@@ -38,8 +38,9 @@ select = [
     "SIM",
     "ERA",
     "FBT",
-    # Exact code on purpose: PLR0917 is a preview rule, and with explicit-preview-rules the
-    # prefix "PLR" silently enables nothing. Do not shorten it (tests/e2e/test_quality_gates.py).
+    # Exact code on purpose; do not shorten it (tests/e2e/test_quality_gates.py). PLR0917 is a
+    # preview rule before ruff 0.16, where explicit-preview-rules makes the prefix "PLR" enable
+    # nothing; from 0.16 it is stable and "PLR" would switch on every other PLR rule as well.
     "PLR0917",
 ]
 preview = true
