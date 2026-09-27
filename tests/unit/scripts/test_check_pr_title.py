@@ -35,6 +35,15 @@ def test_rejects_title_when_scope_unknown() -> None:
     assert problems("feat(server): ingest hook events") != []
 
 
+@pytest.mark.parametrize("title", ["feat(core): x\n", "feat(core): x ", "feat(core): x\t"])
+def test_rejects_title_when_trailing_whitespace(title: str) -> None:
+    assert problems(title) != []
+
+
+def test_accepts_title_when_subject_single_char() -> None:
+    assert problems("feat(core): x") == []
+
+
 def test_rejects_title_when_subject_empty() -> None:
     assert problems("feat(core): ") != []
 

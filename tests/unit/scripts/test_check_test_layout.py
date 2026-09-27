@@ -438,7 +438,10 @@ def test_exits_nonzero_and_prints_path_and_rule_when_violation_found(
     exit_code = main(files)
 
     assert exit_code == 1
-    assert "scripts/utils.py: forbidden-module" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "scripts/utils.py: forbidden-module" in out
+    for name in ("utils", "util", "helpers", "helper", "common", "misc", "tests"):
+        assert name in out
 
 
 def test_exits_zero_when_layout_clean(capsys: pytest.CaptureFixture[str]) -> None:

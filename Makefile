@@ -46,6 +46,8 @@ migrations: ## upgrade a scratch SQLite database to head, then alembic check (no
 	$(ALEMBIC) -x db_url="sqlite:///$$dir/alembic-check.db" upgrade head && \
 	$(ALEMBIC) -x db_url="sqlite:///$$dir/alembic-check.db" check
 
+# Reads the data that test-fast (erase + unit/contract) and test-integration (append) collect,
+# so run it after them, as `make check` does; on its own it checks stale or missing data.
 coverage: ## per-package floors (core 90%, others 80%) over the collected coverage data
 	$(RUN) coverage json -q -o coverage.json && $(RUN) python -m scripts.check_coverage coverage.json
 
