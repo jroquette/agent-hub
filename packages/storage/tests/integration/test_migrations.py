@@ -2,6 +2,7 @@ from pathlib import Path
 
 from alembic.command import check, downgrade, upgrade
 from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
 from sqlalchemy import create_engine, inspect
 
 ALEMBIC_INI = Path(__file__).resolve().parents[2] / "alembic.ini"
@@ -22,14 +23,26 @@ def _table_names(db_path: Path) -> set[str]:
         engine.dispose()
 
 
+def _current_revision(db_path: Path) -> str | None:
+    """The revision stamped in ``alembic_version``; the table also exists (empty) at base."""
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as connection:
+            return MigrationContext.configure(connection).get_current_revision()
+    finally:
+        engine.dispose()
+
+
 def test_upgrades_to_head_and_downgrades_to_base_when_baseline_is_empty(tmp_path: Path) -> None:
     db_path = tmp_path / "agent-hub.db"
     config = _config(db_path)
 
     upgrade(config, "head")
+    assert _current_revision(db_path) == "0001"
     assert _table_names(db_path) == {"alembic_version"}
 
     downgrade(config, "base")
+    assert _current_revision(db_path) is None
     assert _table_names(db_path) == {"alembic_version"}
 
 
