@@ -18,7 +18,7 @@ typecheck: ## mypy --strict (config in mypy.ini)
 	$(RUN) mypy
 
 layout: ## test layout and names, forbidden modules, packages listed in gate configs
-	$(RUN) python scripts/check_test_layout.py
+	$(RUN) python -m scripts.check_test_layout
 
 test-fast: ## unit and contract tests
 	$(RUN) pytest -m "unit or contract"

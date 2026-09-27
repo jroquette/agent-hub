@@ -2,7 +2,14 @@ from collections.abc import Mapping
 
 import pytest
 
-from scripts.check_test_layout import Violation, find_violations, main
+from scripts.check_test_layout import (
+    Violation,
+    checked_level,
+    find_violations,
+    main,
+    split_git_listing,
+)
+from scripts.pytest_levels import level_of
 
 MYPY_INI = """\
 [mypy]
@@ -62,6 +69,9 @@ def files_with(*paths: str, source: str = VALID_TEST) -> dict[str, str]:
         "tests/integration/test_a.py",
         "tests/test_a.py",
         "packages/core/src/agent_hub/core/test_a.py",
+        "packages/core/tests/contract/tests/test_parser.py",
+        "packages/core/tests/unit/tests/integration/test_x.py",
+        "tests/unit/tests/unit/test_a.py",
     ],
 )
 def test_reports_level_folder_when_test_outside_allowed_level(path: str) -> None:
@@ -83,6 +93,66 @@ def test_reports_level_folder_when_test_outside_allowed_level(path: str) -> None
 )
 def test_accepts_level_folder_when_test_under_allowed_level(path: str) -> None:
     assert rule_hits(files_with(path), "level-folder") == []
+
+
+LEVEL_PATHS = [
+    "packages/core/tests/unit/test_a.py",
+    "packages/core/tests/unit/x/test_a.py",
+    "packages/core/tests/contract/test_a.py",
+    "packages/storage/tests/integration/test_a.py",
+    "packages/core/tests/e2e/test_a.py",
+    "packages/core/tests/test_a.py",
+    "packages/core/tests/contract/tests/test_parser.py",
+    "packages/core/tests/unit/tests/integration/test_x.py",
+    "packages/core/src/agent_hub/core/tests/unit/test_a.py",
+    "tests/unit/scripts/test_a.py",
+    "tests/e2e/test_a.py",
+    "tests/integration/test_a.py",
+    "tests/unit/tests/unit/test_a.py",
+    "tests/test_a.py",
+]
+
+
+@pytest.mark.parametrize("path", LEVEL_PATHS)
+def test_agrees_with_marker_plugin_when_level_checked(path: str) -> None:
+    reported = rule_hits(files_with(path), "level-folder") == [path]
+    level = checked_level(path)
+
+    assert reported == (level is None)
+    assert level is None or level == level_of(path)
+
+
+# test-file-name
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "packages/core/tests/unit/builders.py",
+        "packages/core/tests/sample.py",
+        "tests/unit/scripts/fixtures.py",
+        "tests/e2e/conftest_extra.py",
+        "packages/core/tests/unit/ingestion/a_test.py",
+    ],
+)
+def test_reports_test_file_name_when_tests_tree_module_not_named_test(path: str) -> None:
+    assert rule_hits(files_with(path), "test-file-name") == [path]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "packages/core/tests/unit/test_a.py",
+        "packages/core/tests/conftest.py",
+        "packages/core/tests/unit/__init__.py",
+        "tests/conftest.py",
+        "tests/e2e/test_a.py",
+        "packages/core/src/agent_hub/core/errors.py",
+        "scripts/check_x.py",
+    ],
+)
+def test_accepts_test_file_name_when_module_named_test_or_exempt(path: str) -> None:
+    assert rule_hits(files_with(path), "test-file-name") == []
 
 
 # mirror
@@ -235,7 +305,13 @@ def test_accepts_name_rules_when_regression_test_names_behavior() -> None:
         "packages/cli/src/agent_hub/cli/misc.py",
         "packages/core/src/agent_hub/core/helpers/__init__.py",
         "packages/core/src/agent_hub/core/common/strings.py",
+        "packages/core/src/agent_hub/core/helper.py",
         "scripts/utils.py",
+        "scripts/util.py",
+        "packages/core/tests/unit/utils.py",
+        "packages/core/tests/unit/common/test_strings.py",
+        "tests/unit/helper.py",
+        "tests/unit/misc/test_a.py",
     ],
 )
 def test_reports_forbidden_module_when_module_or_package_name_is_generic(path: str) -> None:
@@ -248,6 +324,8 @@ def test_reports_forbidden_module_when_module_or_package_name_is_generic(path: s
         "scripts/check_x.py",
         "packages/core/src/agent_hub/core/errors.py",
         "packages/core/src/agent_hub/core/utilities_note.md",
+        "packages/core/tests/unit/test_utils_when_x.py",
+        "tests/unit/scripts/test_check_x.py",
     ],
 )
 def test_accepts_forbidden_module_when_module_name_is_specific(path: str) -> None:
@@ -290,6 +368,23 @@ def test_reports_package_registered_when_core_contract_missing() -> None:
     files = {**REGISTERED, ".importlinter": importlinter}
 
     assert rule_hits(files, "package-registered") == [".importlinter"]
+
+
+# reading the repo
+
+
+def test_splits_every_path_when_git_listing_is_nul_separated() -> None:
+    listing = "scripts/x.py\0tests/unit/scripts/test_caf\u00e9_menu.py\0docs/a b.md\0"
+
+    assert split_git_listing(listing) == [
+        "scripts/x.py",
+        "tests/unit/scripts/test_caf\u00e9_menu.py",
+        "docs/a b.md",
+    ]
+
+
+def test_returns_no_paths_when_git_listing_empty() -> None:
+    assert split_git_listing("") == []
 
 
 # main
