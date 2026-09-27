@@ -200,7 +200,11 @@ def _check_forbidden_module(path: str) -> Iterator[Violation]:
     else:
         return
     if {PurePosixPath(name).stem for name in names} & FORBIDDEN_MODULE_NAMES:
-        yield Violation(path, "forbidden-module", "utils/helpers/common/misc say nothing; name it")
+        forbidden = "/".join(sorted(FORBIDDEN_MODULE_NAMES))
+        message = (
+            f"{forbidden} say nothing as module or folder names (src, scripts, tests); name it"
+        )
+        yield Violation(path, "forbidden-module", message)
 
 
 # Gate configs: package-registered.

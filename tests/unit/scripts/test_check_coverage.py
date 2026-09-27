@@ -1,8 +1,17 @@
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from scripts.check_coverage import PackageCoverage, measure_packages, run
+from scripts.check_coverage import (
+    PackageCoverage,
+    branch_data_problem,
+    main,
+    measure_packages,
+    missing_from_report,
+    run,
+)
 
 
 def file_summary(
@@ -90,12 +99,68 @@ def test_ignores_files_when_outside_packages() -> None:
     assert measured(files, ["core"])["core"].passed
 
 
+def test_lists_file_when_source_missing_from_report() -> None:
+    hidden = "packages/core/src/agent_hub/core/events/hidden.py"
+
+    missing = missing_from_report(report({CORE_ERRORS: file_summary(1, 1)}), [CORE_ERRORS, hidden])
+
+    assert missing == [hidden]
+
+
+def test_lists_nothing_when_every_source_in_report() -> None:
+    files = {CORE_ERRORS: file_summary(1, 1), STORAGE_DB: file_summary(1, 1)}
+
+    assert missing_from_report(report(files), [STORAGE_DB, CORE_ERRORS]) == []
+
+
+def test_exits_nonzero_and_names_file_when_source_missing_from_report(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    hidden = "packages/core/src/agent_hub/core/events/hidden.py"
+
+    exit_code = run(report({CORE_ERRORS: file_summary(1, 1)}), ["core"], [CORE_ERRORS, hidden])
+
+    assert exit_code == 1
+    assert f"missing from the coverage report: {hidden}" in capsys.readouterr().out
+
+
+def test_reports_problem_when_branch_coverage_off() -> None:
+    no_branches = {"meta": {"branch_coverage": False}, "files": {}}
+
+    assert branch_data_problem(no_branches) is not None
+    assert branch_data_problem({"files": {}}) is not None
+
+
+def test_reports_problem_when_summary_lacks_branch_fields() -> None:
+    lines_only = {"summary": {"num_statements": 1, "covered_lines": 1}}
+
+    problem = branch_data_problem(report({CORE_ERRORS: lines_only}))
+
+    assert problem is not None
+    assert CORE_ERRORS in problem
+
+
+def test_reports_no_problem_when_branch_data_present() -> None:
+    assert branch_data_problem(report({CORE_ERRORS: file_summary(1, 1)})) is None
+
+
+def test_exits_nonzero_with_message_when_branch_data_absent(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    lines_only = {"meta": {"branch_coverage": False}, "files": {CORE_ERRORS: {"summary": {}}}}
+
+    exit_code = run(lines_only, ["core"], [CORE_ERRORS])
+
+    assert exit_code == 1
+    assert "branch" in capsys.readouterr().out
+
+
 def test_exits_nonzero_and_names_package_when_floor_missed(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     files = {CORE_ERRORS: file_summary(10, 9), STORAGE_DB: file_summary(10, 7)}
 
-    exit_code = run(report(files), ["core", "storage"])
+    exit_code = run(report(files), ["core", "storage"], [CORE_ERRORS, STORAGE_DB])
 
     out = capsys.readouterr().out
     assert exit_code == 1
@@ -104,7 +169,49 @@ def test_exits_nonzero_and_names_package_when_floor_missed(
 
 
 def test_exits_zero_when_every_package_meets_floor(capsys: pytest.CaptureFixture[str]) -> None:
-    exit_code = run(report({CORE_ERRORS: file_summary(1, 1)}), ["core"])
+    exit_code = run(report({CORE_ERRORS: file_summary(1, 1)}), ["core"], [CORE_ERRORS])
 
     assert exit_code == 0
     assert "core: 100.00% (floor 90%) ok" in capsys.readouterr().out
+
+
+# main
+
+
+def write_repo(root: Path, sources: list[str], files: dict[str, dict[str, Any]]) -> Path:
+    for source in sources:
+        (root / source).parent.mkdir(parents=True, exist_ok=True)
+        (root / source).write_text("", encoding="utf-8")
+    coverage_json = root / "coverage.json"
+    coverage_json.write_text(json.dumps(report(files)), encoding="utf-8")
+    return coverage_json
+
+
+def test_main_exits_zero_when_repo_sources_covered(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    coverage_json = write_repo(tmp_path, [CORE_ERRORS], {CORE_ERRORS: file_summary(1, 1)})
+
+    exit_code = main([str(coverage_json)], root=tmp_path)
+
+    assert exit_code == 0
+    assert "core: 100.00% (floor 90%) ok" in capsys.readouterr().out
+
+
+def test_main_exits_nonzero_when_nested_source_missing_from_report(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hidden = "packages/core/src/agent_hub/core/events/hidden.py"
+    coverage_json = write_repo(tmp_path, [CORE_ERRORS, hidden], {CORE_ERRORS: file_summary(1, 1)})
+
+    exit_code = main([str(coverage_json)], root=tmp_path)
+
+    assert exit_code == 1
+    assert hidden in capsys.readouterr().out
+
+
+def test_main_exits_with_usage_error_when_report_argument_missing(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main([]) == 2
+    assert "usage" in capsys.readouterr().err

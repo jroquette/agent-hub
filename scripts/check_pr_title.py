@@ -12,13 +12,15 @@ from collections.abc import Sequence
 TYPES = ("feat", "fix", "docs", "chore", "refactor", "test", "ci", "build", "perf", "revert")
 SCOPES = ("core", "storage", "collector", "cli", "api", "web", "repo", "deps", "ci", "docs")
 MAX_LENGTH = 72
-TITLE = re.compile(rf"^({'|'.join(TYPES)})\(({'|'.join(SCOPES)})\)!?: \S.*$")
+# Matched with fullmatch: the subject starts and ends with a non-space, so a trailing space or
+# newline fails (``$`` alone would accept a final newline).
+TITLE = re.compile(rf"({'|'.join(TYPES)})\(({'|'.join(SCOPES)})\)!?: \S(.*\S)?")
 
 
 def problems(title: str) -> list[str]:
     """Every reason ``title`` is not a valid PR title; empty when it is valid."""
     found: list[str] = []
-    if not TITLE.match(title):
+    if not TITLE.fullmatch(title):
         found.append("must be type(scope): subject, with a known type and scope")
     if len(title) > MAX_LENGTH:
         found.append(f"is {len(title)} characters; at most {MAX_LENGTH}")
