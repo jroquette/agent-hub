@@ -19,10 +19,11 @@ forbidden_modules =
     alembic
     typer
 
-[importlinter:contract:siblings-independent]
-name = siblings are independent
-type = independence
-modules =
-    agent_hub.storage
-    agent_hub.collector
+# cli is the composition root (ADR 0008): it may import the adapters to wire them into core use cases, nothing
+# imports it, and the adapters below it stay independent of each other ("|").
+[importlinter:contract:composition-root]
+name = cli is the composition root
+type = layers
+layers =
     agent_hub.cli
+    agent_hub.storage | agent_hub.collector
