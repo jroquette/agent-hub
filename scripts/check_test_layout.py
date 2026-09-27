@@ -4,8 +4,12 @@
 test files and the gate configs need real contents) and returns the violations. ``main`` lists
 the repo files with git, prints ``<path>: <rule> <message>`` per violation and exits 1 if any.
 
-Rules: level-folder, mirror, test-name, ticket-name, generic-name, numbered-name,
-forbidden-module, package-registered.
+Rules: level-folder, test-file-name, mirror, test-name, ticket-name, generic-name,
+numbered-name, forbidden-module, package-registered.
+
+The level of a test comes from ``scripts.pytest_levels.level_of``, the function the marker
+plugin uses, so a test the checker accepts always gets the marker the checker expects.
+Run it as ``python -m scripts.check_test_layout`` from the repo root.
 """
 
 import ast
@@ -17,10 +21,12 @@ from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from scripts.pytest_levels import level_of
+
 PACKAGE_LEVELS = frozenset({"unit", "contract", "integration"})
 ROOT_LEVELS = frozenset({"unit", "e2e"})
 EXEMPT_TEST_DIR_FILES = frozenset({"conftest.py", "__init__.py"})
-FORBIDDEN_MODULE_NAMES = frozenset({"utils", "helpers", "common", "misc"})
+FORBIDDEN_MODULE_NAMES = frozenset({"utils", "util", "helpers", "helper", "common", "misc"})
 GENERIC_WORDS = frozenset(
     {"misc", "utils", "util", "helpers", "helper", "common", "new", "temp", "tmp", "stuff"}
 )
@@ -55,6 +61,30 @@ def find_violations(files: Mapping[str, str]) -> list[Violation]:
     return violations
 
 
+def checked_level(path: str) -> str | None:
+    """The level of the test at ``path``, or None when its location breaks ``level-folder``.
+
+    Exactly one ``tests`` segment, at the repo root or right under ``packages/<name>/``, followed
+    by a level allowed there (C9). The level itself is the marker plugin's ``level_of``.
+    """
+    parts = PurePosixPath(path).parts
+    if parts.count("tests") != 1:
+        return None
+    if parts[0] == "tests":
+        allowed = ROOT_LEVELS
+    elif len(parts) > 2 and parts[0] == "packages" and parts[2] == "tests":
+        allowed = PACKAGE_LEVELS
+    else:
+        return None
+    level = level_of(path)
+    return level if level in allowed else None
+
+
+def split_git_listing(listing: str) -> list[str]:
+    """Paths from ``git ls-files -z`` output: NUL-separated, never quoted or escaped."""
+    return [path for path in listing.split("\0") if path]
+
+
 def main(files: Mapping[str, str] | None = None) -> int:
     """Print the violations in ``files`` (default: the repo) and return the exit code."""
     violations = find_violations(_read_repo_files() if files is None else files)
@@ -70,10 +100,12 @@ def _check_test_file(path: str, source: str, files: Mapping[str, str]) -> Iterat
     pure = PurePosixPath(path)
     if not _is_test_location(pure):
         return
-    level = _level_of(pure)
+    level = checked_level(path)
     if level is None:
         yield Violation(path, "level-folder", "tests must live under an allowed level folder")
     if not pure.name.startswith("test_"):
+        message = "modules in a tests tree are test_*.py, conftest.py or __init__.py"
+        yield Violation(path, "test-file-name", message)
         return
     if level == "unit" and not _mirrors_module(pure, files):
         yield Violation(path, "mirror", f"no src module matches {pure.name}")
@@ -87,21 +119,6 @@ def _is_test_location(path: PurePosixPath) -> bool:
     if path.name.startswith("test_"):
         return True
     return "tests" in path.parts[:-1] and path.name not in EXEMPT_TEST_DIR_FILES
-
-
-def _level_of(path: PurePosixPath) -> str | None:
-    """The level folder of a test, or None when it is not under one allowed for its location."""
-    parts = path.parts
-    if parts[0] == "tests":
-        tests_index, allowed = 0, ROOT_LEVELS
-    elif len(parts) > 2 and parts[2] == "tests":  # packages/<name>/tests/...
-        tests_index, allowed = 2, PACKAGE_LEVELS
-    else:
-        return None
-    level_index = tests_index + 1
-    if level_index >= len(parts) - 1 or parts[level_index] not in allowed:
-        return None
-    return parts[level_index]
 
 
 def _mirrors_module(test_path: PurePosixPath, files: Mapping[str, str]) -> bool:
@@ -163,17 +180,18 @@ def _check_name(path: str, name: str, kind: str) -> Iterator[Violation]:
         yield Violation(path, "numbered-name", f"{kind} {name}: say what differs, not a number")
 
 
-# Source modules: forbidden-module.
+# Modules and packages: forbidden-module.
 
 
 def _check_forbidden_module(path: str) -> Iterator[Violation]:
+    """Generic names in scripts/, package src/ and tests trees (folder or module names)."""
     pure = PurePosixPath(path)
     parts = pure.parts
     if pure.suffix != ".py":
         return
-    if parts[0] == "scripts":
+    if parts[0] in {"scripts", "tests"}:
         names = parts[1:]
-    elif parts[0] == "packages" and len(parts) > 2 and parts[2] == "src":
+    elif parts[0] == "packages" and len(parts) > 2 and parts[2] in {"src", "tests"}:
         names = parts[3:]
     else:
         return
@@ -270,14 +288,15 @@ def _split(value: str, separators: str) -> set[str]:
 
 def _read_repo_files() -> dict[str, str]:
     """Tracked and untracked (not ignored) files; contents only where a rule reads them."""
+    command = ["git", "-C", str(REPO_ROOT), "ls-files", "-z", "--cached", "--others"]
     listing = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "ls-files", "--cached", "--others", "--exclude-standard"],
+        [*command, "--exclude-standard"],
         capture_output=True,
         check=True,
-        text=True,
-    ).stdout.splitlines()
+        encoding="utf-8",
+    ).stdout
     files: dict[str, str] = {}
-    for path in listing:
+    for path in split_git_listing(listing):
         full = REPO_ROOT / path
         if not full.is_file():
             continue  # deleted but still in the index
