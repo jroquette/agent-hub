@@ -27,8 +27,11 @@ Chosen option: **written conventions, enforced by tools where possible, and Engl
   marks each one "enforced by <tool/rule>" or "review-only".
 - Enforcement is in the gates: ruff (`C901` with max complexity 8, `PLR0917` with at most 3 positional params, `FBT`,
   `BLE001` and `S110`, `ERA001`, `N`), mypy strict, and the layout checker (`forbidden-module` and the test name rules).
-- `tests/e2e/test_quality_gates.py` runs ruff and mypy with the repo's configs against scratch modules that break each
-  rule, so a config change that switches a rule off fails `make check`.
+- `tests/e2e/test_quality_gates.py` runs ruff and mypy with the repo's configs against scratch modules, so a config
+  change that switches one of these off fails `make check`: ruff `C901` (at the limit of 8), `PLR0917` (plus a guard
+  that `pyproject.toml` selects that exact code, never a prefix), `FBT001`, `BLE001`, `S110` and `ERA001`;
+  `ruff format --check`; mypy `no-untyped-def`. The other rules listed above are not covered by that test. The layout
+  checker is covered by its own unit tests (`tests/unit/scripts/test_check_test_layout.py`).
 - One term per concept, matching the SPEC glossary. A workflow execution is a `WorkflowRun`, which contains Sessions;
   "run", "job" and "execution" are never synonyms for Session.
 - English everywhere: code, docs, ADRs, commits, PRs and issues.
