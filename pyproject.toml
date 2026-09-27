@@ -1,0 +1,60 @@
+# Virtual workspace root: no [project] table, so uv never tries to build it (ADR 0001).
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv]
+package = false
+# 0.9.0 is the first uv release that offers a final CPython 3.14; older ones only offer release candidates.
+required-version = ">=0.9.0"
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.15",
+    "mypy>=2.3.1",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "pytest-socket>=0.8.1",
+    "ruff>=0.15.8",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "W",
+    "I",
+    "N",
+    "UP",
+    "B",
+    "C90",
+    "S",
+    "BLE",
+    "SIM",
+    "ERA",
+    "FBT",
+    # Exact code on purpose: PLR0917 is a preview rule, and with explicit-preview-rules the
+    # prefix "PLR" silently enables nothing. Do not shorten it (tests/e2e/test_quality_gates.py).
+    "PLR0917",
+]
+preview = true
+explicit-preview-rules = true
+
+[tool.ruff.lint.mccabe]
+max-complexity = 8
+
+[tool.ruff.lint.pylint]
+max-positional-args = 3
+
+[tool.ruff.lint.isort]
+known-first-party = ["agent_hub"]
+
+[tool.ruff.lint.per-file-ignores]
+# pytest's plain assert is how tests state expectations.
+"**/tests/**" = ["S101"]
+# e2e tests and repo scripts run known tools (uv, git, ruff, mypy) as subprocesses by design.
+"tests/e2e/**" = ["S603", "S607"]
+"scripts/**" = ["S603", "S607"]

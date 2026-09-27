@@ -14,3 +14,6 @@ build/
 *.db
 .claude/settings.local.json
 .claude/worktrees/
+.coverage
+coverage.json
+.import_linter_cache/
