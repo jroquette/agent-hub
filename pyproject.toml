@@ -6,6 +6,8 @@ members = ["packages/*"]
 package = false
 # 0.9.0 is the first uv release that offers a final CPython 3.14; older ones only offer release candidates.
 required-version = ">=0.9.0"
+# Pin the build backend so every member builds with the same, locked-in hatchling.
+build-constraint-dependencies = ["hatchling==1.32.4"]
 
 [dependency-groups]
 dev = [
