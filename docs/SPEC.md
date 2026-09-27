@@ -1,198 +1,198 @@
-# Spec inicial — Plataforma de hubs e agentes
+# Initial spec — Hubs and agents platform
 
-27/09/2026 · José Henrique Roquette. Fonte viva: documento no claude.ai; este arquivo é a cópia versionada.
+2026-09-27 · José Henrique Roquette. Living source: a document on claude.ai; this file is the versioned copy.
 
-## Visão e problema
+## Vision and problem
 
-A plataforma transforma o que o `loki-trader-hub` faz à mão para um projeto em um produto que monta, opera e observa hubs de agentes de IA para N projetos. Ela também gerencia a si mesma e o próprio Loki Trader.
+The platform turns what `loki-trader-hub` does by hand for one project into a product that builds, runs and observes AI agent hubs for N projects. It also manages itself and Loki Trader itself.
 
-Hoje o hub do Loki Trader já reúne as peças certas: memória versionada (`brain/`), regras cross-repo (`AGENTS.md`), launcher multi-repo (`agent`), plugin de workflow com agentes de entrega, runner que leva uma issue do Linear até PR (`agent_runner.py`), mineração de transcripts, retro e benchmark. O problema é que tudo está acoplado a um projeto:
+Today the Loki Trader hub already brings together the right pieces: versioned memory (`brain/`), cross-repo rules (`AGENTS.md`), a multi-repo launcher (`agent`), a workflow plugin with delivery agents, a runner that takes a Linear issue to a PR (`agent_runner.py`), transcript mining, retro and benchmark. The problem is that everything is coupled to one project:
 
-- **Não reaproveita.** Os nomes dos repos, o time do Linear, as regras e os caminhos estão fixos no código. Um projeto novo começa do zero.
-- **Não enxerga.** O que os agentes fazem, decidem e aprendem fica espalhado em transcripts JSONL, logs em `.agent-runs/`, `brain/_inbox/` e PRs. Não há um lugar para ver isso junto, ao vivo ou ao longo do tempo.
-- **Não governa.** O workflow (plano → aprovação → código → CI → PR) está implícito em regras de texto, hooks e scripts. Ele não pode ser definido, versionado ou comparado entre projetos.
+- **It is not reusable.** Repo names, the Linear team, the rules and the paths are hard-coded. A new project starts from scratch.
+- **It is not visible.** What the agents do, decide and learn is scattered across JSONL transcripts, logs in `.agent-runs/`, `brain/_inbox/` and PRs. There is no single place to see it together, live or over time.
+- **It is not governed.** The workflow (plan → approval → code → CI → PR) is implicit in text rules, hooks and scripts. It cannot be defined, versioned or compared across projects.
 
-## Objetivos e não-objetivos
+## Goals and non-goals
 
-O sucesso da v1 é recriar o `loki-trader-hub` pela plataforma sem perder capacidade e ver numa tela o que cada agente fez numa sessão.
+Success for v1 is recreating `loki-trader-hub` through the platform without losing capability, and seeing on one screen what each agent did in a session.
 
-**Objetivos**
+**Goals**
 
-1. **Criar hubs genéricos.** Um comando monta o hub de qualquer projeto (1 a N repos) com brain, regras, launcher, plugin e scripts.
-2. **Definir workflows como dado.** Etapas, gates, aprovadores e limites (turnos, custo) ficam versionados no hub, e não espalhados em texto e scripts.
-3. **Observar agentes.** Mostrar ao vivo e no histórico o que cada sessão fez: tarefa, repo, ferramentas usadas, arquivos tocados, decisões e custo.
-4. **Tornar o conhecimento visível.** Mostrar o que o agente recebe de contexto (regras, brain, memória), o que aprendeu (learnings, inbox) e de onde veio cada item.
-5. **Auditar o raciocínio.** Reconstituir por que uma decisão foi tomada a partir do transcript: mensagens, resumos de raciocínio e tool calls.
+1. **Create generic hubs.** One command builds the hub of any project (1 to N repos) with brain, rules, launcher, plugin and scripts.
+2. **Define workflows as data.** Steps, gates, approvers and limits (turns, cost) are versioned in the hub, not scattered across text and scripts.
+3. **Observe agents.** Show, live and in history, what each session did: task, repo, tools used, files touched, decisions and cost.
+4. **Make knowledge visible.** Show what context the agent receives (rules, brain, memory), what it learned (learnings, inbox) and where each item came from.
+5. **Audit the reasoning.** Reconstruct why a decision was made from the transcript: messages, reasoning summaries and tool calls.
 
-**Não-objetivos (v1)**
+**Non-goals (v1)**
 
-- Não é um novo agente nem um runtime de LLM. A plataforma orquestra e observa o Claude Code (e depois outros), não o substitui.
-- Não é multiusuário nem SaaS. A v1 é local-first, para um dono.
-- Não edita o brain sozinha. Mantém a regra do hub atual: agentes propõem em `_inbox/`, e o humano decide.
-- Não promete ler a "mente" do modelo. Ela mostra o que o transcript registra, nada além.
+- It is not a new agent or an LLM runtime. The platform orchestrates and observes Claude Code (and others later); it does not replace it.
+- It is not multi-user or SaaS. v1 is local-first, for one owner.
+- It does not edit the brain on its own. It keeps the current hub's rule: agents propose in `_inbox/`, and the human decides.
+- It does not promise to read the model's "mind". It shows what the transcript records, nothing more.
 
-## Conceitos centrais
+## Core concepts
 
-O modelo tem oito entidades. Todas já existem de forma implícita no Loki Trader, e a plataforma só lhes dá nome e esquema.
+The model has eight entities. All of them already exist implicitly in Loki Trader, and the platform only gives them a name and a schema.
 
-| Conceito | O que é | Equivalente hoje no Loki Trader |
+| Concept | What it is | Today's equivalent in Loki Trader |
 | --- | --- | --- |
-| Projeto | Um produto com 1 a N repos e um rastreador de tarefas | Loki Trader (time `LOK` no Linear) |
-| Hub | Repo de controle do projeto: regras, brain, workflows, plugin, scripts | `loki-trader-hub` |
-| Repo | Repositório de código gerido pelo hub, com o seu `AGENTS.md` | `tradeSentinel`, `loki-trader-ui` |
-| Workflow | Sequência de etapas com gates, aprovadores e limites | Estados do `agent_runner.py` e o `/feature` do plugin |
-| Agente | Um papel com instruções, ferramentas e modelo | Agentes em `plugin/loki-workflow/agents/` |
-| Sessão | Uma execução concreta de um agente, com transcript, custo e resultado | Transcripts JSONL e `.agent-runs/*.jsonl` |
-| Brain | Conhecimento curado e versionado, com proveniência | `brain/` (index, now, decisions, learnings…) |
-| Learning | Algo aprendido numa sessão, proposto e depois aceito ou rejeitado | `brain/_inbox/` → `brain/learnings/` e memória auto |
+| Project | A product with 1 to N repos and a task tracker | Loki Trader (team `LOK` in Linear) |
+| Hub | The project's control repo: rules, brain, workflows, plugin, scripts | `loki-trader-hub` |
+| Repo | A code repository managed by the hub, with its own `AGENTS.md` | `tradeSentinel`, `loki-trader-ui` |
+| Workflow | A sequence of steps with gates, approvers and limits | The states of `agent_runner.py` and the plugin's `/feature` |
+| Agent | A role with instructions, tools and a model | Agents in `plugin/loki-workflow/agents/` |
+| Session | One concrete execution of an agent, with transcript, cost and outcome | JSONL transcripts and `.agent-runs/*.jsonl` |
+| Brain | Curated, versioned knowledge, with provenance | `brain/` (index, now, decisions, learnings…) |
+| Learning | Something learned in a session, proposed and then accepted or rejected | `brain/_inbox/` → `brain/learnings/` and auto memory |
 
-## Camada 1: gerador de hubs (CLI)
+## Layer 1: hub generator (CLI)
 
-Uma CLI cria e mantém hubs a partir de um arquivo de configuração do projeto. Tudo o que hoje é específico do Loki vira parâmetro ou módulo opcional.
+A CLI creates and maintains hubs from a project configuration file. Everything that is Loki-specific today becomes a parameter or an optional module.
 
 ```
-hub init <projeto> --repos org/backend,org/frontend --tracker linear:LOK
-hub sync        # reaplica templates sem sobrescrever o que o projeto customizou
-hub doctor      # checa regras, links, referências mortas e tamanho das instruções
+hub init <project> --repos org/backend,org/frontend --tracker linear:LOK
+hub sync        # reapplies templates without overwriting what the project customized
+hub doctor      # checks rules, links, dead references and instruction size
 ```
 
-**O que extrair do `loki-trader-hub`**
+**What to extract from `loki-trader-hub`**
 
-| Peça atual | Vira na plataforma | Genérico ou módulo |
+| Current piece | Becomes on the platform | Generic or module |
 | --- | --- | --- |
-| `brain/` (index, now, decisions, learnings, playbooks, journal, `_inbox/`, `auto/`) | Template de brain com frontmatter e proveniência | Genérico |
-| `AGENTS.md`/`CLAUDE.md` com regras cross-repo | Template com regras base (autoria, worktree, sem push em `main`) e regras do projeto | Genérico + regras do projeto |
-| `agent` (launcher com `--add-dir` e AGENTS.md anexados) | Launcher gerado a partir da lista de repos | Genérico |
-| `scripts/worktree.sh` | Worktrees isolados por tarefa, com portas e `.env` próprios | Genérico, com hooks por stack |
-| `scripts/brief.py` | Brief de sessão (now, journal, estado de git/PR/CI) | Genérico |
-| `scripts/agent_runner.py` | Executor de workflow (issue → PR como máquina de estados) | Genérico, lendo o workflow como dado |
-| `mine_transcripts.py`, `recall_transcripts.py`, `retro_metrics.py` | Ingestão e análise da camada 2 | Genérico |
-| `bench.py` | Benchmark de configuração de agente em issues fechadas | Módulo |
-| `agent_config_lint.py`, `features_check.py` | `hub doctor` e validação de features | Genérico |
-| `plugin/loki-workflow/` (agents, skills, hooks) e marketplace | Plugin base da plataforma + plugin do projeto | Genérico + do projeto |
-| `contract-sync.sh` (OpenAPI backend → frontend) | Receita de contrato entre repos | Módulo |
-| Red-chain, Decimal, paper/testnet | Regras do domínio Loki | Fica no projeto |
+| `brain/` (index, now, decisions, learnings, playbooks, journal, `_inbox/`, `auto/`) | Brain template with frontmatter and provenance | Generic |
+| `AGENTS.md`/`CLAUDE.md` with cross-repo rules | Template with base rules (authorship, worktree, no push to `main`) and project rules | Generic + project rules |
+| `agent` (launcher with `--add-dir` and appended AGENTS.md files) | Launcher generated from the repo list | Generic |
+| `scripts/worktree.sh` | Isolated per-task worktrees, with their own ports and `.env` | Generic, with per-stack hooks |
+| `scripts/brief.py` | Session brief (now, journal, git/PR/CI state) | Generic |
+| `scripts/agent_runner.py` | Workflow executor (issue → PR as a state machine) | Generic, reading the workflow as data |
+| `mine_transcripts.py`, `recall_transcripts.py`, `retro_metrics.py` | Layer 2 ingestion and analysis | Generic |
+| `bench.py` | Agent configuration benchmark on closed issues | Module |
+| `agent_config_lint.py`, `features_check.py` | `hub doctor` and feature validation | Generic |
+| `plugin/loki-workflow/` (agents, skills, hooks) and marketplace | Platform base plugin + project plugin | Generic + project |
+| `contract-sync.sh` (OpenAPI backend → frontend) | Cross-repo contract recipe | Module |
+| Red-chain, Decimal, paper/testnet | Loki domain rules | Stays in the project |
 
-Regra de desenho: o hub gerado continua sendo só arquivos versionados num repo privado do GitHub, acessível só aos donos. Assim ele funciona no terminal, nas sessões na nuvem e sem a camada 2 rodando.
+Design rule: the generated hub remains just versioned files in a private GitHub repo, accessible only to the owners. That way it works in the terminal, in cloud sessions and without layer 2 running.
 
-## Camada 2: plano de controle e observabilidade
+## Layer 2: control plane and observability
 
-Um app web lê os hubs e os eventos dos agentes e responde a cinco perguntas, uma por visão.
+A web app reads the hubs and the agents' events and answers five questions, one per view.
 
-| Visão | Pergunta que responde | Conteúdo |
+| View | Question it answers | Content |
 | --- | --- | --- |
-| Portfólio | Como estão meus projetos? | Hubs, repos, tarefas em andamento, PRs abertos, CI, custo da semana |
-| Workflows | Como o trabalho deve fluir? | Editor e visualização das etapas e gates; em que etapa cada tarefa está; onde trava |
-| Sessões ao vivo | O que os agentes estão fazendo agora? | Sessões ativas por repo e tarefa, última ação, turnos e custo acumulado, aprovações pendentes |
-| Linha do tempo da sessão | Por que o agente fez isso? | Mensagens, resumos de raciocínio, tool calls, arquivos e diffs, decisões marcadas e o resultado final |
-| Conhecimento | O que ele sabe e o que aprendeu? | Contexto carregado na sessão (regras, brain, memória), learnings propostos, triagem do inbox, evolução ao longo do tempo |
+| Portfolio | How are my projects doing? | Hubs, repos, tasks in progress, open PRs, CI, cost of the week |
+| Workflows | How should work flow? | Editor and visualization of steps and gates; which step each task is at; where it gets stuck |
+| Live sessions | What are the agents doing right now? | Active sessions by repo and task, last action, accumulated turns and cost, pending approvals |
+| Session timeline | Why did the agent do that? | Messages, reasoning summaries, tool calls, files and diffs, marked decisions and the final outcome |
+| Knowledge | What does it know and what did it learn? | Context loaded in the session (rules, brain, memory), proposed learnings, inbox triage, evolution over time |
 
-**Decisões como objeto.** Uma decisão é um trecho da sessão com escolha, alternativas descartadas e justificativa. Na v1 ela é extraída do transcript. Depois, os agentes podem registrá-la explicitamente por uma skill ou hook (`/decide`).
+**Decisions as objects.** A decision is a stretch of the session with a choice, discarded alternatives and a rationale. In v1 it is extracted from the transcript. Later, agents can record it explicitly through a skill or hook (`/decide`).
 
-**Aprender com proveniência.** Cada item do brain e cada learning guarda a sessão de origem, o autor (humano ou agente) e o status. A visão de conhecimento mostra o caminho sessão → proposta → aceito → regra e mede se a regra reduziu a falha que a motivou (o que o `mine_transcripts.py` e o `retro_metrics.py` já começam a fazer).
+**Learning with provenance.** Every brain item and every learning keeps its source session, its author (human or agent) and its status. The knowledge view shows the path session → proposal → accepted → rule and measures whether the rule reduced the failure that motivated it (which `mine_transcripts.py` and `retro_metrics.py` already start to do).
 
-**Ações, não só leitura (depois da v1).** Iniciar um workflow numa issue, aprovar um gate, pausar ou cancelar uma sessão, aceitar um learning.
+**Actions, not just reading (after v1).** Start a workflow on an issue, approve a gate, pause or cancel a session, accept a learning.
 
-## Fontes de dados e modelo de eventos
+## Data sources and event model
 
-Quase todos os dados já existem. A plataforma normaliza cinco fontes num único fluxo de eventos por sessão.
+Almost all of the data already exists. The platform normalizes five sources into a single event stream per session.
 
-| Fonte | O que traz | Latência |
+| Source | What it brings | Latency |
 | --- | --- | --- |
-| Hooks do Claude Code | Início e fim de sessão, cada tool use, prompts, pedidos de permissão | Tempo real |
-| Transcripts (`~/.claude/projects/*.jsonl`) | Mensagens completas, raciocínio registrado, tool calls e resultados | Após cada turno |
-| OpenTelemetry do Claude Code | Tokens, custo, duração, erros | Tempo real |
-| Logs do executor de workflow (hoje `.agent-runs/`) | Etapa, gate, resultado, motivo de falha | Por etapa |
-| GitHub e rastreador (Linear) | Issues, PRs, commits, CI, review | Polling ou webhook |
+| Claude Code hooks | Session start and end, each tool use, prompts, permission requests | Real time |
+| Transcripts (`~/.claude/projects/*.jsonl`) | Full messages, recorded reasoning, tool calls and results | After each turn |
+| Claude Code OpenTelemetry | Tokens, cost, duration, errors | Real time |
+| Workflow executor logs (today `.agent-runs/`) | Step, gate, outcome, failure reason | Per step |
+| GitHub and tracker (Linear) | Issues, PRs, commits, CI, review | Polling or webhook |
 
-**Evento canônico** (rascunho): `{projeto, repo, sessão, agente, workflow, etapa, tipo, timestamp, payload, origem}`. Os tipos iniciais são `session.start`, `session.end`, `tool.call`, `tool.result`, `message`, `reasoning`, `decision`, `gate.request`, `gate.result`, `learning.proposed` e `learning.accepted`.
+**Canonical event** (draft): `{project, repo, session, agent, workflow, step, type, timestamp, payload, source}`. The initial types are `session.start`, `session.end`, `tool.call`, `tool.result`, `message`, `reasoning`, `decision`, `gate.request`, `gate.result`, `learning.proposed` and `learning.accepted`.
 
-**Privacidade e redação.** Transcripts podem conter segredos e dados pessoais. A ingestão reda padrões de chave e token antes de gravar, e os dados ficam na máquina na v1.
+**Privacy and redaction.** Transcripts can contain secrets and personal data. Ingestion redacts key and token patterns before writing, and the data stays on the machine in v1.
 
-## Arquitetura proposta
+## Proposed architecture
 
-A v1 roda inteira na máquina do dono: um coletor, um armazém de eventos e um app web, além da CLI que gera os hubs.
+v1 runs entirely on the owner's machine: a collector, an event store and a web app, plus the CLI that generates the hubs.
 
 ```mermaid
 flowchart LR
-  exec[Executor de workflow<br/>issue → PR, com gates] -->|abre sessões| sess[Sessões Claude Code<br/>hooks, transcripts, OTel]
-  sess --> col[Coletor<br/>normaliza e reda eventos]
-  gh[GitHub e Linear<br/>issues, PRs, CI] --> col
-  col --> store[Armazém de eventos<br/>SQLite na v1]
-  store --> api[API<br/>consultas e ações]
-  api --> app[App web<br/>portfólio, sessões, brain]
-  app -->|ações: iniciar workflow, aprovar gate| exec
-  cli[Hub CLI<br/>init, sync, doctor] -->|gera e sincroniza| hubs[Repos de hubs git<br/>brain, regras, workflows]
+  exec[Workflow executor<br/>issue → PR, with gates] -->|opens sessions| sess[Claude Code sessions<br/>hooks, transcripts, OTel]
+  sess --> col[Collector<br/>normalizes and redacts events]
+  gh[GitHub and Linear<br/>issues, PRs, CI] --> col
+  col --> store[Event store<br/>SQLite in v1]
+  store --> api[API<br/>queries and actions]
+  api --> app[Web app<br/>portfolio, sessions, brain]
+  app -->|actions: start workflow, approve gate| exec
+  cli[Hub CLI<br/>init, sync, doctor] -->|generates and syncs| hubs[Hub git repos<br/>brain, rules, workflows]
 ```
 
-As sessões e o GitHub/Linear alimentam o coletor, e o app web lê tudo pela API. As ações do app voltam ao executor de workflow. A API também lê os repos de hubs para mostrar brain, regras e workflows.
+The sessions and GitHub/Linear feed the collector, and the web app reads everything through the API. The app's actions go back to the workflow executor. The API also reads the hub repos to show brain, rules and workflows.
 
-- **Stack sugerida:** Python (FastAPI + Pydantic) no backend e React no front, como no Loki Trader, para reaproveitar os scripts atuais e a experiência do time. O armazém começa em SQLite e migra para Postgres quando houver multiusuário.
-- **Hooks como sensor:** o hub gerado instala hooks do Claude Code que enviam eventos ao coletor local. Sem o coletor rodando, os hooks falham em silêncio e a sessão segue normal.
-- **Adaptadores:** Claude Code é o primeiro. Outros agentes (Codex, Cursor) entram como adaptadores que emitem o mesmo evento canônico.
+- **Suggested stack:** Python (FastAPI + Pydantic) on the backend and React on the front end, as in Loki Trader, to reuse the current scripts and the team's experience. The store starts on SQLite and moves to Postgres when there are multiple users.
+- **Hooks as sensors:** the generated hub installs Claude Code hooks that send events to the local collector. Without the collector running, the hooks fail silently and the session carries on normally.
+- **Adapters:** Claude Code is the first. Other agents (Codex, Cursor) come in as adapters that emit the same canonical event.
 
-## MVP e fases
+## MVP and phases
 
-O MVP vai até a Fase 2: gerar hubs a partir do Loki e ver as sessões dos agentes numa tela. Cada fase só começa quando o gate da anterior passa.
+The MVP goes up to Phase 2: generate hubs from Loki and see the agents' sessions on one screen. Each phase starts only when the previous one's gate passes.
 
-| Fase | Conteúdo | Gate para a próxima |
+| Phase | Content | Gate to the next |
 | --- | --- | --- |
-| 0 · Fundação (MVP) | Repo novo no GitHub, spec aprovada, esqueleto da CLI e do coletor | O próprio hub gerado pela CLI |
-| 1 · Gerador de hubs (MVP) | Extrair brain, regras, launcher, worktrees, brief e plugin; `hub init`, `sync` e `doctor` | Hub do Loki recriado, `make check` e bench iguais |
-| 2 · Observabilidade read-only (MVP) | Coletor de hooks e transcripts, linha do tempo da sessão, portfólio e sessões ao vivo | Sessões dos 2 projetos ao vivo e no histórico |
-| 3 · Conhecimento e decisões | Proveniência no brain, triagem do inbox na UI, decisões extraídas, métricas de aprendizado | Um learning rastreado da sessão até a regra |
-| 4 · Workflows como dado e ações | Executor genérico lendo o workflow, gates aprovados pela UI, adaptadores para outros agentes | — |
+| 0 · Foundation (MVP) | New GitHub repo, approved spec, CLI and collector skeleton | The platform's own hub generated by the CLI |
+| 1 · Hub generator (MVP) | Extract brain, rules, launcher, worktrees, brief and plugin; `hub init`, `sync` and `doctor` | Loki hub recreated, same `make check` and bench |
+| 2 · Read-only observability (MVP) | Hooks and transcripts collector, session timeline, portfolio and live sessions | Sessions of both projects live and in history |
+| 3 · Knowledge and decisions | Provenance in the brain, inbox triage in the UI, extracted decisions, learning metrics | One learning traced from the session to the rule |
+| 4 · Workflows as data and actions | Generic executor reading the workflow, gates approved from the UI, adapters for other agents | — |
 
-A ordem segue o dogfooding: o primeiro hub gerado é o da própria plataforma, e o segundo substitui o `loki-trader-hub`. Workflows editáveis ficam para depois porque dependem de a observação já mostrar onde o fluxo atual trava.
+The order follows dogfooding: the first generated hub is the platform's own, and the second replaces `loki-trader-hub`. Editable workflows come later because they depend on observation already showing where the current flow gets stuck.
 
-## Decisões em aberto
+## Open decisions
 
-As recomendações valem como ponto de partida.
+The recommendations are a starting point.
 
-| Decisão | Opções | Recomendação |
+| Decision | Options | Recommendation |
 | --- | --- | --- |
-| Nome e onde vive | **Decidido:** `agent-hub`, repo privado na conta pessoal `jroquette` | — |
-| Escopo de agentes | Só Claude Code ou vários desde o início | Só Claude Code na v1, com o evento canônico pronto para adaptadores |
-| Onde roda | Local-first ou serviço hospedado | Local-first na v1. Hospedado só quando houver um segundo usuário |
-| Stack | Python/FastAPI + React ou outra | Repetir a do Loki Trader |
-| Rastreador de tarefas | Só Linear ou interface genérica (Linear, GitHub Issues, Jira) | Interface genérica com Linear como primeira implementação |
+| Name and where it lives | **Decided:** `agent-hub`, private repo in the personal account `jroquette` | — |
+| Agent scope | Only Claude Code, or several from the start | Only Claude Code in v1, with the canonical event ready for adapters |
+| Where it runs | Local-first or hosted service | Local-first in v1. Hosted only when there is a second user |
+| Stack | Python/FastAPI + React, or another | Repeat Loki Trader's |
+| Task tracker | Linear only, or a generic interface (Linear, GitHub Issues, Jira) | Generic interface with Linear as the first implementation |
 
-## Direções definidas (27/09)
+## Defined directions (2026-09-27)
 
-**1. Workflow: YAML declarativo executado por um motor em Python.**
+**1. Workflow: declarative YAML executed by a Python engine.**
 
-- O workflow é um documento declarativo (YAML ou JSON) validado por um schema Pydantic. Ele guarda as etapas, o tipo de cada uma (`agent`, `script`, `gate`, `human`), entradas, saídas, limites e o que executar.
-- Um motor determinístico em Python lê o documento e conduz as etapas. A orquestração não gasta tokens: o LLM só roda dentro das etapas `agent` e só recebe a instrução daquela etapa, e não o workflow inteiro.
-- O trabalho determinístico (testes, lint, sync de contrato, abrir PR) vira etapa `script`, sem LLM.
-- A UI edita o mesmo documento. Ele fica guardado na plataforma com versão e histórico, e cada execução registra a versão do workflow que usou.
+- The workflow is a declarative document (YAML or JSON) validated by a Pydantic schema. It holds the steps, the type of each one (`agent`, `script`, `gate`, `human`), inputs, outputs, limits and what to execute.
+- A deterministic Python engine reads the document and drives the steps. Orchestration spends no tokens: the LLM only runs inside `agent` steps and only receives that step's instruction, not the whole workflow.
+- Deterministic work (tests, lint, contract sync, opening a PR) becomes a `script` step, with no LLM.
+- The UI edits the same document. It is stored on the platform with a version and history, and each execution records the workflow version it used.
 
-**2. Brain: fica no repo do hub, que é privado e só nosso.**
+**2. Brain: stays in the hub repo, which is private and ours only.**
 
-- O hub continua como arquivos versionados no git, como na Camada 1. O repo do hub é privado, só os donos têm acesso, e o funcionamento dele não é compartilhado.
-- Brain, regras internas, workflows, plugin e scripts ficam só no hub. Os repos de código recebem o mínimo: `AGENTS.md` com comandos e convenções básicas.
-- O nosso agente recebe o brain porque é lançado a partir do hub (launcher com os repos anexados, como hoje). Outro agente que abrir só os repos de código não recebe esse conhecimento.
-- O `hub doctor` checa que nada do brain foi copiado para os repos de código.
-- Sessões na nuvem precisam de acesso ao repo do hub pelo GitHub App, concedido só na nossa conta.
-- Um serviço hospedado de brain fica para quando a plataforma virar produto com clientes.
+- The hub remains versioned files in git, as in Layer 1. The hub repo is private, only the owners have access, and how it works is not shared.
+- Brain, internal rules, workflows, plugin and scripts live only in the hub. The code repos get the minimum: an `AGENTS.md` with basic commands and conventions.
+- Our agent receives the brain because it is launched from the hub (launcher with the repos attached, as today). Another agent that opens only the code repos does not receive that knowledge.
+- `hub doctor` checks that nothing from the brain was copied into the code repos.
+- Cloud sessions need access to the hub repo through the GitHub App, granted only on our account.
+- A hosted brain service waits until the platform becomes a product with customers.
 
-**3. Transcripts: matéria-prima temporária, e não a memória de trabalho.**
+**3. Transcripts: temporary raw material, not working memory.**
 
-O hub continua trabalhando com dados derivados, pequenos e estruturados. O transcript bruto só serve para auditoria e para gerar esses derivados.
+The hub keeps working with derived data that is small and structured. The raw transcript only serves for auditing and for generating those derivatives.
 
-| Camada | O que guarda | Retenção proposta |
+| Layer | What it keeps | Proposed retention |
 | --- | --- | --- |
-| Eventos estruturados | Tool calls, arquivos tocados, etapas, gates, custo, resultado | Longa (enquanto o projeto existir) |
-| Derivados da sessão | Resumo, decisões com justificativa, learnings propostos | Longa; os aceitos viram brain |
-| Transcript bruto | Conversa completa, com redação de segredos antes de gravar | Curta, comprimido em armazenamento frio; prazo a definir |
+| Structured events | Tool calls, files touched, steps, gates, cost, outcome | Long (as long as the project exists) |
+| Session derivatives | Summary, decisions with rationale, proposed learnings | Long; accepted ones become brain |
+| Raw transcript | Full conversation, with secrets redacted before writing | Short, compressed in cold storage; period to be defined |
 
-A continuidade entre sessões vem do brain e dos resumos, e não de reler transcripts. Um job após cada sessão extrai os derivados. Depois do prazo, o bruto é apagado.
+Continuity between sessions comes from the brain and the summaries, not from rereading transcripts. A job after each session extracts the derivatives. After the period, the raw transcript is deleted.
 
-**Impactos no resto da spec**
+**Impacts on the rest of the spec**
 
-- Nenhuma mudança de arquitetura: a v1 continua local-first, com o hub em git. A diferença é que o repo do hub é privado e é o único lugar onde o brain existe.
+- No architecture change: v1 remains local-first, with the hub in git. The difference is that the hub repo is private and is the only place where the brain exists.
 
-**Perguntas ainda sem resposta**
+**Open questions**
 
-- [ ] Qual o prazo de retenção do transcript bruto?
-- [ ] Quando a plataforma virar produto, o agente roda na nossa infraestrutura (brain protegido) ou no ambiente do cliente (só mitigações)?
-- [ ] As sessões na nuvem (claude.ai/code) devem emitir eventos para o coletor, e como?
+- [ ] What is the retention period for the raw transcript?
+- [ ] When the platform becomes a product, does the agent run on our infrastructure (protected brain) or in the customer's environment (mitigations only)?
+- [ ] Should cloud sessions (claude.ai/code) emit events to the collector, and how?
