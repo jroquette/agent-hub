@@ -32,11 +32,12 @@ forbidden_modules =
     agent_hub.storage
     sqlalchemy
 
-[importlinter:contract:siblings-independent]
-name = siblings are independent
-type = independence
-modules =
-    agent_hub.storage
+[importlinter:contract:composition-root]
+name = cli is the composition root
+type = layers
+layers =
+    agent_hub.cli
+    agent_hub.storage | (agent_hub.api)
 """
 
 MAKEFILE = """\
@@ -403,11 +404,36 @@ def test_ignores_cov_flags_when_outside_cov_variable() -> None:
 
 
 def test_reports_package_registered_when_core_contract_missing() -> None:
-    importlinter = IMPORTLINTER.replace("type = forbidden", "type = layers")
+    importlinter = IMPORTLINTER.replace("type = forbidden", "type = independence")
 
     files = {**REGISTERED, ".importlinter": importlinter}
 
     assert rule_hits(files, "package-registered") == [".importlinter"]
+
+
+def test_reports_package_registered_when_layers_contract_missing() -> None:
+    importlinter = IMPORTLINTER.replace("type = layers", "type = independence")
+
+    violations = find_violations({**REGISTERED, ".importlinter": importlinter})
+
+    assert [(v.path, v.rule) for v in violations] == [(".importlinter", "package-registered")]
+    assert "no layers contract" in violations[0].message
+
+
+def test_reports_package_registered_when_package_missing_from_layers() -> None:
+    importlinter = IMPORTLINTER.replace("agent_hub.storage | ", "")
+
+    violations = find_violations({**REGISTERED, ".importlinter": importlinter})
+
+    assert [(v.path, v.rule) for v in violations] == [(".importlinter", "package-registered")]
+    assert violations[0].message == "layers contract lacks agent_hub.storage"
+
+
+@pytest.mark.parametrize("layer", ["agent_hub.storage : agent_hub.api", "(agent_hub.storage)"])
+def test_accepts_package_registered_when_package_in_sibling_or_optional_layer(layer: str) -> None:
+    importlinter = IMPORTLINTER.replace("agent_hub.storage | (agent_hub.api)", layer)
+
+    assert rule_hits({**REGISTERED, ".importlinter": importlinter}, "package-registered") == []
 
 
 # reading the repo

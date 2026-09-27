@@ -16,7 +16,9 @@ The spec is in `docs/SPEC.md`: read it before any task. The directions already s
   | `packages/cli` (`agent-hub-cli`) | `agent_hub.cli` | Typer CLI, command `hub` |
   | `packages/agent-hub` (`agent-hub`) | `agent_hub_meta` (placeholder, no code) | Meta-package: `uv tool install` gets everything |
 
-- Everything depends on `core`; `core` depends on nothing internal; siblings never import each other (import-linter).
+- Everything depends on `core`; `core` depends on nothing internal. `cli` is the composition root (ADR 0008): it may
+  import `storage` and `collector`, nothing imports `cli`, and `storage` and `collector` never import each other
+  (import-linter).
 - `packages/api` (FastAPI) and `apps/web` (React) come in Phase 2.
 
 ## Gates

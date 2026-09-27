@@ -45,13 +45,17 @@ the machine can satisfy `3.14`. Fix with `uv self update` and `uv python install
 
 1. Every package may depend on `core`.
 2. `core` depends on nothing internal, and not on the adapter libraries `sqlalchemy`, `alembic` or `typer`.
-3. Sibling packages (`storage`, `collector`, `cli`, later `api`) never import each other.
+3. `agent_hub.cli` is the composition root ([ADR 0008](adr/0008-cli-as-composition-root.md)): it may import the adapter
+   packages `storage` and `collector` to build adapters and pass them to core use cases. Nothing imports `cli`.
+4. The adapter packages (`storage`, `collector`) never import each other; they depend only on `core`.
 
 ```mermaid
 flowchart BT
   storage[agent_hub.storage] --> core[agent_hub.core]
   collector[agent_hub.collector] --> core
   cli[agent_hub.cli] --> core
+  cli --> storage
+  cli --> collector
   api["agent_hub.api (Phase 2)"] -.-> core
 ```
 
@@ -60,16 +64,19 @@ import-linter enforces the rule with the contracts in `.importlinter` (`root_pac
 
 - `core imports nothing internal` (forbidden): `agent_hub.core` must not import `agent_hub.storage`,
   `agent_hub.collector`, `agent_hub.cli`, `sqlalchemy`, `alembic` or `typer`.
-- `siblings are independent` (independence): `agent_hub.storage`, `agent_hub.collector` and `agent_hub.cli`.
+- `cli is the composition root` (layers): `agent_hub.cli` above the independent sibling layers
+  `agent_hub.storage | agent_hub.collector`. A lower layer importing a higher one, or one sibling importing the other,
+  breaks it.
 
 Run it with `make imports` (part of `make check`). A broken contract fails with its name followed by `BROKEN`.
 
-When an entry point needs two adapters together (for example the CLI running a use case that stores events), the adapter
-is passed in as a port implementation; it is never imported by a sibling. The meta-package is the only place that
-depends on every distribution.
+Wiring happens only in the composition root: a CLI command builds the adapters it needs (for example the `storage`
+implementation of `EventStore`) and passes them to the use case as port implementations. Use cases and adapters never
+construct other adapters. In Phase 2, `agent_hub.api` becomes a second composition root and joins `cli` in the top
+layer. The meta-package `agent-hub` only bundles the distributions for installation; it holds no wiring.
 
 Adding a package: create `packages/<pkg>/` with the shape above, then register it in `mypy.ini` (`files` and
-`mypy_path`), in both `.importlinter` contracts (core's forbidden list and the siblings list) and in the Makefile `COV`
+`mypy_path`), in both `.importlinter` contracts (core's forbidden list and the layers list) and in the Makefile `COV`
 list. The layout checker rule `package-registered` fails `make check-fast` until all of these are done.
 
 ## Hexagonal layout
@@ -128,6 +135,7 @@ Paths are under `packages/<pkg>/src/agent_hub/<pkg>/` unless shown in full. `<ar
 | Table | `storage`: `db.py` (`metadata`) | The single place tables are declared |
 | Migration | `packages/storage/alembic/versions/<NNNN>_<slug>.py` | Created with `alembic revision --rev-id <NNNN>`; see [CONTRIBUTING.md](CONTRIBUTING.md) |
 | CLI command | `cli`: `main.py` or a command module registered on the Typer `app` | Parses input, calls one use case |
+| Wiring adapters to use cases | `agent_hub.cli` (composition root, [ADR 0008](adr/0008-cli-as-composition-root.md)) | Builds the adapters and passes them to the use case as ports |
 | API route | `api` (Phase 2) | Thin: validate, call ONE use case, map the response ([API.md](API.md)) |
 | Fake of a port | `core`: `testing/fakes.py` (`agent_hub.core.testing.fakes`) | In-memory; checked by the port's contract suite |
 | Builder of test data | `core`: `testing/builders.py` (`agent_hub.core.testing.builders`) | Synthetic data only |

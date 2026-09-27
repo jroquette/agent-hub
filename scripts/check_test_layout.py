@@ -255,9 +255,9 @@ def _check_import_contracts(
         return
     modules = {f"agent_hub.{name}" for name in packages if name != CORE}
     core = _contract_option(config, "forbidden", "forbidden_modules")
-    siblings = _contract_option(config, "independence", "modules")
-    labels = ("forbidden contract on agent_hub.core", "independence contract")
-    for label, listed in zip(labels, (core, siblings), strict=True):
+    layers = _contract_option(config, "layers", "layers")
+    labels = ("forbidden contract on agent_hub.core", "layers contract")
+    for label, listed in zip(labels, (core, layers), strict=True):
         if listed is None:
             yield Violation(IMPORT_CONFIG, "package-registered", f"no {label} contract")
             continue
@@ -286,7 +286,10 @@ def _check_coverage_list(
 def _contract_option(
     config: configparser.ConfigParser, contract_type: str, option: str
 ) -> set[str] | None:
-    """The option's modules in the first contract of that type (core's, for forbidden)."""
+    """The option's modules in the first contract of that type (core's, for forbidden).
+
+    A layers entry may hold sibling layers (``a | b`` or ``a : b``) and optional ones (``(a)``).
+    """
     for section in config.sections():
         if not section.startswith("importlinter:contract:"):
             continue
@@ -295,7 +298,8 @@ def _contract_option(
         sources = _split(config.get(section, "source_modules", fallback=""), ",")
         if contract_type == "forbidden" and f"agent_hub.{CORE}" not in sources:
             continue
-        return _split(config.get(section, option, fallback=""), ",")
+        listed = _split(config.get(section, option, fallback=""), ",|:")
+        return {module.strip("()") for module in listed}
     return None
 
 
