@@ -20,8 +20,26 @@ def test_prints_version_when_installed_as_uv_tool(
     meta_package = repo_root / "packages" / "agent-hub"
     cli_project = tomllib.loads((repo_root / "packages/cli/pyproject.toml").read_text())
 
+    # Pin the install to uv.lock, so the test (and CI) runs the locked dependency set.
+    constraints = tmp_path / "constraints.txt"
+    export = run(
+        [
+            uv,
+            "export",
+            "--locked",
+            "--package",
+            "agent-hub",
+            "--no-emit-workspace",
+            "--no-hashes",
+            "-o",
+            str(constraints),
+        ],
+        env=env,
+    )
+    assert export.returncode == 0, export.stderr
+
     install = run(
-        [uv, "tool", "install", "--python", "3.14", str(meta_package)],
+        [uv, "tool", "install", "--python", "3.14", "-c", str(constraints), str(meta_package)],
         env=env,
         timeout=INSTALL_TIMEOUT_SECONDS,
     )
