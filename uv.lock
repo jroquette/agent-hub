@@ -14,6 +14,7 @@ members = [
     "agent-hub-core",
     "agent-hub-storage",
 ]
+build-constraints = [{ name = "hatchling", specifier = "==1.32.4" }]
 
 [manifest.dependency-groups]
 dev = [
