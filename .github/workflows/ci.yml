@@ -1,0 +1,39 @@
+# The full gate on every PR and on main: CI runs exactly `make check`, the same command as local
+# (docs/CONTRIBUTING.md). Branch protection requires this job's `check` status.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # Pinned: the newest uv we checked that offers final Python 3.14 builds. To bump, run
+      # `uvx --from uv==<v> uv python list 3.14 --all-versions` and check it lists a final build.
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.19"
+      - name: Install Python (from .python-version)
+        run: uv python install
+      - name: Sync the workspace from uv.lock
+        run: uv sync --locked --all-packages
+      - name: Require a final Python 3.14 (no release candidate)
+        run: >-
+          uv run --locked --all-packages python -c
+          "import sys; assert sys.version_info[:2] == (3, 14) and sys.version_info.releaselevel == 'final', sys.version"
+      - name: make check
+        run: make check
