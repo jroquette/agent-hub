@@ -1,0 +1,16 @@
+.DS_Store
+.env
+.env.*
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+dist/
+build/
+*.sqlite
+*.db
+.claude/settings.local.json
+.claude/worktrees/
