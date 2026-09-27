@@ -17,7 +17,7 @@ import configparser
 import re
 import subprocess
 import sys
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -35,6 +35,10 @@ TICKET_NAME = re.compile(r"(?:^|_)(?:pr|agh|gh|issue|bug|ticket)_?\d+(?:_|$)")
 NUMBERED_NAME = re.compile(r"_\d+$")
 MYPY_CONFIG = "mypy.ini"
 IMPORT_CONFIG = ".importlinter"
+MAKEFILE = "Makefile"
+# The COV variable's value, continuation lines included (C8).
+COV_VARIABLE = re.compile(r"^COV\s*:?=((?:.*\\\n)*.*)$", re.MULTILINE)
+COV_MODULE = re.compile(r"--cov=(agent_hub\.\w+)")
 CORE = "core"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -203,16 +207,20 @@ def _check_forbidden_module(path: str) -> Iterator[Violation]:
 
 
 def _check_packages_registered(files: Mapping[str, str]) -> Iterator[Violation]:
-    """Every ``packages/<dir>/src/agent_hub/<name>`` is in the mypy and import-linter configs."""
-    packages = _discover_packages(files)
+    """Every ``packages/<dir>/src/agent_hub/<name>`` is in mypy, import-linter and Makefile COV."""
+    packages = discover_packages(files)
     if not packages:
         return
     yield from _check_mypy(files, packages)
     yield from _check_import_contracts(files, packages)
+    yield from _check_coverage_list(files, packages)
 
 
-def _discover_packages(files: Mapping[str, str]) -> dict[str, str]:
-    """Map each ``agent_hub.<name>`` module to its ``packages/<dir>/src`` directory."""
+def discover_packages(files: Iterable[str]) -> dict[str, str]:
+    """Map each ``agent_hub.<name>`` module to its ``packages/<dir>/src`` directory.
+
+    ``files`` are repo-relative POSIX paths; a module counts once it has a file in it.
+    """
     found: dict[str, str] = {}
     for path in files:
         parts = PurePosixPath(path).parts
@@ -252,6 +260,23 @@ def _check_import_contracts(
         for module in sorted(modules - listed):
             message = f"{label} lacks {module}"
             yield Violation(IMPORT_CONFIG, "package-registered", message)
+
+
+def _check_coverage_list(
+    files: Mapping[str, str], packages: Mapping[str, str]
+) -> Iterator[Violation]:
+    if MAKEFILE not in files:
+        yield Violation(MAKEFILE, "package-registered", "missing; coverage is not measured")
+        return
+    match = COV_VARIABLE.search(files[MAKEFILE])
+    if match is None:
+        yield Violation(MAKEFILE, "package-registered", "no COV variable; coverage is unmeasured")
+        return
+    listed = set(COV_MODULE.findall(match.group(1)))
+    for name in sorted(packages):
+        if f"agent_hub.{name}" not in listed:
+            message = f"COV lacks --cov=agent_hub.{name}"
+            yield Violation(MAKEFILE, "package-registered", message)
 
 
 def _contract_option(
@@ -300,7 +325,7 @@ def _read_repo_files() -> dict[str, str]:
         full = REPO_ROOT / path
         if not full.is_file():
             continue  # deleted but still in the index
-        needs_source = path in {MYPY_CONFIG, IMPORT_CONFIG} or _is_test_location(
+        needs_source = path in {MYPY_CONFIG, IMPORT_CONFIG, MAKEFILE} or _is_test_location(
             PurePosixPath(path)
         )
         files[path] = full.read_text(encoding="utf-8") if needs_source else ""

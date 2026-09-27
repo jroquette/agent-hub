@@ -39,9 +39,19 @@ modules =
     agent_hub.storage
 """
 
+MAKEFILE = """\
+RUN := uv run --locked --all-packages
+COV := --cov=agent_hub.core \\
+       --cov=agent_hub.storage --cov-branch --cov-report=
+
+test-fast:
+\t$(RUN) pytest $(COV) --cov=agent_hub.collector
+"""
+
 REGISTERED = {
     "mypy.ini": MYPY_INI,
     ".importlinter": IMPORTLINTER,
+    "Makefile": MAKEFILE,
     "packages/core/src/agent_hub/core/__init__.py": "",
     "packages/storage/src/agent_hub/storage/__init__.py": "",
 }
@@ -346,20 +356,50 @@ def test_reports_package_registered_when_package_missing_from_every_config() -> 
 
     messages = [v.message for v in find_violations(files) if v.rule == "package-registered"]
 
-    assert len(messages) == 4
+    assert len(messages) == 5
     assert all("collector" in message for message in messages)
     assert sorted(rule_hits(files, "package-registered")) == [
         ".importlinter",
         ".importlinter",
+        "Makefile",
         "mypy.ini",
         "mypy.ini",
     ]
 
 
-def test_reports_package_registered_when_config_file_missing() -> None:
-    files = {path: source for path, source in REGISTERED.items() if path != ".importlinter"}
+@pytest.mark.parametrize("config", [".importlinter", "mypy.ini", "Makefile"])
+def test_reports_package_registered_when_config_file_missing(config: str) -> None:
+    files = {path: source for path, source in REGISTERED.items() if path != config}
 
-    assert rule_hits(files, "package-registered") == [".importlinter"]
+    assert rule_hits(files, "package-registered") == [config]
+
+
+def test_reports_package_registered_when_package_missing_from_makefile_cov() -> None:
+    makefile = MAKEFILE.replace("--cov=agent_hub.storage ", "")
+
+    violations = find_violations({**REGISTERED, "Makefile": makefile})
+
+    assert [(v.path, v.rule) for v in violations] == [("Makefile", "package-registered")]
+    assert "agent_hub.storage" in violations[0].message
+
+
+def test_reports_package_registered_when_makefile_has_no_cov_variable() -> None:
+    makefile = MAKEFILE.replace("COV :=", "COVERAGE :=")
+
+    assert rule_hits({**REGISTERED, "Makefile": makefile}, "package-registered") == ["Makefile"]
+
+
+def test_accepts_package_registered_when_cov_uses_recursive_assignment() -> None:
+    makefile = MAKEFILE.replace("COV :=", "COV =")
+
+    assert rule_hits({**REGISTERED, "Makefile": makefile}, "package-registered") == []
+
+
+def test_ignores_cov_flags_when_outside_cov_variable() -> None:
+    makefile = MAKEFILE.replace("--cov=agent_hub.core \\\n", "\\\n")
+    makefile += "\t$(RUN) pytest --cov=agent_hub.core\n"
+
+    assert rule_hits({**REGISTERED, "Makefile": makefile}, "package-registered") == ["Makefile"]
 
 
 def test_reports_package_registered_when_core_contract_missing() -> None:
