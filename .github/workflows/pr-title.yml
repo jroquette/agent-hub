@@ -1,0 +1,31 @@
+# PR titles are Conventional Commits (ADR 0007): the squash merge makes the title the commit on
+# main. A separate workflow, so editing the title does not rerun `make check`.
+name: pr-title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-title-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.19"
+      # The title goes through env, never ${{ }} inside run: (script injection).
+      - name: Check the PR title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: uv run --no-project --python 3.14 python scripts/check_pr_title.py "$TITLE"

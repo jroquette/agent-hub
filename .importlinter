@@ -1,0 +1,29 @@
+[importlinter]
+# The single namespace root; contracts name its subpackages (ADR 0001).
+root_packages =
+    agent_hub
+# Lets contracts name third-party packages (core must not use the adapter libraries).
+include_external_packages = True
+
+[importlinter:contract:core-independent]
+name = core imports nothing internal
+type = forbidden
+source_modules =
+    agent_hub.core
+# Sibling packages, and the adapter libraries (core stays Pydantic-only, ADR 0002).
+forbidden_modules =
+    agent_hub.storage
+    agent_hub.collector
+    agent_hub.cli
+    sqlalchemy
+    alembic
+    typer
+
+# cli is the composition root (ADR 0008): it may import the adapters to wire them into core use cases, nothing
+# imports it, and the adapters below it stay independent of each other ("|").
+[importlinter:contract:composition-root]
+name = cli is the composition root
+type = layers
+layers =
+    agent_hub.cli
+    agent_hub.storage | agent_hub.collector

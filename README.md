@@ -1,7 +1,7 @@
 # agent-hub
 
-Plataforma para criar, operar e observar hubs de agentes de IA para N projetos: gerador de hubs (CLI),
-workflows como dado e um plano de controle para ver o que os agentes fazem, decidem e aprendem.
+A platform to create, run and observe AI agent hubs for N projects: a hub generator (CLI),
+workflows as data and a control plane to see what the agents do, decide and learn.
 
 - Spec: [`docs/SPEC.md`](docs/SPEC.md)
-- Instruções para agentes: [`AGENTS.md`](AGENTS.md)
+- Instructions for agents: [`AGENTS.md`](AGENTS.md)
