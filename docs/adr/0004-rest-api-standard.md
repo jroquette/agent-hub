@@ -24,7 +24,7 @@ learnings), FastAPI generates the OpenAPI contract for free, and a generated cli
 
 - Every route is under the `/api/v1` prefix. Resources are plural kebab-case nouns (`/api/v1/workflow-runs`).
 - The OpenAPI document FastAPI generates is the contract. The web TypeScript client is generated from it, and CI fails
-  when the committed spec or client is stale.
+  when the client is stale.
 - Errors are RFC 9457 Problem Details (`application/problem+json`).
 - Lists use cursor pagination.
 - Live sessions stream over Server-Sent Events (SSE).
@@ -35,7 +35,7 @@ learnings), FastAPI generates the OpenAPI contract for free, and a generated cli
 
 ### Consequences
 
-- Good: one contract file for server and client; a breaking change shows up as a diff in review.
+- Good: one contract for server and client, generated from the code, so they cannot drift apart silently.
 - Good: UUIDv7 ids sort by creation time, which suits cursor pagination.
 - Bad: some views need several requests where GraphQL would need one.
 - Bad: SSE is one-way; actions (approve a gate, start a workflow) are ordinary POST requests.

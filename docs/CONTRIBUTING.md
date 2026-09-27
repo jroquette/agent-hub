@@ -103,8 +103,7 @@ The same checklist is in the PR template.
   old file is its status line, `Status: superseded by NNNN`, in the same PR.
 - Write an ADR for decisions that are hard to reverse or shape the tooling and history (structure, persistence, API
   style, testing, conventions, git flow). Team process stays in this file.
-- ADR files are guarded: the hub asks before ADR edits, including a new ADR, so every change to `docs/adr/` gets an
-  explicit confirmation.
+- Every change to `docs/adr/`, including a new ADR, needs the owner's explicit confirmation before it is made.
 
 ## Database migrations
 
@@ -131,7 +130,8 @@ revisions in `packages/storage/alembic/versions/`. Tables are declared only in `
 4. `make migrations` (in `make check`) upgrades a scratch database to head and runs `alembic check`, so a `metadata`
    change without a migration fails. The integration test also downgrades to base.
 
-A merged revision is never edited; fix it with a new revision. The hub asks before edits in `alembic/versions/` too.
+A merged revision is never edited; fix it with a new revision. Any edit in `alembic/versions/` needs the owner's explicit
+confirmation, as ADR edits do.
 Never point Alembic at the real database (`~/.local/share/agent-hub/agent-hub.db`) from a test or a gate.
 
 ## Manual repository and Linear settings

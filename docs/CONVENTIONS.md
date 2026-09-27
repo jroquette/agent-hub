@@ -13,7 +13,7 @@ tool wherever a tool can check it. Each rule below is marked **enforced by <tool
 | Classes are nouns (`TranscriptParser`); use cases are verb + object (`IngestTranscript`, `GenerateHub`); functions are verbs (`parse_line`); booleans are questions (`is_active`, `has_cost`). | review-only |
 | One term per concept, matching the SPEC glossary below. "run", "job" and "execution" are never synonyms for Session; a workflow execution is a `WorkflowRun`. | review-only |
 | No modules or folders named `utils.py`, `helpers.py`, `common.py`, `misc.py` (nor `util`, `helper`); name the module after what it does. | enforced by the layout checker (`forbidden-module`) |
-| A src module name does not end in `_<digits>` (`rfc9457.py`, not `rfc_9457.py`), because its mirrored test would be a numbered name. | enforced by the layout checker, indirectly (`numbered-name` on the mirrored test) |
+| A src module name does not end in `_<digits>` (`rfc9457.py`, not `rfc_9457.py`), because its mirrored test would be a numbered name. | review-only (the layout checker's `numbered-name` catches it only when a unit test mirrors the module) |
 
 ### Glossary
 
@@ -49,7 +49,7 @@ different policy. `tests/e2e/test_quality_gates.py` fails if the exact code is r
 
 | Rule | Enforcement |
 |---|---|
-| Full static typing: every function annotated, generic types parameterized. | enforced by mypy strict (`mypy.ini`: `strict = True`; e.g. `no-untyped-def`) |
+| Full static typing: every function annotated, generic types parameterized. | enforced by mypy strict (`mypy.ini`: `strict = True`, e.g. `no-untyped-def`) for the package `src/` trees, `scripts/` and `conftest.py`; review-only for tests and Alembic scripts, which mypy does not check |
 | Domain models are frozen Pydantic models (`model_config = ConfigDict(frozen=True)`). | review-only |
 | No bare dicts across package boundaries: public functions and ports take and return models or typed values. | review-only (mypy strict makes `dict[str, Any]` visible) |
 
@@ -58,7 +58,7 @@ different policy. `tests/e2e/test_quality_gates.py` fails if the exact code is r
 | Rule | Enforcement |
 |---|---|
 | Named domain exceptions in a per-package hierarchy: `agent_hub.core.errors.AgentHubError` is the root; each package has `errors.py` with its own base (`StorageError`, `CollectorError`) and subclasses. | review-only |
-| Never swallow errors: no `except Exception: pass`, no bare `except`. | enforced by ruff `BLE001` and `S110` |
+| Never swallow errors: no `except Exception: pass`, no bare `except`. | enforced by ruff: `E722` (bare `except` that does not re-raise), `BLE001` and `S110` (`except Exception: pass`) |
 | Adapters translate external errors (database, HTTP, file formats) into the package's domain exceptions at the boundary; core never sees a library exception. | review-only |
 
 ## Comments
