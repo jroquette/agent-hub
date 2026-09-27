@@ -1,0 +1,22 @@
+[importlinter]
+# The single namespace root; contracts name its subpackages (ADR 0001).
+root_packages =
+    agent_hub
+
+[importlinter:contract:core-independent]
+name = core imports nothing internal
+type = forbidden
+source_modules =
+    agent_hub.core
+forbidden_modules =
+    agent_hub.storage
+    agent_hub.collector
+    agent_hub.cli
+
+[importlinter:contract:siblings-independent]
+name = siblings are independent
+type = independence
+modules =
+    agent_hub.storage
+    agent_hub.collector
+    agent_hub.cli
