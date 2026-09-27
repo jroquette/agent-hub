@@ -3,7 +3,7 @@
 
 RUN := uv run --locked --all-packages
 
-.PHONY: help format lint typecheck test-fast check-fast imports
+.PHONY: help format lint typecheck layout test-fast check-fast imports
 
 help: ## List the targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "%-12s %s\n", $$1, $$2}'
@@ -17,10 +17,13 @@ lint: ## ruff check
 typecheck: ## mypy --strict (config in mypy.ini)
 	$(RUN) mypy
 
+layout: ## test layout and names, forbidden modules, packages listed in gate configs
+	$(RUN) python scripts/check_test_layout.py
+
 test-fast: ## unit and contract tests
 	$(RUN) pytest -m "unit or contract"
 
-check-fast: format lint typecheck test-fast ## the fast gate, run while working
+check-fast: format lint typecheck layout test-fast ## the fast gate, run while working
 
 imports: ## import-linter contracts (config in .importlinter)
 	$(RUN) lint-imports
