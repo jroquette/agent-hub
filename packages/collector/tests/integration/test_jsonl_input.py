@@ -42,3 +42,11 @@ def test_raises_unreadable_when_bytes_not_utf8(tmp_path: Path) -> None:
 
     assert str(path) in str(caught.value)
     assert "UTF-8" in str(caught.value)
+
+
+def test_drops_byte_order_mark_when_file_starts_with_one(tmp_path: Path) -> None:
+    text = events_to_jsonl([an_event()])
+    path = tmp_path / "bom.jsonl"
+    path.write_bytes(b"\xef\xbb\xbf" + text.encode())
+
+    assert read_text(path) == text

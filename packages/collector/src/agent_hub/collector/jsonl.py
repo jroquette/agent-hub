@@ -48,9 +48,12 @@ class _LineRejectedError(Exception):
 
 
 def read_text(path: Path) -> str:
-    """The UTF-8 text of the file at ``path``; I/O and decoding errors become collector errors."""
+    """The UTF-8 text of ``path``, a leading BOM dropped (RFC 8259 lets parsers ignore it).
+
+    I/O and decoding errors become collector errors.
+    """
     try:
-        return path.read_text(encoding="utf-8")
+        return path.read_text(encoding="utf-8-sig")
     except FileNotFoundError as error:
         msg = f"input file not found: {path}"
         raise InputNotFoundError(msg) from error
@@ -63,7 +66,7 @@ def read_text(path: Path) -> str:
 
 
 def read_stream(stream: BinaryIO, *, name: str) -> str:
-    """The whole of ``stream`` decoded as UTF-8, whatever the locale; ``name`` goes in errors."""
+    """``stream`` as UTF-8 whatever the locale, a leading BOM dropped; ``name`` is for errors."""
     try:
         data = stream.read()
     except (OSError, ValueError) as error:
@@ -71,7 +74,7 @@ def read_stream(stream: BinaryIO, *, name: str) -> str:
         msg = f"cannot read {name}: {error}"
         raise InputUnreadableError(msg) from error
     try:
-        return data.decode("utf-8")
+        return data.decode("utf-8-sig")
     except UnicodeDecodeError as error:
         msg = f"cannot read {name}: not valid UTF-8 (byte {error.start})"
         raise InputUnreadableError(msg) from error

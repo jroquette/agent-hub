@@ -227,3 +227,9 @@ def test_bounds_reason_when_many_fields_unknown() -> None:
     [error] = batch.errors
     assert len(error.reason) <= MAX_REASON_LENGTH
     assert error.reason.endswith("…")
+
+
+def test_drops_byte_order_mark_when_stream_starts_with_one() -> None:
+    text = events_to_jsonl([an_event()])
+
+    assert read_stream(io.BytesIO(b"\xef\xbb\xbf" + text.encode()), name="stdin") == text
