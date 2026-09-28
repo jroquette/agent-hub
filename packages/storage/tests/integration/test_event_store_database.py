@@ -113,3 +113,14 @@ def test_migrates_once_when_processes_open_fresh_file_together(tmp_path: Path) -
     assert sum(appended for appended, _ in counts) == len(batch)
     assert sum(duplicates for _, duplicates in counts) == len(batch) * (writers - 1)
     assert _current_revision(db_path) == _head(db_path)
+
+
+def test_writes_named_file_when_path_holds_url_characters(tmp_path: Path) -> None:
+    db_path = tmp_path / "q?mode=ro%41" / "events.db"
+    batch = [an_event(), an_event()]
+
+    open_event_store(db_path).append(batch)
+
+    assert db_path.is_file()
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["q?mode=ro%41"]
+    assert open_event_store(db_path).read_all() == batch
