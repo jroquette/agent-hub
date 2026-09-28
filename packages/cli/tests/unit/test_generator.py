@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from click import unstyle
 from typer.testing import CliRunner
 
 from agent_hub.cli.main import app
@@ -40,4 +41,4 @@ def test_describes_command_when_help_requested(command: str, description: str) -
     result = CliRunner().invoke(app, [command, "--help"])
 
     assert result.exit_code == 0
-    assert description in " ".join(result.stdout.split())
+    assert description in " ".join(unstyle(result.stdout).split())
