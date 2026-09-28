@@ -5,7 +5,13 @@ import pytest
 
 from agent_hub.collector import jsonl
 from agent_hub.collector.errors import InputUnreadableError
-from agent_hub.collector.jsonl import LineError, ParsedEvent, parse_events, read_stream
+from agent_hub.collector.jsonl import (
+    MAX_REASON_LENGTH,
+    LineError,
+    ParsedEvent,
+    parse_events,
+    read_stream,
+)
 from agent_hub.core.testing.builders import an_event, events_to_jsonl
 
 
@@ -177,3 +183,47 @@ def test_reports_error_when_key_repeated_inside_payload() -> None:
 
     assert batch.events == ()
     assert batch.errors == (LineError(line_number=1, reason='invalid JSON: duplicate key "state"'),)
+
+
+def _has_control_character(text: str) -> bool:
+    return any(ord(character) < 0x20 or ord(character) == 0x7F for character in text)
+
+
+def test_escapes_key_when_unknown_key_has_control_characters() -> None:
+    fields = an_event().model_dump(mode="json") | {"se\ncret=hunter2\x1b[2J": 1}
+
+    batch = parse_events(json.dumps(fields))
+
+    [error] = batch.errors
+    assert not _has_control_character(error.reason)
+    assert json.dumps("se\ncret=hunter2\x1b[2J") in error.reason
+
+
+def test_keeps_field_name_plain_when_required_field_missing() -> None:
+    fields = an_event().model_dump(mode="json")
+    del fields["project"]
+
+    batch = parse_events(json.dumps(fields))
+
+    assert batch.errors == (LineError(line_number=1, reason="project: Field required"),)
+
+
+def test_bounds_reason_when_location_deeply_nested() -> None:
+    depth = 900
+    line = _line_with_payload('{"a": ' + "[" * depth + "]" * depth + "}")
+
+    batch = parse_events(line)
+
+    [error] = batch.errors
+    assert len(error.reason) <= MAX_REASON_LENGTH
+    assert error.reason.startswith("payload.a.list.0.list…: ")
+
+
+def test_bounds_reason_when_many_fields_unknown() -> None:
+    fields = an_event().model_dump(mode="json") | {f"extra{n}": n for n in range(200)}
+
+    batch = parse_events(json.dumps(fields))
+
+    [error] = batch.errors
+    assert len(error.reason) <= MAX_REASON_LENGTH
+    assert error.reason.endswith("…")

@@ -231,3 +231,36 @@ def test_prints_message_when_database_unusable(tmp_path: Path) -> None:
     assert result.stderr.startswith("error: ")
     assert "Traceback" not in result.stderr
     assert len(result.stderr.splitlines()) == 1
+
+
+def _has_control_character(text: str) -> bool:
+    return any(ord(character) < 0x20 or ord(character) == 0x7F for character in text)
+
+
+def test_prints_one_line_when_conflicting_source_id_has_newline(tmp_path: Path) -> None:
+    db_path = tmp_path / "events.db"
+    source_id = "evt-1\nline 9: forged\x1b[2J"
+    stored = an_event(source_id=source_id, payload={"state": "open"})
+    open_event_store(db_path).append([stored])
+    changed = an_event(source_id=source_id, payload={"state": "closed"})
+    file = _write_jsonl(tmp_path / "events.jsonl", [changed])
+
+    result = _collect([str(file), "--db", str(db_path)])
+
+    assert result.exit_code == 1
+    [line] = result.stderr.splitlines()
+    assert line.startswith("line 1: conflict: ")
+    assert json.dumps(source_id) in line
+    assert not _has_control_character(line)
+
+
+def test_prints_one_line_when_unknown_key_has_newline(tmp_path: Path) -> None:
+    db_path = tmp_path / "events.db"
+    fields = an_event().model_dump(mode="json") | {"se\ncret=hunter2": 1}
+
+    result = _collect(["--db", str(db_path)], stdin=json.dumps(fields) + "\n")
+
+    assert result.exit_code == 1
+    [line] = result.stderr.splitlines()
+    assert line.startswith("line 1: ")
+    assert not _has_control_character(line)
