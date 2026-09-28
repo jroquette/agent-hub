@@ -1,6 +1,8 @@
 """The base of every fixed-key object in ``hub.json`` and the field factory for optional keys."""
 
-from typing import Any, Self
+from collections.abc import Mapping
+from types import MappingProxyType
+from typing import Any, ClassVar, Self
 
 from pydantic import (
     BaseModel,
@@ -15,6 +17,15 @@ from pydantic_core import ErrorDetails, InitErrorDetails, PydanticCustomError, P
 COMMENT_KEY_PREFIX = "_"
 # Keys starting with "_" are comments at every object level (ADR 0010); the schema says so too.
 COMMENT_KEYS_SCHEMA: dict[str, Any] = {"patternProperties": {f"^{COMMENT_KEY_PREFIX}": {}}}
+
+
+def drop_comment_keys[Value](data: dict[Any, Value]) -> dict[Any, Value]:
+    """The object without its comment keys: string keys that start with ``_``."""
+    return {
+        key: value
+        for key, value in data.items()
+        if not (isinstance(key, str) and key.startswith(COMMENT_KEY_PREFIX))
+    }
 
 
 class ConfigObject(BaseModel):
@@ -32,6 +43,10 @@ class ConfigObject(BaseModel):
         json_schema_extra=COMMENT_KEYS_SCHEMA,
     )
 
+    # Keys that are never valid here, each with the message that says why; a subclass sets them.
+    # They are reported like nulls, so they do not hide the object's other errors.
+    rejected_keys: ClassVar[Mapping[str, str]] = MappingProxyType({})
+
     @model_validator(mode="wrap")
     @classmethod
     def _drop_comment_keys_and_reject_null(
@@ -39,16 +54,14 @@ class ConfigObject(BaseModel):
     ) -> Self:
         if not isinstance(data, dict):
             return handler(data)
-        kept = {
-            key: value
-            for key, value in data.items()
-            if not (isinstance(key, str) and key.startswith(COMMENT_KEY_PREFIX))
-        }
+        kept = drop_comment_keys(data)
         # A null under an unknown key is reported as the unknown key it is.
         declared = {field.alias or name for name, field in cls.model_fields.items()}
         null_keys = [key for key, value in kept.items() if value is None and key in declared]
-        rest = {key: value for key, value in kept.items() if key not in null_keys}
+        rejected = [key for key in kept if key in cls.rejected_keys]
+        rest = {key: value for key, value in kept.items() if key not in [*null_keys, *rejected]}
         problems = [*map(_null_error, null_keys)]
+        problems.extend(_rejected_error(key, kept[key], cls.rejected_keys[key]) for key in rejected)
         try:
             instance = handler(rest)
         except ValidationError as error:
@@ -77,6 +90,12 @@ def _null_error(key: str) -> InitErrorDetails:
         ),
         loc=(key,),
         input=None,
+    )
+
+
+def _rejected_error(key: str, value: object, message: str) -> InitErrorDetails:
+    return InitErrorDetails(
+        type=PydanticCustomError("key_not_allowed", message), loc=(key,), input=value
     )
 
 

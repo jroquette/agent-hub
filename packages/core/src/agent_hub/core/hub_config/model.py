@@ -12,6 +12,7 @@ from agent_hub.core.hub_config.config_object import (
     ConfigObject,
     absent_by_default,
 )
+from agent_hub.core.hub_config.doctor_rules import RULE_MODULES, DoctorRules
 
 HUB_ROOT = "@hub"
 JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
@@ -107,6 +108,25 @@ class Guard(ConfigObject):
     deny_paths: tuple[GuardPath, ...] = ()
 
 
+class ModuleSettings(ConfigObject):
+    """The settings of a selected module; none in Phase 1, so only ``{}`` (and ``_`` keys)."""
+
+
+class Modules(ConfigObject):
+    """The optional modules this hub selects: a key present means the module is selected."""
+
+    cloud: ModuleSettings | None = absent_by_default()
+    bench: ModuleSettings | None = absent_by_default()
+    contract_sync: ModuleSettings | None = absent_by_default(alias="contract-sync")
+    marketplace: ModuleSettings | None = absent_by_default()
+
+
+class Doctor(ConfigObject):
+    """How ``hub doctor`` is tuned for this project (docs/design/hub-doctor.md)."""
+
+    rules: DoctorRules = Field(default_factory=DoctorRules)
+
+
 class HubConfig(ConfigObject):
     """The whole ``hub.json``; the CLI and ``hub doctor`` validate with it."""
 
@@ -127,10 +147,17 @@ class HubConfig(ConfigObject):
         Field(json_schema_extra={"minItems": 1}),
     ]
     guard: Guard = Guard()
+    # A factory, not an instance: the schema would export its unset keys as nulls.
+    modules: Modules = Field(default_factory=Modules)
+    doctor: Doctor = Field(default_factory=Doctor)
 
     def cross_field_problems(self) -> list[InitErrorDetails]:
-        """Unique repo dirs (ignoring case) and known ``ask_before_edit`` roots."""
-        return [*self._duplicate_repo_dirs(), *self._unknown_guard_roots()]
+        """Unique repo dirs (ignoring case), known ``ask_before_edit`` roots, selected modules."""
+        return [
+            *self._duplicate_repo_dirs(),
+            *self._unknown_guard_roots(),
+            *self._rules_of_unselected_modules(),
+        ]
 
     def _duplicate_repo_dirs(self) -> Iterator[InitErrorDetails]:
         # Case-insensitive: on macOS's default file system, ``demo-api`` and ``Demo-api`` are
@@ -163,4 +190,21 @@ class HubConfig(ConfigObject):
                     ),
                     loc=("guard", "ask_before_edit", index),
                     input=path,
+                )
+
+    def _rules_of_unselected_modules(self) -> Iterator[InitErrorDetails]:
+        # Dumped by alias, so the keys are the JSON keys: module and rule ids.
+        selected = self.modules.model_dump(exclude_none=True).keys()
+        for rule_id, settings in self.doctor.rules.model_dump(exclude_none=True).items():
+            module = RULE_MODULES.get(rule_id)
+            if module is not None and module not in selected:
+                yield InitErrorDetails(
+                    type=PydanticCustomError(
+                        "module_not_selected",
+                        "rule {rule} belongs to module {module}, which is not selected;"
+                        " add {module} to modules or remove the rule",
+                        {"rule": json.dumps(rule_id), "module": json.dumps(module)},
+                    ),
+                    loc=("doctor", "rules", rule_id),
+                    input=settings,
                 )

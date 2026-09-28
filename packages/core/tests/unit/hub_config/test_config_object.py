@@ -1,4 +1,5 @@
 import json
+from types import MappingProxyType
 from typing import Annotated, Any
 
 import pytest
@@ -22,6 +23,10 @@ class Sample(ConfigObject):
     uri: str | None = absent_by_default(alias="$uri")
     code: Annotated[str, Field(pattern=r"^[a-z]+$")] = "a"
     label: Annotated[str, AfterValidator(unpadded)] = "x"
+
+
+class Narrowed(Sample):
+    rejected_keys = MappingProxyType({"old.key": "old.key is gone; remove it"})
 
 
 NULL_MESSAGE = "null is not a value; give a value or leave the key out"
@@ -97,6 +102,19 @@ def test_keeps_message_when_custom_error_text_has_placeholder() -> None:
 
     assert error["msg"] == alone["msg"] == 'label " {label} " has padding'
     assert "ctx" not in error
+
+
+@pytest.mark.parametrize("value", [{}, None, "x"])
+def test_reports_other_errors_when_rejected_key_given(value: object) -> None:
+    with pytest.raises(ValidationError) as caught:
+        Narrowed.model_validate({"old.key": value, "code": "BAD", "note": None})
+
+    assert [(error["loc"], error["type"], error["msg"]) for error in caught.value.errors()] == [
+        (("note",), "null_not_allowed", NULL_MESSAGE),
+        (("old.key",), "key_not_allowed", "old.key is gone; remove it"),
+        (("name",), "missing", "Field required"),
+        (("code",), "string_pattern_mismatch", "String should match pattern '^[a-z]+$'"),
+    ]
 
 
 def test_rejects_object_when_data_not_object() -> None:
