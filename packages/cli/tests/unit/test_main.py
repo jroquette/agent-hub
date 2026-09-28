@@ -1,5 +1,6 @@
 from importlib.metadata import version
 
+from click import unstyle
 from typer.testing import CliRunner
 
 from agent_hub.cli.main import app
@@ -10,3 +11,20 @@ def test_prints_version_when_version_option_given() -> None:
 
     assert result.exit_code == 0
     assert result.output.strip() == version("agent-hub-cli")
+
+
+def test_lists_commands_when_help_requested() -> None:
+    result = CliRunner().invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    for command in ("collect", "init", "sync", "doctor"):
+        assert command in unstyle(result.stdout)
+
+
+def test_shows_arguments_when_init_help_requested() -> None:
+    result = CliRunner().invoke(app, ["init", "--help"])
+
+    assert result.exit_code == 0
+    # Under CI (GITHUB_ACTIONS) Typer colours the help, splitting option names with ANSI codes.
+    for name in ("PROJECT", "--repos", "--tracker"):
+        assert name in unstyle(result.stdout)

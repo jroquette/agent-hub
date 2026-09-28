@@ -3,7 +3,7 @@ name = "agent-hub-collector"
 version = "0.1.0"
 description = "Collector adapter of agent-hub: ingests agent sessions into the event store."
 requires-python = ">=3.14"
-dependencies = ["agent-hub-core"]
+dependencies = ["agent-hub-core", "pydantic>=2"]
 
 [tool.uv.sources]
 agent-hub-core = { workspace = true }

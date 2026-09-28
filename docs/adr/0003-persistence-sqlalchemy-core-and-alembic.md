@@ -23,8 +23,9 @@ Chosen option: **SQLAlchemy 2.0 Core + Alembic**, because it gives a dialect-neu
 Postgres later) and versioned migrations, without mapping the domain onto tables.
 
 - The domain stays Pydantic, in `core`. The storage adapter maps table rows to domain models and back, in one place.
-- Tables are declared only in `agent_hub.storage.db.metadata`. Alembic lives in `packages/storage/alembic.ini` and
-  `packages/storage/alembic/`; migrations run in batch mode on SQLite.
+- Tables are declared only in `agent_hub.storage.db.metadata`. Alembic's `env.py`, `script.py.mako` and `versions/` live
+  in `packages/storage/src/agent_hub/storage/migrations/` inside the installed package, with the Alembic config built in
+  code by `agent_hub.storage.migration.alembic_config` (no `alembic.ini`); migrations run in batch mode on SQLite.
 - The database lives at `~/.local/share/agent-hub/agent-hub.db` (XDG data dir), never inside a repo.
 - SQLite runs in WAL mode, so the collector can write while the API reads.
 - Events are idempotent: a unique key on `(source, source_id)`.
@@ -45,3 +46,6 @@ Postgres later) and versioned migrations, without mapping the domain onto tables
 
 - [TESTING.md](../TESTING.md): migration tests (upgrade to head, downgrade to base, `alembic check`).
 - [CONTRIBUTING.md](../CONTRIBUTING.md): how to add a migration.
+- Amended 2026-09-27 (AGH-1): the migrations moved from the storage package root into the installed package, with the
+  config built in code (`agent_hub.storage.migration`), so an installed hub can create and upgrade its own database;
+  the events table is revision 0002.
