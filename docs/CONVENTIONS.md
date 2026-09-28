@@ -49,7 +49,7 @@ different policy. `tests/e2e/test_quality_gates.py` fails if the exact code is r
 
 | Rule | Enforcement |
 |---|---|
-| Full static typing: every function annotated, generic types parameterized. | enforced by mypy strict (`mypy.ini`: `strict = True`, e.g. `no-untyped-def`) for the package `src/` trees, `scripts/` and `conftest.py`; review-only for tests and Alembic scripts, which mypy does not check |
+| Full static typing: every function annotated, generic types parameterized. | enforced by mypy strict (`mypy.ini`: `strict = True`, e.g. `no-untyped-def`) for the package `src/` trees (the Alembic migrations in `agent_hub/storage/migrations/` included), `scripts/` and `conftest.py`; review-only for tests |
 | Domain models are frozen Pydantic models (`model_config = ConfigDict(frozen=True)`). | review-only |
 | No bare dicts across package boundaries: public functions and ports take and return models or typed values. | review-only (mypy strict makes `dict[str, Any]` visible) |
 
