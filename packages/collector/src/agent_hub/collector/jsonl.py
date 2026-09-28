@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from typing import BinaryIO
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -52,6 +53,21 @@ def read_text(path: Path) -> str:
         raise InputUnreadableError(msg) from error
     except OSError as error:
         msg = f"cannot read {path}: {error.strerror or error}"
+        raise InputUnreadableError(msg) from error
+
+
+def read_stream(stream: BinaryIO, *, name: str) -> str:
+    """The whole of ``stream`` decoded as UTF-8, whatever the locale; ``name`` goes in errors."""
+    try:
+        data = stream.read()
+    except (OSError, ValueError) as error:
+        # A closed stream raises ValueError.
+        msg = f"cannot read {name}: {error}"
+        raise InputUnreadableError(msg) from error
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        msg = f"cannot read {name}: not valid UTF-8 (byte {error.start})"
         raise InputUnreadableError(msg) from error
 
 

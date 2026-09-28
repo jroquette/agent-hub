@@ -1,6 +1,10 @@
+import io
 import json
 
-from agent_hub.collector.jsonl import LineError, ParsedEvent, parse_events
+import pytest
+
+from agent_hub.collector.errors import InputUnreadableError
+from agent_hub.collector.jsonl import LineError, ParsedEvent, parse_events, read_stream
 from agent_hub.core.testing.builders import an_event, events_to_jsonl
 
 
@@ -96,3 +100,27 @@ def test_accepts_line_when_it_ends_with_carriage_return() -> None:
 
     assert batch.errors == ()
     assert batch.events == (ParsedEvent(line_number=1, event=event),)
+
+
+def test_decodes_utf8_when_stream_read() -> None:
+    text = events_to_jsonl([an_event(payload={"text": "café"})])
+
+    assert read_stream(io.BytesIO(text.encode()), name="stdin") == text
+
+
+def test_raises_unreadable_when_stream_not_utf8() -> None:
+    with pytest.raises(InputUnreadableError) as caught:
+        read_stream(io.BytesIO(b"caf\xe9\n"), name="stdin")
+
+    assert "stdin" in str(caught.value)
+    assert "UTF-8" in str(caught.value)
+
+
+def test_raises_unreadable_when_stream_read_fails() -> None:
+    stream = io.BytesIO()
+    stream.close()
+
+    with pytest.raises(InputUnreadableError) as caught:
+        read_stream(stream, name="stdin")
+
+    assert "stdin" in str(caught.value)
