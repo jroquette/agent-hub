@@ -1,6 +1,6 @@
 # 0011. Hub templates as package data in a generator package
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-09-28
 - Deciders: José Henrique Roquette
 
