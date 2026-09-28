@@ -11,13 +11,15 @@ proposals that the Phase 2 source adapters fix; mechanisms not yet chosen are li
 
 ### Sources and privacy
 
-- Redaction happens in the source adapter, before the event is appended. A stored event is never changed, so a secret
-  that reaches the store cannot be fixed afterwards; the collector's own redaction is a second line, not the first.
-- Events carry no raw message text, reasoning text or raw tool output. `message`, `reasoning` and `tool.result`
-  events hold metadata (sizes, tool, status) and a reference to the redacted transcript blob, which has its own short
-  retention (SPEC direction 3). Where that blob is stored is open.
+- Redact before append, a requirement the SPEC already sets
+  ([event model](../SPEC.md#data-sources-and-event-model), "Privacy and redaction"): ingestion redacts key and token
+  patterns before an event is written. A stored event is never changed, so a secret that reaches the store stays.
+- Proposals for Phase 2, not decided (Open questions): redaction runs in the source adapter, the collector's own being
+  a second line; and events carry no raw message, reasoning or tool-output text, so `message`, `reasoning` and
+  `tool.result` events hold metadata (sizes, tool, status) and a reference to the redacted transcript blob, which has
+  its own short retention (SPEC direction 3).
 - The post-session extraction writes its results (summary, decisions, proposed learnings) as events, so they survive
-  the deletion of the transcript. The Session records the transcript reference and its deletion date.
+  the deletion of the transcript. The Session records where its transcript is and when it is deleted.
 
 ### Fold: required properties
 
@@ -84,7 +86,7 @@ until closed. Accepting one records the fact; editing the brain stays a human ac
 - The event store is the single input; derivations never write, change or delete an event.
 - Same stored events, same derived state, whatever the arrival order or the number of rebuilds.
 - A derived entity can always be dropped and rebuilt; it holds nothing the events do not.
-- No event holds raw transcript text or raw tool output.
+- Every event is redacted before it is appended ([SPEC](../SPEC.md#data-sources-and-event-model)).
 
 ## Decisions
 
@@ -93,6 +95,10 @@ until closed. Accepting one records the fact; editing the brain stays a human ac
 - [ADR 0002](../adr/0002-lean-hexagonal-architecture.md): folds are core functions over data; storage is an adapter.
 
 ## Open questions
+
+- Proposed, a SPEC change for Phase 2 if adopted: events hold no raw message, reasoning or tool-output text, only
+  metadata and a reference to the redacted transcript blob; redaction runs in the source adapter, with the
+  collector's as a second line.
 
 - Proposed event types, a compatible SPEC change for Phase 2: `step.start`, `step.end`, `run.end`,
   `learning.rejected` and a session summary type; the run id in `payload.run`.

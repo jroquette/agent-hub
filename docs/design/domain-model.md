@@ -28,8 +28,8 @@ and Agent as plugin files on disk. Nothing below is persisted before Phase 2.
 A Workflow's content hash is part of its identity: two documents with the same name and revision but different bytes
 are different workflows, so a run always names exactly what it executed ([workflow-schema.md](workflow-schema.md)).
 
-A Session's transcript is never copied into the events: the Session keeps a reference to the redacted transcript blob
-and the date it will be deleted, per the short retention of SPEC direction 3. What outlives the transcript is only
+A Session keeps a reference to its redacted transcript blob and the date it will be deleted, per the short retention of
+SPEC direction 3; that events never copy the transcript text is a Phase 2 proposal. What outlives the transcript is only
 what the post-session extraction wrote back as events ([event-derivations.md](event-derivations.md)).
 
 A Learning is proposed by a person or by an agent. A person's proposal has no source session. Its provenance chain is

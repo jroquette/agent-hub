@@ -23,11 +23,12 @@ to every enabled rule; no rule touches the disk, the network or git itself.
 | `check(snapshot) -> findings` | the check itself |
 
 A finding has `rule`, `severity`, `path`, `line` (optional), `message` and `fix` (one line saying how to repair it).
-The snapshot holds the validated config (or the validation errors), `hub.lock`, the tracked files of the hub and, for
-repo-scoped rules, the tracked files of each `repos[].dir` checkout next to it. A missing checkout gives one `info`
-finding and the repo-scoped rules skip it. Proof: one unit test per rule on an in-memory snapshot, plus one e2e test
-of the command on a synthetic hub. A module lists its rules in its manifest inside the templates package; the doctor
-loads the manifests of the selected modules only.
+The snapshot holds the validated config (or the validation errors), `hub.lock`, the tracked files of the hub, the
+release's base hooks block (read from the templates package installed with the running CLI; doctor still renders no
+file) and, for repo-scoped rules, the tracked files of each `repos[].dir` checkout next to it. A missing checkout gives
+one `info` finding and the repo-scoped rules skip it. Proof: one unit test per rule on an in-memory snapshot, plus one
+e2e test of the command on a synthetic hub. A module lists its rules in its manifest inside the templates package; the
+doctor loads the manifests of the selected modules only.
 
 ### Rules
 
@@ -35,20 +36,20 @@ loads the manifests of the selected modules only.
 |---|---|---|---|
 | `config.schema` | error | `hub.json` against `HubConfig`, including `schema_version` and `doctor.rules` ids; cannot be disabled or retuned | [ADR 0010](../adr/0010-hub-json-config-contract.md) |
 | `platform.version` | error | the running CLI equals `platform.version` (a shim always runs the pin; a direct `hub` may not) | [ADR 0013](../adr/0013-release-by-git-tags.md) |
-| `lock.drift` | error | each managed file exists and matches its `hub.lock` entry (a missing one: `hub sync` restores it); a lock older than the pin: warning "sync pending"; no `hub.lock`: warning "not adopted" | [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md) |
+| `lock.drift` | error | each managed file exists and matches its `hub.lock` entry (a missing one: `hub sync` restores it); a lock older than the pin: warning "sync pending"; newer: warning "downgrade"; no `hub.lock`: warning "not adopted" | [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md) |
 | `links.dead` | error | relative Markdown links resolve to an existing file (hub and repos) | new |
 | `instructions.size` | error | line limits: `AGENTS.md` 100, `CLAUDE.md` 150, `CLAUDE.local.md` 50, `.claude/rules/*.md` 80 | config lint |
 | `instructions.refs` | error | paths, make targets and package scripts named in instruction files exist | config lint |
 | `instructions.duplicates` | error | the same instruction line (60 or more characters) in two instruction files | config lint |
 | `rules.frontmatter` | error | `.claude/rules` `paths:` globs match tracked files | config lint |
 | `settings.valid` | error | `.claude/settings.json` is valid JSON, with no deprecated keys | config lint |
-| `settings.weakening` | error | `.claude/settings.project.json` sets no `disableAllHooks` or `permissions.defaultMode`, and the merged settings keep every base hook | [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md) |
+| `settings.weakening` | error | `.claude/settings.project.json` sets no `disableAllHooks` or `permissions.defaultMode`, and `.claude/settings.json` keeps every hook of the release's base hooks block (in the snapshot) | [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md) |
 | `permissions.bypass` | error | no bypass permission mode and no skip-permissions flag in settings, scripts, Makefile or CI | config lint |
 | `secrets.config` | error | no secret patterns in agent config files | config lint |
 | `mcp.pinned` | error | MCP servers in `.mcp.json` are pinned to a version | config lint |
 | `attribution.ai` | error | no AI co-author trailer, generated-by line or agent branch prefix in agent config, contributing guide or PR template | config lint |
 | `brain.leak` | error | no trimmed brain line of `min_line_length` (default 60) or more characters in a file tracked in a repo | [SPEC](../SPEC.md) direction 2 |
-| `hooks.guard-extension` | error | static: `ast.parse(text, feature_version=(3, 9))` on the extension parses and has a top-level `def check(event, cfg)`; project code is never imported | [hub-generator.md](hub-generator.md) |
+| `hooks.guard-extension` | error | static: `ast.parse(text, feature_version=(3, 9))` on the extension parses and has a top-level `def check` with two positional parameters (names not enforced); no file: no finding; project code is never imported | [hub-generator.md](hub-generator.md) |
 | `makefile.override` | warning | `Makefile.project` does not redefine a managed target | [hub-generator.md](hub-generator.md) |
 | `features.tracker` | error | each feature's `features.json`: shape, AC ids, evidence, and the cross-check with its `spec.md` | feature check |
 | `bench.tasks` | error | module `bench`: the benchmark cases file is valid | module `bench` |
@@ -74,7 +75,9 @@ object with a `findings` list (the finding fields above) and the totals, for scr
 
 0 when no finding has severity `error`; 1 when at least one does; 2 on a usage error, an unknown rule id in `--only`,
 a rule in `--only` whose module is not selected, or a directory that is not a hub (no `hub.json` found; the message
-says so). On an invalid config only `config.schema` runs; a missing `hub.lock` does not stop the other rules.
+says so). The pin is checked before `schema_version`, as in `hub sync`: on a pin mismatch the `platform.version` error
+is reported and `config.schema` reports no `schema_version` mismatch (the pinned release, which fixes both, judges it).
+On an invalid config only `config.schema` runs; a missing `hub.lock` does not stop the other rules.
 
 ### Configuration
 

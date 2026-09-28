@@ -36,8 +36,9 @@ while the CLI still gets strict, typed validation.
   - `schema_version` (integer, required, starting at `1`), bumped only by a breaking change: removing, renaming or
     retyping a key, or making an optional key required. Adding an optional key does not bump it. The CLI knows one
     current version; `hub sync` and `hub doctor` report any other version as an error that names the fix. The CLI
-    reads `schema_version` and `platform.version` leniently first, checks them, and only then validates the whole
-    file, so an older CLI facing a newer file reports the version mismatch instead of an unknown key.
+    reads `platform.version` and `schema_version` leniently first and checks them in that order, and only then
+    validates the whole file, so an older CLI facing a newer file reports the version mismatch instead of an unknown
+    key. The pin is checked first because its fix, running the pinned release, also settles a schema mismatch.
   - `platform.version`: the `hub` CLI release the hub is generated with ([ADR 0013](0013-release-by-git-tags.md)).
   - `modules`: an object keyed by module id whose value holds that module's settings; an unknown id fails.
 - Unknown keys are forbidden at every object level, so a typo fails loudly, as it does for the canonical event. Keys
@@ -45,9 +46,16 @@ while the CLI still gets strict, typed validation.
   a before-validator on each object model drops them before validation. The exported schema says the same at every
   object level, `"additionalProperties": false` with `"patternProperties": {"^_": {}}`, and the schema-equality test
   covers those keywords, so editors and the CLI agree on every per-object check. Cross-field checks (settings of an
-  unselected module, guard paths that must start with a declared repo) are model validators that JSON Schema cannot
-  express; there an editor accepts a document the CLI rejects. [project-config.md](../design/project-config.md) lists
-  them.
+  unselected module, guard paths that must start with a declared repo or `@hub`) are model validators that JSON Schema
+  cannot express; there an editor accepts a document the CLI rejects. [project-config.md](../design/project-config.md)
+  lists them.
+- Values that templates render into shell, Make or YAML text are restricted by patterns, set loose enough to accept
+  the values the existing hubs already use: a repo `dir` is one safe path segment (`^[A-Za-z0-9._-]+$`, not `.` or
+  `..`), so a mixed-case directory such as `tradeSentinel` is valid while a `/`, a space or a quote is not.
+- Guard paths are relative to the workspace that holds the hub and its repos. A path inside the hub starts with the
+  fixed token `@hub`, never with the hub checkout's directory name, which differs between clones, worktrees and
+  cloud sessions; `@` is not allowed in a repo `dir`, so the token cannot collide with a repo. Paths rooted at a repo
+  need no change; a path written with the hub's directory name migrates to `@hub/…` by hand.
 - Two readers, one contract. CLI code validates with `HubConfig` and fails fast: exit 1 and one line per error with its
   JSON path. The hooks keep a defensive stdlib reader that never raises and falls back to defaults; a Phase 1 test
   compares that reader's defaults with the model's so the two cannot drift.
