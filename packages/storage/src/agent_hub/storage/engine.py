@@ -11,7 +11,7 @@ never hold the write lock and, with WAL, never block writers.
 import sqlite3
 from pathlib import Path
 
-from sqlalchemy import Connection, Engine, create_engine, event
+from sqlalchemy import URL, Connection, Engine, create_engine, event
 from sqlalchemy.pool import ConnectionPoolEntry, NullPool
 
 BUSY_TIMEOUT_MS = 5000
@@ -21,7 +21,9 @@ def create_sqlite_engine(path: Path) -> Engine:
     """An engine on the SQLite file at ``path``; SQLite creates the file on first connect."""
     # No pool: each use opens and closes its own SQLite connection, so a store needs no close()
     # and no connection outlives the transaction that used it.
-    engine = create_engine(f"sqlite:///{path}", poolclass=NullPool)
+    # URL.create, not a "sqlite:///..." string: "?" and "%XX" in a path are file name characters,
+    # which URL parsing would read as a query string and escapes.
+    engine = create_engine(URL.create("sqlite", database=str(path)), poolclass=NullPool)
     event.listen(engine, "connect", _configure_connection)
     event.listen(engine, "begin", _begin_transaction)
     return engine
