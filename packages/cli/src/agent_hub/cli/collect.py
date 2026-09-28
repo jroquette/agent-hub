@@ -1,5 +1,6 @@
 """``hub collect``: ingest canonical events from JSON Lines into the event database."""
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -72,8 +73,9 @@ def _ingest_or_exit(events: list[ParsedEvent], db_path: Path) -> AppendResult:
         return IngestEvents(open_event_store(db_path)).execute([item.event for item in events])
     except EventConflictError as error:
         line_number = events[error.position].line_number
+        # source_id comes from the input: quoted and escaped, so it stays on this one line.
         _fail(
-            f"line {line_number}: conflict: event ({error.source}, {error.source_id}) "
+            f"line {line_number}: conflict: event ({error.source}, {json.dumps(error.source_id)}) "
             "differs from an event with the same key"
         )
     except StorageError as error:

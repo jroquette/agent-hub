@@ -10,6 +10,10 @@ from agent_hub.collector.errors import InputNotFoundError, InputUnreadableError
 from agent_hub.core.events.event import Event
 
 NESTED_TOO_DEEPLY = "invalid JSON: nested too deeply"
+# A reason is printed after "line <n>: ", so a whole stderr line stays within 300 characters.
+MAX_REASON_LENGTH = 280
+# Location parts shown before the rest is elided; pydantic lists every level of a deep value.
+MAX_LOCATION_PARTS = 5
 
 
 class ParsedEvent(BaseModel):
@@ -88,7 +92,7 @@ def parse_events(text: str) -> ParsedBatch:
         try:
             events.append(ParsedEvent(line_number=line_number, event=_parse_line(line)))
         except _LineRejectedError as error:
-            errors.append(LineError(line_number=line_number, reason=str(error)))
+            errors.append(LineError(line_number=line_number, reason=_bounded(str(error))))
     return ParsedBatch(events=tuple(events), errors=tuple(errors))
 
 
@@ -133,6 +137,25 @@ def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]
 
 def _describe_validation_error(error: ValidationError) -> str:
     return "; ".join(
-        f"{'.'.join(str(part) for part in detail['loc']) or 'event'}: {detail['msg']}"
-        for detail in error.errors()
+        f"{_describe_location(detail['loc'])}: {detail['msg']}" for detail in error.errors()
     )
+
+
+def _describe_location(location: tuple[int | str, ...]) -> str:
+    shown = ".".join(_describe_location_part(part) for part in location[:MAX_LOCATION_PARTS])
+    elided = "…" if len(location) > MAX_LOCATION_PARTS else ""
+    return f"{shown or 'event'}{elided}"
+
+
+def _describe_location_part(part: int | str) -> str:
+    # Key names come from the input: anything but a plain name is quoted and escaped, so a key
+    # cannot break the message across lines or send control characters to the terminal.
+    if isinstance(part, int) or part.isidentifier():
+        return str(part)
+    return json.dumps(part)
+
+
+def _bounded(reason: str) -> str:
+    if len(reason) <= MAX_REASON_LENGTH:
+        return reason
+    return f"{reason[: MAX_REASON_LENGTH - 1]}…"
