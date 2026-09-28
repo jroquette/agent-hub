@@ -3,6 +3,7 @@
 import os
 import shutil
 import subprocess
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -66,11 +67,15 @@ def installed_hub(tmp_path_factory: pytest.TempPathFactory) -> InstalledHub:
     # Isolated tool dirs, so the test never touches the user's installed tools.
     env = {**os.environ, "UV_TOOL_DIR": str(tmp_path / "tools"), "UV_TOOL_BIN_DIR": str(bin_dir)}
     env.pop("VIRTUAL_ENV", None)
+    # hub must never write to a database named by the caller's environment.
+    env.pop("AGENT_HUB_DB", None)
     constraints = tmp_path / "constraints.txt"
     export_command = [uv, "export", "--locked", "--package", "agent-hub", "--no-emit-workspace"]
     _run_or_fail([*export_command, "--no-hashes", "-o", str(constraints)], env=env)
     meta_package = REPO_ROOT / "packages" / "agent-hub"
-    install_command = [uv, "tool", "install", "--python", "3.14", "-c", str(constraints)]
+    # The interpreter running the tests (a final 3.14 build), so uv never picks an rc build or
+    # downloads a managed Python into the real XDG dirs.
+    install_command = [uv, "tool", "install", "--python", sys.executable, "-c", str(constraints)]
     _run_or_fail([*install_command, str(meta_package)], env=env, timeout=INSTALL_TIMEOUT_SECONDS)
     return InstalledHub(executable=bin_dir / "hub", env=env)
 
