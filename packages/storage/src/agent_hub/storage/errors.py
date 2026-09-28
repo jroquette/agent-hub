@@ -5,3 +5,7 @@ from agent_hub.core.errors import AgentHubError
 
 class StorageError(AgentHubError):
     """Base class for storage adapter errors."""
+
+
+class MigrationError(StorageError):
+    """The database could not be upgraded to the latest schema."""

@@ -4,9 +4,12 @@
 RUN := uv run --locked --all-packages
 # Coverage of every agent_hub package (the layout checker fails when one is missing). Unit and
 # contract tests start the data, integration tests append to it, `coverage` checks the floors.
+# Alembic loads the migration scripts by path under synthetic module names, which package sources
+# never match, so their directory is a source of its own.
 COV := --cov=agent_hub.core --cov=agent_hub.storage --cov=agent_hub.collector \
-       --cov=agent_hub.cli --cov-branch --cov-report=
-ALEMBIC := $(RUN) alembic -c packages/storage/alembic.ini
+       --cov=agent_hub.cli --cov=packages/storage/src/agent_hub/storage/migrations \
+       --cov-branch --cov-report=
+ALEMBIC := $(RUN) python -m agent_hub.storage.migration
 
 .PHONY: help format lint typecheck layout test-fast check-fast test-integration test-e2e imports \
         migrations coverage check

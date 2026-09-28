@@ -1,11 +1,9 @@
 """Alembic environment of the storage package: migrations track ``agent_hub.storage.db.metadata``.
 
-The database URL comes from ``-x db_url=...`` on the command line, else from the config's
-``sqlalchemy.url`` (tests set it with ``Config.set_main_option``). SQLite cannot alter most
+The config is built in code by ``agent_hub.storage.migration.alembic_config`` (there is no
+``alembic.ini``), which puts the database URL in ``sqlalchemy.url``. SQLite cannot alter most
 table properties in place, so migrations run in batch mode there.
 """
-
-from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import create_engine, pool
@@ -14,18 +12,12 @@ from agent_hub.storage.db import metadata
 
 config = context.config
 
-if config.config_file_name is not None:
-    # Keep the caller's loggers (pytest's, for one) working after Alembic configures its own.
-    fileConfig(config.config_file_name, disable_existing_loggers=False)
-
 
 def database_url() -> str:
-    """The URL passed with ``-x db_url=...``, else the config's ``sqlalchemy.url``."""
-    url = context.get_x_argument(as_dictionary=True).get("db_url")
-    if url is None:
-        url = config.get_main_option("sqlalchemy.url")
+    """The config's ``sqlalchemy.url``, set by ``alembic_config``."""
+    url = config.get_main_option("sqlalchemy.url")
     if not url:
-        raise RuntimeError("no database URL: pass -x db_url=... or set sqlalchemy.url")
+        raise RuntimeError("no database URL: build the config with alembic_config")
     return url
 
 
