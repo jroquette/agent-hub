@@ -30,8 +30,8 @@ while the CLI still gets strict, typed validation.
   writes it; `hub sync` never does ([ADR 0009](0009-hub-sync-by-file-ownership.md): it is seeded).
 - A frozen Pydantic model `HubConfig` in core (proposed module `agent_hub.core.hub_config`) is the source of truth. The
   JSON Schema is exported from it; a unit test fails when the shipped schema file differs from the export. The
-  generator writes that schema as a managed `hub.schema.json`, and `hub.json` may name it in a `$schema` key so editors
-  validate as the owner types.
+  generator writes that schema as a managed `hub.schema.json`, and `hub.json` may name it in `$schema`, an optional
+  string key declared at the root of the model, so editors validate as the owner types.
 - New keys:
   - `schema_version` (integer, required, starting at `1`), bumped only by a breaking change: removing, renaming or
     retyping a key, or making an optional key required. Adding an optional key does not bump it. The CLI knows one
@@ -39,7 +39,10 @@ while the CLI still gets strict, typed validation.
   - `platform.version`: the `hub` CLI release the hub is generated with ([ADR 0013](0013-release-by-git-tags.md)).
   - `modules`: an object keyed by module id whose value holds that module's settings; an unknown id fails.
 - Unknown keys are forbidden at every object level, so a typo fails loudly, as it does for the canonical event. Keys
-  starting with `_` (such as `_comment`) are accepted and ignored at every level, which keeps the comment convention.
+  starting with `_` (such as `_comment`) are accepted and ignored at every level, which keeps the comment convention:
+  a before-validator on each object model drops them before validation. The exported schema says the same at every
+  object level, `"additionalProperties": false` with `"patternProperties": {"^_": {}}`, and the schema-equality test
+  covers those keywords, so editors and the CLI accept exactly the same documents.
 - Two readers, one contract. CLI code validates with `HubConfig` and fails fast: exit 1 and one line per error with its
   JSON path. The hooks keep a defensive stdlib reader that never raises and falls back to defaults; a Phase 1 test
   compares that reader's defaults with the model's so the two cannot drift.

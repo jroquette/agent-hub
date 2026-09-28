@@ -24,8 +24,8 @@ fields, validation, versioning and the two readers.
 | Key | Type | "req." or default | Read by |
 |---|---|---|---|
 | `schema_version` | integer, `1` | req. | every reader; see Versioning |
-| `$schema` | string, e.g. `./hub.schema.json` | optional | editors only |
-| `platform.version` | semver `X.Y.Z` | req. | `hub sync`, `hub doctor`, cloud setup |
+| `$schema` | string, e.g. `./hub.schema.json`; a declared root key | optional | editors only |
+| `platform.version` | semver `X.Y.Z` | req. | shims (the release they run), `hub sync`, `hub doctor`, cloud setup |
 | `project.name` | string, kebab-case | req. | templates (plugin, marketplace names), `hub brief` |
 | `project.hub_repo` | `owner/name` | req. | `hub run` (PR links), marketplace |
 | `project.branch_prefix` | string, e.g. `jdoe/` | req. | `hub worktree`, `hub run`, guard branch hint |
@@ -48,8 +48,9 @@ fields, validation, versioning and the two readers.
 
 Guard paths are relative to the workspace (the directory that holds the hub and its repos) and start with a repo `dir`
 or the hub's directory name. Unknown keys are an error at every object level (`extra="forbid"`), so a typo fails loudly.
-Keys that start with `_` (such as `_comment`) are accepted and ignored at every level; they are the only way to
-annotate the file.
+Keys that start with `_` (such as `_comment`) are accepted and ignored at every level, the only way to annotate the
+file: a before-validator on each object model drops them. The exported schema matches: every object carries
+`"additionalProperties": false` and `"patternProperties": {"^_": {}}`, and the schema-equality test covers both.
 
 ### Versioning
 

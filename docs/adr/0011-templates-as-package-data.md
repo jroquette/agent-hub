@@ -23,6 +23,9 @@ and the code that renders and writes them live, and how do they ship?
 - **A separate templates repository**, fetched by the CLI at a pinned revision.
 - **Reading the templates from an existing hub**, treating one hub as the reference copy.
 
+Two sub-choices go with it: the renderer (the standard library or **Jinja2**), and whether the template source and the
+hub file tree sit behind **new core ports** (`TemplateSource`, `HubTree`) or are plain adapter code.
+
 ## Decision Outcome
 
 Chosen option: **a new package `packages/generator`**, because the templates then ship inside a wheel that is built,
@@ -32,14 +35,21 @@ tested and versioned with the rest of the workspace, and `cli` stays a thin comp
   to the source tree. A test builds the wheel and proves that the non-`.py` files are inside it.
 - Split by layer:
   - `core` holds the `HubConfig` model ([ADR 0010](0010-hub-json-config-contract.md)), the pure planners for sync and
-    adopt (template output, lock and disk state in; a list of writes, skips and conflicts out) and the doctor rules.
-  - `generator` holds the templates, the renderer and the adapter that reads the hub tree and applies a plan to disk.
-  - `cli` builds the generator objects and passes them to the core functions, as ADR 0008 prescribes.
+    adopt (render, lock and disk state in; a list of writes, skips and conflicts out) and the doctor rules.
+  - `generator` holds the templates, the renderer, and the adapter that reads the hub tree and applies a plan to disk.
+  - `cli` runs the pipeline, as ADR 0008 prescribes: it calls `generator` to render the templates and read the disk,
+    passes that plain data to the core planner, then hands the resulting plan to `generator` to apply. Core never
+    calls `generator`, and no port is involved.
 - No new port. The planners are pure functions over plain data, and nothing expects to swap the template source or the
   file system, so ADR 0002's rule (a port only where a swap is expected) is kept as written. If a second template
   source appears later, a port is introduced then, with its own ADR.
-- Rendering uses the standard library: `string.Template` for text files, and JSON files are built as dicts in code and
-  serialized with sorted keys, so the output is deterministic and no new dependency is added.
+- Rendering uses the standard library, so the output is deterministic and no new dependency is added. JSON files are
+  built as dicts in code and serialized with sorted keys. Text files use a `string.Template` subclass whose delimiter
+  is `@@` (placeholders `@@name` or `@@{name}`), because the plain `$` delimiter collides with text the templates must
+  keep verbatim: `$(MAKE)` in the Makefile, `${{ … }}` in CI workflows and `$HOME` in shell scripts. Rendering always
+  calls `substitute`, never `safe_substitute`, so an unknown or misspelled placeholder fails the render. A unit test
+  renders every template for the synthetic project and asserts that no `@@` is left in the output; a literal `@@`
+  in a template is written `@@@@`.
 - The new package joins the independent sibling layer below `cli` in the `.importlinter` layers contract
   (`agent_hub.storage | agent_hub.collector | agent_hub.generator`) and is added to the forbidden list of core. This
   extends ADR 0008 without superseding it: its rule (`cli` wires, siblings never import each other) is unchanged, and
@@ -58,7 +68,8 @@ tested and versioned with the rest of the workspace, and `cli` stays a thin comp
   and grow with every template; a separate repository was rejected because it splits one release into two versions
   that must be kept in step; reading templates from an existing hub was rejected because it makes one project's hub
   the product and puts project-owned files at risk of leaking into other hubs. Jinja2 was rejected as a dependency the
-  template set does not need.
+  template set does not need. New ports for the template source and the hub tree were rejected because nothing swaps
+  them; they would need a superseding ADR for ADR 0002 and add indirection to a pipeline of plain data.
 
 ## More Information
 
