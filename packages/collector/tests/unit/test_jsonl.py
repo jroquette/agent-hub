@@ -1,0 +1,98 @@
+import json
+
+from agent_hub.collector.jsonl import LineError, ParsedEvent, parse_events
+from agent_hub.core.testing.builders import an_event, events_to_jsonl
+
+
+def test_returns_events_in_order_when_all_lines_valid() -> None:
+    events = [an_event(), an_event(), an_event()]
+
+    batch = parse_events(events_to_jsonl(events))
+
+    assert batch.errors == ()
+    assert batch.events == (
+        ParsedEvent(line_number=1, event=events[0]),
+        ParsedEvent(line_number=2, event=events[1]),
+        ParsedEvent(line_number=3, event=events[2]),
+    )
+
+
+def test_reports_every_bad_line_when_json_and_schema_errors_mixed() -> None:
+    valid = [an_event(), an_event(), an_event()]
+    without_project = an_event().model_dump(mode="json")
+    del without_project["project"]
+    lines = [
+        valid[0].model_dump_json(),
+        valid[1].model_dump_json(),
+        '{"project": "demo",',
+        valid[2].model_dump_json(),
+        json.dumps(without_project),
+    ]
+
+    batch = parse_events("\n".join(lines) + "\n")
+
+    assert [error.line_number for error in batch.errors] == [3, 5]
+    assert "JSON" in batch.errors[0].reason
+    assert "project" in batch.errors[1].reason
+    assert batch.events == (
+        ParsedEvent(line_number=1, event=valid[0]),
+        ParsedEvent(line_number=2, event=valid[1]),
+        ParsedEvent(line_number=4, event=valid[2]),
+    )
+
+
+def test_skips_blank_lines_when_counting_line_numbers() -> None:
+    first, second = an_event(), an_event()
+    text = f"\n{first.model_dump_json()}\n   \n\t\n{second.model_dump_json()}\n"
+
+    batch = parse_events(text)
+
+    assert batch.errors == ()
+    assert batch.events == (
+        ParsedEvent(line_number=2, event=first),
+        ParsedEvent(line_number=5, event=second),
+    )
+
+
+def test_returns_nothing_when_text_empty() -> None:
+    batch = parse_events("")
+
+    assert batch.events == ()
+    assert batch.errors == ()
+
+
+def test_reports_error_when_line_is_json_array() -> None:
+    batch = parse_events(f"[{an_event().model_dump_json()}]\n")
+
+    assert batch.events == ()
+    assert batch.errors == (LineError(line_number=1, reason="expected a JSON object"),)
+
+
+def test_reports_error_when_line_uses_nan_constant() -> None:
+    fields = an_event().model_dump(mode="json")
+    line = json.dumps(fields | {"payload": {"score": float("nan")}})
+
+    batch = parse_events(line)
+
+    assert batch.events == ()
+    assert [error.line_number for error in batch.errors] == [1]
+    assert "NaN" in batch.errors[0].reason
+
+
+def test_keeps_line_whole_when_string_holds_unicode_line_separator() -> None:
+    # JSON strings may hold U+2028 and U+0085 unescaped; only "\n" ends a JSON Lines record.
+    event = an_event(payload={"text": "a b\x85c"})
+
+    batch = parse_events(events_to_jsonl([event]))
+
+    assert batch.errors == ()
+    assert batch.events == (ParsedEvent(line_number=1, event=event),)
+
+
+def test_accepts_line_when_it_ends_with_carriage_return() -> None:
+    event = an_event()
+
+    batch = parse_events(f"{event.model_dump_json()}\r\n")
+
+    assert batch.errors == ()
+    assert batch.events == (ParsedEvent(line_number=1, event=event),)
