@@ -18,10 +18,12 @@ class InMemoryEventStore:
         """Append the new events of the batch; a conflict raises before any change."""
         plan = plan_append(events, self._by_key)
         for event in plan.new_events:
-            self._by_key[event.key] = event
-            self._events.append(event)
+            # Event is frozen only shallowly: keep a copy, so the caller's payload stays theirs.
+            stored = event.model_copy(deep=True)
+            self._by_key[event.key] = stored
+            self._events.append(stored)
         return AppendResult(appended=len(plan.new_events), duplicates=plan.duplicates)
 
     def read_all(self) -> list[Event]:
         """Return every stored event in the order it was appended."""
-        return list(self._events)
+        return [event.model_copy(deep=True) for event in self._events]
