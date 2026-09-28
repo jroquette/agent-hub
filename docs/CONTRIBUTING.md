@@ -138,8 +138,8 @@ as `-x db_url=…` (default `sqlite://`, an in-memory database). Tables are decl
 
 A merged revision is never edited; fix it with a new revision. Any edit in
 `packages/storage/src/agent_hub/storage/migrations/versions/` needs the owner's explicit confirmation, as ADR edits do.
-Never point Alembic or a test at the real database from a test or a gate: not at `AGENT_HUB_DB`, not at the default
-`$XDG_DATA_HOME/agent-hub/agent-hub.db` or `~/.local/share/agent-hub/agent-hub.db`.
+Never point Alembic or a test at the real database: the file `hub collect` picks (`--db`, else `AGENT_HUB_DB`, else the
+XDG default `$XDG_DATA_HOME/agent-hub/agent-hub.db` or `~/.local/share/agent-hub/agent-hub.db`).
 
 ## Manual repository and Linear settings
 

@@ -58,11 +58,13 @@ hub doctor      # checks rules, links, dead references and instruction size
 hub collect [FILE|-] [--db PATH]   # ingests canonical events from JSON Lines (stdin when FILE is omitted or -)
 ```
 
-`hub collect` (Phase 0) writes to `$XDG_DATA_HOME/agent-hub/agent-hub.db` (only when `XDG_DATA_HOME` is absolute),
-else `~/.local/share/agent-hub/agent-hub.db`; the environment variable `AGENT_HUB_DB` overrides that default and
-`--db PATH` overrides both. It brings the database to the latest schema before writing. A batch is all or nothing: an
-invalid line, a conflict, or an input or storage error writes nothing and exits 1 with one-line messages (naming the
-line when there is one); usage errors exit 2. On success it prints `appended N, duplicates M`.
+`hub collect` (Phase 0) writes to `$XDG_DATA_HOME/agent-hub/agent-hub.db` (only when `XDG_DATA_HOME` is absolute), else
+`~/.local/share/agent-hub/agent-hub.db`, where `~` is `HOME` when it is non-empty and absolute, else the account's home
+from the password database; with neither, `hub collect` exits 1 asking for `--db` or `AGENT_HUB_DB`. The environment
+variable `AGENT_HUB_DB` overrides that default and `--db PATH` overrides both. It brings the database to the latest
+schema before writing. A batch is all or nothing: an invalid line, a conflict, an input or storage error, or no usable
+home directory writes nothing and exits 1, with one line per error (naming the input line when there is one); usage
+errors exit 2. On success it prints `appended N, duplicates M`.
 
 **What to extract from `loki-trader-hub`**
 

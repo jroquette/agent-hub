@@ -125,8 +125,10 @@ idempotent by `(source, source_id)`, that appends a batch all or nothing. The us
 `hub collect` wires them: the collector parses JSON Lines into events, `open_event_store(path)` upgrades the SQLite file
 to the latest migration (under a write lock) and returns the store, and `IngestEvents` appends the batch. The database
 file is `--db PATH`, else the environment variable `AGENT_HUB_DB`, else `$XDG_DATA_HOME/agent-hub/agent-hub.db` (only
-when `XDG_DATA_HOME` is absolute), else `$HOME/.local/share/agent-hub/agent-hub.db` (`agent_hub.cli.database_path`).
-SQLite runs in WAL mode, and the engine opens a connection per use (no pool).
+when `XDG_DATA_HOME` is absolute), else `~/.local/share/agent-hub/agent-hub.db`, where `~` is `HOME` when it is
+non-empty and absolute, else the account's home from the password database; with neither, `hub collect` exits 1 asking
+for `--db` or `AGENT_HUB_DB` (`agent_hub.cli.database_path`). SQLite runs in WAL mode, and the engine opens a connection
+per use (no pool).
 
 ## Where does this code go
 
