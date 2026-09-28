@@ -3,7 +3,8 @@
 How the agent-hub code is organized and where new code goes. The product itself is described in [SPEC.md](SPEC.md); the
 decisions behind this layout are [ADR 0001](adr/0001-uv-workspace-with-namespace-packages.md) (workspace),
 [ADR 0002](adr/0002-lean-hexagonal-architecture.md) (hexagonal architecture) and
-[ADR 0003](adr/0003-persistence-sqlalchemy-core-and-alembic.md) (persistence).
+[ADR 0003](adr/0003-persistence-sqlalchemy-core-and-alembic.md) (persistence). The Phase 1 to 4 designs (hub config,
+generator, doctor, domain model, events, workflows) are indexed in [design/README.md](design/README.md).
 
 ## Packages
 

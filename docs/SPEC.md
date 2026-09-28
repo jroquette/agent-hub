@@ -49,11 +49,15 @@ The model has nine entities. All of them already exist implicitly in Loki Trader
 
 ## Layer 1: hub generator (CLI)
 
-A CLI creates and maintains hubs from a project configuration file. Everything that is Loki-specific today becomes a parameter or an optional module.
+A CLI creates and maintains hubs from a project configuration file. Everything that is Loki-specific today becomes a parameter or an optional module. The Phase 1 design (config contract, generation and sync, hooks, commands, releases, `hub doctor`) is indexed in [design/README.md](design/README.md).
+
+The hub's logic lives in the `hub` CLI, versioned and tested in this repo; the generated hub holds files, `hub.json` and thin shims. A shim runs the CLI release pinned in `hub.json` (a semver git tag of this repo, no PyPI) through `uvx`, so no global install is needed and each hub on a machine can pin its own version. Hooks are the exception: they stay Python 3.9 stdlib scripts that read `hub.json` directly, never need the CLI, and fail open.
 
 ```
-hub init <project> --repos org/backend,org/frontend --tracker linear:LOK
+hub init <project> --repos org/backend,org/frontend --tracker linear:LOK --branch-prefix jdoe/
+hub init --config hub.json   # generates from an existing project config
 hub sync        # reapplies templates without overwriting what the project customized
+hub sync --adopt   # joins a hand-made hub: identical files become managed, differences are listed
 hub doctor      # checks rules, links, dead references and instruction size
 hub collect [FILE|-] [--db PATH]   # ingests canonical events from JSON Lines (stdin when FILE is omitted or -)
 ```
@@ -70,20 +74,20 @@ errors exit 2. On success it prints `appended N, duplicates M`.
 
 | Current piece | Becomes on the platform | Generic or module |
 | --- | --- | --- |
-| `brain/` (index, now, decisions, learnings, playbooks, journal, `_inbox/`, `auto/`) | Brain template with frontmatter and provenance | Generic |
-| `AGENTS.md`/`CLAUDE.md` with cross-repo rules | Template with base rules (authorship, worktree, no push to `main`) and project rules | Generic + project rules |
-| `agent` (launcher with `--add-dir` and appended AGENTS.md files) | Launcher generated from the repo list | Generic |
-| `scripts/worktree.sh` | Isolated per-task worktrees, with their own ports and `.env` | Generic, with per-stack hooks |
-| `scripts/brief.py` | Session brief (now, journal, git/PR/CI state) | Generic |
-| `scripts/agent_runner.py` | Workflow executor (issue → PR as a state machine) | Generic, reading the workflow as data |
-| `mine_transcripts.py`, `recall_transcripts.py`, `retro_metrics.py` | Layer 2 ingestion and analysis | Generic |
-| `bench.py` | Agent configuration benchmark on closed issues | Module |
-| `agent_config_lint.py`, `features_check.py` | `hub doctor` and feature validation | Generic |
-| `plugin/loki-workflow/` (agents, skills, hooks) and marketplace | Platform base plugin + project plugin | Generic + project |
+| `brain/` (index, now, decisions, learnings, playbooks, journal, `_inbox/`, `auto/`) | Brain skeleton with frontmatter and provenance, seeded once; the content stays the project's | Generic |
+| `AGENTS.md`/`CLAUDE.md` with cross-repo rules | Managed base rules (authorship, worktree, no push to `main`) plus a seeded `AGENTS.project.md` for project rules | Generic + project rules |
+| `agent` (launcher with `--add-dir` and appended AGENTS.md files) | Shim for `hub agent`, which reads the repo list | Generic |
+| `scripts/worktree.sh` | `hub worktree`: isolated per-task worktrees, with their own ports and `.env` | Generic, with per-stack hooks |
+| `scripts/brief.py` | `hub brief`: session brief (now, journal, git/PR/CI state) | Generic |
+| `scripts/agent_runner.py` | `hub next` and `hub run` through the tracker port; later the workflow executor reading the workflow as data | Generic |
+| `mine_transcripts.py`, `recall_transcripts.py`, `retro_metrics.py` | Stay hub files until Layer 2 ingestion and analysis replace them (Phase 2) | Generic |
+| `bench.py` | `hub bench`: agent configuration benchmark on closed issues | Module |
+| `agent_config_lint.py`, `features_check.py` | `hub doctor` rules, including feature validation | Generic |
+| `plugin/loki-workflow/` (agents, skills, hooks) and marketplace | Managed base plugin `plugin/hub-workflow/` (its hooks stay stdlib scripts) + seeded project plugin `plugin/<project>/`; the marketplace is an optional module | Generic + project |
 | `contract-sync.sh` (OpenAPI backend → frontend) | Cross-repo contract recipe | Module |
-| Red-chain, Decimal, paper/testnet | Loki domain rules | Stays in the project |
+| Red-chain, Decimal, paper/testnet | Loki domain rules, in its `AGENTS.project.md` | Stays in the project |
 
-Design rule: the generated hub remains just versioned files in a private GitHub repo, accessible only to the owners. That way it works in the terminal, in cloud sessions and without layer 2 running.
+Design rule: the generated hub is versioned files in a private GitHub repo, accessible only to the owners, plus the `hub` CLI pinned per hub; its hooks work without the CLI. That way it works in the terminal, in cloud sessions and without layer 2 running.
 
 ## Layer 2: control plane and observability
 
@@ -162,8 +166,8 @@ The MVP goes up to Phase 2: generate hubs from Loki and see the agents' sessions
 
 | Phase | Content | Gate to the next |
 | --- | --- | --- |
-| 0 · Foundation (MVP) | New GitHub repo, approved spec, the foundation (stack and standards in [ADRs 0001–0008](adr/), uv workspace, `make check-fast`/`make check` gates, CI), CLI and collector skeleton | The platform's own hub generated by the CLI |
-| 1 · Hub generator (MVP) | Extract brain, rules, launcher, worktrees, brief and plugin; `hub init`, `sync` and `doctor` | Loki hub recreated, same `make check` and bench |
+| 0 · Foundation (MVP) | New GitHub repo, approved spec, the foundation (stack and standards in [ADRs 0001–0008](adr/), uv workspace, `make check-fast`/`make check` gates, CI), CLI and collector skeleton | Skeleton done: canonical event, `hub collect`, and `hub init`/`sync`/`doctor` as stubs |
+| 1 · Hub generator (MVP) | First, `hub init` generating the platform's own hub; then extract brain, rules, launcher, worktrees, brief and plugin; `hub sync` (with `--adopt`) and `hub doctor` | Loki hub recreated, same `make check` and bench |
 | 2 · Read-only observability (MVP) | Hooks and transcripts collector, session timeline, portfolio and live sessions | Sessions of both projects live and in history |
 | 3 · Knowledge and decisions | Provenance in the brain, inbox triage in the UI, extracted decisions, learning metrics | One learning traced from the session to the rule |
 | 4 · Workflows as data and actions | Generic executor reading the workflow, gates approved from the UI, adapters for other agents | — |
@@ -180,7 +184,7 @@ The recommendations are a starting point.
 | Agent scope | Only Claude Code, or several from the start | Only Claude Code in v1, with the canonical event ready for adapters |
 | Where it runs | Local-first or hosted service | Local-first in v1. Hosted only when there is a second user |
 | Stack | **Decided:** see [ADR 0001](adr/0001-uv-workspace-with-namespace-packages.md), [ADR 0002](adr/0002-lean-hexagonal-architecture.md), [ADR 0003](adr/0003-persistence-sqlalchemy-core-and-alembic.md), [ADR 0004](adr/0004-rest-api-standard.md) and [ADR 0008](adr/0008-cli-as-composition-root.md) | — |
-| Task tracker | Linear only, or a generic interface (Linear, GitHub Issues, Jira) | Generic interface with Linear as the first implementation |
+| Task tracker | **Decided:** a generic core port (`TrackerClient`) with Linear as the first adapter, selected by `tracker.kind` in `hub.json` ([project-config.md](design/project-config.md)) | — |
 
 ## Defined directions (2026-09-27)
 
@@ -193,8 +197,8 @@ The recommendations are a starting point.
 
 **2. Brain: stays in the hub repo, which is private and ours only.**
 
-- The hub remains versioned files in git, as in Layer 1. The hub repo is private, only the owners have access, and how it works is not shared.
-- Brain, internal rules, workflows, plugin and scripts live only in the hub. The code repos get the minimum: an `AGENTS.md` with basic commands and conventions.
+- The hub remains versioned files in git plus the pinned CLI, as in Layer 1. The hub repo is private and only the owners have access.
+- The generic templates (base workflow plugin, base rules, base hooks, brain skeleton) are the product: they live in agent-hub, which is private too, and ship with the CLI. Only project-owned material (brain content, project rules, project workflows, project plugin) lives only in the hub. The code repos get the minimum: an `AGENTS.md` with basic commands and conventions.
 - Our agent receives the brain because it is launched from the hub (launcher with the repos attached, as today). Another agent that opens only the code repos does not receive that knowledge.
 - `hub doctor` checks that nothing from the brain was copied into the code repos.
 - Cloud sessions need access to the hub repo through the GitHub App, granted only on our account.
