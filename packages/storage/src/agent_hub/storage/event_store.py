@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Connection, Engine, RowMapping, insert, select, tuple_
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from agent_hub.core.events.append_plan import plan_append
 from agent_hub.core.events.event import Event, EventKey
@@ -25,7 +25,8 @@ class SqliteEventStore:
 
     An append reads the stored events with the batch's keys and writes the new ones in one
     ``BEGIN IMMEDIATE`` transaction, so no other writer runs between the read and the write.
-    A conflict leaves as core's ``EventConflictError``, raised before anything is written.
+    Database errors leave as ``DatabaseAccessError``; a conflict leaves as core's
+    ``EventConflictError``, raised before anything is written.
     """
 
     def __init__(self, engine: Engine) -> None:
@@ -33,12 +34,26 @@ class SqliteEventStore:
 
     def append(self, events: Sequence[Event]) -> AppendResult:
         """Append a batch all-or-nothing (see ``EventStore.append``)."""
-        return self._append_once(events)
+        try:
+            try:
+                return self._append_once(events)
+            except IntegrityError:
+                # Only reachable when a writer bypassed the write lock and inserted one of our keys
+                # after we read. Read again: the key is now stored, so the plan counts it as a
+                # duplicate or raises a conflict. A second integrity error is not retried.
+                return self._append_once(events)
+        except SQLAlchemyError as error:
+            msg = f"cannot write to the event database: {error}"
+            raise DatabaseAccessError(msg) from error
 
     def read_all(self) -> list[Event]:
         """Return every stored event in the order it was appended."""
-        with self._engine.connect() as connection:
-            rows = connection.execute(select(events).order_by(events.c.id)).mappings().all()
+        try:
+            with self._engine.connect() as connection:
+                rows = connection.execute(select(events).order_by(events.c.id)).mappings().all()
+        except SQLAlchemyError as error:
+            msg = f"cannot read the event database: {error}"
+            raise DatabaseAccessError(msg) from error
         return [_to_event(row) for row in rows]
 
     def _append_once(self, batch: Sequence[Event]) -> AppendResult:
