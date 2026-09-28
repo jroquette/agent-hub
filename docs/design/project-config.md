@@ -25,7 +25,7 @@ fields, validation, versioning and the two readers.
 |---|---|---|---|
 | `schema_version` | integer, `1` | req. | every reader; see Versioning |
 | `$schema` | string, e.g. `./hub.schema.json`; a declared root key | optional | editors only |
-| `platform.version` | `^\d+\.\d+\.\d+$` | req. | shims (the release they run), `hub sync`, `hub doctor`, cloud setup |
+| `platform.version` | `^[0-9]+\.[0-9]+\.[0-9]+$` | req. | shims (the release they run), `hub sync`, `hub doctor`, cloud setup |
 | `project.name` | kebab-case (Rendered values) | req. | templates (plugin, marketplace names), `hub brief` |
 | `project.hub_repo` | `owner/name` | req. | `hub run` (PR links), marketplace |
 | `project.branch_prefix` | e.g. `jdoe/` (Rendered values) | req. | `hub worktree`, `hub run`, guard branch hint |
@@ -36,7 +36,7 @@ fields, validation, versioning and the two readers.
 | `tracker.ready_label` | string | `agent-ready` | `hub next` |
 | `tracker.failed_label` | string | `agent-failed` | `hub run` on failure |
 | `repos[]` | list, at least one item | req. | launcher, worktrees, hooks, cloud setup |
-| `repos[].dir` | one path segment (Rendered values), unique across `repos` | req. | the sibling directory next to the hub |
+| `repos[].dir` | one path segment (Rendered values), unique across `repos` ignoring case | req. | the sibling directory next to the hub |
 | `repos[].github` | `owner/name` | req. | cloud setup, `hub run` |
 | `repos[].role` | free string; `app` is the only known value | `app` | templates may branch on known roles |
 | `repos[].check_fast`, `repos[].check` | shell commands | req. | stop gate (`check_fast`), `hub run` (`check`) |
@@ -53,21 +53,21 @@ checks are model validators JSON Schema cannot express, so there an editor accep
 
 ### Rendered values
 
-The model restricts values that land in shell, Make or YAML text, so templates need not escape them:
+The model restricts values that land in shell, Make or YAML text, so templates need not escape them. `S` is a safe
+segment, `[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*`: no leading `-` or `.`, no `..`, no trailing punctuation.
 
-- `project.name`: kebab-case `^[a-z0-9]+(-[a-z0-9]+)*$`. `repos[].dir`: one safe path segment `^[A-Za-z0-9._-]+$`,
-  not `.` or `..` (mixed case allowed: Loki's `tradeSentinel`). `tracker.team`: `^[A-Za-z0-9]+$`.
-  `project.branch_prefix`: `^[A-Za-z0-9._-]+/$`.
-- `project.hub_repo`, `repos[].github`: `^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`. `project.author_email`: one `@`, no space.
-- `project.author_name` is free text, rendered only with format-specific quoting: `shlex.quote` in shell, the JSON
-  encoder in JSON, a double-quoted escaped scalar in YAML; never into a Makefile. `repos[].check_fast` and
-  `repos[].check` are commands by design: hooks and `hub run` read them at run time; no template renders them.
-- `platform.version` matches `^\d+\.\d+\.\d+$` in the CLI and in the hooks' stdlib reader (a bad value counts as
-  absent). Shims read it at run time (a stdlib `python3` one-liner, same pattern), never baked in at render time.
-- Guard paths: relative to the workspace (the directory that holds the hub and its repos), normalized, POSIX
-  separators, no `.` or `..` segment, not absolute. The first segment is a `repos[].dir` or the token `@hub` for the
-  hub itself, whatever its checkout directory is called (`@` cannot start a `dir`); `guard.deny_paths` may also start
-  with another workspace directory (Loki's `_archive`). Hooks resolve `@hub` to the hub root holding the hook file.
+- `project.name`: kebab-case `^[a-z0-9]+(-[a-z0-9]+)*$`. `repos[].dir`: `^S$`, unique ignoring case (`tradeSentinel`).
+  `project.hub_repo`, `repos[].github`: `^S/S$`. `project.branch_prefix`: `^S/$`. `project.default_branch`:
+  `^S(?:/S)*$`. `tracker.team`: `^[A-Za-z0-9]+$`. `project.author_email`: `^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$`.
+  `guard.deny_hosts`: `.`-joined DNS labels `[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?`. Other free text has no
+  control character (`\x00-\x1f`, `\x7f`); `author_name` is rendered only with format quoting (`shlex.quote`, JSON
+  encoder, escaped YAML scalar), never into a Makefile; `check_fast` and `check` are read at run time, never rendered.
+- `platform.version` matches `^[0-9]+\.[0-9]+\.[0-9]+$` in the CLI and in the hooks' stdlib reader (a bad value counts
+  as absent). Shims read it at run time (a stdlib `python3` one-liner, same pattern), never baked in at render time.
+- Guard paths: relative to the workspace (the directory holding the hub and its repos), normalized, `/`-separated, not
+  absolute; segments are printable ASCII without space or `\`, never `.` or `..`. The first is a `repos[].dir` or `@hub`
+  (the hub, whatever its checkout is called; `@` cannot start a `dir`); `guard.deny_paths` may also start with another
+  workspace directory (Loki's `_archive`). Hooks resolve `@hub` to the hub root holding the hook file.
 
 ### Versioning
 
