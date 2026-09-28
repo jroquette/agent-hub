@@ -15,6 +15,7 @@ from sqlalchemy import URL, Connection, Engine, create_engine, event
 from sqlalchemy.pool import ConnectionPoolEntry, NullPool
 
 BUSY_TIMEOUT_MS = 5000
+WAL_SWITCH_ATTEMPTS = 10
 
 
 def create_sqlite_engine(path: Path) -> Engine:
@@ -40,9 +41,24 @@ def _configure_connection(
     try:
         # The timeout first: switching a fresh file to WAL needs a lock another process may hold.
         cursor.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
-        cursor.execute("PRAGMA journal_mode=WAL")
+        _switch_to_wal(cursor)
     finally:
         cursor.close()
+
+
+def _switch_to_wal(cursor: sqlite3.Cursor) -> None:
+    # Connections switching a fresh file to WAL at the same moment can deadlock on its locks;
+    # SQLite then fails one of them at once instead of waiting (the busy timeout does not apply).
+    # Each such failure lets another connection go ahead, and once the file is in WAL the switch
+    # is a no-op, so a few attempts cover a handful of processes opening a new database at once.
+    for attempt in range(1, WAL_SWITCH_ATTEMPTS + 1):
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError:
+            if attempt == WAL_SWITCH_ATTEMPTS:
+                raise
+        else:
+            return
 
 
 def _begin_transaction(connection: Connection) -> None:
