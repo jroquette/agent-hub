@@ -6,11 +6,13 @@ from pathlib import Path
 import pytest
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, text
+from sqlalchemy import Engine, create_engine, text
 
 from agent_hub.core.events.event import Event
 from agent_hub.core.testing.builders import an_event
-from agent_hub.storage.errors import StorageError
+from agent_hub.storage import event_store
+from agent_hub.storage.engine import create_sqlite_engine
+from agent_hub.storage.errors import DatabaseAccessError, StorageError
 from agent_hub.storage.event_store import open_event_store
 from agent_hub.storage.migration import alembic_config
 
@@ -128,3 +130,17 @@ def test_writes_named_file_when_path_holds_url_characters(tmp_path: Path) -> Non
     assert db_path.is_file()
     assert sorted(path.name for path in tmp_path.iterdir()) == ["q?mode=ro%41"]
     assert open_event_store(db_path).read_all() == batch
+
+
+def test_raises_storage_error_when_engine_cannot_connect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The migration succeeds on the real file; the store's own engine then points at a
+    # directory, which SQLite cannot open.
+    def engine_on_directory(path: Path) -> Engine:
+        return create_sqlite_engine(tmp_path)
+
+    monkeypatch.setattr(event_store, "create_sqlite_engine", engine_on_directory)
+
+    with pytest.raises(DatabaseAccessError, match="cannot open"):
+        open_event_store(tmp_path / "agent-hub.db")

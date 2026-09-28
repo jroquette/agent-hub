@@ -1,3 +1,4 @@
+import sqlite3
 import threading
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -12,7 +13,7 @@ from agent_hub.core.events.event_store import AppendResult
 from agent_hub.core.testing.builders import an_event
 from agent_hub.storage.engine import create_sqlite_engine
 from agent_hub.storage.errors import DatabaseAccessError
-from agent_hub.storage.event_store import SqliteEventStore, open_event_store
+from agent_hub.storage.event_store import KEYS_PER_QUERY, SqliteEventStore, open_event_store
 
 
 class StaleReadEventStore(SqliteEventStore):
@@ -98,8 +99,8 @@ def test_raises_storage_error_when_unique_constraint_hit_twice(tmp_path: Path) -
 
 
 def test_raises_storage_error_when_append_finds_no_events_table(tmp_path: Path) -> None:
-    """Stands in for a read-only database: tests run as root in CI containers, where a
-    read-only file mode does not stop writes, so a missing table makes the write fail."""
+    """Stands in for a read-only database: tests may run as root (the dev container does), where
+    a read-only file mode does not stop writes, so a missing table makes the write fail."""
     db_path = tmp_path / "agent-hub.db"
     store = open_event_store(db_path)
     _drop_events_table(db_path)
@@ -139,3 +140,31 @@ def test_keeps_sql_and_payload_out_of_message_when_insert_fails(tmp_path: Path) 
     assert message == "cannot write to the event database: synthetic failure"
     for leaked in ("\n", "[SQL:", "[parameters:", "synthetic-payload-marker"):
         assert leaked not in message
+
+
+def test_finds_every_stored_key_when_batch_needs_several_lookups(tmp_path: Path) -> None:
+    store = open_event_store(tmp_path / "agent-hub.db")
+    batch = [an_event() for _ in range(KEYS_PER_QUERY + 1)]
+    store.append(batch)
+
+    result = store.append(batch)
+
+    assert result == AppendResult(appended=0, duplicates=KEYS_PER_QUERY + 1)
+
+
+def test_reads_but_cannot_write_when_other_connection_holds_write_lock(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    stored = an_event()
+    open_event_store(db_path).append([stored])
+    # A short busy timeout, so the blocked append below fails fast instead of waiting 5 s.
+    store = SqliteEventStore(create_sqlite_engine(db_path, busy_timeout_ms=50))
+    writer = sqlite3.connect(db_path, isolation_level=None)
+    try:
+        writer.execute("BEGIN IMMEDIATE")
+
+        assert store.read_all() == [stored]
+        with pytest.raises(DatabaseAccessError, match="database is locked"):
+            store.append([an_event()])
+    finally:
+        writer.execute("ROLLBACK")
+        writer.close()
