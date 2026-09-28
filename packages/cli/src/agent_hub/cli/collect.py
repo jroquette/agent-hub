@@ -9,6 +9,7 @@ from typing import Annotated, NoReturn
 import typer
 
 from agent_hub.cli.database_path import default_database_path
+from agent_hub.cli.errors import CliError
 from agent_hub.collector.errors import CollectorError
 from agent_hub.collector.jsonl import ParsedEvent, parse_events, read_stream, read_text
 from agent_hub.core.errors import EventConflictError
@@ -48,7 +49,7 @@ def collect(
     """Ingest canonical events from JSON Lines, all or nothing."""
     events = _parse_or_exit(_read_or_exit(file))
     # The database is resolved and opened only now, so bad input never creates one.
-    result = _ingest_or_exit(events, db or default_database_path(os.environ))
+    result = _ingest_or_exit(events, db or _default_database_path_or_exit())
     typer.echo(f"appended {result.appended}, duplicates {result.duplicates}")
 
 
@@ -66,6 +67,13 @@ def _parse_or_exit(text: str) -> list[ParsedEvent]:
     if batch.errors:
         _fail(*(f"line {error.line_number}: {error.reason}" for error in batch.errors))
     return list(batch.events)
+
+
+def _default_database_path_or_exit() -> Path:
+    try:
+        return default_database_path(os.environ)
+    except CliError as error:
+        _fail(f"error: {error}")
 
 
 def _ingest_or_exit(events: list[ParsedEvent], db_path: Path) -> AppendResult:
