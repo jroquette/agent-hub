@@ -1,6 +1,6 @@
 # 0013. Release the hub CLI by git tags
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-09-28
 - Deciders: José Henrique Roquette
 
