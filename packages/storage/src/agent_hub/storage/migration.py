@@ -20,6 +20,7 @@ from alembic.config import CommandLine, Config
 from alembic.util import CommandError
 from sqlalchemy.exc import SQLAlchemyError
 
+from agent_hub.storage.engine import create_sqlite_engine
 from agent_hub.storage.errors import MigrationError
 
 MIGRATIONS_DIR = Path(__file__).with_name("migrations")
@@ -36,13 +37,28 @@ def alembic_config(database_url: str, *, cmd_opts: Namespace | None = None) -> C
     return config
 
 
-def upgrade_to_head(database_url: str) -> None:
-    """Upgrade the database to the latest revision; a no-op when it is already there."""
+def upgrade_to_head(path: Path) -> None:
+    """Upgrade the SQLite file at ``path`` to the latest revision; a no-op when already there.
+
+    The upgrade runs on a ``write_lock`` connection (``BEGIN IMMEDIATE``), so when several
+    processes open a fresh file together, one migrates and the others then find it at head.
+    """
+    engine = create_sqlite_engine(path)
     try:
-        command.upgrade(alembic_config(database_url), "head")
+        with (
+            engine.connect().execution_options(write_lock=True) as connection,
+            connection.begin(),
+        ):
+            config = alembic_config(str(engine.url))
+            # env.py migrates on this connection instead of opening its own (Alembic's
+            # "sharing a connection" recipe); the URL above is then only informational.
+            config.attributes["connection"] = connection
+            command.upgrade(config, "head")
     except (CommandError, SQLAlchemyError) as error:
         msg = f"cannot upgrade the database to the latest schema: {error}"
         raise MigrationError(msg) from error
+    finally:
+        engine.dispose()
 
 
 def main(argv: Sequence[str] | None = None) -> None:

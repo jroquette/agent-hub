@@ -87,7 +87,7 @@ def open_event_store(path: Path) -> SqliteEventStore:
     except OSError as error:
         msg = f"cannot create the directory of the event database {path}: {error}"
         raise DatabaseAccessError(msg) from error
-    upgrade_to_head(f"sqlite:///{path}")
+    upgrade_to_head(path)
     engine = create_sqlite_engine(path)
     try:
         # Connect once now, so the journal mode is set and an unusable file fails here.

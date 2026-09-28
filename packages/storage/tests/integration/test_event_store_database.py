@@ -1,3 +1,6 @@
+import multiprocessing
+from multiprocessing.queues import Queue
+from multiprocessing.synchronize import Barrier
 from pathlib import Path
 
 import pytest
@@ -5,6 +8,8 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
 
+from agent_hub.core.events.event import Event
+from agent_hub.core.testing.builders import an_event
 from agent_hub.storage.errors import StorageError
 from agent_hub.storage.event_store import open_event_store
 from agent_hub.storage.migration import alembic_config
@@ -72,3 +77,39 @@ def test_raises_storage_error_when_parent_is_a_file(tmp_path: Path) -> None:
 
     with pytest.raises(StorageError, match="not-a-directory"):
         open_event_store(blocker / "agent-hub.db")
+
+
+def _open_and_append(
+    db_path: Path, batch: list[Event], *, barrier: Barrier, results: Queue[tuple[int, int]]
+) -> None:
+    barrier.wait()
+    result = open_event_store(db_path).append(batch)
+    results.put((result.appended, result.duplicates))
+
+
+def test_migrates_once_when_processes_open_fresh_file_together(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    batch = [an_event() for _ in range(3)]
+    writers = 6
+    # fork: the target is a function of this test module, which a spawned child cannot import.
+    context = multiprocessing.get_context("fork")
+    barrier = context.Barrier(writers)
+    results: Queue[tuple[int, int]] = context.Queue()
+    processes = [
+        context.Process(
+            target=_open_and_append,
+            args=(db_path, batch),
+            kwargs={"barrier": barrier, "results": results},
+        )
+        for _ in range(writers)
+    ]
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(timeout=60)
+
+    assert [process.exitcode for process in processes] == [0] * writers
+    counts = [results.get(timeout=5) for _ in range(writers)]
+    assert sum(appended for appended, _ in counts) == len(batch)
+    assert sum(duplicates for _, duplicates in counts) == len(batch) * (writers - 1)
+    assert _current_revision(db_path) == _head(db_path)
