@@ -109,13 +109,20 @@ def test_migrates_once_when_processes_open_fresh_file_together(tmp_path: Path) -
         )
         for _ in range(writers)
     ]
-    for process in processes:
-        process.start()
-    for process in processes:
-        process.join(timeout=60)
+    try:
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join(timeout=60)
 
-    assert [process.exitcode for process in processes] == [0] * writers
-    counts = [results.get(timeout=5) for _ in range(writers)]
+        assert [process.exitcode for process in processes] == [0] * writers
+        counts = [results.get(timeout=5) for _ in range(writers)]
+    finally:
+        # A hung child must not outlive the test.
+        for process in processes:
+            if process.is_alive():
+                process.kill()
+                process.join()
     assert sum(appended for appended, _ in counts) == len(batch)
     assert sum(duplicates for _, duplicates in counts) == len(batch) * (writers - 1)
     assert _current_revision(db_path) == _head(db_path)
