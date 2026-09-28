@@ -50,13 +50,17 @@ name = "agent-hub-cli"
 version = "0.1.0"
 source = { editable = "packages/cli" }
 dependencies = [
+    { name = "agent-hub-collector" },
     { name = "agent-hub-core" },
+    { name = "agent-hub-storage" },
     { name = "typer" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "agent-hub-collector", editable = "packages/collector" },
     { name = "agent-hub-core", editable = "packages/core" },
+    { name = "agent-hub-storage", editable = "packages/storage" },
     { name = "typer" },
 ]
 

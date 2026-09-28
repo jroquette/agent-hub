@@ -5,6 +5,8 @@ from typing import Annotated
 
 import typer
 
+from agent_hub.cli.collect import collect
+
 app = typer.Typer(name="hub", no_args_is_help=True)
 
 
@@ -28,3 +30,6 @@ def main(
     ] = False,
 ) -> None:
     """Create, operate and observe agent hubs."""
+
+
+app.command("collect")(collect)
