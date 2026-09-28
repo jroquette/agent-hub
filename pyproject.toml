@@ -58,6 +58,8 @@ known-first-party = ["agent_hub"]
 [tool.ruff.lint.per-file-ignores]
 # pytest's plain assert is how tests state expectations.
 "**/tests/**" = ["S101"]
+# The port contract suites are tests shipped in core, run from each implementation's tests/contract/.
+"packages/core/src/agent_hub/core/testing/contracts.py" = ["S101"]
 # e2e tests and repo scripts run known tools (uv, git, ruff, mypy) as subprocesses by design.
 "tests/e2e/**" = ["S603", "S607"]
 "scripts/**" = ["S603", "S607"]
