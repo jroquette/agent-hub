@@ -34,11 +34,15 @@ with fixed inputs. Project additions to managed JSON come from a seeded sibling 
 - `hub.lock`, a JSON file at the hub root, records the platform version the hub was generated with and, for each
   managed file, its path, the SHA-256 hash of the bytes written and the executable bit (for a link, its relative
   target). Seeded files are listed without a hash. It also records the schema version and the selected modules.
+  Entries have a fixed shape: a managed file `{"ownership": "managed", "sha256": "<hex>", "executable": false}`, a
+  managed link `{"ownership": "managed", "symlink": "<relative target>"}`, a seeded path `{"ownership": "seeded"}`.
 - The generated output is a function of three inputs only: `hub.json`, the platform version, and the seeded extension
   inputs (`*.project.json` files, `AGENTS.project.md`, and the entries present under `plugin/<project>/`).
-- Sync loads and checks its inputs first: the config ([ADR 0010](0010-hub-json-config-contract.md)), the running
-  CLI against the pin ([ADR 0013](0013-release-by-git-tags.md)), and the presence of `hub.lock` (only adopt, below, runs
-  without it). Any failure writes nothing and exits 1 naming the fix.
+- Sync loads and checks its inputs first, in this order: the running CLI against the pin
+  ([ADR 0013](0013-release-by-git-tags.md)), then the config's schema version and the whole config
+  ([ADR 0010](0010-hub-json-config-contract.md)), then the presence of `hub.lock` (only adopt, below, runs without
+  it). Any failure writes nothing and exits 1 naming the fix; the pin comes first because a CLI of another release may
+  not understand the config at all, and its fix (run the pinned release) also settles a schema version mismatch.
 - Sync plans every path before writing anything. It plans only paths that are rendered or recorded in the lock; any
   other path is unknown and is never written, moved or deleted. A managed directory such as `.claude/skills/`
   owns only the entries the lock lists; anything else inside it is unknown too. "Equal" compares the bytes and the
@@ -47,7 +51,9 @@ with fixed inputs. Project additions to managed JSON come from a seeded sibling 
     and a re-run of `init`, `sync` or `adopt`, safe.
   - Managed and recorded as managed: when it equals its lock entry, it is rewritten with the new render. Missing from
     disk, it is written again and reported as `restored <path>`: the templates own it, and nothing of the project is
-    lost.
+    lost. `restored` is only for a path recorded in the lock.
+  - Managed, rendered, with no lock entry and absent from disk (a new template file, or a module just selected): it is
+    created and reported as `created <path>`.
   - Managed and no longer rendered: deleted when it equals its lock entry, its entry dropped when it is already gone,
     a conflict otherwise. A rename is a delete plus a create.
   - Managed to seeded: the file stays as it is, and only its lock entry changes. If the file is missing, it
@@ -57,13 +63,18 @@ with fixed inputs. Project additions to managed JSON come from a seeded sibling 
     rendered. An empty seeded directory is a seeded `.gitkeep`, since git does not track directories.
   - Conflicts: a managed file that differs from both its lock entry and the render (an edit); a rendered managed path
     on disk without a managed lock entry (including seeded to managed); a real file or directory where a link is
-    rendered, or the reverse (never removed, and never recursively); and one agent or skill name present in both
-    plugins. Sync prints a diff (or the cause) per path, writes nothing and exits 3. The way out is to move the change
-    into an extension file, then restore the file from git or delete it (git keeps its history), and re-run; plain
-    sync has no flag that overwrites an edit.
+    rendered, or the reverse (never removed, and never recursively); a path with a symlinked ancestor (below); and one
+    agent or skill name present in both plugins. Sync prints a diff (or the cause) per path, writes nothing and exits
+    3. The way out is to move the change into an extension file, then restore the file from git or delete it (git
+    keeps its history), and re-run; plain sync has no flag that overwrites an edit.
   - The lock header (`platform_version`, `schema_version`, `modules`) is part of the plan: when it differs, sync
     rewrites the lock even if no file changes. With nothing to change, sync writes nothing and prints `up to date`.
-  - `--check` plans and writes nothing: it exits 3 when a conflict exists and 4 when only changes are pending.
+  - `--check` plans and writes nothing: it exits 3 when a conflict exists and 4 when only changes are pending; a path
+    to create counts as pending.
+- The file adapter never follows a symlinked parent. Before it writes, deletes or compares a path, it `lstat`s every
+  ancestor between the hub root and that path; a symlinked ancestor makes the path a conflict (or, for adopt, the
+  migration below), so a link planted in the hub can never redirect a write or a delete outside the files it names.
+  It also refuses any link, managed or found on disk, whose target resolves outside the hub.
 - A project customizes a managed file only through `hub.json` or a seeded sibling extension file:
   - Markdown: `X.md` is paired with an optional seeded `X.project.md`; the managed `CLAUDE.md` imports both
     `AGENTS.md` and `AGENTS.project.md`, so project rules take effect without a sync and the lock stays stable.
@@ -80,14 +91,22 @@ with fixed inputs. Project additions to managed JSON come from a seeded sibling 
   - `.gitignore` is seeded, written with the base entries at `hub init`: projects add to it freely, and a new base
     entry reaches existing hubs as a documented manual edit.
 - An existing hand-made hub joins this model through `hub sync --adopt`, which can be re-run and needs no `hub.lock`
-  (it writes one). Paths already in the lock follow the sync rules above. For a path not in the lock: a file equal to
-  the render becomes managed; a missing managed file is written; a seeded path is recorded as seeded and created when
-  absent (an empty `plugin/<project>/` included); a differing file is listed with its line counts, left untouched and
-  kept out of the lock. Adopt exits 3 while anything is listed, else 0; on a fully adopted hub with nothing to do it is
-  a no-op that prints `up to date`. `--accept PATH`, repeatable, takes the template version of a path that this run
-  lists as different (any other path is a usage error, exit 2); it overwrites the working file, so only what was
-  committed survives in git. Until every rendered managed path is in the lock, plain `hub sync` stops on the rest as
-  conflicts. Adopt never commits, and git history is never rewritten.
+  (it writes one). Paths already in the lock follow the sync rules above. For a path not in the lock, adopt acts in
+  the same run: a file equal to the render is recorded as managed; a missing managed file is written; a seeded path is
+  recorded as seeded and created when absent (an empty `plugin/<project>/` included); a differing file is listed with
+  its line counts, left untouched and kept out of the lock. The partial `hub.lock` is saved even when adopt then exits
+  3 because something is listed, so the next run starts from what is already settled; with nothing listed it exits 0,
+  and on a fully adopted hub with nothing to do it is a no-op that prints `up to date`.
+- A directory symlink where a managed directory of per-entry links is rendered (a hand-made hub whose `.claude/skills`
+  or `.claude/agents` points into its plugin folder) is listed as a migration, not a conflict: without `--accept` it is
+  a listed difference (exit 3); `--accept .claude/skills` (and the same for agents) removes the directory link itself,
+  never the contents of its target, and writes a real directory holding one link per entry of both plugins.
+- `--accept PATH`, repeatable, takes the template version of a path that this run lists as different or as a
+  migration; it overwrites the working file, so only what was committed survives in git. Other conflict kinds (a file
+  or directory where a link belongs or the reverse, other symlinked ancestors, a name in both plugins) are listed as
+  conflicts and `--accept` refuses them, as it refuses any path this run does not list (usage error, exit 2). Until
+  every rendered managed path is in the lock, plain `hub sync` stops on the rest as conflicts. Adopt never commits,
+  and git history is never rewritten.
 
 ### Consequences
 

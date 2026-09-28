@@ -54,7 +54,7 @@ A CLI creates and maintains hubs from a project configuration file. Everything t
 The hub's logic lives in the `hub` CLI, versioned and tested in this repo; the generated hub holds files, `hub.json` and thin shims. A shim runs the CLI release pinned in `hub.json` (a semver git tag of this repo, no PyPI) through `uvx`, so no global install is needed and each hub on a machine can pin its own version. Hooks are the exception: they stay Python 3.9 stdlib scripts that read `hub.json` directly, never need the CLI, and fail open.
 
 ```
-hub init <project> --repos org/backend,org/frontend --tracker linear:LOK
+hub init <project> --repos org/backend,org/frontend --tracker linear:LOK --branch-prefix jdoe/
 hub init --config hub.json   # generates from an existing project config
 hub sync        # reapplies templates without overwriting what the project customized
 hub sync --adopt   # joins a hand-made hub: identical files become managed, differences are listed

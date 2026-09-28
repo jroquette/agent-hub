@@ -36,7 +36,7 @@ fields, validation, versioning and the two readers.
 | `tracker.ready_label` | string | `agent-ready` | `hub next` |
 | `tracker.failed_label` | string | `agent-failed` | `hub run` on failure |
 | `repos[]` | list, at least one item | req. | launcher, worktrees, hooks, cloud setup |
-| `repos[].dir` | kebab-case, unique across `repos` | req. | the sibling directory next to the hub |
+| `repos[].dir` | one path segment (Rendered values), unique across `repos` | req. | the sibling directory next to the hub |
 | `repos[].github` | `owner/name` | req. | cloud setup, `hub run` |
 | `repos[].role` | free string; `app` is the only known value | `app` | templates may branch on known roles |
 | `repos[].check_fast`, `repos[].check` | shell commands | req. | stop gate (`check_fast`), `hub run` (`check`) |
@@ -46,19 +46,18 @@ fields, validation, versioning and the two readers.
 | `modules` | object keyed by module id | `{}` | generator, commands, doctor (Modules) |
 | `doctor.rules` | object keyed by rule id | `{}` | `hub doctor`; contract in [hub-doctor.md](hub-doctor.md) |
 
-Unknown keys are an error at every object level (`extra="forbid"`), so a typo fails loudly.
-Keys that start with `_` (such as `_comment`) are accepted and ignored at every level, the only way to annotate the
-file: a before-validator on each object model drops them. The exported schema matches: every object carries
-`"additionalProperties": false` and `"patternProperties": {"^_": {}}`, and the schema-equality test covers both.
-Cross-field checks are model validators JSON Schema cannot express, so there an editor accepts what the CLI rejects:
-unique `repos[].dir`, guard path roots, settings or `doctor.rules` entries of an unselected module.
+Unknown keys are an error at every object level; keys starting with `_` (such as `_comment`) are accepted and ignored
+at every level, and the exported schema says the same ([ADR 0010](../adr/0010-hub-json-config-contract.md)). Cross-field
+checks are model validators JSON Schema cannot express, so there an editor accepts what the CLI rejects: unique
+`repos[].dir`, guard path roots, settings or `doctor.rules` entries of an unselected module.
 
 ### Rendered values
 
 The model restricts values that land in shell, Make or YAML text, so templates need not escape them:
 
-- `project.name`, `repos[].dir`: kebab-case `^[a-z0-9]+(-[a-z0-9]+)*$`, one path segment (never `/`, `..` or an
-  absolute path). `tracker.team`: `^[A-Za-z0-9]+$`. `project.branch_prefix`: `^[A-Za-z0-9._-]+/$`.
+- `project.name`: kebab-case `^[a-z0-9]+(-[a-z0-9]+)*$`. `repos[].dir`: one safe path segment `^[A-Za-z0-9._-]+$`,
+  not `.` or `..` (mixed case allowed: Loki's `tradeSentinel`). `tracker.team`: `^[A-Za-z0-9]+$`.
+  `project.branch_prefix`: `^[A-Za-z0-9._-]+/$`.
 - `project.hub_repo`, `repos[].github`: `^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`. `project.author_email`: one `@`, no space.
 - `project.author_name` is free text, rendered only with format-specific quoting: `shlex.quote` in shell, the JSON
   encoder in JSON, a double-quoted escaped scalar in YAML; never into a Makefile. `repos[].check_fast` and
@@ -66,17 +65,18 @@ The model restricts values that land in shell, Make or YAML text, so templates n
 - `platform.version` matches `^\d+\.\d+\.\d+$` in the CLI and in the hooks' stdlib reader (a bad value counts as
   absent). Shims read it at run time (a stdlib `python3` one-liner, same pattern), never baked in at render time.
 - Guard paths: relative to the workspace (the directory that holds the hub and its repos), normalized, POSIX
-  separators, no `.` or `..` segment, not absolute; the first segment is a `repos[].dir` or the hub's directory name
-  (checked by the CLI, which knows the hub root).
+  separators, no `.` or `..` segment, not absolute. The first segment is a `repos[].dir` or the token `@hub` for the
+  hub itself, whatever its checkout directory is called (`@` cannot start a `dir`); `guard.deny_paths` may also start
+  with another workspace directory (Loki's `_archive`). Hooks resolve `@hub` to the hub root holding the hook file.
 
 ### Versioning
 
 `schema_version` changes only on a breaking change (a key removed, renamed or retyped, or an optional key made
-required); adding an optional key keeps it. The CLI loads in three steps: read `schema_version` and `platform.version`
-leniently (plain JSON, no model), check them, then validate the whole file; so an older CLI facing a newer file reports
-the version mismatch, not an unknown key. It supports exactly one version: on any other, `hub sync` writes nothing and
-exits 1 and `config.schema` reports an error, both naming the fix (update the file, or run the pinned release through
-the shim). Phase 1 ships version 1, so there is no migration command yet.
+required); adding an optional key keeps it. The CLI reads `platform.version` and `schema_version` leniently (plain JSON,
+no model) and checks them in that order before validating the whole file, so an older CLI facing a newer file reports
+the pin mismatch (whose fix settles both), not an unknown key. It supports one schema version: on any other, `hub sync`
+writes nothing and exits 1 and `config.schema` reports an error, both naming the fix (update the file, or run the pinned
+release through the shim). Phase 1 ships version 1, so there is no migration command yet.
 
 ### Modules
 
@@ -88,7 +88,6 @@ name the source and target repos) and `marketplace` (the optional plugin marketp
 ### Readers
 
 - **CLI**: validates with `HubConfig` and fails fast: exit 1 and one line per error, `hub.json: <json path>: <message>`.
-  The hub's stdlib config loader is dropped once its last script moves into the CLI.
 - **Hooks**: a defensive stdlib reader that never raises: a missing file, bad JSON or a wrong type falls back to the
   defaults above and the hook fails open. It ignores unknown and `_` keys.
 - **Consistency**: `test_matches_schema_defaults_when_hub_json_minimal` (generator package, Phase 1) runs the hook
@@ -126,7 +125,8 @@ Where each project guard of the Loki hub goes on adoption. "Extension file" is t
  "guard": {"ask_before_edit": ["demo-api/docs/adr"]}, "modules": {"cloud": {}, "bench": {}}}
 ```
 
-An existing hub migrates by adding `schema_version`, `platform` and, if it uses any, `modules`.
+An existing hub migrates by adding `schema_version`, `platform` and, if it uses any, `modules`. Guard paths rooted at a
+repo stay as they are; one rooted at the hub's directory name is rewritten as `@hub/…`.
 
 ## Invariants
 
