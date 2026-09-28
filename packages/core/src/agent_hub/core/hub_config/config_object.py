@@ -8,11 +8,19 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    GetJsonSchemaHandler,
     ModelWrapValidatorHandler,
     ValidationError,
     model_validator,
 )
-from pydantic_core import ErrorDetails, InitErrorDetails, PydanticCustomError, PydanticKnownError
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import (
+    CoreSchema,
+    ErrorDetails,
+    InitErrorDetails,
+    PydanticCustomError,
+    PydanticKnownError,
+)
 
 COMMENT_KEY_PREFIX = "_"
 # Keys starting with "_" are comments at every object level (ADR 0010); the schema says so too.
@@ -73,6 +81,23 @@ class ConfigObject(BaseModel):
         if problems:
             raise ValidationError.from_exception_data(cls.__name__, problems)
         return instance
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        """The model's schema, without the titles pydantic gives ``absent_by_default`` keys.
+
+        Pydantic titles a key after its attribute, which is not the key (``$schema``), and it
+        adds the title after the field's own ``json_schema_extra`` has run.
+        """
+        json_schema = handler(core_schema)
+        properties = handler.resolve_ref_schema(json_schema).get("properties", {})
+        for name, field in cls.model_fields.items():
+            if field.json_schema_extra is _drop_null_branch:
+                for key in {field.alias or name, name}:
+                    properties.get(key, {}).pop("title", None)
+        return json_schema
 
     def cross_field_problems(self) -> list[InitErrorDetails]:
         """Checks JSON Schema cannot express, each error with its own location; none by default.
@@ -148,7 +173,7 @@ def _drop_null_branch(schema: dict[str, Any]) -> None:
 def absent_by_default(*, alias: str | None = None) -> Any:
     """A ``Field`` for an optional key typed ``X | None = None``: absent means ``None``.
 
-    Its schema shows only ``X``, with no ``null`` branch and no default, because ``null`` is
-    rejected as a value (see ``ConfigObject``).
+    Its schema shows only ``X``, with no ``null`` branch, no default and no generated title,
+    because ``null`` is rejected as a value (see ``ConfigObject``).
     """
     return Field(default=None, alias=alias, json_schema_extra=_drop_null_branch)

@@ -12,7 +12,7 @@ COV := --cov=agent_hub.core --cov=agent_hub.storage --cov=agent_hub.collector \
 ALEMBIC := $(RUN) python -m agent_hub.storage.migration
 
 .PHONY: help format lint typecheck layout test-fast check-fast test-integration test-e2e imports \
-        migrations coverage check
+        migrations coverage check hub-schema
 
 help: ## List the targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "%-16s %s\n", $$1, $$2}'
@@ -53,6 +53,10 @@ migrations: ## upgrade a scratch SQLite database to head, then alembic check (no
 # so run it after them, as `make check` does; on its own it checks stale or missing data.
 coverage: ## per-package floors (core 90%, others 80%) over the collected coverage data
 	$(RUN) coverage json -q -o coverage.json && $(RUN) python -m scripts.check_coverage coverage.json
+
+# Not part of check: the drift tests in test-fast fail while the shipped file is stale.
+hub-schema: ## regenerate the shipped hub.json schema from HubConfig
+	$(RUN) python -m scripts.export_hub_schema
 
 # openapi: added when packages/api exists (the spec is regenerated and diffed in check).
 check: check-fast test-integration test-e2e imports migrations coverage ## the full gate, run before a PR

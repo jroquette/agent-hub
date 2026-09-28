@@ -15,9 +15,9 @@ fields, validation, versioning and the two readers.
 - Ownership: `seeded` ([hub-generator.md](hub-generator.md)). `hub init` writes it once; `hub sync` never writes it.
 - Source of truth: the frozen Pydantic model `HubConfig` in core (area `agent_hub.core.hub_config`), proved by unit
   tests (valid and invalid documents, defaults, error paths).
-- JSON Schema: exported with `HubConfig.model_json_schema()` and shipped as template data that the generator writes to
-  the hub as a managed `hub.schema.json`; a unit test fails when it differs from a fresh export. Consumers: editors
-  (`$schema`), the `config.schema` doctor rule ([hub-doctor.md](hub-doctor.md)) and the hooks' defaults test.
+- JSON Schema: `HubConfig.model_json_schema()`, a managed `hub.schema.json` that the generator writes to the hub. Until
+  the generator package exists (AGH-10), it ships as core package data (`agent_hub/core/hub_config/hub.schema.json`). A
+  unit test fails on drift from a fresh export. Consumers: editors (`$schema`), [`config.schema`](hub-doctor.md), hooks.
 
 ### Fields
 
@@ -90,8 +90,8 @@ name the source and target repos) and `marketplace` (the optional plugin marketp
 - **CLI**: validates with `HubConfig` and fails fast: exit 1 and one line per error, `hub.json: <json path>: <message>`.
 - **Hooks**: a defensive stdlib reader that never raises: a missing file, bad JSON or a wrong type falls back to the
   defaults above and the hook fails open. It ignores unknown and `_` keys.
-- **Consistency**: `test_matches_schema_defaults_when_hub_json_minimal` (generator package, Phase 1) runs the hook
-  template's reader on a minimal `hub.json` and compares its defaults with `HubConfig`'s.
+- **Consistency**: `test_matches_schema_defaults_when_hub_json_minimal` compares the hook reader's defaults on a minimal
+  `hub.json` with `HubConfig`'s. Until AGH-10, reader and test live in core (`agent_hub.core.hub_config.stdlib_reader`).
 
 ### Tracker
 
