@@ -1,6 +1,6 @@
 # 0012. The hub CLI subsumes the hub scripts
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-09-28
 - Deciders: José Henrique Roquette
 
