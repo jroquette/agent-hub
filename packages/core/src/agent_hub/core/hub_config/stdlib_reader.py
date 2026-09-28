@@ -1,0 +1,214 @@
+"""The hooks' ``hub.json`` reader: stdlib only, Python 3.9 syntax, never raises.
+
+Hooks run on the system ``python3`` (3.9 on macOS) with no dependencies, so this module imports
+nothing outside the standard library and nothing else from agent-hub; ruff checks it with a py39
+target. A hook must never fail because of ``hub.json`` (docs/design/project-config.md § Readers):
+where ``HubConfig`` would reject the file, this reader falls back instead.
+
+- A key that is absent, of the wrong type, or an empty string takes its default, and only that
+  key: the rest of the file is kept. A list with any item that is not a string is ``()``.
+- The defaults of optional keys equal ``HubConfig``'s (a test in core compares them). Required
+  strings default to ``""``, ``project.name`` to the name of the directory holding the file (then
+  ``hub``), and a repo without a non-empty string ``dir`` is dropped.
+- ``platform.version`` counts only as three ASCII numbers (``0.2.0``); anything else is ``None``.
+- Unknown keys and comment keys (``_`` first) are ignored. ``modules`` and ``doctor.rules`` keep
+  each entry's settings, minus comment keys, without checking them.
+
+A hook that loads this file by path must register the module before running it, or the frozen
+dataclasses fail to build (``AttributeError`` on ``NoneType.__dict__``)::
+
+    spec = importlib.util.spec_from_file_location("hub_stdlib_reader", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+from dataclasses import dataclass, field
+
+COMMENT_KEY_PREFIX = "_"
+FALLBACK_PROJECT_NAME = "hub"
+# ``[0-9]`` and ``fullmatch``: ``\d`` takes any Unicode digit and ``$`` a final newline.
+RELEASE_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+
+
+@dataclass(frozen=True)
+class PlatformSection:
+    """``platform``: the release the hub is pinned to, ``None`` when absent or malformed."""
+
+    version: str | None = None
+
+
+@dataclass(frozen=True)
+class ProjectSection:
+    """``project``."""
+
+    name: str = FALLBACK_PROJECT_NAME
+    hub_repo: str = ""
+    branch_prefix: str = ""
+    default_branch: str = "main"
+    author_name: str = ""
+    author_email: str = ""
+
+
+@dataclass(frozen=True)
+class TrackerSection:
+    """``tracker``."""
+
+    kind: str = ""
+    team: str = ""
+    ready_label: str = "agent-ready"
+    failed_label: str = "agent-failed"
+
+
+@dataclass(frozen=True)
+class RepoEntry:
+    """One ``repos[]`` item; items without a ``dir`` are dropped."""
+
+    dir: str
+    github: str = ""
+    role: str = "app"
+    check_fast: str = ""
+    check: str = ""
+
+
+@dataclass(frozen=True)
+class GuardSection:
+    """``guard``."""
+
+    ask_before_edit: tuple[str, ...] = ()
+    deny_hosts: tuple[str, ...] = ()
+    deny_paths: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class DoctorSection:
+    """``doctor``: each rule id with its settings, unchecked."""
+
+    rules: dict[str, dict[str, object]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class HubFile:
+    """``hub.json`` as read by hooks; field names are the JSON keys."""
+
+    schema_version: int | None = None
+    platform: PlatformSection = field(default_factory=PlatformSection)
+    project: ProjectSection = field(default_factory=ProjectSection)
+    tracker: TrackerSection = field(default_factory=TrackerSection)
+    repos: tuple[RepoEntry, ...] = ()
+    guard: GuardSection = field(default_factory=GuardSection)
+    modules: dict[str, dict[str, object]] = field(default_factory=dict)
+    doctor: DoctorSection = field(default_factory=DoctorSection)
+
+
+def load_hub_file(path: str | os.PathLike[str]) -> HubFile:
+    """Read ``hub.json`` at ``path``; never raises (see the module docstring for the defaults)."""
+    document = _read_document(path)
+    project = _object(document.get("project"))
+    tracker = _object(document.get("tracker"))
+    guard = _object(document.get("guard"))
+    schema_version = document.get("schema_version")
+    return HubFile(
+        # ``bool`` is an ``int``; only a JSON integer is a schema version.
+        schema_version=schema_version if type(schema_version) is int else None,
+        platform=PlatformSection(version=_version(_object(document.get("platform")))),
+        project=ProjectSection(
+            name=_text(project, "name", _directory_name(path)),
+            hub_repo=_text(project, "hub_repo", ""),
+            branch_prefix=_text(project, "branch_prefix", ""),
+            default_branch=_text(project, "default_branch", ProjectSection.default_branch),
+            author_name=_text(project, "author_name", ""),
+            author_email=_text(project, "author_email", ""),
+        ),
+        tracker=TrackerSection(
+            kind=_text(tracker, "kind", ""),
+            team=_text(tracker, "team", ""),
+            ready_label=_text(tracker, "ready_label", TrackerSection.ready_label),
+            failed_label=_text(tracker, "failed_label", TrackerSection.failed_label),
+        ),
+        repos=_repos(document.get("repos")),
+        guard=GuardSection(
+            ask_before_edit=_texts(guard, "ask_before_edit"),
+            deny_hosts=_texts(guard, "deny_hosts"),
+            deny_paths=_texts(guard, "deny_paths"),
+        ),
+        modules=_settings_by_id(document.get("modules")),
+        doctor=DoctorSection(rules=_settings_by_id(_object(document.get("doctor")).get("rules"))),
+    )
+
+
+def _read_document(path: str | os.PathLike[str]) -> dict[str, object]:
+    """The file's top-level object; ``{}`` when it cannot be read or is not a JSON object."""
+    # Only a regular file (a symlink to one included): opening a FIFO blocks and a device such as
+    # /dev/zero never ends, so a hook would hang.
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as file:
+            return _object(json.load(file))
+    # OSError: missing, a directory, unreadable. ValueError: bad UTF-8 or JSON (and a NUL in the
+    # path). RecursionError: nesting deeper than the parser's stack.
+    except (OSError, ValueError, RecursionError):
+        return {}
+
+
+def _directory_name(path: str | os.PathLike[str]) -> str:
+    """The name of the hub directory, the one holding the file (``hubhooks.py`` does the same)."""
+    try:
+        directory = os.path.dirname(os.path.abspath(path))
+    # A relative path needs the working directory, which may have been deleted.
+    except OSError:
+        return FALLBACK_PROJECT_NAME
+    return os.path.basename(directory) or FALLBACK_PROJECT_NAME
+
+
+def _object(value: object) -> dict[str, object]:
+    """A JSON object without its comment keys; anything else is an empty object."""
+    if not isinstance(value, dict):
+        return {}
+    return {key: item for key, item in value.items() if not key.startswith(COMMENT_KEY_PREFIX)}
+
+
+def _text(section: dict[str, object], key: str, default: str) -> str:
+    value = section.get(key)
+    return value if isinstance(value, str) and value else default
+
+
+def _texts(section: dict[str, object], key: str) -> tuple[str, ...]:
+    value = section.get(key)
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return tuple(value)
+    return ()
+
+
+def _version(platform: dict[str, object]) -> str | None:
+    value = platform.get("version")
+    if isinstance(value, str) and RELEASE_VERSION.fullmatch(value):
+        return value
+    return None
+
+
+def _repos(value: object) -> tuple[RepoEntry, ...]:
+    items = value if isinstance(value, list) else []
+    repos = [_object(item) for item in items]
+    return tuple(
+        RepoEntry(
+            dir=_text(repo, "dir", ""),
+            github=_text(repo, "github", ""),
+            role=_text(repo, "role", RepoEntry.role),
+            check_fast=_text(repo, "check_fast", ""),
+            check=_text(repo, "check", ""),
+        )
+        for repo in repos
+        if _text(repo, "dir", "")
+    )
+
+
+def _settings_by_id(value: object) -> dict[str, dict[str, object]]:
+    """``modules`` or ``doctor.rules``: each id whose settings are an object, minus comment keys."""
+    return {key: _object(item) for key, item in _object(value).items() if isinstance(item, dict)}

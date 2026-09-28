@@ -29,6 +29,14 @@ jobs:
           version: "0.12.19"
       - name: Install Python (from .python-version)
         run: uv python install
+      # The hooks' hub.json reader must run on Python 3.9 (the system python3 on macOS); with a 3.9
+      # on PATH, test_reads_same_values_when_run_on_python39 runs it there instead of skipping.
+      - name: Install Python 3.9 for the hooks reader test
+        run: |
+          uv python install 3.9
+          uv python dir --bin >> "$GITHUB_PATH"
+      - name: Require Python 3.9 on PATH
+        run: python3.9 -c "import sys; assert sys.version_info[:2] == (3, 9), sys.version"
       - name: Sync the workspace from uv.lock
         run: uv sync --locked --all-packages
       - name: Require a final Python 3.14 (no release candidate)
