@@ -78,9 +78,27 @@ class EventStoreContract:
         first = an_event(payload={"version": 1})
         second = an_event(source_id=first.source_id, payload={"version": 2})
 
-        _append_expecting_conflict(event_store, [first, second])
+        conflict = _append_expecting_conflict(event_store, [first, second])
 
+        assert (conflict.source, conflict.source_id) == (first.source, first.source_id)
+        assert conflict.position == 1
         assert event_store.read_all() == []
+
+    def test_counts_duplicate_when_same_instant_has_other_offset(
+        self, event_store: EventStore
+    ) -> None:
+        stored = an_event(timestamp="2026-09-27T08:00:00+00:00", payload={"a": 1, "b": [2]})
+        event_store.append([stored])
+        same = an_event(
+            source_id=stored.source_id,
+            timestamp="2026-09-27T10:00:00+02:00",
+            payload={"b": [2], "a": 1},
+        )
+
+        result = event_store.append([same])
+
+        assert result == AppendResult(appended=0, duplicates=1)
+        assert event_store.read_all() == [stored]
 
     def test_appends_nothing_when_batch_empty(self, event_store: EventStore) -> None:
         result = event_store.append([])
