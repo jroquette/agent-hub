@@ -9,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from agent_hub.collector.errors import InputNotFoundError, InputUnreadableError
 from agent_hub.core.events.event import Event
 
+NESTED_TOO_DEEPLY = "invalid JSON: nested too deeply"
+
 
 class ParsedEvent(BaseModel):
     """A valid event and the 1-based line it came from."""
@@ -92,11 +94,15 @@ def parse_events(text: str) -> ParsedBatch:
 
 def _parse_line(line: str) -> Event:
     try:
-        value = json.loads(line, parse_constant=_reject_constant)
+        value = json.loads(
+            line, parse_constant=_reject_constant, object_pairs_hook=_reject_duplicate_keys
+        )
     except ValueError as error:
-        # JSONDecodeError is a ValueError, and so is the rejected-constant error.
+        # JSONDecodeError is a ValueError; so are the rejected-constant and duplicate-key errors.
         reason = error.msg if isinstance(error, json.JSONDecodeError) else str(error)
         raise _LineRejectedError(f"invalid JSON: {reason}") from error
+    except RecursionError as error:
+        raise _LineRejectedError(NESTED_TOO_DEEPLY) from error
     if not isinstance(value, dict):
         msg = "expected a JSON object"
         raise _LineRejectedError(msg)
@@ -104,12 +110,25 @@ def _parse_line(line: str) -> Event:
         return Event.model_validate(value)
     except ValidationError as error:
         raise _LineRejectedError(_describe_validation_error(error)) from error
+    except RecursionError as error:
+        raise _LineRejectedError(NESTED_TOO_DEEPLY) from error
 
 
 def _reject_constant(name: str) -> object:
     # NaN and Infinity are not JSON (RFC 8259); Python's json accepts them by default.
     msg = f"{name} is not allowed"
     raise ValueError(msg)
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    # Python's json keeps the last of repeated keys, so a second source_id would silently win.
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            msg = f"duplicate key {json.dumps(key)}"
+            raise ValueError(msg)
+        result[key] = value
+    return result
 
 
 def _describe_validation_error(error: ValidationError) -> str:

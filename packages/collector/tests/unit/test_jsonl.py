@@ -3,6 +3,7 @@ import json
 
 import pytest
 
+from agent_hub.collector import jsonl
 from agent_hub.collector.errors import InputUnreadableError
 from agent_hub.collector.jsonl import LineError, ParsedEvent, parse_events, read_stream
 from agent_hub.core.testing.builders import an_event, events_to_jsonl
@@ -124,3 +125,55 @@ def test_raises_unreadable_when_stream_read_fails() -> None:
         read_stream(stream, name="stdin")
 
     assert "stdin" in str(caught.value)
+
+
+def _line_with_payload(payload_json: str) -> str:
+    fields = an_event().model_dump(mode="json")
+    del fields["payload"]
+    return json.dumps(fields)[:-1] + f', "payload": {payload_json}}}'
+
+
+def test_reports_error_when_line_nested_too_deeply() -> None:
+    depth = 200_000
+    line = _line_with_payload('{"a": ' + "[" * depth + "]" * depth + "}")
+
+    batch = parse_events(line)
+
+    assert batch.events == ()
+    assert batch.errors == (LineError(line_number=1, reason="invalid JSON: nested too deeply"),)
+
+
+def test_reports_error_when_validation_recurses_too_deeply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RecursingEvent:
+        @classmethod
+        def model_validate(cls, value: object) -> object:
+            raise RecursionError
+
+    monkeypatch.setattr(jsonl, "Event", RecursingEvent)
+
+    batch = parse_events(an_event().model_dump_json())
+
+    assert batch.errors == (LineError(line_number=1, reason="invalid JSON: nested too deeply"),)
+
+
+def test_reports_error_when_key_repeated_at_top_level() -> None:
+    event = an_event()
+    line = event.model_dump_json()[:-1] + ', "source_id": "evt-other"}'
+
+    batch = parse_events(line)
+
+    assert batch.events == ()
+    assert batch.errors == (
+        LineError(line_number=1, reason='invalid JSON: duplicate key "source_id"'),
+    )
+
+
+def test_reports_error_when_key_repeated_inside_payload() -> None:
+    line = _line_with_payload('{"state": "open", "state": "closed"}')
+
+    batch = parse_events(line)
+
+    assert batch.events == ()
+    assert batch.errors == (LineError(line_number=1, reason='invalid JSON: duplicate key "state"'),)
