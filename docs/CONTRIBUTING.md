@@ -107,32 +107,39 @@ The same checklist is in the PR template.
 
 ## Database migrations
 
-Alembic is configured in `packages/storage/alembic.ini`, with the scripts in `packages/storage/alembic/` and the
-revisions in `packages/storage/alembic/versions/`. Tables are declared only in `agent_hub.storage.db.metadata`.
+The migrations ship inside the installed storage package, so an installed `hub` creates and upgrades its own database:
+the scripts (`env.py`, `script.py.mako`) are in `packages/storage/src/agent_hub/storage/migrations/` and the revisions in
+`packages/storage/src/agent_hub/storage/migrations/versions/`. There is no `alembic.ini`: the Alembic config is built in
+code by `agent_hub.storage.migration.alembic_config`, which `make migrations`, the tests and `hub collect` all use.
+Contributors run the Alembic sub-commands through `python -m agent_hub.storage.migration`, with the database URL passed
+as `-x db_url=…` (default `sqlite://`, an in-memory database). Tables are declared only in
+`agent_hub.storage.db.metadata`, and the schema is only ever created by the migrations (never `metadata.create_all`).
 
 1. Change `metadata` in `packages/storage/src/agent_hub/storage/db.py`.
-2. Create the next revision (numbered ids, like the baseline `0001`), from the repo root:
+2. Create the next revision (numbered ids, like `0001` and `0002`), from the repo root:
 
    ```bash
-   uv run --locked --all-packages alembic -c packages/storage/alembic.ini revision -m "<message>" --rev-id <NNNN>
+   uv run --locked --all-packages python -m agent_hub.storage.migration revision -m "<message>" --rev-id <NNNN>
    ```
 
    To autogenerate it against a scratch database, first upgrade one to head, then pass the same URL:
 
    ```bash
    db="$(mktemp -d)/scratch.db"
-   uv run --locked --all-packages alembic -c packages/storage/alembic.ini -x db_url="sqlite:///$db" upgrade head
-   uv run --locked --all-packages alembic -c packages/storage/alembic.ini -x db_url="sqlite:///$db" \
+   uv run --locked --all-packages python -m agent_hub.storage.migration -x db_url="sqlite:///$db" upgrade head
+   uv run --locked --all-packages python -m agent_hub.storage.migration -x db_url="sqlite:///$db" \
      revision --autogenerate -m "<message>" --rev-id <NNNN>
    ```
 
-3. Review the generated file; migrations run in batch mode on SQLite. The file is formatted by ruff on creation.
+3. Review the generated file; migrations run in batch mode on SQLite. The file is formatted by ruff on creation. It is
+   package code: mypy strict, ruff and coverage check it like the rest of `src/`.
 4. `make migrations` (in `make check`) upgrades a scratch database to head and runs `alembic check`, so a `metadata`
    change without a migration fails. The integration test also downgrades to base.
 
-A merged revision is never edited; fix it with a new revision. Any edit in `alembic/versions/` needs the owner's explicit
-confirmation, as ADR edits do.
-Never point Alembic at the real database (`~/.local/share/agent-hub/agent-hub.db`) from a test or a gate.
+A merged revision is never edited; fix it with a new revision. Any edit in
+`packages/storage/src/agent_hub/storage/migrations/versions/` needs the owner's explicit confirmation, as ADR edits do.
+Never point Alembic or a test at the real database from a test or a gate: not at `AGENT_HUB_DB`, not at the default
+`$XDG_DATA_HOME/agent-hub/agent-hub.db` or `~/.local/share/agent-hub/agent-hub.db`.
 
 ## Manual repository and Linear settings
 
