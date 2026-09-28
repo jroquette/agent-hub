@@ -116,7 +116,9 @@ TOO_MANY_DIGITS = (
         (b"\xff\xfe{}", "not UTF-8 text: "),
         (b'{"schema_version": 1,', "not valid JSON: "),
         (b"[]", "must be a JSON object"),
-        (b"[" * 100_000, "not valid JSON here: "),
+        # Whether this depth raises RecursionError depends on the C stack size, so both outcomes are
+        # a "not valid JSON" line; the RecursionError branch has its own test below.
+        (b"[" * 100_000, "not valid JSON"),
         (LONG_INTEGER, TOO_MANY_DIGITS),
         (b'{"schema_version": ' + LONG_INTEGER + b"}", TOO_MANY_DIGITS),
         (
@@ -147,6 +149,19 @@ def test_exits_with_root_line_when_file_missing_or_not_json(
     assert len(lines) == 1
     assert lines[0].startswith(f"hub.json: $: {reason.format(path=json.dumps(str(path)))}")
     assert "Traceback" not in lines[0]
+
+
+def test_exits_with_root_line_when_nesting_exceeds_recursion_limit(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def too_deep(*_: object, **__: object) -> object:
+        raise RecursionError
+
+    monkeypatch.setattr(json, "loads", too_deep)
+
+    lines = stderr_lines_on_exit(write_document(tmp_path, {}), capsys)
+
+    assert lines == ["hub.json: $: not valid JSON here: it is nested too deeply"]
 
 
 def test_exits_with_root_line_when_path_is_directory(
