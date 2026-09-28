@@ -313,3 +313,26 @@ def test_reports_conflict_line_when_batch_conflicts_with_itself(tmp_path: Path) 
     [line] = result.stderr.splitlines()
     assert line.startswith("line 8: conflict: ")
     assert _stored(db_path) == []
+
+
+def test_prints_one_line_when_missing_file_name_has_newline(tmp_path: Path) -> None:
+    missing = tmp_path / "events\nline 1: forged.jsonl"
+
+    result = _collect([str(missing), "--db", str(tmp_path / "events.db")])
+
+    assert result.exit_code == 1
+    [line] = result.stderr.splitlines()
+    assert line == f"error: input file not found: {json.dumps(str(missing))}"
+
+
+def test_prints_one_line_when_database_path_has_newline(tmp_path: Path) -> None:
+    file = _write_jsonl(tmp_path / "events.jsonl", [an_event()])
+    blocker = tmp_path / "not-a\nline 1: forged"
+    blocker.write_text("synthetic", encoding="utf-8")
+
+    result = _collect([str(file), "--db", str(blocker / "events.db")])
+
+    assert result.exit_code == 1
+    [line] = result.stderr.splitlines()
+    assert line.startswith("error: ")
+    assert not _has_control_character(line)

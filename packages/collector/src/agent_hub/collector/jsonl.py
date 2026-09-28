@@ -52,16 +52,18 @@ def read_text(path: Path) -> str:
 
     I/O and decoding errors become collector errors.
     """
+    # The path comes from the user: quoted and escaped, so a message stays on one line.
+    quoted = json.dumps(str(path))
     try:
         return path.read_text(encoding="utf-8-sig")
     except FileNotFoundError as error:
-        msg = f"input file not found: {path}"
+        msg = f"input file not found: {quoted}"
         raise InputNotFoundError(msg) from error
     except UnicodeDecodeError as error:
-        msg = f"cannot read {path}: not valid UTF-8 (byte {error.start})"
+        msg = f"cannot read {quoted}: not valid UTF-8 (byte {error.start})"
         raise InputUnreadableError(msg) from error
     except OSError as error:
-        msg = f"cannot read {path}: {error.strerror or error}"
+        msg = f"cannot read {quoted}: {error.strerror or error}"
         raise InputUnreadableError(msg) from error
 
 
