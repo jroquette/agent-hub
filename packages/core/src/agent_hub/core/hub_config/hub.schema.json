@@ -1,0 +1,450 @@
+{
+  "$defs": {
+    "BrainLeakSettings": {
+      "additionalProperties": false,
+      "description": "``brain.leak``: the shortest trimmed brain line that counts as a leak.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "min_line_length": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        }
+      },
+      "title": "BrainLeakSettings",
+      "type": "object"
+    },
+    "Doctor": {
+      "additionalProperties": false,
+      "description": "How ``hub doctor`` is tuned for this project (docs/design/hub-doctor.md).",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "rules": {
+          "$ref": "#/$defs/DoctorRules"
+        }
+      },
+      "title": "Doctor",
+      "type": "object"
+    },
+    "DoctorRules": {
+      "additionalProperties": false,
+      "description": "``doctor.rules``: one optional entry per rule id, except ``config.schema``.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "platform.version": {
+          "$ref": "#/$defs/RuleSettings"
+        },
+        "lock.drift": {
+          "$ref": "#/$defs/RuleSettings"
+        },
+        "links.dead": {
+          "$ref": "#/$defs/RuleSettings"
+        },
+        "instructions.size": {
+          "$ref": "#/$defs/InstructionsSizeSettings"
+        },
+        "instructions.refs": {
+          "$ref": "#/$defs/RuleSettings"
+        },
+        "instructions.duplicates": {
+          "$ref": "#/$defs/RuleSettings"
+        },
+        "rules.frontmatter": {
+          "$ref": "#/$defs/RuleSettings"
+        },
+        "settings.valid": {
+          "$ref": "#/$defs/RuleSettings"
+        },
+        "settings.weakening": {
+          "$ref": "#/$defs/RuleSettings"
+        },
+        "permissions.bypass": {
+          "$ref": "#/$defs/RuleSettings"
+        },
+        "secrets.config": {
+          "$ref": "#/$defs/RuleSettings"
+        },
+        "mcp.pinned": {
+          "$ref": "#/$defs/RuleSettings"
+        },
+        "attribution.ai": {
+          "$ref": "#/$defs/RuleSettings"
+        },
+        "brain.leak": {
+          "$ref": "#/$defs/BrainLeakSettings"
+        },
+        "hooks.guard-extension": {
+          "$ref": "#/$defs/RuleSettings"
+        },
+        "makefile.override": {
+          "$ref": "#/$defs/RuleSettings"
+        },
+        "features.tracker": {
+          "$ref": "#/$defs/RuleSettings"
+        },
+        "bench.tasks": {
+          "$ref": "#/$defs/RuleSettings"
+        }
+      },
+      "title": "DoctorRules",
+      "type": "object"
+    },
+    "Guard": {
+      "additionalProperties": false,
+      "description": "Paths and hosts the hub's guard hook asks about or denies.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "ask_before_edit": {
+          "default": [],
+          "items": {
+            "pattern": "^(?:[!-.0-\\[\\]-~]*[!-\\-0-\\[\\]-~][!-.0-\\[\\]-~]*|\\.{3,})(?:/(?:[!-.0-\\[\\]-~]*[!-\\-0-\\[\\]-~][!-.0-\\[\\]-~]*|\\.{3,}))*$",
+            "type": "string"
+          },
+          "title": "Ask Before Edit",
+          "type": "array"
+        },
+        "deny_hosts": {
+          "default": [],
+          "items": {
+            "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*$",
+            "type": "string"
+          },
+          "title": "Deny Hosts",
+          "type": "array"
+        },
+        "deny_paths": {
+          "default": [],
+          "items": {
+            "pattern": "^(?:[!-.0-\\[\\]-~]*[!-\\-0-\\[\\]-~][!-.0-\\[\\]-~]*|\\.{3,})(?:/(?:[!-.0-\\[\\]-~]*[!-\\-0-\\[\\]-~][!-.0-\\[\\]-~]*|\\.{3,}))*$",
+            "type": "string"
+          },
+          "title": "Deny Paths",
+          "type": "array"
+        }
+      },
+      "title": "Guard",
+      "type": "object"
+    },
+    "InstructionsSizeSettings": {
+      "additionalProperties": false,
+      "description": "``instructions.size``: the line limits of instruction files.\n\n``max_lines`` stays a plain ``dict``, so frozen is shallow for the ``max_lines`` map.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "max_lines": {
+          "additionalProperties": {
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          },
+          "patternProperties": {
+            "^_": {}
+          },
+          "propertyNames": {
+            "minLength": 1
+          },
+          "type": "object"
+        }
+      },
+      "title": "InstructionsSizeSettings",
+      "type": "object"
+    },
+    "ModuleSettings": {
+      "additionalProperties": false,
+      "description": "The settings of a selected module; none in Phase 1, so only ``{}`` (and ``_`` keys).",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {},
+      "title": "ModuleSettings",
+      "type": "object"
+    },
+    "Modules": {
+      "additionalProperties": false,
+      "description": "The optional modules this hub selects: a key present means the module is selected.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "cloud": {
+          "$ref": "#/$defs/ModuleSettings"
+        },
+        "bench": {
+          "$ref": "#/$defs/ModuleSettings"
+        },
+        "contract-sync": {
+          "$ref": "#/$defs/ModuleSettings"
+        },
+        "marketplace": {
+          "$ref": "#/$defs/ModuleSettings"
+        }
+      },
+      "title": "Modules",
+      "type": "object"
+    },
+    "Platform": {
+      "additionalProperties": false,
+      "description": "The platform release this hub is pinned to.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "version": {
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version"
+      ],
+      "title": "Platform",
+      "type": "object"
+    },
+    "Project": {
+      "additionalProperties": false,
+      "description": "Project identity, authorship and branch rules.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "name": {
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "hub_repo": {
+          "pattern": "^[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*/[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*$",
+          "title": "Hub Repo",
+          "type": "string"
+        },
+        "branch_prefix": {
+          "pattern": "^[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*/$",
+          "title": "Branch Prefix",
+          "type": "string"
+        },
+        "default_branch": {
+          "default": "main",
+          "pattern": "^[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*(?:/[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*)*$",
+          "title": "Default Branch",
+          "type": "string"
+        },
+        "author_name": {
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Author Name",
+          "type": "string"
+        },
+        "author_email": {
+          "pattern": "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$",
+          "title": "Author Email",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "hub_repo",
+        "branch_prefix",
+        "author_name",
+        "author_email"
+      ],
+      "title": "Project",
+      "type": "object"
+    },
+    "Repo": {
+      "additionalProperties": false,
+      "description": "A repo managed by the hub, checked out next to it.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "dir": {
+          "pattern": "^[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*$",
+          "title": "Dir",
+          "type": "string"
+        },
+        "github": {
+          "pattern": "^[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*/[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*$",
+          "title": "Github",
+          "type": "string"
+        },
+        "role": {
+          "default": "app",
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Role",
+          "type": "string"
+        },
+        "check_fast": {
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Check Fast",
+          "type": "string"
+        },
+        "check": {
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Check",
+          "type": "string"
+        }
+      },
+      "required": [
+        "dir",
+        "github",
+        "check_fast",
+        "check"
+      ],
+      "title": "Repo",
+      "type": "object"
+    },
+    "RuleSettings": {
+      "additionalProperties": false,
+      "description": "How a project tunes one rule: whether it runs, and the level of its findings.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        }
+      },
+      "title": "RuleSettings",
+      "type": "object"
+    },
+    "Severity": {
+      "description": "The level of a finding.",
+      "enum": [
+        "error",
+        "warning",
+        "info"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "Tracker": {
+      "additionalProperties": false,
+      "description": "The task tracker and the labels the runner uses.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "kind": {
+          "const": "linear",
+          "title": "Kind",
+          "type": "string"
+        },
+        "team": {
+          "pattern": "^[A-Za-z0-9]+$",
+          "title": "Team",
+          "type": "string"
+        },
+        "ready_label": {
+          "default": "agent-ready",
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Ready Label",
+          "type": "string"
+        },
+        "failed_label": {
+          "default": "agent-failed",
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Failed Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "team"
+      ],
+      "title": "Tracker",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The whole ``hub.json``; the CLI and ``hub doctor`` validate with it.",
+  "patternProperties": {
+    "^_": {}
+  },
+  "properties": {
+    "$schema": {
+      "minLength": 1,
+      "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "platform": {
+      "$ref": "#/$defs/Platform"
+    },
+    "project": {
+      "$ref": "#/$defs/Project"
+    },
+    "tracker": {
+      "$ref": "#/$defs/Tracker"
+    },
+    "repos": {
+      "items": {
+        "$ref": "#/$defs/Repo"
+      },
+      "minItems": 1,
+      "title": "Repos",
+      "type": "array"
+    },
+    "guard": {
+      "$ref": "#/$defs/Guard",
+      "default": {
+        "ask_before_edit": [],
+        "deny_hosts": [],
+        "deny_paths": []
+      }
+    },
+    "modules": {
+      "$ref": "#/$defs/Modules"
+    },
+    "doctor": {
+      "$ref": "#/$defs/Doctor"
+    }
+  },
+  "required": [
+    "schema_version",
+    "platform",
+    "project",
+    "tracker",
+    "repos"
+  ],
+  "title": "hub.json",
+  "type": "object"
+}
