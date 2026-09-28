@@ -18,8 +18,11 @@ BUSY_TIMEOUT_MS = 5000
 WAL_SWITCH_ATTEMPTS = 10
 
 
-def create_sqlite_engine(path: Path) -> Engine:
-    """An engine on the SQLite file at ``path``; SQLite creates the file on first connect."""
+def create_sqlite_engine(path: Path, *, busy_timeout_ms: int = BUSY_TIMEOUT_MS) -> Engine:
+    """An engine on the SQLite file at ``path``; SQLite creates the file on first connect.
+
+    A connection waits up to ``busy_timeout_ms`` for a lock another connection holds.
+    """
     # No pool: each use opens and closes its own SQLite connection, so a store needs no close()
     # and no connection outlives the transaction that used it.
     # URL.create, not a "sqlite:///..." string: "?" and "%XX" in a path are file name characters,
@@ -28,22 +31,23 @@ def create_sqlite_engine(path: Path) -> Engine:
     engine = create_engine(
         URL.create("sqlite", database=str(path)), poolclass=NullPool, hide_parameters=True
     )
-    event.listen(engine, "connect", _configure_connection)
+
+    def configure_connection(
+        dbapi_connection: sqlite3.Connection, connection_record: ConnectionPoolEntry
+    ) -> None:
+        dbapi_connection.isolation_level = None
+        cursor = dbapi_connection.cursor()
+        try:
+            # The timeout first: switching a fresh file to WAL needs a lock another process may
+            # hold.
+            cursor.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
+            _switch_to_wal(cursor)
+        finally:
+            cursor.close()
+
+    event.listen(engine, "connect", configure_connection)
     event.listen(engine, "begin", _begin_transaction)
     return engine
-
-
-def _configure_connection(
-    dbapi_connection: sqlite3.Connection, connection_record: ConnectionPoolEntry
-) -> None:
-    dbapi_connection.isolation_level = None
-    cursor = dbapi_connection.cursor()
-    try:
-        # The timeout first: switching a fresh file to WAL needs a lock another process may hold.
-        cursor.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
-        _switch_to_wal(cursor)
-    finally:
-        cursor.close()
 
 
 def _switch_to_wal(cursor: sqlite3.Cursor) -> None:

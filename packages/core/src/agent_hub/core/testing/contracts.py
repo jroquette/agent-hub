@@ -100,6 +100,18 @@ class EventStoreContract:
         assert result == AppendResult(appended=0, duplicates=1)
         assert event_store.read_all() == [stored]
 
+    def test_appends_both_when_source_id_repeats_under_other_source(
+        self, event_store: EventStore
+    ) -> None:
+        # The identity is the pair (source, source_id): ids from different sources may collide.
+        first = an_event(source="claude_code", source_id="evt-shared", payload={"version": 1})
+        second = an_event(source="transcript", source_id="evt-shared", payload={"version": 2})
+
+        result = event_store.append([first, second])
+
+        assert result == AppendResult(appended=2, duplicates=0)
+        assert event_store.read_all() == [first, second]
+
     def test_appends_nothing_when_batch_empty(self, event_store: EventStore) -> None:
         result = event_store.append([])
 
