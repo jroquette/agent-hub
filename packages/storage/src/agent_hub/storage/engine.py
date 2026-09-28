@@ -8,14 +8,19 @@ instead. A connection with the execution option ``write_lock=True`` starts with
 never hold the write lock and, with WAL, never block writers.
 """
 
+import random
 import sqlite3
+import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import Protocol
 
 from sqlalchemy import URL, Connection, Engine, create_engine, event
 from sqlalchemy.pool import ConnectionPoolEntry, NullPool
 
 BUSY_TIMEOUT_MS = 5000
-WAL_SWITCH_ATTEMPTS = 10
+BACKOFF_MIN_SECONDS = 0.001
+BACKOFF_MAX_SECONDS = 0.02
 
 
 def create_sqlite_engine(path: Path, *, busy_timeout_ms: int = BUSY_TIMEOUT_MS) -> Engine:
@@ -41,7 +46,7 @@ def create_sqlite_engine(path: Path, *, busy_timeout_ms: int = BUSY_TIMEOUT_MS) 
             # The timeout first: switching a fresh file to WAL needs a lock another process may
             # hold.
             cursor.execute(f"PRAGMA busy_timeout={int(busy_timeout_ms)}")
-            _switch_to_wal(cursor)
+            switch_to_wal(cursor, busy_timeout_ms)
         finally:
             cursor.close()
 
@@ -50,19 +55,45 @@ def create_sqlite_engine(path: Path, *, busy_timeout_ms: int = BUSY_TIMEOUT_MS) 
     return engine
 
 
-def _switch_to_wal(cursor: sqlite3.Cursor) -> None:
-    # Connections switching a fresh file to WAL at the same moment can deadlock on its locks;
-    # SQLite then fails one of them at once instead of waiting (the busy timeout does not apply).
-    # Each such failure lets another connection go ahead, and once the file is in WAL the switch
-    # is a no-op, so a few attempts cover a handful of processes opening a new database at once.
-    for attempt in range(1, WAL_SWITCH_ATTEMPTS + 1):
+class _StatementCursor(Protocol):
+    def execute(self, sql: str, /) -> object: ...
+
+
+def switch_to_wal(
+    cursor: _StatementCursor,
+    busy_timeout_ms: int,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> None:
+    """Put the database in WAL mode, backing off while another connection holds its locks.
+
+    Connections switching a fresh file to WAL at the same moment deadlock on its locks, and
+    SQLite fails the loser at once with SQLITE_BUSY instead of calling the busy handler. The
+    loser sleeps a short random while (so contenders spread out) and tries again until the
+    busy timeout has passed; once the file is in WAL the switch is a no-op. Any other error is
+    raised at once.
+    """
+    deadline = clock() + busy_timeout_ms / 1000
+    while True:
         try:
             cursor.execute("PRAGMA journal_mode=WAL")
-        except sqlite3.OperationalError:
-            if attempt == WAL_SWITCH_ATTEMPTS:
+        except sqlite3.OperationalError as error:
+            if not _is_busy(error) or clock() >= deadline:
                 raise
+            sleep(_backoff_seconds())
         else:
             return
+
+
+def _is_busy(error: sqlite3.OperationalError) -> bool:
+    code = getattr(error, "sqlite_errorcode", None)
+    return code is not None and code & 0xFF == sqlite3.SQLITE_BUSY
+
+
+def _backoff_seconds() -> float:
+    # Jitter to spread contending processes, not a secret: a non-cryptographic PRNG is right.
+    return random.uniform(BACKOFF_MIN_SECONDS, BACKOFF_MAX_SECONDS)  # noqa: S311
 
 
 def _begin_transaction(connection: Connection) -> None:
