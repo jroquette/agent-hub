@@ -14,7 +14,7 @@ The repo is a uv workspace. The root `pyproject.toml` is virtual (no `[project]`
 | Package dir | Distribution | Module root | Role |
 |---|---|---|---|
 | `packages/core` | `agent-hub-core` | `agent_hub.core` | Domain: entities, canonical event, Pydantic schemas, use cases, ports; test support in `agent_hub.core.testing` |
-| `packages/storage` | `agent-hub-storage` | `agent_hub.storage` | Storage adapter: SQLAlchemy Core tables (`agent_hub.storage.db.metadata`) and Alembic migrations |
+| `packages/storage` | `agent-hub-storage` | `agent_hub.storage` | Storage adapter: SQLAlchemy Core tables (`agent_hub.storage.db.metadata`), the SQLite `EventStore` and the Alembic migrations, shipped inside the package (`agent_hub/storage/migrations/`) |
 | `packages/collector` | `agent-hub-collector` | `agent_hub.collector` | Collector adapter: receives hook events and transcripts and feeds them to core |
 | `packages/cli` | `agent-hub-cli` | `agent_hub.cli` | The `hub` command (Typer); entry point `agent_hub.cli.main:app` |
 | `packages/agent-hub` | `agent-hub` | `agent_hub_meta` (placeholder) | Meta-package: depends on the four above and declares the `hub` script, so `uv tool install agent-hub` installs everything |
@@ -117,8 +117,18 @@ flowchart LR
   tracker -. implements .-> ports
 ```
 
-The first port (`EventStore`) arrives with the collector issue; this foundation ships only the skeleton, the error roots
-and the empty `agent_hub.core.testing` modules.
+The first port is `EventStore` (`agent_hub.core.events.event_store`): an append-only store of canonical events,
+idempotent by `(source, source_id)`, that appends a batch all or nothing. The use case `IngestEvents` calls it. Its fake is
+`InMemoryEventStore` (`agent_hub.core.testing.fakes`), and its contract suite `EventStoreContract`
+(`agent_hub.core.testing.contracts`) runs against both the fake and `SqliteEventStore` (`agent_hub.storage.event_store`).
+
+`hub collect` wires them: the collector parses JSON Lines into events, `open_event_store(path)` upgrades the SQLite file
+to the latest migration (under a write lock) and returns the store, and `IngestEvents` appends the batch. The database
+file is `--db PATH`, else the environment variable `AGENT_HUB_DB`, else `$XDG_DATA_HOME/agent-hub/agent-hub.db` (only
+when `XDG_DATA_HOME` is absolute), else `~/.local/share/agent-hub/agent-hub.db`, where `~` is `HOME` when it is
+non-empty and absolute, else the account's home from the password database; with neither, `hub collect` exits 1 asking
+for `--db` or `AGENT_HUB_DB` (`agent_hub.cli.database_path`). SQLite runs in WAL mode, and the engine opens a connection
+per use (no pool).
 
 ## Where does this code go
 
@@ -133,7 +143,7 @@ Paths are under `packages/<pkg>/src/agent_hub/<pkg>/` unless shown in full. `<ar
 | Domain exception | the package's `errors.py` | Subclass of the package's root error, itself under `AgentHubError` |
 | Adapter | the adapter package, e.g. `storage/<port>.py` | Implements a core port; translates external errors |
 | Table | `storage`: `db.py` (`metadata`) | The single place tables are declared |
-| Migration | `packages/storage/alembic/versions/<NNNN>_<slug>.py` | Created with `alembic revision --rev-id <NNNN>`; see [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Migration | `packages/storage/src/agent_hub/storage/migrations/versions/<NNNN>_<slug>.py` | Created with `python -m agent_hub.storage.migration revision --rev-id <NNNN>`; the Alembic config is built in code (`agent_hub.storage.migration.alembic_config`); see [CONTRIBUTING.md](CONTRIBUTING.md) |
 | CLI command | `cli`: `main.py` or a command module registered on the Typer `app` | Parses input, calls one use case |
 | Wiring adapters to use cases | `agent_hub.cli` (composition root, [ADR 0008](adr/0008-cli-as-composition-root.md)) | Builds the adapters and passes them to the use case as ports |
 | API route | `api` (Phase 2) | Thin: validate, call ONE use case, map the response ([API.md](API.md)) |

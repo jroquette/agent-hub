@@ -55,7 +55,16 @@ A CLI creates and maintains hubs from a project configuration file. Everything t
 hub init <project> --repos org/backend,org/frontend --tracker linear:LOK
 hub sync        # reapplies templates without overwriting what the project customized
 hub doctor      # checks rules, links, dead references and instruction size
+hub collect [FILE|-] [--db PATH]   # ingests canonical events from JSON Lines (stdin when FILE is omitted or -)
 ```
+
+`hub collect` (Phase 0) writes to `$XDG_DATA_HOME/agent-hub/agent-hub.db` (only when `XDG_DATA_HOME` is absolute), else
+`~/.local/share/agent-hub/agent-hub.db`, where `~` is `HOME` when it is non-empty and absolute, else the account's home
+from the password database; with neither, `hub collect` exits 1 asking for `--db` or `AGENT_HUB_DB`. The environment
+variable `AGENT_HUB_DB` overrides that default and `--db PATH` overrides both. It brings the database to the latest
+schema before writing. A batch is all or nothing: an invalid line, a conflict, an input or storage error, or no usable
+home directory writes nothing and exits 1, with one line per error (naming the input line when there is one); usage
+errors exit 2. On success it prints `appended N, duplicates M`.
 
 **What to extract from `loki-trader-hub`**
 
@@ -106,9 +115,24 @@ Almost all of the data already exists. The platform normalizes five sources into
 | Workflow executor logs (today `.agent-runs/`) | Step, gate, outcome, failure reason | Per step |
 | GitHub and tracker (Linear) | Issues, PRs, commits, CI, review | Polling or webhook |
 
-**Canonical event** (draft): `{project, repo, session, agent, workflow, step, type, timestamp, payload, source}`. The initial types are `session.start`, `session.end`, `tool.call`, `tool.result`, `message`, `reasoning`, `decision`, `gate.request`, `gate.result`, `learning.proposed` and `learning.accepted`.
+**Canonical event:** `{project, session, type, timestamp, source, source_id, payload, repo, agent, workflow, step}`.
+`project`, `session`, `type`, `timestamp`, `source` and `source_id` are required; `payload` is a JSON object (empty by
+default); `repo`, `agent`, `workflow` and `step` are optional. Unknown fields are rejected.
+
+- `type` is a closed list: `session.start`, `session.end`, `tool.call`, `tool.result`, `message`, `reasoning`, `decision`,
+  `gate.request`, `gate.result`, `learning.proposed` and `learning.accepted`.
+- `source` is a closed list: `claude_code`, `transcript`, `otel`, `executor`, `github` and `linear`. Widening either list
+  later is a compatible change.
+- `timestamp` is an ISO 8601 string with an offset (numbers and naive times are rejected) and is stored in UTC.
+- **Identity and idempotency:** `(source, source_id)` identifies an event. Ingesting an identical event again is a
+  duplicate and is skipped; a different event with the same key is a conflict and fails the batch. Nothing stored is
+  ever overwritten.
+- The input format of `hub collect` is JSON Lines, UTF-8, one event per line (records split on `\n`); blank lines are
+  skipped and duplicate JSON keys are rejected.
 
 **Privacy and redaction.** Transcripts can contain secrets and personal data. Ingestion redacts key and token patterns before writing, and the data stays on the machine in v1.
+Redaction is not built yet: until it ships (Phase 2 at the latest, with the first real source), the collector accepts
+only synthetic input, and no real transcript or hook payload is fed to it.
 
 ## Proposed architecture
 

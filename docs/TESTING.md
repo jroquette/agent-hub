@@ -12,7 +12,13 @@ Makefile uses.
 - **Synthetic fixtures only.** Test data comes from builders in `agent_hub.core.testing.builders`. No real transcripts,
   no `*.jsonl` copied from `~/.claude/projects`, no real tokens, keys or personal data, anywhere in the repo.
 - **Hermetic.** Unit and contract tests have no network (sockets are blocked). No test reads or writes the real database
-  (`~/.local/share/agent-hub/agent-hub.db`) or `~/.claude`; files go under pytest's `tmp_path`.
+  or `~/.claude`; files go under pytest's `tmp_path`. The real database is the file `hub collect` picks: `--db PATH`,
+  else `AGENT_HUB_DB`, else `$XDG_DATA_HOME/agent-hub/agent-hub.db` (when `XDG_DATA_HOME` is absolute), else
+  `~/.local/share/agent-hub/agent-hub.db`, where `~` is `HOME` when it is non-empty and absolute, else the account's
+  home from the password database. `packages/cli/tests/conftest.py` has an autouse fixture that points `HOME`
+  and `XDG_DATA_HOME` under `tmp_path` and unsets `AGENT_HUB_DB` for every cli test; a test that needs other values
+  passes them to `CliRunner.invoke(env=...)`. JSON Lines inputs are written to `tmp_path` at test time from the
+  builders (`an_event`, `events_to_jsonl`); no `*.jsonl` file is committed.
 
 ## Levels
 
@@ -24,9 +30,12 @@ Makefile uses.
 | e2e | The installed product and the gates as subprocesses: `hub` installed with `uv tool install`, ruff and mypy run with the repo's configs | root `tests/e2e/` | `make check` |
 | web (later) | The React app: Vitest for components, Playwright end to end | `apps/web` (Phase 2) | added with `apps/web` |
 
-Contract folders start empty: the first suite (`EventStore`) arrives with the collector. A port's suite is written once,
-as reusable tests in `agent_hub.core.testing.contracts`, and each implementation's `tests/contract/` runs it against that
-implementation, so the fake used by unit tests is proven to behave like the real adapter.
+A port's suite is written once, as reusable tests in `agent_hub.core.testing.contracts`, and each implementation's
+`tests/contract/` runs it against that implementation, so the fake used by unit tests is proven to behave like the real
+adapter. The first suite is `EventStoreContract`: a class of tests that take an `event_store` fixture. Each
+implementation's `tests/contract/conftest.py` provides that fixture (`packages/core/tests/contract/` returns an
+`InMemoryEventStore`; `packages/storage/tests/contract/` returns `open_event_store(tmp_path / "events.db")`, a migrated
+SQLite file), and a test module subclasses the suite (`class TestSqliteEventStore(EventStoreContract)`).
 
 ## Layout
 
@@ -126,6 +135,9 @@ per package directory:
 - `make test-fast` erases the coverage data, then measures unit and contract tests with branch coverage for every
   `agent_hub` package (the Makefile `COV` list).
 - `make test-integration` appends integration tests to the same data. e2e tests run in subprocesses and are not counted.
+- Alembic loads the migration scripts by path, under module names no package source matches, so the migrations
+  directory is a source of its own in `COV` (`--cov=packages/storage/src/agent_hub/storage/migrations`) and counts
+  towards the storage floor.
 - `make coverage` writes `coverage.json` and runs `python -m scripts.check_coverage coverage.json`. It prints one line
   per package and fails when a package is under its floor or has no data, when a `packages/*/src/agent_hub/**/*.py` file
   is missing from the report, or when the report has no branch data. Run it after `test-fast` and `test-integration`,
@@ -152,7 +164,12 @@ Notes:
 - `tests/e2e/test_quality_gates.py` runs ruff and mypy with the repo's configs against scratch modules that break each
   convention (complexity, positional params, boolean flags, swallowed exceptions, commented-out code, formatting, missing
   annotations). A config change that switches a rule off fails `make check`. See [CONVENTIONS.md](CONVENTIONS.md).
-- `packages/storage/tests/integration/test_migrations.py` upgrades a `tmp_path` database to `head`, downgrades it to
-  `base`, and checks that `alembic check` finds no pending changes.
+- `packages/storage/tests/integration/test_migrations.py` upgrades a `tmp_path` database to `head` and downgrades it
+  to `base` through `agent_hub.storage.migration.alembic_config`, checks that `alembic check` finds no pending changes,
+  covers the offline (`--sql`) mode of `env.py` and runs `python -m agent_hub.storage.migration` as a module.
+- `tests/e2e/test_hub_cli.py` installs `hub` once per module (the `installed_hub` fixture in `tests/e2e/conftest.py`),
+  then checks `hub --version` and runs `hub collect` twice with `HOME` and `XDG_DATA_HOME` under `tmp_path` and a working
+  directory outside the repo: the second run reports only duplicates, and the default database is at the Alembic head.
+  This proves the installed package ships and applies its own migrations.
 - Redirect gate output to a file and check the exit code: `make check > check.log 2>&1; echo $?`. `make check | tail`
   hides a failure.
