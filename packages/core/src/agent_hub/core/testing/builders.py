@@ -30,6 +30,7 @@ _HUB_DOCUMENT: dict[str, Any] = {
         }
     ],
     "guard": {"ask_before_edit": ["demo-api/docs/adr"]},
+    "modules": {"cloud": {}, "bench": {}},
 }
 
 

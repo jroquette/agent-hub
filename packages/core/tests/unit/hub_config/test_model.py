@@ -1,3 +1,4 @@
+import json
 import posixpath
 from typing import Any
 
@@ -43,7 +44,12 @@ def error_types(document: dict[str, Any]) -> list[tuple[tuple[str | int, ...], s
 
 
 def with_value(path: tuple[str | int, ...], value: object) -> dict[str, Any]:
-    document = a_hub_document()
+    return with_path_value(a_hub_document(), path, value)
+
+
+def with_path_value(
+    document: dict[str, Any], path: tuple[str | int, ...], value: object
+) -> dict[str, Any]:
     parent: Any = document
     for segment in path[:-1]:
         parent = parent[segment]
@@ -72,6 +78,7 @@ def test_applies_defaults_when_optional_fields_absent() -> None:
     document = a_hub_document()
     del document["$schema"]
     del document["guard"]
+    del document["modules"]
 
     config = HubConfig.model_validate(document)
 
@@ -83,6 +90,33 @@ def test_applies_defaults_when_optional_fields_absent() -> None:
     assert config.guard.ask_before_edit == ()
     assert config.guard.deny_hosts == ()
     assert config.guard.deny_paths == ()
+    dump = config.model_dump(mode="json", exclude_none=True)
+    assert dump["modules"] == {}
+    assert dump["doctor"] == {"rules": {}}
+
+
+def schema_defaults(node: object) -> list[object]:
+    if isinstance(node, list):
+        return [default for item in node for default in schema_defaults(item)]
+    if not isinstance(node, dict):
+        return []
+    own = [node["default"]] if "default" in node else []
+    return own + [default for value in node.values() for default in schema_defaults(value)]
+
+
+def holds_null(value: object) -> bool:
+    if isinstance(value, dict):
+        return any(map(holds_null, value.values()))
+    if isinstance(value, list):
+        return any(map(holds_null, value))
+    return value is None
+
+
+def test_exports_no_null_default_when_schema_generated() -> None:
+    defaults = schema_defaults(HubConfig.model_json_schema())
+
+    assert defaults
+    assert [default for default in defaults if holds_null(default)] == []
 
 
 @pytest.mark.parametrize("path", REQUIRED_KEYS, ids=lambda path: ".".join(map(str, path)))
@@ -272,7 +306,7 @@ def test_reports_nested_locations_when_list_item_has_null_value() -> None:
     ]
 
 
-def test_keeps_nested_error_when_top_level_key_is_null() -> None:
+def test_keeps_cross_field_error_when_top_level_key_is_null() -> None:
     document = a_hub_document()
     document["repos"].append(document["repos"][0] | {"github": "acme/other"})
     with pytest.raises(ValidationError) as caught:
@@ -288,6 +322,48 @@ def test_keeps_nested_error_when_top_level_key_is_null() -> None:
         (("repos", 1, "dir"), "duplicate_repo_dir"),
     ]
     assert caught.value.errors()[1] == duplicate
+
+
+def test_keeps_nested_error_when_top_level_key_is_null() -> None:
+    document = with_value(("guard",), None)
+    document["project"]["name"] = "BAD"
+
+    assert sorted(error_types(document)) == [
+        (("guard",), "null_not_allowed"),
+        (("project", "name"), "string_pattern_mismatch"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ("guard",),
+        ("project", "name"),
+        ("repos", 0, "role"),
+        ("modules", "cloud"),
+        ("doctor", "rules", "links.dead"),
+        ("doctor", "rules", "links.dead", "severity"),
+    ],
+    ids=lambda path: ".".join(map(str, path)),
+)
+def test_reports_same_errors_when_null_document_validated_as_json(
+    path: tuple[str | int, ...],
+) -> None:
+    document = with_value(("doctor",), {"rules": {"links.dead": {}}})
+    document = with_path_value(document, path, None)
+    document["tracker"]["team"] = "D-M"
+    with pytest.raises(ValidationError) as from_python:
+        HubConfig.model_validate(document)
+
+    with pytest.raises(ValidationError) as from_json:
+        HubConfig.model_validate_json(json.dumps(document))
+
+    python_errors = {(error["loc"], error["type"]) for error in from_python.value.errors()}
+    assert {(error["loc"], error["type"]) for error in from_json.value.errors()} == python_errors
+    assert python_errors == {
+        (path, "null_not_allowed"),
+        (("tracker", "team"), "string_pattern_mismatch"),
+    }
 
 
 def test_rejects_schema_key_when_control_character() -> None:
@@ -425,3 +501,112 @@ def test_accepts_hub_document_when_migrated_with_version_keys() -> None:
     config = HubConfig.model_validate(document)
 
     assert config.guard.ask_before_edit[1] == "demo-api/packages/storage/migrations/versions"
+
+
+def test_accepts_every_module_when_all_selected() -> None:
+    modules = {"cloud": {}, "bench": {}, "contract-sync": {}, "marketplace": {}}
+
+    config = HubConfig.model_validate(with_value(("modules",), modules))
+
+    assert config.model_dump(mode="json", exclude_none=True)["modules"] == modules
+
+
+def test_rejects_module_when_id_unknown() -> None:
+    assert error_types(with_value(("modules", "slack"), {})) == [
+        (("modules", "slack"), "extra_forbidden")
+    ]
+
+
+def test_rejects_module_settings_when_key_not_underscore() -> None:
+    assert error_types(with_value(("modules", "cloud"), {"x": 1})) == [
+        (("modules", "cloud", "x"), "extra_forbidden")
+    ]
+
+
+def test_accepts_module_settings_when_only_comment_keys() -> None:
+    config = HubConfig.model_validate(with_value(("modules",), {"cloud": {"_note": "x"}}))
+
+    assert config.model_dump(mode="json", exclude_none=True)["modules"] == {"cloud": {}}
+
+
+@pytest.mark.parametrize("entry", [{}, {"enabled": False}, {"severity": "info"}])
+def test_rejects_bench_rule_when_bench_module_not_selected(entry: dict[str, Any]) -> None:
+    document = with_value(("modules",), {"cloud": {}})
+    document["doctor"] = {"rules": {"bench.tasks": entry}}
+
+    with pytest.raises(ValidationError) as caught:
+        HubConfig.model_validate(document)
+
+    [error] = caught.value.errors()
+    assert error["loc"] == ("doctor", "rules", "bench.tasks")
+    assert '"bench"' in error["msg"]
+
+
+def test_accepts_bench_rule_when_bench_module_selected() -> None:
+    document = with_value(("modules",), {"bench": {}})
+    document["doctor"] = {"rules": {"bench.tasks": {"enabled": False}}}
+
+    config = HubConfig.model_validate(document)
+
+    assert config.doctor.rules.bench_tasks is not None
+    assert config.doctor.rules.bench_tasks.enabled is False
+
+
+# Every fixed-key object of a document that has them all, as a path from the root.
+OBJECT_PATHS: list[tuple[str | int, ...]] = [
+    (),
+    ("platform",),
+    ("project",),
+    ("tracker",),
+    ("repos", 0),
+    ("guard",),
+    ("modules",),
+    ("modules", "cloud"),
+    ("modules", "bench"),
+    ("modules", "contract-sync"),
+    ("modules", "marketplace"),
+    ("doctor",),
+    ("doctor", "rules"),
+    ("doctor", "rules", "links.dead"),
+    ("doctor", "rules", "instructions.size"),
+    ("doctor", "rules", "brain.leak"),
+]
+
+
+def a_full_document() -> dict[str, Any]:
+    document = with_value(
+        ("modules",), {"cloud": {}, "bench": {}, "contract-sync": {}, "marketplace": {}}
+    )
+    document["guard"] |= {"deny_hosts": ["api.example.com"], "deny_paths": ["_archive"]}
+    document["doctor"] = {
+        "rules": {
+            "links.dead": {"severity": "warning"},
+            "instructions.size": {"max_lines": {"AGENTS.md": 120}},
+            "brain.leak": {"min_line_length": 80},
+        }
+    }
+    return document
+
+
+def object_at(document: dict[str, Any], path: tuple[str | int, ...]) -> dict[str, Any]:
+    target: Any = document
+    for segment in path:
+        target = target[segment]
+    return target  # type: ignore[no-any-return]
+
+
+@pytest.mark.parametrize("path", OBJECT_PATHS, ids=lambda path: ".".join(map(str, path)) or "root")
+def test_drops_comment_keys_when_at_every_object_level(path: tuple[str | int, ...]) -> None:
+    expected = HubConfig.model_validate(a_full_document()).model_dump(mode="json")
+    document = a_full_document()
+    object_at(document, path)["_comment"] = {"note": "ignored", "x": [1]}
+
+    assert HubConfig.model_validate(document).model_dump(mode="json") == expected
+
+
+@pytest.mark.parametrize("path", OBJECT_PATHS, ids=lambda path: ".".join(map(str, path)) or "root")
+def test_rejects_unknown_key_when_at_any_object_level(path: tuple[str | int, ...]) -> None:
+    document = a_full_document()
+    object_at(document, path)["comment"] = "x"
+
+    assert error_types(document) == [((*path, "comment"), "extra_forbidden")]
