@@ -40,9 +40,16 @@ infrastructure, and a per-hub pin lets hubs on one machine upgrade independently
   The root `pyproject.toml` is a virtual workspace, so the meta-package subdirectory must be named; uv resolves the
   other workspace members from the same checkout and caches each version. No global install is required. Using `hub`
   outside a hub (for example `hub init`) takes the same `--from` source with `uvx` or `uv tool install`.
+- A shim reads `platform.version` from `hub.json` when it runs, with a one-line stdlib `python3` reader that checks
+  it against `^\d+\.\d+\.\d+$`; the version is not baked into the shim at render time. Editing the pin therefore
+  takes effect at once, and the `hub sync` that follows already runs the new release. When the release cannot be
+  fetched, the shim names the missing access and exits 1 (127 stays reserved for uv missing).
 - Reading the private repository needs a credential wherever agent-hub is not attached: a read-only secret in each
   hub's CI, and the repository attached or a `GH_TOKEN` in cloud sessions of other projects. The `cloud` module's
   setup script checks that access and warms the uv cache with the pinned release before it fetches the repositories.
+  The credential reaches uv and git through a git credential helper or `GIT_CONFIG_*` environment settings (an
+  `insteadOf` rewrite), never inside the `--from` URL, so it cannot leak into process lists, logs, `hub.json` or
+  `hub.lock`.
 - Mismatch: a `hub` run directly whose version differs from `platform.version` refuses `hub sync` (exit 1, printing the
   pinned `uvx` command), and `hub doctor` reports it as an error. Upgrading a hub is: edit `platform.version`, run
   `hub sync` through a shim.

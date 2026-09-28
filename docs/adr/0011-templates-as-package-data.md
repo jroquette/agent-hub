@@ -48,8 +48,8 @@ tested and versioned with the rest of the workspace, and `cli` stays a thin comp
   is `@@` (placeholders `@@name` or `@@{name}`), because the plain `$` delimiter collides with text the templates must
   keep verbatim: `$(MAKE)` in the Makefile, `${{ … }}` in CI workflows and `$HOME` in shell scripts. Rendering always
   calls `substitute`, never `safe_substitute`, so an unknown or misspelled placeholder fails the render. A unit test
-  renders every template for the synthetic project and asserts that no `@@` is left in the output; a literal `@@`
-  in a template is written `@@@@`.
+  renders every template for the synthetic project and asserts that no unresolved placeholder (the `@@name` or
+  `@@{name}` pattern) is left in the output; a literal `@@` in a template is written `@@@@`.
 - The new package joins the independent sibling layer below `cli` in the `.importlinter` layers contract
   (`agent_hub.storage | agent_hub.collector | agent_hub.generator`) and is added to the forbidden list of core. This
   extends ADR 0008 without superseding it: its rule (`cli` wires, siblings never import each other) is unchanged, and
