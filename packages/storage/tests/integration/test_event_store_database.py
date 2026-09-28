@@ -1,3 +1,4 @@
+import json
 import multiprocessing
 from multiprocessing.queues import Queue
 from multiprocessing.synchronize import Barrier
@@ -151,3 +152,33 @@ def test_raises_storage_error_when_engine_cannot_connect(
 
     with pytest.raises(DatabaseAccessError, match="cannot open"):
         open_event_store(tmp_path / "agent-hub.db")
+
+
+def test_quotes_path_on_one_line_when_parent_file_name_has_newline(tmp_path: Path) -> None:
+    blocker = tmp_path / "not-a\nerror: forged"
+    blocker.write_text("synthetic", encoding="utf-8")
+    db_path = blocker / "agent-hub.db"
+
+    with pytest.raises(DatabaseAccessError) as raised:
+        open_event_store(db_path)
+
+    message = str(raised.value)
+    assert "\n" not in message
+    assert json.dumps(str(db_path)) in message
+
+
+def test_quotes_path_on_one_line_when_unopenable_name_has_newline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def engine_on_directory(path: Path) -> Engine:
+        return create_sqlite_engine(tmp_path)
+
+    monkeypatch.setattr(event_store, "create_sqlite_engine", engine_on_directory)
+    db_path = tmp_path / "agent\nerror: forged.db"
+
+    with pytest.raises(DatabaseAccessError) as raised:
+        open_event_store(db_path)
+
+    message = str(raised.value)
+    assert "\n" not in message
+    assert json.dumps(str(db_path)) in message

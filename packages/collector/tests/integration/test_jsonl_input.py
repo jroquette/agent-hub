@@ -1,3 +1,5 @@
+import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -50,3 +52,31 @@ def test_drops_byte_order_mark_when_file_starts_with_one(tmp_path: Path) -> None
     path.write_bytes(b"\xef\xbb\xbf" + text.encode())
 
     assert read_text(path) == text
+
+
+def _missing(path: Path) -> Path:
+    return path
+
+
+def _directory(path: Path) -> Path:
+    path.mkdir()
+    return path
+
+
+def _latin1(path: Path) -> Path:
+    path.write_bytes(b'{"project": "caf\xe9"}\n')
+    return path
+
+
+@pytest.mark.parametrize("make_input", [_missing, _directory, _latin1])
+def test_quotes_path_on_one_line_when_name_has_newline(
+    tmp_path: Path, make_input: Callable[[Path], Path]
+) -> None:
+    path = make_input(tmp_path / "events\nerror: forged.jsonl")
+
+    with pytest.raises(CollectorError) as caught:
+        read_text(path)
+
+    message = str(caught.value)
+    assert "\n" not in message
+    assert json.dumps(str(path)) in message

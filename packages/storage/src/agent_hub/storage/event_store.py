@@ -1,5 +1,6 @@
 """The SQLite ``EventStore`` adapter and the entry point that opens it."""
 
+import json
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -82,10 +83,12 @@ class SqliteEventStore:
 
 def open_event_store(path: Path) -> SqliteEventStore:
     """Open the event store at ``path``, creating its directories and upgrading it to head."""
+    # The path comes from the user: quoted and escaped, so a message stays on one line.
+    quoted = json.dumps(str(path))
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as error:
-        msg = f"cannot create the directory of the event database {path}: {error}"
+        msg = f"cannot create the directory of the event database {quoted}: {error}"
         raise DatabaseAccessError(msg) from error
     upgrade_to_head(path)
     engine = create_sqlite_engine(path)
@@ -94,7 +97,7 @@ def open_event_store(path: Path) -> SqliteEventStore:
         with engine.connect():
             pass
     except SQLAlchemyError as error:
-        msg = f"cannot open the event database {path}: {describe_database_error(error)}"
+        msg = f"cannot open the event database {quoted}: {describe_database_error(error)}"
         raise DatabaseAccessError(msg) from error
     return SqliteEventStore(engine)
 
