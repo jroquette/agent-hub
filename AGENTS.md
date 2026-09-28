@@ -37,6 +37,7 @@ Redirect the output to a file and check the exit code: `make check > check.log 2
 - `docs/TESTING.md`: test levels, layout, naming, fixtures, coverage floors.
 - `docs/API.md`: REST API standard (implemented in Phase 2).
 - `docs/CONTRIBUTING.md`: task workflow, branches, commits, PRs, Definition of Ready and Done, ADR process.
+- [docs/design/README.md](docs/design/README.md): design docs (config, generator, doctor, domain model), one file per subject.
 - `docs/adr/`: architecture decision records. Accepted ADRs are never edited; a new ADR supersedes them.
 
 ## Rules

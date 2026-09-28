@@ -94,7 +94,7 @@ The same checklist is in the PR template.
 
 ## Architecture Decision Records
 
-- Location and name: `docs/adr/NNNN-kebab-title.md`, numbered in sequence (`0009-…` is next).
+- Location and name: `docs/adr/NNNN-kebab-title.md`, numbered in sequence (`0014-…` is next).
 - Format: [MADR](https://adr.github.io/madr/): a header with `Status`, `Date` and `Deciders`, then the sections Context
   and Problem Statement, Considered Options, Decision Outcome (with Consequences) and More Information. Follow
   [ADR 0001](adr/0001-uv-workspace-with-namespace-packages.md) as the model.
