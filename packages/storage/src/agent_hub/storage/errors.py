@@ -9,3 +9,7 @@ class StorageError(AgentHubError):
 
 class MigrationError(StorageError):
     """The database could not be upgraded to the latest schema."""
+
+
+class DatabaseAccessError(StorageError):
+    """The event database could not be opened, read or written."""
