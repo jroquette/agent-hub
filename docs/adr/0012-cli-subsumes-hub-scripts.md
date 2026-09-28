@@ -30,7 +30,10 @@ gates and hexagonal architecture, and a fix reaches every hub through a release 
   retro metrics) stay hub files until then.
 - The launcher and the Makefile targets that map to a command become shims: each runs the `hub` release pinned in
   `hub.json` through uv ([ADR 0013](0013-release-by-git-tags.md)). When uv is missing, the shim prints how to install
-  it and exits 127, to tell "tool missing" apart from a failing command.
+  it and exits 127, to tell "tool missing" apart from a failing command. When uv is present but the pinned release
+  cannot be fetched, it prints which access is missing (the credential, or the repository not attached) and exits 1.
+- Skill and agent text that names a `hub` command is managed template content, so it changes in the same release as
+  the command it names.
 - Each script is migrated only after characterization tests pin its current behavior; the old script is deleted in the
   template release where its command lands.
 - **Hooks are the exception.** They stay managed stdlib scripts that run on Python 3.9, read `hub.json` directly and
@@ -39,15 +42,21 @@ gates and hexagonal architecture, and a fix reaches every hub through a release 
   hook, which runs once per session: it calls the pinned `hub brief` the same way the shims do, with a short timeout,
   and falls back to a small stdlib brief when uv or the release is unavailable, the call fails or it times out (the
   first run of a new version may be spent filling the uv cache).
-- Project-specific guard rules go in a seeded extension file that the base guard loads after its own checks. The guard
-  hardens that call:
-  - it resolves the file from the hub root (the hook's own location, or `CLAUDE_PROJECT_DIR`), never from the current
-    directory or from the tool input;
-  - it runs the extension with a time bound; a timeout, an import error or an exception gives the tool call `ask` with
-    the cause as the reason, so a broken or slow project guard never silently allows a call;
-  - its built-in ask-before-edit covers the guard's own inputs: the extension file, the hooks directory,
-    `.claude/settings*.json`, `hub.lock` and `hub.json` (which holds the `guard` block), so an agent cannot weaken the
-    guard without the owner's confirmation.
+- Project-specific guard rules go in a seeded extension file that the base guard consults after its own checks. The
+  guard hardens that call:
+  - it resolves the file from the hub root that holds the hook file itself; `CLAUDE_PROJECT_DIR`, the current
+    directory and the tool input never choose which file is loaded, and a `CLAUDE_PROJECT_DIR` that points elsewhere
+    is ignored for loading;
+  - a base `deny` is final: the extension runs only when the base verdict is not `deny`, and its answer can only
+    tighten the verdict (allow to ask or deny, ask to deny);
+  - it runs the extension in a child `python3` process with a timeout, not with `signal.alarm`, which only works on the
+    main thread of a POSIX process; the child loads the file, reads the config with the same stdlib reader and gets
+    the event on stdin;
+  - a timeout, an import error or any exception, `BaseException` included (so `SystemExit` too), gives the tool call
+    `ask` with the cause as the reason, so a broken or slow project guard never silently allows a call;
+  - its built-in ask-before-edit covers the guard's own inputs: the whole `plugin/<project>/hooks/` directory (the
+    extension and anything it imports), `.claude/settings*.json`, `hub.lock` and `hub.json` (which holds the `guard`
+    block), so an agent cannot weaken the guard without the owner's confirmation.
 - **The plugin lives in the hub.** The base workflow plugin is written into every hub as managed files under
   `plugin/hub-workflow/`, with the same name in every hub; a seeded `plugin/<project>/` holds the project's own skills,
   agents and guard extension. The generated `.claude/` wiring is part of the templates, because cloud sessions do not
