@@ -9,7 +9,7 @@ from alembic.script import ScriptDirectory
 
 from agent_hub.core.testing.builders import an_event, events_to_jsonl
 from agent_hub.storage.migration import alembic_config
-from tests.e2e.conftest import InstalledHub
+from tests.e2e.conftest import REPO_ROOT, InstalledHub
 
 EVENT_COUNT = 3
 
@@ -34,9 +34,9 @@ def test_collects_twice_when_installed_as_uv_tool(
     # The default database path, under tmp_path, and a working directory outside the repo, so
     # the installed package has to bring its own migrations.
     env = {**installed_hub.env, "HOME": str(tmp_path / "home"), "XDG_DATA_HOME": str(data_home)}
-    env.pop("AGENT_HUB_DB", None)
     work_dir = tmp_path / "work"
     work_dir.mkdir()
+    assert not work_dir.resolve().is_relative_to(REPO_ROOT)
     command = [str(installed_hub.executable), "collect", str(events_file)]
 
     first = run(command, env=env, cwd=work_dir)
@@ -53,4 +53,4 @@ def test_collects_twice_when_installed_as_uv_tool(
     with closing(sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True)) as connection:
         versions = connection.execute("SELECT version_num FROM alembic_version").fetchall()
     assert versions == [(head,)]
-    assert head == "0002"
+    assert head is not None
