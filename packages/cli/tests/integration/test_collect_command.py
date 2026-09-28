@@ -2,8 +2,10 @@ import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner, Result
 
+from agent_hub.cli import database_path
 from agent_hub.cli.main import app
 from agent_hub.core.events.event import Event
 from agent_hub.core.testing.builders import an_event, events_to_jsonl
@@ -264,3 +266,20 @@ def test_prints_one_line_when_unknown_key_has_newline(tmp_path: Path) -> None:
     [line] = result.stderr.splitlines()
     assert line.startswith("line 1: ")
     assert not _has_control_character(line)
+
+
+def test_fails_without_creating_database_when_home_unresolvable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    file = _write_jsonl(tmp_path / "events.jsonl", [an_event()])
+    monkeypatch.setattr(database_path, "account_home_directory", lambda: None)
+    monkeypatch.chdir(tmp_path)
+
+    result = _collect([str(file)], env={"HOME": "", "XDG_DATA_HOME": None})
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == (
+        "error: cannot resolve the home directory; pass --db or set AGENT_HUB_DB\n"
+    )
+    assert list(tmp_path.iterdir()) == [file]
