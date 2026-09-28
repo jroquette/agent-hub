@@ -2,11 +2,14 @@ import io
 import runpy
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from alembic.command import check, downgrade, upgrade
 from alembic.runtime.migration import MigrationContext
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import JSON, create_engine, inspect
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.types import TypeEngine
 
 from agent_hub.storage.migration import alembic_config
 
@@ -15,6 +18,17 @@ def _table_names(db_path: Path) -> set[str]:
     engine = create_engine(f"sqlite:///{db_path}")
     try:
         return set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
+
+
+def _events_schema(db_path: Path) -> tuple[dict[str, TypeEngine[Any]], list[Any]]:
+    """The events table's column types by name, and its unique constraints."""
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        inspector = inspect(engine)
+        columns = {column["name"]: column["type"] for column in inspector.get_columns("events")}
+        return columns, list(inspector.get_unique_constraints("events"))
     finally:
         engine.dispose()
 
@@ -29,17 +43,42 @@ def _current_revision(db_path: Path) -> str | None:
         engine.dispose()
 
 
-def test_upgrades_to_head_and_downgrades_to_base_when_baseline_is_empty(tmp_path: Path) -> None:
+def test_creates_and_drops_events_table_when_upgraded_and_downgraded(tmp_path: Path) -> None:
     db_path = tmp_path / "agent-hub.db"
     config = alembic_config(f"sqlite:///{db_path}")
 
     upgrade(config, "head")
-    assert _current_revision(db_path) == "0001"
-    assert _table_names(db_path) == {"alembic_version"}
+    assert _current_revision(db_path) == "0002"
+    assert _table_names(db_path) == {"alembic_version", "events"}
+    columns, unique_constraints = _events_schema(db_path)
+    filtered = {"project", "session", "type", "timestamp", "source", "source_id"}
+    assert filtered <= set(columns)
+    assert isinstance(columns["payload"], JSON)
+    assert [constraint["column_names"] for constraint in unique_constraints] == [
+        ["source", "source_id"]
+    ]
 
     downgrade(config, "base")
     assert _current_revision(db_path) is None
     assert _table_names(db_path) == {"alembic_version"}
+
+
+def test_rejects_duplicate_key_when_inserted_with_raw_sql(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    upgrade(alembic_config(f"sqlite:///{db_path}"), "head")
+    insert = (
+        "INSERT INTO events (project, session, type, source, source_id, timestamp, payload) "
+        "VALUES ('demo', 'session-1', 'tool.call', 'claude_code', 'evt-1', "
+        "'2026-09-27 08:00:00.000000', ?)"
+    )
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(insert, ('{"version": 1}',))
+        with pytest.raises(IntegrityError), engine.begin() as connection:
+            connection.exec_driver_sql(insert, ('{"version": 2}',))
+    finally:
+        engine.dispose()
 
 
 def test_reports_no_pending_changes_when_database_at_head(tmp_path: Path) -> None:
@@ -72,4 +111,4 @@ def test_upgrades_to_head_when_run_as_module(
 
     runpy.run_module("agent_hub.storage.migration", run_name="__main__")
 
-    assert _current_revision(db_path) == "0001"
+    assert _current_revision(db_path) == "0002"
