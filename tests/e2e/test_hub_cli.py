@@ -1,50 +1,56 @@
-import os
-import shutil
+import sqlite3
 import tomllib
 from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
 from subprocess import CompletedProcess
 
-INSTALL_TIMEOUT_SECONDS = 300
+from alembic.script import ScriptDirectory
+
+from agent_hub.core.testing.builders import an_event, events_to_jsonl
+from agent_hub.storage.migration import alembic_config
+from tests.e2e.conftest import InstalledHub
+
+EVENT_COUNT = 3
 
 
 def test_prints_version_when_installed_as_uv_tool(
-    tmp_path: Path, repo_root: Path, run: Callable[..., CompletedProcess[str]]
+    installed_hub: InstalledHub, repo_root: Path, run: Callable[..., CompletedProcess[str]]
 ) -> None:
-    uv = os.environ.get("UV") or shutil.which("uv")
-    assert uv is not None, "uv must be on PATH (run the tests with uv run)"
-    bin_dir = tmp_path / "bin"
-    # Isolated tool dirs, so the test never touches the user's installed tools.
-    env = {**os.environ, "UV_TOOL_DIR": str(tmp_path / "tools"), "UV_TOOL_BIN_DIR": str(bin_dir)}
-    env.pop("VIRTUAL_ENV", None)
-    meta_package = repo_root / "packages" / "agent-hub"
     cli_project = tomllib.loads((repo_root / "packages/cli/pyproject.toml").read_text())
 
-    # Pin the install to uv.lock, so the test (and CI) runs the locked dependency set.
-    constraints = tmp_path / "constraints.txt"
-    export = run(
-        [
-            uv,
-            "export",
-            "--locked",
-            "--package",
-            "agent-hub",
-            "--no-emit-workspace",
-            "--no-hashes",
-            "-o",
-            str(constraints),
-        ],
-        env=env,
-    )
-    assert export.returncode == 0, export.stderr
-
-    install = run(
-        [uv, "tool", "install", "--python", "3.14", "-c", str(constraints), str(meta_package)],
-        env=env,
-        timeout=INSTALL_TIMEOUT_SECONDS,
-    )
-    assert install.returncode == 0, install.stderr
-    result = run([str(bin_dir / "hub"), "--version"], env=env)
+    result = run([str(installed_hub.executable), "--version"], env=installed_hub.env)
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == cli_project["project"]["version"]
+
+
+def test_collects_twice_when_installed_as_uv_tool(
+    tmp_path: Path, installed_hub: InstalledHub, run: Callable[..., CompletedProcess[str]]
+) -> None:
+    events_file = tmp_path / "events.jsonl"
+    events_file.write_text(events_to_jsonl(an_event() for _ in range(EVENT_COUNT)))
+    data_home = tmp_path / "xdg"
+    # The default database path, under tmp_path, and a working directory outside the repo, so
+    # the installed package has to bring its own migrations.
+    env = {**installed_hub.env, "HOME": str(tmp_path / "home"), "XDG_DATA_HOME": str(data_home)}
+    env.pop("AGENT_HUB_DB", None)
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    command = [str(installed_hub.executable), "collect", str(events_file)]
+
+    first = run(command, env=env, cwd=work_dir)
+    second = run(command, env=env, cwd=work_dir)
+
+    assert (first.returncode, first.stderr) == (0, ""), first.stderr
+    assert first.stdout == f"appended {EVENT_COUNT}, duplicates 0\n"
+    assert (second.returncode, second.stderr) == (0, ""), second.stderr
+    assert second.stdout == f"appended 0, duplicates {EVENT_COUNT}\n"
+    database = data_home / "agent-hub" / "agent-hub.db"
+    assert database.is_file()
+    head = ScriptDirectory.from_config(alembic_config("sqlite://")).get_current_head()
+    # Read-only, so a missing file fails here instead of being created empty.
+    with closing(sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True)) as connection:
+        versions = connection.execute("SELECT version_num FROM alembic_version").fetchall()
+    assert versions == [(head,)]
+    assert head == "0002"
