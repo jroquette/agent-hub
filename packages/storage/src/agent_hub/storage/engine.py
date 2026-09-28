@@ -23,7 +23,10 @@ def create_sqlite_engine(path: Path) -> Engine:
     # and no connection outlives the transaction that used it.
     # URL.create, not a "sqlite:///..." string: "?" and "%XX" in a path are file name characters,
     # which URL parsing would read as a query string and escapes.
-    engine = create_engine(URL.create("sqlite", database=str(path)), poolclass=NullPool)
+    # hide_parameters: an error must never carry event payloads into messages or logs.
+    engine = create_engine(
+        URL.create("sqlite", database=str(path)), poolclass=NullPool, hide_parameters=True
+    )
     event.listen(engine, "connect", _configure_connection)
     event.listen(engine, "begin", _begin_transaction)
     return engine
