@@ -77,7 +77,8 @@ class Event(BaseModel):
 
     ``timestamp`` must carry an offset and is normalized to UTC, so the same instant written
     with another offset gives an equal event. ``Event`` is not hashable (``payload`` is a
-    dict); use ``key`` to index events.
+    dict); use ``key`` to index events. Frozen is shallow: ``payload`` is not deeply frozen and
+    must not be mutated.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

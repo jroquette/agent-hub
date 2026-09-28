@@ -79,3 +79,13 @@ def test_keeps_input_order_when_new_events_planned() -> None:
     plan = plan_append([third, stored, first, second], stored_by_key(stored))
 
     assert plan.new_events == (third, first, second)
+
+
+def test_raises_conflict_when_payload_bool_becomes_int() -> None:
+    stored = an_event(payload={"n": True})
+    changed = an_event(source_id=stored.source_id, payload={"n": 1})
+
+    with pytest.raises(EventConflictError) as caught:
+        plan_append([changed], stored_by_key(stored))
+
+    assert caught.value.position == 0
