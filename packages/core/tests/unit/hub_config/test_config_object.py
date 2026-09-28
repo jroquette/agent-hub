@@ -135,4 +135,5 @@ def test_omits_null_branch_when_field_absent_by_default() -> None:
         assert properties[key]["type"] == "string"
         assert "anyOf" not in properties[key]
         assert "default" not in properties[key]
+        assert "title" not in properties[key]
     assert Sample.model_validate({"name": "demo"}).note is None

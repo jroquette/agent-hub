@@ -141,6 +141,22 @@ A merged revision is never edited; fix it with a new revision. Any edit in
 Never point Alembic or a test at the real database: the file `hub collect` picks (`--db`, else `AGENT_HUB_DB`, else the
 XDG default `$XDG_DATA_HOME/agent-hub/agent-hub.db` or `~/.local/share/agent-hub/agent-hub.db`).
 
+## Hub config schema
+
+`hub.schema.json`, the JSON Schema of `hub.json`, is exported from the `HubConfig` model and ships as core package data
+(`packages/core/src/agent_hub/core/hub_config/hub.schema.json`). After any change to a `HubConfig` model, regenerate it
+from the repo root and commit the file with the change:
+
+```bash
+make hub-schema
+```
+
+The drift tests (in `make check-fast`) fail while the file differs from the export:
+`packages/core/tests/unit/hub_config/test_schema.py` compares the content,
+`tests/unit/scripts/test_export_hub_schema.py` the exact bytes (LF, key order). On an unchanged model
+`make hub-schema` leaves `git status --porcelain` empty. A Pydantic upgrade that changes the export needs the same
+regeneration in its PR.
+
 ## Manual repository and Linear settings
 
 These live outside the repo and are set by the owner:
