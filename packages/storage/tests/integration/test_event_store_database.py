@@ -69,6 +69,10 @@ def test_raises_storage_error_when_file_is_not_a_database(tmp_path: Path) -> Non
         open_event_store(db_path)
 
     assert type(raised.value).__module__ == "agent_hub.storage.errors"
+    message = str(raised.value)
+    assert "file is not a database" in message
+    for leaked in ("\n", "[SQL:", "[parameters:"):
+        assert leaked not in message
 
 
 def test_raises_storage_error_when_parent_is_a_file(tmp_path: Path) -> None:

@@ -21,7 +21,7 @@ from alembic.util import CommandError
 from sqlalchemy.exc import SQLAlchemyError
 
 from agent_hub.storage.engine import create_sqlite_engine
-from agent_hub.storage.errors import MigrationError
+from agent_hub.storage.errors import MigrationError, describe_database_error
 
 MIGRATIONS_DIR = Path(__file__).with_name("migrations")
 DEFAULT_DATABASE_URL = "sqlite://"
@@ -55,7 +55,7 @@ def upgrade_to_head(path: Path) -> None:
             config.attributes["connection"] = connection
             command.upgrade(config, "head")
     except (CommandError, SQLAlchemyError) as error:
-        msg = f"cannot upgrade the database to the latest schema: {error}"
+        msg = f"cannot upgrade the database to the latest schema: {describe_database_error(error)}"
         raise MigrationError(msg) from error
     finally:
         engine.dispose()

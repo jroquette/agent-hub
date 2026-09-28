@@ -113,5 +113,29 @@ def test_raises_storage_error_when_read_finds_no_events_table(tmp_path: Path) ->
     store = open_event_store(db_path)
     _drop_events_table(db_path)
 
-    with pytest.raises(DatabaseAccessError, match="cannot read"):
+    with pytest.raises(DatabaseAccessError, match="cannot read") as raised:
         store.read_all()
+
+    assert str(raised.value) == "cannot read the event database: no such table: events"
+
+
+def test_keeps_sql_and_payload_out_of_message_when_insert_fails(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    store = open_event_store(db_path)
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "CREATE TRIGGER reject_insert BEFORE INSERT ON events "
+                "BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END"
+            )
+    finally:
+        engine.dispose()
+
+    with pytest.raises(DatabaseAccessError) as raised:
+        store.append([an_event(payload={"note": "synthetic-payload-marker"})])
+
+    message = str(raised.value)
+    assert message == "cannot write to the event database: synthetic failure"
+    for leaked in ("\n", "[SQL:", "[parameters:", "synthetic-payload-marker"):
+        assert leaked not in message

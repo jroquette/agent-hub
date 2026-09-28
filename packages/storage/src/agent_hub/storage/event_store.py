@@ -12,7 +12,7 @@ from agent_hub.core.events.event import Event, EventKey
 from agent_hub.core.events.event_store import AppendResult
 from agent_hub.storage.db import events
 from agent_hub.storage.engine import create_sqlite_engine
-from agent_hub.storage.errors import DatabaseAccessError
+from agent_hub.storage.errors import DatabaseAccessError, describe_database_error
 from agent_hub.storage.migration import upgrade_to_head
 
 # Keys per lookup query: two bound parameters each, far below SQLite's parameter limit.
@@ -43,7 +43,7 @@ class SqliteEventStore:
                 # duplicate or raises a conflict. A second integrity error is not retried.
                 return self._append_once(events)
         except SQLAlchemyError as error:
-            msg = f"cannot write to the event database: {error}"
+            msg = f"cannot write to the event database: {describe_database_error(error)}"
             raise DatabaseAccessError(msg) from error
 
     def read_all(self) -> list[Event]:
@@ -52,7 +52,7 @@ class SqliteEventStore:
             with self._engine.connect() as connection:
                 rows = connection.execute(select(events).order_by(events.c.id)).mappings().all()
         except SQLAlchemyError as error:
-            msg = f"cannot read the event database: {error}"
+            msg = f"cannot read the event database: {describe_database_error(error)}"
             raise DatabaseAccessError(msg) from error
         return [_to_event(row) for row in rows]
 
@@ -94,7 +94,7 @@ def open_event_store(path: Path) -> SqliteEventStore:
         with engine.connect():
             pass
     except SQLAlchemyError as error:
-        msg = f"cannot open the event database {path}: {error}"
+        msg = f"cannot open the event database {path}: {describe_database_error(error)}"
         raise DatabaseAccessError(msg) from error
     return SqliteEventStore(engine)
 
