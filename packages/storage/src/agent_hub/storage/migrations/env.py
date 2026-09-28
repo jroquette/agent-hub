@@ -6,7 +6,7 @@ table properties in place, so migrations run in batch mode there.
 """
 
 from alembic import context
-from sqlalchemy import create_engine, pool
+from sqlalchemy import Connection, create_engine, pool
 
 from agent_hub.storage.db import metadata
 
@@ -36,17 +36,26 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    """Connect to the database and apply the migrations."""
+    """Apply the migrations on the caller's connection, else on a new one to the config's URL."""
+    shared: Connection | None = config.attributes.get("connection")
+    if shared is not None:
+        # The caller owns the connection and its transaction (a write lock on SQLite).
+        _run_migrations(shared)
+        return
     engine = create_engine(database_url(), poolclass=pool.NullPool)
     with engine.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=metadata,
-            render_as_batch=connection.dialect.name == "sqlite",
-        )
-        with context.begin_transaction():
-            context.run_migrations()
+        _run_migrations(connection)
     engine.dispose()
+
+
+def _run_migrations(connection: Connection) -> None:
+    context.configure(
+        connection=connection,
+        target_metadata=metadata,
+        render_as_batch=connection.dialect.name == "sqlite",
+    )
+    with context.begin_transaction():
+        context.run_migrations()
 
 
 if context.is_offline_mode():

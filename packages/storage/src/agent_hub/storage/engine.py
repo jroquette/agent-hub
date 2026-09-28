@@ -18,7 +18,7 @@ BUSY_TIMEOUT_MS = 5000
 
 
 def create_sqlite_engine(path: Path) -> Engine:
-    """An engine on the SQLite file at ``path`` (which must exist and be migrated)."""
+    """An engine on the SQLite file at ``path``; SQLite creates the file on first connect."""
     # No pool: each use opens and closes its own SQLite connection, so a store needs no close()
     # and no connection outlives the transaction that used it.
     engine = create_engine(f"sqlite:///{path}", poolclass=NullPool)
@@ -33,8 +33,9 @@ def _configure_connection(
     dbapi_connection.isolation_level = None
     cursor = dbapi_connection.cursor()
     try:
-        cursor.execute("PRAGMA journal_mode=WAL")
+        # The timeout first: switching a fresh file to WAL needs a lock another process may hold.
         cursor.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+        cursor.execute("PRAGMA journal_mode=WAL")
     finally:
         cursor.close()
 
