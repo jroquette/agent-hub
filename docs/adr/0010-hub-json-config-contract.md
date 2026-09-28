@@ -1,6 +1,6 @@
 # 0010. hub.json as the versioned config contract
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-09-28
 - Deciders: José Henrique Roquette
 

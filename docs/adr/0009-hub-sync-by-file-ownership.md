@@ -1,6 +1,6 @@
 # 0009. Hub sync by per-file ownership
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-09-28
 - Deciders: José Henrique Roquette
 
