@@ -283,3 +283,33 @@ def test_fails_without_creating_database_when_home_unresolvable(
         "error: cannot resolve the home directory; pass --db or set AGENT_HUB_DB\n"
     )
     assert list(tmp_path.iterdir()) == [file]
+
+
+def test_reports_conflict_line_when_blank_lines_precede_events(tmp_path: Path) -> None:
+    db_path = tmp_path / "events.db"
+    stored = an_event(payload={"state": "open"})
+    open_event_store(db_path).append([stored])
+    changed = an_event(source_id=stored.source_id, payload={"state": "closed"})
+    text = f"\n\n{an_event().model_dump_json()}\n\n{changed.model_dump_json()}\n"
+
+    result = _collect(["--db", str(db_path)], stdin=text)
+
+    assert result.exit_code == 1
+    [line] = result.stderr.splitlines()
+    assert line.startswith("line 5: conflict: ")
+    assert _stored(db_path) == [stored]
+
+
+def test_reports_conflict_line_when_batch_conflicts_with_itself(tmp_path: Path) -> None:
+    db_path = tmp_path / "events.db"
+    first = an_event(payload={"state": "open"})
+    changed = an_event(source_id=first.source_id, payload={"state": "closed"})
+    lines = ["", "", first, "", an_event(), first, "", changed]
+    text = "\n".join(line if isinstance(line, str) else line.model_dump_json() for line in lines)
+
+    result = _collect(["--db", str(db_path)], stdin=text + "\n")
+
+    assert result.exit_code == 1
+    [line] = result.stderr.splitlines()
+    assert line.startswith("line 8: conflict: ")
+    assert _stored(db_path) == []
