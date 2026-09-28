@@ -3,83 +3,106 @@
 ## Purpose
 
 A sketch for Phases 2 and 3: how the three derived entities of the [domain model](domain-model.md) are computed from
-canonical events ([SPEC](../SPEC.md), event model). For each one it lists the event types and fields that create,
-change and close it. The payload keys named here are proposals that the Phase 2 source adapters fix; the SPEC only
-says the payload is a JSON object.
+canonical events ([SPEC](../SPEC.md#data-sources-and-event-model)). For each one it lists the event types and fields
+that create, change and close it, and the properties any implementation must have. The payload keys named here are
+proposals that the Phase 2 source adapters fix; mechanisms not yet chosen are listed under Open questions.
 
 ## Contract
 
-### Fold
+### Sources and privacy
 
-- A derivation is a pure function in core that folds events into entity state. Its only input is the event store; it
-  sorts by `(timestamp, source, source_id)`, a total order because the pair `(source, source_id)` is unique.
-- Recomputable: the derived tables are projections, kept apart from the events table. Dropping them and folding the
-  whole store again rebuilds them exactly.
+- Redaction happens in the source adapter, before the event is appended. A stored event is never changed, so a secret
+  that reaches the store cannot be fixed afterwards; the collector's own redaction is a second line, not the first.
+- Events carry no raw message text, reasoning text or raw tool output. `message`, `reasoning` and `tool.result`
+  events hold metadata (sizes, tool, status) and a reference to the redacted transcript blob, which has its own short
+  retention (SPEC direction 3). Where that blob is stored is open.
+- The post-session extraction writes its results (summary, decisions, proposed learnings) as events, so they survive
+  the deletion of the transcript. The Session records the transcript reference and its deletion date.
+
+### Fold: required properties
+
+- A derivation is a pure function in core over stored events. Rebuilding from the events gives the same state; how
+  and where the derived state is kept is open.
 - The fold is idempotent: a duplicate never reaches the store, and folding the same events again, in any arrival
-  order, gives the same state. An incremental update must equal a full fold; an event older than the last one folded
-  for an entity triggers a refold of that entity.
+  order, gives the same state.
+- One fact reported by several sources (hooks, transcript, OTel) counts once. Either each attribute has one
+  authoritative source, or the sources share a correlation key; which one is open.
+- State that depends on order (current step, last tool, first terminal event) follows one source's own sequence,
+  never a sort of timestamps across sources, whose clocks and latencies differ.
+- Costs and token counts are summed exactly (`Decimal`, never float).
 - Tolerant: a missing or unknown payload key leaves the attribute empty; it never fails the fold.
-- Proof (Phase 2): unit tests on the fold with shuffled and duplicated input, and an integration test that drops the
-  projections and rebuilds them from a SQLite store.
+- Proof (Phase 2): unit tests on the fold with shuffled, duplicated and multi-source input.
 
 ### Session
 
 | Step | Events | Fields used |
 |---|---|---|
-| Create | the first event with a new `(project, session)` from `claude_code`, `transcript` or `otel`; normally `session.start` | `timestamp` (start), `repo`, `agent`, `workflow` |
-| Change | every later event of that session | latest `timestamp` (last activity); `tool.call` → tool counts (`payload.tool`) and files touched (`payload.path`); `tool.result` → errors; `otel` → tokens and cost (`payload.cost_usd`); `decision` → decision count; an open `gate.request` → waiting |
-| Close | `session.end` | `timestamp` (end), `payload.outcome` |
+| Create | the first event with a new `(project, session)` from `claude_code`, `transcript` or `otel` | `repo`, `agent`, `workflow`; start = `session.start`'s `timestamp` when present, else the earliest seen |
+| Change | every later event of that session | last activity; `tool.call` → tool counts (`payload.tool`) and files touched (`payload.path`); `tool.result` → errors; `otel` → tokens and cost; `decision` → decisions; an open `gate.request` → waiting; the transcript reference and deletion date |
+| Close | `session.end` | end = the last `session.end`; `payload.outcome` |
 
-Events from `executor`, `github` or `linear` that name an existing session enrich it (for example a PR link) but never
-create one. A session without `session.end` stays open.
+A resumed session (several start and end pairs under one `session`) is one Session. Events that arrive after its end
+enrich it (a late cost, a PR link from `github`) but never reopen it. Events from `executor`, `github` or `linear`
+that name an existing session enrich it but never create one. A session without `session.end` stays open.
 
 ### WorkflowRun
 
-Created and moved by `executor` events that carry `workflow`, `step` and the run id. Sessions join a run when their
-events carry the same `workflow` and run id. Mapping of the current issue-to-PR runner, whose per-transition log
-already records a run id, the issue, the repo and the state:
+Created and moved by `executor` events that carry `workflow`, `step` and the run id. A retried step carries its
+attempt number in `payload.attempt` and in the executor's `source_id`, so each attempt is a distinct event, and step
+state is keyed by `(step, attempt)`. How a Session joins its run is open. Mapping of the current issue-to-PR runner,
+whose per-transition log already records a run id, the issue, the repo and the state:
 
 | Runner state | Event (proposed types, see Open questions) | Effect on the run |
 |---|---|---|
 | `PICKED` | `step.start`, step `pick`, `payload.issue` | creates it: workflow, issue, repo, start time |
 | `WORKTREE` | `step.start`, step `worktree` | current step |
 | `IMPLEMENTING` | `step.start`, step `implement` | current step; the agent sessions it starts join the run |
-| `VERIFYING` | `step.start`, step `verify`; `gate.result` with the check outcome | current step; gate outcome |
+| `VERIFYING` | `step.start`, step `verify`; `gate.result` with the check outcome | current step and attempt; gate outcome |
 | `PR_OPEN` | `step.start`, step `pr`, `payload.pr_url` | current step; PR link |
-| `FAILED(stage, reason)` | `step.end` with `payload.status` failed, `payload.stage`, `payload.reason` | marks it failed with stage and reason |
-| `REPORTED` | `step.end`, step `report` | closes it: end time, final state done or failed |
+| `FAILED(stage, reason)` | `step.end` with `payload.status` failed, then `run.end` failed with `payload.stage`, `payload.reason` | closes it as failed with stage and reason |
+| `REPORTED` | `step.end` of the last step, then `run.end` done | closes it: end time, final state |
 
-Human approvals anywhere in a run are `gate.request` (waiting) and `gate.result` (approver, decision). A run with no
-closing event stays in its current step.
+A run ends only on its explicit terminal event, `run.end`, never because a step has a given name. A run with no
+`run.end` stays in its current step. Approvals anywhere in a run are a `gate.request` (waiting) and a `gate.result`
+(approver, decision), paired by `payload.gate_id`, never by adjacency.
 
 ### Learning
 
 | Step | Events | Fields used |
 |---|---|---|
-| Create | `learning.proposed` | `payload.id`, `payload.text`, `payload.target` (the brain file it would change), author; `session` → source session |
-| Close | `learning.accepted` with the same `payload.id` | status accepted, who accepted it, when |
-| Close | a rejection (no event type today, see Open questions) | status rejected, reason |
+| Create | `learning.proposed` | its `(source, source_id)` is the identity; `payload.text`, `payload.target` (the brain file it would change), `payload.author` (person or agent); `session` → source session, none for a person's proposal |
+| Change | none | nothing changes a learning between proposal and close |
+| Close | `learning.accepted` naming the proposal in `payload.proposal` | status accepted, who and when, `payload.brain_path` and `payload.commit` it became |
+| Close | a rejection (`learning.rejected`, proposed type) | status rejected, reason |
 
-A learning stays `proposed` until closed. Accepting one records the fact; editing the brain stays a human act.
+The first terminal event, in its source's own order, wins; a later one stays in the store and the fold ignores it. An
+accept whose proposal is not stored yet waits and is applied once the proposal arrives. A learning stays `proposed`
+until closed. Accepting one records the fact; editing the brain stays a human act.
 
 ## Invariants
 
 - The event store is the single input; derivations never write, change or delete an event.
-- Same stored events, same derived state, whatever the arrival order or the number of refolds.
+- Same stored events, same derived state, whatever the arrival order or the number of rebuilds.
 - A derived entity can always be dropped and rebuilt; it holds nothing the events do not.
+- No event holds raw transcript text or raw tool output.
 
 ## Decisions
 
-- [SPEC](../SPEC.md): the canonical event, idempotency by `(source, source_id)`, and direction 3 (structured events
-  and derivatives are kept, raw transcripts are not working memory).
+- [SPEC](../SPEC.md): the canonical event, idempotency by `(source, source_id)`, privacy and redaction, and
+  direction 3 (structured events and derivatives are kept; raw transcripts are short-lived).
 - [ADR 0002](../adr/0002-lean-hexagonal-architecture.md): folds are core functions over data; storage is an adapter.
-- [ADR 0003](../adr/0003-persistence-sqlalchemy-core-and-alembic.md): projections are tables next to the events.
 
 ## Open questions
 
-- Run id and step events: the canonical event has no run id and no step type today. Proposal, a compatible SPEC change
-  for Phase 2: the run id in `payload.run`, and `type` widened with `step.start`, `step.end` and `learning.rejected`.
-- `session` is required on every event: which value executor events carry outside an agent session (the run id is
-  the candidate), without the Session fold treating it as a session.
+- Proposed event types, a compatible SPEC change for Phase 2: `step.start`, `step.end`, `run.end`,
+  `learning.rejected` and a session summary type; the run id in `payload.run`.
+- Counting a fact once: an authoritative source per attribute, or a correlation key shared by the sources.
+- How a Session joins its WorkflowRun: a link event emitted by the executor, or the run id stamped on every event by
+  the hooks (from the environment the executor sets).
+- Each source's own sequence: in `source_id`, or a `payload.seq` the adapter assigns.
+- Storage of derived state (tables, a cache, recomputed on read) and how it is kept in step with new events.
+- Storage and retention of the transcript blob; the period is an open question of the SPEC.
+- `session` is required on every event: which value executor events and a person's learning carry outside an agent
+  session (the run id is the candidate for the executor), without the Session fold treating it as a session.
 - When an open session with no `session.end` counts as abandoned (an idle timeout, or never).
 - The exact payload keys per type, fixed by each source adapter's issue.
