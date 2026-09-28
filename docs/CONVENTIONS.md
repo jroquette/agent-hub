@@ -90,7 +90,7 @@ The logging library is chosen with the first logging code (likely `structlog`); 
 |---|---|
 | Code is formatted by ruff (line length 100). | enforced by ruff format (`ruff format --check`) |
 | Imports are sorted, `agent_hub` first-party. | enforced by ruff `I` |
-| Modern syntax for the target version (py314). | enforced by ruff `UP` |
+| Modern syntax for the target version (py314). One exception: `agent_hub/core/hub_config/stdlib_reader.py`, the hooks' `hub.json` reader, runs on the system Python 3.9, so its target is py39 (`[tool.ruff.per-file-target-version]`): ruff rejects 3.10+ syntax there and `UP` does not rewrite it for 3.14. The target checks syntax only: a 3.10+ runtime API (`zip(strict=)`, `datetime.UTC`) is caught only by the test that runs the reader on a real Python 3.9. | enforced by ruff `UP` and the per-file target, plus `ast.parse(feature_version=(3, 9))` for syntax; for runtime APIs, the reader's real-3.9 test (skips when no 3.9 is installed; CI installs one) |
 | Common bugs and simplifications. | enforced by ruff `B`, `SIM`, `E`, `F`, `W` |
 | Security checks (`S`), with `assert` allowed in tests and subprocess calls of known tools in `scripts/` and `tests/e2e/`. | enforced by ruff `S` (per-file ignores `S101`, `S603`, `S607`) |
 
