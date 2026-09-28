@@ -49,12 +49,18 @@ class EventKey(NamedTuple):
     source_id: str
 
 
-def _reject_number(value: object) -> object:
-    # A Unix number carries no offset, so it cannot say which instant the source meant.
-    if isinstance(value, int | float):
-        msg = "timestamp must be an ISO 8601 string with an offset, not a number"
+def _parse_iso_8601(value: object) -> datetime:
+    # Only datetimes and ISO 8601 strings: pydantic's lax mode would also take Unix numbers and
+    # digit-only strings, which carry no offset and so cannot say which instant the source meant.
+    msg = "timestamp must be an ISO 8601 string with an offset, not a number"
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str):
         raise ValueError(msg)
-    return value
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError as error:
+        raise ValueError(msg) from error
 
 
 def _to_utc(value: datetime) -> datetime:
@@ -62,7 +68,7 @@ def _to_utc(value: datetime) -> datetime:
 
 
 type UtcTimestamp = Annotated[
-    AwareDatetime, BeforeValidator(_reject_number), AfterValidator(_to_utc)
+    AwareDatetime, BeforeValidator(_parse_iso_8601), AfterValidator(_to_utc)
 ]
 
 

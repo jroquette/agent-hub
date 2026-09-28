@@ -59,14 +59,22 @@ def test_normalizes_to_utc_when_timestamp_has_offset() -> None:
     assert event.timestamp.tzinfo == UTC
 
 
-def test_rejects_timestamp_when_offset_missing() -> None:
+@pytest.mark.parametrize(
+    "timestamp", ["2026-09-27T10:00:00", "2026-09-27"], ids=["naive", "date_only"]
+)
+def test_rejects_timestamp_when_offset_missing(timestamp: str) -> None:
     with pytest.raises(ValidationError, match="timestamp"):
-        Event.model_validate(required_fields() | {"timestamp": "2026-09-27T10:00:00"})
+        Event.model_validate(required_fields() | {"timestamp": timestamp})
 
 
-def test_rejects_timestamp_when_given_as_number() -> None:
+@pytest.mark.parametrize(
+    "timestamp",
+    [1790503200, 1.5, True, "1790503200", "1790503200.5", "1790503200000"],
+    ids=["int", "float", "bool", "digits", "digits_fraction", "digits_milliseconds"],
+)
+def test_rejects_timestamp_when_given_as_number(timestamp: object) -> None:
     with pytest.raises(ValidationError, match="timestamp"):
-        Event.model_validate(required_fields() | {"timestamp": 1790503200})
+        Event.model_validate(required_fields() | {"timestamp": timestamp})
 
 
 @pytest.mark.parametrize("event_type", SPEC_TYPES, ids=SPEC_TYPES)
