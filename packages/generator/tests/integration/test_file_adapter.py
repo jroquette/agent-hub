@@ -1005,3 +1005,302 @@ def test_skips_leftover_when_already_gone(tmp_path: Path) -> None:
     remove_leftovers(root, [".x.md.hub-tmp-0a1b2c3d"])
 
     assert list(root.iterdir()) == []
+
+
+def test_skips_absent_root_when_no_leftovers_listed(tmp_path: Path) -> None:
+    # The cleanup runs before the root is made: with nothing listed, it does not open the root.
+    remove_leftovers(tmp_path / "missing", [])
+
+    assert list(tmp_path.iterdir()) == []
+
+
+PINNED_SUFFIX = "0a1b2c3d"
+
+
+def pin_temp_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make every temp name the writer draws end in ``PINNED_SUFFIX``."""
+    monkeypatch.setattr(os, "urandom", lambda size: bytes.fromhex(PINNED_SUFFIX)[:size])
+
+
+def plant_temp_file(path: Path) -> str:
+    write_file(path, b"not the writer's\n")
+    return "file"
+
+
+def plant_temp_link(path: Path) -> str:
+    path.symlink_to("somewhere-else")
+    return "link"
+
+
+def planted_state(path: Path) -> tuple[int, bytes | str]:
+    info = path.lstat()
+    held = os.readlink(path) if stat.S_ISLNK(info.st_mode) else path.read_bytes()
+    return (stat.S_IFMT(info.st_mode), held)
+
+
+@pytest.mark.parametrize("plant", [plant_temp_file, plant_temp_link], ids=["file", "link"])
+@pytest.mark.parametrize(
+    "write",
+    [
+        pytest.param(FileWrite(path="scripts/run.py", content=b"#!\n", executable=True), id="file"),
+        pytest.param(LinkWrite(path="scripts/run", target="run.py"), id="link"),
+    ],
+)
+def test_keeps_planted_entry_when_temp_name_taken(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    write: FileWrite | LinkWrite,
+    plant: Callable[[Path], str],
+) -> None:
+    root = a_root(tmp_path)
+    (root / "scripts").mkdir()
+    name = write.path.rpartition("/")[2]
+    temp = root / "scripts" / f".{name}.hub-tmp-{PINNED_SUFFIX}"
+    plant(temp)
+    before = planted_state(temp)
+    pin_temp_token(monkeypatch)
+
+    with pytest.raises(FileWriteError) as raised:
+        apply_writes(root, folders=[], writes=[write])
+
+    # The temp entry was not the writer's: it is left exactly as it was.
+    assert (raised.value.path, raised.value.cause) == (write.path, os.strerror(errno.EEXIST))
+    assert planted_state(temp) == before
+    assert sorted(p.name for p in (root / "scripts").iterdir()) == [temp.name]
+
+
+@pytest.mark.parametrize(
+    ("folders", "write"),
+    [
+        pytest.param([], LinkWrite(path="x.md", target="../rootx/x.md"), id="top"),
+        pytest.param(
+            ["plugin"], LinkWrite(path="plugin/x.md", target="../../rootx/x.md"), id="nested"
+        ),
+    ],
+)
+def test_refuses_link_when_target_in_sibling_prefix_folder(
+    tmp_path: Path, folders: list[str], write: LinkWrite
+) -> None:
+    root = a_root(tmp_path)
+    # ``rootx`` shares the root's name as a prefix: only a path-wise check tells it apart.
+    write_file(tmp_path / "rootx" / "x.md", b"sibling\n")
+    before = tree_digest(tmp_path / "rootx")
+
+    with pytest.raises(LinkOutsideHubError) as raised:
+        apply_writes(root, folders=folders, writes=[write])
+
+    assert raised.value.path == write.path
+    assert sorted(str(p.relative_to(root)) for p in root.rglob("*")) == folders
+    assert tree_digest(tmp_path / "rootx") == before
+
+
+def test_writes_link_when_root_reached_through_symlinked_folder(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    ensure_root(real / "root")
+    (tmp_path / "via").symlink_to(real, target_is_directory=True)
+    writes = [
+        FileWrite(path="plugin/x.md", content=b"inside\n", executable=False),
+        LinkWrite(path=".claude/x.md", target="../plugin/x.md"),
+    ]
+
+    apply_writes(tmp_path / "via" / "root", folders=[".claude", "plugin"], writes=writes)
+
+    link = real / "root" / ".claude" / "x.md"
+    assert link.is_symlink()
+    assert os.readlink(link) == "../plugin/x.md"
+    assert link.read_bytes() == b"inside\n"
+
+
+def swap_root(root: Path, moved: Path) -> None:
+    """Move the root folder aside and put a new, empty folder at its path."""
+    root.rename(moved)
+    root.mkdir()
+
+
+def after_first_call(
+    monkeypatch: pytest.MonkeyPatch, name: str, action: Callable[[], None]
+) -> None:
+    """Run ``action`` once, right after the first ``os.<name>`` call returned."""
+    real = getattr(os, name)
+    pending = [action]
+
+    def called(*args: Any, **kwargs: Any) -> Any:
+        result = real(*args, **kwargs)
+        if pending:
+            pending.pop()()
+        return result
+
+    monkeypatch.setattr(os, name, called)
+
+
+def test_writes_into_held_root_when_root_swapped_between_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = a_root(tmp_path)
+    moved = tmp_path / "moved"
+    after_first_call(monkeypatch, "replace", lambda: swap_root(root, moved))
+    writes = [
+        FileWrite(path="AGENTS.md", content=b"# Rules\n", executable=False),
+        FileWrite(path="scripts/run.py", content=b"#!\n", executable=True),
+    ]
+
+    apply_writes(root, folders=["scripts"], writes=writes)
+
+    # Every write went to the folder opened at the start; nothing landed in the new one.
+    assert list(root.iterdir()) == []
+    assert sorted(str(p.relative_to(moved)) for p in moved.rglob("*")) == [
+        "AGENTS.md",
+        "scripts",
+        "scripts/run.py",
+    ]
+
+
+def test_refuses_link_when_root_swapped_before_link_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = a_root(tmp_path)
+    moved = tmp_path / "moved"
+    after_first_call(monkeypatch, "replace", lambda: swap_root(root, moved))
+    writes = [
+        FileWrite(path="scripts/run.py", content=b"#!\n", executable=True),
+        LinkWrite(path="scripts/run", target="run.py"),
+    ]
+
+    # The link's check reads the root by path, which now names another folder: it is refused.
+    with pytest.raises(FileWriteError) as raised:
+        apply_writes(root, folders=["scripts"], writes=writes)
+
+    assert (raised.value.path, raised.value.cause) == ("scripts/run", "the hub folder moved")
+    assert list(root.iterdir()) == []
+    assert sorted(str(p.relative_to(moved)) for p in moved.rglob("*")) == [
+        "scripts",
+        "scripts/run.py",
+    ]
+
+
+def before_first_folder_open(monkeypatch: pytest.MonkeyPatch, action: Callable[[], None]) -> None:
+    """Run ``action`` once, right before the first folder open (``O_DIRECTORY``)."""
+    real_open = os.open
+    pending = [action]
+
+    def opened(path: Any, flags: int, mode: int = 0o777, **kwargs: Any) -> int:
+        if pending and flags & os.O_DIRECTORY:
+            pending.pop()()
+        return real_open(path, flags, mode, **kwargs)
+
+    monkeypatch.setattr(os, "open", opened)
+
+
+def test_raises_when_root_moves_between_resolve_and_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first, second = tmp_path / "first", tmp_path / "second"
+    ensure_root(first / "root")
+    ensure_root(second / "root")
+    via = tmp_path / "via"
+    via.symlink_to(first, target_is_directory=True)
+
+    def retarget() -> None:
+        via.unlink()
+        via.symlink_to(second, target_is_directory=True)
+
+    before_first_folder_open(monkeypatch, retarget)
+
+    with pytest.raises(FileWriteError) as raised:
+        apply_writes(
+            via / "root",
+            folders=[],
+            writes=[FileWrite(path="AGENTS.md", content=b"# Rules\n", executable=False)],
+        )
+
+    assert (raised.value.path, raised.value.cause) == (str(via / "root"), "the hub folder moved")
+    assert list((first / "root").iterdir()) == []
+    assert list((second / "root").iterdir()) == []
+
+
+def test_removes_from_held_root_when_root_swapped_between_leftovers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = a_root(tmp_path)
+    moved = tmp_path / "moved"
+    names = [".a.md.hub-tmp-0a1b2c3d", ".b.md.hub-tmp-0a1b2c3d"]
+    for name in names:
+        write_file(root / name, b"half\n")
+
+    def swap() -> None:
+        swap_root(root, moved)
+        # The new folder holds an entry of the same name: it is not the one listed.
+        write_file(root / names[1], b"someone else's\n")
+
+    after_first_call(monkeypatch, "unlink", swap)
+
+    remove_leftovers(root, names)
+
+    assert list(moved.iterdir()) == []
+    assert (root / names[1]).read_bytes() == b"someone else's\n"
+
+
+def open_descriptors() -> int:
+    """How many descriptors the process holds (``/dev/fd`` lists them on Linux and macOS)."""
+    return len(os.listdir("/dev/fd"))
+
+
+def fail_descent(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    apply_writes(
+        root, folders=[], writes=[FileWrite(path="missing/x.md", content=b"x\n", executable=False)]
+    )
+
+
+def fail_existing_folder(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (root / "plugin").mkdir()
+    apply_writes(root, folders=["plugin", "plugin/agents"], writes=[])
+
+
+def fail_link_outside(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    apply_writes(root, folders=["plugin"], writes=[LinkWrite(path="plugin/x.md", target="../..")])
+
+
+def fail_symlinked_ancestor(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (root / "plugin").symlink_to(root.parent, target_is_directory=True)
+    apply_writes(
+        root, folders=[], writes=[FileWrite(path="plugin/x.md", content=b"x\n", executable=False)]
+    )
+
+
+def fail_leftover_missing_folder(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    remove_leftovers(root, [".x.md.hub-tmp-0a1b2c3d", "missing/.x.md.hub-tmp-0a1b2c3d"])
+
+
+def fail_collision(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    write_file(root / f".x.md.hub-tmp-{PINNED_SUFFIX}", b"not the writer's\n")
+    pin_temp_token(monkeypatch)
+    apply_writes(
+        root, folders=[], writes=[FileWrite(path="x.md", content=b"x\n", executable=False)]
+    )
+
+
+@pytest.mark.parametrize(
+    "fail",
+    [
+        fail_descent,
+        fail_existing_folder,
+        fail_link_outside,
+        fail_symlinked_ancestor,
+        fail_leftover_missing_folder,
+        fail_collision,
+    ],
+    ids=["descent", "folder-exists", "link-outside", "symlinked", "leftover-descent", "collision"],
+)
+def test_closes_every_descriptor_when_write_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fail: Callable[[Path, pytest.MonkeyPatch], None],
+) -> None:
+    root = a_root(tmp_path)
+    before = open_descriptors()
+
+    with pytest.raises(GeneratorError):
+        fail(root, monkeypatch)
+
+    assert open_descriptors() == before
