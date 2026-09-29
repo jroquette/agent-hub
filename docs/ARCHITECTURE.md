@@ -78,7 +78,9 @@ layer. The meta-package `agent-hub` only bundles the distributions for installat
 
 Adding a package: create `packages/<pkg>/` with the shape above, then register it in `mypy.ini` (`files` and
 `mypy_path`), in both `.importlinter` contracts (core's forbidden list and the layers list) and in the Makefile `COV`
-list. The layout checker rule `package-registered` fails `make check-fast` until all of these are done.
+list. The layout checker rule `package-registered` fails `make check-fast` until all of these are done. Then add it to
+the PR-title scopes (`SCOPES` in `scripts/check_pr_title.py` and the list in CONTRIBUTING.md) and create its
+`pkg:<name>` area label.
 
 ## Hexagonal layout
 

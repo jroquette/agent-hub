@@ -10,7 +10,19 @@ import sys
 from collections.abc import Sequence
 
 TYPES = ("feat", "fix", "docs", "chore", "refactor", "test", "ci", "build", "perf", "revert")
-SCOPES = ("core", "storage", "collector", "cli", "api", "web", "repo", "deps", "ci", "docs")
+SCOPES = (
+    "core",
+    "storage",
+    "collector",
+    "cli",
+    "generator",
+    "api",
+    "web",
+    "repo",
+    "deps",
+    "ci",
+    "docs",
+)
 MAX_LENGTH = 72
 # Matched with fullmatch: the subject starts and ends with a non-space, so a trailing space or
 # newline fails (``$`` alone would accept a final newline).
