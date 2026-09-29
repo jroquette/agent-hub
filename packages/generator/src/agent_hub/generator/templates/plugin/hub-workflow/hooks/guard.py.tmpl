@@ -33,7 +33,7 @@ import subprocess
 import sys
 import tempfile
 from fnmatch import fnmatch
-from typing import IO, Optional, Tuple
+from typing import IO, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
@@ -45,7 +45,7 @@ except Exception as error:  # a partial install: ask, never let the call through
                                              "permissionDecisionReason": f"[hub guard] could not check this call ({type(error).__name__}); confirm"}}))
     sys.exit(0)
 
-Verdict = Optional[Tuple[str, str]]
+Verdict = Optional[tuple[str, str]]
 
 NON_SECRET_ENV = {".env.example", ".env.development", ".env.staging", ".env.test", ".env.sample", ".env.template"}
 SECRET_FILE = re.compile(r"(^|/)(\.env(\.[\w.-]+)?|[^/]*\.(pem|key|p12|pfx)|id_(rsa|ed25519)[^/]*)$")
@@ -467,7 +467,7 @@ def _extension_cause(code: int, stdout: bytes, stderr: str) -> str | None:
     return f"unexpected answer {json.dumps(answer)[:REASON_CAP]}"
 
 
-def _failed(cause: str) -> Tuple[Verdict, bool]:
+def _failed(cause: str) -> tuple[Verdict, bool]:
     return ("ask", EXTENSION_REASON.format(f"{cause}; confirm")), True
 
 
@@ -478,7 +478,7 @@ def _tail(fh: IO[bytes]) -> str:
     return fh.read().decode("utf-8", "replace")
 
 
-def run_extension(path: str, data: dict, cfg: Config) -> Tuple[Verdict, bool]:
+def run_extension(path: str, data: dict, cfg: Config) -> tuple[Verdict, bool]:
     """(the extension's verdict on the event, whether it failed). A failure is an ask naming the
     cause. The runner gets its own session, so a timeout kills every process it started."""
     unusable = _unusable(path, cfg)

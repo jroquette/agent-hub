@@ -26,6 +26,7 @@ from agent_hub.core.hub_config.model import (
     Tracker,
 )
 from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.generator.render_hub import render_hub
 
 READER = "plugin/hub-workflow/hooks/stdlib_reader.py"
 
@@ -423,3 +424,38 @@ def test_reads_same_values_when_run_on_python39(
 
         assert loaded["imported"] == []
         assert loaded["hub_file"] == read(sys.executable, path)["hub_file"], path
+
+
+# argv: the modules to import, as JSON. Prints the names that imported. A 3.10+ stdlib module, or
+# a form 3.9 evaluates at import time (``X | None`` outside an annotation) fails here, where
+# ``ast.parse`` and ruff at py39 cannot tell.
+IMPORT_ALL = """
+import importlib, json
+names = json.loads(sys.argv[1])
+print(json.dumps([importlib.import_module(name).__name__ for name in names]))
+"""
+
+
+def test_imports_every_rendered_module_when_run_on_python39(
+    *,
+    python39: str,
+    demo_config: HubConfig,
+    rendered_hub: Callable[[HubConfig], Path],
+    run_python: Callable[..., Any],
+) -> None:
+    hub = rendered_hub(demo_config)
+    # The scripts read hub.json when imported, found by walking up from the script.
+    write_hub_file(hub, a_hub_document())
+    folders: dict[str, list[str]] = {}
+    for file in render_hub(demo_config).files:
+        folder, _, name = file.path.rpartition("/")
+        if name.endswith(".py"):
+            folders.setdefault(folder, []).append(name.removesuffix(".py"))
+
+    for folder, names in folders.items():
+        imported = run_python(
+            python39, IMPORT_ALL, path=hub / folder, args=[json.dumps(names)], cwd=hub
+        )
+
+        assert imported == names, folder
+    assert set(folders) == {"plugin/demo/hooks", "plugin/hub-workflow/hooks", "scripts"}

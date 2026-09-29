@@ -14,7 +14,6 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import List, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
@@ -38,7 +37,7 @@ def session_start_time(data: dict) -> float:
         return time.time() - 12 * 3600
 
 
-def changed_code(top: Path, since: float) -> List[str]:
+def changed_code(top: Path, since: float) -> list[str]:
     out = []
     for line in git(["status", "--porcelain", "--untracked-files=all"], top).splitlines():
         rel = line[3:].split(" -> ")[-1].strip('"')
@@ -48,14 +47,14 @@ def changed_code(top: Path, since: float) -> List[str]:
     return out
 
 
-def candidates(cfg: Config, cwd: Path) -> List[Tuple[str, Path]]:
+def candidates(cfg: Config, cwd: Path) -> list[tuple[str, Path]]:
     """Checkouts to consider: the one containing cwd, else every checkout/worktree of every configured repo."""
     res = checkouts(cfg, cfg.repo_dirs)
     inside = [(r, t) for r, t in res if cwd == t or t in cwd.parents]
     return inside[-1:] if inside else res
 
 
-def run_check(cmd: str, top: Path) -> Tuple[bool, str]:
+def run_check(cmd: str, top: Path) -> tuple[bool, str]:
     try:
         env = dict(os.environ, NO_COLOR="1", FORCE_COLOR="0", CLICOLOR="0")
         p = subprocess.run(["bash", "-c", cmd], cwd=top, capture_output=True, text=True, timeout=TIMEOUT, env=env)

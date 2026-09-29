@@ -24,7 +24,6 @@ import subprocess
 import sys
 from pathlib import Path
 from collections.abc import Callable
-from typing import List, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from stdlib_reader import GuardSection, HubFile, RepoEntry, load_hub_file  # noqa: E402
@@ -195,7 +194,7 @@ def load_config(start: object = None) -> Config:
     return Config(hub, load_hub_file(found), root, root_file)
 
 
-def checkouts(cfg: Config, names: Optional[List[str]] = None) -> List[Tuple[str, Path]]:
+def checkouts(cfg: Config, names: list[str] | None = None) -> list[tuple[str, Path]]:
     """(name, dir) for each main checkout and its .claude/worktrees/* (default: every repo plus the hub)."""
     if not cfg.workspace:
         return []
@@ -219,7 +218,7 @@ def git(args: list[str], cwd: str | os.PathLike, timeout: int = 10) -> str:
         return ""
 
 
-def repo_of(path: str | os.PathLike, known: List[str]) -> tuple[str | None, Path | None]:
+def repo_of(path: str | os.PathLike, known: list[str]) -> tuple[str | None, Path | None]:
     """(repo name, worktree root) for a path inside one of the known repos (main checkout or worktree)."""
     top = git(["rev-parse", "--show-toplevel"], cwd=path if os.path.isdir(path) else os.path.dirname(path) or ".")
     if not top:
