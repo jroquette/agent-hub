@@ -6,6 +6,7 @@ environment built from scratch (``HOME`` and ``TMPDIR`` under ``tmp_path``).
 """
 
 import json
+import os
 import shutil
 import subprocess
 from collections.abc import Callable, Mapping
@@ -69,6 +70,8 @@ HANDLED = frozenset({*FIXED_STDINS, "event", *tool_field_events(Path("/"))})
 GUARD_CRASH = b"could not check this call"
 TRACEBACK = b"Traceback (most recent call last)"
 FAILING_GIT = "#!/bin/sh\necho 'fatal: not a git repository' >&2\nexit 128\n"
+# A `hub brief` stub: SessionStart then falls back to the mini brief (cause "failed").
+STUB_UVX = "#!/bin/sh\necho 'hub: brief is not implemented yet' >&2\nexit 2\n"
 
 type RunHook = Callable[..., subprocess.CompletedProcess[bytes]]
 
@@ -142,10 +145,17 @@ def problems_of(
 
 
 def scratch_env(tmp_path: Path) -> dict[str, str]:
-    home, temp = tmp_path / "home", tmp_path / "tmp"
+    """``HOME`` and ``TMPDIR`` under ``tmp_path``; ``PATH`` starts with a stub ``uvx``, so the
+    SessionStart hook never reaches the real one (or the network)."""
+    home, temp, bin_dir = tmp_path / "home", tmp_path / "tmp", tmp_path / "bin"
     home.mkdir(exist_ok=True)
     temp.mkdir(exist_ok=True)
-    return {"HOME": str(home), "TMPDIR": str(temp)}
+    bin_dir.mkdir(exist_ok=True)
+    stub = bin_dir / "uvx"
+    stub.write_text(STUB_UVX, encoding="utf-8")
+    stub.chmod(0o755)
+    path = os.pathsep.join([str(bin_dir), os.environ.get("PATH", os.defpath)])
+    return {"HOME": str(home), "TMPDIR": str(temp), "PATH": path}
 
 
 @pytest.fixture
@@ -232,11 +242,11 @@ def test_exits_zero_when_git_fails(
     for checkout in (hub, hub.parent / "demo-api"):
         (checkout / ".git").mkdir(parents=True)
     (hub.parent / "demo-api" / "a.py").write_text("x = 1\n", encoding="utf-8")
-    fake = tmp_path / "bin" / "git"
-    fake.parent.mkdir()
+    env = scratch_env(tmp_path)
+    fake = tmp_path / "bin" / "git"  # beside the stub uvx
     fake.write_text(FAILING_GIT, encoding="utf-8")
     fake.chmod(0o755)
-    env = scratch_env(tmp_path) | {"PATH": f"{fake.parent}:/usr/bin:/bin"}
+    env |= {"PATH": f"{fake.parent}:/usr/bin:/bin"}
 
     completed = run_hook_file(
         hook_python,

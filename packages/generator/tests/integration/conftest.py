@@ -7,6 +7,7 @@ The golden file harness of the characterization cases (AC-4.22) follows, behind 
 fixture, and then the workspace a case runs in, behind ``char_workspace``.
 """
 
+import ast
 import contextlib
 import copy
 import datetime
@@ -187,6 +188,88 @@ def run_entry_point(
 def run_hook_file() -> Callable[..., subprocess.CompletedProcess[bytes]]:
     """``run_entry_point``: run a rendered hook file with an event on stdin."""
     return run_entry_point
+
+
+# argv: a rendered hook file, one of its module constants, the constant's new value as JSON. Loads
+# the hook under another name than ``__main__`` (so it does not run on import), replaces the
+# constant, then runs it as its ``__main__`` block does. Lets a timeout test wait 1 s, not 10.
+CONSTANT_DRIVER = """\
+import importlib.util, json, sys
+hook, name, value = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
+spec = importlib.util.spec_from_file_location("hook_under_test", hook)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+if type(getattr(module, name)) is not type(value):
+    sys.exit(f"{name} is {getattr(module, name)!r}, not a {type(value).__name__}")
+setattr(module, name, value)
+sys.argv = [hook]
+module.run_hook(module.main, getattr(module, "ask_on_error", None))
+"""
+
+
+@pytest.fixture
+def run_hook_with_constant(tmp_path: Path) -> Callable[..., subprocess.CompletedProcess[bytes]]:
+    """Run a rendered hook with the event on stdin and one module constant replaced."""
+    driver = tmp_path / "support" / "constant_driver.py"
+    driver.parent.mkdir(parents=True, exist_ok=True)
+    driver.write_text(CONSTANT_DRIVER, encoding="utf-8")
+
+    def run(
+        python: str,
+        hook: Path,
+        *,
+        constant: tuple[str, object],
+        stdin: bytes,
+        cwd: Path,
+        env: Mapping[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[bytes]:
+        name, value = constant
+        return subprocess.run(  # noqa: S603 - an interpreter from hook_python, a fixed driver
+            [python, str(driver), str(hook), name, json.dumps(value)],
+            input=stdin,
+            capture_output=True,
+            check=False,
+            cwd=cwd,
+            env=child_env(env),
+            timeout=CHILD_TIMEOUT,
+        )
+
+    return run
+
+
+def module_constant(source: str, name: str) -> object:
+    """The literal a module-level ``name = <literal>`` assigns in ``source`` (read, never run)."""
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Assign) and [
+            target.id for target in node.targets if isinstance(target, ast.Name)
+        ] == [name]:
+            return ast.literal_eval(node.value)
+    raise AssertionError(f"no module-level {name} = <literal>")
+
+
+def hook_timeouts(config: HubConfig, event: str) -> dict[str, list[object]]:
+    """The ``timeout`` of every ``event`` hook in the rendered ``hooks.json`` and settings."""
+    texts = {file.path: file.content for file in render_hub(config).files}
+    found = {}
+    for path in ("plugin/hub-workflow/hooks/hooks.json", ".claude/settings.json"):
+        groups = json.loads(texts[path])["hooks"][event]
+        found[path] = [hook["timeout"] for group in groups for hook in group["hooks"]]
+    return found
+
+
+@pytest.fixture
+def pinned_timeout() -> Callable[..., tuple[object, dict[str, list[object]]]]:
+    """(a rendered hook's timeout constant, the timeouts Claude Code gives that hook's event).
+
+    The static half of a timeout test whose run lowers the constant (``run_hook_with_constant``).
+    """
+
+    def read(config: HubConfig, *, hook: str, constant: str, event: str) -> Any:
+        texts = {file.path: file.content for file in render_hub(config).files}
+        value = module_constant(texts[hook].decode("utf-8"), constant)
+        return value, hook_timeouts(config, event)
+
+    return read
 
 
 # The golden harness: a port of AGH-7's ``support/golden.py`` and the compare part of its
