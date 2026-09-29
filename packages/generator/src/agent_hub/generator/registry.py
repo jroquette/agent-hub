@@ -166,6 +166,10 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
         )
         for name in _BASE_AGENTS
     ),
+    # The hooks' `hub.json` reader: stdlib only, Python 3.9 (spec Q-2).
+    _generic_managed(
+        f"{_BASE_PLUGIN}/hooks/stdlib_reader.py", f"{_BASE_PLUGIN}/hooks/stdlib_reader.py.tmpl"
+    ),
     # `render_entries` links each skill folder into `.claude/skills/`.
     *(
         _generic_managed(

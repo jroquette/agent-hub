@@ -16,7 +16,7 @@ from agent_hub.core.testing.builders import a_hub_document
 
 _EXECUTABLE_BITS = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
 
-type TreeWriter = Callable[[RenderedHub], Path]
+type TreeWriter = Callable[..., Path]
 
 
 @pytest.fixture
@@ -51,14 +51,14 @@ def variant_config() -> HubConfig:
 
 @pytest.fixture
 def rendered_tree(tmp_path: Path) -> TreeWriter:
-    """Write a rendered hub under ``tmp_path / "hub"``; return that folder.
+    """Write a rendered hub under ``tmp_path / "hub"``, or the keyword ``root``; return that folder.
 
     Files keep their executable bit; each link becomes a symlink to its relative target. Files go
     first: ``RenderedHub`` puts no path under a link, so nothing is ever written through one.
     """
 
-    def write(rendered: RenderedHub) -> Path:
-        root = tmp_path / "hub"
+    def write(rendered: RenderedHub, *, root: Path | None = None) -> Path:
+        root = tmp_path / "hub" if root is None else root
         for file in rendered.files:
             target = root / file.path
             target.parent.mkdir(parents=True, exist_ok=True)

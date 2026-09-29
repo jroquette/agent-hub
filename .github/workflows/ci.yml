@@ -29,8 +29,9 @@ jobs:
           version: "0.12.19"
       - name: Install Python (from .python-version)
         run: uv python install
-      # The hooks' hub.json reader must run on Python 3.9 (the system python3 on macOS); with a 3.9
-      # on PATH, test_reads_same_values_when_run_on_python39 runs it there instead of skipping.
+      # Rendered hooks and scripts must run on Python 3.9 (the system python3 on macOS); with a 3.9
+      # on PATH, the generator integration tests (hook_python) run them there too, and under CI
+      # they fail instead of skipping when it is missing.
       - name: Install Python 3.9 for the hooks reader test
         run: |
           uv python install 3.9

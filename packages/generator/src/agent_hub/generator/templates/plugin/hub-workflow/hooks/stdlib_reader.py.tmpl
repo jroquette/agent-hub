@@ -1,15 +1,16 @@
 """The hooks' ``hub.json`` reader: stdlib only, Python 3.9 syntax, never raises.
 
 Hooks run on the system ``python3`` (3.9 on macOS) with no dependencies, so this module imports
-nothing outside the standard library and nothing else from agent-hub; ruff checks it with a py39
-target. A hook must never fail because of ``hub.json`` (docs/design/project-config.md § Readers):
+nothing outside the standard library and nothing else from agent-hub; agent-hub's tests run it on
+a real 3.9. A hook must never fail because of ``hub.json`` (docs/design/project-config.md § Readers):
 where ``HubConfig`` would reject the file, this reader falls back instead.
 
 - A key that is absent, of the wrong type, or an empty string takes its default, and only that
   key: the rest of the file is kept. A list with any item that is not a string is ``()``.
-- The defaults of optional keys equal ``HubConfig``'s (a test in core compares them). Required
-  strings default to ``""``, ``project.name`` to the name of the directory holding the file (then
-  ``hub``), and a repo without a non-empty string ``dir`` is dropped.
+- The defaults of optional keys equal ``HubConfig``'s (the consistency test is
+  ``packages/generator/tests/integration/test_hub_json_reader.py``). Required strings default
+  to ``""``, ``project.name`` to the name of the directory holding the file (then ``hub``), and a
+  repo without a non-empty string ``dir`` is dropped.
 - ``platform.version`` counts only as three ASCII numbers (``0.2.0``); anything else is ``None``.
 - Unknown keys and comment keys (``_`` first) are ignored. ``modules`` and ``doctor.rules`` keep
   each entry's settings, minus comment keys, without checking them.

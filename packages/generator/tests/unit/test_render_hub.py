@@ -67,6 +67,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/agents/requirements-analyst.md",
     "plugin/hub-workflow/agents/researcher.md",
     "plugin/hub-workflow/agents/spec-reviewer.md",
+    "plugin/hub-workflow/hooks/stdlib_reader.py",
     "plugin/hub-workflow/skills/create-plan/SKILL.md",
     "plugin/hub-workflow/skills/feature/SKILL.md",
     "plugin/hub-workflow/skills/handoff/SKILL.md",
