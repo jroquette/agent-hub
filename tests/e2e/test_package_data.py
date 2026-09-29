@@ -63,7 +63,12 @@ def test_ships_every_template_when_generator_wheel_built(
     tmp_path: Path, run: Callable[..., CompletedProcess[str]]
 ) -> None:
     uv = _uv()
-    sources = [e.source.name for e in REGISTRY if e.source.package == GENERATOR_PACKAGE]
+    # Generator-built entries have no source (spec Q-9): nothing to ship for them.
+    sources = [
+        e.source.name
+        for e in REGISTRY
+        if e.source is not None and e.source.package == GENERATOR_PACKAGE
+    ]
     command = [uv, "build", "--package", "agent-hub-generator", "--wheel"]
 
     result = run([*command, "--out-dir", str(tmp_path)])

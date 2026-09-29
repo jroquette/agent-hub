@@ -21,6 +21,7 @@ from agent_hub.core.hub_files.rendered_link import RenderedLink
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.generator.errors import GeneratorError, TemplateError
 from agent_hub.generator.hub_template import render_template
+from agent_hub.generator.json_form import JsonValue
 from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_mapping
 from agent_hub.generator.registry import REGISTRY, TemplateEntry, TemplateSource
 from agent_hub.generator.render_hub import render_entries, render_hub
@@ -365,6 +366,43 @@ def test_raises_generator_error_when_paths_collide(
 
     assert type(raised.value) is GeneratorError
     assert str(raised.value).startswith(f"{colliding}: ")
+
+
+def a_manifest(config: HubConfig) -> dict[str, JsonValue]:
+    return {"version": "0.1.0", "name": config.project.name, "note": "d\u00e9j\u00e0"}
+
+
+@pytest.mark.parametrize("project_name", ["demo", "acme-tools"])
+def test_writes_json_form_when_entry_built(project_name: str, fixture_templates: Path) -> None:
+    built = TemplateEntry(
+        path="plugin/@@{project_name}/.claude-plugin/plugin.json",
+        build=a_manifest,
+        kind=Kind.PROJECT_OWNED,
+        ownership=Ownership.SEEDED,
+    )
+    entries = [built, *plugin_entries(fixture_templates, ("plugin/x/agents/a.md",))]
+
+    rendered = render_entries(a_config_named(project_name), entries)
+
+    file = rendered.files[0]
+    assert file.path == f"plugin/{project_name}/.claude-plugin/plugin.json"
+    # Spec Q-9: sorted keys, two-space indent, non-ASCII as UTF-8, final newline.
+    lines = [
+        "{",
+        f'  "name": "{project_name}",',
+        '  "note": "d\u00e9j\u00e0",',
+        '  "version": "0.1.0"',
+        "}",
+    ]
+    assert file.content == ("\n".join(lines) + "\n").encode()
+    assert json.loads(file.content) == a_manifest(a_config_named(project_name))
+    assert (file.kind, file.ownership, file.module, file.executable) == (
+        Kind.PROJECT_OWNED,
+        Ownership.SEEDED,
+        None,
+        False,
+    )
+    assert [other.path for other in rendered.files[1:]] == ["plugin/x/agents/a.md"]
 
 
 def test_takes_no_project_entry_input_when_signature_read() -> None:

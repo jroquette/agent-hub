@@ -4,6 +4,8 @@ One entry per output path, sorted by path, classified as in docs/design/hub-gene
 § Classification and rendering. Template sources are package data under ``templates/``, named
 without a leading dot and with a ``.tmpl`` suffix, so no tool takes a template for a live config
 file. ``hub.schema.json`` is core's shipped schema, copied verbatim: the generator holds no copy.
+A JSON file whose value comes from the config is built in code instead (spec Q-9): its entry names
+a builder and has no source file.
 """
 
 from dataclasses import dataclass
@@ -11,6 +13,7 @@ from typing import Final, NamedTuple
 
 from agent_hub.core.hub_config.schema import SCHEMA_FILE, SCHEMA_PACKAGE
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership
+from agent_hub.generator.json_form import JsonBuilder
 
 _PACKAGE: Final = "agent_hub.generator"
 
@@ -27,18 +30,32 @@ class TemplateSource(NamedTuple):
 
 @dataclass(frozen=True, kw_only=True)
 class TemplateEntry:
-    """One output file of a hub: its path, its source and its classification.
+    """One output file of a hub: its path, where its bytes come from and its classification.
 
-    ``verbatim`` sources are copied byte for byte, never substituted.
+    Exactly one of ``source`` (a template) and ``build`` (a JSON builder, rendered in the JSON
+    byte form) is set. ``verbatim`` sources are copied byte for byte, never substituted; a built
+    entry is never verbatim.
     """
 
     path: str
-    source: TemplateSource
+    source: TemplateSource | None = None
+    build: JsonBuilder | None = None
     kind: Kind
     ownership: Ownership
     module: str | None = None
     executable: bool = False
     verbatim: bool = False
+
+    def __post_init__(self) -> None:
+        if self.source is None and self.build is None:
+            msg = f"{self.path}: neither a source nor a builder"
+            raise ValueError(msg)
+        if self.source is not None and self.build is not None:
+            msg = f"{self.path}: both a source and a builder"
+            raise ValueError(msg)
+        if self.build is not None and self.verbatim:
+            msg = f"{self.path}: a built entry cannot be verbatim"
+            raise ValueError(msg)
 
 
 def _template(name: str) -> TemplateSource:
