@@ -156,7 +156,7 @@ flowchart LR
 
 The sessions and GitHub/Linear feed the collector, and the web app reads everything through the API. The app's actions go back to the workflow executor. The API also reads the hub repos to show brain, rules and workflows.
 
-- **Stack (decided, ADRs 0001–0004 and 0008):** Python 3.14 in a uv workspace with one package per component (`core`, `storage`, `collector`, `cli`; `api` later) under a lean hexagonal architecture: entities, use cases and ports in `core`, adapters in the other packages. Persistence is SQLAlchemy Core + Alembic on SQLite, moving to Postgres via config when there are multiple users. FastAPI + Pydantic for the API and React on the front end come in Phase 2.
+- **Stack (decided, ADRs 0001–0004, 0008 and 0011):** Python 3.14 in a uv workspace with one package per component (`core`, `storage`, `collector`, `generator`, `cli`; `api` later) under a lean hexagonal architecture: entities, use cases and ports in `core`, adapters in the other packages. Persistence is SQLAlchemy Core + Alembic on SQLite, moving to Postgres via config when there are multiple users. FastAPI + Pydantic for the API and React on the front end come in Phase 2.
 - **Hooks as sensors:** the generated hub installs Claude Code hooks that send events to the local collector. Without the collector running, the hooks fail silently and the session carries on normally.
 - **Adapters:** Claude Code is the first. Other agents (Codex, Cursor) come in as adapters that emit the same canonical event.
 
