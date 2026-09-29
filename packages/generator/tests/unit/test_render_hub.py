@@ -73,6 +73,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/hooks/hubhooks.py",
     "plugin/hub-workflow/hooks/post_edit.py",
     "plugin/hub-workflow/hooks/pre_compact.py",
+    "plugin/hub-workflow/hooks/project_guard_runner.py",
     "plugin/hub-workflow/hooks/session_end.py",
     "plugin/hub-workflow/hooks/session_start.py",
     "plugin/hub-workflow/hooks/stdlib_reader.py",

@@ -684,9 +684,16 @@ def render_guarded(rendered_tree: Callable[..., Path], root: Path, name: str = "
 
 @pytest.fixture
 def guarded_hub(tmp_path: Path, rendered_tree: Callable[..., Path]) -> Path:
-    """``ws/demo-hub`` with AC-4.13's lists, its hub worktree at ``WORKTREE``, ``ws/demo-api``."""
+    """``ws/demo-hub`` with AC-4.13's lists, its hub worktree at ``WORKTREE``, ``ws/demo-api``.
+
+    Both checkouts are without the seeded ``plugin/demo/hooks/project_guard.py``: these matrices
+    test the base rules, and each call would otherwise start the stub's child (test time, O3).
+    The stub leaves every verdict unchanged (``test_guard_extension.py``, AC-4.18).
+    """
     hub = render_guarded(rendered_tree, tmp_path / "ws" / "demo-hub")
     render_guarded(rendered_tree, hub / WORKTREE)
+    for checkout in (hub, hub / WORKTREE):
+        (checkout / "plugin" / "demo" / "hooks" / "project_guard.py").unlink()
     (hub.parent / "demo-api" / "src").mkdir(parents=True)
     return hub
 

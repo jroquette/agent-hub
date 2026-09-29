@@ -10,8 +10,12 @@ tool call it does not deny itself. It runs this file in a child ``python3`` with
 ``check`` returns ``None`` to keep the base verdict, ``("deny", reason)`` to block the call or
 ``("ask", reason)`` to ask the user first. An extension only tightens: it never allows what the
 base guard denies or asks. Any failure (an exception, another return value, output printed to
-stdout, the timeout) makes the guard ask, naming the cause. Use the standard library only: the
-hooks run on the system ``python3`` (3.9 or newer).
+stdout, the 3 s timeout) makes the guard ask, naming the cause. Use the standard library only: the
+hooks run on the system ``python3`` (3.9 or newer). Relative paths resolve against the session's
+working directory, not this folder.
+
+The only-tightens guarantee covers a buggy extension, not a hostile one: this file runs as the
+user, with the user's rights. Its trust boundary is the guard's ask on every edit of this folder.
 
 This file is seeded: ``hub init`` or ``hub sync`` writes it once and never rewrites it.
 """

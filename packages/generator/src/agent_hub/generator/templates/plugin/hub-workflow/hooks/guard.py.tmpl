@@ -10,16 +10,30 @@ ask   = needs the user's confirmation (removing test assertions or adding skip/x
         editing paths in guard.ask_before_edit, writing brain/ outside now.md, journal/, _inbox/, auto/, features/)
 Project values (branch prefix, default branch, tracker team, guard lists) come from hub.json. A list entry
 `@hub/<path>` is <path> in the hub that holds this file; with no such hub (plugin cache) it is skipped.
+Then, unless the verdict is deny (final), the project's extension plugin/<project>/hooks/project_guard.py
+of the hub that holds this file (never one found from $CLAUDE_PROJECT_DIR, the cwd or the tool input;
+none in the plugin cache) runs in a child, project_guard_runner.py, with a 3 s timeout that kills its
+whole process group. When that hub.json names no project (unreadable, or no project.name), the one
+plugin/*/hooks/project_guard.py there is, if exactly one, runs. It only tightens: its ask or deny
+replaces a weaker verdict, and anything else it does (another answer, extra output, a crash, the
+timeout, a file that resolves outside the hub) is an ask naming the cause, added to a base ask's reason.
+That guarantee covers a buggy extension, not a hostile one: it runs as the user, with the user's
+rights, so its trust boundary is the ask on every edit of plugin/<project>/hooks/ (and of this folder).
 Everything else passes through to the normal permission rules.
 """
 
 from __future__ import annotations
 
+import glob
+import json
 import os
 import re
+import signal
+import subprocess
 import sys
+import tempfile
 from fnmatch import fnmatch
-from typing import Optional, Tuple
+from typing import IO, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
@@ -371,6 +385,13 @@ def check_file(tool: str, ti: dict, cfg: Config | None = None) -> Verdict:
 
 
 FILE_TOOLS = ("Read", "Grep", "Glob", "Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch")
+EXTENSION_TIMEOUT = 3  # seconds, inside the guard's own 10 s hook timeout (spec Q-5)
+RUNNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "project_guard_runner.py")
+STRICTNESS = {None: 0, "ask": 1, "deny": 2}
+EXTENSION_REASON = "project guard: {}"
+EXTENSION_NAME = "project_guard.py"
+REASON_CAP = 300  # characters of an extension's reason or of a failure's stderr line
+STDERR_TAIL = 4096  # bytes of the runner's stderr that are read back
 
 
 def decide(data: dict, cfg: Config) -> Verdict:
@@ -385,12 +406,139 @@ def decide(data: dict, cfg: Config) -> Verdict:
     return None
 
 
+def _one_line(text: str) -> str:
+    """text on one line (whitespace runs become one space), capped at REASON_CAP characters."""
+    return " ".join(text.split())[:REASON_CAP]
+
+
+def _named(cfg: Config) -> bool:
+    """Whether the hook root's hub.json names its project: the reader falls back to the folder's
+    name (then "hub") when the file is unreadable or has no project.name."""
+    root = str(cfg.root).rstrip("/")
+    return cfg.root_project not in (os.path.basename(root), "hub")
+
+
+def extension_file(cfg: Config) -> str | None:
+    """plugin/<project>/hooks/project_guard.py of the hub holding this file, when it exists: never
+    from $CLAUDE_PROJECT_DIR, $HUB_CONFIG, the cwd or the tool input; none in the plugin cache.
+    When that hub.json names no project, the only plugin/*/hooks/project_guard.py there, if one."""
+    if cfg.root is None:
+        return None
+    project = cfg.root_project
+    if project not in ("", ".", "..") and "/" not in project and "\\" not in project:
+        path = os.path.join(str(cfg.root), "plugin", project, "hooks", EXTENSION_NAME)
+        if os.path.lexists(path):
+            return path
+    if _named(cfg):
+        return None
+    pattern = os.path.join(glob.escape(str(cfg.root)), "plugin", "*", "hooks", EXTENSION_NAME)
+    found = [p for p in sorted(glob.glob(pattern)) if p.split(os.sep)[-3] != "hub-workflow"]
+    return found[0] if len(found) == 1 else None
+
+
+def _unusable(path: str, cfg: Config) -> str | None:
+    """Why the extension file cannot run: it resolves (links followed) outside the hook root, or
+    to no file; None when it is a file inside the root."""
+    root = os.path.realpath(str(cfg.root)).rstrip(os.sep) + os.sep
+    real = os.path.realpath(path)
+    if not real.startswith(root):
+        return "extension resolves outside the hub"
+    return None if os.path.isfile(real) else "extension is not a file"
+
+
+def _extension_cause(code: int, stdout: bytes, stderr: str) -> str | None:
+    """Why the runner's answer is unusable, or None when it is null or a valid verdict."""
+    if code != 0:
+        lines = stderr.strip().splitlines()
+        return f"exit {code}" + (f" ({_one_line(lines[-1])})" if lines else "")
+    try:
+        answer = json.loads(stdout.decode("utf-8").strip())
+    except ValueError:
+        return "its output is not one JSON value"
+    if answer is None:
+        return None
+    if (
+        isinstance(answer, dict)
+        and set(answer) == {"verdict", "reason"}
+        and answer["verdict"] in ("ask", "deny")
+        and isinstance(answer["reason"], str)
+    ):
+        return None
+    return f"unexpected answer {json.dumps(answer)[:REASON_CAP]}"
+
+
+def _failed(cause: str) -> Tuple[Verdict, bool]:
+    return ("ask", EXTENSION_REASON.format(f"{cause}; confirm")), True
+
+
+def _tail(fh: IO[bytes]) -> str:
+    """The last STDERR_TAIL bytes of the runner's stderr file, as text."""
+    fh.seek(0, os.SEEK_END)
+    fh.seek(max(0, fh.tell() - STDERR_TAIL))
+    return fh.read().decode("utf-8", "replace")
+
+
+def run_extension(path: str, data: dict, cfg: Config) -> Tuple[Verdict, bool]:
+    """(the extension's verdict on the event, whether it failed). A failure is an ask naming the
+    cause. The runner gets its own session, so a timeout kills every process it started."""
+    unusable = _unusable(path, cfg)
+    if unusable:
+        return _failed(unusable)
+    hub_json = os.path.join(str(cfg.root), "hub.json")
+    with tempfile.TemporaryFile() as err:
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, RUNNER, path, hub_json],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=err,
+                start_new_session=True,
+            )
+        except (OSError, ValueError) as error:
+            return _failed(f"could not start ({type(error).__name__})")
+        try:
+            stdout, _ = proc.communicate(json.dumps(data).encode("utf-8"), timeout=EXTENSION_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                proc.communicate(timeout=1)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            return _failed(f"timed out after {EXTENSION_TIMEOUT} s")
+        cause = _extension_cause(proc.returncode, stdout, _tail(err))
+    if cause:
+        return _failed(cause)
+    answer = json.loads(stdout.decode("utf-8").strip())
+    if answer is None:
+        return None, False
+    return (answer["verdict"], EXTENSION_REASON.format(_one_line(answer["reason"]))), False
+
+
+def tighten(base: Verdict, extra: Verdict, failed: bool = False) -> Verdict:
+    """The stricter verdict (none < ask < deny); on a tie the base one, with a failure's cause
+    added to its reason."""
+    if STRICTNESS[extra[0] if extra else None] > STRICTNESS[base[0] if base else None]:
+        return extra
+    if failed and base and extra:
+        return base[0], f"{base[1]}; {extra[1]}"
+    return base
+
+
 def main() -> None:
     data = read_input()
     tool = data.get("tool_name")
     if tool != "Bash" and tool not in FILE_TOOLS:
         return
-    verdict = decide(data, load_config(data.get("cwd")))
+    cfg = load_config(data.get("cwd"))
+    verdict = decide(data, cfg)
+    if verdict is None or verdict[0] != "deny":  # a deny is final: the extension never runs
+        path = extension_file(cfg)
+        if path:
+            extra, failed = run_extension(path, data, cfg)
+            verdict = tighten(verdict, extra, failed)
     if verdict:
         decision, reason = verdict
         emit({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
