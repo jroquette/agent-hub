@@ -184,6 +184,14 @@ INVALID: dict[str, Callable[[dict[str, Any]], None]] = {
     "unsorted-modules": lambda value: value.update(modules=["cloud", "bench"]),
     "hub-lock-key": _set_file(HUB_LOCK_PATH, {"ownership": "seeded"}),
     "git-key": _set_file(".git/x", {"ownership": "seeded"}),
+    "git-folder-key": _set_file(".git", {"ownership": "seeded"}),
+    "duplicate-modules": lambda value: value.update(modules=["bench", "bench"]),
+    "unknown-module": lambda value: value.update(modules=["nope"]),
+    "schema-version-true": lambda value: value.update(schema_version=True),
+    "executable-int": _set_file("a.md", {"ownership": "managed", "executable": 1, "sha256": _HASH}),
+    "executable-string": _set_file(
+        "a.md", {"ownership": "managed", "executable": "false", "sha256": _HASH}
+    ),
 }
 
 
@@ -194,6 +202,47 @@ def test_rejects_lock_when_invalid(lock: HubLock, mutate: Callable[[dict[str, An
     mutate(value)
 
     with pytest.raises(ValidationError):
+        HubLock.model_validate(value)
+
+
+# Each case is valid only if the clause next to it is no broader than the rule: a ``.git`` prefix
+# must not catch ``.gitignore`` or ``.github``, and a link may climb as far as the hub root.
+VALID: dict[str, Callable[[dict[str, Any]], None]] = {
+    "gitignore-key": _set_file(".gitignore", {"ownership": "seeded"}),
+    "github-key": _set_file(".github/x", {"ownership": "seeded"}),
+    "link-to-hub-root-folder": _set_file(
+        "a/b/c.md", {"ownership": "managed", "symlink": "../../x.md"}
+    ),
+}
+
+
+@pytest.mark.parametrize("mutate", VALID.values(), ids=VALID.keys())
+def test_accepts_lock_when_valid(lock: HubLock, mutate: Callable[[dict[str, Any]], None]) -> None:
+    value = written_value(lock)
+    mutate(value)
+
+    assert written_value(HubLock.model_validate(value)) == value
+
+
+@pytest.mark.parametrize(
+    ("path", "target", "problem"),
+    [
+        ("a.md", "", "must not be empty"),
+        ("a.md", "/etc/passwd", "must be relative"),
+        ("a/b.md", "../../x", "resolves outside the hub"),
+        (".claude/agents/x.md", "../../../x", "resolves outside the hub"),
+        ("a.md", "b\x00.md", "must not contain NUL"),
+        ("a.md", "./b.md", "must be a normalized POSIX path"),
+        ("a.md", "a.md", "must not point at the hub root or at itself"),
+    ],
+)
+def test_rejects_link_target_when_not_inside_hub(
+    *, lock: HubLock, path: str, target: str, problem: str
+) -> None:
+    value = written_value(lock)
+    value["files"][path] = {"ownership": "managed", "symlink": target}
+
+    with pytest.raises(ValidationError, match=problem):
         HubLock.model_validate(value)
 
 
