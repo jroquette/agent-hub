@@ -13,6 +13,7 @@ from typing import Final, NamedTuple
 
 from agent_hub.core.hub_config.schema import SCHEMA_FILE, SCHEMA_PACKAGE
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership
+from agent_hub.generator.built_json import project_manifest, project_settings
 from agent_hub.generator.json_form import JsonBuilder
 
 _PACKAGE: Final = "agent_hub.generator"
@@ -80,7 +81,17 @@ def _project_seeded(path: str, template: str) -> TemplateEntry:
     )
 
 
+def _project_built(path: str, build: JsonBuilder) -> TemplateEntry:
+    return TemplateEntry(
+        path=path, build=build, kind=Kind.PROJECT_OWNED, ownership=Ownership.SEEDED
+    )
+
+
+# The project plugin's folder; `render_entries` puts the project name in its placeholder.
+_PROJECT_PLUGIN: Final = "plugin/@@{project_name}"
+
 REGISTRY: Final[tuple[TemplateEntry, ...]] = (
+    _project_built(".claude/settings.project.json", project_settings),
     _generic_managed(".github/workflows/ci.yml", "github/workflows/ci.yml.tmpl"),
     _generic_seeded(".gitignore", "gitignore.tmpl"),
     _generic_managed(".pre-commit-config.yaml", "pre-commit-config.yaml.tmpl"),
@@ -108,4 +119,10 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
         ownership=Ownership.MANAGED,
         verbatim=True,
     ),
+    _project_built(f"{_PROJECT_PLUGIN}/.claude-plugin/plugin.json", project_manifest),
+    _project_seeded(f"{_PROJECT_PLUGIN}/agents/.gitkeep", "plugin/project/agents/gitkeep.tmpl"),
+    _project_seeded(
+        f"{_PROJECT_PLUGIN}/hooks/project_guard.py", "plugin/project/hooks/project_guard.py.tmpl"
+    ),
+    _project_seeded(f"{_PROJECT_PLUGIN}/skills/.gitkeep", "plugin/project/skills/gitkeep.tmpl"),
 )
