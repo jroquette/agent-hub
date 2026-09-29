@@ -19,7 +19,7 @@ from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.hub_files.rendered_link import RenderedLink
 from agent_hub.core.testing.builders import a_hub_document
-from agent_hub.generator.errors import TemplateError
+from agent_hub.generator.errors import GeneratorError, TemplateError
 from agent_hub.generator.hub_template import render_template
 from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_mapping
 from agent_hub.generator.registry import REGISTRY, TemplateEntry, TemplateSource
@@ -130,8 +130,11 @@ def fixture_templates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
     sys.modules.pop(FIXTURE_PACKAGE, None)
 
 
-def a_fixture_entry(package: Path, path: str, text: str) -> TemplateEntry:
-    name = f"{path}.tmpl"
+def a_fixture_entry(
+    package: Path, path: str, text: str, *, source_name: str | None = None
+) -> TemplateEntry:
+    """An entry for ``path`` whose source holds ``text``; ``source_name`` when ``path`` nests."""
+    name = source_name or f"{path}.tmpl"
     (package / name).write_text(text, encoding="utf-8", newline="")
     return a_template_entry(path, name, source=TemplateSource(FIXTURE_PACKAGE, name))
 
@@ -241,6 +244,131 @@ def test_returns_nothing_when_template_fails(
 
     assert raised.value.source == "broken.md.tmpl"
     assert raised.value.placeholder == "project_nmae"
+
+
+def a_config_named(name: str) -> HubConfig:
+    document = a_hub_document()
+    document["project"]["name"] = name
+    return HubConfig.model_validate(document)
+
+
+def plugin_entries(package: Path, paths: Iterable[str]) -> list[TemplateEntry]:
+    """One fixture entry per path; flat sources with no placeholder, so only the path renders."""
+    return [
+        a_fixture_entry(package, path, f"entry {index}\n", source_name=f"{index}.tmpl")
+        for index, path in enumerate(paths)
+    ]
+
+
+def test_adds_one_link_when_entry_list_gains_agent_or_skill(
+    demo_config: HubConfig, fixture_templates: Path
+) -> None:
+    base = (
+        "plugin/hub-workflow/agents/architect.md",
+        "plugin/hub-workflow/agents/.gitkeep",
+        "plugin/hub-workflow/skills/recall/SKILL.md",
+        "plugin/hub-workflow/skills/.gitkeep",
+    )
+    extra = (
+        "plugin/demo/agents/reviewer.md",
+        "plugin/demo/skills/deploy/SKILL.md",
+        "plugin/demo/skills/deploy/reference.md",
+    )
+
+    before = render_entries(demo_config, plugin_entries(fixture_templates, base))
+    after = render_entries(demo_config, plugin_entries(fixture_templates, base + extra))
+
+    assert [(link.path, link.target) for link in before.links] == [
+        (".claude/agents/architect.md", "../../plugin/hub-workflow/agents/architect.md"),
+        (".claude/skills/recall", "../../plugin/hub-workflow/skills/recall"),
+    ]
+    added = set(after.links) - set(before.links)
+    assert sorted((link.path, link.target) for link in added) == [
+        (".claude/agents/reviewer.md", "../../plugin/demo/agents/reviewer.md"),
+        (".claude/skills/deploy", "../../plugin/demo/skills/deploy"),
+    ]
+    assert len(after.links) == len(before.links) + 2
+    assert {file.path for file in after.files}.isdisjoint(link.path for link in after.links)
+
+
+@pytest.mark.parametrize("project_name", ["demo", "acme-tools"])
+def test_substitutes_project_name_when_path_holds_placeholder(
+    project_name: str, fixture_templates: Path
+) -> None:
+    entries = plugin_entries(
+        fixture_templates,
+        ("plugin/@@{project_name}/agents/reviewer.md", "plugin/@@{project_name}/skills/.gitkeep"),
+    )
+
+    rendered = render_entries(a_config_named(project_name), entries)
+
+    assert [file.path for file in rendered.files] == [
+        f"plugin/{project_name}/agents/reviewer.md",
+        f"plugin/{project_name}/skills/.gitkeep",
+    ]
+    assert [(link.path, link.target) for link in rendered.links] == [
+        (".claude/agents/reviewer.md", f"../../plugin/{project_name}/agents/reviewer.md"),
+    ]
+
+
+@pytest.mark.parametrize("placeholder", ["tracker_team", "project_nmae"])
+def test_raises_template_error_when_path_holds_other_placeholder(
+    placeholder: str, demo_config: HubConfig, fixture_templates: Path
+) -> None:
+    # ``tracker_team`` is a key of the text mapping: paths take ``project_name`` only.
+    path = f"plugin/@@{{{placeholder}}}/agents/reviewer.md"
+    entries = plugin_entries(fixture_templates, (path,))
+
+    with pytest.raises(TemplateError) as raised:
+        render_entries(demo_config, entries)
+
+    assert raised.value.source == path
+    assert raised.value.placeholder == placeholder
+
+
+@pytest.mark.parametrize(
+    ("project_name", "paths", "colliding"),
+    [
+        (
+            "hub-workflow",
+            (
+                "plugin/hub-workflow/.claude-plugin/plugin.json",
+                "plugin/@@{project_name}/.claude-plugin/plugin.json",
+            ),
+            "plugin/hub-workflow/.claude-plugin/plugin.json",
+        ),
+        (
+            "demo",
+            ("plugin/demo/agents/reviewer.md", ".claude/agents/reviewer.md"),
+            ".claude/agents/reviewer.md",
+        ),
+        (
+            "demo",
+            ("plugin/hub-workflow/skills/recall/SKILL.md", "plugin/demo/skills/recall/SKILL.md"),
+            ".claude/skills/recall",
+        ),
+        (
+            "demo",
+            ("plugin/demo/skills/recall/SKILL.md", ".claude/skills/recall/extra.md"),
+            ".claude/skills/recall/extra.md",
+        ),
+    ],
+    ids=["file-and-file", "file-and-link", "link-and-link", "file-under-link"],
+)
+def test_raises_generator_error_when_paths_collide(
+    *, project_name: str, paths: tuple[str, ...], colliding: str, fixture_templates: Path
+) -> None:
+    entries = plugin_entries(fixture_templates, paths)
+
+    with pytest.raises(GeneratorError) as raised:
+        render_entries(a_config_named(project_name), entries)
+
+    assert type(raised.value) is GeneratorError
+    assert str(raised.value).startswith(f"{colliding}: ")
+
+
+def test_takes_no_project_entry_input_when_signature_read() -> None:
+    assert list(inspect.signature(render_hub).parameters) == ["config"]
 
 
 def test_renders_same_bytes_when_rendered_twice(demo_config: HubConfig) -> None:
