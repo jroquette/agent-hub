@@ -26,6 +26,8 @@ import pytest
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.generator.render_hub import render_hub
 
+# `%aI` prints UTC as `+00:00` on older git (2.43) and as `Z` on newer (2.55, CI): pin the form.
+GIT_ISO_DATES = "--date=format:%Y-%m-%dT%H:%M:%S%z"
 ACTUAL = {"rc": b"0\n", "stdout": b"a\nc\n", "stderr": b"", "fs": b"A <ROOT>/x/\n", "calls": b""}
 GOLDEN = (
     b"--- rc (2 bytes) ---\n0\n\n"
@@ -710,8 +712,8 @@ def test_copies_rendered_hooks_and_scripts_when_hub_copied(
     assert (hub / "hub.json").read_bytes() == AGH7_HUB_JSON
     assert (hub / ".gitignore").read_text() == HUB_GITIGNORE
     assert git_out(ws, "status", "--porcelain", cwd=hub) == ""
-    assert git_out(ws, "log", "--format=%s %aI %cI %an", cwd=hub) == (
-        "init 2025-12-16T09:00:00+00:00 2025-12-16T09:00:00+00:00 Test User\n"
+    assert git_out(ws, "log", GIT_ISO_DATES, "--format=%s %ad %cd %an", cwd=hub) == (
+        "init 2025-12-16T09:00:00+0000 2025-12-16T09:00:00+0000 Test User\n"
     )
     assert git_out(ws, "branch", "--show-current", cwd=hub) == "trunk\n"
 
@@ -1036,6 +1038,6 @@ def test_builds_brief_workspace_when_fixture_built(char_workspace: Callable[...,
     assert git_out(ws, "branch", "--show-current", cwd=web) == ""
     assert ws.BRIEF_GH["gh"][0]["argv_has"] == ["pr", "acme/api"]
     ws.commit_hub({"brain/now.md": None, "brain/x.md": "x\n"})
-    assert git_out(ws, "log", "-1", "--format=%s %aI", "--name-status", cwd=hub) == (
-        "case change 2026-01-15T09:30:00+00:00\n\nD\tbrain/now.md\nA\tbrain/x.md\n"
+    assert git_out(ws, "log", "-1", GIT_ISO_DATES, "--format=%s %ad", "--name-status", cwd=hub) == (
+        "case change 2026-01-15T09:30:00+0000\n\nD\tbrain/now.md\nA\tbrain/x.md\n"
     )
