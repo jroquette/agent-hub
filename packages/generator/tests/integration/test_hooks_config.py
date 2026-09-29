@@ -161,6 +161,28 @@ def test_falls_back_per_key_when_hub_json_mistyped(
     assert "- cwd: `/w`" in only_file(hub / "brain" / "auto" / "workspace")
 
 
+def test_denies_deny_path_when_hub_json_mistyped(
+    run_hook: Callable[..., subprocess.CompletedProcess[bytes]], hub: Path
+) -> None:
+    write_hub_json(hub, MISTYPED)
+    notes = hub / "secret-notes" / "plan.md"
+    read = {"tool_name": "Read", "tool_input": {"file_path": str(notes)}, "cwd": str(hub)}
+
+    by_read = verdict_of(run_hook("guard", read))
+    by_cat = verdict_of(run_hook("guard", bash_event("cat secret-notes/plan.md", hub), cwd=hub))
+    other = verdict_of(run_hook("guard", bash_event("cat notes/plan.md", hub), cwd=hub))
+
+    assert by_read == (
+        "deny",
+        f"[hub guard] {notes} is under guard.deny_paths `@hub/secret-notes` (hub.json); agents"
+        " neither read nor change it",
+    )
+    assert by_cat is not None
+    assert by_cat[0] == "deny"
+    assert "secret-notes/plan.md" in by_cat[1]
+    assert other is None
+
+
 def test_reads_deny_paths_when_config_loaded(
     hub: Path, *, hook_python: str, run_python: Callable[..., Any], elsewhere: Path
 ) -> None:
@@ -565,3 +587,120 @@ def test_prints_skip_line_when_hook_crashes(
         b"",
         f"[hub {name}] skipped: RuntimeError\n".encode(),
     )
+
+
+# Owner decision (2026-09-29): with a hook root, $HUB_CONFIG may only tighten the guard's lists.
+# A settings ``env`` entry (an app repo's ``settings.local.json`` too) can reach the hooks, so the
+# lists are the union of the hook root's and $HUB_CONFIG's; every other value keeps Q-4's order.
+ROOT_GUARD: dict[str, Any] = {
+    "project": {"name": "demo", "default_branch": "trunk"},
+    "guard": {
+        "ask_before_edit": ["demo-api/docs/adr"],
+        "deny_hosts": ["prod.example.com"],
+        "deny_paths": ["@hub/private"],
+    },
+}
+LISTS_CODE = (
+    "import json\nfrom hubhooks import load_config\ncfg = load_config(None)\n"
+    "print(json.dumps([list(cfg.ask_before_edit), list(cfg.deny_hosts), list(cfg.deny_paths),"
+    " cfg.default_branch, cfg.project_name]))\n"
+)
+
+
+def guard_calls(hub: Path) -> list[dict[str, Any]]:
+    """A deny path read, a deny host, an ask path edit, a guard file edit, a push to trunk."""
+    adr = hub.parent / "demo-api" / "docs" / "adr" / "0001.md"
+    edit = {"file_path": str(adr), "old_string": "a", "new_string": "b"}
+    extension = {"file_path": str(hub / "plugin" / "demo" / "hooks" / "x.py"), "content": "x"}
+    return [
+        {"tool_name": "Read", "tool_input": {"file_path": str(hub / "private" / "a.md")}},
+        bash_event("curl https://prod.example.com/x", hub),
+        {"tool_name": "Edit", "tool_input": edit},
+        {"tool_name": "Write", "tool_input": extension},
+        bash_event("git push origin trunk", hub),
+    ]
+
+
+def test_keeps_hook_root_guard_lists_when_hub_config_permissive(
+    run_hook: Callable[..., subprocess.CompletedProcess[bytes]],
+    hub: Path,
+    *,
+    hook_python: str,
+    run_python: Callable[..., Any],
+    elsewhere: Path,
+) -> None:
+    write_hub_json(hub, ROOT_GUARD)
+    permissive = elsewhere / "permissive.json"
+    permissive.write_text(
+        json.dumps(
+            {
+                "project": {"name": "other", "default_branch": "release"},
+                "guard": {"ask_before_edit": [], "deny_hosts": [], "deny_paths": []},
+            }
+        ),
+        encoding="utf-8",
+    )
+    env = {"HUB_CONFIG": str(permissive)}
+
+    lists = run_python(hook_python, LISTS_CODE, path=hub / HOOKS, cwd=elsewhere, env=env)
+    verdicts = [verdict_of(run_hook("guard", event, env=env)) for event in guard_calls(hub)]
+
+    # the lists stay the hook root's; the other values are $HUB_CONFIG's (Q-4)
+    assert lists == [
+        ["demo-api/docs/adr"],
+        ["prod.example.com"],
+        ["@hub/private"],
+        "release",
+        "other",
+    ]
+    # plugin/demo/hooks/ is the hook root's project, whatever $HUB_CONFIG names
+    assert [verdict and verdict[0] for verdict in verdicts] == ["deny", "deny", "ask", "ask", None]
+
+
+def test_adds_hub_config_guard_lists_when_stricter(
+    run_hook: Callable[..., subprocess.CompletedProcess[bytes]],
+    hub: Path,
+    *,
+    hook_python: str,
+    run_python: Callable[..., Any],
+    elsewhere: Path,
+) -> None:
+    write_hub_json(hub, ROOT_GUARD)
+    stricter = elsewhere / "stricter.json"
+    stricter.write_text(
+        json.dumps(
+            {
+                "project": {"name": "demo", "default_branch": "trunk"},
+                "guard": {
+                    "ask_before_edit": ["demo-api/src", "demo-api/docs/adr"],
+                    "deny_hosts": ["evil.example.org"],
+                    "deny_paths": ["@hub/drafts", "@hub/private"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    env = {"HUB_CONFIG": str(stricter)}
+    source = hub.parent / "demo-api" / "src" / "a.py"
+    added = [
+        {"tool_name": "Read", "tool_input": {"file_path": str(hub / "drafts" / "a.md")}},
+        bash_event("curl https://evil.example.org/x", hub),
+        {"tool_name": "Write", "tool_input": {"file_path": str(source), "content": "x"}},
+    ]
+
+    lists = run_python(hook_python, LISTS_CODE, path=hub / HOOKS, cwd=elsewhere, env=env)
+    kept = [verdict_of(run_hook("guard", event, env=env)) for event in guard_calls(hub)]
+    tightened = [verdict_of(run_hook("guard", event, env=env)) for event in added]
+    without = [verdict_of(run_hook("guard", event)) for event in added]
+
+    # the hook root's entries first, then $HUB_CONFIG's new ones, each once
+    assert lists == [
+        ["demo-api/docs/adr", "demo-api/src"],
+        ["prod.example.com", "evil.example.org"],
+        ["@hub/private", "@hub/drafts"],
+        "trunk",
+        "demo",
+    ]
+    assert [verdict and verdict[0] for verdict in kept] == ["deny", "deny", "ask", "ask", "deny"]
+    assert [verdict and verdict[0] for verdict in tightened] == ["deny", "deny", "ask"]
+    assert without == [None, None, None]

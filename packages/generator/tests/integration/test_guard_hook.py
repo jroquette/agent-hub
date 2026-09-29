@@ -19,6 +19,8 @@ from typing import Any
 import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.generator.render_hub import render_hub
 
 HOOKS = "plugin/hub-workflow/hooks"
 # Where Claude Code's plugin cache would hold the hooks: no hub.json three folders up.
@@ -599,3 +601,509 @@ def test_uses_hub_config_when_env_names_file(
     assert found == [str(other.resolve())]
     # without it, the hub holding the hook wins (Q-4): HUB_CONFIG came first
     assert evaluate(["str(find_hub('/'))"]) == [str(workspace / "demo-hub")]
+
+
+# D1 rules (slice 18): the guard's built-in asks, ``deny_paths`` and ``@hub`` (AC-4.12, AC-4.13).
+# The guard runs as Claude Code runs it: ``guard.py`` as ``__main__`` with the event on stdin. One
+# child per hook root replays a batch of (event, cwd) pairs, so the matrix stays fast on both
+# interpreters; each run's exit code and stdout are kept.
+GUARD_BATCH = """
+import contextlib, io, json, os, runpy
+guard, batch = sys.argv[1], sys.argv[2]
+with open(batch, encoding="utf-8") as fh:
+    runs = json.load(fh)
+results = []
+for event, cwd in runs:
+    os.chdir(cwd)
+    sys.stdin = io.TextIOWrapper(io.BytesIO(json.dumps(event).encode("utf-8")), encoding="utf-8")
+    out, code = io.StringIO(), None
+    with contextlib.redirect_stdout(out):
+        try:
+            runpy.run_path(guard, run_name="__main__")
+        except SystemExit as stop:
+            code = stop.code
+    results.append([code, out.getvalue()])
+print(json.dumps(results))
+"""
+# AC-4.12: the guard's own files, its extension, the settings, the lock and the config.
+GUARD_FILES = (
+    "plugin/hub-workflow/hooks/guard.py",
+    "plugin/hub-workflow/hooks/stdlib_reader.py",
+    "plugin/hub-workflow/hooks/project_guard_runner.py",
+    "plugin/demo/hooks/project_guard.py",
+    "plugin/demo/hooks/extra.py",
+    ".claude/settings.json",
+    ".claude/settings.project.json",
+    ".claude/settings.local.json",
+    "hub.lock",
+    "hub.json",
+)
+# Near misses: none of them is a guard file.
+FREE_FILES = (
+    "plugin/hub-workflow/skills/learn/SKILL.md",
+    ".claude/skills/learn/SKILL.md",
+    "plugin/demo/agents/reviewer.md",
+    "plugin/other/hooks/x.py",
+    ".claude/settings.json.bak",
+    "hub.json.bak",
+    "docs/hub.json",
+    "scripts/hub.lock",
+)
+BASH_WRITES = (
+    "echo x > {}",
+    "echo x | tee {}",
+    "sed -i s/a/b/ {}",
+    "rm {}",
+    "mv {} /tmp/moved",
+    "cp /tmp/source {}",
+)
+# AC-4.13's lists.
+DENY_PATHS = ["@hub/private", "demo-api/secrets"]
+# AC-4.13's ask path, plus one outside brain/ so a Bash write reaches the ask_before_edit rule
+# (the curated-brain rule answers first inside brain/).
+ASK_PATHS = ["@hub/brain/decisions", "@hub/notes"]
+WORKTREE = ".claude/worktrees/x"
+
+type Guard = Callable[..., list[tuple[str, str] | None]]
+
+
+def guarded_document(name: str = "demo") -> dict[str, Any]:
+    document = a_hub_document()
+    document["project"] |= {"name": name, "hub_repo": f"acme/{name}-hub"}
+    document["guard"] = {"ask_before_edit": ASK_PATHS, "deny_paths": DENY_PATHS}
+    return document
+
+
+def render_guarded(rendered_tree: Callable[..., Path], root: Path, name: str = "demo") -> Path:
+    """The ``name`` render at ``root`` with AC-4.13's guard lists in its ``hub.json``."""
+    config = HubConfig.model_validate(guarded_document(name))
+    hub = rendered_tree(render_hub(config), root=root)
+    (hub / "hub.json").write_text(json.dumps(guarded_document(name)), encoding="utf-8")
+    return hub.resolve()
+
+
+@pytest.fixture
+def guarded_hub(tmp_path: Path, rendered_tree: Callable[..., Path]) -> Path:
+    """``ws/demo-hub`` with AC-4.13's lists, its hub worktree at ``WORKTREE``, ``ws/demo-api``."""
+    hub = render_guarded(rendered_tree, tmp_path / "ws" / "demo-hub")
+    render_guarded(rendered_tree, hub / WORKTREE)
+    (hub.parent / "demo-api" / "src").mkdir(parents=True)
+    return hub
+
+
+@pytest.fixture
+def guard(*, hook_python: str, run_python: Callable[..., Any], tmp_path: Path) -> Guard:
+    """Run ``<hooks>/guard.py`` once per ``(event, cwd)``; the ``(decision, reason)`` of each."""
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+
+    def run(
+        hooks: Path,
+        runs: Sequence[tuple[Mapping[str, Any], Path]],
+        *,
+        env: Mapping[str, str] | None = None,
+    ) -> list[tuple[str, str] | None]:
+        batch = tmp_path / "batch.json"
+        batch.write_text(json.dumps([[event, str(cwd)] for event, cwd in runs]), encoding="utf-8")
+        results = run_python(
+            hook_python,
+            GUARD_BATCH,
+            path=hooks,
+            args=[str(hooks / "guard.py"), str(batch)],
+            cwd=tmp_path,
+            env={"HOME": str(home)} | dict(env or {}),
+        )
+        verdicts: list[tuple[str, str] | None] = []
+        for code, stdout in results:
+            assert code == 0, stdout
+            if not stdout.strip():
+                verdicts.append(None)
+                continue
+            output = json.loads(stdout)["hookSpecificOutput"]
+            verdicts.append((output["permissionDecision"], output["permissionDecisionReason"]))
+        return verdicts
+
+    return run
+
+
+def edit_events(path: Path) -> list[dict[str, Any]]:
+    """Edit, Write, MultiEdit and NotebookEdit of ``path``."""
+    return [
+        {
+            "tool_name": "Edit",
+            "tool_input": {"file_path": str(path), "old_string": "a", "new_string": "b"},
+        },
+        {"tool_name": "Write", "tool_input": {"file_path": str(path), "content": "x"}},
+        {
+            "tool_name": "MultiEdit",
+            "tool_input": {
+                "file_path": str(path),
+                "edits": [{"old_string": "a", "new_string": "b"}],
+            },
+        },
+        {
+            "tool_name": "NotebookEdit",
+            "tool_input": {"notebook_path": str(path), "new_source": "x"},
+        },
+    ]
+
+
+def read_events(path: Path) -> list[dict[str, Any]]:
+    """Read, Grep and Glob of ``path``."""
+    return [
+        {"tool_name": "Read", "tool_input": {"file_path": str(path)}},
+        {"tool_name": "Grep", "tool_input": {"pattern": "x", "path": str(path)}},
+        {"tool_name": "Glob", "tool_input": {"pattern": "*", "path": str(path)}},
+    ]
+
+
+def bash_run(command: str, cwd: Path) -> tuple[dict[str, Any], Path]:
+    return {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(cwd)}, cwd
+
+
+def test_asks_when_guard_file_edited(guarded_hub: Path, guard: Guard) -> None:
+    bases = (guarded_hub, guarded_hub / WORKTREE)
+    runs: list[tuple[dict[str, Any], Path]] = []
+    named: list[str] = []
+    for base in bases:
+        for rel in GUARD_FILES:
+            for event in edit_events(base / rel):
+                runs.append((event, base))
+                named.append(str(base / rel))
+            for command in BASH_WRITES:
+                runs.append(bash_run(command.format(rel), base))
+                named.append(rel)
+
+    # the hub's own guard, then the guard of the hub worktree: both protect both checkouts
+    for hooks in (guarded_hub / HOOKS, guarded_hub / WORKTREE / HOOKS):
+        verdicts = guard(hooks, runs)
+
+        missed = [
+            (event, verdict)
+            for (event, _), path, verdict in zip(runs, named, verdicts, strict=True)
+            if verdict is None or verdict[0] != "ask" or path not in verdict[1]
+        ]
+        assert len(runs) == 2 * len(GUARD_FILES) * (4 + len(BASH_WRITES))
+        assert missed == []
+
+
+def test_allows_read_when_guard_file_read(guarded_hub: Path, guard: Guard) -> None:
+    runs = [
+        run
+        for base in (guarded_hub, guarded_hub / WORKTREE)
+        for rel in GUARD_FILES
+        for run in (
+            *((event, base) for event in read_events(base / rel)),
+            bash_run(f"cat {rel}", base),
+            bash_run(f"sed -n 1,5p {rel}", base),
+        )
+    ]
+
+    for hooks in (guarded_hub / HOOKS, guarded_hub / WORKTREE / HOOKS):
+        assert guard(hooks, runs) == [None] * len(runs)
+
+
+def test_allows_edit_when_skill_edited(guarded_hub: Path, guard: Guard) -> None:
+    runs = [
+        run
+        for base in (guarded_hub, guarded_hub / WORKTREE)
+        for rel in FREE_FILES
+        for run in (
+            *((event, base) for event in edit_events(base / rel)),
+            *(bash_run(command.format(rel), base) for command in BASH_WRITES),
+        )
+    ]
+    # a repo beside the hub has no guard files of its own
+    api = guarded_hub.parent / "demo-api"
+    runs += [(event, api) for event in edit_events(api / "hub.json")]
+    runs += [bash_run("echo x > .claude/settings.json", api)]
+
+    assert guard(guarded_hub / HOOKS, runs) == [None] * len(runs)
+
+
+def test_denies_when_deny_path_read_or_written(guarded_hub: Path, guard: Guard) -> None:
+    api = guarded_hub.parent / "demo-api"
+    targets = {
+        "@hub/private": [guarded_hub / "private" / "notes.md", guarded_hub / WORKTREE / "private"],
+        "demo-api/secrets": [api / "secrets" / "k.txt", api / WORKTREE / "secrets" / "k.txt"],
+    }
+    runs: list[tuple[dict[str, Any], Path]] = []
+    expected: list[tuple[str, str]] = []
+    for pattern, paths in targets.items():
+        for path in paths:
+            for event in (*read_events(path), *edit_events(path)[:2]):
+                runs.append((event, guarded_hub))
+                expected.append((pattern, str(path)))
+            for command in ("cat {}", "ls {}", "grep -rn key {}", "echo x > {}", "head -1 < {}"):
+                runs.append(bash_run(command.format(path), guarded_hub))
+                expected.append((pattern, str(path)))
+    # relative tokens resolve against the cwd, as in ask_before_edit's token rule
+    runs.append(bash_run("cat private/notes.md", guarded_hub))
+    expected.append(("@hub/private", "private/notes.md"))
+    runs.append(bash_run("grep -rn key secrets", api))
+    expected.append(("demo-api/secrets", "secrets"))
+    # Glob's pattern joined to its path
+    glob = {"tool_name": "Glob", "tool_input": {"pattern": "private/*", "path": str(guarded_hub)}}
+    runs.append((glob, guarded_hub))
+    expected.append(("@hub/private", str(guarded_hub / "private/*")))
+    near = [
+        guarded_hub / "privateer" / "x.md",
+        guarded_hub / "brain" / "private" / "x.md",
+        api / "secrets-old" / "k.txt",
+        api / "src" / "secrets.py",
+    ]
+    near_runs = [(event, guarded_hub) for path in near for event in read_events(path)]
+    near_runs += [bash_run(f"cat {path}", guarded_hub) for path in near]
+
+    verdicts = guard(guarded_hub / HOOKS, [*runs, *near_runs])
+
+    denied = verdicts[: len(runs)]
+    wrong = [
+        (event, verdict)
+        for (event, _), (pattern, path), verdict in zip(runs, expected, denied, strict=True)
+        if verdict is None
+        or verdict[0] != "deny"
+        or f"guard.deny_paths `{pattern}`" not in verdict[1]
+        or path not in verdict[1]
+    ]
+    assert wrong == []
+    assert verdicts[len(runs) :] == [None] * len(near_runs)
+
+
+def test_asks_when_ask_path_edited_only(guarded_hub: Path, guard: Guard) -> None:
+    decision = guarded_hub / "brain" / "decisions" / "0001-x.md"
+    in_worktree = guarded_hub / WORKTREE / "brain" / "decisions" / "0001-x.md"
+    edits = [
+        (event, guarded_hub) for path in (decision, in_worktree) for event in edit_events(path)
+    ]
+    reads = [
+        (event, guarded_hub) for path in (decision, in_worktree) for event in read_events(path)
+    ]
+    reads += [
+        bash_run("cat brain/decisions/0001-x.md", guarded_hub),
+        bash_run("cat notes/a.md", guarded_hub),
+    ]
+    writes = [bash_run("rm notes/a.md", guarded_hub)]
+
+    verdicts = guard(guarded_hub / HOOKS, [*edits, *reads, *writes])
+
+    asked = verdicts[: len(edits)]
+    assert [verdict and verdict[0] for verdict in asked] == ["ask"] * len(edits)
+    assert [
+        verdict
+        for verdict in asked
+        if verdict and "guard.ask_before_edit `@hub/brain/decisions`" not in verdict[1]
+    ] == []
+    assert verdicts[len(edits) : len(edits) + len(reads)] == [None] * len(reads)
+    assert verdicts[len(edits) + len(reads) :] == [
+        (
+            "ask",
+            "[hub guard] notes/a.md matches guard.ask_before_edit `@hub/notes` (hub.json); confirm"
+            " this change is intended",
+        )
+    ]
+
+
+def test_ignores_other_hub_when_at_hub_resolved(
+    guarded_hub: Path, guard: Guard, *, rendered_tree: Callable[..., Path], tmp_path: Path
+) -> None:
+    # A second hub in the same workspace, with the same lists: its own private/ and
+    # brain/decisions/ are not the first hub's, even with every pointer aimed at it.
+    other = render_guarded(rendered_tree, guarded_hub.parent / "other-hub", name="other")
+    env = {"CLAUDE_PROJECT_DIR": str(other)}
+    private, decision = other / "private" / "notes.md", other / "brain" / "decisions" / "0001-x.md"
+    runs = [
+        (event | {"cwd": str(other)}, other)
+        for event in (*read_events(private), *edit_events(private)[:2], *read_events(decision))
+    ]
+    runs += [bash_run("cat private/notes.md", other)]
+    # any hub's brain/ is curated, so this edit asks, but not through the first hub's ask path
+    edit = edit_events(decision)[0] | {"cwd": str(other)}
+    # the same hooks in a plugin cache: no hook root, so every @hub entry is skipped, while a
+    # workspace entry still denies
+    cache = tmp_path / "home" / ".claude" / "plugins" / "cache" / "agent-hub" / "hub-workflow"
+    shutil.copytree(guarded_hub / HOOKS, cache / "hooks")
+    mine = guarded_hub / "private" / "notes.md"
+    cached = [
+        (
+            {"tool_name": "Read", "tool_input": {"file_path": str(mine)}, "cwd": str(guarded_hub)},
+            guarded_hub,
+        ),
+        bash_run(f"cat {guarded_hub.parent / 'demo-api' / 'secrets' / 'k.txt'}", guarded_hub),
+    ]
+
+    in_other = guard(guarded_hub / HOOKS, runs, env=env)
+    [curated] = guard(guarded_hub / HOOKS, [(edit, other)], env=env)
+    from_cache = guard(cache / "hooks", cached)
+    own = guard(
+        guarded_hub / HOOKS,
+        [({"tool_name": "Read", "tool_input": {"file_path": str(mine)}}, other)],
+        env=env,
+    )
+
+    assert in_other == [None] * len(runs)
+    assert curated is not None
+    assert "brain/ is curated" in curated[1]
+    assert from_cache[0] is None
+    assert from_cache[1] is not None
+    assert from_cache[1][0] == "deny"
+    assert own[0] is not None
+    assert own[0][0] == "deny"
+
+
+# Review fixes: each only adds a path form the guard sees through, or an ask.
+
+
+def test_follows_links_when_path_goes_through_symlink(
+    guarded_hub: Path, guard: Guard, tmp_path: Path
+) -> None:
+    # A workspace reached through a link (macOS: /tmp is /private/tmp), and `..` after the
+    # rendered .claude/skills/<name> link, which lands in plugin/hub-workflow/.
+    linked = tmp_path / "linked"
+    linked.symlink_to(guarded_hub.parent, target_is_directory=True)
+    unresolved = linked / guarded_hub.name
+    skill = guarded_hub / ".claude" / "skills" / "learn"
+    runs: list[tuple[dict[str, Any], Path]] = [
+        (
+            {
+                "tool_name": "Write",
+                "tool_input": {"file_path": str(unresolved / "hub.json"), "content": "x"},
+            },
+            tmp_path,
+        ),
+        (
+            {
+                "tool_name": "Read",
+                "tool_input": {"file_path": str(unresolved / "private" / "a.md")},
+            },
+            tmp_path,
+        ),
+        (
+            {
+                "tool_name": "Write",
+                "tool_input": {"file_path": f"{skill}/../../hooks/guard.py", "content": "x"},
+            },
+            tmp_path,
+        ),
+        (
+            {"tool_name": "Read", "tool_input": {"file_path": f"{skill}/../../../../private/a.md"}},
+            tmp_path,
+        ),
+    ]
+
+    verdicts = guard(guarded_hub / HOOKS, runs)
+
+    assert skill.is_symlink()
+    assert [verdict and verdict[0] for verdict in verdicts] == ["ask", "deny", "ask", "deny"]
+
+
+def test_expands_home_when_path_starts_with_tilde(
+    guarded_hub: Path, guard: Guard, tmp_path: Path
+) -> None:
+    home_rel = guarded_hub.relative_to(tmp_path.resolve())
+    runs = [
+        bash_run(f"echo x > ~/{home_rel}/hub.json", tmp_path),
+        bash_run(f"cat ~/{home_rel}/private/x", tmp_path),
+        ({"tool_name": "Read", "tool_input": {"file_path": f"~/{home_rel}/private/x"}}, tmp_path),
+    ]
+
+    verdicts = guard(guarded_hub / HOOKS, runs, env={"HOME": str(tmp_path.resolve())})
+
+    assert [verdict and verdict[0] for verdict in verdicts] == ["ask", "deny", "deny"]
+
+
+PUNCTUATED = (
+    "(rm hub.json)",
+    "echo `rm hub.json`",
+    "echo $(rm hub.json)",
+    "rm hub.json&",
+    'rm h"ub".json',
+    "rm hub\\.json",
+    "rm 'hub'.json",
+)
+
+
+def test_asks_when_command_hides_guard_file_in_shell_punctuation(
+    guarded_hub: Path, guard: Guard
+) -> None:
+    verdicts = guard(
+        guarded_hub / HOOKS, [bash_run(command, guarded_hub) for command in PUNCTUATED]
+    )
+
+    assert dict(
+        zip(PUNCTUATED, (verdict and verdict[0] for verdict in verdicts), strict=True)
+    ) == dict.fromkeys(PUNCTUATED, "ask")
+
+
+PARENT_REMOVALS = (
+    "rm -rf .claude",
+    "mv .claude x",
+    "rm -rf plugin",
+    "rm -rf plugin/hub-workflow",
+    "rm -rf plugin/demo",
+    "mv plugin x",
+    "git rm -r plugin/hub-workflow",
+    "git mv plugin/demo plugin/x",
+    "rm -rf .",
+    "rm -rf ../demo-hub",
+    "rm -rf ..",
+)
+PARENT_KEPT = (
+    "rm -rf docs",
+    "cp a .",
+    "cp -r plugin /tmp/copy",
+    "mv docs/a docs/b",
+    "rm -rf plugin/demo/agents",
+)
+
+
+def test_asks_when_rm_or_mv_targets_guard_parent(guarded_hub: Path, guard: Guard) -> None:
+    commands = (*PARENT_REMOVALS, *PARENT_KEPT)
+    runs = [bash_run(command, guarded_hub) for command in commands]
+    runs += [bash_run("rm -rf ../../..", guarded_hub / WORKTREE / "brain")]
+
+    verdicts = guard(guarded_hub / HOOKS, runs)
+
+    kinds_by = dict(zip(commands, (verdict and verdict[0] for verdict in verdicts), strict=False))
+    assert kinds_by == dict.fromkeys(PARENT_REMOVALS, "ask") | dict.fromkeys(PARENT_KEPT)
+    assert verdicts[-1] is not None
+    assert verdicts[-1][0] == "ask"
+
+
+def test_matches_case_insensitively_when_path_case_differs(guarded_hub: Path, guard: Guard) -> None:
+    # macOS file systems ignore case: HUB.JSON is hub.json there.
+    runs = [
+        (
+            {
+                "tool_name": "Write",
+                "tool_input": {"file_path": str(guarded_hub / "HUB.JSON"), "content": "x"},
+            },
+            guarded_hub,
+        ),
+        (
+            {
+                "tool_name": "Write",
+                "tool_input": {
+                    "file_path": str(guarded_hub / "Plugin/hub-workflow/hooks/guard.py"),
+                    "content": "x",
+                },
+            },
+            guarded_hub,
+        ),
+        bash_run("echo x > HUB.JSON", guarded_hub),
+        (
+            {"tool_name": "Read", "tool_input": {"file_path": str(guarded_hub / "PRIVATE" / "x")}},
+            guarded_hub,
+        ),
+        (
+            {
+                "tool_name": "Write",
+                "tool_input": {"file_path": str(guarded_hub / "Notes" / "a.md"), "content": "x"},
+            },
+            guarded_hub,
+        ),
+    ]
+
+    verdicts = guard(guarded_hub / HOOKS, runs)
+
+    assert [verdict and verdict[0] for verdict in verdicts] == ["ask", "ask", "ask", "deny", "ask"]

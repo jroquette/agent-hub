@@ -2,11 +2,14 @@
 """PreToolUse guard for a hub workspace (hub.json + sibling repos).
 
 deny  = hard block (secrets, force-push / push to the default branch, curl|sh, destructive infra and docker
-        volumes, AI attribution in commits/PRs/branches, editing .git internals, network to guard.deny_hosts)
+        volumes, AI attribution in commits/PRs/branches, editing .git internals, network to guard.deny_hosts,
+        reading or changing paths in guard.deny_paths, from a file tool or any Bash token)
 ask   = needs the user's confirmation (removing test assertions or adding skip/xfail/quarantine markers,
-        deleting or sed-editing tests from Bash, editing paths in guard.ask_before_edit, writing brain/
-        outside now.md, journal/, _inbox/, auto/, features/)
-Project values (branch prefix, default branch, tracker team, guard lists) come from hub.json.
+        deleting or sed-editing tests from Bash, editing the hub's guard files: plugin/hub-workflow/hooks/,
+        plugin/<project>/hooks/, .claude/settings*.json, hub.lock and hub.json, in the hub or a hub worktree;
+        editing paths in guard.ask_before_edit, writing brain/ outside now.md, journal/, _inbox/, auto/, features/)
+Project values (branch prefix, default branch, tracker team, guard lists) come from hub.json. A list entry
+`@hub/<path>` is <path> in the hub that holds this file; with no such hub (plugin cache) it is skipped.
 Everything else passes through to the normal permission rules.
 """
 
@@ -44,6 +47,8 @@ SKIP_MARKERS = re.compile(
 TEST_PATH = r"(?:(\S*/)?(tests?|__tests__)/\S+|\S+\.(test|spec)\.[jt]sx?\b|\S*/test_\w+\.py\b)"
 BASH_WRITE = re.compile(r">>?|\btee\b|\bsed\s+(-\w*i\w*|--in-place)\b|\b(rm|mv|cp|truncate|ln)\b")
 WORKTREE_SEG = re.compile(r"/\.claude/worktrees/[^/]+(?=/)")
+SETTINGS_FILE = re.compile(r"\.claude/settings[^/]*\.json")
+HUB_PREFIX = "@hub"
 
 
 def _str(value: object) -> str:
@@ -90,29 +95,142 @@ def denied_host(text: str, cfg: Config) -> str | None:
     return None
 
 
-def protected(path: str, cfg: Config) -> str | None:
-    """The guard.ask_before_edit pattern that covers path, if any.
-
-    Patterns are globs (fnmatch, `*` crosses `/`) matched against the absolute path, the path relative to the
-    workspace, and any path suffix; a pattern without glob characters is a file or directory prefix.
-    Worktree segments (`<repo>/.claude/worktrees/<t>/`) are dropped first, so `app/src/auth/*` covers
-    the same file in every worktree of `app`."""
-    if not cfg.ask_before_edit or not path:
-        return None
-    p = WORKTREE_SEG.sub("", os.path.abspath(path) if not path.startswith("~") else path)
-    cands = [p, path]
+def _candidates(path: str, cfg: Config) -> list[str]:
+    """path as given, absolute after `~` expansion, and with symlinks and `..` resolved (worktree segments
+    dropped), plus each absolute form relative to the workspace. Lowercased: macOS file systems ignore case."""
+    expanded = os.path.expanduser(path)
+    full = os.path.abspath(expanded)
+    try:
+        real = os.path.realpath(expanded)  # not of full: abspath drops `..` before a link is followed
+    except (OSError, ValueError):  # a NUL byte in the path
+        real = full
+    absolute = list(dict.fromkeys(WORKTREE_SEG.sub("", p).lower() for p in (full, real)))
+    cands = [*absolute, path.lower()]
     if cfg.workspace:
-        ws = str(cfg.workspace).rstrip("/") + "/"
-        if p.startswith(ws):
-            cands.append(p[len(ws):])
-    for pat in cfg.ask_before_edit:
-        pat = pat.strip()
-        globs = [pat] if any(c in pat for c in "*?[") else [pat.rstrip("/"), pat.rstrip("/") + "/*"]
-        for g in globs:
+        ws = str(cfg.workspace).rstrip("/").lower() + "/"
+        cands += [p[len(ws):] for p in absolute if p.startswith(ws)]
+    return cands
+
+
+def _globs(pattern: str) -> list[str]:
+    return [pattern] if any(c in pattern for c in "*?[") else [pattern.rstrip("/"), pattern.rstrip("/") + "/*"]
+
+
+def _rules(entries: tuple[str, ...], cfg: Config) -> list[tuple[str, list[str], bool]]:
+    """(entry, globs, anchored) per list entry. `@hub/<rest>` is anchored at the hub holding this file
+    (its main checkout, so a hub worktree is covered too); with none, the entry is skipped."""
+    rules = []
+    for entry in entries:
+        pat = entry.strip()
+        if pat == HUB_PREFIX or pat.startswith(HUB_PREFIX + "/"):
+            if cfg.root_hub is None:
+                continue
+            base = re.sub(r"([*?[])", r"[\1]", str(cfg.root_hub).rstrip("/"))
+            rules.append((pat, [base + g for g in _globs(pat[len(HUB_PREFIX):])], True))
+        else:
+            rules.append((pat, _globs(pat), False))
+    return rules
+
+
+def _match(path: str, entries: tuple[str, ...], cfg: Config) -> str | None:
+    """The list entry that covers path, if any.
+
+    Entries are globs (fnmatch, `*` crosses `/`) matched against the absolute path, the path relative to the
+    workspace, and any path suffix; an entry without glob characters is a file or directory prefix.
+    Worktree segments (`<repo>/.claude/worktrees/<t>/`) are dropped first, so `app/src/auth/*` covers
+    the same file in every worktree of `app`. `@hub/<rest>` entries match the absolute path only."""
+    if not entries or not path:
+        return None
+    cands = _candidates(path, cfg)
+    for pat, globs, anchored in _rules(entries, cfg):
+        for g in (g.lower() for g in globs):
             for c in cands:
-                if fnmatch(c, g) or fnmatch(c, "*/" + g.lstrip("/")):
+                if fnmatch(c, g) or (not anchored and fnmatch(c, "*/" + g.lstrip("/"))):
                     return pat
     return None
+
+
+def protected(path: str, cfg: Config) -> str | None:
+    """The guard.ask_before_edit entry that covers path, if any (see _match)."""
+    return _match(path, cfg.ask_before_edit, cfg)
+
+
+def denied_path(path: str, cfg: Config) -> str | None:
+    """The guard.deny_paths entry that covers path, if any (see _match)."""
+    return _match(path, cfg.deny_paths, cfg)
+
+
+def _guard_dirs(cfg: Config) -> list[str]:
+    project = cfg.root_project.lower()
+    return ["plugin/hub-workflow/hooks"] + ([f"plugin/{project}/hooks"] if project and "/" not in project else [])
+
+
+def _hub_base(cfg: Config) -> str | None:
+    base = cfg.root_hub or cfg.hub
+    return str(base).rstrip("/").lower() if base else None
+
+
+def guard_file(path: str, cfg: Config) -> str | None:
+    """path relative to the hub when it is one of the guard's own files: its hooks, the project's
+    hooks (the guard extension), .claude/settings*.json, hub.lock or hub.json, in the hub holding
+    this file or one of its worktrees (in the plugin cache: the hub found). Case is ignored."""
+    base = _hub_base(cfg)
+    if base is None or not path:
+        return None
+    head = base + "/"
+    dirs = _guard_dirs(cfg)
+    for c in _candidates(path, cfg):
+        if not c.startswith(head):
+            continue
+        rel = c[len(head):]
+        if any(rel == d or rel.startswith(d + "/") for d in dirs) or SETTINGS_FILE.fullmatch(rel) or rel in ("hub.lock", "hub.json"):
+            return rel
+    return None
+
+
+def guard_parent(path: str, cfg: Config) -> str | None:
+    """The folder path names when it holds guard files: the hub itself, a folder above it, or a folder
+    on the way to a guard file (.claude, plugin, plugin/hub-workflow, plugin/<project>, ...)."""
+    base = _hub_base(cfg)
+    if base is None or not path:
+        return None
+    parents = {"", ".claude"}
+    for d in _guard_dirs(cfg):
+        parts = d.split("/")
+        parents |= {"/".join(parts[:n]) for n in range(1, len(parts) + 1)}
+    for c in _candidates(path, cfg):
+        c = c.rstrip("/") or "/"
+        if c == base or (base + "/").startswith(c if c.endswith("/") else c + "/"):
+            return c
+        if c.startswith(base + "/") and c[len(base) + 1 :] in parents:
+            return c[len(base) + 1 :]
+    return None
+
+
+def _segments(command: str) -> list[str]:
+    """The command's segments split at `&&`, `||`, `;`, `|` and newlines, then also at a single `&`
+    (both splits are kept, so a split only adds segments)."""
+    first = re.split(r"&&|\|\||[;|\n]", command)
+    more = [seg for seg in re.split(r"&&|\|\||[;|&\n]", command) if seg not in first]
+    return first + more
+
+
+def _tokens(segment: str) -> list[str]:
+    """The segment's words that may name a path, options dropped: each with its outer quotes stripped,
+    and again with every quote and backslash removed (`h"ub".json`, `hub\\.json`). Words split at
+    blanks and redirections, and again also at parentheses and backticks (both kept: only adds words)."""
+    toks = []
+    for word in dict.fromkeys([*re.split(r"[\s<>]+", segment), *re.split(r"[\s<>()`]+", segment)]):
+        for tok in (word.strip("'\""), re.sub(r"['\"\\\\]", "", word)):
+            if tok and not tok.startswith("-") and tok not in toks:
+                toks.append(tok)
+    return toks
+
+
+DENY_PATH_REASON = "{} is under guard.deny_paths `{}` (hub.json); agents neither read nor change it"
+GUARD_PARENT_REASON = "{} holds the hub's guard files ({}); removing or moving it changes the guard, confirm first"
+GUARD_FILE_REASON = ("{} is the hub's own guard or config ({}): hooks, the project guard extension, settings, "
+                     "hub.lock and hub.json change only with the user's confirmation")
 
 
 def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
@@ -148,20 +266,35 @@ def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
         return "deny", f"branches are {_branch_hint(cfg)}, never claude/..."
     if re.search(r"\b(rm|mv|cp|ln|truncate)\b[^;&|\n]*(^|[\s/'\"])\.git(/|\s|$|['\"])", c) or re.search(r">>?\s*(\S*/)?\.git(/|\s|$)", c):
         return "deny", ".git is git's own state (a worktree's .git file links it to the repo); use git commands, never edit it directly"
+    if cfg.deny_paths:
+        for seg in _segments(c):
+            for tok in _tokens(seg):
+                pat = denied_path(tok, cfg)
+                if pat:
+                    return "deny", DENY_PATH_REASON.format(tok, pat)
+    for seg in _segments(c):
+        if BASH_WRITE.search(seg):
+            for tok in _tokens(seg):
+                rel = guard_file(tok, cfg)
+                if rel:
+                    return "ask", GUARD_FILE_REASON.format(tok, rel)
+        if re.search(r"\b(rm|mv)\b", seg):
+            for tok in _tokens(seg):
+                held = guard_parent(tok, cfg)
+                if held is not None:
+                    return "ask", GUARD_PARENT_REASON.format(tok, held or "the hub")
     if re.search(r"\b(rm|mv|truncate)\b[^;&|\n]*\s" + TEST_PATH, c) or re.search(r"\bsed\s+(-\w*i\w*|--in-place)\b[^;&|\n]*\s" + TEST_PATH, c):
         return "ask", "deleting or sed-editing tests from Bash bypasses the assertion guard; use Edit, or confirm this is intended"
     if re.search(r"(>>?|\btee\b(\s+-a)?|\bsed\s+-\w*i\w*|\b(rm|mv|cp)\b)[^;&|\n]*\bbrain/(?!(now\.md|journal/|_inbox/|auto/|features/))\S+", c):
         return "ask", "brain/ is curated: agents write only now.md, journal/, _inbox/, auto/ and features/; propose via /learn or confirm"
     if cfg.ask_before_edit:
-        for seg in re.split(r"&&|\|\||[;|\n]", c):
+        for seg in _segments(c):
             if not BASH_WRITE.search(seg):
                 continue
-            for tok in re.split(r"[\s<>]+", seg):
-                tok = tok.strip("'\"")
-                if tok and not tok.startswith("-"):
-                    pat = protected(tok, cfg)
-                    if pat:
-                        return "ask", f"{tok} matches guard.ask_before_edit `{pat}` (hub.json); confirm this change is intended"
+            for tok in _tokens(seg):
+                pat = protected(tok, cfg)
+                if pat:
+                    return "ask", f"{tok} matches guard.ask_before_edit `{pat}` (hub.json); confirm this change is intended"
     return None
 
 
@@ -193,6 +326,13 @@ def check_file(tool: str, ti: dict, cfg: Config | None = None) -> Verdict:
     glob = _str(ti.get("glob"))
     if tool == "Grep" and glob and re.search(r"(^|[/*{,])\.env\b", glob) and ".example" not in glob:
         return "deny", "Grep over .env files may print secrets; reference variable names instead"
+    targets = [path] if path else []
+    if tool == "Glob" and _str(ti.get("pattern")):
+        targets.append(os.path.join(path, _str(ti.get("pattern"))) if path else _str(ti.get("pattern")))
+    for target in targets if cfg.deny_paths else []:
+        pat = denied_path(target, cfg)
+        if pat:
+            return "deny", DENY_PATH_REASON.format(target, pat)
     if not path:
         return None
     if _secret_path(path):
@@ -201,6 +341,9 @@ def check_file(tool: str, ti: dict, cfg: Config | None = None) -> Verdict:
         return None
     if re.search(r"(^|/)\.git(/|$)", path):
         return "deny", ".git is git's own state (a worktree's .git file links it to the repo); use git commands, never edit it directly"
+    rel = guard_file(path, cfg)
+    if rel:
+        return "ask", GUARD_FILE_REASON.format(path, rel)
     if re.search(r"(^|/)(tests?|__tests__)/|\.(test|spec)\.[jt]sx?$|/test_[^/]+\.py$", path):
         if tool == "Edit":
             removed = _assert_count(_str(ti.get("old_string"))) - _assert_count(_str(ti.get("new_string")))
@@ -230,15 +373,24 @@ def check_file(tool: str, ti: dict, cfg: Config | None = None) -> Verdict:
 FILE_TOOLS = ("Read", "Grep", "Glob", "Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch")
 
 
-def main() -> None:
-    data = read_input()
-    tool, ti = data.get("tool_name", ""), data.get("tool_input")
+def decide(data: dict, cfg: Config) -> Verdict:
+    """The base verdict for one PreToolUse event: pure, no output."""
+    tool, ti = _str(data.get("tool_name")), data.get("tool_input")
     if not isinstance(ti, dict):
         ti = {}
+    if tool == "Bash":
+        return check_bash(_str(ti.get("command")), cfg)
+    if tool in FILE_TOOLS:
+        return check_file(tool, ti, cfg)
+    return None
+
+
+def main() -> None:
+    data = read_input()
+    tool = data.get("tool_name")
     if tool != "Bash" and tool not in FILE_TOOLS:
         return
-    cfg = load_config(data.get("cwd"))
-    verdict = check_bash(_str(ti.get("command")), cfg) if tool == "Bash" else check_file(tool, ti, cfg)
+    verdict = decide(data, load_config(data.get("cwd")))
     if verdict:
         decision, reason = verdict
         emit({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,

@@ -2,7 +2,9 @@
 
 The config is the hub that holds these files (spec Q-4): when the folder three levels above
 this file holds hub.json, that hub wins, whatever the event's cwd, $CLAUDE_PROJECT_DIR or the
-process cwd say; only $HUB_CONFIG (a hub.json path) comes first. Hooks in a hub worktree read the
+process cwd say; only $HUB_CONFIG (a hub.json path) comes first. $HUB_CONFIG can only tighten the
+guard: its lists (ask_before_edit, deny_hosts, deny_paths) are added to the hook root's, never put
+in their place, since a settings `env` entry can set it. Hooks in a hub worktree read the
 worktree's hub.json, but the hub (and so the workspace of repos) is the main checkout. When the
 hooks run from Claude Code's plugin cache, no hub holds them, and the hub is found by walking up
 from the session cwd (then $CLAUDE_PROJECT_DIR, then the process cwd) to the first directory
@@ -25,7 +27,7 @@ from collections.abc import Callable
 from typing import List, Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from stdlib_reader import HubFile, RepoEntry, load_hub_file  # noqa: E402
+from stdlib_reader import GuardSection, HubFile, RepoEntry, load_hub_file  # noqa: E402
 
 HUB_FILE = "hub.json"
 
@@ -134,23 +136,42 @@ def find_hub(start: object = None) -> Path | None:
     return located[1] if located else None
 
 
-class Config:
-    """hub.json as the reader loads it, with the hub's folders; every field has a default."""
+def _union(first: tuple[str, ...], then: tuple[str, ...]) -> tuple[str, ...]:
+    """first, then the entries of then that first lacks; each once, in order."""
+    return tuple(dict.fromkeys((*first, *then)))
 
-    def __init__(self, hub: Path | None = None, hub_file: HubFile | None = None, root: Path | None = None):
+
+class Config:
+    """hub.json as the reader loads it, with the hub's folders; every field has a default.
+
+    root is the hub (or hub worktree) holding the hook files, root_hub its main checkout, and
+    root_project its own project name. root_file is the root's hub.json when the config is another
+    file ($HUB_CONFIG): the guard's lists are then the union of both, so that file only tightens.
+    """
+
+    def __init__(
+        self,
+        hub: Path | None = None,
+        hub_file: HubFile | None = None,
+        root: Path | None = None,
+        root_file: HubFile | None = None,
+    ):
         hub_file = hub_file if hub_file is not None else HubFile()
+        root_guard = root_file.guard if root_file is not None else GuardSection()
         self.hub = hub
         self.workspace = hub.parent if hub else None
         self.root = root
+        self.root_hub = _main_checkout(root) if root else None
+        self.root_project = (root_file if root_file is not None else hub_file).project.name
         self.hub_file = hub_file
         self.project_name = hub_file.project.name
         self.branch_prefix = hub_file.project.branch_prefix
         self.default_branch = hub_file.project.default_branch
         self.tracker_team = hub_file.tracker.team
         self.repos = hub_file.repos
-        self.ask_before_edit = hub_file.guard.ask_before_edit
-        self.deny_hosts = hub_file.guard.deny_hosts
-        self.deny_paths = hub_file.guard.deny_paths
+        self.ask_before_edit = _union(root_guard.ask_before_edit, hub_file.guard.ask_before_edit)
+        self.deny_hosts = _union(root_guard.deny_hosts, hub_file.guard.deny_hosts)
+        self.deny_paths = _union(root_guard.deny_paths, hub_file.guard.deny_paths)
 
     @property
     def repo_dirs(self) -> tuple[str, ...]:
@@ -168,7 +189,10 @@ def load_config(start: object = None) -> Config:
     if not located:
         return Config(root=hook_root())
     found, hub = located
-    return Config(hub, load_hub_file(found), hook_root())
+    root = hook_root()
+    own = root / HUB_FILE if root else None
+    root_file = load_hub_file(own) if own and found.resolve() != own.resolve() else None
+    return Config(hub, load_hub_file(found), root, root_file)
 
 
 def checkouts(cfg: Config, names: Optional[List[str]] = None) -> List[Tuple[str, Path]]:
