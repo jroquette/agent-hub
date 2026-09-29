@@ -197,6 +197,11 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
     _generic_managed(f"{_BASE_PLUGIN}/hooks/hubhooks.py", f"{_BASE_PLUGIN}/hooks/hubhooks.py.tmpl"),
     _hook_entry_point("post_edit"),
     _hook_entry_point("pre_compact"),
+    # Runs the project's guard extension in a child for `guard.py` (spec Q-2, Q-5).
+    _generic_managed(
+        f"{_BASE_PLUGIN}/hooks/project_guard_runner.py",
+        f"{_BASE_PLUGIN}/hooks/project_guard_runner.py.tmpl",
+    ),
     _hook_entry_point("session_end"),
     _hook_entry_point("session_start"),
     # The hooks' `hub.json` reader: stdlib only, Python 3.9 (spec Q-2).
