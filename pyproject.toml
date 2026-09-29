@@ -23,11 +23,6 @@ dev = [
 line-length = 100
 target-version = "py314"
 
-[tool.ruff.per-file-target-version]
-# The hooks' hub.json reader runs on the system Python 3.9 (macOS): py39 makes ruff reject 3.10+
-# syntax there and keeps pyupgrade (UP) from rewriting it for 3.14 (docs/CONVENTIONS.md).
-"packages/core/src/agent_hub/core/hub_config/stdlib_reader.py" = "py39"
-
 [tool.ruff.lint]
 select = [
     "E",

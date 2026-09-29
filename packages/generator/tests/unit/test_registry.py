@@ -75,6 +75,7 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "plugin/hub-workflow/agents/requirements-analyst.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/agents/researcher.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/agents/spec-reviewer.md": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/hooks/stdlib_reader.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/create-plan/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/feature/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/handoff/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
