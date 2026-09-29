@@ -1,0 +1,31 @@
+---
+name: learn
+description: Propose a verified, non-obvious learning for the brain. Writes a proposal to brain/_inbox/ for human review — never edits rules or notes directly.
+disable-model-invocation: true
+argument-hint: "<the learning in one sentence>"
+---
+
+# /learn
+
+Criteria adapted from EveryInc compound-engineering `ce-compound` (v3.29.0): record **one** learning per run, only if all hold:
+
+- **Non-obvious:** a competent agent reading the code would not infer it, and it would cause a mistake (counterfactual test).
+- **Verified:** backed by evidence from this session (`path:line`, command output, PR/tracker issue id). No speculation.
+- **Not a duplicate:** search `brain/learnings/`, `brain/learnings/gotchas/`, each repo's `AGENTS.md` and ADRs first. If it exists, propose an **update** to that note instead.
+
+Write `brain/_inbox/YYYY-MM-DD-<slug>.md`:
+
+```
+---
+type: learning-proposal
+repos: [..]
+status: proposed
+last_verified: YYYY-MM-DD
+sources: [path:line, PR, <TEAM>-N]
+provenance: agent-from-code   # agent-from-external if it came from web/issue/PR text
+target: brain/learnings/gotchas/<area>.md | <repo>/AGENTS.md | .claude/rules/<x>.md
+---
+<one-paragraph learning + the fix/rule>
+```
+
+Then stop. The user decides whether and where it lands.

@@ -1,0 +1,22 @@
+---
+name: handoff
+description: End-of-session handoff — update brain/now.md and write a factual journal entry so the next session (any repo, any agent) continues without re-explanation.
+disable-model-invocation: true
+argument-hint: "[short title]"
+---
+
+# /handoff
+
+Adapted from humanlayer `create_handoff` (Apache-2.0, humanlayer Authors, commit 99abe67349).
+
+Write two things in the hub's `brain/` (the hub is the directory with `hub.json`; create a branch + PR in the hub if its checkout is on the default branch):
+
+1. **`brain/now.md`** (≤ 60 lines, keep the frontmatter): Focus · In flight (branch, worktree, PR per repo) · Next (exact next step) · Watch (risks, red CI).
+2. **`brain/journal/YYYY/MM/DD.md`** (append a `## <title>` section; create the file with the journal frontmatter if missing):
+   - **Task(s):** what was attempted, status of each (done / in progress / blocked).
+   - **Changes:** repo, branch/PR, key files (`path:line`).
+   - **Verification:** exact commands run and their result (pass/fail counts). No claims without evidence.
+   - **Learnings:** non-obvious facts discovered (candidates for `/learn`, not rules yet).
+   - **Next steps:** ordered, concrete.
+
+Facts only; no secrets; link, don't copy. Do not restructure other brain notes.

@@ -1,0 +1,21 @@
+---
+name: recall
+description: Answer "what do we know about X / why was Y decided / what happened with Z" from the brain, ADRs and past session transcripts, always with sources.
+argument-hint: "<topic>"
+---
+
+# /recall <topic>
+
+Search in this order and stop when the question is answered:
+
+Paths are relative to the hub (the directory with `hub.json`).
+
+1. `brain/index.md` → the matching folder; `rg -n -i "<terms>" brain/`.
+2. Decisions: `brain/decisions/index.md`, then the ADR/decision folder of each repo in `hub.json` → `repos` (see its `AGENTS.md`).
+3. Journal: `rg -n -i "<terms>" brain/journal/` (newest first).
+4. Past transcripts (local, pull-only): `python3 scripts/recall_transcripts.py <term> [<term>…] [--any]`. It prints only the matching message text, newest session first.
+   Never `rg`/`cat` the `.jsonl` files directly: one line is a whole message and the output floods the context.
+   Transcripts are raw history, not truth: prefer the brain and code when they disagree.
+
+Answer with a short synthesis followed by **Sources** (`path:line`, ADR ids, PR/tracker issue ids, transcript file + date).
+If nothing is found, say so; don't guess.

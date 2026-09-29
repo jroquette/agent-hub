@@ -67,8 +67,16 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/agents/requirements-analyst.md",
     "plugin/hub-workflow/agents/researcher.md",
     "plugin/hub-workflow/agents/spec-reviewer.md",
+    "plugin/hub-workflow/skills/create-plan/SKILL.md",
+    "plugin/hub-workflow/skills/feature/SKILL.md",
+    "plugin/hub-workflow/skills/handoff/SKILL.md",
+    "plugin/hub-workflow/skills/kickoff/SKILL.md",
+    "plugin/hub-workflow/skills/learn/SKILL.md",
+    "plugin/hub-workflow/skills/recall/SKILL.md",
+    "plugin/hub-workflow/skills/research/SKILL.md",
 )
-# AGH-19 spec "The rendered set": the base plugin's agents, by file stem.
+# AGH-19 spec "The rendered set": the base plugin's agents, by file stem, and its skills, by
+# folder name.
 BASE_AGENTS = (
     "architect",
     "evaluator",
@@ -78,6 +86,7 @@ BASE_AGENTS = (
     "researcher",
     "spec-reviewer",
 )
+BASE_SKILLS = ("create-plan", "feature", "handoff", "kickoff", "learn", "recall", "research")
 
 GENERATOR_PACKAGE = "agent_hub.generator"
 # A synthetic package of test templates, importable only while a test's fixture puts it on sys.path.
@@ -182,10 +191,16 @@ def test_returns_rendered_hub_when_demo_rendered(demo_config: HubConfig) -> None
     assert isinstance(rendered, RenderedHub)
     assert isinstance(rendered.links, tuple)
     assert all(type(link) is RenderedLink for link in rendered.links)
-    # The base plugin holds agents only (spec "The rendered set": skills come with their files).
+    # AC-4.6: exactly the 14 links of spec "The rendered set", sorted by path.
     assert [link.path for link in rendered.links] == [
-        f".claude/agents/{name}.md" for name in BASE_AGENTS
+        *(f".claude/agents/{name}.md" for name in BASE_AGENTS),
+        *(f".claude/skills/{name}" for name in BASE_SKILLS),
     ]
+    assert len(rendered.links) == 14
+    assert all(
+        (link.kind, link.ownership) == (Kind.GENERIC, Ownership.MANAGED) for link in rendered.links
+    )
+    assert {file.path for file in rendered.files}.isdisjoint(link.path for link in rendered.links)
 
 
 def test_links_seven_agents_when_demo_rendered(demo_config: HubConfig) -> None:
@@ -202,6 +217,23 @@ def test_links_seven_agents_when_demo_rendered(demo_config: HubConfig) -> None:
         # The target, read from the link's folder, is a rendered agent file.
         resolved = os.path.normpath(os.path.join(os.path.dirname(link.path), link.target))
         assert resolved in file_paths, link.path
+
+
+def test_links_seven_skills_when_demo_rendered(demo_config: HubConfig) -> None:
+    rendered = render_hub(demo_config)
+
+    skill_links = [link for link in rendered.links if link.path.startswith(".claude/skills/")]
+    # One link per skill folder, not per file.
+    assert [(link.path, link.target) for link in skill_links] == [
+        (f".claude/skills/{name}", f"../../plugin/hub-workflow/skills/{name}")
+        for name in BASE_SKILLS
+    ]
+    file_paths = {file.path for file in rendered.files}
+    for link in skill_links:
+        assert (link.kind, link.ownership, link.module) == (Kind.GENERIC, Ownership.MANAGED, None)
+        # The target, read from the link's folder, is a folder that holds the rendered SKILL.md.
+        resolved = os.path.normpath(os.path.join(os.path.dirname(link.path), link.target))
+        assert f"{resolved}/SKILL.md" in file_paths, link.path
 
 
 def test_raises_generator_error_when_project_named_hub_workflow() -> None:
@@ -818,6 +850,7 @@ def test_names_no_hub_script_when_plugin_rendered(demo_config: HubConfig) -> Non
     texts = plugin_markdown(demo_config)
 
     assert {f"plugin/hub-workflow/agents/{name}.md" for name in BASE_AGENTS} <= set(texts)
+    assert {f"plugin/hub-workflow/skills/{name}/SKILL.md" for name in BASE_SKILLS} <= set(texts)
     for path, text in texts.items():
         for name in HUB_SCRIPT_NAMES:
             assert name not in text, f"{path} names {name}"
@@ -845,6 +878,74 @@ def test_keeps_frontmatter_when_agents_rendered(demo_render: dict[str, RenderedF
         assert fields["name"] == name
         assert fields["description"].strip(), name
         # The body follows the frontmatter.
+        assert text.split("\n---\n", 1)[1].strip(), name
+
+
+# AC-4.19 (Q-15, plan design 7): the `hub` command and the make target that runs it through the
+# shim, where one exists; the tracker check has no target yet and stays bare.
+SKILL_COMMANDS = {
+    "kickoff": ("`hub brief` (`make brain-brief`)",),
+    "feature": (
+        "`hub worktree <team>-<n>-<slug> [--only <repo>]` (`make worktree NAME=…`)",
+        f"`{FEATURE_CHECK_COMMAND}`",
+    ),
+}
+MAKE_COMMAND = re.compile(r"`make ([a-z][a-z0-9-]*)")
+
+
+def skill_text(render: dict[str, RenderedFile], name: str) -> str:
+    return render[f"plugin/hub-workflow/skills/{name}/SKILL.md"].content.decode("utf-8")
+
+
+@pytest.mark.parametrize("skill", sorted(SKILL_COMMANDS))
+def test_names_hub_commands_when_kickoff_or_feature_rendered(
+    skill: str, demo_render: dict[str, RenderedFile]
+) -> None:
+    text = skill_text(demo_render, skill)
+    targets = MAKE_TARGET.findall(demo_render["Makefile"].content.decode("utf-8"))
+
+    for command in SKILL_COMMANDS[skill]:
+        assert text.count(command) == 1, command
+    # Every make target the skill names is one the rendered Makefile defines.
+    named = MAKE_COMMAND.findall(text)
+    assert named
+    assert set(named) <= set(targets), named
+
+
+def test_names_transcript_script_when_recall_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    text = skill_text(demo_render, "recall")
+
+    # The script ships with the hub (plan design 6), so the skill keeps naming it.
+    assert "`python3 scripts/recall_transcripts.py <term> [<term>…] [--any]`" in text
+
+
+# The hub's skill frontmatter, key by key; the skills without `disable-model-invocation` stay
+# model-invocable.
+SKILL_FRONTMATTER_KEYS = {
+    "create-plan": ["name", "description", "argument-hint"],
+    "feature": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "handoff": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "kickoff": ["name", "description", "disable-model-invocation"],
+    "learn": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "recall": ["name", "description", "argument-hint"],
+    "research": ["name", "description", "argument-hint"],
+}
+
+
+def test_keeps_frontmatter_when_skills_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    assert sorted(SKILL_FRONTMATTER_KEYS) == list(BASE_SKILLS)
+    for name, keys in SKILL_FRONTMATTER_KEYS.items():
+        text = skill_text(demo_render, name)
+
+        lines = frontmatter_lines(text)
+
+        assert [line.split(":", 1)[0] for line in lines] == keys, name
+        fields = dict(line.split(": ", 1) for line in lines)
+        assert fields["name"] == name
+        assert fields["description"].strip(), name
+        assert fields.get("disable-model-invocation", "true") == "true", name
         assert text.split("\n---\n", 1)[1].strip(), name
 
 
@@ -1384,6 +1485,22 @@ def test_writes_utf8_lf_final_newline_when_text_rendered(
         assert not text.endswith("\n\n"), file.path
 
 
+# The rendered hub's pre-commit runs `trailing-whitespace` and `end-of-file-fixer`: a managed file
+# they would rewrite on the hub's first commit drifts from what `hub sync` renders.
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+def test_passes_whitespace_hooks_when_config_rendered(
+    config_name: str, request: pytest.FixtureRequest
+) -> None:
+    config = request.getfixturevalue(f"{config_name}_config")
+
+    for file in render_hub(config).files:
+        text = file.content.decode("utf-8")
+        assert "\r" not in text, file.path
+        assert text == "" or (text.endswith("\n") and not text.endswith("\n\n")), file.path
+        for number, line in enumerate(text.split("\n"), start=1):
+            assert not line.endswith((" ", "\t")), f"{file.path}:{number}"
+
+
 def test_writes_empty_file_when_gitkeep_or_project_rules_rendered(
     demo_render: dict[str, RenderedFile],
 ) -> None:
@@ -1546,10 +1663,18 @@ def rendered_paths(rendered: Iterable[RenderedFile]) -> set[str]:
     return paths
 
 
+# E4.11 (owner OK): brain paths that no render creates, because a rendered skill, hook or script
+# creates them at run time. Closed: path → its producer; each must still be referenced.
+RUN_TIME_BRAIN_PATHS = {
+    "brain/learnings/gotchas/": "plugin/hub-workflow/skills/learn/SKILL.md",
+}
+
+
 def test_references_created_brain_paths_when_markdown_rendered(demo_config: HubConfig) -> None:
     rendered = render_hub(demo_config).files
     created = rendered_paths(rendered)
     texts = {file.path: file.content.decode("utf-8") for file in rendered}
+    run_time = {resolvable_path(path) for path in RUN_TIME_BRAIN_PATHS}
 
     references = [
         (path, match.rstrip(".,:;"))
@@ -1558,7 +1683,12 @@ def test_references_created_brain_paths_when_markdown_rendered(demo_config: HubC
     ]
     assert references
     for path, reference in references:
-        assert resolvable_path(reference) in created, f"{path} names {reference}"
+        resolved = resolvable_path(reference)
+        assert resolved in created or resolved in run_time, f"{path} names {reference}"
+    for allowed, producer in RUN_TIME_BRAIN_PATHS.items():
+        # Allowlisted only while no render creates it, and named by its producer.
+        assert resolvable_path(allowed) not in created, allowed
+        assert allowed in texts[producer], (allowed, producer)
     entries = BRAIN_INDEX_ENTRY.findall(texts["brain/index.md"])
     for entry in entries:
         assert resolvable_path(f"brain/{entry}") in created, f"brain/index.md names {entry}"
