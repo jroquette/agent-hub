@@ -83,6 +83,9 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/skills/learn/SKILL.md",
     "plugin/hub-workflow/skills/recall/SKILL.md",
     "plugin/hub-workflow/skills/research/SKILL.md",
+    "scripts/mine_transcripts.py",
+    "scripts/recall_transcripts.py",
+    "scripts/retro_metrics.py",
 )
 # AGH-19 spec "The rendered set": the base plugin's agents, by file stem, and its skills, by
 # folder name.
@@ -837,6 +840,20 @@ def test_names_no_ported_script_when_templates_read() -> None:
     for name, text in texts.items():
         for script in PORTED_SCRIPTS:
             assert script not in text, f"{name} names {script}"
+
+
+# AC-4.10 (Q-2): the scripts and hooks read `hub.json` through the hooks' reader, so no template
+# imports, loads or names the hub's own loader module.
+def test_names_no_hubconfig_when_templates_read() -> None:
+    texts = dict(template_texts())
+
+    assert {
+        "scripts/mine_transcripts.py.tmpl",
+        "scripts/recall_transcripts.py.tmpl",
+        "scripts/retro_metrics.py.tmpl",
+    } <= set(texts)
+    for name, text in texts.items():
+        assert "hubconfig" not in text, name
 
 
 # AC-4.19 (Q-15): the hub scripts that `hub` commands replace. No rendered agent or skill names
@@ -1697,6 +1714,7 @@ def rendered_paths(rendered: Iterable[RenderedFile]) -> set[str]:
 # E4.11 (owner OK): brain paths that no render creates, because a rendered skill, hook or script
 # creates them at run time. Closed: path → its producer; each must still be referenced.
 RUN_TIME_BRAIN_PATHS = {
+    "brain/_inbox/mining/": "scripts/mine_transcripts.py",
     "brain/learnings/gotchas/": "plugin/hub-workflow/skills/learn/SKILL.md",
 }
 

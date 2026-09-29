@@ -15,9 +15,9 @@ is a hub bug: log it in `brain/_inbox/`.
 - `brain/`: curated, versioned project memory. Start at `brain/index.md`; `brain/now.md` is the current focus. Read on
   demand, never in bulk.
 - `hub sync` rewrites these managed files: `AGENTS.md`, `CLAUDE.md`, `Makefile`, `hub.schema.json`,
-  `.github/workflows/ci.yml`, `.pre-commit-config.yaml`, `plugin/hub-workflow/`. Change them only through `hub.json`
-  or their seeded sibling (`AGENTS.project.md`, `Makefile.project`, `plugin/@@{project_name}/`), which `hub sync`
-  never touches.
+  `.github/workflows/ci.yml`, `.pre-commit-config.yaml`, `plugin/hub-workflow/`, `scripts/mine_transcripts.py`,
+  `scripts/recall_transcripts.py`, `scripts/retro_metrics.py`. Change them only through `hub.json` or their seeded
+  sibling (`AGENTS.project.md`, `Makefile.project`, `plugin/@@{project_name}/`), which `hub sync` never touches.
 - Repos, checked out next to this hub: @@{repo_dirs}.
 
 ## Workflow (every task)
