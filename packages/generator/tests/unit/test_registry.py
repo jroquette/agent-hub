@@ -10,6 +10,7 @@ import pytest
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.schema import SCHEMA_FILE, SCHEMA_PACKAGE
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
+from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
 from agent_hub.generator.json_form import JsonValue
 from agent_hub.generator.registry import REGISTRY, TemplateEntry, TemplateSource
 from agent_hub.generator.render_hub import render_hub
@@ -332,3 +333,23 @@ def test_excludes_out_of_scope_paths_when_outputs_listed() -> None:
 def test_has_no_module_entry_when_registry_walked() -> None:
     assert all(entry.kind is not Kind.MODULE for entry in REGISTRY)
     assert all(entry.module is None for entry in REGISTRY)
+
+
+def temp_shaped_segments(paths: list[str]) -> list[str]:
+    return [path for path in paths if any(is_leftover_name(part) for part in path.split("/"))]
+
+
+def test_renders_no_temp_shaped_path_when_registry_walked(demo_config: HubConfig) -> None:
+    rendered = render_hub(demo_config)
+    templates = [entry.path.replace(PROJECT_SEGMENT[0], "demo") for entry in REGISTRY]
+    paths = [
+        *templates,
+        *(file.path for file in rendered.files),
+        *(link.path for link in rendered.links),
+    ]
+    assert len(templates) == len(REGISTRY)
+    assert rendered.links
+    # Positive control: a temp-shaped segment anywhere in a path is found.
+    assert temp_shaped_segments(["plugin/.x.md.hub-tmp-0a1b2c3d/y"]) != []
+
+    assert temp_shaped_segments(paths) == []
