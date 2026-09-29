@@ -1,13 +1,33 @@
-"""Fixtures for the cli integration tests: a fake git on ``PATH``."""
+"""Fixtures for the cli integration tests: a fake git on ``PATH`` and the ``demo`` inputs."""
 
 import shlex
 from collections.abc import Callable, Mapping
+from importlib.metadata import version
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import pytest
 
+from agent_hub.core.json_form import dump_json
+from agent_hub.core.testing.builders import a_hub_document
+
 GIT_TOPLEVEL_ARGS = "rev-parse --show-toplevel"
+# The spec's DEMO_FLAGS: every value given, so git is never called.
+DEMO_FLAGS = (
+    "demo",
+    "--repos",
+    "acme/demo-api",
+    "--tracker",
+    "linear:DEM",
+    "--branch-prefix",
+    "jdoe/",
+    "--author-name",
+    "Jane Doe",
+    "--author-email",
+    "jane@example.com",
+    "--hub-repo",
+    "acme/demo-hub",
+)
 # Exit code of git when a folder is not in a work tree.
 NOT_A_REPO = 128
 
@@ -78,3 +98,28 @@ def no_git_path(tmp_path: Path) -> Path:
     folder = tmp_path / "no-git-bin"
     folder.mkdir()
     return folder
+
+
+@pytest.fixture
+def demo_document() -> dict[str, Any]:
+    """The spec's ``DEMO``: the example config with no modules (D3), pinned to the running CLI."""
+    document = a_hub_document()
+    del document["modules"]
+    document["platform"]["version"] = version("agent-hub-cli")
+    return document
+
+
+@pytest.fixture
+def demo_config_file(tmp_path: Path, demo_document: dict[str, Any]) -> Path:
+    """``DEMO`` written in the one JSON form, outside any target folder."""
+    folder = tmp_path / "config"
+    folder.mkdir()
+    path = folder / "hub.json"
+    path.write_bytes(dump_json(demo_document))
+    return path
+
+
+@pytest.fixture
+def demo_flags() -> list[str]:
+    """The ``init`` arguments of the spec's ``DEMO_FLAGS``."""
+    return list(DEMO_FLAGS)
