@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 import typer
 
-from agent_hub.cli.hub_config_reader import load_hub_config_or_exit
+from agent_hub.cli.hub_config_reader import load_hub_config_or_exit, load_hub_json_or_exit
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing.builders import a_hub_document
 
@@ -103,6 +103,52 @@ def test_keeps_each_error_on_one_line_when_value_has_newline(
     assert lines == ['hub.json: ["a\\nhub.json: forged"]: Extra inputs are not permitted']
 
 
+def test_returns_exact_bytes_when_hub_json_loaded(tmp_path: Path) -> None:
+    document = a_pinned_document()
+    document["project"]["author_name"] = "Zoë Ångström"
+    content = json.dumps(document, indent=2, ensure_ascii=False).replace("\n", "\r\n").encode()
+    path = tmp_path / "hub.json"
+    path.write_bytes(content)
+
+    loaded = load_hub_json_or_exit(path)
+
+    assert loaded.content == content
+    assert b"\r\n" in loaded.content
+    assert "Zoë Ångström".encode() in loaded.content
+    assert loaded.config == HubConfig.model_validate(document)
+
+
+def test_reads_file_once_when_hub_json_loaded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = write_document(tmp_path, a_pinned_document())
+    read_bytes = Path.read_bytes
+    calls: list[Path] = []
+
+    def spy(self: Path) -> bytes:
+        calls.append(self)
+        return read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", spy)
+
+    loaded = load_hub_json_or_exit(path)
+
+    assert calls == [path]
+    assert loaded.content == path.read_bytes()
+
+
+def test_counts_lines_as_before_when_file_uses_bare_carriage_returns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The reader used to read text with universal newlines, so a bare CR ends a line in messages.
+    path = tmp_path / "hub.json"
+    path.write_bytes(b'{\r"schema_version": }')
+
+    lines = stderr_lines_on_exit(path, capsys)
+
+    assert lines == ["hub.json: $: not valid JSON: Expecting value at line 2 column 19"]
+
+
 LONG_INTEGER = b"1" * 5000
 TOO_MANY_DIGITS = (
     "not valid JSON here: a number has more than 4300 digits, which this reader does not accept"
@@ -182,7 +228,7 @@ from pathlib import Path
 
 import typer
 
-from agent_hub.cli.hub_config_reader import load_hub_config_or_exit
+from agent_hub.cli.hub_config_reader import load_hub_config_or_exit, load_hub_json_or_exit
 
 try:
     load_hub_config_or_exit(Path(sys.argv[1]))
