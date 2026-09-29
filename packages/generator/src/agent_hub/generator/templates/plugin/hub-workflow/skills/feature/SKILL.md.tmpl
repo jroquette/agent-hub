@@ -1,0 +1,27 @@
+---
+name: feature
+description: Golden path from idea to merged, verified change across the hub's repos. Chooses the ceremony by process size (spike, bounded, architectural) and chains research, plan, TDD implementation and review.
+disable-model-invocation: true
+argument-hint: "<idea or tracker issue id>"
+---
+
+# /feature <idea>
+
+Paths below are relative to the hub (the directory with `hub.json`); repos are its siblings, listed in `hub.json` → `repos`, each with its own `AGENTS.md`.
+Agents are the hub's project subagents (`subagent_type: <name>`, from `.claude/agents/`; `hub-workflow:<name>` when installed as a plugin); each reads the brain first and ends with a compound step (`/learn` proposal or "no learning").
+
+1. **Size it** (ask if unclear): *spike* (throwaway learning, no merge), *bounded* (≤ a few PRs, known design), *architectural* (new contracts, paths under `guard.ask_before_edit`, or cross-repo design).
+2. **Spec** (bounded/architectural): run superpowers `brainstorming` **here in the main session** (one question at a time, 2–3 approaches; subagents can't ask the user), then the **`requirements-analyst`** agent writes
+   `brain/features/<slug>/spec.md` (AC ids, Given/When/Then, invariants, repos). **Gate: user approves the spec** (architectural; bounded may merge spec+plan approval).
+3. **Research**: **`researcher`** agent (or `/research` inline for small questions). **Plan**: **`architect`** agent → `plan.md` → **gate: user approves the plan**.
+4. **Tickets**: **`planner`** agent → `features.json` (validated by `hub doctor --only features.tracker`) + `issues.md`; create the issues in the tracker (`tracker.team` in `hub.json`) from here.
+5. **Workspace**: `hub worktree <team>-<n>-<slug> [--only <repo>]` (`make worktree NAME=…`) (named by the tracker issue) (isolated worktrees from a freshly fetched default branch).
+6. **Implement** with superpowers `subagent-driven-development` + `test-driven-development`: one task per fresh subagent,
+   failing test first, the repo's `check_fast` (from `hub.json`) green after each task. Never weaken existing assertions.
+7. **Review each task twice** (fresh contexts): **`spec-reviewer`** (matches the plan, nothing extra), then **`quality-reviewer`**
+   (domain invariants, security, idempotency). Fixes go back to the implementer.
+8. **Verify**: **`evaluator`** agent → `eval.md` + `features.json` flipped with evidence; `SHIP` required. **Finish**: superpowers
+   `finishing-a-development-branch` — PR authored by the user on a `project.branch_prefix` branch: no AI co-author trailer, no "Generated with", no 🤖.
+9. **Compound**: triage the agents' `brain/_inbox/` proposals with the user; `/handoff` if the work spans sessions.
+
+*Spike*: skip 2, 4 and the plan gate; timebox; `researcher` findings in `brain/features/<slug>/research.md`; no merge.

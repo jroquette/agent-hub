@@ -100,6 +100,16 @@ _BASE_AGENTS: Final = (
     "researcher",
     "spec-reviewer",
 )
+# The base plugin's skills, one folder each (sorted).
+_BASE_SKILLS: Final = (
+    "create-plan",
+    "feature",
+    "handoff",
+    "kickoff",
+    "learn",
+    "recall",
+    "research",
+)
 # The upstream license files the base plugin's NOTICE names (sorted).
 _LICENSE_TEXTS: Final = ("Apache-2.0.txt", "MIT-compound-engineering-plugin.txt")
 
@@ -155,5 +165,12 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
             f"{_BASE_PLUGIN}/agents/{name}.md", f"{_BASE_PLUGIN}/agents/{name}.md.tmpl"
         )
         for name in _BASE_AGENTS
+    ),
+    # `render_entries` links each skill folder into `.claude/skills/`.
+    *(
+        _generic_managed(
+            f"{_BASE_PLUGIN}/skills/{name}/SKILL.md", f"{_BASE_PLUGIN}/skills/{name}/SKILL.md.tmpl"
+        )
+        for name in _BASE_SKILLS
     ),
 )
