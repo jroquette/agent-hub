@@ -1,0 +1,66 @@
+--- rc (2 bytes) ---
+0
+
+--- stdout (1019 bytes) ---
+{
+  "window": "2026-01-01 .. 2026-01-15",
+  "prs": {
+    "acme/api": {
+      "merged": 0,
+      "median_cycle_h": null,
+      "agent_prs": 0,
+      "agent_merged_without_edits": 0
+    },
+    "acme/web": {
+      "merged": 0,
+      "median_cycle_h": null,
+      "agent_prs": 0,
+      "agent_merged_without_edits": 0
+    },
+    "acme/demo-hub": {
+      "merged": 0,
+      "median_cycle_h": null,
+      "agent_prs": 0,
+      "agent_merged_without_edits": 0
+    }
+  },
+  "agent_runs": {
+    "outcomes": {},
+    "cost_per_issue": {}
+  },
+  "ci": {
+    "acme/api": {
+      "runs": 0,
+      "failed": 0,
+      "failed_workflows": []
+    },
+    "acme/web": {
+      "runs": 0,
+      "failed": 0,
+      "failed_workflows": []
+    },
+    "acme/demo-hub": {
+      "runs": 0,
+      "failed": 0,
+      "failed_workflows": []
+    }
+  },
+  "memory": {
+    "inbox_pending": 0,
+    "learnings_added_or_changed": 0,
+    "note": "sessions that needed re-explanation are not measurable from files yet; count them by hand in the retro"
+  }
+}
+
+--- stderr (0 bytes) ---
+
+--- fs (0 bytes) ---
+
+--- calls (1261 bytes) ---
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "pr", "list", "-R", "acme/api", "--state", "merged", "--limit", "40", "--search", "merged:>=2026-01-01", "--json", "number,createdAt,mergedAt,body,commits"]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "pr", "list", "-R", "acme/web", "--state", "merged", "--limit", "40", "--search", "merged:>=2026-01-01", "--json", "number,createdAt,mergedAt,body,commits"]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "pr", "list", "-R", "acme/demo-hub", "--state", "merged", "--limit", "40", "--search", "merged:>=2026-01-01", "--json", "number,createdAt,mergedAt,body,commits"]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "run", "list", "-R", "acme/api", "--branch", "trunk", "--limit", "60", "--json", "conclusion,createdAt,workflowName"]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "run", "list", "-R", "acme/web", "--branch", "trunk", "--limit", "60", "--json", "conclusion,createdAt,workflowName"]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "run", "list", "-R", "acme/demo-hub", "--branch", "trunk", "--limit", "60", "--json", "conclusion,createdAt,workflowName"]}
+

@@ -1,0 +1,12 @@
+--- rc (2 bytes) ---
+0
+
+--- stdout (164 bytes) ---
+{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "\n\n## Snapshot before compaction\n  Snapshot body with surrounding spaces.  \n\n"}}
+
+--- stderr (0 bytes) ---
+
+--- fs (0 bytes) ---
+
+--- calls (0 bytes) ---
+

@@ -1,0 +1,19 @@
+--- rc (2 bytes) ---
+0
+
+--- stdout (0 bytes) ---
+
+--- stderr (0 bytes) ---
+
+--- fs (354 bytes) ---
+A <ROOT>/ws/demo-hub/brain/auto/
+A <ROOT>/ws/demo-hub/brain/auto/workspace/
+A <ROOT>/ws/demo-hub/brain/auto/workspace/session-snapshot.md
+| # Session snapshot (2026-01-15 10:30, before auto)
+| - cwd: `<ROOT>/ws/api`
+| - last user request: (n/a)
+|
+| - api [trunk]: EADME.md, f01.txt, f02.txt, f03.txt, f04.txt, f05.txt, f06.txt, f07.txt, f08.txt, f09.txt
+
+--- calls (0 bytes) ---
+

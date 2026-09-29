@@ -778,9 +778,13 @@ class CaseWorkspace:
     HUB_JSON = CASE_HUB_JSON
     BRIEF_HUB_JSON = BRIEF_HUB_JSON
     BRIEF_GH = BRIEF_GH
+    NOW_MD = NOW_MD
+    JOURNAL = JOURNAL
+    HUB_DIR = HUB_DIR
     COMMANDS = COMMANDS
     at = staticmethod(at)
     write_files = staticmethod(write_files)
+    write_exe = staticmethod(write_exe)
 
     time_cap = CASE_TIME_CAP
 
@@ -971,6 +975,7 @@ class CaseWorkspace:
         self.git("commit", "-q", "-am", "upstream change", cwd=pusher, date=at(1, "09:00"))
         self.git("push", "-q", "origin", "trunk", cwd=pusher)
         self.git("fetch", "-q", "origin", cwd=api)
+        shutil.rmtree(pusher)  # AGH-7 built this workspace elsewhere and copied only ws/, origins/
         write_files(api, {"README.md": "api, edited\n", "notes.txt": "untracked\n"})
         web = self.make_repo(
             ws / "web",
@@ -1052,6 +1057,15 @@ class CaseWorkspace:
     def elapsed(self) -> float:
         return time.monotonic() - self.started
 
+    def run_named(
+        self, case: str, *, argv: Sequence[str] = (), hub: Path | None = None, **run: Any
+    ) -> dict[str, bytes]:
+        """Run ``<file>/<name>``'s file under test against ``hub`` (default: the hub copy) with
+        ``argv``; return its five streams (``run``'s other arguments pass through)."""
+        name = case.split("/", 1)[0]
+        hub = hub or self.root / "ws" / HUB_DIR
+        return self.run([*self.command(name, hub=hub), *argv], hub=hub, **run)
+
     def run_case(
         self,
         case: str,
@@ -1067,9 +1081,7 @@ class CaseWorkspace:
         Update mode is read (and refused under ``CI``) before anything runs.
         """
         update = update_mode()
-        name = case.split("/", 1)[0]
-        hub = hub or self.root / "ws" / HUB_DIR
-        streams = self.run([*self.command(name, hub=hub), *argv], hub=hub, **run)
+        streams = self.run_named(case, argv=argv, hub=hub, **run)
         problems = compare_case(golden_root, case, streams, update=update)
         if self.elapsed() > self.time_cap:
             problems.insert(

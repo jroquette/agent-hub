@@ -1,0 +1,18 @@
+--- rc (2 bytes) ---
+0
+
+--- stdout (1041 bytes) ---
+{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "# Brief\n\n## Now\nShip the collector.\nThen the CLI.\n\n## Journal (last 7 days)\n- 2026-01-14: Day 14 topic 1: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; Day 14 topic 2: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; Day 14 topic 3: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; Day 14\n- 2026-01-13: Fixed the loader; Reviewed slice A\n\n## Repos\n- hub: trunk, 0 changed file(s), 0 behind origin/trunk\n- api: trunk, 2 changed file(s), 1 behind origin/trunk\n  open PRs: #41 Add login endpoint | #40 Refactor the session storage layer so that every adapter shares on | #38 Fix pagination | #37 Bump dependencies\n  \u26a0 failing on main: build, lint\n- web: detached@dd68590, 0 changed file(s), ? behind origin/trunk\n- ui: not found\n\nLinear: n/a (connector not configured for scripts).\nMore: brain/index.md (pull only what the task needs)."}}
+
+--- stderr (0 bytes) ---
+
+--- fs (0 bytes) ---
+
+--- calls (1246 bytes) ---
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "pr", "list", "-R", "acme/demo-hub", "--author", "@me", "--json", "number,title", "-q", ".[] | \"#\\(.number) \\(.title)\""]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "run", "list", "-R", "acme/demo-hub", "--branch", "trunk", "-L", "3", "--json", "name,conclusion", "-q", ".[] | select(.conclusion==\"failure\") | .name"]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "pr", "list", "-R", "acme/api", "--author", "@me", "--json", "number,title", "-q", ".[] | \"#\\(.number) \\(.title)\""]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "run", "list", "-R", "acme/api", "--branch", "trunk", "-L", "3", "--json", "name,conclusion", "-q", ".[] | select(.conclusion==\"failure\") | .name"]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "pr", "list", "-R", "acme/web", "--author", "@me", "--json", "number,title", "-q", ".[] | \"#\\(.number) \\(.title)\""]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub", "argv": ["<ROOT>/bin/gh", "run", "list", "-R", "acme/web", "--branch", "trunk", "-L", "3", "--json", "name,conclusion", "-q", ".[] | select(.conclusion==\"failure\") | .name"]}
+

@@ -1,0 +1,14 @@
+--- rc (2 bytes) ---
+0
+
+--- stdout (750 bytes) ---
+{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "# Brief\n\n## Now\nWorktree focus.\nOnly here.\n\n## Journal (last 7 days)\n- 2026-01-14: Day 14 topic 1: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; Day 14 topic 2: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; Day 14 topic 3: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; Day 14\n- 2026-01-13: Fixed the loader; Reviewed slice A\n\n## Repos\n- hub: x, 0 changed file(s), 0 behind origin/trunk\n- api: not found\n- web: not found\n- ui: not found\n\nLinear: n/a (connector not configured for scripts).\nMore: brain/index.md (pull only what the task needs)."}}
+
+--- stderr (0 bytes) ---
+
+--- fs (0 bytes) ---
+
+--- calls (468 bytes) ---
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub/.claude/worktrees/x", "argv": ["<ROOT>/bin/gh", "pr", "list", "-R", "acme/demo-hub-wt", "--author", "@me", "--json", "number,title", "-q", ".[] | \"#\\(.number) \\(.title)\""]}
+{"tool": "gh", "cwd": "<ROOT>/ws/demo-hub/.claude/worktrees/x", "argv": ["<ROOT>/bin/gh", "run", "list", "-R", "acme/demo-hub-wt", "--branch", "trunk", "-L", "3", "--json", "name,conclusion", "-q", ".[] | select(.conclusion==\"failure\") | .name"]}
+
