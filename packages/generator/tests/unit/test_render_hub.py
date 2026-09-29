@@ -2006,6 +2006,8 @@ def rendered_paths(rendered: Iterable[RenderedFile]) -> set[str]:
 # creates them at run time. Closed: path → its producer; each must still be referenced.
 RUN_TIME_BRAIN_PATHS = {
     "brain/_inbox/mining/": "scripts/mine_transcripts.py",
+    "brain/_inbox/sessions/": "plugin/hub-workflow/hooks/session_end.py",
+    "brain/auto/workspace/session-snapshot.md": "plugin/hub-workflow/hooks/pre_compact.py",
     "brain/learnings/gotchas/": "plugin/hub-workflow/skills/learn/SKILL.md",
 }
 
@@ -2104,3 +2106,41 @@ def test_lists_repos_when_readme_rendered(variant_config: HubConfig) -> None:
     readme = text_of(variant_config, "README.md")
 
     assert "demo-api, demo-web" in readme
+
+
+# AC-4.33 (Q-17): the seeded .gitignore keeps AGH-10's base entries and ignores what the hooks and
+# `make mine` write into the hub at run time (the snapshot holds the last user prompt verbatim).
+AGH10_GITIGNORE = (
+    ".DS_Store",
+    ".env",
+    ".env.*",
+    "!.env.example",
+    ".claude/settings.local.json",
+    ".claude/worktrees/",
+    "__pycache__/",
+    "*.pyc",
+    ".venv/",
+    "node_modules/",
+    ".agent-runs/",
+)
+RUN_TIME_OUTPUTS = (
+    "brain/_inbox/sessions/",
+    "brain/auto/workspace/session-snapshot.md",
+    "brain/_inbox/mining/",
+)
+
+
+def test_ignores_run_time_outputs_when_gitignore_rendered(
+    demo_config: HubConfig, variant_config: HubConfig
+) -> None:
+    [demo, variant] = [
+        next(file for file in render_hub(config).files if file.path == ".gitignore")
+        for config in (demo_config, variant_config)
+    ]
+    lines = demo.content.decode("utf-8").splitlines()
+
+    assert set(RUN_TIME_OUTPUTS) <= set(lines)
+    assert set(AGH10_GITIGNORE) <= set(lines)
+    assert len(lines) == len(set(lines))
+    assert (demo.kind, demo.ownership) == (Kind.GENERIC, Ownership.SEEDED)
+    assert variant.content == demo.content

@@ -134,6 +134,7 @@ def run(scripts_hub: Path, tmp_path: Path) -> Run:
             "HOME": str(tmp_path / "home"),
             "PYTHONUTF8": "1",
             "GIT_CEILING_DIRECTORIES": str(tmp_path),
+            "GIT_CONFIG_NOSYSTEM": "1",
         }
         return subprocess.run(  # noqa: S603 - make or the python3 wrapper, fixed arguments
             [executable, *argv[1:]],
@@ -346,6 +347,56 @@ def test_runs_mine_and_retro_when_make_targets_run(
     assert [call.split()[:4] for call in calls] == [
         [kind, "list", "-R", repo] for kind in ("pr", "run") for repo in GITHUB_REPOS
     ]
+
+
+# AC-4.33 (Q-17): what the hooks and `make mine` write into the hub stays out of `git status`
+
+
+def test_keeps_status_clean_when_hooks_and_mine_write(
+    run: Run,
+    scripts_hub: Path,
+    *,
+    hook_python: str,
+    run_hook_file: Callable[..., subprocess.CompletedProcess[bytes]],
+    tmp_path: Path,
+) -> None:
+    git = ["git", "-c", "user.name=Demo", "-c", "user.email=demo@example.com"]
+    for argv in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "render"]):
+        assert run([*git, *argv]).returncode == 0, argv
+    [transcript] = (tmp_path / "home" / ".claude" / "projects").glob("*-demo-hub/*.jsonl")
+    hooks = scripts_hub / "plugin" / "hub-workflow" / "hooks"
+    events = {
+        "session_end": {"cwd": str(scripts_hub), "session_id": "abcdef12", "reason": "exit"},
+        "pre_compact": {
+            "cwd": str(scripts_hub),
+            "transcript_path": str(transcript),
+            "trigger": "manual",
+        },
+    }
+
+    for hook, event in events.items():
+        completed = run_hook_file(
+            hook_python,
+            hooks / f"{hook}.py",
+            stdin=json.dumps(event).encode(),
+            cwd=scripts_hub,
+            env={"HOME": str(tmp_path / "home")},
+        )
+        assert completed.returncode == 0, completed.stderr
+    mine = run(["make", "mine", "DAYS=7"])
+    status = run(["git", "status", "--porcelain", "--untracked-files=all", "--ignored"])
+
+    assert mine.returncode == 0, mine.stderr
+    snapshot = scripts_hub / "brain" / "auto" / "workspace" / "session-snapshot.md"
+    assert MATCH in snapshot.read_text(encoding="utf-8")
+    [session_log] = (scripts_hub / "brain" / "_inbox" / "sessions").iterdir()
+    [mined] = (scripts_hub / "brain" / "_inbox" / "mining").iterdir()
+    written = {path.relative_to(scripts_hub).as_posix() for path in (snapshot, session_log, mined)}
+    assert status.returncode == 0, status.stderr
+    changed = [line for line in status.stdout.splitlines() if not line.startswith("!! ")]
+    ignored = {line.removeprefix("!! ") for line in status.stdout.splitlines()} - set(changed)
+    assert changed == []
+    assert written <= ignored
 
 
 def test_prints_match_when_recall_run(run: Run) -> None:
