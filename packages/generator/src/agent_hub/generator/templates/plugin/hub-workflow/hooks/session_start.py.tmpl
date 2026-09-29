@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""SessionStart: inject the session brief. After a compaction, also re-inject the pre-compact snapshot.
+
+The brief is the pinned release's `hub brief`: one `uvx --from <platform source>@v<version> hub brief`
+call from the hub, the version read from hub.json (platform.version), with a 10 s timeout inside
+the hook's 20 s; its output is capped at 8000 characters. When it cannot run (no version, no uvx,
+a failure or empty output, the timeout), the mini brief stands in: one header line naming the
+fallback and its cause, brain/now.md capped at 2500 characters and the latest 3 journal files.
+It uses no git and no network."""
+
+from __future__ import annotations
+
+import os
+import shutil
+import signal
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from hubhooks import emit, load_config, read_input, run_hook
+except Exception as error:  # a partial install: skip, never error the session
+    print(f"[hub {os.path.splitext(os.path.basename(sys.argv[0] or 'hook'))[0]}] skipped: {type(error).__name__}", file=sys.stderr)
+    sys.exit(0)
+
+# The platform's git source at the pinned release; the version comes from hub.json at run time.
+SOURCE = "@@{platform_repository}@v{version}#subdirectory=packages/agent-hub"
+BRIEF_TIMEOUT = 10  # seconds, inside the hook's 20 s
+BRIEF_CAP = 8000
+NOW_CAP = 2500
+SNAPSHOT_CAP = 2500
+JOURNAL_COUNT = 3
+
+
+def pinned_brief(hub: Path, version: str | None) -> tuple[str, str]:
+    """(the brief of `hub brief`, "") or ("", why it is missing: the cause the mini brief names)."""
+    if version is None:
+        return "", "no version"
+    uvx = shutil.which("uvx")
+    if uvx is None:
+        return "", "no uv"
+    argv = [uvx, "--from", SOURCE.format(version=version), "hub", "brief"]
+    try:
+        proc = subprocess.Popen(argv, cwd=hub, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:  # found on PATH but cannot start
+        return "", "failed"
+    try:
+        out, _ = proc.communicate(timeout=BRIEF_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        stop(proc)
+        return "", "timed out"
+    brief = out.decode("utf-8", "replace").strip()[:BRIEF_CAP]
+    if proc.returncode != 0 or not brief:
+        return "", "failed"
+    return brief, ""
+
+
+def stop(proc: subprocess.Popen) -> None:
+    """Kill the timed-out call's whole process group: uvx runs `hub` as its own child."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except OSError:  # already gone
+        pass
+    try:
+        proc.communicate(timeout=1)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
+def latest_journal(hub: Path) -> list[str]:
+    """The newest JOURNAL_COUNT journal files (by path, the template excluded), newest first."""
+    try:
+        days = sorted(p.relative_to(hub).as_posix() for p in (hub / "brain" / "journal").glob("**/*.md") if p.name != "_template.md" and p.is_file())
+    except OSError:
+        return []
+    return days[::-1][:JOURNAL_COUNT]
+
+
+def mini_brief(hub: Path, cause: str) -> str:
+    """The fallback brief: its header (with the cause), now.md capped, the latest journal files."""
+    parts = [f"# Brief (fallback: hub brief {cause})"]
+    try:
+        parts.append((hub / "brain" / "now.md").read_text(encoding="utf-8", errors="replace")[:NOW_CAP].strip())
+    except OSError:
+        pass
+    days = latest_journal(hub)
+    if days:
+        parts.append("Latest journal: " + ", ".join(days))
+    return "\n\n".join(part for part in parts if part)
+
+
+def main() -> None:
+    data = read_input()
+    cfg = load_config(data.get("cwd"))
+    hub = cfg.hub
+    if not hub:
+        return
+    brief, cause = pinned_brief(hub, cfg.hub_file.platform.version)
+    ctx = brief or mini_brief(hub, cause)
+    snap = hub / "brain" / "auto" / "workspace" / "session-snapshot.md"
+    if data.get("source") == "compact" and snap.exists():
+        ctx += "\n\n## Snapshot before compaction\n" + snap.read_text(encoding="utf-8", errors="replace")[:SNAPSHOT_CAP]
+    emit({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": ctx}})
+
+
+if __name__ == "__main__":
+    run_hook(main)

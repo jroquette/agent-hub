@@ -1,0 +1,77 @@
+"""Runs the project's guard extension for guard.py, in a child process (Python 3.9+, stdlib only).
+
+argv: the extension file (plugin/<project>/hooks/project_guard.py of the hub holding the hooks)
+and that hub's hub.json. stdin: the PreToolUse event, a JSON object. The runner reads the config
+with stdlib_reader.load_hub_file, so the extension gets a HubFile read by attribute
+(cfg.guard.deny_paths), loads the extension by path as the module hub_project_guard, calls
+check(event, cfg) and prints one JSON value: null for None, {"verdict": v, "reason": r} for a
+(v, r) tuple. guard.py checks v and r, runs this with a timeout and only tightens its own verdict.
+
+Any other return value, anything the extension prints to stdout, and any exception (SystemExit
+included) end the run with exit 3 and one stderr line naming the cause: guard.py then asks. The
+child runs in its own session with the session's cwd (relative paths resolve against it), and
+guard.py kills its whole process group on the timeout.
+
+This protects the guard from a buggy extension, not from a hostile one: the extension runs as the
+user, with the user's rights. Its trust boundary is the guard's ask on every edit of
+plugin/<project>/hooks/ and plugin/hub-workflow/hooks/.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import importlib.util
+import io
+import json
+import os
+import sys
+from types import ModuleType
+
+MODULE_NAME = "hub_project_guard"
+FAILED = 3
+
+
+def load_extension(path: str) -> ModuleType:
+    """The extension module, loaded by path and registered before it runs (as a dataclass needs)."""
+    spec = importlib.util.spec_from_file_location(MODULE_NAME, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[MODULE_NAME] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def answer(extension: str, hub_json: str, event: object) -> dict | None:
+    """What check(event, cfg) returns, as the JSON value to print."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from stdlib_reader import load_hub_file
+
+    cfg = load_hub_file(hub_json)
+    sys.path.append(os.path.dirname(os.path.abspath(extension)))  # the extension's own modules
+    printed = io.StringIO()
+    with contextlib.redirect_stdout(printed):
+        result = load_extension(extension).check(event, cfg)
+    if printed.getvalue():
+        raise RuntimeError("the extension printed to stdout; write to stderr")
+    if result is None:
+        return None
+    if isinstance(result, tuple) and len(result) == 2:
+        return {"verdict": result[0], "reason": result[1]}
+    raise TypeError(f"check returned {type(result).__name__}, not None or a (verdict, reason) tuple")
+
+
+def main() -> None:
+    try:
+        extension, hub_json = sys.argv[1], sys.argv[2]
+        event = json.loads(sys.stdin.buffer.read().decode("utf-8"))
+        output = json.dumps(answer(extension, hub_json, event))
+    except BaseException as error:  # SystemExit and KeyboardInterrupt too: the guard asks
+        cause = " ".join(f"{type(error).__name__}: {error}".split())
+        print(cause[:300], file=sys.stderr)
+        sys.exit(FAILED)
+    print(output)
+
+
+if __name__ == "__main__":
+    main()

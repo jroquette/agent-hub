@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""PostToolUse (Edit|Write|MultiEdit): format and lint just the edited file inside a repo listed in hub.json,
+feeding remaining lint errors back to the agent. Uses only tools the repo already has installed:
+Python: `.venv/bin/ruff` (worktree or main checkout) → ruff format + ruff check --fix.
+TS/JS: `node_modules/.bin/prettier` and, when an ESLint config exists, `node_modules/.bin/eslint --fix`."""
+
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from hubhooks import emit, git, load_config, read_input, repo_of, run_hook
+except Exception as error:  # a partial install: skip, never error the session
+    print(f"[hub {os.path.splitext(os.path.basename(sys.argv[0] or 'hook'))[0]}] skipped: {type(error).__name__}", file=sys.stderr)
+    sys.exit(0)
+
+ESLINT_CONFIGS = ("eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", "eslint.config.ts",
+                  ".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yml", ".eslintrc.yaml")
+
+
+def run(cmd: list[str], cwd: Path) -> tuple[int, str]:
+    try:
+        env = dict(os.environ, NO_COLOR="1", FORCE_COLOR="0")
+        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=40, env=env)
+        return p.returncode, re.sub(r"\x1b\[[0-9;]*m", "", p.stdout + p.stderr).strip()
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 0, f"skipped: {e}"
+
+
+def main() -> None:
+    data = read_input()
+    ti = data.get("tool_input")
+    path = ti.get("file_path") if isinstance(ti, dict) else None
+    if not isinstance(path, str):
+        path = ""
+    if not path or not os.path.isfile(path):
+        return
+    cfg = load_config(data.get("cwd") or path)
+    repo, top = repo_of(path, cfg.repo_dirs)
+    if not repo or not top:
+        return
+    main_repo = Path(git(["rev-parse", "--path-format=absolute", "--git-common-dir"], top) or top).parent
+    msgs = []
+    if path.endswith(".py"):
+        ruff = next((r for r in (top / ".venv" / "bin" / "ruff", main_repo / ".venv" / "bin" / "ruff") if r.exists()), None)
+        if ruff:
+            run([str(ruff), "format", "-q", path], top)
+            rc, out = run([str(ruff), "check", "--fix", "-q", path], top)
+            if rc:
+                msgs.append(out[-1500:])
+    elif path.endswith((".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")):
+        nm = top / "node_modules" / ".bin"
+        if (nm / "prettier").exists():
+            run([str(nm / "prettier"), "--write", "--log-level", "warn", path], top)
+        if (nm / "eslint").exists() and any((top / c).exists() for c in ESLINT_CONFIGS):
+            rc, out = run([str(nm / "eslint"), "--fix", path], top)
+            if rc:
+                msgs.append(out[-1500:])
+    if msgs:
+        emit({"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                     "additionalContext": f"[hub post-edit] lint issues remain in {os.path.basename(path)}:\n" + "\n".join(msgs)}})
+
+
+if __name__ == "__main__":
+    run_hook(main)

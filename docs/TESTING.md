@@ -26,7 +26,7 @@ Makefile uses.
 |---|---|---|---|
 | unit | Core logic against in-memory fakes; one module at a time; no I/O, no network | `packages/<pkg>/tests/unit/`, root `tests/unit/` (repo scripts) | `make check-fast` |
 | contract | A port's behavior: one suite in `agent_hub.core.testing.contracts`, run against the fake (`agent_hub.core.testing.fakes`) and against the real adapter; no network | `packages/<pkg>/tests/contract/` | `make check-fast` |
-| integration | Adapters against real infrastructure: a SQLite file under `tmp_path`, Alembic upgrade and downgrade | `packages/<pkg>/tests/integration/` | `make check` |
+| integration | Adapters against real infrastructure: a SQLite file under `tmp_path`, Alembic upgrade and downgrade; the generator's rendered hooks and scripts run in a temporary hub, with the characterization goldens | `packages/<pkg>/tests/integration/` | `make check` |
 | e2e | The installed product and the gates as subprocesses: `hub` installed with `uv tool install`, ruff and mypy run with the repo's configs | root `tests/e2e/` | `make check` |
 | web (later) | The React app: Vitest for components, Playwright end to end | `apps/web` (Phase 2) | added with `apps/web` |
 
@@ -36,6 +36,13 @@ adapter. The first suite is `EventStoreContract`: a class of tests that take an 
 implementation's `tests/contract/conftest.py` provides that fixture (`packages/core/tests/contract/` returns an
 `InMemoryEventStore`; `packages/storage/tests/contract/` returns `open_event_store(tmp_path / "events.db")`, a migrated
 SQLite file), and a test module subclasses the suite (`class TestSqliteEventStore(EventStoreContract)`).
+
+A test that runs a rendered hook or script takes the `hook_python` fixture, so it runs on the current Python and on a
+real Python 3.9 (the system `python3` on macOS); without a 3.9 on `PATH` that case skips, and under `CI` it fails. A
+characterization case compares a hook's or script's exit code, stdout, stderr, files and calls to fake tools with
+`packages/generator/tests/integration/golden/<file>/<case>.golden`, stored byte-exact (`-text` in `.gitattributes`).
+`GOLDEN_UPDATE=1` rewrites the goldens (refused under `CI`; review and commit the diff) and `GOLDEN_KEEP=1` keeps each
+case's temporary root and prints its path.
 
 ## Layout
 

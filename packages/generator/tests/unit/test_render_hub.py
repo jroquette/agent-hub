@@ -1,3 +1,5 @@
+import ast
+import hashlib
 import inspect
 import json
 import os
@@ -6,7 +8,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
@@ -16,15 +18,21 @@ import pytest
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
+from agent_hub.core.hub_files.rendered_hub import RenderedHub
+from agent_hub.core.hub_files.rendered_link import RenderedLink
 from agent_hub.core.testing.builders import a_hub_document
-from agent_hub.generator.errors import TemplateError
+from agent_hub.generator.errors import GeneratorError, TemplateError
 from agent_hub.generator.hub_template import render_template
+from agent_hub.generator.json_form import JsonValue
 from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_mapping
 from agent_hub.generator.registry import REGISTRY, TemplateEntry, TemplateSource
 from agent_hub.generator.render_hub import render_entries, render_hub
 
-# AC-3.13: the D5 path set of docs/design/hub-generator.md, in code-point order.
+# AC-3.13: the D5 path set of docs/design/hub-generator.md, in code-point order; AC-4.1 adds
+# AGH-19's rendered set (spec "The rendered set", for project `demo`).
 DESIGN_PATHS = (
+    ".claude/settings.json",
+    ".claude/settings.project.json",
     ".github/workflows/ci.yml",
     ".gitignore",
     ".pre-commit-config.yaml",
@@ -45,7 +53,54 @@ DESIGN_PATHS = (
     "brain/now.md",
     "brain/playbooks/.gitkeep",
     "hub.schema.json",
+    "plugin/demo/.claude-plugin/plugin.json",
+    "plugin/demo/agents/.gitkeep",
+    "plugin/demo/hooks/project_guard.py",
+    "plugin/demo/skills/.gitkeep",
+    "plugin/hub-workflow/.claude-plugin/plugin.json",
+    "plugin/hub-workflow/LICENSES/Apache-2.0.txt",
+    "plugin/hub-workflow/LICENSES/MIT-compound-engineering-plugin.txt",
+    "plugin/hub-workflow/NOTICE",
+    "plugin/hub-workflow/agents/architect.md",
+    "plugin/hub-workflow/agents/evaluator.md",
+    "plugin/hub-workflow/agents/planner.md",
+    "plugin/hub-workflow/agents/quality-reviewer.md",
+    "plugin/hub-workflow/agents/requirements-analyst.md",
+    "plugin/hub-workflow/agents/researcher.md",
+    "plugin/hub-workflow/agents/spec-reviewer.md",
+    "plugin/hub-workflow/hooks/guard.py",
+    "plugin/hub-workflow/hooks/hooks.json",
+    "plugin/hub-workflow/hooks/hubhooks.py",
+    "plugin/hub-workflow/hooks/post_edit.py",
+    "plugin/hub-workflow/hooks/pre_compact.py",
+    "plugin/hub-workflow/hooks/project_guard_runner.py",
+    "plugin/hub-workflow/hooks/session_end.py",
+    "plugin/hub-workflow/hooks/session_start.py",
+    "plugin/hub-workflow/hooks/stdlib_reader.py",
+    "plugin/hub-workflow/hooks/stop_gate.py",
+    "plugin/hub-workflow/skills/create-plan/SKILL.md",
+    "plugin/hub-workflow/skills/feature/SKILL.md",
+    "plugin/hub-workflow/skills/handoff/SKILL.md",
+    "plugin/hub-workflow/skills/kickoff/SKILL.md",
+    "plugin/hub-workflow/skills/learn/SKILL.md",
+    "plugin/hub-workflow/skills/recall/SKILL.md",
+    "plugin/hub-workflow/skills/research/SKILL.md",
+    "scripts/mine_transcripts.py",
+    "scripts/recall_transcripts.py",
+    "scripts/retro_metrics.py",
 )
+# AGH-19 spec "The rendered set": the base plugin's agents, by file stem, and its skills, by
+# folder name.
+BASE_AGENTS = (
+    "architect",
+    "evaluator",
+    "planner",
+    "quality-reviewer",
+    "requirements-analyst",
+    "researcher",
+    "spec-reviewer",
+)
+BASE_SKILLS = ("create-plan", "feature", "handoff", "kickoff", "learn", "recall", "research")
 
 GENERATOR_PACKAGE = "agent_hub.generator"
 # A synthetic package of test templates, importable only while a test's fixture puts it on sys.path.
@@ -63,8 +118,9 @@ print(render_digest(render_hub(HubConfig.model_validate(a_hub_document()))))
 """
 
 
-def render_digest(rendered: Sequence[RenderedFile]) -> str:
-    """SHA-256 of a canonical dump: per file its fields, its content length, then its bytes.
+def render_digest(rendered: RenderedHub) -> str:
+    """SHA-256 of a canonical dump: per file its fields, content length and bytes, then per link
+    its path, target and classification (AC-4.28).
 
     Self-contained (imports inside), because the subprocess tests send its source to children.
     """
@@ -72,7 +128,7 @@ def render_digest(rendered: Sequence[RenderedFile]) -> str:
     import json
 
     digest = hashlib.sha256()
-    for file in rendered:
+    for file in rendered.files:
         fields = [
             file.path,
             file.kind.value,
@@ -83,6 +139,9 @@ def render_digest(rendered: Sequence[RenderedFile]) -> str:
         ]
         digest.update(json.dumps(fields).encode("utf-8"))
         digest.update(file.content)
+    for link in rendered.links:
+        row = [link.path, link.target, link.kind.value, link.ownership.value, link.module]
+        digest.update(json.dumps(row).encode("utf-8"))
     return digest.hexdigest()
 
 
@@ -124,8 +183,11 @@ def fixture_templates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
     sys.modules.pop(FIXTURE_PACKAGE, None)
 
 
-def a_fixture_entry(package: Path, path: str, text: str) -> TemplateEntry:
-    name = f"{path}.tmpl"
+def a_fixture_entry(
+    package: Path, path: str, text: str, *, source_name: str | None = None
+) -> TemplateEntry:
+    """An entry for ``path`` whose source holds ``text``; ``source_name`` when ``path`` nests."""
+    name = source_name or f"{path}.tmpl"
     (package / name).write_text(text, encoding="utf-8", newline="")
     return a_template_entry(path, name, source=TemplateSource(FIXTURE_PACKAGE, name))
 
@@ -133,14 +195,76 @@ def a_fixture_entry(package: Path, path: str, text: str) -> TemplateEntry:
 def test_returns_design_paths_sorted_when_demo_rendered(demo_config: HubConfig) -> None:
     rendered = render_hub(demo_config)
 
-    assert isinstance(rendered, tuple)
-    assert tuple(file.path for file in rendered) == DESIGN_PATHS
+    assert isinstance(rendered.files, tuple)
+    assert tuple(file.path for file in rendered.files) == DESIGN_PATHS
+
+
+def test_returns_rendered_hub_when_demo_rendered(demo_config: HubConfig) -> None:
+    rendered = render_hub(demo_config)
+
+    assert isinstance(rendered, RenderedHub)
+    assert isinstance(rendered.links, tuple)
+    assert all(type(link) is RenderedLink for link in rendered.links)
+    # AC-4.6: exactly the 14 links of spec "The rendered set", sorted by path.
+    assert [link.path for link in rendered.links] == [
+        *(f".claude/agents/{name}.md" for name in BASE_AGENTS),
+        *(f".claude/skills/{name}" for name in BASE_SKILLS),
+    ]
+    assert len(rendered.links) == 14
+    assert all(
+        (link.kind, link.ownership) == (Kind.GENERIC, Ownership.MANAGED) for link in rendered.links
+    )
+    assert {file.path for file in rendered.files}.isdisjoint(link.path for link in rendered.links)
+
+
+def test_links_seven_agents_when_demo_rendered(demo_config: HubConfig) -> None:
+    rendered = render_hub(demo_config)
+
+    agent_links = [link for link in rendered.links if link.path.startswith(".claude/agents/")]
+    assert [(link.path, link.target) for link in agent_links] == [
+        (f".claude/agents/{name}.md", f"../../plugin/hub-workflow/agents/{name}.md")
+        for name in BASE_AGENTS
+    ]
+    file_paths = {file.path for file in rendered.files}
+    for link in agent_links:
+        assert (link.kind, link.ownership, link.module) == (Kind.GENERIC, Ownership.MANAGED, None)
+        # The target, read from the link's folder, is a rendered agent file.
+        resolved = os.path.normpath(os.path.join(os.path.dirname(link.path), link.target))
+        assert resolved in file_paths, link.path
+
+
+def test_links_seven_skills_when_demo_rendered(demo_config: HubConfig) -> None:
+    rendered = render_hub(demo_config)
+
+    skill_links = [link for link in rendered.links if link.path.startswith(".claude/skills/")]
+    # One link per skill folder, not per file.
+    assert [(link.path, link.target) for link in skill_links] == [
+        (f".claude/skills/{name}", f"../../plugin/hub-workflow/skills/{name}")
+        for name in BASE_SKILLS
+    ]
+    file_paths = {file.path for file in rendered.files}
+    for link in skill_links:
+        assert (link.kind, link.ownership, link.module) == (Kind.GENERIC, Ownership.MANAGED, None)
+        # The target, read from the link's folder, is a folder that holds the rendered SKILL.md.
+        resolved = os.path.normpath(os.path.join(os.path.dirname(link.path), link.target))
+        assert f"{resolved}/SKILL.md" in file_paths, link.path
+
+
+def test_raises_generator_error_when_project_named_hub_workflow() -> None:
+    # Spec Q-16 (AC-4.4): the project plugin's manifest lands on the base plugin's.
+    with pytest.raises(GeneratorError) as raised:
+        render_hub(a_config_named("hub-workflow"))
+
+    assert type(raised.value) is GeneratorError
+    assert str(raised.value).startswith("plugin/hub-workflow/.claude-plugin/plugin.json: ")
 
 
 def test_copies_registry_classification_when_demo_rendered(demo_config: HubConfig) -> None:
-    entries = {entry.path: entry for entry in REGISTRY}
+    # An entry path may hold `@@{project_name}` (AGH-19 D2): look entries up by rendered path.
+    name = demo_config.project.name
+    entries = {entry.path.replace("@@{project_name}", name): entry for entry in REGISTRY}
 
-    for file in render_hub(demo_config):
+    for file in render_hub(demo_config).files:
         entry = entries[file.path]
         assert type(file) is RenderedFile
         assert type(file.kind) is Kind
@@ -168,7 +292,7 @@ def test_renders_module_entry_when_module_selected(demo_config: HubConfig) -> No
 
     rendered = render_entries(demo_config, [a_bench_entry(), readme])
 
-    assert [(file.path, file.kind, file.module) for file in rendered] == [
+    assert [(file.path, file.kind, file.module) for file in rendered.files] == [
         ("README.md", Kind.GENERIC, None),
         ("mk/bench.mk", Kind.MODULE, "bench"),
     ]
@@ -185,7 +309,7 @@ def test_renders_module_entry_when_aliased_module_selected() -> None:
 
     rendered = render_entries(a_config_with_modules({"contract-sync": {}}), [entry])
 
-    assert [file.path for file in rendered] == ["mk/contract-sync.mk"]
+    assert [file.path for file in rendered.files] == ["mk/contract-sync.mk"]
 
 
 def test_skips_module_entry_when_module_unselected(variant_config: HubConfig) -> None:
@@ -193,13 +317,13 @@ def test_skips_module_entry_when_module_unselected(variant_config: HubConfig) ->
 
     rendered = render_entries(variant_config, [a_bench_entry(), readme])
 
-    assert [file.path for file in rendered] == ["README.md"]
+    assert [file.path for file in rendered.files] == ["README.md"]
 
 
 def test_copies_core_schema_bytes_when_schema_rendered(demo_config: HubConfig) -> None:
     core_schema = files("agent_hub.core.hub_config").joinpath("hub.schema.json").read_bytes()
 
-    schema = {file.path: file for file in render_hub(demo_config)}["hub.schema.json"]
+    schema = {file.path: file for file in render_hub(demo_config).files}["hub.schema.json"]
 
     assert schema.content == core_schema
 
@@ -211,7 +335,7 @@ def test_substitutes_config_values_when_template_rendered(
         fixture_templates, "NAME.md", "# @@{project_name} hub\r\n$HOME @@@@ é\n"
     )
 
-    (rendered,) = render_entries(demo_config, [entry])
+    (rendered,) = render_entries(demo_config, [entry]).files
 
     # Strict UTF-8, no newline translation: a \r stays visible to the byte-form checks.
     assert rendered.content == "# demo hub\r\n$HOME @@ é\n".encode()
@@ -228,6 +352,360 @@ def test_returns_nothing_when_template_fails(
 
     assert raised.value.source == "broken.md.tmpl"
     assert raised.value.placeholder == "project_nmae"
+
+
+def a_config_named(name: str) -> HubConfig:
+    document = a_hub_document()
+    document["project"]["name"] = name
+    return HubConfig.model_validate(document)
+
+
+def plugin_entries(package: Path, paths: Iterable[str]) -> list[TemplateEntry]:
+    """One fixture entry per path; flat sources with no placeholder, so only the path renders."""
+    return [
+        a_fixture_entry(package, path, f"entry {index}\n", source_name=f"{index}.tmpl")
+        for index, path in enumerate(paths)
+    ]
+
+
+def test_adds_one_link_when_entry_list_gains_agent_or_skill(
+    demo_config: HubConfig, fixture_templates: Path
+) -> None:
+    base = (
+        "plugin/hub-workflow/agents/architect.md",
+        "plugin/hub-workflow/agents/.gitkeep",
+        "plugin/hub-workflow/skills/recall/SKILL.md",
+        "plugin/hub-workflow/skills/.gitkeep",
+    )
+    extra = (
+        "plugin/demo/agents/reviewer.md",
+        "plugin/demo/skills/deploy/SKILL.md",
+        "plugin/demo/skills/deploy/reference.md",
+    )
+
+    before = render_entries(demo_config, plugin_entries(fixture_templates, base))
+    after = render_entries(demo_config, plugin_entries(fixture_templates, base + extra))
+
+    assert [(link.path, link.target) for link in before.links] == [
+        (".claude/agents/architect.md", "../../plugin/hub-workflow/agents/architect.md"),
+        (".claude/skills/recall", "../../plugin/hub-workflow/skills/recall"),
+    ]
+    added = set(after.links) - set(before.links)
+    assert sorted((link.path, link.target) for link in added) == [
+        (".claude/agents/reviewer.md", "../../plugin/demo/agents/reviewer.md"),
+        (".claude/skills/deploy", "../../plugin/demo/skills/deploy"),
+    ]
+    assert len(after.links) == len(before.links) + 2
+    assert {file.path for file in after.files}.isdisjoint(link.path for link in after.links)
+
+
+@pytest.mark.parametrize("project_name", ["demo", "acme-tools"])
+def test_substitutes_project_name_when_path_holds_placeholder(
+    project_name: str, fixture_templates: Path
+) -> None:
+    entries = plugin_entries(
+        fixture_templates,
+        ("plugin/@@{project_name}/agents/reviewer.md", "plugin/@@{project_name}/skills/.gitkeep"),
+    )
+
+    rendered = render_entries(a_config_named(project_name), entries)
+
+    assert [file.path for file in rendered.files] == [
+        f"plugin/{project_name}/agents/reviewer.md",
+        f"plugin/{project_name}/skills/.gitkeep",
+    ]
+    assert [(link.path, link.target) for link in rendered.links] == [
+        (".claude/agents/reviewer.md", f"../../plugin/{project_name}/agents/reviewer.md"),
+    ]
+
+
+@pytest.mark.parametrize("placeholder", ["tracker_team", "project_nmae"])
+def test_raises_template_error_when_path_holds_other_placeholder(
+    placeholder: str, demo_config: HubConfig, fixture_templates: Path
+) -> None:
+    # ``tracker_team`` is a key of the text mapping: paths take ``project_name`` only.
+    path = f"plugin/@@{{{placeholder}}}/agents/reviewer.md"
+    entries = plugin_entries(fixture_templates, (path,))
+
+    with pytest.raises(TemplateError) as raised:
+        render_entries(demo_config, entries)
+
+    assert raised.value.source == path
+    assert raised.value.placeholder == placeholder
+
+
+@pytest.mark.parametrize(
+    ("project_name", "paths", "colliding"),
+    [
+        (
+            "hub-workflow",
+            (
+                "plugin/hub-workflow/.claude-plugin/plugin.json",
+                "plugin/@@{project_name}/.claude-plugin/plugin.json",
+            ),
+            "plugin/hub-workflow/.claude-plugin/plugin.json",
+        ),
+        (
+            "demo",
+            ("plugin/demo/agents/reviewer.md", ".claude/agents/reviewer.md"),
+            ".claude/agents/reviewer.md",
+        ),
+        (
+            "demo",
+            ("plugin/hub-workflow/skills/recall/SKILL.md", "plugin/demo/skills/recall/SKILL.md"),
+            ".claude/skills/recall",
+        ),
+        (
+            "demo",
+            ("plugin/demo/skills/recall/SKILL.md", ".claude/skills/recall/extra.md"),
+            ".claude/skills/recall/extra.md",
+        ),
+    ],
+    ids=["file-and-file", "file-and-link", "link-and-link", "file-under-link"],
+)
+def test_raises_generator_error_when_paths_collide(
+    *, project_name: str, paths: tuple[str, ...], colliding: str, fixture_templates: Path
+) -> None:
+    entries = plugin_entries(fixture_templates, paths)
+
+    with pytest.raises(GeneratorError) as raised:
+        render_entries(a_config_named(project_name), entries)
+
+    assert type(raised.value) is GeneratorError
+    assert str(raised.value).startswith(f"{colliding}: ")
+
+
+def a_manifest(config: HubConfig) -> dict[str, JsonValue]:
+    return {"version": "0.1.0", "name": config.project.name, "note": "d\u00e9j\u00e0"}
+
+
+@pytest.mark.parametrize("project_name", ["demo", "acme-tools"])
+def test_writes_json_form_when_entry_built(project_name: str, fixture_templates: Path) -> None:
+    built = TemplateEntry(
+        path="plugin/@@{project_name}/.claude-plugin/plugin.json",
+        build=a_manifest,
+        kind=Kind.PROJECT_OWNED,
+        ownership=Ownership.SEEDED,
+    )
+    entries = [built, *plugin_entries(fixture_templates, ("plugin/x/agents/a.md",))]
+
+    rendered = render_entries(a_config_named(project_name), entries)
+
+    file = rendered.files[0]
+    assert file.path == f"plugin/{project_name}/.claude-plugin/plugin.json"
+    # Spec Q-9: sorted keys, two-space indent, non-ASCII as UTF-8, final newline.
+    lines = [
+        "{",
+        f'  "name": "{project_name}",',
+        '  "note": "d\u00e9j\u00e0",',
+        '  "version": "0.1.0"',
+        "}",
+    ]
+    assert file.content == ("\n".join(lines) + "\n").encode()
+    assert json.loads(file.content) == a_manifest(a_config_named(project_name))
+    assert (file.kind, file.ownership, file.module, file.executable) == (
+        Kind.PROJECT_OWNED,
+        Ownership.SEEDED,
+        None,
+        False,
+    )
+    assert [other.path for other in rendered.files[1:]] == ["plugin/x/agents/a.md"]
+
+
+# AGH-19 spec "The rendered set": the seeded, project-owned files, for project `<project>`.
+SEEDED_PROJECT_PATHS = (
+    ".claude/settings.project.json",
+    "plugin/{project}/.claude-plugin/plugin.json",
+    "plugin/{project}/agents/.gitkeep",
+    "plugin/{project}/hooks/project_guard.py",
+    "plugin/{project}/skills/.gitkeep",
+)
+
+
+@pytest.mark.parametrize("project_name", ["demo", "acme-tools"])
+def test_seeds_project_paths_when_config_named(project_name: str) -> None:
+    rendered = {file.path: file for file in render_hub(a_config_named(project_name)).files}
+
+    seeded = sorted(
+        path
+        for path, file in rendered.items()
+        if (file.kind, file.ownership) == (Kind.PROJECT_OWNED, Ownership.SEEDED)
+        and path.startswith(("plugin/", ".claude/"))
+    )
+    assert seeded == [path.format(project=project_name) for path in SEEDED_PROJECT_PATHS]
+    # No other project's folder: every plugin path outside the base plugin is this project's.
+    project_plugin = [
+        path
+        for path in rendered
+        if path.startswith("plugin/") and not path.startswith("plugin/hub-workflow/")
+    ]
+    assert project_plugin == [
+        path.format(project=project_name) for path in SEEDED_PROJECT_PATHS[1:]
+    ]
+    manifest = json.loads(rendered[f"plugin/{project_name}/.claude-plugin/plugin.json"].content)
+    assert manifest["name"] == project_name
+
+
+def test_writes_empty_object_when_project_settings_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    # Spec AC-4.8: the JSON byte form of `{}`.
+    assert demo_render[".claude/settings.project.json"].content == b"{}\n"
+
+
+# AGH-19 D2 and hub-generator.md § Hooks and plugin wiring: the extension's protocol words.
+STUB_PROTOCOL_WORDS = ("check(event, cfg)", "None", '("deny", reason)', '("ask", reason)')
+
+
+def test_defines_check_returning_none_when_stub_parsed(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    stub = demo_render["plugin/demo/hooks/project_guard.py"].content.decode("utf-8")
+
+    # The system python3 may be 3.9: the stub parses with 3.9's grammar.
+    module = ast.parse(stub, feature_version=(3, 9))
+
+    docstring = ast.get_docstring(module)
+    assert docstring is not None
+    for word in STUB_PROTOCOL_WORDS:
+        assert word in docstring, word
+    functions = [node for node in module.body if isinstance(node, ast.FunctionDef)]
+    assert [function.name for function in functions] == ["check"]
+    arguments = functions[0].args
+    assert [argument.arg for argument in arguments.args] == ["event", "cfg"]
+    assert (arguments.posonlyargs, arguments.kwonlyargs, arguments.defaults) == ([], [], [])
+    assert (arguments.vararg, arguments.kwarg) == (None, None)
+    body = functions[0].body
+    if ast.get_docstring(functions[0]) is not None:
+        body = body[1:]
+    assert [ast.dump(statement) for statement in body] == [
+        ast.dump(ast.parse("return None", feature_version=(3, 9)).body[0])
+    ]
+
+
+# AC-4.24 (Q-1): every rendered `.py` runs on the system python3, which may be 3.9. The scripts
+# load the hooks' reader by path; the guard's runner loads the project extension by path (AC-4.14).
+READER_PATH = "plugin/hub-workflow/hooks/stdlib_reader.py"
+READER_MODULE = "hub_stdlib_reader"
+EXTENSION_RUNNER = "plugin/hub-workflow/hooks/project_guard_runner.py"
+# `sys.stdlib_module_names` is the running 3.14's: these stdlib modules came after 3.9 (What's New
+# in Python 3.11 and 3.14), so a rendered file that imports one fails on the system python3.
+POST_39_STDLIB = frozenset(
+    {
+        "annotationlib",
+        "compression",
+        "concurrent.interpreters",
+        "string.templatelib",
+        "tomllib",
+        "wsgiref.types",
+    }
+)
+
+
+def rendered_python(render: Mapping[str, RenderedFile]) -> dict[str, ast.Module]:
+    """Every rendered `.py`, by output path, parsed with 3.9's grammar."""
+    return {
+        path: ast.parse(file.content, filename=path, feature_version=(3, 9))
+        for path, file in render.items()
+        if path.endswith(".py")
+    }
+
+
+def imported_names(module: ast.Module) -> Iterator[tuple[str, int]]:
+    """Each imported module name with its relative level (0 for an absolute import)."""
+    for node in ast.walk(module):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                yield alias.name, 0
+        elif isinstance(node, ast.ImportFrom):
+            yield node.module or "", node.level
+
+
+def string_constants(node: ast.AST) -> Iterator[str]:
+    """The string constants under ``node`` in source order (``ast.walk`` is breadth-first)."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        yield node.value
+    for child in ast.iter_child_nodes(node):
+        yield from string_constants(child)
+
+
+def by_path_loads(module: ast.Module) -> list[ast.Call]:
+    return [
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "spec_from_file_location"
+    ]
+
+
+def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    parsed = rendered_python(demo_render)
+
+    assert {path.rsplit("/", 1)[0] for path in parsed} == {
+        "plugin/demo/hooks",
+        "plugin/hub-workflow/hooks",
+        "scripts",
+    }
+
+
+def test_imports_stdlib_or_siblings_when_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    parsed = rendered_python(demo_render)
+    siblings: dict[str, set[str]] = {}
+    for path in parsed:
+        folder, name = path.rsplit("/", 1)
+        siblings.setdefault(folder, set()).add(name.removesuffix(".py"))
+    reader_loads = 0
+
+    for path, module in parsed.items():
+        folder = path.rsplit("/", 1)[0]
+        for name, level in imported_names(module):
+            assert level == 0, f"{path}: relative import of {name!r}"
+            top = name.split(".")[0]
+            assert top in sys.stdlib_module_names | siblings[folder], f"{path} imports {name}"
+            newer = {added for added in POST_39_STDLIB if f"{name}.".startswith(f"{added}.")}
+            assert not newer, f"{path} imports {name}, added after 3.9"
+        for call in by_path_loads(module):
+            if path == EXTENSION_RUNNER:
+                continue
+            assert folder == "scripts", f"{path} loads a module by path"
+            [name, location] = call.args
+            parts = list(string_constants(location))
+            assert ast.literal_eval(name) == READER_MODULE, path
+            assert "/".join(parts) == READER_PATH, path
+            reader_loads += 1
+
+    assert READER_PATH in demo_render
+    assert reader_loads >= 1
+
+
+def function_imports(module: ast.Module) -> Iterator[tuple[str, int]]:
+    """Each import inside a function or lambda, with its line: it runs only when called."""
+    for scope in ast.walk(module):
+        if isinstance(scope, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+            for node in ast.walk(scope):
+                if isinstance(node, ast.Import | ast.ImportFrom):
+                    yield ast.unparse(node), node.lineno
+
+
+# The real-3.9 import test executes module-level imports only (class bodies included); an import
+# inside a function would reach 3.9 untested. One exception, closed: the extension runner imports
+# its sibling reader inside `answer`, so a missing or broken reader ends the run with exit 3 and a
+# one-line cause (its docstring's protocol), and the guard extension tests run that path on 3.9.
+FUNCTION_IMPORTS = {EXTENSION_RUNNER: ["from stdlib_reader import load_hub_file"]}
+
+
+def test_imports_at_module_level_when_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    found = {
+        path: [statement for statement, _ in function_imports(module)]
+        for path, module in rendered_python(demo_render).items()
+    }
+
+    assert {path: imports for path, imports in found.items() if imports} == FUNCTION_IMPORTS
+
+
+def test_takes_no_project_entry_input_when_signature_read() -> None:
+    assert list(inspect.signature(render_hub).parameters) == ["config"]
 
 
 def test_renders_same_bytes_when_rendered_twice(demo_config: HubConfig) -> None:
@@ -268,6 +746,25 @@ def test_renders_same_bytes_when_module_order_differs() -> None:
     assert render_digest(render_hub(bench_first)) == render_digest(render_hub(cloud_first))
 
 
+def test_changes_digest_when_link_target_or_ownership_differs() -> None:
+    link = RenderedLink(
+        path=".claude/agents/a.md",
+        target="../../plugin/hub-workflow/agents/a.md",
+        kind=Kind.GENERIC,
+        ownership=Ownership.MANAGED,
+        module=None,
+    )
+    other_target = link.model_copy(update={"target": "../../plugin/demo/agents/a.md"})
+    other_ownership = link.model_copy(update={"ownership": Ownership.SEEDED})
+
+    digests = [
+        render_digest(RenderedHub(files=(), links=links))
+        for links in ((), (link,), (other_target,), (other_ownership,))
+    ]
+
+    assert len(set(digests)) == len(digests)
+
+
 # AC-3.18 (Q5): the base Makefile's targets; `bench` and `bench-validate` go to mk/bench.mk.
 BASE_TARGETS = (
     "brain-brief",
@@ -301,7 +798,7 @@ MAKE_ENV_LEAKS = ("MAKEFLAGS", "MFLAGS", "MAKELEVEL", "GNUMAKEFLAGS", "MAKEFILES
 
 
 def text_of(config: HubConfig, path: str) -> str:
-    return {file.path: file for file in render_hub(config)}[path].content.decode("utf-8")
+    return {file.path: file for file in render_hub(config).files}[path].content.decode("utf-8")
 
 
 def template_texts() -> Iterator[tuple[str, str]]:
@@ -338,7 +835,34 @@ def pinned_source(version: str) -> str:
     return command[command.index("--from") + 1]
 
 
-def a_hub_tree(config: HubConfig, rendered_tree: Callable[[Iterable[RenderedFile]], Path]) -> Path:
+def test_writes_links_as_symlinks_when_tree_written(
+    rendered_tree: Callable[[RenderedHub], Path],
+) -> None:
+    agent = RenderedFile(
+        path="plugin/p/agents/a.md",
+        content=b"# a\n",
+        executable=False,
+        kind=Kind.GENERIC,
+        ownership=Ownership.MANAGED,
+        module=None,
+    )
+    link = RenderedLink(
+        path=".claude/agents/a.md",
+        target="../../plugin/p/agents/a.md",
+        kind=Kind.GENERIC,
+        ownership=Ownership.MANAGED,
+        module=None,
+    )
+
+    root = rendered_tree(RenderedHub(files=(agent,), links=(link,)))
+
+    written = root / ".claude" / "agents" / "a.md"
+    assert written.is_symlink()
+    assert os.readlink(written) == "../../plugin/p/agents/a.md"
+    assert written.read_bytes() == b"# a\n"
+
+
+def a_hub_tree(config: HubConfig, rendered_tree: Callable[[RenderedHub], Path]) -> Path:
     """The render written to disk, next to a synthetic hub.json pinned to ``RUN_VERSION``."""
     root = rendered_tree(render_hub(config))
     document = a_hub_document()
@@ -441,6 +965,209 @@ def test_names_no_ported_script_when_templates_read() -> None:
             assert script not in text, f"{name} names {script}"
 
 
+# AC-4.10 (Q-2): the scripts and hooks read `hub.json` through the hooks' reader, so no template
+# imports, loads or names the hub's own loader module.
+def test_names_no_hubconfig_when_templates_read() -> None:
+    texts = dict(template_texts())
+
+    assert {
+        "scripts/mine_transcripts.py.tmpl",
+        "scripts/recall_transcripts.py.tmpl",
+        "scripts/retro_metrics.py.tmpl",
+    } <= set(texts)
+    for name, text in texts.items():
+        assert "hubconfig" not in text, name
+
+
+# AC-4.19 (Q-15): the hub scripts that `hub` commands replace. No rendered agent or skill names
+# one, with or without its folder (the hub's planner also named `features_check.py` bare).
+HUB_SCRIPT_NAMES = ("brief.py", "features_check.py", "worktree.sh", "hubconfig")
+FEATURE_CHECK_COMMAND = "hub doctor --only features.tracker"
+AGENT_FRONTMATTER_KEYS = ["name", "description", "tools", "model"]
+
+
+def plugin_markdown(config: HubConfig) -> dict[str, str]:
+    """The base plugin's rendered agent and skill text, by path."""
+    return {
+        path: text
+        for path, text in rendered_texts(config).items()
+        if path.startswith("plugin/hub-workflow/") and path.endswith(".md")
+    }
+
+
+def test_names_no_hub_script_when_plugin_rendered(demo_config: HubConfig) -> None:
+    texts = plugin_markdown(demo_config)
+
+    assert {f"plugin/hub-workflow/agents/{name}.md" for name in BASE_AGENTS} <= set(texts)
+    assert {f"plugin/hub-workflow/skills/{name}/SKILL.md" for name in BASE_SKILLS} <= set(texts)
+    for path, text in texts.items():
+        for name in HUB_SCRIPT_NAMES:
+            assert name not in text, f"{path} names {name}"
+
+
+# The planner validates features.json and says what the check rejects; the evaluator runs it.
+@pytest.mark.parametrize(("agent", "mentions"), [("planner", 2), ("evaluator", 1)])
+def test_names_hub_doctor_when_planner_or_evaluator_rendered(
+    agent: str, mentions: int, demo_render: dict[str, RenderedFile]
+) -> None:
+    text = demo_render[f"plugin/hub-workflow/agents/{agent}.md"].content.decode("utf-8")
+
+    assert text.count(FEATURE_CHECK_COMMAND) == mentions
+    assert "features_check" not in text
+
+
+def test_keeps_frontmatter_when_agents_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    for name in BASE_AGENTS:
+        text = demo_render[f"plugin/hub-workflow/agents/{name}.md"].content.decode("utf-8")
+
+        lines = frontmatter_lines(text)
+
+        assert [line.split(":", 1)[0] for line in lines] == AGENT_FRONTMATTER_KEYS, name
+        fields = dict(line.split(": ", 1) for line in lines)
+        assert fields["name"] == name
+        assert fields["description"].strip(), name
+        # The body follows the frontmatter.
+        assert text.split("\n---\n", 1)[1].strip(), name
+
+
+# AC-4.19 (Q-15, plan design 7): the `hub` command and the make target that runs it through the
+# shim, where one exists; the tracker check has no target yet and stays bare.
+SKILL_COMMANDS = {
+    "kickoff": ("`hub brief` (`make brain-brief`)",),
+    "feature": (
+        "`hub worktree <team>-<n>-<slug> [--only <repo>]` (`make worktree NAME=…`)",
+        f"`{FEATURE_CHECK_COMMAND}`",
+    ),
+}
+MAKE_COMMAND = re.compile(r"`make ([a-z][a-z0-9-]*)")
+
+
+def skill_text(render: dict[str, RenderedFile], name: str) -> str:
+    return render[f"plugin/hub-workflow/skills/{name}/SKILL.md"].content.decode("utf-8")
+
+
+@pytest.mark.parametrize("skill", sorted(SKILL_COMMANDS))
+def test_names_hub_commands_when_kickoff_or_feature_rendered(
+    skill: str, demo_render: dict[str, RenderedFile]
+) -> None:
+    text = skill_text(demo_render, skill)
+    targets = MAKE_TARGET.findall(demo_render["Makefile"].content.decode("utf-8"))
+
+    for command in SKILL_COMMANDS[skill]:
+        assert text.count(command) == 1, command
+    # Every make target the skill names is one the rendered Makefile defines.
+    named = MAKE_COMMAND.findall(text)
+    assert named
+    assert set(named) <= set(targets), named
+
+
+def test_names_transcript_script_when_recall_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    text = skill_text(demo_render, "recall")
+
+    # The script ships with the hub (plan design 6), so the skill keeps naming it.
+    assert "`python3 scripts/recall_transcripts.py <term> [<term>…] [--any]`" in text
+
+
+# The hub's skill frontmatter, key by key; the skills without `disable-model-invocation` stay
+# model-invocable.
+SKILL_FRONTMATTER_KEYS = {
+    "create-plan": ["name", "description", "argument-hint"],
+    "feature": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "handoff": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "kickoff": ["name", "description", "disable-model-invocation"],
+    "learn": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "recall": ["name", "description", "argument-hint"],
+    "research": ["name", "description", "argument-hint"],
+}
+
+
+def test_keeps_frontmatter_when_skills_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    assert sorted(SKILL_FRONTMATTER_KEYS) == list(BASE_SKILLS)
+    for name, keys in SKILL_FRONTMATTER_KEYS.items():
+        text = skill_text(demo_render, name)
+
+        lines = frontmatter_lines(text)
+
+        assert [line.split(":", 1)[0] for line in lines] == keys, name
+        fields = dict(line.split(": ", 1) for line in lines)
+        assert fields["name"] == name
+        assert fields["description"].strip(), name
+        assert fields.get("disable-model-invocation", "true") == "true", name
+        assert text.split("\n---\n", 1)[1].strip(), name
+
+
+def test_has_no_author_when_base_manifest_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    content = demo_render["plugin/hub-workflow/.claude-plugin/plugin.json"].content
+
+    manifest = json.loads(content)
+
+    # Spec Q-10: the hub's manifest fields minus `author` (hub rule 5).
+    assert sorted(manifest) == ["description", "license", "name", "version"]
+    assert manifest["name"] == "hub-workflow"
+    assert b"author" not in content.lower()
+
+
+# `hooks.json` runs each hook as `python3 "${CLAUDE_PLUGIN_ROOT}/hooks/<file>"`. A missing file
+# makes `python3` exit 2, which blocks on PreToolUse and Stop: a missing `stop_gate.py` would
+# block every stop.
+HOOK_COMMAND = re.compile(r'python3 "\$\{CLAUDE_PLUGIN_ROOT\}/hooks/([^"/]+)"')
+
+
+def test_names_rendered_script_when_hooks_json_command_read(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    hooks = json.loads(demo_render["plugin/hub-workflow/hooks/hooks.json"].content)["hooks"]
+
+    commands = [
+        hook["command"] for groups in hooks.values() for group in groups for hook in group["hooks"]
+    ]
+
+    assert len(commands) == len(hooks) == 6
+    for command in commands:
+        match = HOOK_COMMAND.fullmatch(command)
+        assert match, command
+        assert f"plugin/hub-workflow/hooks/{match[1]}" in demo_render, command
+
+
+# The upstream license texts the NOTICE's attributions point to, by SHA-256 of the official
+# files: the Apache License 2.0 (apache.org) and the MIT license of the adapted plugin.
+LICENSE_DIGESTS = {
+    "LICENSES/Apache-2.0.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "LICENSES/MIT-compound-engineering-plugin.txt": (
+        "61d89de7646effdaba2d0a4ab7bd0eba60b4094b83efe5bc73c7940e43e93fc6"
+    ),
+}
+
+
+def test_copies_upstream_license_bytes_when_licenses_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    rendered = {
+        path.removeprefix("plugin/hub-workflow/"): file
+        for path, file in demo_render.items()
+        if path.startswith("plugin/hub-workflow/LICENSES/")
+    }
+
+    assert sorted(rendered) == sorted(LICENSE_DIGESTS)
+    for name, digest in LICENSE_DIGESTS.items():
+        assert hashlib.sha256(rendered[name].content).hexdigest() == digest, name
+
+
+def test_points_to_each_license_when_notice_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    notice = demo_render["plugin/hub-workflow/NOTICE"].content.decode("utf-8")
+
+    for name in LICENSE_DIGESTS:
+        assert notice.count(name) == 1, name
+    assert "Copyright (c) 2024, humanlayer Authors" in notice
+    assert "Copyright (c) 2025 Every" in notice
+    # A generated hub never had the hub's removed skill.
+    assert "validate-plan" not in notice
+
+
 def test_keeps_author_name_out_when_makefile_rendered(
     demo_config: HubConfig, variant_config: HubConfig
 ) -> None:
@@ -450,7 +1177,7 @@ def test_keeps_author_name_out_when_makefile_rendered(
 
 def test_lists_help_when_make_dry_run(
     variant_config: HubConfig,
-    rendered_tree: Callable[[Iterable[RenderedFile]], Path],
+    rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
@@ -462,7 +1189,7 @@ def test_lists_help_when_make_dry_run(
 
 def test_lists_each_base_target_once_when_help_run(
     variant_config: HubConfig,
-    rendered_tree: Callable[[Iterable[RenderedFile]], Path],
+    rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
@@ -478,7 +1205,7 @@ def test_lists_each_base_target_once_when_help_run(
 
 def test_passes_check_when_hub_has_no_tests(
     variant_config: HubConfig,
-    rendered_tree: Callable[[Iterable[RenderedFile]], Path],
+    rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
@@ -491,7 +1218,7 @@ def test_passes_check_when_hub_has_no_tests(
 
 def test_fails_check_when_hub_test_fails(
     variant_config: HubConfig,
-    rendered_tree: Callable[[Iterable[RenderedFile]], Path],
+    rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
@@ -532,7 +1259,7 @@ def test_runs_pinned_release_when_target_run(
     hub_call: str,
     *,
     variant_config: HubConfig,
-    rendered_tree: Callable[[Iterable[RenderedFile]], Path],
+    rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
@@ -617,7 +1344,7 @@ def test_pins_hygiene_hooks_when_pre_commit_rendered(demo_config: HubConfig) -> 
 
 def test_runs_hub_doctor_through_shim_when_pre_commit_entry_run(
     variant_config: HubConfig,
-    rendered_tree: Callable[[Iterable[RenderedFile]], Path],
+    rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
@@ -701,7 +1428,7 @@ def test_rejects_name_when_target_given_shell_syntax(
     arguments: tuple[str, ...],
     *,
     variant_config: HubConfig,
-    rendered_tree: Callable[[Iterable[RenderedFile]], Path],
+    rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
@@ -776,7 +1503,7 @@ def test_names_missing_access_when_release_unresolved(
     runner: str,
     *,
     variant_config: HubConfig,
-    rendered_tree: Callable[[Iterable[RenderedFile]], Path],
+    rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
@@ -801,7 +1528,7 @@ def test_passes_exit_code_through_when_hub_call_fails(
     runner: str,
     *,
     variant_config: HubConfig,
-    rendered_tree: Callable[[Iterable[RenderedFile]], Path],
+    rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
@@ -823,7 +1550,7 @@ def test_prints_install_hint_when_uv_missing(
     runner: str,
     *,
     variant_config: HubConfig,
-    rendered_tree: Callable[[Iterable[RenderedFile]], Path],
+    rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
     no_uv_path: str,
 ) -> None:
@@ -845,7 +1572,7 @@ def test_calls_no_uvx_when_pinned_version_unreadable(
     hub_json: str,
     *,
     variant_config: HubConfig,
-    rendered_tree: Callable[[Iterable[RenderedFile]], Path],
+    rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
@@ -876,6 +1603,8 @@ EMPTY_PATHS = (
     "brain/journal/.gitkeep",
     "brain/learnings/.gitkeep",
     "brain/playbooks/.gitkeep",
+    "plugin/demo/agents/.gitkeep",
+    "plugin/demo/skills/.gitkeep",
 )
 BRAIN_FRONTMATTER_PATHS = (
     "brain/decisions/index.md",
@@ -891,7 +1620,7 @@ CONFIG_NAMES = ("demo", "variant")
 
 def rendered_texts(config: HubConfig) -> dict[str, str]:
     """Every rendered file by path, decoded as strict UTF-8."""
-    return {file.path: file.content.decode("utf-8") for file in render_hub(config)}
+    return {file.path: file.content.decode("utf-8") for file in render_hub(config).files}
 
 
 def frontmatter_lines(text: str) -> list[str]:
@@ -918,7 +1647,7 @@ def test_writes_utf8_lf_final_newline_when_text_rendered(
 ) -> None:
     config = request.getfixturevalue(f"{config_name}_config")
 
-    for file in render_hub(config):
+    for file in render_hub(config).files:
         if file.path in EMPTY_PATHS:
             continue
         text = file.content.decode("utf-8")
@@ -927,11 +1656,191 @@ def test_writes_utf8_lf_final_newline_when_text_rendered(
         assert not text.endswith("\n\n"), file.path
 
 
+# The rendered hub's pre-commit runs `trailing-whitespace` and `end-of-file-fixer`: a managed file
+# they would rewrite on the hub's first commit drifts from what `hub sync` renders.
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+def test_passes_whitespace_hooks_when_config_rendered(
+    config_name: str, request: pytest.FixtureRequest
+) -> None:
+    config = request.getfixturevalue(f"{config_name}_config")
+
+    for file in render_hub(config).files:
+        text = file.content.decode("utf-8")
+        assert "\r" not in text, file.path
+        assert text == "" or (text.endswith("\n") and not text.endswith("\n\n")), file.path
+        for number, line in enumerate(text.split("\n"), start=1):
+            assert not line.endswith((" ", "\t")), f"{file.path}:{number}"
+
+
 def test_writes_empty_file_when_gitkeep_or_project_rules_rendered(
     demo_render: dict[str, RenderedFile],
 ) -> None:
     for path in EMPTY_PATHS:
         assert demo_render[path].content == b"", path
+
+
+# Spec AC-4.7 (D5, Q-5, Q-11): the managed `.claude/settings.json` is the rules base, nothing more.
+SETTINGS_KEYS = ["$schema", "attribution", "hooks", "includeCoAuthoredBy", "permissions"]
+SETTINGS_SCHEMA = "https://json.schemastore.org/claude-code-settings.json"
+SETTINGS_ALLOW = ["Bash(git status *)", "Bash(git diff *)", "Bash(git log *)", "Bash(git show *)"]
+SETTINGS_DENY = ["Read(**/*.pem)", "Read(**/*.key)"]
+# The project's own keys (D5 "Out"): they come through the seeded `settings.project.json`.
+PROJECT_ONLY_SETTINGS = (
+    "extraKnownMarketplaces",
+    "enabledPlugins",
+    "sandbox",
+    "env",
+    "skillOverrides",
+)
+# Event → (matcher, hook file, timeout in seconds); `None`: the group has no matcher.
+SETTINGS_HOOKS = {
+    "SessionStart": ("startup|resume|clear|compact", "session_start.py", 20),
+    "PreToolUse": (
+        "Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetch",
+        "guard.py",
+        10,
+    ),
+    "PostToolUse": ("Edit|Write|MultiEdit", "post_edit.py", 60),
+    "Stop": (None, "stop_gate.py", 180),
+    "PreCompact": (None, "pre_compact.py", 20),
+    "SessionEnd": (None, "session_end.py", 10),
+}
+SETTINGS_COMMAND = re.compile(
+    r'python3 "\$CLAUDE_PROJECT_DIR/(plugin/hub-workflow/hooks/[^"/]+\.py)"'
+)
+REPO_DIRS = {"demo": ["demo-api"], "variant": ["demo-api", "demo-web"]}
+
+
+def reject_constant(name: str) -> None:
+    """``json.loads`` hook: ``NaN``, ``Infinity`` and ``-Infinity`` are not JSON."""
+    msg = f"not JSON: {name}"
+    raise ValueError(msg)
+
+
+def strict_json(content: bytes) -> Any:
+    """Parse ``content`` as strict UTF-8 JSON, refusing the non-JSON constants."""
+    return json.loads(content.decode("utf-8"), parse_constant=reject_constant)
+
+
+def hook_groups(hooks: Mapping[str, Any]) -> dict[str, tuple[str | None, str, int]]:
+    """Each event's single group as (matcher, hook file name, timeout)."""
+    rows = {}
+    for event, groups in hooks.items():
+        assert len(groups) == 1, event
+        assert len(groups[0]["hooks"]) == 1, event
+        hook = groups[0]["hooks"][0]
+        assert hook["type"] == "command", event
+        rows[event] = (groups[0].get("matcher"), hook["command"], hook["timeout"])
+    return rows
+
+
+def key_anywhere(value: Any, key: str) -> bool:
+    """Whether ``key`` names a member of any object inside ``value``."""
+    if isinstance(value, dict):
+        return key in value or any(key_anywhere(child, key) for child in value.values())
+    if isinstance(value, list):
+        return any(key_anywhere(child, key) for child in value)
+    return False
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+def test_holds_rules_base_only_when_settings_rendered(
+    config_name: str, request: pytest.FixtureRequest
+) -> None:
+    config = request.getfixturevalue(f"{config_name}_config")
+    rendered = {file.path: file for file in render_hub(config).files}
+
+    settings = strict_json(rendered[".claude/settings.json"].content)
+
+    assert sorted(settings) == SETTINGS_KEYS
+    assert settings["$schema"] == SETTINGS_SCHEMA
+    assert settings["attribution"] == {"commit": "", "pr": ""}
+    assert settings["includeCoAuthoredBy"] is False
+    assert settings["permissions"] == {
+        "allow": SETTINGS_ALLOW,
+        "deny": SETTINGS_DENY,
+        "additionalDirectories": [f"../{repo_dir}" for repo_dir in REPO_DIRS[config_name]],
+    }
+    assert set(settings["hooks"]) == set(SETTINGS_HOOKS)
+    for event, (matcher, command, timeout) in hook_groups(settings["hooks"]).items():
+        expected_matcher, file, expected_timeout = SETTINGS_HOOKS[event]
+        assert (matcher, timeout) == (expected_matcher, expected_timeout), event
+        match = SETTINGS_COMMAND.fullmatch(command)
+        assert match, command
+        assert match[1] == f"plugin/hub-workflow/hooks/{file}", command
+        # A missing hook file makes `python3` exit 2, which blocks on PreToolUse and Stop.
+        assert match[1] in rendered, command
+        assert rendered[match[1]].executable, command
+    assert "matcher" not in settings["hooks"]["Stop"][0]
+    for key in PROJECT_ONLY_SETTINGS:
+        assert not key_anywhere(settings, key), key
+
+
+def test_matches_plugin_hooks_when_settings_compared(demo_render: dict[str, RenderedFile]) -> None:
+    settings = strict_json(demo_render[".claude/settings.json"].content)
+    plugin = strict_json(demo_render["plugin/hub-workflow/hooks/hooks.json"].content)
+
+    in_settings = hook_groups(settings["hooks"])
+    in_plugin = hook_groups(plugin["hooks"])
+
+    # The same hooks, wired two ways: the settings block for cloud sessions (which do not install
+    # repo plugins), `hooks.json` for a plugin install. Only the command's root differs.
+    assert set(in_settings) == set(in_plugin)
+    for event, (matcher, command, timeout) in in_settings.items():
+        plugin_matcher, plugin_command, plugin_timeout = in_plugin[event]
+        assert (matcher, timeout) == (plugin_matcher, plugin_timeout), event
+        assert command == plugin_command.replace(
+            "${CLAUDE_PLUGIN_ROOT}", "$CLAUDE_PROJECT_DIR/plugin/hub-workflow"
+        ), event
+
+
+# Spec AC-4.8 (Q-9): the files the generator builds from the config.
+BUILT_JSON_PATHS = (
+    ".claude/settings.json",
+    ".claude/settings.project.json",
+    "plugin/{project}/.claude-plugin/plugin.json",
+)
+# Static JSON with no placeholder: rendered byte for byte from its template.
+TEMPLATED_JSON_SOURCES = {
+    "plugin/hub-workflow/.claude-plugin/plugin.json": (
+        "templates/plugin/hub-workflow/claude-plugin/plugin.json.tmpl"
+    ),
+    "plugin/hub-workflow/hooks/hooks.json": "templates/plugin/hub-workflow/hooks/hooks.json.tmpl",
+}
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+def test_writes_json_form_when_generator_json_rendered(
+    config_name: str, request: pytest.FixtureRequest
+) -> None:
+    config = request.getfixturevalue(f"{config_name}_config")
+    rendered = {file.path: file for file in render_hub(config).files}
+    built = {
+        entry.path.replace("@@{project_name}", "{project}") for entry in REGISTRY if entry.build
+    }
+
+    assert built == set(BUILT_JSON_PATHS)
+    for pattern in BUILT_JSON_PATHS:
+        content = rendered[pattern.format(project=config.project.name)].content
+        value = strict_json(content)
+        form = json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+        assert content == form.encode("utf-8"), pattern
+    assert rendered[".claude/settings.project.json"].content == b"{}\n"
+    for path, source in TEMPLATED_JSON_SOURCES.items():
+        template = files(GENERATOR_PACKAGE).joinpath(*source.split("/")).read_bytes()
+        assert rendered[path].content == template, path
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+def test_parses_every_json_when_rendered(config_name: str, request: pytest.FixtureRequest) -> None:
+    config = request.getfixturevalue(f"{config_name}_config")
+
+    json_files = [file for file in render_hub(config).files if file.path.endswith(".json")]
+
+    # The two settings files, both manifests, `hooks.json` and the schema.
+    assert len(json_files) == 6
+    for file in json_files:
+        strict_json(file.content)
 
 
 @pytest.mark.parametrize("config_name", CONFIG_NAMES)
@@ -999,8 +1908,8 @@ def project_identifiers(text: str) -> list[str]:
 
 
 # The one carrier: the platform repository as a pinned install source (`<repository>@v<version>`,
-# as the Makefile and the pre-commit hook spell it). A longer name sharing its prefix (the owner's
-# own hub repository) is not the carrier and stays flagged.
+# as the Makefile, the pre-commit hook and the SessionStart hook spell it). A longer name sharing
+# its prefix (the owner's own hub repository) is not the carrier and stays flagged.
 PLATFORM_CARRIER = re.compile(re.escape(PLATFORM_REPOSITORY) + r"(?=@v)")
 
 
@@ -1024,7 +1933,26 @@ def test_holds_no_project_identifier_when_demo_rendered(demo_config: HubConfig) 
     for path, text in texts.items():
         assert rendered_identifiers(text) == [], path
     carriers = {path for path, text in texts.items() if PLATFORM_CARRIER.search(text)}
-    assert carriers == {".pre-commit-config.yaml", "Makefile"}
+    assert carriers == {
+        ".pre-commit-config.yaml",
+        "Makefile",
+        "plugin/hub-workflow/hooks/session_start.py",
+    }
+
+
+def test_holds_no_project_identifier_when_demo_paths_and_links_listed(
+    demo_config: HubConfig,
+) -> None:
+    rendered = render_hub(demo_config)
+
+    # AC-4.25: every file path, link path and link target, not only file text.
+    assert rendered.links
+    names = [
+        *(file.path for file in rendered.files),
+        *(name for link in rendered.links for name in (link.path, link.target)),
+    ]
+    for name in names:
+        assert project_identifiers(name) == [], name
 
 
 def test_flags_identifier_when_template_carries_other_owner(demo_config: HubConfig) -> None:
@@ -1074,10 +2002,21 @@ def rendered_paths(rendered: Iterable[RenderedFile]) -> set[str]:
     return paths
 
 
+# E4.11 (owner OK): brain paths that no render creates, because a rendered skill, hook or script
+# creates them at run time. Closed: path → its producer; each must still be referenced.
+RUN_TIME_BRAIN_PATHS = {
+    "brain/_inbox/mining/": "scripts/mine_transcripts.py",
+    "brain/_inbox/sessions/": "plugin/hub-workflow/hooks/session_end.py",
+    "brain/auto/workspace/session-snapshot.md": "plugin/hub-workflow/hooks/pre_compact.py",
+    "brain/learnings/gotchas/": "plugin/hub-workflow/skills/learn/SKILL.md",
+}
+
+
 def test_references_created_brain_paths_when_markdown_rendered(demo_config: HubConfig) -> None:
-    rendered = render_hub(demo_config)
+    rendered = render_hub(demo_config).files
     created = rendered_paths(rendered)
     texts = {file.path: file.content.decode("utf-8") for file in rendered}
+    run_time = {resolvable_path(path) for path in RUN_TIME_BRAIN_PATHS}
 
     references = [
         (path, match.rstrip(".,:;"))
@@ -1086,7 +2025,12 @@ def test_references_created_brain_paths_when_markdown_rendered(demo_config: HubC
     ]
     assert references
     for path, reference in references:
-        assert resolvable_path(reference) in created, f"{path} names {reference}"
+        resolved = resolvable_path(reference)
+        assert resolved in created or resolved in run_time, f"{path} names {reference}"
+    for allowed, producer in RUN_TIME_BRAIN_PATHS.items():
+        # Allowlisted only while no render creates it, and named by its producer.
+        assert resolvable_path(allowed) not in created, allowed
+        assert allowed in texts[producer], (allowed, producer)
     entries = BRAIN_INDEX_ENTRY.findall(texts["brain/index.md"])
     for entry in entries:
         assert resolvable_path(f"brain/{entry}") in created, f"brain/index.md names {entry}"
@@ -1110,7 +2054,43 @@ def test_names_every_managed_path_when_agents_rendered(demo_config: HubConfig) -
     named = BACKTICKED.findall(statements[0])
     managed = [entry.path for entry in REGISTRY if entry.ownership is Ownership.MANAGED]
     assert managed
-    assert sorted(named) == sorted(managed)
+    assert len(named) == len(set(named))
+    # E4.10: an item is a managed file, or a folder (`plugin/hub-workflow/`) that holds at least
+    # one registry entry and only managed ones.
+    for item in named:
+        if item.endswith("/"):
+            under = [entry for entry in REGISTRY if entry.path.startswith(item)]
+            assert under, item
+            assert all(entry.ownership is Ownership.MANAGED for entry in under), item
+        else:
+            assert item in managed, item
+    # Every managed path is named exactly once: by itself or by one folder that holds it.
+    for path in managed:
+        covering = [
+            item for item in named if item == path or (item.endswith("/") and path.startswith(item))
+        ]
+        assert len(covering) == 1, (path, covering)
+
+
+# Owner decision on slice 16: `.claude/settings.json` wires the base plugin's hooks, so enabling
+# `hub-workflow` from a marketplace too would run every hook twice (Claude Code merges only
+# identical command strings). The base rules say so in one bullet.
+DOUBLE_WIRING_RULE = "must not be enabled from a marketplace"
+
+
+def test_forbids_marketplace_plugin_when_agents_rendered(demo_config: HubConfig) -> None:
+    agents = text_of(demo_config, "AGENTS.md")
+
+    bullets = [
+        " ".join(bullet.split())
+        for bullet in re.split(r"\n(?=- )", agents)
+        if DOUBLE_WIRING_RULE in " ".join(bullet.split())
+    ]
+
+    assert len(bullets) == 1, bullets
+    assert "`.claude/settings.json`" in bullets[0]
+    assert "`hub-workflow`" in bullets[0]
+    assert "twice" in bullets[0]
 
 
 def test_points_to_agents_for_managed_files_when_readme_rendered(demo_config: HubConfig) -> None:
@@ -1126,3 +2106,41 @@ def test_lists_repos_when_readme_rendered(variant_config: HubConfig) -> None:
     readme = text_of(variant_config, "README.md")
 
     assert "demo-api, demo-web" in readme
+
+
+# AC-4.33 (Q-17): the seeded .gitignore keeps AGH-10's base entries and ignores what the hooks and
+# `make mine` write into the hub at run time (the snapshot holds the last user prompt verbatim).
+AGH10_GITIGNORE = (
+    ".DS_Store",
+    ".env",
+    ".env.*",
+    "!.env.example",
+    ".claude/settings.local.json",
+    ".claude/worktrees/",
+    "__pycache__/",
+    "*.pyc",
+    ".venv/",
+    "node_modules/",
+    ".agent-runs/",
+)
+RUN_TIME_OUTPUTS = (
+    "brain/_inbox/sessions/",
+    "brain/auto/workspace/session-snapshot.md",
+    "brain/_inbox/mining/",
+)
+
+
+def test_ignores_run_time_outputs_when_gitignore_rendered(
+    demo_config: HubConfig, variant_config: HubConfig
+) -> None:
+    [demo, variant] = [
+        next(file for file in render_hub(config).files if file.path == ".gitignore")
+        for config in (demo_config, variant_config)
+    ]
+    lines = demo.content.decode("utf-8").splitlines()
+
+    assert set(RUN_TIME_OUTPUTS) <= set(lines)
+    assert set(AGH10_GITIGNORE) <= set(lines)
+    assert len(lines) == len(set(lines))
+    assert (demo.kind, demo.ownership) == (Kind.GENERIC, Ownership.SEEDED)
+    assert variant.content == demo.content

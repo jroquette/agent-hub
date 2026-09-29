@@ -28,6 +28,8 @@ def _path_problem(path: str) -> str | None:
     # Checked in this order so the message names the first thing wrong with the path.
     if not path:
         return "must not be empty"
+    if "\x00" in path:
+        return "must not contain NUL"
     if "\\" in path:
         return "must use / as the separator, not \\"
     if path.startswith("/"):
@@ -47,6 +49,22 @@ def _relative_posix_path(path: str) -> str:
         msg = f"path {path!r} {problem}"
         raise ValueError(msg)
     return path
+
+
+def check_module(kind: Kind, module: str | None) -> None:
+    """Raise ``ValueError`` unless ``module`` is set exactly when ``kind`` is ``module``.
+
+    A set ``module`` must be one of ``MODULE_IDS``. ``RenderedFile`` and ``RenderedLink`` use it.
+    """
+    if kind is Kind.MODULE and module is None:
+        msg = "module must be set when kind is module"
+        raise ValueError(msg)
+    if kind is not Kind.MODULE and module is not None:
+        msg = f"module must be unset when kind is {kind.value}, got {module!r}"
+        raise ValueError(msg)
+    if module is not None and module not in MODULE_IDS:
+        msg = f"module {module!r} is not one of {', '.join(MODULE_IDS)}"
+        raise ValueError(msg)
 
 
 # Relative, normalized, POSIX: where the file lands under the hub root, on any system. A plain
@@ -72,13 +90,5 @@ class RenderedFile(BaseModel):
 
     @model_validator(mode="after")
     def _module_matches_kind(self) -> Self:
-        if self.kind is Kind.MODULE and self.module is None:
-            msg = "module must be set when kind is module"
-            raise ValueError(msg)
-        if self.kind is not Kind.MODULE and self.module is not None:
-            msg = f"module must be unset when kind is {self.kind.value}, got {self.module!r}"
-            raise ValueError(msg)
-        if self.module is not None and self.module not in MODULE_IDS:
-            msg = f"module {self.module!r} is not one of {', '.join(MODULE_IDS)}"
-            raise ValueError(msg)
+        check_module(self.kind, self.module)
         return self

@@ -1,0 +1,22 @@
+---
+name: create-plan
+description: Turn a spec/research into an implementation plan of small tasks, contract-first, each with exact files and a verification command. Human approval gate before any code.
+argument-hint: "<tracker issue id or feature slug>"
+---
+
+# /create-plan
+
+Adapted from humanlayer `create_plan` (Apache-2.0, humanlayer Authors, commit 99abe67349). Complements superpowers `writing-plans`.
+Paths are relative to the hub (the directory with `hub.json`); repos are its siblings, listed in `hub.json` → `repos`.
+
+1. Read `brain/features/<slug>/spec.md` and `research.md` fully (run `/research` first if missing). Resolve open questions with the user **before** writing.
+2. Classify risk: any file under `hub.json` → `guard.ask_before_edit` (or a sensitive area named in a repo's `AGENTS.md`) → plan approval is mandatory; include the tests/invariants to run.
+3. Write `brain/features/<slug>/plan.md`:
+   - Overview · Current state (links to research) · Desired end state · **What we're NOT doing**
+   - Order: **contract first** (schema/migration/API change, then regenerate the contract artifacts with each repo's own commands), then logic, then UI.
+   - Phases → tasks of 2–5 minutes each: exact file paths, the intended change, and the **verification command**
+     (a single test, or the repo's `check_fast` from `hub.json`).
+   - Every acceptance criterion (AC id) maps to at least one test.
+   - Success criteria split into **Automated** (commands) and **Manual** (what a human checks).
+   - PR slicing: ≤ ~300 changed lines each, one concern.
+4. Present the plan and **wait for explicit approval**. No code before that.
