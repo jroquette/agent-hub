@@ -51,7 +51,9 @@ The model has nine entities. All of them already exist implicitly in Loki Trader
 
 A CLI creates and maintains hubs from a project configuration file. Everything that is Loki-specific today becomes a parameter or an optional module. The Phase 1 design (config contract, generation and sync, hooks, commands, releases, `hub doctor`) is indexed in [design/README.md](design/README.md).
 
-The hub's logic lives in the `hub` CLI, versioned and tested in this repo; the generated hub holds files, `hub.json` and thin shims. A shim runs the CLI release pinned in `hub.json` (a semver git tag of this repo, no PyPI) through `uvx`, so no global install is needed and each hub on a machine can pin its own version. Hooks are the exception: they stay Python 3.9 stdlib scripts that read `hub.json` directly, never need the CLI, and fail open.
+The hub's logic lives in the `hub` CLI, versioned and tested in this repo; the generated hub holds files, `hub.json` and thin shims. A shim runs the CLI release pinned in `hub.json` (a semver git tag of this repo, no PyPI) through `uvx`, so no global install is needed and each hub on a machine can pin its own version. Hooks are the exception: they stay Python 3.9 stdlib scripts that read `hub.json` through the stdlib reader rendered with them, never need the CLI (SessionStart tries the pinned `hub brief` and falls back to a mini brief), and fail open.
+
+The generator renders a hub in memory as a `RenderedHub`: its files (`RenderedFile`) and its symlinks (`RenderedLink`, one per base or project plugin agent and skill under `.claude/agents/` and `.claude/skills/`), contract types in `agent_hub.core.hub_files`. Besides the base rules and the brain skeleton, it ships the managed base plugin `plugin/hub-workflow/` (agents, skills, hooks and their reader), the managed `.claude/settings.json` that runs those hooks, the seeded project plugin `plugin/<project>/` with its guard extension stub, and the transcript mining, recall and retro metrics scripts.
 
 ```
 hub init <project> --repos org/backend,org/frontend --tracker linear:LOK --branch-prefix jdoe/

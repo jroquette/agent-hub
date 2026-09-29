@@ -90,8 +90,8 @@ name the source and target repos) and `marketplace` (the optional plugin marketp
 - **CLI**: validates with `HubConfig` and fails fast: exit 1 and one line per error, `hub.json: <json path>: <message>`.
 - **Hooks**: a defensive stdlib reader that never raises: a missing file, bad JSON or a wrong type falls back to the
   defaults above and the hook fails open. It ignores unknown and `_` keys.
-- **Consistency**: `test_matches_schema_defaults_when_hub_json_minimal` compares the hook reader's defaults on a minimal
-  `hub.json` with `HubConfig`'s. Reader and test live in core (`agent_hub.core.hub_config.stdlib_reader`) until AGH-19.
+- **Consistency**: `packages/generator/tests/integration/test_hub_json_reader.py` compares the reader's defaults on a
+  minimal `hub.json` with `HubConfig`'s. The reader is a hook template: `plugin/hub-workflow/hooks/stdlib_reader.py`.
 
 ### Tracker
 
