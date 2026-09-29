@@ -14,6 +14,7 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_valida
 from agent_hub.core.hub_config.model import MODULE_IDS, HubConfig, ReleaseVersion, exact_int
 from agent_hub.core.hub_files.rendered_file import Ownership, RelativePosixPath
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
+from agent_hub.core.hub_files.rendered_link import link_target_problem
 from agent_hub.core.json_form import dump_json
 
 LOCK_VERSION: Final = 1
@@ -80,21 +81,39 @@ class HubLock(BaseModel):
 
     @model_validator(mode="after")
     def _modules_and_paths_allowed(self) -> Self:
-        if list(self.modules) != sorted(set(self.modules)):
-            msg = "modules must be sorted and unique"
-            raise ValueError(msg)
-        unknown = [module for module in self.modules if module not in MODULE_IDS]
-        if unknown:
-            msg = f"module {unknown[0]!r} is not one of {', '.join(MODULE_IDS)}"
-            raise ValueError(msg)
-        for path in self.files:
-            if path == HUB_LOCK_PATH:
-                msg = f"files must not list {HUB_LOCK_PATH}"
-                raise ValueError(msg)
-            if path == _GIT_FOLDER or path.startswith(f"{_GIT_FOLDER}/"):
-                msg = f"files must not list anything under {_GIT_FOLDER}, got {path!r}"
-                raise ValueError(msg)
+        _check_modules(self.modules)
+        for path, entry in self.files.items():
+            _check_path(path)
+            if isinstance(entry, ManagedLinkEntry):
+                _check_link_target(path, entry.symlink)
         return self
+
+
+def _check_modules(modules: tuple[str, ...]) -> None:
+    if list(modules) != sorted(set(modules)):
+        msg = "modules must be sorted and unique"
+        raise ValueError(msg)
+    unknown = [module for module in modules if module not in MODULE_IDS]
+    if unknown:
+        msg = f"module {unknown[0]!r} is not one of {', '.join(MODULE_IDS)}"
+        raise ValueError(msg)
+
+
+def _check_path(path: str) -> None:
+    if path == HUB_LOCK_PATH:
+        msg = f"files must not list {HUB_LOCK_PATH}"
+        raise ValueError(msg)
+    if path == _GIT_FOLDER or path.startswith(f"{_GIT_FOLDER}/"):
+        msg = f"files must not list anything under {_GIT_FOLDER}, got {path!r}"
+        raise ValueError(msg)
+
+
+def _check_link_target(path: str, target: str) -> None:
+    # The lock is read back from disk, so a target gets the check ``RenderedLink`` gave it.
+    problem = link_target_problem(path, target)
+    if problem is not None:
+        msg = f"files[{path!r}].symlink {target!r} {problem}"
+        raise ValueError(msg)
 
 
 def _sha256(content: bytes) -> str:
