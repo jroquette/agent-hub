@@ -56,6 +56,10 @@ _TOKEN: Final = re.compile(r"[0-9a-f]{8}")
 
 def temp_name(final_name: str, token: str) -> str:
     """The temporary name for ``final_name`` in the same folder: ``.<name>.hub-tmp-<token>``."""
+    if not final_name:
+        # ``..hub-tmp-<token>`` would not have the leftover shape, so a crash would leave it behind.
+        msg = "final name must not be empty"
+        raise ValueError(msg)
     if not _TOKEN.fullmatch(token):
         msg = f"token must be 8 lowercase hex digits, got {token!r}"
         raise ValueError(msg)

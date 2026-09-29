@@ -58,7 +58,12 @@ class InitRefusal:
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class InitPlan:
-    """What an init does, in order, and what it counts. Every path tuple is sorted."""
+    """What an init does, in order, and what it counts. Every path tuple is sorted.
+
+    ``kept_seeded`` holds seeded files already there (``hub.json`` included), ``kept_equal`` managed
+    files equal to their render, and ``kept_links`` links equal to their render, whatever their
+    ownership: links are counted apart from files (spec Q-1).
+    """
 
     leftovers: tuple[str, ...]
     folders: tuple[str, ...]
@@ -68,6 +73,7 @@ class InitPlan:
     created_links: tuple[str, ...]
     kept_seeded: tuple[str, ...]
     kept_equal: tuple[str, ...]
+    kept_links: tuple[str, ...]
     lock: HubLock
 
 
@@ -96,6 +102,14 @@ def _not_planned(path: str) -> NoReturn:
     raise NotImplementedError(msg)
 
 
+def _content(entry: FileEntry, path: str) -> bytes:
+    if entry.content is None:
+        # A caller bug: the tree reader was not asked to read a path the planner compares.
+        msg = f"{path}: content was not read; wanted must include it"
+        raise ValueError(msg)
+    return entry.content
+
+
 def _file_outcome(file: RenderedFile, entry: TreeEntry | None) -> _Outcome:
     if entry is None:
         return _Outcome.WRITE
@@ -103,7 +117,7 @@ def _file_outcome(file: RenderedFile, entry: TreeEntry | None) -> _Outcome:
         # A seeded file is the project's once written: kept whatever its bytes or mode.
         if file.ownership is Ownership.SEEDED:
             return _Outcome.KEPT_SEEDED
-        if entry.content == file.content and entry.executable == file.executable:
+        if _content(entry, file.path) == file.content and entry.executable == file.executable:
             return _Outcome.KEPT_EQUAL
     return _not_planned(file.path)
 
@@ -119,7 +133,7 @@ def _link_outcome(link: RenderedLink, entry: TreeEntry | None) -> _Outcome:
 def _hub_json_outcome(hub_json: bytes, entry: TreeEntry | None) -> _Outcome:
     if entry is None:
         return _Outcome.WRITE
-    if isinstance(entry, FileEntry) and entry.content == hub_json:
+    if isinstance(entry, FileEntry) and _content(entry, HUB_JSON_PATH) == hub_json:
         return _Outcome.KEPT_SEEDED
     return _not_planned(HUB_JSON_PATH)
 
@@ -188,7 +202,9 @@ def plan_init(
 ) -> InitPlan | InitRefusal:
     """Plan an init of ``rendered`` for ``config`` into the target ``tree`` describes.
 
-    Raises ``ValueError`` when the render holds ``hub.json`` or ``hub.lock``.
+    ``tree`` must hold the content of every rendered managed file and of ``hub.json``: the tree
+    reader's ``wanted`` includes those paths. Raises ``ValueError`` when the render holds
+    ``hub.json`` or ``hub.lock``, or when a file it compares was read without its content.
     """
     _check_render(rendered)
     decisions = _decisions(rendered, hub_json, tree.entries)
@@ -204,6 +220,7 @@ def plan_init(
         created_seeded=_paths(decisions, write, _Group.SEEDED),
         created_links=_paths(decisions, write, _Group.LINK),
         kept_seeded=_paths(decisions, kept_seeded, _Group.SEEDED),
-        kept_equal=_paths(decisions, kept_equal, _Group.MANAGED, _Group.LINK),
+        kept_equal=_paths(decisions, kept_equal, _Group.MANAGED),
+        kept_links=_paths(decisions, kept_equal, _Group.LINK),
         lock=lock,
     )

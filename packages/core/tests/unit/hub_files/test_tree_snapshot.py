@@ -16,7 +16,7 @@ def test_matches_leftover_when_name_has_temp_shape(name: str) -> None:
         pytest.param(".x.hub-tmp-0a1b2c3d4", id="nine-hex"),
         pytest.param(".x.hub-tmp-0A1B2C3D", id="uppercase"),
         pytest.param("x.hub-tmp-0a1b2c3d", id="no-leading-dot"),
-        pytest.param(".hub-tmp-0a1b2c3d", id="empty-name"),
+        pytest.param("..hub-tmp-0a1b2c3d", id="empty-name"),
         pytest.param(".x.hub-tmp-0a1b2c3d.bak", id="suffix-after-hex"),
     ],
 )
@@ -35,3 +35,8 @@ def test_builds_temp_name_when_token_given() -> None:
 def test_rejects_token_when_not_eight_hex(token: str) -> None:
     with pytest.raises(ValueError, match="8 lowercase hex"):
         temp_name("Makefile", token)
+
+
+def test_rejects_final_name_when_empty() -> None:
+    with pytest.raises(ValueError, match="final name must not be empty"):
+        temp_name("", "0a1b2c3d")
