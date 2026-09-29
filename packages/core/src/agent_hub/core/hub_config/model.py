@@ -2,7 +2,7 @@
 
 import json
 from collections.abc import Iterator
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal
 
 from pydantic import BeforeValidator, ConfigDict, Field
 from pydantic_core import InitErrorDetails, PydanticCustomError
@@ -119,6 +119,13 @@ class Modules(ConfigObject):
     bench: ModuleSettings | None = absent_by_default()
     contract_sync: ModuleSettings | None = absent_by_default(alias="contract-sync")
     marketplace: ModuleSettings | None = absent_by_default()
+
+
+# The closed module ids in their JSON spelling (``contract-sync``), as ``hub.lock`` and
+# ``mk/<id>.mk`` use them. Derived from ``Modules``, so a new module field cannot be left out.
+MODULE_IDS: Final[tuple[str, ...]] = tuple(
+    sorted(field.alias or name for name, field in Modules.model_fields.items())
+)
 
 
 class Doctor(ConfigObject):

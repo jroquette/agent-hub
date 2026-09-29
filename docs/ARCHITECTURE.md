@@ -17,8 +17,9 @@ The repo is a uv workspace. The root `pyproject.toml` is virtual (no `[project]`
 | `packages/core` | `agent-hub-core` | `agent_hub.core` | Domain: entities, canonical event, Pydantic schemas, use cases, ports; test support in `agent_hub.core.testing` |
 | `packages/storage` | `agent-hub-storage` | `agent_hub.storage` | Storage adapter: SQLAlchemy Core tables (`agent_hub.storage.db.metadata`), the SQLite `EventStore` and the Alembic migrations, shipped inside the package (`agent_hub/storage/migrations/`) |
 | `packages/collector` | `agent-hub-collector` | `agent_hub.collector` | Collector adapter: receives hook events and transcripts and feeds them to core |
+| `packages/generator` | `agent-hub-generator` | `agent_hub.generator` | Hub generator: the hub templates as package data, the `@@` renderer, the classification registry and `render_hub`; the file adapter joins with `hub init` ([ADR 0011](adr/0011-templates-as-package-data.md)) |
 | `packages/cli` | `agent-hub-cli` | `agent_hub.cli` | The `hub` command (Typer); entry point `agent_hub.cli.main:app` |
-| `packages/agent-hub` | `agent-hub` | `agent_hub_meta` (placeholder) | Meta-package: depends on the four above and declares the `hub` script, so `uv tool install agent-hub` installs everything |
+| `packages/agent-hub` | `agent-hub` | `agent_hub_meta` (placeholder) | Meta-package: depends on the five above and declares the `hub` script, so `uv tool install agent-hub` installs everything |
 
 Later, in Phase 2: `packages/api` (`agent_hub.api`, FastAPI, see [API.md](API.md)) and `apps/web` (React). They do not
 exist yet.
@@ -47,16 +48,19 @@ the machine can satisfy `3.14`. Fix with `uv self update` and `uv python install
 1. Every package may depend on `core`.
 2. `core` depends on nothing internal, and not on the adapter libraries `sqlalchemy`, `alembic` or `typer`.
 3. `agent_hub.cli` is the composition root ([ADR 0008](adr/0008-cli-as-composition-root.md)): it may import the adapter
-   packages `storage` and `collector` to build adapters and pass them to core use cases. Nothing imports `cli`.
-4. The adapter packages (`storage`, `collector`) never import each other; they depend only on `core`.
+   packages `storage`, `collector` and `generator` to build adapters and pass them to core use cases. Nothing imports
+   `cli`.
+4. The adapter packages (`storage`, `collector`, `generator`) never import each other; they depend only on `core`.
 
 ```mermaid
 flowchart BT
   storage[agent_hub.storage] --> core[agent_hub.core]
   collector[agent_hub.collector] --> core
+  generator[agent_hub.generator] --> core
   cli[agent_hub.cli] --> core
   cli --> storage
   cli --> collector
+  cli --> generator
   api["agent_hub.api (Phase 2)"] -.-> core
 ```
 
@@ -64,10 +68,10 @@ import-linter enforces the rule with the contracts in `.importlinter` (`root_pac
 `include_external_packages = True`):
 
 - `core imports nothing internal` (forbidden): `agent_hub.core` must not import `agent_hub.storage`,
-  `agent_hub.collector`, `agent_hub.cli`, `sqlalchemy`, `alembic` or `typer`.
+  `agent_hub.collector`, `agent_hub.generator`, `agent_hub.cli`, `sqlalchemy`, `alembic` or `typer`.
 - `cli is the composition root` (layers): `agent_hub.cli` above the independent sibling layers
-  `agent_hub.storage | agent_hub.collector`. A lower layer importing a higher one, or one sibling importing the other,
-  breaks it.
+  `agent_hub.storage | agent_hub.collector | agent_hub.generator`. A lower layer importing a higher one, or one sibling
+  importing another, breaks it.
 
 Run it with `make imports` (part of `make check`). A broken contract fails with its name followed by `BROKEN`.
 
@@ -78,7 +82,9 @@ layer. The meta-package `agent-hub` only bundles the distributions for installat
 
 Adding a package: create `packages/<pkg>/` with the shape above, then register it in `mypy.ini` (`files` and
 `mypy_path`), in both `.importlinter` contracts (core's forbidden list and the layers list) and in the Makefile `COV`
-list. The layout checker rule `package-registered` fails `make check-fast` until all of these are done.
+list. The layout checker rule `package-registered` fails `make check-fast` until all of these are done. Then add it to
+the PR-title scopes (`SCOPES` in `scripts/check_pr_title.py` and the list in CONTRIBUTING.md) and create its
+`pkg:<name>` area label.
 
 ## Hexagonal layout
 
@@ -92,9 +98,11 @@ list. The layout checker rule `package-registered` fails `make check-fast` until
   `TrackerClient` (Linear first), `TranscriptSource` (Claude Code first). No port where no swap is expected.
 - **Adapters** (other packages): `storage` implements `EventStore`; `collector` turns hook events and transcripts into
   canonical events and calls the ingestion use case; `cli` (and later `api`) parse input, call ONE use case and render
-  the result. Adapters translate external errors into the package's domain exceptions at the boundary.
+  the result; `generator` renders a hub's files from `HubConfig` (and, with `hub init`, applies plans to disk) and
+  implements no port ([ADR 0011](adr/0011-templates-as-package-data.md)). Adapters translate external errors into the
+  package's domain exceptions at the boundary.
 - **Errors**: `agent_hub.core.errors.AgentHubError` is the root; each package has its own `errors.py` with subclasses
-  (`StorageError`, `CollectorError`, …).
+  (`StorageError`, `CollectorError`, `GeneratorError`, …).
 
 ```mermaid
 flowchart LR
@@ -151,6 +159,7 @@ Paths are under `packages/<pkg>/src/agent_hub/<pkg>/` unless shown in full. `<ar
 | Fake of a port | `core`: `testing/fakes.py` (`agent_hub.core.testing.fakes`) | In-memory; checked by the port's contract suite |
 | Builder of test data | `core`: `testing/builders.py` (`agent_hub.core.testing.builders`) | Synthetic data only |
 | Port contract suite | `core`: `testing/contracts.py` (`agent_hub.core.testing.contracts`) | Run from each implementation's `tests/contract/` |
+| Hub template | `generator`: `templates/<output path, no leading dot>.tmpl` plus a `registry.py` entry | Package data read with `importlib.resources`; `@@{key}` placeholders from `placeholders.py` |
 | Repo tooling | `scripts/<verb_object>.py`, tests in `tests/unit/scripts/` | Run as `python -m scripts.<name>` when it imports another script |
 
 Module and folder names never use `utils`, `util`, `helpers`, `helper`, `common` or `misc` (layout checker rule

@@ -1,0 +1,25 @@
+# Hygiene hooks from a pinned release tag, then hub doctor through the release pinned in hub.json
+# (platform.version, read when the hook runs). Managed by hub sync.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-json
+      - id: check-yaml
+  - repo: local
+    hooks:
+      - id: hub-doctor
+        name: hub doctor
+        language: system
+        entry: |-
+          bash -c '
+            version="$(python3 -c "import json, re, sys; v = json.load(sys.stdin).get(\"platform\", {}).get(\"version\"); ok = isinstance(v, str) and re.fullmatch(\"[0-9]+[.][0-9]+[.][0-9]+\", v); print(v) if ok else sys.exit(\"hub: platform.version in hub.json must be X.Y.Z\")" < hub.json)" || exit 1
+            command -v uvx >/dev/null 2>&1 || { echo "hub: uv is not installed; see https://docs.astral.sh/uv/getting-started/installation/" >&2; exit 127; }
+            from_source="@@{platform_repository}@v${version}#subdirectory=packages/agent-hub"
+            uvx --from "$from_source" hub --version >/dev/null || { echo "hub: cannot run agent-hub $version from $from_source; check read access to the repository" >&2; exit 1; }
+            exec uvx --from "$from_source" hub doctor
+          ' hub-doctor
+        pass_filenames: false
+        always_run: true
