@@ -347,3 +347,49 @@ def test_exits_with_root_line_when_file_swapped_for_fifo_after_check(
         lines = stderr_lines_on_exit(path, capsys)
 
     assert lines == [f"hub.json: $: cannot read {json.dumps(str(path))}: not a regular file"]
+
+
+def open_descriptors() -> int:
+    """How many descriptors the process holds (``/dev/fd`` lists them on Linux and macOS)."""
+    return len(os.listdir("/dev/fd"))
+
+
+def swap_for_fifo_after_check(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    is_file = Path.is_file
+
+    def swap(self: Path, *args: Any, **kwargs: Any) -> bool:
+        found = is_file(self, *args, **kwargs)
+        if self == path:
+            path.unlink()
+            os.mkfifo(path)
+        return found
+
+    monkeypatch.setattr(Path, "is_file", swap)
+
+
+def make_invalid_json(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path.write_text("{", encoding="utf-8")
+
+
+def keep_valid(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The file stays a valid, pinned hub.json."""
+
+
+@pytest.mark.parametrize(
+    "prepare",
+    [swap_for_fifo_after_check, make_invalid_json, keep_valid],
+    ids=["fifo-swapped-in", "invalid-json", "valid"],
+)
+def test_closes_descriptor_when_hub_json_loaded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    prepare: Callable[[Path, pytest.MonkeyPatch], None],
+) -> None:
+    path = write_document(tmp_path, a_pinned_document())
+    prepare(path, monkeypatch)
+    before = open_descriptors()
+
+    with alarm_guard(HANG_SECONDS), contextlib.suppress(typer.Exit):
+        load_hub_json_or_exit(path)
+
+    assert open_descriptors() == before

@@ -176,7 +176,9 @@ def _config_from_flags_or_exit(
     )
     checked = check_hub_document(document, running_version=running)
     if not isinstance(checked, HubConfig):
-        _fail(*flag_problems(_with_git_reasons(checked, defaults.problems)))
+        _fail(
+            *flag_problems(_with_git_reasons(checked, defaults.problems), repos=required["repos"])
+        )
     return checked, dump_json(document)
 
 

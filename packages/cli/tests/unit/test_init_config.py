@@ -24,6 +24,7 @@ DEMO_FLAGS: dict[str, Any] = {
 SAFE_SEGMENT = r"[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*"
 GITHUB_PATTERN = f"String should match pattern '^{SAFE_SEGMENT}/{SAFE_SEGMENT}$'"
 DIR_PATTERN = f"String should match pattern '^{SAFE_SEGMENT}$'"
+TEAM_PATTERN = "String should match pattern '^[A-Za-z0-9]+$'"
 
 
 def demo_document(**flags: Any) -> dict[str, Any]:
@@ -88,8 +89,14 @@ def test_takes_dir_after_last_slash_when_repo_has_path() -> None:
 
 @pytest.mark.parametrize(
     ("tracker", "kind", "team"),
-    [("linear:DEM", "linear", "DEM"), ("DEM", "", "DEM"), ("linear:DEM:X", "linear", "DEM:X")],
-    ids=["kind-and-team", "no-colon", "first-colon"],
+    [
+        ("linear:DEM", "linear", "DEM"),
+        # No colon: the value is the kind, so `--tracker linear` names only the missing team.
+        ("linear", "linear", ""),
+        ("DEM", "DEM", ""),
+        ("linear:DEM:X", "linear", "DEM:X"),
+    ],
+    ids=["kind-and-team", "no-colon-kind", "no-colon-team", "first-colon"],
 )
 def test_splits_tracker_on_first_colon_when_tracker_given(
     tracker: str, kind: str, team: str
@@ -104,16 +111,24 @@ REJECTED = [
     pytest.param(
         {"tracker": "jira:DEM"}, ["--tracker: Input should be 'linear'"], id="tracker-kind"
     ),
-    pytest.param({"tracker": "DEM"}, ["--tracker: Input should be 'linear'"], id="tracker-no-kind"),
-    pytest.param({"repos": "acme"}, [f"--repos: {GITHUB_PATTERN}"], id="repo-no-owner"),
     pytest.param(
+        {"tracker": "DEM"},
+        ["--tracker: Input should be 'linear'", f"--tracker: {TEAM_PATTERN}"],
+        id="tracker-no-kind",
+    ),
+    pytest.param({"tracker": "linear"}, [f"--tracker: {TEAM_PATTERN}"], id="tracker-no-team"),
+    pytest.param(
+        {"repos": "acme"}, [f'--repos item 1 ("acme"): {GITHUB_PATTERN}'], id="repo-no-owner"
+    ),
+    pytest.param(
+        # The empty item's dir is derived from its github, which already failed: one line.
         {"repos": "acme/a,,acme/b"},
-        [f"--repos: {DIR_PATTERN}", f"--repos: {GITHUB_PATTERN}"],
+        [f'--repos item 2 (""): {GITHUB_PATTERN}'],
         id="repo-empty",
     ),
     pytest.param(
         {"repos": "acme/a,ACME/A"},
-        ['--repos: repo dir "A" is already used by repos[0], ignoring case'],
+        ['--repos item 2 ("ACME/A"): repo dir "A" is already used by repos[0], ignoring case'],
         id="repo-duplicate",
     ),
     pytest.param(
@@ -133,17 +148,17 @@ REJECTED = [
 def test_names_flag_when_model_rejects_value(flags: dict[str, str], lines: list[str]) -> None:
     problems = problems_of(demo_document(**flags))
 
-    printed = flag_problems(problems)
+    printed = flag_problems(problems, repos=flags.get("repos", DEMO_FLAGS["repos"]))
 
     assert printed == lines
-    # Each line is the flag, then the model's own message.
-    assert [line.split(": ", 1)[1] for line in printed] == [p.message for p in problems]
+    # Each line ends with the model's own message (a derived dir line may be dropped).
+    assert all(any(line.endswith(f": {p.message}") for p in problems) for line in printed)
 
 
 def test_names_every_missing_flag_when_values_absent() -> None:
     document = demo_document(branch_prefix=None, author_name=None, author_email=None, hub_repo=None)
 
-    printed = flag_problems(problems_of(document))
+    printed = flag_problems(problems_of(document), repos=DEMO_FLAGS["repos"])
 
     # All in one run, in the model's field order.
     assert printed == [
@@ -161,7 +176,7 @@ def test_names_every_missing_flag_when_values_absent() -> None:
 def test_names_each_project_flag_when_its_value_rejected() -> None:
     document = demo_document(hub_repo="demo-hub", author_name="Jane\nDoe", author_email="jane")
 
-    printed = flag_problems(problems_of(document))
+    printed = flag_problems(problems_of(document), repos=DEMO_FLAGS["repos"])
 
     assert [line.split(": ", 1)[0] for line in printed] == [
         "--hub-repo",
@@ -174,7 +189,7 @@ def test_shows_json_path_when_problem_has_no_flag() -> None:
     # The running version is the pin; a version of another shape is no flag's fault.
     document = document_from_flags(**DEMO_FLAGS, version="1.0")
 
-    printed = flag_problems(problems_of(document))
+    printed = flag_problems(problems_of(document), repos=DEMO_FLAGS["repos"])
 
     assert printed == ['platform.version: must be three numbers such as 1.2.3, not "1.0"']
 
@@ -185,3 +200,52 @@ def test_validates_with_hub_config_when_document_built() -> None:
     checked = check_hub_document(document, running_version=VERSION)
 
     assert checked == HubConfig.model_validate(document)
+
+
+@pytest.mark.parametrize(
+    ("repos", "line"),
+    [
+        # 1-based, and the item that failed, not the first one.
+        ("acme/a,acme", f'--repos item 2 ("acme"): {GITHUB_PATTERN}'),
+        # The item as typed: the space before it is part of the value.
+        ("acme/a, acme/b", f'--repos item 2 (" acme/b"): {GITHUB_PATTERN}'),
+        # JSON-quoted, so a quote in the value cannot end it.
+        ('acme/"x', f'--repos item 1 ("acme/\\"x"): {GITHUB_PATTERN}'),
+    ],
+    ids=["second-item", "raw-value", "quoted-value"],
+)
+def test_names_item_and_value_when_repo_rejected(repos: str, line: str) -> None:
+    problems = problems_of(demo_document(repos=repos))
+
+    printed = flag_problems(problems, repos=repos)
+
+    assert printed == [line]
+
+
+@pytest.mark.parametrize(
+    ("problems", "lines"),
+    [
+        (
+            # Another item's github failed: this item's dir line stays.
+            [ConfigProblem("repos[0].dir", "bad dir"), ConfigProblem("repos[1].github", "bad")],
+            ['--repos item 1 ("acme/a"): bad dir', '--repos item 2 ("acme"): bad'],
+        ),
+        (
+            # Only the derived dir is dropped: another field of the same item stays.
+            [ConfigProblem("repos[0].github", "bad"), ConfigProblem("repos[0].check", "bad check")],
+            ['--repos item 1 ("acme/a"): bad', '--repos item 1 ("acme/a"): bad check'],
+        ),
+        (
+            # A problem with the list itself names no item.
+            [ConfigProblem("repos", "bad list")],
+            ["--repos: bad list"],
+        ),
+    ],
+    ids=["other-item-dir-kept", "other-field-kept", "no-item"],
+)
+def test_keeps_line_when_not_derived_from_failed_github(
+    problems: list[ConfigProblem], lines: list[str]
+) -> None:
+    printed = flag_problems(problems, repos="acme/a,acme")
+
+    assert printed == lines

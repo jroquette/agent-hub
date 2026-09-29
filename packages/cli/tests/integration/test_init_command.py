@@ -542,11 +542,16 @@ def test_never_shows_secret_when_remote_has_token(
     ("value", "flag", "message"),
     [
         (["--tracker", "jira:DEM"], "--tracker", "Input should be 'linear'"),
-        (["--repos", "acme"], "--repos", "String should match pattern"),
-        (["--repos", "acme/a,ACME/A"], "--repos", 'repo dir "A" is already used by repos[0]'),
+        (["--tracker", "linear"], "--tracker", "String should match pattern"),
+        (["--repos", "acme"], '--repos item 1 ("acme")', "String should match pattern"),
+        (
+            ["--repos", "acme/a,ACME/A"],
+            '--repos item 2 ("ACME/A")',
+            'repo dir "A" is already used by repos[0]',
+        ),
         (["--branch-prefix", "jdoe"], "--branch-prefix", "String should match pattern"),
     ],
-    ids=["tracker", "repos-shape", "repos-clash", "branch-prefix"],
+    ids=["tracker", "tracker-no-team", "repos-shape", "repos-clash", "branch-prefix"],
 )
 def test_names_flag_when_flag_value_rejected(
     git_on_path: Any,

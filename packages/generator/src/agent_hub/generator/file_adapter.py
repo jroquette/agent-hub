@@ -13,7 +13,8 @@ entry this write created is removed, never one it found there (a removal that fa
 the write's error, never masking it). No ``fsync`` (Q-6).
 
 Every path is checked before anything is touched: it must be relative, with no empty, ``.`` or
-``..`` segment, because ``openat`` with ``O_NOFOLLOW`` still climbs out of the root through ``..``.
+``..`` segment, because ``openat`` with ``O_NOFOLLOW`` still climbs out of the root through ``..``,
+and no NUL byte.
 A path that is not is a caller bug (``ValueError``); the planner only makes plain paths.
 """
 
@@ -114,8 +115,9 @@ def apply_writes(
 
 
 def _check_plain(path: str) -> None:
-    # An absolute path starts with an empty segment, and an empty path is one.
-    if not _NOT_PLAIN_SEGMENTS.isdisjoint(path.split("/")):
+    # An absolute path starts with an empty segment, and an empty path is one. A NUL is refused
+    # here too: the OS would refuse it only when the write reaches it, after earlier writes.
+    if "\x00" in path or not _NOT_PLAIN_SEGMENTS.isdisjoint(path.split("/")):
         msg = f"{path!r}: {_NOT_UNDER_ROOT}"
         raise ValueError(msg)
 
