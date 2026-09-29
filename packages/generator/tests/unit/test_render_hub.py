@@ -70,7 +70,12 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/hooks/guard.py",
     "plugin/hub-workflow/hooks/hooks.json",
     "plugin/hub-workflow/hooks/hubhooks.py",
+    "plugin/hub-workflow/hooks/post_edit.py",
+    "plugin/hub-workflow/hooks/pre_compact.py",
+    "plugin/hub-workflow/hooks/session_end.py",
+    "plugin/hub-workflow/hooks/session_start.py",
     "plugin/hub-workflow/hooks/stdlib_reader.py",
+    "plugin/hub-workflow/hooks/stop_gate.py",
     "plugin/hub-workflow/skills/create-plan/SKILL.md",
     "plugin/hub-workflow/skills/feature/SKILL.md",
     "plugin/hub-workflow/skills/handoff/SKILL.md",
@@ -962,6 +967,28 @@ def test_has_no_author_when_base_manifest_rendered(demo_render: dict[str, Render
     assert sorted(manifest) == ["description", "license", "name", "version"]
     assert manifest["name"] == "hub-workflow"
     assert b"author" not in content.lower()
+
+
+# `hooks.json` runs each hook as `python3 "${CLAUDE_PLUGIN_ROOT}/hooks/<file>"`. A missing file
+# makes `python3` exit 2, which blocks on PreToolUse and Stop: a missing `stop_gate.py` would
+# block every stop.
+HOOK_COMMAND = re.compile(r'python3 "\$\{CLAUDE_PLUGIN_ROOT\}/hooks/([^"/]+)"')
+
+
+def test_names_rendered_script_when_hooks_json_command_read(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    hooks = json.loads(demo_render["plugin/hub-workflow/hooks/hooks.json"].content)["hooks"]
+
+    commands = [
+        hook["command"] for groups in hooks.values() for group in groups for hook in group["hooks"]
+    ]
+
+    assert len(commands) == len(hooks) == 6
+    for command in commands:
+        match = HOOK_COMMAND.fullmatch(command)
+        assert match, command
+        assert f"plugin/hub-workflow/hooks/{match[1]}" in demo_render, command
 
 
 # The upstream license texts the NOTICE's attributions point to, by SHA-256 of the official

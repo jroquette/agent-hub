@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""SessionStart: inject the session brief (brain/now.md, last journal days,
+repo/PR/CI state). After a compaction, also re-inject the pre-compact snapshot."""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hubhooks import emit, find_hub, read_input  # noqa: E402
+
+
+def main() -> None:
+    data = read_input()
+    hub = find_hub(data.get("cwd"))
+    if not hub:
+        return
+    brief_py = hub / "scripts" / "brief.py"
+    ctx = ""
+    if brief_py.exists():
+        try:
+            ctx = subprocess.run([sys.executable, str(brief_py)], capture_output=True, text=True, timeout=12, cwd=hub).stdout
+        except subprocess.TimeoutExpired:
+            try:
+                ctx = subprocess.run([sys.executable, str(brief_py), "--no-network"], capture_output=True, text=True, timeout=8, cwd=hub).stdout
+            except subprocess.TimeoutExpired:
+                ctx = ""
+    ctx = ctx.strip()
+    snap = hub / "brain" / "auto" / "workspace" / "session-snapshot.md"
+    if data.get("source") == "compact" and snap.exists():
+        ctx += "\n\n## Snapshot before compaction\n" + snap.read_text(encoding="utf-8")[:2500]
+    if ctx:
+        emit({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": ctx}})
+
+
+if __name__ == "__main__":
+    main()

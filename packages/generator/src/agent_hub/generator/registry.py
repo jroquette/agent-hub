@@ -113,6 +113,18 @@ _BASE_SKILLS: Final = (
 # The upstream license files the base plugin's NOTICE names (sorted).
 _LICENSE_TEXTS: Final = ("Apache-2.0.txt", "MIT-compound-engineering-plugin.txt")
 
+
+def _hook_entry_point(name: str) -> TemplateEntry:
+    """A base plugin hook that `hooks.json` runs: managed, executable, from `<name>.py.tmpl`."""
+    return TemplateEntry(
+        path=f"{_BASE_PLUGIN}/hooks/{name}.py",
+        source=_template(f"{_BASE_PLUGIN}/hooks/{name}.py.tmpl"),
+        kind=Kind.GENERIC,
+        ownership=Ownership.MANAGED,
+        executable=True,
+    )
+
+
 REGISTRY: Final[tuple[TemplateEntry, ...]] = (
     _project_built(".claude/settings.project.json", project_settings),
     _generic_managed(".github/workflows/ci.yml", "github/workflows/ci.yml.tmpl"),
@@ -166,21 +178,20 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
         )
         for name in _BASE_AGENTS
     ),
-    # The hooks, copied from the hub as they are (spec D4); only the entry points are executable
-    # (Q-3): `hubhooks.py` is their shared module.
-    TemplateEntry(
-        path=f"{_BASE_PLUGIN}/hooks/guard.py",
-        source=_template(f"{_BASE_PLUGIN}/hooks/guard.py.tmpl"),
-        kind=Kind.GENERIC,
-        ownership=Ownership.MANAGED,
-        executable=True,
-    ),
+    # The hooks, copied from the hub as they are (spec D4); only the entry points `hooks.json` runs
+    # are executable (Q-3): `hubhooks.py` and the reader are their shared modules.
+    _hook_entry_point("guard"),
     _generic_managed(f"{_BASE_PLUGIN}/hooks/hooks.json", f"{_BASE_PLUGIN}/hooks/hooks.json.tmpl"),
     _generic_managed(f"{_BASE_PLUGIN}/hooks/hubhooks.py", f"{_BASE_PLUGIN}/hooks/hubhooks.py.tmpl"),
+    _hook_entry_point("post_edit"),
+    _hook_entry_point("pre_compact"),
+    _hook_entry_point("session_end"),
+    _hook_entry_point("session_start"),
     # The hooks' `hub.json` reader: stdlib only, Python 3.9 (spec Q-2).
     _generic_managed(
         f"{_BASE_PLUGIN}/hooks/stdlib_reader.py", f"{_BASE_PLUGIN}/hooks/stdlib_reader.py.tmpl"
     ),
+    _hook_entry_point("stop_gate"),
     # `render_entries` links each skill folder into `.claude/skills/`.
     *(
         _generic_managed(

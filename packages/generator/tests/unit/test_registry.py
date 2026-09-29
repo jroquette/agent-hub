@@ -79,7 +79,12 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "plugin/hub-workflow/hooks/guard.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/hooks.json": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/hubhooks.py": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/hooks/post_edit.py": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/hooks/pre_compact.py": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/hooks/session_end.py": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/hooks/session_start.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/stdlib_reader.py": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/hooks/stop_gate.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/create-plan/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/feature/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/handoff/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
@@ -91,7 +96,10 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
 
 # AC-4.3 (Q-3): the entry points with a `#!` line are executable; modules and every non-`.py`
 # file are not. The hooks and scripts join as they are ported (plan slices 11-13).
-EXECUTABLE_PATHS = frozenset({"plugin/hub-workflow/hooks/guard.py"})
+EXECUTABLE_PATHS = frozenset(
+    f"plugin/hub-workflow/hooks/{name}.py"
+    for name in ("guard", "post_edit", "pre_compact", "session_end", "session_start", "stop_gate")
+)
 
 # AC-3.12 (spec D5 "Out"): later issues generate these, never AGH-10's registry. AGH-19
 # (AC-4.29) brings `plugin/` and `.claude/` into scope.
