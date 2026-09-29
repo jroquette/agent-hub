@@ -1,4 +1,5 @@
 import ast
+import hashlib
 import inspect
 import json
 import os
@@ -55,6 +56,27 @@ DESIGN_PATHS = (
     "plugin/demo/agents/.gitkeep",
     "plugin/demo/hooks/project_guard.py",
     "plugin/demo/skills/.gitkeep",
+    "plugin/hub-workflow/.claude-plugin/plugin.json",
+    "plugin/hub-workflow/LICENSES/Apache-2.0.txt",
+    "plugin/hub-workflow/LICENSES/MIT-compound-engineering-plugin.txt",
+    "plugin/hub-workflow/NOTICE",
+    "plugin/hub-workflow/agents/architect.md",
+    "plugin/hub-workflow/agents/evaluator.md",
+    "plugin/hub-workflow/agents/planner.md",
+    "plugin/hub-workflow/agents/quality-reviewer.md",
+    "plugin/hub-workflow/agents/requirements-analyst.md",
+    "plugin/hub-workflow/agents/researcher.md",
+    "plugin/hub-workflow/agents/spec-reviewer.md",
+)
+# AGH-19 spec "The rendered set": the base plugin's agents, by file stem.
+BASE_AGENTS = (
+    "architect",
+    "evaluator",
+    "planner",
+    "quality-reviewer",
+    "requirements-analyst",
+    "researcher",
+    "spec-reviewer",
 )
 
 GENERATOR_PACKAGE = "agent_hub.generator"
@@ -158,7 +180,37 @@ def test_returns_rendered_hub_when_demo_rendered(demo_config: HubConfig) -> None
     rendered = render_hub(demo_config)
 
     assert isinstance(rendered, RenderedHub)
-    assert rendered.links == ()
+    assert isinstance(rendered.links, tuple)
+    assert all(type(link) is RenderedLink for link in rendered.links)
+    # The base plugin holds agents only (spec "The rendered set": skills come with their files).
+    assert [link.path for link in rendered.links] == [
+        f".claude/agents/{name}.md" for name in BASE_AGENTS
+    ]
+
+
+def test_links_seven_agents_when_demo_rendered(demo_config: HubConfig) -> None:
+    rendered = render_hub(demo_config)
+
+    agent_links = [link for link in rendered.links if link.path.startswith(".claude/agents/")]
+    assert [(link.path, link.target) for link in agent_links] == [
+        (f".claude/agents/{name}.md", f"../../plugin/hub-workflow/agents/{name}.md")
+        for name in BASE_AGENTS
+    ]
+    file_paths = {file.path for file in rendered.files}
+    for link in agent_links:
+        assert (link.kind, link.ownership, link.module) == (Kind.GENERIC, Ownership.MANAGED, None)
+        # The target, read from the link's folder, is a rendered agent file.
+        resolved = os.path.normpath(os.path.join(os.path.dirname(link.path), link.target))
+        assert resolved in file_paths, link.path
+
+
+def test_raises_generator_error_when_project_named_hub_workflow() -> None:
+    # Spec Q-16 (AC-4.4): the project plugin's manifest lands on the base plugin's.
+    with pytest.raises(GeneratorError) as raised:
+        render_hub(a_config_named("hub-workflow"))
+
+    assert type(raised.value) is GeneratorError
+    assert str(raised.value).startswith("plugin/hub-workflow/.claude-plugin/plugin.json: ")
 
 
 def test_copies_registry_classification_when_demo_rendered(demo_config: HubConfig) -> None:
@@ -744,6 +796,104 @@ def test_names_no_ported_script_when_templates_read() -> None:
     for name, text in texts.items():
         for script in PORTED_SCRIPTS:
             assert script not in text, f"{name} names {script}"
+
+
+# AC-4.19 (Q-15): the hub scripts that `hub` commands replace. No rendered agent or skill names
+# one, with or without its folder (the hub's planner also named `features_check.py` bare).
+HUB_SCRIPT_NAMES = ("brief.py", "features_check.py", "worktree.sh", "hubconfig")
+FEATURE_CHECK_COMMAND = "hub doctor --only features.tracker"
+AGENT_FRONTMATTER_KEYS = ["name", "description", "tools", "model"]
+
+
+def plugin_markdown(config: HubConfig) -> dict[str, str]:
+    """The base plugin's rendered agent and skill text, by path."""
+    return {
+        path: text
+        for path, text in rendered_texts(config).items()
+        if path.startswith("plugin/hub-workflow/") and path.endswith(".md")
+    }
+
+
+def test_names_no_hub_script_when_plugin_rendered(demo_config: HubConfig) -> None:
+    texts = plugin_markdown(demo_config)
+
+    assert {f"plugin/hub-workflow/agents/{name}.md" for name in BASE_AGENTS} <= set(texts)
+    for path, text in texts.items():
+        for name in HUB_SCRIPT_NAMES:
+            assert name not in text, f"{path} names {name}"
+
+
+# The planner validates features.json and says what the check rejects; the evaluator runs it.
+@pytest.mark.parametrize(("agent", "mentions"), [("planner", 2), ("evaluator", 1)])
+def test_names_hub_doctor_when_planner_or_evaluator_rendered(
+    agent: str, mentions: int, demo_render: dict[str, RenderedFile]
+) -> None:
+    text = demo_render[f"plugin/hub-workflow/agents/{agent}.md"].content.decode("utf-8")
+
+    assert text.count(FEATURE_CHECK_COMMAND) == mentions
+    assert "features_check" not in text
+
+
+def test_keeps_frontmatter_when_agents_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    for name in BASE_AGENTS:
+        text = demo_render[f"plugin/hub-workflow/agents/{name}.md"].content.decode("utf-8")
+
+        lines = frontmatter_lines(text)
+
+        assert [line.split(":", 1)[0] for line in lines] == AGENT_FRONTMATTER_KEYS, name
+        fields = dict(line.split(": ", 1) for line in lines)
+        assert fields["name"] == name
+        assert fields["description"].strip(), name
+        # The body follows the frontmatter.
+        assert text.split("\n---\n", 1)[1].strip(), name
+
+
+def test_has_no_author_when_base_manifest_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    content = demo_render["plugin/hub-workflow/.claude-plugin/plugin.json"].content
+
+    manifest = json.loads(content)
+
+    # Spec Q-10: the hub's manifest fields minus `author` (hub rule 5).
+    assert sorted(manifest) == ["description", "license", "name", "version"]
+    assert manifest["name"] == "hub-workflow"
+    assert b"author" not in content.lower()
+
+
+# The upstream license texts the NOTICE's attributions point to, by SHA-256 of the official
+# files: the Apache License 2.0 (apache.org) and the MIT license of the adapted plugin.
+LICENSE_DIGESTS = {
+    "LICENSES/Apache-2.0.txt": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "LICENSES/MIT-compound-engineering-plugin.txt": (
+        "61d89de7646effdaba2d0a4ab7bd0eba60b4094b83efe5bc73c7940e43e93fc6"
+    ),
+}
+
+
+def test_copies_upstream_license_bytes_when_licenses_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    rendered = {
+        path.removeprefix("plugin/hub-workflow/"): file
+        for path, file in demo_render.items()
+        if path.startswith("plugin/hub-workflow/LICENSES/")
+    }
+
+    assert sorted(rendered) == sorted(LICENSE_DIGESTS)
+    for name, digest in LICENSE_DIGESTS.items():
+        assert hashlib.sha256(rendered[name].content).hexdigest() == digest, name
+
+
+def test_points_to_each_license_when_notice_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    notice = demo_render["plugin/hub-workflow/NOTICE"].content.decode("utf-8")
+
+    for name in LICENSE_DIGESTS:
+        assert notice.count(name) == 1, name
+    assert "Copyright (c) 2024, humanlayer Authors" in notice
+    assert "Copyright (c) 2025 Every" in notice
+    # A generated hub never had the hub's removed skill.
+    assert "validate-plan" not in notice
 
 
 def test_keeps_author_name_out_when_makefile_rendered(
@@ -1334,6 +1484,21 @@ def test_holds_no_project_identifier_when_demo_rendered(demo_config: HubConfig) 
     assert carriers == {".pre-commit-config.yaml", "Makefile"}
 
 
+def test_holds_no_project_identifier_when_demo_paths_and_links_listed(
+    demo_config: HubConfig,
+) -> None:
+    rendered = render_hub(demo_config)
+
+    # AC-4.25: every file path, link path and link target, not only file text.
+    assert rendered.links
+    names = [
+        *(file.path for file in rendered.files),
+        *(name for link in rendered.links for name in (link.path, link.target)),
+    ]
+    for name in names:
+        assert project_identifiers(name) == [], name
+
+
 def test_flags_identifier_when_template_carries_other_owner(demo_config: HubConfig) -> None:
     text = render_template(
         "@@{platform_repository}@v1.0.0\nhttps://github.com/jroquette/other\n",
@@ -1417,7 +1582,22 @@ def test_names_every_managed_path_when_agents_rendered(demo_config: HubConfig) -
     named = BACKTICKED.findall(statements[0])
     managed = [entry.path for entry in REGISTRY if entry.ownership is Ownership.MANAGED]
     assert managed
-    assert sorted(named) == sorted(managed)
+    assert len(named) == len(set(named))
+    # E4.10: an item is a managed file, or a folder (`plugin/hub-workflow/`) that holds at least
+    # one registry entry and only managed ones.
+    for item in named:
+        if item.endswith("/"):
+            under = [entry for entry in REGISTRY if entry.path.startswith(item)]
+            assert under, item
+            assert all(entry.ownership is Ownership.MANAGED for entry in under), item
+        else:
+            assert item in managed, item
+    # Every managed path is named exactly once: by itself or by one folder that holds it.
+    for path in managed:
+        covering = [
+            item for item in named if item == path or (item.endswith("/") and path.startswith(item))
+        ]
+        assert len(covering) == 1, (path, covering)
 
 
 def test_points_to_agents_for_managed_files_when_readme_rendered(demo_config: HubConfig) -> None:

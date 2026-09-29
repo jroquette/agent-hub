@@ -89,6 +89,19 @@ def _project_built(path: str, build: JsonBuilder) -> TemplateEntry:
 
 # The project plugin's folder; `render_entries` puts the project name in its placeholder.
 _PROJECT_PLUGIN: Final = "plugin/@@{project_name}"
+# The base plugin's folder, the same in every hub, and its agents (sorted).
+_BASE_PLUGIN: Final = "plugin/hub-workflow"
+_BASE_AGENTS: Final = (
+    "architect",
+    "evaluator",
+    "planner",
+    "quality-reviewer",
+    "requirements-analyst",
+    "researcher",
+    "spec-reviewer",
+)
+# The upstream license files the base plugin's NOTICE names (sorted).
+_LICENSE_TEXTS: Final = ("Apache-2.0.txt", "MIT-compound-engineering-plugin.txt")
 
 REGISTRY: Final[tuple[TemplateEntry, ...]] = (
     _project_built(".claude/settings.project.json", project_settings),
@@ -125,4 +138,22 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
         f"{_PROJECT_PLUGIN}/hooks/project_guard.py", "plugin/project/hooks/project_guard.py.tmpl"
     ),
     _project_seeded(f"{_PROJECT_PLUGIN}/skills/.gitkeep", "plugin/project/skills/gitkeep.tmpl"),
+    # The base plugin (spec D1): its manifest has no `author` (Q-10); `render_entries` links each
+    # agent into `.claude/agents/`.
+    _generic_managed(
+        f"{_BASE_PLUGIN}/.claude-plugin/plugin.json",
+        f"{_BASE_PLUGIN}/claude-plugin/plugin.json.tmpl",
+    ),
+    # Upstream license texts, byte for byte; the NOTICE points to each.
+    *(
+        _generic_managed(f"{_BASE_PLUGIN}/LICENSES/{name}", f"{_BASE_PLUGIN}/LICENSES/{name}.tmpl")
+        for name in _LICENSE_TEXTS
+    ),
+    _generic_managed(f"{_BASE_PLUGIN}/NOTICE", f"{_BASE_PLUGIN}/NOTICE.tmpl"),
+    *(
+        _generic_managed(
+            f"{_BASE_PLUGIN}/agents/{name}.md", f"{_BASE_PLUGIN}/agents/{name}.md.tmpl"
+        )
+        for name in _BASE_AGENTS
+    ),
 )

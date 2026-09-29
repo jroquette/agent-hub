@@ -58,6 +58,23 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "plugin/@@{project_name}/agents/.gitkeep": (Kind.PROJECT_OWNED, Ownership.SEEDED, None),
     "plugin/@@{project_name}/hooks/project_guard.py": (Kind.PROJECT_OWNED, Ownership.SEEDED, None),
     "plugin/@@{project_name}/skills/.gitkeep": (Kind.PROJECT_OWNED, Ownership.SEEDED, None),
+    # Row "`plugin/hub-workflow/**` (base agents, skills, hooks)": generic, managed (AGH-19 spec
+    # "The rendered set"; the manifest and NOTICE are Q-10's).
+    "plugin/hub-workflow/.claude-plugin/plugin.json": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/LICENSES/Apache-2.0.txt": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/LICENSES/MIT-compound-engineering-plugin.txt": (
+        Kind.GENERIC,
+        Ownership.MANAGED,
+        None,
+    ),
+    "plugin/hub-workflow/NOTICE": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/agents/architect.md": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/agents/evaluator.md": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/agents/planner.md": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/agents/quality-reviewer.md": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/agents/requirements-analyst.md": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/agents/researcher.md": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/agents/spec-reviewer.md": (Kind.GENERIC, Ownership.MANAGED, None),
 }
 
 # AC-3.12 (spec D5 "Out"): later issues generate these, never AGH-10's registry. AGH-19
