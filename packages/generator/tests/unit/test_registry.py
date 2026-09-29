@@ -19,6 +19,9 @@ TEMPLATES_FOLDER = "templates"
 # AC-3.11: the D5 path set, transcribed from docs/design/hub-generator.md § Classification and
 # rendering. Each row cites the table row it comes from; every entry has no module (AC-3.12).
 EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
+    # Row "`.claude/settings.json` (merged with a seeded `.claude/settings.project.json`), …":
+    # generic (+ project-owned), managed (+ seeded). AGH-19 spec D2: the seeded, project-owned part.
+    ".claude/settings.project.json": (Kind.PROJECT_OWNED, Ownership.SEEDED, None),
     # Row "`hub.schema.json`, `AGENTS.md` and `CLAUDE.md` (base rules), `Makefile`, …,
     # `.pre-commit-config.yaml`, `.github/workflows/ci.yml`": generic, managed.
     ".github/workflows/ci.yml": (Kind.GENERIC, Ownership.MANAGED, None),
@@ -45,11 +48,22 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "brain/learnings/.gitkeep": (Kind.GENERIC, Ownership.SEEDED, None),
     "brain/now.md": (Kind.GENERIC, Ownership.SEEDED, None),
     "brain/playbooks/.gitkeep": (Kind.GENERIC, Ownership.SEEDED, None),
+    # Row "`plugin/<project>/**` (project agents, skills, guard extension; empty folders hold a
+    # `.gitkeep`)": project-owned, seeded (AGH-19 spec D2, "The rendered set").
+    "plugin/@@{project_name}/.claude-plugin/plugin.json": (
+        Kind.PROJECT_OWNED,
+        Ownership.SEEDED,
+        None,
+    ),
+    "plugin/@@{project_name}/agents/.gitkeep": (Kind.PROJECT_OWNED, Ownership.SEEDED, None),
+    "plugin/@@{project_name}/hooks/project_guard.py": (Kind.PROJECT_OWNED, Ownership.SEEDED, None),
+    "plugin/@@{project_name}/skills/.gitkeep": (Kind.PROJECT_OWNED, Ownership.SEEDED, None),
 }
 
-# AC-3.12 (spec D5 "Out"): later issues generate these, never AGH-10's registry.
+# AC-3.12 (spec D5 "Out"): later issues generate these, never AGH-10's registry. AGH-19
+# (AC-4.29) brings `plugin/` and `.claude/` into scope.
 OUT_OF_SCOPE_FILES = ("hub.json", "hub.lock", "agent")
-OUT_OF_SCOPE_FOLDERS = ("plugin/", ".claude/", ".claude-plugin/", "scripts/", "mk/")
+OUT_OF_SCOPE_FOLDERS = (".claude-plugin/", "scripts/", "mk/")
 
 
 def generator_sources() -> list[str]:

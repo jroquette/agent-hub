@@ -1,3 +1,4 @@
+import ast
 import inspect
 import json
 import os
@@ -26,8 +27,10 @@ from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_m
 from agent_hub.generator.registry import REGISTRY, TemplateEntry, TemplateSource
 from agent_hub.generator.render_hub import render_entries, render_hub
 
-# AC-3.13: the D5 path set of docs/design/hub-generator.md, in code-point order.
+# AC-3.13: the D5 path set of docs/design/hub-generator.md, in code-point order; AC-4.1 adds
+# AGH-19's rendered set (spec "The rendered set", for project `demo`).
 DESIGN_PATHS = (
+    ".claude/settings.project.json",
     ".github/workflows/ci.yml",
     ".gitignore",
     ".pre-commit-config.yaml",
@@ -48,6 +51,10 @@ DESIGN_PATHS = (
     "brain/now.md",
     "brain/playbooks/.gitkeep",
     "hub.schema.json",
+    "plugin/demo/.claude-plugin/plugin.json",
+    "plugin/demo/agents/.gitkeep",
+    "plugin/demo/hooks/project_guard.py",
+    "plugin/demo/skills/.gitkeep",
 )
 
 GENERATOR_PACKAGE = "agent_hub.generator"
@@ -155,7 +162,9 @@ def test_returns_rendered_hub_when_demo_rendered(demo_config: HubConfig) -> None
 
 
 def test_copies_registry_classification_when_demo_rendered(demo_config: HubConfig) -> None:
-    entries = {entry.path: entry for entry in REGISTRY}
+    # An entry path may hold `@@{project_name}` (AGH-19 D2): look entries up by rendered path.
+    name = demo_config.project.name
+    entries = {entry.path.replace("@@{project_name}", name): entry for entry in REGISTRY}
 
     for file in render_hub(demo_config).files:
         entry = entries[file.path]
@@ -403,6 +412,77 @@ def test_writes_json_form_when_entry_built(project_name: str, fixture_templates:
         False,
     )
     assert [other.path for other in rendered.files[1:]] == ["plugin/x/agents/a.md"]
+
+
+# AGH-19 spec "The rendered set": the seeded, project-owned files, for project `<project>`.
+SEEDED_PROJECT_PATHS = (
+    ".claude/settings.project.json",
+    "plugin/{project}/.claude-plugin/plugin.json",
+    "plugin/{project}/agents/.gitkeep",
+    "plugin/{project}/hooks/project_guard.py",
+    "plugin/{project}/skills/.gitkeep",
+)
+
+
+@pytest.mark.parametrize("project_name", ["demo", "acme-tools"])
+def test_seeds_project_paths_when_config_named(project_name: str) -> None:
+    rendered = {file.path: file for file in render_hub(a_config_named(project_name)).files}
+
+    seeded = sorted(
+        path
+        for path, file in rendered.items()
+        if (file.kind, file.ownership) == (Kind.PROJECT_OWNED, Ownership.SEEDED)
+        and path.startswith(("plugin/", ".claude/"))
+    )
+    assert seeded == [path.format(project=project_name) for path in SEEDED_PROJECT_PATHS]
+    # No other project's folder: every plugin path outside the base plugin is this project's.
+    project_plugin = [
+        path
+        for path in rendered
+        if path.startswith("plugin/") and not path.startswith("plugin/hub-workflow/")
+    ]
+    assert project_plugin == [
+        path.format(project=project_name) for path in SEEDED_PROJECT_PATHS[1:]
+    ]
+    manifest = json.loads(rendered[f"plugin/{project_name}/.claude-plugin/plugin.json"].content)
+    assert manifest["name"] == project_name
+
+
+def test_writes_empty_object_when_project_settings_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    # Spec AC-4.8: the JSON byte form of `{}`.
+    assert demo_render[".claude/settings.project.json"].content == b"{}\n"
+
+
+# AGH-19 D2 and hub-generator.md § Hooks and plugin wiring: the extension's protocol words.
+STUB_PROTOCOL_WORDS = ("check(event, cfg)", "None", '("deny", reason)', '("ask", reason)')
+
+
+def test_defines_check_returning_none_when_stub_parsed(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    stub = demo_render["plugin/demo/hooks/project_guard.py"].content.decode("utf-8")
+
+    # The system python3 may be 3.9: the stub parses with 3.9's grammar.
+    module = ast.parse(stub, feature_version=(3, 9))
+
+    docstring = ast.get_docstring(module)
+    assert docstring is not None
+    for word in STUB_PROTOCOL_WORDS:
+        assert word in docstring, word
+    functions = [node for node in module.body if isinstance(node, ast.FunctionDef)]
+    assert [function.name for function in functions] == ["check"]
+    arguments = functions[0].args
+    assert [argument.arg for argument in arguments.args] == ["event", "cfg"]
+    assert (arguments.posonlyargs, arguments.kwonlyargs, arguments.defaults) == ([], [], [])
+    assert (arguments.vararg, arguments.kwarg) == (None, None)
+    body = functions[0].body
+    if ast.get_docstring(functions[0]) is not None:
+        body = body[1:]
+    assert [ast.dump(statement) for statement in body] == [
+        ast.dump(ast.parse("return None", feature_version=(3, 9)).body[0])
+    ]
 
 
 def test_takes_no_project_entry_input_when_signature_read() -> None:
@@ -1101,6 +1181,8 @@ EMPTY_PATHS = (
     "brain/journal/.gitkeep",
     "brain/learnings/.gitkeep",
     "brain/playbooks/.gitkeep",
+    "plugin/demo/agents/.gitkeep",
+    "plugin/demo/skills/.gitkeep",
 )
 BRAIN_FRONTMATTER_PATHS = (
     "brain/decisions/index.md",
