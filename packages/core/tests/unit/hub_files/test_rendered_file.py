@@ -52,7 +52,7 @@ def test_rejects_assignment_when_rendered_file_frozen() -> None:
         rendered.content = b""  # type: ignore[misc]
 
 
-@pytest.mark.parametrize("path", ["/abs", "a/../b", "./a", "a\\b", "a/", "a//b", ""])
+@pytest.mark.parametrize("path", ["/abs", "a/../b", "./a", "a\\b", "a/", "a//b", "", "a\x00b"])
 def test_rejects_path_when_not_relative_normalized_posix(path: str) -> None:
     with pytest.raises(ValidationError) as caught:
         RenderedFile(**rendered_file_fields(path=path))
