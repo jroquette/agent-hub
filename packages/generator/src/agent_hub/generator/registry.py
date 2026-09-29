@@ -114,15 +114,20 @@ _BASE_SKILLS: Final = (
 _LICENSE_TEXTS: Final = ("Apache-2.0.txt", "MIT-compound-engineering-plugin.txt")
 
 
-def _hook_entry_point(name: str) -> TemplateEntry:
-    """A base plugin hook that `hooks.json` runs: managed, executable, from `<name>.py.tmpl`."""
+def _entry_point(path: str) -> TemplateEntry:
+    """A Python entry point with a `#!` line: managed, executable, from `<path>.tmpl`."""
     return TemplateEntry(
-        path=f"{_BASE_PLUGIN}/hooks/{name}.py",
-        source=_template(f"{_BASE_PLUGIN}/hooks/{name}.py.tmpl"),
+        path=path,
+        source=_template(f"{path}.tmpl"),
         kind=Kind.GENERIC,
         ownership=Ownership.MANAGED,
         executable=True,
     )
+
+
+def _hook_entry_point(name: str) -> TemplateEntry:
+    """A base plugin hook that `hooks.json` runs."""
+    return _entry_point(f"{_BASE_PLUGIN}/hooks/{name}.py")
 
 
 REGISTRY: Final[tuple[TemplateEntry, ...]] = (
@@ -199,4 +204,9 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
         )
         for name in _BASE_SKILLS
     ),
+    # The generic scripts the base `mine`/`retro` targets and the `recall` skill run, copied from
+    # the hub; they read `hub.json` through the hooks' reader, loaded by path (spec Q-2).
+    _entry_point("scripts/mine_transcripts.py"),
+    _entry_point("scripts/recall_transcripts.py"),
+    _entry_point("scripts/retro_metrics.py"),
 )

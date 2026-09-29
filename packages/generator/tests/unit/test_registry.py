@@ -92,19 +92,39 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "plugin/hub-workflow/skills/learn/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/recall/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/research/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
+    # AGH-19 spec "The rendered set": the three generic scripts the base `mine`/`retro` targets and
+    # the `recall` skill run; generic, managed.
+    "scripts/mine_transcripts.py": (Kind.GENERIC, Ownership.MANAGED, None),
+    "scripts/recall_transcripts.py": (Kind.GENERIC, Ownership.MANAGED, None),
+    "scripts/retro_metrics.py": (Kind.GENERIC, Ownership.MANAGED, None),
 }
 
 # AC-4.3 (Q-3): the entry points with a `#!` line are executable; modules and every non-`.py`
-# file are not. The hooks and scripts join as they are ported (plan slices 11-13).
+# file are not: the six hooks `hooks.json` runs and the three scripts.
 EXECUTABLE_PATHS = frozenset(
-    f"plugin/hub-workflow/hooks/{name}.py"
-    for name in ("guard", "post_edit", "pre_compact", "session_end", "session_start", "stop_gate")
+    {
+        *(
+            f"plugin/hub-workflow/hooks/{name}.py"
+            for name in (
+                "guard",
+                "post_edit",
+                "pre_compact",
+                "session_end",
+                "session_start",
+                "stop_gate",
+            )
+        ),
+        *(
+            f"scripts/{name}.py"
+            for name in ("mine_transcripts", "recall_transcripts", "retro_metrics")
+        ),
+    }
 )
 
 # AC-3.12 (spec D5 "Out"): later issues generate these, never AGH-10's registry. AGH-19
-# (AC-4.29) brings `plugin/` and `.claude/` into scope.
+# (AC-4.29) brings `plugin/`, `.claude/` and `scripts/` into scope.
 OUT_OF_SCOPE_FILES = ("hub.json", "hub.lock", "agent")
-OUT_OF_SCOPE_FOLDERS = (".claude-plugin/", "scripts/", "mk/")
+OUT_OF_SCOPE_FOLDERS = (".claude-plugin/", "mk/")
 
 
 def generator_sources() -> list[str]:

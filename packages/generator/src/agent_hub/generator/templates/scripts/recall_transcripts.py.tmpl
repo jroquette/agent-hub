@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""Search past Claude Code session transcripts of this workspace for a topic (stdlib only).
+
+Transcripts are JSONL where one line is a whole message (often huge), so plain `rg` output is unreadable. This prints
+only the matching user/assistant *text* as short excerpts, newest session first, with file, date and message index:
+
+    scripts/recall_transcripts.py "env.example" "push" [--all] [--max 20] [--context 300]
+
+Terms are case-insensitive and ALL must appear in the same message (use --any for OR). Tool inputs/outputs are included
+as text too, since many facts only appear there. Transcripts are raw history, not truth: prefer the brain and the code.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import glob
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from mine_transcripts import transcript_dirs  # noqa: E402
+
+
+def message_text(rec: dict) -> str:
+    msg = rec.get("message") or {}
+    content = msg.get("content")
+    if isinstance(content, str):
+        return content
+    parts = []
+    for b in content or []:
+        if not isinstance(b, dict):
+            continue
+        if b.get("type") == "text":
+            parts.append(b.get("text", ""))
+        elif b.get("type") == "tool_use":
+            parts.append(f"[tool {b.get('name')}] {json.dumps(b.get('input'), ensure_ascii=False)[:2000]}")
+        elif b.get("type") == "tool_result":
+            c = b.get("content")
+            parts.append("[result] " + (c if isinstance(c, str) else json.dumps(c, ensure_ascii=False))[:2000])
+    return "\n".join(parts)
+
+
+def excerpt(text: str, terms: list[str], width: int) -> str:
+    low = text.lower()
+    pos = min((low.find(t) for t in terms if low.find(t) >= 0), default=0)
+    start = max(0, pos - width // 3)
+    return re.sub(r"\s+", " ", text[start:start + width]).strip()
+
+
+def search(terms: list[str], any_term: bool, limit: int, width: int, files: list[Path]) -> list[str]:
+    terms = [t.lower() for t in terms]
+    out: list[str] = []
+    for f in files:
+        day = dt.datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d")
+        with open(f, encoding="utf-8", errors="replace") as fh:
+            for i, line in enumerate(fh):
+                low = line.lower()
+                if not (any if any_term else all)(t in low for t in terms):
+                    continue  # cheap pre-filter on the raw line
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if rec.get("type") not in ("user", "assistant"):
+                    continue
+                text = message_text(rec)
+                tl = text.lower()
+                if not (any if any_term else all)(t in tl for t in terms):
+                    continue
+                out.append(f"- {f.parent.name[-40:]}/{f.stem[:8]} ({day}) msg {i} [{rec['type']}]: {excerpt(text, terms, width)}")
+                if len(out) >= limit:
+                    return out
+    return out
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("terms", nargs="+")
+    ap.add_argument("--any", action="store_true", help="match any term instead of all")
+    ap.add_argument("--max", type=int, default=20)
+    ap.add_argument("--context", type=int, default=300)
+    ap.add_argument("--skip-current", default=os.environ.get("CLAUDE_SESSION_ID", ""), help="session id to skip")
+    a = ap.parse_args(argv)
+    files = sorted((Path(p) for d in transcript_dirs() for p in glob.glob(str(d / "*.jsonl"))),
+                   key=lambda p: p.stat().st_mtime, reverse=True)
+    files = [f for f in files if not (a.skip_current and f.stem == a.skip_current)]
+    hits = search(a.terms, a.any, a.max, a.context, files)
+    print("\n".join(hits) if hits else "no match in transcripts")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

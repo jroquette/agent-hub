@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""Retro metrics over a window (stdlib + gh CLI).
+
+  - merged PRs per repo and cycle time (opened → merged, median);
+  - agent-runner PRs merged without human edits (no commits after the PR was opened);
+  - agent runs by outcome and failure stage, cost per issue (.agent-runs/*.jsonl);
+  - CI health: workflow runs on each repo's default branch, and how many failed;
+  - memory: learning proposals waiting in brain/_inbox vs learnings merged into brain/learnings.
+
+Usage: scripts/retro_metrics.py [--days 14]
+"""
+
+from __future__ import annotations
+
+import argparse
+import collections
+import datetime as dt
+import json
+import statistics
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from mine_transcripts import find_hub_json, reader  # noqa: E402
+
+HUB = Path(__file__).resolve().parents[1]
+if (HUB / ".git").is_file():
+    common = subprocess.run(["git", "-C", str(HUB), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                            capture_output=True, text=True).stdout.strip()
+    HUB = Path(common).parent if common else HUB
+CFG = reader.load_hub_file(find_hub_json())
+GH_REPOS = [r.github for r in CFG.repos] + [CFG.project.hub_repo]  # owner/name, as gh -R wants
+if not all(GH_REPOS):  # an empty -R makes gh use the cwd repo
+    sys.exit("hub.json: project.hub_repo and every repos[].github are required")
+
+
+def gh_json(args: list[str]) -> list[dict[str, object]]:
+    res = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60)
+    if res.returncode != 0:
+        print(f"warning: gh {' '.join(args[:2])} failed: {res.stderr.strip()[:200]}", file=sys.stderr)
+        return []
+    try:
+        return json.loads(res.stdout or "[]")
+    except json.JSONDecodeError:
+        return []
+
+
+def ts(s: str) -> dt.datetime:
+    return dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+
+
+def pr_metrics(since: dt.date) -> dict[str, dict[str, object]]:
+    out: dict[str, dict[str, object]] = {}
+    for repo in GH_REPOS:
+        prs = gh_json(["pr", "list", "-R", repo, "--state", "merged", "--limit", "40",  # commits x authors hits the GraphQL node cap above ~50
+                       "--search", f"merged:>={since.isoformat()}",
+                       "--json", "number,createdAt,mergedAt,body,commits"])
+        hours = [(ts(p["mergedAt"]) - ts(p["createdAt"])).total_seconds() / 3600 for p in prs]
+        agent = [p for p in prs if "Agent run `" in str(p.get("body", ""))]
+        untouched = [p for p in agent
+                     if all(ts(c["committedDate"]) <= ts(p["createdAt"]) for c in p.get("commits", []) if c.get("committedDate"))]
+        out[repo] = {"merged": len(prs), "median_cycle_h": round(statistics.median(hours), 1) if hours else None,
+                     "agent_prs": len(agent), "agent_merged_without_edits": len(untouched)}
+    return out
+
+
+def run_metrics(since: dt.date) -> dict[str, object]:
+    outcomes: collections.Counter[str] = collections.Counter()
+    cost: collections.defaultdict[str, float] = collections.defaultdict(float)
+    for f in sorted((HUB / ".agent-runs").glob("*.jsonl")):
+        if dt.date.fromisoformat(f.stem) < since:
+            continue
+        for line in f.read_text().splitlines():
+            rec = json.loads(line)
+            if rec.get("event") == "reported":
+                outcomes[f"failed:{rec['failed_stage']}" if rec.get("failed_stage") else "pr_opened"] += 1
+                cost[rec["issue"]] += float(rec.get("total_cost_usd") or 0)
+    return {"outcomes": dict(outcomes), "cost_per_issue": {k: round(v, 2) for k, v in cost.items()}}
+
+
+def ci_metrics(since: dt.date) -> dict[str, dict[str, object]]:
+    out: dict[str, dict[str, object]] = {}
+    for repo in GH_REPOS:
+        runs = gh_json(["run", "list", "-R", repo, "--branch", CFG.project.default_branch, "--limit", "60",
+                        "--json", "conclusion,createdAt,workflowName"])
+        runs = [r for r in runs if ts(r["createdAt"]).date() >= since and r.get("conclusion")]
+        failed = [r for r in runs if r["conclusion"] == "failure"]
+        out[repo] = {"runs": len(runs), "failed": len(failed),
+                     "failed_workflows": sorted({str(r.get("workflowName")) for r in failed})}
+    return out
+
+
+def memory_metrics(since: dt.date) -> dict[str, object]:
+    pending = [p for p in (HUB / "brain" / "_inbox").glob("*.md")]
+    merged = subprocess.run(["git", "-C", str(HUB), "log", f"origin/{CFG.project.default_branch}", f"--since={since.isoformat()}", "--diff-filter=AM",
+                             "--name-only", "--format=", "--", "brain/learnings"], capture_output=True, text=True).stdout.split()
+    return {"inbox_pending": len(pending), "learnings_added_or_changed": len(set(merged)),
+            "note": "sessions that needed re-explanation are not measurable from files yet; count them by hand in the retro"}
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--days", type=int, default=14)
+    a = ap.parse_args(argv)
+    since = dt.date.today() - dt.timedelta(days=a.days)
+    report = {"window": f"{since} .. {dt.date.today()}", "prs": pr_metrics(since), "agent_runs": run_metrics(since),
+              "ci": ci_metrics(since), "memory": memory_metrics(since)}
+    print(json.dumps(report, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
