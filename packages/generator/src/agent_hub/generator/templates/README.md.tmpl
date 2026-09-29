@@ -1,0 +1,12 @@
+# @@{project_name} hub
+
+Workspace hub of the @@{project_name} project (`@@{project_hub_repo}`): every change to its repos goes through it.
+
+- `hub.json`: the project config (repos, tracker, branch prefix, checks, guard paths)
+- Files rendered from `hub.json` and rewritten by `hub sync`: listed in `AGENTS.md`, which `hub sync` keeps current
+- This README and the other seeded files are created once, then owned by the project
+- `brain/`: curated, versioned project memory (start at `brain/index.md`)
+
+`make help` lists the entry points.
+
+Repos, checked out next to this hub: @@{repo_dirs}.
