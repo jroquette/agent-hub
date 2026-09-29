@@ -26,5 +26,15 @@ def test_shows_arguments_when_init_help_requested() -> None:
 
     assert result.exit_code == 0
     # Under CI (GITHUB_ACTIONS) Typer colours the help, splitting option names with ANSI codes.
-    for name in ("PROJECT", "--repos", "--tracker"):
+    for name in (
+        "PROJECT",
+        "--repos",
+        "--tracker",
+        "--branch-prefix",
+        "--author-name",
+        "--author-email",
+        "--hub-repo",
+        "--config",
+        "--dir",
+    ):
         assert name in unstyle(result.stdout)
