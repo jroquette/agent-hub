@@ -12,7 +12,14 @@ from agent_hub.core.hub_files.hub_lock import (
     build_hub_lock,
     lock_bytes,
 )
-from agent_hub.core.hub_files.plan_init import FileWrite, InitPlan, LinkWrite, plan_init
+from agent_hub.core.hub_files.plan_init import (
+    FileWrite,
+    InitPlan,
+    InitRefusal,
+    LinkWrite,
+    PathProblem,
+    plan_init,
+)
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.hub_files.rendered_link import RenderedLink
@@ -20,6 +27,7 @@ from agent_hub.core.hub_files.tree_snapshot import (
     FileEntry,
     FolderEntry,
     LinkEntry,
+    OtherEntry,
     TreeEntry,
     TreeSnapshot,
 )
@@ -39,6 +47,14 @@ CORE_MODULES = (
     "hub_files/tree_snapshot.py",
     "hub_files/plan_init.py",
 )
+
+# Design decision 4 of the plan, word for word: each refusal names the cause or the way out.
+LOCK_PRESENT = "this folder is already a hub; run hub sync"
+DIFFERS = "differs from its render; run hub sync --adopt"
+HUB_JSON_DIFFERS = "differs from the one this run would write; run hub sync --adopt"
+UNKNOWN = "not part of the hub; run hub sync --adopt"
+OUTSIDE = "resolves outside the hub"
+NOT_REGULAR = "not a regular file"
 
 type HubFactory = Callable[..., RenderedHub]
 
@@ -71,6 +87,12 @@ def planned(rendered: RenderedHub, config: HubConfig, tree: TreeSnapshot) -> Ini
     plan = plan_init(rendered=rendered, config=config, hub_json=HUB_JSON, tree=tree)
     assert isinstance(plan, InitPlan)
     return plan
+
+
+def problems(rendered: RenderedHub, config: HubConfig, tree: TreeSnapshot) -> list[PathProblem]:
+    refusal = plan_init(rendered=rendered, config=config, hub_json=HUB_JSON, tree=tree)
+    assert isinstance(refusal, InitRefusal)
+    return list(refusal.problems)
 
 
 def written_paths(plan: InitPlan) -> list[str]:
@@ -253,3 +275,270 @@ def test_calls_no_io_when_core_modules_scanned() -> None:
     ]
 
     assert hits == []
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        FileEntry(executable=False, content=None),
+        FolderEntry(),
+        LinkEntry(target="AGENTS.md", outside=False),
+    ],
+    ids=["file", "folder", "link"],
+)
+def test_refuses_when_lock_present(
+    a_rendered_hub: HubFactory, config: HubConfig, entry: TreeEntry
+) -> None:
+    found = problems(a_rendered_hub(), config, a_tree({HUB_LOCK_PATH: entry}))
+
+    assert found == [PathProblem(HUB_LOCK_PATH, LOCK_PRESENT)]
+    assert "hub sync" in found[0].message
+    assert "--adopt" not in found[0].message
+
+
+def test_refuses_when_hub_json_differs(a_rendered_hub: HubFactory, config: HubConfig) -> None:
+    tree = {HUB_JSON_PATH: FileEntry(executable=False, content=HUB_JSON + b" ")}
+
+    found = problems(a_rendered_hub(), config, a_tree(tree))
+
+    assert found == [PathProblem(HUB_JSON_PATH, HUB_JSON_DIFFERS)]
+
+
+def test_refuses_when_managed_bytes_differ(a_rendered_hub: HubFactory, config: HubConfig) -> None:
+    tree = {"AGENTS.md": FileEntry(executable=False, content=b"# Other rules\n")}
+
+    found = problems(a_rendered_hub(), config, a_tree(tree))
+
+    assert found == [PathProblem("AGENTS.md", DIFFERS)]
+
+
+def test_refuses_when_executable_bit_differs(a_rendered_hub: HubFactory, config: HubConfig) -> None:
+    tree = folders("scripts") | {
+        "scripts/run.sh": FileEntry(executable=False, content=b"#!/bin/sh\n")
+    }
+
+    found = problems(a_rendered_hub(), config, a_tree(tree))
+
+    assert found == [PathProblem("scripts/run.sh", DIFFERS)]
+
+
+def test_refuses_when_link_target_differs(a_rendered_hub: HubFactory, config: HubConfig) -> None:
+    link = LinkEntry(target="../../plugin/agents/z.md", outside=False)
+    tree = folders(".claude", ".claude/agents") | {".claude/agents/x.md": link}
+
+    found = problems(a_rendered_hub(), config, a_tree(tree))
+
+    assert found == [PathProblem(".claude/agents/x.md", DIFFERS)]
+
+
+def test_refuses_when_link_resolves_outside(a_rendered_hub: HubFactory, config: HubConfig) -> None:
+    link = LinkEntry(target="../../plugin/agents/x.md", outside=True)
+    tree = folders(".claude", ".claude/agents") | {".claude/agents/x.md": link}
+
+    found = problems(a_rendered_hub(), config, a_tree(tree))
+
+    assert found == [PathProblem(".claude/agents/x.md", OUTSIDE)]
+
+
+@pytest.mark.parametrize(
+    ("path", "entry", "message"),
+    [
+        pytest.param(
+            "AGENTS.md", FolderEntry(), "a folder where a file belongs", id="folder-at-file"
+        ),
+        pytest.param(
+            "AGENTS.md",
+            LinkEntry(target="README.md", outside=False),
+            "a link where a file belongs",
+            id="link-at-file",
+        ),
+        pytest.param(
+            ".claude/agents/x.md",
+            FileEntry(executable=False, content=None),
+            "a file where a link belongs",
+            id="file-at-link",
+        ),
+        pytest.param(
+            ".claude/agents/x.md",
+            FolderEntry(),
+            "a folder where a link belongs",
+            id="folder-at-link",
+        ),
+        pytest.param(
+            "README.md",
+            LinkEntry(target="AGENTS.md", outside=False),
+            "a link where a file belongs",
+            id="link-at-seeded",
+        ),
+        pytest.param(
+            "README.md", FolderEntry(), "a folder where a file belongs", id="folder-at-seeded"
+        ),
+        pytest.param(
+            HUB_JSON_PATH,
+            LinkEntry(target="AGENTS.md", outside=False),
+            "a link where a file belongs",
+            id="link-at-hub-json",
+        ),
+        pytest.param(
+            HUB_JSON_PATH, FolderEntry(), "a folder where a file belongs", id="folder-at-hub-json"
+        ),
+    ],
+)
+def test_refuses_when_type_differs(
+    a_rendered_hub: HubFactory, config: HubConfig, *, path: str, entry: TreeEntry, message: str
+) -> None:
+    tree = folders(*FOLDERS) | {path: entry}
+
+    found = problems(a_rendered_hub(), config, a_tree(tree))
+
+    assert found == [PathProblem(path, message)]
+
+
+@pytest.mark.parametrize(
+    "path", ["AGENTS.md", "README.md", ".claude/agents/x.md", HUB_JSON_PATH], ids=str
+)
+def test_refuses_when_not_regular_file(
+    a_rendered_hub: HubFactory, config: HubConfig, path: str
+) -> None:
+    tree = folders(*FOLDERS) | {path: OtherEntry(kind="fifo")}
+
+    found = problems(a_rendered_hub(), config, a_tree(tree))
+
+    assert found == [PathProblem(path, NOT_REGULAR)]
+
+
+@pytest.mark.parametrize(
+    ("ancestor", "outside", "below"),
+    [
+        pytest.param("plugin", False, ["plugin/agents/x.md"], id="top"),
+        pytest.param("plugin", True, ["plugin/agents/x.md"], id="top-outside"),
+        pytest.param(".claude/agents", False, [".claude/agents/x.md"], id="nested"),
+        pytest.param(".claude", False, [".claude/agents/x.md", ".claude/skills/y"], id="two-below"),
+    ],
+)
+def test_refuses_when_ancestor_is_symlink(
+    a_rendered_hub: HubFactory,
+    config: HubConfig,
+    *,
+    ancestor: str,
+    below: list[str],
+    outside: bool,
+) -> None:
+    kept = [f for f in FOLDERS if f != ancestor and not f.startswith(f"{ancestor}/")]
+    tree = folders(*kept) | {ancestor: LinkEntry(target="/elsewhere", outside=outside)}
+
+    found = problems(a_rendered_hub(), config, a_tree(tree))
+
+    assert found == [PathProblem(path, f"symlinked ancestor {ancestor}") for path in below]
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [FileEntry(executable=False, content=None), OtherEntry(kind="socket")],
+    ids=["file", "other"],
+)
+def test_refuses_when_ancestor_is_file(
+    a_rendered_hub: HubFactory, config: HubConfig, entry: TreeEntry
+) -> None:
+    tree = folders(".claude", ".claude/agents", ".claude/skills", "plugin", "plugin/agents")
+    tree["scripts"] = entry
+
+    found = problems(a_rendered_hub(), config, a_tree(tree))
+
+    assert found == [PathProblem("scripts/run.sh", "a file where a folder belongs: scripts")]
+
+
+BRAIN_NOW = RenderedFile(
+    path="brain/now.md",
+    content=b"# Now\n",
+    executable=False,
+    kind=Kind.GENERIC,
+    ownership=Ownership.SEEDED,
+    module=None,
+)
+TEMP_SHAPED = ".x.hub-tmp-0a1b2c3d"
+
+
+@pytest.mark.parametrize(
+    ("entries", "unknown"),
+    [
+        pytest.param(
+            {"notes.txt": FileEntry(executable=False, content=None)}, ["notes.txt"], id="file"
+        ),
+        pytest.param(
+            folders("brain/extra")
+            | {"brain/extra/x.md": FileEntry(executable=False, content=None)},
+            ["brain/extra", "brain/extra/x.md"],
+            id="file-in-unknown-folder",
+        ),
+        pytest.param(folders("docs"), ["docs"], id="empty-folder"),
+        pytest.param(
+            {".DS_Store": FileEntry(executable=False, content=None)}, [".DS_Store"], id="ds-store"
+        ),
+        pytest.param(folders(TEMP_SHAPED), [TEMP_SHAPED], id="temp-named-folder"),
+        pytest.param({TEMP_SHAPED: OtherEntry(kind="fifo")}, [TEMP_SHAPED], id="temp-named-fifo"),
+        pytest.param({"notes": LinkEntry(target="AGENTS.md", outside=False)}, ["notes"], id="link"),
+    ],
+)
+def test_refuses_when_entry_unknown(
+    a_rendered_hub: HubFactory,
+    config: HubConfig,
+    *,
+    entries: dict[str, TreeEntry],
+    unknown: list[str],
+) -> None:
+    rendered = a_rendered_hub(files=(*a_rendered_hub().files, BRAIN_NOW))
+    tree = folders(*FOLDERS, "brain") | entries
+
+    found = problems(rendered, config, a_tree(tree))
+
+    assert found == [PathProblem(path, UNKNOWN) for path in unknown]
+
+
+def test_cleans_leftover_when_file_or_link_has_temp_shape(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    rendered = a_rendered_hub()
+    leftovers = {
+        ".Makefile.hub-tmp-0a1b2c3d": FileEntry(executable=False, content=None),
+        "plugin/agents/.x.md.hub-tmp-ffffffff": LinkEntry(target="x.md", outside=False),
+        "scripts/.run.sh.hub-tmp-00000000": LinkEntry(target="/etc/passwd", outside=True),
+    }
+
+    fresh = planned(rendered, config, a_tree(folders(*FOLDERS)))
+    plan = planned(rendered, config, a_tree(folders(*FOLDERS) | leftovers))
+
+    assert plan.leftovers == tuple(sorted(leftovers))
+    assert plan.writes == fresh.writes
+    assert plan.lock == fresh.lock
+    assert not set(leftovers) & set(plan.lock.files)
+
+
+def test_returns_every_problem_sorted_when_several_refused(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    tree = folders(".claude", ".claude/agents", ".claude/skills", "plugin") | {
+        HUB_LOCK_PATH: FileEntry(executable=False, content=None),
+        "notes.txt": FileEntry(executable=False, content=None),
+        "AGENTS.md": FileEntry(executable=False, content=b"# Other\n"),
+        ".DS_Store": FileEntry(executable=False, content=None),
+        "scripts": LinkEntry(target="../scripts", outside=True),
+        ".claude/skills/y": FileEntry(executable=False, content=None),
+        "plugin/.agents.hub-tmp-0a1b2c3d": FolderEntry(),
+    }
+
+    result = plan_init(
+        rendered=a_rendered_hub(), config=config, hub_json=HUB_JSON, tree=a_tree(tree)
+    )
+
+    assert result == InitRefusal(
+        problems=(
+            PathProblem(".DS_Store", UNKNOWN),
+            PathProblem(".claude/skills/y", "a file where a link belongs"),
+            PathProblem("AGENTS.md", DIFFERS),
+            PathProblem(HUB_LOCK_PATH, LOCK_PRESENT),
+            PathProblem("notes.txt", UNKNOWN),
+            PathProblem("plugin/.agents.hub-tmp-0a1b2c3d", UNKNOWN),
+            PathProblem("scripts/run.sh", "symlinked ancestor scripts"),
+        )
+    )
