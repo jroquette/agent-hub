@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""Stop: if this session changed code in a repo checkout/worktree listed in hub.json, run that repo's
+`check_fast` command and block completion while it fails (feedback goes back to the agent). Repos with an
+empty `check_fast` are skipped. Releases after 3 consecutive blocks to avoid loops. When checks pass and
+files changed, remind about /handoff (never blocks)."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+from typing import List, Tuple
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hubhooks import Config, checkouts, emit, git, load_config, read_input  # noqa: E402
+
+CODE_EXT = {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".rs", ".java", ".kt", ".rb", ".sql",
+            ".sh", ".toml", ".cfg", ".ini", ".yml", ".yaml"}
+CODE_NAMES = {"Makefile", "package.json", "pyproject.toml", "go.mod", "Cargo.toml", "Dockerfile"}
+MAX_BLOCKS = 3
+TIMEOUT = 150
+
+
+def session_start_time(data: dict) -> float:
+    tp = data.get("transcript_path")
+    try:
+        return os.stat(tp).st_birthtime if tp and hasattr(os.stat(tp), "st_birthtime") else time.time() - 12 * 3600
+    except OSError:
+        return time.time() - 12 * 3600
+
+
+def changed_code(top: Path, since: float) -> List[str]:
+    out = []
+    for line in git(["status", "--porcelain", "--untracked-files=all"], top).splitlines():
+        rel = line[3:].split(" -> ")[-1].strip('"')
+        p = top / rel
+        if (p.suffix in CODE_EXT or p.name in CODE_NAMES) and p.exists() and p.stat().st_mtime >= since:
+            out.append(rel)
+    return out
+
+
+def candidates(cfg: Config, cwd: Path) -> List[Tuple[str, Path]]:
+    """Checkouts to consider: the one containing cwd, else every checkout/worktree of every configured repo."""
+    res = checkouts(cfg, cfg.repo_dirs)
+    inside = [(r, t) for r, t in res if cwd == t or t in cwd.parents]
+    return inside[-1:] if inside else res
+
+
+def run_check(cmd: str, top: Path) -> Tuple[bool, str]:
+    try:
+        env = dict(os.environ, NO_COLOR="1", FORCE_COLOR="0", CLICOLOR="0")
+        p = subprocess.run(["bash", "-c", cmd], cwd=top, capture_output=True, text=True, timeout=TIMEOUT, env=env)
+        out = re.sub(r"\x1b\[[0-9;]*m", "", p.stdout + p.stderr)
+        return p.returncode == 0, out[-3000:]
+    except subprocess.TimeoutExpired:
+        return False, f"check_fast timed out (>{TIMEOUT} s)"
+    except OSError as e:
+        return False, f"check_fast could not start: {e}"
+
+
+def main() -> None:
+    data = read_input()
+    cwd = Path(data.get("cwd") or os.getcwd()).resolve()
+    cfg = load_config(cwd)
+    if not cfg.workspace:
+        return
+    since = session_start_time(data)
+    state = Path(tempfile.gettempdir()) / f"hub-stop-{data.get('session_id', 'x')}.json"
+    try:
+        blocks = json.loads(state.read_text()).get("blocks", 0) if state.exists() else 0
+    except (OSError, ValueError):
+        blocks = 0
+    changed_any, failures, skipped = False, [], []
+    for repo, top in candidates(cfg, cwd):
+        files = changed_code(top, since)
+        if not files:
+            continue
+        changed_any = True
+        cmd = (cfg.repo(repo).get("check_fast") or "").strip()
+        if not cmd:
+            skipped.append(repo)
+            continue
+        ok, out = run_check(cmd, top)
+        if not ok:
+            failures.append(f"## {repo} ({top.relative_to(cfg.workspace)}): `{cmd}` FAILED\nchanged: {', '.join(files[:8])}\n{out}")
+    if failures and blocks < MAX_BLOCKS:
+        state.write_text(json.dumps({"blocks": blocks + 1}))
+        emit({"decision": "block", "reason": "[hub stop-gate] Fix these before finishing (check_fast must pass):\n\n" + "\n\n".join(failures)})
+        return
+    if state.exists():
+        state.unlink()
+    note = f" (no check_fast configured in hub.json for: {', '.join(sorted(set(skipped)))})" if skipped else ""
+    if failures:
+        emit({"systemMessage": f"[hub stop-gate] check_fast still failing after {MAX_BLOCKS} attempts; finishing anyway. Do not claim the work is done."})
+    elif changed_any:
+        emit({"systemMessage": f"[hub] code changed and check_fast is green{note}. If the work spans sessions, run /handoff."})
+
+
+if __name__ == "__main__":
+    main()
