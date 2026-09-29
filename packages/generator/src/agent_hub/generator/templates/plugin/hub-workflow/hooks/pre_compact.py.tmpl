@@ -10,7 +10,11 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hubhooks import checkouts, git, load_config, read_input  # noqa: E402
+try:
+    from hubhooks import checkouts, git, load_config, read_input, run_hook
+except Exception as error:  # a partial install: skip, never error the session
+    print(f"[hub {os.path.splitext(os.path.basename(sys.argv[0] or 'hook'))[0]}] skipped: {type(error).__name__}", file=sys.stderr)
+    sys.exit(0)
 
 
 def last_user_message(tp: str | None) -> str:
@@ -44,9 +48,12 @@ def main() -> None:
             files = [ln[3:] for ln in st.splitlines()][:10]
             lines.append(f"- {t.relative_to(cfg.workspace)} [{br}]: {', '.join(files)}")
     out = cfg.hub / "brain" / "auto" / "workspace" / "session-snapshot.md"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError as e:  # an unwritable hub: say so, never error the session
+        print(f"[hub pre_compact] not written: {type(e).__name__}", file=sys.stderr)
 
 
 if __name__ == "__main__":
-    main()
+    run_hook(main)

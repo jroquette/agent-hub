@@ -19,7 +19,14 @@ from fnmatch import fnmatch
 from typing import Optional, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hubhooks import Config, emit, load_config, read_input  # noqa: E402
+try:
+    from hubhooks import Config, emit, load_config, read_input, run_hook
+except Exception as error:  # a partial install: ask, never let the call through unchecked
+    import json
+
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
+                                             "permissionDecisionReason": f"[hub guard] could not check this call ({type(error).__name__}); confirm"}}))
+    sys.exit(0)
 
 Verdict = Optional[Tuple[str, str]]
 
@@ -37,6 +44,26 @@ SKIP_MARKERS = re.compile(
 TEST_PATH = r"(?:(\S*/)?(tests?|__tests__)/\S+|\S+\.(test|spec)\.[jt]sx?\b|\S*/test_\w+\.py\b)"
 BASH_WRITE = re.compile(r">>?|\btee\b|\bsed\s+(-\w*i\w*|--in-place)\b|\b(rm|mv|cp|truncate|ln)\b")
 WORKTREE_SEG = re.compile(r"/\.claude/worktrees/[^/]+(?=/)")
+
+
+def _str(value: object) -> str:
+    """A tool field as text: anything that is not a string counts as absent."""
+    return value if isinstance(value, str) else ""
+
+
+def _edits(ti: dict) -> list[dict]:
+    """MultiEdit's edits: a list of objects, other items (and a non-list) dropped."""
+    edits = ti.get("edits")
+    return [e for e in edits if isinstance(e, dict)] if isinstance(edits, list) else []
+
+
+def _read_text(path: str) -> str:
+    """A file's text for the assertion and marker counts; "" when unreadable or not UTF-8."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+    except (OSError, ValueError):
+        return ""
 
 
 def _secret_path(path: str) -> bool:
@@ -160,10 +187,11 @@ def _brain_rel(path: str, cfg: Config) -> str | None:
 def check_file(tool: str, ti: dict, cfg: Config | None = None) -> Verdict:
     cfg = cfg or Config()
     if tool == "WebFetch":
-        host = denied_host(ti.get("url", ""), cfg)
+        host = denied_host(_str(ti.get("url")), cfg)
         return ("deny", f"{host} is in guard.deny_hosts (hub.json); agents do not reach it") if host else None
-    path = ti.get("file_path") or ti.get("notebook_path") or ti.get("path") or ""
-    if tool == "Grep" and ti.get("glob") and re.search(r"(^|[/*{,])\.env\b", ti["glob"]) and ".example" not in ti["glob"]:
+    path = _str(ti.get("file_path")) or _str(ti.get("notebook_path")) or _str(ti.get("path"))
+    glob = _str(ti.get("glob"))
+    if tool == "Grep" and glob and re.search(r"(^|[/*{,])\.env\b", glob) and ".example" not in glob:
         return "deny", "Grep over .env files may print secrets; reference variable names instead"
     if not path:
         return None
@@ -175,27 +203,19 @@ def check_file(tool: str, ti: dict, cfg: Config | None = None) -> Verdict:
         return "deny", ".git is git's own state (a worktree's .git file links it to the repo); use git commands, never edit it directly"
     if re.search(r"(^|/)(tests?|__tests__)/|\.(test|spec)\.[jt]sx?$|/test_[^/]+\.py$", path):
         if tool == "Edit":
-            removed = _assert_count(ti.get("old_string", "")) - _assert_count(ti.get("new_string", ""))
+            removed = _assert_count(_str(ti.get("old_string"))) - _assert_count(_str(ti.get("new_string")))
         elif tool == "MultiEdit":
-            removed = sum(_assert_count(e.get("old_string", "")) - _assert_count(e.get("new_string", "")) for e in ti.get("edits", []))
+            removed = sum(_assert_count(_str(e.get("old_string"))) - _assert_count(_str(e.get("new_string"))) for e in _edits(ti))
         elif tool == "Write" and os.path.exists(path):
-            try:
-                with open(path, encoding="utf-8") as fh:
-                    removed = _assert_count(fh.read()) - _assert_count(ti.get("content", ""))
-            except OSError:
-                removed = 0
+            removed = _assert_count(_read_text(path)) - _assert_count(_str(ti.get("content")))
         else:
             removed = 0
         if removed > 0:
             return "ask", f"this edit removes {removed} assertion(s) from a test; acceptance tests are a contract, confirm first"
-        before = ti.get("old_string", "") if tool == "Edit" else "".join(e.get("old_string", "") for e in ti.get("edits", [])) if tool == "MultiEdit" else ""
+        before = _str(ti.get("old_string")) if tool == "Edit" else "".join(_str(e.get("old_string")) for e in _edits(ti)) if tool == "MultiEdit" else ""
         if tool == "Write" and os.path.exists(path):
-            try:
-                with open(path, encoding="utf-8") as fh:
-                    before = fh.read()
-            except OSError:
-                before = ""
-        after = ti.get("new_string", "") if tool == "Edit" else "".join(e.get("new_string", "") for e in ti.get("edits", [])) if tool == "MultiEdit" else ti.get("content", "")
+            before = _read_text(path)
+        after = _str(ti.get("new_string")) if tool == "Edit" else "".join(_str(e.get("new_string")) for e in _edits(ti)) if tool == "MultiEdit" else _str(ti.get("content"))
         if len(SKIP_MARKERS.findall(after or "")) > len(SKIP_MARKERS.findall(before or "")):
             return "ask", "this edit adds a skip/xfail/quarantine/fixme marker to a test; that weakens the suite, confirm first"
     pat = protected(path, cfg)
@@ -212,16 +232,24 @@ FILE_TOOLS = ("Read", "Grep", "Glob", "Edit", "Write", "MultiEdit", "NotebookEdi
 
 def main() -> None:
     data = read_input()
-    tool, ti = data.get("tool_name", ""), data.get("tool_input") or {}
+    tool, ti = data.get("tool_name", ""), data.get("tool_input")
+    if not isinstance(ti, dict):
+        ti = {}
     if tool != "Bash" and tool not in FILE_TOOLS:
         return
     cfg = load_config(data.get("cwd"))
-    verdict = check_bash(ti.get("command", ""), cfg) if tool == "Bash" else check_file(tool, ti, cfg)
+    verdict = check_bash(_str(ti.get("command")), cfg) if tool == "Bash" else check_file(tool, ti, cfg)
     if verdict:
         decision, reason = verdict
         emit({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
                                      "permissionDecisionReason": f"[hub guard] {reason}"}})
 
 
+def ask_on_error(kind: str) -> None:
+    """A guard that could not check a call asks: never an allow by accident (fail open, AC-4.11)."""
+    emit({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
+                                 "permissionDecisionReason": f"[hub guard] could not check this call ({kind}); confirm"}})
+
+
 if __name__ == "__main__":
-    main()
+    run_hook(main, ask_on_error)

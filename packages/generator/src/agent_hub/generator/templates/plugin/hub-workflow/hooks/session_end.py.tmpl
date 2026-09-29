@@ -9,7 +9,11 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hubhooks import checkouts, git, load_config, read_input  # noqa: E402
+try:
+    from hubhooks import checkouts, git, load_config, read_input, run_hook
+except Exception as error:  # a partial install: skip, never error the session
+    print(f"[hub {os.path.splitext(os.path.basename(sys.argv[0] or 'hook'))[0]}] skipped: {type(error).__name__}", file=sys.stderr)
+    sys.exit(0)
 
 
 def main() -> None:
@@ -24,15 +28,18 @@ def main() -> None:
             changed.append(f"{t.relative_to(cfg.workspace)} [{git(['branch', '--show-current'], t) or 'detached'}]: {len(st.splitlines())} changed")
     day = time.strftime("%Y-%m-%d")
     out = cfg.hub / "brain" / "_inbox" / "sessions" / f"{day}.md"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    new = not out.exists()
-    with open(out, "a", encoding="utf-8") as fh:
-        if new:
-            fh.write(f"---\ntype: session-log\nstatus: proposed\nlast_verified: {day}\nprovenance: agent-from-code\n---\n# Sessions {day}\n")
-        fh.write(f"\n- {time.strftime('%H:%M')} session `{str(data.get('session_id', '?'))[:8]}` ended ({data.get('reason', '?')}), cwd `{data.get('cwd')}`\n")
-        for c in changed:
-            fh.write(f"  - {c}\n")
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        new = not out.exists()
+        with open(out, "a", encoding="utf-8") as fh:
+            if new:
+                fh.write(f"---\ntype: session-log\nstatus: proposed\nlast_verified: {day}\nprovenance: agent-from-code\n---\n# Sessions {day}\n")
+            fh.write(f"\n- {time.strftime('%H:%M')} session `{str(data.get('session_id', '?'))[:8]}` ended ({data.get('reason', '?')}), cwd `{data.get('cwd')}`\n")
+            for c in changed:
+                fh.write(f"  - {c}\n")
+    except OSError as e:  # an unwritable hub: say so, never error the session
+        print(f"[hub session_end] not written: {type(e).__name__}", file=sys.stderr)
 
 
 if __name__ == "__main__":
-    main()
+    run_hook(main)

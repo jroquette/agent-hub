@@ -1,0 +1,567 @@
+"""The rendered hooks read ``hub.json`` through the rendered reader, from their own hub (AC-4.10).
+
+Each hook runs as Claude Code runs it: a file on ``hook_python`` with the event on stdin, in an
+environment built from scratch (``HOME`` and ``TMPDIR`` under ``tmp_path``). The hub is the demo
+render at ``ws/demo-hub``; the config comes from the hub that holds the hook file (spec Q-4), so the
+event's cwd, ``CLAUDE_PROJECT_DIR`` and the process cwd may all point into another hub.
+"""
+
+import ast
+import json
+import os
+import shutil
+import subprocess
+from collections.abc import Callable, Iterator, Mapping
+from importlib.resources import files
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.generator.render_hub import render_hub
+
+HOOKS = "plugin/hub-workflow/hooks"
+READER = "plugin/hub-workflow/hooks/stdlib_reader.py"
+# The sources as installed (an editable install: the repo folder).
+TEMPLATES = Path(str(files("agent_hub.generator").joinpath("templates")))
+# AC-4.10's hub.json: three wrong-typed keys; every other key is valid and must be kept.
+MISTYPED: dict[str, Any] = {
+    "project": {"name": "demo", "branch_prefix": "me/", "default_branch": 7},
+    "tracker": {"kind": "linear", "team": "DEM"},
+    "repos": {},
+    "guard": {
+        "ask_before_edit": 5,
+        "deny_hosts": ["prod.example.com"],
+        "deny_paths": ["@hub/secret-notes"],
+    },
+}
+# The calls that read a file's text: a hook reading hub.json itself would make one of them.
+FILE_READS = frozenset({"open", "read_text", "read_bytes", "load", "loads"})
+HUB_JSON_NAME = "hub.json"
+
+type RunHook = Callable[..., subprocess.CompletedProcess[bytes]]
+
+
+def write_hub_json(hub: Path, document: Mapping[str, Any]) -> None:
+    (hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+
+
+def scratch_env(tmp_path: Path) -> dict[str, str]:
+    """``HOME`` and ``TMPDIR`` under ``tmp_path`` (``PATH`` comes from ``child_env``)."""
+    home, temp = tmp_path / "home", tmp_path / "tmp"
+    home.mkdir(exist_ok=True)
+    temp.mkdir(exist_ok=True)
+    return {"HOME": str(home), "TMPDIR": str(temp)}
+
+
+@pytest.fixture
+def hub(rendered_hub: Callable[[HubConfig], Path], demo_config: HubConfig) -> Path:
+    """The rendered demo hub at ``ws/demo-hub``, without a ``hub.json`` yet."""
+    rendered = rendered_hub(demo_config).resolve()
+    assert rendered.name == "demo-hub"
+    return rendered
+
+
+@pytest.fixture
+def elsewhere(tmp_path: Path) -> Path:
+    """A folder with no hub above it or beside it: the process cwd when nothing else is given."""
+    folder = tmp_path / "elsewhere"
+    folder.mkdir()
+    return folder
+
+
+@pytest.fixture
+def run_hook(
+    hub: Path,
+    *,
+    hook_python: str,
+    run_hook_file: RunHook,
+    elsewhere: Path,
+    tmp_path: Path,
+) -> Callable[..., subprocess.CompletedProcess[bytes]]:
+    """Run ``<hub>/<HOOKS>/<name>.py`` with ``event`` as JSON; the cwd defaults to ``elsewhere``."""
+
+    def run(
+        name: str,
+        event: Mapping[str, Any],
+        *,
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[bytes]:
+        return run_hook_file(
+            hook_python,
+            hub / HOOKS / f"{name}.py",
+            stdin=json.dumps(event).encode(),
+            cwd=cwd or elsewhere,
+            env=scratch_env(tmp_path) | dict(env or {}),
+        )
+
+    return run
+
+
+def verdict_of(completed: subprocess.CompletedProcess[bytes]) -> tuple[str, str] | None:
+    """The guard's ``(decision, reason)``, or ``None`` when it printed nothing."""
+    assert completed.returncode == 0, completed.stderr
+    if not completed.stdout.strip():
+        return None
+    output = json.loads(completed.stdout)["hookSpecificOutput"]
+    return output["permissionDecision"], output["permissionDecisionReason"]
+
+
+def bash_event(command: str, cwd: Path) -> dict[str, Any]:
+    return {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(cwd)}
+
+
+def only_file(folder: Path) -> str:
+    """The text of the one file in ``folder`` (the hooks name it after the day)."""
+    files = sorted(folder.iterdir()) if folder.is_dir() else []
+    assert len(files) == 1, files
+    return files[0].read_text(encoding="utf-8")
+
+
+def test_falls_back_per_key_when_hub_json_mistyped(
+    run_hook: Callable[..., subprocess.CompletedProcess[bytes]], hub: Path
+) -> None:
+    write_hub_json(hub, MISTYPED)
+    app = hub.parent / "demo-api" / "docs" / "adr"
+    app.mkdir(parents=True)
+    edit = {"file_path": str(app / "0001.md"), "old_string": "a", "new_string": "b"}
+
+    guard = {
+        "push_main": run_hook("guard", bash_event("git push origin main", hub)),
+        "push_trunk": run_hook("guard", bash_event("git push origin trunk", hub)),
+        "deny_host": run_hook("guard", bash_event("curl https://prod.example.com/x", hub)),
+        "edit": run_hook("guard", {"tool_name": "Edit", "tool_input": edit, "cwd": str(hub)}),
+    }
+    stop = run_hook("stop_gate", {"cwd": str(hub), "session_id": "mistyped"})
+    end = run_hook("session_end", {"session_id": "abcdef123456", "reason": "clear", "cwd": "/w"})
+    compact = run_hook("pre_compact", {"trigger": "manual", "cwd": "/w"})
+
+    verdicts = {name: verdict_of(completed) for name, completed in guard.items()}
+    # default_branch 7 → "main"; the prefix and the team of the same file are kept.
+    assert verdicts["push_main"] == (
+        "deny",
+        "[hub guard] pushing to main is not allowed; open a PR from a me/dem-<N>-<desc> branch",
+    )
+    assert verdicts["push_trunk"] is None
+    assert verdicts["deny_host"] is not None
+    assert verdicts["deny_host"][0] == "deny"
+    # ask_before_edit 5 → (): nothing asks
+    assert verdicts["edit"] is None
+    # repos {} → (): no checkout to gate, so the stop gate is silent
+    assert (stop.returncode, stop.stdout) == (0, b"")
+    for completed in (*guard.values(), stop, end, compact):
+        assert completed.stderr == b"", completed.stderr
+    assert (end.returncode, end.stdout, compact.returncode, compact.stdout) == (0, b"", 0, b"")
+    assert "session `abcdef12` ended (clear), cwd `/w`" in only_file(
+        hub / "brain" / "_inbox" / "sessions"
+    )
+    assert "- cwd: `/w`" in only_file(hub / "brain" / "auto" / "workspace")
+
+
+def test_reads_deny_paths_when_config_loaded(
+    hub: Path, *, hook_python: str, run_python: Callable[..., Any], elsewhere: Path
+) -> None:
+    write_hub_json(hub, MISTYPED)
+    code = (
+        "import json\nfrom hubhooks import load_config\ncfg = load_config(None)\n"
+        "print(json.dumps([str(cfg.hub), list(cfg.deny_paths), list(cfg.deny_hosts),"
+        " list(cfg.ask_before_edit), list(cfg.repo_dirs), cfg.default_branch, cfg.branch_prefix,"
+        " cfg.tracker_team, cfg.project_name]))\n"
+    )
+
+    found = run_python(hook_python, code, path=hub / HOOKS, cwd=elsewhere)
+
+    assert found == [
+        str(hub),
+        ["@hub/secret-notes"],
+        ["prod.example.com"],
+        [],
+        [],
+        "main",
+        "me/",
+        "DEM",
+        "demo",
+    ]
+
+
+def test_reads_hook_root_config_when_cwd_in_other_hub(
+    run_hook: Callable[..., subprocess.CompletedProcess[bytes]],
+    hub: Path,
+    *,
+    rendered_tree: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    write_hub_json(hub, {"project": {"name": "demo", "default_branch": "trunk"}})
+    document = a_hub_document()
+    document["project"] |= {"name": "other", "hub_repo": "acme/other-hub"}
+    other_root = tmp_path / "other" / "ws" / "other-hub"
+    other = rendered_tree(render_hub(HubConfig.model_validate(document)), root=other_root)
+    write_hub_json(other, {"project": {"name": "other", "default_branch": "release"}})
+    inside = other / "brain"
+    env = {"CLAUDE_PROJECT_DIR": str(other)}
+
+    trunk = run_hook("guard", bash_event("git push origin trunk", inside), cwd=inside, env=env)
+    release = run_hook("guard", bash_event("git push origin release", inside), cwd=inside, env=env)
+    end = run_hook(
+        "session_end", {"session_id": "abcdef123456", "cwd": str(inside)}, cwd=inside, env=env
+    )
+
+    verdict = verdict_of(trunk)
+    assert verdict is not None
+    assert verdict[0] == "deny"
+    assert "pushing to trunk" in verdict[1]
+    assert verdict_of(release) is None
+    assert end.returncode == 0, end.stderr
+    assert "session `abcdef12` ended" in only_file(hub / "brain" / "_inbox" / "sessions")
+    assert not (other / "brain" / "_inbox" / "sessions").exists()
+
+
+def test_imports_no_hubconfig_when_templates_read() -> None:
+    sources = sorted(path for path in TEMPLATES.rglob("*") if path.is_file())
+
+    naming = [
+        str(path.relative_to(TEMPLATES))
+        for path in sources
+        if "hubconfig" in path.read_text(encoding="utf-8")
+    ]
+
+    assert len(sources) > 1
+    assert naming == []
+
+
+def names_in(node: ast.AST) -> set[str]:
+    return {child.id for child in ast.walk(node) if isinstance(child, ast.Name)}
+
+
+def mentions_hub_json(node: ast.AST) -> bool:
+    return any(
+        isinstance(child, ast.Constant) and child.value == HUB_JSON_NAME for child in ast.walk(node)
+    )
+
+
+def hub_json_names(tree: ast.AST) -> set[str]:
+    """Names bound, anywhere in the module, to an expression that mentions ``hub.json``."""
+    bound: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign | ast.AnnAssign) and node.value is not None:
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if mentions_hub_json(node.value):
+                bound |= {name for target in targets for name in names_in(target)}
+    return bound
+
+
+def call_name(call: ast.Call) -> str | None:
+    if isinstance(call.func, ast.Name):
+        return call.func.id
+    if isinstance(call.func, ast.Attribute):
+        return call.func.attr
+    return None
+
+
+def hub_json_reads(source: str) -> list[int]:
+    """Lines of the calls that open or read ``hub.json``: a file read whose receiver or arguments
+    mention ``"hub.json"`` or a name bound to such an expression."""
+    tree = ast.parse(source)
+    bound = hub_json_names(tree)
+
+    def reads(call: ast.Call) -> bool:
+        if call_name(call) not in FILE_READS:
+            return False
+        parts: list[ast.AST] = [*call.args, *(keyword.value for keyword in call.keywords)]
+        if isinstance(call.func, ast.Attribute):
+            parts.append(call.func.value)
+        return any(mentions_hub_json(part) or names_in(part) & bound for part in parts)
+
+    return sorted(
+        {node.lineno for node in ast.walk(tree) if isinstance(node, ast.Call) and reads(node)}
+    )
+
+
+def rendered_modules(config: HubConfig) -> Iterator[tuple[str, str]]:
+    for file in render_hub(config).files:
+        if file.path.endswith(".py"):
+            yield file.path, file.content.decode("utf-8")
+
+
+def test_opens_hub_json_only_in_reader_when_sources_read(demo_config: HubConfig) -> None:
+    modules = dict(rendered_modules(demo_config))
+
+    readers = {path: lines for path, source in modules.items() if (lines := hub_json_reads(source))}
+
+    # the detector sees both forms, direct and through a name
+    assert hub_json_reads('p = hub / "hub.json"\njson.loads(p.read_text())\n') == [2]
+    assert hub_json_reads('open(os.path.join(d, "hub.json"))\n') == [1]
+    assert READER in modules
+    assert len(modules) > 1
+    assert readers == {}
+
+
+def test_reads_named_file_when_hub_config_names_other_json(
+    hub: Path, *, hook_python: str, run_python: Callable[..., Any], tmp_path: Path
+) -> None:
+    write_hub_json(hub, {"project": {"name": "demo", "default_branch": "from-hook-root"}})
+    folder = tmp_path / "conf" / "settings"
+    folder.mkdir(parents=True)
+    write_hub_json(folder, {"project": {"name": "x", "default_branch": "from-hub-json"}})
+    custom = folder / "custom.json"
+    custom.write_text(json.dumps({"project": {"default_branch": "from-custom"}}), encoding="utf-8")
+    code = (
+        "import json\nfrom hubhooks import load_config\ncfg = load_config(None)\n"
+        "print(json.dumps([str(cfg.hub), cfg.default_branch]))\n"
+    )
+
+    found = run_python(
+        hook_python, code, path=hub / HOOKS, cwd=folder, env={"HUB_CONFIG": str(custom)}
+    )
+
+    assert found == [str(folder), "from-custom"]
+
+
+# Plugin-cache mode: the hooks sit where Claude Code's plugin cache would hold them, so no hub
+# holds them and the walk decides. A hub found beside the start counts only for its own repos.
+PLUGIN_CACHE = "home/.claude/plugins/cache/agent-hub/hub-workflow/0.1.0/hooks"
+SIBLING_HUB_JSON: dict[str, Any] = {
+    "project": {"name": "other", "default_branch": "release"},
+    "repos": [{"dir": "listed"}],
+    "guard": {"deny_hosts": ["prod.example.com"]},
+}
+
+
+@pytest.fixture
+def cached_hooks(tmp_path: Path, demo_config: HubConfig) -> Path:
+    """The rendered hooks copied into a plugin-cache folder, with no hub above them."""
+    cache = tmp_path / PLUGIN_CACHE
+    cache.mkdir(parents=True)
+    for file in render_hub(demo_config).files:
+        if file.path.startswith(f"{HOOKS}/"):
+            (cache / Path(file.path).name).write_bytes(file.content)
+    return cache
+
+
+@pytest.fixture
+def sibling_workspace(tmp_path: Path) -> Path:
+    """``w2``: ``other-hub`` (hub.json + brain/), its listed repo ``listed``, ``unrelated/proj``."""
+    workspace = tmp_path / "w2"
+    (workspace / "other-hub" / "brain").mkdir(parents=True)
+    write_hub_json(workspace / "other-hub", SIBLING_HUB_JSON)
+    for folder in ("listed/src", "unrelated/proj"):
+        (workspace / folder).mkdir(parents=True)
+    return workspace
+
+
+def run_cached(
+    run_hook_file: RunHook,
+    *,
+    python: str,
+    hook: Path,
+    event: Mapping[str, Any],
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[bytes]:
+    cwd = Path(event["cwd"])
+    return run_hook_file(python, hook, stdin=json.dumps(event).encode(), cwd=cwd, env=env)
+
+
+# Hand-edited repo dirs that are not one plain folder name: none may adopt the start.
+ODD_DIRS = [None, ".", "..", "./unrelated"]
+
+
+@pytest.mark.parametrize("odd_dir", ODD_DIRS)
+def test_ignores_sibling_hub_when_start_outside_its_repos(
+    odd_dir: str | None,
+    cached_hooks: Path,
+    sibling_workspace: Path,
+    *,
+    hook_python: str,
+    run_hook_file: RunHook,
+    tmp_path: Path,
+) -> None:
+    if odd_dir is not None:
+        document = SIBLING_HUB_JSON | {"repos": [{"dir": "listed"}, {"dir": odd_dir}]}
+        write_hub_json(sibling_workspace / "other-hub", document)
+    project = sibling_workspace / "unrelated" / "proj"
+    env = scratch_env(tmp_path) | {"CLAUDE_PROJECT_DIR": str(project)}
+
+    def run(name: str, event: Mapping[str, Any]) -> subprocess.CompletedProcess[bytes]:
+        hook = cached_hooks / f"{name}.py"
+        return run_cached(run_hook_file, python=hook_python, hook=hook, event=event, env=env)
+
+    host = run("guard", bash_event("curl https://prod.example.com/x", project))
+    release = run("guard", bash_event("git push origin release", project))
+    end = run("session_end", {"session_id": "abcdef123456", "cwd": str(project)})
+
+    assert verdict_of(host) is None
+    assert verdict_of(release) is None
+    assert (end.returncode, end.stdout, end.stderr) == (0, b"", b"")
+    assert sorted(path.name for path in (sibling_workspace / "other-hub").rglob("*")) == [
+        "brain",
+        "hub.json",
+    ]
+
+
+@pytest.mark.parametrize(
+    "start", ["listed", "listed/src", "listed/.claude/worktrees/t", "other-hub"]
+)
+def test_finds_sibling_hub_when_start_in_listed_repo_or_hub(
+    start: str,
+    cached_hooks: Path,
+    sibling_workspace: Path,
+    *,
+    hook_python: str,
+    run_hook_file: RunHook,
+    tmp_path: Path,
+) -> None:
+    folder = sibling_workspace / start
+    folder.mkdir(parents=True, exist_ok=True)
+    env = scratch_env(tmp_path)
+
+    release = run_cached(
+        run_hook_file,
+        python=hook_python,
+        hook=cached_hooks / "guard.py",
+        event=bash_event("git push origin release", folder),
+        env=env,
+    )
+    end = run_cached(
+        run_hook_file,
+        python=hook_python,
+        hook=cached_hooks / "session_end.py",
+        event={"session_id": "abcdef123456", "cwd": str(folder)},
+        env=env,
+    )
+
+    verdict = verdict_of(release)
+    assert verdict is not None
+    assert verdict[0] == "deny"
+    assert end.returncode == 0, end.stderr
+    assert "session `abcdef12` ended" in only_file(
+        sibling_workspace / "other-hub" / "brain" / "_inbox" / "sessions"
+    )
+
+
+# A crash forced inside a hook: ``read_input`` raises, whatever the event. The launcher runs the
+# hook file as Claude Code does (``__main__``, ``argv[0]`` the hook) after patching the module.
+CRASH_LAUNCHER = """\
+import runpy
+import sys
+hook = sys.argv[1]
+sys.path.insert(0, hook.rsplit("/", 1)[0])
+import hubhooks
+def boom():
+    raise RuntimeError("forced")
+hubhooks.read_input = boom
+sys.argv = [hook]
+runpy.run_path(hook, run_name="__main__")
+"""
+GUARD_CRASH_OUTPUT = (
+    b'{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask", '
+    b'"permissionDecisionReason": "[hub guard] could not check this call (RuntimeError); '
+    b'confirm"}}\n'
+)
+
+
+# The rendered hooks folder without the reader: every import of hubhooks fails.
+def hooks_without_reader(hub: Path, tmp_path: Path) -> Path:
+    broken = tmp_path / "broken" / HOOKS
+    shutil.copytree(hub / HOOKS, broken)
+    (broken / "stdlib_reader.py").unlink()
+    return broken
+
+
+def test_asks_when_guard_cannot_import_helpers(
+    hub: Path, *, hook_python: str, run_hook_file: RunHook, elsewhere: Path, tmp_path: Path
+) -> None:
+    hooks = hooks_without_reader(hub, tmp_path)
+
+    completed = run_hook_file(
+        hook_python,
+        hooks / "guard.py",
+        stdin=json.dumps(bash_event("git push --force origin main", elsewhere)).encode(),
+        cwd=elsewhere,
+        env=scratch_env(tmp_path),
+    )
+
+    assert (completed.returncode, completed.stdout, completed.stderr) == (
+        0,
+        GUARD_CRASH_OUTPUT.replace(b"RuntimeError", b"ModuleNotFoundError"),
+        b"",
+    )
+
+
+@pytest.mark.parametrize(
+    "name", ["post_edit", "stop_gate", "session_start", "session_end", "pre_compact"]
+)
+def test_prints_skip_line_when_hook_cannot_import_helpers(
+    name: str,
+    hub: Path,
+    *,
+    hook_python: str,
+    run_hook_file: RunHook,
+    elsewhere: Path,
+    tmp_path: Path,
+) -> None:
+    hooks = hooks_without_reader(hub, tmp_path)
+
+    completed = run_hook_file(
+        hook_python, hooks / f"{name}.py", stdin=b"{}", cwd=elsewhere, env=scratch_env(tmp_path)
+    )
+
+    assert (completed.returncode, completed.stdout, completed.stderr) == (
+        0,
+        b"",
+        f"[hub {name}] skipped: ModuleNotFoundError\n".encode(),
+    )
+
+
+def run_crashing(
+    hook: Path, *, python: str, cwd: Path, tmp_path: Path
+) -> subprocess.CompletedProcess[bytes]:
+    launcher = tmp_path / "support" / "crash_launcher.py"
+    launcher.parent.mkdir(exist_ok=True)
+    launcher.write_text(CRASH_LAUNCHER, encoding="utf-8")
+    return subprocess.run(  # noqa: S603 - an interpreter from hook_python, a fixed launcher
+        [python, str(launcher), str(hook)],
+        input=b"{}",
+        capture_output=True,
+        check=False,
+        cwd=cwd,
+        env={"PATH": os.environ.get("PATH", os.defpath)} | scratch_env(tmp_path),
+        timeout=60,
+    )
+
+
+def test_asks_when_guard_crashes(
+    hub: Path, *, hook_python: str, elsewhere: Path, tmp_path: Path
+) -> None:
+    write_hub_json(hub, a_hub_document())
+
+    completed = run_crashing(
+        hub / HOOKS / "guard.py", python=hook_python, cwd=elsewhere, tmp_path=tmp_path
+    )
+
+    assert (completed.returncode, completed.stdout, completed.stderr) == (
+        0,
+        GUARD_CRASH_OUTPUT,
+        b"",
+    )
+
+
+@pytest.mark.parametrize(
+    "name", ["post_edit", "stop_gate", "session_start", "session_end", "pre_compact"]
+)
+def test_prints_skip_line_when_hook_crashes(
+    name: str, hub: Path, *, hook_python: str, elsewhere: Path, tmp_path: Path
+) -> None:
+    write_hub_json(hub, a_hub_document())
+
+    completed = run_crashing(
+        hub / HOOKS / f"{name}.py", python=hook_python, cwd=elsewhere, tmp_path=tmp_path
+    )
+
+    assert (completed.returncode, completed.stdout, completed.stderr) == (
+        0,
+        b"",
+        f"[hub {name}] skipped: RuntimeError\n".encode(),
+    )

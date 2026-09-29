@@ -142,7 +142,8 @@ def post_edit_missing_file(*, ws: Any) -> Run:
 
 
 def post_edit_no_hub(*, ws: Any) -> Run:
-    # The repo is named like a listed one and has ruff: only the missing hub stops the hook.
+    # No hub above the cwd or the file, and the repo is named like a listed one. AGH-7 pinned
+    # "no hub, not linted"; under Q-4 the hub holding the hook is the config, so it is linted.
     post_edit_workspace(ws)
     repo = ws.make_repo(ws.root / "elsewhere" / "api", files={"x.py": "x = 1\n"})
     ws.install_repo_fakes(repo, ["ruff"])
@@ -274,7 +275,9 @@ def start(
 
 def session_start_no_hub(*, ws: Any) -> Run:
     ws.brief_workspace()
-    write_snapshot(ws)  # HUB_CONFIG names a dir whose parent is the hub: ignored, no snapshot
+    # HUB_CONFIG names a dir, so it is ignored. AGH-7 pinned "no snapshot"; under Q-4 the hub
+    # holding the hook is found, so its snapshot is appended.
+    write_snapshot(ws)
     return start(
         ws,
         session_event("compact", ws.root / "elsewhere"),
@@ -330,7 +333,9 @@ def session_start_no_brief_startup(*, ws: Any) -> Run:
 
 def session_start_hub_worktree_cwd(*, ws: Any) -> Run:
     ws.brief_workspace()
-    write_snapshot(ws)  # in the main hub only: the worktree has none, so nothing is appended
+    # In the main hub only. AGH-7 read the worktree (none, so nothing appended); under Q-4 the
+    # hook reads the main hub that holds it, so this snapshot is appended (SNAPSHOT_OF).
+    write_snapshot(ws)
     wt = ws.add_worktree(hub_of(ws), "x")
     ws.add_worktree(hub_of(ws), "z")  # also a hub worktree: the scan takes the first sorted
     project = dict(ws.BRIEF_HUB_JSON["project"], hub_repo="acme/demo-hub-wt")
@@ -345,6 +350,7 @@ def session_start_hub_worktree_cwd(*, ws: Any) -> Run:
 
 
 def session_start_non_object_stdin(*, ws: Any) -> Run:
+    # AGH-7 pinned a crash; hooks fail open (AC-4.11): an empty object, exit 0.
     ws.brief_workspace()
     return start(ws, b"[]", cwd=hub_of(ws))
 
@@ -381,6 +387,8 @@ def session_end_workspace(ws: Any) -> None:
 
 
 def session_end_no_hub(*, ws: Any) -> Run:
+    # No hub above the event's or the process's cwd. AGH-7 pinned "nothing written"; under Q-4
+    # the entry goes to the hub holding the hook.
     session_end_workspace(ws)
     stdin = fields_event(session_id="abcdef123456", reason="logout", cwd=str(ws.root / "elsewhere"))
     return {"stdin": stdin, "no_hub": True}
@@ -417,8 +425,10 @@ def session_end_empty_stdin_in_hub(*, ws: Any) -> Run:
 
 
 def session_end_hub_worktree_cwd(*, ws: Any) -> Run:
-    # Pinned item 1: from inside a hub worktree, the workspace is <hub>/.claude/worktrees, so the
-    # entry goes into the worktree's brain/. A null session id prints `None`.
+    # AGH-7's pinned item 1: hooks run from a hub worktree took <hub>/.claude/worktrees as the
+    # workspace and wrote into the worktree's brain/. Under Q-4 the worktree's hooks read its
+    # hub.json, but the hub and workspace are the main checkout's: the entry goes into the main
+    # brain/ and lists api and the worktree. A null session id prints `None`.
     session_end_workspace(ws)
     wt = ws.add_worktree(hub_of(ws), "x", branch="dev/tst-9-x")
     ws.write_files(wt, {"draft.txt": "wt\n"})
@@ -478,6 +488,7 @@ def write_transcript(ws: Any) -> Path:
 
 
 def pre_compact_no_hub(*, ws: Any) -> Run:
+    # As session_end/no_hub: under Q-4 the snapshot goes to the hub holding the hook.
     pre_compact_workspace(ws)
     transcript = write_transcript(ws)
     stdin = fields_event(
@@ -794,6 +805,10 @@ DIVERGENT = frozenset(
 # What the missing brief script changes in them: its text and its gh calls, nothing else.
 BRIEF_STREAMS = frozenset({"stdout", "calls"})
 SNAPSHOT_MARKER = "\n\n## Snapshot before compaction\n"
+# Q-4: the hook reads the hub that holds it, not the hub worktree of the event's cwd, so this case
+# now appends the hub's snapshot: the one compact_snapshot's golden holds (slice 20 regenerates
+# both).
+SNAPSHOT_OF = {"session_start/hub_worktree_cwd": "session_start/compact_snapshot"}
 MATCHING = sorted(CASES.keys() - DIVERGENT)
 
 
@@ -809,6 +824,8 @@ def test_lists_every_golden_when_cases_collected(golden: Any) -> None:
     files = [case.split("/", 1)[0] for case in CASES]
     assert {name: files.count(name) for name in files} == CASES_PER_FILE
     assert CASES.keys() > DIVERGENT
+    assert SNAPSHOT_OF.keys() <= DIVERGENT
+    assert set(SNAPSHOT_OF.values()) <= CASES.keys()
     assert golden.orphans(golden.GOLDEN_ROOT, CASES) == []
     if not golden.update_mode():  # in update mode the cases write what is missing
         assert golden.missing(golden.GOLDEN_ROOT, CASES) == []
@@ -838,4 +855,6 @@ def test_differs_from_golden_when_case_needs_hub_brief_script(
     assert "stdout" in differing, f"{case} now matches the brief's output: drop it from DIVERGENT"
     assert differing <= BRIEF_STREAMS, f"{case}: {sorted(differing)} differ"
     assert actual["calls"] == b""
-    assert actual["stdout"] == brief_free_stdout(expected["stdout"])
+    snapshot_path = golden.GOLDEN_ROOT / f"{SNAPSHOT_OF.get(case, case)}.golden"
+    snapshot_stdout = golden.parse(snapshot_path.read_bytes(), snapshot_path)["stdout"]
+    assert actual["stdout"] == brief_free_stdout(snapshot_stdout)

@@ -10,6 +10,8 @@ and a real 3.9), from a folder outside the workspace, with neither ``HUB_CONFIG`
 
 import ast
 import json
+import shutil
+import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -19,6 +21,8 @@ import pytest
 from agent_hub.core.hub_config.model import HubConfig
 
 HOOKS = "plugin/hub-workflow/hooks"
+# Where Claude Code's plugin cache would hold the hooks: no hub.json three folders up.
+PLUGIN_CACHE = "home/.claude/plugins/cache/agent-hub/hub-workflow/0.1.0/hooks"
 # The hub test's HUB_JSON, value for value.
 HUB_JSON: dict[str, Any] = {
     "project": {
@@ -46,9 +50,11 @@ import json
 from pathlib import Path
 from guard import check_bash, check_file
 from hubhooks import Config, find_hub, load_config
+from stdlib_reader import HubFile, ProjectSection
 hub, ws = Path(sys.argv[1]), Path(sys.argv[2])
 scope = dict(check_bash=check_bash, check_file=check_file, Config=Config, find_hub=find_hub,
-             load_config=load_config, cfg=load_config(hub), hub=hub, ws=ws)
+             load_config=load_config, cfg=load_config(hub), hub=hub, ws=ws, HubFile=HubFile,
+             ProjectSection=ProjectSection)
 print(json.dumps([repr(eval(expression, scope)) for expression in json.loads(sys.argv[3])]))
 """
 
@@ -134,12 +140,22 @@ def evaluate(
     elsewhere.mkdir()
     home.mkdir()
 
-    def run(expressions: Sequence[str], *, env: Mapping[str, str] | None = None) -> list[Any]:
+    def run(
+        expressions: Sequence[str],
+        *,
+        env: Mapping[str, str] | None = None,
+        hooks: Path | None = None,
+    ) -> list[Any]:
         hub = workspace / "demo-hub"
         args = [str(hub), str(workspace), json.dumps(list(expressions))]
         child_env = {"HOME": str(home)} | dict(env or {})
         found = run_python(
-            hook_python, EVALUATE, path=hub / HOOKS, args=args, cwd=elsewhere, env=child_env
+            hook_python,
+            EVALUATE,
+            path=hooks or hub / HOOKS,
+            args=args,
+            cwd=elsewhere,
+            env=child_env,
         )
         return [ast.literal_eval(value) for value in found]
 
@@ -462,6 +478,40 @@ def test_asks_when_file_tool_edits_protected_path(evaluate: Evaluate, workspace:
     assert verdicts[-1] is None
 
 
+def test_asks_when_write_replaces_non_utf8_protected_test_file(
+    evaluate: Evaluate,
+    workspace: Path,
+    *,
+    hook_python: str,
+    run_hook_file: Callable[..., subprocess.CompletedProcess[bytes]],
+    tmp_path: Path,
+) -> None:
+    # Reading the old test file fails (not UTF-8): the assertion count is skipped, never the
+    # ask_before_edit rule after it.
+    path = workspace / "app" / "src" / "auth" / "tests" / "test_x.py"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"assert x\n\xff\n")
+    write = {"tool_name": "Write", "tool_input": {"file_path": str(path), "content": "x"}}
+    reason = (
+        f"[hub guard] {path} matches guard.ask_before_edit `app/src/auth/*` (hub.json): plan and "
+        "approval first; confirm this change is intended"
+    )
+
+    (verdict,) = evaluate([file("Write", {"file_path": str(path), "content": "x"})])
+    completed = run_hook_file(
+        hook_python,
+        workspace / "demo-hub" / HOOKS / "guard.py",
+        stdin=json.dumps(write | {"cwd": str(workspace / "app")}).encode(),
+        cwd=workspace / "app",
+        env={"HOME": str(tmp_path / "home")},
+    )
+
+    assert verdict == ("ask", reason.removeprefix("[hub guard] "))
+    assert completed.returncode == 0, completed.stderr
+    output = json.loads(completed.stdout)["hookSpecificOutput"]
+    assert (output["permissionDecision"], output["permissionDecisionReason"]) == ("ask", reason)
+
+
 def test_denies_webfetch_when_host_listed(evaluate: Evaluate) -> None:
     prod, payments, docs, without_config = evaluate(
         [
@@ -499,35 +549,45 @@ def test_finds_hub_when_started_from_hub_repo_or_worktree(
     app_worktree = workspace / "app" / ".claude" / "worktrees" / "x" / "src"
     app_worktree.mkdir(parents=True)
     starts = [hub, hub / "brain", worktree, workspace / "app" / "src", app_worktree, workspace]
+    # The same hooks in a plugin cache, with no hub.json above them: only the walk finds the hub.
+    cache = workspace.parent / PLUGIN_CACHE
+    shutil.copytree(hub / HOOKS, cache)
+    expressions = [f"str(find_hub({str(start)!r}))" for start in starts]
 
-    found = evaluate([f"str(find_hub({str(start)!r}))" for start in starts])
+    in_hub = evaluate(expressions)
+    in_cache = evaluate(expressions, hooks=cache)
 
-    assert dict(zip(map(str, starts), found, strict=True)) == dict.fromkeys(
-        map(str, starts), str(hub)
-    )
+    expected = dict.fromkeys(map(str, starts), str(hub))
+    assert dict(zip(map(str, starts), in_hub, strict=True)) == expected
+    # the workspace itself is in no listed repo and not in the hub: a scan hit there does not
+    # count (owner decision, 2026-09-29), so from the cache it finds no hub
+    assert dict(zip(map(str, starts), in_cache, strict=True)) == expected | {str(workspace): "None"}
 
 
 def test_reads_values_and_defaults_when_config_loaded(evaluate: Evaluate, workspace: Path) -> None:
-    bare = "Config(hub, {'project': {'name': 'x'}})"
+    # D1/Q-2: Config is built from the reader's HubFile; repo() returns a RepoEntry.
+    bare = "Config(hub, HubFile(project=ProjectSection(name='x')))"
     fields = "b.default_branch, b.branch_prefix, b.repo_dirs, b.ask_before_edit"
     repo_dirs, found_workspace, check_fast, default_branch, defaults = evaluate(
         [
             "cfg.repo_dirs",
             "str(cfg.workspace)",
-            "cfg.repo('app')['check_fast']",
+            "cfg.repo('app').check_fast",
             "cfg.default_branch",
             f"(lambda b: ({fields}))({bare})",
         ]
     )
 
-    assert repo_dirs == ["app", "web"]
+    assert repo_dirs == ("app", "web")
     assert found_workspace == str(workspace)
     assert check_fast == "make check-fast"
     assert default_branch == "trunk"
-    assert defaults == ("main", "", [], ())
+    assert defaults == ("main", "", (), ())
 
 
-def test_uses_hub_config_when_env_names_file(evaluate: Evaluate, tmp_path: Path) -> None:
+def test_uses_hub_config_when_env_names_file(
+    evaluate: Evaluate, workspace: Path, tmp_path: Path
+) -> None:
     # A second hub, apart from the one holding the hook and two levels below tmp_path, so no
     # walk from the child's cwd (tmp_path/elsewhere) or its sibling scan can find it.
     other = tmp_path / "other" / "other-hub"
@@ -537,3 +597,5 @@ def test_uses_hub_config_when_env_names_file(evaluate: Evaluate, tmp_path: Path)
     found = evaluate(["str(find_hub('/'))"], env={"HUB_CONFIG": str(other / "hub.json")})
 
     assert found == [str(other.resolve())]
+    # without it, the hub holding the hook wins (Q-4): HUB_CONFIG came first
+    assert evaluate(["str(find_hub('/'))"]) == [str(workspace / "demo-hub")]
