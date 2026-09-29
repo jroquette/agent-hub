@@ -166,6 +166,17 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
         )
         for name in _BASE_AGENTS
     ),
+    # The hooks, copied from the hub as they are (spec D4); only the entry points are executable
+    # (Q-3): `hubhooks.py` is their shared module.
+    TemplateEntry(
+        path=f"{_BASE_PLUGIN}/hooks/guard.py",
+        source=_template(f"{_BASE_PLUGIN}/hooks/guard.py.tmpl"),
+        kind=Kind.GENERIC,
+        ownership=Ownership.MANAGED,
+        executable=True,
+    ),
+    _generic_managed(f"{_BASE_PLUGIN}/hooks/hooks.json", f"{_BASE_PLUGIN}/hooks/hooks.json.tmpl"),
+    _generic_managed(f"{_BASE_PLUGIN}/hooks/hubhooks.py", f"{_BASE_PLUGIN}/hooks/hubhooks.py.tmpl"),
     # The hooks' `hub.json` reader: stdlib only, Python 3.9 (spec Q-2).
     _generic_managed(
         f"{_BASE_PLUGIN}/hooks/stdlib_reader.py", f"{_BASE_PLUGIN}/hooks/stdlib_reader.py.tmpl"

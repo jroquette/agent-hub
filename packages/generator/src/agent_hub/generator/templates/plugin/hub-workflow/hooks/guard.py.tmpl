@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""PreToolUse guard for a hub workspace (hub.json + sibling repos).
+
+deny  = hard block (secrets, force-push / push to the default branch, curl|sh, destructive infra and docker
+        volumes, AI attribution in commits/PRs/branches, editing .git internals, network to guard.deny_hosts)
+ask   = needs the user's confirmation (removing test assertions or adding skip/xfail/quarantine markers,
+        deleting or sed-editing tests from Bash, editing paths in guard.ask_before_edit, writing brain/
+        outside now.md, journal/, _inbox/, auto/, features/)
+Project values (branch prefix, default branch, tracker team, guard lists) come from hub.json.
+Everything else passes through to the normal permission rules.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import sys
+from fnmatch import fnmatch
+from typing import Optional, Tuple
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hubhooks import Config, emit, load_config, read_input  # noqa: E402
+
+Verdict = Optional[Tuple[str, str]]
+
+NON_SECRET_ENV = {".env.example", ".env.development", ".env.staging", ".env.test", ".env.sample", ".env.template"}
+SECRET_FILE = re.compile(r"(^|/)(\.env(\.[\w.-]+)?|[^/]*\.(pem|key|p12|pfx)|id_(rsa|ed25519)[^/]*)$")
+AI_ATTRIBUTION = re.compile(r"co-authored-by:\s*[^\n]*(claude|anthropic|openai|copilot|\bai\b)|generated with \[?claude|🤖", re.I)
+SECRET_TOKEN = re.compile(
+    r"(?<![\w-])[<'\"]?(\S*/)?(\.env(\.[\w.-]+)?|[\w.-]+\.(pem|key|p12|pfx)|id_(rsa|ed25519|ecdsa)[\w.-]*)(?=[\s'\";|&)<>]|$)"
+)
+SAFE_ON_SECRETS = {"ls", "test", "[", "stat"}  # these never print file contents
+GIT = r"\bgit(\s+-[Cc]\s+\S+)*\s+"
+SKIP_MARKERS = re.compile(
+    r"@pytest\.mark\.(skip|skipif|xfail|quarantine)\b|\bpytest\.(skip|xfail)\(|\b(test|it|describe)\.(skip|fixme|todo)\(|\bx(it|describe)\("
+)
+TEST_PATH = r"(?:(\S*/)?(tests?|__tests__)/\S+|\S+\.(test|spec)\.[jt]sx?\b|\S*/test_\w+\.py\b)"
+BASH_WRITE = re.compile(r">>?|\btee\b|\bsed\s+(-\w*i\w*|--in-place)\b|\b(rm|mv|cp|truncate|ln)\b")
+WORKTREE_SEG = re.compile(r"/\.claude/worktrees/[^/]+(?=/)")
+
+
+def _secret_path(path: str) -> bool:
+    if os.path.basename(path) in NON_SECRET_ENV:
+        return False
+    return bool(SECRET_FILE.search(path))
+
+
+def _branch_hint(cfg: Config) -> str:
+    team = f"{cfg.tracker_team.lower()}-<N>-" if cfg.tracker_team else ""
+    return f"{cfg.branch_prefix}{team}<desc>"
+
+
+def _host_regex(pattern: str) -> str:
+    """deny_hosts entry → regex; `*.example.com` covers subdomains, anything else is an exact host."""
+    body = re.escape(pattern.strip().lower()).replace(r"\*", r"[\w-]+(?:\.[\w-]+)*")
+    return r"(?<![\w.-])" + body + r"(?![\w-]|\.[\w-])"
+
+
+def denied_host(text: str, cfg: Config) -> str | None:
+    for h in cfg.deny_hosts:
+        if re.search(_host_regex(h), text, re.I):
+            return h
+    return None
+
+
+def protected(path: str, cfg: Config) -> str | None:
+    """The guard.ask_before_edit pattern that covers path, if any.
+
+    Patterns are globs (fnmatch, `*` crosses `/`) matched against the absolute path, the path relative to the
+    workspace, and any path suffix; a pattern without glob characters is a file or directory prefix.
+    Worktree segments (`<repo>/.claude/worktrees/<t>/`) are dropped first, so `app/src/auth/*` covers
+    the same file in every worktree of `app`."""
+    if not cfg.ask_before_edit or not path:
+        return None
+    p = WORKTREE_SEG.sub("", os.path.abspath(path) if not path.startswith("~") else path)
+    cands = [p, path]
+    if cfg.workspace:
+        ws = str(cfg.workspace).rstrip("/") + "/"
+        if p.startswith(ws):
+            cands.append(p[len(ws):])
+    for pat in cfg.ask_before_edit:
+        pat = pat.strip()
+        globs = [pat] if any(c in pat for c in "*?[") else [pat.rstrip("/"), pat.rstrip("/") + "/*"]
+        for g in globs:
+            for c in cands:
+                if fnmatch(c, g) or fnmatch(c, "*/" + g.lstrip("/")):
+                    return pat
+    return None
+
+
+def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
+    cfg = cfg or Config()
+    c = cmd.replace("\\\n", " ")
+    branches = "|".join(sorted({"main", "master", re.escape(cfg.default_branch)}))
+    if re.search(GIT + r"push\b[^;&|\n]*(\s--force\b|\s-f\b|\s--force-with-lease\b|\s\+\S)", c):
+        return "deny", "force-push is not allowed; push a new commit (or a merge) instead"
+    if re.search(GIT + rf"push\b[^;&|\n]*(\s(origin\s+)?({branches})\b|:(refs/heads/)?({branches})\b)", c):
+        return "deny", f"pushing to {cfg.default_branch} is not allowed; open a PR from a {_branch_hint(cfg)} branch"
+    if re.search(r"\b(curl|wget)\b[^|;&\n]*\|\s*(sudo\s+)?(ba|z|da)?sh\b", c):
+        return "deny", "curl|sh is not allowed; download, inspect, then run explicitly"
+    host = denied_host(c, cfg)
+    if host:
+        return "deny", f"{host} is in guard.deny_hosts (hub.json); agents do not reach it. Use fixtures or a sandbox endpoint"
+    if re.search(r"\bdocker\s+volume\s+(rm|prune)\b|\bdocker\s+compose\b[^;&|\n]*\bdown\b[^;&|\n]*\s-v\b", c):
+        return "deny", "removing docker volumes deletes local data (databases, caches); a human does this"
+    if re.search(r"\bterraform\s+(apply|destroy|import)\b|\baws\s+\S+|\bpulumi\s+(up|destroy)\b|\bkubectl\s+(apply|delete)\b", c):
+        return "deny", "infrastructure commands (terraform/aws/pulumi/kubectl) are human-only"
+    for seg in re.split(r"&&|\|\||[;|\n]", c):
+        words = seg.split()
+        if not words or words[0] in SAFE_ON_SECRETS:
+            continue
+        for m in SECRET_TOKEN.finditer(seg):
+            tok = m.group(0).lstrip("<").strip("'\"")
+            if _secret_path(tok):
+                return "deny", f"reading secret file {tok} is not allowed (any command, not just cat); reference the variable name instead"
+    if re.search(r"\bgit\s+(commit|tag)\b", c) and AI_ATTRIBUTION.search(c):
+        return "deny", "commits carry no AI attribution (no Co-Authored-By AI, no 'Generated with', no 🤖)"
+    if re.search(r"\bgh\s+pr\s+(create|edit)\b", c) and AI_ATTRIBUTION.search(c):
+        return "deny", "PR text carries no AI attribution"
+    if re.search(r"\b(checkout\s+-b|switch\s+-c|branch(\s+-\w+)*|worktree\s+add\b[^;&|\n]*-b)\s+['\"]?claude/", c):
+        return "deny", f"branches are {_branch_hint(cfg)}, never claude/..."
+    if re.search(r"\b(rm|mv|cp|ln|truncate)\b[^;&|\n]*(^|[\s/'\"])\.git(/|\s|$|['\"])", c) or re.search(r">>?\s*(\S*/)?\.git(/|\s|$)", c):
+        return "deny", ".git is git's own state (a worktree's .git file links it to the repo); use git commands, never edit it directly"
+    if re.search(r"\b(rm|mv|truncate)\b[^;&|\n]*\s" + TEST_PATH, c) or re.search(r"\bsed\s+(-\w*i\w*|--in-place)\b[^;&|\n]*\s" + TEST_PATH, c):
+        return "ask", "deleting or sed-editing tests from Bash bypasses the assertion guard; use Edit, or confirm this is intended"
+    if re.search(r"(>>?|\btee\b(\s+-a)?|\bsed\s+-\w*i\w*|\b(rm|mv|cp)\b)[^;&|\n]*\bbrain/(?!(now\.md|journal/|_inbox/|auto/|features/))\S+", c):
+        return "ask", "brain/ is curated: agents write only now.md, journal/, _inbox/, auto/ and features/; propose via /learn or confirm"
+    if cfg.ask_before_edit:
+        for seg in re.split(r"&&|\|\||[;|\n]", c):
+            if not BASH_WRITE.search(seg):
+                continue
+            for tok in re.split(r"[\s<>]+", seg):
+                tok = tok.strip("'\"")
+                if tok and not tok.startswith("-"):
+                    pat = protected(tok, cfg)
+                    if pat:
+                        return "ask", f"{tok} matches guard.ask_before_edit `{pat}` (hub.json); confirm this change is intended"
+    return None
+
+
+def _assert_count(s: str) -> int:
+    return len(re.findall(r"\bassert\b|\bexpect\(|\bpytest\.raises\b|\.assert_\w+\(", s or ""))
+
+
+def _brain_rel(path: str, cfg: Config) -> str | None:
+    """Path inside the hub's brain/ (main checkout or a hub worktree), relative to brain/."""
+    if cfg.hub:
+        m = re.search(re.escape(cfg.hub.name) + r"/(?:\.claude/worktrees/[^/]+/)?brain/(.+)$", path)
+        if m:
+            return m.group(1)
+    m = re.search(r"^(.*)/brain/(.+)$", path)
+    if m and os.path.isfile(os.path.join(m.group(1), "hub.json")):
+        return m.group(2)
+    m = re.search(r"^brain/(.+)$", path)
+    if m and os.path.isdir("brain"):
+        return m.group(1)
+    return None
+
+
+def check_file(tool: str, ti: dict, cfg: Config | None = None) -> Verdict:
+    cfg = cfg or Config()
+    if tool == "WebFetch":
+        host = denied_host(ti.get("url", ""), cfg)
+        return ("deny", f"{host} is in guard.deny_hosts (hub.json); agents do not reach it") if host else None
+    path = ti.get("file_path") or ti.get("notebook_path") or ti.get("path") or ""
+    if tool == "Grep" and ti.get("glob") and re.search(r"(^|[/*{,])\.env\b", ti["glob"]) and ".example" not in ti["glob"]:
+        return "deny", "Grep over .env files may print secrets; reference variable names instead"
+    if not path:
+        return None
+    if _secret_path(path):
+        return "deny", f"{os.path.basename(path)} may hold secrets; reference variable names instead of reading it"
+    if tool in ("Read", "Grep", "Glob"):
+        return None
+    if re.search(r"(^|/)\.git(/|$)", path):
+        return "deny", ".git is git's own state (a worktree's .git file links it to the repo); use git commands, never edit it directly"
+    if re.search(r"(^|/)(tests?|__tests__)/|\.(test|spec)\.[jt]sx?$|/test_[^/]+\.py$", path):
+        if tool == "Edit":
+            removed = _assert_count(ti.get("old_string", "")) - _assert_count(ti.get("new_string", ""))
+        elif tool == "MultiEdit":
+            removed = sum(_assert_count(e.get("old_string", "")) - _assert_count(e.get("new_string", "")) for e in ti.get("edits", []))
+        elif tool == "Write" and os.path.exists(path):
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    removed = _assert_count(fh.read()) - _assert_count(ti.get("content", ""))
+            except OSError:
+                removed = 0
+        else:
+            removed = 0
+        if removed > 0:
+            return "ask", f"this edit removes {removed} assertion(s) from a test; acceptance tests are a contract, confirm first"
+        before = ti.get("old_string", "") if tool == "Edit" else "".join(e.get("old_string", "") for e in ti.get("edits", [])) if tool == "MultiEdit" else ""
+        if tool == "Write" and os.path.exists(path):
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    before = fh.read()
+            except OSError:
+                before = ""
+        after = ti.get("new_string", "") if tool == "Edit" else "".join(e.get("new_string", "") for e in ti.get("edits", [])) if tool == "MultiEdit" else ti.get("content", "")
+        if len(SKIP_MARKERS.findall(after or "")) > len(SKIP_MARKERS.findall(before or "")):
+            return "ask", "this edit adds a skip/xfail/quarantine/fixme marker to a test; that weakens the suite, confirm first"
+    pat = protected(path, cfg)
+    if pat:
+        return "ask", f"{path} matches guard.ask_before_edit `{pat}` (hub.json): plan and approval first; confirm this change is intended"
+    rel = _brain_rel(path, cfg)
+    if rel is not None and not re.match(r"(now\.md|journal/|_inbox/|auto/|features/)", rel):
+        return "ask", "brain/ is curated: agents write only now.md, journal/, _inbox/, auto/ and features/; propose via /learn or confirm"
+    return None
+
+
+FILE_TOOLS = ("Read", "Grep", "Glob", "Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch")
+
+
+def main() -> None:
+    data = read_input()
+    tool, ti = data.get("tool_name", ""), data.get("tool_input") or {}
+    if tool != "Bash" and tool not in FILE_TOOLS:
+        return
+    cfg = load_config(data.get("cwd"))
+    verdict = check_bash(ti.get("command", ""), cfg) if tool == "Bash" else check_file(tool, ti, cfg)
+    if verdict:
+        decision, reason = verdict
+        emit({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
+                                     "permissionDecisionReason": f"[hub guard] {reason}"}})
+
+
+if __name__ == "__main__":
+    main()

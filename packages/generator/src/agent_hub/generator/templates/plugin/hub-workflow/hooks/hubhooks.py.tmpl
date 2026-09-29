@@ -1,0 +1,130 @@
+"""Shared helpers for the hub-workflow hooks (Python 3.9+, stdlib only).
+
+The plugin may run from Claude Code's plugin cache, so nothing here assumes the hub's own scripts/ are
+importable. The hub is found by walking up from the session cwd (then $CLAUDE_PROJECT_DIR) to the first
+directory holding hub.json, or to a workspace directory whose child holds hub.json + brain/ (so a session
+started in a sibling repo, or in one of its worktrees, still finds the hub). $HUB_CONFIG overrides both.
+hub.json is read directly with json; every field has a default so a partial config never breaks a hook.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import List, Optional, Tuple
+
+
+def read_input() -> dict:
+    try:
+        return json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError):
+        return {}
+
+
+def emit(obj: dict) -> None:
+    print(json.dumps(obj))
+
+
+def _in_worktree(d: Path) -> bool:
+    return d.parent.name == "worktrees" and d.parent.parent.name == ".claude"
+
+
+def find_hub(start: str | os.PathLike | None = None) -> Path | None:
+    """The hub directory (the one holding hub.json), searched upwards from start.
+
+    A hub worktree (<hub>/.claude/worktrees/<t>) carries its own hub.json; it is skipped so the walk
+    reaches the main hub checkout, whose parent is the workspace."""
+    env = os.environ.get("HUB_CONFIG")
+    if env and os.path.isfile(env):
+        return Path(env).resolve().parent
+    for s in (start, os.environ.get("CLAUDE_PROJECT_DIR"), os.getcwd()):
+        if not s:
+            continue
+        p = Path(s).resolve()
+        for d in (p, *p.parents):
+            if (d / "hub.json").is_file() and not _in_worktree(d):
+                return d
+            try:
+                kids = sorted(k for k in d.iterdir() if k.is_dir() and (k / "hub.json").is_file() and (k / "brain").is_dir())
+            except OSError:
+                kids = []
+            if kids:
+                return kids[0]
+    return None
+
+
+class Config:
+    """hub.json as plain attributes, with a default for every field."""
+
+    def __init__(self, hub: Path | None = None, raw: dict | None = None):
+        raw = raw or {}
+        self.hub = hub
+        self.workspace = hub.parent if hub else None
+        proj = raw.get("project") or {}
+        self.project_name = proj.get("name") or (hub.name if hub else "hub")
+        self.branch_prefix = proj.get("branch_prefix") or ""
+        self.default_branch = proj.get("default_branch") or "main"
+        trk = raw.get("tracker") or {}
+        self.tracker_team = trk.get("team") or ""
+        self.repos = [r for r in (raw.get("repos") or []) if isinstance(r, dict) and r.get("dir")]
+        g = raw.get("guard") or {}
+        self.ask_before_edit = tuple(str(x) for x in (g.get("ask_before_edit") or ()) if x)
+        self.deny_hosts = tuple(str(x) for x in (g.get("deny_hosts") or ()) if x)
+
+    @property
+    def repo_dirs(self) -> List[str]:
+        return [r["dir"] for r in self.repos]
+
+    def repo(self, name: str) -> dict:
+        for r in self.repos:
+            if r.get("dir") == name:
+                return r
+        return {}
+
+
+def load_config(start: str | os.PathLike | None = None) -> Config:
+    hub = find_hub(start)
+    if not hub:
+        return Config()
+    try:
+        raw = json.loads((hub / "hub.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raw = {}
+    return Config(hub, raw if isinstance(raw, dict) else {})
+
+
+def checkouts(cfg: Config, names: Optional[List[str]] = None) -> List[Tuple[str, Path]]:
+    """(name, dir) for each main checkout and its .claude/worktrees/* (default: every repo plus the hub)."""
+    if not cfg.workspace:
+        return []
+    if names is None:
+        names = cfg.repo_dirs + ([cfg.hub.name] if cfg.hub else [])
+    res = []
+    for name in names:
+        main = cfg.workspace / name
+        if not main.is_dir():
+            continue
+        for t in [main] + sorted((main / ".claude" / "worktrees").glob("*")):
+            if t.is_dir() and (t / ".git").exists():
+                res.append((name, t))
+    return res
+
+
+def git(args: list[str], cwd: str | os.PathLike, timeout: int = 10) -> str:
+    try:
+        return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=timeout).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def repo_of(path: str | os.PathLike, known: List[str]) -> tuple[str | None, Path | None]:
+    """(repo name, worktree root) for a path inside one of the known repos (main checkout or worktree)."""
+    top = git(["rev-parse", "--show-toplevel"], cwd=path if os.path.isdir(path) else os.path.dirname(path) or ".")
+    if not top:
+        return None, None
+    common = git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=top)
+    main = Path(common).parent.name if common else Path(top).name
+    return (main if main in known else None), Path(top)

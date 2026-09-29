@@ -12,6 +12,7 @@ from agent_hub.core.hub_config.schema import SCHEMA_FILE, SCHEMA_PACKAGE
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
 from agent_hub.generator.json_form import JsonValue
 from agent_hub.generator.registry import REGISTRY, TemplateEntry, TemplateSource
+from agent_hub.generator.render_hub import render_hub
 
 GENERATOR_PACKAGE = "agent_hub.generator"
 TEMPLATES_FOLDER = "templates"
@@ -75,6 +76,9 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "plugin/hub-workflow/agents/requirements-analyst.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/agents/researcher.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/agents/spec-reviewer.md": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/hooks/guard.py": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/hooks/hooks.json": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/hooks/hubhooks.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/stdlib_reader.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/create-plan/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/feature/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
@@ -84,6 +88,10 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "plugin/hub-workflow/skills/recall/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/research/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
 }
+
+# AC-4.3 (Q-3): the entry points with a `#!` line are executable; modules and every non-`.py`
+# file are not. The hooks and scripts join as they are ported (plan slices 11-13).
+EXECUTABLE_PATHS = frozenset({"plugin/hub-workflow/hooks/guard.py"})
 
 # AC-3.12 (spec D5 "Out"): later issues generate these, never AGH-10's registry. AGH-19
 # (AC-4.29) brings `plugin/` and `.claude/` into scope.
@@ -270,7 +278,18 @@ def test_matches_design_classification_when_compared() -> None:
     actual = {entry.path: (entry.kind, entry.ownership, entry.module) for entry in REGISTRY}
 
     assert actual == EXPECTED
-    assert all(not entry.executable for entry in REGISTRY)
+    assert {entry.path for entry in REGISTRY if entry.executable} == EXECUTABLE_PATHS
+
+
+def test_starts_with_shebang_when_executable_entry_rendered(demo_config: HubConfig) -> None:
+    rendered = render_hub(demo_config).files
+
+    executables = [file for file in rendered if file.executable]
+
+    assert {file.path for file in executables} == EXECUTABLE_PATHS
+    for file in executables:
+        assert file.content.startswith(b"#!"), file.path
+    assert {file.path for file in rendered if file.content.startswith(b"#!")} == EXECUTABLE_PATHS
 
 
 def test_excludes_out_of_scope_paths_when_outputs_listed() -> None:
