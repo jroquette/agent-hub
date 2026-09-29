@@ -18,6 +18,8 @@ from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.generator.errors import TemplateError
+from agent_hub.generator.hub_template import render_template
+from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_mapping
 from agent_hub.generator.registry import REGISTRY, TemplateEntry, TemplateSource
 from agent_hub.generator.render_hub import render_entries, render_hub
 
@@ -861,3 +863,266 @@ def test_calls_no_uvx_when_pinned_version_unreadable(
     if hub_json == "bad-version":
         assert "hub: platform.version in hub.json must be X.Y.Z" in completed.stderr
     assert logged_calls(fake_uv_bin) == []
+
+
+# AC-3.15 (Q9): byte form and seeded brain text of every rendered file.
+# ADR 0011: any `@@name` or `@@{…}` left after rendering is an unresolved placeholder.
+UNRESOLVED_PLACEHOLDER = re.compile(r"@@(?:[A-Za-z_][A-Za-z0-9_]*|\{[^}]*\})")
+EMPTY_PATHS = (
+    "AGENTS.project.md",
+    "brain/_inbox/.gitkeep",
+    "brain/domain/.gitkeep",
+    "brain/features/.gitkeep",
+    "brain/journal/.gitkeep",
+    "brain/learnings/.gitkeep",
+    "brain/playbooks/.gitkeep",
+)
+BRAIN_FRONTMATTER_PATHS = (
+    "brain/decisions/index.md",
+    "brain/index.md",
+    "brain/journal/_template.md",
+    "brain/now.md",
+)
+REAL_DATE = re.compile(r"20[0-9]{2}-[0-9]{2}-[0-9]{2}")
+JOURNAL_FIELDS = ("**Context:**", "**Learning:**", "**Action:**", "**Links:**")
+PORTUGUESE_JOURNAL_WORDS = ("contexto", "aprendizado", "acao", "titulo")
+CONFIG_NAMES = ("demo", "variant")
+
+
+def rendered_texts(config: HubConfig) -> dict[str, str]:
+    """Every rendered file by path, decoded as strict UTF-8."""
+    return {file.path: file.content.decode("utf-8") for file in render_hub(config)}
+
+
+def frontmatter_lines(text: str) -> list[str]:
+    """The lines between a leading ``---`` line and the next one; empty without frontmatter."""
+    lines = text.splitlines()
+    if not lines or lines[0] != "---":
+        return []
+    return lines[1 : lines.index("---", 1)]
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+def test_leaves_no_placeholder_when_config_rendered(
+    config_name: str, request: pytest.FixtureRequest
+) -> None:
+    config = request.getfixturevalue(f"{config_name}_config")
+
+    for path, text in rendered_texts(config).items():
+        assert not UNRESOLVED_PLACEHOLDER.search(text), f"{path}: {text!r}"
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+def test_writes_utf8_lf_final_newline_when_text_rendered(
+    config_name: str, request: pytest.FixtureRequest
+) -> None:
+    config = request.getfixturevalue(f"{config_name}_config")
+
+    for file in render_hub(config):
+        if file.path in EMPTY_PATHS:
+            continue
+        text = file.content.decode("utf-8")
+        assert "\r" not in text, file.path
+        assert text.endswith("\n"), file.path
+        assert not text.endswith("\n\n"), file.path
+
+
+def test_writes_empty_file_when_gitkeep_or_project_rules_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    for path in EMPTY_PATHS:
+        assert demo_render[path].content == b"", path
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+def test_keeps_literal_date_when_brain_seeded(
+    config_name: str, request: pytest.FixtureRequest
+) -> None:
+    config = request.getfixturevalue(f"{config_name}_config")
+    texts = rendered_texts(config)
+
+    with_frontmatter = sorted(
+        path
+        for path, text in texts.items()
+        if path.startswith("brain/") and path.endswith(".md") and frontmatter_lines(text)
+    )
+    assert with_frontmatter == sorted(BRAIN_FRONTMATTER_PATHS)
+    for path in with_frontmatter:
+        assert "last_verified: YYYY-MM-DD" in frontmatter_lines(texts[path]), path
+    for path, text in texts.items():
+        assert not REAL_DATE.search(text), f"{path}: {REAL_DATE.search(text)}"
+
+
+def test_writes_english_journal_template_when_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    journal = demo_render["brain/journal/_template.md"].content.decode("utf-8")
+
+    assert not re.search(r"^\s*sources:", journal, re.MULTILINE)
+    positions = [journal.index(field) for field in JOURNAL_FIELDS]
+    assert positions == sorted(positions)
+    assert "### YYYY-MM-DD — " in journal
+    for word in PORTUGUESE_JOURNAL_WORDS:
+        assert word not in journal.lower(), word
+
+
+# AC-3.9 (O6): run-time values and the author name are never rendered.
+VARIANT_RUN_TIME_VALUES = (
+    "make sentinel-fast-q7",
+    "make sentinel-full-q7",
+    "9.8.7",
+    "Sentinel Author Q7",
+)
+
+
+def test_renders_no_run_time_value_when_variant_rendered(
+    demo_config: HubConfig, variant_config: HubConfig
+) -> None:
+    for path, text in rendered_texts(variant_config).items():
+        for value in VARIANT_RUN_TIME_VALUES:
+            assert value not in text, f"{path} holds {value}"
+    for path, text in rendered_texts(demo_config).items():
+        assert "Jane Doe" not in text, path
+
+
+# AC-3.20 (hub rule 5): identifiers of the hubs the templates were split from. Substrings match
+# anywhere; tokens match only whole (`AGH-10` matches, `block` does not). Case is ignored.
+IDENTIFIER_SUBSTRINGS = ("agent-hub-hub", "jroquette", "roquette", "loki", "tradesentinel")
+IDENTIFIER_TOKENS = re.compile(r"(?<![A-Za-z0-9_])(?:agh|lok)(?![A-Za-z0-9_])", re.IGNORECASE)
+
+
+def project_identifiers(text: str) -> list[str]:
+    """The denylisted identifiers found in ``text``, lowercased."""
+    lowered = text.lower()
+    found = [identifier for identifier in IDENTIFIER_SUBSTRINGS if identifier in lowered]
+    return found + [match.lower() for match in IDENTIFIER_TOKENS.findall(text)]
+
+
+# The one carrier: the platform repository as a pinned install source (`<repository>@v<version>`,
+# as the Makefile and the pre-commit hook spell it). A longer name sharing its prefix (the owner's
+# own hub repository) is not the carrier and stays flagged.
+PLATFORM_CARRIER = re.compile(re.escape(PLATFORM_REPOSITORY) + r"(?=@v)")
+
+
+def rendered_identifiers(text: str) -> list[str]:
+    """Identifiers in rendered text once the platform repository, their one carrier, is removed."""
+    return project_identifiers(PLATFORM_CARRIER.sub("", text))
+
+
+def test_holds_no_project_identifier_when_templates_read() -> None:
+    texts = dict(template_texts())
+
+    assert "AGENTS.md.tmpl" in texts
+    for name, text in texts.items():
+        assert project_identifiers(text) == [], name
+
+
+def test_holds_no_project_identifier_when_demo_rendered(demo_config: HubConfig) -> None:
+    texts = rendered_texts(demo_config)
+
+    assert any(PLATFORM_REPOSITORY in text for text in texts.values())
+    for path, text in texts.items():
+        assert rendered_identifiers(text) == [], path
+    carriers = {path for path, text in texts.items() if PLATFORM_CARRIER.search(text)}
+    assert carriers == {".pre-commit-config.yaml", "Makefile"}
+
+
+def test_flags_identifier_when_template_carries_other_owner(demo_config: HubConfig) -> None:
+    text = render_template(
+        "@@{platform_repository}@v1.0.0\nhttps://github.com/jroquette/other\n",
+        substitution_mapping(demo_config),
+        source="synthetic.md.tmpl",
+    )
+
+    assert rendered_identifiers(f"{PLATFORM_REPOSITORY}@v1.0.0") == []
+    assert rendered_identifiers(text) == ["jroquette", "roquette"]
+    for suffix in ("-hub", "-hub.git"):
+        assert rendered_identifiers(f"{PLATFORM_REPOSITORY}{suffix}@v1.0.0") == [
+            "agent-hub-hub",
+            "jroquette",
+            "roquette",
+        ], suffix
+        assert rendered_identifiers(f"{PLATFORM_REPOSITORY}{suffix}") == [
+            "agent-hub-hub",
+            "jroquette",
+            "roquette",
+        ], suffix
+
+
+# R10: the seeded brain names only paths the skeleton creates.
+BRAIN_PATH = re.compile(r"(?<![\w/.-])brain/[\w./-]*")
+DATE_SEGMENT = re.compile(r"YYYY|MM|DD")
+BRAIN_INDEX_ENTRY = re.compile(r"`([\w.-]+(?:/[\w.-]+)*(?:/|\.md))`")
+
+
+def resolvable_path(path: str) -> str:
+    """``path`` up to its first date-pattern segment: ``journal/YYYY/MM/DD.md`` → ``journal``."""
+    kept = []
+    for segment in path.rstrip("/").split("/"):
+        if DATE_SEGMENT.search(segment):
+            break
+        kept.append(segment)
+    return "/".join(kept)
+
+
+def rendered_paths(rendered: Iterable[RenderedFile]) -> set[str]:
+    """Every rendered file path and every folder that holds one."""
+    paths = set()
+    for file in rendered:
+        parts = file.path.split("/")
+        paths.update("/".join(parts[:end]) for end in range(1, len(parts) + 1))
+    return paths
+
+
+def test_references_created_brain_paths_when_markdown_rendered(demo_config: HubConfig) -> None:
+    rendered = render_hub(demo_config)
+    created = rendered_paths(rendered)
+    texts = {file.path: file.content.decode("utf-8") for file in rendered}
+
+    references = [
+        (path, match.rstrip(".,:;"))
+        for path, text in texts.items()
+        for match in BRAIN_PATH.findall(text)
+    ]
+    assert references
+    for path, reference in references:
+        assert resolvable_path(reference) in created, f"{path} names {reference}"
+    entries = BRAIN_INDEX_ENTRY.findall(texts["brain/index.md"])
+    for entry in entries:
+        assert resolvable_path(f"brain/{entry}") in created, f"brain/index.md names {entry}"
+    brain_folders = {
+        path.split("/")[1] for path in texts if path.startswith("brain/") and path.count("/") >= 2
+    }
+    assert brain_folders <= {resolvable_path(entry).split("/")[0] for entry in entries}
+
+
+# The managed-files statement of the base AGENTS.md: the one place a hub names what `hub sync`
+# rewrites (the seeded README points to it), kept equal to the registry's managed set.
+MANAGED_FILES_STATEMENT = re.compile(r"rewrites these managed files: (.*?)\.(?:\s|$)", re.DOTALL)
+BACKTICKED = re.compile(r"`([^`]+)`")
+
+
+def test_names_every_managed_path_when_agents_rendered(demo_config: HubConfig) -> None:
+    agents = text_of(demo_config, "AGENTS.md")
+    statements = MANAGED_FILES_STATEMENT.findall(agents)
+
+    assert len(statements) == 1
+    named = BACKTICKED.findall(statements[0])
+    managed = [entry.path for entry in REGISTRY if entry.ownership is Ownership.MANAGED]
+    assert managed
+    assert sorted(named) == sorted(managed)
+
+
+def test_points_to_agents_for_managed_files_when_readme_rendered(demo_config: HubConfig) -> None:
+    readme = text_of(demo_config, "README.md")
+
+    assert "`AGENTS.md`" in readme
+    for entry in REGISTRY:
+        if entry.ownership is Ownership.MANAGED and entry.path != "AGENTS.md":
+            assert f"`{entry.path}`" not in readme, entry.path
+
+
+def test_lists_repos_when_readme_rendered(variant_config: HubConfig) -> None:
+    readme = text_of(variant_config, "README.md")
+
+    assert "demo-api, demo-web" in readme
