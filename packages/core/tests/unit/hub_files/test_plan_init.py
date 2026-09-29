@@ -116,7 +116,8 @@ def test_keeps_link_when_target_equal(a_rendered_hub: HubFactory, config: HubCon
 
     plan = planned(a_rendered_hub(), config, a_tree(tree))
 
-    assert plan.kept_equal == (".claude/agents/x.md",)
+    assert plan.kept_links == (".claude/agents/x.md",)
+    assert plan.kept_equal == ()
     assert ".claude/agents/x.md" not in written_paths(plan)
     assert plan.created_links == (".claude/skills/y",)
 
@@ -195,12 +196,47 @@ def test_counts_created_and_kept_when_planned(
     assert fresh.created_managed == ("AGENTS.md", "plugin/agents/x.md", "scripts/run.sh")
     assert fresh.created_seeded == ("README.md", HUB_JSON_PATH)
     assert fresh.created_links == (".claude/agents/x.md", ".claude/skills/y")
-    assert (fresh.kept_seeded, fresh.kept_equal) == ((), ())
+    assert (fresh.kept_seeded, fresh.kept_equal, fresh.kept_links) == ((), (), ())
     assert rerun.created_managed == ("plugin/agents/x.md", "scripts/run.sh")
     assert rerun.created_seeded == ()
     assert rerun.created_links == (".claude/skills/y",)
     assert rerun.kept_seeded == ("README.md", HUB_JSON_PATH)
-    assert rerun.kept_equal == (".claude/agents/x.md", "AGENTS.md")
+    assert rerun.kept_equal == ("AGENTS.md",)
+    assert rerun.kept_links == (".claude/agents/x.md",)
+
+
+def test_keeps_link_whatever_ownership_when_target_equal(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    tree = folders(*FOLDERS) | {
+        ".claude/agents/x.md": LinkEntry(target="../../plugin/agents/x.md", outside=False),
+        ".claude/skills/y": LinkEntry(target="../../plugin/skills/y", outside=False),
+    }
+
+    plan = planned(a_rendered_hub(), config, a_tree(tree))
+
+    assert plan.kept_links == (".claude/agents/x.md", ".claude/skills/y")
+    assert (plan.kept_seeded, plan.kept_equal, plan.created_links) == ((), (), ())
+
+
+@pytest.mark.parametrize("path", ["AGENTS.md", HUB_JSON_PATH])
+def test_raises_when_compared_file_content_not_read(
+    a_rendered_hub: HubFactory, config: HubConfig, path: str
+) -> None:
+    tree = {path: FileEntry(executable=False, content=None)}
+
+    with pytest.raises(ValueError, match=re.escape(f"{path}: content was not read")):
+        plan_init(rendered=a_rendered_hub(), config=config, hub_json=HUB_JSON, tree=a_tree(tree))
+
+
+def test_keeps_seeded_file_when_content_not_read(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    tree = {"README.md": FileEntry(executable=False, content=None)}
+
+    plan = planned(a_rendered_hub(), config, a_tree(tree))
+
+    assert plan.kept_seeded == ("README.md",)
 
 
 def test_calls_no_io_when_core_modules_scanned() -> None:
