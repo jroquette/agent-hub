@@ -55,6 +55,7 @@ source = { editable = "packages/cli" }
 dependencies = [
     { name = "agent-hub-collector" },
     { name = "agent-hub-core" },
+    { name = "agent-hub-generator" },
     { name = "agent-hub-storage" },
     { name = "typer" },
 ]
@@ -63,6 +64,7 @@ dependencies = [
 requires-dist = [
     { name = "agent-hub-collector", editable = "packages/collector" },
     { name = "agent-hub-core", editable = "packages/core" },
+    { name = "agent-hub-generator", editable = "packages/generator" },
     { name = "agent-hub-storage", editable = "packages/storage" },
     { name = "typer" },
 ]
