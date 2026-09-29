@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""PreCompact: snapshot where the session is (cwd, per-checkout branch and changed files, last user
+request) into <hub>/brain/auto/workspace/session-snapshot.md; SessionStart(compact) re-injects it."""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from hubhooks import checkouts, git, load_config, read_input, run_hook
+except Exception as error:  # a partial install: skip, never error the session
+    print(f"[hub {os.path.splitext(os.path.basename(sys.argv[0] or 'hook'))[0]}] skipped: {type(error).__name__}", file=sys.stderr)
+    sys.exit(0)
+
+
+def last_user_message(tp: str | None) -> str:
+    if not tp or not os.path.exists(tp):
+        return ""
+    last = ""
+    with open(tp, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            try:
+                m = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if m.get("type") == "user":
+                c = (m.get("message") or {}).get("content")
+                if isinstance(c, str) and not c.startswith("<"):
+                    last = c
+    return last[:800]
+
+
+def main() -> None:
+    data = read_input()
+    cfg = load_config(data.get("cwd"))
+    if not cfg.hub:
+        return
+    lines = [f"# Session snapshot ({time.strftime('%Y-%m-%d %H:%M')}, before {data.get('trigger', 'compaction')})",
+             f"- cwd: `{data.get('cwd')}`", f"- last user request: {last_user_message(data.get('transcript_path')) or '(n/a)'}", ""]
+    for _, t in checkouts(cfg):
+        st = git(["status", "--porcelain"], t)
+        if st:
+            br = git(["branch", "--show-current"], t) or "detached"
+            files = [ln[3:] for ln in st.splitlines()][:10]
+            lines.append(f"- {t.relative_to(cfg.workspace)} [{br}]: {', '.join(files)}")
+    out = cfg.hub / "brain" / "auto" / "workspace" / "session-snapshot.md"
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    except OSError as e:  # an unwritable hub: say so, never error the session
+        print(f"[hub pre_compact] not written: {type(e).__name__}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    run_hook(main)

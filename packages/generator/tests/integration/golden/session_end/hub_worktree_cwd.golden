@@ -1,0 +1,25 @@
+--- rc (2 bytes) ---
+0
+
+--- stdout (0 bytes) ---
+
+--- stderr (0 bytes) ---
+
+--- fs (451 bytes) ---
+A <ROOT>/ws/demo-hub/brain/_inbox/
+A <ROOT>/ws/demo-hub/brain/_inbox/sessions/
+A <ROOT>/ws/demo-hub/brain/_inbox/sessions/2026-01-15.md
+| ---
+| type: session-log
+| status: proposed
+| last_verified: 2026-01-15
+| provenance: agent-from-code
+| ---
+| # Sessions 2026-01-15
+|
+| - 10:30 session `None` ended (clear), cwd `<ROOT>/ws/demo-hub/.claude/worktrees/x/brain`
+|   - api [trunk]: 2 changed
+|   - demo-hub/.claude/worktrees/x [dev/tst-9-x]: 1 changed
+
+--- calls (0 bytes) ---
+

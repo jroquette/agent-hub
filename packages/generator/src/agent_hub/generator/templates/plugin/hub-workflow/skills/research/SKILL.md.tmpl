@@ -1,0 +1,20 @@
+---
+name: research
+description: Document how the code works today for a feature or question, across the repos listed in hub.json, with file:line references. Read-only; writes research.md.
+argument-hint: "<question or tracker issue id>"
+---
+
+# /research
+
+Adapted from humanlayer `research_codebase` (Apache-2.0, humanlayer Authors, commit 99abe67349).
+
+**Describe what exists, where, and how it connects. Do not propose changes or critique** unless asked.
+
+1. Read any files, tickets or docs the user named, fully, before delegating.
+2. Split the question into areas; run parallel read-only `Explore` subagents (one per area/repo). Ask for `path:line` evidence.
+3. Check the brain for history (`/recall` flow) and ADRs; code wins when they disagree — note the drift.
+4. Write `brain/features/<issue-id-or-slug>/research.md` in the hub (the directory with `hub.json`):
+   frontmatter (`type: research`, `repos`, `status: draft`, `last_verified`, `sources`, `provenance: agent-from-code`),
+   then Question · Summary · Detailed findings (per area, with `path:line`) · Cross-repo contract (API paths/schemas) ·
+   Invariants touched (as documented or tested in each repo) · Open questions.
+5. Present the summary and the file path. Stop.

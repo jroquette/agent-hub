@@ -1,0 +1,228 @@
+"""Shared helpers for the hub-workflow hooks (Python 3.9+, stdlib only).
+
+The config is the hub that holds these files (spec Q-4): when the folder three levels above
+this file holds hub.json, that hub wins, whatever the event's cwd, $CLAUDE_PROJECT_DIR or the
+process cwd say; only $HUB_CONFIG (a hub.json path) comes first. $HUB_CONFIG can only tighten the
+guard: its lists (ask_before_edit, deny_hosts, deny_paths) are added to the hook root's, never put
+in their place, since a settings `env` entry can set it. Hooks in a hub worktree read the
+worktree's hub.json, but the hub (and so the workspace of repos) is the main checkout. When the
+hooks run from Claude Code's plugin cache, no hub holds them, and the hub is found by walking up
+from the session cwd (then $CLAUDE_PROJECT_DIR, then the process cwd) to the first directory
+holding hub.json, or to a workspace directory whose child holds hub.json + brain/ and covers the
+start: the start is inside that hub, or inside a repo its hub.json lists (or one of that repo's
+worktrees). Another project's hub beside the start is never taken.
+hub.json is read only by stdlib_reader.py, which never raises and gives every key a default.
+A hook never errors the session: run_hook turns any exception into exit 0 and one stderr line
+(the guard: one ask).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from collections.abc import Callable
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from stdlib_reader import GuardSection, HubFile, RepoEntry, load_hub_file  # noqa: E402
+
+HUB_FILE = "hub.json"
+
+
+def read_input() -> dict:
+    """The event on stdin; {} for anything that is not a JSON object (empty, bad UTF-8, a list)."""
+    try:
+        data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def emit(obj: dict) -> None:
+    print(json.dumps(obj))
+
+
+def run_hook(main: Callable[[], None], on_error: Callable[[str], None] | None = None) -> None:
+    """Run a hook's main and exit 0. An exception becomes on_error(<type name>) when given (the
+    guard asks), else one stderr line `[hub <name>] skipped: <type>`; never a traceback."""
+    try:
+        main()
+    except Exception as error:  # a hook never errors the session (fail open)
+        if on_error is not None:
+            on_error(type(error).__name__)
+        else:
+            name = os.path.splitext(os.path.basename(sys.argv[0] or "hook"))[0]
+            print(f"[hub {name}] skipped: {type(error).__name__}", file=sys.stderr)
+    sys.exit(0)
+
+
+def _in_worktree(d: Path) -> bool:
+    return d.parent.name == "worktrees" and d.parent.parent.name == ".claude"
+
+
+def _main_checkout(d: Path) -> Path:
+    """The main hub checkout of a hub worktree (<hub>/.claude/worktrees/<t>); d itself otherwise."""
+    if _in_worktree(d) and (d.parents[2] / HUB_FILE).is_file():
+        return d.parents[2]
+    return d
+
+
+def hook_root() -> Path | None:
+    """The hub (or hub worktree) that holds these hook files, or None (plugin-cache mode)."""
+    parents = Path(__file__).resolve().parents
+    if len(parents) < 4:
+        return None
+    return parents[3] if (parents[3] / HUB_FILE).is_file() else None
+
+
+def _serves(hub: Path, start: Path) -> bool:
+    """Whether a hub found beside the start covers it: start is inside the hub, or inside a repo
+    its hub.json lists (main checkout or worktree), so another project's hub is never taken."""
+    dirs = [r.dir for r in load_hub_file(hub / HUB_FILE).repos]
+    # only a plain folder name is a sibling repo: ".", ".." or "a/b" would cover unrelated folders
+    homes = [hub.resolve()] + [(hub.parent / d).resolve() for d in dirs if "/" not in d and d not in (".", "..")]
+    return any(start == home or home in start.parents for home in homes)
+
+
+def _walk(start: object) -> Path | None:
+    for s in (start, os.environ.get("CLAUDE_PROJECT_DIR"), os.getcwd()):
+        if not s or not isinstance(s, (str, os.PathLike)):
+            continue
+        p = Path(s).resolve()
+        for d in (p, *p.parents):
+            if (d / HUB_FILE).is_file() and not _in_worktree(d):
+                return d / HUB_FILE
+            try:
+                kids = sorted(k for k in d.iterdir() if k.is_dir() and (k / HUB_FILE).is_file() and (k / "brain").is_dir())
+            except OSError:
+                kids = []
+            for kid in kids:
+                if _serves(kid, p):
+                    return kid / HUB_FILE
+    return None
+
+
+def _locate(start: object) -> tuple[Path, Path] | None:
+    """(the hub.json to read, the hub directory): $HUB_CONFIG, else the hook root's, else the walk.
+
+    Hooks in a hub worktree read its hub.json, but the hub is the main checkout, whose parent is
+    the workspace that holds the repos."""
+    env = os.environ.get("HUB_CONFIG")
+    if env and os.path.isfile(env):
+        found = Path(env).resolve()
+        return found, found.parent
+    root = hook_root()
+    if root:
+        return root / HUB_FILE, _main_checkout(root)
+    walked = _walk(start)
+    return (walked, walked.parent) if walked else None
+
+
+def find_hub_file(start: object = None) -> Path | None:
+    """The hub.json the hooks read (see _locate)."""
+    located = _locate(start)
+    return located[0] if located else None
+
+
+def find_hub(start: object = None) -> Path | None:
+    """The hub directory (the main checkout); see _locate.
+
+    A hub worktree (<hub>/.claude/worktrees/<t>) carries its own hub.json; the walk skips it so it
+    reaches the main hub checkout, whose parent is the workspace."""
+    located = _locate(start)
+    return located[1] if located else None
+
+
+def _union(first: tuple[str, ...], then: tuple[str, ...]) -> tuple[str, ...]:
+    """first, then the entries of then that first lacks; each once, in order."""
+    return tuple(dict.fromkeys((*first, *then)))
+
+
+class Config:
+    """hub.json as the reader loads it, with the hub's folders; every field has a default.
+
+    root is the hub (or hub worktree) holding the hook files, root_hub its main checkout, and
+    root_project its own project name. root_file is the root's hub.json when the config is another
+    file ($HUB_CONFIG): the guard's lists are then the union of both, so that file only tightens.
+    """
+
+    def __init__(
+        self,
+        hub: Path | None = None,
+        hub_file: HubFile | None = None,
+        root: Path | None = None,
+        root_file: HubFile | None = None,
+    ):
+        hub_file = hub_file if hub_file is not None else HubFile()
+        root_guard = root_file.guard if root_file is not None else GuardSection()
+        self.hub = hub
+        self.workspace = hub.parent if hub else None
+        self.root = root
+        self.root_hub = _main_checkout(root) if root else None
+        self.root_project = (root_file if root_file is not None else hub_file).project.name
+        self.hub_file = hub_file
+        self.project_name = hub_file.project.name
+        self.branch_prefix = hub_file.project.branch_prefix
+        self.default_branch = hub_file.project.default_branch
+        self.tracker_team = hub_file.tracker.team
+        self.repos = hub_file.repos
+        self.ask_before_edit = _union(root_guard.ask_before_edit, hub_file.guard.ask_before_edit)
+        self.deny_hosts = _union(root_guard.deny_hosts, hub_file.guard.deny_hosts)
+        self.deny_paths = _union(root_guard.deny_paths, hub_file.guard.deny_paths)
+
+    @property
+    def repo_dirs(self) -> tuple[str, ...]:
+        return tuple(r.dir for r in self.repos)
+
+    def repo(self, name: str) -> RepoEntry | None:
+        for r in self.repos:
+            if r.dir == name:
+                return r
+        return None
+
+
+def load_config(start: object = None) -> Config:
+    located = _locate(start)
+    if not located:
+        return Config(root=hook_root())
+    found, hub = located
+    root = hook_root()
+    own = root / HUB_FILE if root else None
+    root_file = load_hub_file(own) if own and found.resolve() != own.resolve() else None
+    return Config(hub, load_hub_file(found), root, root_file)
+
+
+def checkouts(cfg: Config, names: list[str] | None = None) -> list[tuple[str, Path]]:
+    """(name, dir) for each main checkout and its .claude/worktrees/* (default: every repo plus the hub)."""
+    if not cfg.workspace:
+        return []
+    if names is None:
+        names = list(cfg.repo_dirs) + ([cfg.hub.name] if cfg.hub else [])
+    res = []
+    for name in names:
+        main = cfg.workspace / name
+        if not main.is_dir():
+            continue
+        for t in [main] + sorted((main / ".claude" / "worktrees").glob("*")):
+            if t.is_dir() and (t / ".git").exists():
+                res.append((name, t))
+    return res
+
+
+def git(args: list[str], cwd: str | os.PathLike, timeout: int = 10) -> str:
+    try:
+        return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=timeout).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def repo_of(path: str | os.PathLike, known: list[str]) -> tuple[str | None, Path | None]:
+    """(repo name, worktree root) for a path inside one of the known repos (main checkout or worktree)."""
+    top = git(["rev-parse", "--show-toplevel"], cwd=path if os.path.isdir(path) else os.path.dirname(path) or ".")
+    if not top:
+        return None, None
+    common = git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=top)
+    main = Path(common).parent.name if common else Path(top).name
+    return (main if main in known else None), Path(top)

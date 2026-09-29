@@ -1,0 +1,14 @@
+--- rc (2 bytes) ---
+0
+
+--- stdout (0 bytes) ---
+
+--- stderr (0 bytes) ---
+
+--- fs (63 bytes) ---
+M <ROOT>/ws/web/.claude/worktrees/j/a.js
+| export const b = 2;
+
+--- calls (215 bytes) ---
+{"tool": "prettier", "cwd": "<ROOT>/ws/web/.claude/worktrees/j", "argv": ["<ROOT>/ws/web/.claude/worktrees/j/node_modules/.bin/prettier", "--write", "--log-level", "warn", "<ROOT>/ws/web/.claude/worktrees/j/a.js"]}
+

@@ -1,0 +1,16 @@
+--- rc (2 bytes) ---
+0
+
+--- stdout (1666 bytes) ---
+{"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "[hub post-edit] lint issues remain in a.ts:\neslint (fake) report \u2014\n  1:1  error  'v01' is never used  no-unused-vars\n  2:1  error  'v02' is never used  no-unused-vars\n  3:1  error  'v03' is never used  no-unused-vars\n  4:1  error  'v04' is never used  no-unused-vars\n  5:1  error  'v05' is never used  no-unused-vars\n  6:1  error  'v06' is never used  no-unused-vars\n  7:1  error  'v07' is never used  no-unused-vars\n  8:1  error  'v08' is never used  no-unused-vars\n  9:1  error  'v09' is never used  no-unused-vars\n  10:1  error  'v10' is never used  no-unused-vars\n  11:1  error  'v11' is never used  no-unused-vars\n  12:1  error  'v12' is never used  no-unused-vars\n  13:1  error  'v13' is never used  no-unused-vars\n  14:1  error  'v14' is never used  no-unused-vars\n  15:1  error  'v15' is never used  no-unused-vars\n  16:1  error  'v16' is never used  no-unused-vars\n  17:1  error  'v17' is never used  no-unused-vars\n  18:1  error  'v18' is never used  no-unused-vars\n  19:1  error  'v19' is never used  no-unused-vars\n  20:1  error  'v20' is never used  no-unused-vars\n  21:1  error  'v21' is never used  no-unused-vars\n  22:1  error  'v22' is never used  no-unused-vars\n  23:1  error  'v23' is never used  no-unused-vars\n  24:1  error  'v24' is never used  no-unused-vars\n  25:1  error  'v25' is never used  no-unused-vars\n  26:1  error  'v26' is never used  no-unused-vars\n  27:1  error  'v27' is never used  no-unused-vars\n=====================================================================\n\u001b[2K27 problems (27 errors, 0 warnings)"}}
+
+--- stderr (0 bytes) ---
+
+--- fs (43 bytes) ---
+M <ROOT>/ws/web/a.ts
+| export const a = 1;
+
+--- calls (281 bytes) ---
+{"tool": "prettier", "cwd": "<ROOT>/ws/web", "argv": ["<ROOT>/ws/web/node_modules/.bin/prettier", "--write", "--log-level", "warn", "<ROOT>/ws/web/a.ts"]}
+{"tool": "eslint", "cwd": "<ROOT>/ws/web", "argv": ["<ROOT>/ws/web/node_modules/.bin/eslint", "--fix", "<ROOT>/ws/web/a.ts"]}
+

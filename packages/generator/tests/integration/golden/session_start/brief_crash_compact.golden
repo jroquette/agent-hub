@@ -1,0 +1,12 @@
+--- rc (2 bytes) ---
+0
+
+--- stdout (391 bytes) ---
+{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "# Brief (fallback: hub brief no version)\n\n---\nlast_verified: 2026-01-12\n---\n# Now\nShip the collector.\nThen the CLI.\n\nLatest journal: brain/journal/2026/01/14.md, brain/journal/2026/01/13.md, brain/journal/2026/01/10.md\n\n## Snapshot before compaction\n  Snapshot body with surrounding spaces.  \n\n"}}
+
+--- stderr (0 bytes) ---
+
+--- fs (0 bytes) ---
+
+--- calls (0 bytes) ---
+

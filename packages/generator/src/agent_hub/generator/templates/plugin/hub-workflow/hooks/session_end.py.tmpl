@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+"""SessionEnd: append a factual stub (time, session, cwd, reason, changed files per checkout) to
+<hub>/brain/_inbox/sessions/YYYY-MM-DD.md. Reviewed and promoted to the journal by the user / consolidation."""
+
+from __future__ import annotations
+
+import os
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from hubhooks import checkouts, git, load_config, read_input, run_hook
+except Exception as error:  # a partial install: skip, never error the session
+    print(f"[hub {os.path.splitext(os.path.basename(sys.argv[0] or 'hook'))[0]}] skipped: {type(error).__name__}", file=sys.stderr)
+    sys.exit(0)
+
+
+def main() -> None:
+    data = read_input()
+    cfg = load_config(data.get("cwd"))
+    if not cfg.hub:
+        return
+    changed = []
+    for _, t in checkouts(cfg):
+        st = git(["status", "--porcelain"], t)
+        if st:
+            changed.append(f"{t.relative_to(cfg.workspace)} [{git(['branch', '--show-current'], t) or 'detached'}]: {len(st.splitlines())} changed")
+    day = time.strftime("%Y-%m-%d")
+    out = cfg.hub / "brain" / "_inbox" / "sessions" / f"{day}.md"
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        new = not out.exists()
+        with open(out, "a", encoding="utf-8") as fh:
+            if new:
+                fh.write(f"---\ntype: session-log\nstatus: proposed\nlast_verified: {day}\nprovenance: agent-from-code\n---\n# Sessions {day}\n")
+            fh.write(f"\n- {time.strftime('%H:%M')} session `{str(data.get('session_id', '?'))[:8]}` ended ({data.get('reason', '?')}), cwd `{data.get('cwd')}`\n")
+            for c in changed:
+                fh.write(f"  - {c}\n")
+    except OSError as e:  # an unwritable hub: say so, never error the session
+        print(f"[hub session_end] not written: {type(e).__name__}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    run_hook(main)
