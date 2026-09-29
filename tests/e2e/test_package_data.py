@@ -131,6 +131,8 @@ def test_renders_same_files_when_installed_wheels_run_outside_repo(
     assert report["files"] == _rows(in_repo.files)
     assert report["links"] == _link_rows(in_repo.links)
     assert "hub.schema.json" in {row[0] for row in report["files"]}
+    # A known link anchors the comparison: a render that lost every link on both sides fails.
+    assert ".claude/agents/architect.md" in {row[0] for row in report["links"]}
 
 
 def _uv() -> str:
