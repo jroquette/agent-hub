@@ -6,7 +6,8 @@ Every path is reached from the root one folder at a time through directory descr
 nothing is ever written through a link. A file is written to ``.<name>.hub-tmp-<8 hex>`` in its
 final folder, created with ``O_CREAT | O_EXCL | O_NOFOLLOW`` at mode 0o600, given its final mode
 (``0o777`` or ``0o666`` less the umask) and then ``os.replace``d onto its name; a link is made at
-the temp name and replaced the same way. On an error the temp entry is removed. No ``fsync`` (Q-6).
+the temp name and replaced the same way. On an error the temp entry is removed (a removal that
+fails is a note on the write's error, never masking it). No ``fsync`` (Q-6).
 """
 
 import contextlib
@@ -136,9 +137,9 @@ def _write_file(folder_fd: int, *, name: str, write: FileWrite, mode: int) -> No
             os.fchmod(file.fileno(), mode)
         os.replace(temp, name, src_dir_fd=folder_fd, dst_dir_fd=folder_fd)
     except OSError as error:
-        if created:
-            _discard(folder_fd, temp)
-        raise FileWriteError(path=write.path, cause=_cause(error)) from error
+        raise _write_error(
+            error, folder_fd, path=write.path, temp=temp if created else None
+        ) from error
 
 
 def _write_link(folder_fd: int, *, name: str, write: LinkWrite) -> None:
@@ -149,9 +150,9 @@ def _write_link(folder_fd: int, *, name: str, write: LinkWrite) -> None:
         created = True
         os.replace(temp, name, src_dir_fd=folder_fd, dst_dir_fd=folder_fd)
     except OSError as error:
-        if created:
-            _discard(folder_fd, temp)
-        raise FileWriteError(path=write.path, cause=_cause(error)) from error
+        raise _write_error(
+            error, folder_fd, path=write.path, temp=temp if created else None
+        ) from error
 
 
 def _make_folder(parent_fd: int, *, name: str, path: str) -> None:
@@ -177,10 +178,22 @@ def _remove_leftover(folder_fd: int, *, path: str, name: str) -> None:
         raise FileWriteError(path=path, cause=_cause(error)) from error
 
 
-def _discard(folder_fd: int, temp: str) -> None:
-    # Only a temp entry this write created is removed; the error being raised says what failed.
-    with contextlib.suppress(FileNotFoundError):
-        os.unlink(temp, dir_fd=folder_fd)
+def _write_error(error: OSError, folder_fd: int, *, path: str, temp: str | None) -> FileWriteError:
+    """The ``FileWriteError`` for ``error``, once the temp entry this write created is removed.
+
+    The write's own failure is the one reported: a temp entry that cannot be removed is a note
+    naming it (the next init lists it as a leftover), never an error that masks the first.
+    """
+    failure = FileWriteError(path=path, cause=_cause(error))
+    if temp is not None:
+        try:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temp, dir_fd=folder_fd)
+        except OSError as cleanup:
+            folder, _ = _split(path)
+            left = f"{folder}/{temp}" if folder else temp
+            failure.add_note(f"{left}: not removed: {_cause(cleanup)}")
+    return failure
 
 
 def _cause(error: OSError) -> str:

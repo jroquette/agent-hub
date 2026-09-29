@@ -11,6 +11,7 @@ import contextlib
 import errno
 import hashlib
 import os
+import shutil
 import signal
 import socket
 import stat
@@ -221,7 +222,12 @@ def test_raises_generator_error_when_wanted_file_unreadable(
     root = tmp_path / "root"
     write_file(root / "hub.json", b"{}\n")
 
-    def refuse(path: str, flags: int, mode: int = 0o777) -> int:
+    real_open = os.open
+
+    def refuse(path: str, flags: int, mode: int = 0o777, **kwargs: Any) -> int:
+        # Only the file is refused: the walk opens folders with ``O_DIRECTORY``.
+        if flags & os.O_DIRECTORY:
+            return real_open(path, flags, mode, **kwargs)
         raise PermissionError(13, "Permission denied", path)
 
     monkeypatch.setattr(os, "open", refuse)
@@ -230,13 +236,17 @@ def test_raises_generator_error_when_wanted_file_unreadable(
         read_hub_tree(root, wanted={"hub.json"})
 
 
-def swap_before_open(monkeypatch: pytest.MonkeyPatch, swap: Callable[[str], None]) -> None:
-    """Run ``swap`` on the path the reader opens, right before the real ``os.open``: a race."""
+def swap_before_open(
+    monkeypatch: pytest.MonkeyPatch, swap: Callable[[str, int | None], None]
+) -> None:
+    """Run ``swap`` on the file the reader opens (name and ``dir_fd``), right before the real
+    ``os.open``: a race. Folder opens (``O_DIRECTORY``) pass through."""
     real_open = os.open
 
-    def swapped_open(path: str, flags: int, mode: int = 0o777) -> int:
-        swap(path)
-        return real_open(path, flags, mode)
+    def swapped_open(path: str, flags: int, mode: int = 0o777, *, dir_fd: int | None = None) -> int:
+        if not flags & os.O_DIRECTORY:
+            swap(path, dir_fd)
+        return real_open(path, flags, mode, dir_fd=dir_fd)
 
     monkeypatch.setattr(os, "open", swapped_open)
 
@@ -247,9 +257,9 @@ def test_reports_not_regular_when_file_swapped_for_fifo_before_open(
     root = tmp_path / "root"
     write_file(root / "hub.json", b"{}\n")
 
-    def to_fifo(path: str) -> None:
-        os.unlink(path)
-        os.mkfifo(path)
+    def to_fifo(path: str, dir_fd: int | None) -> None:
+        os.unlink(path, dir_fd=dir_fd)
+        os.mkfifo(path, dir_fd=dir_fd)
 
     swap_before_open(monkeypatch, to_fifo)
 
@@ -266,14 +276,240 @@ def test_raises_generator_error_when_file_swapped_for_link_before_open(
     root = tmp_path / "root"
     write_file(root / "hub.json", b"{}\n")
 
-    def to_link(path: str) -> None:
-        os.unlink(path)
-        os.symlink(outside / "x.md", path)
+    def to_link(path: str, dir_fd: int | None) -> None:
+        os.unlink(path, dir_fd=dir_fd)
+        os.symlink(outside / "x.md", path, dir_fd=dir_fd)
 
     swap_before_open(monkeypatch, to_link)
 
     with pytest.raises(GeneratorError, match=r"^hub\.json: "):
         read_hub_tree(root, wanted={"hub.json"})
+
+
+def test_marks_link_outside_when_target_is_sibling_prefix_or_parent(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    # ``rootx`` shares the root's name as a prefix: only a path-wise check tells it apart.
+    write_file(tmp_path / "rootx" / "x.md", b"sibling\n")
+    (root / "sibling").symlink_to("../rootx", target_is_directory=True)
+    (root / "sibling.md").symlink_to("../rootx/x.md")
+    (root / "parent").symlink_to("..", target_is_directory=True)
+
+    snapshot = read_hub_tree(root, wanted={"sibling/x.md", "sibling.md"})
+
+    assert snapshot.entries == {
+        "parent": LinkEntry(target="..", outside=True),
+        "sibling": LinkEntry(target="../rootx", outside=True),
+        "sibling.md": LinkEntry(target="../rootx/x.md", outside=True),
+    }
+
+
+def test_keeps_links_inside_when_root_reached_through_symlinked_folder(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    write_file(real / "root" / "plugin" / "x.md", b"inside\n")
+    (real / "root" / "x.md").symlink_to("plugin/x.md")
+    (real / "root" / "tools").symlink_to("plugin", target_is_directory=True)
+    (tmp_path / "alias").symlink_to(real, target_is_directory=True)
+
+    snapshot = read_hub_tree(tmp_path / "alias" / "root", wanted={"plugin/x.md"})
+
+    assert snapshot.entries == {
+        "plugin": FolderEntry(),
+        "plugin/x.md": FileEntry(executable=False, content=b"inside\n"),
+        "tools": LinkEntry(target="plugin", outside=False),
+        "x.md": LinkEntry(target="plugin/x.md", outside=False),
+    }
+
+
+def after_root_listing(monkeypatch: pytest.MonkeyPatch, action: Callable[[], None]) -> None:
+    """Run ``action`` once, as soon as the reader has listed the root (the first listing)."""
+    real_scandir = os.scandir
+    pending = [action]
+
+    @contextlib.contextmanager
+    def listing(path: Any) -> Iterator[Any]:
+        with real_scandir(path) as found:
+            yield found
+        if pending:
+            pending.pop()()
+
+    monkeypatch.setattr(os, "scandir", listing)
+
+
+def before_plugin_descent(monkeypatch: pytest.MonkeyPatch, action: Callable[[], None]) -> None:
+    """Run ``action`` once, right before the reader opens or lists the folder ``plugin``."""
+    real_open, real_scandir = os.open, os.scandir
+    pending = [action]
+
+    def fire() -> None:
+        if pending:
+            pending.pop()()
+
+    def opened(path: Any, flags: int, mode: int = 0o777, **kwargs: Any) -> int:
+        if flags & os.O_DIRECTORY and os.fspath(path) == "plugin":
+            fire()
+        return real_open(path, flags, mode, **kwargs)
+
+    def listed(path: Any) -> Any:
+        # A reader that lists by path (not by descriptor) meets the swap here.
+        if isinstance(path, str) and path.endswith(f"{os.sep}plugin"):
+            fire()
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "open", opened)
+    monkeypatch.setattr(os, "scandir", listed)
+
+
+def before_first_file_open(monkeypatch: pytest.MonkeyPatch, action: Callable[[], None]) -> None:
+    """Run ``action`` once, right before the reader opens its first file."""
+    real_open = os.open
+    pending = [action]
+
+    def opened(path: Any, flags: int, mode: int = 0o777, **kwargs: Any) -> int:
+        if pending and not flags & os.O_DIRECTORY:
+            pending.pop()()
+        return real_open(path, flags, mode, **kwargs)
+
+    monkeypatch.setattr(os, "open", opened)
+
+
+def test_reads_no_outside_bytes_when_parent_swapped_after_listing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outside = outside_folder(tmp_path)
+    root = tmp_path / "root"
+    write_file(root / "plugin" / "x.md", b"inside\n")
+    # ``plugin`` was a folder when the root was listed; it is a link when the walk reaches it.
+    after_root_listing(monkeypatch, lambda: swap_for_link(root, outside))
+
+    snapshot = read_hub_tree(root, wanted={"plugin/x.md", "plugin/agents/y.md"})
+
+    assert snapshot.entries == {"plugin": LinkEntry(target=str(outside), outside=True)}
+
+
+def test_raises_generator_error_when_parent_swapped_before_descent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outside = outside_folder(tmp_path)
+    root = tmp_path / "root"
+    write_file(root / "plugin" / "x.md", b"inside\n")
+    # ``plugin`` was a folder when it was looked at; it is a link when the walk opens it.
+    before_plugin_descent(monkeypatch, lambda: swap_for_link(root, outside))
+
+    with pytest.raises(GeneratorError, match=r"^plugin: "):
+        read_hub_tree(root, wanted={"plugin/x.md", "plugin/agents/y.md"})
+
+
+def test_reads_held_folder_when_parent_swapped_before_file_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outside = outside_folder(tmp_path)
+    root = tmp_path / "root"
+    write_file(root / "plugin" / "x.md", b"inside\n")
+    write_file(root / "plugin" / "agents" / "y.md", b"inside agent\n")
+    # The swap comes after ``plugin`` was opened: the reader follows the descriptor it holds.
+    before_first_file_open(monkeypatch, lambda: swap_for_link(root, outside))
+
+    snapshot = read_hub_tree(root, wanted={"plugin/x.md", "plugin/agents/y.md"})
+
+    assert snapshot.entries == {
+        "plugin": FolderEntry(),
+        "plugin/agents": FolderEntry(),
+        "plugin/agents/y.md": FileEntry(executable=False, content=b"inside agent\n"),
+        "plugin/x.md": FileEntry(executable=False, content=b"inside\n"),
+    }
+
+
+def test_raises_generator_error_when_root_cannot_be_looked_at(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    real_lstat = os.lstat
+
+    def refuse(path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+        if os.fspath(path) == os.fspath(root):
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), os.fspath(path))
+        return real_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "lstat", refuse)
+
+    # A root that cannot be looked at is not an absent root.
+    with pytest.raises(GeneratorError) as raised:
+        read_hub_tree(root, wanted=set())
+
+    assert str(raised.value) == f"{root}: {os.strerror(errno.EACCES)}"
+
+
+def refuse_second_listing(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
+    """The root lists; the next folder cannot be read."""
+    real_scandir = os.scandir
+    calls: list[Any] = []
+
+    def listed(path: Any) -> Any:
+        calls.append(path)
+        if len(calls) > 1:
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES))
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", listed)
+
+
+def remove_after_listing(monkeypatch: pytest.MonkeyPatch, root: Path, name: str) -> None:
+    """Remove ``root/name`` once the root was listed, before the walk looks at it."""
+
+    def remove() -> None:
+        if (root / name).is_dir():
+            shutil.rmtree(root / name)
+        else:
+            (root / name).unlink()
+
+    after_root_listing(monkeypatch, remove)
+
+
+def refuse_readlink(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
+    def refuse(*args: Any, **kwargs: Any) -> str:
+        raise OSError(errno.EIO, os.strerror(errno.EIO))
+
+    monkeypatch.setattr(os, "readlink", refuse)
+
+
+WALK_FAILURES = [
+    pytest.param(
+        refuse_second_listing, f"plugin: {os.strerror(errno.EACCES)}", id="unreadable-folder"
+    ),
+    pytest.param(
+        lambda m, root: remove_after_listing(m, root, "plugin"),
+        f"plugin: {os.strerror(errno.ENOENT)}",
+        id="folder-vanished",
+    ),
+    pytest.param(
+        lambda m, root: remove_after_listing(m, root, "notes.txt"),
+        f"notes.txt: {os.strerror(errno.ENOENT)}",
+        id="entry-vanished",
+    ),
+    pytest.param(refuse_readlink, f"link.md: {os.strerror(errno.EIO)}", id="unreadable-link"),
+]
+
+
+@pytest.mark.parametrize(("fail", "message"), WALK_FAILURES)
+def test_raises_generator_error_naming_path_when_walk_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    fail: Callable[[pytest.MonkeyPatch, Path], None],
+    message: str,
+) -> None:
+    root = tmp_path / "root"
+    write_file(root / "plugin" / "x.md", b"inside\n")
+    write_file(root / "notes.txt", b"not wanted\n")
+    (root / "link.md").symlink_to("notes.txt")
+    fail(monkeypatch, root)
+
+    with pytest.raises(GeneratorError) as raised:
+        read_hub_tree(root, wanted={"plugin/x.md"})
+
+    assert str(raised.value) == message
 
 
 @pytest.fixture
@@ -653,6 +889,34 @@ def test_leaves_no_temp_when_write_fails(
     assert (raised.value.path, raised.value.cause) == (write.path, os.strerror(errno.ENOSPC))
     assert str(raised.value) == f"{write.path}: {os.strerror(errno.ENOSPC)}"
     assert list((root / "scripts").iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "write",
+    [
+        pytest.param(FileWrite(path="scripts/run.py", content=b"#!\n", executable=True), id="file"),
+        pytest.param(LinkWrite(path="scripts/run", target="run.py"), id="link"),
+    ],
+)
+def test_reports_write_error_when_temp_cleanup_also_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, write: FileWrite | LinkWrite
+) -> None:
+    root = a_root(tmp_path)
+    (root / "scripts").mkdir()
+    Recorder(monkeypatch, fail_at="replace")
+
+    def refuse(*args: Any, **kwargs: Any) -> None:
+        raise PermissionError(errno.EACCES, os.strerror(errno.EACCES))
+
+    monkeypatch.setattr(os, "unlink", refuse)
+
+    with pytest.raises(FileWriteError) as raised:
+        apply_writes(root, folders=[], writes=[write])
+
+    # The write's own failure is the one reported; the cleanup's is a note naming the leftover.
+    assert (raised.value.path, raised.value.cause) == (write.path, os.strerror(errno.ENOSPC))
+    (left,) = temp_entries(root)
+    assert raised.value.__notes__ == [f"{left}: not removed: {os.strerror(errno.EACCES)}"]
 
 
 def test_leaves_no_temp_when_write_succeeds(tmp_path: Path) -> None:
