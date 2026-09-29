@@ -13,12 +13,13 @@ The spec is in `docs/SPEC.md`: read it before any task. The directions already s
   | `packages/core` (`agent-hub-core`) | `agent_hub.core` | Entities, use cases, ports, test fakes/builders/contracts |
   | `packages/storage` (`agent-hub-storage`) | `agent_hub.storage` | SQLAlchemy Core + Alembic adapter |
   | `packages/collector` (`agent-hub-collector`) | `agent_hub.collector` | Event collector adapter |
+  | `packages/generator` (`agent-hub-generator`) | `agent_hub.generator` | Hub templates, `@@` renderer, registry |
   | `packages/cli` (`agent-hub-cli`) | `agent_hub.cli` | Typer CLI, command `hub` |
   | `packages/agent-hub` (`agent-hub`) | `agent_hub_meta` (placeholder, no code) | Meta-package: `uv tool install` gets everything |
 
 - Everything depends on `core`; `core` depends on nothing internal. `cli` is the composition root (ADR 0008): it may
-  import `storage` and `collector`, nothing imports `cli`, and `storage` and `collector` never import each other
-  (import-linter).
+  import `storage`, `collector` and `generator`, nothing imports `cli`, and `storage`, `collector` and `generator` never
+  import each other (import-linter).
 - `packages/api` (FastAPI) and `apps/web` (React) come in Phase 2.
 
 ## Gates

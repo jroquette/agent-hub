@@ -2,7 +2,8 @@
 
 Keys are the Rendered values of docs/design/project-config.md, whose patterns make them safe
 unquoted in shell, Make and Markdown text; in YAML a template double-quotes them, because a valid
-value such as ``on``, ``NO`` or ``1.0`` would otherwise parse as another type. Plus the platform
+value such as ``on``, ``NO`` or ``1.0`` would otherwise parse as another type (brain frontmatter
+lists repo dirs unquoted; its readers load it without type resolution). Plus the platform
 repository and the Makefile's module include lines. ``project.author_name``,
 ``repos[].check_fast``, ``repos[].check`` and ``platform.version`` are never keys: shims read
 them at run time, and the author name needs format quoting.

@@ -3,8 +3,7 @@
 ## Purpose
 
 `hub.json` names a project: repos, tracker, authorship and branch rules, guard paths and the platform release. Every
-generated file and `hub` command takes project values from it and nowhere else. This is its Phase 1 contract: format,
-fields, validation, versioning and the two readers.
+generated file and `hub` command takes project values from it and nowhere else. This is its Phase 1 contract.
 
 ## Contract
 
@@ -15,8 +14,8 @@ fields, validation, versioning and the two readers.
 - Ownership: `seeded` ([hub-generator.md](hub-generator.md)). `hub init` writes it once; `hub sync` never writes it.
 - Source of truth: the frozen Pydantic model `HubConfig` in core (area `agent_hub.core.hub_config`), proved by unit
   tests (valid and invalid documents, defaults, error paths).
-- JSON Schema: `HubConfig.model_json_schema()`, a managed `hub.schema.json` that the generator writes to the hub. Until
-  the generator package exists (AGH-10), it ships as core package data (`agent_hub/core/hub_config/hub.schema.json`). A
+- JSON Schema: `HubConfig.model_json_schema()`, a managed `hub.schema.json` that the generator writes to the hub. It
+  stays core package data (`agent_hub/core/hub_config/hub.schema.json`); the generator copies those bytes verbatim. A
   unit test fails on drift from a fresh export. Consumers: editors (`$schema`), [`config.schema`](hub-doctor.md), hooks.
 
 ### Fields
@@ -53,8 +52,9 @@ checks are model validators JSON Schema cannot express, so there an editor accep
 
 ### Rendered values
 
-The model restricts values that land in shell, Make or YAML text, so templates need not escape them. `S` is a safe
-segment, `[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*`: no leading `-` or `.`, no `..`, no trailing punctuation.
+The model restricts rendered values: safe unquoted in shell, Make and Markdown. YAML templates double-quote placeholders
+(`on`, `NO`, `1.0` would retype). Brain frontmatter lists repo dirs unquoted: readers load it without type resolution.
+`S` is a safe segment, `[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*`: no leading `-` or `.`, no `..`, no trailing punctuation.
 
 - `project.name`: kebab-case `^[a-z0-9]+(-[a-z0-9]+)*$`. `repos[].dir`: `^S$`, unique ignoring case (`tradeSentinel`).
   `project.hub_repo`, `repos[].github`: `^S/S$`. `project.branch_prefix`: `^S/$`. `project.default_branch`:
@@ -91,7 +91,7 @@ name the source and target repos) and `marketplace` (the optional plugin marketp
 - **Hooks**: a defensive stdlib reader that never raises: a missing file, bad JSON or a wrong type falls back to the
   defaults above and the hook fails open. It ignores unknown and `_` keys.
 - **Consistency**: `test_matches_schema_defaults_when_hub_json_minimal` compares the hook reader's defaults on a minimal
-  `hub.json` with `HubConfig`'s. Until AGH-10, reader and test live in core (`agent_hub.core.hub_config.stdlib_reader`).
+  `hub.json` with `HubConfig`'s. Reader and test live in core (`agent_hub.core.hub_config.stdlib_reader`) until AGH-19.
 
 ### Tracker
 
