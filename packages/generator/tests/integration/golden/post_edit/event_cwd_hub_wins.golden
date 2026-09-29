@@ -1,0 +1,17 @@
+--- rc (2 bytes) ---
+0
+
+--- stdout (0 bytes) ---
+
+--- stderr (0 bytes) ---
+
+--- fs (58 bytes) ---
+M <ROOT>/elsewhere/api/x.py
+| import os
+|
+| print(os.sep)
+
+--- calls (292 bytes) ---
+{"tool": "ruff", "cwd": "<ROOT>/elsewhere/api", "argv": ["<ROOT>/elsewhere/api/.venv/bin/ruff", "format", "-q", "<ROOT>/elsewhere/api/x.py"]}
+{"tool": "ruff", "cwd": "<ROOT>/elsewhere/api", "argv": ["<ROOT>/elsewhere/api/.venv/bin/ruff", "check", "--fix", "-q", "<ROOT>/elsewhere/api/x.py"]}
+

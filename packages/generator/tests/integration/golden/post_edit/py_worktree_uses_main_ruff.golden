@@ -1,0 +1,17 @@
+--- rc (2 bytes) ---
+0
+
+--- stdout (0 bytes) ---
+
+--- stderr (0 bytes) ---
+
+--- fs (71 bytes) ---
+M <ROOT>/ws/api/.claude/worktrees/t/x.py
+| import os
+|
+| print(os.sep)
+
+--- calls (330 bytes) ---
+{"tool": "ruff", "cwd": "<ROOT>/ws/api/.claude/worktrees/t", "argv": ["<ROOT>/ws/api/.venv/bin/ruff", "format", "-q", "<ROOT>/ws/api/.claude/worktrees/t/x.py"]}
+{"tool": "ruff", "cwd": "<ROOT>/ws/api/.claude/worktrees/t", "argv": ["<ROOT>/ws/api/.venv/bin/ruff", "check", "--fix", "-q", "<ROOT>/ws/api/.claude/worktrees/t/x.py"]}
+
