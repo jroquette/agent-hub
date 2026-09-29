@@ -1,10 +1,13 @@
+import contextlib
 import json
 import os
+import signal
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from importlib.metadata import version
 from pathlib import Path
+from types import FrameType
 from typing import Any
 
 import pytest
@@ -121,15 +124,16 @@ def test_returns_exact_bytes_when_hub_json_loaded(tmp_path: Path) -> None:
 def test_reads_file_once_when_hub_json_loaded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The reader opens the file by descriptor and reads from it: one open is one read.
     path = write_document(tmp_path, a_pinned_document())
-    read_bytes = Path.read_bytes
+    real_open = os.open
     calls: list[Path] = []
 
-    def spy(self: Path) -> bytes:
-        calls.append(self)
-        return read_bytes(self)
+    def spy(opened: Any, *args: Any, **kwargs: Any) -> int:
+        calls.append(Path(opened))
+        return real_open(opened, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "read_bytes", spy)
+    monkeypatch.setattr(os, "open", spy)
 
     loaded = load_hub_json_or_exit(path)
 
@@ -159,7 +163,7 @@ TOO_MANY_DIGITS = (
     ("content", "reason"),
     [
         (None, "cannot read {path}: No such file or directory"),
-        (b"\xff\xfe{}", "not UTF-8 text: "),
+        (b"\xff\xfe{}", "not UTF-8 text: byte 0 cannot be decoded"),
         (b'{"schema_version": 1,', "not valid JSON: "),
         (b"[]", "must be a JSON object"),
         # Whether this depth raises RecursionError depends on the C stack size, so both outcomes are
@@ -197,6 +201,22 @@ def test_exits_with_root_line_when_file_missing_or_not_json(
     assert "Traceback" not in lines[0]
 
 
+@pytest.mark.parametrize(
+    ("content", "offset"),
+    [(b"\xff\xfe{}", 0), (b'{"a": "\xff"}', 7)],
+    ids=["first-byte", "inside-string"],
+)
+def test_names_first_bad_byte_when_file_not_utf8(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], *, content: bytes, offset: int
+) -> None:
+    path = tmp_path / "hub.json"
+    path.write_bytes(content)
+
+    lines = stderr_lines_on_exit(path, capsys)
+
+    assert lines == [f"hub.json: $: not UTF-8 text: byte {offset} cannot be decoded"]
+
+
 def test_exits_with_root_line_when_nesting_exceeds_recursion_limit(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -228,7 +248,7 @@ from pathlib import Path
 
 import typer
 
-from agent_hub.cli.hub_config_reader import load_hub_config_or_exit, load_hub_json_or_exit
+from agent_hub.cli.hub_config_reader import load_hub_config_or_exit
 
 try:
     load_hub_config_or_exit(Path(sys.argv[1]))
@@ -281,3 +301,49 @@ def test_exits_with_root_line_when_path_not_regular_file(
     assert completed.stderr == (
         f"hub.json: $: cannot read {json.dumps(str(path))}: not a regular file\n"
     )
+
+
+# A read blocked on a FIFO has hung: no load of a small file takes this long.
+HANG_SECONDS = 5
+
+
+class HungError(Exception):
+    """The alarm fired: the loader blocked."""
+
+
+@contextlib.contextmanager
+def alarm_guard(seconds: int) -> Iterator[None]:
+    """Fail with ``HungError`` if the block runs longer than ``seconds``."""
+
+    def fire(signum: int, frame: FrameType | None) -> None:
+        raise HungError
+
+    previous = signal.signal(signal.SIGALRM, fire)
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def test_exits_with_root_line_when_file_swapped_for_fifo_after_check(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = write_document(tmp_path, a_pinned_document())
+    is_file = Path.is_file
+
+    def swap_after_check(self: Path, *args: Any, **kwargs: Any) -> bool:
+        # The check sees a regular file; a FIFO with no writer takes its place right after.
+        found = is_file(self, *args, **kwargs)
+        if self == path:
+            path.unlink()
+            os.mkfifo(path)
+        return found
+
+    monkeypatch.setattr(Path, "is_file", swap_after_check)
+
+    with alarm_guard(HANG_SECONDS):
+        lines = stderr_lines_on_exit(path, capsys)
+
+    assert lines == [f"hub.json: $: cannot read {json.dumps(str(path))}: not a regular file"]

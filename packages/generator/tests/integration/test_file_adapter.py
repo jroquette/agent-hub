@@ -1014,6 +1014,84 @@ def test_skips_absent_root_when_no_leftovers_listed(tmp_path: Path) -> None:
     assert list(tmp_path.iterdir()) == []
 
 
+NOT_UNDER_ROOT = r"not a relative path inside the hub"
+LEFTOVER = ".x.md.hub-tmp-0a1b2c3d"
+
+
+# Paths the adapter must refuse, each shape once, built from ``tmp_path`` and the entry's name.
+BAD_PATHS: dict[str, Callable[[Path, str], str]] = {
+    "absolute": lambda tmp_path, name: str(tmp_path / "abs" / name),
+    "empty": lambda tmp_path, name: "",
+    "empty-segment": lambda tmp_path, name: f"plugin//{name}",
+    "trailing-slash": lambda tmp_path, name: f"plugin/{name}/",
+    "dot-first": lambda tmp_path, name: f"./{name}",
+    "dot-inside": lambda tmp_path, name: f"plugin/./{name}",
+    "dot-dot-first": lambda tmp_path, name: f"../{name}",
+    "dot-dot-inside": lambda tmp_path, name: f"plugin/../../{name}",
+}
+
+
+def apply_bad_folder(root: Path, path: str) -> None:
+    apply_writes(root, folders=["ok", path], writes=[])
+
+
+def apply_bad_file(root: Path, path: str) -> None:
+    apply_writes(
+        root,
+        folders=["ok"],
+        writes=[
+            FileWrite(path="ok.md", content=b"ok\n", executable=False),
+            FileWrite(path=path, content=b"x\n", executable=False),
+        ],
+    )
+
+
+def apply_bad_link(root: Path, path: str) -> None:
+    apply_writes(
+        root,
+        folders=["ok"],
+        writes=[
+            FileWrite(path="ok.md", content=b"ok\n", executable=False),
+            LinkWrite(path=path, target="ok.md"),
+        ],
+    )
+
+
+@pytest.mark.parametrize("shape", list(BAD_PATHS))
+@pytest.mark.parametrize(
+    "apply", [apply_bad_folder, apply_bad_file, apply_bad_link], ids=["folder", "file", "link"]
+)
+def test_raises_value_error_and_writes_nothing_when_path_not_under_root(
+    tmp_path: Path, *, apply: Callable[[Path, str], None], shape: str
+) -> None:
+    root = a_root(tmp_path)
+    (root / "plugin").mkdir()
+    (tmp_path / "abs").mkdir()
+    before = tree_digest(tmp_path)
+
+    # Checked before anything is written: the valid entries listed first are not made either.
+    with pytest.raises(ValueError, match=NOT_UNDER_ROOT):
+        apply(root, BAD_PATHS[shape](tmp_path, "x.md"))
+
+    assert tree_digest(tmp_path) == before
+
+
+@pytest.mark.parametrize("shape", list(BAD_PATHS))
+def test_raises_value_error_and_removes_nothing_when_leftover_not_under_root(
+    tmp_path: Path, shape: str
+) -> None:
+    root = a_root(tmp_path)
+    # A leftover-shaped file wherever each bad path could reach, and one the valid entry names.
+    for folder in (root, root / "plugin", tmp_path, tmp_path / "abs"):
+        write_file(folder / LEFTOVER, b"not the adapter's\n")
+    before = tree_digest(tmp_path)
+
+    with pytest.raises(ValueError, match=NOT_UNDER_ROOT):
+        remove_leftovers(root, [LEFTOVER, BAD_PATHS[shape](tmp_path, LEFTOVER)])
+
+    assert tree_digest(tmp_path) == before
+
+
 PINNED_SUFFIX = "0a1b2c3d"
 
 
@@ -1280,6 +1358,13 @@ def fail_collision(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def fail_tree_read(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The nested folder is opened, then cannot be listed: the reader must still close it.
+    write_file(root / "plugin" / "agents" / "x.md", b"inside\n")
+    refuse_second_listing(monkeypatch, root)
+    read_hub_tree(root, wanted={"plugin/agents/x.md"})
+
+
 @pytest.mark.parametrize(
     "fail",
     [
@@ -1289,8 +1374,17 @@ def fail_collision(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         fail_symlinked_ancestor,
         fail_leftover_missing_folder,
         fail_collision,
+        fail_tree_read,
     ],
-    ids=["descent", "folder-exists", "link-outside", "symlinked", "leftover-descent", "collision"],
+    ids=[
+        "descent",
+        "folder-exists",
+        "link-outside",
+        "symlinked",
+        "leftover-descent",
+        "collision",
+        "tree-read",
+    ],
 )
 def test_closes_every_descriptor_when_write_fails(
     tmp_path: Path,
@@ -1303,4 +1397,18 @@ def test_closes_every_descriptor_when_write_fails(
     with pytest.raises(GeneratorError):
         fail(root, monkeypatch)
 
+    assert open_descriptors() == before
+
+
+def test_closes_every_descriptor_when_tree_read(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    write_file(root / "plugin" / "agents" / "x.md", b"agent\n", mode=0o755)
+    write_file(root / "brain" / "journal" / "day.md", b"day\n")
+    write_file(root / "AGENTS.md", b"rules\n")
+    (root / "plugin" / "link.md").symlink_to("agents/x.md")
+    before = open_descriptors()
+
+    snapshot = read_hub_tree(root, wanted={"plugin/agents/x.md", "AGENTS.md"})
+
+    assert snapshot.entries["plugin/agents/x.md"] == FileEntry(executable=True, content=b"agent\n")
     assert open_descriptors() == before
