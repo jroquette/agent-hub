@@ -1,18 +1,16 @@
-"""Synthetic hub configs and render helpers for the generator tests.
+"""The demo render and fake uv tools for the generator unit tests.
 
 TESTING.md: builders only, no real hub.json; a test that writes does so under ``tmp_path``.
 """
 
 import shutil
 import stat
-from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.rendered_file import RenderedFile
-from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.generator.render_hub import render_hub
 
 # The fake uv tools append one line per call: the tool's name, then its arguments.
@@ -24,61 +22,11 @@ FAKE_UVX_RESOLVE_RC = "FAKE_UVX_RESOLVE_RC"
 FAKE_UVX_RC = "FAKE_UVX_RC"
 _EXECUTABLE_BITS = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
 
-type TreeWriter = Callable[[Iterable[RenderedFile]], Path]
-
-
-@pytest.fixture
-def demo_config() -> HubConfig:
-    """The builder's demo project: one repo, modules ``cloud`` and ``bench``."""
-    return HubConfig.model_validate(a_hub_document())
-
-
-@pytest.fixture
-def variant_config() -> HubConfig:
-    """A second project whose run-time values are sentinels no rendered file may contain.
-
-    No module, two repos, a non-``main`` default branch; ``check_fast``, ``check``,
-    ``platform.version`` and ``author_name`` hold values that are never rendered (AC-3.9).
-    """
-    document = a_hub_document()
-    document["platform"]["version"] = "9.8.7"
-    document["project"]["default_branch"] = "trunk"
-    document["project"]["author_name"] = "Sentinel Author Q7"
-    document["repos"] = [
-        {
-            "dir": repo_dir,
-            "github": f"acme/{repo_dir}",
-            "check_fast": "make sentinel-fast-q7",
-            "check": "make sentinel-full-q7",
-        }
-        for repo_dir in ("demo-api", "demo-web")
-    ]
-    document["modules"] = {}
-    return HubConfig.model_validate(document)
-
 
 @pytest.fixture
 def demo_render(demo_config: HubConfig) -> dict[str, RenderedFile]:
     """The demo render, by output path."""
-    return {file.path: file for file in render_hub(demo_config)}
-
-
-@pytest.fixture
-def rendered_tree(tmp_path: Path) -> TreeWriter:
-    """Write rendered files under ``tmp_path / "hub"`` (executable bit kept); return that folder."""
-
-    def write(rendered: Iterable[RenderedFile]) -> Path:
-        root = tmp_path / "hub"
-        for file in rendered:
-            target = root / file.path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(file.content)
-            if file.executable:
-                target.chmod(target.stat().st_mode | _EXECUTABLE_BITS)
-        root.mkdir(exist_ok=True)
-        return root
-
-    return write
+    return {file.path: file for file in render_hub(demo_config).files}
 
 
 @pytest.fixture

@@ -6,7 +6,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
@@ -16,6 +16,8 @@ import pytest
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
+from agent_hub.core.hub_files.rendered_hub import RenderedHub
+from agent_hub.core.hub_files.rendered_link import RenderedLink
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.generator.errors import TemplateError
 from agent_hub.generator.hub_template import render_template
@@ -63,8 +65,9 @@ print(render_digest(render_hub(HubConfig.model_validate(a_hub_document()))))
 """
 
 
-def render_digest(rendered: Sequence[RenderedFile]) -> str:
-    """SHA-256 of a canonical dump: per file its fields, its content length, then its bytes.
+def render_digest(rendered: RenderedHub) -> str:
+    """SHA-256 of a canonical dump: per file its fields, content length and bytes, then per link
+    its path, target and classification (AC-4.28).
 
     Self-contained (imports inside), because the subprocess tests send its source to children.
     """
@@ -72,7 +75,7 @@ def render_digest(rendered: Sequence[RenderedFile]) -> str:
     import json
 
     digest = hashlib.sha256()
-    for file in rendered:
+    for file in rendered.files:
         fields = [
             file.path,
             file.kind.value,
@@ -83,6 +86,9 @@ def render_digest(rendered: Sequence[RenderedFile]) -> str:
         ]
         digest.update(json.dumps(fields).encode("utf-8"))
         digest.update(file.content)
+    for link in rendered.links:
+        row = [link.path, link.target, link.kind.value, link.ownership.value, link.module]
+        digest.update(json.dumps(row).encode("utf-8"))
     return digest.hexdigest()
 
 
@@ -133,14 +139,21 @@ def a_fixture_entry(package: Path, path: str, text: str) -> TemplateEntry:
 def test_returns_design_paths_sorted_when_demo_rendered(demo_config: HubConfig) -> None:
     rendered = render_hub(demo_config)
 
-    assert isinstance(rendered, tuple)
-    assert tuple(file.path for file in rendered) == DESIGN_PATHS
+    assert isinstance(rendered.files, tuple)
+    assert tuple(file.path for file in rendered.files) == DESIGN_PATHS
+
+
+def test_returns_rendered_hub_when_demo_rendered(demo_config: HubConfig) -> None:
+    rendered = render_hub(demo_config)
+
+    assert isinstance(rendered, RenderedHub)
+    assert rendered.links == ()
 
 
 def test_copies_registry_classification_when_demo_rendered(demo_config: HubConfig) -> None:
     entries = {entry.path: entry for entry in REGISTRY}
 
-    for file in render_hub(demo_config):
+    for file in render_hub(demo_config).files:
         entry = entries[file.path]
         assert type(file) is RenderedFile
         assert type(file.kind) is Kind
@@ -168,7 +181,7 @@ def test_renders_module_entry_when_module_selected(demo_config: HubConfig) -> No
 
     rendered = render_entries(demo_config, [a_bench_entry(), readme])
 
-    assert [(file.path, file.kind, file.module) for file in rendered] == [
+    assert [(file.path, file.kind, file.module) for file in rendered.files] == [
         ("README.md", Kind.GENERIC, None),
         ("mk/bench.mk", Kind.MODULE, "bench"),
     ]
@@ -185,7 +198,7 @@ def test_renders_module_entry_when_aliased_module_selected() -> None:
 
     rendered = render_entries(a_config_with_modules({"contract-sync": {}}), [entry])
 
-    assert [file.path for file in rendered] == ["mk/contract-sync.mk"]
+    assert [file.path for file in rendered.files] == ["mk/contract-sync.mk"]
 
 
 def test_skips_module_entry_when_module_unselected(variant_config: HubConfig) -> None:
@@ -193,13 +206,13 @@ def test_skips_module_entry_when_module_unselected(variant_config: HubConfig) ->
 
     rendered = render_entries(variant_config, [a_bench_entry(), readme])
 
-    assert [file.path for file in rendered] == ["README.md"]
+    assert [file.path for file in rendered.files] == ["README.md"]
 
 
 def test_copies_core_schema_bytes_when_schema_rendered(demo_config: HubConfig) -> None:
     core_schema = files("agent_hub.core.hub_config").joinpath("hub.schema.json").read_bytes()
 
-    schema = {file.path: file for file in render_hub(demo_config)}["hub.schema.json"]
+    schema = {file.path: file for file in render_hub(demo_config).files}["hub.schema.json"]
 
     assert schema.content == core_schema
 
@@ -211,7 +224,7 @@ def test_substitutes_config_values_when_template_rendered(
         fixture_templates, "NAME.md", "# @@{project_name} hub\r\n$HOME @@@@ é\n"
     )
 
-    (rendered,) = render_entries(demo_config, [entry])
+    (rendered,) = render_entries(demo_config, [entry]).files
 
     # Strict UTF-8, no newline translation: a \r stays visible to the byte-form checks.
     assert rendered.content == "# demo hub\r\n$HOME @@ é\n".encode()
@@ -268,6 +281,25 @@ def test_renders_same_bytes_when_module_order_differs() -> None:
     assert render_digest(render_hub(bench_first)) == render_digest(render_hub(cloud_first))
 
 
+def test_changes_digest_when_link_target_or_ownership_differs() -> None:
+    link = RenderedLink(
+        path=".claude/agents/a.md",
+        target="../../plugin/hub-workflow/agents/a.md",
+        kind=Kind.GENERIC,
+        ownership=Ownership.MANAGED,
+        module=None,
+    )
+    other_target = link.model_copy(update={"target": "../../plugin/demo/agents/a.md"})
+    other_ownership = link.model_copy(update={"ownership": Ownership.SEEDED})
+
+    digests = [
+        render_digest(RenderedHub(files=(), links=links))
+        for links in ((), (link,), (other_target,), (other_ownership,))
+    ]
+
+    assert len(set(digests)) == len(digests)
+
+
 # AC-3.18 (Q5): the base Makefile's targets; `bench` and `bench-validate` go to mk/bench.mk.
 BASE_TARGETS = (
     "brain-brief",
@@ -301,7 +333,7 @@ MAKE_ENV_LEAKS = ("MAKEFLAGS", "MFLAGS", "MAKELEVEL", "GNUMAKEFLAGS", "MAKEFILES
 
 
 def text_of(config: HubConfig, path: str) -> str:
-    return {file.path: file for file in render_hub(config)}[path].content.decode("utf-8")
+    return {file.path: file for file in render_hub(config).files}[path].content.decode("utf-8")
 
 
 def template_texts() -> Iterator[tuple[str, str]]:
@@ -338,7 +370,34 @@ def pinned_source(version: str) -> str:
     return command[command.index("--from") + 1]
 
 
-def a_hub_tree(config: HubConfig, rendered_tree: Callable[[Iterable[RenderedFile]], Path]) -> Path:
+def test_writes_links_as_symlinks_when_tree_written(
+    rendered_tree: Callable[[RenderedHub], Path],
+) -> None:
+    agent = RenderedFile(
+        path="plugin/p/agents/a.md",
+        content=b"# a\n",
+        executable=False,
+        kind=Kind.GENERIC,
+        ownership=Ownership.MANAGED,
+        module=None,
+    )
+    link = RenderedLink(
+        path=".claude/agents/a.md",
+        target="../../plugin/p/agents/a.md",
+        kind=Kind.GENERIC,
+        ownership=Ownership.MANAGED,
+        module=None,
+    )
+
+    root = rendered_tree(RenderedHub(files=(agent,), links=(link,)))
+
+    written = root / ".claude" / "agents" / "a.md"
+    assert written.is_symlink()
+    assert os.readlink(written) == "../../plugin/p/agents/a.md"
+    assert written.read_bytes() == b"# a\n"
+
+
+def a_hub_tree(config: HubConfig, rendered_tree: Callable[[RenderedHub], Path]) -> Path:
     """The render written to disk, next to a synthetic hub.json pinned to ``RUN_VERSION``."""
     root = rendered_tree(render_hub(config))
     document = a_hub_document()
@@ -450,7 +509,7 @@ def test_keeps_author_name_out_when_makefile_rendered(
 
 def test_lists_help_when_make_dry_run(
     variant_config: HubConfig,
-    rendered_tree: Callable[[Iterable[RenderedFile]], Path],
+    rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
@@ -462,7 +521,7 @@ def test_lists_help_when_make_dry_run(
 
 def test_lists_each_base_target_once_when_help_run(
     variant_config: HubConfig,
-    rendered_tree: Callable[[Iterable[RenderedFile]], Path],
+    rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
@@ -478,7 +537,7 @@ def test_lists_each_base_target_once_when_help_run(
 
 def test_passes_check_when_hub_has_no_tests(
     variant_config: HubConfig,
-    rendered_tree: Callable[[Iterable[RenderedFile]], Path],
+    rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
@@ -491,7 +550,7 @@ def test_passes_check_when_hub_has_no_tests(
 
 def test_fails_check_when_hub_test_fails(
     variant_config: HubConfig,
-    rendered_tree: Callable[[Iterable[RenderedFile]], Path],
+    rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
@@ -532,7 +591,7 @@ def test_runs_pinned_release_when_target_run(
     hub_call: str,
     *,
     variant_config: HubConfig,
-    rendered_tree: Callable[[Iterable[RenderedFile]], Path],
+    rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
@@ -617,7 +676,7 @@ def test_pins_hygiene_hooks_when_pre_commit_rendered(demo_config: HubConfig) -> 
 
 def test_runs_hub_doctor_through_shim_when_pre_commit_entry_run(
     variant_config: HubConfig,
-    rendered_tree: Callable[[Iterable[RenderedFile]], Path],
+    rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
@@ -701,7 +760,7 @@ def test_rejects_name_when_target_given_shell_syntax(
     arguments: tuple[str, ...],
     *,
     variant_config: HubConfig,
-    rendered_tree: Callable[[Iterable[RenderedFile]], Path],
+    rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
@@ -776,7 +835,7 @@ def test_names_missing_access_when_release_unresolved(
     runner: str,
     *,
     variant_config: HubConfig,
-    rendered_tree: Callable[[Iterable[RenderedFile]], Path],
+    rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
@@ -801,7 +860,7 @@ def test_passes_exit_code_through_when_hub_call_fails(
     runner: str,
     *,
     variant_config: HubConfig,
-    rendered_tree: Callable[[Iterable[RenderedFile]], Path],
+    rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
@@ -823,7 +882,7 @@ def test_prints_install_hint_when_uv_missing(
     runner: str,
     *,
     variant_config: HubConfig,
-    rendered_tree: Callable[[Iterable[RenderedFile]], Path],
+    rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
     no_uv_path: str,
 ) -> None:
@@ -845,7 +904,7 @@ def test_calls_no_uvx_when_pinned_version_unreadable(
     hub_json: str,
     *,
     variant_config: HubConfig,
-    rendered_tree: Callable[[Iterable[RenderedFile]], Path],
+    rendered_tree: Callable[[RenderedHub], Path],
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
@@ -891,7 +950,7 @@ CONFIG_NAMES = ("demo", "variant")
 
 def rendered_texts(config: HubConfig) -> dict[str, str]:
     """Every rendered file by path, decoded as strict UTF-8."""
-    return {file.path: file.content.decode("utf-8") for file in render_hub(config)}
+    return {file.path: file.content.decode("utf-8") for file in render_hub(config).files}
 
 
 def frontmatter_lines(text: str) -> list[str]:
@@ -918,7 +977,7 @@ def test_writes_utf8_lf_final_newline_when_text_rendered(
 ) -> None:
     config = request.getfixturevalue(f"{config_name}_config")
 
-    for file in render_hub(config):
+    for file in render_hub(config).files:
         if file.path in EMPTY_PATHS:
             continue
         text = file.content.decode("utf-8")
@@ -1075,7 +1134,7 @@ def rendered_paths(rendered: Iterable[RenderedFile]) -> set[str]:
 
 
 def test_references_created_brain_paths_when_markdown_rendered(demo_config: HubConfig) -> None:
-    rendered = render_hub(demo_config)
+    rendered = render_hub(demo_config).files
     created = rendered_paths(rendered)
     texts = {file.path: file.content.decode("utf-8") for file in rendered}
 

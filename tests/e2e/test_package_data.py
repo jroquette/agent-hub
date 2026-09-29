@@ -11,6 +11,7 @@ from subprocess import CompletedProcess
 
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.rendered_file import RenderedFile
+from agent_hub.core.hub_files.rendered_link import RenderedLink
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.generator.registry import REGISTRY
 from agent_hub.generator.render_hub import render_hub
@@ -20,7 +21,8 @@ GENERATOR_PACKAGE = "agent_hub.generator"
 INSTALL_TIMEOUT_SECONDS = 300
 
 # Run by the scratch venv's python, from a cwd outside the repo: renders the demo config with the
-# installed wheels and prints where core and the generator were imported from, and one row per file.
+# installed wheels and prints where core and the generator were imported from, one row per file
+# and one row per link.
 RENDER_SCRIPT = """
 import hashlib, json
 import agent_hub.core, agent_hub.generator
@@ -32,10 +34,14 @@ rendered = render_hub(HubConfig.model_validate(a_hub_document()))
 rows = [
     [f.path, f.kind.value, f.ownership.value, f.module, f.executable,
      hashlib.sha256(f.content).hexdigest()]
-    for f in rendered
+    for f in rendered.files
+]
+links = [
+    [link.path, link.target, link.kind.value, link.ownership.value, link.module]
+    for link in rendered.links
 ]
 origins = [*agent_hub.core.__path__, *agent_hub.generator.__path__]
-print(json.dumps({"origins": origins, "rows": rows}))
+print(json.dumps({"origins": origins, "files": rows, "links": links}))
 """
 
 
@@ -117,8 +123,9 @@ def test_renders_same_files_when_installed_wheels_run_outside_repo(
     assert len(report["origins"]) == 2, report["origins"]
     assert all(Path(origin).is_relative_to(venv) for origin in report["origins"]), report["origins"]
     in_repo = render_hub(HubConfig.model_validate(a_hub_document()))
-    assert report["rows"] == _rows(in_repo)
-    assert "hub.schema.json" in {row[0] for row in report["rows"]}
+    assert report["files"] == _rows(in_repo.files)
+    assert report["links"] == _link_rows(in_repo.links)
+    assert "hub.schema.json" in {row[0] for row in report["files"]}
 
 
 def _uv() -> str:
@@ -142,4 +149,11 @@ def _rows(rendered: Iterable[RenderedFile]) -> list[list[object]]:
             hashlib.sha256(file.content).hexdigest(),
         ]
         for file in rendered
+    ]
+
+
+def _link_rows(links: Iterable[RenderedLink]) -> list[list[object]]:
+    return [
+        [link.path, link.target, link.kind.value, link.ownership.value, link.module]
+        for link in links
     ]

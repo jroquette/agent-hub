@@ -1,4 +1,4 @@
-"""``render_hub``: every file of a hub, rendered in memory from a validated ``HubConfig``.
+"""``render_hub``: every file and link of a hub, rendered in memory from a validated ``HubConfig``.
 
 Pure and deterministic: sources are package data read through ``importlib.resources``; nothing
 is written, and no clock, environment, working directory or hub tree is read. The same config
@@ -10,21 +10,22 @@ from importlib.resources import files
 
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.rendered_file import RenderedFile
+from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.generator.hub_template import render_template
 from agent_hub.generator.placeholders import substitution_mapping
 from agent_hub.generator.registry import REGISTRY, TemplateEntry
 
 
-def render_hub(config: HubConfig) -> tuple[RenderedFile, ...]:
+def render_hub(config: HubConfig) -> RenderedHub:
     """Render every registry file this config selects, sorted by path."""
     return render_entries(config, REGISTRY)
 
 
-def render_entries(config: HubConfig, entries: Iterable[TemplateEntry]) -> tuple[RenderedFile, ...]:
+def render_entries(config: HubConfig, entries: Iterable[TemplateEntry]) -> RenderedHub:
     """Render the ``entries`` this config selects, sorted by path (code-point order).
 
     An entry of a module renders only when the config selects that module. Every file is built
-    before any is returned, so a ``TemplateError`` leaves no partial result.
+    before any is returned, so a ``TemplateError`` leaves no partial result. No link yet.
     """
     mapping = substitution_mapping(config)
     # Dumped by alias: the closed JSON ids (``contract-sync``) that ``TemplateEntry.module`` uses.
@@ -34,7 +35,7 @@ def render_entries(config: HubConfig, entries: Iterable[TemplateEntry]) -> tuple
         for entry in entries
         if entry.module is None or entry.module in selected_modules
     ]
-    return tuple(sorted(rendered, key=lambda file: file.path))
+    return RenderedHub(files=tuple(sorted(rendered, key=lambda file: file.path)), links=())
 
 
 def _render(entry: TemplateEntry, mapping: Mapping[str, str]) -> RenderedFile:
