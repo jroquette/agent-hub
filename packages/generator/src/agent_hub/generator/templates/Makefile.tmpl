@@ -1,0 +1,66 @@
+# Hub entry points. Project, repos and tracker come from hub.json; repos are siblings of the hub.
+# Managed by hub sync: put project targets in Makefile.project. `make help` lists the targets.
+SHELL := /bin/bash
+.DEFAULT_GOAL := help
+
+# The hub command of the release pinned in hub.json (platform.version), read when a recipe runs,
+# never at render time. No uv: exit 127. The pinned release cannot be resolved: exit 1.
+HUB = hub() { \
+  local version from_source; \
+  version="$$(python3 -c 'import json, re, sys; v = json.load(sys.stdin).get("platform", {}).get("version"); ok = isinstance(v, str) and re.fullmatch("[0-9]+[.][0-9]+[.][0-9]+", v); print(v) if ok else sys.exit("hub: platform.version in hub.json must be X.Y.Z")' < hub.json)" || return 1; \
+  command -v uvx >/dev/null 2>&1 || { echo "hub: uv is not installed; see https://docs.astral.sh/uv/getting-started/installation/" >&2; return 127; }; \
+  from_source="@@{platform_repository}@v$$version\#subdirectory=packages/agent-hub"; \
+  uvx --from "$$from_source" hub --version >/dev/null || { echo "hub: cannot run agent-hub $$version from $$from_source; check read access to the repository" >&2; return 1; }; \
+  uvx --from "$$from_source" hub "$$@"; \
+}; hub
+
+# A command-line value single-quoted for the shell, taken raw (make never expands it): $(call hub_quote,NAME).
+hub_quote = '$(subst ','\'',$(value $(1)))'
+# Fails the recipe unless variable $(2) of target $(1) matches ^[A-Za-z0-9._-]+$ (empty passes; required is checked apart).
+hub_check_name = case $(call hub_quote,$(2)) in *[!A-Za-z0-9._-]*) echo "ERROR $(1): $(2) may hold only letters, digits, '.', '_' and '-'. Fix: make $(1) $(2)=<value matching ^[A-Za-z0-9._-]+$$>" >&2; exit 1;; esac
+
+.PHONY: brain-brief agent worktree worktree-remove next run-issue usage mine retro check help
+
+brain-brief:  ## Session brief: brain/now.md, recent journal, repo/PR/CI state
+	@$(HUB) brief
+
+agent:  ## Multi-repo Claude session (hub + every repo in hub.json, AGENTS.md appended)
+	./agent
+
+worktree:  ## Isolated worktrees for one task in every repo (usage: make worktree NAME=<team>-<n>[-<desc>] [ONLY=<repo>])
+	@test -n $(call hub_quote,NAME) || (echo "ERROR worktree: NAME is required. Fix: make worktree NAME=<name>"; exit 1)
+	@$(call hub_check_name,worktree,NAME); $(call hub_check_name,worktree,ONLY); \
+	$(HUB) worktree $(call hub_quote,NAME) $(if $(value ONLY),--only $(call hub_quote,ONLY))
+
+worktree-remove:  ## Remove a task's worktrees (usage: make worktree-remove NAME=<name> [ONLY=<repo>])
+	@test -n $(call hub_quote,NAME) || (echo "ERROR worktree-remove: NAME is required. Fix: make worktree-remove NAME=<name>"; exit 1)
+	@$(call hub_check_name,worktree-remove,NAME); $(call hub_check_name,worktree-remove,ONLY); \
+	$(HUB) worktree --remove $(call hub_quote,NAME) $(if $(value ONLY),--only $(call hub_quote,ONLY))
+
+next:  ## List the tracker's ready issues
+	@$(HUB) next
+
+run-issue:  ## Agent runner, dry run by default (usage: make run-issue ISSUE=<TEAM>-N REPO=<repo dir in hub.json> [LIVE=1])
+	@test -n $(call hub_quote,ISSUE) -a -n $(call hub_quote,REPO) || (echo "ERROR run-issue: ISSUE and REPO are required. Fix: make run-issue ISSUE=<TEAM>-N REPO=<repo dir in hub.json>"; exit 1)
+	@$(call hub_check_name,run-issue,ISSUE); $(call hub_check_name,run-issue,REPO); \
+	$(HUB) run $(call hub_quote,ISSUE) --repo $(call hub_quote,REPO) $(if $(LIVE),--live)
+
+usage:  ## Claude Code cost from local transcripts (ccusage), last 7 days by day and model
+	npx -y ccusage@20.0.24 daily --since $$(date -v-7d +%Y%m%d 2>/dev/null || date -d '7 days ago' +%Y%m%d) --breakdown
+
+mine:  ## Weekly transcript mining: recurring failures → brain inbox report (DAYS=7)
+	python3 scripts/mine_transcripts.py --days $(or $(DAYS),7) --write
+
+retro:  ## Retro metrics as JSON: PRs, cycle time, agent runs, CI health, memory (DAYS=14)
+	python3 scripts/retro_metrics.py --days $(or $(DAYS),14)
+
+# The hub tests run only when tests/ exists. From Python 3.12 unittest fails on a tests/ with no test.
+check:  ## Hub gates (what CI runs): hub doctor, then the hub's own tests when tests/ exists
+	@$(HUB) doctor
+	@if [ -d tests ]; then python3 -m unittest discover -s tests -q; fi
+
+help:  ## Show this help
+	@grep -hE '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-16s %s\n", $$1, $$2}'
+
+# One mk/<id>.mk per module selected in hub.json, then the project's own targets (may use $(HUB)).
+@@{module_includes}-include Makefile.project

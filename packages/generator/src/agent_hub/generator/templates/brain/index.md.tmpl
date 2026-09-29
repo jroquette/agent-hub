@@ -1,0 +1,22 @@
+---
+type: index
+repos: [hub, @@{repo_dirs}]
+status: active
+last_verified: YYYY-MM-DD
+provenance: human
+---
+# Brain index
+
+Pull-only knowledge. Read the entry that matches your task; don't load folders in bulk.
+
+| I need… | Go to |
+|---|---|
+| Current focus, in-flight work, next step | `now.md` |
+| Domain rules, glossary, invariants | `domain/` |
+| Why a decision was made | `decisions/` (cross-repo), plus each repo's own docs |
+| Step-by-step procedures (debugging, worktrees, ops) | `playbooks/` |
+| Pitfalls by area, verified learnings | `learnings/` |
+| Per-feature specs, research and plans | `features/` |
+| What happened, by date | `journal/YYYY/MM/DD.md` (template: `journal/_template.md`) |
+
+`_inbox/` holds unreviewed proposals; nothing there is authoritative.

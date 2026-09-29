@@ -12,6 +12,7 @@ members = [
     "agent-hub-cli",
     "agent-hub-collector",
     "agent-hub-core",
+    "agent-hub-generator",
     "agent-hub-storage",
 ]
 build-constraints = [{ name = "hatchling", specifier = "==1.32.4" }]
@@ -34,6 +35,7 @@ dependencies = [
     { name = "agent-hub-cli" },
     { name = "agent-hub-collector" },
     { name = "agent-hub-core" },
+    { name = "agent-hub-generator" },
     { name = "agent-hub-storage" },
 ]
 
@@ -42,6 +44,7 @@ requires-dist = [
     { name = "agent-hub-cli", editable = "packages/cli" },
     { name = "agent-hub-collector", editable = "packages/collector" },
     { name = "agent-hub-core", editable = "packages/core" },
+    { name = "agent-hub-generator", editable = "packages/generator" },
     { name = "agent-hub-storage", editable = "packages/storage" },
 ]
 
@@ -89,6 +92,17 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "pydantic", specifier = ">=2" }]
+
+[[package]]
+name = "agent-hub-generator"
+version = "0.1.0"
+source = { editable = "packages/generator" }
+dependencies = [
+    { name = "agent-hub-core" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "agent-hub-core", editable = "packages/core" }]
 
 [[package]]
 name = "agent-hub-storage"

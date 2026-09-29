@@ -33,7 +33,7 @@ PR titles follow [Conventional Commits](https://www.conventionalcommits.org/): `
 the PR title the commit on `main`, so the title is what the history and the future changelogs read.
 
 - **Types:** `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`, `build`, `perf`, `revert`.
-- **Scopes:** `core`, `storage`, `collector`, `cli`, `api`, `web`, `repo`, `deps`, `ci`, `docs`.
+- **Scopes:** `core`, `storage`, `collector`, `cli`, `generator`, `api`, `web`, `repo`, `deps`, `ci`, `docs`.
 - The scope is required. `!` before the colon marks a breaking change: `fix(cli)!: rename flag`.
 - The whole title is at most 72 characters, has no trailing period and no trailing whitespace.
 - Examples: `feat(collector): ingest hook events`, `chore(repo): foundation workspace, gates, ADRs and English docs`.
@@ -53,7 +53,7 @@ follow-up chore.
 - **States:** Backlog → Todo → In Progress → In Review (PR open and `check` green) → Done, plus Canceled.
 - **Labels:**
   - type, exactly one per issue: `feature`, `bug`, `chore`, `spike`, `docs`;
-  - area: `pkg:core`, `pkg:storage`, `pkg:collector`, `pkg:cli`, `pkg:api`, `app:web`;
+  - area: `pkg:core`, `pkg:storage`, `pkg:collector`, `pkg:cli`, `pkg:generator`, `pkg:api`, `app:web`;
   - automation: `agent-ready` (an agent may pick it up), `agent-failed` (an agent run failed; the issue has the diagnosis).
 - **Size:** `spike`, `bounded` or `architectural`. No story points; cycle time is tracked instead.
 

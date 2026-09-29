@@ -7,8 +7,8 @@ RUN := uv run --locked --all-packages
 # Alembic loads the migration scripts by path under synthetic module names, which package sources
 # never match, so their directory is a source of its own.
 COV := --cov=agent_hub.core --cov=agent_hub.storage --cov=agent_hub.collector \
-       --cov=agent_hub.cli --cov=packages/storage/src/agent_hub/storage/migrations \
-       --cov-branch --cov-report=
+       --cov=agent_hub.generator --cov=agent_hub.cli \
+       --cov=packages/storage/src/agent_hub/storage/migrations --cov-branch --cov-report=
 ALEMBIC := $(RUN) python -m agent_hub.storage.migration
 
 .PHONY: help format lint typecheck layout test-fast check-fast test-integration test-e2e imports \

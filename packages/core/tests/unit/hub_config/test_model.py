@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.model import MODULE_IDS, HubConfig
 from agent_hub.core.testing.builders import a_hub_document
 
 REQUIRED_KEYS: list[tuple[str | int, ...]] = [
@@ -515,6 +515,10 @@ def test_rejects_module_when_id_unknown() -> None:
     assert error_types(with_value(("modules", "slack"), {})) == [
         (("modules", "slack"), "extra_forbidden")
     ]
+
+
+def test_lists_json_ids_when_module_ids_read() -> None:
+    assert MODULE_IDS == ("bench", "cloud", "contract-sync", "marketplace")
 
 
 def test_rejects_module_settings_when_key_not_underscore() -> None:

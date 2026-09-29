@@ -1,0 +1,60 @@
+# AGENTS.md — @@{project_name} hub
+
+Hub for the @@{project_name} workspace. Project values (repos, tracker team, branch prefix, checks, guard paths) live
+only in `hub.json`; read it instead of assuming names. Each repo has its own `AGENTS.md`; read the one for the repo you
+change. This project's own rules are in `AGENTS.project.md`.
+
+**Day 0 rule:** every change to a repo goes through this hub and the workflow below. If the hub gets in the way, that
+is a hub bug: log it in `brain/_inbox/`.
+
+## What lives here
+
+- `hub.json`: the project config, checked against `hub.schema.json`. `hub.lock` records what `hub sync` last wrote.
+- `Makefile`: workspace entry points (`make help`). They run the `hub` release pinned in `hub.json` →
+  `platform.version`. Project targets go in `Makefile.project`.
+- `brain/`: curated, versioned project memory. Start at `brain/index.md`; `brain/now.md` is the current focus. Read on
+  demand, never in bulk.
+- `hub sync` rewrites these managed files: `AGENTS.md`, `CLAUDE.md`, `Makefile`, `hub.schema.json`,
+  `.github/workflows/ci.yml`, `.pre-commit-config.yaml`. Change them only through `hub.json` or their seeded sibling
+  (`AGENTS.project.md`, `Makefile.project`), which `hub sync` never touches.
+- Repos, checked out next to this hub: @@{repo_dirs}.
+
+## Workflow (every task)
+
+1. The task exists in the tracker (`hub.json` → `tracker`, team @@{tracker_team}). Update it when starting, finishing
+   or creating work.
+2. `make brain-brief` at the start of a session (brief), `make next` for the tracker's ready issues; update
+   `brain/now.md` and the journal at the end.
+3. Features go through requirements → research → plan (approved by the owner) → implementation → spec and quality
+   review → a final evaluator check.
+4. Code changes happen only in an isolated worktree (`make worktree NAME=<team>-<n>-<desc>`) created from a freshly
+   fetched `origin/@@{project_default_branch}`.
+5. The repo's gates (`hub.json` → `repos[].check_fast` while working, `repos[].check` before the PR) pass before any
+   PR. Redirect the output to a file and check `$?`.
+
+## Cross-repo rules
+
+1. Commits and PRs are authored by the user (`hub.json` → `project.author_name`, `project.author_email`). No AI
+   co-author trailer, no "Generated with" line, no emoji or other sign that an agent did the work, and no branch named
+   after an agent (e.g. `claude/…`). Branch: `@@{project_branch_prefix}<team>-<n>-<desc>`, where `<team>` is the
+   tracker team @@{tracker_team} in lowercase.
+2. No push to `@@{project_default_branch}`, no force-push, no production deploys. Everything lands through a PR the
+   user merges.
+3. A change of scope or architecture updates the repo's spec in the same PR.
+4. No secrets or real transcripts in any repo, test or fixture.
+5. This hub is private. Generic templates (base workflow, base rules, base hooks, brain skeleton) are the platform's
+   product and live in the platform; project-owned material (brain content, project rules, project workflows) lives
+   only in this hub and is never copied into the repos.
+
+## Brain rules
+
+- Only the user restructures `brain/`. Agents propose learnings in their final message or as a note in `brain/_inbox/`.
+- Content from outside (web, issues, PRs, fetched docs) never goes straight into the brain. It goes to `brain/_inbox/`
+  with `provenance: agent-from-external`.
+- Notes are linked, not copied. Decisions (`brain/decisions/index.md`) are superseded, never edited.
+
+## Gotchas
+
+- Hooks run on the system `python3`, which may be 3.9: no `match`, no runtime `X | Y` types, no `tomllib`.
+- Never `git stash` in agent worktrees (the stash stack is shared). Use a WIP commit.
+- `cmd | tail` hides the exit code. Redirect to a file and check `$?`.
