@@ -11,7 +11,6 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
@@ -24,7 +23,7 @@ ESLINT_CONFIGS = ("eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", 
                   ".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yml", ".eslintrc.yaml")
 
 
-def run(cmd: List[str], cwd: Path) -> Tuple[int, str]:
+def run(cmd: list[str], cwd: Path) -> tuple[int, str]:
     try:
         env = dict(os.environ, NO_COLOR="1", FORCE_COLOR="0")
         p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=40, env=env)

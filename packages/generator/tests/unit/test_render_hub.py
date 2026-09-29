@@ -583,6 +583,127 @@ def test_defines_check_returning_none_when_stub_parsed(
     ]
 
 
+# AC-4.24 (Q-1): every rendered `.py` runs on the system python3, which may be 3.9. The scripts
+# load the hooks' reader by path; the guard's runner loads the project extension by path (AC-4.14).
+READER_PATH = "plugin/hub-workflow/hooks/stdlib_reader.py"
+READER_MODULE = "hub_stdlib_reader"
+EXTENSION_RUNNER = "plugin/hub-workflow/hooks/project_guard_runner.py"
+# `sys.stdlib_module_names` is the running 3.14's: these stdlib modules came after 3.9 (What's New
+# in Python 3.11 and 3.14), so a rendered file that imports one fails on the system python3.
+POST_39_STDLIB = frozenset(
+    {
+        "annotationlib",
+        "compression",
+        "concurrent.interpreters",
+        "string.templatelib",
+        "tomllib",
+        "wsgiref.types",
+    }
+)
+
+
+def rendered_python(render: Mapping[str, RenderedFile]) -> dict[str, ast.Module]:
+    """Every rendered `.py`, by output path, parsed with 3.9's grammar."""
+    return {
+        path: ast.parse(file.content, filename=path, feature_version=(3, 9))
+        for path, file in render.items()
+        if path.endswith(".py")
+    }
+
+
+def imported_names(module: ast.Module) -> Iterator[tuple[str, int]]:
+    """Each imported module name with its relative level (0 for an absolute import)."""
+    for node in ast.walk(module):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                yield alias.name, 0
+        elif isinstance(node, ast.ImportFrom):
+            yield node.module or "", node.level
+
+
+def string_constants(node: ast.AST) -> Iterator[str]:
+    """The string constants under ``node`` in source order (``ast.walk`` is breadth-first)."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        yield node.value
+    for child in ast.iter_child_nodes(node):
+        yield from string_constants(child)
+
+
+def by_path_loads(module: ast.Module) -> list[ast.Call]:
+    return [
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "spec_from_file_location"
+    ]
+
+
+def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    parsed = rendered_python(demo_render)
+
+    assert {path.rsplit("/", 1)[0] for path in parsed} == {
+        "plugin/demo/hooks",
+        "plugin/hub-workflow/hooks",
+        "scripts",
+    }
+
+
+def test_imports_stdlib_or_siblings_when_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    parsed = rendered_python(demo_render)
+    siblings: dict[str, set[str]] = {}
+    for path in parsed:
+        folder, name = path.rsplit("/", 1)
+        siblings.setdefault(folder, set()).add(name.removesuffix(".py"))
+    reader_loads = 0
+
+    for path, module in parsed.items():
+        folder = path.rsplit("/", 1)[0]
+        for name, level in imported_names(module):
+            assert level == 0, f"{path}: relative import of {name!r}"
+            top = name.split(".")[0]
+            assert top in sys.stdlib_module_names | siblings[folder], f"{path} imports {name}"
+            newer = {added for added in POST_39_STDLIB if f"{name}.".startswith(f"{added}.")}
+            assert not newer, f"{path} imports {name}, added after 3.9"
+        for call in by_path_loads(module):
+            if path == EXTENSION_RUNNER:
+                continue
+            assert folder == "scripts", f"{path} loads a module by path"
+            [name, location] = call.args
+            parts = list(string_constants(location))
+            assert ast.literal_eval(name) == READER_MODULE, path
+            assert "/".join(parts) == READER_PATH, path
+            reader_loads += 1
+
+    assert READER_PATH in demo_render
+    assert reader_loads >= 1
+
+
+def function_imports(module: ast.Module) -> Iterator[tuple[str, int]]:
+    """Each import inside a function or lambda, with its line: it runs only when called."""
+    for scope in ast.walk(module):
+        if isinstance(scope, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+            for node in ast.walk(scope):
+                if isinstance(node, ast.Import | ast.ImportFrom):
+                    yield ast.unparse(node), node.lineno
+
+
+# The real-3.9 import test executes module-level imports only (class bodies included); an import
+# inside a function would reach 3.9 untested. One exception, closed: the extension runner imports
+# its sibling reader inside `answer`, so a missing or broken reader ends the run with exit 3 and a
+# one-line cause (its docstring's protocol), and the guard extension tests run that path on 3.9.
+FUNCTION_IMPORTS = {EXTENSION_RUNNER: ["from stdlib_reader import load_hub_file"]}
+
+
+def test_imports_at_module_level_when_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    found = {
+        path: [statement for statement, _ in function_imports(module)]
+        for path, module in rendered_python(demo_render).items()
+    }
+
+    assert {path: imports for path, imports in found.items() if imports} == FUNCTION_IMPORTS
+
+
 def test_takes_no_project_entry_input_when_signature_read() -> None:
     assert list(inspect.signature(render_hub).parameters) == ["config"]
 

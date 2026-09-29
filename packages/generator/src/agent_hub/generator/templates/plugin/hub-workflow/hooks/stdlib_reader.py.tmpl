@@ -2,8 +2,9 @@
 
 Hooks run on the system ``python3`` (3.9 on macOS) with no dependencies, so this module imports
 nothing outside the standard library and nothing else from agent-hub; agent-hub's tests run it on
-a real 3.9. A hook must never fail because of ``hub.json`` (docs/design/project-config.md § Readers):
-where ``HubConfig`` would reject the file, this reader falls back instead.
+a real 3.9 and lint it with ruff at ``--target-version py39``. A hook must never fail because of
+``hub.json`` (docs/design/project-config.md § Readers): where ``HubConfig`` would reject the file,
+this reader falls back instead.
 
 - A key that is absent, of the wrong type, or an empty string takes its default, and only that
   key: the rest of the file is kept. A list with any item that is not a string is ``()``.
