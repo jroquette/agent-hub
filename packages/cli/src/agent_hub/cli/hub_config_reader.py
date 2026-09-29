@@ -7,6 +7,8 @@ The file is read once, as bytes, so a caller that copies it gets exactly what wa
 
 import io
 import json
+import os
+import stat
 from importlib.metadata import version
 from pathlib import Path
 from typing import NamedTuple, NoReturn
@@ -24,6 +26,9 @@ FILE_LABEL = "hub.json"
 BYTE_ORDER_MARK = "\N{ZERO WIDTH NO-BREAK SPACE}"
 # An invalid hub.json. Typer keeps 2 for usage errors.
 FAILURE = 1
+# O_NONBLOCK: a FIFO swapped in after the check cannot block the open; fstat then refuses it.
+# No O_NOFOLLOW: a link to a regular file is read, as it always was.
+_OPEN_FLAGS = os.O_RDONLY | os.O_NONBLOCK
 
 
 class LoadedHubJson(NamedTuple):
@@ -52,12 +57,19 @@ def load_hub_config_or_exit(path: Path) -> HubConfig:
 def _read_bytes_or_exit(path: Path) -> bytes:
     # The path is quoted and escaped, so it stays on the one line.
     shown_path = json.dumps(str(path))
-    # Opening a FIFO waits for a writer and a device can be endless: only a regular file is read.
-    # A path that does not exist is left to the read, which names the reason.
+    not_regular = ConfigProblem(ROOT_PATH, f"cannot read {shown_path}: not a regular file")
+    # Opening a FIFO waits for a writer and a device can be endless: only a regular file is read,
+    # so a FIFO found here is never opened. A path that does not exist is left to the open, which
+    # names the reason.
     if path.exists() and not path.is_file():
-        _fail(ConfigProblem(ROOT_PATH, f"cannot read {shown_path}: not a regular file"))
+        _fail(not_regular)
     try:
-        return path.read_bytes()
+        descriptor = os.open(path, _OPEN_FLAGS)
+        # What was opened is what gets read: a swap after the check above fails here instead.
+        with open(descriptor, "rb") as opened:
+            if not stat.S_ISREG(os.fstat(opened.fileno()).st_mode):
+                _fail(not_regular)
+            return opened.read()
     except OSError as error:
         reason = error.strerror or type(error).__name__
         _fail(ConfigProblem(ROOT_PATH, f"cannot read {shown_path}: {reason}"))

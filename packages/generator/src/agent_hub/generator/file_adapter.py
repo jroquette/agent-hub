@@ -11,6 +11,10 @@ mode 0o600, given its final mode (``0o777`` or ``0o666`` less the umask) and the
 onto its name; a link is made at the temp name and replaced the same way. On an error the temp
 entry this write created is removed, never one it found there (a removal that fails is a note on
 the write's error, never masking it). No ``fsync`` (Q-6).
+
+Every path is checked before anything is touched: it must be relative, with no empty, ``.`` or
+``..`` segment, because ``openat`` with ``O_NOFOLLOW`` still climbs out of the root through ``..``.
+A path that is not is a caller bug (``ValueError``); the planner only makes plain paths.
 """
 
 import contextlib
@@ -35,6 +39,8 @@ _TEMP_FLAGS: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
 _TEMP_MODE: Final = 0o600
 _NOT_LEFTOVER: Final = "not a leftover file or link"
 _ROOT_MOVED: Final = "the hub folder moved"
+_NOT_UNDER_ROOT: Final = "not a relative path inside the hub"
+_NOT_PLAIN_SEGMENTS: Final = frozenset({"", ".", ".."})
 
 
 @dataclass(frozen=True)
@@ -56,11 +62,13 @@ def ensure_root(root: Path) -> None:
 def remove_leftovers(root: Path, paths: Iterable[str]) -> None:
     """Remove each leftover temp file or link at ``paths``, never what a link points to.
 
-    Raises ``ValueError`` for a path whose name lacks the temp shape (a caller bug), and
-    ``FileWriteError`` when the entry is no longer a regular file or a link.
+    Raises ``ValueError`` for a path that is not plain and relative or whose name lacks the temp
+    shape (a caller bug), and ``FileWriteError`` when the entry is no longer a regular file or a
+    link.
     """
     listed = list(paths)
     for path in listed:
+        _check_plain(path)
         if not is_leftover_name(_split(path)[1]):
             msg = f"{path}: not a leftover name"
             raise ValueError(msg)
@@ -77,7 +85,14 @@ def remove_leftovers(root: Path, paths: Iterable[str]) -> None:
 def apply_writes(
     root: Path, *, folders: Iterable[str], writes: Iterable[FileWrite | LinkWrite]
 ) -> None:
-    """Make ``folders`` (parents first), then apply ``writes`` in order under ``root``."""
+    """Make ``folders`` (parents first), then apply ``writes`` in order under ``root``.
+
+    Raises ``ValueError``, before anything is written, for a path that is not plain and relative.
+    """
+    folders = list(folders)
+    writes = list(writes)
+    for path in [*folders, *(write.path for write in writes)]:
+        _check_plain(path)
     # ``os`` has no umask getter: set it and put it back, once per apply (Q-6's git rule).
     umask = os.umask(0o022)
     os.umask(umask)
@@ -96,6 +111,13 @@ def apply_writes(
                 else:
                     _check_inside(hub, write)
                     _write_link(folder_fd, name=name, write=write)
+
+
+def _check_plain(path: str) -> None:
+    # An absolute path starts with an empty segment, and an empty path is one.
+    if not _NOT_PLAIN_SEGMENTS.isdisjoint(path.split("/")):
+        msg = f"{path!r}: {_NOT_UNDER_ROOT}"
+        raise ValueError(msg)
 
 
 def _split(path: str) -> tuple[str, str]:
