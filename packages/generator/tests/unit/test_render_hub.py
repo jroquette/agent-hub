@@ -1787,8 +1787,8 @@ def project_identifiers(text: str) -> list[str]:
 
 
 # The one carrier: the platform repository as a pinned install source (`<repository>@v<version>`,
-# as the Makefile and the pre-commit hook spell it). A longer name sharing its prefix (the owner's
-# own hub repository) is not the carrier and stays flagged.
+# as the Makefile, the pre-commit hook and the SessionStart hook spell it). A longer name sharing
+# its prefix (the owner's own hub repository) is not the carrier and stays flagged.
 PLATFORM_CARRIER = re.compile(re.escape(PLATFORM_REPOSITORY) + r"(?=@v)")
 
 
@@ -1812,7 +1812,11 @@ def test_holds_no_project_identifier_when_demo_rendered(demo_config: HubConfig) 
     for path, text in texts.items():
         assert rendered_identifiers(text) == [], path
     carriers = {path for path, text in texts.items() if PLATFORM_CARRIER.search(text)}
-    assert carriers == {".pre-commit-config.yaml", "Makefile"}
+    assert carriers == {
+        ".pre-commit-config.yaml",
+        "Makefile",
+        "plugin/hub-workflow/hooks/session_start.py",
+    }
 
 
 def test_holds_no_project_identifier_when_demo_paths_and_links_listed(

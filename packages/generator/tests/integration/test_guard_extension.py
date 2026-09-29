@@ -297,40 +297,100 @@ def test_asks_with_cause_when_extension_misbehaves(
     assert deny == base["deny"]
 
 
-def test_asks_with_cause_when_extension_times_out(hub: Path, guard: Guard, marker: Path) -> None:
-    # Only a base allow: a timed-out run costs the full 3 s (the other failures cover a base ask).
-    install(hub, marker=marker, body="import time\ntime.sleep(4)\nreturn None")
+# The guard's extension timeout in the rendered hook, and the one a timeout run lowers it to.
+EXTENSION_TIMEOUT = 3
+TEST_TIMEOUT = 1
+GUARD_HOOK_TIMEOUT = 10
 
-    [allow] = guard(hub / HOOKS, [base_events(hub)["allow"]])
 
-    assert allow == ("ask", f"{PREFIX}project guard: timed out after 3 s; confirm")
+def guard_with_timeout(
+    hub: Path, run_hook_with_constant: Callable[..., Any], *, python: str, tmp_path: Path
+) -> tuple[Verdict, float]:
+    """The guard's verdict on the base allow, with ``EXTENSION_TIMEOUT`` lowered to
+    ``TEST_TIMEOUT``, and the seconds the run took."""
+    event, cwd = base_events(hub)["allow"]
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    began = time.monotonic()
+    completed = run_hook_with_constant(
+        python,
+        hub / HOOKS / "guard.py",
+        constant=("EXTENSION_TIMEOUT", TEST_TIMEOUT),
+        stdin=json.dumps(event).encode(),
+        cwd=cwd,
+        env={"HOME": str(home)},
+    )
+    took = time.monotonic() - began
+    assert (completed.returncode, completed.stderr) == (0, b"")
+    output = json.loads(completed.stdout)["hookSpecificOutput"]
+    return (output["permissionDecision"], output["permissionDecisionReason"]), took
+
+
+def test_keeps_extension_timeout_inside_guard_timeout_when_rendered(
+    demo_config: HubConfig, pinned_timeout: Callable[..., Any]
+) -> None:
+    value, hook_timeouts = pinned_timeout(
+        demo_config, hook=f"{HOOKS}/guard.py", constant="EXTENSION_TIMEOUT", event="PreToolUse"
+    )
+
+    assert value == EXTENSION_TIMEOUT
+    assert hook_timeouts == {
+        f"{HOOKS}/hooks.json": [GUARD_HOOK_TIMEOUT],
+        ".claude/settings.json": [GUARD_HOOK_TIMEOUT],
+    }
+    assert EXTENSION_TIMEOUT < GUARD_HOOK_TIMEOUT
+
+
+def test_asks_with_cause_when_extension_times_out(
+    hub: Path,
+    marker: Path,
+    *,
+    hook_python: str,
+    run_hook_with_constant: Callable[..., Any],
+    tmp_path: Path,
+) -> None:
+    # Only a base allow (the other failures cover a base ask). The rendered 3 s is pinned by
+    # test_keeps_extension_timeout_inside_guard_timeout_when_rendered; this run lowers it to 1 s.
+    install(hub, marker=marker, body="import time\ntime.sleep(2)\nreturn None")
+
+    allow, took = guard_with_timeout(
+        hub, run_hook_with_constant, python=hook_python, tmp_path=tmp_path
+    )
+
+    assert allow == ("ask", f"{PREFIX}project guard: timed out after {TEST_TIMEOUT} s; confirm")
+    assert TEST_TIMEOUT <= took < 2
 
 
 GRANDCHILD = """\
 import subprocess, sys, time
 subprocess.Popen([sys.executable, "-c", {script!r}])
-time.sleep(10)
+time.sleep(5)
 return None
 """
 GRANDCHILD_SCRIPT = "import time; time.sleep({delay}); open({late!r}, 'w').close()"
-# The grandchild writes its marker this long after it starts: past the guard's 3 s timeout.
-GRANDCHILD_DELAY = 4.5
+# The grandchild writes its marker this long after it starts: past the lowered 1 s timeout.
+GRANDCHILD_DELAY = 2.0
 
 
 def test_kills_extension_process_group_when_timed_out(
-    hub: Path, guard: Guard, marker: Path, *, tmp_path: Path
+    hub: Path,
+    marker: Path,
+    *,
+    hook_python: str,
+    run_hook_with_constant: Callable[..., Any],
+    tmp_path: Path,
 ) -> None:
     late = tmp_path / "late.txt"
     script = GRANDCHILD_SCRIPT.format(delay=GRANDCHILD_DELAY, late=str(late))
     install(hub, marker=marker, body=GRANDCHILD.format(script=script))
 
-    start = time.monotonic()
-    [allow] = guard(hub / HOOKS, [base_events(hub)["allow"]])
-    took = time.monotonic() - start
-    time.sleep(GRANDCHILD_DELAY + 1.5 - min(took, 3.0))
+    allow, took = guard_with_timeout(
+        hub, run_hook_with_constant, python=hook_python, tmp_path=tmp_path
+    )
+    time.sleep(max(0.0, GRANDCHILD_DELAY + 1.5 - took))
 
-    assert allow == ("ask", f"{PREFIX}project guard: timed out after 3 s; confirm")
-    assert took < 5.0
+    assert allow == ("ask", f"{PREFIX}project guard: timed out after {TEST_TIMEOUT} s; confirm")
+    assert TEST_TIMEOUT <= took < GRANDCHILD_DELAY + 1
     assert seen(marker) == ["Read"]
     assert not late.exists()
 

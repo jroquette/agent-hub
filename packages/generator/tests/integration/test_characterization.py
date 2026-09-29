@@ -2,11 +2,10 @@
 
 Each ``<file>/<case>`` of ``CASES`` builds its workspace in a fresh ``<ROOT>`` (``char_workspace``),
 returns how the file under test is run, and is compared byte for byte with the golden AGH-7 wrote
-for the hub's own files (``golden/<file>/<case>.golden``, copied unchanged). The builders and
-their data are AGH-7's, case for case. The four ``DIVERGENT`` session start cases embed the output
-and ``gh`` calls of the hub's ``scripts/brief.py``, which is not rendered: they are asserted to
-differ from their goldens, so the list cannot rot. ``session_start/brief_crash_compact`` matches
-vacuously for the same reason (its brief crash adds nothing, and there is no brief).
+for the hub's own files (``golden/<file>/<case>.golden``), copied from the hub, then changed only
+under D1 (slices 17 and 20). The builders and their data are AGH-7's, case for case. The session
+start goldens hold the mini brief (D1, Q-6): the case hub pins no ``platform.version``, so the
+hook never calls ``uvx`` and names the cause ``no version`` (erratum E1).
 """
 
 import json
@@ -334,7 +333,7 @@ def session_start_no_brief_startup(*, ws: Any) -> Run:
 def session_start_hub_worktree_cwd(*, ws: Any) -> Run:
     ws.brief_workspace()
     # In the main hub only. AGH-7 read the worktree (none, so nothing appended); under Q-4 the
-    # hook reads the main hub that holds it, so this snapshot is appended (SNAPSHOT_OF).
+    # hook reads the main hub that holds it, so its now.md and this snapshot are injected.
     write_snapshot(ws)
     wt = ws.add_worktree(hub_of(ws), "x")
     ws.add_worktree(hub_of(ws), "z")  # also a hub worktree: the scan takes the first sorted
@@ -793,26 +792,9 @@ CASES_PER_FILE = {
     "pre_compact": 4,
     "retro_metrics": 6,
 }
-# Erratum E1 (a): their goldens hold the hub brief script's output and gh calls.
-DIVERGENT = frozenset(
-    {
-        "session_start/startup",
-        "session_start/sibling_repo_cwd",
-        "session_start/compact_snapshot",
-        "session_start/hub_worktree_cwd",
-    }
-)
-# What the missing brief script changes in them: its text and its gh calls, nothing else.
-BRIEF_STREAMS = frozenset({"stdout", "calls"})
-SNAPSHOT_MARKER = "\n\n## Snapshot before compaction\n"
-# Q-4: the hook reads the hub that holds it, not the hub worktree of the event's cwd, so this case
-# now appends the hub's snapshot: the one compact_snapshot's golden holds (slice 20 regenerates
-# both).
-SNAPSHOT_OF = {"session_start/hub_worktree_cwd": "session_start/compact_snapshot"}
-MATCHING = sorted(CASES.keys() - DIVERGENT)
 
 
-@pytest.mark.parametrize("case", MATCHING)
+@pytest.mark.parametrize("case", sorted(CASES))
 def test_matches_golden_when_case_run(
     case: str, char_workspace: Callable[..., Any], hook_python: str
 ) -> None:
@@ -823,38 +805,6 @@ def test_matches_golden_when_case_run(
 def test_lists_every_golden_when_cases_collected(golden: Any) -> None:
     files = [case.split("/", 1)[0] for case in CASES]
     assert {name: files.count(name) for name in files} == CASES_PER_FILE
-    assert CASES.keys() > DIVERGENT
-    assert SNAPSHOT_OF.keys() <= DIVERGENT
-    assert set(SNAPSHOT_OF.values()) <= CASES.keys()
     assert golden.orphans(golden.GOLDEN_ROOT, CASES) == []
     if not golden.update_mode():  # in update mode the cases write what is missing
         assert golden.missing(golden.GOLDEN_ROOT, CASES) == []
-
-
-def brief_free_stdout(golden_stdout: bytes) -> bytes:
-    """The golden's stdout without the brief: only the snapshot part of the context is left,
-    in the hook's JSON form; nothing when the context held no snapshot."""
-    output = json.loads(golden_stdout)
-    assert json.dumps(output).encode() + b"\n" == golden_stdout, "not the hook's JSON form"
-    context = output["hookSpecificOutput"]["additionalContext"]
-    if SNAPSHOT_MARKER not in context:
-        return b""
-    output["hookSpecificOutput"]["additionalContext"] = context[context.index(SNAPSHOT_MARKER) :]
-    return json.dumps(output).encode() + b"\n"
-
-
-@pytest.mark.parametrize("case", sorted(DIVERGENT))
-def test_differs_from_golden_when_case_needs_hub_brief_script(
-    case: str, *, char_workspace: Callable[..., Any], hook_python: str, golden: Any
-) -> None:
-    ws = char_workspace(python=hook_python)
-    actual = ws.run_named(case, **CASES[case](ws=ws))
-    path = golden.GOLDEN_ROOT / f"{case}.golden"
-    expected = golden.parse(path.read_bytes(), path)
-    differing = {stream for stream in golden.STREAMS if actual[stream] != expected[stream]}
-    assert "stdout" in differing, f"{case} now matches the brief's output: drop it from DIVERGENT"
-    assert differing <= BRIEF_STREAMS, f"{case}: {sorted(differing)} differ"
-    assert actual["calls"] == b""
-    snapshot_path = golden.GOLDEN_ROOT / f"{SNAPSHOT_OF.get(case, case)}.golden"
-    snapshot_stdout = golden.parse(snapshot_path.read_bytes(), snapshot_path)["stdout"]
-    assert actual["stdout"] == brief_free_stdout(snapshot_stdout)
