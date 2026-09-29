@@ -5,7 +5,8 @@ Each test is the counterpart of one test of the hub's
 hub test's: a rendered demo hub at ``ws/demo-hub`` whose ``hub.json`` each run writes, and the git
 repos ``app/`` and ``web/`` beside it. The hook runs as Claude Code runs it, a file on
 ``hook_python`` with the event on stdin, in an environment from scratch (no ``HUB_CONFIG``, no
-``CLAUDE_PROJECT_DIR``; ``TMPDIR`` under ``tmp_path``, so its block counter stays there).
+``CLAUDE_PROJECT_DIR``; ``TMPDIR`` under ``tmp_path``, so its block counter stays there). The
+config comes from the hub that holds the hook (Q-4), not from a walk up from the event's cwd.
 """
 
 import json
@@ -114,3 +115,35 @@ def test_skips_repo_when_check_fast_empty(run_hook: RunHook, workspace: Path) ->
 
 def test_stays_silent_when_no_code_changed(run_hook: RunHook, workspace: Path) -> None:
     assert run_hook([{"dir": "app", "check_fast": "exit 1"}], workspace / "demo-hub") == {}
+
+
+def test_gates_repos_when_hooks_run_from_hub_worktree(
+    workspace: Path, *, hook_python: str, tmp_path: Path
+) -> None:
+    # A hub worktree holds its own copy of the hooks and of hub.json. Its hooks keep it as their
+    # root (Q-4), but the hub and workspace are the main checkout's, so the repos stay gated.
+    hub = workspace / "demo-hub"
+    worktree = hub / ".claude" / "worktrees" / "x"
+    shutil.copytree(hub, worktree, ignore=shutil.ignore_patterns(".claude"))
+    # The worktree's hub.json is the one read: its check fails, the main checkout's passes.
+    for folder, check in ((hub, "exit 0"), (worktree, "echo boom; exit 3")):
+        document = {"project": {"name": "demo"}, "repos": [{"dir": "app", "check_fast": check}]}
+        (folder / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    event = {"cwd": str(worktree), "session_id": f"worktree-{os.getpid()}-{tmp_path.name}"}
+
+    completed = subprocess.run(  # noqa: S603 - an interpreter from hook_python, the rendered hook
+        [hook_python, str(worktree / HOOK)],
+        input=json.dumps(event),
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=worktree,
+        env=scratch_env(tmp_path),
+        timeout=TIMEOUT,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    output = json.loads(completed.stdout)
+    assert output["decision"] == "block"
+    assert "## app (app): `echo boom; exit 3` FAILED" in output["reason"]

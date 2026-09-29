@@ -14,7 +14,11 @@ from pathlib import Path
 from typing import List, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hubhooks import emit, git, load_config, read_input, repo_of  # noqa: E402
+try:
+    from hubhooks import emit, git, load_config, read_input, repo_of, run_hook
+except Exception as error:  # a partial install: skip, never error the session
+    print(f"[hub {os.path.splitext(os.path.basename(sys.argv[0] or 'hook'))[0]}] skipped: {type(error).__name__}", file=sys.stderr)
+    sys.exit(0)
 
 ESLINT_CONFIGS = ("eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", "eslint.config.ts",
                   ".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yml", ".eslintrc.yaml")
@@ -31,7 +35,10 @@ def run(cmd: List[str], cwd: Path) -> Tuple[int, str]:
 
 def main() -> None:
     data = read_input()
-    path = (data.get("tool_input") or {}).get("file_path", "")
+    ti = data.get("tool_input")
+    path = ti.get("file_path") if isinstance(ti, dict) else None
+    if not isinstance(path, str):
+        path = ""
     if not path or not os.path.isfile(path):
         return
     cfg = load_config(data.get("cwd") or path)
@@ -61,4 +68,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    run_hook(main)

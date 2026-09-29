@@ -9,7 +9,11 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hubhooks import emit, find_hub, read_input  # noqa: E402
+try:
+    from hubhooks import emit, find_hub, read_input, run_hook
+except Exception as error:  # a partial install: skip, never error the session
+    print(f"[hub {os.path.splitext(os.path.basename(sys.argv[0] or 'hook'))[0]}] skipped: {type(error).__name__}", file=sys.stderr)
+    sys.exit(0)
 
 
 def main() -> None:
@@ -25,8 +29,10 @@ def main() -> None:
         except subprocess.TimeoutExpired:
             try:
                 ctx = subprocess.run([sys.executable, str(brief_py), "--no-network"], capture_output=True, text=True, timeout=8, cwd=hub).stdout
-            except subprocess.TimeoutExpired:
+            except (OSError, subprocess.TimeoutExpired):
                 ctx = ""
+        except OSError:
+            ctx = ""
     ctx = ctx.strip()
     snap = hub / "brain" / "auto" / "workspace" / "session-snapshot.md"
     if data.get("source") == "compact" and snap.exists():
@@ -36,4 +42,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    run_hook(main)

@@ -160,6 +160,35 @@ def run_python() -> Callable[..., Any]:
     return run_child
 
 
+def run_entry_point(
+    python: str,
+    script: Path,
+    *,
+    stdin: bytes,
+    cwd: Path,
+    env: Mapping[str, str] | None = None,
+) -> subprocess.CompletedProcess[bytes]:
+    """Run a rendered hook or script as Claude Code does: a file on ``python``, the event on stdin.
+
+    The environment is built from scratch (``child_env``); the exit code is the caller's to check.
+    """
+    return subprocess.run(  # noqa: S603 - an interpreter from hook_python, a rendered file
+        [python, str(script)],
+        input=stdin,
+        capture_output=True,
+        check=False,
+        cwd=cwd,
+        env=child_env(env),
+        timeout=CHILD_TIMEOUT,
+    )
+
+
+@pytest.fixture
+def run_hook_file() -> Callable[..., subprocess.CompletedProcess[bytes]]:
+    """``run_entry_point``: run a rendered hook file with an event on stdin."""
+    return run_entry_point
+
+
 # The golden harness: a port of AGH-7's ``support/golden.py`` and the compare part of its
 # ``support/harness.py``. A case's golden is ``golden/<file>/<case>.golden``: five sections in
 # ``STREAMS`` order, each a header ``--- <stream> (<n> bytes) ---``, exactly those n bytes, then

@@ -17,7 +17,11 @@ from pathlib import Path
 from typing import List, Tuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hubhooks import Config, checkouts, emit, git, load_config, read_input  # noqa: E402
+try:
+    from hubhooks import Config, checkouts, emit, git, load_config, read_input, run_hook
+except Exception as error:  # a partial install: skip, never error the session
+    print(f"[hub {os.path.splitext(os.path.basename(sys.argv[0] or 'hook'))[0]}] skipped: {type(error).__name__}", file=sys.stderr)
+    sys.exit(0)
 
 CODE_EXT = {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".rs", ".java", ".kt", ".rb", ".sql",
             ".sh", ".toml", ".cfg", ".ini", ".yml", ".yaml"}
@@ -65,15 +69,19 @@ def run_check(cmd: str, top: Path) -> Tuple[bool, str]:
 
 def main() -> None:
     data = read_input()
-    cwd = Path(data.get("cwd") or os.getcwd()).resolve()
+    event_cwd = data.get("cwd")
+    cwd = Path(event_cwd if isinstance(event_cwd, str) and event_cwd else os.getcwd()).resolve()
     cfg = load_config(cwd)
     if not cfg.workspace:
         return
     since = session_start_time(data)
     state = Path(tempfile.gettempdir()) / f"hub-stop-{data.get('session_id', 'x')}.json"
     try:
-        blocks = json.loads(state.read_text()).get("blocks", 0) if state.exists() else 0
-    except (OSError, ValueError):
+        saved = json.loads(state.read_text()) if state.exists() else {}
+    except (OSError, ValueError):  # unreadable, not UTF-8 or not JSON: no block counted yet
+        saved = {}
+    blocks = saved.get("blocks") if isinstance(saved, dict) else None
+    if not isinstance(blocks, int) or isinstance(blocks, bool):
         blocks = 0
     changed_any, failures, skipped = False, [], []
     for repo, top in candidates(cfg, cwd):
@@ -81,7 +89,8 @@ def main() -> None:
         if not files:
             continue
         changed_any = True
-        cmd = (cfg.repo(repo).get("check_fast") or "").strip()
+        entry = cfg.repo(repo)
+        cmd = (entry.check_fast if entry else "").strip()
         if not cmd:
             skipped.append(repo)
             continue
@@ -89,11 +98,18 @@ def main() -> None:
         if not ok:
             failures.append(f"## {repo} ({top.relative_to(cfg.workspace)}): `{cmd}` FAILED\nchanged: {', '.join(files[:8])}\n{out}")
     if failures and blocks < MAX_BLOCKS:
-        state.write_text(json.dumps({"blocks": blocks + 1}))
+        try:
+            state.write_text(json.dumps({"blocks": blocks + 1}))
+        except OSError:  # without its counter the gate could never release: fail open, warn
+            emit({"systemMessage": "[hub stop-gate] check_fast still failing and the block counter could not be saved; "
+                                   "finishing anyway. Do not claim the work is done.\n\n" + "\n\n".join(failures)})
+            return
         emit({"decision": "block", "reason": "[hub stop-gate] Fix these before finishing (check_fast must pass):\n\n" + "\n\n".join(failures)})
         return
-    if state.exists():
+    try:
         state.unlink()
+    except OSError:  # absent, or not a file
+        pass
     note = f" (no check_fast configured in hub.json for: {', '.join(sorted(set(skipped)))})" if skipped else ""
     if failures:
         emit({"systemMessage": f"[hub stop-gate] check_fast still failing after {MAX_BLOCKS} attempts; finishing anyway. Do not claim the work is done."})
@@ -102,4 +118,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    run_hook(main)

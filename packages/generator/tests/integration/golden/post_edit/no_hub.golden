@@ -1,11 +1,17 @@
 --- rc (2 bytes) ---
 0
 
---- stdout (0 bytes) ---
+--- stdout (1663 bytes) ---
+{"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": "[hub post-edit] lint issues remain in x.py:\nruff (fake) report \u2014\nsrc/x.py:1:1: F401 `mod01` imported but unused\nsrc/x.py:2:1: F401 `mod02` imported but unused\nsrc/x.py:3:1: F401 `mod03` imported but unused\nsrc/x.py:4:1: F401 `mod04` imported but unused\nsrc/x.py:5:1: F401 `mod05` imported but unused\nsrc/x.py:6:1: F401 `mod06` imported but unused\nsrc/x.py:7:1: F401 `mod07` imported but unused\nsrc/x.py:8:1: F401 `mod08` imported but unused\nsrc/x.py:9:1: F401 `mod09` imported but unused\nsrc/x.py:10:1: F401 `mod10` imported but unused\nsrc/x.py:11:1: F401 `mod11` imported but unused\nsrc/x.py:12:1: F401 `mod12` imported but unused\nsrc/x.py:13:1: F401 `mod13` imported but unused\nsrc/x.py:14:1: F401 `mod14` imported but unused\nsrc/x.py:15:1: F401 `mod15` imported but unused\nsrc/x.py:16:1: F401 `mod16` imported but unused\nsrc/x.py:17:1: F401 `mod17` imported but unused\nsrc/x.py:18:1: F401 `mod18` imported but unused\nsrc/x.py:19:1: F401 `mod19` imported but unused\nsrc/x.py:20:1: F401 `mod20` imported but unused\nsrc/x.py:21:1: F401 `mod21` imported but unused\nsrc/x.py:22:1: F401 `mod22` imported but unused\nsrc/x.py:23:1: F401 `mod23` imported but unused\nsrc/x.py:24:1: F401 `mod24` imported but unused\nsrc/x.py:25:1: F401 `mod25` imported but unused\nsrc/x.py:26:1: F401 `mod26` imported but unused\nsrc/x.py:27:1: F401 `mod27` imported but unused\nsrc/x.py:28:1: F401 `mod28` imported but unused\nsrc/x.py:29:1: F401 `mod29` imported but unused\n===============================================================================\nFound 29 errors."}}
 
 --- stderr (0 bytes) ---
 
---- fs (0 bytes) ---
+--- fs (85 bytes) ---
+A <ROOT>/elsewhere/api/src/
+A <ROOT>/elsewhere/api/src/x.py
+| import os  # formatted
 
---- calls (0 bytes) ---
+--- calls (292 bytes) ---
+{"tool": "ruff", "cwd": "<ROOT>/elsewhere/api", "argv": ["<ROOT>/elsewhere/api/.venv/bin/ruff", "format", "-q", "<ROOT>/elsewhere/api/x.py"]}
+{"tool": "ruff", "cwd": "<ROOT>/elsewhere/api", "argv": ["<ROOT>/elsewhere/api/.venv/bin/ruff", "check", "--fix", "-q", "<ROOT>/elsewhere/api/x.py"]}
 
