@@ -2,8 +2,10 @@
 
 Git is read, never written: one ``git config --get <key>`` per missing value, plus
 ``git rev-parse --show-toplevel`` before the remote, each with a timeout and the environment
-unchanged. A remote URL can carry a credential, so it never leaves this module: only the
-parsed ``owner/name`` does, and no message or exception quotes the URL.
+unchanged. With ``GIT_DIR`` or ``GIT_WORK_TREE`` set, git does not find the repo from the target
+(with ``GIT_DIR`` alone it takes the cwd as the work tree top), so the remote is not read. A
+remote URL can carry a credential, so it never leaves this module: only the parsed
+``owner/name`` does, and no message or exception quotes the URL.
 """
 
 import contextlib
@@ -35,6 +37,8 @@ GIT_TIMEOUT_SECONDS = 10.0
 _READ_ORDER = (AUTHOR_NAME, AUTHOR_EMAIL, HUB_REPO)
 _CONFIG_KEYS = {AUTHOR_NAME: "user.name", AUTHOR_EMAIL: "user.email"}
 _REMOTE_KEY = "remote.origin.url"
+# Set, they point git at another repo than the target's own, whatever the top check says.
+_GIT_LOCATION_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE")
 
 # The three URL forms of a GitHub remote. The host is exactly github.com; the https form may
 # carry a userinfo (a user or a token), limited to RFC 3986's characters so that a host cannot
@@ -129,6 +133,9 @@ class _Git:
         if self.cwd is None:
             # An absent target (or a file) is no work tree top: the cwd's repo is not the hub.
             return None
+        if any(variable in os.environ for variable in _GIT_LOCATION_VARIABLES):
+            # The environment is left as it is: the remote is simply not taken.
+            return None
         top = self._run("rev-parse", "--show-toplevel")
         if top is None or os.path.realpath(top) != os.path.realpath(target):
             return None
@@ -152,8 +159,8 @@ class _Git:
         return None if output is None else _decoded_value(output)
 
     def _output(self, argv: list[str]) -> bytes | None:
-        # A new session, so a timeout kills git and every child it started: a child left
-        # running would hold stdout open and the read would never end.
+        # A new session, so a timeout (or any interruption) kills git and every child it
+        # started: a child left running would hold stdout open and the read would never end.
         with subprocess.Popen(  # noqa: S603 - fixed argv, no shell
             argv,
             cwd=self.cwd,
@@ -164,10 +171,9 @@ class _Git:
         ) as child:
             try:
                 output, _ = child.communicate(timeout=self.timeout)
-            except subprocess.TimeoutExpired:
+            except BaseException:
                 with contextlib.suppress(ProcessLookupError):
                     os.killpg(child.pid, signal.SIGKILL)
-                child.communicate()
                 raise
         return output if child.returncode == 0 else None
 

@@ -1,6 +1,7 @@
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import threading
 from collections.abc import Callable
@@ -392,3 +393,57 @@ def test_names_git_not_found_when_git_vanishes_before_run(
     defaults = read_git_defaults(missing=ALL_KEYS, target=target)
 
     assert defaults == GitDefaults(values={}, problems=dict.fromkeys(ALL_KEYS, GIT_NOT_FOUND))
+
+
+@pytest.mark.parametrize("variable", ["GIT_DIR", "GIT_WORK_TREE"])
+def test_skips_remote_when_git_location_set_in_environment(
+    fake_git: FakeGitFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    target: Path,
+    variable: str,
+) -> None:
+    # With GIT_DIR set, git takes the cwd as the work tree top: the target would pass the top
+    # check while the remote comes from another repo. So the remote is not read at all.
+    git = fake_git(ANSWERS, toplevel=target)
+    monkeypatch.setenv("PATH", str(git.bin_dir))
+    monkeypatch.setenv(variable, str(tmp_path / "other-repo" / ".git"))
+
+    defaults = read_git_defaults(missing=ALL_KEYS, target=target)
+
+    assert defaults == GitDefaults(
+        values={AUTHOR_NAME: "Jane Doe", AUTHOR_EMAIL: "jane@example.com"}, problems={}
+    )
+    assert HUB_REPO not in defaults.values
+    assert [arguments for _, arguments in git.calls()] == [
+        "config --get user.name",
+        "config --get user.email",
+    ]
+
+
+def test_kills_git_group_when_interrupted_while_git_runs(
+    fake_git: FakeGitFactory, monkeypatch: pytest.MonkeyPatch, target: Path
+) -> None:
+    git = fake_git(ANSWERS, toplevel=target)
+    monkeypatch.setenv("PATH", str(git.bin_dir))
+    killed: list[tuple[int, int]] = []
+    started: list[int] = []
+    real_killpg = os.killpg
+
+    def interrupted(self: subprocess.Popen[bytes], *_args: object, **_kwargs: object) -> None:
+        started.append(self.pid)
+        raise KeyboardInterrupt
+
+    def recording_killpg(group: int, signal_number: int) -> None:
+        killed.append((group, signal_number))
+        real_killpg(group, signal_number)
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", interrupted)
+    monkeypatch.setattr(os, "killpg", recording_killpg)
+
+    with pytest.raises(KeyboardInterrupt):
+        read_git_defaults(missing=ALL_KEYS, target=target)
+
+    # git runs in its own session, so its pid is its group: the whole group is killed.
+    assert killed == [(started[0], signal.SIGKILL)]
