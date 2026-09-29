@@ -3,9 +3,14 @@ from collections import Counter
 from collections.abc import Iterator
 from importlib.resources import files
 from importlib.resources.abc import Traversable
+from typing import Any
 
+import pytest
+
+from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.schema import SCHEMA_FILE, SCHEMA_PACKAGE
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
+from agent_hub.generator.json_form import JsonValue
 from agent_hub.generator.registry import REGISTRY, TemplateEntry, TemplateSource
 
 GENERATOR_PACKAGE = "agent_hub.generator"
@@ -48,7 +53,37 @@ OUT_OF_SCOPE_FOLDERS = ("plugin/", ".claude/", ".claude-plugin/", "scripts/", "m
 
 
 def generator_sources() -> list[str]:
-    return [entry.source.name for entry in REGISTRY if entry.source.package == GENERATOR_PACKAGE]
+    return [
+        entry.source.name
+        for entry in REGISTRY
+        if entry.source is not None and entry.source.package == GENERATOR_PACKAGE
+    ]
+
+
+def an_empty_object(config: HubConfig) -> JsonValue:
+    return {}
+
+
+def an_entry(**overrides: Any) -> TemplateEntry:
+    fields: dict[str, Any] = {
+        "path": "settings.json",
+        "kind": Kind.GENERIC,
+        "ownership": Ownership.MANAGED,
+    }
+    fields.update(overrides)
+    return TemplateEntry(**fields)
+
+
+# A project path segment's name in the templates folder (plan design 2: `plugin/project/…`).
+PROJECT_SEGMENT = ("@@{project_name}", "project")
+
+
+def source_name_of(path: str) -> str:
+    """The template name the naming rule gives ``path``: ``@@{project_name}`` → ``project``,
+    leading dots dropped (AGH-10 P2), ``.tmpl`` added.
+    """
+    segments = [PROJECT_SEGMENT[1] if s == PROJECT_SEGMENT[0] else s for s in path.split("/")]
+    return f"{TEMPLATES_FOLDER}/" + "/".join(s.removeprefix(".") for s in segments) + ".tmpl"
 
 
 def walk_files(folder: Traversable, prefix: str) -> Iterator[str]:
@@ -63,12 +98,26 @@ def walk_files(folder: Traversable, prefix: str) -> Iterator[str]:
 def test_describes_every_field_when_registry_walked() -> None:
     names = {field.name for field in dataclasses.fields(TemplateEntry)}
 
-    assert names == {"path", "source", "kind", "ownership", "module", "executable", "verbatim"}
+    assert names == {
+        "path",
+        "source",
+        "build",
+        "kind",
+        "ownership",
+        "module",
+        "executable",
+        "verbatim",
+    }
     assert REGISTRY
     for entry in REGISTRY:
-        assert isinstance(entry.source, TemplateSource)
-        assert entry.source.package
-        assert entry.source.name
+        # Spec Q-9: an entry has a template source or is built in code, never both or neither.
+        assert (entry.source is None) == (entry.build is not None), entry.path
+        if entry.source is not None:
+            assert isinstance(entry.source, TemplateSource)
+            assert entry.source.package
+            assert entry.source.name
+        else:
+            assert callable(entry.build)
         assert isinstance(entry.path, str)
         assert isinstance(entry.kind, Kind)
         assert isinstance(entry.ownership, Ownership)
@@ -96,6 +145,11 @@ def test_uses_unique_valid_paths_when_registry_walked() -> None:
 
 def test_finds_every_source_when_package_data_read() -> None:
     for entry in REGISTRY:
+        if entry.source is None:
+            # Spec Q-9: a generator-built JSON entry has no source at all.
+            assert entry.build is not None, entry.path
+            assert not entry.verbatim, entry.path
+            continue
         package, name = entry.source
         if entry.path == "hub.schema.json":
             # Spec Q2: core's shipped schema, copied verbatim, never a second copy here.
@@ -110,8 +164,57 @@ def test_finds_every_source_when_package_data_read() -> None:
 
 def test_names_no_dotted_source_when_registry_walked() -> None:
     for entry in REGISTRY:
+        if entry.source is None:
+            continue
         segments = entry.source.name.split("/")
         assert not any(segment.startswith(".") for segment in segments), entry.source.name
+
+
+@pytest.mark.parametrize(
+    ("fields", "reason"),
+    [
+        ({}, "neither a source nor a builder"),
+        (
+            {
+                "source": TemplateSource(GENERATOR_PACKAGE, "templates/x.tmpl"),
+                "build": an_empty_object,
+            },
+            "both a source and a builder",
+        ),
+        ({"build": an_empty_object, "verbatim": True}, "a built entry cannot be verbatim"),
+    ],
+)
+def test_requires_one_of_source_or_build_when_entry_built(
+    fields: dict[str, Any], reason: str
+) -> None:
+    with pytest.raises(ValueError, match=reason) as raised:
+        an_entry(**fields)
+
+    assert "settings.json" in str(raised.value)
+
+
+def test_accepts_entry_when_source_or_build_alone_given() -> None:
+    source = TemplateSource(GENERATOR_PACKAGE, "templates/x.tmpl")
+
+    built = an_entry(build=an_empty_object)
+    templated = an_entry(source=source, verbatim=True)
+
+    assert (built.source, built.build, built.verbatim) == (None, an_empty_object, False)
+    assert (templated.source, templated.build, templated.verbatim) == (source, None, True)
+
+
+def test_has_no_source_file_when_entry_built() -> None:
+    folder = files(GENERATOR_PACKAGE)
+    on_disk = set(walk_files(folder.joinpath(TEMPLATES_FOLDER), TEMPLATES_FOLDER))
+    assert source_name_of(".github/workflows/ci.yml") in on_disk
+    assert source_name_of("plugin/@@{project_name}/.claude-plugin/plugin.json") == (
+        f"{TEMPLATES_FOLDER}/plugin/project/claude-plugin/plugin.json.tmpl"
+    )
+
+    for entry in REGISTRY:
+        if entry.build is not None:
+            assert entry.source is None, entry.path
+            assert source_name_of(entry.path) not in on_disk, entry.path
 
 
 def test_uses_every_template_file_once_when_data_folder_walked() -> None:

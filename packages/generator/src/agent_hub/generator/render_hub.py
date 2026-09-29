@@ -1,19 +1,22 @@
 """``render_hub``: every file and link of a hub, rendered in memory from a validated ``HubConfig``.
 
-Pure and deterministic: sources are package data read through ``importlib.resources``; nothing
-is written, and no clock, environment, working directory or hub tree is read. The same config
-renders the same bytes on any machine (docs/design/hub-generator.md).
+Pure and deterministic: sources are package data read through ``importlib.resources``, or JSON
+values built from the config; nothing is written, and no clock, environment, working directory or
+hub tree is read. The same config renders the same bytes on any machine
+(docs/design/hub-generator.md).
 """
 
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
 from importlib.resources import files
+from typing import cast
 
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.rendered_file import RenderedFile
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.generator.errors import GeneratorError
 from agent_hub.generator.hub_template import render_template
+from agent_hub.generator.json_form import JsonBuilder, dump_json
 from agent_hub.generator.links import plugin_links
 from agent_hub.generator.placeholders import substitution_mapping
 from agent_hub.generator.registry import REGISTRY, TemplateEntry
@@ -28,7 +31,8 @@ def render_entries(config: HubConfig, entries: Iterable[TemplateEntry]) -> Rende
     """Render the ``entries`` this config selects and their plugin links, each sorted by path.
 
     An entry of a module renders only when the config selects that module. An entry path may hold
-    ``@@{project_name}`` and no other placeholder (``TemplateError``). Two files or links with one
+    ``@@{project_name}`` and no other placeholder (``TemplateError``). A built entry's bytes are
+    its builder's value in the JSON byte form (``dump_json``). Two files or links with one
     path, or a path under a link's path, raise ``GeneratorError`` naming it. Everything is built
     before anything is returned, so an error leaves no partial result.
     """
@@ -37,7 +41,12 @@ def render_entries(config: HubConfig, entries: Iterable[TemplateEntry]) -> Rende
     # Dumped by alias: the closed JSON ids (``contract-sync``) that ``TemplateEntry.module`` uses.
     selected_modules = config.modules.model_dump(exclude_none=True).keys()
     rendered = [
-        _render(entry, render_template(entry.path, path_mapping, source=entry.path), mapping)
+        _render(
+            entry,
+            render_template(entry.path, path_mapping, source=entry.path),
+            config=config,
+            mapping=mapping,
+        )
         for entry in entries
         if entry.module is None or entry.module in selected_modules
     ]
@@ -66,20 +75,26 @@ def _refuse_clashes(paths: Sequence[str], *, link_paths: Sequence[str]) -> None:
             raise GeneratorError(msg)
 
 
-def _render(entry: TemplateEntry, path: str, mapping: Mapping[str, str]) -> RenderedFile:
-    package, name = entry.source
-    source = files(package).joinpath(*name.split("/")).read_bytes()
-    # Strict UTF-8 and no newline translation: the bytes are the template's, placeholders aside.
-    content = (
-        source
-        if entry.verbatim
-        else render_template(source.decode("utf-8"), mapping, source=name).encode("utf-8")
-    )
+def _render(
+    entry: TemplateEntry, path: str, *, config: HubConfig, mapping: Mapping[str, str]
+) -> RenderedFile:
     return RenderedFile(
         path=path,
-        content=content,
+        content=_content(entry, config=config, mapping=mapping),
         executable=entry.executable,
         kind=entry.kind,
         ownership=entry.ownership,
         module=entry.module,
     )
+
+
+def _content(entry: TemplateEntry, *, config: HubConfig, mapping: Mapping[str, str]) -> bytes:
+    if entry.source is None:
+        # ``TemplateEntry`` holds exactly one of ``source`` and ``build``.
+        return dump_json(cast(JsonBuilder, entry.build)(config))
+    package, name = entry.source
+    source = files(package).joinpath(*name.split("/")).read_bytes()
+    # Strict UTF-8 and no newline translation: the bytes are the template's, placeholders aside.
+    if entry.verbatim:
+        return source
+    return render_template(source.decode("utf-8"), mapping, source=name).encode("utf-8")
