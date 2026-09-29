@@ -322,22 +322,35 @@ def test_refuses_when_executable_bit_differs(a_rendered_hub: HubFactory, config:
     assert found == [PathProblem("scripts/run.sh", DIFFERS)]
 
 
-def test_refuses_when_link_target_differs(a_rendered_hub: HubFactory, config: HubConfig) -> None:
-    link = LinkEntry(target="../../plugin/agents/z.md", outside=False)
-    tree = folders(".claude", ".claude/agents") | {".claude/agents/x.md": link}
+# The fixture's managed and seeded links: a link is compared whatever its ownership.
+LINKS = [
+    pytest.param(".claude/agents/x.md", "../../plugin/agents/x.md", id="managed"),
+    pytest.param(".claude/skills/y", "../../plugin/skills/y", id="seeded"),
+]
+
+
+@pytest.mark.parametrize(("path", "target"), LINKS)
+def test_refuses_when_link_target_differs(
+    a_rendered_hub: HubFactory, config: HubConfig, *, path: str, target: str
+) -> None:
+    link = LinkEntry(target=f"{target}-other", outside=False)
+    tree = folders(*FOLDERS) | {path: link}
 
     found = problems(a_rendered_hub(), config, a_tree(tree))
 
-    assert found == [PathProblem(".claude/agents/x.md", DIFFERS)]
+    assert found == [PathProblem(path, DIFFERS)]
 
 
-def test_refuses_when_link_resolves_outside(a_rendered_hub: HubFactory, config: HubConfig) -> None:
-    link = LinkEntry(target="../../plugin/agents/x.md", outside=True)
-    tree = folders(".claude", ".claude/agents") | {".claude/agents/x.md": link}
+@pytest.mark.parametrize(("path", "target"), LINKS)
+def test_refuses_when_link_resolves_outside(
+    a_rendered_hub: HubFactory, config: HubConfig, *, path: str, target: str
+) -> None:
+    link = LinkEntry(target=target, outside=True)
+    tree = folders(*FOLDERS) | {path: link}
 
     found = problems(a_rendered_hub(), config, a_tree(tree))
 
-    assert found == [PathProblem(".claude/agents/x.md", OUTSIDE)]
+    assert found == [PathProblem(path, OUTSIDE)]
 
 
 @pytest.mark.parametrize(
@@ -512,6 +525,52 @@ def test_cleans_leftover_when_file_or_link_has_temp_shape(
     assert plan.writes == fresh.writes
     assert plan.lock == fresh.lock
     assert not set(leftovers) & set(plan.lock.files)
+
+
+def test_sorts_leftovers_when_tree_lists_them_out_of_order(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    leftovers = {
+        "scripts/.run.sh.hub-tmp-00000000": FileEntry(executable=False, content=None),
+        ".Makefile.hub-tmp-0a1b2c3d": LinkEntry(target="Makefile", outside=False),
+        "plugin/agents/.x.md.hub-tmp-ffffffff": FileEntry(executable=False, content=None),
+    }
+
+    plan = planned(a_rendered_hub(), config, a_tree(leftovers | folders(*FOLDERS)))
+
+    assert plan.leftovers == (
+        ".Makefile.hub-tmp-0a1b2c3d",
+        "plugin/agents/.x.md.hub-tmp-ffffffff",
+        "scripts/.run.sh.hub-tmp-00000000",
+    )
+
+
+SETUP_MD = RenderedFile(
+    path="setup.md",
+    content=b"# Setup\n",
+    executable=False,
+    kind=Kind.GENERIC,
+    ownership=Ownership.SEEDED,
+    module=None,
+)
+
+
+def test_sorts_seeded_paths_when_seeded_file_follows_hub_json(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    # ``setup.md`` sorts after ``hub.json``, which the planner decides last.
+    rendered = a_rendered_hub(files=(*a_rendered_hub().files, SETUP_MD))
+    tree = {
+        HUB_JSON_PATH: FileEntry(executable=False, content=HUB_JSON),
+        "README.md": FileEntry(executable=False, content=b"# Mine\n"),
+        "setup.md": FileEntry(executable=False, content=b"# Mine\n"),
+    }
+
+    fresh = planned(rendered, config, a_tree())
+    rerun = planned(rendered, config, a_tree(tree))
+
+    assert fresh.created_seeded == ("README.md", HUB_JSON_PATH, "setup.md")
+    assert rerun.kept_seeded == ("README.md", HUB_JSON_PATH, "setup.md")
 
 
 def test_returns_every_problem_sorted_when_several_refused(
