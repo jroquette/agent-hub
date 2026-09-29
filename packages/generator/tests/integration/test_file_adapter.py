@@ -1028,6 +1028,9 @@ BAD_PATHS: dict[str, Callable[[Path, str], str]] = {
     "dot-inside": lambda tmp_path, name: f"plugin/./{name}",
     "dot-dot-first": lambda tmp_path, name: f"../{name}",
     "dot-dot-inside": lambda tmp_path, name: f"plugin/../../{name}",
+    # The OS refuses a NUL only when the path reaches it, after the entries listed before it.
+    "nul-name": lambda tmp_path, name: "a\x00b",
+    "nul-folder": lambda tmp_path, name: f"a\x00b/{name}",
 }
 
 

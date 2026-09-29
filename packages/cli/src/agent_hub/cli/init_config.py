@@ -8,7 +8,9 @@ it as required, and every missing flag is named in the same run (Q-10). The docu
 with ``check_hub_document``, and ``flag_problems`` prints each problem as ``<flag>: <message>``.
 """
 
-from collections.abc import Sequence
+import json
+import re
+from collections.abc import Collection, Sequence
 from typing import Final
 
 from agent_hub.core.hub_config.problems import ConfigProblem
@@ -21,6 +23,9 @@ REPO_CHECK_FAST: Final = "make check-fast"
 REPO_CHECK: Final = "make check"
 # How the help names the positional argument that holds ``project.name``.
 PROJECT_ARGUMENT: Final = "PROJECT"
+REPOS_FLAG: Final = "--repos"
+# A problem inside one ``--repos`` item: its index, and the field after it.
+_REPO_ITEM: Final = re.compile(r"repos\[(?P<index>\d+)\](?:\.(?P<field>.+))?")
 
 
 def document_from_flags(
@@ -37,7 +42,8 @@ def document_from_flags(
     """The ``hub.json`` document of these flag values, pinned to ``version``; None is missing.
 
     ``repos`` is ``owner/name`` items split on ``,`` in order, each one's ``dir`` the part after
-    its last ``/``. ``tracker`` is ``kind:team`` split on the first ``:``.
+    its last ``/``. ``tracker`` is ``kind:team`` split on the first ``:``; with no ``:`` the
+    value is the kind, so ``--tracker linear`` reports only the missing team.
     """
     optional = {
         "hub_repo": hub_repo,
@@ -53,23 +59,39 @@ def document_from_flags(
         "platform": {"version": version},
         "project": project_values,
         "tracker": _tracker(tracker),
-        "repos": [_repo(github) for github in repos.split(",")],
+        "repos": [_repo(github) for github in _repo_items(repos)],
     }
 
 
-def flag_problems(problems: Sequence[ConfigProblem]) -> list[str]:
+def flag_problems(problems: Sequence[ConfigProblem], *, repos: str) -> list[str]:
     """One ``<flag>: <message>`` line per problem, the flag found from the problem's JSON path.
 
-    A path no flag sets (the pin is the running release) is printed as the path itself.
+    A problem in one ``--repos`` item names it as ``--repos item <n> (<value>)``: its 1-based
+    position and the item as typed, JSON-quoted. An item's ``dir`` line is dropped when its
+    ``github`` failed too: the dir is derived from it, and the user never typed it. A path no
+    flag sets (the pin is the running release) is printed as the path itself.
     """
-    return [f"{_flag(problem.path)}: {problem.message}" for problem in problems]
+    items = _repo_items(repos)
+    paths = {problem.path for problem in problems}
+    return [
+        f"{_flag(problem.path, items=items)}: {problem.message}"
+        for problem in problems
+        if not _is_dir_of_failed_github(problem.path, paths=paths)
+    ]
+
+
+def _repo_items(repos: str) -> list[str]:
+    return repos.split(",")
+
+
+def _is_dir_of_failed_github(path: str, *, paths: Collection[str]) -> bool:
+    item = _REPO_ITEM.fullmatch(path)
+    return item is not None and item["field"] == "dir" and f"repos[{item['index']}].github" in paths
 
 
 def _tracker(value: str) -> dict[str, JsonValue]:
-    kind, colon, team = value.partition(":")
-    if not colon:
-        # No kind given: an empty one, which the model refuses by naming the kinds it takes.
-        return {"kind": "", "team": value}
+    kind, _, team = value.partition(":")
+    # No colon: the value is the kind, and the model names the missing team (owner, E16).
     return {"kind": kind, "team": team}
 
 
@@ -83,13 +105,17 @@ def _repo(github: str) -> dict[str, JsonValue]:
     }
 
 
-def _flag(path: str) -> str:
+def _flag(path: str, *, items: Sequence[str]) -> str:
     if path == "project.name":
         return PROJECT_ARGUMENT
     if path.startswith("project."):
         return "--" + path.removeprefix("project.").replace("_", "-")
     if path.startswith("tracker."):
         return "--tracker"
+    item = _REPO_ITEM.fullmatch(path)
+    if item is not None:
+        index = int(item["index"])
+        return f"{REPOS_FLAG} item {index + 1} ({json.dumps(items[index])})"
     if path.startswith("repos"):
-        return "--repos"
+        return REPOS_FLAG
     return path
