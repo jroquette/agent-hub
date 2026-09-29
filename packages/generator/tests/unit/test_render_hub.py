@@ -31,6 +31,7 @@ from agent_hub.generator.render_hub import render_entries, render_hub
 # AC-3.13: the D5 path set of docs/design/hub-generator.md, in code-point order; AC-4.1 adds
 # AGH-19's rendered set (spec "The rendered set", for project `demo`).
 DESIGN_PATHS = (
+    ".claude/settings.json",
     ".claude/settings.project.json",
     ".github/workflows/ci.yml",
     ".gitignore",
@@ -1556,6 +1557,170 @@ def test_writes_empty_file_when_gitkeep_or_project_rules_rendered(
         assert demo_render[path].content == b"", path
 
 
+# Spec AC-4.7 (D5, Q-5, Q-11): the managed `.claude/settings.json` is the rules base, nothing more.
+SETTINGS_KEYS = ["$schema", "attribution", "hooks", "includeCoAuthoredBy", "permissions"]
+SETTINGS_SCHEMA = "https://json.schemastore.org/claude-code-settings.json"
+SETTINGS_ALLOW = ["Bash(git status *)", "Bash(git diff *)", "Bash(git log *)", "Bash(git show *)"]
+SETTINGS_DENY = ["Read(**/*.pem)", "Read(**/*.key)"]
+# The project's own keys (D5 "Out"): they come through the seeded `settings.project.json`.
+PROJECT_ONLY_SETTINGS = (
+    "extraKnownMarketplaces",
+    "enabledPlugins",
+    "sandbox",
+    "env",
+    "skillOverrides",
+)
+# Event → (matcher, hook file, timeout in seconds); `None`: the group has no matcher.
+SETTINGS_HOOKS = {
+    "SessionStart": ("startup|resume|clear|compact", "session_start.py", 20),
+    "PreToolUse": (
+        "Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetch",
+        "guard.py",
+        10,
+    ),
+    "PostToolUse": ("Edit|Write|MultiEdit", "post_edit.py", 60),
+    "Stop": (None, "stop_gate.py", 180),
+    "PreCompact": (None, "pre_compact.py", 20),
+    "SessionEnd": (None, "session_end.py", 10),
+}
+SETTINGS_COMMAND = re.compile(
+    r'python3 "\$CLAUDE_PROJECT_DIR/(plugin/hub-workflow/hooks/[^"/]+\.py)"'
+)
+REPO_DIRS = {"demo": ["demo-api"], "variant": ["demo-api", "demo-web"]}
+
+
+def reject_constant(name: str) -> None:
+    """``json.loads`` hook: ``NaN``, ``Infinity`` and ``-Infinity`` are not JSON."""
+    msg = f"not JSON: {name}"
+    raise ValueError(msg)
+
+
+def strict_json(content: bytes) -> Any:
+    """Parse ``content`` as strict UTF-8 JSON, refusing the non-JSON constants."""
+    return json.loads(content.decode("utf-8"), parse_constant=reject_constant)
+
+
+def hook_groups(hooks: Mapping[str, Any]) -> dict[str, tuple[str | None, str, int]]:
+    """Each event's single group as (matcher, hook file name, timeout)."""
+    rows = {}
+    for event, groups in hooks.items():
+        assert len(groups) == 1, event
+        assert len(groups[0]["hooks"]) == 1, event
+        hook = groups[0]["hooks"][0]
+        assert hook["type"] == "command", event
+        rows[event] = (groups[0].get("matcher"), hook["command"], hook["timeout"])
+    return rows
+
+
+def key_anywhere(value: Any, key: str) -> bool:
+    """Whether ``key`` names a member of any object inside ``value``."""
+    if isinstance(value, dict):
+        return key in value or any(key_anywhere(child, key) for child in value.values())
+    if isinstance(value, list):
+        return any(key_anywhere(child, key) for child in value)
+    return False
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+def test_holds_rules_base_only_when_settings_rendered(
+    config_name: str, request: pytest.FixtureRequest
+) -> None:
+    config = request.getfixturevalue(f"{config_name}_config")
+    rendered = {file.path: file for file in render_hub(config).files}
+
+    settings = strict_json(rendered[".claude/settings.json"].content)
+
+    assert sorted(settings) == SETTINGS_KEYS
+    assert settings["$schema"] == SETTINGS_SCHEMA
+    assert settings["attribution"] == {"commit": "", "pr": ""}
+    assert settings["includeCoAuthoredBy"] is False
+    assert settings["permissions"] == {
+        "allow": SETTINGS_ALLOW,
+        "deny": SETTINGS_DENY,
+        "additionalDirectories": [f"../{repo_dir}" for repo_dir in REPO_DIRS[config_name]],
+    }
+    assert set(settings["hooks"]) == set(SETTINGS_HOOKS)
+    for event, (matcher, command, timeout) in hook_groups(settings["hooks"]).items():
+        expected_matcher, file, expected_timeout = SETTINGS_HOOKS[event]
+        assert (matcher, timeout) == (expected_matcher, expected_timeout), event
+        match = SETTINGS_COMMAND.fullmatch(command)
+        assert match, command
+        assert match[1] == f"plugin/hub-workflow/hooks/{file}", command
+        # A missing hook file makes `python3` exit 2, which blocks on PreToolUse and Stop.
+        assert match[1] in rendered, command
+        assert rendered[match[1]].executable, command
+    assert "matcher" not in settings["hooks"]["Stop"][0]
+    for key in PROJECT_ONLY_SETTINGS:
+        assert not key_anywhere(settings, key), key
+
+
+def test_matches_plugin_hooks_when_settings_compared(demo_render: dict[str, RenderedFile]) -> None:
+    settings = strict_json(demo_render[".claude/settings.json"].content)
+    plugin = strict_json(demo_render["plugin/hub-workflow/hooks/hooks.json"].content)
+
+    in_settings = hook_groups(settings["hooks"])
+    in_plugin = hook_groups(plugin["hooks"])
+
+    # The same hooks, wired two ways: the settings block for cloud sessions (which do not install
+    # repo plugins), `hooks.json` for a plugin install. Only the command's root differs.
+    assert set(in_settings) == set(in_plugin)
+    for event, (matcher, command, timeout) in in_settings.items():
+        plugin_matcher, plugin_command, plugin_timeout = in_plugin[event]
+        assert (matcher, timeout) == (plugin_matcher, plugin_timeout), event
+        assert command == plugin_command.replace(
+            "${CLAUDE_PLUGIN_ROOT}", "$CLAUDE_PROJECT_DIR/plugin/hub-workflow"
+        ), event
+
+
+# Spec AC-4.8 (Q-9): the files the generator builds from the config.
+BUILT_JSON_PATHS = (
+    ".claude/settings.json",
+    ".claude/settings.project.json",
+    "plugin/{project}/.claude-plugin/plugin.json",
+)
+# Static JSON with no placeholder: rendered byte for byte from its template.
+TEMPLATED_JSON_SOURCES = {
+    "plugin/hub-workflow/.claude-plugin/plugin.json": (
+        "templates/plugin/hub-workflow/claude-plugin/plugin.json.tmpl"
+    ),
+    "plugin/hub-workflow/hooks/hooks.json": "templates/plugin/hub-workflow/hooks/hooks.json.tmpl",
+}
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+def test_writes_json_form_when_generator_json_rendered(
+    config_name: str, request: pytest.FixtureRequest
+) -> None:
+    config = request.getfixturevalue(f"{config_name}_config")
+    rendered = {file.path: file for file in render_hub(config).files}
+    built = {
+        entry.path.replace("@@{project_name}", "{project}") for entry in REGISTRY if entry.build
+    }
+
+    assert built == set(BUILT_JSON_PATHS)
+    for pattern in BUILT_JSON_PATHS:
+        content = rendered[pattern.format(project=config.project.name)].content
+        value = strict_json(content)
+        form = json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+        assert content == form.encode("utf-8"), pattern
+    assert rendered[".claude/settings.project.json"].content == b"{}\n"
+    for path, source in TEMPLATED_JSON_SOURCES.items():
+        template = files(GENERATOR_PACKAGE).joinpath(*source.split("/")).read_bytes()
+        assert rendered[path].content == template, path
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+def test_parses_every_json_when_rendered(config_name: str, request: pytest.FixtureRequest) -> None:
+    config = request.getfixturevalue(f"{config_name}_config")
+
+    json_files = [file for file in render_hub(config).files if file.path.endswith(".json")]
+
+    # The two settings files, both manifests, `hooks.json` and the schema.
+    assert len(json_files) == 6
+    for file in json_files:
+        strict_json(file.content)
+
+
 @pytest.mark.parametrize("config_name", CONFIG_NAMES)
 def test_keeps_literal_date_when_brain_seeded(
     config_name: str, request: pytest.FixtureRequest
@@ -1777,6 +1942,27 @@ def test_names_every_managed_path_when_agents_rendered(demo_config: HubConfig) -
             item for item in named if item == path or (item.endswith("/") and path.startswith(item))
         ]
         assert len(covering) == 1, (path, covering)
+
+
+# Owner decision on slice 16: `.claude/settings.json` wires the base plugin's hooks, so enabling
+# `hub-workflow` from a marketplace too would run every hook twice (Claude Code merges only
+# identical command strings). The base rules say so in one bullet.
+DOUBLE_WIRING_RULE = "must not be enabled from a marketplace"
+
+
+def test_forbids_marketplace_plugin_when_agents_rendered(demo_config: HubConfig) -> None:
+    agents = text_of(demo_config, "AGENTS.md")
+
+    bullets = [
+        " ".join(bullet.split())
+        for bullet in re.split(r"\n(?=- )", agents)
+        if DOUBLE_WIRING_RULE in " ".join(bullet.split())
+    ]
+
+    assert len(bullets) == 1, bullets
+    assert "`.claude/settings.json`" in bullets[0]
+    assert "`hub-workflow`" in bullets[0]
+    assert "twice" in bullets[0]
 
 
 def test_points_to_agents_for_managed_files_when_readme_rendered(demo_config: HubConfig) -> None:

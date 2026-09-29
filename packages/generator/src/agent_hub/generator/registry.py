@@ -13,7 +13,7 @@ from typing import Final, NamedTuple
 
 from agent_hub.core.hub_config.schema import SCHEMA_FILE, SCHEMA_PACKAGE
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership
-from agent_hub.generator.built_json import project_manifest, project_settings
+from agent_hub.generator.built_json import managed_settings, project_manifest, project_settings
 from agent_hub.generator.json_form import JsonBuilder
 
 _PACKAGE: Final = "agent_hub.generator"
@@ -131,6 +131,13 @@ def _hook_entry_point(name: str) -> TemplateEntry:
 
 
 REGISTRY: Final[tuple[TemplateEntry, ...]] = (
+    # The rules base (spec D5); the project's own settings go in the seeded sibling.
+    TemplateEntry(
+        path=".claude/settings.json",
+        build=managed_settings,
+        kind=Kind.GENERIC,
+        ownership=Ownership.MANAGED,
+    ),
     _project_built(".claude/settings.project.json", project_settings),
     _generic_managed(".github/workflows/ci.yml", "github/workflows/ci.yml.tmpl"),
     _generic_seeded(".gitignore", "gitignore.tmpl"),
