@@ -3,9 +3,23 @@
 The port of the hub's ``agent_config_lint.py`` machinery: instruction files, plugin agent and
 skill files, their text and frontmatter. Only listed regular files count: a link, to a file or a
 folder, is never followed (spec D3, Q-6; plan E1).
+
+The goldens (spec AC-11.18): the sixteen cases of the hub's
+``tests/characterization/test_agent_config_lint.py``, goldens at hub commit ``8eaebae`` under
+``tests/characterization/golden/agent_config_lint/``, each rebuilt as an in-memory snapshot and run
+through the nine ported rules. ``TestGoldenCases`` holds the thirteen whose flagged set is
+unchanged: ``clean``, ``instructions_refs``, ``instructions_size``, ``instructions_duplicates``,
+``rules_frontmatter``, ``agent_skill_frontmatter``, ``agent_skill_frontmatter_project_dir``,
+``settings_valid_invalid_json``, ``settings_valid_deprecated_key``,
+``permissions_bypass_settings``, ``secrets_config``, ``mcp_pinned`` and ``attribution_ai``.
+``TestPortDivergences`` asserts spec § Port differences: ``non_git_fallback`` and
+``permissions_bypass_scripts`` differ (D3), and ``attribution_ai_no_hub`` is the "not a hub"
+exit (AC-11.2).
 """
 
-from collections.abc import Callable
+import json
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 
 import pytest
 
@@ -21,8 +35,13 @@ from agent_hub.core.doctor.config_lint import (
     plugin_files,
     text_lines,
 )
+from agent_hub.core.doctor.finding import Finding
+from agent_hub.core.doctor.registry import REGISTRY
+from agent_hub.core.doctor.run_rules import Selection, run_rules
 from agent_hub.core.doctor.snapshot import DoctorSnapshot
+from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, FolderEntry, LinkEntry
+from agent_hub.core.testing.builders import a_hub_document
 
 type SnapshotFactory = Callable[..., DoctorSnapshot]
 
@@ -315,3 +334,547 @@ class TestFrontmatter:
     )
     def test_finds_no_frontmatter_when_first_line_not_marker(self, text: str) -> None:
         assert parse_frontmatter(text) is None
+
+
+# The goldens: hub commit 8eaebae, tests/characterization/golden/agent_config_lint/ (spec AC-11.18).
+# Each case's files are the hub test's, rebuilt in memory; every agent-config file name, secret
+# shape, attribution line and the skip-permissions flag is assembled here from fragments at run
+# time, so no committed line holds one.
+
+FLAG = "--dangerously-" + "skip-permissions"
+BARE_FLAG = FLAG[2:]
+TRAILER = "Co-Authored-" + "By: Claude <noreply@example.com>"
+GENERATED = "Generated " + "with [Claude Code](https://example.com)"
+AI_BRANCH = "claude" + "/fix-login"
+AGENTS, CLAUDE = "AGENTS" + ".md", "CLAUDE" + ".md"
+LOCAL, GEMINI = "CLAUDE" + ".local.md", "GEMINI" + ".md"
+SKILL = "SKILL" + ".md"
+DOT = "." + "claude/"
+SETTINGS, MCP = DOT + "settings" + ".json", "." + "mcp.json"
+COPILOT = ".github/copilot-instructions.md"
+LINT_NAME = "scripts/agent_config_lint.py"
+# The fixture repos' committed ignore file (the hub's REPO_IGNORES).
+GITIGNORE = ".claude/worktrees/\n.venv/\nnode_modules/\n__pycache__/\n"
+
+# One line per secret kind, each at the pattern's minimum length and matching that pattern only.
+SHAPES = {
+    "jwt": "ey" + "J" + "a" * 15 + "." + "b" * 15,
+    "aws": "AK" + "IA" + "Z" * 16,
+    "pem": "-" * 5 + "BEGIN " + "RSA PRIVATE" + " KEY" + "-" * 5,
+    "stripe": "sk" + "_live_" + "c" * 16,
+    "openai": "sk" + "-" + "d" * 20,
+    "github": "gh" + "p_" + "e" * 30,
+    "linear": "lin" + "_api_" + "f" * 20,
+    "cred": "PGPASS" + "WORD=" + "abcdef",
+    "fernet": "k" * 43 + "=",
+}
+
+L60 = "keep every change small, tested and reviewed before merging!"
+L59 = "keep each commit focused on one concern and on one issue no"
+LONG_TABLE = "| " + "table cell that repeats in two instruction files, on purpose" + " |"
+LONG_HEADING = "## " + "a heading that repeats in two instruction files, on purpose ok"
+LONG_FENCE = "```" + "sh # a fence line that repeats in two instruction files on purpose"
+
+# The nine ported rules, taken from the registry, so a rule missing there fails every golden.
+CONFIG_LINT_IDS = (
+    "instructions.size",
+    "instructions.refs",
+    "instructions.duplicates",
+    "rules.frontmatter",
+    "settings.valid",
+    "permissions.bypass",
+    "secrets.config",
+    "mcp.pinned",
+    "attribution.ai",
+)
+CONFIG_LINT_RULES = tuple(rule for rule in REGISTRY if rule.id in CONFIG_LINT_IDS)
+
+type Flagged = tuple[str, str, int | None]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class GoldenCase:
+    """A golden case's repo: its files (committed or untracked alike) and its links."""
+
+    files: Mapping[str, str | bytes]
+    links: Mapping[str, str] = field(default_factory=dict)
+    git: bool = True
+
+
+def numbered(count: int, word: str) -> str:
+    return "".join(f"{word} {index}\n" for index in range(1, count + 1))
+
+
+def frontmatter(**fields: str) -> str:
+    return "---\n" + "".join(f"{key}: {value}\n" for key, value in fields.items()) + "---\n"
+
+
+def dumps(data: object) -> str:
+    return json.dumps(data, indent=2) + "\n"
+
+
+def clean_case() -> GoldenCase:
+    # Every reference takes a skip or an exists path; AGENTS.md is exactly 100 lines,
+    # CLAUDE.local.md exactly 50.
+    body = [
+        "---",
+        "title: agents",
+        "note: see `gone/in-frontmatter.md`",
+        "---",
+        "# Agents",
+        "- Web: [site](https://example.com/docs), [mail](mailto:a@example.com), "
+        "[home](~/notes/x.md), [abs](/nonexistent-char/x.md).",
+        "- Sibling and placeholders: `../agent-hub/docs/SPEC.md`, [p](docs/<name>.md), "
+        "`path/to/file.md`, `docs/.../x.md`, [u](docs/…/y.md), [v](${ROOT}/a.md).",
+        "- Not paths: `origin/main`, `application/json`, the branch `dev/tst-1-login`.",
+        "- Ignored by design: `.claude/worktrees/`; globs `src/**/*.py` and [all](*.md).",
+        "- Code: `@/lib/util`, `helpers.py`, `pkg/helpers.py`, `src/pkg/`, "
+        "[t](tests/test_app.py::test_ok), [g](docs/guide.md#intro).",
+        "- Run `make lint` and `make test`; `pnpm install`, `pnpm run build`, `pnpm test:unit`, "
+        "`pnpm i`.",
+    ]
+    agents = "\n".join(body) + "\n" + numbered(100 - len(body), "- note")
+    rule = (
+        frontmatter(paths='\n  - "src/**/*.{py,ts}"\n  - docs')
+        + "See [notes](local/notes.txt) and `build/out.txt`.\n"
+    )
+    servers = {
+        "docs": {"command": "npx", "args": ["-y", "docs-mcp@1.2.3"]},
+        "remote": {"type": "http", "url": "https://mcp.example.com/mcp"},
+    }
+    return GoldenCase(
+        files={
+            AGENTS: agents,
+            LOCAL: numbered(50, "local"),
+            DOT + "rules/r.md": rule,
+            DOT + "agents/rev.md": frontmatter(name="rev", description="Reviews diffs") + "Body\n",
+            DOT + "skills/k/" + SKILL: frontmatter(name="k", description="A project skill")
+            + "Body\n",
+            ".github/instructions/py.md": "Python notes.\n",
+            "plugin/p/skills/s/" + SKILL: frontmatter(name="s", description="A skill") + "Body\n",
+            SETTINGS: dumps(
+                {"permissions": {"defaultMode": "acceptEdits", "allow": ["Bash(make lint)"]}}
+            ),
+            MCP: dumps({"mcpServers": servers}),
+            "CONTRIBUTING.md": "Branches: `dev/tst-<N>-<desc>`.\n",
+            "Makefile": "lint:\n\techo ok\ntest: lint\n\techo ok\n",
+            "package.json": dumps({"scripts": {"build": "tsc", "test:unit": "vitest"}}),
+            "src/app.py": "",
+            "src/lib/util.ts": "",
+            "src/pkg/helpers.py": "",
+            "docs/guide.md": "# Guide\n",
+            "tests/test_app.py": "",
+            "scripts/run.sh": "echo ok\n",
+            ".github/workflows/ci.yml": "run: make check\n",
+            # Untracked, not ignored.
+            DOT + "rules/local/notes.txt": "n\n",
+            "build/out.txt": "o\n",
+        }
+    )
+
+
+def instructions_refs_case() -> GoldenCase:
+    # Line 3: the repeated path is reported twice.
+    agents = (
+        "# Agents\n\nRead `src/gone.py` and the [guide](docs/missing.md#setup), then "
+        "`src/gone.py` again.\n"
+        "Run `make lint`, then make sure it is green.\n"
+        "Build with `pnpm build`, `pnpm run e2e` and `pnpm deploy`.\n"
+    )
+    package = (
+        '{\n  "scripts": {\n    "build": "tsc",\n    "e2e": "claude ' + FLAG + ' -p e2e"\n  }\n}\n'
+    )
+    return GoldenCase(
+        files={AGENTS: agents, "Makefile": "lint:\n\techo ok\n", "package.json": package}
+    )
+
+
+def instructions_size_case() -> GoldenCase:
+    return GoldenCase(
+        files={
+            AGENTS: numbered(101, "agents"),
+            CLAUDE: numbered(150, "claude"),
+            LOCAL: numbered(51, "local"),
+            GEMINI: numbered(500, "gemini"),
+            DOT + "rules/x.md": numbered(81, "rule"),
+            DOT + "rules/y.md": numbered(80, "rule"),
+            COPILOT: numbered(81, "copilot"),
+        }
+    )
+
+
+def instructions_duplicates_case() -> GoldenCase:
+    # No Makefile or package.json: the make and pnpm mentions are not checked; CLAUDE.md is 151
+    # lines. One finding of each other check too.
+    agents = (
+        "\n".join(
+            [
+                "# Agents",
+                "- " + L60,
+                "- " + L60,
+                LONG_TABLE,
+                LONG_HEADING,
+                LONG_FENCE,
+                L59,
+                "Run `make nothing` and `pnpm nothing`.",
+                "See `gone/x.md`.",
+                SHAPES["aws"],
+            ]
+        )
+        + "\n"
+    )
+    shouted = "1.   " + L60.upper().replace(" ", "  ", 3)
+    claude = (
+        "\n".join([shouted, LONG_TABLE, LONG_HEADING, LONG_FENCE, L59])
+        + "\n"
+        + numbered(146, "pad")
+    )
+    return GoldenCase(
+        files={
+            AGENTS: agents,
+            CLAUDE: claude,
+            GEMINI: "* " + L60 + "\n",
+            "plugin/p/skills/s/" + SKILL: frontmatter(description="No name") + "Body\n",
+            SETTINGS: dumps({"allowedTools": []}),
+            "scripts/run.sh": "#!/bin/sh\nclaude " + FLAG + " -p task\n",
+        }
+    )
+
+
+def rules_frontmatter_case() -> GoldenCase:
+    rules = DOT + "rules/"
+    return GoldenCase(
+        files={
+            rules + "a-nopaths.md": frontmatter(description="no paths") + "Body\n",
+            rules + "b-scalar.md": frontmatter(paths="src/**") + "Body\n",
+            rules + "c-empty.md": frontmatter(paths="") + "Body\n",
+            rules + "d-globs.md": frontmatter(paths='\n  - "src/**/*.{ts,py}"\n  - nomatch/**/*.md')
+            + "Body\n",
+            rules + "e-nofm.md": "Just a body, no frontmatter.\n",
+            rules + "f-unterminated.md": "---\npaths:\n  - src/*.py\nno closing line\n",
+            rules + "g-empty.md": "",
+            DOT + "commands/c.md": frontmatter(paths="\n  - nomatch/*") + "Not a rules file.\n",
+            "src/app.py": "",
+        }
+    )
+
+
+def agent_skill_frontmatter_case() -> GoldenCase:
+    # .claude/skills links into plugin/, .claude/commands into pluginx/: folder links.
+    return GoldenCase(
+        files={
+            DOT + "agents/a.md": frontmatter(name="a") + "Body\n",
+            DOT + "agents/b.md": "No frontmatter.\n",
+            DOT + "agents/ok.md": frontmatter(name="ok", description="Fine") + "Body\n",
+            "plugin/p/skills/s/" + SKILL: frontmatter(description="No name") + "Body\n",
+            "plugin/p/agents/ok.md": frontmatter(name="ok", description="Fine") + "Body\n",
+            "plugin/p/hooks/notes.md": "Not an agent or a skill.\n",
+            "pluginx/commands/c.md": "A command.\n",
+        },
+        links={DOT + "skills": "../plugin/p/skills", DOT + "commands": "../pluginx/commands"},
+    )
+
+
+def settings_valid_invalid_json_case() -> GoldenCase:
+    return GoldenCase(
+        files={
+            SETTINGS: '{\n  "permissions": {\n    "allow": ["Bash(ls)",]\n  }\n}\n',
+            MCP: '{\n  "mcpServers": oops\n}\n',
+        }
+    )
+
+
+def settings_valid_deprecated_key_case() -> GoldenCase:
+    settings = {
+        "allowedTools": ["Bash(ls)"],
+        "model": "sonnet",
+        "permissions": {"defaultMode": "acceptEdits"},
+    }
+    return GoldenCase(
+        files={
+            SETTINGS: dumps(settings),
+            "scripts/run.sh": "#!/bin/sh\nclaude " + FLAG + " -p task\n",
+        }
+    )
+
+
+def permissions_bypass_settings_case() -> GoldenCase:
+    settings = {
+        "ignorePatterns": [],
+        "permissions": {"defaultMode": "bypass" + "Permissions"},
+        "env": {"AGENT_ARGS": FLAG},
+    }
+    servers = {"x": {"command": "npx", "args": ["x-mcp@2.0.0", BARE_FLAG]}}
+    return GoldenCase(
+        files={
+            SETTINGS: dumps(settings),
+            MCP: dumps({"mcpServers": servers}),
+            ".github/workflows/ci.yml": "jobs:\n  agent:\n    run: claude " + FLAG + " -p review\n",
+        }
+    )
+
+
+def permissions_bypass_scripts_case() -> GoldenCase:
+    return GoldenCase(
+        files={
+            "Makefile": "agent:\n\tclaude " + FLAG + " -p task\n",
+            LINT_NAME: "# " + FLAG + "\n",
+            "scripts/sub/tool.sh": "echo ok\n",
+            "scripts/blob.bin": b"\xff\xfe" + FLAG.encode() + b"\n",
+            "docs/run.sh": "claude " + FLAG + "\n",
+            # Untracked, not ignored.
+            "scripts/x.sh": "claude " + FLAG + "\n",
+        }
+    )
+
+
+def secrets_config_case() -> GoldenCase:
+    agents = (
+        "\n".join(
+            [
+                "# Agents",
+                SHAPES["jwt"],
+                SHAPES["aws"],
+                SHAPES["pem"],
+                SHAPES["stripe"],
+                SHAPES["openai"],
+                SHAPES["linear"],
+                "PASSWORD=<x>",
+                # Two kinds on one line: two errors. One kind twice: one error.
+                SHAPES["github"] + " " + SHAPES["aws"],
+                SHAPES["jwt"] + " " + SHAPES["jwt"],
+            ]
+        )
+        + "\n"
+    )
+    vault = {
+        "type": "http",
+        "url": "https://mcp.example.com/mcp",
+        "headers": {"X-Key": SHAPES["fernet"]},
+    }
+    return GoldenCase(
+        files={
+            AGENTS: agents,
+            "plugin/p/skills/s/" + SKILL: frontmatter(name="s", description="A skill")
+            + "gh: "
+            + SHAPES["github"]
+            + "\n",
+            SETTINGS: dumps({"env": {"PGOPTS": SHAPES["cred"]}}),
+            MCP: dumps({"mcpServers": {"vault": vault}}),
+        }
+    )
+
+
+def mcp_pinned_case() -> GoldenCase:
+    # Unpinned: `@latest` without npx (zeta), npx without a version (beta), in key order; the
+    # settings' mcpServers are not checked.
+    servers = {
+        "zeta": {"command": "uvx", "args": ["zeta-mcp@latest"]},
+        "beta": {"command": "npx", "args": ["-y", "beta-mcp"]},
+        "alpha": {"command": "npx", "args": ["-y", "alpha-mcp@1.2.3"]},
+        "local": {"command": "node", "args": ["server.js"]},
+        "remote": {"type": "http", "url": "https://mcp.example.com/mcp"},
+    }
+    mcp = {
+        "mcpServers": servers,
+        "allowedTools": ["x"],
+        "permissions": {"defaultMode": "bypass" + "Permissions"},
+    }
+    settings = {"mcpServers": {"s": {"command": "npx", "args": ["s-mcp"]}}}
+    return GoldenCase(files={MCP: dumps(mcp), SETTINGS: dumps(settings)})
+
+
+def attribution_ai_case() -> GoldenCase:
+    # CONTRIBUTING.md line 5 holds two kinds, line 6 one kind twice (one error).
+    contributing = (
+        "# Contributing\n\nEnd commits with:\n"
+        + TRAILER
+        + "\nBranch "
+        + AI_BRANCH
+        + ", "
+        + GENERATED
+        + "\n"
+        + TRAILER
+        + " and "
+        + TRAILER
+        + "\n"
+    )
+    template = "## Summary\n\n" + GENERATED + "\nBranch: " + AI_BRANCH + "\n"
+    return GoldenCase(
+        files={
+            AGENTS: "Branch: `dev/tst-1-login`.\n",
+            "CONTRIBUTING.md": contributing,
+            ".github/PULL_REQUEST_TEMPLATE.md": template,
+        }
+    )
+
+
+def non_git_fallback_case() -> GoldenCase:
+    return GoldenCase(
+        files={
+            AGENTS: "# Agents\nCI runs `ci.yml`.\nVendored: `vendor.json`.\n"
+            "Entry point: `main.py`.\n",
+            "Makefile": "agent:\n\tclaude " + FLAG + " -p task\n",
+            ".github/workflows/ci.yml": "run: claude " + FLAG + "\n",
+            "node_modules/pkg/vendor.json": "{}\n",
+            "src/main.py": "",
+        },
+        git=False,
+    )
+
+
+def agent_skill_frontmatter_project_dir_case() -> GoldenCase:
+    # A regular (not linked) .claude/skills tree gets the agent and skill check.
+    return GoldenCase(
+        files={DOT + "skills/k/" + SKILL: frontmatter(description="No name") + "Body\n"}
+    )
+
+
+SIZE, REFS, DUPLICATES = "instructions.size", "instructions.refs", "instructions.duplicates"
+FRONTMATTER, VALID, BYPASS = "rules.frontmatter", "settings.valid", "permissions.bypass"
+SECRETS, PINNED, ATTRIBUTION = "secrets.config", "mcp.pinned", "attribution.ai"
+
+# Each golden's ERROR lines as (rule id, path, line): the old message mapped to its rule id (spec
+# § Port differences), ``instructions.size`` without a line. The thirteen cases whose flagged set
+# is unchanged; ``non_git_fallback`` and ``permissions_bypass_scripts`` differ (D3) and are
+# asserted divergent below, and ``attribution_ai_no_hub`` (no ``hub.json``) is not reachable:
+# ``hub doctor`` exits 2 on a folder that is not a hub (AC-11.2).
+GOLDENS: dict[str, tuple[Callable[[], GoldenCase], tuple[Flagged, ...]]] = {
+    "clean": (clean_case, ()),
+    "instructions_refs": (
+        instructions_refs_case,
+        (
+            (REFS, AGENTS, 3),
+            (REFS, AGENTS, 3),
+            (REFS, AGENTS, 3),
+            (REFS, AGENTS, 4),
+            (REFS, AGENTS, 5),
+            (BYPASS, "package.json", 4),
+        ),
+    ),
+    "instructions_size": (
+        instructions_size_case,
+        (
+            (SIZE, DOT + "rules/x.md", None),
+            (SIZE, COPILOT, None),
+            (SIZE, AGENTS, None),
+            (SIZE, LOCAL, None),
+        ),
+    ),
+    "instructions_duplicates": (
+        instructions_duplicates_case,
+        (
+            (REFS, AGENTS, 9),
+            (SIZE, CLAUDE, None),
+            (FRONTMATTER, "plugin/p/skills/s/" + SKILL, 1),
+            (VALID, SETTINGS, 1),
+            (SECRETS, AGENTS, 10),
+            (BYPASS, "scripts/run.sh", 2),
+            (DUPLICATES, CLAUDE, 1),
+            (DUPLICATES, GEMINI, 1),
+        ),
+    ),
+    "rules_frontmatter": (
+        rules_frontmatter_case,
+        tuple(
+            (FRONTMATTER, DOT + f"rules/{name}.md", 1)
+            for name in ("a-nopaths", "b-scalar", "c-empty", "d-globs", "f-unterminated")
+        ),
+    ),
+    "agent_skill_frontmatter": (
+        agent_skill_frontmatter_case,
+        (
+            (FRONTMATTER, DOT + "agents/a.md", 1),
+            (FRONTMATTER, DOT + "agents/b.md", 1),
+            (FRONTMATTER, "plugin/p/skills/s/" + SKILL, 1),
+        ),
+    ),
+    "settings_valid_invalid_json": (
+        settings_valid_invalid_json_case,
+        ((VALID, SETTINGS, 3), (VALID, MCP, 2)),
+    ),
+    "settings_valid_deprecated_key": (
+        settings_valid_deprecated_key_case,
+        ((VALID, SETTINGS, 1), (BYPASS, "scripts/run.sh", 2)),
+    ),
+    "permissions_bypass_settings": (
+        permissions_bypass_settings_case,
+        (
+            (VALID, SETTINGS, 1),
+            (BYPASS, SETTINGS, 1),
+            (BYPASS, SETTINGS, 1),
+            (BYPASS, MCP, 1),
+            (BYPASS, ".github/workflows/ci.yml", 3),
+        ),
+    ),
+    "secrets_config": (
+        secrets_config_case,
+        (
+            *((SECRETS, AGENTS, line) for line in (2, 3, 4, 5, 6, 7, 9, 9, 10)),
+            (SECRETS, "plugin/p/skills/s/" + SKILL, 5),
+            (SECRETS, MCP, 7),
+            (SECRETS, SETTINGS, 3),
+        ),
+    ),
+    "mcp_pinned": (mcp_pinned_case, ((PINNED, MCP, 1), (PINNED, MCP, 1))),
+    "attribution_ai": (
+        attribution_ai_case,
+        (
+            *((ATTRIBUTION, "CONTRIBUTING.md", line) for line in (4, 5, 5, 6)),
+            (ATTRIBUTION, ".github/PULL_REQUEST_TEMPLATE.md", 3),
+            (ATTRIBUTION, ".github/PULL_REQUEST_TEMPLATE.md", 4),
+        ),
+    ),
+    "agent_skill_frontmatter_project_dir": (
+        agent_skill_frontmatter_project_dir_case,
+        ((FRONTMATTER, DOT + "skills/k/" + SKILL, 1),),
+    ),
+}
+
+
+def golden_config() -> HubConfig:
+    # The hub copy's hub.json: branch prefix ``dev/``, tracker team ``TST``.
+    document = a_hub_document()
+    document["project"]["branch_prefix"] = "dev/"
+    document["tracker"]["team"] = "TST"
+    return HubConfig.model_validate(document)
+
+
+def case_snapshot(snapshot_of: SnapshotFactory, case: GoldenCase) -> DoctorSnapshot:
+    files = {
+        path: content.encode() if isinstance(content, str) else content
+        for path, content in case.files.items()
+    }
+    if case.git:
+        files[".gitignore"] = GITIGNORE.encode()
+    return snapshot_of(files=files, links=case.links, config=golden_config())
+
+
+def run_case(snapshot_of: SnapshotFactory, case: GoldenCase) -> tuple[Finding, ...]:
+    selection = Selection(rules=CONFIG_LINT_RULES, notes=(), severities={})
+    return run_rules(selection, case_snapshot(snapshot_of, case))
+
+
+def flagged(findings: tuple[Finding, ...]) -> list[Flagged]:
+    return sorted(
+        ((finding.rule, finding.path or "", finding.line) for finding in findings),
+        key=lambda item: (item[0], item[1], item[2] or 0),
+    )
+
+
+def expected(golden: tuple[Flagged, ...]) -> list[Flagged]:
+    return sorted(golden, key=lambda item: (item[0], item[1], item[2] or 0))
+
+
+class TestGoldenCases:
+    @pytest.mark.parametrize("name", sorted(GOLDENS))
+    def test_matches_golden_when_case_rebuilt(
+        self, snapshot_of: SnapshotFactory, name: str
+    ) -> None:
+        build, golden = GOLDENS[name]
+        findings = run_case(snapshot_of, build())
+
+        assert tuple(rule.id for rule in CONFIG_LINT_RULES) == CONFIG_LINT_IDS
+        # E27's guard turns a raising rule into a finding: none may hide a rule failure here.
+        assert not [f for f in findings if f.message.startswith("rule crashed")]
+        assert flagged(findings) == expected(golden)
