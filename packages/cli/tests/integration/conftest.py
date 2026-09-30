@@ -1,9 +1,16 @@
-"""Fixtures for the cli integration tests: a fake git on ``PATH`` and the ``demo`` inputs."""
+"""Fixtures for the cli integration tests: a fake git on ``PATH`` and the ``demo`` inputs.
 
+Also the ``hub.lock`` golden harness (``lock_golden``), a from-scratch child environment
+(``child_env``) and the process umask (``set_umask``).
+"""
+
+import difflib
+import json
 import os
 import shlex
 import stat
-from collections.abc import Callable, Mapping
+import sys
+from collections.abc import Callable, Iterator, Mapping
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -172,3 +179,92 @@ def tree_digest() -> TreeDigest:
         return found
 
     return digest
+
+
+@pytest.fixture
+def set_umask() -> Iterator[Callable[[int], None]]:
+    """Set the process umask for the test; the original one is restored afterwards."""
+    original = os.umask(0o022)
+    os.umask(original)
+    try:
+        yield lambda mask: os.umask(mask) and None
+    finally:
+        os.umask(original)
+
+
+# The golden harness of the init lock (AC-12.28). Its twin is ``update_mode`` in
+# packages/generator/tests/integration/conftest.py, which a conftest cannot import: same variable,
+# same refusal under CI, same message.
+UPDATE_VARIABLE = "GOLDEN_UPDATE"
+DEMO_LOCK_GOLDEN = Path(__file__).parent / "golden" / "init" / "demo.hub.lock"
+VERSION_MARK = "<VERSION>"
+UPDATE_HINT = (
+    f"Update: {UPDATE_VARIABLE}=1 uv run --locked --all-packages pytest -m integration "
+    "packages/cli/tests/integration/test_synthetic_demo.py -q, "
+    "then review and commit the golden diff"
+)
+# A child never rewrites goldens, keeps roots or runs as CI because this run does.
+CHILD_DROPPED = frozenset({UPDATE_VARIABLE, "GOLDEN_KEEP", "CI"})
+
+
+def golden_update_mode() -> bool:
+    """Whether ``GOLDEN_UPDATE=1`` asks to rewrite goldens; fails the test when ``CI`` is set."""
+    if os.environ.get(UPDATE_VARIABLE) != "1":
+        return False
+    if os.environ.get("CI"):
+        pytest.fail(
+            f"{UPDATE_VARIABLE}=1 is refused when CI is set: goldens are regenerated locally, "
+            "reviewed and committed"
+        )
+    return True
+
+
+def normalized_lock(content: bytes) -> bytes:
+    """``content`` with its one ``platform_version`` value replaced by ``<VERSION>``."""
+    field = f'"platform_version": {json.dumps(version("agent-hub-cli"))}'.encode()
+    if content.count(field) != 1:
+        pytest.fail(f"the lock holds {content.count(field)} of {field!r}, not one")
+    return content.replace(field, f'"platform_version": "{VERSION_MARK}"'.encode())
+
+
+def compare_lock_golden(content: bytes, *, golden: Path = DEMO_LOCK_GOLDEN) -> None:
+    """Fail unless the normalized ``content`` equals ``golden``; update mode rewrites it instead.
+
+    Update mode is read (and refused under ``CI``) before anything is compared.
+    """
+    update = golden_update_mode()
+    new = normalized_lock(content)
+    old = golden.read_bytes() if golden.is_file() else None
+    if old == new:
+        return
+    if update:
+        golden.parent.mkdir(parents=True, exist_ok=True)
+        golden.write_bytes(new)
+        sys.stderr.write(f"wrote {golden}\n")
+        return
+    if old is None:
+        pytest.fail(f"missing golden {golden}\n{UPDATE_HINT}")
+    diff = difflib.unified_diff(
+        old.decode(errors="replace").splitlines(),
+        new.decode(errors="replace").splitlines(),
+        "golden",
+        "actual",
+        lineterm="",
+    )
+    pytest.fail("\n".join([f"{golden} differs from the lock:", *diff, UPDATE_HINT]))
+
+
+@pytest.fixture
+def lock_golden() -> Callable[..., None]:
+    """Compare a ``hub.lock`` with its golden (``demo.hub.lock`` by default) or rewrite it."""
+    return compare_lock_golden
+
+
+@pytest.fixture
+def child_env() -> Callable[[Mapping[str, str]], dict[str, str]]:
+    """Build a child's environment from ``values`` alone, the harness mode variables dropped."""
+
+    def build(values: Mapping[str, str]) -> dict[str, str]:
+        return {name: value for name, value in values.items() if name not in CHILD_DROPPED}
+
+    return build
