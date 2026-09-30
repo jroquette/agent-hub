@@ -169,8 +169,8 @@ makes it by hand; no workflow or agent creates tags.
 
    ```bash
    git fetch origin
-   git log -1 --oneline origin/main    # the release PR's squash commit
-   git tag -a vX.Y.Z -m "vX.Y.Z" origin/main
+   git log -1 --oneline origin/main    # the release PR's squash commit: note its SHA
+   git tag -a vX.Y.Z -m "vX.Y.Z" <sha>   # that SHA, not origin/main, which may have moved on
    git push origin vX.Y.Z
    ```
 

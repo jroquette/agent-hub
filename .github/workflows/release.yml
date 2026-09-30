@@ -46,7 +46,8 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           git rev-parse --verify -q origin/main > /dev/null || { echo "tag $TAG: origin/main is missing from the checkout" >&2; exit 1; }
-          git merge-base --is-ancestor "$(git rev-parse "$TAG^{commit}")" origin/main || { echo "tag $TAG: its commit is not on main" >&2; exit 1; }
+          commit="$(git rev-parse --verify -q "refs/tags/$TAG^{commit}")" || { echo "tag $TAG: not found in the checkout" >&2; exit 1; }
+          git merge-base --is-ancestor "$commit" origin/main || { echo "tag $TAG: its commit is not on main" >&2; exit 1; }
           echo "tag $TAG: its commit is on main"
       # Run outside the checkout, as a user would. The token reaches git only through the
       # GIT_CONFIG_* rewrite below (never in the URL, never printed); uv fetches with system git.
@@ -58,7 +59,8 @@ jobs:
           GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/.insteadOf
           GIT_CONFIG_VALUE_0: https://github.com/
         run: |
-          printed="$(uvx --from git+https://github.com/jroquette/agent-hub@"$TAG"#subdirectory=packages/agent-hub hub --version)"
+          printed="$(uvx --from git+https://github.com/jroquette/agent-hub@"$TAG"#subdirectory=packages/agent-hub hub --version)" \
+            || { echo "tag $TAG: the pinned uvx command failed (see uv's error above)" >&2; exit 1; }
           if [ "$printed" != "${TAG#v}" ]; then
             echo "tag $TAG: the pinned uvx command printed ${printed@Q}, expected ${TAG#v}" >&2
             exit 1
