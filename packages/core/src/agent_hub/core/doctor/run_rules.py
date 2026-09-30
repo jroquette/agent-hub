@@ -20,8 +20,11 @@ from agent_hub.core.hub_config.model import HubConfig
 
 # The rules that read ``hub.json`` itself: the only ones run on a failed config, never retuned.
 CONFIG_RULES: Final = (CONFIG_SCHEMA_RULE, PLATFORM_VERSION_RULE)
-# The fix of the one finding a failed file listing gives (E7); the message names the cause.
-LISTING_FIX: Final = "fix the cause above so this folder can be listed, then run hub doctor again"
+# The fix of the one finding a hub tree that could not be listed or read gives (E7, E24); the
+# message names the cause.
+LISTING_FIX: Final = (
+    "fix the cause above so every file can be listed and read, then run hub doctor again"
+)
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -117,7 +120,8 @@ def _only_problem(
 def run_rules(selection: Selection, snapshot: DoctorSnapshot) -> tuple[Finding, ...]:
     """Every finding of the selected rules, each check called once, retuned, then sorted.
 
-    A failed hub listing adds one finding, after the retune, so its level is never changed.
+    A hub tree that could not be listed or read adds one finding, after the retune, so its
+    level is never changed.
     """
     failed = isinstance(snapshot.config, ConfigFailure)
     findings: list[Finding] = []
@@ -129,24 +133,30 @@ def run_rules(selection: Selection, snapshot: DoctorSnapshot) -> tuple[Finding, 
             finding if severity is None else replace(finding, severity=severity)
             for finding in rule.check(snapshot)
         )
-    listing = _listing_finding(selection, snapshot)
-    if listing is not None:
-        findings.append(listing)
+    problem = _tree_problem_finding(selection, snapshot)
+    if problem is not None:
+        findings.append(problem)
     return sort_findings(findings)
 
 
-def _listing_finding(selection: Selection, snapshot: DoctorSnapshot) -> Finding | None:
-    """The one error of a failed hub listing, on the first selected rule by id that reads it.
+def _tree_problem_finding(selection: Selection, snapshot: DoctorSnapshot) -> Finding | None:
+    """The one error of a hub tree that could not be listed or read (E24).
 
-    None on a failed config: then only the config rules run, and none of them reads the listing.
+    It goes on the first selected rule by id that reads the listing, else on the first selected
+    rule other than the config rules; with only those selected, or on a failed config (only
+    the config rules run then), there is none.
     """
-    if isinstance(snapshot.config, ConfigFailure):
+    if isinstance(snapshot.config, ConfigFailure) or snapshot.hub.problem is None:
         return None
-    readers = sorted(rule.id for rule in selection.rules if Read.HUB_LISTING in rule.reads)
-    if snapshot.hub.problem is None or not readers:
+    hub_rules = sorted(
+        (Read.HUB_LISTING not in rule.reads, rule.id)
+        for rule in selection.rules
+        if rule.id not in CONFIG_RULES
+    )
+    if not hub_rules:
         return None
     return Finding(
-        rule=readers[0],
+        rule=hub_rules[0][1],
         severity=Severity.ERROR,
         path=".",
         line=None,
