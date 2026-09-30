@@ -1,8 +1,9 @@
 """``hub doctor``: its command surface, the root and ``hub.json`` steps, and the exit codes.
 
 A failed config runs only the config rules and reads no other file, so those cases copy only
-``hub.json`` into an empty folder (plan O6); the others run on a copy of the ``DEMO`` hub. On
-this release no rule reads a listing, so a run starts no git (plan E21 e).
+``hub.json`` into an empty folder (plan O6); the others run on a copy of the ``DEMO`` hub, which is
+walked, not listed by git, unless the test commits it (plan E21 e): only ``features.tracker`` reads
+the listing.
 """
 
 import errno
@@ -11,6 +12,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 from collections.abc import Callable, Iterator
 from importlib.metadata import version
 from pathlib import Path
@@ -22,6 +24,7 @@ from typer.testing import CliRunner, Result
 
 from agent_hub.cli.main import app
 from agent_hub.core.json_form import dump_json
+from agent_hub.generator import render_hub as render_hub_module
 
 # The conftest's in-process doctor run, its path recorder and the recorder's filters (tests
 # cannot import a conftest in importlib mode).
@@ -47,6 +50,18 @@ NOT_A_HUB = (
     ": not a hub: no hub.json in this folder (hub doctor runs in the hub folder, never a parent)"
 )
 FIFO_ALARM_SECONDS = 5
+NOT_ADOPTED_LINE = (
+    "warning lock.drift hub.lock: not adopted: no hub.lock records this hub's files"
+    " Fix: run hub sync --adopt"
+)
+# The seeded Makefile.project holds two comment lines; the planted rule is the third.
+OVERRIDE_LINE = (
+    "warning makefile.override Makefile.project:3: redefines target 'check'"
+    " Fix: rename the project target"
+)
+LISTING_FIX = (
+    "Fix: fix the cause above so every file can be listed and read, then run hub doctor again"
+)
 # The characters of the box Rich may draw around a usage error.
 BOX_CHARACTERS = "│╭╮╰╯─"
 
@@ -98,6 +113,12 @@ def lines_of(result: Result, *, exit_code: int) -> list[str]:
     assert result.exception is None or isinstance(result.exception, SystemExit)
     assert result.stderr == ""
     return result.stdout.splitlines()
+
+
+def plant_check_override(root: Path) -> None:
+    """Give ``Makefile.project`` a rule for ``check``, a target the managed ``Makefile`` defines."""
+    project = root / "Makefile.project"
+    project.write_bytes(project.read_bytes() + b"check:\n\t@echo ours\n")
 
 
 def schema_line(message: str) -> str:
@@ -334,6 +355,46 @@ class TestExitCodes:
 
         assert_refused(result, message)
 
+    def test_exits_zero_when_only_warnings_or_infos(
+        self, demo_hub: Path, run_doctor: DoctorRunner
+    ) -> None:
+        (demo_hub / "hub.lock").unlink()
+
+        lines = lines_of(run_doctor(demo_hub), exit_code=0)
+
+        assert lines == [NOT_ADOPTED_LINE, "0 errors, 1 warning, 0 infos"]
+
+    def test_runs_only_named_rule_when_only_given(
+        self, demo_hub: Path, run_doctor: DoctorRunner
+    ) -> None:
+        # A lock.drift problem (a managed file edited) that only a run of lock.drift reports.
+        (demo_hub / "AGENTS.md").write_bytes(b"# Agents, edited\n")
+        plant_check_override(demo_hub)
+
+        lines = lines_of(run_doctor(demo_hub, "--only", "makefile.override"), exit_code=0)
+
+        assert lines == [OVERRIDE_LINE, "0 errors, 1 warning, 0 infos"]
+
+    def test_notes_disabled_rule_when_only_names_it(
+        self, demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+    ) -> None:
+        # lock.drift would warn "not adopted"; makefile.override, retuned to error, sets the exit.
+        demo_document["doctor"] = {
+            "rules": {"lock.drift": {"enabled": False}, "makefile.override": {"severity": "error"}}
+        }
+        (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+        (demo_hub / "hub.lock").unlink()
+        plant_check_override(demo_hub)
+
+        result = run_doctor(demo_hub, "--only", "lock.drift", "--only", "makefile.override")
+
+        assert result.exit_code == 1, result.output
+        assert result.stderr == "lock.drift: disabled in hub.json doctor.rules\n"
+        assert result.stdout.splitlines() == [
+            OVERRIDE_LINE.replace("warning", "error", 1),
+            ONE_ERROR,
+        ]
+
 
 def test_runs_no_git_when_no_rule_needs_listing(
     demo_hub: Path, run_doctor: DoctorRunner, path_reads: list[PathRead]
@@ -468,3 +529,125 @@ def test_reports_settings_weakening_when_project_disables_hooks(
         "2 errors, 0 warnings, 0 infos",
     ]
     assert [read for read in path_reads if read.call == "Popen"] == []
+
+
+def test_warns_not_adopted_and_runs_other_rules_when_lock_absent(
+    demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    (demo_hub / "hub.lock").unlink()
+    plant_check_override(demo_hub)
+
+    lines = lines_of(run_doctor(demo_hub), exit_code=0)
+
+    assert lines == [NOT_ADOPTED_LINE, OVERRIDE_LINE, "0 errors, 2 warnings, 0 infos"]
+
+
+def test_renders_nothing_when_doctor_runs(
+    demo_hub: Path, run_doctor: DoctorRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Every render entry point, wherever a module bound it by name, raises when called.
+    renders = {name: getattr(render_hub_module, name) for name in ("render_hub", "render_entries")}
+    for module in [m for name, m in sys.modules.items() if name.startswith("agent_hub.")]:
+        for name, real in renders.items():
+            if getattr(module, name, None) is real:
+                monkeypatch.setattr(module, name, refusing_call(name))
+
+    lines = lines_of(run_doctor(demo_hub), exit_code=0)
+
+    assert lines == [CLEAN]
+
+
+def refusing_call(name: str) -> Callable[..., Any]:
+    def refusing(*_args: Any, **_kwargs: Any) -> Any:
+        pytest.fail(f"hub doctor called {name}")
+
+    return refusing
+
+
+def test_leaves_no_marker_when_guard_extension_would_write(
+    tmp_path: Path, demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    marker = tmp_path / "imported.marker"
+    extension = demo_hub / "plugin/demo/hooks/project_guard.py"
+    extension.write_text(
+        "import pathlib\n"
+        f"pathlib.Path({str(marker)!r}).write_text('ran')\n"
+        "\n\n"
+        "def check(event, cfg):\n"
+        "    return None\n",
+        encoding="utf-8",
+    )
+
+    lines = lines_of(run_doctor(demo_hub), exit_code=0)
+
+    assert lines == [CLEAN]
+    assert not os.path.lexists(marker)
+
+
+def test_checks_features_when_only_features_tracker(
+    demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    features = demo_hub / "brain/features"
+    valid = {
+        "feature": "valid",
+        "linear": ["DEM-1"],
+        "acs": [a_demo_ac(1, repo="demo-api"), a_demo_ac(2, repo="demo-hub")],
+    }
+    invalid = {
+        "feature": "invalid",
+        "linear": ["DEM-2"],
+        "acs": [a_demo_ac(1, repo="api"), a_demo_ac(2, passes=True)],
+    }
+    for name, record in (("valid", valid), ("invalid", invalid)):
+        (features / name).mkdir()
+        (features / name / "features.json").write_bytes(dump_json(record))
+    # The valid record agrees with its spec, so the cross-check runs and finds nothing.
+    (features / "valid/spec.md").write_bytes(b"# Valid\n\n- **AC-1** x\n- **AC-2** y\n")
+    # A lock.drift problem that only a run of lock.drift reports.
+    (demo_hub / "hub.lock").unlink()
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "features.tracker"), exit_code=1)
+
+    record = "brain/features/invalid/features.json"
+    assert lines == [
+        f"error features.tracker {record}: AC-1: repo must be one of demo-api, demo-hub"
+        " Fix: fix the record in features.json",
+        f"error features.tracker {record}: AC-2: passes=true needs evidence (command + result)"
+        " Fix: record the command run and its result in evidence",
+        "2 errors, 0 warnings, 0 infos",
+    ]
+
+
+def a_demo_ac(number: int, **changes: object) -> dict[str, Any]:
+    """A pending AC of the ``DEMO`` hub, valid unless ``changes`` break it."""
+    ac: dict[str, Any] = {
+        "id": f"AC-{number}",
+        "description": "Given x When y Then z",
+        "repo": "demo-api",
+        "verification": f"pytest tests/unit/test_x.py::test_{number}",
+        "passes": False,
+        "evidence": None,
+    }
+    return ac | changes
+
+
+@pytest.mark.parametrize("only", [(), ("--only", "features.tracker")], ids=["all", "only-features"])
+def test_reports_listing_problem_once_when_git_missing(
+    demo_hub: Path,
+    run_doctor: DoctorRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    no_git_path: Path,
+    only: tuple[str, ...],
+) -> None:
+    # A .git entry asks for git's listing; with no git on PATH the listing fails. The fixed
+    # paths are still read, so no other rule reports anything (plan E23, E24).
+    (demo_hub / ".git").mkdir()
+    monkeypatch.setenv("PATH", str(no_git_path))
+
+    lines = lines_of(run_doctor(demo_hub, *only), exit_code=1)
+
+    assert lines == [
+        f"error features.tracker .: could not list the files: git not found {LISTING_FIX}",
+        ONE_ERROR,
+    ]
