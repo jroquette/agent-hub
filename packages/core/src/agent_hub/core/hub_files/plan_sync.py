@@ -10,6 +10,8 @@ Each path is decided in this order (plan erratum E5): an ancestor that is a link
 then a link on disk that resolves outside the hub, then "equal to the render" (clean, whatever the
 lock says, so a file an interrupted sync already wrote is never a conflict), then the type rules,
 then the ownership rules. ``hub.json`` is the project's: never compared, written or deleted.
+A project agent or skill named like another entry of its ``.claude`` folder, case and Unicode form
+aside, is a conflict too (plan E8, E37): ``render_hub`` keeps the base plugin's link.
 """
 
 import hashlib
@@ -19,6 +21,7 @@ from enum import StrEnum
 from typing import Final
 
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_files.extension_inputs import ExtensionInputs, entry_name_key
 from agent_hub.core.hub_files.hub_lock import (
     HUB_JSON_PATH,
     HUB_LOCK_PATH,
@@ -113,6 +116,12 @@ type _Verdict = Verb | SyncProblem | None
 
 _OUTSIDE: Final = "resolves outside the hub"
 _NO_LONGER_RENDERED: Final = "differs from its hub.lock entry and is no longer rendered"
+_IN_BOTH: Final = "in both plugins ({other} and {own})"
+_TWICE: Final = (
+    "named twice in plugin/{project}, ignoring case and Unicode form ({other} and {own})"
+)
+# From ``.claude/<folder>/<name>`` back to the hub root, as every plugin link's target starts.
+_UP_TO_ROOT: Final = "../../"
 
 
 def _bit(*, executable: bool) -> str:
@@ -230,6 +239,46 @@ def _leftovers(entries: Mapping[str, TreeEntry], planned: set[str]) -> tuple[str
     )
 
 
+def _entries_by_key(
+    rendered: RenderedHub, *, folder: str, own: Iterable[tuple[str, str]]
+) -> dict[str, dict[str, None]]:
+    """The entry paths of ``.claude/<folder>``'s links and ``own`` pairs, by name key (E37).
+
+    Each key keeps its paths in the order found (a dict, not a set), so no order hangs on hashing.
+    """
+    prefix = f".claude/{folder}/"
+    linked = [
+        (link.path.removeprefix(prefix), link.target.removeprefix(_UP_TO_ROOT))
+        for link in rendered.links
+        if link.path.startswith(prefix)
+    ]
+    grouped: dict[str, dict[str, None]] = {}
+    for name, entry in [*linked, *own]:
+        grouped.setdefault(entry_name_key(name), {})[entry] = None
+    return grouped
+
+
+def _name_clashes(
+    rendered: RenderedHub, *, project: str, extensions: ExtensionInputs
+) -> list[PathProblem]:
+    """E8, E37: each project entry whose name another entry of its folder holds (case, form aside).
+
+    The other entry is the base plugin's (``in both plugins``) or the project's own under another
+    case or Unicode form (``named twice``): either way one entry on a case-insensitive disk.
+    """
+    problems: list[PathProblem] = []
+    for folder, names in (("agents", extensions.agents), ("skills", extensions.skills)):
+        base = f"plugin/{project}/{folder}/"
+        own = [(name, base + name) for name in names]
+        grouped = _entries_by_key(rendered, folder=folder, own=own)
+        for name, entry in own:
+            for other in sorted(o for o in grouped[entry_name_key(name)] if o != entry):
+                message = _TWICE if other.startswith(base) else _IN_BOTH
+                cause = message.format(project=project, other=other, own=entry)
+                problems.append(PathProblem(f".claude/{folder}/{name}", cause))
+    return problems
+
+
 def _write(rendered: _Rendered) -> FileWrite | LinkWrite:
     if isinstance(rendered, RenderedLink):
         return LinkWrite(path=rendered.path, target=rendered.target)
@@ -256,6 +305,7 @@ def plan_sync(
     lock: HubLock,
     lock_content: bytes,
     tree: TreeSnapshot,
+    extensions: ExtensionInputs,
 ) -> SyncPlan | SyncConflicts:
     """Plan a sync of the hub ``tree`` describes to ``rendered`` for ``config``.
 
@@ -263,6 +313,8 @@ def plan_sync(
     exactly when its bytes differ (spec Q-15). ``tree`` must hold the content of every rendered
     managed file and of every managed file ``lock`` records. Raises ``ValueError`` when the render
     holds ``hub.json`` or ``hub.lock``, or when a file it compares was read without its content.
+    ``extensions`` are the inputs ``rendered`` was rendered with: a project agent or skill named
+    like another entry of its folder is a conflict.
     """
     _check_render(rendered)
     entries = tree.entries
@@ -275,7 +327,8 @@ def plan_sync(
         for path, entry in lock.files.items()
         if path not in verdicts
     }
-    problems = _problems([*verdicts.values(), *gone.values()])
+    clashes = _name_clashes(rendered, project=config.project.name, extensions=extensions)
+    problems = _problems([*verdicts.values(), *gone.values(), *clashes])
     if problems:
         return SyncConflicts(problems=problems)
     new_lock = build_hub_lock(rendered=rendered, config=config)

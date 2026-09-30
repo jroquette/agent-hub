@@ -174,7 +174,8 @@ def test_writes_hub_when_demo_flags_given(
 def test_reads_content_of_compared_files_when_tree_read(
     git_on_path: Any, monkeypatch: pytest.MonkeyPatch, target: Path, *, demo_flags: list[str]
 ) -> None:
-    # The planner compares every managed file and hub.json by content: the reader must read them.
+    # The planner compares every managed file and hub.json by content, and the kept sibling is
+    # merged (spec D2): the reader must read them.
     asked: list[frozenset[str]] = []
 
     def recording_read(root: Path, *, wanted: Collection[str]) -> TreeSnapshot:
@@ -188,7 +189,7 @@ def test_reads_content_of_compared_files_when_tree_read(
     assert result.exit_code == 0, result.stderr
     rendered = render_hub(written_config(target))
     managed = {file.path for file in rendered.files if file.ownership is Ownership.MANAGED}
-    assert asked == [frozenset({*managed, "hub.json"})]
+    assert asked == [frozenset({*managed, "hub.json", ".claude/settings.project.json"})]
 
 
 @pytest.mark.parametrize(

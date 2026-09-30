@@ -21,9 +21,10 @@ plain and relative (a ``ValueError`` before anything is read), since ``..`` clim
 
 import os
 import stat
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Final
 
 from agent_hub.core.hub_files.tree_snapshot import (
@@ -104,6 +105,14 @@ def read_root_entry(root: Path, name: str) -> TreeEntry | None:
 
 
 @dataclass(frozen=True)
+class LinkFolder:
+    """Where the entries of a listed folder are linked, and the entry type that is linked."""
+
+    path: str
+    linked: type[FileEntry] | type[FolderEntry]
+
+
+@dataclass(frozen=True)
 class _Descent:
     """The folders one planned read reached: open descriptors by path (``""`` is the root)."""
 
@@ -118,18 +127,21 @@ def read_planned_tree(
     paths: Collection[str],
     wanted: Collection[str],
     listed: Collection[str] = (),
+    links_in: Mapping[str, LinkFolder] = MappingProxyType({}),
 ) -> TreeSnapshot:
     """Return only what ``hub sync`` plans under ``root``; ``root`` is already a real path.
 
     For each of ``paths``: its ancestors down to the first that is not a folder, then the path
     itself when present (content read only when in ``wanted``). Each existing parent folder of a
     planned path, the root included, is listed, and only its leftover-shaped names are recorded.
-    Each folder in ``listed`` is listed and every name in it recorded, never descended. Raises
-    ``ValueError`` for a path that is not plain and relative, before anything is read, and
-    ``GeneratorError`` naming the path when anything planned cannot be looked at or read.
+    Each folder in ``listed`` is listed and every name in it recorded, never descended. For a
+    listed folder that is a key of ``links_in``, each name found is also looked at (never listed)
+    in the value folder, where its link would go (spec Q-20: one read for the project's entries
+    and their link paths). Raises ``ValueError`` for a path that is not plain and relative, or a
+    ``links_in`` key not in ``listed``, before anything is read, and ``GeneratorError`` naming the
+    path when anything planned cannot be looked at or read.
     """
-    for path in [*paths, *listed]:
-        _check_plain(path)
+    _check_planned(paths, listed=listed, links_in=links_in)
     shown = os.fspath(root)
     descent = _Descent(
         walk=_Walk(real_root=os.path.realpath(root), wanted=wanted, entries={}),
@@ -149,6 +161,9 @@ def read_planned_tree(
         for folder in listed:
             if _reach(folder, descent) is not None:
                 _record_names(folder, descent, names=None, every=True)
+        for folder, link_folder in links_in.items():
+            names = _linkable_names(folder, linked=link_folder.linked, walk=descent.walk)
+            _look_in(link_folder.path, names=names, descent=descent)
     finally:
         for folder_fd in descent.folders.values():
             os.close(folder_fd)
@@ -175,6 +190,43 @@ def _reach(folder: str, descent: _Descent) -> int | None:
     folder_fd = _open_folder(name, parent_fd, path=folder)
     descent.folders[folder] = folder_fd
     return folder_fd
+
+
+def _check_planned(
+    paths: Collection[str], *, listed: Collection[str], links_in: Mapping[str, LinkFolder]
+) -> None:
+    for path in [*paths, *listed, *(link_folder.path for link_folder in links_in.values())]:
+        _check_plain(path)
+    for folder in links_in:
+        if folder not in listed:
+            msg = f"{folder!r}: links_in names a folder that is not listed"
+            raise ValueError(msg)
+
+
+def _linkable_names(
+    folder: str, *, linked: type[FileEntry] | type[FolderEntry], walk: _Walk
+) -> list[str]:
+    """The names right under ``folder`` whose entry is of type ``linked``, dotfiles never."""
+    prefix = f"{folder}/"
+    return [
+        name
+        for path, entry in walk.entries.items()
+        if path.startswith(prefix) and isinstance(entry, linked)
+        for name in [path.removeprefix(prefix)]
+        if "/" not in name and not name.startswith(".")
+    ]
+
+
+def _look_in(folder: str, *, names: list[str], descent: _Descent) -> None:
+    """Record each of ``names`` present in ``folder``, which is looked at by name, never listed.
+
+    The names are only those a link is planned for (see ``_linkable_names``), so a dotfile or an
+    entry of another type never makes the link folder be looked into.
+    """
+    folder_fd = _reach(folder, descent) if names else None
+    if folder_fd is not None:
+        for name in names:
+            _look(folder_fd, name, path=f"{folder}/{name}", walk=descent.walk)
 
 
 def _record_names(folder: str, descent: _Descent, *, names: list[str] | None, every: bool) -> None:

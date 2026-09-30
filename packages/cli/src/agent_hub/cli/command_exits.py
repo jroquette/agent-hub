@@ -6,6 +6,7 @@ Every error goes to stderr on its own line, escaped so that it cannot fake a sec
 """
 
 import os
+from collections.abc import Collection
 from pathlib import Path
 from typing import Final, NoReturn
 
@@ -14,6 +15,8 @@ import typer
 from agent_hub.cli.hub_config_reader import FILE_LABEL
 from agent_hub.cli.init_report import shown_path, shown_text
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_files.extension_inputs import ExtensionInputs, extension_inputs_from
+from agent_hub.core.hub_files.tree_snapshot import TreeSnapshot
 from agent_hub.generator.errors import GeneratorError
 
 # Any failure after the usage check: config, modules, target, tree or write.
@@ -47,6 +50,20 @@ def root_or_exit(directory: Path | None) -> str:
     except OSError as error:
         # A relative path needs the cwd, which may have been deleted.
         fail(f"{shown_path(given)}: {error.strerror or error}")
+
+
+def extension_inputs_or_exit(
+    tree: TreeSnapshot, *, project: str, siblings: Collection[str]
+) -> ExtensionInputs:
+    """The project's extension inputs in ``tree``; each problem is one line, then exit 1.
+
+    A sibling that is not a regular file, or an agent or skill name ``hub.lock`` cannot record
+    (plan E9), is an input error: nothing is written.
+    """
+    found = extension_inputs_from(tree, project=project, siblings=siblings)
+    if not isinstance(found, ExtensionInputs):
+        fail(*(f"{shown_path(path)}: {message}" for path, message in found))
+    return found
 
 
 def fail_generator(error: GeneratorError) -> NoReturn:
