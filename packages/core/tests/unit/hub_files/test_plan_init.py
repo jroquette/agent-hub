@@ -54,6 +54,7 @@ CORE_MODULES = (
     "doctor/run_rules.py",
     "doctor/config_rules.py",
     "doctor/registry.py",
+    "doctor/lock_rules.py",
 )
 
 # Design decision 4 of the plan, word for word: each refusal names the cause or the way out.

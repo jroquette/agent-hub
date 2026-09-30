@@ -1,4 +1,4 @@
-"""What ``hub doctor`` knows of a hub: its config (or why it failed), and the files it looked at.
+"""What ``hub doctor`` knows of a hub: its config (or why it failed), its lock and its files.
 
 The cli fills a ``DoctorSnapshot``; rules read it and never touch the disk. Paths are relative
 POSIX paths from the hub root.
@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
-from agent_hub.core.hub_files.hub_lock import HUB_LOCK_PATH
+from agent_hub.core.hub_files.hub_lock import HUB_LOCK_PATH, HubLock
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, TreeEntry
 
 
@@ -46,12 +46,31 @@ class HubFiles:
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
+class LockAbsent:
+    """No ``hub.lock`` entry in the hub folder: the hub was never adopted."""
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LockNotRegular:
+    """``hub.lock`` is a link, folder, FIFO or other non-regular file, so it was never opened."""
+
+
+# What ``hub.lock`` holds: the lock, no lock, something that is no file, or its problems.
+type LockState = HubLock | LockAbsent | LockNotRegular | tuple[ConfigProblem, ...]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
 class DoctorSnapshot:
-    """The input of every rule: the config, the running release and the hub's files."""
+    """The input of every rule: the config, the running release, the hub's files and its lock.
+
+    ``lock`` is ``None`` when it was not read: no selected rule reads it, the config failed, or
+    ``hub.lock`` could not be read (the hub's files then say why, as ``hub.lock`` is a fixed path).
+    """
 
     config: HubConfig | ConfigFailure
     running_version: str
     hub: HubFiles
+    lock: LockState | None
 
     @property
     def hub_config(self) -> HubConfig:
