@@ -222,3 +222,60 @@ def test_loads_same_value_when_strict_and_input_clean() -> None:
     content = b'{"a": [1, 1.0, true, null, {"b": "c"}], "d": -0.5e3}'
 
     assert load_json_bytes(content, strict=True) == load_json_bytes(content)
+
+
+BOM_MESSAGE = "not valid JSON: the file starts with a UTF-8 byte order mark; save it without one"
+
+
+@pytest.mark.parametrize(
+    ("content", "strict", "line", "message"),
+    [
+        (b'{\n"a": 1,\n"b": }', False, 3, "not valid JSON: Expecting value at line 3 column 6"),
+        (b'{\r\n"a": 1,\r\n"b": }', False, 3, "not valid JSON: Expecting value at line 3 column 6"),
+        (b"\xef\xbb\xbf{}", False, 1, BOM_MESSAGE),
+        (b"\xef\xbb\xbf{}", True, 1, BOM_MESSAGE),
+        (b"\xff\xfe{}", False, None, "not UTF-8 text: byte 0 cannot be decoded"),
+        (b"1" * 4301, False, None, TOO_MANY_DIGITS),
+        (
+            b'{"a": 1,\n"a": 2}',
+            True,
+            None,
+            'not valid JSON here: the key "a" appears more than once',
+        ),
+    ],
+    ids=[
+        "syntax-error",
+        "syntax-error-crlf",
+        "byte-order-mark",
+        "byte-order-mark-strict",
+        "not-utf8",
+        "long-integer",
+        "strict-duplicate-key",
+    ],
+)
+def test_carries_line_when_json_invalid(
+    content: bytes, *, strict: bool, line: int | None, message: str
+) -> None:
+    with pytest.raises(InvalidJsonError) as caught:
+        load_json_bytes(content, strict=strict)
+
+    assert caught.value.line == line
+    assert caught.value.message == str(caught.value) == message
+
+
+def test_carries_no_line_when_nested_too_deeply(monkeypatch: pytest.MonkeyPatch) -> None:
+    def too_deep(*_: object, **__: object) -> object:
+        raise RecursionError
+
+    monkeypatch.setattr(json, "loads", too_deep)
+
+    with pytest.raises(InvalidJsonError) as caught:
+        load_json_bytes(b"{}")
+
+    assert caught.value.line is None
+    assert caught.value.message == TOO_DEEP
+
+
+def test_carries_no_line_when_built_without_one() -> None:
+    assert InvalidJsonError(TOO_DEEP).line is None
+    assert InvalidJsonError(TOO_DEEP, line=4).line == 4
