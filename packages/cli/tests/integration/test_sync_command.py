@@ -870,8 +870,10 @@ class TestInterruptedSync:
         name: str,
         path: str,
     ) -> None:
-        # One delete, three file writes (CLAUDE.md is the middle one), one link, then hub.lock.
-        for make in [_deleted, _restored, _created, _restored_hook, _restored_link]:
+        # One delete, four file writes (CLAUDE.md is the second), one link, then hub.lock.
+        # Makefile is updated from an older lock hash: once written it differs from its lock
+        # entry until hub.lock is, so the stops after it (first-link, hub-lock) pin E5.
+        for make in [_deleted, _restored, _created, _updated, _restored_hook, _restored_link]:
             make_pending(demo_hub, make)
         old_lock = (demo_hub / "hub.lock").read_bytes()
 
@@ -975,6 +977,7 @@ def test_writes_lock_last_when_sync_applies(
         ("replace", "feature"),
         ("replace", "hub.lock"),
     ]
+    assert hub_json_flags
     written = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
     assert not [flags for flags in hub_json_flags if flags & written]
     after = (demo_hub / "hub.json").stat()

@@ -302,12 +302,16 @@ def normalized_lock(content: bytes) -> bytes:
     return content.replace(field, f'"platform_version": "{VERSION_MARK}"'.encode())
 
 
-def compare_lock_golden(content: bytes, *, golden: Path = DEMO_LOCK_GOLDEN) -> None:
+def compare_lock_golden(
+    content: bytes, *, golden: Path = DEMO_LOCK_GOLDEN, update: bool | None = None
+) -> None:
     """Fail unless the normalized ``content`` equals ``golden``; update mode rewrites it instead.
 
-    Update mode is read (and refused under ``CI``) before anything is compared.
+    Update mode is read (and refused under ``CI``) before anything is compared, unless ``update``
+    is given: ``False`` only compares, whatever ``GOLDEN_UPDATE`` says.
     """
-    update = golden_update_mode()
+    if update is None:
+        update = golden_update_mode()
     new = normalized_lock(content)
     old = golden.read_bytes() if golden.is_file() else None
     if old == new:
