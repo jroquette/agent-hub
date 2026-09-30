@@ -28,6 +28,23 @@ _VERSION_PATH = "platform.version"
 _SCHEMA_VERSION_PATH = "schema_version"
 
 
+def pinned_release(document: object) -> str | None:
+    """The pinned release of a parsed ``hub.json`` when it is well formed, else None."""
+    if not isinstance(document, dict):
+        return None
+    platform = document.get("platform")
+    if not isinstance(platform, dict):
+        return None
+    return _well_formed_release(platform.get("version"))
+
+
+def pinned_release_command(pinned: str) -> str | None:
+    """The command that runs the pinned release, or None when the pin is too long to echo."""
+    if len(pinned) > ECHO_LIMIT:
+        return None
+    return PINNED_RELEASE_COMMAND.format(version=pinned)
+
+
 def find_version_problem(document: object, *, running_version: str) -> ConfigProblem | None:
     """The first version problem of a parsed ``hub.json``, or None when both are supported."""
     if not isinstance(document, dict):
@@ -50,10 +67,11 @@ def _platform_problem(platform: object, *, is_present: bool) -> ConfigProblem:
 def _pin_problem(platform: dict[str, object], *, running_version: str) -> ConfigProblem | None:
     if "version" not in platform:
         return ConfigProblem(_VERSION_PATH, "required: the pinned release, such as 1.2.3")
-    pinned = platform["version"]
-    if not isinstance(pinned, str) or not _RELEASE_VERSION.fullmatch(pinned):
+    pinned = _well_formed_release(platform["version"])
+    if pinned is None:
         return ConfigProblem(
-            _VERSION_PATH, f"must be three numbers such as 1.2.3, not {_shown(pinned)}"
+            _VERSION_PATH,
+            f"must be three numbers such as 1.2.3, not {_shown(platform['version'])}",
         )
     if pinned != running_version:
         # Digits and dots only (the pattern), so only its length needs bounding.
@@ -87,11 +105,16 @@ def _schema_version_problem(document: dict[str, object]) -> ConfigProblem | None
     return None
 
 
+def _well_formed_release(value: object) -> str | None:
+    if isinstance(value, str) and _RELEASE_VERSION.fullmatch(value):
+        return value
+    return None
+
+
 def _pinned_command(pinned: str) -> str:
     """``: <the uvx command>`` for a pinned version short enough to print, else nothing."""
-    if len(pinned) > ECHO_LIMIT:
-        return ""
-    return f": {PINNED_RELEASE_COMMAND.format(version=pinned)}"
+    command = pinned_release_command(pinned)
+    return "" if command is None else f": {command}"
 
 
 def _shown(value: object) -> str:
