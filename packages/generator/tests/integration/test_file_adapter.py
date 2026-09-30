@@ -48,6 +48,7 @@ from agent_hub.generator.file_adapter import (
 )
 from agent_hub.generator.hub_tree import (
     LinkFolder,
+    read_every_file,
     read_hub_tree,
     read_planned_tree,
     read_root_entry,
@@ -212,6 +213,50 @@ def test_reports_not_regular_when_fifo_or_socket_found(
         "plugin/fifo.md": OtherEntry(kind="fifo"),
         "plugin/socket.md": OtherEntry(kind="socket"),
     }
+
+
+def test_reads_every_file_when_every_file_read(tmp_path: Path) -> None:
+    outside = outside_folder(tmp_path)
+    root = tmp_path / "root"
+    write_file(root / ".git" / "HEAD", b"ref: refs/heads/main\n")
+    write_file(root / ".github" / "workflows" / "ci.yml", b"on: push\n")
+    write_file(root / "scripts" / "run.sh", b"#!/bin/sh\n", mode=0o755)
+    (root / "plugin").symlink_to(outside, target_is_directory=True)
+    os.mkfifo(root / "fifo.md")
+
+    with alarm_guard(HANG_SECONDS):
+        snapshot = read_every_file(root)
+
+    # Every regular file is read; the root's .git, the linked folder's files and the FIFO never.
+    assert snapshot == TreeSnapshot(
+        entries={
+            ".github": FolderEntry(),
+            ".github/workflows": FolderEntry(),
+            ".github/workflows/ci.yml": FileEntry(executable=False, content=b"on: push\n"),
+            "fifo.md": OtherEntry(kind="fifo"),
+            "plugin": LinkEntry(target=str(outside), outside=True),
+            "scripts": FolderEntry(),
+            "scripts/run.sh": FileEntry(executable=True, content=b"#!/bin/sh\n"),
+        },
+        git_present=True,
+    )
+
+
+@pytest.mark.parametrize("kind", ["folder", "file"])
+def test_skips_nested_repository_when_every_file_read(tmp_path: Path, kind: str) -> None:
+    root = tmp_path / "root"
+    write_file(root / "README.md", b"readme\n")
+    write_file(root / "nested" / "deep" / "x.md", b"x\n")
+    # A nested clone holds a .git folder; a linked worktree or a submodule a .git file.
+    if kind == "folder":
+        write_file(root / "nested" / ".git" / "HEAD", b"ref: refs/heads/main\n")
+    else:
+        write_file(root / "nested" / ".git", b"gitdir: ../elsewhere/.git\n")
+
+    snapshot = read_every_file(root)
+
+    assert snapshot.entries == {"README.md": FileEntry(executable=False, content=b"readme\n")}
+    assert snapshot.git_present is False
 
 
 def test_returns_empty_snapshot_when_root_absent(tmp_path: Path) -> None:
