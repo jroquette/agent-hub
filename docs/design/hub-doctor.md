@@ -78,8 +78,8 @@ selected).
 One line per finding, sorted by rule id, path (a finding without one first) and line:
 
 ```text
-error instructions.size AGENTS.md: 132 lines, limit 100. Fix: move detail into linked docs.
-warning makefile.override Makefile.project:12: redefines target 'check'. Fix: rename the project target.
+error instructions.size AGENTS.md: 132 lines, limit 100 Fix: move detail into linked docs
+warning makefile.override Makefile.project:12: redefines target 'check' Fix: rename the project target
 1 error, 1 warning, 0 infos
 ```
 
