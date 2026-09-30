@@ -23,7 +23,10 @@ INSTRUCTIONS_SIZE_RULE: Final = "instructions.size"
 INSTRUCTIONS_REFS_RULE: Final = "instructions.refs"
 INSTRUCTIONS_DUPLICATES_RULE: Final = "instructions.duplicates"
 RULES_FRONTMATTER_RULE: Final = "rules.frontmatter"
+SETTINGS_VALID_RULE: Final = "settings.valid"
 SETTINGS_WEAKENING_RULE: Final = "settings.weakening"
+PERMISSIONS_BYPASS_RULE: Final = "permissions.bypass"
+MCP_PINNED_RULE: Final = "mcp.pinned"
 GUARD_EXTENSION_RULE: Final = "hooks.guard-extension"
 MAKEFILE_OVERRIDE_RULE: Final = "makefile.override"
 FEATURES_TRACKER_RULE: Final = "features.tracker"
@@ -37,11 +40,11 @@ RULE_IDS: Final = (
     INSTRUCTIONS_REFS_RULE,
     INSTRUCTIONS_DUPLICATES_RULE,
     RULES_FRONTMATTER_RULE,
-    "settings.valid",
+    SETTINGS_VALID_RULE,
     SETTINGS_WEAKENING_RULE,
-    "permissions.bypass",
+    PERMISSIONS_BYPASS_RULE,
     "secrets.config",
-    "mcp.pinned",
+    MCP_PINNED_RULE,
     "attribution.ai",
     "brain.leak",
     GUARD_EXTENSION_RULE,
