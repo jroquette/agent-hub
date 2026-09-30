@@ -22,6 +22,7 @@ LOCK_DRIFT_RULE: Final = "lock.drift"
 SETTINGS_WEAKENING_RULE: Final = "settings.weakening"
 GUARD_EXTENSION_RULE: Final = "hooks.guard-extension"
 MAKEFILE_OVERRIDE_RULE: Final = "makefile.override"
+FEATURES_TRACKER_RULE: Final = "features.tracker"
 
 RULE_IDS: Final = (
     CONFIG_SCHEMA_RULE,
@@ -41,7 +42,7 @@ RULE_IDS: Final = (
     "brain.leak",
     GUARD_EXTENSION_RULE,
     MAKEFILE_OVERRIDE_RULE,
-    "features.tracker",
+    FEATURES_TRACKER_RULE,
     "bench.tasks",
 )
 
