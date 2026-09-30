@@ -1,7 +1,8 @@
 """The synthetic ``demo`` inits (Q-12): the lock on disk, modes, identical trees and the golden.
 
 A sync of a fresh ``demo`` init prints ``up to date`` and writes nothing (AGH-14 AC-14.7), and a
-pending ``demo`` hub synced in process and as a child writes identical trees (AC-14.16).
+pending ``demo`` hub synced in process and as a child writes identical trees (AC-14.16). A doctor
+run on a fresh ``demo`` init, plain or committed, finds and writes nothing (AGH-11 AC-11.16).
 
 ``DEMO`` is ``demo_config_file`` (the example config without modules, pinned to the running CLI)
 and ``DEMO_FLAGS`` is ``demo_flags``. The golden harness of ``demo.hub.lock`` is the conftest's
@@ -33,12 +34,15 @@ from agent_hub.generator.render_hub import render_hub
 
 # Found before any test puts a fake git first on PATH.
 REAL_GIT = shutil.which("git")
-# The conftest's golden compare, tree digest and child environment (tests cannot import a
-# conftest in importlib mode).
+# The conftest's golden compare, tree digest, child environment, doctor run and read filters
+# (tests cannot import a conftest in importlib mode).
 type LockGolden = Callable[..., None]
 type TreeDigest = Callable[[Path], dict[str, Any]]
 type ChildEnv = Callable[[Mapping[str, str]], dict[str, str]]
 type SyncRunner = Callable[..., Result]
+type DoctorRunner = Callable[..., Result]
+type PathFilter = Callable[[list[Any], Path], set[str]]
+type Ancestors = Callable[..., set[str]]
 # A subprocess init differs from the in-process one in all of these but its inputs.
 CHILD_HASH_SEED = "123"
 CHILD_TZ = "Pacific/Kiritimati"
@@ -338,6 +342,68 @@ def test_writes_nothing_when_sync_runs_on_fresh_init(
     assert applied == []
     assert tree_digest(root) == before
     assert (root / "hub.lock").stat().st_mtime_ns == lock_mtime
+
+
+def test_finds_nothing_when_doctor_runs_on_fresh_init(
+    tmp_path: Path,
+    demo_hub: Path,
+    demo_hub_template: Path,
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    run_doctor: DoctorRunner,
+    tree_digest: TreeDigest,
+    path_reads: list[Any],
+    reads_in: PathFilter,
+    ancestors: Ancestors,
+    under: PathFilter,
+) -> None:
+    # DEMO's one repo, an empty folder next to the hubs: no rule reads it before PR 3, and an
+    # empty non-git checkout gives no finding after it (plan E3a).
+    (tmp_path / "demo-api").mkdir()
+    committed = tmp_path / "committed"
+    shutil.copytree(demo_hub_template, committed, symlinks=True)
+    home = tmp_path / "git-home"
+    home.mkdir()
+    author = ["-c", "user.name=Jane Doe", "-c", "user.email=jane@example.com"]
+    git(["-c", "init.defaultBranch=main", "init", "-q"], cwd=committed, home=home)
+    git(["add", "-A"], cwd=committed, home=home)
+    git(
+        [*author, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"],
+        cwd=committed,
+        home=home,
+    )
+    assert git(["status", "--porcelain"], cwd=committed, home=home) == ""
+    # Any git a later rule runs reads the test's config only, never the developer's.
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+    for root in (demo_hub, committed):
+        real_root = os.path.realpath(root)
+        before = tree_digest(tmp_path)
+        path_reads.clear()
+
+        result = run_doctor(root)
+
+        read = reads_in(path_reads, tmp_path)
+        assert (result.exit_code, result.stdout, result.stderr) == (
+            0,
+            "0 errors, 0 warnings, 0 infos\n",
+            "",
+        ), root.name
+        # A walk goes down from a folder it opened by name, one entry name at a time.
+        walked = {path for path in read if path.startswith("<fd")}
+        assert all(
+            "/" not in name and name not in {".", ".."}
+            for name in (path.partition(">/")[2] for path in walked)
+        ), walked
+        allowed = (
+            ancestors(real_root, up_to=tmp_path)
+            | under(path_reads, root)
+            | under(path_reads, tmp_path / "demo-api")
+        )
+        assert read - walked <= allowed, root.name
+        assert tree_digest(tmp_path) == before, root.name
 
 
 MAKEFILE_LINE = b"local: ; @true\n"

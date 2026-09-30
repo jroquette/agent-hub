@@ -10,26 +10,6 @@ from agent_hub.cli.main import app
 @pytest.mark.parametrize(
     "args",
     [
-        ["doctor"],
-    ],
-    ids=["doctor"],
-)
-def test_exits_two_when_stub_command_run(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, args: list[str]
-) -> None:
-    monkeypatch.chdir(tmp_path)
-
-    result = CliRunner().invoke(app, args)
-
-    assert result.exit_code == 2
-    assert "not implemented yet (Phase 1)" in result.stderr
-    assert result.stdout == ""
-    assert list(tmp_path.iterdir()) == []
-
-
-@pytest.mark.parametrize(
-    "args",
-    [
         ["init", "demo", "--repos", "acme/a", "--tracker", "linear:DEM", "--unknown"],
         ["init", "demo", "--config", "hub.json"],
         ["init", "--repos", "acme/a", "--config", "hub.json"],

@@ -125,3 +125,34 @@ def test_prints_up_to_date_when_installed_hub_syncs_fresh_init(
     result = run([str(installed_hub.executable), "sync"], env=env, cwd=root)
 
     assert (result.returncode, result.stdout, result.stderr) == (0, "up to date\n", "")
+
+
+def test_exits_zero_when_installed_hub_doctors_fresh_init(
+    tmp_path: Path, installed_hub: InstalledHub, run: Callable[..., CompletedProcess[str]]
+) -> None:
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    assert not work_dir.resolve().is_relative_to(REPO_ROOT)
+    # DEMO's one repo next to the hub, empty, so the run stays clean once repos are read.
+    (work_dir / "demo-api").mkdir()
+    env = {**installed_hub.env, "HOME": str(tmp_path / "home")}
+    # No harness mode, and no git location or config of the caller: git reads the test HOME only.
+    for variable in [*DROPPED_VARIABLES, "XDG_CONFIG_HOME"]:
+        env.pop(variable, None)
+    for variable in [name for name in env if name.startswith("GIT_")]:
+        env.pop(variable)
+    root = work_dir / "t"
+    initialized = run(
+        [str(installed_hub.executable), "init", *DEMO_FLAGS, "--dir", str(root)],
+        env=env,
+        cwd=work_dir,
+    )
+    assert (initialized.returncode, initialized.stderr) == (0, ""), initialized.stderr
+
+    result = run([str(installed_hub.executable), "doctor"], env=env, cwd=root)
+
+    assert (result.returncode, result.stdout, result.stderr) == (
+        0,
+        "0 errors, 0 warnings, 0 infos\n",
+        "",
+    ), result.stderr
