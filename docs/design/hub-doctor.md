@@ -28,11 +28,14 @@ The snapshot is read from the cwd's real path (no walk-up) and holds the validat
 running CLI; doctor still renders no file) and, for repo-scoped rules, the files of each `repos[].dir` checkout next to
 it. A tree whose root is the top of a git work tree is listed with `git ls-files -z --cached --others
 --exclude-standard`; any other is walked, skipping `.git` and nested repositories. The lock's paths and a fixed set of
-paths are looked at by path; no link is followed, and git runs only when a selected rule needs a listing. A missing
-checkout gives one `info` finding on the first selected repo-scoped rule (`brain.leak`, else `links.dead`), and the
-repo-scoped rules skip it. Proof: one unit test per rule on an in-memory snapshot, plus one e2e test of the command on
-a synthetic hub. A rule's `module` comes from core's `RULE_MODULES`; a module's rules are core functions registered
-when the module ships.
+paths are looked at by path; no link is followed, and git runs only when a selected rule needs a listing. A failed
+listing or read of the hub is one `error` finding at path `.` on the first selected rule that reads the listing, else
+the first selected rule other than `config.schema` and `platform.version` (none when only those run), never retuned;
+its message is the cause (`could not list the files: …` or `could not read the files: <path>: …`), its fix one line.
+A missing checkout gives one `info` finding on the first selected repo-scoped rule (`brain.leak`, else `links.dead`),
+and the repo-scoped rules skip it. Proof: one unit test per rule on an in-memory snapshot, plus one e2e test of the
+command on a synthetic hub. A rule's `module` comes from core's `RULE_MODULES`; a module's rules are core functions
+registered when the module ships.
 
 ### Rules
 
@@ -74,8 +77,8 @@ warning makefile.override Makefile.project:12: redefines target 'check'. Fix: re
 The format is `<severity> <rule> <path>[:<line>]: <message> Fix: <fix>`, or `<severity> <rule>: <message> Fix: <fix>`
 without a path, then the totals: three counts, singular at 1; with no finding: `0 errors, 0 warnings, 0 infos`.
 `--only RULE` (repeatable) runs just those rules, plus `config.schema` always; skills use `hub doctor --only
-features.tracker`. `--json` prints one object with a `findings` list (the finding fields above) and the totals, for
-scripts and the Layer 2 control plane.
+features.tracker`. `--json` prints one object with a `findings` list (the finding fields above) and the totals
+(integer keys `errors`, `warnings`, `infos`), for scripts and the Layer 2 control plane.
 
 ### Exit codes
 
@@ -84,8 +87,8 @@ a rule in `--only` whose module is not selected or that is not in this release, 
 `hub.json` entry in the cwd; the message says so). An unusable `hub.json` is a `config.schema` error. A rule in
 `--only` that `doctor.rules` disables does not run; stderr notes it. The pin is checked before `schema_version`, as in
 `hub sync` ([hub-sync.md](hub-sync.md)): on a pin mismatch the `platform.version` error is reported and `config.schema`
-reports no `schema_version` mismatch (the pinned release, which fixes both, judges it). On an invalid config only
-`config.schema` runs; a missing `hub.lock` does not stop the other rules.
+reports no `schema_version` mismatch (the pinned release, which fixes both, judges it). On an invalid config only the
+two config rules run and only `config.schema` reports; a missing `hub.lock` does not stop the other rules.
 
 ### Configuration
 
