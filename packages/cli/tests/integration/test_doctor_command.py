@@ -387,3 +387,60 @@ def test_prints_one_json_object_when_json_given(
     assert not_hub.exit_code == 2
     assert not_hub.stdout == ""
     assert not_hub.stderr == f"{os.path.realpath(empty)}{NOT_A_HUB}\n"
+
+
+def refusing_name(name: str, real: Callable[..., Any]) -> Callable[..., Any]:
+    """``real``, except that a path named ``name`` (its last segment) raises ``EACCES``."""
+
+    def refusing(path: Any, *args: Any, **kwargs: Any) -> Any:
+        if not isinstance(path, int) and os.path.basename(os.fsdecode(path)) == name:
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), path)
+        return real(path, *args, **kwargs)
+
+    return refusing
+
+
+def test_reports_lock_drift_when_managed_paths_changed(
+    demo_hub: Path, run_doctor: DoctorRunner, path_reads: list[PathRead]
+) -> None:
+    # Paths the lock alone names (no fixed path): only the lock's paths make them looked at.
+    (demo_hub / "AGENTS.md").write_bytes(b"# Agents, edited\n")
+    (demo_hub / "CLAUDE.md").unlink()
+    (demo_hub / "plugin/hub-workflow/hooks/guard.py").chmod(0o644)
+    retargeted = demo_hub / ".claude/agents/planner.md"
+    retargeted.unlink()
+    retargeted.symlink_to("../../plugin/hub-workflow/agents/architect.md")
+    # Seeded: the project's, never compared.
+    (demo_hub / "README.md").write_bytes(b"# Our hub\n")
+    path_reads.clear()
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "lock.drift"), exit_code=1)
+
+    assert lines == [
+        "error lock.drift .claude/agents/planner.md: link target differs from its hub.lock entry"
+        " (on disk -> ../../plugin/hub-workflow/agents/architect.md,"
+        " hub.lock -> ../../plugin/hub-workflow/agents/planner.md) Fix: run hub sync",
+        "error lock.drift AGENTS.md: content differs from its hub.lock entry Fix: run hub sync",
+        "error lock.drift CLAUDE.md: missing; hub sync restores it Fix: run hub sync",
+        "error lock.drift plugin/hub-workflow/hooks/guard.py: executable bit differs from its"
+        " hub.lock entry (on disk -x, hub.lock +x) Fix: run hub sync",
+        "4 errors, 0 warnings, 0 infos",
+    ]
+    # The lock's paths are looked at by path: no listing, so no git.
+    assert [read for read in path_reads if read.call == "Popen"] == []
+
+
+@pytest.mark.parametrize("refused", [".claude", "hub.lock"])
+def test_reports_read_problem_not_adoption_when_lock_drift_cannot_read(
+    demo_hub: Path, run_doctor: DoctorRunner, monkeypatch: pytest.MonkeyPatch, *, refused: str
+) -> None:
+    # An unreadable hub.lock is not an absent one, and an unread managed file is not missing.
+    monkeypatch.setattr(os, "open", refusing_name(refused, os.open))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "lock.drift"), exit_code=1)
+
+    assert lines == [
+        f"error lock.drift .: could not read the files: {refused}: Permission denied"
+        " Fix: fix the cause above so every file can be listed and read, then run hub doctor again",
+        ONE_ERROR,
+    ]
