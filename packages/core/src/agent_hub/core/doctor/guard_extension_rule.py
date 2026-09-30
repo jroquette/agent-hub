@@ -25,6 +25,7 @@ from agent_hub.core.hub_files.tree_snapshot import FileEntry, TreeEntry
 HOOKS_PYTHON: Final = (3, 9)
 FIX: Final = "make it a UTF-8 Python 3.9 file with a top-level def check(event, cfg)"
 NOT_READ_FIX: Final = "run hub doctor again"
+TOO_LARGE_FIX: Final = "keep it under 1 MiB"
 NOT_REGULAR: Final = "not a regular file"
 NOT_READ: Final = "content was not read, so it cannot be checked"
 NOT_TEXT: Final = "not UTF-8 text without NUL bytes"
@@ -66,7 +67,7 @@ def _problem_of(entry: TreeEntry) -> _Problem | None:
     if entry.content is None:
         return _Problem(NOT_READ, fix=NOT_READ_FIX)
     if len(entry.content) > MAX_BYTES:
-        return _Problem(TOO_LARGE.format(size=len(entry.content)))
+        return _Problem(TOO_LARGE.format(size=len(entry.content)), fix=TOO_LARGE_FIX)
     if text_of(entry) is None:
         return _Problem(NOT_TEXT)
     parsed = _parsed(entry.content)

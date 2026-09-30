@@ -14,6 +14,7 @@ type Shown = tuple[Severity, str | None, int | None, str, str]
 EXTENSION = "plugin/demo/hooks/project_guard.py"
 FIX = "make it a UTF-8 Python 3.9 file with a top-level def check(event, cfg)"
 NOT_READ_FIX = "run hub doctor again"
+TOO_LARGE_FIX = "keep it under 1 MiB"
 # The seeded stub's shape (the generator's template), rebuilt here: core never reads templates.
 SEEDED_STUB = (
     '"""This project\'s guard extension: the project\'s own rules on top of the base guard."""\n'
@@ -316,9 +317,24 @@ def test_reports_error_when_coding_cookie_rejects_file(
 
 
 def test_reports_error_when_extension_too_large(snapshot_of: SnapshotFactory) -> None:
-    content = b"#" * (MAX_BYTES + 1)
+    # Not UTF-8 either: the size cap is checked before the text gate.
+    content = b"\xff" * (MAX_BYTES + 1)
     entries: Mapping[str, TreeEntry] = {EXTENSION: FileEntry(executable=False, content=content)}
 
     assert findings_of(snapshot_of(entries=entries)) == [
-        an_error(f"too large to check ({MAX_BYTES + 1} bytes, limit 1 MiB)", None)
+        an_error(
+            f"too large to check ({MAX_BYTES + 1} bytes, limit 1 MiB)",
+            None,
+            TOO_LARGE_FIX,
+        )
     ]
+
+
+def test_reports_nothing_when_valid_extension_exactly_at_size_limit(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    content = SEEDED_STUB.encode().ljust(MAX_BYTES, b"#")
+    entries: Mapping[str, TreeEntry] = {EXTENSION: FileEntry(executable=False, content=content)}
+
+    assert len(content) == MAX_BYTES
+    assert findings_of(snapshot_of(entries=entries)) == []
