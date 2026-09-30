@@ -36,13 +36,19 @@ FIFO_ALARM_SECONDS = 5
 
 @pytest.fixture(autouse=True)
 def no_caller_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Remove every ``GIT_*`` variable and give git a home of its own, without system config."""
+    """Remove every ``GIT_*`` variable and give git a home and config of its own, no system one.
+
+    The user's global config and excludes (``~/.gitconfig``, ``$XDG_CONFIG_HOME/git``) never
+    reach a test's git.
+    """
     for variable in [name for name in os.environ if name.startswith("GIT_")]:
         monkeypatch.delenv(variable)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(home / ".gitconfig"))
 
 
 @pytest.fixture
@@ -66,7 +72,9 @@ def git(args: Sequence[str], *, cwd: Path) -> bytes:
     completed = subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
         [REAL_GIT, *args],
         cwd=cwd,
-        env={"HOME": os.environ["HOME"], "GIT_CONFIG_NOSYSTEM": "1"},
+        env={
+            name: os.environ[name] for name in ("HOME", "GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL")
+        },
         capture_output=True,
         check=True,
         timeout=CHILD_TIMEOUT,
@@ -211,14 +219,30 @@ def test_walks_when_root_is_subfolder_of_work_tree(work_tree: Path) -> None:
 def test_ignores_caller_git_variables_when_listing(
     work_tree: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    other = write(tmp_path / "other", {"elsewhere.md": "other\n"})
+    other = write(tmp_path / "other", {"elsewhere.md": "other\n", "excludes": "notes.md\n"})
     git(["init", "-q"], cwd=other)
     git(["add", "-A"], cwd=other)
+    # Git's repository-local variables (``git rev-parse --local-env-vars``), each pointing at
+    # the other repo or changing how the tree is read.
     for variable, value in {
         "GIT_DIR": other / ".git",
         "GIT_WORK_TREE": other,
         "GIT_COMMON_DIR": other / ".git",
         "GIT_INDEX_FILE": other / ".git" / "index",
+        "GIT_OBJECT_DIRECTORY": other / ".git" / "objects",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES": other / ".git" / "objects",
+        "GIT_CONFIG": other / ".git" / "config",
+        # Either one alone would hide the untracked notes.md behind another excludes file.
+        "GIT_CONFIG_PARAMETERS": f"'core.excludesfile'='{other / 'excludes'}'",
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "core.excludesfile",
+        "GIT_CONFIG_VALUE_0": other / "excludes",
+        "GIT_IMPLICIT_WORK_TREE": "0",
+        "GIT_GRAFT_FILE": other / "grafts",
+        "GIT_NO_REPLACE_OBJECTS": "1",
+        "GIT_REPLACE_REF_BASE": "refs/other/",
+        "GIT_PREFIX": "docs/",
+        "GIT_SHALLOW_FILE": other / "shallow",
     }.items():
         monkeypatch.setenv(variable, str(value))
 
@@ -348,21 +372,43 @@ def test_reports_problem_when_folder_unreadable(
 ) -> None:
     if tree_kind == "walked":
         shutil.rmtree(work_tree / ".git")
+    write(work_tree, {"hub.lock": "{}\n"})
     refused = ".git" if tree_kind == "git entry" else "docs"
-    call = "lstat" if tree_kind == "git entry" else "open"
+    refuse(refused, call="lstat" if tree_kind == "git entry" else "open", monkeypatch=monkeypatch)
+
+    tree = read_doctor_tree(work_tree, by_path=("hub.lock", "AGENTS.md"), listing=True)
+
+    assert tree.problem == f"could not list the files: {refused}: Permission denied"
+    assert tree.listed == ()
+    # Only the listing is lost: the fixed paths are still read.
+    assert tree.entries["hub.lock"] == FileEntry(executable=False, content=b"{}\n")
+    assert tree.entries["AGENTS.md"] == FileEntry(executable=False, content=b"# Agents\n")
+
+
+def test_keeps_other_fixed_paths_when_one_unreadable(
+    work_tree: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write(work_tree, {"hub.lock": "{}\n", ".claude/settings.json": "{}\n"})
+    refuse(".claude", call="open", monkeypatch=monkeypatch)
+
+    tree = read_doctor_tree(work_tree, by_path=(".claude/settings.json", "hub.lock"), listing=False)
+
+    # No listing was asked: the problem says read, never list.
+    assert tree.problem == "could not read the files: .claude: Permission denied"
+    assert tree.entries == {"hub.lock": FileEntry(executable=False, content=b"{}\n")}
+    assert tree.listed == ()
+
+
+def refuse(name: str, *, call: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make ``os.<call>`` of any path named ``name`` fail with ``EACCES`` (root reads all)."""
     real = getattr(os, call)
 
     def refusing(path: str | bytes | Path, *args: object, **kwargs: object) -> object:
-        if os.path.basename(os.fsdecode(path)) == refused:
+        if os.path.basename(os.fsdecode(path)) == name:
             raise PermissionError(errno.EACCES, "Permission denied")
         return real(path, *args, **kwargs)
 
     monkeypatch.setattr(os, call, refusing)
-
-    tree = read_doctor_tree(work_tree, by_path=(), listing=True)
-
-    assert tree.problem == f"could not list the files: {refused}: Permission denied"
-    assert tree.listed == ()
 
 
 def digest(root: Path) -> dict[str, tuple[int, bytes | str | None]]:
