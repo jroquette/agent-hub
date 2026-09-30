@@ -13,13 +13,14 @@ import os
 from collections.abc import Iterable, Mapping
 from importlib.metadata import version
 from pathlib import Path
-from typing import Annotated, Final, NoReturn
+from typing import Annotated, Final
 
 import typer
 
 from agent_hub.cli.command_exits import (
     fail,
     fail_generator,
+    not_implemented,
     refuse_modules_or_exit,
     root_or_exit,
 )
@@ -40,9 +41,6 @@ from agent_hub.generator.file_adapter import apply_writes, ensure_root, remove_l
 from agent_hub.generator.hub_tree import read_hub_tree
 from agent_hub.generator.render_hub import render_hub
 
-NOT_IMPLEMENTED = "not implemented yet (Phase 1)"
-# A usage-level failure, so a script that calls a stub by accident stops (D7).
-NOT_IMPLEMENTED_EXIT_CODE = 2
 _BRANCH_PREFIX: Final = "branch_prefix"
 _DEFAULTABLE: Final = (AUTHOR_NAME, AUTHOR_EMAIL, HUB_REPO)
 
@@ -126,12 +124,7 @@ def init(
 
 def doctor() -> None:
     """Check the hub's rules, links, dead references and instruction size."""
-    _not_implemented()
-
-
-def _not_implemented() -> NoReturn:
-    typer.echo(NOT_IMPLEMENTED, err=True)
-    raise typer.Exit(NOT_IMPLEMENTED_EXIT_CODE)
+    not_implemented()
 
 
 def _source_or_fail(
