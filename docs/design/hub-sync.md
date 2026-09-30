@@ -71,7 +71,8 @@ a function of the render and the config only (`build_hub_lock`), written by `ini
   `P: binary content differs (on disk sha256 <12 hex>, render <12 hex>)`. Other causes, one line `P: <cause>`:
   `executable bit differs (on disk +x, render -x)`, `link target differs (on disk -> X, render -> Y)`,
   `differs from its hub.lock entry and is no longer rendered` (bytes, bit or target), `symlinked ancestor A`,
-  `resolves outside the hub`, or `init`'s type wording (`a link where a file belongs`, `not a regular file`, …).
+  `a file where a folder belongs: A`, `resolves outside the hub`, or `init`'s type wording (`a link where a file
+  belongs`, `not a regular file`, …). A name in both plugins stays exit 1 (`GeneratorError`) until the second PR.
 - **Exits:** 0 done or up to date; 1 error (config, modules, lock, I/O; one escaped line each, stderr); 2 usage (and
   `--adopt` until AGH-16); 3 conflict; 4 `--check` with changes pending.
 
