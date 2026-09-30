@@ -7,7 +7,9 @@ in a folder (``run_sync``) and the writer calls a test makes (``adapter_calls``)
 an in-process run in a folder (``run_doctor``) and the paths a run reads (``path_reads``).
 """
 
+import builtins
 import difflib
+import io
 import json
 import os
 import shlex
@@ -222,8 +224,9 @@ def _read_path(path: Any, dir_fd: int | None) -> str:
 def path_reads(monkeypatch: pytest.MonkeyPatch) -> list[PathRead]:
     """Every path given to ``os.open``, ``os.stat``, ``os.lstat`` and ``os.scandir``, in order.
 
-    A ``subprocess.Popen`` is recorded as ``Popen`` with the folder it runs in. Each call goes
-    through.
+    The builtin ``open`` (also ``io.open``, which ``Path.read_bytes`` uses) is recorded as
+    ``builtin-open`` when given a path, not a descriptor. A ``subprocess.Popen`` is recorded as
+    ``Popen`` with the folder it runs in. Each call goes through.
     """
     reads: list[PathRead] = []
 
@@ -243,6 +246,15 @@ def path_reads(monkeypatch: pytest.MonkeyPatch) -> list[PathRead]:
         return real_scandir(path)
 
     monkeypatch.setattr(os, "scandir", recorded_scandir)
+    real_open = builtins.open
+
+    def recorded_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+        if not isinstance(file, int):
+            reads.append(PathRead("builtin-open", _read_path(file, None)))
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", recorded_open)
+    monkeypatch.setattr(io, "open", recorded_open)
     real_popen = subprocess.Popen
 
     def recorded_popen(*args: Any, **kwargs: Any) -> Any:

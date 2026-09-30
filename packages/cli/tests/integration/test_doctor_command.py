@@ -45,8 +45,8 @@ NOT_A_HUB = (
     ": not a hub: no hub.json in this folder (hub doctor runs in the hub folder, never a parent)"
 )
 FIFO_ALARM_SECONDS = 5
-# Rich draws a usage error in a box as wide as the terminal; the tests pin 80 columns.
-ERROR_BOX_WIDTH = 80
+# The characters of the box Rich may draw around a usage error.
+BOX_CHARACTERS = "│╭╮╰╯─"
 
 
 @pytest.fixture
@@ -65,16 +65,20 @@ def alarm() -> Iterator[None]:
         signal.signal(signal.SIGALRM, previous)
 
 
-def usage_error(message: str) -> str:
-    """The exact stderr of ``hub doctor`` refusing its usage with ``message`` at 80 columns."""
-    inner = ERROR_BOX_WIDTH - 2
-    return (
-        "Usage: hub doctor [OPTIONS]\n"
-        "Try 'hub doctor --help' for help.\n"
-        f"╭─ Error {'─' * (inner - len('─ Error '))}╮\n"
-        f"│ {message.ljust(inner - 2)} │\n"
-        f"╰{'─' * inner}╯\n"
-    )
+def assert_refused(result: Result, message: str) -> None:
+    """Exit 2 with ``message`` as one line of the usage error on stderr, nothing on stdout.
+
+    Typer draws the error in a box whose width, colors and borders follow the terminal (CI sets
+    ``FORCE_TERMINAL``), so the box is stripped and only the message line is pinned.
+    """
+    assert result.exit_code == 2, result.output
+    assert result.stdout == ""
+    shown = unstyle(result.stderr)
+    assert "not a hub" not in shown
+    assert "Usage: hub doctor" in shown
+    texts = [line.strip(BOX_CHARACTERS + " ") for line in shown.splitlines()]
+    assert [text for text in texts if text == message] == [message], shown
+    assert [text for text in texts if message in text] == [message], shown
 
 
 def config_only_hub(tmp_path: Path, content: bytes) -> Path:
@@ -187,8 +191,9 @@ def test_exits_two_when_cwd_not_hub(
         ("fifo", "not a regular file"),
         ("dangling-link", "No such file or directory"),
         ("unreadable", "Permission denied"),
+        ("lstat-refused", "Permission denied"),
     ],
-    ids=["folder", "fifo", "dangling-link", "unreadable"],
+    ids=["folder", "fifo", "dangling-link", "unreadable", "lstat-refused"],
 )
 def test_reports_config_schema_when_hub_json_not_regular(
     tmp_path: Path,
@@ -210,19 +215,27 @@ def test_reports_config_schema_when_hub_json_not_regular(
         config.symlink_to("gone.json")
     else:
         config.write_bytes(dump_json(demo_document))
-        real_open = os.open
-
-        def refusing_open(path: Any, *args: Any, **kwargs: Any) -> int:
-            if os.fsdecode(path).endswith("hub.json"):
-                raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), path)
-            return real_open(path, *args, **kwargs)
-
-        monkeypatch.setattr(os, "open", refusing_open)
+        # "unreadable" refuses the open alone; "lstat-refused" refuses every look at hub.json,
+        # as an unsearchable folder does: the lstat error is not "absent", so it is no exit 2.
+        calls = ("open",) if case == "unreadable" else ("open", "stat", "lstat")
+        for call in calls:
+            monkeypatch.setattr(os, call, refusing_hub_json(getattr(os, call)))
     shown = json.dumps(os.path.join(os.path.realpath(root), "hub.json"))
 
     lines = lines_of(run_doctor(root), exit_code=1)
 
     assert lines == [schema_line(f"$: cannot read {shown}: {reason}"), ONE_ERROR]
+
+
+def refusing_hub_json(real: Callable[..., Any]) -> Callable[..., Any]:
+    """``real``, except that a path ending in ``hub.json`` raises ``EACCES``."""
+
+    def refusing(path: Any, *args: Any, **kwargs: Any) -> Any:
+        if not isinstance(path, int) and os.fsdecode(path).endswith("hub.json"):
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), path)
+        return real(path, *args, **kwargs)
+
+    return refusing
 
 
 def invalid_config(case: str, document: dict[str, Any]) -> tuple[bytes, str]:
@@ -308,9 +321,7 @@ class TestExitCodes:
 
         result = CliRunner().invoke(app, ["doctor", "--only", "nope"], env={"COLUMNS": "80"})
 
-        assert result.exit_code == 2, result.output
-        assert result.stdout == ""
-        assert result.stderr == usage_error("unknown rule in --only: nope")
+        assert_refused(result, "unknown rule in --only: nope")
         assert reads_in(path_reads, tmp_path) == set()
 
     @pytest.mark.parametrize(
@@ -337,9 +348,7 @@ class TestExitCodes:
 
         result = CliRunner().invoke(app, ["doctor", "--only", "bench.tasks"], env={"COLUMNS": "80"})
 
-        assert result.exit_code == 2, result.output
-        assert result.stdout == ""
-        assert result.stderr == usage_error(message)
+        assert_refused(result, message)
 
 
 def test_runs_no_git_when_no_rule_needs_listing(
@@ -375,6 +384,7 @@ def test_prints_one_json_object_when_json_given(
     not_hub = run_doctor(empty, "--json")
 
     assert shown.exit_code == text.exit_code
+    assert shown.exit_code == (1 if case == "error" else 0)
     assert shown.stderr == ""
     document = json.loads(shown.stdout)
     # One object in the one JSON form, and nothing else.
