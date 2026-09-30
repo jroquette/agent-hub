@@ -56,6 +56,7 @@ CORE_MODULES = (
     "doctor/registry.py",
     "doctor/lock_rules.py",
     "doctor/settings_rules.py",
+    "doctor/guard_extension_rule.py",
 )
 
 # Design decision 4 of the plan, word for word: each refusal names the cause or the way out.

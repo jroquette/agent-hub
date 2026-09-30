@@ -20,6 +20,7 @@ CONFIG_SCHEMA_RULE: Final = "config.schema"
 PLATFORM_VERSION_RULE: Final = "platform.version"
 LOCK_DRIFT_RULE: Final = "lock.drift"
 SETTINGS_WEAKENING_RULE: Final = "settings.weakening"
+GUARD_EXTENSION_RULE: Final = "hooks.guard-extension"
 
 RULE_IDS: Final = (
     CONFIG_SCHEMA_RULE,
@@ -37,7 +38,7 @@ RULE_IDS: Final = (
     "mcp.pinned",
     "attribution.ai",
     "brain.leak",
-    "hooks.guard-extension",
+    GUARD_EXTENSION_RULE,
     "makefile.override",
     "features.tracker",
     "bench.tasks",
