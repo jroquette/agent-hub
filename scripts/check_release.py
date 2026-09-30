@@ -23,8 +23,8 @@ RELEASE_TAG = re.compile(r"v([0-9]+\.[0-9]+\.[0-9]+)")
 # The most characters of an untrusted value that a line repeats.
 ECHO_LIMIT = 80
 REPO_ROOT = Path(__file__).resolve().parent.parent
-TAG_FORM_PROBLEM = "must be v<major>.<minor>.<patch> with ASCII digits"
-# One character of escaped text, an escape sequence (``\n``, ``٠``) counting as one. The
+_TAG_FORM_PROBLEM = "must be v<major>.<minor>.<patch> with ASCII digits"
+# One character of escaped text, an escape sequence (``\n``, ``\u00e9``) counting as one. The
 # same rule as agent_hub.core.hub_config.versions, copied to stay stdlib only.
 _ESCAPED_CHARACTER = re.compile(r"\\(?:u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|U[0-9a-fA-F]{8}|.)|.", re.S)
 _BOTH_FILES = f"{CLI_PYPROJECT} and {META_PYPROJECT}"
@@ -35,7 +35,7 @@ class _CheckFailedError(Exception):
 
 
 def shown(value: str | None) -> str:
-    """An untrusted value as one line of ASCII (JSON-quoted and escaped), cut to ECHO_LIMIT."""
+    """An untrusted value on one line, JSON-quoted and escaped; cut to ECHO_LIMIT with ``…``."""
     text = json.dumps(value)
     if len(text) <= ECHO_LIMIT:
         return text
@@ -72,7 +72,7 @@ def tag_problem(tag: str, *, version: str) -> str | None:
     """Why ``tag`` does not name the release of ``version``, or None when it does."""
     match = RELEASE_TAG.fullmatch(tag)
     if match is None:
-        return TAG_FORM_PROBLEM
+        return _TAG_FORM_PROBLEM
     if match.group(1) != version:
         return f"must be v + the version {shown(version)} of {_BOTH_FILES}"
     return None
@@ -106,7 +106,7 @@ def _checked_version(root: Path, *, tag: str | None) -> str:
     """The version cli and meta share (and the tag names); raises _CheckFailedError otherwise."""
     # The form first: a malformed tag fails the same way whatever the files hold.
     if tag is not None and RELEASE_TAG.fullmatch(tag) is None:
-        raise _CheckFailedError(TAG_FORM_PROBLEM)
+        raise _CheckFailedError(_TAG_FORM_PROBLEM)
     cli = _read(root, CLI_PYPROJECT)
     meta = _read(root, META_PYPROJECT)
     problem = lockstep_problem(cli=cli, meta=meta)
@@ -122,8 +122,9 @@ def _read(root: Path, relative: str) -> str | None:
     try:
         return read_version(root / relative)
     except OSError as error:
-        raise _CheckFailedError(f"{relative}: cannot read: {shown(error.strerror)}") from error
-    except tomllib.TOMLDecodeError as error:
+        reason = error.strerror or type(error).__name__
+        raise _CheckFailedError(f"{relative}: cannot read: {shown(reason)}") from error
+    except ValueError as error:  # tomllib.TOMLDecodeError, or UnicodeDecodeError on bad UTF-8
         raise _CheckFailedError(f"{relative}: cannot read: {shown(str(error))}") from error
 
 

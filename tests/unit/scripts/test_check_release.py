@@ -93,7 +93,7 @@ def test_names_both_files_when_version_missing(
     assert err == expected
 
 
-@pytest.mark.parametrize("breakage", ["absent", "invalid-toml"])
+@pytest.mark.parametrize("breakage", ["absent", "invalid-toml", "invalid-utf8"])
 def test_reports_file_when_pyproject_unreadable(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], breakage: str
 ) -> None:
@@ -101,8 +101,10 @@ def test_reports_file_when_pyproject_unreadable(
     meta_path = tmp_path / META
     if breakage == "absent":
         meta_path.unlink()
-    else:
+    elif breakage == "invalid-toml":
         meta_path.write_text("[project\nversion = \n", encoding="utf-8")
+    else:
+        meta_path.write_bytes(b'[project]\nname = "\xff"\n')
 
     exit_code, out, err = run(tmp_path, capsys)
 
@@ -170,6 +172,21 @@ def test_rejects_tag_when_form_invalid(
     assert exit_code == 1
     assert out == ""
     assert err == f"tag {shown_tag}: must be v<major>.<minor>.<patch> with ASCII digits\n"
+
+
+@pytest.mark.parametrize("breakage", ["meta-absent", "meta-version-differs"])
+def test_rejects_tag_form_when_files_also_wrong(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], breakage: str
+) -> None:
+    write_pyprojects(tmp_path, cli="0.2.0", meta="0.1.0")
+    if breakage == "meta-absent":
+        (tmp_path / META).unlink()
+
+    exit_code, out, err = run(tmp_path, capsys, "--tag=v0.2")
+
+    assert exit_code == 1
+    assert out == ""
+    assert err == 'tag "v0.2": must be v<major>.<minor>.<patch> with ASCII digits\n'
 
 
 def test_rejects_tag_when_version_differs(
