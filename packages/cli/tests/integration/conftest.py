@@ -4,7 +4,8 @@ Also the ``hub.lock`` golden harness (``lock_golden``), a from-scratch child env
 (``child_env``), the process umask (``set_umask``), and for ``hub sync`` a ``DEMO`` hub built
 once per session (``demo_hub_template``) and copied per test (``demo_hub``), an in-process sync
 in a folder (``run_sync``) and the writer calls a test makes (``adapter_calls``); for ``hub doctor``
-an in-process run in a folder (``run_doctor``) and the paths a run reads (``path_reads``).
+an in-process run in a folder (``run_doctor``), the paths a run reads (``path_reads``) and their
+filters (``reads_in``, ``ancestors``, ``under``).
 """
 
 import builtins
@@ -264,6 +265,60 @@ def path_reads(monkeypatch: pytest.MonkeyPatch) -> list[PathRead]:
 
     monkeypatch.setattr(subprocess, "Popen", recorded_popen)
     return reads
+
+
+def reads_in_folder(reads: list[PathRead], folder: Path) -> set[str]:
+    """The paths read inside ``folder`` (itself included), and every read relative to a folder."""
+    # Taken before ``realpath``, whose own looks the recorder would add.
+    recorded = list(reads)
+    real = os.path.realpath(folder)
+    return {
+        read.path
+        for read in recorded
+        if read.path.startswith("<fd") or read.path == real or read.path.startswith(real + os.sep)
+    }
+
+
+def folder_ancestors(folder: str, *, up_to: Path) -> set[str]:
+    """``folder`` and each folder above it, up to and including ``up_to`` (real paths)."""
+    top = os.path.realpath(up_to)
+    found = {top}
+    while folder != top:
+        found.add(folder)
+        folder = os.path.dirname(folder)
+    return found
+
+
+def reads_under_folder(reads: list[PathRead], folder: Path) -> set[str]:
+    """The paths read at or below ``folder``, named from it (a ``<fd N>`` read is not).
+
+    A path is judged by its normalized form, so ``folder/../other`` is not below ``folder``.
+    """
+    recorded = list(reads)
+    real = os.path.realpath(folder)
+    return {
+        read.path
+        for read in recorded
+        if (normal := os.path.normpath(read.path)) == real or normal.startswith(real + os.sep)
+    }
+
+
+@pytest.fixture
+def reads_in() -> Callable[[list[PathRead], Path], set[str]]:
+    """``reads_in(path_reads, folder)``: the paths read inside ``folder``, and every ``<fd N>``."""
+    return reads_in_folder
+
+
+@pytest.fixture
+def ancestors() -> Callable[..., set[str]]:
+    """``ancestors(real_folder, up_to=top)``: the folder and each one above it up to ``top``."""
+    return folder_ancestors
+
+
+@pytest.fixture
+def under() -> Callable[[list[PathRead], Path], set[str]]:
+    """``under(path_reads, folder)``: the recorded paths at or below ``folder``."""
+    return reads_under_folder
 
 
 # The calls through which the writer changes a tree, each recorded by the name it changes.
