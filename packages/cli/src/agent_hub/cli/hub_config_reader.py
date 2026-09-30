@@ -5,7 +5,6 @@ docs/design/project-config.md § Versioning: the pin, then ``schema_version``, t
 The file is read once, as bytes, so a caller that copies it gets exactly what was checked.
 """
 
-import io
 import json
 import os
 import stat
@@ -18,12 +17,11 @@ import typer
 from agent_hub.core.hub_config.document_check import check_hub_document
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ROOT_PATH, ConfigProblem
+from agent_hub.core.json_form import InvalidJsonError, JsonValue, load_json_bytes
 
 # The installed release of the hub command, which a hub's pin must equal.
 DISTRIBUTION = "agent-hub-cli"
 FILE_LABEL = "hub.json"
-# Written as an escape: the character itself is invisible in the source.
-BYTE_ORDER_MARK = "\N{ZERO WIDTH NO-BREAK SPACE}"
 # An invalid hub.json. Typer keeps 2 for usage errors.
 FAILURE = 1
 # O_NONBLOCK: a FIFO swapped in after the check cannot block the open; fstat then refuses it.
@@ -41,9 +39,7 @@ class LoadedHubJson(NamedTuple):
 def load_hub_json_or_exit(path: Path) -> LoadedHubJson:
     """The bytes and validated config in ``path``; on any problem, print its lines and exit 1."""
     content = _read_bytes_or_exit(path)
-    checked = check_hub_document(
-        _parse_or_exit(_decode_or_exit(content)), running_version=version(DISTRIBUTION)
-    )
+    checked = check_hub_document(_parse_or_exit(content), running_version=version(DISTRIBUTION))
     if not isinstance(checked, HubConfig):
         _fail(*checked)
     return LoadedHubJson(content=content, config=checked)
@@ -75,43 +71,12 @@ def _read_bytes_or_exit(path: Path) -> bytes:
         _fail(ConfigProblem(ROOT_PATH, f"cannot read {shown_path}: {reason}"))
 
 
-def _decode_or_exit(content: bytes) -> str:
-    # Decoded as Path.read_text would: strict UTF-8 with universal newlines, so the line and
-    # column in a JSON message count as before, while the caller keeps the bytes unchanged.
+def _parse_or_exit(content: bytes) -> JsonValue:
+    # Core parses the bytes; each problem it names is one line at the root.
     try:
-        return io.TextIOWrapper(io.BytesIO(content), encoding="utf-8").read()
-    except UnicodeDecodeError as error:
-        _fail(ConfigProblem(ROOT_PATH, f"not UTF-8 text: byte {error.start} cannot be decoded"))
-
-
-def _parse_or_exit(text: str) -> object:
-    if text.startswith(BYTE_ORDER_MARK):
-        _fail(
-            ConfigProblem(
-                ROOT_PATH,
-                "not valid JSON: the file starts with a UTF-8 byte order mark; save it without one",
-            )
-        )
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError as error:
-        _fail(
-            ConfigProblem(
-                ROOT_PATH,
-                f"not valid JSON: {error.msg} at line {error.lineno} column {error.colno}",
-            )
-        )
-    except ValueError:
-        # Python reads integers of at most 4300 digits (sys.get_int_max_str_digits()).
-        _fail(
-            ConfigProblem(
-                ROOT_PATH,
-                "not valid JSON here: a number has more than 4300 digits,"
-                " which this reader does not accept",
-            )
-        )
-    except RecursionError:
-        _fail(ConfigProblem(ROOT_PATH, "not valid JSON here: it is nested too deeply"))
+        return load_json_bytes(content)
+    except InvalidJsonError as error:
+        _fail(ConfigProblem(ROOT_PATH, error.message))
 
 
 def _fail(*problems: ConfigProblem) -> NoReturn:

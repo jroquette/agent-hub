@@ -2,7 +2,8 @@ import json
 
 import pytest
 
-from agent_hub.core.json_form import dump_json
+from agent_hub.core.errors import AgentHubError
+from agent_hub.core.json_form import InvalidJsonError, dump_json, load_json_bytes
 
 
 def test_dumps_sorted_indented_utf8_when_value_given() -> None:
@@ -60,3 +61,85 @@ def test_rejects_value_when_number_not_finite(number: float) -> None:
     # ``json.dumps`` would write ``NaN``/``Infinity``: not JSON, yet ``json.loads`` reads it back.
     with pytest.raises(ValueError, match="not JSON compliant"):
         dump_json({"a": [number]})
+
+
+TOO_MANY_DIGITS = (
+    "not valid JSON here: a number has more than 4300 digits, which this reader does not accept"
+)
+TOO_DEEP = "not valid JSON here: it is nested too deeply"
+
+
+def problem_of(content: bytes) -> str:
+    with pytest.raises(InvalidJsonError) as caught:
+        load_json_bytes(content)
+    return caught.value.message
+
+
+def test_loads_value_when_bytes_valid_json() -> None:
+    content = '{"name": "José", "items": [1, 2.5, true, null]}'.encode()
+
+    assert load_json_bytes(content) == {"name": "José", "items": [1, 2.5, True, None]}
+    assert load_json_bytes(b"[]") == []
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        (b"\xff\xfe{}", "not UTF-8 text: byte 0 cannot be decoded"),
+        (b'{"a": "\xff"}', "not UTF-8 text: byte 7 cannot be decoded"),
+        (
+            b"\xef\xbb\xbf{}",
+            "not valid JSON: the file starts with a UTF-8 byte order mark; save it without one",
+        ),
+        (b'{\n"a": }', "not valid JSON: Expecting value at line 2 column 6"),
+        (
+            b'{"a": 1,',
+            "not valid JSON: Expecting property name enclosed in double quotes at line 1 column 9",
+        ),
+        (b"1" * 4301, TOO_MANY_DIGITS),
+        (b'{"a": ' + b"1" * 4301 + b"}", TOO_MANY_DIGITS),
+    ],
+    ids=[
+        "not-utf8",
+        "not-utf8-inside-string",
+        "byte-order-mark",
+        "syntax-error",
+        "unterminated",
+        "long-integer",
+        "nested-long-integer",
+    ],
+)
+def test_names_problem_when_bytes_invalid(content: bytes, message: str) -> None:
+    assert problem_of(content) == message
+
+
+def test_names_problem_when_bytes_nested_deeply() -> None:
+    # Whether this depth overflows depends on the C stack size, so the message is either the
+    # nesting one or a syntax one; the nesting branch is pinned by the next test.
+    message = problem_of(b"[" * 100_000)
+
+    assert message == TOO_DEEP or message.startswith("not valid JSON: ")
+
+
+def test_names_nesting_when_parser_recurses_too_deeply(monkeypatch: pytest.MonkeyPatch) -> None:
+    def too_deep(*_: object, **__: object) -> object:
+        raise RecursionError
+
+    monkeypatch.setattr(json, "loads", too_deep)
+
+    assert problem_of(b"{}") == TOO_DEEP
+
+
+@pytest.mark.parametrize("newline", [b"\r\n", b"\r"], ids=["crlf", "bare-cr"])
+def test_keeps_line_count_when_crlf_given(newline: bytes) -> None:
+    # Decoded with universal newlines, as Path.read_text would: a CRLF or a bare CR ends one line.
+    content = b"{" + newline + b'"a": 1,' + newline + b'"b": }'
+
+    assert problem_of(content) == "not valid JSON: Expecting value at line 3 column 6"
+
+
+def test_is_agent_hub_error_when_problem_raised() -> None:
+    error = InvalidJsonError("not valid JSON here: it is nested too deeply")
+
+    assert isinstance(error, AgentHubError)
+    assert error.message == str(error) == TOO_DEEP
