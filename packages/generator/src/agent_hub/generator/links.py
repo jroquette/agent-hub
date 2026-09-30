@@ -10,6 +10,7 @@ names (``project_links``, spec Q-17). Links are data: nothing here touches the f
 
 from collections.abc import Collection, Iterator, Sequence
 
+from agent_hub.core.hub_files.extension_inputs import entry_name_key
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
 from agent_hub.core.hub_files.rendered_link import RenderedLink
 from agent_hub.generator.errors import GeneratorError
@@ -40,9 +41,11 @@ def project_links(
     """Return one link per project agent and skill name, sorted by path, all generic and managed.
 
     ``.claude/agents/<name>`` targets ``plugin/<project>/agents/<name>``, and the same for skills.
-    A name whose link path is in ``taken`` (a base plugin link) gets none: the base plugin keeps
-    its link, and the sync planner reports the name in both plugins (plan E8).
+    A name whose link path is in ``taken`` (a base plugin link) gets none, also when the two
+    differ only in case or Unicode form (plan E37): the base plugin keeps its link, and the sync
+    planner reports the name in both plugins (plan E8).
     """
+    taken_keys = {entry_name_key(path) for path in taken}
     targets = {
         f".claude/{folder}/{name}": f"plugin/{project}/{folder}/{name}"
         for folder, names in (("agents", agents), ("skills", skills))
@@ -51,7 +54,7 @@ def project_links(
     return tuple(
         _managed_link(link_path, targets[link_path])
         for link_path in sorted(targets)
-        if link_path not in taken
+        if entry_name_key(link_path) not in taken_keys
     )
 
 

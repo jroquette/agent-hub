@@ -7,6 +7,7 @@ which stays pure. A sibling that is not a regular file, or an entry name that ``
 record, is a problem (plan E9): the caller exits 1 and writes nothing.
 """
 
+import unicodedata
 from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -31,6 +32,15 @@ def unlinkable_reason(name: str) -> str | None:
     if not name.isprintable():
         return "not printable"
     return None
+
+
+def entry_name_key(name: str) -> str:
+    """The key under which two entry names are one name (plan E37): NFC, then ``casefold()``.
+
+    A case- or normalization-insensitive disk (macOS's default APFS) holds one entry for names
+    with the same key, such as ``Evaluator.md`` and ``evaluator.md``, or an NFD and an NFC name.
+    """
+    return unicodedata.normalize("NFC", unicodedata.normalize("NFC", name).casefold())
 
 
 def _is_plain(name: str) -> bool:
@@ -62,6 +72,8 @@ class ExtensionInputs:
     record; the mapping is copied into a read-only view. A value breaking this raises
     ``ValueError`` (a caller bug: ``extension_inputs_from`` reports such names as problems).
     """
+
+    # Unhashable (a ``MappingProxyType`` field): never memoize ``render_hub`` on this value.
 
     project_json: Mapping[str, bytes]
     agents: tuple[str, ...]
