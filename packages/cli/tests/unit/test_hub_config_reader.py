@@ -17,6 +17,7 @@ from agent_hub.cli.hub_config_reader import (
     LoadedHubJson,
     load_hub_config_or_exit,
     load_hub_json_or_exit,
+    read_hub_bytes,
     read_hub_json,
 )
 from agent_hub.core.hub_config.model import HubConfig
@@ -469,3 +470,53 @@ def test_returns_problems_when_hub_json_unusable(
     assert problems[0].message.startswith(message_start.format(path=json.dumps(str(path))))
     # The same problems the exiting reader prints, and nothing printed by the returning one.
     assert printed == [f"hub.json: {problem.path}: {problem.message}" for problem in problems]
+
+
+def with_crlf_lines(path: Path) -> None:
+    content = json.dumps(a_pinned_document(), indent=2).replace("\n", "\r\n")
+    path.write_bytes(content.encode())
+
+
+@pytest.mark.parametrize(
+    "make_hub_file", [with_crlf_lines, write_other_pin], ids=["crlf", "invalid-pin"]
+)
+def test_returns_bytes_when_hub_json_readable(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    make_hub_file: Callable[[Path], None],
+) -> None:
+    path = tmp_path / "hub.json"
+    make_hub_file(path)
+
+    content = read_hub_bytes(path)
+
+    # Only the read happens: a pin the running command would refuse still gives its bytes.
+    assert content == path.read_bytes()
+    assert capsys.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize(
+    "make_hub_file",
+    [leave_absent, make_directory, make_fifo],
+    ids=["absent", "folder", "fifo"],
+)
+def test_returns_read_problem_when_hub_json_unreadable(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    make_hub_file: Callable[[Path], None],
+) -> None:
+    path = tmp_path / "hub.json"
+    make_hub_file(path)
+
+    # A FIFO is never opened: the alarm fails the test instead of hanging it.
+    with alarm_guard(HANG_SECONDS):
+        problems = read_hub_bytes(path)
+        expected = read_hub_json(path)
+
+    assert isinstance(problems, tuple)
+    assert not isinstance(expected, LoadedHubJson)
+    assert [(problem.path, problem.message) for problem in problems] == [
+        (problem.path, problem.message) for problem in expected
+    ]
+    assert len(problems) == 1
+    assert capsys.readouterr() == ("", "")
