@@ -7,6 +7,8 @@ RELEASED_IDS = (
     "config.schema",
     "platform.version",
     "lock.drift",
+    "instructions.size",
+    "instructions.duplicates",
     "settings.weakening",
     "hooks.guard-extension",
     "makefile.override",

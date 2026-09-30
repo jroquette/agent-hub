@@ -19,6 +19,8 @@ from agent_hub.core.hub_config.config_object import (
 CONFIG_SCHEMA_RULE: Final = "config.schema"
 PLATFORM_VERSION_RULE: Final = "platform.version"
 LOCK_DRIFT_RULE: Final = "lock.drift"
+INSTRUCTIONS_SIZE_RULE: Final = "instructions.size"
+INSTRUCTIONS_DUPLICATES_RULE: Final = "instructions.duplicates"
 SETTINGS_WEAKENING_RULE: Final = "settings.weakening"
 GUARD_EXTENSION_RULE: Final = "hooks.guard-extension"
 MAKEFILE_OVERRIDE_RULE: Final = "makefile.override"
@@ -29,9 +31,9 @@ RULE_IDS: Final = (
     PLATFORM_VERSION_RULE,
     LOCK_DRIFT_RULE,
     "links.dead",
-    "instructions.size",
+    INSTRUCTIONS_SIZE_RULE,
     "instructions.refs",
-    "instructions.duplicates",
+    INSTRUCTIONS_DUPLICATES_RULE,
     "rules.frontmatter",
     "settings.valid",
     SETTINGS_WEAKENING_RULE,
