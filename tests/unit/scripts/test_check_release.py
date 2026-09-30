@@ -74,6 +74,13 @@ def test_names_both_files_when_versions_differ(
             " they must be equal\n",
             id="meta-not-a-string",
         ),
+        pytest.param(
+            None,
+            None,
+            f"version lockstep: {CLI} has no project.version, {META} has no project.version;"
+            " they must be equal\n",
+            id="both-missing",
+        ),
     ],
 )
 def test_names_both_files_when_version_missing(
@@ -229,3 +236,16 @@ def test_cuts_tag_when_longer_than_limit(
     assert len(shown_tag) <= 80
     assert shown_tag.endswith("…")
     assert re.fullmatch(r'"(\\u0660)+…', shown_tag)
+
+
+def test_cuts_ascii_tag_to_limit_when_longer(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_pyprojects(tmp_path, cli="0.2.0", meta="0.2.0")
+
+    exit_code, _, err = run(tmp_path, capsys, "--tag=v" + "1" * 200)
+
+    shown_tag = err.removeprefix("tag ").split(": must be ")[0]
+    assert exit_code == 1
+    assert shown_tag == '"v' + "1" * 77 + "…"
+    assert len(shown_tag) == 80
