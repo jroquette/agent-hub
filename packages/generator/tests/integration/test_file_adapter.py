@@ -39,7 +39,7 @@ from agent_hub.generator.errors import (
     SymlinkedAncestorError,
 )
 from agent_hub.generator.file_adapter import apply_writes, ensure_root, remove_leftovers
-from agent_hub.generator.hub_tree import read_hub_tree
+from agent_hub.generator.hub_tree import read_hub_tree, read_planned_tree, read_root_entry
 
 # A reader blocked on a FIFO has hung: no read of a small tree takes this long.
 HANG_SECONDS = 5
@@ -1368,6 +1368,13 @@ def fail_tree_read(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     read_hub_tree(root, wanted={"plugin/agents/x.md"})
 
 
+def fail_planned_read(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The planned folder is opened, then cannot be listed: the reader must still close it.
+    write_file(root / "plugin" / "agents" / "x.md", b"inside\n")
+    refuse_second_listing(monkeypatch, root)
+    read_planned_tree(root, paths={"plugin/agents/x.md"}, wanted=set())
+
+
 @pytest.mark.parametrize(
     "fail",
     [
@@ -1378,6 +1385,7 @@ def fail_tree_read(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         fail_leftover_missing_folder,
         fail_collision,
         fail_tree_read,
+        fail_planned_read,
     ],
     ids=[
         "descent",
@@ -1387,6 +1395,7 @@ def fail_tree_read(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "leftover-descent",
         "collision",
         "tree-read",
+        "planned-read",
     ],
 )
 def test_closes_every_descriptor_when_write_fails(
@@ -1415,3 +1424,379 @@ def test_closes_every_descriptor_when_tree_read(tmp_path: Path) -> None:
 
     assert snapshot.entries["plugin/agents/x.md"] == FileEntry(executable=True, content=b"agent\n")
     assert open_descriptors() == before
+
+
+# The sync readers (spec Q-3, E2, E14): one root entry, or only the planned paths and folders.
+# The containers run as root, where a mode-0 folder is still readable, so the tests record the
+# ``os`` calls to show that unknown parts of the tree are never opened, listed or looked at.
+
+
+@dataclass
+class ReadCalls:
+    """The names ``os.open`` and ``os.stat`` got, and the folders ``os.scandir`` listed."""
+
+    opened: list[str]
+    looked: list[str]
+    listed: list[FolderId]
+
+    def names(self) -> set[str]:
+        return {Path(name).name for name in [*self.opened, *self.looked]}
+
+
+def record_reads(monkeypatch: pytest.MonkeyPatch) -> ReadCalls:
+    calls = ReadCalls(opened=[], looked=[], listed=[])
+    real_open, real_stat, real_scandir = os.open, os.stat, os.scandir
+
+    def opened(path: Any, flags: int, mode: int = 0o777, **kwargs: Any) -> int:
+        calls.opened.append(os.fsdecode(path))
+        return real_open(path, flags, mode, **kwargs)
+
+    def looked(path: Any, **kwargs: Any) -> os.stat_result:
+        if not isinstance(path, int):
+            calls.looked.append(os.fsdecode(path))
+        return real_stat(path, **kwargs)
+
+    def listed(path: Any) -> Any:
+        if isinstance(path, int):
+            calls.listed.append(folder_id(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "open", opened)
+    monkeypatch.setattr(os, "stat", looked)
+    monkeypatch.setattr(os, "scandir", listed)
+    return calls
+
+
+def plant_lock_file(root: Path, outside: Path) -> object:
+    write_file(root / "hub.lock", b'{"lock_version": 1}\n')
+    return FileEntry(executable=False, content=b'{"lock_version": 1}\n')
+
+
+def plant_lock_link(root: Path, outside: Path) -> object:
+    (root / "hub.lock").symlink_to(outside / "x.md")
+    return LinkEntry(target=str(outside / "x.md"), outside=True)
+
+
+def plant_lock_folder(root: Path, outside: Path) -> object:
+    write_file(root / "hub.lock" / "inner.md", b"inner\n")
+    return FolderEntry()
+
+
+def plant_lock_fifo(root: Path, outside: Path) -> object:
+    os.mkfifo(root / "hub.lock")
+    return OtherEntry(kind="fifo")
+
+
+def plant_nothing(root: Path, outside: Path) -> object:
+    return None
+
+
+@pytest.mark.parametrize(
+    ("plant", "opens"),
+    [
+        (plant_lock_file, ["hub.lock"]),
+        (plant_lock_link, []),
+        (plant_lock_folder, []),
+        (plant_lock_fifo, []),
+        (plant_nothing, []),
+    ],
+    ids=["file", "link", "folder", "fifo", "absent"],
+)
+def test_reads_root_entry_without_following_when_name_given(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    plant: Callable[[Path, Path], object],
+    opens: list[str],
+) -> None:
+    outside = outside_folder(tmp_path)
+    root = tmp_path / "root"
+    write_file(root / "hub.json", b"{}\n")
+    expected = plant(root, outside)
+    calls = record_reads(monkeypatch)
+
+    with alarm_guard(HANG_SECONDS):
+        entry = read_root_entry(root, "hub.lock")
+
+    assert entry == expected
+    # The root is the only folder opened; a link, folder or FIFO is never opened itself.
+    assert calls.opened == [str(root), *opens]
+    assert calls.listed == []
+
+
+def unknown_parts_tree(tmp_path: Path) -> Path:
+    """A hub holding planned paths and AC-14.13's unknown entries next to them."""
+    root = tmp_path / "root"
+    write_file(root / "hub.json", b"{}\n")
+    write_file(root / "AGENTS.md", b"rules\n")
+    write_file(root / "brain" / "index.md", b"index\n")
+    write_file(root / "plugin" / "hub-workflow" / "skills" / "x" / "SKILL.md", b"skill\n")
+    (root / ".claude" / "skills").mkdir(parents=True)
+    (root / ".claude" / "skills" / "x").symlink_to("../../plugin/hub-workflow/skills/x")
+    write_file(root / ".git" / "HEAD", b"ref: refs/heads/main\n")
+    write_file(root / "notes.txt", b"notes\n")
+    write_file(root / "scratch" / "secret.md", b"secret\n")
+    (root / "scratch").chmod(0)
+    os.mkfifo(root / "brain" / "pipe")
+    write_file(root / "scratch2" / ".x.hub-tmp-0123abcd", b"temp-shaped\n")
+    (root / ".claude" / "skills" / "mine").symlink_to("../../scratch")
+    return root
+
+
+PLANNED = {
+    "hub.json",
+    "AGENTS.md",
+    "brain/index.md",
+    ".claude/skills/x",
+    "plugin/hub-workflow/skills/x/SKILL.md",
+    "old/gone.md",
+}
+
+
+def test_reads_only_planned_paths_when_tree_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = unknown_parts_tree(tmp_path)
+    parents = [root, root / "brain", root / ".claude" / "skills"]
+    parents.append(root / "plugin" / "hub-workflow" / "skills" / "x")
+    calls = record_reads(monkeypatch)
+    try:
+        with alarm_guard(HANG_SECONDS):
+            snapshot = read_planned_tree(
+                root, paths=PLANNED, wanted={"AGENTS.md", "plugin/hub-workflow/skills/x/SKILL.md"}
+            )
+    finally:
+        (root / "scratch").chmod(0o755)
+
+    assert snapshot == TreeSnapshot(
+        entries={
+            ".claude": FolderEntry(),
+            ".claude/skills": FolderEntry(),
+            ".claude/skills/x": LinkEntry(
+                target="../../plugin/hub-workflow/skills/x", outside=False
+            ),
+            "AGENTS.md": FileEntry(executable=False, content=b"rules\n"),
+            "brain": FolderEntry(),
+            "brain/index.md": FileEntry(executable=False, content=None),
+            "hub.json": FileEntry(executable=False, content=None),
+            "plugin": FolderEntry(),
+            "plugin/hub-workflow": FolderEntry(),
+            "plugin/hub-workflow/skills": FolderEntry(),
+            "plugin/hub-workflow/skills/x": FolderEntry(),
+            "plugin/hub-workflow/skills/x/SKILL.md": FileEntry(
+                executable=False, content=b"skill\n"
+            ),
+        },
+        git_present=True,
+    )
+    unknown = {"notes.txt", "scratch", "secret.md", "pipe", "scratch2", ".x.hub-tmp-0123abcd"}
+    assert not calls.names() & {*unknown, "mine", ".git"}
+    # Only the parents of planned paths are listed (the root for ``hub.json`` and ``old/``'s
+    # parent), never ``scratch/`` or ``scratch2/``.
+    assert sorted(set(calls.listed)) == sorted({folder_id(folder) for folder in parents})
+
+
+@pytest.mark.parametrize("ancestor", ["link", "file"])
+def test_stops_at_symlinked_ancestor_when_planned_path_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ancestor: str
+) -> None:
+    outside = outside_folder(tmp_path)
+    write_file(outside / "x" / "SKILL.md", b"outside skill\n")
+    before = tree_digest(outside)
+    root = tmp_path / "root"
+    skills = root / "plugin" / "hub-workflow" / "skills"
+    skills.parent.mkdir(parents=True)
+    if ancestor == "link":
+        skills.symlink_to(outside, target_is_directory=True)
+        expected: object = LinkEntry(target=str(outside), outside=True)
+    else:
+        write_file(skills, b"a file where a folder belongs\n")
+        expected = FileEntry(executable=False, content=None)
+    calls = record_reads(monkeypatch)
+    planned = {"plugin/hub-workflow/skills/x/SKILL.md", "plugin/hub-workflow/skills/x/run.md"}
+
+    snapshot = read_planned_tree(root, paths=planned, wanted=planned)
+
+    assert snapshot.entries == {
+        "plugin": FolderEntry(),
+        "plugin/hub-workflow": FolderEntry(),
+        "plugin/hub-workflow/skills": expected,
+    }
+    assert not {"x", "SKILL.md"} & calls.names()
+    assert folder_id(outside) not in calls.listed
+    assert tree_digest(outside) == before
+
+
+def test_records_leftovers_in_planned_folders_when_listed(tmp_path: Path) -> None:
+    outside = outside_folder(tmp_path)
+    root = tmp_path / "root"
+    hooks = root / "plugin" / "hub-workflow" / "hooks"
+    write_file(hooks / "guard.py", b"guard\n", mode=0o755)
+    write_file(hooks / ".guard.py.hub-tmp-0a1b2c3d", b"half written\n")
+    (hooks / ".x.md.hub-tmp-0a1b2c3d").symlink_to(outside / "x.md")
+    (hooks / ".d.hub-tmp-0a1b2c3d").mkdir()
+    write_file(hooks / "plain.txt", b"unknown\n")
+    write_file(root / ".hub.lock.hub-tmp-01234567", b"half a lock\n")
+    # ``plugin/`` is an ancestor of a planned path, not its parent: it is never listed.
+    write_file(root / "plugin" / ".y.md.hub-tmp-0a1b2c3d", b"not in a planned folder\n")
+
+    snapshot = read_planned_tree(root, paths={"plugin/hub-workflow/hooks/guard.py"}, wanted=set())
+
+    assert snapshot.entries == {
+        ".hub.lock.hub-tmp-01234567": FileEntry(executable=False, content=None),
+        "plugin": FolderEntry(),
+        "plugin/hub-workflow": FolderEntry(),
+        "plugin/hub-workflow/hooks": FolderEntry(),
+        "plugin/hub-workflow/hooks/.d.hub-tmp-0a1b2c3d": FolderEntry(),
+        "plugin/hub-workflow/hooks/.guard.py.hub-tmp-0a1b2c3d": FileEntry(
+            executable=False, content=None
+        ),
+        "plugin/hub-workflow/hooks/.x.md.hub-tmp-0a1b2c3d": LinkEntry(
+            target=str(outside / "x.md"), outside=True
+        ),
+        "plugin/hub-workflow/hooks/guard.py": FileEntry(executable=True, content=None),
+    }
+    assert snapshot.git_present is False
+
+
+def test_lists_every_name_when_folder_listed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "root"
+    agents = root / "plugin" / "demo" / "agents"
+    write_file(agents / "a.md", b"agent\n")
+    write_file(agents / ".hidden", b"dotfile\n")
+    write_file(agents / "sub" / "inner.md", b"never listed\n")
+    calls = record_reads(monkeypatch)
+
+    # A planned path in a listed folder is looked at once, and read as planned.
+    snapshot = read_planned_tree(
+        root,
+        paths={"plugin/demo/agents/a.md"},
+        wanted={"plugin/demo/agents/a.md"},
+        listed={"plugin/demo/agents", "plugin/demo/skills"},
+    )
+
+    assert snapshot.entries == {
+        "plugin": FolderEntry(),
+        "plugin/demo": FolderEntry(),
+        "plugin/demo/agents": FolderEntry(),
+        "plugin/demo/agents/.hidden": FileEntry(executable=False, content=None),
+        "plugin/demo/agents/a.md": FileEntry(executable=False, content=b"agent\n"),
+        "plugin/demo/agents/sub": FolderEntry(),
+    }
+    assert "inner.md" not in calls.names()
+    assert calls.looked.count("a.md") == 1
+    assert folder_id(agents / "sub") not in calls.listed
+
+
+def test_reads_content_only_when_wanted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "root"
+    write_file(root / "docs" / "a.md", b"compared\n")
+    write_file(root / "docs" / "b.md", b"seeded\n", mode=0o755)
+    calls = record_reads(monkeypatch)
+
+    snapshot = read_planned_tree(root, paths={"docs/a.md", "docs/b.md"}, wanted={"docs/a.md"})
+
+    assert snapshot.entries == {
+        "docs": FolderEntry(),
+        "docs/a.md": FileEntry(executable=False, content=b"compared\n"),
+        "docs/b.md": FileEntry(executable=True, content=None),
+    }
+    assert "b.md" not in {Path(name).name for name in calls.opened}
+
+
+def refuse_brain_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_open = os.open
+
+    def refuse(path: Any, flags: int, mode: int = 0o777, **kwargs: Any) -> int:
+        if path == "brain":
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), path)
+        return real_open(path, flags, mode, **kwargs)
+
+    monkeypatch.setattr(os, "open", refuse)
+
+
+def refuse_index_stat(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_stat = os.stat
+
+    def refuse(path: Any, **kwargs: Any) -> os.stat_result:
+        if path == "index.md":
+            raise OSError(errno.EIO, os.strerror(errno.EIO))
+        return real_stat(path, **kwargs)
+
+    monkeypatch.setattr(os, "stat", refuse)
+
+
+@pytest.mark.parametrize(
+    ("fail", "message"),
+    [
+        (refuse_brain_open, f"brain: {os.strerror(errno.EACCES)}"),
+        (refuse_index_stat, f"brain/index.md: {os.strerror(errno.EIO)}"),
+    ],
+    ids=["folder-open", "entry-stat"],
+)
+def test_names_path_when_planned_folder_unreadable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    fail: Callable[[pytest.MonkeyPatch], None],
+    message: str,
+) -> None:
+    root = tmp_path / "root"
+    write_file(root / "brain" / "index.md", b"index\n")
+    fail(monkeypatch)
+
+    with pytest.raises(GeneratorError) as raised:
+        read_planned_tree(root, paths={"brain/index.md"}, wanted={"brain/index.md"})
+
+    assert str(raised.value) == message
+
+
+def test_names_root_when_hub_folder_cannot_be_opened(tmp_path: Path) -> None:
+    root = tmp_path / "missing"
+
+    with pytest.raises(GeneratorError) as raised:
+        read_planned_tree(root, paths={"hub.json"}, wanted=set())
+    with pytest.raises(GeneratorError) as raised_entry:
+        read_root_entry(root, "hub.lock")
+
+    assert str(raised.value) == f"{root}: {os.strerror(errno.ENOENT)}"
+    assert str(raised_entry.value) == str(raised.value)
+
+
+def read_planned(root: Path, path: str) -> object:
+    return read_planned_tree(root, paths={path}, wanted=set())
+
+
+def read_listed(root: Path, path: str) -> object:
+    return read_planned_tree(root, paths=set(), wanted=set(), listed={path})
+
+
+def test_raises_value_error_when_root_entry_name_nested(tmp_path: Path) -> None:
+    root = a_root(tmp_path)
+    write_file(root / "plugin" / "x.md", b"inside\n")
+
+    with pytest.raises(ValueError, match=NOT_UNDER_ROOT):
+        read_root_entry(root, "plugin/x.md")
+
+
+@pytest.mark.parametrize("shape", list(BAD_PATHS))
+@pytest.mark.parametrize(
+    "read", [read_planned, read_listed, read_root_entry], ids=["planned", "listed", "root-entry"]
+)
+def test_raises_value_error_when_read_path_not_plain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    read: Callable[[Path, str], object],
+    shape: str,
+) -> None:
+    root = a_root(tmp_path)
+    write_file(tmp_path / "abs" / "x.md", b"outside\n")
+    calls = record_reads(monkeypatch)
+
+    with pytest.raises(ValueError, match=NOT_UNDER_ROOT):
+        read(root, BAD_PATHS[shape](tmp_path, "x.md"))
+
+    assert calls == ReadCalls(opened=[], looked=[], listed=[])

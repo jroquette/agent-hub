@@ -10,6 +10,13 @@ through a link. A link records its target as written and whether its real path l
 Only the regular files the render wants are opened, with ``O_NOFOLLOW | O_NONBLOCK``, and a FIFO,
 socket or device is never opened. The root's ``.git`` is not listed; only its presence is recorded.
 Every ``OSError`` of the walk becomes a ``GeneratorError`` naming the path.
+
+``hub sync`` reads less (spec Q-3, E2): ``read_root_entry`` looks at one name in the root, and
+``read_planned_tree`` only at the paths it plans, the folders above them, and the leftover-shaped
+names in their parent folders. The same descriptor rules hold, so unknown parts of the hub (notes,
+run output, FIFOs, unreadable folders) are never opened, listed or looked at. Paths there must be
+plain and relative (a ``ValueError`` before anything is read), since ``..`` climbs out even under
+``O_NOFOLLOW``.
 """
 
 import os
@@ -26,6 +33,7 @@ from agent_hub.core.hub_files.tree_snapshot import (
     OtherEntry,
     TreeEntry,
     TreeSnapshot,
+    is_leftover_name,
 )
 from agent_hub.generator.errors import GeneratorError
 
@@ -34,6 +42,8 @@ _FOLDER_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 # O_NOFOLLOW: a file swapped for a link since the listing is refused, not followed.
 # O_NONBLOCK: one swapped for a FIFO cannot block the open; fstat then says what it is.
 _FILE_FLAGS: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+_NOT_PLAIN_SEGMENTS: Final = frozenset({"", ".", ".."})
+_NOT_UNDER_ROOT: Final = "not a relative path inside the hub"
 
 
 @dataclass(frozen=True)
@@ -73,6 +83,132 @@ def read_hub_tree(root: Path, *, wanted: Collection[str]) -> TreeSnapshot:
     )
 
 
+def read_root_entry(root: Path, name: str) -> TreeEntry | None:
+    """Return the entry ``name`` in ``root`` without following it, or ``None`` when absent.
+
+    Only a regular file is opened (its content read); a link, folder, FIFO, socket or device is
+    returned as its entry. Raises ``ValueError`` when ``name`` is not one plain segment, and
+    ``GeneratorError`` naming the path when the root or the entry cannot be read.
+    """
+    _check_plain(name)
+    if "/" in name:
+        msg = f"{name!r}: {_NOT_UNDER_ROOT}"
+        raise ValueError(msg)
+    shown = os.fspath(root)
+    walk = _Walk(real_root=os.path.realpath(root), wanted={name}, entries={})
+    root_fd = _open_folder(shown, None, path=shown)
+    try:
+        return _look(root_fd, name, path=name, walk=walk)
+    finally:
+        os.close(root_fd)
+
+
+@dataclass(frozen=True)
+class _Descent:
+    """The folders one planned read reached: open descriptors by path (``""`` is the root)."""
+
+    walk: _Walk
+    folders: dict[str, int]
+    unreachable: set[str]
+
+
+def read_planned_tree(
+    root: Path,
+    *,
+    paths: Collection[str],
+    wanted: Collection[str],
+    listed: Collection[str] = (),
+) -> TreeSnapshot:
+    """Return only what ``hub sync`` plans under ``root``; ``root`` is already a real path.
+
+    For each of ``paths``: its ancestors down to the first that is not a folder, then the path
+    itself when present (content read only when in ``wanted``). Each existing parent folder of a
+    planned path, the root included, is listed, and only its leftover-shaped names are recorded.
+    Each folder in ``listed`` is listed and every name in it recorded, never descended. Raises
+    ``ValueError`` for a path that is not plain and relative, before anything is read, and
+    ``GeneratorError`` naming the path when anything planned cannot be looked at or read.
+    """
+    for path in [*paths, *listed]:
+        _check_plain(path)
+    shown = os.fspath(root)
+    descent = _Descent(
+        walk=_Walk(real_root=os.path.realpath(root), wanted=wanted, entries={}),
+        folders={"": _open_folder(shown, None, path=shown)},
+        unreachable=set(),
+    )
+    try:
+        root_names = _list(descent.folders[""], path=shown)
+        for path in paths:
+            folder, _, name = path.rpartition("/")
+            folder_fd = _reach(folder, descent)
+            if folder_fd is not None:
+                _look(folder_fd, name, path=path, walk=descent.walk)
+        parents = sorted({"", *(path.rpartition("/")[0] for path in paths)})
+        for folder in parents:
+            _record_names(folder, descent, names=root_names if not folder else None, every=False)
+        for folder in listed:
+            if _reach(folder, descent) is not None:
+                _record_names(folder, descent, names=None, every=True)
+    finally:
+        for folder_fd in descent.folders.values():
+            os.close(folder_fd)
+    entries = descent.walk.entries
+    return TreeSnapshot(
+        entries={path: entries[path] for path in sorted(entries)},
+        git_present=_GIT in root_names,
+    )
+
+
+def _reach(folder: str, descent: _Descent) -> int | None:
+    """The open descriptor of ``folder``, or ``None`` when it or an ancestor is not a folder."""
+    if folder in descent.folders:
+        return descent.folders[folder]
+    if folder in descent.unreachable:
+        return None
+    parent, _, name = folder.rpartition("/")
+    parent_fd = _reach(parent, descent)
+    entry = None if parent_fd is None else _look(parent_fd, name, path=folder, walk=descent.walk)
+    if parent_fd is None or not isinstance(entry, FolderEntry):
+        # Nothing under a link, a file or an absent folder is ever looked at.
+        descent.unreachable.add(folder)
+        return None
+    folder_fd = _open_folder(name, parent_fd, path=folder)
+    descent.folders[folder] = folder_fd
+    return folder_fd
+
+
+def _record_names(folder: str, descent: _Descent, *, names: list[str] | None, every: bool) -> None:
+    folder_fd = descent.folders.get(folder)
+    if folder_fd is None:
+        return
+    prefix = f"{folder}/" if folder else ""
+    for name in _list(folder_fd, path=folder) if names is None else names:
+        if name != _GIT and (every or is_leftover_name(name)):
+            _look(folder_fd, name, path=prefix + name, walk=descent.walk)
+
+
+def _look(folder_fd: int, name: str, *, path: str, walk: _Walk) -> TreeEntry | None:
+    """Record and return the entry at ``path`` (``name`` in ``folder_fd``); ``None`` if absent."""
+    if path in walk.entries:
+        return walk.entries[path]
+    try:
+        mode = os.stat(name, dir_fd=folder_fd, follow_symlinks=False).st_mode
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise _walk_error(path, error) from error
+    entry = _typed_entry(folder_fd, name, mode=mode, path=path, walk=walk)
+    walk.entries[path] = entry
+    return entry
+
+
+def _check_plain(path: str) -> None:
+    # An absolute path starts with an empty segment, and an empty path is one.
+    if "\x00" in path or not _NOT_PLAIN_SEGMENTS.isdisjoint(path.split("/")):
+        msg = f"{path!r}: {_NOT_UNDER_ROOT}"
+        raise ValueError(msg)
+
+
 def _read_folder(folder_fd: int, names: list[str], *, prefix: str, walk: _Walk) -> None:
     for name in names:
         path = prefix + name
@@ -105,6 +241,13 @@ def _list(folder_fd: int, *, path: str) -> list[str]:
 def _entry(folder_fd: int, name: str, *, path: str, walk: _Walk) -> TreeEntry:
     try:
         mode = os.stat(name, dir_fd=folder_fd, follow_symlinks=False).st_mode
+    except OSError as error:
+        raise _walk_error(path, error) from error
+    return _typed_entry(folder_fd, name, mode=mode, path=path, walk=walk)
+
+
+def _typed_entry(folder_fd: int, name: str, *, mode: int, path: str, walk: _Walk) -> TreeEntry:
+    try:
         if stat.S_ISLNK(mode):
             target = os.readlink(name, dir_fd=folder_fd)
             # The walk never entered a link, so the link's folder is the same under the real root.
