@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tomllib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -76,8 +77,20 @@ def installed_hub(tmp_path_factory: pytest.TempPathFactory) -> InstalledHub:
     # The interpreter running the tests (a final 3.14 build), so uv never picks an rc build or
     # downloads a managed Python into the real XDG dirs.
     install_command = [uv, "tool", "install", "--python", sys.executable, "-c", str(constraints)]
+    # uv reuses a cached build of a local package until its pyproject.toml changes, so a new
+    # module would be missing from the installed copy; the members are rebuilt every time.
+    for member in _workspace_members():
+        install_command += ["--reinstall-package", member]
     _run_or_fail([*install_command, str(meta_package)], env=env, timeout=INSTALL_TIMEOUT_SECONDS)
     return InstalledHub(executable=bin_dir / "hub", env=env)
+
+
+def _workspace_members() -> list[str]:
+    """The distribution name of every workspace package."""
+    return sorted(
+        tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["name"]
+        for pyproject in (REPO_ROOT / "packages").glob("*/pyproject.toml")
+    )
 
 
 def _run_or_fail(

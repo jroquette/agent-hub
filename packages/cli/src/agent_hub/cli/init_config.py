@@ -26,6 +26,8 @@ PROJECT_ARGUMENT: Final = "PROJECT"
 REPOS_FLAG: Final = "--repos"
 # A problem inside one ``--repos`` item: its index, and the field after it.
 _REPO_ITEM: Final = re.compile(r"repos\[(?P<index>\d+)\](?:\.(?P<field>.+))?")
+# A ``repos[<i>]`` cited inside a message, such as the item a dir clashes with.
+_CITED_ITEM: Final = re.compile(r"repos\[(?P<index>\d+)\]")
 
 
 def document_from_flags(
@@ -67,17 +69,22 @@ def flag_problems(problems: Sequence[ConfigProblem], *, repos: str) -> list[str]
     """One ``<flag>: <message>`` line per problem, the flag found from the problem's JSON path.
 
     A problem in one ``--repos`` item names it as ``--repos item <n> (<value>)``: its 1-based
-    position and the item as typed, JSON-quoted. An item's ``dir`` line is dropped when its
-    ``github`` failed too: the dir is derived from it, and the user never typed it. A path no
-    flag sets (the pin is the running release) is printed as the path itself.
+    position and the item as typed, JSON-quoted; a ``repos[<i>]`` the message cites reads as
+    ``item <i+1>`` too (``--config`` keeps the JSON path). An item's ``dir`` line is dropped
+    when its ``github`` failed too: the dir is derived from it, and the user never typed it. A
+    path no flag sets (the pin is the running release) is printed as the path itself.
     """
     items = _repo_items(repos)
     paths = {problem.path for problem in problems}
     return [
-        f"{_flag(problem.path, items=items)}: {problem.message}"
+        f"{_flag(problem.path, items=items)}: {_CITED_ITEM.sub(_item_number, problem.message)}"
         for problem in problems
         if not _is_dir_of_failed_github(problem.path, paths=paths)
     ]
+
+
+def _item_number(cited: re.Match[str]) -> str:
+    return f"item {int(cited['index']) + 1}"
 
 
 def _repo_items(repos: str) -> list[str]:

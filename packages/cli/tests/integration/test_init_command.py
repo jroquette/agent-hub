@@ -591,7 +591,7 @@ def test_never_shows_secret_when_remote_has_token(
         (
             ["--repos", "acme/a,ACME/A"],
             '--repos item 2 ("ACME/A")',
-            'repo dir "A" is already used by repos[0]',
+            'repo dir "A" is already used by item 1',
         ),
         (["--branch-prefix", "jdoe"], "--branch-prefix", "String should match pattern"),
     ],
@@ -999,38 +999,37 @@ def plant_unknown_empty_folder(target: Path) -> None:
     (target / "empty").mkdir()
 
 
-# The entries of AC-12.13, one per case, each in an otherwise empty target.
-CONFLICTS: dict[str, Callable[[Path], None]] = {
-    "managed-bytes": plant_managed_bytes,
-    "managed-mode": plant_managed_mode,
-    "link-target": plant_link_target,
-    "file-at-link": plant_file_at_link,
-    "folder-at-link": plant_folder_at_link,
-    "link-at-file": plant_link_at_file,
-    "unknown-file": plant_unknown_file,
-    "unknown-nested": plant_unknown_nested,
-    "unknown-empty-folder": plant_unknown_empty_folder,
-}
-
-
+# The entries of AC-12.13, one per case, each in an otherwise empty target, and the lines each
+# prints.
 @pytest.mark.parametrize(
-    ("case", "lines"),
+    ("plant", "lines"),
     [
-        ("managed-bytes", [f"Makefile: differs from its render; {ADOPT}"]),
-        ("managed-mode", [f"{GUARD}: differs from its render; {ADOPT}"]),
-        ("link-target", [f"{ARCHITECT_LINK}: differs from its render; {ADOPT}"]),
-        ("file-at-link", [f"{ARCHITECT_LINK}: a file where a link belongs"]),
-        ("folder-at-link", [".claude/skills/feature: a folder where a link belongs"]),
-        ("link-at-file", ["Makefile: a link where a file belongs"]),
-        ("unknown-file", [f"notes.txt: not part of the hub; {ADOPT}"]),
+        (plant_managed_bytes, [f"Makefile: differs from its render; {ADOPT}"]),
+        (plant_managed_mode, [f"{GUARD}: differs from its render; {ADOPT}"]),
+        (plant_link_target, [f"{ARCHITECT_LINK}: differs from its render; {ADOPT}"]),
+        (plant_file_at_link, [f"{ARCHITECT_LINK}: a file where a link belongs"]),
+        (plant_folder_at_link, [".claude/skills/feature: a folder where a link belongs"]),
+        (plant_link_at_file, ["Makefile: a link where a file belongs"]),
+        (plant_unknown_file, [f"notes.txt: not part of the hub; {ADOPT}"]),
         (
-            "unknown-nested",
+            plant_unknown_nested,
             [
                 f"brain/extra: not part of the hub; {ADOPT}",
                 f"brain/extra/x.md: not part of the hub; {ADOPT}",
             ],
         ),
-        ("unknown-empty-folder", [f"empty: not part of the hub; {ADOPT}"]),
+        (plant_unknown_empty_folder, [f"empty: not part of the hub; {ADOPT}"]),
+    ],
+    ids=[
+        "managed-bytes",
+        "managed-mode",
+        "link-target",
+        "file-at-link",
+        "folder-at-link",
+        "link-at-file",
+        "unknown-file",
+        "unknown-nested",
+        "unknown-empty-folder",
     ],
 )
 def test_refuses_and_writes_nothing_when_target_conflicts(
@@ -1039,10 +1038,10 @@ def test_refuses_and_writes_nothing_when_target_conflicts(
     tree_digest: TreeDigest,
     *,
     demo_flags: list[str],
-    case: str,
+    plant: Callable[[Path], None],
     lines: list[str],
 ) -> None:
-    CONFLICTS[case](target)
+    plant(target)
     before = tree_digest(target)
 
     result = run_init([*demo_flags, "--dir", str(target)])
@@ -1279,6 +1278,7 @@ def test_resumes_when_write_failed_midway(
     assert stopped.stderr.splitlines() == [f"{order[at]}: Input/output error"]
     assert not (target / "hub.lock").exists()
     assert temp_entries(target) == []
+    monkeypatch.setattr(os, "replace", replace)
 
     resumed = run_init([*demo_flags, "--dir", str(target)])
 
