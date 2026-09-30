@@ -4,8 +4,8 @@
 
 `hub doctor` checks that a hub and the repos it lists are healthy: the config is valid, the generated files match the
 lock, links resolve, agent instructions stay short, true and safe, and nothing from the brain leaks into a code repo.
-It will replace the hub's config lint and feature-tracker check. This file is the Phase 1 contract for the rule interface,
-the rule set, the output, the exit codes and the per-project configuration.
+It will replace the hub's config lint and feature-tracker check. This file is the Phase 1 contract for the rule
+interface, the rule set, the output, the exit codes and the per-project configuration.
 
 ## Contract
 
@@ -25,9 +25,9 @@ to every enabled rule; no rule touches the disk, the network or git itself.
 A finding has `rule`, `severity`, `path`, `line` (optional), `message` and `fix` (one line saying how to repair it).
 The snapshot is read from the cwd's real path (no walk-up) and holds the validated config (or the validation errors),
 the files of the hub and the fixed set of paths the rules read by name. Later inputs arrive with the rules that need
-them: `hub.lock` and its paths, looked at by path (`lock.drift`); the release's base hooks block, read from the
-templates package installed with the running CLI, so doctor still renders no file (`settings.weakening`); the files of
-each `repos[].dir` checkout next to the hub, where a missing checkout gives one `info` finding on the first selected
+them: the parsed `hub.lock` and its paths, looked at by path (`lock.drift`); the release's base hooks block, read from
+the templates package installed with the running CLI, so doctor still renders no file (`settings.weakening`); the files
+of each `repos[].dir` checkout next to the hub, where a missing checkout gives one `info` finding on the first selected
 repo-scoped rule (`brain.leak`, else `links.dead`) and those rules skip it (`links.dead`, `brain.leak`). A root with
 no `.git` entry, a hub inside a larger repository included, is walked, skipping `.git` and nested repositories. A root
 with a `.git` entry is listed with `git ls-files -z --cached --others --exclude-standard`, and git must name the root
@@ -66,7 +66,8 @@ from core's `RULE_MODULES`; a module's rules are core functions registered when 
 "config lint" and "feature check" are the hub scripts these rules replace ([hub-generator.md](hub-generator.md),
 Commands). Each ported rule keeps the old check's behavior, pinned first by characterization tests. This release
 registers `config.schema` and `platform.version`; the other rules come in later AGH-11 PRs. Until a rule ships,
-`doctor.rules` accepts its settings and `--only` on it exits 2 with `<id> is not in this release`.
+`doctor.rules` accepts its settings and `--only` on it exits 2 (`<id> is not in this release` when its module is
+selected).
 
 ### Output
 
