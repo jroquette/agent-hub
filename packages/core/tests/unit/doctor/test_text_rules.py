@@ -6,7 +6,7 @@ nine secret shapes and the three AI-attribution patterns; a finding names the ki
 text. A file that is not text is the runner's to report (E28): the rules skip it.
 
 Every secret-shaped or attribution string here is assembled at run time from harmless pieces, so
-this file holds none of the text it tests for.
+this file holds no secret-shaped text.
 """
 
 import re
@@ -31,6 +31,8 @@ AGENTS = "AGENTS.md"
 SETTINGS = ".claude/settings.json"
 PROJECT_SETTINGS = ".claude/settings.project.json"
 MEBIBYTE = 1 << 20
+# The size of the scale cases whose patterns never retried a run (the rewritten two get 1 MiB).
+SMALL = 1 << 16
 
 ROTATE_FIX = "remove it and rotate the credential; reference an env var name instead"
 # The builder's hub.json: branch_prefix ``jdoe/``, tracker team ``DEM``.
@@ -228,6 +230,13 @@ class TestSecrets:
 
         assert found(SECRETS_CONFIG, snapshot) == expected
 
+    def test_anchors_nothing_when_shape_patterns_read(self) -> None:
+        # The whole-text pre-filter holds only if no pattern needs the text's start or end.
+        for shape in (*text_rules.SECRETS, *text_rules.ATTRIBUTIONS):
+            assert shape.patterns
+            for pattern in shape.patterns:
+                assert anchors_of(pattern.pattern) == [], (shape.kind, pattern.pattern)
+
     def test_agrees_with_old_patterns_when_shapes_listed(self) -> None:
         assert [kind for _, kind in OLD_SECRETS] == [shape.kind for shape in text_rules.SECRETS]
         assert [kind for _, kind in OLD_ATTRIBUTIONS] == [
@@ -235,27 +244,29 @@ class TestSecrets:
         ]
 
     @pytest.mark.parametrize(
-        ("name", "near"),
+        ("name", "near", "size"),
         [
             # Each a run of near matches a backtracking pattern would retry from every start.
-            pytest.param("JWT", "ey" + "J", id="jwt"),
-            pytest.param("JWT", "ey" + "J" + "a" * 15 + "!", id="jwt-no-dot"),
-            pytest.param("AWS access key", "AK" + "IA" + "a" * 16 + " ", id="aws"),
-            pytest.param("private key", DASHES + "BEGIN " + "A" * 64, id="private-key"),
-            pytest.param("API key (live)", "sk" + "_live_" + "a" * 15 + " ", id="api-key-live"),
-            pytest.param("API key (dash)", "sk" + "-" + "a" * 19 + " ", id="api-key-dash"),
-            pytest.param("GitHub token", "gh" + "p_" + "a" * 29 + " ", id="github"),
-            pytest.param("Linear API key", "lin" + "_api_" + "a" * 19 + " ", id="linear"),
-            pytest.param("credential assignment", "TOK" + "EN = abcde ", id="credential"),
-            pytest.param("credential assignment", "PASS" + "WORD", id="credential-word"),
-            pytest.param("Fernet-like key", "a" * 42 + "= ", id="fernet"),
-            pytest.param("Fernet-like key", "a-", id="fernet-dashes"),
+            pytest.param("JWT", "ey" + "J", MEBIBYTE, id="jwt"),
+            pytest.param("JWT", "ey" + "J" + "a" * 15 + "!", MEBIBYTE, id="jwt-no-dot"),
+            pytest.param("AWS access key", "AK" + "IA" + "a" * 16 + " ", SMALL, id="aws"),
+            pytest.param("private key", DASHES + "BEGIN " + "A" * 64, SMALL, id="private-key"),
+            pytest.param(
+                "API key (live)", "sk" + "_live_" + "a" * 15 + " ", SMALL, id="api-key-live"
+            ),
+            pytest.param("API key (dash)", "sk" + "-" + "a" * 19 + " ", SMALL, id="api-key-dash"),
+            pytest.param("GitHub token", "gh" + "p_" + "a" * 29 + " ", SMALL, id="github"),
+            pytest.param("Linear API key", "lin" + "_api_" + "a" * 19 + " ", SMALL, id="linear"),
+            pytest.param("credential assignment", "TOK" + "EN = abcde ", SMALL, id="credential"),
+            pytest.param("credential assignment", "PASS" + "WORD", SMALL, id="credential-word"),
+            pytest.param("Fernet-like key", "a" * 42 + "= ", SMALL, id="fernet"),
+            pytest.param("Fernet-like key", "a-", SMALL, id="fernet-dashes"),
         ],
     )
-    def test_finds_one_when_line_is_one_mebibyte_of_near_matches(
-        self, snapshot_of: SnapshotFactory, name: str, near: str
+    def test_finds_one_when_line_is_long_run_of_near_matches(
+        self, snapshot_of: SnapshotFactory, *, name: str, near: str, size: int
     ) -> None:
-        line = near * (MEBIBYTE // len(near)) + " " + AT_MINIMUM[name]
+        line = near * (size // len(near)) + " " + AT_MINIMUM[name]
         snapshot = snapshot_of(files={AGENTS: line.encode()})
 
         assert found(SECRETS_CONFIG, snapshot) == [secret(AGENTS, 1, kind_of(name))]
@@ -308,6 +319,36 @@ class TestAttribution:
 
         assert found(ATTRIBUTION_AI, snapshot) == [attribution(path, 2, "AI co-author trailer")]
 
+    def test_cuts_branch_shape_when_longer_than_echo_limit(
+        self, snapshot_of: SnapshotFactory
+    ) -> None:
+        document = a_hub_document()
+        document["project"]["branch_prefix"] = "a" * 90 + "/"
+        snapshot = snapshot_of(
+            files={AGENTS: f"{BRANCH}\n".encode()}, config=HubConfig.model_validate(document)
+        )
+
+        assert [finding.fix for finding in ATTRIBUTION_AI.check(snapshot)] == [
+            "branches are `" + "a" * 79 + "…`; commits/PRs carry no AI trailer"
+        ]
+
+    def test_scans_line_once_when_co_author_tags_repeat(
+        self, snapshot_of: SnapshotFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The old ``.*anthropic`` rescanned the rest of the line from every tag.
+        counters = {
+            name: ScanCounter(getattr(text_rules, name))
+            for name in ("_CO_AUTHOR_TAG", "_CO_AUTHOR_NAMED", "_AI_VENDOR")
+        }
+        for name, counter in counters.items():
+            monkeypatch.setattr(text_rules, name, counter)
+        line = (CO_AUTHOR + " x ") * 2_000
+
+        assert found(ATTRIBUTION_AI, snapshot_of(files={AGENTS: line.encode()})) == []
+        assert all(counter.searches > 0 for counter in counters.values())
+        # One search per counter for the whole text, one per line (the text is one line).
+        assert all(counter.characters <= 2 * len(line) for counter in counters.values())
+
     def test_names_branch_shape_when_fix_given(self, snapshot_of: SnapshotFactory) -> None:
         document = a_hub_document()
         document["project"]["branch_prefix"] = "ab-c/"
@@ -349,7 +390,7 @@ class TestAttribution:
             "CO-" + "AUTHORED-BY:" + "CLAUDE",
             "co-" + "authored-by : claude",
             "open" + "ai " + CO_AUTHOR + " x",
-            "generated with claude code",
+            "generated " + "with claude code",
             "Generated with [[Claude Code",
             "clau" + "de/a-",
             "clau" + "de/-",
@@ -370,21 +411,24 @@ class TestAttribution:
         assert found(ATTRIBUTION_AI, snapshot) == expected
 
     @pytest.mark.parametrize(
-        ("kind", "near"),
+        ("kind", "near", "size"),
         [
-            pytest.param("AI co-author trailer", CO_AUTHOR + " x ", id="co-author"),
-            pytest.param("AI co-author trailer", CO_AUTHOR, id="co-author-run"),
+            pytest.param("AI co-author trailer", CO_AUTHOR + " x ", MEBIBYTE, id="co-author"),
+            pytest.param("AI co-author trailer", CO_AUTHOR, MEBIBYTE, id="co-author-run"),
             pytest.param(
-                '"Generated with Claude Code"', "generated with [claude cod ", id="generated"
+                '"Generated with Claude Code"',
+                "generated " + "with [claude cod ",
+                SMALL,
+                id="generated",
             ),
-            pytest.param("`claude/` branch prefix", "clau" + "de/abc ", id="branch"),
-            pytest.param("`claude/` branch prefix", "a", id="branch-run"),
+            pytest.param("`claude/` branch prefix", "clau" + "de/abc ", SMALL, id="branch"),
+            pytest.param("`claude/` branch prefix", "a", SMALL, id="branch-run"),
         ],
     )
-    def test_finds_one_when_line_is_one_mebibyte_of_near_matches(
-        self, snapshot_of: SnapshotFactory, kind: str, near: str
+    def test_finds_one_when_line_is_long_run_of_near_matches(
+        self, snapshot_of: SnapshotFactory, *, kind: str, near: str, size: int
     ) -> None:
-        body = near * (MEBIBYTE // len(near))
+        body = near * (size // len(near))
         if near == "a":
             body = "clau" + "de/" + body
         line = body + " " + ATTRIBUTIONS[kind]
@@ -495,3 +539,63 @@ class TestScannedFiles:
         assert found(SECRETS_CONFIG, snapshot) == [
             secret(path, 1, "GitHub token") for path in sorted(scanned)
         ]
+
+
+class ScanCounter:
+    """A stand-in for a compiled pattern that counts its searches and the characters they pass."""
+
+    def __init__(self, pattern: re.Pattern[str]) -> None:
+        self.pattern = pattern
+        self.searches = 0
+        self.characters = 0
+
+    def search(self, text: str, start: int = 0) -> re.Match[str] | None:
+        found = self.pattern.search(text, start)
+        self.searches += 1
+        self.characters += (len(text) if found is None else found.start()) - start
+        return found
+
+
+def anchors_of(source: str) -> list[str]:
+    """The ``^``, ``$``, ``\\A``, ``\\Z`` and ``\\z`` of a pattern outside character classes."""
+    anchors: list[str] = []
+    index = 0
+    while index < len(source):
+        character = source[index]
+        if character == "\\":
+            if source[index + 1 : index + 2] in {"A", "Z", "z"}:
+                anchors.append(source[index : index + 2])
+            index += 2
+        elif character == "[":
+            index = class_end(source, index)
+        else:
+            if character in "^$":
+                anchors.append(character)
+            index += 1
+    return anchors
+
+
+def class_end(source: str, start: int) -> int:
+    """The index after the ``]`` closing the character class opened at ``start``."""
+    index = start + 1
+    if source[index : index + 1] == "^":
+        index += 1
+    if source[index : index + 1] == "]":
+        index += 1
+    while source[index] != "]":
+        index += 2 if source[index] == "\\" else 1
+    return index + 1
+
+
+@pytest.mark.parametrize(
+    ("source", "anchors"),
+    [
+        ("a^b$", ["^", "$"]),
+        (r"\Ax\Z\z", [r"\A", r"\Z", r"\z"]),
+        (r"[^$]\^\$", []),
+        (r"[]^][\]$]x", []),
+        (r"\bsk-[A-Za-z0-9_-]{20,}", []),
+    ],
+)
+def test_finds_anchors_when_outside_classes(source: str, anchors: list[str]) -> None:
+    assert anchors_of(source) == anchors

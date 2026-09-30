@@ -52,15 +52,24 @@ ROTATE_FIX: Final = "remove it and rotate the credential; reference an env var n
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class Shape:
-    """What a line must hold to be flagged, and the kind a finding names."""
+    """What a line must hold to be flagged, and the kind a finding names.
+
+    ``patterns`` are the ones ``matches`` searches with; none anchors at the text's start or end,
+    so a line's match is also one of the whole text (the pre-filter in ``_flagged``).
+    """
 
     kind: str
+    patterns: tuple[re.Pattern[str], ...]
     matches: Callable[[str], bool]
 
 
-def _searched(pattern: str) -> Callable[[str], bool]:
+def _searched(kind: str, pattern: str) -> Shape:
     compiled = re.compile(pattern)
-    return lambda text: compiled.search(text) is not None
+    return Shape(
+        kind=kind,
+        patterns=(compiled,),
+        matches=lambda text: compiled.search(text) is not None,
+    )
 
 
 # A run of the JWT's characters, which holds its ``eyJ`` and first part.
@@ -75,20 +84,18 @@ _JWT: Final = (
 
 # The old lint's shapes, in its order; two shapes share the kind ``API key``.
 SECRETS: Final = (
-    Shape(kind="JWT", matches=_searched(_JWT)),
-    Shape(kind="AWS access key", matches=_searched(r"AKIA[0-9A-Z]{16}")),
-    Shape(kind="private key", matches=_searched(r"-{5}BEGIN [A-Z ]*PRIVATE KEY-{5}")),
-    Shape(kind="API key", matches=_searched(r"\b(?:sk|pk)_(?:live|test)_[A-Za-z0-9]{16,}")),
-    Shape(kind="API key", matches=_searched(r"\bsk-[A-Za-z0-9_-]{20,}")),
-    Shape(kind="GitHub token", matches=_searched(r"\bghp_[A-Za-z0-9]{30,}")),
-    Shape(kind="Linear API key", matches=_searched(r"\blin_api_[A-Za-z0-9]{20,}")),
-    Shape(
-        kind="credential assignment",
-        matches=_searched(
-            r"(?i)\b[A-Z_]*(?:PASSWORD|SECRET|TOKEN|ENCRYPTION_KEY)\s*=\s*['\"]?[^\s'\"<>$`{]{6,}"
-        ),
+    _searched("JWT", _JWT),
+    _searched("AWS access key", r"AKIA[0-9A-Z]{16}"),
+    _searched("private key", r"-{5}BEGIN [A-Z ]*PRIVATE KEY-{5}"),
+    _searched("API key", r"\b(?:sk|pk)_(?:live|test)_[A-Za-z0-9]{16,}"),
+    _searched("API key", r"\bsk-[A-Za-z0-9_-]{20,}"),
+    _searched("GitHub token", r"\bghp_[A-Za-z0-9]{30,}"),
+    _searched("Linear API key", r"\blin_api_[A-Za-z0-9]{20,}"),
+    _searched(
+        "credential assignment",
+        r"(?i)\b[A-Z_]*(?:PASSWORD|SECRET|TOKEN|ENCRYPTION_KEY)\s*=\s*['\"]?[^\s'\"<>$`{]{6,}",
     ),
-    Shape(kind="Fernet-like key", matches=_searched(r"\b[A-Za-z0-9_-]{43}=(?![A-Za-z0-9])")),
+    _searched("Fernet-like key", r"\b[A-Za-z0-9_-]{43}=(?![A-Za-z0-9])"),
 )
 
 _CO_AUTHOR_TAG: Final = re.compile(r"(?i)co-authored-by:")
@@ -112,12 +119,16 @@ def _names_ai_co_author(text: str) -> bool:
 
 
 ATTRIBUTIONS: Final = (
-    Shape(kind="AI co-author trailer", matches=_names_ai_co_author),
     Shape(
-        kind='"Generated with Claude Code"',
-        matches=_searched(r"(?i)generated with \[?claude code"),
+        kind="AI co-author trailer",
+        patterns=(_CO_AUTHOR_TAG, _CO_AUTHOR_NAMED, _AI_VENDOR),
+        matches=_names_ai_co_author,
     ),
-    Shape(kind="`claude/` branch prefix", matches=_searched(r"\bclaude/(?:<|[a-z0-9-]+-)")),
+    _searched(
+        '"Generated with Claude Code"',
+        r"(?i)generated with \[?claude code",
+    ),
+    _searched("`claude/` branch prefix", r"\bclaude/(?:<|[a-z0-9-]+-)"),
 )
 
 
