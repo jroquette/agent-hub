@@ -4,10 +4,11 @@ Claude Code reads a hub's own agents and skills from ``.claude/agents/`` and ``.
 each entry there links to its plugin (spec D3). ``plugin/<p>/agents/<name>`` gives
 ``.claude/agents/<name>``, and every file under ``plugin/<p>/skills/<name>/`` gives the one link
 ``.claude/skills/<name>``. A dotfile (``.gitkeep``) never causes a link, nor does anything under a
-dotfile ``<name>``. Links are data: nothing here touches the filesystem.
+dotfile ``<name>``. The project's own entries, which the render never holds, are linked from their
+names (``project_links``, spec Q-17). Links are data: nothing here touches the filesystem.
 """
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Collection, Iterator, Sequence
 
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
 from agent_hub.core.hub_files.rendered_link import RenderedLink
@@ -30,15 +31,37 @@ def plugin_links(files: Sequence[RenderedFile]) -> tuple[RenderedLink, ...]:
         if known != target:
             msg = f"{link_path}: linked from two plugins ({known} and {target})"
             raise GeneratorError(msg)
+    return tuple(_managed_link(link_path, targets[link_path]) for link_path in sorted(targets))
+
+
+def project_links(
+    *, project: str, agents: Sequence[str], skills: Sequence[str], taken: Collection[str]
+) -> tuple[RenderedLink, ...]:
+    """Return one link per project agent and skill name, sorted by path, all generic and managed.
+
+    ``.claude/agents/<name>`` targets ``plugin/<project>/agents/<name>``, and the same for skills.
+    A name whose link path is in ``taken`` (a base plugin link) gets none: the base plugin keeps
+    its link, and the sync planner reports the name in both plugins (plan E8).
+    """
+    targets = {
+        f".claude/{folder}/{name}": f"plugin/{project}/{folder}/{name}"
+        for folder, names in (("agents", agents), ("skills", skills))
+        for name in names
+    }
     return tuple(
-        RenderedLink(
-            path=link_path,
-            target=_UP_TO_ROOT + targets[link_path],
-            kind=Kind.GENERIC,
-            ownership=Ownership.MANAGED,
-            module=None,
-        )
+        _managed_link(link_path, targets[link_path])
         for link_path in sorted(targets)
+        if link_path not in taken
+    )
+
+
+def _managed_link(link_path: str, entry_path: str) -> RenderedLink:
+    return RenderedLink(
+        path=link_path,
+        target=_UP_TO_ROOT + entry_path,
+        kind=Kind.GENERIC,
+        ownership=Ownership.MANAGED,
+        module=None,
     )
 
 
