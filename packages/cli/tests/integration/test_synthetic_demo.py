@@ -1,5 +1,7 @@
 """The synthetic ``demo`` inits (Q-12): the lock on disk, modes, identical trees and the golden.
 
+A sync of a fresh ``demo`` init prints ``up to date`` and writes nothing (AGH-14 AC-14.7).
+
 ``DEMO`` is ``demo_config_file`` (the example config without modules, pinned to the running CLI)
 and ``DEMO_FLAGS`` is ``demo_flags``. The golden harness of ``demo.hub.lock`` is the conftest's
 ``lock_golden``; its self-tests set or clear ``GOLDEN_UPDATE`` and ``CI`` themselves.
@@ -17,8 +19,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
+from agent_hub.cli import sync_command
 from agent_hub.cli.main import app
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.hub_lock import build_hub_lock, lock_bytes
@@ -34,6 +37,7 @@ REAL_GIT = shutil.which("git")
 type LockGolden = Callable[..., None]
 type TreeDigest = Callable[[Path], dict[str, Any]]
 type ChildEnv = Callable[[Mapping[str, str]], dict[str, str]]
+type SyncRunner = Callable[..., Result]
 # A subprocess init differs from the in-process one in all of these but its inputs.
 CHILD_HASH_SEED = "123"
 CHILD_TZ = "Pacific/Kiritimati"
@@ -306,3 +310,30 @@ def test_writes_identical_trees_when_demo_initialized_twice(
     run_init([*demo_flags, "--dir", str(first)])
     run_init([*demo_flags, "--dir", str(second)])
     assert tree_digest(first) == tree_digest(second)
+
+
+def test_writes_nothing_when_sync_runs_on_fresh_init(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    demo_config_file: Path,
+    run_sync: SyncRunner,
+    tree_digest: TreeDigest,
+    adapter_calls: list[tuple[str, str]],
+) -> None:
+    root = init_demo(demo_config_file, tmp_path / "hub")
+    before = tree_digest(root)
+    lock_mtime = (root / "hub.lock").stat().st_mtime_ns
+    applied: list[object] = []
+    # Plan erratum E4: with nothing pending the adapter is not called at all.
+    monkeypatch.setattr(sync_command, "apply_sync", lambda *args, **kwargs: applied.append(args))
+    adapter_calls.clear()
+
+    for _ in range(2):
+        result = run_sync(root)
+
+        assert (result.exit_code, result.stdout, result.stderr) == (0, "up to date\n", "")
+    assert adapter_calls == []
+    assert applied == []
+    assert tree_digest(root) == before
+    assert (root / "hub.lock").stat().st_mtime_ns == lock_mtime

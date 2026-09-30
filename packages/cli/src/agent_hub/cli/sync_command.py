@@ -4,20 +4,27 @@ The pipeline of the AGH-14 spec, in the current folder (its real path, taken onc
 step that fails exits 1 before anything is read after it: ``hub.json`` (pin, schema, model), the
 module refusal, then ``hub.lock``, read once without following a link (absent: the ``--adopt``
 pointer; not a regular file or malformed: one line per problem, then the way out). Then the
-render, a read of only the planned paths, and core's planner: a conflict exits 3 with one line per
-path, a plan with nothing to do prints ``up to date``, and pending changes are listed as ``would``
-lines with exit 4 (nothing is applied yet). Every error goes to stderr.
+render, a read of only the planned paths, and core's planner. A conflict exits 3 with its report
+on stderr and nothing written. With nothing pending, ``up to date`` and no write at all (the
+adapter is not called). ``--check`` prints the ``would`` lines and exits 4. Otherwise the plan is
+applied with one open of the root (leftovers, deletes, folders, files, links, ``hub.lock`` last)
+and its lines are printed; an I/O error exits 1 naming the path. Every error goes to stderr.
 """
 
 from pathlib import Path
-from typing import Annotated, Final, NoReturn
+from typing import Annotated, Final
 
 import typer
 
-from agent_hub.cli.command_exits import fail, fail_generator, refuse_modules_or_exit, root_or_exit
-from agent_hub.cli.generator import NOT_IMPLEMENTED, NOT_IMPLEMENTED_EXIT_CODE
+from agent_hub.cli.command_exits import (
+    fail,
+    fail_generator,
+    not_implemented,
+    refuse_modules_or_exit,
+    root_or_exit,
+)
 from agent_hub.cli.hub_config_reader import load_hub_json_or_exit
-from agent_hub.cli.init_report import shown_path, shown_text
+from agent_hub.cli.sync_report import change_lines, conflict_lines
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.hub_lock import (
     ADOPT_POINTER,
@@ -29,17 +36,12 @@ from agent_hub.core.hub_files.hub_lock import (
     ManagedFileEntry,
     read_hub_lock,
 )
-from agent_hub.core.hub_files.plan_sync import (
-    ContentConflict,
-    SyncConflicts,
-    SyncPlan,
-    Verb,
-    plan_sync,
-)
+from agent_hub.core.hub_files.plan_sync import SyncConflicts, SyncPlan, plan_sync
 from agent_hub.core.hub_files.rendered_file import Ownership
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, TreeSnapshot
 from agent_hub.generator.errors import GeneratorError
+from agent_hub.generator.file_adapter import apply_sync
 from agent_hub.generator.hub_tree import read_planned_tree, read_root_entry
 from agent_hub.generator.render_hub import render_hub
 
@@ -47,19 +49,7 @@ from agent_hub.generator.render_hub import render_hub
 CONFLICT: Final = 3
 # Changes are pending: nothing was written.
 PENDING: Final = 4
-UP_TO_DATE: Final = "up to date"
 MISSING_HUB_JSON_HINT: Final = "run hub sync in the hub folder"
-CONFLICT_WAY_OUT: Final = (
-    "move the change to an extension file (hub.json, a *.project.* file, Makefile.project),"
-    " restore or delete the file, then re-run hub sync"
-)
-_CONTENT_DIFFERS: Final = "differs from its hub.lock entry and from its render"
-_WOULD: Final = {
-    Verb.CREATED: "would create",
-    Verb.RESTORED: "would restore",
-    Verb.UPDATED: "would update",
-    Verb.DELETED: "would delete",
-}
 
 
 def sync(
@@ -77,22 +67,24 @@ def sync(
 ) -> None:
     """Reapply the hub templates without overwriting what the project customized."""
     if adopt:
-        typer.echo(NOT_IMPLEMENTED, err=True)
-        raise typer.Exit(NOT_IMPLEMENTED_EXIT_CODE)
+        not_implemented()
     root = Path(root_or_exit(None))
     config = load_hub_json_or_exit(root / HUB_JSON_PATH, missing_hint=MISSING_HUB_JSON_HINT).config
     refuse_modules_or_exit(config)
     lock, lock_content = _lock_or_exit(root)
     planned = _plan_or_exit(root, config=config, lock=lock, lock_content=lock_content)
     if isinstance(planned, SyncConflicts):
-        _fail_conflicts(planned)
-    # Nothing is applied yet, with or without --check: a pending plan is reported and exits 4.
-    if not planned.pending:
-        typer.echo(UP_TO_DATE)
-        return
-    for line in _pending_lines(planned):
+        # Nothing on stdout: the report, then exit 3.
+        for line in conflict_lines(planned):
+            typer.echo(line, err=True)
+        raise typer.Exit(CONFLICT)
+    # An empty plan never reaches the adapter: nothing is opened, made or replaced (E4).
+    if planned.pending and not check:
+        _apply_or_exit(root, planned)
+    for line in change_lines(planned, check=check):
         typer.echo(line)
-    raise typer.Exit(PENDING)
+    if planned.pending and check:
+        raise typer.Exit(PENDING)
 
 
 def _lock_line(message: str) -> str:
@@ -143,19 +135,14 @@ def _plan_or_exit(
     )
 
 
-def _fail_conflicts(conflicts: SyncConflicts) -> NoReturn:
-    # One line per conflicted path, then the way out; nothing on stdout.
-    for problem in conflicts.problems:
-        cause = _CONTENT_DIFFERS if isinstance(problem, ContentConflict) else problem.message
-        typer.echo(shown_text(f"{shown_path(problem.path)}: {cause}"), err=True)
-    typer.echo(CONFLICT_WAY_OUT, err=True)
-    raise typer.Exit(CONFLICT)
-
-
-def _pending_lines(plan: SyncPlan) -> list[str]:
-    lines = [f"{_WOULD[change.verb]} {shown_path(change.path)}" for change in plan.changes]
-    if plan.leftovers:
-        lines.append(f"would remove {len(plan.leftovers)} leftover temporary files")
-    if plan.lock_written:
-        lines.append(f"would update {HUB_LOCK_PATH}")
-    return lines
+def _apply_or_exit(root: Path, plan: SyncPlan) -> None:
+    try:
+        apply_sync(
+            root,
+            leftovers=plan.leftovers,
+            deletes=plan.deletes,
+            folders=plan.folders,
+            writes=plan.writes,
+        )
+    except GeneratorError as error:
+        fail_generator(error)

@@ -1,9 +1,11 @@
 """``hub sync``: its command surface and the load order of ``hub.json`` and ``hub.lock``.
 
 Each load failure exits 1 before anything is written. Those cases copy only ``hub.json`` and
-``hub.lock`` into an empty folder (plan O2): the load steps read nothing else.
+``hub.lock`` into an empty folder (plan O2): the load steps read nothing else. ``--check`` cases
+run on a copy of the ``DEMO`` hub and compare their lines with those of the real run.
 """
 
+import hashlib
 import json
 import os
 import signal
@@ -70,6 +72,8 @@ def a_hub(tmp_path: Path, document: dict[str, Any], *, lock: bytes | None) -> Pa
 def assert_load_failed(result: Result) -> list[str]:
     """Exit 1 with nothing on stdout; the stderr lines."""
     assert result.exit_code == 1, result.output
+    # An exit, not an exception the runner caught.
+    assert result.exception is None or isinstance(result.exception, SystemExit)
     assert result.stdout == ""
     return result.stderr.splitlines()
 
@@ -331,3 +335,163 @@ def test_reports_lock_problem_when_lock_malformed(
     assert lines == [*expected, LOCK_WAY_OUT_LINE]
     assert tree_digest(root) == before
     assert adapter_calls == []
+
+
+type PendingMaker = Callable[[Path, dict[str, Any]], list[str]]
+OLDER_RENDER = b"# rendered by an older release\n"
+LEFTOVER = "plugin/hub-workflow/hooks/.guard.py.hub-tmp-0123abcd"
+
+
+def _restored(root: Path, _lock: dict[str, Any]) -> list[str]:
+    (root / "AGENTS.md").unlink()
+    return ["restored AGENTS.md"]
+
+
+def _created(root: Path, lock: dict[str, Any]) -> list[str]:
+    (root / "CLAUDE.md").unlink()
+    del lock["files"]["CLAUDE.md"]
+    return ["created CLAUDE.md", "updated hub.lock"]
+
+
+def _updated(root: Path, lock: dict[str, Any]) -> list[str]:
+    (root / "Makefile").write_bytes(OLDER_RENDER)
+    lock["files"]["Makefile"]["sha256"] = hashlib.sha256(OLDER_RENDER).hexdigest()
+    return ["updated Makefile", "updated hub.lock"]
+
+
+def _deleted(root: Path, lock: dict[str, Any]) -> list[str]:
+    (root / "old").mkdir()
+    (root / "old" / "file.md").write_bytes(OLDER_RENDER)
+    lock["files"]["old/file.md"] = {
+        "ownership": "managed",
+        "executable": False,
+        "sha256": hashlib.sha256(OLDER_RENDER).hexdigest(),
+    }
+    return ["deleted old/file.md", "updated hub.lock"]
+
+
+def _header(_root: Path, lock: dict[str, Any]) -> list[str]:
+    lock["platform_version"] = "0.0.1"
+    return ["updated hub.lock"]
+
+
+def _leftover(root: Path, _lock: dict[str, Any]) -> list[str]:
+    (root / LEFTOVER).write_bytes(b"half written\n")
+    return ["removed 1 leftover temporary files"]
+
+
+# Each case makes a DEMO hub pending one way and returns the lines the real run prints.
+PENDING_CASES: dict[str, PendingMaker] = {
+    "restored": _restored,
+    "created": _created,
+    "updated": _updated,
+    "deleted": _deleted,
+    "header-only": _header,
+    "leftover-alone": _leftover,
+}
+
+
+def make_pending(root: Path, make: PendingMaker) -> list[str]:
+    """Apply ``make`` to the hub at ``root`` and its lock; the real run's lines."""
+    lock: dict[str, Any] = json.loads((root / "hub.lock").read_bytes())
+    expected = make(root, lock)
+    (root / "hub.lock").write_bytes(dump_json(lock))
+    return expected
+
+
+def would(line: str) -> str:
+    """A real run's line as ``--check`` prints it."""
+    verb, rest = line.split(" ", 1)
+    base = {"restored": "restore", "created": "create", "updated": "update"}.get(verb)
+    return f"would {base or verb.removesuffix('d')} {rest}"
+
+
+class TestCheck:
+    """``hub sync --check`` writes nothing: exit 0 up to date, 4 pending, 3 on a conflict."""
+
+    def test_prints_up_to_date_when_fresh(
+        self,
+        demo_hub: Path,
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        adapter_calls: list[tuple[str, str]],
+    ) -> None:
+        before = tree_digest(demo_hub)
+        adapter_calls.clear()
+
+        result = run_sync(demo_hub, "--check")
+
+        assert (result.exit_code, result.stdout, result.stderr) == (0, "up to date\n", "")
+        assert adapter_calls == []
+        assert tree_digest(demo_hub) == before
+
+    @pytest.mark.parametrize("make", PENDING_CASES.values(), ids=PENDING_CASES.keys())
+    def test_exits_four_when_pending(
+        self,
+        demo_hub: Path,
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        adapter_calls: list[tuple[str, str]],
+        make: PendingMaker,
+    ) -> None:
+        expected = make_pending(demo_hub, make)
+        before = tree_digest(demo_hub)
+        adapter_calls.clear()
+
+        checked = run_sync(demo_hub, "--check")
+
+        assert (checked.exit_code, checked.stderr) == (4, ""), checked.output
+        assert checked.stdout.splitlines() == [would(line) for line in expected]
+        assert adapter_calls == []
+        assert tree_digest(demo_hub) == before
+        # The real run prints the same lines without ``would``, applies them, and exits 0.
+        applied = run_sync(demo_hub)
+        assert (applied.exit_code, applied.stderr) == (0, ""), applied.output
+        assert applied.stdout.splitlines() == expected
+        assert adapter_calls != []
+        assert run_sync(demo_hub, "--check").stdout == "up to date\n"
+
+    def test_prints_only_conflicts_when_conflict_and_pending(
+        self,
+        demo_hub: Path,
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        adapter_calls: list[tuple[str, str]],
+    ) -> None:
+        make_pending(demo_hub, _restored)
+        with (demo_hub / "Makefile").open("ab") as makefile:
+            makefile.write(b"local: ; @true\n")
+        before = tree_digest(demo_hub)
+        adapter_calls.clear()
+
+        for args in [("--check",), ()]:
+            result = run_sync(demo_hub, *args)
+
+            assert (result.exit_code, result.stdout) == (3, ""), result.output
+            lines = result.stderr.splitlines()
+            assert lines[:2] == ["--- Makefile (on disk)", "+++ Makefile (render)"]
+            assert "-local: ; @true" in lines
+            assert lines[-1].startswith("move the change to an extension file")
+            assert not [line for line in lines if "AGENTS.md" in line or "would" in line]
+        assert adapter_calls == []
+        assert tree_digest(demo_hub) == before
+
+
+def test_applies_pending_changes_when_not_checking(
+    demo_hub: Path,
+    demo_hub_template: Path,
+    run_sync: SyncRunner,
+    *,
+    tree_digest: TreeDigest,
+) -> None:
+    make_pending(demo_hub, _restored)
+    make_pending(demo_hub, _leftover)
+
+    result = run_sync(demo_hub)
+
+    assert (result.exit_code, result.stderr) == (0, ""), result.output
+    assert result.stdout == "restored AGENTS.md\nremoved 1 leftover temporary files\n"
+    assert tree_digest(demo_hub) == tree_digest(demo_hub_template)
