@@ -50,10 +50,15 @@ managed file (SHA-256 of the LF bytes written, executable bit), a managed link (
    entry and render; a rendered managed path on disk with no managed entry; a file or directory where a link belongs, or
    the reverse; a name in both plugins; a symlinked ancestor. Print a diff or cause per path, write nothing, exit 3. Way
    out: move the change to an extension file, restore or delete the file, re-run.
-3. Write via a temporary file and a rename, `hub.lock` last; nothing to do: `up to date`. The file adapter `lstat`s
-   every ancestor of a path it writes, deletes or compares, never follows a symlinked parent and refuses a link that
-   resolves outside the hub. Exits: 0 done; 1 error (config, merge, version, I/O); 2 usage; 3 conflict; 4 `--check`
-   (writes nothing): changes pending, creations included.
+3. Write each path through `.<name>.hub-tmp-<8 random hex>` in its folder (`O_CREAT|O_EXCL|O_NOFOLLOW`, 0o600; a link:
+   `os.symlink`), give it its final mode, `os.replace` it; `hub.lock` last. On an error the adapter removes its own temp
+   entry. A file or link (not a folder) of that shape is a leftover, never unknown or locked, removed once the plan
+   passes (init: the whole tree but `.git`; sync: planned folders). Nothing to do: `up to date`. The file adapter opens
+   the root once, checked against its real path by device and inode, and descends by `O_DIRECTORY|O_NOFOLLOW`
+   descriptors, so it never follows a symlinked ancestor of a path it reads, writes, deletes or compares; it never opens
+   a non-regular file and refuses a link resolving outside the hub (accepted risk: that check resolves by path, so a
+   folder swapped meanwhile can escape it; the root check narrows that window). Exits: 0 done; 1 error (config, merge,
+   version, I/O); 2 usage; 3 conflict; 4 `--check` (writes nothing): changes pending, creations included.
 
 `--adopt` joins a hand-made hub; re-runnable, needs no `hub.lock`, never commits. Lock paths follow sync; others, in the
 same run: equal → recorded managed; missing managed → written; seeded → recorded, created when absent (an empty
@@ -66,13 +71,18 @@ file; other conflicts are listed and refused, like a path not listed this run (e
 ### hub init
 
 `hub init <project> --repos org/a,org/b --tracker linear:TEAM --branch-prefix P [--dir PATH]` writes a schema-1
-`hub.json`: repo `dir` = name, `github` = `org/name`, `role` = `app`, checks `make check-fast` / `make check`,
-`platform.version` = the running CLI. `--author-name`/`--author-email` default to `git config user.name`/`user.email`,
-`--hub-repo` to `remote.origin.url` (git is read, never written); `--branch-prefix` has no default. A missing value
-exits 1 naming the flag. `--config PATH` validates and copies a `hub.json`; a `platform.version` other than the running
-CLI exits 1 with the pinned `uvx` command. The target may hold only `.git`, seeded files (kept) and files equal to their
-render, else exit 1 pointing to `--adopt`; a `hub.lock`, or a `hub.json` other than init's, exits 1 pointing to `hub
-sync`. Output: `created N files (M managed, K seeded)` and next steps.
+`hub.json` without defaults: repo `dir` = name, `github` = `org/name`, `role` = `app`, checks `make check-fast` / `make
+check`, `platform.version` = the running CLI. Git is read (never written) for a missing value only, in the target (else
+the cwd): `--author-name`/`--author-email` from `git config --get user.name`/`user.email`, `--hub-repo` from a GitHub
+`remote.origin.url`, never printed, read only if the target is its work tree's top and none of `GIT_DIR`,
+`GIT_WORK_TREE`, `GIT_COMMON_DIR` is set. `--branch-prefix` has no default. A missing or rejected value exits 1 naming
+its flag and why (no value, `git not found`, `git timed out`, `git could not run`). `--config PATH` checks the pin (else
+the pinned `uvx` command), schema and model, and copies it byte for byte; selected modules exit 1 until module templates
+ship. `--dir` (default: the cwd) is created after every check. The target may hold only `.git`, seeded files (kept),
+paths equal to their render and leftovers: a `hub.lock` exits 1 pointing to `hub sync`; a differing managed path, an
+unknown entry or a `hub.json` other than this run's to `hub sync --adopt`; any other problem names its cause. Output:
+`created N files (M managed, K seeded) and L links in <root>`; if any, `kept X files already there (Y seeded, Z equal to
+the render)` (`and L links`) and `removed X leftover temporary files`; next steps. Exits: 0 done, 1 error, 2 usage.
 
 ### Hooks and plugin wiring
 
@@ -147,4 +157,4 @@ move guard rules to `guard.*`/`project_guard.py` and domain rules to `AGENTS.pro
 
 ## Open questions
 
-- Temp-file naming and cleanup: the Phase 1 sync issue must fix them.
+- None.
