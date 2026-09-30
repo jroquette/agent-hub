@@ -77,7 +77,7 @@ def _pin_problem(platform: dict[str, object], *, running_version: str) -> Config
         # Digits and dots only (the pattern), so only its length needs bounding.
         return ConfigProblem(
             _VERSION_PATH,
-            f"this hub is pinned to {_cut(pinned)} but this hub command is {running_version};"
+            f"this hub is pinned to {cut_echo(pinned)} but this hub command is {running_version};"
             f" run the pinned release{_pinned_command(pinned)}",
         )
     return None
@@ -119,10 +119,10 @@ def _pinned_command(pinned: str) -> str:
 
 def _shown(value: object) -> str:
     """A value from the file as JSON text, escaped onto one line and cut to ``ECHO_LIMIT``."""
-    return _cut(one_line(json.dumps(value)))
+    return cut_echo(one_line(json.dumps(value)))
 
 
-def _cut(text: str) -> str:
+def cut_echo(text: str) -> str:
     """The escaped text, cut to ``ECHO_LIMIT`` with ``…``, never inside an escape sequence."""
     if len(text) <= ECHO_LIMIT:
         return text
