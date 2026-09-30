@@ -458,6 +458,19 @@ def test_returns_equal_findings_when_snapshot_run_twice(snapshot_of: SnapshotFac
 LISTING_PROBLEM = "git ls-files failed: fatal: detected dubious ownership"
 LISTING = frozenset({Read.HUB_LISTING})
 TRACKER, OVERRIDE = "features.tracker", "makefile.override"
+TREE_FIX = "fix the cause above so every file can be listed and read, then run hub doctor again"
+
+
+def tree_finding(rule: str) -> Finding:
+    """The one error a tree problem gives, on ``rule``: level error, path ``.``, never retuned."""
+    return Finding(
+        rule=rule,
+        severity=Severity.ERROR,
+        path=".",
+        line=None,
+        message=LISTING_PROBLEM,
+        fix=TREE_FIX,
+    )
 
 
 @pytest.mark.parametrize(
@@ -516,7 +529,7 @@ def test_reports_listing_problem_once_when_listing_rule_selected(
         path=".",
         line=None,
         message=LISTING_PROBLEM,
-        fix="fix the cause above so this folder can be listed, then run hub doctor again",
+        fix="fix the cause above so every file can be listed and read, then run hub doctor again",
     )
 
 
@@ -527,7 +540,7 @@ def test_reports_listing_problem_once_when_listing_rule_selected(
         pytest.param({TRACKER: {"enabled": False}}, [], id="reader-disabled"),
     ],
 )
-def test_reports_no_listing_problem_when_no_selected_rule_reads_listing(
+def test_reports_tree_problem_on_first_rule_when_no_selected_rule_reads_listing(
     snapshot_of: SnapshotFactory, *, rules: dict[str, Any], only: list[str]
 ) -> None:
     spies = Spies()
@@ -543,7 +556,7 @@ def test_reports_no_listing_problem_when_no_selected_rule_reads_listing(
     findings = run_rules(selected(registry, config=config, only=only), failed)
 
     assert spies.calls == ["config.schema", "lock.drift"]
-    assert findings == ()
+    assert findings == (tree_finding("lock.drift"),)
 
 
 def test_reports_no_listing_problem_when_listing_made(snapshot_of: SnapshotFactory) -> None:
@@ -571,3 +584,78 @@ def test_reports_no_listing_problem_when_config_failed(snapshot_of: SnapshotFact
 
     assert spies.calls == ["config.schema"]
     assert [(f.rule, f.path) for f in findings] == [("config.schema", "hub.json")]
+
+
+READ_PROBLEM = "could not read the files: .claude/settings.json: Permission denied"
+
+
+def a_registry_without_listing_readers(spies: Spies) -> tuple[Rule, ...]:
+    # makefile.override is registered before lock.drift, so "first" means first by id.
+    return (
+        spies.rule("config.schema"),
+        spies.rule("platform.version"),
+        spies.rule(OVERRIDE),
+        spies.rule(
+            "lock.drift",
+            reads=frozenset({Read.LOCK_PATHS}),
+            emits=[(Severity.WARNING, "hub.lock", None, "not adopted")],
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("only", "rule"),
+    [
+        pytest.param([OVERRIDE], OVERRIDE, id="one-rule-named"),
+        pytest.param([], "lock.drift", id="first-by-id"),
+    ],
+)
+def test_reports_tree_problem_on_first_hub_rule_when_no_listing_reader_selected(
+    snapshot_of: SnapshotFactory, *, only: list[str], rule: str
+) -> None:
+    spies = Spies()
+    registry = a_registry_without_listing_readers(spies)
+    config = a_config(rules={"lock.drift": {"severity": "info"}})
+    snapshot = snapshot_of(config=config)
+    failed = replace(snapshot, hub=replace(snapshot.hub, problem=READ_PROBLEM))
+
+    findings = run_rules(selected(registry, config=config, only=only), failed)
+
+    problem = [finding for finding in findings if finding.path == "."]
+    assert problem == [replace(tree_finding(rule), message=READ_PROBLEM)]
+    assert all(f.severity is Severity.INFO for f in findings if f.path == "hub.lock")
+
+
+@pytest.mark.parametrize("only", [["config.schema"], ["platform.version"]])
+def test_drops_tree_problem_when_only_config_rules_selected(
+    snapshot_of: SnapshotFactory, only: list[str]
+) -> None:
+    spies = Spies()
+    registry = a_registry_without_listing_readers(spies)
+    config = a_config()
+    snapshot = snapshot_of(config=config)
+    failed = replace(snapshot, hub=replace(snapshot.hub, problem=READ_PROBLEM))
+
+    findings = run_rules(selected(registry, config=config, only=only), failed)
+
+    assert set(spies.calls) <= {"config.schema", "platform.version"}
+    assert findings == ()
+
+
+def test_prefers_listing_reader_when_earlier_rule_reads_no_listing(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    spies = Spies()
+    registry = (
+        spies.rule("config.schema"),
+        spies.rule("attribution.ai"),
+        spies.rule(TRACKER, reads=LISTING),
+    )
+    config = a_config()
+    snapshot = snapshot_of(config=config)
+    failed = replace(snapshot, hub=replace(snapshot.hub, problem=LISTING_PROBLEM))
+
+    findings = run_rules(selected(registry, config=config), failed)
+
+    assert TRACKER > "attribution.ai"
+    assert findings == (tree_finding(TRACKER),)
