@@ -1,4 +1,4 @@
-"""What ``hub doctor`` knows of a hub: its config (or why it failed), its lock and its files.
+"""What ``hub doctor`` knows of a hub: its config (or why it failed), lock, files, base hooks.
 
 The cli fills a ``DoctorSnapshot``; rules read it and never touch the disk. Paths are relative
 POSIX paths from the hub root.
@@ -11,6 +11,7 @@ from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.hub_files.hub_lock import HUB_LOCK_PATH, HubLock
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, TreeEntry
+from agent_hub.core.json_form import JsonValue
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -65,12 +66,15 @@ class DoctorSnapshot:
 
     ``lock`` is ``None`` when it was not read: no selected rule reads it, the config failed, or
     ``hub.lock`` could not be read (the hub's files then say why, as ``hub.lock`` is a fixed path).
+    ``base_hooks`` is the ``hooks`` block of the running release's managed settings, ``None``
+    when no selected rule reads it or the config failed.
     """
 
     config: HubConfig | ConfigFailure
     running_version: str
     hub: HubFiles
     lock: LockState | None
+    base_hooks: Mapping[str, JsonValue] | None
 
     @property
     def hub_config(self) -> HubConfig:

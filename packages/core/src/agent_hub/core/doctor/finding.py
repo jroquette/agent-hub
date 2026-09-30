@@ -39,6 +39,7 @@ class Read(StrEnum):
     LOCK_PATHS = "lock_paths"
     HUB_LISTING = "hub_listing"
     REPOS = "repos"
+    BASE_HOOKS = "base_hooks"
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

@@ -444,3 +444,27 @@ def test_reports_read_problem_not_adoption_when_lock_drift_cannot_read(
         " Fix: fix the cause above so every file can be listed and read, then run hub doctor again",
         ONE_ERROR,
     ]
+
+
+def test_reports_settings_weakening_when_project_disables_hooks(
+    demo_hub: Path, run_doctor: DoctorRunner, path_reads: list[PathRead]
+) -> None:
+    # The retimed group is found only against the release's base hooks block.
+    settings_path = demo_hub / ".claude/settings.json"
+    settings = json.loads(settings_path.read_bytes())
+    settings["hooks"]["Stop"][0]["hooks"][0]["timeout"] = 1
+    settings_path.write_bytes(dump_json(settings))
+    (demo_hub / ".claude/settings.project.json").write_bytes(dump_json({"disableAllHooks": False}))
+    path_reads.clear()
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "settings.weakening"), exit_code=1)
+
+    assert lines == [
+        "error settings.weakening .claude/settings.json: hooks.Stop: a base hook group is missing"
+        " or changed Fix: run hub sync",
+        "error settings.weakening .claude/settings.project.json: disableAllHooks: refused: a"
+        " project cannot set this key (it weakens the harness)"
+        " Fix: remove disableAllHooks from .claude/settings.project.json",
+        "2 errors, 0 warnings, 0 infos",
+    ]
+    assert [read for read in path_reads if read.call == "Popen"] == []
