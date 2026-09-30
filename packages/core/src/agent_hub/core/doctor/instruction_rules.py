@@ -1,8 +1,8 @@
 """``instructions.size`` and ``instructions.duplicates``: short instruction files, no repeats.
 
 The port of the hub's old ``agent_config_lint.py`` checks over the listed regular instruction
-files (``config_lint``; spec AC-11.19, AC-11.20, Q-6). Lines are counted as the old lint read
-them in text mode: ``\\n``, ``\\r\\n`` and a lone ``\\r`` each end one line.
+files (``config_lint``; spec AC-11.19, AC-11.20, Q-6). Lines are ``config_lint.text_lines``
+(E29): ``\\n`` and ``\\r\\n`` end a line, a lone ``\\r`` does not.
 
 - Size: a file over its line limit is flagged, with no line number. The defaults are
   ``AGENTS.md`` 100, ``CLAUDE.md`` 150 and ``CLAUDE.local.md`` 50 at the root and 80 for every
@@ -26,9 +26,9 @@ from fnmatch import translate
 from types import MappingProxyType
 from typing import Final
 
-from agent_hub.core.doctor.config_lint import file_text, instruction_files
+from agent_hub.core.doctor.config_lint import file_text, instruction_files, text_lines
 from agent_hub.core.doctor.finding import Finding, Read, Rule
-from agent_hub.core.doctor.snapshot import DoctorSnapshot, lines_of
+from agent_hub.core.doctor.snapshot import DoctorSnapshot
 from agent_hub.core.hub_config.doctor_rules import (
     INSTRUCTIONS_DUPLICATES_RULE,
     INSTRUCTIONS_SIZE_RULE,
@@ -79,11 +79,6 @@ def _limits(max_lines: Mapping[str, int]) -> _Limits:
 _DEFAULT_LIMITS: Final = _limits(DEFAULT_MAX_LINES)
 
 
-def text_mode_lines(text: str) -> tuple[str, ...]:
-    """The lines of a text as text mode reads them: ``\\r\\n`` or a lone ``\\r`` ends one too."""
-    return lines_of(text.replace("\r\n", "\n").replace("\r", "\n"))
-
-
 def _instructions_size(snapshot: DoctorSnapshot) -> Iterator[Finding]:
     settings = snapshot.hub_config.doctor.rules.instructions_size
     max_lines = None if settings is None else settings.max_lines
@@ -97,7 +92,7 @@ def _instructions_size(snapshot: DoctorSnapshot) -> Iterator[Finding]:
         text = file_text(snapshot.hub.entries.get(path))
         if not isinstance(text, str):
             continue
-        count = len(text_mode_lines(text))
+        count = len(text_lines(text))
         if count > limit:
             yield INSTRUCTIONS_SIZE.finding(
                 path=path, message=f"{count} lines, limit {limit}", fix=SIZE_FIX
@@ -111,7 +106,7 @@ def _instructions_duplicates(snapshot: DoctorSnapshot) -> Iterator[Finding]:
         text = file_text(snapshot.hub.entries.get(path))
         if not isinstance(text, str):
             continue
-        for number, line in enumerate(text_mode_lines(text), start=1):
+        for number, line in enumerate(text_lines(text), start=1):
             key = _normalized(line)
             if key is None:
                 continue
