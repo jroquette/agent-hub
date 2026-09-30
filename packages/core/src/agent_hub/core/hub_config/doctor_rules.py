@@ -26,7 +26,9 @@ RULES_FRONTMATTER_RULE: Final = "rules.frontmatter"
 SETTINGS_VALID_RULE: Final = "settings.valid"
 SETTINGS_WEAKENING_RULE: Final = "settings.weakening"
 PERMISSIONS_BYPASS_RULE: Final = "permissions.bypass"
+SECRETS_CONFIG_RULE: Final = "secrets.config"
 MCP_PINNED_RULE: Final = "mcp.pinned"
+ATTRIBUTION_AI_RULE: Final = "attribution.ai"
 GUARD_EXTENSION_RULE: Final = "hooks.guard-extension"
 MAKEFILE_OVERRIDE_RULE: Final = "makefile.override"
 FEATURES_TRACKER_RULE: Final = "features.tracker"
@@ -43,9 +45,9 @@ RULE_IDS: Final = (
     SETTINGS_VALID_RULE,
     SETTINGS_WEAKENING_RULE,
     PERMISSIONS_BYPASS_RULE,
-    "secrets.config",
+    SECRETS_CONFIG_RULE,
     MCP_PINNED_RULE,
-    "attribution.ai",
+    ATTRIBUTION_AI_RULE,
     "brain.leak",
     GUARD_EXTENSION_RULE,
     MAKEFILE_OVERRIDE_RULE,

@@ -20,6 +20,7 @@ from agent_hub.core.doctor.lock_rules import LOCK_DRIFT
 from agent_hub.core.doctor.makefile_rules import MAKEFILE_OVERRIDE
 from agent_hub.core.doctor.permission_rules import MCP_PINNED, PERMISSIONS_BYPASS, SETTINGS_VALID
 from agent_hub.core.doctor.settings_rules import SETTINGS_WEAKENING
+from agent_hub.core.doctor.text_rules import ATTRIBUTION_AI, SECRETS_CONFIG
 
 REGISTRY: Final[tuple[Rule, ...]] = (
     CONFIG_SCHEMA,
@@ -32,7 +33,9 @@ REGISTRY: Final[tuple[Rule, ...]] = (
     SETTINGS_VALID,
     SETTINGS_WEAKENING,
     PERMISSIONS_BYPASS,
+    SECRETS_CONFIG,
     MCP_PINNED,
+    ATTRIBUTION_AI,
     GUARD_EXTENSION,
     MAKEFILE_OVERRIDE,
     FEATURES_TRACKER,
