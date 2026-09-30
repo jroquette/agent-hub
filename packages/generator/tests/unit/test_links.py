@@ -172,7 +172,7 @@ def test_skips_project_name_when_base_link_taken() -> None:
     ("agent", "skill"),
     [
         pytest.param("Planner.md", "RECALL", id="case"),
-        pytest.param("plánner.md", "récall", id="nfd"),
+        pytest.param("pla\u0301nner.md", "re\u0301call", id="nfd"),
     ],
 )
 def test_skips_project_name_when_base_link_taken_under_another_case_or_form(
@@ -181,9 +181,9 @@ def test_skips_project_name_when_base_link_taken_under_another_case_or_form(
     """E37: names equal after NFC and casefold are one entry on APFS; the base keeps its link."""
     base = plugin_links(
         [
-            a_file("plugin/hub-workflow/agents/plánner.md"),
+            a_file("plugin/hub-workflow/agents/pl\u00e1nner.md"),
             a_file("plugin/hub-workflow/agents/planner.md"),
-            a_file("plugin/hub-workflow/skills/récall/SKILL.md"),
+            a_file("plugin/hub-workflow/skills/r\u00e9call/SKILL.md"),
             a_file("plugin/hub-workflow/skills/recall/SKILL.md"),
         ]
     )

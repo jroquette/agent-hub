@@ -38,6 +38,16 @@ def render_hub(config: HubConfig, extensions: ExtensionInputs = NO_EXTENSIONS) -
     return render_entries(config, REGISTRY, extensions)
 
 
+def project_json_siblings(config: HubConfig) -> tuple[str, ...]:
+    """The ``X.project.json`` paths ``render_hub`` merges for this config, sorted (spec Q-18).
+
+    Each is a seeded built entry whose managed built ``X.json`` renders too: the only paths the
+    cli may pass as siblings in ``ExtensionInputs``.
+    """
+    selected = dict(_selected(config, REGISTRY))
+    return tuple(sorted(path for path in selected if _paired_build(path, selected) is not None))
+
+
 def render_entries(
     config: HubConfig,
     entries: Iterable[TemplateEntry],
@@ -57,26 +67,9 @@ def render_entries(
     keep a name both plugins hold.
     """
     mapping = substitution_mapping(config)
-    path_mapping = {"project_name": config.project.name}
-    # Dumped by alias: the closed JSON ids (``contract-sync``) that ``TemplateEntry.module`` uses.
-    selected_modules = config.modules.model_dump(exclude_none=True).keys()
-    selected = [
-        entry for entry in entries if entry.module is None or entry.module in selected_modules
-    ]
-    rendered = [
-        _render(
-            entry,
-            render_template(entry.path, path_mapping, source=entry.path),
-            config=config,
-            mapping=mapping,
-        )
-        for entry in selected
-    ]
-    merged = _merged_json(
-        {file.path: entry for file, entry in zip(rendered, selected, strict=True)},
-        config=config,
-        extensions=extensions,
-    )
+    selected = _selected(config, entries)
+    rendered = [_render(entry, path, config=config, mapping=mapping) for path, entry in selected]
+    merged = _merged_json(dict(selected), config=config, extensions=extensions)
     rendered = [
         file.model_copy(update={"content": merged[file.path]}) if file.path in merged else file
         for file in rendered
@@ -96,25 +89,51 @@ def render_entries(
     return RenderedHub(files=tuple(sorted(rendered, key=lambda file: file.path)), links=links)
 
 
+def _selected(
+    config: HubConfig, entries: Iterable[TemplateEntry]
+) -> list[tuple[str, TemplateEntry]]:
+    """The entries this config selects, each with its rendered path, in the given order."""
+    path_mapping = {"project_name": config.project.name}
+    # Dumped by alias: the closed JSON ids (``contract-sync``) that ``TemplateEntry.module`` uses.
+    selected_modules = config.modules.model_dump(exclude_none=True).keys()
+    return [
+        (render_template(entry.path, path_mapping, source=entry.path), entry)
+        for entry in entries
+        if entry.module is None or entry.module in selected_modules
+    ]
+
+
+def _target_of(sibling: str) -> str:
+    return sibling.removesuffix(PROJECT_JSON_SUFFIX) + ".json"
+
+
+def _paired_build(path: str, selected: Mapping[str, TemplateEntry]) -> JsonBuilder | None:
+    """The builder of the managed built ``X.json`` when ``path`` is its seeded built sibling."""
+    if not path.endswith(PROJECT_JSON_SUFFIX):
+        return None
+    seeded, managed = selected.get(path), selected.get(_target_of(path))
+    if (
+        seeded is not None
+        and seeded.build is not None
+        and seeded.ownership is Ownership.SEEDED
+        and managed is not None
+        and managed.ownership is Ownership.MANAGED
+    ):
+        return managed.build
+    return None
+
+
 def _merged_json(
     selected: Mapping[str, TemplateEntry], *, config: HubConfig, extensions: ExtensionInputs
 ) -> dict[str, bytes]:
     """The merged bytes of each ``X.json`` whose sibling ``extensions`` holds, by ``X.json``."""
     merged: dict[str, bytes] = {}
     for sibling, content in extensions.project_json.items():
-        target = sibling.removesuffix(PROJECT_JSON_SUFFIX) + ".json"
-        seeded, managed = selected.get(sibling), selected.get(target)
-        if (
-            seeded is None
-            or seeded.build is None
-            or seeded.ownership is not Ownership.SEEDED
-            or managed is None
-            or managed.build is None
-            or managed.ownership is not Ownership.MANAGED
-        ):
+        build = _paired_build(sibling, selected)
+        if build is None:
             msg = f"{sibling}: not a seeded sibling of a managed built JSON file in this render"
             raise ValueError(msg)
-        merged[target] = merge_json(managed.build(config), content, path=sibling)
+        merged[_target_of(sibling)] = merge_json(build(config), content, path=sibling)
     return merged
 
 
