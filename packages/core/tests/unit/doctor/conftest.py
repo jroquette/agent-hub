@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping
 
 import pytest
 
-from agent_hub.core.doctor.snapshot import ConfigFailure, DoctorSnapshot, HubFiles
+from agent_hub.core.doctor.snapshot import ConfigFailure, DoctorSnapshot, HubFiles, LockState
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, LinkEntry, TreeEntry
 from agent_hub.core.testing.builders import a_hub_document
@@ -18,7 +18,9 @@ type SnapshotFactory = Callable[..., DoctorSnapshot]
 def snapshot_of() -> SnapshotFactory:
     """Build a ``DoctorSnapshot``: regular files by bytes, links by target, the builder's config.
 
-    ``listed`` is the hub listing; ``None`` lists every file and link given, sorted.
+    ``listed`` is the hub listing; ``None`` lists every file and link given, sorted. ``entries``
+    adds entries of any kind (an executable file, a folder); ``lock`` is the lock read, ``None``
+    when it was not; ``problem`` is why the hub's files could not all be read.
     """
 
     def build(
@@ -27,22 +29,27 @@ def snapshot_of() -> SnapshotFactory:
         links: Mapping[str, str] | None = None,
         config: HubConfig | ConfigFailure | None = None,
         listed: tuple[str, ...] | None = None,
+        entries: Mapping[str, TreeEntry] | None = None,
+        lock: LockState | None = None,
+        problem: str | None = None,
     ) -> DoctorSnapshot:
-        entries: dict[str, TreeEntry] = {
+        found: dict[str, TreeEntry] = {
             path: FileEntry(executable=False, content=content)
             for path, content in (files or {}).items()
         }
-        entries |= {
+        found |= {
             path: LinkEntry(target=target, outside=False) for path, target in (links or {}).items()
         }
+        found |= entries or {}
         return DoctorSnapshot(
             config=HubConfig.model_validate(a_hub_document()) if config is None else config,
             running_version=RUNNING_VERSION,
             hub=HubFiles(
-                entries=entries,
-                listed=tuple(sorted(entries)) if listed is None else listed,
-                problem=None,
+                entries=found,
+                listed=tuple(sorted(found)) if listed is None else listed,
+                problem=problem,
             ),
+            lock=lock,
         )
 
     return build

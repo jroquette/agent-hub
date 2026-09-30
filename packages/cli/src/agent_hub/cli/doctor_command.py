@@ -76,7 +76,9 @@ def doctor(
     for note in selection.notes:
         typer.echo(note, err=True)
     hub = _NO_FILES if isinstance(config, ConfigFailure) else _hub_files(root, config, selection)
-    findings = run_rules(selection, DoctorSnapshot(config=config, running_version=running, hub=hub))
+    # No rule of this commit reads the lock.
+    snapshot = DoctorSnapshot(config=config, running_version=running, hub=hub, lock=None)
+    findings = run_rules(selection, snapshot)
     if as_json:
         typer.echo(report_json(findings), nl=False)
     else:
