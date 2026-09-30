@@ -16,6 +16,7 @@ The product and its phases are in [SPEC.md](../SPEC.md). Phase 1 is designed as 
 
 - Every subject file has exactly the sections Purpose, Contract, Invariants, Decisions and Open questions, in that
   order, and stays at or under 150 lines.
+- `hub-generator.md` may reach 160 lines: it holds three commands (`hub init`, `hub sync`, `--adopt`).
 - A contract is stated once, in its subject file, and linked from elsewhere. The reasons live in the ADRs.
 - A sketch is rewritten as a contract when its phase starts.
 

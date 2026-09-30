@@ -42,7 +42,10 @@ real Python 3.9 (the system `python3` on macOS); without a 3.9 on `PATH` that ca
 characterization case compares a hook's or script's exit code, stdout, stderr, files and calls to fake tools with
 `packages/generator/tests/integration/golden/<file>/<case>.golden`, stored byte-exact (`-text` in `.gitattributes`).
 `GOLDEN_UPDATE=1` rewrites the goldens (refused under `CI`; review and commit the diff) and `GOLDEN_KEEP=1` keeps each
-case's temporary root and prints its path.
+case's temporary root and prints its path. The `hub init` golden,
+`packages/cli/tests/integration/golden/init/demo.hub.lock`, is the synthetic `demo` init's `hub.lock` with
+`platform_version` as `<VERSION>` and every hash kept, so a template change shows as a reviewed hash diff; it is `-text`
+too, and `GOLDEN_UPDATE=1` rewrites it the same way (the cli conftest's own harness, refused under `CI`).
 
 ## Layout
 
@@ -174,9 +177,11 @@ Notes:
 - `packages/storage/tests/integration/test_migrations.py` upgrades a `tmp_path` database to `head` and downgrades it
   to `base` through `agent_hub.storage.migration.alembic_config`, checks that `alembic check` finds no pending changes,
   covers the offline (`--sql`) mode of `env.py` and runs `python -m agent_hub.storage.migration` as a module.
-- `tests/e2e/test_hub_cli.py` installs `hub` once per module (the `installed_hub` fixture in `tests/e2e/conftest.py`),
+- `tests/e2e/test_hub_cli.py` installs `hub` once per module (the `installed_hub` fixture in `tests/e2e/conftest.py`,
+  which rebuilds every workspace package, so a stale uv cache entry is never installed),
   then checks `hub --version` and runs `hub collect` twice with `HOME` and `XDG_DATA_HOME` under `tmp_path` and a working
   directory outside the repo: the second run reports only duplicates, and the default database is at the Alembic head.
-  This proves the installed package ships and applies its own migrations.
+  This proves the installed package ships and applies its own migrations. It also runs `hub init` of the `demo` flags
+  and checks that the installed `hub` writes the same `hub.lock` as an in-process run.
 - Redirect gate output to a file and check the exit code: `make check > check.log 2>&1; echo $?`. `make check | tail`
   hides a failure.

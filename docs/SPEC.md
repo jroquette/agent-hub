@@ -55,6 +55,8 @@ The hub's logic lives in the `hub` CLI, versioned and tested in this repo; the g
 
 The generator renders a hub in memory as a `RenderedHub`: its files (`RenderedFile`) and its symlinks (`RenderedLink`, one per base or project plugin agent and skill under `.claude/agents/` and `.claude/skills/`), contract types in `agent_hub.core.hub_files`. Besides the base rules and the brain skeleton, it ships the managed base plugin `plugin/hub-workflow/` (agents, skills, hooks and their reader), the managed `.claude/settings.json` that runs those hooks, the seeded project plugin `plugin/<project>/` with its guard extension stub, and the transcript mining, recall and retro metrics scripts.
 
+`hub init` writes the rendered hub, a seeded `hub.json` and, last, `hub.lock` (v1), which records each managed file's SHA-256 and executable bit, each managed link's target and each seeded path. The init planner and the lock model are pure core code; the file adapter in `agent_hub.generator` reads the target tree and writes through temporary files in the same folder, never through a symlinked folder. `hub sync` (next) reads the same lock.
+
 ```
 hub init <project> --repos org/backend,org/frontend --tracker linear:LOK --branch-prefix jdoe/
 hub init --config hub.json   # generates from an existing project config
