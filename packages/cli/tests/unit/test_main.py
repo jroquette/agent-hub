@@ -33,6 +33,8 @@ def test_shows_arguments_when_init_help_requested(
     result = CliRunner().invoke(app, ["init", "--help"], env={"COLUMNS": "120"})
 
     assert result.exit_code == 0
+    # Self-check: the patch took effect, so both renderings are really tested.
+    assert ("\N{BOX DRAWINGS LIGHT VERTICAL}" in result.stdout) is use_rich
     # Under CI (GITHUB_ACTIONS) Typer colours the help, splitting option names with ANSI codes.
     for name in (
         "PROJECT",

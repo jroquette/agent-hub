@@ -271,6 +271,7 @@ def test_writes_identical_trees_when_demo_initialized_twice(
             "HOME": str(tmp_path / "child-home"),
             "PYTHONHASHSEED": CHILD_HASH_SEED,
             "TZ": CHILD_TZ,
+            "LC_ALL": "C",
         }
     )
     assert not {"GOLDEN_UPDATE", "CI"} & env.keys()
