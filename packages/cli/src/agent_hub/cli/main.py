@@ -6,7 +6,8 @@ from typing import Annotated
 import typer
 
 from agent_hub.cli.collect import collect
-from agent_hub.cli.generator import doctor, init
+from agent_hub.cli.doctor_command import doctor
+from agent_hub.cli.generator import init
 from agent_hub.cli.sync_command import sync
 
 app = typer.Typer(name="hub", no_args_is_help=True)
