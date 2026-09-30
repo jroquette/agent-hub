@@ -775,6 +775,61 @@ def test_raises_value_error_when_sibling_not_rendered_pair(
         render_hub(demo_config, extensions)
 
 
+def a_json_pair(
+    *, sibling: Ownership, target: Ownership, sibling_built: bool = True, target_built: bool = True
+) -> list[TemplateEntry]:
+    """A ``x.project.json`` and ``x.json`` entry pair: each built or from a template source."""
+
+    def entry(path: str, ownership: Ownership, *, built: bool) -> TemplateEntry:
+        if built:
+            return TemplateEntry(
+                path=path, build=lambda _: {"a": 1}, kind=Kind.GENERIC, ownership=ownership
+            )
+        return a_template_entry(path, "templates/Makefile.project.tmpl", ownership=ownership)
+
+    return [
+        entry("x.project.json", sibling, built=sibling_built),
+        entry("x.json", target, built=target_built),
+    ]
+
+
+def test_merges_custom_pair_when_sibling_seeded_and_target_managed(
+    demo_config: HubConfig,
+) -> None:
+    entries = a_json_pair(sibling=Ownership.SEEDED, target=Ownership.MANAGED)
+    extensions = ExtensionInputs(project_json={"x.project.json": b'{"b": 2}'}, agents=(), skills=())
+
+    rendered = {file.path: file for file in render_entries(demo_config, entries, extensions).files}
+
+    assert json.loads(rendered["x.json"].content) == {"a": 1, "b": 2}
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        a_json_pair(sibling=Ownership.MANAGED, target=Ownership.MANAGED),
+        a_json_pair(sibling=Ownership.SEEDED, target=Ownership.SEEDED),
+        a_json_pair(sibling=Ownership.SEEDED, target=Ownership.MANAGED, sibling_built=False),
+        a_json_pair(sibling=Ownership.SEEDED, target=Ownership.MANAGED, target_built=False),
+        a_json_pair(sibling=Ownership.SEEDED, target=Ownership.MANAGED)[:1],
+    ],
+    ids=[
+        "sibling-managed",
+        "target-seeded",
+        "sibling-from-template",
+        "target-from-template",
+        "target-not-rendered",
+    ],
+)
+def test_raises_value_error_when_custom_pair_not_seeded_and_managed_built(
+    demo_config: HubConfig, entries: list[TemplateEntry]
+) -> None:
+    extensions = ExtensionInputs(project_json={"x.project.json": b"{}"}, agents=(), skills=())
+
+    with pytest.raises(ValueError, match=r"^x\.project\.json: not a seeded sibling "):
+        render_entries(demo_config, entries, extensions)
+
+
 def test_links_project_entries_when_extensions_name_them(demo_config: HubConfig) -> None:
     extensions = ExtensionInputs(
         project_json={}, agents=("planner.md", "reviewer.md"), skills=("review",)
