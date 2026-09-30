@@ -591,6 +591,10 @@ class TestBudget:
     def test_bounds_run_when_default_budget(self) -> None:
         assert frontmatter_rule.MAX_GLOB_CHARACTERS == 64_000_000
 
+    def test_bounds_glob_when_design_limits_read(self) -> None:
+        # E32 states the numbers; the bound tests build from the constants, so pin them here.
+        assert (MAX_GLOB_LENGTH, MAX_GLOB_EXPANSIONS) == (256, 64)
+
 
 def spent(counters: list[MatchCounter]) -> int:
     """The budget the file patterns' matches spent: each path's length + 1."""
