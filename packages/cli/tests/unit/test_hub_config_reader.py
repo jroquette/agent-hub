@@ -1,16 +1,19 @@
+import contextlib
 import json
 import os
+import signal
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from importlib.metadata import version
 from pathlib import Path
+from types import FrameType
 from typing import Any
 
 import pytest
 import typer
 
-from agent_hub.cli.hub_config_reader import load_hub_config_or_exit
+from agent_hub.cli.hub_config_reader import load_hub_config_or_exit, load_hub_json_or_exit
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing.builders import a_hub_document
 
@@ -103,6 +106,53 @@ def test_keeps_each_error_on_one_line_when_value_has_newline(
     assert lines == ['hub.json: ["a\\nhub.json: forged"]: Extra inputs are not permitted']
 
 
+def test_returns_exact_bytes_when_hub_json_loaded(tmp_path: Path) -> None:
+    document = a_pinned_document()
+    document["project"]["author_name"] = "Zoë Ångström"
+    content = json.dumps(document, indent=2, ensure_ascii=False).replace("\n", "\r\n").encode()
+    path = tmp_path / "hub.json"
+    path.write_bytes(content)
+
+    loaded = load_hub_json_or_exit(path)
+
+    assert loaded.content == content
+    assert b"\r\n" in loaded.content
+    assert "Zoë Ångström".encode() in loaded.content
+    assert loaded.config == HubConfig.model_validate(document)
+
+
+def test_reads_file_once_when_hub_json_loaded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The reader opens the file by descriptor and reads from it: one open is one read.
+    path = write_document(tmp_path, a_pinned_document())
+    real_open = os.open
+    calls: list[Path] = []
+
+    def spy(opened: Any, *args: Any, **kwargs: Any) -> int:
+        calls.append(Path(opened))
+        return real_open(opened, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", spy)
+
+    loaded = load_hub_json_or_exit(path)
+
+    assert calls == [path]
+    assert loaded.content == path.read_bytes()
+
+
+def test_counts_lines_as_before_when_file_uses_bare_carriage_returns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The reader used to read text with universal newlines, so a bare CR ends a line in messages.
+    path = tmp_path / "hub.json"
+    path.write_bytes(b'{\r"schema_version": }')
+
+    lines = stderr_lines_on_exit(path, capsys)
+
+    assert lines == ["hub.json: $: not valid JSON: Expecting value at line 2 column 19"]
+
+
 LONG_INTEGER = b"1" * 5000
 TOO_MANY_DIGITS = (
     "not valid JSON here: a number has more than 4300 digits, which this reader does not accept"
@@ -113,7 +163,7 @@ TOO_MANY_DIGITS = (
     ("content", "reason"),
     [
         (None, "cannot read {path}: No such file or directory"),
-        (b"\xff\xfe{}", "not UTF-8 text: "),
+        (b"\xff\xfe{}", "not UTF-8 text: byte 0 cannot be decoded"),
         (b'{"schema_version": 1,', "not valid JSON: "),
         (b"[]", "must be a JSON object"),
         # Whether this depth raises RecursionError depends on the C stack size, so both outcomes are
@@ -149,6 +199,22 @@ def test_exits_with_root_line_when_file_missing_or_not_json(
     assert len(lines) == 1
     assert lines[0].startswith(f"hub.json: $: {reason.format(path=json.dumps(str(path)))}")
     assert "Traceback" not in lines[0]
+
+
+@pytest.mark.parametrize(
+    ("content", "offset"),
+    [(b"\xff\xfe{}", 0), (b'{"a": "\xff"}', 7)],
+    ids=["first-byte", "inside-string"],
+)
+def test_names_first_bad_byte_when_file_not_utf8(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], *, content: bytes, offset: int
+) -> None:
+    path = tmp_path / "hub.json"
+    path.write_bytes(content)
+
+    lines = stderr_lines_on_exit(path, capsys)
+
+    assert lines == [f"hub.json: $: not UTF-8 text: byte {offset} cannot be decoded"]
 
 
 def test_exits_with_root_line_when_nesting_exceeds_recursion_limit(
@@ -235,3 +301,95 @@ def test_exits_with_root_line_when_path_not_regular_file(
     assert completed.stderr == (
         f"hub.json: $: cannot read {json.dumps(str(path))}: not a regular file\n"
     )
+
+
+# A read blocked on a FIFO has hung: no load of a small file takes this long.
+HANG_SECONDS = 5
+
+
+class HungError(Exception):
+    """The alarm fired: the loader blocked."""
+
+
+@contextlib.contextmanager
+def alarm_guard(seconds: int) -> Iterator[None]:
+    """Fail with ``HungError`` if the block runs longer than ``seconds``."""
+
+    def fire(signum: int, frame: FrameType | None) -> None:
+        raise HungError
+
+    previous = signal.signal(signal.SIGALRM, fire)
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def test_exits_with_root_line_when_file_swapped_for_fifo_after_check(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = write_document(tmp_path, a_pinned_document())
+    is_file = Path.is_file
+
+    def swap_after_check(self: Path, *args: Any, **kwargs: Any) -> bool:
+        # The check sees a regular file; a FIFO with no writer takes its place right after.
+        found = is_file(self, *args, **kwargs)
+        if self == path:
+            path.unlink()
+            os.mkfifo(path)
+        return found
+
+    monkeypatch.setattr(Path, "is_file", swap_after_check)
+
+    with alarm_guard(HANG_SECONDS):
+        lines = stderr_lines_on_exit(path, capsys)
+
+    assert lines == [f"hub.json: $: cannot read {json.dumps(str(path))}: not a regular file"]
+
+
+def open_descriptors() -> int:
+    """How many descriptors the process holds (``/dev/fd`` lists them on Linux and macOS)."""
+    return len(os.listdir("/dev/fd"))
+
+
+def swap_for_fifo_after_check(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    is_file = Path.is_file
+
+    def swap(self: Path, *args: Any, **kwargs: Any) -> bool:
+        found = is_file(self, *args, **kwargs)
+        if self == path:
+            path.unlink()
+            os.mkfifo(path)
+        return found
+
+    monkeypatch.setattr(Path, "is_file", swap)
+
+
+def make_invalid_json(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path.write_text("{", encoding="utf-8")
+
+
+def keep_valid(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The file stays a valid, pinned hub.json."""
+
+
+@pytest.mark.parametrize(
+    "prepare",
+    [swap_for_fifo_after_check, make_invalid_json, keep_valid],
+    ids=["fifo-swapped-in", "invalid-json", "valid"],
+)
+def test_closes_descriptor_when_hub_json_loaded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    prepare: Callable[[Path, pytest.MonkeyPatch], None],
+) -> None:
+    path = write_document(tmp_path, a_pinned_document())
+    prepare(path, monkeypatch)
+    before = open_descriptors()
+
+    with alarm_guard(HANG_SECONDS), contextlib.suppress(typer.Exit):
+        load_hub_json_or_exit(path)
+
+    assert open_descriptors() == before
