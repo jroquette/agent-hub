@@ -21,7 +21,9 @@ def snapshot_of() -> SnapshotFactory:
 
     ``listed`` is the hub listing; ``None`` lists every file and link given, sorted. ``entries``
     adds entries of any kind (an executable file, a folder); ``lock`` is the lock read, ``None``
-    when it was not; ``problem`` is why the hub's files could not all be read; ``base_hooks`` is
+    when it was not; ``problem`` is why the hub's files could not all be listed or read, and
+    ``paths_read`` whether every fixed and lock path was read (by default, when no ``problem``
+    is given); ``base_hooks`` is
     the release's base hooks block, ``None`` when it was not built.
     """
 
@@ -34,6 +36,7 @@ def snapshot_of() -> SnapshotFactory:
         entries: Mapping[str, TreeEntry] | None = None,
         lock: LockState | None = None,
         problem: str | None = None,
+        paths_read: bool | None = None,
         base_hooks: Mapping[str, JsonValue] | None = None,
     ) -> DoctorSnapshot:
         found: dict[str, TreeEntry] = {
@@ -51,6 +54,7 @@ def snapshot_of() -> SnapshotFactory:
                 entries=found,
                 listed=tuple(sorted(found)) if listed is None else listed,
                 problem=problem,
+                paths_read=problem is None if paths_read is None else paths_read,
             ),
             lock=lock,
             base_hooks=base_hooks,

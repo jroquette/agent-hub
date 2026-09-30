@@ -214,6 +214,19 @@ def test_skips_absent_settings_when_hub_files_not_all_read(snapshot_of: Snapshot
     assert findings_of(snapshot) == []
 
 
+def test_reports_missing_settings_when_only_listing_failed(snapshot_of: SnapshotFactory) -> None:
+    snapshot = hub_of(
+        snapshot_of,
+        files={},
+        problem="could not list the files: git not found",
+        paths_read=True,
+    )
+
+    assert findings_of(snapshot) == [
+        (Severity.ERROR, SETTINGS, "missing; hub sync restores it", SYNC_FIX)
+    ]
+
+
 @pytest.mark.parametrize(
     ("entry", "message"),
     [

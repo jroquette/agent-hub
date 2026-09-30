@@ -41,7 +41,7 @@ def _settings_weakening(snapshot: DoctorSnapshot) -> Iterable[Finding]:
     return (
         *_project_findings(entries),
         *_settings_findings(
-            entries.get(SETTINGS_PATH), base=base, all_read=snapshot.hub.problem is None
+            entries.get(SETTINGS_PATH), base=base, all_read=snapshot.hub.paths_read
         ),
     )
 

@@ -32,6 +32,8 @@ SYNC_FIX: Final = "run hub sync"
 ADOPT_FIX: Final = "run hub sync --adopt"
 NOT_ADOPTED: Final = "not adopted: no hub.lock records this hub's files"
 MISSING: Final = "missing; hub sync restores it"
+NOT_READ: Final = "content was not read, so it cannot be compared with its hub.lock entry"
+NOT_READ_FIX: Final = "run hub doctor again"
 
 
 def lock_state(entry: TreeEntry | None) -> LockState:
@@ -107,16 +109,24 @@ def _header_finding(lock: HubLock, *, pin: str) -> Finding | None:
 
 
 def _entry_findings(lock: HubLock, snapshot: DoctorSnapshot) -> Iterator[Finding]:
-    # With a failed read, an absent path may be one the read never reached: not "missing".
-    all_read = snapshot.hub.problem is None
+    # With a failed path read, an absent path may be one the read never reached: not "missing".
+    # A failed listing alone reads every path by path, so an absent one is missing.
+    all_read = snapshot.hub.paths_read
     for path, locked in lock.files.items():
         on_disk = snapshot.hub.entries.get(path)
         if on_disk is None:
             message = MISSING if all_read and _is_managed(locked) else None
+        elif isinstance(locked, ManagedFileEntry) and _unread(on_disk):
+            yield LOCK_DRIFT.finding(path=path, message=NOT_READ, fix=NOT_READ_FIX)
+            continue
         else:
             message = _drift(locked, on_disk)
         if message is not None:
             yield LOCK_DRIFT.finding(path=path, message=message, fix=SYNC_FIX)
+
+
+def _unread(on_disk: TreeEntry) -> bool:
+    return isinstance(on_disk, FileEntry) and on_disk.content is None
 
 
 def _is_managed(locked: LockEntry) -> bool:
@@ -154,7 +164,7 @@ def _link_drift(locked: ManagedLinkEntry, on_disk: TreeEntry) -> str | None:
     if on_disk.target != locked.symlink:
         return (
             "link target differs from its hub.lock entry"
-            f" (on disk -> {on_disk.target}, hub.lock -> {locked.symlink})"
+            f" (on disk -> {cut_echo(on_disk.target)}, hub.lock -> {cut_echo(locked.symlink)})"
         )
     return None
 
