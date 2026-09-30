@@ -317,6 +317,7 @@ def test_reports_error_when_coding_cookie_rejects_file(
 
 
 def test_reports_error_when_extension_too_large(snapshot_of: SnapshotFactory) -> None:
+    assert MAX_BYTES == 1 << 20  # the design's 1 MiB, stated once as a literal
     # Not UTF-8 either: the size cap is checked before the text gate.
     content = b"\xff" * (MAX_BYTES + 1)
     entries: Mapping[str, TreeEntry] = {EXTENSION: FileEntry(executable=False, content=content)}
