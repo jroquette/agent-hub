@@ -6,7 +6,6 @@ import pytest
 
 from agent_hub.core.doctor.finding import Finding, Read, Rule
 from agent_hub.core.doctor.run_rules import (
-    LISTING_FIX,
     Selection,
     Totals,
     UsageProblem,
@@ -517,12 +516,19 @@ def test_reports_listing_problem_once_when_listing_rule_selected(
         path=".",
         line=None,
         message=LISTING_PROBLEM,
-        fix=LISTING_FIX,
+        fix="fix the cause above so this folder can be listed, then run hub doctor again",
     )
 
 
+@pytest.mark.parametrize(
+    ("rules", "only"),
+    [
+        pytest.param({}, ["lock.drift"], id="reader-not-named"),
+        pytest.param({TRACKER: {"enabled": False}}, [], id="reader-disabled"),
+    ],
+)
 def test_reports_no_listing_problem_when_no_selected_rule_reads_listing(
-    snapshot_of: SnapshotFactory,
+    snapshot_of: SnapshotFactory, *, rules: dict[str, Any], only: list[str]
 ) -> None:
     spies = Spies()
     registry = (
@@ -530,11 +536,11 @@ def test_reports_no_listing_problem_when_no_selected_rule_reads_listing(
         spies.rule("lock.drift", reads=frozenset({Read.LOCK_PATHS})),
         spies.rule(TRACKER, reads=LISTING),
     )
-    config = a_config()
+    config = a_config(rules=rules)
     snapshot = snapshot_of(config=config)
     failed = replace(snapshot, hub=replace(snapshot.hub, problem=LISTING_PROBLEM))
 
-    findings = run_rules(selected(registry, config=config, only=["lock.drift"]), failed)
+    findings = run_rules(selected(registry, config=config, only=only), failed)
 
     assert spies.calls == ["config.schema", "lock.drift"]
     assert findings == ()
@@ -549,3 +555,19 @@ def test_reports_no_listing_problem_when_listing_made(snapshot_of: SnapshotFacto
 
     assert spies.calls == ["config.schema", TRACKER]
     assert findings == ()
+
+
+def test_reports_no_listing_problem_when_config_failed(snapshot_of: SnapshotFactory) -> None:
+    spies = Spies()
+    registry = (
+        spies.rule("config.schema", emits=[(Severity.ERROR, "hub.json", None, "problem")]),
+        spies.rule(TRACKER, reads=LISTING),
+    )
+    failure = failure_of(with_rules({"nope": {}}))
+    snapshot = snapshot_of(config=failure)
+    failed = replace(snapshot, hub=replace(snapshot.hub, problem=LISTING_PROBLEM))
+
+    findings = run_rules(Selection(rules=registry, notes=(), severities={}), failed)
+
+    assert spies.calls == ["config.schema"]
+    assert [(f.rule, f.path) for f in findings] == [("config.schema", "hub.json")]
