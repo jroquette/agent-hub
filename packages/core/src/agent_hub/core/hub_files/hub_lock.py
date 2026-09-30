@@ -1,4 +1,4 @@
-"""``hub.lock`` v1: what ``hub init`` wrote, by path (docs/design/hub-generator.md § hub.lock).
+"""``hub.lock`` v1: what init or sync last wrote, by path (docs/design/hub-sync.md § hub.lock).
 
 A managed file is recorded by the SHA-256 of its bytes and its executable bit, a managed link by
 its relative target, and a seeded path (``hub.json`` included) by its ownership only. The lock
