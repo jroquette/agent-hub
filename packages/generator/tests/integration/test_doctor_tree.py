@@ -219,7 +219,12 @@ def test_walks_when_root_is_subfolder_of_work_tree(work_tree: Path) -> None:
 def test_ignores_caller_git_variables_when_listing(
     work_tree: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    other = write(tmp_path / "other", {"elsewhere.md": "other\n", "excludes": "notes.md\n"})
+    # ``ignored.txt`` is tracked only in the other index: read through ``GIT_INDEX_FILE``, it
+    # would be listed although this tree ignores it.
+    other = write(
+        tmp_path / "other",
+        {"elsewhere.md": "other\n", "excludes": "notes.md\n", "ignored.txt": "other\n"},
+    )
     git(["init", "-q"], cwd=other)
     git(["add", "-A"], cwd=other)
     # Git's repository-local variables (``git rev-parse --local-env-vars``), each pointing at

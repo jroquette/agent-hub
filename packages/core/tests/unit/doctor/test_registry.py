@@ -10,6 +10,7 @@ RELEASED_IDS = (
     "settings.weakening",
     "hooks.guard-extension",
     "makefile.override",
+    "features.tracker",
 )
 
 # The "Default" column of docs/design/hub-doctor.md § Rules.

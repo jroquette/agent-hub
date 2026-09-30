@@ -20,8 +20,10 @@ SPEC = "brain/features/demo/spec.md"
 RECORD_FIX = "fix the record in features.json"
 MASKED_FIX = "end the verification with the check itself, so a failure exits non-zero"
 EVIDENCE_FIX = "record the command run and its result in evidence"
+SPEC_FIX = "give spec.md and features.json the same AC ids"
 JSON_FIX = "fix the JSON of the record"
 LINK_FIX = "replace it with the file itself"
+TEXT_FIX = "save it as UTF-8 text"
 NOT_READ = "not read as a regular file (links are never followed)"
 MASKED = "`verification` must keep its exit code (no trailing `echo $?`, `|| true` or `| tail`)"
 REPOS = "repo must be one of api, demo-hub, web"
@@ -65,10 +67,18 @@ def findings_of(snapshot: DoctorSnapshot) -> list[Shown]:
     return [(finding.path, finding.message, finding.fix) for finding in found]
 
 
-def checked(snapshot_of: SnapshotFactory, record: object) -> list[Shown]:
-    """The findings on one feature record."""
+def checked(
+    snapshot_of: SnapshotFactory,
+    record: object,
+    *,
+    spec: bytes | None = None,
+    listed: tuple[str, ...] | None = None,
+) -> list[Shown]:
+    """The findings on one feature record, with its sibling spec when one is given."""
     files = {RECORD: json.dumps(record).encode()}
-    return findings_of(snapshot_of(config=a_config(), files=files))
+    if spec is not None:
+        files[SPEC] = spec
+    return findings_of(snapshot_of(config=a_config(), files=files, listed=listed))
 
 
 def on_record(*messages: str, fix: str = RECORD_FIX) -> list[Shown]:
@@ -236,6 +246,89 @@ def test_accepts_record_when_linear_absent(snapshot_of: SnapshotFactory) -> None
 
 
 @pytest.mark.parametrize(
+    ("spec", "acs", "expected"),
+    [
+        pytest.param(
+            b"- AC-1: Given ...\n- AC-2: Given ...\n- AC-10: Given ...\n",
+            (an_ac(1), an_ac(3)),
+            [
+                "AC-2: in spec.md but not in features.json",
+                "AC-10: in spec.md but not in features.json",
+                "AC-3: in features.json but not in spec.md",
+            ],
+            id="numeric-order",
+        ),
+        pytest.param(
+            b"- AC-1.1: Given ...\n- AC-1.2: Given ...\n- AC-1.10: Given ...\n",
+            (an_ac(1, id="AC-1.1"), an_ac(3, id="AC-1.3")),
+            [
+                "AC-1.2: in spec.md but not in features.json",
+                "AC-1.10: in spec.md but not in features.json",
+                "AC-1.3: in features.json but not in spec.md",
+            ],
+            id="dotted",
+        ),
+        pytest.param(
+            b"- AC-1.1\n- AC-1.2\n- AC-1.10\n",
+            (an_ac(1, id="AC-1.1"), an_ac(2, id="AC-1.2"), an_ac(10, id="AC-1.10")),
+            [],
+            id="dotted-same",
+        ),
+        pytest.param(b"AC-1 only\r\n", (an_ac(1),), [], id="same"),
+        pytest.param(
+            b"AC-1 and AC-2\n",
+            (an_ac(1),),
+            ["AC-2: in spec.md but not in features.json"],
+            id="spec-only",
+        ),
+        # A malformed id sorts first, then by its text: the order never depends on a set.
+        pytest.param(
+            b"AC-1\n",
+            (an_ac(1), an_ac(2, id="R-2"), an_ac(3, id="Q-3")),
+            [
+                "R-2: id must look like AC-<n>",
+                "Q-3: id must look like AC-<n>",
+                "Q-3: in features.json but not in spec.md",
+                "R-2: in features.json but not in spec.md",
+            ],
+            id="malformed-first",
+        ),
+    ],
+)
+def test_cross_checks_spec_when_sibling_present(
+    snapshot_of: SnapshotFactory, spec: bytes, *, acs: tuple[object, ...], expected: list[str]
+) -> None:
+    findings = checked(snapshot_of, a_record(*acs), spec=spec)
+
+    assert findings == [
+        (RECORD, message, RECORD_FIX if "look like" in message else SPEC_FIX)
+        for message in expected
+    ]
+
+
+def test_skips_cross_check_when_spec_absent_or_unlisted(snapshot_of: SnapshotFactory) -> None:
+    record = a_record(an_ac(1), an_ac(3))
+
+    assert checked(snapshot_of, record) == []
+    assert checked(snapshot_of, record, spec=b"AC-2\n", listed=(RECORD,)) == []
+
+
+def test_accepts_placeholder_ids_when_spec_names_them(snapshot_of: SnapshotFactory) -> None:
+    # A range yields its ends and a placeholder in prose counts (the hub's spec rule relies
+    # on it); a number followed by ``.<digit>`` is no id.
+    spec = b"Criteria AC-1..AC-3; AC-7 is cited in prose; version AC-9.1x and AC-5.2.\n"
+    matching = a_record(an_ac(1), an_ac(3), an_ac(7), an_ac(51, id="AC-5.2"), an_ac(9, id="AC-9"))
+    ranged = a_record(an_ac(1), an_ac(2), an_ac(3), an_ac(7), an_ac(51, id="AC-5.2"))
+
+    assert checked(snapshot_of, matching, spec=spec) == [
+        (RECORD, "AC-9: in features.json but not in spec.md", SPEC_FIX)
+    ]
+    assert checked(snapshot_of, ranged, spec=spec) == [
+        (RECORD, "AC-2: in features.json but not in spec.md", SPEC_FIX)
+    ]
+
+
+@pytest.mark.parametrize(
     ("content", "message"),
     [
         pytest.param(
@@ -288,6 +381,41 @@ def test_reports_record_when_not_regular_file(
     snapshot = snapshot_of(config=a_config(), entries={RECORD: entry})
 
     assert findings_of(snapshot) == [(RECORD, NOT_READ, LINK_FIX)]
+
+
+@pytest.mark.parametrize(
+    ("entry", "expected"),
+    [
+        pytest.param(
+            FileEntry(executable=False, content=b"AC-1 \xff AC-2\n"),
+            (SPEC, "not UTF-8 text: byte 5 cannot be decoded", TEXT_FIX),
+            id="not-utf8",
+        ),
+        pytest.param(
+            LinkEntry(target="../other/spec.md", outside=False),
+            (SPEC, NOT_READ, LINK_FIX),
+            id="link",
+        ),
+        pytest.param(
+            FileEntry(executable=False, content=None), (SPEC, NOT_READ, LINK_FIX), id="unread"
+        ),
+    ],
+)
+def test_reports_spec_when_unreadable_or_not_utf8(
+    snapshot_of: SnapshotFactory, entry: TreeEntry, expected: Shown
+) -> None:
+    # The record is still checked, without the cross-check.
+    record = json.dumps(a_record(an_ac(1), an_ac(1, id="R-1"))).encode()
+    snapshot = snapshot_of(config=a_config(), files={RECORD: record}, entries={SPEC: entry})
+
+    assert findings_of(snapshot) == [expected, *on_record("R-1: id must look like AC-<n>")]
+
+
+def test_reads_spec_when_it_holds_nul(snapshot_of: SnapshotFactory) -> None:
+    # The old check read any UTF-8 text; a NUL does not stop the cross-check.
+    assert checked(snapshot_of, a_record(an_ac(1)), spec=b"AC-1\x00 AC-2\n") == [
+        (RECORD, "AC-2: in spec.md but not in features.json", SPEC_FIX)
+    ]
 
 
 @pytest.mark.parametrize(
@@ -368,6 +496,35 @@ def test_pins_old_outcome_when_untested_branch_hit(
         (RECORD, message) for message in expected
     ]
     assert all(fix == RECORD_FIX for _, message, fix in findings if "evidence (" not in message)
+
+
+def test_checks_every_feature_when_several_listed(snapshot_of: SnapshotFactory) -> None:
+    valid = json.dumps(a_record(an_ac(1))).encode()
+    invalid = json.dumps(a_record(an_ac(1), an_ac(2, repo="other"))).encode()
+    snapshot = snapshot_of(
+        config=a_config(),
+        files={
+            "brain/features/alpha/features.json": valid,
+            "brain/features/alpha/spec.md": b"AC-1\n",
+            "brain/features/beta/features.json": invalid,
+            "brain/features/beta/spec.md": b"AC-1 AC-3\n",
+            "brain/features/gamma/features.json": valid,
+        },
+    )
+
+    assert findings_of(snapshot) == [
+        ("brain/features/beta/features.json", f"AC-2: {REPOS}", RECORD_FIX),
+        (
+            "brain/features/beta/features.json",
+            "AC-3: in spec.md but not in features.json",
+            SPEC_FIX,
+        ),
+        (
+            "brain/features/beta/features.json",
+            "AC-2: in features.json but not in spec.md",
+            SPEC_FIX,
+        ),
+    ]
 
 
 @pytest.mark.parametrize(
