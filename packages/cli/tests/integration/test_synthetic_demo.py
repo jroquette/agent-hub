@@ -252,6 +252,7 @@ def test_writes_identical_trees_when_demo_initialized_twice(
     *,
     tree_digest: TreeDigest,
     child_env: ChildEnv,
+    set_umask: Callable[[int], None],
     no_git_path: Path,
     demo_config_file: Path,
     demo_flags: list[str],
@@ -259,10 +260,13 @@ def test_writes_identical_trees_when_demo_initialized_twice(
     # The parent runs as if in update mode under CI: the child must inherit neither.
     monkeypatch.setenv("GOLDEN_UPDATE", "1")
     monkeypatch.setenv("CI", "true")
+    # A umask other than the child's, whatever the developer's shell uses.
+    set_umask(0o022)
     in_process = init_demo(demo_config_file, tmp_path / "in-process")
     child_root = tmp_path / "child"
     env = child_env(
         {
+            **os.environ,
             "PATH": str(no_git_path),
             "HOME": str(tmp_path / "child-home"),
             "PYTHONHASHSEED": CHILD_HASH_SEED,

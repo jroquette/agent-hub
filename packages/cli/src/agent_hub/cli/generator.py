@@ -64,17 +64,20 @@ def init(
     ] = None,
     author_name: Annotated[
         str | None,
-        typer.Option("--author-name", help="Author of commits and PRs \\[default: git user.name]."),
+        typer.Option(
+            "--author-name", help="Author of commits and PRs.", show_default="git user.name"
+        ),
     ] = None,
     author_email: Annotated[
         str | None,
-        typer.Option("--author-email", help="Author's email \\[default: git user.email]."),
+        typer.Option("--author-email", help="Author's email.", show_default="git user.email"),
     ] = None,
     hub_repo: Annotated[
         str | None,
         typer.Option(
             "--hub-repo",
-            help="GitHub owner/name of the hub \\[default: the hub folder's GitHub origin].",
+            help="GitHub owner/name of the hub.",
+            show_default="the hub folder's GitHub origin",
         ),
     ] = None,
     config: Annotated[
@@ -83,7 +86,9 @@ def init(
     ] = None,
     directory: Annotated[
         Path | None,
-        typer.Option("--dir", help="Folder to write the hub in \\[default: the current folder]."),
+        typer.Option(
+            "--dir", help="Folder to write the hub in.", show_default="the current folder"
+        ),
     ] = None,
 ) -> None:
     """Create a hub for a project with its repos and task tracker."""

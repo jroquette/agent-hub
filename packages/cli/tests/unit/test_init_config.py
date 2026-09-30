@@ -1,3 +1,4 @@
+import re
 from importlib.metadata import version
 from typing import Any
 
@@ -128,7 +129,7 @@ REJECTED = [
     ),
     pytest.param(
         {"repos": "acme/a,ACME/A"},
-        ['--repos item 2 ("ACME/A"): repo dir "A" is already used by repos[0], ignoring case'],
+        ['--repos item 2 ("ACME/A"): repo dir "A" is already used by item 1, ignoring case'],
         id="repo-duplicate",
     ),
     pytest.param(
@@ -151,8 +152,12 @@ def test_names_flag_when_model_rejects_value(flags: dict[str, str], lines: list[
     printed = flag_problems(problems, repos=flags.get("repos", DEMO_FLAGS["repos"]))
 
     assert printed == lines
-    # Each line ends with the model's own message (a derived dir line may be dropped).
-    assert all(any(line.endswith(f": {p.message}") for p in problems) for line in printed)
+    # Each line ends with the model's own message (a derived dir line may be dropped), where a
+    # cited ``repos[<i>]`` reads as the item the user typed.
+    shown = [
+        re.sub(r"repos\[(\d+)\]", lambda m: f"item {int(m[1]) + 1}", p.message) for p in problems
+    ]
+    assert all(any(line.endswith(f": {message}") for message in shown) for line in printed)
 
 
 def test_names_every_missing_flag_when_values_absent() -> None:
@@ -249,3 +254,11 @@ def test_keeps_line_when_not_derived_from_failed_github(
     printed = flag_problems(problems, repos="acme/a,acme")
 
     assert printed == lines
+
+
+def test_names_item_when_message_cites_repos_index() -> None:
+    problems = [ConfigProblem("repos[1].dir", "clashes with repos[0] and repos[11]")]
+
+    printed = flag_problems(problems, repos="acme/a,acme/b")
+
+    assert printed == ['--repos item 2 ("acme/b"): clashes with item 1 and item 12']
