@@ -1,3 +1,5 @@
+import copy
+
 import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
@@ -101,16 +103,25 @@ def test_renders_repos_in_config_order_when_repos_reordered() -> None:
 
 
 def test_equals_managed_hooks_when_base_block_read(demo_config: HubConfig) -> None:
-    # Spec AC-11.12 (Q-14): hub doctor's settings.weakening compares against this value, so it is
-    # the managed settings' own ``hooks``, not a copy, and reading it renders nothing.
+    # Spec AC-11.12 (Q-14): hub doctor's settings.weakening compares against this block: the value
+    # the managed settings embed; reading it renders nothing.
     settings = managed_settings(demo_config)
     assert isinstance(settings, dict)
+    expected = copy.deepcopy(settings["hooks"])
 
     block = base_hooks_block()
 
-    assert block == settings["hooks"]
+    assert block == expected
     assert list(block) == [hook.event for hook in HOOK_EVENTS]
     assert len(block) == 6
-    # Each call builds a new value: a caller that edits one cannot change the next.
+    # Each call builds a new value: a caller that edits one, at the top or deeper, cannot change
+    # the next.
     block["Stop"] = []
-    assert base_hooks_block() == settings["hooks"]
+    groups = block["PreToolUse"]
+    assert isinstance(groups, list)
+    assert isinstance(groups[0], dict)
+    hooks = groups[0]["hooks"]
+    assert isinstance(hooks, list)
+    hooks.clear()
+    assert base_hooks_block() == expected
+    assert base_hooks_block()["Stop"][0] is not base_hooks_block()["Stop"][0]
