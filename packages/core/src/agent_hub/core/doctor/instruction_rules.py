@@ -19,8 +19,9 @@ files (``config_lint``; spec AC-11.19, AC-11.20, Q-6). Lines are ``config_lint.t
   under ``project.branch_prefix``. It resolves, after cutting a ``::`` test id and a glob's tail
   (``@/`` read as ``src/``), against the listed paths, the fixed paths present and their
   folders (E31), from the file's folder or the root; then by name (``.claude/worktrees``,
-  ``node_modules``… are there by design); then as the end of such a path or folder, with ``.ts``,
-  ``.tsx``, ``.js`` or ``.py`` added, for a reference of at most ``SEARCHED_SEGMENTS`` segments.
+  ``node_modules``… are there by design; ``hub.lock`` is the lock rules', E35); then as the end
+  of such a path or folder, with ``.ts``, ``.tsx``, ``.js`` or ``.py`` added, for a reference
+  of at most ``SEARCHED_SEGMENTS`` segments.
   Nothing out of the hub and no link is followed (D3). ``make`` targets are checked only when
   ``Makefile`` or ``Makefile.project`` names one (``X :=`` counts, as in the old lint), ``pnpm``
   scripts only when ``package.json`` is a JSON object with a non-empty ``scripts`` object (E11);
@@ -62,6 +63,7 @@ from agent_hub.core.hub_config.doctor_rules import (
     Severity,
 )
 from agent_hub.core.hub_config.versions import cut_echo
+from agent_hub.core.hub_files.hub_lock import HUB_LOCK_PATH
 from agent_hub.core.hub_files.tree_snapshot import FileEntry
 from agent_hub.core.json_form import InvalidJsonError, load_json_bytes
 
@@ -166,9 +168,10 @@ MAKEFILES: Final = ("Makefile", "Makefile.project")
 # counts only from its folder or the root. The bound keeps that search linear in the hub's paths.
 SEARCHED_SEGMENTS: Final = 32
 PACKAGE_JSON: Final = "package.json"
-# Paths an instruction may name that a hub never lists, by design.
+# Paths an instruction may name that a hub never lists, by design; and ``hub.lock``, whose
+# absence is the lock rules' finding, never a second one here (plan E35).
 IGNORED_BY_DESIGN: Final = frozenset(
-    {".claude/worktrees", ".claude/settings.local.json", "node_modules", ".venv"}
+    {".claude/worktrees", ".claude/settings.local.json", "node_modules", ".venv", HUB_LOCK_PATH}
 )
 PNPM_BUILTINS: Final = frozenset(
     {"install", "add", "exec", "dlx", "run", "i", "remove", "update", "why", "list", "store"}
