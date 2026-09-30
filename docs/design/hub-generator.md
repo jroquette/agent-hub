@@ -52,12 +52,12 @@ managed file (SHA-256 of the LF bytes written, executable bit), a managed link (
    out: move the change to an extension file, restore or delete the file, re-run.
 3. Write each path through `.<name>.hub-tmp-<8 random hex>` in its folder (`O_CREAT|O_EXCL|O_NOFOLLOW`, 0o600; a link:
    `os.symlink`), give it its final mode, `os.replace` it; `hub.lock` last. On an error the adapter removes its own temp
-   entry. A file or link (not a folder) of that shape is a leftover, never unknown or locked, removed once the plan
-   passes (init: the whole tree but `.git`; sync: planned folders). Nothing to do: `up to date`. The file adapter opens
-   the root once, checked against its real path by device and inode, and descends by `O_DIRECTORY|O_NOFOLLOW`
-   descriptors, so it never follows a symlinked ancestor of a path it reads, writes, deletes or compares; it never opens
-   a non-regular file and refuses a link resolving outside the hub (accepted risk: that check resolves by path, so a
-   folder swapped meanwhile can escape it; the root check narrows that window). Exits: 0 done; 1 error (config, merge,
+   entry. A file or link (not a folder) of that shape is a leftover, never unknown or locked, removed after the plan
+   passes, before any write (init: the whole tree but `.git`; sync: planned folders). Nothing to do: `up to date`. The
+   writer opens the root once per apply, checked against its real path by device and inode. Reader and writer descend by
+   `O_DIRECTORY|O_NOFOLLOW` descriptors, so neither follows a symlinked ancestor of a path it touches, nor opens a
+   non-regular file; a link resolving outside the hub is refused (accepted risk: both resolve that by path, so a folder
+   swapped meanwhile can escape it; the writer's root check narrows that window). Exits: 0 done; 1 error (config, merge,
    version, I/O); 2 usage; 3 conflict; 4 `--check` (writes nothing): changes pending, creations included.
 
 `--adopt` joins a hand-made hub; re-runnable, needs no `hub.lock`, never commits. Lock paths follow sync; others, in the
