@@ -3,15 +3,20 @@
 Also the ``hub.lock`` golden harness (``lock_golden``), a from-scratch child environment
 (``child_env``), the process umask (``set_umask``), and for ``hub sync`` a ``DEMO`` hub built
 once per session (``demo_hub_template``) and copied per test (``demo_hub``), an in-process sync
-in a folder (``run_sync``) and the writer calls a test makes (``adapter_calls``).
+in a folder (``run_sync``) and the writer calls a test makes (``adapter_calls``); for ``hub doctor``
+an in-process run in a folder (``run_doctor``), the paths a run reads (``path_reads``) and their
+filters (``reads_in``, ``ancestors``, ``under``).
 """
 
+import builtins
 import difflib
+import io
 import json
 import os
 import shlex
 import shutil
 import stat
+import subprocess
 import sys
 from collections.abc import Callable, Iterator, Mapping
 from importlib.metadata import version
@@ -44,15 +49,16 @@ DEMO_FLAGS = (
 )
 # Exit code of git when a folder is not in a work tree.
 NOT_A_REPO = 128
-# Set by the caller (a git hook, a worktree script), they would make init skip the remote.
-GIT_LOCATION_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
+# Set by the caller (a git hook, a worktree script, a cloud session's config), a variable with
+# this prefix would change which repo git reads or how it reads it.
+GIT_VARIABLE_PREFIX = "GIT_"
 
 
 @pytest.fixture(autouse=True)
 def no_git_location(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Run every test as if git found the repo from the folder: the caller's variables unset."""
-    for variable in GIT_LOCATION_VARIABLES:
-        monkeypatch.delenv(variable, raising=False)
+    """Run every test as if git found the repo from the folder: every ``GIT_*`` variable unset."""
+    for variable in [name for name in os.environ if name.startswith(GIT_VARIABLE_PREFIX)]:
+        monkeypatch.delenv(variable)
 
 
 class FakeGit(NamedTuple):
@@ -175,6 +181,144 @@ def run_sync(monkeypatch: pytest.MonkeyPatch) -> SyncRunner:
         return CliRunner().invoke(app, ["sync", *args])
 
     return run
+
+
+type DoctorRunner = Callable[..., Result]
+
+
+@pytest.fixture
+def run_doctor(monkeypatch: pytest.MonkeyPatch) -> DoctorRunner:
+    """Run ``hub doctor <args>`` in process with ``root`` as the current folder."""
+
+    def run(root: Path, *args: str) -> Result:
+        monkeypatch.chdir(root)
+        return CliRunner().invoke(app, ["doctor", *args])
+
+    return run
+
+
+class PathRead(NamedTuple):
+    """One call that reads a path: its name and the path.
+
+    The path is absolute when the call names it from the current folder, and reads
+    ``<fd N>/<name>`` when it is relative to an open folder (or ``<fd N>`` for the folder itself).
+    """
+
+    call: str
+    path: str
+
+
+# The calls through which a run looks at a path, each recorded before it goes through.
+PATH_READ_CALLS = ("open", "stat", "lstat")
+
+
+def _read_path(path: Any, dir_fd: int | None) -> str:
+    if isinstance(path, int):
+        return f"<fd {path}>"
+    name = os.fsdecode(path)
+    if dir_fd is not None:
+        return f"<fd {dir_fd}>/{name}"
+    return os.path.join(os.getcwd(), name)
+
+
+@pytest.fixture
+def path_reads(monkeypatch: pytest.MonkeyPatch) -> list[PathRead]:
+    """Every path given to ``os.open``, ``os.stat``, ``os.lstat`` and ``os.scandir``, in order.
+
+    The builtin ``open`` (also ``io.open``, which ``Path.read_bytes`` uses) is recorded as
+    ``builtin-open`` when given a path, not a descriptor. A ``subprocess.Popen`` is recorded as
+    ``Popen`` with the folder it runs in. Each call goes through.
+    """
+    reads: list[PathRead] = []
+
+    def wrap(call: str, real: Callable[..., Any]) -> Callable[..., Any]:
+        def recorded(path: Any, *args: Any, dir_fd: int | None = None, **kwargs: Any) -> Any:
+            reads.append(PathRead(call, _read_path(path, dir_fd)))
+            return real(path, *args, dir_fd=dir_fd, **kwargs)
+
+        return recorded
+
+    for call in PATH_READ_CALLS:
+        monkeypatch.setattr(os, call, wrap(call, getattr(os, call)))
+    real_scandir = os.scandir
+
+    def recorded_scandir(path: Any = os.curdir) -> Any:
+        reads.append(PathRead("scandir", _read_path(path, None)))
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", recorded_scandir)
+    real_open = builtins.open
+
+    def recorded_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+        if not isinstance(file, int):
+            reads.append(PathRead("builtin-open", _read_path(file, None)))
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", recorded_open)
+    monkeypatch.setattr(io, "open", recorded_open)
+    real_popen = subprocess.Popen
+
+    def recorded_popen(*args: Any, **kwargs: Any) -> Any:
+        folder = kwargs.get("cwd")
+        reads.append(PathRead("Popen", os.fspath(folder) if folder is not None else os.getcwd()))
+        return real_popen(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", recorded_popen)
+    return reads
+
+
+def reads_in_folder(reads: list[PathRead], folder: Path) -> set[str]:
+    """The paths read inside ``folder`` (itself included), and every read relative to a folder."""
+    # Taken before ``realpath``, whose own looks the recorder would add.
+    recorded = list(reads)
+    real = os.path.realpath(folder)
+    return {
+        read.path
+        for read in recorded
+        if read.path.startswith("<fd") or read.path == real or read.path.startswith(real + os.sep)
+    }
+
+
+def folder_ancestors(folder: str, *, up_to: Path) -> set[str]:
+    """``folder`` and each folder above it, up to and including ``up_to`` (real paths)."""
+    top = os.path.realpath(up_to)
+    found = {top}
+    while folder != top:
+        found.add(folder)
+        folder = os.path.dirname(folder)
+    return found
+
+
+def reads_under_folder(reads: list[PathRead], folder: Path) -> set[str]:
+    """The paths read at or below ``folder``, named from it (a ``<fd N>`` read is not).
+
+    A path is judged by its normalized form, so ``folder/../other`` is not below ``folder``.
+    """
+    recorded = list(reads)
+    real = os.path.realpath(folder)
+    return {
+        read.path
+        for read in recorded
+        if (normal := os.path.normpath(read.path)) == real or normal.startswith(real + os.sep)
+    }
+
+
+@pytest.fixture
+def reads_in() -> Callable[[list[PathRead], Path], set[str]]:
+    """``reads_in(path_reads, folder)``: the paths read inside ``folder``, and every ``<fd N>``."""
+    return reads_in_folder
+
+
+@pytest.fixture
+def ancestors() -> Callable[..., set[str]]:
+    """``ancestors(real_folder, up_to=top)``: the folder and each one above it up to ``top``."""
+    return folder_ancestors
+
+
+@pytest.fixture
+def under() -> Callable[[list[PathRead], Path], set[str]]:
+    """``under(path_reads, folder)``: the recorded paths at or below ``folder``."""
+    return reads_under_folder
 
 
 # The calls through which the writer changes a tree, each recorded by the name it changes.
