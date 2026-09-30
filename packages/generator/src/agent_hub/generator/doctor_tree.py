@@ -32,12 +32,28 @@ from agent_hub.generator.errors import GeneratorError
 from agent_hub.generator.hub_tree import read_every_file, read_planned_tree
 
 GIT_TIMEOUT_SECONDS = 10.0
-# Each one makes git read another repository, index or work tree than the tree's own.
-SCRUBBED_VARIABLES: Final = frozenset(
-    {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"}
+# Git's repository-local variables (``git rev-parse --local-env-vars``, git 2.43): each makes
+# git read another repository, index, config or work tree than the tree's own.
+SCRUBBED_VARIABLES: Final = (
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_CONFIG",
+    "GIT_CONFIG_COUNT",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_DIR",
+    "GIT_GRAFT_FILE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_PREFIX",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_SHALLOW_FILE",
+    "GIT_WORK_TREE",
 )
 
 _LISTING_FAILED: Final = "could not list the files: "
+_READING_FAILED: Final = "could not read the files: "
 _GIT_ENTRY: Final = ".git"
 _LIST_ARGUMENTS: Final = ("ls-files", "-z", "--cached", "--others", "--exclude-standard")
 
@@ -59,31 +75,44 @@ _NO_LISTING: Final = _Listing(paths=(), entries={})
 def read_doctor_tree(root: Path, *, by_path: Collection[str], listing: bool) -> HubFiles:
     """The files of the tree at ``root`` (already a real path) that the selected rules need.
 
-    ``by_path`` are looked at by path whatever the listing says; ``listing`` asks for the
-    tree's file list. Raises ``ValueError`` for a ``by_path`` entry that is not plain and
-    relative; any failure to list or read the tree is the returned ``problem``.
+    ``by_path`` are looked at by path whatever the listing says, each on its own, so one that
+    cannot be read (``could not read the files: …``) never loses the others; ``listing`` asks
+    for the tree's file list, and a failure to make or read it (``could not list the files:
+    …``) loses only the listing. When both fail, the listing's problem is the one returned.
+    Raises ``ValueError`` for a ``by_path`` entry that is not plain and relative.
     """
-    problem: str | None = None
+    fixed, fixed_problem = _read_fixed(root, by_path)
     try:
         found = _list_tree(root) if listing else _NO_LISTING
-    except (GeneratorError, _GitError) as error:
-        found, problem = _NO_LISTING, _LISTING_FAILED + one_line(str(error))
-    unread = sorted({*found.paths, *by_path} - found.entries.keys())
-    try:
+        unread = sorted(set(found.paths) - found.entries.keys() - fixed.keys())
         looked = read_planned_tree(root, paths=unread, wanted=unread).entries if unread else {}
-    except GeneratorError as error:
+    except (GeneratorError, _GitError) as error:
         return HubFiles(
-            entries=found.entries,
+            entries=_sorted(fixed),
             listed=(),
-            problem=problem or _LISTING_FAILED + one_line(str(error)),
+            problem=_LISTING_FAILED + one_line(str(error)),
         )
-    entries = {**found.entries, **looked}
+    entries = {**found.entries, **looked, **fixed}
     listed = tuple(
         path for path in found.paths if isinstance(entries.get(path), FileEntry | LinkEntry)
     )
-    return HubFiles(
-        entries={path: entries[path] for path in sorted(entries)}, listed=listed, problem=problem
-    )
+    return HubFiles(entries=_sorted(entries), listed=listed, problem=fixed_problem)
+
+
+def _read_fixed(root: Path, by_path: Collection[str]) -> tuple[dict[str, TreeEntry], str | None]:
+    """The entries of ``by_path`` present, and the first one's problem that cannot be read."""
+    entries: dict[str, TreeEntry] = {}
+    problems: list[str] = []
+    for path in sorted(by_path):
+        try:
+            entries |= read_planned_tree(root, paths=[path], wanted=[path]).entries
+        except GeneratorError as error:
+            problems.append(_READING_FAILED + one_line(str(error)))
+    return entries, next(iter(problems), None)
+
+
+def _sorted(entries: Mapping[str, TreeEntry]) -> dict[str, TreeEntry]:
+    return {path: entries[path] for path in sorted(entries)}
 
 
 def _list_tree(root: Path) -> _Listing:
