@@ -2,12 +2,16 @@
 
 This module reads the file and prints; core's ``check_hub_document`` checks it, in the order of
 docs/design/project-config.md § Versioning: the pin, then ``schema_version``, then the model.
+The file is read once, as bytes, so a caller that copies it gets exactly what was checked.
 """
 
+import io
 import json
+import os
+import stat
 from importlib.metadata import version
 from pathlib import Path
-from typing import NoReturn
+from typing import NamedTuple, NoReturn
 
 import typer
 
@@ -22,34 +26,60 @@ FILE_LABEL = "hub.json"
 BYTE_ORDER_MARK = "\N{ZERO WIDTH NO-BREAK SPACE}"
 # An invalid hub.json. Typer keeps 2 for usage errors.
 FAILURE = 1
+# O_NONBLOCK: a FIFO swapped in after the check cannot block the open; fstat then refuses it.
+# No O_NOFOLLOW: a link to a regular file is read, as it always was.
+_OPEN_FLAGS = os.O_RDONLY | os.O_NONBLOCK
+
+
+class LoadedHubJson(NamedTuple):
+    """The bytes of a ``hub.json`` exactly as read, and the config they hold."""
+
+    content: bytes
+    config: HubConfig
+
+
+def load_hub_json_or_exit(path: Path) -> LoadedHubJson:
+    """The bytes and validated config in ``path``; on any problem, print its lines and exit 1."""
+    content = _read_bytes_or_exit(path)
+    checked = check_hub_document(
+        _parse_or_exit(_decode_or_exit(content)), running_version=version(DISTRIBUTION)
+    )
+    if not isinstance(checked, HubConfig):
+        _fail(*checked)
+    return LoadedHubJson(content=content, config=checked)
 
 
 def load_hub_config_or_exit(path: Path) -> HubConfig:
     """The validated config in ``path``; on any problem, print its lines to stderr and exit 1."""
-    checked = check_hub_document(
-        _read_document_or_exit(path), running_version=version(DISTRIBUTION)
-    )
-    if not isinstance(checked, HubConfig):
-        _fail(*checked)
-    return checked
+    return load_hub_json_or_exit(path).config
 
 
-def _read_document_or_exit(path: Path) -> object:
-    return _parse_or_exit(_read_text_or_exit(path))
-
-
-def _read_text_or_exit(path: Path) -> str:
+def _read_bytes_or_exit(path: Path) -> bytes:
     # The path is quoted and escaped, so it stays on the one line.
     shown_path = json.dumps(str(path))
-    # Opening a FIFO waits for a writer and a device can be endless: only a regular file is read.
-    # A path that does not exist is left to the read, which names the reason.
+    not_regular = ConfigProblem(ROOT_PATH, f"cannot read {shown_path}: not a regular file")
+    # Opening a FIFO waits for a writer and a device can be endless: only a regular file is read,
+    # so a FIFO found here is never opened. A path that does not exist is left to the open, which
+    # names the reason.
     if path.exists() and not path.is_file():
-        _fail(ConfigProblem(ROOT_PATH, f"cannot read {shown_path}: not a regular file"))
+        _fail(not_regular)
     try:
-        return path.read_text(encoding="utf-8")
+        descriptor = os.open(path, _OPEN_FLAGS)
+        # What was opened is what gets read: a swap after the check above fails here instead.
+        with open(descriptor, "rb") as opened:
+            if not stat.S_ISREG(os.fstat(opened.fileno()).st_mode):
+                _fail(not_regular)
+            return opened.read()
     except OSError as error:
         reason = error.strerror or type(error).__name__
         _fail(ConfigProblem(ROOT_PATH, f"cannot read {shown_path}: {reason}"))
+
+
+def _decode_or_exit(content: bytes) -> str:
+    # Decoded as Path.read_text would: strict UTF-8 with universal newlines, so the line and
+    # column in a JSON message count as before, while the caller keeps the bytes unchanged.
+    try:
+        return io.TextIOWrapper(io.BytesIO(content), encoding="utf-8").read()
     except UnicodeDecodeError as error:
         _fail(ConfigProblem(ROOT_PATH, f"not UTF-8 text: byte {error.start} cannot be decoded"))
 

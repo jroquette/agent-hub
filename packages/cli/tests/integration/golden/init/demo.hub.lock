@@ -1,0 +1,314 @@
+{
+  "files": {
+    ".claude/agents/architect.md": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/agents/architect.md"
+    },
+    ".claude/agents/evaluator.md": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/agents/evaluator.md"
+    },
+    ".claude/agents/planner.md": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/agents/planner.md"
+    },
+    ".claude/agents/quality-reviewer.md": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/agents/quality-reviewer.md"
+    },
+    ".claude/agents/requirements-analyst.md": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/agents/requirements-analyst.md"
+    },
+    ".claude/agents/researcher.md": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/agents/researcher.md"
+    },
+    ".claude/agents/spec-reviewer.md": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/agents/spec-reviewer.md"
+    },
+    ".claude/settings.json": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "164e0aebffe1770efee9c5689df364f1c22d60a6ebb8941946f2d25c7db994ff"
+    },
+    ".claude/settings.project.json": {
+      "ownership": "seeded"
+    },
+    ".claude/skills/create-plan": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/create-plan"
+    },
+    ".claude/skills/feature": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/feature"
+    },
+    ".claude/skills/handoff": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/handoff"
+    },
+    ".claude/skills/kickoff": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/kickoff"
+    },
+    ".claude/skills/learn": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/learn"
+    },
+    ".claude/skills/recall": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/recall"
+    },
+    ".claude/skills/research": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/research"
+    },
+    ".github/workflows/ci.yml": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "d91340a12c31c0f73fa3d1dcc21a9cda1b48d2fef4286733e1e10e33b0f39dad"
+    },
+    ".gitignore": {
+      "ownership": "seeded"
+    },
+    ".pre-commit-config.yaml": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "d90c36a3cf7d0775447ce8b4216518f537cd8bbd66fc560aec6b4b8ad68e7cd6"
+    },
+    "AGENTS.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "168d74d13589edc6005cf8e126243e880d7cad62e0c24fa437c1b3dfe1886825"
+    },
+    "AGENTS.project.md": {
+      "ownership": "seeded"
+    },
+    "CLAUDE.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "6e720378590d05ee02652570b9173fe9250713f34c2186eef818fb46381b1a0c"
+    },
+    "Makefile": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "9ee8464c7bccd538483de317e4a15c964680a694703379f9f829a1161f734e73"
+    },
+    "Makefile.project": {
+      "ownership": "seeded"
+    },
+    "README.md": {
+      "ownership": "seeded"
+    },
+    "brain/_inbox/.gitkeep": {
+      "ownership": "seeded"
+    },
+    "brain/decisions/index.md": {
+      "ownership": "seeded"
+    },
+    "brain/domain/.gitkeep": {
+      "ownership": "seeded"
+    },
+    "brain/features/.gitkeep": {
+      "ownership": "seeded"
+    },
+    "brain/index.md": {
+      "ownership": "seeded"
+    },
+    "brain/journal/.gitkeep": {
+      "ownership": "seeded"
+    },
+    "brain/journal/_template.md": {
+      "ownership": "seeded"
+    },
+    "brain/learnings/.gitkeep": {
+      "ownership": "seeded"
+    },
+    "brain/now.md": {
+      "ownership": "seeded"
+    },
+    "brain/playbooks/.gitkeep": {
+      "ownership": "seeded"
+    },
+    "hub.json": {
+      "ownership": "seeded"
+    },
+    "hub.schema.json": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "29b3e284dd2ab3d4f4d65e81cfcc29ced3f6ba04d6c571676d5f4b94a0004ef3"
+    },
+    "plugin/demo/.claude-plugin/plugin.json": {
+      "ownership": "seeded"
+    },
+    "plugin/demo/agents/.gitkeep": {
+      "ownership": "seeded"
+    },
+    "plugin/demo/hooks/project_guard.py": {
+      "ownership": "seeded"
+    },
+    "plugin/demo/skills/.gitkeep": {
+      "ownership": "seeded"
+    },
+    "plugin/hub-workflow/.claude-plugin/plugin.json": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "7fb5b625dad49bf7edaef97bc41a8757a98c3a8b50c4c845f163e7f234c1adb4"
+    },
+    "plugin/hub-workflow/LICENSES/Apache-2.0.txt": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    "plugin/hub-workflow/LICENSES/MIT-compound-engineering-plugin.txt": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "61d89de7646effdaba2d0a4ab7bd0eba60b4094b83efe5bc73c7940e43e93fc6"
+    },
+    "plugin/hub-workflow/NOTICE": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "d4f33e59fd80e374614fcc0d8017da71ce02dc35201cf97b64a9ef83339247e8"
+    },
+    "plugin/hub-workflow/agents/architect.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "232f83a754ead65d922d4da15e6e4d594b4778b2186f806291fba307bd5ab1ee"
+    },
+    "plugin/hub-workflow/agents/evaluator.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "3db05eaa81446c47989a43625f2ea2b7b5417361d53b89d5236637ad57de7d12"
+    },
+    "plugin/hub-workflow/agents/planner.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "6b9e9aea2825a0d8b2b0b52c383e82829f65a382a353cecfdf306f2a0152828f"
+    },
+    "plugin/hub-workflow/agents/quality-reviewer.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "7adbe4d67028bbadcdae6ea92e2d8c0c11353c372ec76845f437510cddd56b34"
+    },
+    "plugin/hub-workflow/agents/requirements-analyst.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "ab751abfcef8e53f5f9b6cb2a07698bc6f1fd5fda30be944d298f756a457b643"
+    },
+    "plugin/hub-workflow/agents/researcher.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "6c7e226adfcbb4bd0d7195d3aa15b03f49df3268a55b1afcd6267a7de6355908"
+    },
+    "plugin/hub-workflow/agents/spec-reviewer.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "5c2ea69603034913f43b8dd45c084bd71db815154a1a63000ec74fb328f3a703"
+    },
+    "plugin/hub-workflow/hooks/guard.py": {
+      "executable": true,
+      "ownership": "managed",
+      "sha256": "c3386734be04a51dbe53116c3a2895bc16b03a49bc6b6666c7ade98feab8a636"
+    },
+    "plugin/hub-workflow/hooks/hooks.json": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "216ea018500cde0cb290ed79f49a860dd255c7945e944e14ae1ee5c4c0836993"
+    },
+    "plugin/hub-workflow/hooks/hubhooks.py": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "615ae11a28a0c93e0d2fada0056f0f266e900713fbce00eb1ceb8433e96220a7"
+    },
+    "plugin/hub-workflow/hooks/post_edit.py": {
+      "executable": true,
+      "ownership": "managed",
+      "sha256": "ddc63623bb4fb796e8804cc065186394021ef2fe277d6381c30563a8647693fb"
+    },
+    "plugin/hub-workflow/hooks/pre_compact.py": {
+      "executable": true,
+      "ownership": "managed",
+      "sha256": "9005d66b0022e0bfd61faf61ca19dc9086116a8a9d5fede61d3c62c88b017345"
+    },
+    "plugin/hub-workflow/hooks/project_guard_runner.py": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "fe50e04fe056020dbd3b72050b17019b31a25118bc922583dc6d33130b83350c"
+    },
+    "plugin/hub-workflow/hooks/session_end.py": {
+      "executable": true,
+      "ownership": "managed",
+      "sha256": "af9487f55b821805f56028baaac3236829f6e9861eefa3f0f7507fd59d9df87f"
+    },
+    "plugin/hub-workflow/hooks/session_start.py": {
+      "executable": true,
+      "ownership": "managed",
+      "sha256": "c1bdeae63df6b4c14eb09cd6633c225172d61c7c19f84300d20e0a245d41f4dc"
+    },
+    "plugin/hub-workflow/hooks/stdlib_reader.py": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "d71ac5182045accf9d6bfdb62d20970711ebf21fb27ca4c80cd0d4e597c31cf3"
+    },
+    "plugin/hub-workflow/hooks/stop_gate.py": {
+      "executable": true,
+      "ownership": "managed",
+      "sha256": "4e859f915101c88e20efc95e7325d299498a865c010cf13ed66f203cb13aa3fd"
+    },
+    "plugin/hub-workflow/skills/create-plan/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "70d982b78f5fd21b5c47d02b0bfd2fded847419ce903cbd9045f1d53747d0a59"
+    },
+    "plugin/hub-workflow/skills/feature/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "190ef0d4d6275ed3c479b29ac69dbc3f963467f7f274d3266d6f0eeb5b96dcda"
+    },
+    "plugin/hub-workflow/skills/handoff/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "e2789656defde586cb980f5c08b0008829fb4abdaf75f24c24a68575dd94e33e"
+    },
+    "plugin/hub-workflow/skills/kickoff/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "1e4a6107402b4ce6135f86fede86e9ed93934b4803cbac142b5d3bb1593bd3da"
+    },
+    "plugin/hub-workflow/skills/learn/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "d58bc967e02b570e0c29c149465bb6f5ffe1415f08e0b3076913c04aa6c310e5"
+    },
+    "plugin/hub-workflow/skills/recall/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "62a78cf03c8b07910906921dc1816198f429ea24fd7a3c70e961516ed2ebd8ad"
+    },
+    "plugin/hub-workflow/skills/research/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "bc91d1ca2541992c0529d5cb9ced9df2e16899872cc2ff958a4c51b7a6cf1856"
+    },
+    "scripts/mine_transcripts.py": {
+      "executable": true,
+      "ownership": "managed",
+      "sha256": "2e5d7328dc865055bf461e0ba3074be43404207a399e38292c5137544af4d610"
+    },
+    "scripts/recall_transcripts.py": {
+      "executable": true,
+      "ownership": "managed",
+      "sha256": "f16eb4741e1d5bcbe27bb2700a5c46ca2d75587cbdffe735736eaa4e39d3abf6"
+    },
+    "scripts/retro_metrics.py": {
+      "executable": true,
+      "ownership": "managed",
+      "sha256": "02673716dea8fae22b7414e4e26b8b56c1cd8731ad950227284e0119d8e6ea6b"
+    }
+  },
+  "lock_version": 1,
+  "modules": [],
+  "platform_version": "<VERSION>",
+  "schema_version": 1
+}

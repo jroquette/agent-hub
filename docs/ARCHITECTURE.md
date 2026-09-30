@@ -14,10 +14,10 @@ The repo is a uv workspace. The root `pyproject.toml` is virtual (no `[project]`
 
 | Package dir | Distribution | Module root | Role |
 |---|---|---|---|
-| `packages/core` | `agent-hub-core` | `agent_hub.core` | Domain: entities, canonical event, Pydantic schemas, use cases, ports, the rendered-hub contract types (`agent_hub.core.hub_files`: `RenderedFile`, `RenderedLink`, `RenderedHub`); test support in `agent_hub.core.testing` |
+| `packages/core` | `agent-hub-core` | `agent_hub.core` | Domain: entities, canonical event, Pydantic schemas, use cases, ports, the one JSON byte form (`agent_hub.core.json_form`: `dump_json`), the rendered-hub contract types and `hub.lock` (`agent_hub.core.hub_files`: `RenderedFile`, `RenderedLink`, `RenderedHub`; the lock model `HubLock` with `build_hub_lock` and `lock_bytes`; the tree snapshot types; the init planner `plan_init`); test support in `agent_hub.core.testing` |
 | `packages/storage` | `agent-hub-storage` | `agent_hub.storage` | Storage adapter: SQLAlchemy Core tables (`agent_hub.storage.db.metadata`), the SQLite `EventStore` and the Alembic migrations, shipped inside the package (`agent_hub/storage/migrations/`) |
 | `packages/collector` | `agent-hub-collector` | `agent_hub.collector` | Collector adapter: receives hook events and transcripts and feeds them to core |
-| `packages/generator` | `agent-hub-generator` | `agent_hub.generator` | Hub generator: the hub templates as package data (base rules, brain skeleton, the base plugin `plugin/hub-workflow/` with its hooks and their stdlib reader, the seeded project plugin under the project's name, the transcript and retro scripts), the `@@` renderer, the JSON built in code (`.claude/settings.json`, the project settings and manifest), the classification registry and `render_hub`, which returns a `RenderedHub` (files and plugin links); the file adapter joins with `hub init` ([ADR 0011](adr/0011-templates-as-package-data.md)) |
+| `packages/generator` | `agent-hub-generator` | `agent_hub.generator` | Hub generator: the hub templates as package data (base rules, brain skeleton, the base plugin `plugin/hub-workflow/` with its hooks and their stdlib reader, the seeded project plugin under the project's name, the transcript and retro scripts), the `@@` renderer, the JSON built in code (`.claude/settings.json`, the project settings and manifest), the classification registry and `render_hub`, which returns a `RenderedHub` (files and plugin links); and the file adapter: `hub_tree.py` reads a hub tree without following a link, `file_adapter.py` writes a plan through temporary files ([ADR 0011](adr/0011-templates-as-package-data.md)) |
 | `packages/cli` | `agent-hub-cli` | `agent_hub.cli` | The `hub` command (Typer); entry point `agent_hub.cli.main:app` |
 | `packages/agent-hub` | `agent-hub` | `agent_hub_meta` (placeholder) | Meta-package: depends on the five above and declares the `hub` script, so `uv tool install agent-hub` installs everything |
 
@@ -98,9 +98,9 @@ the PR-title scopes (`SCOPES` in `scripts/check_pr_title.py` and the list in CON
   `TrackerClient` (Linear first), `TranscriptSource` (Claude Code first). No port where no swap is expected.
 - **Adapters** (other packages): `storage` implements `EventStore`; `collector` turns hook events and transcripts into
   canonical events and calls the ingestion use case; `cli` (and later `api`) parse input, call ONE use case and render
-  the result; `generator` renders a hub's files and links from `HubConfig` (and, with `hub init`, applies plans to disk)
-  and implements no port ([ADR 0011](adr/0011-templates-as-package-data.md)). Adapters translate external errors into
-  the package's domain exceptions at the boundary.
+  the result; `generator` renders a hub's files and links from `HubConfig` (and reads a hub tree and applies core's init
+  plan to disk) and implements no port ([ADR 0011](adr/0011-templates-as-package-data.md)). Adapters translate external
+  errors into the package's domain exceptions at the boundary.
 - **Errors**: `agent_hub.core.errors.AgentHubError` is the root; each package has its own `errors.py` with subclasses
   (`StorageError`, `CollectorError`, `GeneratorError`, …).
 
@@ -159,7 +159,7 @@ Paths are under `packages/<pkg>/src/agent_hub/<pkg>/` unless shown in full. `<ar
 | Fake of a port | `core`: `testing/fakes.py` (`agent_hub.core.testing.fakes`) | In-memory; checked by the port's contract suite |
 | Builder of test data | `core`: `testing/builders.py` (`agent_hub.core.testing.builders`) | Synthetic data only |
 | Port contract suite | `core`: `testing/contracts.py` (`agent_hub.core.testing.contracts`) | Run from each implementation's `tests/contract/` |
-| Hub template | `generator`: `templates/<output path, no leading dot>.tmpl` plus a `registry.py` entry; a JSON file whose value comes from the config has a builder in `built_json.py` instead of a template | Package data read with `importlib.resources`; `@@{key}` placeholders from `placeholders.py`; built JSON is written by `json_form.dump_json` |
+| Hub template | `generator`: `templates/<output path, no leading dot>.tmpl` plus a `registry.py` entry; a JSON file whose value comes from the config has a builder in `built_json.py` instead of a template | Package data read with `importlib.resources`; `@@{key}` placeholders from `placeholders.py`; built JSON is written by `dump_json` (`agent_hub.core.json_form`, re-exported by the generator's `json_form`) |
 | Repo tooling | `scripts/<verb_object>.py`, tests in `tests/unit/scripts/` | Run as `python -m scripts.<name>` when it imports another script |
 
 Module and folder names never use `utils`, `util`, `helpers`, `helper`, `common` or `misc` (layout checker rule

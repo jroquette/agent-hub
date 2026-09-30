@@ -24,7 +24,11 @@ def _form_problem(target: str) -> str | None:
     return None
 
 
-def _target_problem(path: str | None, target: str) -> str | None:
+def link_target_problem(path: str | None, target: str) -> str | None:
+    """What is wrong with ``target`` for a link at ``path``, or ``None`` when it stays in the hub.
+
+    ``hub.lock`` applies the same rule to the link targets it reads back.
+    """
     problem = _form_problem(target)
     if problem is not None or path is None:
         # With an invalid path (already reported) there is no folder to resolve from.
@@ -55,7 +59,7 @@ class RenderedLink(BaseModel):
     @field_validator("target")
     @classmethod
     def _target_inside_hub(cls, target: str, info: ValidationInfo) -> str:
-        problem = _target_problem(info.data.get("path"), target)
+        problem = link_target_problem(info.data.get("path"), target)
         if problem is not None:
             msg = f"target {target!r} {problem}"
             raise ValueError(msg)

@@ -2144,3 +2144,48 @@ def test_ignores_run_time_outputs_when_gitignore_rendered(
     assert len(lines) == len(set(lines))
     assert (demo.kind, demo.ownership) == (Kind.GENERIC, Ownership.SEEDED)
     assert variant.content == demo.content
+
+
+# AGH-19's purity pattern (spec AC-12.26), verbatim: write, tree-read, clock and environment calls.
+PURITY = re.compile(
+    r"write_text|write_bytes|\bopen\(|os\.(replace|rename|remove|unlink|mkdir|makedirs|chmod|"
+    r"symlink|walk|scandir|lstat|environ)|shutil|Path\.cwd|\bPath\(|"
+    r"^\s*(import|from) (datetime|time|random|uuid|getpass|socket)\b"
+)
+ADAPTER_MODULES = frozenset({"hub_tree.py", "file_adapter.py"})
+RENDERING_MODULES = frozenset(
+    {
+        "__init__.py",
+        "built_json.py",
+        "errors.py",
+        "hub_template.py",
+        "json_form.py",
+        "links.py",
+        "placeholders.py",
+        "registry.py",
+        "render_hub.py",
+    }
+)
+
+
+def test_calls_no_io_when_rendering_modules_scanned() -> None:
+    generator_root = Path(inspect.getfile(render_hub)).parent
+    modules = {path.name: path for path in generator_root.glob("*.py")}
+    adapters = [modules.get(name) for name in sorted(ADAPTER_MODULES)]
+    assert all(
+        path is not None
+        and any(PURITY.search(line) for line in path.read_text(encoding="utf-8").splitlines())
+        for path in adapters
+    )
+    assert set(modules) - ADAPTER_MODULES == RENDERING_MODULES
+
+    hits = [
+        f"{name}:{number}: {line}"
+        for name in sorted(RENDERING_MODULES)
+        for number, line in enumerate(
+            modules[name].read_text(encoding="utf-8").splitlines(), start=1
+        )
+        if PURITY.search(line)
+    ]
+
+    assert hits == []
