@@ -15,8 +15,8 @@ from agent_hub.core.hub_config.model import HubConfig
 
 # The rules that read ``hub.json`` itself: the only ones run on a failed config, never retuned.
 CONFIG_RULES: Final = (CONFIG_SCHEMA_RULE, "platform.version")
-# The fix of the one finding a failed file listing gives (E7): the listing is git's, or a walk.
-LISTING_FIX: Final = "make git ls-files work in this folder, then run hub doctor again"
+# The fix of the one finding a failed file listing gives (E7); the message names the cause.
+LISTING_FIX: Final = "fix the cause above so this folder can be listed, then run hub doctor again"
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -131,7 +131,12 @@ def run_rules(selection: Selection, snapshot: DoctorSnapshot) -> tuple[Finding, 
 
 
 def _listing_finding(selection: Selection, snapshot: DoctorSnapshot) -> Finding | None:
-    """The one error of a failed hub listing, on the first selected rule by id that reads it."""
+    """The one error of a failed hub listing, on the first selected rule by id that reads it.
+
+    None on a failed config: then only the config rules run, and none of them reads the listing.
+    """
+    if isinstance(snapshot.config, ConfigFailure):
+        return None
     readers = sorted(rule.id for rule in selection.rules if Read.HUB_LISTING in rule.reads)
     if snapshot.hub.problem is None or not readers:
         return None
