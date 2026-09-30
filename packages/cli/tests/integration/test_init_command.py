@@ -2,7 +2,11 @@ import errno
 import functools
 import json
 import os
+import shutil
 import signal
+import socket
+import stat
+import subprocess
 from collections.abc import Callable, Collection, Iterator, Sequence
 from importlib.metadata import version
 from pathlib import Path
@@ -13,18 +17,22 @@ from typer.testing import CliRunner, Result
 
 from agent_hub.cli import generator
 from agent_hub.cli.git_defaults import read_git_defaults
+from agent_hub.cli.init_config import document_from_flags
 from agent_hub.cli.main import app
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.rendered_file import Ownership
-from agent_hub.core.hub_files.tree_snapshot import TreeSnapshot
+from agent_hub.core.hub_files.rendered_hub import RenderedHub
+from agent_hub.core.hub_files.tree_snapshot import TreeSnapshot, is_leftover_name
 from agent_hub.core.json_form import dump_json
 from agent_hub.generator.errors import GeneratorError
 from agent_hub.generator.hub_tree import read_hub_tree
 from agent_hub.generator.render_hub import render_hub
 
 VERSION = version("agent-hub-cli")
-# The conftest's fake git builder (tests cannot import a conftest in importlib mode).
+# The conftest's fake git builder and tree digest (tests cannot import a conftest in importlib
+# mode).
 type FakeGitFactory = Callable[..., Any]
+type TreeDigest = Callable[[Path], dict[str, Any]]
 GIT_ANSWERS = {
     "config --get user.name": "Git Author",
     "config --get user.email": "git.author@example.com",
@@ -39,6 +47,7 @@ PINNED_COMMAND = (
 # A credential planted in a remote URL: it must never reach output or a written file.
 LEAKED_MARK = "SECRET123"
 FIFO_ALARM_SECONDS = 5
+CLEANUP_LEFTOVER = ".X.hub-tmp-0a1b2c3d"
 
 
 def run_init(args: Sequence[str]) -> Result:
@@ -589,6 +598,19 @@ def test_names_project_when_project_rejected(git_on_path: Any, target: Path) -> 
     ]
 
 
+def plant_unremovable_leftover(target: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A leftover the cleanup step (6) cannot remove: nothing may be written after it."""
+    (target / CLEANUP_LEFTOVER).write_bytes(b"left\n")
+    unlink = os.unlink
+
+    def failing_unlink(path: Any, *args: Any, **kwargs: Any) -> None:
+        if path == CLEANUP_LEFTOVER:
+            raise OSError(errno.EACCES, os.strerror(errno.EACCES))
+        unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "unlink", failing_unlink)
+
+
 def failing_run(
     case: str,
     *,
@@ -616,6 +638,8 @@ def failing_run(
     target.mkdir()
     if case == "tree-refusal":
         (target / "notes.txt").write_bytes(b"mine\n")
+    elif case == "cleanup-error":
+        plant_unremovable_leftover(target, monkeypatch)
     else:
 
         def failing_replace(*_args: object, **_kwargs: object) -> None:
@@ -633,9 +657,18 @@ def failing_run(
         ("modules", "hub.json: modules: bench: not supported yet (module templates ship later)"),
         ("dir-is-file", "{target}: not a folder"),
         ("tree-refusal", "notes.txt: not part of the hub; run hub sync --adopt"),
+        ("cleanup-error", ".X.hub-tmp-0a1b2c3d: Permission denied"),
         ("write-error", "{first_write}: Input/output error"),
     ],
-    ids=["missing-flag", "rejected-flag", "modules", "dir-is-file", "tree-refusal", "write-error"],
+    ids=[
+        "missing-flag",
+        "rejected-flag",
+        "modules",
+        "dir-is-file",
+        "tree-refusal",
+        "cleanup-error",
+        "write-error",
+    ],
 )
 def test_prints_nothing_on_stdout_when_init_fails(
     git_on_path: Any,
@@ -746,3 +779,559 @@ def test_prints_generator_error_when_tree_cannot_be_read(
     assert result.stdout == ""
     assert result.stderr.splitlines() == [shown]
     assert listing(target) == []
+
+
+# Target rules, re-runs and write order (slice 11). The behavior exists: characterization.
+
+REAL_GIT = shutil.which("git")
+ADOPT = "run hub sync --adopt"
+LEFTOVER_FILE = ".Makefile.hub-tmp-0a1b2c3d"
+LEFTOVER_LINK = "plugin/hub-workflow/hooks/.guard.py.hub-tmp-0123abcd"
+
+
+@functools.cache
+def flags_render() -> RenderedHub:
+    """The render of ``DEMO_FLAGS``: what ``init`` writes for them."""
+    return render_hub(HubConfig.model_validate(flags_document()))
+
+
+def flags_document() -> dict[str, Any]:
+    return document_from_flags(
+        project="demo",
+        repos="acme/demo-api",
+        tracker="linear:DEM",
+        branch_prefix="jdoe/",
+        author_name="Jane Doe",
+        author_email="jane@example.com",
+        hub_repo="acme/demo-hub",
+        version=VERSION,
+    )
+
+
+def rendered_bytes(path: str) -> bytes:
+    return next(file.content for file in flags_render().files if file.path == path)
+
+
+def lock_files(root: Path) -> dict[str, Any]:
+    files: dict[str, Any] = json.loads((root / "hub.lock").read_bytes())["files"]
+    return files
+
+
+def write_planted(path: Path, content: bytes, *, mode: int = 0o644) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    path.chmod(mode)
+
+
+def git_init(folder: Path, home: Path) -> None:
+    assert REAL_GIT is not None, "git is needed to make a real .git folder"
+    # The test's own HOME and no system config: the user's git config is never read.
+    env = {"HOME": str(home), "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
+    subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
+        [REAL_GIT, "init", "-q", str(folder)], env=env, check=True, timeout=30
+    )
+
+
+@pytest.mark.parametrize("form", ["git-init-folder", "git-file"])
+def test_leaves_git_untouched_when_target_holds_git(
+    git_on_path: Any,
+    tmp_path: Path,
+    target: Path,
+    *,
+    tree_digest: TreeDigest,
+    demo_flags: list[str],
+    form: str,
+) -> None:
+    if form == "git-init-folder":
+        git_init(target, tmp_path)
+    else:
+        (target / ".git").write_bytes(b"gitdir: /elsewhere/.git/worktrees/hub\n")
+    before = tree_digest(target / ".git")
+
+    result = run_init([*demo_flags, "--dir", str(target)])
+
+    assert result.exit_code == 0, result.stderr
+    assert tree_digest(target / ".git") == before
+    # `.gitignore` and `.github/` are rendered paths; nothing is `.git` or under it.
+    assert not [path for path in lock_files(target) if path == ".git" or path.startswith(".git/")]
+    assert "git init" not in result.stdout
+
+
+SEEDED_PLANTED = {
+    "README.md": (b"# my readme\n", 0o755),
+    "brain/now.md": (b"my focus\n", 0o644),
+    "AGENTS.project.md": (b"my rules\n", 0o600),
+}
+
+
+def test_keeps_seeded_files_when_already_present(
+    git_on_path: Any, target: Path, tree_digest: TreeDigest, *, demo_flags: list[str]
+) -> None:
+    for path, (content, mode) in SEEDED_PLANTED.items():
+        write_planted(target / path, content, mode=mode)
+    planted = {path: tree_digest(target / path) for path in SEEDED_PLANTED}
+    rendered = flags_render()
+    managed = sum(file.ownership is Ownership.MANAGED for file in rendered.files)
+    # The render's seeded files, less the three kept, plus hub.json.
+    seeded = len(rendered.files) - managed - len(SEEDED_PLANTED) + 1
+
+    result = run_init([*demo_flags, "--dir", str(target)])
+
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout.splitlines()[:3] == [
+        f"created {managed + seeded} files ({managed} managed, {seeded} seeded)"
+        f" and {len(rendered.links)} links in {real(target)}",
+        "kept 3 files already there (3 seeded, 0 equal to the render)",
+        "",
+    ]
+    assert {path: tree_digest(target / path) for path in SEEDED_PLANTED} == planted
+    files = lock_files(target)
+    assert all(files[path] == {"ownership": "seeded"} for path in SEEDED_PLANTED)
+
+
+def plant_readme_link(target: Path) -> None:
+    (target / "README.md").symlink_to("AGENTS.md")
+
+
+def plant_readme_folder(target: Path) -> None:
+    (target / "README.md").mkdir()
+
+
+@pytest.mark.parametrize(
+    ("plant", "found"),
+    [(plant_readme_link, "link"), (plant_readme_folder, "folder")],
+    ids=["link", "folder"],
+)
+def test_refuses_seeded_path_when_link_or_folder(
+    git_on_path: Any,
+    target: Path,
+    tree_digest: TreeDigest,
+    *,
+    demo_flags: list[str],
+    plant: Callable[[Path], None],
+    found: str,
+) -> None:
+    plant(target)
+    before = tree_digest(target)
+
+    result = run_init([*demo_flags, "--dir", str(target)])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr.splitlines() == [f"README.md: a {found} where a file belongs"]
+    assert tree_digest(target) == before
+
+
+GUARD = "plugin/hub-workflow/hooks/guard.py"
+ARCHITECT_LINK = ".claude/agents/architect.md"
+
+
+def plant_managed_bytes(target: Path) -> None:
+    write_planted(target / "Makefile", b"all:\n")
+
+
+def plant_managed_mode(target: Path) -> None:
+    # The render's bytes, without u+x.
+    write_planted(target / GUARD, rendered_bytes(GUARD), mode=0o644)
+
+
+def plant_link_target(target: Path) -> None:
+    (target / ".claude" / "agents").mkdir(parents=True)
+    (target / ARCHITECT_LINK).symlink_to("../../plugin/hub-workflow/agents/planner.md")
+
+
+def plant_file_at_link(target: Path) -> None:
+    write_planted(target / ARCHITECT_LINK, b"architect\n")
+
+
+def plant_folder_at_link(target: Path) -> None:
+    (target / ".claude" / "skills" / "feature").mkdir(parents=True)
+
+
+def plant_link_at_file(target: Path) -> None:
+    (target / "Makefile").symlink_to("AGENTS.md")
+
+
+def plant_unknown_file(target: Path) -> None:
+    write_planted(target / "notes.txt", b"mine\n")
+
+
+def plant_unknown_nested(target: Path) -> None:
+    write_planted(target / "brain" / "extra" / "x.md", b"mine\n")
+
+
+def plant_unknown_empty_folder(target: Path) -> None:
+    (target / "empty").mkdir()
+
+
+# The entries of AC-12.13, one per case, each in an otherwise empty target.
+CONFLICTS: dict[str, Callable[[Path], None]] = {
+    "managed-bytes": plant_managed_bytes,
+    "managed-mode": plant_managed_mode,
+    "link-target": plant_link_target,
+    "file-at-link": plant_file_at_link,
+    "folder-at-link": plant_folder_at_link,
+    "link-at-file": plant_link_at_file,
+    "unknown-file": plant_unknown_file,
+    "unknown-nested": plant_unknown_nested,
+    "unknown-empty-folder": plant_unknown_empty_folder,
+}
+
+
+@pytest.mark.parametrize(
+    ("case", "lines"),
+    [
+        ("managed-bytes", [f"Makefile: differs from its render; {ADOPT}"]),
+        ("managed-mode", [f"{GUARD}: differs from its render; {ADOPT}"]),
+        ("link-target", [f"{ARCHITECT_LINK}: differs from its render; {ADOPT}"]),
+        ("file-at-link", [f"{ARCHITECT_LINK}: a file where a link belongs"]),
+        ("folder-at-link", [".claude/skills/feature: a folder where a link belongs"]),
+        ("link-at-file", ["Makefile: a link where a file belongs"]),
+        ("unknown-file", [f"notes.txt: not part of the hub; {ADOPT}"]),
+        (
+            "unknown-nested",
+            [
+                f"brain/extra: not part of the hub; {ADOPT}",
+                f"brain/extra/x.md: not part of the hub; {ADOPT}",
+            ],
+        ),
+        ("unknown-empty-folder", [f"empty: not part of the hub; {ADOPT}"]),
+    ],
+)
+def test_refuses_and_writes_nothing_when_target_conflicts(
+    git_on_path: Any,
+    target: Path,
+    tree_digest: TreeDigest,
+    *,
+    demo_flags: list[str],
+    case: str,
+    lines: list[str],
+) -> None:
+    CONFLICTS[case](target)
+    before = tree_digest(target)
+
+    result = run_init([*demo_flags, "--dir", str(target)])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr.splitlines() == lines
+    assert tree_digest(target) == before
+
+
+@pytest.mark.parametrize("state", ["lock-only", "completed-init"])
+def test_points_to_sync_when_lock_present(
+    git_on_path: Any, target: Path, tree_digest: TreeDigest, *, demo_flags: list[str], state: str
+) -> None:
+    if state == "lock-only":
+        (target / "hub.lock").write_bytes(b"any content\n")
+    else:
+        assert run_init([*demo_flags, "--dir", str(target)]).exit_code == 0
+    before = tree_digest(target)
+
+    result = run_init([*demo_flags, "--dir", str(target)])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr.splitlines() == ["hub.lock: this folder is already a hub; run hub sync"]
+    assert tree_digest(target) == before
+
+
+def init_source(
+    source: str, *, demo_flags: list[str], demo_config_file: Path
+) -> tuple[list[str], bytes]:
+    """The ``init`` arguments of ``source`` and the ``hub.json`` bytes it would write."""
+    if source == "flags":
+        return demo_flags, dump_json(flags_document())
+    return ["--config", str(demo_config_file)], demo_config_file.read_bytes()
+
+
+@pytest.mark.parametrize("source", ["flags", "config"])
+def test_points_to_adopt_when_hub_json_differs(
+    git_on_path: Any,
+    target: Path,
+    tree_digest: TreeDigest,
+    *,
+    demo_flags: list[str],
+    demo_config_file: Path,
+    source: str,
+) -> None:
+    args, hub_json = init_source(source, demo_flags=demo_flags, demo_config_file=demo_config_file)
+    # One byte off: the last newline is a space.
+    (target / "hub.json").write_bytes(hub_json[:-1] + b" ")
+    before = tree_digest(target)
+
+    result = run_init([*args, "--dir", str(target)])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr.splitlines() == [
+        f"hub.json: differs from the one this run would write; {ADOPT}"
+    ]
+    assert tree_digest(target) == before
+
+
+@pytest.mark.parametrize("source", ["flags", "config"])
+def test_keeps_hub_json_when_byte_equal(
+    git_on_path: Any,
+    target: Path,
+    *,
+    demo_flags: list[str],
+    demo_config_file: Path,
+    source: str,
+) -> None:
+    args, hub_json = init_source(source, demo_flags=demo_flags, demo_config_file=demo_config_file)
+    (target / "hub.json").write_bytes(hub_json)
+    inode = (target / "hub.json").stat().st_ino
+
+    result = run_init([*args, "--dir", str(target)])
+
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout.splitlines()[1] == (
+        "kept 1 files already there (1 seeded, 0 equal to the render)"
+    )
+    # Kept, not rewritten: the same file, with the same bytes.
+    assert (target / "hub.json").stat().st_ino == inode
+    assert (target / "hub.json").read_bytes() == hub_json
+    assert lock_files(target)["hub.json"] == {"ownership": "seeded"}
+
+
+@pytest.mark.parametrize("ancestor", ["plugin", ".claude", "brain/journal"])
+def test_refuses_when_ancestor_symlinked(
+    git_on_path: Any,
+    tmp_path: Path,
+    target: Path,
+    *,
+    tree_digest: TreeDigest,
+    demo_flags: list[str],
+    ancestor: str,
+) -> None:
+    outside = tmp_path / "outside"
+    write_planted(outside / "kept.md", b"outside\n")
+    (target / ancestor).parent.mkdir(parents=True, exist_ok=True)
+    (target / ancestor).symlink_to(outside, target_is_directory=True)
+    before, outside_before = tree_digest(target), tree_digest(outside)
+    rendered = flags_render()
+    under = sorted(
+        path
+        for path in [
+            *(file.path for file in rendered.files),
+            *(link.path for link in rendered.links),
+        ]
+        if path.startswith(f"{ancestor}/")
+    )
+
+    result = run_init([*demo_flags, "--dir", str(target)])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert under
+    assert result.stderr.splitlines() == [
+        f"{path}: symlinked ancestor {ancestor}" for path in under
+    ]
+    assert tree_digest(target) == before
+    assert tree_digest(outside) == outside_before
+
+
+def plant_fifo(path: Path) -> None:
+    os.mkfifo(path)
+
+
+def plant_socket(path: Path) -> None:
+    # Bound by a relative name from its folder: a full tmp_path can exceed AF_UNIX's length (E13).
+    cwd = Path.cwd()
+    os.chdir(path.parent)
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as bound:
+            bound.bind(path.name)
+    finally:
+        os.chdir(cwd)
+    assert stat.S_ISSOCK(path.lstat().st_mode)
+
+
+@pytest.mark.usefixtures("alarm")
+@pytest.mark.parametrize("plant", [plant_fifo, plant_socket], ids=["fifo", "socket"])
+@pytest.mark.parametrize("path", ["Makefile", "README.md"], ids=["managed", "seeded"])
+def test_refuses_when_rendered_path_not_regular(
+    git_on_path: Any,
+    target: Path,
+    tree_digest: TreeDigest,
+    *,
+    demo_flags: list[str],
+    plant: Callable[[Path], None],
+    path: str,
+) -> None:
+    plant(target / path)
+    before = tree_digest(target)
+
+    result = run_init([*demo_flags, "--dir", str(target)])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr.splitlines() == [f"{path}: not a regular file"]
+    assert tree_digest(target) == before
+
+
+def write_order() -> list[str]:
+    """Every path ``init`` renames into place on an empty target, before ``hub.lock`` (Q-16)."""
+    rendered = flags_render()
+    files = sorted(file.path for file in rendered.files)
+    links = sorted(link.path for link in rendered.links)
+    return [*files, *links, "hub.json"]
+
+
+def kept_line(written: Sequence[str]) -> str | None:
+    """The kept line of a re-run over ``written``, or None when nothing is kept."""
+    rendered = flags_render()
+    seeded = {file.path for file in rendered.files if file.ownership is Ownership.SEEDED}
+    links = {link.path for link in rendered.links}
+    kept_seeded = sum(path in seeded or path == "hub.json" for path in written)
+    kept_links = sum(path in links for path in written)
+    kept_equal = len(written) - kept_seeded - kept_links
+    if not written:
+        return None
+    suffix = f" and {kept_links} links" if kept_links else ""
+    return (
+        f"kept {kept_seeded + kept_equal} files already there"
+        f" ({kept_seeded} seeded, {kept_equal} equal to the render){suffix}"
+    )
+
+
+def temp_entries(root: Path) -> list[str]:
+    return [
+        name
+        for _, folders, files in os.walk(root)
+        for name in [*folders, *files]
+        if is_leftover_name(name)
+    ]
+
+
+@pytest.mark.parametrize("failing", ["first-file", "middle-file", "first-link", "hub-json"])
+def test_resumes_when_write_failed_midway(
+    git_on_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    target: Path,
+    tree_digest: TreeDigest,
+    demo_flags: list[str],
+    failing: str,
+) -> None:
+    order = write_order()
+    rendered = flags_render()
+    at = {
+        "first-file": 0,
+        "middle-file": len(rendered.files) // 2,
+        "first-link": len(rendered.files),
+        "hub-json": order.index("hub.json"),
+    }[failing]
+    replace = os.replace
+    calls = []
+
+    def replace_failing_once(*args: Any, **kwargs: Any) -> None:
+        calls.append(args)
+        if len(calls) == at + 1:
+            raise OSError(errno.EIO, os.strerror(errno.EIO))
+        replace(*args, **kwargs)
+
+    monkeypatch.setattr(os, "replace", replace_failing_once)
+    clean = tmp_path / "clean"
+    clean.mkdir()
+
+    stopped = run_init([*demo_flags, "--dir", str(target)])
+
+    assert stopped.exit_code == 1
+    assert stopped.stdout == ""
+    assert stopped.stderr.splitlines() == [f"{order[at]}: Input/output error"]
+    assert not (target / "hub.lock").exists()
+    assert temp_entries(target) == []
+
+    resumed = run_init([*demo_flags, "--dir", str(target)])
+
+    assert resumed.exit_code == 0, resumed.stderr
+    expected_kept = kept_line(order[:at])
+    shown = resumed.stdout.splitlines()[1]
+    assert shown == (expected_kept if expected_kept is not None else "")
+    assert run_init([*demo_flags, "--dir", str(clean)]).exit_code == 0
+    assert tree_digest(target) == tree_digest(clean)
+    assert (target / "hub.lock").read_bytes() == (clean / "hub.lock").read_bytes()
+
+
+def test_removes_leftovers_when_rerun(
+    git_on_path: Any,
+    tmp_path: Path,
+    target: Path,
+    *,
+    tree_digest: TreeDigest,
+    demo_flags: list[str],
+) -> None:
+    outside = tmp_path / "outside" / "kept.md"
+    write_planted(outside, b"outside\n")
+    write_planted(target / LEFTOVER_FILE, b"half written\n")
+    (target / LEFTOVER_LINK).parent.mkdir(parents=True)
+    # A leftover link whose target is outside the hub: the link goes, never what it points to.
+    (target / LEFTOVER_LINK).symlink_to(outside)
+    outside_before = tree_digest(outside.parent)
+
+    result = run_init([*demo_flags, "--dir", str(target)])
+
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout.splitlines()[:3] == [
+        created_line(written_config(target), target),
+        "removed 2 leftover temporary files",
+        "",
+    ]
+    assert not os.path.lexists(target / LEFTOVER_FILE)
+    assert not os.path.lexists(target / LEFTOVER_LINK)
+    assert tree_digest(outside.parent) == outside_before
+    assert not {LEFTOVER_FILE, LEFTOVER_LINK} & lock_files(target).keys()
+
+
+def test_refuses_temp_named_folder_when_found(
+    git_on_path: Any, target: Path, tree_digest: TreeDigest, *, demo_flags: list[str]
+) -> None:
+    (target / ".x.md.hub-tmp-0a1b2c3d").mkdir()
+    before = tree_digest(target)
+
+    result = run_init([*demo_flags, "--dir", str(target)])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr.splitlines() == [f".x.md.hub-tmp-0a1b2c3d: not part of the hub; {ADOPT}"]
+    assert tree_digest(target) == before
+
+
+def test_renames_lock_last_when_demo_written(
+    git_on_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    target: Path,
+    *,
+    demo_flags: list[str],
+) -> None:
+    replace = os.replace
+    root = target.stat()
+    renames: list[tuple[str, str, bool]] = []
+
+    def recording_replace(
+        source: str, destination: str, *, src_dir_fd: int, dst_dir_fd: int
+    ) -> None:
+        # The kind of the temp entry, the final name, and whether its folder is the hub root.
+        mode = os.stat(source, dir_fd=src_dir_fd, follow_symlinks=False).st_mode
+        folder = os.fstat(dst_dir_fd)
+        at_root = (folder.st_dev, folder.st_ino) == (root.st_dev, root.st_ino)
+        renames.append(("link" if stat.S_ISLNK(mode) else "file", destination, at_root))
+        replace(source, destination, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+
+    monkeypatch.setattr(os, "replace", recording_replace)
+    rendered = flags_render()
+
+    result = run_init([*demo_flags, "--dir", str(target)])
+
+    assert result.exit_code == 0, result.stderr
+    files = sorted(file.path for file in rendered.files)
+    links = sorted(link.path for link in rendered.links)
+    assert renames == [
+        *(("file", path.rpartition("/")[2], "/" not in path) for path in files),
+        *(("link", path.rpartition("/")[2], "/" not in path) for path in links),
+        ("file", "hub.json", True),
+        ("file", "hub.lock", True),
+    ]

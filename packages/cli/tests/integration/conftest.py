@@ -1,6 +1,8 @@
 """Fixtures for the cli integration tests: a fake git on ``PATH`` and the ``demo`` inputs."""
 
+import os
 import shlex
+import stat
 from collections.abc import Callable, Mapping
 from importlib.metadata import version
 from pathlib import Path
@@ -123,3 +125,41 @@ def demo_config_file(tmp_path: Path, demo_document: dict[str, Any]) -> Path:
 def demo_flags() -> list[str]:
     """The ``init`` arguments of the spec's ``DEMO_FLAGS``."""
     return list(DEMO_FLAGS)
+
+
+# One entry of a digest: the type, the permission bits, and the bytes or the link target.
+type DigestEntry = tuple[str, int, bytes | str | None]
+type TreeDigest = Callable[[Path], dict[str, DigestEntry]]
+
+
+def _digest_entry(path: Path) -> DigestEntry:
+    status = path.lstat()
+    mode = stat.S_IMODE(status.st_mode)
+    if stat.S_ISLNK(status.st_mode):
+        return ("link", mode, os.readlink(path))
+    if stat.S_ISREG(status.st_mode):
+        return ("file", mode, path.read_bytes())
+    if stat.S_ISDIR(status.st_mode):
+        return ("folder", mode, None)
+    return ("other", mode, None)
+
+
+@pytest.fixture
+def tree_digest() -> TreeDigest:
+    """Digest a path: every entry under it (itself as ``.``), never following a link.
+
+    Each entry is its type, permission bits, and a file's bytes or a link's target, so two
+    trees with equal digests hold the same paths, bytes, modes and links.
+    """
+
+    def digest(root: Path) -> dict[str, DigestEntry]:
+        found = {".": _digest_entry(root)}
+        if found["."][0] != "folder":
+            return found
+        for folder, folders, files in os.walk(root):
+            for name in [*folders, *files]:
+                path = Path(folder) / name
+                found[path.relative_to(root).as_posix()] = _digest_entry(path)
+        return found
+
+    return digest
