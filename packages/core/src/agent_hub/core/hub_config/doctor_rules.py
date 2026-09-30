@@ -76,9 +76,15 @@ def drop_map_comment_keys(value: object) -> object:
     return drop_comment_keys(value) if isinstance(value, dict) else value
 
 
+# E30: scale guards. ``fnmatch.translate`` is quadratic on a long key, and each glob key is tried
+# on each instruction file; comment keys are dropped first, so they count toward neither.
+MAX_LINES_KEY_LENGTH: Final = 1024
+MAX_LINES_KEYS: Final = 256
+
 # A file name or glob mapped to its line limit, merged over the rule's defaults.
 LineLimits = Annotated[
-    dict[Annotated[str, Field(min_length=1)], PositiveInt],
+    dict[Annotated[str, Field(min_length=1, max_length=MAX_LINES_KEY_LENGTH)], PositiveInt],
+    Field(max_length=MAX_LINES_KEYS),
     BeforeValidator(drop_map_comment_keys),
     # The schema says what the model does: a ``_`` key is a comment, not a limit.
     Field(json_schema_extra=COMMENT_KEYS_SCHEMA),

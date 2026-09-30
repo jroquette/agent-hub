@@ -16,6 +16,7 @@ from agent_hub.core.doctor.config_lint import (
     agent_skill_files,
     file_text,
     instruction_files,
+    line_count,
     parse_frontmatter,
     plugin_files,
     text_lines,
@@ -212,22 +213,30 @@ class TestFileText:
 
 
 class TestTextLines:
-    @pytest.mark.parametrize(
-        ("text", "lines"),
-        [
-            pytest.param("", (), id="empty"),
-            pytest.param("a\nb\n", ("a", "b"), id="lf"),
-            pytest.param("a\r\nb\r\n", ("a", "b"), id="crlf"),
-            pytest.param("a\rb\n", ("a\rb",), id="lone-cr-inside"),
-            pytest.param("a\n\nb", ("a", "", "b"), id="blank-and-unended"),
-            pytest.param("a\u2028b\n", ("a\u2028b",), id="line-separator-is-text"),
-        ],
+    LINE_ENDS = (
+        pytest.param("", (), id="empty"),
+        pytest.param("a\nb\n", ("a", "b"), id="lf"),
+        pytest.param("a\r\nb\r\n", ("a", "b"), id="crlf"),
+        pytest.param("a\rb\n", ("a\rb",), id="lone-cr-inside"),
+        pytest.param("a\n\nb", ("a", "", "b"), id="blank-and-unended"),
+        pytest.param("a\u2028b\n", ("a\u2028b",), id="line-separator-is-text"),
+        pytest.param("\n", ("",), id="one-empty-line"),
+        pytest.param("a\r", ("a",), id="final-cr-unended"),
     )
+
+    @pytest.mark.parametrize(("text", "lines"), LINE_ENDS)
     def test_ends_line_at_newline_only_when_text_split(
         self, text: str, lines: tuple[str, ...]
     ) -> None:
         # E29: every config-lint rule reads these lines.
         assert text_lines(text) == lines
+
+    @pytest.mark.parametrize(("text", "lines"), LINE_ENDS)
+    def test_counts_as_text_lines_when_counted_without_split(
+        self, text: str, lines: tuple[str, ...]
+    ) -> None:
+        # E30: the size rule counts without building the lines.
+        assert line_count(text) == len(text_lines(text)) == len(lines)
 
 
 class TestFrontmatter:

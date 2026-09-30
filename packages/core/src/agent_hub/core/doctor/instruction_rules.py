@@ -8,13 +8,14 @@ files (``config_lint``; spec AC-11.19, AC-11.20, Q-6). Lines are ``config_lint.t
   ``AGENTS.md`` 100, ``CLAUDE.md`` 150 and ``CLAUDE.local.md`` 50 at the root and 80 for every
   nested instruction file (``*/*``); ``GEMINI.md`` has none. ``doctor.rules."instructions.size"
   .max_lines`` adds limits by key: a key with no glob character (``*``, ``?``, ``[``) is the exact
-  path (so a bare name is a root file), any other key an ``fnmatch`` over the path. A project key
-  wins over a default one; within each, an exact key over a glob, then the longest glob, then the
-  first in sorted order.
+  path, with or without ``/`` (so a bare name is a root file; E30), any other key an ``fnmatch``
+  over the path (where an unclosed ``[`` is a literal). A project key wins over a default one;
+  within each, an exact key over a glob, then the longest glob, then the first in sorted order.
 - Duplicates: a line normalized as the old lint did (stripped, list markers and digits dropped
   from its start, blanks collapsed, lowercased) of 60 or more characters, not a table, fence or
   heading line, that an earlier file in sorted path order holds is flagged on the later file,
-  naming the first ``path:line``. Repeats within one file are not.
+  naming the first ``path:line``. Frontmatter lines count too, as in the old lint (E11). Repeats
+  within one file are not.
 
 A file that is not text is skipped: the runner reports it once (E28).
 """
@@ -26,7 +27,12 @@ from fnmatch import translate
 from types import MappingProxyType
 from typing import Final
 
-from agent_hub.core.doctor.config_lint import file_text, instruction_files, text_lines
+from agent_hub.core.doctor.config_lint import (
+    file_text,
+    instruction_files,
+    line_count,
+    text_lines,
+)
 from agent_hub.core.doctor.finding import Finding, Read, Rule
 from agent_hub.core.doctor.snapshot import DoctorSnapshot
 from agent_hub.core.hub_config.doctor_rules import (
@@ -92,7 +98,7 @@ def _instructions_size(snapshot: DoctorSnapshot) -> Iterator[Finding]:
         text = file_text(snapshot.hub.entries.get(path))
         if not isinstance(text, str):
             continue
-        count = len(text_lines(text))
+        count = line_count(text)
         if count > limit:
             yield INSTRUCTIONS_SIZE.finding(
                 path=path, message=f"{count} lines, limit {limit}", fix=SIZE_FIX
