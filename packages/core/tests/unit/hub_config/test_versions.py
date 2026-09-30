@@ -7,6 +7,8 @@ from agent_hub.core.hub_config.versions import (
     PINNED_RELEASE_COMMAND,
     SUPPORTED_SCHEMA_VERSION,
     find_version_problem,
+    pinned_release,
+    pinned_release_command,
 )
 from agent_hub.core.testing.builders import a_hub_document
 
@@ -153,3 +155,48 @@ def test_returns_nothing_when_both_versions_supported() -> None:
     document = a_pinned_document(project="not checked here", unknown="ignored")
 
     assert find_version_problem(document, running_version=RUNNING) is None
+
+
+@pytest.mark.parametrize(
+    ("document", "expected"),
+    [
+        (a_pinned_document(platform={"version": "0.0.1"}), "0.0.1"),
+        (_without("platform"), None),
+        (a_pinned_document(platform=["0.0.1"]), None),
+        (a_pinned_document(platform={}), None),
+        (a_pinned_document(platform={"version": 1}), None),
+        (a_pinned_document(platform={"version": "0.1"}), None),
+        (a_pinned_document(platform={"version": "0.1.0\n"}), None),
+        (a_pinned_document(platform={"version": "\u0660.1.0"}), None),
+        ([a_pinned_document(platform={"version": "0.0.1"})], None),
+    ],
+    ids=[
+        "well-formed",
+        "platform-absent",
+        "platform-array",
+        "version-absent",
+        "version-number",
+        "version-two-numbers",
+        "version-trailing-newline",
+        "version-non-ascii-digit",
+        "top-level-array",
+    ],
+)
+def test_returns_pin_when_pin_well_formed(document: object, expected: str | None) -> None:
+    assert pinned_release(document) == expected
+
+
+def test_formats_pinned_command_when_pin_short() -> None:
+    assert pinned_release_command("0.0.1") == (
+        "uvx --from git+https://github.com/jroquette/agent-hub@v0.0.1"
+        "#subdirectory=packages/agent-hub hub"
+    )
+
+
+def test_drops_pinned_command_when_pin_longer_than_limit() -> None:
+    at_limit = "1" * (ECHO_LIMIT - 4) + ".0.0"
+    over_limit = "1" * (ECHO_LIMIT - 3) + ".0.0"
+
+    assert len(at_limit) == ECHO_LIMIT
+    assert pinned_release_command(at_limit) == PINNED_RELEASE_COMMAND.format(version=at_limit)
+    assert pinned_release_command(over_limit) is None
