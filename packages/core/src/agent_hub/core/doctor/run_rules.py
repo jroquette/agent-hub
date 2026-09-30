@@ -8,6 +8,12 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Final
 
+from agent_hub.core.doctor.config_lint import (
+    TextProblem,
+    file_text,
+    instruction_files,
+    plugin_files,
+)
 from agent_hub.core.doctor.finding import Finding, Read, Rule
 from agent_hub.core.doctor.snapshot import ConfigFailure, DoctorSnapshot
 from agent_hub.core.hub_config.doctor_rules import (
@@ -124,8 +130,9 @@ def run_rules(selection: Selection, snapshot: DoctorSnapshot) -> tuple[Finding, 
     """Every finding of the selected rules, each check called once, retuned, then sorted.
 
     A rule whose check raises an ``Exception`` loses its findings and gives one error instead
-    (E27); the other rules still run. That error, and the one of a hub tree that could not be
-    listed or read, are added after the retune, so their level is never changed.
+    (E27); the other rules still run. That error, the ones of files the config-lint rules read
+    that are not text (E28), and the one of a hub tree that could not be listed or read, are
+    added after the retune, so their level is never changed.
     """
     failed = isinstance(snapshot.config, ConfigFailure)
     findings: list[Finding] = []
@@ -143,6 +150,7 @@ def run_rules(selection: Selection, snapshot: DoctorSnapshot) -> tuple[Finding, 
             for finding in emitted
         )
     findings.extend(crashes)
+    findings.extend(_text_problem_findings(selection, snapshot))
     problem = _tree_problem_finding(selection, snapshot)
     if problem is not None:
         findings.append(problem)
@@ -172,6 +180,39 @@ def _checked(rule: Rule, snapshot: DoctorSnapshot) -> tuple[Finding, ...] | Find
             message=f"rule crashed: {type(error).__name__}: {detail}",
             fix=CRASH_FIX,
         )
+
+
+def _text_problem_findings(selection: Selection, snapshot: DoctorSnapshot) -> list[Finding]:
+    """One error per instruction or plugin file that is not text, on its first reader (E28).
+
+    The reader is the first selected rule, in registry (``RULE_IDS``) order, that reads a set the
+    file is in; the other rules skip the file. None on a failed config (only the config rules run).
+    """
+    if isinstance(snapshot.config, ConfigFailure):
+        return []
+    sets = {
+        Read.INSTRUCTION_FILES: instruction_files(snapshot.hub),
+        Read.PLUGIN_FILES: plugin_files(snapshot.hub),
+    }
+    findings: list[Finding] = []
+    for path in sorted({path for paths in sets.values() for path in paths}):
+        reads = {read for read, paths in sets.items() if path in paths}
+        reader = next((rule.id for rule in selection.rules if reads & rule.reads), None)
+        if reader is None:
+            continue
+        problem = file_text(snapshot.hub.entries.get(path))
+        if isinstance(problem, TextProblem):
+            findings.append(
+                Finding(
+                    rule=reader,
+                    severity=Severity.ERROR,
+                    path=path,
+                    line=None,
+                    message=problem.message,
+                    fix=problem.fix,
+                )
+            )
+    return findings
 
 
 def _tree_problem_finding(selection: Selection, snapshot: DoctorSnapshot) -> Finding | None:

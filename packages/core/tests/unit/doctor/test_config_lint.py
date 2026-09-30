@@ -166,9 +166,14 @@ class TestFileText:
 
         assert file_text(entry) == "línea\r\nzwei\n"
 
-    def test_reads_text_when_file_holds_nul(self) -> None:
-        # The old lint read such a file as text; only undecodable bytes are refused.
-        assert file_text(FileEntry(executable=False, content=b"a\x00b\n")) == "a\x00b\n"
+    def test_reports_not_utf8_when_file_holds_nul(self) -> None:
+        # Q-19: a NUL is not text, though it decodes (the old lint read it); the offset is the
+        # first NUL's byte in the file, counted in bytes.
+        entry = FileEntry(executable=False, content="é\n\x00b\x00\n".encode())
+
+        assert file_text(entry) == TextProblem(
+            message="not UTF-8 text: NUL at byte 3", fix=TEXT_FIX
+        )
 
     def test_reports_not_utf8_when_instruction_file_undecodable(self) -> None:
         # Q-19: an instruction file that does not decode is an error, not a skip (the old lint
@@ -189,12 +194,12 @@ class TestFileText:
         ],
         ids=["absent", "unread", "link", "folder"],
     )
-    def test_reports_unread_when_entry_has_no_content(
+    def test_skips_file_when_entry_has_no_content(
         self, entry: FileEntry | LinkEntry | FolderEntry | None
     ) -> None:
-        assert file_text(entry) == TextProblem(
-            message="could not be read", fix="run hub doctor again"
-        )
+        # E28: the reader asked for every listed file, so one with no content is a read that
+        # failed, already reported once as the hub's problem (E24).
+        assert file_text(entry) is None
 
 
 class TestFrontmatter:
@@ -230,6 +235,22 @@ class TestFrontmatter:
         assert parse_frontmatter(text) == Frontmatter(
             fields={"name": "x", "paths": ("a/*",)}, end=5
         )
+
+    def test_keeps_empty_list_when_crlf_item_has_no_value(self) -> None:
+        text = "---\r\npaths:\r\n  -\r\ntools:  Read \r\nglobs:\r\n  - 'a/*' \r\n---\r\n"
+
+        assert parse_frontmatter(text) == Frontmatter(
+            fields={"paths": (), "tools": "Read", "globs": ("a/*",)}, end=7
+        )
+
+    @pytest.mark.parametrize(
+        "text",
+        ["\ufeff---\nname: x\n---\n", "---\rname: x\r---\r"],
+        ids=["bom", "lone-cr"],
+    )
+    def test_finds_no_frontmatter_when_first_line_not_bare_marker(self, text: str) -> None:
+        # As the old lint: a BOM is part of the first line, and only \n ends a line.
+        assert parse_frontmatter(text) is None
 
     def test_parses_empty_frontmatter_when_closed_at_once(self) -> None:
         assert parse_frontmatter(" --- \n---\n") == Frontmatter(fields={}, end=2)
