@@ -1,6 +1,7 @@
 """The synthetic ``demo`` inits (Q-12): the lock on disk, modes, identical trees and the golden.
 
-A sync of a fresh ``demo`` init prints ``up to date`` and writes nothing (AGH-14 AC-14.7).
+A sync of a fresh ``demo`` init prints ``up to date`` and writes nothing (AGH-14 AC-14.7), and a
+pending ``demo`` hub synced in process and as a child writes identical trees (AC-14.16).
 
 ``DEMO`` is ``demo_config_file`` (the example config without modules, pinned to the running CLI)
 and ``DEMO_FLAGS`` is ``demo_flags``. The golden harness of ``demo.hub.lock`` is the conftest's
@@ -419,3 +420,73 @@ def test_prints_up_to_date_when_sync_reruns(
     assert adapter_calls == []
     assert tree_digest(root) == fresh
     assert (root / "hub.lock").stat().st_mtime_ns == lock_mtime
+
+
+OLDER_RENDER = b"# rendered by an older release\n"
+
+
+def make_all_pending(root: Path) -> None:
+    """The pending-changes cases at once: restore, create, update, delete and a lock header."""
+    lock = json.loads((root / "hub.lock").read_bytes())
+    (root / "AGENTS.md").unlink()
+    (root / "CLAUDE.md").unlink()
+    del lock["files"]["CLAUDE.md"]
+    (root / "Makefile").write_bytes(OLDER_RENDER)
+    older = {"executable": False, "sha256": hashlib.sha256(OLDER_RENDER).hexdigest()}
+    lock["files"]["Makefile"].update(older)
+    (root / "old").mkdir()
+    (root / "old" / "file.md").write_bytes(OLDER_RENDER)
+    lock["files"]["old/file.md"] = {"ownership": "managed", **older}
+    lock["platform_version"] = "0.0.1"
+    (root / "hub.lock").write_bytes(dump_json(lock))
+
+
+def test_writes_identical_trees_when_sync_runs_twice(
+    tmp_path: Path,
+    demo_hub: Path,
+    *,
+    run_sync: SyncRunner,
+    tree_digest: TreeDigest,
+    child_env: ChildEnv,
+    set_umask: Callable[[int], None],
+    lock_golden: LockGolden,
+    no_git_path: Path,
+) -> None:
+    make_all_pending(demo_hub)
+    child_root = tmp_path / "child"
+    shutil.copytree(demo_hub, child_root, symlinks=True)
+    # A umask other than the child's, whatever the developer's shell uses.
+    set_umask(0o022)
+    env = child_env(
+        {
+            **os.environ,
+            "PATH": str(no_git_path),
+            "HOME": str(tmp_path / "child-home"),
+            "PYTHONHASHSEED": CHILD_HASH_SEED,
+            "TZ": CHILD_TZ,
+            "LC_ALL": "C",
+        }
+    )
+
+    in_process = run_sync(demo_hub)
+    child = subprocess.run(  # noqa: S603 - this interpreter, fixed code, a tmp_path folder
+        [sys.executable, "-c", "from agent_hub.cli.main import app; app(prog_name='hub')", "sync"],
+        cwd=child_root,
+        env=env,
+        umask=CHILD_UMASK,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=CHILD_TIMEOUT,
+    )
+
+    assert (in_process.exit_code, in_process.stderr) == (0, ""), in_process.output
+    assert (child.returncode, child.stderr) == (0, ""), child.stderr
+    assert in_process.stdout.splitlines()[-1] == "updated hub.lock"
+    assert child.stdout == in_process.stdout
+    # Another umask: the permission bits of the written files differ, nothing else does.
+    assert tree_digest(child_root) != tree_digest(demo_hub)
+    assert shape(tree_digest(child_root)) == shape(tree_digest(demo_hub))
+    lock = (demo_hub / "hub.lock").read_bytes()
+    assert (child_root / "hub.lock").read_bytes() == lock
+    lock_golden(lock)
