@@ -36,9 +36,12 @@ class LoadedHubJson(NamedTuple):
     config: HubConfig
 
 
-def load_hub_json_or_exit(path: Path) -> LoadedHubJson:
-    """The bytes and validated config in ``path``; on any problem, print its lines and exit 1."""
-    content = _read_bytes_or_exit(path)
+def load_hub_json_or_exit(path: Path, *, missing_hint: str | None = None) -> LoadedHubJson:
+    """The bytes and validated config in ``path``; on any problem, print its lines and exit 1.
+
+    When ``path`` does not exist and ``missing_hint`` is given, the hint is one more line.
+    """
+    content = _read_bytes_or_exit(path, missing_hint=missing_hint)
     checked = check_hub_document(_parse_or_exit(content), running_version=version(DISTRIBUTION))
     if not isinstance(checked, HubConfig):
         _fail(*checked)
@@ -50,7 +53,7 @@ def load_hub_config_or_exit(path: Path) -> HubConfig:
     return load_hub_json_or_exit(path).config
 
 
-def _read_bytes_or_exit(path: Path) -> bytes:
+def _read_bytes_or_exit(path: Path, *, missing_hint: str | None) -> bytes:
     # The path is quoted and escaped, so it stays on the one line.
     shown_path = json.dumps(str(path))
     not_regular = ConfigProblem(ROOT_PATH, f"cannot read {shown_path}: not a regular file")
@@ -68,7 +71,10 @@ def _read_bytes_or_exit(path: Path) -> bytes:
             return opened.read()
     except OSError as error:
         reason = error.strerror or type(error).__name__
-        _fail(ConfigProblem(ROOT_PATH, f"cannot read {shown_path}: {reason}"))
+        problem = ConfigProblem(ROOT_PATH, f"cannot read {shown_path}: {reason}")
+        if missing_hint is not None and isinstance(error, FileNotFoundError):
+            _fail(problem, hint=missing_hint)
+        _fail(problem)
 
 
 def _parse_or_exit(content: bytes) -> JsonValue:
@@ -79,8 +85,10 @@ def _parse_or_exit(content: bytes) -> JsonValue:
         _fail(ConfigProblem(ROOT_PATH, error.message))
 
 
-def _fail(*problems: ConfigProblem) -> NoReturn:
+def _fail(*problems: ConfigProblem, hint: str | None = None) -> NoReturn:
     # Each problem is built on one line: text from the file is escaped where it is quoted.
     for problem in problems:
         typer.echo(f"{FILE_LABEL}: {problem.path}: {problem.message}", err=True)
+    if hint is not None:
+        typer.echo(f"{FILE_LABEL}: {hint}", err=True)
     raise typer.Exit(FAILURE)

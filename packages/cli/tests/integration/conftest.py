@@ -1,13 +1,16 @@
 """Fixtures for the cli integration tests: a fake git on ``PATH`` and the ``demo`` inputs.
 
 Also the ``hub.lock`` golden harness (``lock_golden``), a from-scratch child environment
-(``child_env``) and the process umask (``set_umask``).
+(``child_env``), the process umask (``set_umask``), and for ``hub sync`` a ``DEMO`` hub built
+once per session (``demo_hub_template``) and copied per test (``demo_hub``), an in-process sync
+in a folder (``run_sync``) and the writer calls a test makes (``adapter_calls``).
 """
 
 import difflib
 import json
 import os
 import shlex
+import shutil
 import stat
 import sys
 from collections.abc import Callable, Iterator, Mapping
@@ -16,7 +19,9 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 import pytest
+from typer.testing import CliRunner, Result
 
+from agent_hub.cli.main import app
 from agent_hub.core.json_form import dump_json
 from agent_hub.core.testing.builders import a_hub_document
 
@@ -118,13 +123,83 @@ def no_git_path(tmp_path: Path) -> Path:
     return folder
 
 
-@pytest.fixture
-def demo_document() -> dict[str, Any]:
+def demo_document_value() -> dict[str, Any]:
     """The spec's ``DEMO``: the example config with no modules (D3), pinned to the running CLI."""
     document = a_hub_document()
     del document["modules"]
     document["platform"]["version"] = version("agent-hub-cli")
     return document
+
+
+@pytest.fixture
+def demo_document() -> dict[str, Any]:
+    """A fresh ``DEMO`` document, which the test may change."""
+    return demo_document_value()
+
+
+@pytest.fixture(scope="session")
+def demo_hub_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The tree ``hub init --config DEMO`` writes, built once per session: never change it.
+
+    ``init --config`` reads neither git nor ``HOME``, so the function-scoped fixtures that
+    isolate them are not needed here.
+    """
+    base = tmp_path_factory.mktemp("demo-hub-template")
+    config = base / "hub.json"
+    config.write_bytes(dump_json(demo_document_value()))
+    root = base / "hub"
+    result = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
+    assert result.exit_code == 0, result.stderr
+    # A copy must not carry a git folder that points back at the template.
+    assert not os.path.lexists(root / ".git")
+    return root
+
+
+@pytest.fixture
+def demo_hub(tmp_path: Path, demo_hub_template: Path) -> Path:
+    """A copy of the ``DEMO`` hub for this test: links kept as links, modes kept."""
+    root = tmp_path / "hub"
+    shutil.copytree(demo_hub_template, root, symlinks=True)
+    return root
+
+
+type SyncRunner = Callable[..., Result]
+
+
+@pytest.fixture
+def run_sync(monkeypatch: pytest.MonkeyPatch) -> SyncRunner:
+    """Run ``hub sync <args>`` in process with ``root`` as the current folder."""
+
+    def run(root: Path, *args: str) -> Result:
+        monkeypatch.chdir(root)
+        return CliRunner().invoke(app, ["sync", *args])
+
+    return run
+
+
+# The calls through which the writer changes a tree, each recorded by the name it changes.
+ADAPTER_CALLS = ("replace", "unlink", "mkdir")
+
+
+@pytest.fixture
+def adapter_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
+    """``(call, name)`` of every ``os.replace``, ``os.unlink`` and ``os.mkdir``, in order.
+
+    ``name`` is the destination as given (relative to its ``dir_fd``); each call goes through.
+    """
+    calls: list[tuple[str, str]] = []
+
+    def wrap(call: str, real: Callable[..., Any]) -> Callable[..., Any]:
+        def recorded(*args: Any, **kwargs: Any) -> Any:
+            destination = args[1] if call == "replace" else args[0]
+            calls.append((call, os.fsdecode(destination)))
+            return real(*args, **kwargs)
+
+        return recorded
+
+    for call in ADAPTER_CALLS:
+        monkeypatch.setattr(os, call, wrap(call, getattr(os, call)))
+    return calls
 
 
 @pytest.fixture
