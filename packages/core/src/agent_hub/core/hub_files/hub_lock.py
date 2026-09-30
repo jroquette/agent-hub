@@ -167,8 +167,8 @@ def read_hub_lock(content: bytes) -> HubLock | tuple[ConfigProblem, ...]:
     """The lock ``content`` holds, or its problems, one per line to print after ``hub.lock: ``.
 
     The JSON problems read as ``hub.json``'s do. A lock the model accepts is still refused when it
-    records ``hub.json`` as managed (sync would then compare, rewrite or delete the project's file)
-    records ``hub.json`` as managed. A key or a string with a lone surrogate (a ``\\ud800``
+    records ``hub.json`` as managed (sync would then compare, rewrite or delete the project's file).
+    A key or a string with a lone surrogate (a ``\\ud800``
     escape: no UTF-8 bytes) is reported before the model sees it, one line where each one is.
     """
     try:
