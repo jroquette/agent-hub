@@ -337,3 +337,85 @@ def test_writes_nothing_when_sync_runs_on_fresh_init(
     assert applied == []
     assert tree_digest(root) == before
     assert (root / "hub.lock").stat().st_mtime_ns == lock_mtime
+
+
+MAKEFILE_LINE = b"local: ; @true\n"
+AGENTS_LINE = b"- A rule the project wrote here.\n"
+
+
+def appended_diff(render: bytes, *, path: str, line: bytes) -> list[str]:
+    """Spec Q-4's diff of ``path`` when the project appended ``line`` to its render."""
+    lines = render.decode().splitlines()
+    start = len(lines) - 2
+    return [
+        f"--- {path} (on disk)",
+        f"+++ {path} (render)",
+        f"@@ -{start},4 +{start},3 @@",
+        *(f" {kept}" for kept in lines[-3:]),
+        f"-{line.decode().removesuffix(chr(10))}",
+    ]
+
+
+@pytest.mark.parametrize("edited", [["Makefile"], ["Makefile", "AGENTS.md"]], ids=["one", "two"])
+def test_exits_conflict_when_managed_file_edited(
+    demo_hub: Path,
+    run_sync: SyncRunner,
+    *,
+    tree_digest: TreeDigest,
+    adapter_calls: list[tuple[str, str]],
+    edited: list[str],
+) -> None:
+    appended = {"Makefile": MAKEFILE_LINE, "AGENTS.md": AGENTS_LINE}
+    renders = {path: (demo_hub / path).read_bytes() for path in edited}
+    for path in edited:
+        with (demo_hub / path).open("ab") as file:
+            file.write(appended[path])
+    before = tree_digest(demo_hub)
+    adapter_calls.clear()
+    # One report per path, in path order, then ADR 0009's way out.
+    expected = [
+        line
+        for path in sorted(edited)
+        for line in appended_diff(renders[path], path=path, line=appended[path])
+    ]
+    expected.append(
+        "move the change to an extension file (hub.json, a *.project.* file, Makefile.project),"
+        " restore or delete the file, then re-run hub sync"
+    )
+
+    for args in [(), ("--check",)]:
+        result = run_sync(demo_hub, *args)
+
+        assert (result.exit_code, result.stdout) == (3, ""), result.output
+        assert result.stderr.splitlines() == expected
+    assert adapter_calls == []
+    assert tree_digest(demo_hub) == before
+
+
+def test_prints_up_to_date_when_sync_reruns(
+    tmp_path: Path,
+    *,
+    demo_config_file: Path,
+    run_sync: SyncRunner,
+    tree_digest: TreeDigest,
+    adapter_calls: list[tuple[str, str]],
+) -> None:
+    root = init_demo(demo_config_file, tmp_path / "hub")
+    fresh = tree_digest(root)
+    (root / "AGENTS.md").unlink()
+    lock = json.loads((root / "hub.lock").read_bytes())
+    lock["platform_version"] = "0.0.1"
+    (root / "hub.lock").write_bytes(dump_json(lock))
+
+    applied = run_sync(root)
+
+    assert (applied.exit_code, applied.stderr) == (0, ""), applied.output
+    assert applied.stdout == "restored AGENTS.md\nupdated hub.lock\n"
+    assert tree_digest(root) == fresh
+    lock_mtime = (root / "hub.lock").stat().st_mtime_ns
+    adapter_calls.clear()
+    rerun = run_sync(root)
+    assert (rerun.exit_code, rerun.stdout, rerun.stderr) == (0, "up to date\n", "")
+    assert adapter_calls == []
+    assert tree_digest(root) == fresh
+    assert (root / "hub.lock").stat().st_mtime_ns == lock_mtime
