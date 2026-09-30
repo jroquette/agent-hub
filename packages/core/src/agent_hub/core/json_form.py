@@ -24,10 +24,15 @@ BYTE_ORDER_MARK = "\N{ZERO WIDTH NO-BREAK SPACE}"
 
 
 class InvalidJsonError(AgentHubError):
-    """Bytes that are not a JSON value this platform reads; ``message`` says why, on one line."""
+    """Bytes that are not a JSON value this platform reads; ``message`` says why, on one line.
 
-    def __init__(self, message: str) -> None:
+    ``line`` is the line the parser stopped at for a syntax error, 1 for a byte order mark, and
+    ``None`` for every other problem (not UTF-8, too many digits, too deep, a strict refusal).
+    """
+
+    def __init__(self, message: str, *, line: int | None = None) -> None:
         self.message = message
+        self.line = line
         super().__init__(message)
 
 
@@ -66,13 +71,14 @@ def _decode(content: bytes) -> str:
 def _parse(text: str, *, strict: bool) -> JsonValue:
     if text.startswith(BYTE_ORDER_MARK):
         raise InvalidJsonError(
-            "not valid JSON: the file starts with a UTF-8 byte order mark; save it without one"
+            "not valid JSON: the file starts with a UTF-8 byte order mark; save it without one",
+            line=1,
         )
     try:
         value: JsonValue = _load_strict(text) if strict else json.loads(text)
     except json.JSONDecodeError as error:
         message = f"not valid JSON: {error.msg} at line {error.lineno} column {error.colno}"
-        raise InvalidJsonError(message) from None
+        raise InvalidJsonError(message, line=error.lineno) from None
     except _StrictError as error:
         raise InvalidJsonError(f"not valid JSON here: {error.reason}") from None
     except ValueError:
