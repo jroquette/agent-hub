@@ -38,3 +38,6 @@ def test_shows_arguments_when_init_help_requested() -> None:
         "--dir",
     ):
         assert name in unstyle(result.stdout)
+    # The defaults are shown, not eaten as markup; a wrapped cell reads as one line of words.
+    words = " ".join(unstyle(result.stdout).replace("\N{BOX DRAWINGS LIGHT VERTICAL}", " ").split())
+    assert "Author of commits and PRs [default: git user.name]." in words

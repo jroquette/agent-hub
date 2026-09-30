@@ -32,6 +32,15 @@ DEMO_FLAGS = (
 )
 # Exit code of git when a folder is not in a work tree.
 NOT_A_REPO = 128
+# Set by the caller (a git hook, a worktree script), they would make init skip the remote.
+GIT_LOCATION_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
+
+
+@pytest.fixture(autouse=True)
+def no_git_location(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run every test as if git found the repo from the folder: the caller's variables unset."""
+    for variable in GIT_LOCATION_VARIABLES:
+        monkeypatch.delenv(variable, raising=False)
 
 
 class FakeGit(NamedTuple):

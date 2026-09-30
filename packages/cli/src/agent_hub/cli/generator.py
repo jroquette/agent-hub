@@ -64,17 +64,17 @@ def init(
     ] = None,
     author_name: Annotated[
         str | None,
-        typer.Option("--author-name", help="Author of commits and PRs [default: git user.name]."),
+        typer.Option("--author-name", help="Author of commits and PRs \\[default: git user.name]."),
     ] = None,
     author_email: Annotated[
         str | None,
-        typer.Option("--author-email", help="Author's email [default: git user.email]."),
+        typer.Option("--author-email", help="Author's email \\[default: git user.email]."),
     ] = None,
     hub_repo: Annotated[
         str | None,
         typer.Option(
             "--hub-repo",
-            help="GitHub owner/name of the hub [default: the hub folder's GitHub origin].",
+            help="GitHub owner/name of the hub \\[default: the hub folder's GitHub origin].",
         ),
     ] = None,
     config: Annotated[
@@ -83,7 +83,7 @@ def init(
     ] = None,
     directory: Annotated[
         Path | None,
-        typer.Option("--dir", help="Folder to write the hub in [default: the current folder]."),
+        typer.Option("--dir", help="Folder to write the hub in \\[default: the current folder]."),
     ] = None,
 ) -> None:
     """Create a hub for a project with its repos and task tracker."""
@@ -96,8 +96,7 @@ def init(
     flags = {"--repos": repos, "--tracker": tracker}
     flags |= {"--" + key.replace("_", "-"): value for key, value in optional.items()}
     source = _source_or_fail(context, project=project, flags=flags, config=config)
-    # The hub root, taken once: every later step uses this real path (spec Q-9).
-    root = os.path.realpath(directory if directory is not None else os.curdir)
+    root = _root_or_exit(directory)
     running = version(DISTRIBUTION)
     if isinstance(source, Path):
         loaded = load_hub_json_or_exit(source)
@@ -205,6 +204,16 @@ def _refuse_modules_or_exit(config: HubConfig) -> None:
         )
 
 
+def _root_or_exit(directory: Path | None) -> str:
+    """The hub root, taken once: every later step uses this real path (spec Q-9)."""
+    given = os.fspath(directory) if directory is not None else os.curdir
+    try:
+        return os.path.realpath(given)
+    except OSError as error:
+        # A relative path needs the cwd, which may have been deleted.
+        _fail(f"{shown_path(given)}: {error.strerror or error}")
+
+
 def _check_root_or_exit(root: str) -> None:
     # Absent is fine: the folder is made only once every check passed.
     if os.path.lexists(root) and not os.path.isdir(root):
@@ -226,7 +235,7 @@ def _plan_or_exit(root: str, *, config: HubConfig, hub_json: bytes) -> tuple[Ini
         _fail_generator(error)
     planned = plan_init(rendered=rendered, config=config, hub_json=hub_json, tree=tree)
     if isinstance(planned, InitRefusal):
-        _fail(*(f"{shown_path(path)}: {message}" for path, message in sorted(planned.problems)))
+        _fail(*(f"{shown_path(path)}: {message}" for path, message in planned.problems))
     return planned, tree.git_present
 
 

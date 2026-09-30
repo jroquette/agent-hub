@@ -2,8 +2,10 @@
 
 Git is read, never written: one ``git config --get <key>`` per missing value, plus
 ``git rev-parse --show-toplevel`` before the remote, each with a timeout and the environment
-unchanged. With ``GIT_DIR`` or ``GIT_WORK_TREE`` set, git does not find the repo from the target
-(with ``GIT_DIR`` alone it takes the cwd as the work tree top), so the remote is not read. A
+unchanged. With ``GIT_DIR``, ``GIT_WORK_TREE`` or ``GIT_COMMON_DIR`` set, git does not find the
+repo from the target alone (with ``GIT_DIR`` alone it takes the cwd as the work tree top, and
+``GIT_COMMON_DIR`` takes the config, remotes included, from another repo), so the remote is not
+read. A
 remote URL can carry a credential, so it never leaves this module: only the parsed
 ``owner/name`` does, and no message or exception quotes the URL.
 """
@@ -38,7 +40,7 @@ _READ_ORDER = (AUTHOR_NAME, AUTHOR_EMAIL, HUB_REPO)
 _CONFIG_KEYS = {AUTHOR_NAME: "user.name", AUTHOR_EMAIL: "user.email"}
 _REMOTE_KEY = "remote.origin.url"
 # Set, they point git at another repo than the target's own, whatever the top check says.
-_GIT_LOCATION_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE")
+_GIT_LOCATION_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
 
 # The three URL forms of a GitHub remote. The host is exactly github.com; the https form may
 # carry a userinfo (a user or a token), limited to RFC 3986's characters so that a host cannot

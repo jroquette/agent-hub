@@ -395,7 +395,7 @@ def test_names_git_not_found_when_git_vanishes_before_run(
     assert defaults == GitDefaults(values={}, problems=dict.fromkeys(ALL_KEYS, GIT_NOT_FOUND))
 
 
-@pytest.mark.parametrize("variable", ["GIT_DIR", "GIT_WORK_TREE"])
+@pytest.mark.parametrize("variable", ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"])
 def test_skips_remote_when_git_location_set_in_environment(
     fake_git: FakeGitFactory,
     monkeypatch: pytest.MonkeyPatch,
