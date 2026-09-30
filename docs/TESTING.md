@@ -158,8 +158,8 @@ coverage.py and pytest-cov only offer a global `--fail-under`, which is why the 
 ## Gates
 
 `make check-fast` (while working) runs, in order: `format` (`ruff format --check`), `lint`
-(`ruff check`), `typecheck` (`mypy`, strict), `layout` (the layout checker) and `test-fast` (unit and contract tests with
-coverage).
+(`ruff check`), `typecheck` (`mypy`, strict), `layout` (the layout checker), `lockstep` (the cli and meta versions are
+equal) and `test-fast` (unit and contract tests with coverage).
 
 `make check` (before a PR, and in CI) runs `check-fast`, then `test-integration`, `test-e2e`, `imports`
 (`lint-imports`), `migrations` (upgrade a scratch SQLite database to head, then `alembic check`) and `coverage` (the

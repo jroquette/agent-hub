@@ -157,6 +157,30 @@ The drift tests (in `make check-fast`) fail while the file differs from the expo
 `make hub-schema` leaves `git status --porcelain` empty. A Pydantic upgrade that changes the export needs the same
 regeneration in its PR.
 
+## Releases
+
+A release is an annotated tag `vX.Y.Z` on a commit of `main` ([ADR 0013](adr/0013-release-by-git-tags.md)). The owner
+makes it by hand; no workflow or agent creates tags.
+
+1. The release PR sets `version` in `packages/cli/pyproject.toml` and `packages/agent-hub/pyproject.toml` to `X.Y.Z`,
+   runs `uv lock` and commits `uv.lock`. `make lockstep` (in `make check-fast`) fails while the two versions differ.
+   The other packages keep their versions.
+2. After the merge, wait for the `main` CI run to be green, then tag that commit and push that one tag (never `--tags`):
+
+   ```bash
+   git fetch origin
+   git log -1 --oneline origin/main    # the release PR's squash commit
+   git tag -a vX.Y.Z -m "vX.Y.Z" origin/main
+   git push origin vX.Y.Z
+   ```
+
+3. `.github/workflows/release.yml` runs on the tag. It checks the tag form and that the tag is `v` + the cli and meta
+   version (`scripts/check_release.py --tag=vX.Y.Z`), that its commit is on `main`, and that the pinned `uvx` command
+   prints `X.Y.Z`.
+
+- A wrong or failed tag is never moved or deleted: fix the cause in a PR, bump the patch version and tag that.
+- Tag immutability rests on this written rule: GitHub tag rulesets on a private repo need a paid plan.
+
 ## Manual repository and Linear settings
 
 These live outside the repo and are set by the owner:
