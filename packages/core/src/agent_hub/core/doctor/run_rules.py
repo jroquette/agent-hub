@@ -10,11 +10,16 @@ from typing import Final
 
 from agent_hub.core.doctor.finding import Finding, Read, Rule
 from agent_hub.core.doctor.snapshot import ConfigFailure, DoctorSnapshot
-from agent_hub.core.hub_config.doctor_rules import CONFIG_SCHEMA_RULE, RULE_MODULES, Severity
+from agent_hub.core.hub_config.doctor_rules import (
+    CONFIG_SCHEMA_RULE,
+    PLATFORM_VERSION_RULE,
+    RULE_MODULES,
+    Severity,
+)
 from agent_hub.core.hub_config.model import HubConfig
 
 # The rules that read ``hub.json`` itself: the only ones run on a failed config, never retuned.
-CONFIG_RULES: Final = (CONFIG_SCHEMA_RULE, "platform.version")
+CONFIG_RULES: Final = (CONFIG_SCHEMA_RULE, PLATFORM_VERSION_RULE)
 # The fix of the one finding a failed file listing gives (E7); the message names the cause.
 LISTING_FIX: Final = "fix the cause above so this folder can be listed, then run hub doctor again"
 
