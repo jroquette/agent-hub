@@ -2160,6 +2160,7 @@ RENDERING_MODULES = frozenset(
         "errors.py",
         "hub_template.py",
         "json_form.py",
+        "json_merge.py",
         "links.py",
         "placeholders.py",
         "registry.py",

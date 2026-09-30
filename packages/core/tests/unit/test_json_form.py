@@ -143,3 +143,52 @@ def test_is_agent_hub_error_when_problem_raised() -> None:
 
     assert isinstance(error, AgentHubError)
     assert error.message == str(error) == TOO_DEEP
+
+
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        (b'{"a": 1, "a": 2}', 'not valid JSON here: the key "a" appears more than once'),
+        (
+            b'{"b": {"x\\n": 1, "x\\n": 2}}',
+            'not valid JSON here: the key "x\\n" appears more than once',
+        ),
+        (b'{"a": NaN}', "not valid JSON here: NaN is not a JSON number"),
+        (b"[Infinity]", "not valid JSON here: Infinity is not a JSON number"),
+        (b"-Infinity", "not valid JSON here: -Infinity is not a JSON number"),
+        (b'{"a": 1e999}', "not valid JSON here: a number is too large for this reader"),
+        (
+            b"\xef\xbb\xbf{}",
+            "not valid JSON: the file starts with a UTF-8 byte order mark; save it without one",
+        ),
+    ],
+    ids=[
+        "duplicate-key",
+        "nested-duplicate-key",
+        "nan",
+        "infinity",
+        "minus-infinity",
+        "overflow",
+        "bom",
+    ],
+)
+def test_refuses_duplicates_and_nan_when_strict(content: bytes, message: str) -> None:
+    with pytest.raises(InvalidJsonError) as caught:
+        load_json_bytes(content, strict=True)
+
+    assert caught.value.message == message
+
+
+def test_keeps_lenient_reading_when_not_strict() -> None:
+    # The default is unchanged for hub.json and hub.lock: the last duplicate wins, NaN is read.
+    assert load_json_bytes(b'{"a": 1, "a": 2}') == {"a": 2}
+    assert load_json_bytes(b'{"a": 1, "a": 2}', strict=False) == {"a": 2}
+    value = load_json_bytes(b"[NaN]")
+    assert isinstance(value, list)
+    assert value[0] != value[0]
+
+
+def test_loads_same_value_when_strict_and_input_clean() -> None:
+    content = b'{"a": [1, 1.0, true, null, {"b": "c"}], "d": -0.5e3}'
+
+    assert load_json_bytes(content, strict=True) == load_json_bytes(content)
