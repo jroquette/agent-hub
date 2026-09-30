@@ -22,7 +22,11 @@ import pytest
 from click import unstyle
 from typer.testing import CliRunner, Result
 
+from agent_hub.cli import doctor_command
 from agent_hub.cli.main import app
+from agent_hub.core.doctor.finding import Read, Rule
+from agent_hub.core.doctor.registry import REGISTRY
+from agent_hub.core.hub_config.doctor_rules import Severity
 from agent_hub.core.json_form import dump_json
 from agent_hub.generator import render_hub as render_hub_module
 
@@ -615,6 +619,32 @@ def test_checks_features_when_only_features_tracker(
         f"error features.tracker {record}: AC-2: passes=true needs evidence (command + result)"
         " Fix: record the command run and its result in evidence",
         "2 errors, 0 warnings, 0 infos",
+    ]
+
+
+def test_lists_files_when_rule_reads_instruction_files(
+    demo_hub: Path, run_doctor: DoctorRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A rule that declares only INSTRUCTION_FILES still gets the listing its set comes from, so
+    # the file that is not text is found (E28).
+    reader = Rule(
+        id="instructions.size",
+        severity=Severity.WARNING,
+        summary="A synthetic instruction-files reader.",
+        module=None,
+        reads=frozenset({Read.INSTRUCTION_FILES}),
+        check=lambda snapshot: (),
+    )
+    schema = next(rule for rule in REGISTRY if rule.id == "config.schema")
+    monkeypatch.setattr(doctor_command, "REGISTRY", (schema, reader))
+    (demo_hub / "AGENTS.md").write_bytes(b"\xff")
+
+    lines = lines_of(run_doctor(demo_hub), exit_code=1)
+
+    assert lines == [
+        "error instructions.size AGENTS.md: not UTF-8 text: byte 0 cannot be decoded"
+        " Fix: save it as UTF-8 text",
+        ONE_ERROR,
     ]
 
 

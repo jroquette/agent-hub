@@ -50,6 +50,8 @@ from agent_hub.generator.doctor_tree import read_doctor_tree
 from agent_hub.generator.errors import GeneratorError
 from agent_hub.generator.hub_tree import read_root_entry
 
+# The reads the hub listing serves: the listing itself, and the file sets that come from it.
+LISTING_READS: Final = frozenset({Read.HUB_LISTING, Read.INSTRUCTION_FILES, Read.PLUGIN_FILES})
 # A usage error, an unknown or unrunnable ``--only`` id, or a folder that is not a hub.
 NOT_A_HUB_EXIT: Final = 2
 NOT_A_HUB: Final = (
@@ -124,12 +126,12 @@ def _hub_snapshot(
     """The lock, the files and the base hooks block the selected rules read.
 
     The files are the fixed paths, the lock's managed paths when a rule reads them, and the
-    listing when one needs it.
+    listing when one needs it or a file set that comes from it.
     """
     reads = {read for rule in selection.rules for read in rule.reads}
     lock = _lock_or_none(root) if Read.LOCK_PATHS in reads else None
     by_path = sorted({*hub_paths(config), *lock_paths(lock)})
-    hub = read_doctor_tree(Path(root), by_path=by_path, listing=Read.HUB_LISTING in reads)
+    hub = read_doctor_tree(Path(root), by_path=by_path, listing=not LISTING_READS.isdisjoint(reads))
     base_hooks = base_hooks_block() if Read.BASE_HOOKS in reads else None
     return DoctorSnapshot(
         config=config, running_version=running, hub=hub, lock=lock, base_hooks=base_hooks

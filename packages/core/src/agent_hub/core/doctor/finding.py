@@ -40,6 +40,11 @@ class Read(StrEnum):
     HUB_LISTING = "hub_listing"
     REPOS = "repos"
     BASE_HOOKS = "base_hooks"
+    # A rule that reads the text of the instruction files, or of the plugins' agent and skill
+    # files (``config_lint``). Those sets come from the listing, so it declares ``HUB_LISTING``
+    # too (the command lists the files for either, E24 counts only ``HUB_LISTING``).
+    INSTRUCTION_FILES = "instruction_files"
+    PLUGIN_FILES = "plugin_files"
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

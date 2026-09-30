@@ -44,8 +44,7 @@ MARKDOWN: Final = ".md"
 FRONTMATTER_MARKER: Final = "---"
 
 TEXT_FIX: Final = "save it as UTF-8 text"
-UNREAD: Final = "could not be read"
-UNREAD_FIX: Final = "run hub doctor again"
+NUL: Final = b"\x00"
 
 # The old lint's field and list-item lines, each matched from the line's start.
 _FIELD: Final = re.compile(r"([A-Za-z_-]+):\s*(.*)")
@@ -98,25 +97,35 @@ def agent_skill_files(hub: HubFiles) -> tuple[str, ...]:
     )
 
 
-def file_text(entry: TreeEntry | None) -> str | TextProblem:
-    """A regular file's UTF-8 text, a NUL included (the old lint read it); else why not."""
+def file_text(entry: TreeEntry | None) -> str | TextProblem | None:
+    """A regular file's UTF-8 text, else why it is not text (Q-19: a NUL is not text either).
+
+    ``None`` when the entry is no regular file with content: the reader asked for every listed
+    file, so a read that failed is already the hub's problem (E24) and the caller skips it.
+    """
     if not isinstance(entry, FileEntry) or entry.content is None:
-        return TextProblem(message=UNREAD, fix=UNREAD_FIX)
+        return None
     try:
-        return entry.content.decode("utf-8")
+        text = entry.content.decode("utf-8")
     except UnicodeDecodeError as error:
         return TextProblem(
             message=f"not UTF-8 text: byte {error.start} cannot be decoded", fix=TEXT_FIX
         )
+    if NUL in entry.content:
+        return TextProblem(
+            message=f"not UTF-8 text: NUL at byte {entry.content.index(NUL)}", fix=TEXT_FIX
+        )
+    return text
 
 
 def parse_frontmatter(text: str) -> Frontmatter | Unterminated | None:
     """The frontmatter of a text; ``None`` when its first line is not ``---``.
 
-    Read as the old lint read it: a line is ``---`` once stripped (a CRLF line too), a field is
-    ``name: value`` from the line's start, a list item is an indented ``- item``.
+    Read as the old lint read it: a line ends at ``\n`` (a BOM or a lone ``\r`` is text), is
+    ``---`` once stripped, a field is ``name: value`` from the line's start, a list item is an
+    indented ``- item``; a CRLF line's ``\r`` is dropped first, so no value keeps it.
     """
-    lines = lines_of(text)
+    lines = tuple(line.removesuffix("\r") for line in lines_of(text))
     if not lines or lines[0].strip() != FRONTMATTER_MARKER:
         return None
     fields: dict[str, str | list[str]] = {}
