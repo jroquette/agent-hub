@@ -13,9 +13,12 @@ import pytest
 
 from agent_hub.core.doctor.finding import Read, Rule
 from agent_hub.core.doctor.permission_rules import MCP_PINNED, PERMISSIONS_BYPASS, SETTINGS_VALID
+from agent_hub.core.doctor.registry import REGISTRY
+from agent_hub.core.doctor.run_rules import Selection, run_rules, select_rules
 from agent_hub.core.doctor.snapshot import DoctorSnapshot
 from agent_hub.core.hub_config.doctor_rules import Severity
 from agent_hub.core.hub_config.versions import cut_echo
+from agent_hub.core.hub_files.tree_snapshot import FileEntry
 from agent_hub.core.json_form import JsonValue, dump_json
 
 type SnapshotFactory = Callable[..., DoctorSnapshot]
@@ -183,6 +186,44 @@ class TestPermissionsBypass:
 
         assert found(PERMISSIONS_BYPASS, snapshot) == [(SETTINGS, 1, *BYPASS_MODE)]
 
+    @pytest.mark.parametrize(
+        ("content", "message"),
+        [
+            pytest.param(
+                b'{"model": "a", "model": "b", '
+                b'"permissions": {"defaultMode": "bypassPermissions"}, "env": {"A": "'
+                + FLAG.encode()
+                + b'"}}',
+                'not valid JSON here: the key "model" appears more than once',
+                id="repeated-key",
+            ),
+            pytest.param(
+                b'{"n": NaN, "permissions": {"defaultMode": "bypassPermissions"}, "env": {"A": "'
+                + FLAG.encode()
+                + b'"}}',
+                "not valid JSON here: NaN is not a JSON number",
+                id="nan",
+            ),
+        ],
+    )
+    def test_reports_bypass_when_settings_not_strict_json(
+        self, snapshot_of: SnapshotFactory, *, content: bytes, message: str
+    ) -> None:
+        """E34(f): the strict parse error is settings.valid's; the bypass is still reported."""
+        snapshot = snapshot_of(files={SETTINGS: content})
+        bypass = [(SETTINGS, 1, *BYPASS_MODE), (SETTINGS, 1, *FLAG_IN_CONFIG)]
+
+        assert found(SETTINGS_VALID, snapshot) == [(SETTINGS, None, message, SYNTAX_FIX)]
+        assert found(PERMISSIONS_BYPASS, snapshot) == bypass
+        selection = select_rules(REGISTRY, config=snapshot.config, only=("permissions.bypass",))
+        assert isinstance(selection, Selection)
+        only = [
+            (finding.path, finding.line, finding.message, finding.fix)
+            for finding in run_rules(selection, snapshot)
+            if finding.rule == "permissions.bypass"
+        ]
+        assert only == bypass
+
     def test_accepts_mode_when_not_bypass(self, snapshot_of: SnapshotFactory) -> None:
         snapshot = snapshot_of(
             files={SETTINGS: dump_json({"permissions": {"defaultMode": "acceptEdits"}})}
@@ -227,6 +268,9 @@ class TestPermissionsBypass:
         assert found(PERMISSIONS_BYPASS, snapshot) == [(SETTINGS, 1, *FLAG_IN_CONFIG)]
 
     def test_flags_skip_flag_when_in_listed_script(self, snapshot_of: SnapshotFactory) -> None:
+        """E34(e): the scan reads E31's known paths, the listing plus the fixed paths present, so
+        a present ``Makefile`` or ``package.json`` is scanned even when git-ignored.
+        """
         run = f"claude {FLAG} -p task\n".encode()
         files = {
             "scripts/x.sh": b"#!/bin/sh\n" + run,
@@ -399,14 +443,54 @@ class TestMcpPinned:
 
     def test_checks_every_server_when_many(self, snapshot_of: SnapshotFactory) -> None:
         pinned: dict[str, JsonValue] = {
-            f"s{index:06}": {"command": "npx", "args": [f"p{index}@1"], "env": {"A": "b"}}
-            for index in range(100_000)
+            f"s{index:03}": {"command": "npx", "args": [f"p{index}@1"], "env": {"A": "b"}}
+            for index in range(300)
         }
+        # Inserted in reverse: findings follow the file's key order, not the sorted names.
         bare: dict[str, JsonValue] = {
-            f"s{index:06}": {"command": "npx"} for index in range(100_000)
+            f"s{index:03}": {"command": "npx"} for index in range(300)[::-1]
         }
 
         assert found(MCP_PINNED, snapshot_of(files={MCP: mcp_with(pinned)})) == []
-        assert found(MCP_PINNED, snapshot_of(files={MCP: mcp_with(bare)})) == [
-            unpinned(name) for name in bare
-        ]
+        assert found(
+            MCP_PINNED,
+            snapshot_of(
+                files={
+                    MCP: b'{"mcpServers": {'
+                    + b", ".join(f'"{name}": {{"command": "npx"}}'.encode() for name in bare)
+                    + b"}}"
+                }
+            ),
+        ) == [unpinned(name) for name in bare]
+
+    @pytest.mark.parametrize(
+        "mcp",
+        [
+            pytest.param(
+                {"entries": {MCP: FileEntry(executable=False, content=None)}}, id="unread"
+            ),
+            pytest.param({"links": {MCP: "bad.json"}}, id="linked"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "target",
+        [
+            # settings.valid would flag it.
+            pytest.param(b'{"mcpServers": ]', id="invalid-target"),
+            # permissions.bypass and mcp.pinned would flag it.
+            pytest.param(
+                mcp_with({"s": {"command": "npx", "args": ["s@latest", FLAG]}}),
+                id="unpinned-target",
+            ),
+        ],
+    )
+    def test_reports_nothing_when_mcp_unread_or_linked(
+        self, snapshot_of: SnapshotFactory, *, mcp: dict[str, object], target: bytes
+    ) -> None:
+        """E34(d): a linked ``.mcp.json`` is not followed and an unread one is not guessed at,
+        though each target here would be flagged if it were read as ``.mcp.json``.
+        """
+        snapshot = snapshot_of(files={"bad.json": target}, **mcp)
+
+        rules = (SETTINGS_VALID, PERMISSIONS_BYPASS, MCP_PINNED)
+        assert {rule.id: found(rule, snapshot) for rule in rules} == {rule.id: [] for rule in rules}
