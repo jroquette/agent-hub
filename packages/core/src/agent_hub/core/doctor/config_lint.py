@@ -16,11 +16,12 @@ Each set is sorted by path string, the order in which a later file is "later" (d
 """
 
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Final
 
-from agent_hub.core.doctor.snapshot import HubFiles, lines_of
+from agent_hub.core.doctor.snapshot import HubFiles, hub_paths, lines_of
+from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, TreeEntry
 
 INSTRUCTION_ROOT_FILES: Final = (
@@ -95,6 +96,14 @@ def agent_skill_files(hub: HubFiles) -> tuple[str, ...]:
             or (path.startswith(AGENT_SKILL_FOLDERS) and path.endswith(MARKDOWN))
         ),
     )
+
+
+def known_paths(hub: HubFiles, *, config: HubConfig) -> Iterator[str]:
+    """The tree's files a rule resolves against (plan E31): the listed paths and the fixed paths
+    present, never lock paths or leftover names. A fixed path that is also listed comes twice.
+    """
+    yield from hub.listed
+    yield from (path for path in hub_paths(config) if path in hub.entries)
 
 
 def file_text(entry: TreeEntry | None) -> str | TextProblem | None:

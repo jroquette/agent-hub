@@ -47,12 +47,13 @@ from agent_hub.core.doctor.config_lint import (
     Unterminated,
     file_text,
     instruction_files,
+    known_paths,
     line_count,
     parse_frontmatter,
     text_lines,
 )
 from agent_hub.core.doctor.finding import Finding, Read, Rule
-from agent_hub.core.doctor.snapshot import DoctorSnapshot, HubFiles, hub_paths, text_of
+from agent_hub.core.doctor.snapshot import DoctorSnapshot, HubFiles, text_of
 from agent_hub.core.hub_config.doctor_rules import (
     INSTRUCTIONS_DUPLICATES_RULE,
     INSTRUCTIONS_REFS_RULE,
@@ -246,7 +247,7 @@ def _instructions_refs(snapshot: DoctorSnapshot) -> Iterator[Finding]:
     if not files:
         return
     context = _RefContext(
-        paths=_path_tree(_known_paths(snapshot)),
+        paths=_path_tree(known_paths(hub, config=snapshot.hub_config)),
         searched=_Trie(),
         make_targets=_make_targets(hub),
         pnpm_scripts=_pnpm_scripts(hub),
@@ -410,13 +411,6 @@ def _is_placeholder(ref: str) -> bool:
     return (opening != -1 and ref.find(">", opening) != -1) or (
         _PLACEHOLDER.search(ref) is not None
     )
-
-
-def _known_paths(snapshot: DoctorSnapshot) -> Iterator[str]:
-    """The listed paths and the fixed paths present (E31): never lock paths or leftover names."""
-    hub = snapshot.hub
-    yield from hub.listed
-    yield from (path for path in hub_paths(snapshot.hub_config) if path in hub.entries)
 
 
 def _path_tree(paths: Iterable[str]) -> _Trie:

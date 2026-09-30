@@ -9,6 +9,7 @@ from typing import Final
 from agent_hub.core.doctor.config_rules import CONFIG_SCHEMA, PLATFORM_VERSION
 from agent_hub.core.doctor.features_rule import FEATURES_TRACKER
 from agent_hub.core.doctor.finding import Rule
+from agent_hub.core.doctor.frontmatter_rule import RULES_FRONTMATTER
 from agent_hub.core.doctor.guard_extension_rule import GUARD_EXTENSION
 from agent_hub.core.doctor.instruction_rules import (
     INSTRUCTIONS_DUPLICATES,
@@ -26,6 +27,7 @@ REGISTRY: Final[tuple[Rule, ...]] = (
     INSTRUCTIONS_SIZE,
     INSTRUCTIONS_REFS,
     INSTRUCTIONS_DUPLICATES,
+    RULES_FRONTMATTER,
     SETTINGS_WEAKENING,
     GUARD_EXTENSION,
     MAKEFILE_OVERRIDE,

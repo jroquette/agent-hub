@@ -22,6 +22,7 @@ LOCK_DRIFT_RULE: Final = "lock.drift"
 INSTRUCTIONS_SIZE_RULE: Final = "instructions.size"
 INSTRUCTIONS_REFS_RULE: Final = "instructions.refs"
 INSTRUCTIONS_DUPLICATES_RULE: Final = "instructions.duplicates"
+RULES_FRONTMATTER_RULE: Final = "rules.frontmatter"
 SETTINGS_WEAKENING_RULE: Final = "settings.weakening"
 GUARD_EXTENSION_RULE: Final = "hooks.guard-extension"
 MAKEFILE_OVERRIDE_RULE: Final = "makefile.override"
@@ -35,7 +36,7 @@ RULE_IDS: Final = (
     INSTRUCTIONS_SIZE_RULE,
     INSTRUCTIONS_REFS_RULE,
     INSTRUCTIONS_DUPLICATES_RULE,
-    "rules.frontmatter",
+    RULES_FRONTMATTER_RULE,
     "settings.valid",
     SETTINGS_WEAKENING_RULE,
     "permissions.bypass",

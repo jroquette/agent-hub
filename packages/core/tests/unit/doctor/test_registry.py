@@ -10,6 +10,7 @@ RELEASED_IDS = (
     "instructions.size",
     "instructions.refs",
     "instructions.duplicates",
+    "rules.frontmatter",
     "settings.weakening",
     "hooks.guard-extension",
     "makefile.override",
