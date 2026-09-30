@@ -100,14 +100,14 @@ class TestSize:
         ("content", "count"),
         [
             pytest.param(lines(101, end=b"\r\n"), 101, id="crlf-once"),
-            pytest.param(lines(51, end=b"\r"), 51, id="lone-cr-ends-line"),
+            pytest.param(lines(50) + b"a\rb\n", 51, id="lone-cr-inside-line"),
             pytest.param(lines(100) + b"no final newline", 101, id="last-line-unended"),
         ],
     )
-    def test_counts_lines_as_old_lint_when_line_ends_vary(
+    def test_ends_line_at_newline_only_when_line_ends_vary(
         self, snapshot_of: SnapshotFactory, *, content: bytes, count: int
     ) -> None:
-        # The old lint counted text-mode lines: \n, \r\n and a lone \r each end one.
+        # E29: \n and \r\n end a line; a lone \r does not (the old lint's text mode split there).
         snapshot = snapshot_of(files={"CLAUDE.local.md": content, "AGENTS.md": content})
 
         assert sizes(snapshot) == [

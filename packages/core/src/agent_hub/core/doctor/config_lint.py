@@ -118,14 +118,23 @@ def file_text(entry: TreeEntry | None) -> str | TextProblem | None:
     return text
 
 
+def text_lines(text: str) -> tuple[str, ...]:
+    """The lines every config-lint rule reads (E29): split on ``\\n``, a trailing ``\\r`` dropped.
+
+    So ``\\n`` and ``\\r\\n`` end a line and a lone ``\\r`` does not (the old lint's text mode
+    also split there).
+    """
+    return tuple(line.removesuffix("\r") for line in lines_of(text))
+
+
 def parse_frontmatter(text: str) -> Frontmatter | Unterminated | None:
     """The frontmatter of a text; ``None`` when its first line is not ``---``.
 
-    Read as the old lint read it: a line ends at ``\n`` (a BOM or a lone ``\r`` is text), is
-    ``---`` once stripped, a field is ``name: value`` from the line's start, a list item is an
-    indented ``- item``; a CRLF line's ``\r`` is dropped first, so no value keeps it.
+    Lines are ``text_lines`` (a BOM or a lone ``\r`` is text); the marker is ``---`` once
+    stripped, a field is ``name: value`` from the line's start, a list item is an indented
+    ``- item``, as the old lint read them.
     """
-    lines = tuple(line.removesuffix("\r") for line in lines_of(text))
+    lines = text_lines(text)
     if not lines or lines[0].strip() != FRONTMATTER_MARKER:
         return None
     fields: dict[str, str | list[str]] = {}

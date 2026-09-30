@@ -18,6 +18,7 @@ from agent_hub.core.doctor.config_lint import (
     instruction_files,
     parse_frontmatter,
     plugin_files,
+    text_lines,
 )
 from agent_hub.core.doctor.snapshot import DoctorSnapshot
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, FolderEntry, LinkEntry
@@ -208,6 +209,25 @@ class TestFileText:
         # E28: the reader asked for every listed file, so one with no content is a read that
         # failed, already reported once as the hub's problem (E24).
         assert file_text(entry) is None
+
+
+class TestTextLines:
+    @pytest.mark.parametrize(
+        ("text", "lines"),
+        [
+            pytest.param("", (), id="empty"),
+            pytest.param("a\nb\n", ("a", "b"), id="lf"),
+            pytest.param("a\r\nb\r\n", ("a", "b"), id="crlf"),
+            pytest.param("a\rb\n", ("a\rb",), id="lone-cr-inside"),
+            pytest.param("a\n\nb", ("a", "", "b"), id="blank-and-unended"),
+            pytest.param("a\u2028b\n", ("a\u2028b",), id="line-separator-is-text"),
+        ],
+    )
+    def test_ends_line_at_newline_only_when_text_split(
+        self, text: str, lines: tuple[str, ...]
+    ) -> None:
+        # E29: every config-lint rule reads these lines.
+        assert text_lines(text) == lines
 
 
 class TestFrontmatter:
