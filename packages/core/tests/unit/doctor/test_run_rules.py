@@ -1,10 +1,12 @@
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import replace
 from typing import Any
 
 import pytest
 
-from agent_hub.core.doctor.finding import Finding, Rule
+from agent_hub.core.doctor.finding import Finding, Read, Rule
 from agent_hub.core.doctor.run_rules import (
+    LISTING_FIX,
     Selection,
     Totals,
     UsageProblem,
@@ -37,6 +39,7 @@ class Spies:
         *,
         severity: Severity = Severity.WARNING,
         module: str | None = None,
+        reads: frozenset[Read] = frozenset(),
         emits: Sequence[tuple[Severity, str | None, int | None, str]] = (),
     ) -> Rule:
         """A rule that records its call and emits ``(severity, path, line, message)`` findings."""
@@ -61,7 +64,7 @@ class Spies:
             severity=severity,
             summary=f"The synthetic {rule_id} rule.",
             module=module,
-            reads=frozenset(),
+            reads=reads,
             check=check,
         )
 
@@ -204,10 +207,12 @@ def test_runs_only_config_schema_when_config_invalid(
         *spies.registry("platform.version", "lock.drift", "makefile.override", "bench.tasks"),
     )
     failure = failure_of(document)
+    selection = selected(registry, config=failure)
 
-    findings = run_rules(selected(registry, config=failure), snapshot_of(config=failure))
+    findings = run_rules(selection, snapshot_of(config=failure))
 
     assert failure.problems
+    assert [rule.id for rule in selection.rules] == ["config.schema", "platform.version"]
     # platform.version runs too: it reports only a pin mismatch, which this failure is not.
     assert spies.calls == ["config.schema", "platform.version"]
     assert [finding.rule for finding in findings] == ["config.schema"]
@@ -279,6 +284,7 @@ def test_ignores_unregistered_only_when_config_invalid(
     selection = selected(registry, config=failure, only=[rule_id])
     run_rules(selection, snapshot_of(config=failure))
 
+    assert [rule.id for rule in selection.rules] == ["config.schema", "platform.version"]
     assert selection.notes == ()
     assert spies.calls == ["config.schema", "platform.version"]
 
@@ -448,3 +454,98 @@ def test_returns_equal_findings_when_snapshot_run_twice(snapshot_of: SnapshotFac
 
     assert len(first) == 3
     assert first == second
+
+
+LISTING_PROBLEM = "git ls-files failed: fatal: detected dubious ownership"
+LISTING = frozenset({Read.HUB_LISTING})
+TRACKER, OVERRIDE = "features.tracker", "makefile.override"
+
+
+@pytest.mark.parametrize(
+    ("rules", "only", "expected"),
+    [
+        pytest.param(
+            {},
+            [TRACKER],
+            [(TRACKER, ".", Severity.ERROR), (TRACKER, "spec.md", Severity.WARNING)],
+            id="plain",
+        ),
+        pytest.param(
+            {TRACKER: {"severity": "info"}},
+            [TRACKER],
+            [(TRACKER, ".", Severity.ERROR), (TRACKER, "spec.md", Severity.INFO)],
+            id="listing-rule-retuned",
+        ),
+        pytest.param(
+            {},
+            [],
+            [
+                (TRACKER, ".", Severity.ERROR),
+                (TRACKER, "spec.md", Severity.WARNING),
+                (OVERRIDE, "Makefile.project", Severity.WARNING),
+            ],
+            id="two-listing-rules",
+        ),
+    ],
+)
+def test_reports_listing_problem_once_when_listing_rule_selected(
+    snapshot_of: SnapshotFactory,
+    *,
+    rules: dict[str, Any],
+    only: list[str],
+    expected: list[tuple[str, str, Severity]],
+) -> None:
+    spies = Spies()
+    # Registered out of id order, so the finding's rule is the first by id, not by registry.
+    registry = (
+        spies.rule("config.schema"),
+        spies.rule(
+            OVERRIDE, reads=LISTING, emits=[(Severity.WARNING, "Makefile.project", None, "x")]
+        ),
+        spies.rule(TRACKER, reads=LISTING, emits=[(Severity.WARNING, "spec.md", None, "kept")]),
+    )
+    config = a_config(rules=rules)
+    snapshot = snapshot_of(config=config)
+    failed = replace(snapshot, hub=replace(snapshot.hub, problem=LISTING_PROBLEM))
+
+    findings = run_rules(selected(registry, config=config, only=only), failed)
+
+    assert [(f.rule, f.path, f.severity) for f in findings] == expected
+    assert findings[0] == Finding(
+        rule=TRACKER,
+        severity=Severity.ERROR,
+        path=".",
+        line=None,
+        message=LISTING_PROBLEM,
+        fix=LISTING_FIX,
+    )
+
+
+def test_reports_no_listing_problem_when_no_selected_rule_reads_listing(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    spies = Spies()
+    registry = (
+        spies.rule("config.schema"),
+        spies.rule("lock.drift", reads=frozenset({Read.LOCK_PATHS})),
+        spies.rule(TRACKER, reads=LISTING),
+    )
+    config = a_config()
+    snapshot = snapshot_of(config=config)
+    failed = replace(snapshot, hub=replace(snapshot.hub, problem=LISTING_PROBLEM))
+
+    findings = run_rules(selected(registry, config=config, only=["lock.drift"]), failed)
+
+    assert spies.calls == ["config.schema", "lock.drift"]
+    assert findings == ()
+
+
+def test_reports_no_listing_problem_when_listing_made(snapshot_of: SnapshotFactory) -> None:
+    spies = Spies()
+    registry = (spies.rule("config.schema"), spies.rule(TRACKER, reads=LISTING))
+    config = a_config()
+
+    findings = run_rules(selected(registry, config=config), snapshot_of(config=config))
+
+    assert spies.calls == ["config.schema", TRACKER]
+    assert findings == ()
