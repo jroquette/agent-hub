@@ -178,6 +178,24 @@ def test_caps_diff_at_200_lines_when_long() -> None:
 
 
 @pytest.mark.parametrize(
+    ("added", "tail"),
+    [(98, []), (99, ["… 1 more lines"])],
+    ids=["200-lines", "201-lines"],
+)
+def test_caps_diff_only_past_200_lines_when_at_boundary(added: int, tail: list[str]) -> None:
+    on_disk = "".join(f"old {number}\n" for number in range(99))
+    render = "".join(f"new {number}\n" for number in range(added))
+
+    lines = body(conflict_lines(conflicts(text_conflict(on_disk, render))))
+
+    # Two labels, one hunk header, 99 removed and 98 or 99 added lines: 200 print whole; at 201
+    # the first 200 print and a count takes the last one's place.
+    assert len(lines) == 200 + len(tail)
+    assert lines[199] == "+new 97"
+    assert lines[200:] == tail
+
+
+@pytest.mark.parametrize(
     ("on_disk", "render"),
     [(b"caf\xe9\n", b"cafe\n"), (b"text\n", b"te\x00xt\n")],
     ids=["not-utf8-on-disk", "nul-in-render"],
