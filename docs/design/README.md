@@ -6,7 +6,8 @@ The product and its phases are in [SPEC.md](../SPEC.md). Phase 1 is designed as 
 | File | Subject | Load it when |
 |---|---|---|
 | [project-config.md](project-config.md) | the `hub.json` contract: fields, validation, versioning, readers, tracker | a change reads or adds a config key |
-| [hub-generator.md](hub-generator.md) | `hub init`, `hub sync`, `--adopt`, `hub.lock`, plugin and hooks, commands, releases | generating or syncing hub files, a hook, a `hub` command that replaces a script |
+| [hub-generator.md](hub-generator.md) | what a hub holds and who owns it, `hub init`, plugin and hooks, commands, releases | generating hub files, a hook, a `hub` command that replaces a script |
+| [hub-sync.md](hub-sync.md) | `hub.lock`, `hub sync`, `--check`, `--adopt`, the write path, the `*.project.json` merge | syncing or adopting a hub, reading the lock |
 | [hub-doctor.md](hub-doctor.md) | the `hub doctor` rule interface, rule set, output and exit codes | adding or tuning a check |
 | [domain-model.md](domain-model.md) | the nine entities: identity, attributes, relations, phase (sketch) | modeling an entity in core; for Session, WorkflowRun or Learning read [event-derivations.md](event-derivations.md) too |
 | [event-derivations.md](event-derivations.md) | how Session, WorkflowRun and Learning are folded from events, and what events may hold (sketch) | a derived entity (with [domain-model.md](domain-model.md)), a projection or a view over events; a source adapter: its "Sources and privacy" part (redaction before append) and the SPEC's [canonical event](../SPEC.md#data-sources-and-event-model) |
@@ -16,7 +17,6 @@ The product and its phases are in [SPEC.md](../SPEC.md). Phase 1 is designed as 
 
 - Every subject file has exactly the sections Purpose, Contract, Invariants, Decisions and Open questions, in that
   order, and stays at or under 150 lines.
-- `hub-generator.md` may reach 160 lines: it holds `hub init`, `hub sync` and `hub sync --adopt`.
 - A contract is stated once, in its subject file, and linked from elsewhere. The reasons live in the ADRs.
 - A sketch is rewritten as a contract when its phase starts.
 

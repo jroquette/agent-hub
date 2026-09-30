@@ -4,7 +4,9 @@ The reader lists what a target folder holds without following a link, opening on
 files the render wants (AC-12.17, AC-12.18, AC-12.21). A test that meets a FIFO or a socket runs
 under a ``signal.alarm`` guard, so a reader that opened one fails the test instead of hanging it.
 The writer goes through a temp file in the final folder and ``os.replace``, re-checking every
-ancestor at write time (AC-12.17 to AC-12.20). A test that sets the umask restores it.
+ancestor at write time (AC-12.17 to AC-12.20). A sync apply opens the root once and removes
+leftovers, deletes, makes folders and writes in that order (AGH-14 Q-13, E4). A test that sets the
+umask restores it.
 """
 
 import contextlib
@@ -38,8 +40,13 @@ from agent_hub.generator.errors import (
     LinkOutsideHubError,
     SymlinkedAncestorError,
 )
-from agent_hub.generator.file_adapter import apply_writes, ensure_root, remove_leftovers
-from agent_hub.generator.hub_tree import read_hub_tree
+from agent_hub.generator.file_adapter import (
+    apply_sync,
+    apply_writes,
+    ensure_root,
+    remove_leftovers,
+)
+from agent_hub.generator.hub_tree import read_hub_tree, read_planned_tree, read_root_entry
 
 # A reader blocked on a FIFO has hung: no read of a small tree takes this long.
 HANG_SECONDS = 5
@@ -267,6 +274,23 @@ def test_reports_not_regular_when_file_swapped_for_fifo_before_open(
         snapshot = read_hub_tree(root, wanted={"hub.json"})
 
     assert snapshot.entries == {"hub.json": OtherEntry(kind="fifo")}
+
+
+def test_reports_folder_when_file_swapped_for_folder_before_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "root"
+    write_file(root / "hub.json", b"{}\n")
+
+    def to_folder(path: str, dir_fd: int | None) -> None:
+        os.unlink(path, dir_fd=dir_fd)
+        os.mkdir(path, dir_fd=dir_fd)
+
+    swap_before_open(monkeypatch, to_folder)
+
+    snapshot = read_hub_tree(root, wanted={"hub.json"})
+
+    assert snapshot.entries == {"hub.json": FolderEntry()}
 
 
 def test_raises_generator_error_when_file_swapped_for_link_before_open(
@@ -714,7 +738,7 @@ class Recorder:
     def __init__(self, monkeypatch: pytest.MonkeyPatch, *, fail_at: str | None = None) -> None:
         self.calls: list[Call] = []
         self.fail_at = fail_at
-        for name in ("open", "symlink", "fchmod", "replace"):
+        for name in ("open", "symlink", "fchmod", "replace", "unlink", "mkdir"):
             monkeypatch.setattr(os, name, self._wrap(name, getattr(os, name)))
 
     def _wrap(self, name: str, real: Callable[..., Any]) -> Callable[..., Any]:
@@ -1361,11 +1385,37 @@ def fail_collision(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def fail_sync_delete(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (root / "plugin" / "x.md").mkdir(parents=True)
+    apply_sync(root, leftovers=[], deletes=["plugin/x.md"], folders=[], writes=[])
+
+
 def fail_tree_read(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # The nested folder is opened, then cannot be listed: the reader must still close it.
     write_file(root / "plugin" / "agents" / "x.md", b"inside\n")
     refuse_second_listing(monkeypatch, root)
     read_hub_tree(root, wanted={"plugin/agents/x.md"})
+
+
+def fail_planned_read(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The planned folder is opened, then cannot be listed: the reader must still close it.
+    write_file(root / "plugin" / "agents" / "x.md", b"inside\n")
+    refuse_second_listing(monkeypatch, root)
+    read_planned_tree(root, paths={"plugin/agents/x.md"}, wanted=set())
+
+
+def fail_root_entry(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The root is opened, then the entry cannot be looked at: the reader must still close it.
+    write_file(root / "hub.lock", b"lock\n")
+    real_stat = os.stat
+
+    def refuse_lock(path: Any, **kwargs: Any) -> os.stat_result:
+        if path == "hub.lock":
+            raise OSError(errno.EIO, os.strerror(errno.EIO))
+        return real_stat(path, **kwargs)
+
+    monkeypatch.setattr(os, "stat", refuse_lock)
+    read_root_entry(root, "hub.lock")
 
 
 @pytest.mark.parametrize(
@@ -1377,7 +1427,10 @@ def fail_tree_read(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         fail_symlinked_ancestor,
         fail_leftover_missing_folder,
         fail_collision,
+        fail_sync_delete,
         fail_tree_read,
+        fail_planned_read,
+        fail_root_entry,
     ],
     ids=[
         "descent",
@@ -1386,7 +1439,10 @@ def fail_tree_read(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "symlinked",
         "leftover-descent",
         "collision",
+        "sync-delete",
         "tree-read",
+        "planned-read",
+        "root-entry",
     ],
 )
 def test_closes_every_descriptor_when_write_fails(
@@ -1415,3 +1471,594 @@ def test_closes_every_descriptor_when_tree_read(tmp_path: Path) -> None:
 
     assert snapshot.entries["plugin/agents/x.md"] == FileEntry(executable=True, content=b"agent\n")
     assert open_descriptors() == before
+
+
+# The sync readers (spec Q-3, E2, E14): one root entry, or only the planned paths and folders.
+# The containers run as root, where a mode-0 folder is still readable, so the tests record the
+# ``os`` calls to show that unknown parts of the tree are never opened, listed or looked at.
+
+
+@dataclass
+class ReadCalls:
+    """The names ``os.open`` and ``os.stat`` got, and the folders ``os.scandir`` listed."""
+
+    opened: list[str]
+    looked: list[str]
+    listed: list[FolderId]
+
+    def names(self) -> set[str]:
+        return {Path(name).name for name in [*self.opened, *self.looked]}
+
+
+def record_reads(monkeypatch: pytest.MonkeyPatch) -> ReadCalls:
+    calls = ReadCalls(opened=[], looked=[], listed=[])
+    real_open, real_stat, real_scandir = os.open, os.stat, os.scandir
+
+    def opened(path: Any, flags: int, mode: int = 0o777, **kwargs: Any) -> int:
+        calls.opened.append(os.fsdecode(path))
+        return real_open(path, flags, mode, **kwargs)
+
+    def looked(path: Any, **kwargs: Any) -> os.stat_result:
+        if not isinstance(path, int):
+            calls.looked.append(os.fsdecode(path))
+        return real_stat(path, **kwargs)
+
+    def listed(path: Any) -> Any:
+        if isinstance(path, int):
+            calls.listed.append(folder_id(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "open", opened)
+    monkeypatch.setattr(os, "stat", looked)
+    monkeypatch.setattr(os, "scandir", listed)
+    return calls
+
+
+def plant_lock_file(root: Path, outside: Path) -> object:
+    write_file(root / "hub.lock", b'{"lock_version": 1}\n')
+    return FileEntry(executable=False, content=b'{"lock_version": 1}\n')
+
+
+def plant_lock_link(root: Path, outside: Path) -> object:
+    (root / "hub.lock").symlink_to(outside / "x.md")
+    return LinkEntry(target=str(outside / "x.md"), outside=True)
+
+
+def plant_lock_folder(root: Path, outside: Path) -> object:
+    write_file(root / "hub.lock" / "inner.md", b"inner\n")
+    return FolderEntry()
+
+
+def plant_lock_fifo(root: Path, outside: Path) -> object:
+    os.mkfifo(root / "hub.lock")
+    return OtherEntry(kind="fifo")
+
+
+def plant_nothing(root: Path, outside: Path) -> object:
+    return None
+
+
+@pytest.mark.parametrize(
+    ("plant", "opens"),
+    [
+        (plant_lock_file, ["hub.lock"]),
+        (plant_lock_link, []),
+        (plant_lock_folder, []),
+        (plant_lock_fifo, []),
+        (plant_nothing, []),
+    ],
+    ids=["file", "link", "folder", "fifo", "absent"],
+)
+def test_reads_root_entry_without_following_when_name_given(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    plant: Callable[[Path, Path], object],
+    opens: list[str],
+) -> None:
+    outside = outside_folder(tmp_path)
+    root = tmp_path / "root"
+    write_file(root / "hub.json", b"{}\n")
+    expected = plant(root, outside)
+    before = open_descriptors()
+    calls = record_reads(monkeypatch)
+
+    with alarm_guard(HANG_SECONDS):
+        entry = read_root_entry(root, "hub.lock")
+
+    assert entry == expected
+    # The root is the only folder opened; a link, folder or FIFO is never opened itself.
+    assert calls.opened == [str(root), *opens]
+    assert calls.listed == []
+    assert open_descriptors() == before
+
+
+def unknown_parts_tree(tmp_path: Path) -> Path:
+    """A hub holding planned paths and AC-14.13's unknown entries next to them."""
+    root = tmp_path / "root"
+    write_file(root / "hub.json", b"{}\n")
+    write_file(root / "AGENTS.md", b"rules\n")
+    write_file(root / "brain" / "index.md", b"index\n")
+    write_file(root / "plugin" / "hub-workflow" / "skills" / "x" / "SKILL.md", b"skill\n")
+    (root / ".claude" / "skills").mkdir(parents=True)
+    (root / ".claude" / "skills" / "x").symlink_to("../../plugin/hub-workflow/skills/x")
+    write_file(root / ".git" / "HEAD", b"ref: refs/heads/main\n")
+    write_file(root / "notes.txt", b"notes\n")
+    write_file(root / "scratch" / "secret.md", b"secret\n")
+    (root / "scratch").chmod(0)
+    os.mkfifo(root / "brain" / "pipe")
+    write_file(root / "scratch2" / ".x.hub-tmp-0123abcd", b"temp-shaped\n")
+    (root / ".claude" / "skills" / "mine").symlink_to("../../scratch")
+    return root
+
+
+PLANNED = {
+    "hub.json",
+    "AGENTS.md",
+    "brain/index.md",
+    ".claude/skills/x",
+    "plugin/hub-workflow/skills/x/SKILL.md",
+    "old/gone.md",
+}
+
+
+def test_reads_only_planned_paths_when_tree_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = unknown_parts_tree(tmp_path)
+    parents = [root, root / "brain", root / ".claude" / "skills"]
+    parents.append(root / "plugin" / "hub-workflow" / "skills" / "x")
+    calls = record_reads(monkeypatch)
+    try:
+        with alarm_guard(HANG_SECONDS):
+            snapshot = read_planned_tree(
+                root, paths=PLANNED, wanted={"AGENTS.md", "plugin/hub-workflow/skills/x/SKILL.md"}
+            )
+    finally:
+        (root / "scratch").chmod(0o755)
+
+    assert snapshot == TreeSnapshot(
+        entries={
+            ".claude": FolderEntry(),
+            ".claude/skills": FolderEntry(),
+            ".claude/skills/x": LinkEntry(
+                target="../../plugin/hub-workflow/skills/x", outside=False
+            ),
+            "AGENTS.md": FileEntry(executable=False, content=b"rules\n"),
+            "brain": FolderEntry(),
+            "brain/index.md": FileEntry(executable=False, content=None),
+            "hub.json": FileEntry(executable=False, content=None),
+            "plugin": FolderEntry(),
+            "plugin/hub-workflow": FolderEntry(),
+            "plugin/hub-workflow/skills": FolderEntry(),
+            "plugin/hub-workflow/skills/x": FolderEntry(),
+            "plugin/hub-workflow/skills/x/SKILL.md": FileEntry(
+                executable=False, content=b"skill\n"
+            ),
+        },
+        git_present=True,
+    )
+    unknown = {"notes.txt", "scratch", "secret.md", "pipe", "scratch2", ".x.hub-tmp-0123abcd"}
+    assert not calls.names() & {*unknown, "mine", ".git"}
+    # Only the parents of planned paths are listed (the root for ``hub.json`` and ``old/``'s
+    # parent), never ``scratch/`` or ``scratch2/``.
+    assert sorted(set(calls.listed)) == sorted({folder_id(folder) for folder in parents})
+
+
+@pytest.mark.parametrize("ancestor", ["link", "file"])
+def test_stops_at_symlinked_ancestor_when_planned_path_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ancestor: str
+) -> None:
+    outside = outside_folder(tmp_path)
+    write_file(outside / "x" / "SKILL.md", b"outside skill\n")
+    before = tree_digest(outside)
+    root = tmp_path / "root"
+    skills = root / "plugin" / "hub-workflow" / "skills"
+    skills.parent.mkdir(parents=True)
+    if ancestor == "link":
+        skills.symlink_to(outside, target_is_directory=True)
+        expected: object = LinkEntry(target=str(outside), outside=True)
+    else:
+        write_file(skills, b"a file where a folder belongs\n")
+        expected = FileEntry(executable=False, content=None)
+    calls = record_reads(monkeypatch)
+    planned = {"plugin/hub-workflow/skills/x/SKILL.md", "plugin/hub-workflow/skills/x/run.md"}
+
+    snapshot = read_planned_tree(root, paths=planned, wanted=planned)
+
+    assert snapshot.entries == {
+        "plugin": FolderEntry(),
+        "plugin/hub-workflow": FolderEntry(),
+        "plugin/hub-workflow/skills": expected,
+    }
+    assert not {"x", "SKILL.md"} & calls.names()
+    assert folder_id(outside) not in calls.listed
+    assert tree_digest(outside) == before
+
+
+def test_records_leftovers_in_planned_folders_when_listed(tmp_path: Path) -> None:
+    outside = outside_folder(tmp_path)
+    root = tmp_path / "root"
+    hooks = root / "plugin" / "hub-workflow" / "hooks"
+    write_file(hooks / "guard.py", b"guard\n", mode=0o755)
+    write_file(hooks / ".guard.py.hub-tmp-0a1b2c3d", b"half written\n")
+    (hooks / ".x.md.hub-tmp-0a1b2c3d").symlink_to(outside / "x.md")
+    (hooks / ".d.hub-tmp-0a1b2c3d").mkdir()
+    write_file(hooks / "plain.txt", b"unknown\n")
+    write_file(root / ".hub.lock.hub-tmp-01234567", b"half a lock\n")
+    # ``plugin/`` is an ancestor of a planned path, not its parent: it is never listed.
+    write_file(root / "plugin" / ".y.md.hub-tmp-0a1b2c3d", b"not in a planned folder\n")
+
+    snapshot = read_planned_tree(root, paths={"plugin/hub-workflow/hooks/guard.py"}, wanted=set())
+
+    assert snapshot.entries == {
+        ".hub.lock.hub-tmp-01234567": FileEntry(executable=False, content=None),
+        "plugin": FolderEntry(),
+        "plugin/hub-workflow": FolderEntry(),
+        "plugin/hub-workflow/hooks": FolderEntry(),
+        "plugin/hub-workflow/hooks/.d.hub-tmp-0a1b2c3d": FolderEntry(),
+        "plugin/hub-workflow/hooks/.guard.py.hub-tmp-0a1b2c3d": FileEntry(
+            executable=False, content=None
+        ),
+        "plugin/hub-workflow/hooks/.x.md.hub-tmp-0a1b2c3d": LinkEntry(
+            target=str(outside / "x.md"), outside=True
+        ),
+        "plugin/hub-workflow/hooks/guard.py": FileEntry(executable=True, content=None),
+    }
+    assert snapshot.git_present is False
+
+
+def test_lists_every_name_when_folder_listed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "root"
+    agents = root / "plugin" / "demo" / "agents"
+    write_file(agents / "a.md", b"agent\n")
+    write_file(agents / ".hidden", b"dotfile\n")
+    write_file(agents / "sub" / "inner.md", b"never listed\n")
+    calls = record_reads(monkeypatch)
+
+    # A planned path in a listed folder is looked at once, and read as planned.
+    snapshot = read_planned_tree(
+        root,
+        paths={"plugin/demo/agents/a.md"},
+        wanted={"plugin/demo/agents/a.md"},
+        listed={"plugin/demo/agents", "plugin/demo/skills"},
+    )
+
+    assert snapshot.entries == {
+        "plugin": FolderEntry(),
+        "plugin/demo": FolderEntry(),
+        "plugin/demo/agents": FolderEntry(),
+        "plugin/demo/agents/.hidden": FileEntry(executable=False, content=None),
+        "plugin/demo/agents/a.md": FileEntry(executable=False, content=b"agent\n"),
+        "plugin/demo/agents/sub": FolderEntry(),
+    }
+    assert "inner.md" not in calls.names()
+    assert calls.looked.count("a.md") == 1
+    assert folder_id(agents / "sub") not in calls.listed
+
+
+def test_reads_content_only_when_wanted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "root"
+    write_file(root / "docs" / "a.md", b"compared\n")
+    write_file(root / "docs" / "b.md", b"seeded\n", mode=0o755)
+    calls = record_reads(monkeypatch)
+
+    snapshot = read_planned_tree(root, paths={"docs/a.md", "docs/b.md"}, wanted={"docs/a.md"})
+
+    assert snapshot.entries == {
+        "docs": FolderEntry(),
+        "docs/a.md": FileEntry(executable=False, content=b"compared\n"),
+        "docs/b.md": FileEntry(executable=True, content=None),
+    }
+    assert "b.md" not in {Path(name).name for name in calls.opened}
+
+
+def refuse_brain_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_open = os.open
+
+    def refuse(path: Any, flags: int, mode: int = 0o777, **kwargs: Any) -> int:
+        if path == "brain":
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), path)
+        return real_open(path, flags, mode, **kwargs)
+
+    monkeypatch.setattr(os, "open", refuse)
+
+
+def refuse_index_stat(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_stat = os.stat
+
+    def refuse(path: Any, **kwargs: Any) -> os.stat_result:
+        if path == "index.md":
+            raise OSError(errno.EIO, os.strerror(errno.EIO))
+        return real_stat(path, **kwargs)
+
+    monkeypatch.setattr(os, "stat", refuse)
+
+
+@pytest.mark.parametrize(
+    ("fail", "message"),
+    [
+        (refuse_brain_open, f"brain: {os.strerror(errno.EACCES)}"),
+        (refuse_index_stat, f"brain/index.md: {os.strerror(errno.EIO)}"),
+    ],
+    ids=["folder-open", "entry-stat"],
+)
+def test_names_path_when_planned_folder_unreadable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    fail: Callable[[pytest.MonkeyPatch], None],
+    message: str,
+) -> None:
+    root = tmp_path / "root"
+    write_file(root / "brain" / "index.md", b"index\n")
+    fail(monkeypatch)
+
+    with pytest.raises(GeneratorError) as raised:
+        read_planned_tree(root, paths={"brain/index.md"}, wanted={"brain/index.md"})
+
+    assert str(raised.value) == message
+
+
+def test_names_root_when_hub_folder_cannot_be_opened(tmp_path: Path) -> None:
+    root = tmp_path / "missing"
+
+    with pytest.raises(GeneratorError) as raised:
+        read_planned_tree(root, paths={"hub.json"}, wanted=set())
+    with pytest.raises(GeneratorError) as raised_entry:
+        read_root_entry(root, "hub.lock")
+
+    assert str(raised.value) == f"{root}: {os.strerror(errno.ENOENT)}"
+    assert str(raised_entry.value) == str(raised.value)
+
+
+def read_planned(root: Path, path: str) -> object:
+    return read_planned_tree(root, paths={path}, wanted=set())
+
+
+def read_listed(root: Path, path: str) -> object:
+    return read_planned_tree(root, paths=set(), wanted=set(), listed={path})
+
+
+def test_raises_value_error_when_root_entry_name_nested(tmp_path: Path) -> None:
+    root = a_root(tmp_path)
+    write_file(root / "plugin" / "x.md", b"inside\n")
+
+    with pytest.raises(ValueError, match=NOT_UNDER_ROOT):
+        read_root_entry(root, "plugin/x.md")
+
+
+@pytest.mark.parametrize("shape", list(BAD_PATHS))
+@pytest.mark.parametrize(
+    "read", [read_planned, read_listed, read_root_entry], ids=["planned", "listed", "root-entry"]
+)
+def test_raises_value_error_when_read_path_not_plain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    read: Callable[[Path, str], object],
+    shape: str,
+) -> None:
+    root = a_root(tmp_path)
+    write_file(tmp_path / "abs" / "x.md", b"outside\n")
+    calls = record_reads(monkeypatch)
+
+    with pytest.raises(ValueError, match=NOT_UNDER_ROOT):
+        read(root, BAD_PATHS[shape](tmp_path, "x.md"))
+
+    assert calls == ReadCalls(opened=[], looked=[], listed=[])
+
+
+PLAIN_AND_EXECUTABLE = {"AGENTS.md": 0o644, "new/a.md": 0o755, "hub.lock": 0o644}
+
+
+def a_file(path: str, content: bytes = b"new\n") -> FileWrite:
+    return FileWrite(path=path, content=content, executable=False)
+
+
+def test_applies_in_order_when_sync_applied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, set_umask: Callable[[int], None]
+) -> None:
+    set_umask(0o022)
+    root = a_root(tmp_path)
+    write_file(root / "plugin" / LEFTOVER, b"half\n")
+    write_file(root / "old" / "gone.md", b"old\n")
+    write_file(root / "AGENTS.md", b"old rules\n")
+    write_file(root / "hub.lock", b"old lock\n")
+    (root / "scripts").mkdir()
+    recorder = Recorder(monkeypatch)
+
+    apply_sync(
+        root,
+        leftovers=[f"plugin/{LEFTOVER}"],
+        deletes=["old/gone.md"],
+        folders=["new"],
+        writes=[
+            a_file("AGENTS.md", b"rules\n"),
+            FileWrite(path="new/a.md", content=b"new\n", executable=True),
+            LinkWrite(path="scripts/run", target="../AGENTS.md"),
+            a_file("hub.lock", b"lock\n"),
+        ],
+    )
+
+    steps = [
+        (call.name, call.args[1] if call.name == "replace" else call.args[0])
+        for call in recorder.calls
+        if call.name in {"unlink", "mkdir", "replace"}
+    ]
+    assert steps == [
+        ("unlink", LEFTOVER),
+        ("unlink", "gone.md"),
+        ("mkdir", "new"),
+        ("replace", "AGENTS.md"),
+        ("replace", "a.md"),
+        ("replace", "run"),
+        ("replace", "hub.lock"),
+    ]
+    # One open of the root itself; every other open is relative to a held folder.
+    (root_open,) = [call for call in recorder.calls if call.name == "open" and not call.folders]
+    assert root_open.args[0] == root
+    assert root_open.args[1] & os.O_DIRECTORY
+    assert (root / "hub.lock").read_bytes() == b"lock\n"
+    # The writes honour the umask: 0o666 or 0o777 minus 0o022.
+    modes = {path: stat.S_IMODE((root / path).stat().st_mode) for path in PLAIN_AND_EXECUTABLE}
+    assert modes == PLAIN_AND_EXECUTABLE
+    assert (root / "old").is_dir()
+    assert temp_entries(root) == []
+
+
+def test_deletes_file_and_link_when_listed(tmp_path: Path) -> None:
+    outside = outside_folder(tmp_path)
+    before = tree_digest(outside)
+    root = a_root(tmp_path)
+    write_file(root / "old" / "x.md", b"old\n")
+    (root / "old" / "agents").symlink_to(outside / "agents", target_is_directory=True)
+    write_file(root / "kept.md", b"kept\n")
+
+    apply_sync(root, leftovers=[], deletes=["old/agents", "old/x.md"], folders=[], writes=[])
+
+    # The emptied folder stays (Q-13); a link is removed itself, never what it points to.
+    assert sorted(str(p.relative_to(root)) for p in root.rglob("*")) == ["kept.md", "old"]
+    assert (root / "kept.md").read_bytes() == b"kept\n"
+    assert tree_digest(outside) == before
+
+
+def test_accepts_delete_when_path_already_gone(tmp_path: Path) -> None:
+    root = a_root(tmp_path)
+    (root / "old").mkdir()
+
+    apply_sync(root, leftovers=[], deletes=["old/gone.md"], folders=[], writes=[a_file("x.md")])
+
+    assert (root / "x.md").read_bytes() == b"new\n"
+    assert list((root / "old").iterdir()) == []
+
+
+@pytest.mark.parametrize("plant", [plant_folder, plant_fifo], ids=["folder", "fifo"])
+def test_refuses_delete_when_path_is_folder_or_other(
+    tmp_path: Path, plant: Callable[[Path], None]
+) -> None:
+    root = a_root(tmp_path)
+    (root / "old").mkdir()
+    plant(root / "old" / "x.md")
+    before = tree_digest(root)
+
+    with alarm_guard(HANG_SECONDS), pytest.raises(FileWriteError) as raised:
+        apply_sync(root, leftovers=[], deletes=["old/x.md"], folders=[], writes=[a_file("y.md")])
+
+    # Deletes come before writes: the refusal stops the sync with nothing removed or written.
+    assert (raised.value.path, raised.value.cause) == ("old/x.md", "not a file or link")
+    assert str(raised.value) == "old/x.md: not a file or link"
+    assert tree_digest(root) == before
+
+
+def test_refuses_delete_when_parent_folder_missing(tmp_path: Path) -> None:
+    root = a_root(tmp_path)
+    before = tree_digest(root)
+
+    with pytest.raises(FileWriteError) as raised:
+        apply_sync(root, leftovers=[], deletes=["old/x.md"], folders=[], writes=[a_file("y.md")])
+
+    # E21: a missing parent is a failed descent, not an entry already gone; the write after it
+    # is not made.
+    assert str(raised.value) == "old/x.md: No such file or directory"
+    assert tree_digest(root) == before
+    assert not (root / "y.md").exists()
+
+
+@pytest.mark.parametrize("step", ["delete", "write"])
+def test_refuses_delete_when_ancestor_symlinked(tmp_path: Path, step: str) -> None:
+    outside = tmp_path / "outside"
+    write_file(outside / "a.md", b"outside\n")
+    before = tree_digest(outside)
+    root = a_root(tmp_path)
+    write_file(root / "plugin" / "skills" / "a.md", b"inside\n")
+    # The plan was made while ``plugin/skills`` was a folder; it becomes a link to a folder
+    # holding the same name before the apply.
+    shutil.rmtree(root / "plugin" / "skills")
+    (root / "plugin" / "skills").symlink_to(outside, target_is_directory=True)
+    deletes = ["plugin/skills/a.md"] if step == "delete" else []
+    writes = [] if step == "delete" else [a_file("plugin/skills/a.md")]
+
+    with pytest.raises(SymlinkedAncestorError) as raised:
+        apply_sync(root, leftovers=[], deletes=deletes, folders=[], writes=writes)
+
+    assert (raised.value.path, raised.value.ancestor) == ("plugin/skills/a.md", "plugin/skills")
+    assert str(raised.value) == "plugin/skills/a.md: symlinked ancestor plugin/skills"
+    assert tree_digest(outside) == before
+    assert (root / "plugin" / "skills").is_symlink()
+
+
+# Where each list's entry of the plan below lives; a bad path takes that entry's name.
+SYNC_NAMES = {"leftovers": LEFTOVER, "deletes": "old.md", "folders": "new", "writes": "x.md"}
+
+
+@pytest.mark.parametrize("shape", list(BAD_PATHS))
+@pytest.mark.parametrize("step", list(SYNC_NAMES))
+def test_refuses_sync_paths_before_touching_when_not_plain(
+    tmp_path: Path, *, step: str, shape: str
+) -> None:
+    root = a_root(tmp_path)
+    # The entries a valid plan removes, wherever each bad path could reach.
+    for folder in (root, root / "plugin", tmp_path, tmp_path / "abs"):
+        write_file(folder / LEFTOVER, b"not the adapter's\n")
+        write_file(folder / "old.md", b"old\n")
+    before = tree_digest(tmp_path)
+    plan: dict[str, list[Any]] = {name: [path] for name, path in SYNC_NAMES.items()}
+    plan["writes"] = [a_file("x.md")]
+    bad = BAD_PATHS[shape](tmp_path, SYNC_NAMES[step])
+    plan[step].append(a_file(bad) if step == "writes" else bad)
+
+    # Checked before anything is touched: the valid entries of every list are left too.
+    with pytest.raises(ValueError, match=NOT_UNDER_ROOT):
+        apply_sync(root, **plan)
+
+    assert tree_digest(tmp_path) == before
+
+
+def test_refuses_sync_leftover_when_not_leftover_shaped(tmp_path: Path) -> None:
+    root = a_root(tmp_path)
+    write_file(root / "AGENTS.md", b"user file\n")
+    write_file(root / "old.md", b"old\n")
+
+    with pytest.raises(ValueError, match=r"^AGENTS\.md: not a leftover name$"):
+        apply_sync(root, leftovers=["AGENTS.md"], deletes=["old.md"], folders=[], writes=[])
+
+    assert (root / "AGENTS.md").read_bytes() == b"user file\n"
+    assert (root / "old.md").read_bytes() == b"old\n"
+
+
+def test_writes_nothing_when_sync_plan_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recorder = Recorder(monkeypatch)
+
+    # Nothing to apply: the root is not even opened, so a missing one is no error.
+    apply_sync(tmp_path / "missing", leftovers=[], deletes=[], folders=[], writes=[])
+
+    assert recorder.calls == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_raises_when_root_moves_before_sync_applied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first, second = tmp_path / "first", tmp_path / "second"
+    for folder in (first, second):
+        write_file(folder / "root" / "old.md", b"old\n")
+    via = tmp_path / "via"
+    via.symlink_to(first, target_is_directory=True)
+
+    def retarget() -> None:
+        via.unlink()
+        via.symlink_to(second, target_is_directory=True)
+
+    before_first_folder_open(monkeypatch, retarget)
+
+    with pytest.raises(FileWriteError) as raised:
+        apply_sync(via / "root", leftovers=[], deletes=["old.md"], folders=[], writes=[])
+
+    assert (raised.value.path, raised.value.cause) == (str(via / "root"), "the hub folder moved")
+    assert (first / "root" / "old.md").read_bytes() == b"old\n"
+    assert (second / "root" / "old.md").read_bytes() == b"old\n"

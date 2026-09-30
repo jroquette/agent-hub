@@ -1,4 +1,4 @@
-"""Write an init plan into a hub folder through temp files (spec D2, Q-5, Q-6).
+"""Write an init or sync plan into a hub folder through temp files (spec D2, Q-5, Q-6).
 
 The root is opened once per call. Its real path is taken before the open and checked against the
 opened folder (device and inode), so the path the link check reads names the folder written to.
@@ -11,6 +11,12 @@ mode 0o600, given its final mode (``0o777`` or ``0o666`` less the umask) and the
 onto its name; a link is made at the temp name and replaced the same way. On an error the temp
 entry this write created is removed, never one it found there (a removal that fails is a note on
 the write's error, never masking it). No ``fsync`` (Q-6).
+
+A sync (AGH-14 Q-13) opens the root once and applies, in this order: leftover removals, deletes,
+missing folders (parents first), then the writes in the order given (the planner puts files, then
+links, then ``hub.lock``). A delete descends like a write and unlinks a regular file or a link (the
+link itself, wherever it points); a path already gone is fine, a folder or any other type is
+refused, and a folder emptied by a delete stays. An empty plan does not open the root.
 
 Every path is checked before anything is touched: it must be relative, with no empty, ``.`` or
 ``..`` segment, because ``openat`` with ``O_NOFOLLOW`` still climbs out of the root through ``..``,
@@ -39,6 +45,7 @@ _FOLDER_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 _TEMP_FLAGS: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
 _TEMP_MODE: Final = 0o600
 _NOT_LEFTOVER: Final = "not a leftover file or link"
+_NOT_FILE_OR_LINK: Final = "not a file or link"
 _ROOT_MOVED: Final = "the hub folder moved"
 _NOT_UNDER_ROOT: Final = "not a relative path inside the hub"
 _NOT_PLAIN_SEGMENTS: Final = frozenset({"", ".", ".."})
@@ -67,20 +74,12 @@ def remove_leftovers(root: Path, paths: Iterable[str]) -> None:
     shape (a caller bug), and ``FileWriteError`` when the entry is no longer a regular file or a
     link.
     """
-    listed = list(paths)
-    for path in listed:
-        _check_plain(path)
-        if not is_leftover_name(_split(path)[1]):
-            msg = f"{path}: not a leftover name"
-            raise ValueError(msg)
+    listed = _checked_leftovers(paths)
     if not listed:
         # Nothing to remove: the root may not exist yet.
         return
     with _opened_root(root) as hub:
-        for path in listed:
-            folder, name = _split(path)
-            with _folder(hub, path=path, folder=folder) as folder_fd:
-                _remove_leftover(folder_fd, path=path, name=name)
+        _remove_all(hub, listed, refused=_NOT_LEFTOVER)
 
 
 def apply_writes(
@@ -90,28 +89,88 @@ def apply_writes(
 
     Raises ``ValueError``, before anything is written, for a path that is not plain and relative.
     """
-    folders = list(folders)
-    writes = list(writes)
-    for path in [*folders, *(write.path for write in writes)]:
+    planned_folders = list(folders)
+    planned_writes = list(writes)
+    for path in [*planned_folders, *(write.path for write in planned_writes)]:
         _check_plain(path)
+    umask = _umask()
+    with _opened_root(root) as hub:
+        _make_and_write(hub, folders=planned_folders, writes=planned_writes, umask=umask)
+
+
+def apply_sync(
+    root: Path,
+    *,
+    leftovers: Iterable[str],
+    deletes: Iterable[str],
+    folders: Iterable[str],
+    writes: Iterable[FileWrite | LinkWrite],
+) -> None:
+    """Apply a sync plan under ``root`` with one open of the root (AGH-14 Q-13, E4).
+
+    Removes ``leftovers``, then ``deletes``, makes ``folders`` (parents first), then applies
+    ``writes`` in order. Raises ``ValueError``, before anything is touched, for a path that is not
+    plain and relative or a leftover whose name lacks the temp shape (a caller bug);
+    ``FileWriteError`` when a delete finds a folder or another type, or an I/O call fails;
+    ``SymlinkedAncestorError`` when a folder above a path is a link. With nothing to apply, the
+    root is not opened.
+    """
+    planned_leftovers = _checked_leftovers(leftovers)
+    planned_deletes = list(deletes)
+    planned_folders = list(folders)
+    planned_writes = list(writes)
+    for path in [*planned_deletes, *planned_folders, *(write.path for write in planned_writes)]:
+        _check_plain(path)
+    if not (planned_leftovers or planned_deletes or planned_folders or planned_writes):
+        return
+    umask = _umask()
+    with _opened_root(root) as hub:
+        _remove_all(hub, planned_leftovers, refused=_NOT_LEFTOVER)
+        _remove_all(hub, planned_deletes, refused=_NOT_FILE_OR_LINK)
+        _make_and_write(hub, folders=planned_folders, writes=planned_writes, umask=umask)
+
+
+def _checked_leftovers(paths: Iterable[str]) -> list[str]:
+    listed = list(paths)
+    for path in listed:
+        _check_plain(path)
+        if not is_leftover_name(_split(path)[1]):
+            msg = f"{path}: not a leftover name"
+            raise ValueError(msg)
+    return listed
+
+
+def _umask() -> int:
     # ``os`` has no umask getter: set it and put it back, once per apply (Q-6's git rule).
     umask = os.umask(0o022)
     os.umask(umask)
-    with _opened_root(root) as hub:
-        for path in folders:
-            parent, name = _split(path)
-            with _folder(hub, path=path, folder=parent) as parent_fd:
-                _make_folder(parent_fd, name=name, path=path)
-        for write in writes:
-            folder, name = _split(write.path)
-            # The descent comes first, so a symlinked ancestor is named as such.
-            with _folder(hub, path=write.path, folder=folder) as folder_fd:
-                if isinstance(write, FileWrite):
-                    mode = (0o777 if write.executable else 0o666) & ~umask
-                    _write_file(folder_fd, name=name, write=write, mode=mode)
-                else:
-                    _check_inside(hub, write)
-                    _write_link(folder_fd, name=name, write=write)
+    return umask
+
+
+def _remove_all(hub: _Root, paths: list[str], *, refused: str) -> None:
+    for path in paths:
+        folder, name = _split(path)
+        with _folder(hub, path=path, folder=folder) as folder_fd:
+            _remove_file_or_link(folder_fd, path=path, name=name, refused=refused)
+
+
+def _make_and_write(
+    hub: _Root, *, folders: list[str], writes: list[FileWrite | LinkWrite], umask: int
+) -> None:
+    for path in folders:
+        parent, name = _split(path)
+        with _folder(hub, path=path, folder=parent) as parent_fd:
+            _make_folder(parent_fd, name=name, path=path)
+    for write in writes:
+        folder, name = _split(write.path)
+        # The descent comes first, so a symlinked ancestor is named as such.
+        with _folder(hub, path=write.path, folder=folder) as folder_fd:
+            if isinstance(write, FileWrite):
+                mode = (0o777 if write.executable else 0o666) & ~umask
+                _write_file(folder_fd, name=name, write=write, mode=mode)
+            else:
+                _check_inside(hub, write)
+                _write_link(folder_fd, name=name, write=write)
 
 
 def _check_plain(path: str) -> None:
@@ -233,7 +292,8 @@ def _make_folder(parent_fd: int, *, name: str, path: str) -> None:
         raise FileWriteError(path=path, cause=_cause(error)) from error
 
 
-def _remove_leftover(folder_fd: int, *, path: str, name: str) -> None:
+def _remove_file_or_link(folder_fd: int, *, path: str, name: str, refused: str) -> None:
+    """Unlink the file or link ``name``; an absent one is fine, another type is ``refused``."""
     try:
         mode = os.stat(name, dir_fd=folder_fd, follow_symlinks=False).st_mode
     except FileNotFoundError:
@@ -241,7 +301,7 @@ def _remove_leftover(folder_fd: int, *, path: str, name: str) -> None:
     except OSError as error:
         raise FileWriteError(path=path, cause=_cause(error)) from error
     if not (stat.S_ISREG(mode) or stat.S_ISLNK(mode)):
-        raise FileWriteError(path=path, cause=_NOT_LEFTOVER)
+        raise FileWriteError(path=path, cause=refused)
     try:
         # ``unlink`` on a link removes the link itself, wherever it points.
         os.unlink(name, dir_fd=folder_fd)

@@ -75,8 +75,8 @@ The model restricts rendered values: safe unquoted in shell, Make and Markdown. 
 required); adding an optional key keeps it. The CLI reads `platform.version` and `schema_version` leniently (plain JSON,
 no model) and checks them in that order before validating the whole file, so an older CLI facing a newer file reports
 the pin mismatch (whose fix settles both), not an unknown key. It supports one schema version: on any other, `hub sync`
-writes nothing and exits 1 and `config.schema` reports an error, both naming the fix (update the file, or run the pinned
-release through the shim). Phase 1 ships version 1, so there is no migration command yet.
+writes nothing and exits 1 ([hub-sync.md](hub-sync.md)) and `config.schema` reports an error, both naming the fix
+(update the file, or run the pinned release through the shim). Phase 1 ships version 1, so there is no migration command yet.
 
 ### Modules
 
