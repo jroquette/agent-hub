@@ -219,7 +219,12 @@ def test_walks_when_root_is_subfolder_of_work_tree(work_tree: Path) -> None:
 def test_ignores_caller_git_variables_when_listing(
     work_tree: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    other = write(tmp_path / "other", {"elsewhere.md": "other\n", "excludes": "notes.md\n"})
+    # ``ignored.txt`` is tracked only in the other index: read through ``GIT_INDEX_FILE``, it
+    # would be listed although this tree ignores it.
+    other = write(
+        tmp_path / "other",
+        {"elsewhere.md": "other\n", "excludes": "notes.md\n", "ignored.txt": "other\n"},
+    )
     git(["init", "-q"], cwd=other)
     git(["add", "-A"], cwd=other)
     # Git's repository-local variables (``git rev-parse --local-env-vars``), each pointing at
@@ -297,6 +302,7 @@ def test_reads_only_fixed_paths_when_listing_not_asked(
         entries={"AGENTS.md": FileEntry(executable=False, content=b"# Agents\n")},
         listed=(),
         problem=None,
+        paths_read=True,
     )
     assert not log.exists()
 
@@ -380,6 +386,7 @@ def test_reports_problem_when_folder_unreadable(
 
     assert tree.problem == f"could not list the files: {refused}: Permission denied"
     assert tree.listed == ()
+    assert tree.paths_read is True
     # Only the listing is lost: the fixed paths are still read.
     assert tree.entries["hub.lock"] == FileEntry(executable=False, content=b"{}\n")
     assert tree.entries["AGENTS.md"] == FileEntry(executable=False, content=b"# Agents\n")
@@ -395,8 +402,24 @@ def test_keeps_other_fixed_paths_when_one_unreadable(
 
     # No listing was asked: the problem says read, never list.
     assert tree.problem == "could not read the files: .claude: Permission denied"
+    assert tree.paths_read is False
     assert tree.entries == {"hub.lock": FileEntry(executable=False, content=b"{}\n")}
     assert tree.listed == ()
+
+
+@pytest.mark.parametrize("sibling", ["a/z.md", "a/.a.md"], ids=["read-after", "read-before"])
+def test_keeps_fixed_entry_when_other_path_lists_its_folder(work_tree: Path, sibling: str) -> None:
+    # Reading the sibling lists a/ and records its leftover-shaped names unread: never over the
+    # fixed path's own read, whichever comes first.
+    leftover = "a/.x.hub-tmp-0123abcd"
+    write(work_tree, {leftover: "partial\n", sibling: "# Z\n"})
+
+    tree = read_doctor_tree(work_tree, by_path=(leftover, sibling), listing=False)
+
+    assert tree.entries[leftover] == FileEntry(executable=False, content=b"partial\n")
+    assert tree.entries[sibling] == FileEntry(executable=False, content=b"# Z\n")
+    assert tree.problem is None
+    assert tree.paths_read is True
 
 
 def refuse(name: str, *, call: str, monkeypatch: pytest.MonkeyPatch) -> None:
