@@ -182,6 +182,7 @@ Notes:
   then checks `hub --version` and runs `hub collect` twice with `HOME` and `XDG_DATA_HOME` under `tmp_path` and a working
   directory outside the repo: the second run reports only duplicates, and the default database is at the Alembic head.
   This proves the installed package ships and applies its own migrations. It also runs `hub init` of the `demo` flags
-  and checks that the installed `hub` writes the same `hub.lock` as an in-process run.
+  and checks that the installed `hub` writes the same `hub.lock` as an in-process run, and that `hub doctor` on a
+  fresh `demo` hub exits 0 and prints only `0 errors, 0 warnings, 0 infos`.
 - Redirect gate output to a file and check the exit code: `make check > check.log 2>&1; echo $?`. `make check | tail`
   hides a failure.
