@@ -1739,6 +1739,50 @@ def test_lists_every_name_when_folder_listed(
     assert folder_id(agents / "sub") not in calls.listed
 
 
+def test_looks_at_link_paths_of_listed_names_when_links_in_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "root"
+    write_file(root / "plugin" / "demo" / "agents" / "a.md", b"agent\n")
+    write_file(root / "plugin" / "demo" / "agents" / "b.md", b"agent\n")
+    write_file(root / ".claude" / "agents" / "a.md", b"the project's own\n")
+    (root / ".claude" / "agents" / "base.md").symlink_to("../../base.md")
+    write_file(root / ".claude" / "agents" / "other.md", b"unknown\n")
+    calls = record_reads(monkeypatch)
+
+    snapshot = read_planned_tree(
+        root,
+        paths={".claude/agents/base.md"},
+        wanted=set(),
+        listed={"plugin/demo/agents"},
+        links_in={"plugin/demo/agents": ".claude/agents"},
+    )
+
+    # ``b.md`` has no entry at its link path; ``other.md`` is never looked at.
+    assert snapshot.entries == {
+        ".claude": FolderEntry(),
+        ".claude/agents": FolderEntry(),
+        ".claude/agents/a.md": FileEntry(executable=False, content=None),
+        ".claude/agents/base.md": LinkEntry(target="../../base.md", outside=False),
+        "plugin": FolderEntry(),
+        "plugin/demo": FolderEntry(),
+        "plugin/demo/agents": FolderEntry(),
+        "plugin/demo/agents/a.md": FileEntry(executable=False, content=None),
+        "plugin/demo/agents/b.md": FileEntry(executable=False, content=None),
+    }
+    assert "other.md" not in calls.names()
+
+
+def test_raises_before_reading_when_links_in_folder_not_listed(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="links_in names a folder that is not listed"):
+        read_planned_tree(
+            tmp_path / "absent",
+            paths=(),
+            wanted=(),
+            links_in={"plugin/demo/agents": ".claude/agents"},
+        )
+
+
 def test_reads_content_only_when_wanted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path / "root"
     write_file(root / "docs" / "a.md", b"compared\n")
