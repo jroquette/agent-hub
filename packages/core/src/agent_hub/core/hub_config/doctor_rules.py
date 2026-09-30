@@ -19,6 +19,7 @@ from agent_hub.core.hub_config.config_object import (
 CONFIG_SCHEMA_RULE: Final = "config.schema"
 PLATFORM_VERSION_RULE: Final = "platform.version"
 LOCK_DRIFT_RULE: Final = "lock.drift"
+SETTINGS_WEAKENING_RULE: Final = "settings.weakening"
 
 RULE_IDS: Final = (
     CONFIG_SCHEMA_RULE,
@@ -30,7 +31,7 @@ RULE_IDS: Final = (
     "instructions.duplicates",
     "rules.frontmatter",
     "settings.valid",
-    "settings.weakening",
+    SETTINGS_WEAKENING_RULE,
     "permissions.bypass",
     "secrets.config",
     "mcp.pinned",

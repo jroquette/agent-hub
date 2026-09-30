@@ -7,6 +7,7 @@ import pytest
 from agent_hub.core.doctor.snapshot import ConfigFailure, DoctorSnapshot, HubFiles, LockState
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, LinkEntry, TreeEntry
+from agent_hub.core.json_form import JsonValue
 from agent_hub.core.testing.builders import a_hub_document
 
 RUNNING_VERSION = "0.2.0"
@@ -20,7 +21,8 @@ def snapshot_of() -> SnapshotFactory:
 
     ``listed`` is the hub listing; ``None`` lists every file and link given, sorted. ``entries``
     adds entries of any kind (an executable file, a folder); ``lock`` is the lock read, ``None``
-    when it was not; ``problem`` is why the hub's files could not all be read.
+    when it was not; ``problem`` is why the hub's files could not all be read; ``base_hooks`` is
+    the release's base hooks block, ``None`` when it was not built.
     """
 
     def build(
@@ -32,6 +34,7 @@ def snapshot_of() -> SnapshotFactory:
         entries: Mapping[str, TreeEntry] | None = None,
         lock: LockState | None = None,
         problem: str | None = None,
+        base_hooks: Mapping[str, JsonValue] | None = None,
     ) -> DoctorSnapshot:
         found: dict[str, TreeEntry] = {
             path: FileEntry(executable=False, content=content)
@@ -50,6 +53,7 @@ def snapshot_of() -> SnapshotFactory:
                 problem=problem,
             ),
             lock=lock,
+            base_hooks=base_hooks,
         )
 
     return build
