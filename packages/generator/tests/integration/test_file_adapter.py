@@ -4,7 +4,9 @@ The reader lists what a target folder holds without following a link, opening on
 files the render wants (AC-12.17, AC-12.18, AC-12.21). A test that meets a FIFO or a socket runs
 under a ``signal.alarm`` guard, so a reader that opened one fails the test instead of hanging it.
 The writer goes through a temp file in the final folder and ``os.replace``, re-checking every
-ancestor at write time (AC-12.17 to AC-12.20). A test that sets the umask restores it.
+ancestor at write time (AC-12.17 to AC-12.20). A sync apply opens the root once and removes
+leftovers, deletes, makes folders and writes in that order (AGH-14 Q-13, E4). A test that sets the
+umask restores it.
 """
 
 import contextlib
@@ -38,7 +40,12 @@ from agent_hub.generator.errors import (
     LinkOutsideHubError,
     SymlinkedAncestorError,
 )
-from agent_hub.generator.file_adapter import apply_writes, ensure_root, remove_leftovers
+from agent_hub.generator.file_adapter import (
+    apply_sync,
+    apply_writes,
+    ensure_root,
+    remove_leftovers,
+)
 from agent_hub.generator.hub_tree import read_hub_tree, read_planned_tree, read_root_entry
 
 # A reader blocked on a FIFO has hung: no read of a small tree takes this long.
@@ -714,7 +721,7 @@ class Recorder:
     def __init__(self, monkeypatch: pytest.MonkeyPatch, *, fail_at: str | None = None) -> None:
         self.calls: list[Call] = []
         self.fail_at = fail_at
-        for name in ("open", "symlink", "fchmod", "replace"):
+        for name in ("open", "symlink", "fchmod", "replace", "unlink", "mkdir"):
             monkeypatch.setattr(os, name, self._wrap(name, getattr(os, name)))
 
     def _wrap(self, name: str, real: Callable[..., Any]) -> Callable[..., Any]:
@@ -1361,6 +1368,11 @@ def fail_collision(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def fail_sync_delete(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (root / "plugin" / "x.md").mkdir(parents=True)
+    apply_sync(root, leftovers=[], deletes=["plugin/x.md"], folders=[], writes=[])
+
+
 def fail_tree_read(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # The nested folder is opened, then cannot be listed: the reader must still close it.
     write_file(root / "plugin" / "agents" / "x.md", b"inside\n")
@@ -1384,6 +1396,7 @@ def fail_planned_read(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         fail_symlinked_ancestor,
         fail_leftover_missing_folder,
         fail_collision,
+        fail_sync_delete,
         fail_tree_read,
         fail_planned_read,
     ],
@@ -1394,6 +1407,7 @@ def fail_planned_read(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "symlinked",
         "leftover-descent",
         "collision",
+        "sync-delete",
         "tree-read",
         "planned-read",
     ],
@@ -1800,3 +1814,195 @@ def test_raises_value_error_when_read_path_not_plain(
         read(root, BAD_PATHS[shape](tmp_path, "x.md"))
 
     assert calls == ReadCalls(opened=[], looked=[], listed=[])
+
+
+def a_file(path: str, content: bytes = b"new\n") -> FileWrite:
+    return FileWrite(path=path, content=content, executable=False)
+
+
+def test_applies_in_order_when_sync_applied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = a_root(tmp_path)
+    write_file(root / "plugin" / LEFTOVER, b"half\n")
+    write_file(root / "old" / "gone.md", b"old\n")
+    write_file(root / "AGENTS.md", b"old rules\n")
+    write_file(root / "hub.lock", b"old lock\n")
+    (root / "scripts").mkdir()
+    recorder = Recorder(monkeypatch)
+
+    apply_sync(
+        root,
+        leftovers=[f"plugin/{LEFTOVER}"],
+        deletes=["old/gone.md"],
+        folders=["new"],
+        writes=[
+            a_file("AGENTS.md", b"rules\n"),
+            a_file("new/a.md"),
+            LinkWrite(path="scripts/run", target="../AGENTS.md"),
+            a_file("hub.lock", b"lock\n"),
+        ],
+    )
+
+    steps = [
+        (call.name, call.args[1] if call.name == "replace" else call.args[0])
+        for call in recorder.calls
+        if call.name in {"unlink", "mkdir", "replace"}
+    ]
+    assert steps == [
+        ("unlink", LEFTOVER),
+        ("unlink", "gone.md"),
+        ("mkdir", "new"),
+        ("replace", "AGENTS.md"),
+        ("replace", "a.md"),
+        ("replace", "run"),
+        ("replace", "hub.lock"),
+    ]
+    # One open of the root itself; every other open is relative to a held folder.
+    (root_open,) = [call for call in recorder.calls if call.name == "open" and not call.folders]
+    assert root_open.args[0] == root
+    assert root_open.args[1] & os.O_DIRECTORY
+    assert (root / "hub.lock").read_bytes() == b"lock\n"
+    assert (root / "old").is_dir()
+    assert temp_entries(root) == []
+
+
+def test_deletes_file_and_link_when_listed(tmp_path: Path) -> None:
+    outside = outside_folder(tmp_path)
+    before = tree_digest(outside)
+    root = a_root(tmp_path)
+    write_file(root / "old" / "x.md", b"old\n")
+    (root / "old" / "agents").symlink_to(outside / "agents", target_is_directory=True)
+    write_file(root / "kept.md", b"kept\n")
+
+    apply_sync(root, leftovers=[], deletes=["old/agents", "old/x.md"], folders=[], writes=[])
+
+    # The emptied folder stays (Q-13); a link is removed itself, never what it points to.
+    assert sorted(str(p.relative_to(root)) for p in root.rglob("*")) == ["kept.md", "old"]
+    assert (root / "kept.md").read_bytes() == b"kept\n"
+    assert tree_digest(outside) == before
+
+
+def test_accepts_delete_when_path_already_gone(tmp_path: Path) -> None:
+    root = a_root(tmp_path)
+    (root / "old").mkdir()
+
+    apply_sync(root, leftovers=[], deletes=["old/gone.md"], folders=[], writes=[a_file("x.md")])
+
+    assert (root / "x.md").read_bytes() == b"new\n"
+    assert list((root / "old").iterdir()) == []
+
+
+@pytest.mark.parametrize("plant", [plant_folder, plant_fifo], ids=["folder", "fifo"])
+def test_refuses_delete_when_path_is_folder_or_other(
+    tmp_path: Path, plant: Callable[[Path], None]
+) -> None:
+    root = a_root(tmp_path)
+    (root / "old").mkdir()
+    plant(root / "old" / "x.md")
+    before = tree_digest(root)
+
+    with alarm_guard(HANG_SECONDS), pytest.raises(FileWriteError) as raised:
+        apply_sync(root, leftovers=[], deletes=["old/x.md"], folders=[], writes=[a_file("y.md")])
+
+    # Deletes come before writes: the refusal stops the sync with nothing removed or written.
+    assert (raised.value.path, raised.value.cause) == ("old/x.md", "not a file or link")
+    assert str(raised.value) == "old/x.md: not a file or link"
+    assert tree_digest(root) == before
+
+
+@pytest.mark.parametrize("step", ["delete", "write"])
+def test_refuses_delete_when_ancestor_symlinked(tmp_path: Path, step: str) -> None:
+    outside = tmp_path / "outside"
+    write_file(outside / "a.md", b"outside\n")
+    before = tree_digest(outside)
+    root = a_root(tmp_path)
+    write_file(root / "plugin" / "skills" / "a.md", b"inside\n")
+    # The plan was made while ``plugin/skills`` was a folder; it becomes a link to a folder
+    # holding the same name before the apply.
+    shutil.rmtree(root / "plugin" / "skills")
+    (root / "plugin" / "skills").symlink_to(outside, target_is_directory=True)
+    deletes = ["plugin/skills/a.md"] if step == "delete" else []
+    writes = [] if step == "delete" else [a_file("plugin/skills/a.md")]
+
+    with pytest.raises(SymlinkedAncestorError) as raised:
+        apply_sync(root, leftovers=[], deletes=deletes, folders=[], writes=writes)
+
+    assert (raised.value.path, raised.value.ancestor) == ("plugin/skills/a.md", "plugin/skills")
+    assert str(raised.value) == "plugin/skills/a.md: symlinked ancestor plugin/skills"
+    assert tree_digest(outside) == before
+    assert (root / "plugin" / "skills").is_symlink()
+
+
+# Where each list's entry of the plan below lives; a bad path takes that entry's name.
+SYNC_NAMES = {"leftovers": LEFTOVER, "deletes": "old.md", "folders": "new", "writes": "x.md"}
+
+
+@pytest.mark.parametrize("shape", list(BAD_PATHS))
+@pytest.mark.parametrize("step", list(SYNC_NAMES))
+def test_refuses_sync_paths_before_touching_when_not_plain(
+    tmp_path: Path, *, step: str, shape: str
+) -> None:
+    root = a_root(tmp_path)
+    # The entries a valid plan removes, wherever each bad path could reach.
+    for folder in (root, root / "plugin", tmp_path, tmp_path / "abs"):
+        write_file(folder / LEFTOVER, b"not the adapter's\n")
+        write_file(folder / "old.md", b"old\n")
+    before = tree_digest(tmp_path)
+    plan: dict[str, list[Any]] = {name: [path] for name, path in SYNC_NAMES.items()}
+    plan["writes"] = [a_file("x.md")]
+    bad = BAD_PATHS[shape](tmp_path, SYNC_NAMES[step])
+    plan[step].append(a_file(bad) if step == "writes" else bad)
+
+    # Checked before anything is touched: the valid entries of every list are left too.
+    with pytest.raises(ValueError, match=NOT_UNDER_ROOT):
+        apply_sync(root, **plan)
+
+    assert tree_digest(tmp_path) == before
+
+
+def test_refuses_sync_leftover_when_not_leftover_shaped(tmp_path: Path) -> None:
+    root = a_root(tmp_path)
+    write_file(root / "AGENTS.md", b"user file\n")
+    write_file(root / "old.md", b"old\n")
+
+    with pytest.raises(ValueError, match=r"^AGENTS\.md: not a leftover name$"):
+        apply_sync(root, leftovers=["AGENTS.md"], deletes=["old.md"], folders=[], writes=[])
+
+    assert (root / "AGENTS.md").read_bytes() == b"user file\n"
+    assert (root / "old.md").read_bytes() == b"old\n"
+
+
+def test_writes_nothing_when_sync_plan_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recorder = Recorder(monkeypatch)
+
+    # Nothing to apply: the root is not even opened, so a missing one is no error.
+    apply_sync(tmp_path / "missing", leftovers=[], deletes=[], folders=[], writes=[])
+
+    assert recorder.calls == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_raises_when_root_moves_before_sync_applied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first, second = tmp_path / "first", tmp_path / "second"
+    for folder in (first, second):
+        write_file(folder / "root" / "old.md", b"old\n")
+    via = tmp_path / "via"
+    via.symlink_to(first, target_is_directory=True)
+
+    def retarget() -> None:
+        via.unlink()
+        via.symlink_to(second, target_is_directory=True)
+
+    before_first_folder_open(monkeypatch, retarget)
+
+    with pytest.raises(FileWriteError) as raised:
+        apply_sync(via / "root", leftovers=[], deletes=["old.md"], folders=[], writes=[])
+
+    assert (raised.value.path, raised.value.cause) == (str(via / "root"), "the hub folder moved")
+    assert (first / "root" / "old.md").read_bytes() == b"old\n"
+    assert (second / "root" / "old.md").read_bytes() == b"old\n"

@@ -582,7 +582,7 @@ def test_keeps_lock_entry_path_when_named_like_leftover(
     plan = planned(rendered, lock, tree)
 
     assert plan.leftovers == ()
-    assert path not in plan.lock.files
+    assert plan.deletes == ()
 
 
 def test_keeps_folder_when_named_like_leftover(
@@ -870,7 +870,7 @@ def test_reports_type_when_seeded_without_entry_is_not_a_file(
         pytest.param("plugin/agents/x.md", "plugin", None, id="write-created"),
         pytest.param("plugin/agents/x.md", "plugin/agents", old_file_entry(), id="write-restored"),
         pytest.param("old/x.md", "old", old_file_entry(), id="delete"),
-        pytest.param(SEEDED_LINK, ".claude/skills", None, id="compare-seeded-no-entry"),
+        pytest.param(SEEDED_LINK, ".claude/skills", None, id="write-seeded-no-entry"),
     ],
 )
 def test_reports_symlinked_ancestor_when_ancestor_is_link(
@@ -1000,7 +1000,11 @@ def test_reports_ancestor_first_when_file_below_equals_render(
     path: str,
     cause: str,
 ) -> None:
-    """E5: the file below still equals its render (as seen through the link); it is not clean."""
+    """E5: the file below still equals its render (as seen through the link); it is not clean.
+
+    The real reader never lists a path below a link or a file; the fixture pins E5's order in
+    case it did.
+    """
     rendered = a_rendered_hub()
     tree = synced_tree(rendered) | dict(changed)
 
