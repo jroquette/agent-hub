@@ -13,8 +13,14 @@ from typing import Any
 import pytest
 import typer
 
-from agent_hub.cli.hub_config_reader import load_hub_config_or_exit, load_hub_json_or_exit
+from agent_hub.cli.hub_config_reader import (
+    LoadedHubJson,
+    load_hub_config_or_exit,
+    load_hub_json_or_exit,
+    read_hub_json,
+)
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.testing.builders import a_hub_document
 
 
@@ -393,3 +399,73 @@ def test_closes_descriptor_when_hub_json_loaded(
         load_hub_json_or_exit(path)
 
     assert open_descriptors() == before
+
+
+def test_returns_bytes_and_config_when_hub_json_valid(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    document = a_pinned_document()
+    path = write_document(tmp_path, document)
+
+    loaded = read_hub_json(path)
+
+    assert loaded == LoadedHubJson(
+        content=path.read_bytes(), config=HubConfig.model_validate(document)
+    )
+    assert capsys.readouterr() == ("", "")
+
+
+def leave_absent(path: Path) -> None:
+    """No hub.json at all."""
+
+
+def write_invalid_json(path: Path) -> None:
+    path.write_bytes(b'{"schema_version": 1,')
+
+
+def write_other_pin(path: Path) -> None:
+    document = a_pinned_document()
+    document["platform"]["version"] = "999.0.0"
+    write_document(path.parent, document)
+
+
+def write_unknown_key(path: Path) -> None:
+    document = a_pinned_document()
+    document["unknown"] = True
+    write_document(path.parent, document)
+
+
+@pytest.mark.parametrize(
+    ("make_hub_file", "expected_path", "message_start"),
+    [
+        (leave_absent, "$", "cannot read {path}: No such file or directory"),
+        (make_directory, "$", "cannot read {path}: not a regular file"),
+        (make_fifo, "$", "cannot read {path}: not a regular file"),
+        (write_invalid_json, "$", "not valid JSON: "),
+        (write_other_pin, "platform.version", "this hub is pinned to 999.0.0 but "),
+        (write_unknown_key, "unknown", "Extra inputs are not permitted"),
+    ],
+    ids=["absent", "folder", "fifo", "invalid-json", "pin-mismatch", "unknown-key"],
+)
+def test_returns_problems_when_hub_json_unusable(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    make_hub_file: Callable[[Path], None],
+    expected_path: str,
+    message_start: str,
+) -> None:
+    path = tmp_path / "hub.json"
+    make_hub_file(path)
+
+    # A FIFO is never opened: the alarm fails the test instead of hanging it.
+    with alarm_guard(HANG_SECONDS):
+        problems = read_hub_json(path)
+        printed = stderr_lines_on_exit(path, capsys)
+
+    assert not isinstance(problems, LoadedHubJson)
+    assert all(isinstance(problem, ConfigProblem) for problem in problems)
+    assert [problem.path for problem in problems] == [expected_path]
+    assert problems[0].message.startswith(message_start.format(path=json.dumps(str(path))))
+    # The same problems the exiting reader prints, and nothing printed by the returning one.
+    assert printed == [f"hub.json: {problem.path}: {problem.message}" for problem in problems]
