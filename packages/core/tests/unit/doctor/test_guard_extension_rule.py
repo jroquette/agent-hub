@@ -2,7 +2,7 @@ from collections.abc import Callable, Mapping
 
 import pytest
 
-from agent_hub.core.doctor.guard_extension_rule import GUARD_EXTENSION
+from agent_hub.core.doctor.guard_extension_rule import GUARD_EXTENSION, MAX_BYTES
 from agent_hub.core.doctor.snapshot import DoctorSnapshot
 from agent_hub.core.hub_config.doctor_rules import Severity
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, FolderEntry, LinkEntry, TreeEntry
@@ -94,14 +94,14 @@ def test_reads_nothing_beyond_fixed_paths_when_rule_declared() -> None:
             id="one-parameter",
         ),
         pytest.param(
-            "\ndef check(event, cfg, extra):\n    return None\n",
-            an_error("check takes 3 positional parameters; the guard passes 2 (event, cfg)", 2),
-            id="three-parameters",
+            "def check():\n    return None\n",
+            an_error("check takes 0 positional parameters; the guard passes 2 (event, cfg)", 1),
+            id="no-parameter",
         ),
         pytest.param(
-            "def check(event, cfg, *args):\n    return None\n",
-            an_error("check takes *args; the guard passes exactly 2 arguments (event, cfg)", 1),
-            id="star-args",
+            "\ndef check(event, cfg, extra):\n    return None\n",
+            an_error("check requires 3 positional parameters; the guard passes 2 (event, cfg)", 2),
+            id="three-parameters",
         ),
         pytest.param(
             "def check(event, cfg, *, strict):\n    return None\n",
@@ -171,6 +171,26 @@ def test_accepts_any_parameter_names_when_two_positional(snapshot_of: SnapshotFa
     assert findings_of(with_source(snapshot_of, source)) == []
 
 
+@pytest.mark.parametrize(
+    "signature",
+    [
+        pytest.param("event, cfg", id="two-positional"),
+        pytest.param("event, cfg, extra=None", id="extra-with-default"),
+        pytest.param("*args", id="star-args-only"),
+        pytest.param("event, *rest", id="one-and-star-args"),
+        pytest.param("event, cfg, *args", id="two-and-star-args"),
+        pytest.param("event, cfg, **kw", id="double-star-kwargs"),
+        pytest.param("event, cfg, /", id="positional-only"),
+    ],
+)
+def test_accepts_signature_when_guard_call_succeeds(
+    snapshot_of: SnapshotFactory, signature: str
+) -> None:
+    source = f"def check({signature}):\n    return None\n"
+
+    assert findings_of(with_source(snapshot_of, source)) == []
+
+
 def test_accepts_keyword_only_with_default_when_two_positional(
     snapshot_of: SnapshotFactory,
 ) -> None:
@@ -209,3 +229,96 @@ def test_never_runs_extension_when_top_level_would_raise(snapshot_of: SnapshotFa
     source = "raise SystemExit('ran')\n\n\ndef check(event, cfg):\n    return None\n"
 
     assert findings_of(with_source(snapshot_of, source)) == []
+
+
+VALID_DEF = "def check(event, cfg):\n    return None\n\n\n"
+
+
+@pytest.mark.parametrize(
+    ("binding", "kind"),
+    [
+        pytest.param("class check:\n    pass\n", "class", id="class"),
+        pytest.param("import check\n", "import", id="import"),
+        pytest.param("import check.sub\n", "import", id="dotted-import"),
+        pytest.param("import json as check\n", "import", id="import-as"),
+        pytest.param("from json import check\n", "import", id="from-import"),
+        pytest.param("from json import loads as check\n", "import", id="from-import-as"),
+        pytest.param("check = None\n", "assignment", id="assign"),
+        pytest.param("check, other = None, None\n", "assignment", id="tuple-assign"),
+        pytest.param("[other, *check] = [1, 2]\n", "assignment", id="starred-list-assign"),
+        pytest.param("check: object = None\n", "annotated assignment", id="annotated-assign"),
+        pytest.param("check += 1\n", "augmented assignment", id="augmented-assign"),
+        pytest.param("del check\n", "del", id="delete"),
+    ],
+)
+def test_reports_error_when_check_last_bound_by_other_than_def(
+    snapshot_of: SnapshotFactory, binding: str, kind: str
+) -> None:
+    # The binding sits on line 5, after a valid def.
+    source = VALID_DEF + binding
+
+    assert findings_of(with_source(snapshot_of, source)) == [
+        an_error(f"check is last bound by {kind} at line 5, not a def", 5)
+    ]
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        pytest.param("check: object\n", id="annotation-without-value"),
+        pytest.param("import check_other\nfrom json import check as other\n", id="other-names"),
+        pytest.param("import other.check\n", id="dotted-import-binds-first-name"),
+        pytest.param("checked = check\n", id="read-not-bound"),
+    ],
+)
+def test_reports_nothing_when_statement_does_not_bind_check(
+    snapshot_of: SnapshotFactory, binding: str
+) -> None:
+    assert findings_of(with_source(snapshot_of, VALID_DEF + binding)) == []
+
+
+def test_accepts_def_when_it_rebinds_check_last(snapshot_of: SnapshotFactory) -> None:
+    source = "check = None\n\n\n" + VALID_DEF
+
+    assert findings_of(with_source(snapshot_of, source)) == []
+
+
+def test_reports_nothing_when_utf8_bom_starts_valid_file(snapshot_of: SnapshotFactory) -> None:
+    content = b"\xef\xbb\xbf" + SEEDED_STUB.encode()
+    entries: Mapping[str, TreeEntry] = {EXTENSION: FileEntry(executable=False, content=content)}
+
+    assert findings_of(snapshot_of(entries=entries)) == []
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        pytest.param(
+            "# coding: bogus\n" + SEEDED_STUB,
+            an_error("does not parse as Python 3.9: unknown encoding: bogus", None),
+            id="unknown-coding",
+        ),
+        pytest.param(
+            "# coding: ascii\ndef check(event, cfg):\n    return '\u00e9'\n",
+            an_error(
+                "does not parse as Python 3.9: 'ascii' codec can't decode byte 0xc3 "
+                "in position 51: ordinal not in range(128)",
+                None,
+            ),
+            id="ascii-coding-with-utf8",
+        ),
+    ],
+)
+def test_reports_error_when_coding_cookie_rejects_file(
+    snapshot_of: SnapshotFactory, source: str, expected: Shown
+) -> None:
+    assert findings_of(with_source(snapshot_of, source)) == [expected]
+
+
+def test_reports_error_when_extension_too_large(snapshot_of: SnapshotFactory) -> None:
+    content = b"#" * (MAX_BYTES + 1)
+    entries: Mapping[str, TreeEntry] = {EXTENSION: FileEntry(executable=False, content=content)}
+
+    assert findings_of(snapshot_of(entries=entries)) == [
+        an_error(f"too large to check ({MAX_BYTES + 1} bytes, limit 1 MiB)", None)
+    ]
