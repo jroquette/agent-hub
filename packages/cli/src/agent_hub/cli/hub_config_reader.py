@@ -1,8 +1,10 @@
-"""Load ``hub.json`` for a command, or print one line per problem and exit 1.
+"""Read ``hub.json`` into its bytes and config, or the problems that stop it.
 
-This module reads the file and prints; core's ``check_hub_document`` checks it, in the order of
+This module reads the file; core's ``check_hub_document`` checks it, in the order of
 docs/design/project-config.md § Versioning: the pin, then ``schema_version``, then the model.
 The file is read once, as bytes, so a caller that copies it gets exactly what was checked.
+``read_hub_json`` returns the problems; ``load_hub_json_or_exit`` prints one line per problem
+and exits 1.
 """
 
 import json
@@ -36,16 +38,29 @@ class LoadedHubJson(NamedTuple):
     config: HubConfig
 
 
+class _Unread(NamedTuple):
+    # Why the file could not be read, and whether it was absent (the exiting reader's hint).
+    problem: ConfigProblem
+    is_missing: bool
+
+
+def read_hub_json(path: Path) -> LoadedHubJson | tuple[ConfigProblem, ...]:
+    """The bytes and validated config in ``path``, or the problems that stop its use."""
+    loaded = _load(path)
+    return (loaded.problem,) if isinstance(loaded, _Unread) else loaded
+
+
 def load_hub_json_or_exit(path: Path, *, missing_hint: str | None = None) -> LoadedHubJson:
     """The bytes and validated config in ``path``; on any problem, print its lines and exit 1.
 
     When ``path`` does not exist and ``missing_hint`` is given, the hint is one more line.
     """
-    content = _read_bytes_or_exit(path, missing_hint=missing_hint)
-    checked = check_hub_document(_parse_or_exit(content), running_version=version(DISTRIBUTION))
-    if not isinstance(checked, HubConfig):
-        _fail(*checked)
-    return LoadedHubJson(content=content, config=checked)
+    loaded = _load(path)
+    if isinstance(loaded, _Unread):
+        _fail(loaded.problem, hint=missing_hint if loaded.is_missing else None)
+    if not isinstance(loaded, LoadedHubJson):
+        _fail(*loaded)
+    return loaded
 
 
 def load_hub_config_or_exit(path: Path) -> HubConfig:
@@ -53,36 +68,51 @@ def load_hub_config_or_exit(path: Path) -> HubConfig:
     return load_hub_json_or_exit(path).config
 
 
-def _read_bytes_or_exit(path: Path, *, missing_hint: str | None) -> bytes:
+def _load(path: Path) -> LoadedHubJson | _Unread | tuple[ConfigProblem, ...]:
+    content = _read_bytes(path)
+    if isinstance(content, _Unread):
+        return content
+    parsed = _parse(content)
+    if isinstance(parsed, ConfigProblem):
+        return (parsed,)
+    checked = check_hub_document(parsed, running_version=version(DISTRIBUTION))
+    if not isinstance(checked, HubConfig):
+        return checked
+    return LoadedHubJson(content=content, config=checked)
+
+
+def _read_bytes(path: Path) -> bytes | _Unread:
     # The path is quoted and escaped, so it stays on the one line.
     shown_path = json.dumps(str(path))
-    not_regular = ConfigProblem(ROOT_PATH, f"cannot read {shown_path}: not a regular file")
+    not_regular = _Unread(
+        ConfigProblem(ROOT_PATH, f"cannot read {shown_path}: not a regular file"), is_missing=False
+    )
     # Opening a FIFO waits for a writer and a device can be endless: only a regular file is read,
     # so a FIFO found here is never opened. A path that does not exist is left to the open, which
     # names the reason.
     if path.exists() and not path.is_file():
-        _fail(not_regular)
+        return not_regular
     try:
         descriptor = os.open(path, _OPEN_FLAGS)
         # What was opened is what gets read: a swap after the check above fails here instead.
         with open(descriptor, "rb") as opened:
             if not stat.S_ISREG(os.fstat(opened.fileno()).st_mode):
-                _fail(not_regular)
+                return not_regular
             return opened.read()
     except OSError as error:
         reason = error.strerror or type(error).__name__
-        problem = ConfigProblem(ROOT_PATH, f"cannot read {shown_path}: {reason}")
-        if missing_hint is not None and isinstance(error, FileNotFoundError):
-            _fail(problem, hint=missing_hint)
-        _fail(problem)
+        return _Unread(
+            ConfigProblem(ROOT_PATH, f"cannot read {shown_path}: {reason}"),
+            is_missing=isinstance(error, FileNotFoundError),
+        )
 
 
-def _parse_or_exit(content: bytes) -> JsonValue:
+def _parse(content: bytes) -> JsonValue | ConfigProblem:
     # Core parses the bytes; each problem it names is one line at the root.
     try:
         return load_json_bytes(content)
     except InvalidJsonError as error:
-        _fail(ConfigProblem(ROOT_PATH, error.message))
+        return ConfigProblem(ROOT_PATH, error.message)
 
 
 def _fail(*problems: ConfigProblem, hint: str | None = None) -> NoReturn:
