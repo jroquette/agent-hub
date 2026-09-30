@@ -15,10 +15,16 @@ from typing import Annotated, Final, NoReturn
 
 import typer
 
+from agent_hub.cli.command_exits import (
+    fail,
+    fail_generator,
+    refuse_modules_or_exit,
+    root_or_exit,
+)
 from agent_hub.cli.git_defaults import AUTHOR_EMAIL, AUTHOR_NAME, HUB_REPO, read_git_defaults
-from agent_hub.cli.hub_config_reader import DISTRIBUTION, FILE_LABEL, load_hub_json_or_exit
+from agent_hub.cli.hub_config_reader import DISTRIBUTION, load_hub_json_or_exit
 from agent_hub.cli.init_config import document_from_flags, flag_problems
-from agent_hub.cli.init_report import created_lines, next_steps, shown_path, shown_text
+from agent_hub.cli.init_report import created_lines, next_steps, shown_path
 from agent_hub.core.hub_config.document_check import check_hub_document
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
@@ -35,8 +41,6 @@ from agent_hub.generator.render_hub import render_hub
 NOT_IMPLEMENTED = "not implemented yet (Phase 1)"
 # A usage-level failure, so a script that calls a stub by accident stops (D7).
 NOT_IMPLEMENTED_EXIT_CODE = 2
-# Any failure after the usage check: config, modules, target, tree or write.
-FAILURE: Final = 1
 _BRANCH_PREFIX: Final = "branch_prefix"
 _DEFAULTABLE: Final = (AUTHOR_NAME, AUTHOR_EMAIL, HUB_REPO)
 
@@ -101,7 +105,7 @@ def init(
     flags = {"--repos": repos, "--tracker": tracker}
     flags |= {"--" + key.replace("_", "-"): value for key, value in optional.items()}
     source = _source_or_fail(context, project=project, flags=flags, config=config)
-    root = _root_or_exit(directory)
+    root = root_or_exit(directory)
     running = version(DISTRIBUTION)
     if isinstance(source, Path):
         loaded = load_hub_json_or_exit(source)
@@ -110,7 +114,7 @@ def init(
         hub_config, hub_json = _config_from_flags_or_exit(
             source, optional=optional, root=root, running=running
         )
-    _refuse_modules_or_exit(hub_config)
+    refuse_modules_or_exit(hub_config)
     _check_root_or_exit(root)
     plan, git_present = _plan_or_exit(root, config=hub_config, hub_json=hub_json)
     _apply_or_exit(root, plan)
@@ -180,9 +184,7 @@ def _config_from_flags_or_exit(
     )
     checked = check_hub_document(document, running_version=running)
     if not isinstance(checked, HubConfig):
-        _fail(
-            *flag_problems(_with_git_reasons(checked, defaults.problems), repos=required["repos"])
-        )
+        fail(*flag_problems(_with_git_reasons(checked, defaults.problems), repos=required["repos"]))
     return checked, dump_json(document)
 
 
@@ -199,30 +201,10 @@ def _with_git_reasons(
     ]
 
 
-def _refuse_modules_or_exit(config: HubConfig) -> None:
-    # D3: no module templates exist yet, and the rendered Makefile would include their files.
-    selected = sorted(config.modules.model_dump(exclude_none=True))
-    if selected:
-        _fail(
-            f"{FILE_LABEL}: modules: {', '.join(selected)}:"
-            " not supported yet (module templates ship later)"
-        )
-
-
-def _root_or_exit(directory: Path | None) -> str:
-    """The hub root, taken once: every later step uses this real path (spec Q-9)."""
-    given = os.fspath(directory) if directory is not None else os.curdir
-    try:
-        return os.path.realpath(given)
-    except OSError as error:
-        # A relative path needs the cwd, which may have been deleted.
-        _fail(f"{shown_path(given)}: {error.strerror or error}")
-
-
 def _check_root_or_exit(root: str) -> None:
     # Absent is fine: the folder is made only once every check passed.
     if os.path.lexists(root) and not os.path.isdir(root):
-        _fail(f"{shown_path(root)}: not a folder")
+        fail(f"{shown_path(root)}: not a folder")
 
 
 def _wanted(rendered: RenderedHub) -> frozenset[str]:
@@ -237,10 +219,10 @@ def _plan_or_exit(root: str, *, config: HubConfig, hub_json: bytes) -> tuple[Ini
         rendered = render_hub(config)
         tree = read_hub_tree(Path(root), wanted=_wanted(rendered))
     except GeneratorError as error:
-        _fail_generator(error)
+        fail_generator(error)
     planned = plan_init(rendered=rendered, config=config, hub_json=hub_json, tree=tree)
     if isinstance(planned, InitRefusal):
-        _fail(*(f"{shown_path(path)}: {message}" for path, message in planned.problems))
+        fail(*(f"{shown_path(path)}: {message}" for path, message in planned.problems))
     return planned, tree.git_present
 
 
@@ -251,17 +233,4 @@ def _apply_or_exit(root: str, plan: InitPlan) -> None:
         remove_leftovers(hub, plan.leftovers)
         apply_writes(hub, folders=plan.folders, writes=plan.writes)
     except GeneratorError as error:
-        _fail_generator(error)
-
-
-def _fail_generator(error: GeneratorError) -> NoReturn:
-    # The error reads "<path>: <cause>"; a note (a temp entry left behind) is one more line.
-    notes: list[str] = getattr(error, "__notes__", [])
-    _fail(str(error), *notes)
-
-
-def _fail(*lines: str) -> NoReturn:
-    # One line per problem: text with a line break is shown escaped, so it cannot fake a line.
-    for line in lines:
-        typer.echo(shown_text(line), err=True)
-    raise typer.Exit(FAILURE)
+        fail_generator(error)
