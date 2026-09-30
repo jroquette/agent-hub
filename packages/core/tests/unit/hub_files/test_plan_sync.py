@@ -573,7 +573,8 @@ def test_sorts_leftovers_and_deletes_when_listed_in_reverse(
 def test_keeps_lock_entry_path_when_named_like_leftover(
     a_rendered_hub: HubFactory, config: HubConfig
 ) -> None:
-    """A path the lock records is planned (dropped here), never a leftover, whatever its name."""
+    """A path the lock records is planned (a seeded one is kept, not deleted), never a leftover,
+    whatever its name."""
     rendered = a_rendered_hub()
     path = ".a.hub-tmp-01234567"
     lock = a_lock(rendered, config, files={path: seeded_entry()})

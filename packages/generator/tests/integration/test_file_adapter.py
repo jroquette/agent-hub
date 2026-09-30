@@ -276,6 +276,23 @@ def test_reports_not_regular_when_file_swapped_for_fifo_before_open(
     assert snapshot.entries == {"hub.json": OtherEntry(kind="fifo")}
 
 
+def test_reports_folder_when_file_swapped_for_folder_before_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "root"
+    write_file(root / "hub.json", b"{}\n")
+
+    def to_folder(path: str, dir_fd: int | None) -> None:
+        os.unlink(path, dir_fd=dir_fd)
+        os.mkdir(path, dir_fd=dir_fd)
+
+    swap_before_open(monkeypatch, to_folder)
+
+    snapshot = read_hub_tree(root, wanted={"hub.json"})
+
+    assert snapshot.entries == {"hub.json": FolderEntry()}
+
+
 def test_raises_generator_error_when_file_swapped_for_link_before_open(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1387,6 +1404,20 @@ def fail_planned_read(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     read_planned_tree(root, paths={"plugin/agents/x.md"}, wanted=set())
 
 
+def fail_root_entry(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The root is opened, then the entry cannot be looked at: the reader must still close it.
+    write_file(root / "hub.lock", b"lock\n")
+    real_stat = os.stat
+
+    def refuse_lock(path: Any, **kwargs: Any) -> os.stat_result:
+        if path == "hub.lock":
+            raise OSError(errno.EIO, os.strerror(errno.EIO))
+        return real_stat(path, **kwargs)
+
+    monkeypatch.setattr(os, "stat", refuse_lock)
+    read_root_entry(root, "hub.lock")
+
+
 @pytest.mark.parametrize(
     "fail",
     [
@@ -1399,6 +1430,7 @@ def fail_planned_read(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         fail_sync_delete,
         fail_tree_read,
         fail_planned_read,
+        fail_root_entry,
     ],
     ids=[
         "descent",
@@ -1410,6 +1442,7 @@ def fail_planned_read(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "sync-delete",
         "tree-read",
         "planned-read",
+        "root-entry",
     ],
 )
 def test_closes_every_descriptor_when_write_fails(
@@ -1527,6 +1560,7 @@ def test_reads_root_entry_without_following_when_name_given(
     root = tmp_path / "root"
     write_file(root / "hub.json", b"{}\n")
     expected = plant(root, outside)
+    before = open_descriptors()
     calls = record_reads(monkeypatch)
 
     with alarm_guard(HANG_SECONDS):
@@ -1536,6 +1570,7 @@ def test_reads_root_entry_without_following_when_name_given(
     # The root is the only folder opened; a link, folder or FIFO is never opened itself.
     assert calls.opened == [str(root), *opens]
     assert calls.listed == []
+    assert open_descriptors() == before
 
 
 def unknown_parts_tree(tmp_path: Path) -> Path:
@@ -1816,13 +1851,17 @@ def test_raises_value_error_when_read_path_not_plain(
     assert calls == ReadCalls(opened=[], looked=[], listed=[])
 
 
+PLAIN_AND_EXECUTABLE = {"AGENTS.md": 0o644, "new/a.md": 0o755, "hub.lock": 0o644}
+
+
 def a_file(path: str, content: bytes = b"new\n") -> FileWrite:
     return FileWrite(path=path, content=content, executable=False)
 
 
 def test_applies_in_order_when_sync_applied(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, set_umask: Callable[[int], None]
 ) -> None:
+    set_umask(0o022)
     root = a_root(tmp_path)
     write_file(root / "plugin" / LEFTOVER, b"half\n")
     write_file(root / "old" / "gone.md", b"old\n")
@@ -1838,7 +1877,7 @@ def test_applies_in_order_when_sync_applied(
         folders=["new"],
         writes=[
             a_file("AGENTS.md", b"rules\n"),
-            a_file("new/a.md"),
+            FileWrite(path="new/a.md", content=b"new\n", executable=True),
             LinkWrite(path="scripts/run", target="../AGENTS.md"),
             a_file("hub.lock", b"lock\n"),
         ],
@@ -1863,6 +1902,9 @@ def test_applies_in_order_when_sync_applied(
     assert root_open.args[0] == root
     assert root_open.args[1] & os.O_DIRECTORY
     assert (root / "hub.lock").read_bytes() == b"lock\n"
+    # The writes honour the umask: 0o666 or 0o777 minus 0o022.
+    modes = {path: stat.S_IMODE((root / path).stat().st_mode) for path in PLAIN_AND_EXECUTABLE}
+    assert modes == PLAIN_AND_EXECUTABLE
     assert (root / "old").is_dir()
     assert temp_entries(root) == []
 
@@ -1909,6 +1951,20 @@ def test_refuses_delete_when_path_is_folder_or_other(
     assert (raised.value.path, raised.value.cause) == ("old/x.md", "not a file or link")
     assert str(raised.value) == "old/x.md: not a file or link"
     assert tree_digest(root) == before
+
+
+def test_refuses_delete_when_parent_folder_missing(tmp_path: Path) -> None:
+    root = a_root(tmp_path)
+    before = tree_digest(root)
+
+    with pytest.raises(FileWriteError) as raised:
+        apply_sync(root, leftovers=[], deletes=["old/x.md"], folders=[], writes=[a_file("y.md")])
+
+    # E21: a missing parent is a failed descent, not an entry already gone; the write after it
+    # is not made.
+    assert str(raised.value) == "old/x.md: No such file or directory"
+    assert tree_digest(root) == before
+    assert not (root / "y.md").exists()
 
 
 @pytest.mark.parametrize("step", ["delete", "write"])

@@ -268,11 +268,17 @@ def _typed_entry(folder_fd: int, name: str, *, mode: int, path: str, walk: _Walk
 
 def _read_file(folder_fd: int, name: str, *, executable: bool) -> TreeEntry:
     descriptor = os.open(name, _FILE_FLAGS, dir_fd=folder_fd)
-    with open(descriptor, "rb") as opened:
-        mode = os.fstat(opened.fileno()).st_mode
+    try:
+        # Checked on the descriptor: the entry may have been swapped since it was looked at.
+        mode = os.fstat(descriptor).st_mode
+        if stat.S_ISDIR(mode):
+            return FolderEntry()
         if not stat.S_ISREG(mode):
             return OtherEntry(kind=_other_kind(mode))
-        return FileEntry(executable=executable, content=opened.read())
+        with open(descriptor, "rb", closefd=False) as opened:
+            return FileEntry(executable=executable, content=opened.read())
+    finally:
+        os.close(descriptor)
 
 
 def _walk_error(path: str, error: OSError) -> GeneratorError:
