@@ -17,8 +17,9 @@ from agent_hub.core.hub_files.hub_lock import (
     build_hub_lock,
     lock_bytes,
 )
-from agent_hub.core.hub_files.plan_init import FileWrite, LinkWrite
+from agent_hub.core.hub_files.plan_init import FileWrite, LinkWrite, PathProblem
 from agent_hub.core.hub_files.plan_sync import (
+    ContentConflict,
     SyncChange,
     SyncConflicts,
     SyncPlan,
@@ -32,6 +33,7 @@ from agent_hub.core.hub_files.tree_snapshot import (
     FileEntry,
     FolderEntry,
     LinkEntry,
+    OtherEntry,
     TreeEntry,
     TreeSnapshot,
 )
@@ -512,8 +514,21 @@ def test_creates_only_missing_folders_when_writing(
 
     plan = planned(rendered, a_lock(rendered, config), tree)
 
-    # ``scripts`` is there; ``.claude/skills`` is there but nothing under it is written.
+    # ``scripts`` is there already.
     assert plan.folders == (".claude/agents", "plugin", "plugin/agents")
+
+
+def test_skips_missing_folder_when_nothing_written_below(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    rendered = a_rendered_hub()
+    # The seeded link keeps its entry, so nothing is written under the missing ``.claude/skills``.
+    tree = without(synced_tree(rendered), ".claude/skills", SEEDED_LINK, FILE)
+
+    plan = planned(rendered, a_lock(rendered, config), tree)
+
+    assert written_paths(plan) == [FILE]
+    assert plan.folders == ()
 
 
 @pytest.mark.parametrize(
@@ -532,6 +547,42 @@ def test_cleans_leftover_when_temp_shaped_entry_listed(
     assert plan.leftovers == (LEFTOVER,)
     assert (plan.writes, plan.changes) == ((), ())
     assert plan.pending
+
+
+def test_sorts_leftovers_and_deletes_when_listed_in_reverse(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    rendered = a_rendered_hub()
+    lock = a_lock(rendered, config, files={"a.md": old_file_entry(), "b.md": old_file_entry()})
+    lock = lock.model_copy(update={"files": dict(reversed(lock.files.items()))})
+    other = "plugin/.y.md.hub-tmp-89abcdef"
+    tree = {
+        other: FileEntry(executable=False, content=None),
+        LEFTOVER: FileEntry(executable=False, content=None),
+        "b.md": FileEntry(executable=False, content=OLD),
+        "a.md": FileEntry(executable=False, content=OLD),
+        **synced_tree(rendered),
+    }
+
+    plan = planned(rendered, lock, tree)
+
+    assert plan.leftovers == (LEFTOVER, other)
+    assert plan.deletes == ("a.md", "b.md")
+
+
+def test_keeps_lock_entry_path_when_named_like_leftover(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    """A path the lock records is planned (dropped here), never a leftover, whatever its name."""
+    rendered = a_rendered_hub()
+    path = ".a.hub-tmp-01234567"
+    lock = a_lock(rendered, config, files={path: seeded_entry()})
+    tree = synced_tree(rendered) | {path: FileEntry(executable=False, content=None)}
+
+    plan = planned(rendered, lock, tree)
+
+    assert plan.leftovers == ()
+    assert path not in plan.lock.files
 
 
 def test_keeps_folder_when_named_like_leftover(
@@ -580,3 +631,405 @@ def test_raises_when_compared_content_not_read(
 
     with pytest.raises(ValueError, match=re.escape(f"{path}: content was not read")):
         run(rendered, lock, tree)
+
+
+# Conflicts (AC-14.6): each test's input is decided by the one rule it names.
+
+EDITED = b"# Edited rules\n"
+RULES = b"# Rules\n"
+ELSEWHERE = "../../elsewhere"
+OLD_FILE = "old.md"
+OLD_LINK = ".claude/agents/old.md"
+NO_LONGER_RENDERED = "differs from its hub.lock entry and is no longer rendered"
+
+
+def conflicts(
+    rendered: RenderedHub, lock: HubLock, tree: Mapping[str, TreeEntry]
+) -> tuple[PathProblem | ContentConflict, ...]:
+    result = run(rendered, lock, tree)
+    assert isinstance(result, SyncConflicts)
+    return result.problems
+
+
+def test_carries_contents_when_managed_bytes_differ_from_entry_and_render(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    rendered = a_rendered_hub()
+    lock = a_lock(rendered, config, files={FILE: old_file_entry()})
+    tree = synced_tree(rendered) | {FILE: FileEntry(executable=False, content=EDITED)}
+
+    problems = conflicts(rendered, lock, tree)
+
+    assert problems == (ContentConflict(path=FILE, on_disk=EDITED, render=RULES),)
+
+
+@pytest.mark.parametrize(
+    ("path", "content", "on_disk_bit", "cause"),
+    [
+        pytest.param(
+            FILE, RULES, True, "executable bit differs (on disk +x, render -x)", id="gained-x"
+        ),
+        pytest.param(
+            "scripts/run.sh",
+            b"#!/bin/sh\n",
+            False,
+            "executable bit differs (on disk -x, render +x)",
+            id="lost-x",
+        ),
+    ],
+)
+def test_names_bit_when_only_executable_bit_differs(
+    a_rendered_hub: HubFactory,
+    config: HubConfig,
+    path: str,
+    *,
+    content: bytes,
+    on_disk_bit: bool,
+    cause: str,
+) -> None:
+    rendered = a_rendered_hub()
+    tree = synced_tree(rendered) | {path: FileEntry(executable=on_disk_bit, content=content)}
+
+    problems = conflicts(rendered, a_lock(rendered, config), tree)
+
+    assert problems == (PathProblem(path, cause),)
+
+
+def test_names_targets_when_link_differs_from_entry_and_render(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    rendered = a_rendered_hub()
+    lock = a_lock(rendered, config, files={LINK: old_link_entry()})
+    tree = synced_tree(rendered) | {LINK: LinkEntry(target=ELSEWHERE, outside=False)}
+
+    problems = conflicts(rendered, lock, tree)
+
+    cause = f"link target differs (on disk -> {ELSEWHERE}, render -> {LINK_TARGET})"
+    assert problems == (PathProblem(LINK, cause),)
+
+
+@pytest.mark.parametrize("old_entry", [None, seeded_entry()], ids=["no-entry", "seeded-entry"])
+@pytest.mark.parametrize(
+    ("path", "on_disk", "expected"),
+    [
+        pytest.param(
+            FILE,
+            FileEntry(executable=False, content=OLD),
+            ContentConflict(path=FILE, on_disk=OLD, render=RULES),
+            id="file",
+        ),
+        pytest.param(
+            LINK,
+            LinkEntry(target=OLD_TARGET, outside=False),
+            PathProblem(
+                LINK, f"link target differs (on disk -> {OLD_TARGET}, render -> {LINK_TARGET})"
+            ),
+            id="link",
+        ),
+    ],
+)
+def test_reports_managed_on_disk_when_no_managed_entry(
+    a_rendered_hub: HubFactory,
+    config: HubConfig,
+    path: str,
+    *,
+    old_entry: LockEntry | None,
+    on_disk: TreeEntry,
+    expected: PathProblem | ContentConflict,
+) -> None:
+    """The disk is not what a sync wrote: the old hash or target is not trusted without an entry."""
+    rendered = a_rendered_hub()
+    lock = a_lock(rendered, config, files={path: old_entry})
+
+    problems = conflicts(rendered, lock, synced_tree(rendered) | {path: on_disk})
+
+    assert problems == (expected,)
+
+
+@pytest.mark.parametrize(
+    ("path", "old_entry", "on_disk"),
+    [
+        pytest.param(
+            OLD_FILE, old_file_entry(), FileEntry(executable=False, content=EDITED), id="bytes"
+        ),
+        pytest.param(OLD_FILE, old_file_entry(), FileEntry(executable=True, content=OLD), id="bit"),
+        pytest.param(
+            OLD_LINK, old_link_entry(), LinkEntry(target=ELSEWHERE, outside=False), id="target"
+        ),
+    ],
+)
+def test_reports_no_longer_rendered_when_disk_differs_from_entry(
+    a_rendered_hub: HubFactory,
+    config: HubConfig,
+    path: str,
+    *,
+    old_entry: LockEntry,
+    on_disk: TreeEntry,
+) -> None:
+    rendered = a_rendered_hub()
+    lock = a_lock(rendered, config, files={path: old_entry})
+
+    problems = conflicts(rendered, lock, synced_tree(rendered) | {path: on_disk})
+
+    assert problems == (PathProblem(path, NO_LONGER_RENDERED),)
+
+
+@pytest.mark.parametrize(
+    ("path", "old_entry", "on_disk", "cause"),
+    [
+        pytest.param(
+            LINK,
+            old_file_entry(),
+            FileEntry(executable=False, content=OLD),
+            "a file where a link belongs",
+            id="file-where-link",
+        ),
+        pytest.param(
+            LINK, None, FolderEntry(), "a folder where a link belongs", id="folder-where-link"
+        ),
+        pytest.param(
+            FILE,
+            old_link_entry(),
+            LinkEntry(target=OLD_TARGET, outside=False),
+            "a link where a file belongs",
+            id="link-where-file",
+        ),
+        pytest.param(
+            FILE,
+            old_file_entry(),
+            OtherEntry(kind="fifo"),
+            "not a regular file",
+            id="other-where-file",
+        ),
+    ],
+)
+def test_reports_type_when_kind_differs_even_if_equal_to_entry(
+    a_rendered_hub: HubFactory,
+    config: HubConfig,
+    path: str,
+    *,
+    old_entry: LockEntry | None,
+    on_disk: TreeEntry,
+    cause: str,
+) -> None:
+    """A path whose rendered type changed is never replaced, even when a sync wrote it (Q-16)."""
+    rendered = a_rendered_hub()
+    lock = a_lock(rendered, config, files={path: old_entry})
+
+    problems = conflicts(rendered, lock, synced_tree(rendered) | {path: on_disk})
+
+    assert problems == (PathProblem(path, cause),)
+
+
+def test_restores_when_rendered_type_changed_and_path_absent(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    """Nothing on disk to protect: the managed entry of the old type is restored as the new one."""
+    rendered = a_rendered_hub()
+    lock = a_lock(rendered, config, files={LINK: old_file_entry()})
+
+    plan = planned(rendered, lock, without(synced_tree(rendered), LINK))
+
+    assert plan.changes == (SyncChange(path=LINK, verb=Verb.RESTORED),)
+    assert written_paths(plan) == [LINK, HUB_LOCK_PATH]
+
+
+@pytest.mark.parametrize(
+    ("path", "on_disk", "cause"),
+    [
+        pytest.param(
+            SEEDED,
+            LinkEntry(target=ELSEWHERE, outside=False),
+            "a link where a file belongs",
+            id="link-where-file",
+        ),
+        pytest.param(SEEDED, FolderEntry(), "a folder where a file belongs", id="folder"),
+        pytest.param(SEEDED, OtherEntry(kind="fifo"), "not a regular file", id="fifo"),
+        pytest.param(
+            SEEDED_LINK,
+            FileEntry(executable=False, content=None),
+            "a file where a link belongs",
+            id="file-where-link",
+        ),
+    ],
+)
+def test_reports_type_when_seeded_without_entry_is_not_a_file(
+    a_rendered_hub: HubFactory, config: HubConfig, path: str, *, on_disk: TreeEntry, cause: str
+) -> None:
+    rendered = a_rendered_hub()
+    lock = a_lock(rendered, config, files={path: None})
+
+    problems = conflicts(rendered, lock, synced_tree(rendered) | {path: on_disk})
+
+    assert problems == (PathProblem(path, cause),)
+
+
+@pytest.mark.parametrize(
+    ("path", "link", "old_entry"),
+    [
+        pytest.param("plugin/agents/x.md", "plugin", None, id="write-created"),
+        pytest.param("plugin/agents/x.md", "plugin/agents", old_file_entry(), id="write-restored"),
+        pytest.param("old/x.md", "old", old_file_entry(), id="delete"),
+        pytest.param(SEEDED_LINK, ".claude/skills", None, id="compare-seeded-no-entry"),
+    ],
+)
+def test_reports_symlinked_ancestor_when_ancestor_is_link(
+    a_rendered_hub: HubFactory,
+    config: HubConfig,
+    path: str,
+    *,
+    link: str,
+    old_entry: LockEntry | None,
+) -> None:
+    """The reader never descends into a link: ``path`` itself is absent from the tree."""
+    rendered = a_rendered_hub()
+    lock = a_lock(rendered, config, files={path: old_entry})
+    tree = {
+        each: entry
+        for each, entry in synced_tree(rendered).items()
+        if each != link and not each.startswith(f"{link}/")
+    }
+    tree[link] = LinkEntry(target=ELSEWHERE, outside=False)
+
+    problems = conflicts(rendered, lock, tree)
+
+    assert problems == (PathProblem(path, f"symlinked ancestor {link}"),)
+
+
+def test_reports_file_ancestor_when_ancestor_planned_for_delete(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    """Q-13: a delete does not clear the way for a write below it; the user deletes and re-runs."""
+    base = a_rendered_hub()
+    extra = RenderedFile(
+        path="docs/x.md",
+        content=RULES,
+        executable=False,
+        kind=Kind.GENERIC,
+        ownership=Ownership.MANAGED,
+        module=None,
+    )
+    rendered = a_rendered_hub(files=[*base.files, extra])
+    lock = a_lock(base, config, files={"docs": old_file_entry()})
+    tree = synced_tree(base) | {"docs": FileEntry(executable=False, content=OLD)}
+
+    problems = conflicts(rendered, lock, tree)
+
+    assert problems == (PathProblem("docs/x.md", "a file where a folder belongs: docs"),)
+
+
+@pytest.mark.parametrize(
+    ("path", "old_entry", "target"),
+    [
+        pytest.param(LINK, None, LINK_TARGET, id="managed-no-entry"),
+        pytest.param(LINK, old_link_entry(), LINK_TARGET, id="managed-entry"),
+        pytest.param(OLD_LINK, old_link_entry(), OLD_TARGET, id="no-longer-rendered"),
+        pytest.param(SEEDED_LINK, None, "../../plugin/skills/y", id="seeded-no-entry"),
+    ],
+)
+def test_reports_outside_when_link_on_disk_resolves_outside(
+    a_rendered_hub: HubFactory,
+    config: HubConfig,
+    path: str,
+    *,
+    target: str,
+    old_entry: LockEntry | None,
+) -> None:
+    """The target is the render's or the entry's own: only ``outside`` makes it a conflict."""
+    rendered = a_rendered_hub()
+    lock = a_lock(rendered, config, files={path: old_entry})
+    tree = synced_tree(rendered) | {path: LinkEntry(target=target, outside=True)}
+
+    problems = conflicts(rendered, lock, tree)
+
+    assert problems == (PathProblem(path, "resolves outside the hub"),)
+
+
+@pytest.mark.parametrize(
+    ("changed", "remove"),
+    [
+        pytest.param(
+            {SEEDED_LINK: LinkEntry(target="../../../../etc", outside=True)}, (), id="outside"
+        ),
+        pytest.param(
+            {".claude/skills": LinkEntry(target=ELSEWHERE, outside=True)},
+            (SEEDED_LINK,),
+            id="symlinked-ancestor",
+        ),
+    ],
+)
+def test_leaves_seeded_when_entry_seeded_and_link_resolves_outside(
+    a_rendered_hub: HubFactory,
+    config: HubConfig,
+    changed: Mapping[str, TreeEntry],
+    *,
+    remove: tuple[str, ...],
+) -> None:
+    """Plan erratum E19: a seeded path with an entry is never looked at, so it is no conflict."""
+    rendered = a_rendered_hub()
+    tree = without(synced_tree(rendered), *remove) | dict(changed)
+
+    plan = planned(rendered, a_lock(rendered, config), tree)
+
+    assert not plan.pending
+    assert plan.changes == ()
+
+
+@pytest.mark.parametrize(
+    ("changed", "path", "cause"),
+    [
+        pytest.param(
+            {"plugin": LinkEntry(target=ELSEWHERE, outside=False)},
+            "plugin/agents/x.md",
+            "symlinked ancestor plugin",
+            id="symlinked-ancestor",
+        ),
+        pytest.param(
+            {"plugin/agents": FileEntry(executable=False, content=None)},
+            "plugin/agents/x.md",
+            "a file where a folder belongs: plugin/agents",
+            id="file-ancestor",
+        ),
+    ],
+)
+def test_reports_ancestor_first_when_file_below_equals_render(
+    a_rendered_hub: HubFactory,
+    config: HubConfig,
+    changed: Mapping[str, TreeEntry],
+    *,
+    path: str,
+    cause: str,
+) -> None:
+    """E5: the file below still equals its render (as seen through the link); it is not clean."""
+    rendered = a_rendered_hub()
+    tree = synced_tree(rendered) | dict(changed)
+
+    problems = conflicts(rendered, a_lock(rendered, config), tree)
+
+    assert problems == (PathProblem(path, cause),)
+
+
+def test_returns_every_conflict_sorted_without_writes_when_several(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    rendered = a_rendered_hub()
+    lock = a_lock(rendered, config, files={OLD_FILE: old_file_entry(), "gone.md": old_file_entry()})
+    tree = without(synced_tree(rendered), "plugin/agents/x.md") | {
+        FILE: FileEntry(executable=False, content=EDITED),
+        "scripts/run.sh": FileEntry(executable=False, content=b"#!/bin/sh\n"),
+        LINK: LinkEntry(target=LINK_TARGET, outside=True),
+        OLD_FILE: FileEntry(executable=False, content=EDITED),
+        # Would be deleted, like ``plugin/agents/x.md`` would be restored: neither is planned.
+        "gone.md": FileEntry(executable=False, content=OLD),
+    }
+
+    result = run(rendered, lock, tree)
+
+    assert result == SyncConflicts(
+        problems=(
+            PathProblem(LINK, "resolves outside the hub"),
+            ContentConflict(path=FILE, on_disk=EDITED, render=RULES),
+            PathProblem(OLD_FILE, NO_LONGER_RENDERED),
+            PathProblem("scripts/run.sh", "executable bit differs (on disk -x, render +x)"),
+        )
+    )
