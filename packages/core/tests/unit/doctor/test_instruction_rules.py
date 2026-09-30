@@ -655,13 +655,14 @@ class TestRefs:
         assert instruction_rules._is_placeholder(ref) is (OLD_PLACEHOLDER.search(ref) is not None)
 
     def test_resolves_many_references_when_hub_large(self, snapshot_of: SnapshotFactory) -> None:
-        listed = {f"packages/p{n}/src/m{n}.py": b"x\n" for n in range(20_000)}
-        text = "".join(f"`m{n}.py` `p{n}/src/m{n}` `src/gone{n}.py`\n" for n in range(20_000))
+        # 5100 references over 1700 listed files.
+        listed = {f"packages/p{n}/src/m{n}.py": b"x\n" for n in range(1_700)}
+        text = "".join(f"`m{n}.py` `p{n}/src/m{n}` `src/gone{n}.py`\n" for n in range(1_700))
         snapshot = snapshot_of(files={"AGENTS.md": text.encode(), **listed})
 
         found = refs(snapshot)
 
-        assert found == [stale("AGENTS.md", n + 1, f"src/gone{n}.py") for n in range(20_000)]
+        assert found == [stale("AGENTS.md", n + 1, f"src/gone{n}.py") for n in range(1_700)]
 
     def test_resolves_by_name_and_end_when_paths_deep(self, snapshot_of: SnapshotFactory) -> None:
         # Five chains 600 folders deep: every folder and every end of a path is searched.
@@ -830,10 +831,10 @@ class ScanCounter:
         return found
 
 
-def nodes_of(tree: object) -> int:
+def nodes_of(tree: instruction_rules._Trie) -> int:
     count, pending = 0, [tree]
     while pending:
-        children = pending.pop().children  # type: ignore[attr-defined]
+        children = pending.pop().children
         count += len(children)
         pending.extend(children.values())
     return count

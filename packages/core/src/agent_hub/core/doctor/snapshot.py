@@ -38,11 +38,12 @@ class HubFiles:
 
     ``entries`` holds every path looked at, present ones only: the listed and fixed paths, the
     lock's paths when read, and the leftover-shaped names the reader also records (unread,
-    plan E9); ``listed`` is the sorted listing of the tree, empty when no rule asked for it, and
-    the only set a rule may treat as the tree's files; ``problem`` says why the
-    listing could not be made or a path read. ``paths_read`` is whether every path looked at by
-    path was read: when not, an absent one may be one the read never reached, so no rule may
-    call it missing; a failed listing alone leaves it true.
+    plan E9); ``listed`` is the sorted listing of the tree, empty when no rule asked for it. The
+    tree's files, the only set a rule may treat as such, are the listing plus the fixed paths
+    (``hub_paths``) present in ``entries`` (plan E31); never lock paths or leftover names.
+    ``problem`` says why the listing could not be made or a path read. ``paths_read`` is whether
+    every path looked at by path was read: when not, an absent one may be one the read never
+    reached, so no rule may call it missing; a failed listing alone leaves it true.
     """
 
     entries: Mapping[str, TreeEntry]
