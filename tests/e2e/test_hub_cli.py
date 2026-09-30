@@ -101,3 +101,25 @@ def test_writes_same_lock_when_installed_hub_inits(
     lock = (installed_root / "hub.lock").read_bytes()
     assert lock == (in_process_root / "hub.lock").read_bytes()
     assert b'"lock_version": 1' in lock
+
+
+def test_prints_up_to_date_when_installed_hub_syncs_fresh_init(
+    tmp_path: Path, installed_hub: InstalledHub, run: Callable[..., CompletedProcess[str]]
+) -> None:
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    assert not work_dir.resolve().is_relative_to(REPO_ROOT)
+    env = {**installed_hub.env, "HOME": str(tmp_path / "home")}
+    for variable in DROPPED_VARIABLES:
+        env.pop(variable, None)
+    root = work_dir / "t"
+    initialized = run(
+        [str(installed_hub.executable), "init", *DEMO_FLAGS, "--dir", str(root)],
+        env=env,
+        cwd=work_dir,
+    )
+    assert (initialized.returncode, initialized.stderr) == (0, ""), initialized.stderr
+
+    result = run([str(installed_hub.executable), "sync"], env=env, cwd=root)
+
+    assert (result.returncode, result.stdout, result.stderr) == (0, "up to date\n", "")

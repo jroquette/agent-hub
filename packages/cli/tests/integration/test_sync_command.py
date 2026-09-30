@@ -6,9 +6,12 @@ run on a copy of the ``DEMO`` hub and compare their lines with those of the real
 
 The other cases also run on a copy of the ``DEMO`` hub: conflicts (a cause line, a symlinked
 ancestor, a link resolving outside) that write nothing, pending changes applied in one run,
-seeded paths left alone, and unknown entries that are never opened, listed or changed.
+seeded paths left alone, and unknown entries that are never opened, listed or changed. Then an
+apply stopped by an injected I/O error and resumed, its call order (``hub.lock`` last), and a
+link planted between the plan and the apply.
 """
 
+import errno
 import hashlib
 import json
 import os
@@ -24,9 +27,11 @@ import pytest
 from click import unstyle
 from typer.testing import CliRunner, Result
 
+from agent_hub.cli import sync_command
 from agent_hub.cli.main import app
 from agent_hub.cli.sync_report import CONFLICT_WAY_OUT
 from agent_hub.core.hub_files.hub_lock import ADOPT_POINTER
+from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
 from agent_hub.core.json_form import dump_json
 
 # The conftest's tree digest and in-process sync (tests cannot import a conftest in importlib
@@ -437,6 +442,7 @@ class TestCheck:
     def test_exits_four_when_pending(
         self,
         demo_hub: Path,
+        demo_hub_template: Path,
         run_sync: SyncRunner,
         *,
         tree_digest: TreeDigest,
@@ -459,6 +465,11 @@ class TestCheck:
         assert applied.stdout.splitlines() == expected
         assert adapter_calls != []
         assert run_sync(demo_hub, "--check").stdout == "up to date\n"
+        # The applied hub is a fresh one (a deleted path's folder stays, empty).
+        after = tree_digest(demo_hub)
+        after.pop("old", None)
+        assert after == tree_digest(demo_hub_template)
+        assert (demo_hub / "hub.lock").read_bytes() == (demo_hub_template / "hub.lock").read_bytes()
 
     def test_prints_only_conflicts_when_conflict_and_pending(
         self,
@@ -772,12 +783,14 @@ def test_leaves_unknown_entries_when_syncing(
     make_pending(demo_hub, _deleted)
     (demo_hub / "scratch").chmod(0)
     try:
+        # ``scratch/secret.md`` is in the digest only when the tests run as root: otherwise
+        # ``os.walk`` cannot list the mode-0 folder, and ``scratch`` is compared alone.
         before = {path: tree_digest(demo_hub / path) for path in UNKNOWN_ENTRIES}
-        calls = record_tree_calls(monkeypatch)
+        with monkeypatch.context() as patch:
+            calls = record_tree_calls(patch)
 
-        result = run_sync(demo_hub)
+            result = run_sync(demo_hub)
 
-        monkeypatch.undo()
         after = {path: tree_digest(demo_hub / path) for path in UNKNOWN_ENTRIES}
     finally:
         (demo_hub / "scratch").chmod(0o755)
@@ -797,3 +810,233 @@ def test_leaves_unknown_entries_when_syncing(
     fresh = {path: entry for path, entry in tree_digest(demo_hub).items() if path not in unknown}
     fresh.pop("old")
     assert fresh == tree_digest(demo_hub_template)
+
+
+def _created_link(root: Path, lock: dict[str, Any]) -> list[str]:
+    (root / ".claude/skills/feature").unlink()
+    del lock["files"][".claude/skills/feature"]
+    return ["created .claude/skills/feature"]
+
+
+def temp_entries(root: Path) -> list[str]:
+    """The paths under ``root`` whose name has the temp shape."""
+    return [
+        (Path(folder) / name).relative_to(root).as_posix()
+        for folder, folders, files in os.walk(root)
+        for name in [*folders, *files]
+        if is_leftover_name(name)
+    ]
+
+
+def fail_once(patch: pytest.MonkeyPatch, *, call: str, name: str) -> None:
+    """Make the first ``os.<call>`` (``replace`` or ``unlink``) of ``name`` raise ``EIO``."""
+    real = getattr(os, call)
+    failed: list[str] = []
+
+    def failing(*args: Any, **kwargs: Any) -> Any:
+        destination = os.fsdecode(args[1] if call == "replace" else args[0])
+        if destination == name and not failed:
+            failed.append(destination)
+            raise OSError(errno.EIO, os.strerror(errno.EIO))
+        return real(*args, **kwargs)
+
+    patch.setattr(os, call, failing)
+
+
+# Each failure point (spec AC-14.14): the call that fails, the name it is given, the path shown.
+FAILURE_POINTS = {
+    "first-delete": ("unlink", "file.md", "old/file.md"),
+    "middle-file": ("replace", "CLAUDE.md", "CLAUDE.md"),
+    "first-link": ("replace", "feature", ".claude/skills/feature"),
+    "hub-lock": ("replace", "hub.lock", "hub.lock"),
+}
+
+
+class TestInterruptedSync:
+    """A sync stopped by an I/O error leaves no temp entry, and the next sync finishes it."""
+
+    @pytest.mark.parametrize(
+        ("call", "name", "path"), FAILURE_POINTS.values(), ids=FAILURE_POINTS.keys()
+    )
+    def test_resumes_when_apply_fails(
+        self,
+        demo_hub: Path,
+        demo_hub_template: Path,
+        run_sync: SyncRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+        tree_digest: TreeDigest,
+        call: str,
+        name: str,
+        path: str,
+    ) -> None:
+        # One delete, three file writes (CLAUDE.md is the middle one), one link, then hub.lock.
+        for make in [_deleted, _restored, _created, _restored_hook, _restored_link]:
+            make_pending(demo_hub, make)
+        old_lock = (demo_hub / "hub.lock").read_bytes()
+
+        with monkeypatch.context() as patch:
+            fail_once(patch, call=call, name=name)
+
+            stopped = run_sync(demo_hub)
+
+        assert (stopped.exit_code, stopped.stdout) == (1, ""), stopped.output
+        assert stopped.stderr.splitlines() == [f"{path}: Input/output error"]
+        # Even when its own rename fails, hub.lock keeps the old bytes.
+        assert (demo_hub / "hub.lock").read_bytes() == old_lock
+        assert temp_entries(demo_hub) == []
+
+        resumed = run_sync(demo_hub)
+
+        # A file written before the error equals its render: clean, not a conflict (E5).
+        assert (resumed.exit_code, resumed.stderr) == (0, ""), resumed.output
+        # A clean sync's hub (TestPendingChanges): a fresh one plus the emptied ``old/``.
+        after = tree_digest(demo_hub)
+        assert after.pop("old")[0] == "folder"
+        assert not list((demo_hub / "old").iterdir())
+        assert after == tree_digest(demo_hub_template)
+        assert (demo_hub / "hub.lock").read_bytes() == (demo_hub_template / "hub.lock").read_bytes()
+        assert run_sync(demo_hub).stdout == "up to date\n"
+
+    def test_removes_leftovers_when_planted_in_planned_folder(
+        self,
+        tmp_path: Path,
+        demo_hub: Path,
+        demo_hub_template: Path,
+        *,
+        run_sync: SyncRunner,
+        tree_digest: TreeDigest,
+    ) -> None:
+        hooks = demo_hub / "plugin/hub-workflow/hooks"
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "kept.md").write_bytes(b"outside\n")
+        (hooks / ".guard.py.hub-tmp-0123abcd").write_bytes(b"half written\n")
+        # A leftover link to a file outside the hub: the link goes, never what it points to.
+        (hooks / ".hubhooks.py.hub-tmp-4567cdef").symlink_to(outside / "kept.md")
+        outside_before = tree_digest(outside)
+
+        result = run_sync(demo_hub)
+
+        assert (result.exit_code, result.stderr) == (0, ""), result.output
+        assert result.stdout == "removed 2 leftover temporary files\n"
+        assert tree_digest(demo_hub) == tree_digest(demo_hub_template)
+        # Never recorded: the lock is the fresh one, not even rewritten.
+        assert (demo_hub / "hub.lock").read_bytes() == (demo_hub_template / "hub.lock").read_bytes()
+        assert tree_digest(outside) == outside_before
+
+
+def test_writes_lock_last_when_sync_applies(
+    demo_hub: Path,
+    run_sync: SyncRunner,
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_calls: list[tuple[str, str]],
+) -> None:
+    make_pending(demo_hub, _leftover)
+    make_pending(demo_hub, _deleted)
+    make_pending(demo_hub, _updated)
+    make_pending(demo_hub, _created_link)
+    lock: dict[str, Any] = json.loads((demo_hub / "hub.lock").read_bytes())
+    del lock["files"][".github/workflows/ci.yml"]
+    (demo_hub / "hub.lock").write_bytes(dump_json(lock))
+    shutil.rmtree(demo_hub / ".github")
+    hub_json = (demo_hub / "hub.json").stat()
+    real_open = os.open
+    hub_json_flags: list[int] = []
+
+    def opened(path: Any, flags: int, mode: int = 0o777, **kwargs: Any) -> int:
+        if os.fsdecode(path).rpartition("/")[2] == "hub.json":
+            hub_json_flags.append(flags)
+        return real_open(path, flags, mode, **kwargs)
+
+    monkeypatch.setattr(os, "open", opened)
+    adapter_calls.clear()
+
+    result = run_sync(demo_hub)
+
+    assert (result.exit_code, result.stderr) == (0, ""), result.output
+    assert result.stdout.splitlines() == [
+        "created .claude/skills/feature",
+        "created .github/workflows/ci.yml",
+        "updated Makefile",
+        "deleted old/file.md",
+        "removed 1 leftover temporary files",
+        "updated hub.lock",
+    ]
+    # Leftovers, deletes, folders (parents first), files, links, then hub.lock (spec Q-13).
+    assert adapter_calls == [
+        ("unlink", LEFTOVER.rpartition("/")[2]),
+        ("unlink", "file.md"),
+        ("mkdir", ".github"),
+        ("mkdir", "workflows"),
+        ("replace", "ci.yml"),
+        ("replace", "Makefile"),
+        ("replace", "feature"),
+        ("replace", "hub.lock"),
+    ]
+    written = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
+    assert not [flags for flags in hub_json_flags if flags & written]
+    after = (demo_hub / "hub.json").stat()
+    assert (after.st_ino, after.st_mtime_ns) == (hub_json.st_ino, hub_json.st_mtime_ns)
+
+
+def _restored_skill(root: Path, _lock: dict[str, Any]) -> list[str]:
+    (root / "plugin/hub-workflow/skills/feature/SKILL.md").unlink()
+    return ["restored plugin/hub-workflow/skills/feature/SKILL.md"]
+
+
+def _deleted_skill(root: Path, lock: dict[str, Any]) -> list[str]:
+    (root / "plugin/hub-workflow/skills/old.md").write_bytes(OLDER_RENDER)
+    lock["files"]["plugin/hub-workflow/skills/old.md"] = {
+        "ownership": "managed",
+        "executable": False,
+        "sha256": hashlib.sha256(OLDER_RENDER).hexdigest(),
+    }
+    return ["deleted plugin/hub-workflow/skills/old.md", "updated hub.lock"]
+
+
+@pytest.mark.parametrize(
+    ("make", "path"),
+    [
+        (_restored_skill, "plugin/hub-workflow/skills/feature/SKILL.md"),
+        (_deleted_skill, "plugin/hub-workflow/skills/old.md"),
+    ],
+    ids=["write", "delete"],
+)
+def test_exits_one_when_adapter_meets_planted_ancestor(
+    tmp_path: Path,
+    demo_hub: Path,
+    run_sync: SyncRunner,
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    tree_digest: TreeDigest,
+    make: PendingMaker,
+    path: str,
+) -> None:
+    make_pending(demo_hub, make)
+    lock = (demo_hub / "hub.lock").read_bytes()
+    skills = demo_hub / "plugin/hub-workflow/skills"
+    real_apply = sync_command.apply_sync
+    planned: list[list[str]] = []
+    outside: list[tuple[Path, dict[str, Any]]] = []
+
+    def plant_then_apply(root: Path, **plan: Any) -> None:
+        # The plan was made with a real folder; a link to an outside copy replaces it now.
+        planned.append([*plan["deletes"], *(write.path for write in plan["writes"])])
+        copy = outside_copy(tmp_path, skills)
+        shutil.rmtree(skills)
+        skills.symlink_to(copy, target_is_directory=True)
+        outside.append((copy, tree_digest(copy)))
+        real_apply(root, **plan)
+
+    monkeypatch.setattr(sync_command, "apply_sync", plant_then_apply)
+
+    result = run_sync(demo_hub)
+
+    assert (result.exit_code, result.stdout) == (1, ""), result.output
+    assert result.stderr.splitlines() == [f"{path}: symlinked ancestor plugin/hub-workflow/skills"]
+    assert path in planned[0]
+    [(copy, copy_before)] = outside
+    assert tree_digest(copy) == copy_before
+    assert (demo_hub / "hub.lock").read_bytes() == lock
