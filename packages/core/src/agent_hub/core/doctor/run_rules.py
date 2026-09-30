@@ -14,7 +14,7 @@ from agent_hub.core.doctor.config_lint import (
     instruction_files,
     plugin_files,
 )
-from agent_hub.core.doctor.finding import Finding, Read, Rule
+from agent_hub.core.doctor.finding import LISTING_READS, Finding, Read, Rule
 from agent_hub.core.doctor.snapshot import ConfigFailure, DoctorSnapshot
 from agent_hub.core.hub_config.doctor_rules import (
     CONFIG_SCHEMA_RULE,
@@ -190,12 +190,18 @@ def _text_problem_findings(selection: Selection, snapshot: DoctorSnapshot) -> li
     """
     if isinstance(snapshot.config, ConfigFailure):
         return []
+    wanted = {read for rule in selection.rules for read in rule.reads}
+    # Frozen sets, so a path's sets are found in constant time on a large hub.
     sets = {
-        Read.INSTRUCTION_FILES: instruction_files(snapshot.hub),
-        Read.PLUGIN_FILES: plugin_files(snapshot.hub),
+        read: frozenset(files(snapshot.hub))
+        for read, files in (
+            (Read.INSTRUCTION_FILES, instruction_files),
+            (Read.PLUGIN_FILES, plugin_files),
+        )
+        if read in wanted
     }
     findings: list[Finding] = []
-    for path in sorted({path for paths in sets.values() for path in paths}):
+    for path in sorted(set().union(*sets.values())):
         reads = {read for read, paths in sets.items() if path in paths}
         reader = next((rule.id for rule in selection.rules if reads & rule.reads), None)
         if reader is None:
@@ -218,14 +224,14 @@ def _text_problem_findings(selection: Selection, snapshot: DoctorSnapshot) -> li
 def _tree_problem_finding(selection: Selection, snapshot: DoctorSnapshot) -> Finding | None:
     """The one error of a hub tree that could not be listed or read (E24).
 
-    It goes on the first selected rule by id that reads the listing, else on the first selected
-    rule other than the config rules; with only those selected, or on a failed config (only
-    the config rules run then), there is none.
+    It goes on the first selected rule by id that reads the listing or a file set that comes from
+    it, else on the first selected rule other than the config rules; with only those selected,
+    or on a failed config (only the config rules run then), there is none.
     """
     if isinstance(snapshot.config, ConfigFailure) or snapshot.hub.problem is None:
         return None
     hub_rules = sorted(
-        (Read.HUB_LISTING not in rule.reads, rule.id)
+        (LISTING_READS.isdisjoint(rule.reads), rule.id)
         for rule in selection.rules
         if rule.id not in CONFIG_RULES
     )

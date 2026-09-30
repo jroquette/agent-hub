@@ -175,13 +175,21 @@ class TestFileText:
             message="not UTF-8 text: NUL at byte 3", fix=TEXT_FIX
         )
 
-    def test_reports_not_utf8_when_instruction_file_undecodable(self) -> None:
+    @pytest.mark.parametrize(
+        ("content", "byte"),
+        [(b"ok\n\xff\xfe", 3), (b"\x00\xff", 1)],
+        # A file that holds a NUL and does not decode reads as undecodable, not as a NUL.
+        ids=["undecodable", "nul-then-undecodable"],
+    )
+    def test_reports_not_utf8_when_instruction_file_undecodable(
+        self, content: bytes, byte: int
+    ) -> None:
         # Q-19: an instruction file that does not decode is an error, not a skip (the old lint
         # crashed on it).
-        entry = FileEntry(executable=False, content=b"ok\n\xff\xfe")
+        entry = FileEntry(executable=False, content=content)
 
         assert file_text(entry) == TextProblem(
-            message="not UTF-8 text: byte 3 cannot be decoded", fix=TEXT_FIX
+            message=f"not UTF-8 text: byte {byte} cannot be decoded", fix=TEXT_FIX
         )
 
     @pytest.mark.parametrize(

@@ -25,7 +25,7 @@ from agent_hub.cli.doctor_report import report_json, report_lines
 from agent_hub.cli.hub_config_reader import DISTRIBUTION, FILE_LABEL, read_hub_bytes
 from agent_hub.cli.init_report import shown_path
 from agent_hub.core.doctor.config_rules import config_state
-from agent_hub.core.doctor.finding import Read
+from agent_hub.core.doctor.finding import LISTING_READS, Read
 from agent_hub.core.doctor.lock_rules import lock_paths, lock_state
 from agent_hub.core.doctor.registry import REGISTRY
 from agent_hub.core.doctor.run_rules import (
@@ -50,8 +50,6 @@ from agent_hub.generator.doctor_tree import read_doctor_tree
 from agent_hub.generator.errors import GeneratorError
 from agent_hub.generator.hub_tree import read_root_entry
 
-# The reads the hub listing serves: the listing itself, and the file sets that come from it.
-LISTING_READS: Final = frozenset({Read.HUB_LISTING, Read.INSTRUCTION_FILES, Read.PLUGIN_FILES})
 # A usage error, an unknown or unrunnable ``--only`` id, or a folder that is not a hub.
 NOT_A_HUB_EXIT: Final = 2
 NOT_A_HUB: Final = (
