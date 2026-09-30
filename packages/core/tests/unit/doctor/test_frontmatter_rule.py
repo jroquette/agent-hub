@@ -36,6 +36,7 @@ NO_PATHS = (
 )
 UNNAMED = ("agent/skill frontmatter needs `name` and `description`", "add both fields")
 GLOB_FIX = "fix or remove the glob"
+BUDGET_FIX = "use fewer or narrower globs"
 NAMED = b"---\nname: a\ndescription: b\n---\nbody\n"
 
 
@@ -51,7 +52,13 @@ def at(path: str, problem: tuple[str, str]) -> Shown:
 
 
 def unmatched(path: str, glob: str) -> Shown:
-    return (path, 1, f"`paths` glob `{cut_echo(glob)}` matches no tracked file", GLOB_FIX)
+    message = f"`paths` glob `{cut_echo(glob)}` matches no file or folder in the hub"
+    return (path, 1, message, GLOB_FIX)
+
+
+def unchecked(path: str, glob: str) -> Shown:
+    message = f"`paths` glob `{cut_echo(glob)}` was not checked: the run's glob budget is spent"
+    return (path, 1, message, BUDGET_FIX)
 
 
 def a_rule(*globs: str) -> bytes:
@@ -314,7 +321,8 @@ class TestNotText:
         ]
 
 
-# The old lint's brace expansion and match, word for word, over the index it built.
+# AC-11.21's oracle: the old lint's brace expansion and fnmatch over the files and their folders
+# (its index), which the rule must agree with on every glob below.
 def old_expand_braces(glob: str) -> list[str]:
     m = re.search(r"\{([^{}]*)\}", glob)
     if not m:
@@ -519,6 +527,58 @@ class TestGlobs:
 
         assert found(snapshot) == [unmatched(RULE, "src/*.rs")]
         assert sum(counter.calls for counter in counters) <= 2
+
+
+class TestBudget:
+    def test_spends_run_budget_when_globs_many(
+        self, snapshot_of: SnapshotFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # E33, structural: with a budget of 10 path matches, "src/a0.py" tries 1 path and "*.rs"
+        # all 7; "*.txt" would pass the budget, so it and every later glob are not checked (a
+        # glob decided before, "src/a0.py", keeps its result).
+        monkeypatch.setattr(frontmatter_rule, "MAX_GLOB_MATCHES", 10)
+        counters = count_patterns(monkeypatch)
+        files = {f"src/a{n}.py": b"" for n in range(5)}
+        first = {".claude/rules/a.md": a_rule("src/a0.py", "*.rs", "*.txt")}
+        later = {".claude/rules/b.md": a_rule("src/a1.py", "src/a0.py")}
+        snapshot = snapshot_of(files={**first, **later, **files})
+
+        assert found(snapshot) == [
+            unmatched(".claude/rules/a.md", "*.rs"),
+            unchecked(".claude/rules/a.md", "*.txt"),
+            unchecked(".claude/rules/b.md", "src/a1.py"),
+        ]
+        assert sum(counter.calls for counter in counters[0::2]) <= 10
+
+    def test_checks_every_glob_when_budget_enough(
+        self, snapshot_of: SnapshotFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(frontmatter_rule, "MAX_GLOB_MATCHES", 15)
+        files = {f"src/a{n}.py": b"" for n in range(5)}
+        rules = {".claude/rules/a.md": a_rule("src/a0.py", "*.rs", "*.txt")}
+        snapshot = snapshot_of(files={**rules, **files})
+
+        assert found(snapshot) == [
+            unmatched(".claude/rules/a.md", "*.rs"),
+            unmatched(".claude/rules/a.md", "*.txt"),
+        ]
+
+    def test_bounds_run_when_default_budget(self) -> None:
+        assert frontmatter_rule.MAX_GLOB_MATCHES == 2_000_000
+
+
+def count_patterns(monkeypatch: pytest.MonkeyPatch) -> list[MatchCounter]:
+    """Wrap each glob's file and folder patterns in counters, in that order."""
+    counters: list[MatchCounter] = []
+    patterns = frontmatter_rule._patterns
+
+    def counted(glob: str) -> tuple[MatchCounter, MatchCounter]:
+        pair = (MatchCounter(patterns(glob)[0]), MatchCounter(patterns(glob)[1]))
+        counters.extend(pair)
+        return pair
+
+    monkeypatch.setattr(frontmatter_rule, "_patterns", counted)
+    return counters
 
 
 class SearchCounter:

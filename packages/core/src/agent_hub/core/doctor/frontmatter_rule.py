@@ -16,8 +16,10 @@ Scale: a glob longer than ``MAX_GLOB_LENGTH`` characters, or whose braces expand
 ``MAX_GLOB_EXPANSIONS`` globs, is reported as such and not matched. A glob is translated once per
 run, in time linear in its length (an ``[`` that ``fnmatch`` reads as a literal is closed first),
 and matched only against the paths that start with its literal head, each path once as a file
-and once for its folders, so no folder is ever built as a string. A file that is not text is
-skipped: the runner reports it once (E28).
+and once for its folders, so no folder is ever built as a string. A run spends at most
+``MAX_GLOB_MATCHES`` such path matches on all its globs (E33); a glob that would pass that budget,
+and every glob after it, is reported as not checked. A file that is not text is skipped: the
+runner reports it once (E28).
 """
 
 import re
@@ -52,12 +54,19 @@ NAMED_FIELDS: Final = ("name", "description")
 # matched against the hub's paths, so both bound the work one frontmatter line can ask for.
 MAX_GLOB_LENGTH: Final = 256
 MAX_GLOB_EXPANSIONS: Final = 64
+# The path matches one run may spend on all globs (E33): each glob variant tried on one path is
+# one. Globs are tried in file order, then in their order in the file; a glob whose matching
+# would pass the budget, and every glob after it, gets a "not checked" finding instead.
+MAX_GLOB_MATCHES: Final = 2_000_000
 
 UNTERMINATED_MESSAGE: Final = "unterminated frontmatter"
 UNTERMINATED_FIX: Final = "close the frontmatter with `---`"
 PATHS_MESSAGE: Final = "rules frontmatter needs a non-empty `paths:` list"
 PATHS_FIX: Final = "list the globs this rule applies to"
 GLOB_FIX: Final = "fix or remove the glob"
+UNMATCHED_MESSAGE: Final = "matches no file or folder in the hub"
+UNCHECKED_MESSAGE: Final = "was not checked: the run's glob budget is spent"
+UNCHECKED_FIX: Final = "use fewer or narrower globs"
 UNNAMED_MESSAGE: Final = "agent/skill frontmatter needs `name` and `description`"
 UNNAMED_FIX: Final = "add both fields"
 
@@ -93,7 +102,8 @@ def _paths_findings(path: str, *, frontmatter: Frontmatter, globs: _Globs) -> It
     for glob in listed:
         problem = globs.problem(glob)
         if problem is not None:
-            yield _finding(path, message=problem, fix=GLOB_FIX)
+            message, fix = problem
+            yield _finding(path, message=message, fix=fix)
 
 
 def _is_named(frontmatter: Frontmatter | None) -> bool:
@@ -109,36 +119,49 @@ class _Globs:
     """Whether each glob matches a hub path or folder, each glob worked out once per run.
 
     The hub's paths are sorted on first use, so a hub whose rules name no glob never sorts them.
+    Matching spends the run's budget (E33): one unit per path a glob variant is tried on; once
+    it is spent, the glob being matched and every glob not yet worked out are not checked.
     """
 
-    __slots__ = ("_paths", "_problems", "_source")
+    __slots__ = ("_budget", "_paths", "_problems", "_source", "_spent")
 
     def __init__(self, source: Callable[[], Iterable[str]]) -> None:
         self._source = source
         self._paths: tuple[str, ...] | None = None
-        self._problems: dict[str, str | None] = {}
+        self._problems: dict[str, tuple[str, str] | None] = {}
+        self._budget = MAX_GLOB_MATCHES
+        self._spent = 0
 
-    def problem(self, glob: str) -> str | None:
-        """Why the glob is flagged: too long, too many expansions or no match; else ``None``."""
+    def problem(self, glob: str) -> tuple[str, str] | None:
+        """The message and fix of a flagged glob (too long, too many expansions, no match, not
+        checked); ``None`` when it matches.
+        """
         if glob not in self._problems:
             self._problems[glob] = self._first_problem(glob)
         return self._problems[glob]
 
-    def _first_problem(self, glob: str) -> str | None:
+    def _first_problem(self, glob: str) -> tuple[str, str] | None:
         shown = f"`{PATHS_FIELD}` glob `{cut_echo(glob)}`"
         if len(glob) > MAX_GLOB_LENGTH:
-            return f"{shown} is longer than {MAX_GLOB_LENGTH} characters"
+            return f"{shown} is longer than {MAX_GLOB_LENGTH} characters", GLOB_FIX
         expanded = _expanded(glob)
         if expanded is None:
-            return f"{shown} expands to more than {MAX_GLOB_EXPANSIONS} globs"
+            return f"{shown} expands to more than {MAX_GLOB_EXPANSIONS} globs", GLOB_FIX
         tried = dict.fromkeys(
             variant for each in expanded for variant in (each, each.replace("/**/", "/"))
         )
-        if any(self._matches(variant) for variant in tried):
-            return None
-        return f"{shown} matches no tracked file"
+        if self._spent >= self._budget:
+            return f"{shown} {UNCHECKED_MESSAGE}", UNCHECKED_FIX
+        for variant in tried:
+            matched = self._matches(variant)
+            if matched is None:
+                return f"{shown} {UNCHECKED_MESSAGE}", UNCHECKED_FIX
+            if matched:
+                return None
+        return f"{shown} {UNMATCHED_MESSAGE}", GLOB_FIX
 
-    def _matches(self, glob: str) -> bool:
+    def _matches(self, glob: str) -> bool | None:
+        """Whether the glob matches; ``None`` when the budget runs out before it is known."""
         paths = self._sorted_paths()
         file_pattern, folder_pattern = _patterns(glob)
         wildcard = _WILDCARD.search(glob)
@@ -148,6 +171,9 @@ class _Globs:
             path = paths[index]
             if not path.startswith(head):
                 return False
+            if self._spent >= self._budget:
+                return None
+            self._spent += 1
             if file_pattern.fullmatch(path) or folder_pattern.match(path):
                 return True
         return False
