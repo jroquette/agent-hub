@@ -54,15 +54,18 @@ def duplicates(snapshot: DoctorSnapshot) -> list[Shown]:
     return shown(INSTRUCTIONS_DUPLICATES, snapshot, fix=DUPLICATE_FIX)
 
 
+def test_uses_design_ids_when_rules_declared() -> None:
+    assert (INSTRUCTIONS_SIZE.id, INSTRUCTIONS_DUPLICATES.id) == (
+        "instructions.size",
+        "instructions.duplicates",
+    )
+
+
 @pytest.mark.parametrize("rule", [INSTRUCTIONS_SIZE, INSTRUCTIONS_DUPLICATES])
 def test_reads_instruction_files_when_rule_declared(rule: Rule) -> None:
     assert rule.reads == frozenset({Read.INSTRUCTION_FILES})
     assert rule.severity is Severity.ERROR
     assert rule.module is None
-    assert (INSTRUCTIONS_SIZE.id, INSTRUCTIONS_DUPLICATES.id) == (
-        "instructions.size",
-        "instructions.duplicates",
-    )
 
 
 class TestSize:
@@ -149,6 +152,12 @@ class TestSize:
             ),
             # A key with no "/" and no glob character names a root file only.
             pytest.param({"r.md": 5}, RULE, 80, id="name-root-only"),
+            # A class is a glob; an unclosed "[" is a literal character, so the key is a glob that
+            # matches only that exact path.
+            pytest.param({".claude/rules/[rs].md": 90}, RULE, 90, id="class-glob"),
+            pytest.param({".claude/rules/[qs].md": 5}, RULE, 80, id="class-glob-misses"),
+            pytest.param({".claude/rules/[r.md": 90}, ".claude/rules/[r.md", 90, id="unclosed"),
+            pytest.param({".claude/rules/[r.md": 5}, RULE, 80, id="unclosed-misses"),
             # A root file with no default limit takes a project one.
             pytest.param({"GEMINI.md": 60}, "GEMINI.md", 60, id="gemini-given"),
         ],
@@ -259,14 +268,21 @@ class TestDuplicates:
             pytest.param(f"{SIXTY}\r", id="crlf"),
         ],
     )
-    def test_normalizes_list_marker_when_compared(
-        self, snapshot_of: SnapshotFactory, line: str
-    ) -> None:
+    def test_matches_line_when_normalized(self, snapshot_of: SnapshotFactory, line: str) -> None:
         snapshot = snapshot_of(
             files={"AGENTS.md": f"{SIXTY}\n".encode(), "CLAUDE.md": f"{line}\n".encode()}
         )
 
         assert duplicates(snapshot) == [("CLAUDE.md", 1, "duplicates AGENTS.md:1")]
+
+    def test_flags_duplicate_when_inside_frontmatter(self, snapshot_of: SnapshotFactory) -> None:
+        # E11: frontmatter lines are compared too, as the old lint did.
+        text = f"---\ndescription: {SIXTY}\n---\n# Body\n".encode()
+        snapshot = snapshot_of(files={".claude/agents/a.md": text, ".claude/agents/b.md": text})
+
+        assert duplicates(snapshot) == [
+            (".claude/agents/b.md", 2, "duplicates .claude/agents/a.md:2")
+        ]
 
     def test_skips_link_when_same_line_behind_it(self, snapshot_of: SnapshotFactory) -> None:
         # E1: a linked instruction file is not an instruction file.

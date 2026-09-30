@@ -127,6 +127,11 @@ def text_lines(text: str) -> tuple[str, ...]:
     return tuple(line.removesuffix("\r") for line in lines_of(text))
 
 
+def line_count(text: str) -> int:
+    """``len(text_lines(text))`` without building the lines (E30: the size rule's count)."""
+    return text.count("\n") + (1 if text and not text.endswith("\n") else 0)
+
+
 def parse_frontmatter(text: str) -> Frontmatter | Unterminated | None:
     """The frontmatter of a text; ``None`` when its first line is not ``---``.
 
