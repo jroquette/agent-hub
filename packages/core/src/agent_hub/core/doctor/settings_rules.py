@@ -2,11 +2,14 @@
 
 A seeded ``*.project.json`` sibling may not set a key of ``REFUSED_KEYS`` (whatever its value),
 and must be one JSON value ``hub sync`` can merge (E17: otherwise the rule cannot tell it sets no
-refused key). ``.claude/settings.json`` must hold each group of the running release's base hooks
-block in ``hooks.<event>``, equal as in the merge: the same ``dump_json`` bytes, so ``true`` is
-not ``1``. A project group added next to the base ones is its own.
+refused key). ``.claude/settings.json`` is read as strictly (a file Claude Code may reject keeps
+nothing), holds no refused key either (a synced file never does), and must hold each group of the
+running release's base hooks block in ``hooks.<event>``, equal as in the merge (the same
+``dump_json`` form, compared compactly), so ``true`` is not ``1``. A project group added next to
+the base ones is its own.
 """
 
+import json
 from collections.abc import Iterable, Iterator, Mapping
 from typing import Final, NamedTuple
 
@@ -16,7 +19,7 @@ from agent_hub.core.hub_config.doctor_rules import RULE_MODULES, SETTINGS_WEAKEN
 from agent_hub.core.hub_config.problems import ROOT_PATH, json_path
 from agent_hub.core.hub_files.extension_inputs import REFUSED_KEYS
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, TreeEntry
-from agent_hub.core.json_form import InvalidJsonError, JsonValue, dump_json, load_json_bytes
+from agent_hub.core.json_form import InvalidJsonError, JsonValue, load_json_bytes
 
 SETTINGS_PATH: Final = ".claude/settings.json"
 SYNC_FIX: Final = "run hub sync"
@@ -88,16 +91,23 @@ def _settings_findings(
     if entry is None:
         # With a failed read, it may be the path the read failed on: the runner says so.
         return (_settings_finding(MISSING),) if all_read else ()
-    document = _loaded(entry, strict=False)
+    document = _loaded(entry, strict=True)
     if isinstance(document, _Unreadable):
         return (_settings_finding(document.message),)
+    refused = (
+        _settings_finding(f"{json_path(key_path)}: {REFUSED}")
+        for key_paths in REFUSED_KEYS.values()
+        for key_path in key_paths
+        if _holds(document, key_path)
+    )
     hooks = document.get("hooks") if isinstance(document, dict) else None
     held = hooks if isinstance(hooks, dict) else {}
-    return tuple(
+    changed = (
         _settings_finding(f"{json_path(('hooks', event))}: {CHANGED}")
         for event, groups in base.items()
         if not _keeps(groups, held.get(event))
     )
+    return (*refused, *changed)
 
 
 def _settings_finding(message: str) -> Finding:
@@ -106,18 +116,20 @@ def _settings_finding(message: str) -> Finding:
 
 def _keeps(base_groups: JsonValue, groups: JsonValue) -> bool:
     """Whether ``groups`` (an event's array) holds each base group, compared by JSON form."""
-    forms = (_json_form(group) for group in groups) if isinstance(groups, list) else ()
-    held = {form for form in forms if form is not None}
+    held = {_group_key(group) for group in groups} if isinstance(groups, list) else set()
     wanted = base_groups if isinstance(base_groups, list) else [base_groups]
-    return all(_json_form(group) in held for group in wanted)
+    return all(_group_key(group) in held for group in wanted)
 
 
-def _json_form(value: JsonValue) -> bytes | None:
-    """The merge's equality key; ``None`` for a value with no JSON form (NaN, too deep)."""
-    try:
-        return dump_json(value)
-    except ValueError, RecursionError:
-        return None
+def _group_key(value: JsonValue) -> str:
+    """The merge's equality (``dump_json``'s: ``true`` is not ``1``, ``1`` not ``1.0``), compact.
+
+    ``dump_json``'s indent grows with the square of the depth; this key grows with the size.
+    The strict parse refused NaN and infinities, and its nesting limit bounds what reaches here.
+    """
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+    )
 
 
 SETTINGS_WEAKENING: Final = Rule(
