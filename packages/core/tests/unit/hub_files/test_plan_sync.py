@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_files.extension_inputs import NO_EXTENSIONS, ExtensionInputs
 from agent_hub.core.hub_files.hub_lock import (
     HUB_JSON_PATH,
     HUB_LOCK_PATH,
@@ -122,10 +123,16 @@ def run(
     tree: Mapping[str, TreeEntry],
     *,
     lock_content: bytes | None = None,
+    extensions: ExtensionInputs = NO_EXTENSIONS,
 ) -> SyncPlan | SyncConflicts:
     content = lock_bytes(lock) if lock_content is None else lock_content
     return plan_sync(
-        rendered=rendered, config=CONFIG, lock=lock, lock_content=content, tree=a_tree(tree)
+        rendered=rendered,
+        config=CONFIG,
+        lock=lock,
+        lock_content=content,
+        tree=a_tree(tree),
+        extensions=extensions,
     )
 
 
@@ -135,8 +142,9 @@ def planned(
     tree: Mapping[str, TreeEntry],
     *,
     lock_content: bytes | None = None,
+    extensions: ExtensionInputs = NO_EXTENSIONS,
 ) -> SyncPlan:
-    plan = run(rendered, lock, tree, lock_content=lock_content)
+    plan = run(rendered, lock, tree, lock_content=lock_content, extensions=extensions)
     assert isinstance(plan, SyncPlan)
     return plan
 
@@ -1038,3 +1046,128 @@ def test_returns_every_conflict_sorted_without_writes_when_several(
             PathProblem("scripts/run.sh", "executable bit differs (on disk -x, render +x)"),
         )
     )
+
+
+# E8, E37: the base plugin's links; ``a_hub_document``'s project is ``demo``.
+BASE_AGENT = ".claude/agents/evaluator.md"
+BASE_SKILL = ".claude/skills/r\u00e9vue"
+
+
+def a_managed_link(path: str, target: str) -> RenderedLink:
+    return RenderedLink(
+        path=path, target=target, kind=Kind.GENERIC, ownership=Ownership.MANAGED, module=None
+    )
+
+
+def with_links(rendered: RenderedHub, *links: RenderedLink) -> RenderedHub:
+    every = sorted([*rendered.links, *links], key=lambda link: link.path)
+    return RenderedHub(files=rendered.files, links=tuple(every))
+
+
+def base_links() -> tuple[RenderedLink, ...]:
+    return (
+        a_managed_link(BASE_AGENT, "../../plugin/hub-workflow/agents/evaluator.md"),
+        a_managed_link(BASE_SKILL, "../../plugin/hub-workflow/skills/r\u00e9vue"),
+    )
+
+
+def project_link(folder: str, name: str) -> RenderedLink:
+    return a_managed_link(f".claude/{folder}/{name}", f"../../plugin/demo/{folder}/{name}")
+
+
+def names_in(folder: str, *names: str) -> ExtensionInputs:
+    return ExtensionInputs(
+        project_json={},
+        agents=names if folder == "agents" else (),
+        skills=names if folder == "skills" else (),
+    )
+
+
+@pytest.mark.parametrize(
+    ("folder", "name", "base"),
+    [
+        pytest.param("agents", "evaluator.md", "evaluator.md", id="agent"),
+        pytest.param("agents", "Evaluator.md", "evaluator.md", id="agent-case"),
+        pytest.param("skills", "r\u00e9vue", "r\u00e9vue", id="skill"),
+        pytest.param("skills", "re\u0301vue", "r\u00e9vue", id="skill-nfd"),
+        pytest.param("skills", "RE\u0301VUE", "r\u00e9vue", id="skill-case-and-nfd"),
+    ],
+)
+def test_reports_clash_when_project_entry_named_like_base_entry(
+    a_rendered_hub: HubFactory, config: HubConfig, folder: str, *, name: str, base: str
+) -> None:
+    """The render keeps the base link and never holds the project's (``project_links``)."""
+    rendered = with_links(a_rendered_hub(), *base_links())
+    lock = a_lock(rendered, config)
+
+    result = run(rendered, lock, synced_tree(rendered), extensions=names_in(folder, name))
+
+    both = f"plugin/hub-workflow/{folder}/{base} and plugin/demo/{folder}/{name}"
+    assert result == SyncConflicts(
+        problems=(PathProblem(f".claude/{folder}/{name}", f"in both plugins ({both})"),)
+    )
+
+
+def test_reports_every_clash_without_writes_when_changes_also_pending(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    rendered = with_links(a_rendered_hub(), *base_links(), project_link("agents", "planner.md"))
+    lock = a_lock(rendered, config)
+    tree = without(synced_tree(rendered), FILE, ".claude/agents/planner.md")
+    extensions = ExtensionInputs(
+        project_json={}, agents=("EVALUATOR.md", "planner.md"), skills=("r\u00e9vue",)
+    )
+
+    result = run(rendered, lock, tree, extensions=extensions)
+
+    agent = "plugin/hub-workflow/agents/evaluator.md and plugin/demo/agents/EVALUATOR.md"
+    skill = "plugin/hub-workflow/skills/r\u00e9vue and plugin/demo/skills/r\u00e9vue"
+    assert result == SyncConflicts(
+        problems=(
+            PathProblem(".claude/agents/EVALUATOR.md", f"in both plugins ({agent})"),
+            PathProblem(BASE_SKILL, f"in both plugins ({skill})"),
+        )
+    )
+
+
+def test_reports_clash_when_project_names_differ_only_in_case_or_form(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    """E37: one entry on a case- or form-insensitive disk (APFS), so two links would collide."""
+    names = ("Planner.md", "planner.md")
+    rendered = with_links(a_rendered_hub(), *(project_link("agents", name) for name in names))
+    lock = a_lock(rendered, config)
+
+    result = run(rendered, lock, synced_tree(rendered), extensions=names_in("agents", *names))
+
+    twice = "named twice in plugin/demo, ignoring case and Unicode form"
+    assert result == SyncConflicts(
+        problems=(
+            PathProblem(
+                ".claude/agents/Planner.md",
+                f"{twice} (plugin/demo/agents/planner.md and plugin/demo/agents/Planner.md)",
+            ),
+            PathProblem(
+                ".claude/agents/planner.md",
+                f"{twice} (plugin/demo/agents/Planner.md and plugin/demo/agents/planner.md)",
+            ),
+        )
+    )
+
+
+def test_accepts_project_link_when_name_unique(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    # An agent named like a base skill is no clash: each folder has its own names.
+    agents = ("planner.md", "r\u00e9vue")
+    added = [project_link("agents", name) for name in agents] + [project_link("skills", "review")]
+    rendered = with_links(a_rendered_hub(), *base_links(), *added)
+    lock = a_lock(rendered, config, files=dict.fromkeys(link.path for link in added))
+    tree = without(synced_tree(rendered), *(link.path for link in added))
+    extensions = ExtensionInputs(project_json={}, agents=agents, skills=("review",))
+
+    plan = planned(rendered, lock, tree, extensions=extensions)
+
+    paths = sorted(link.path for link in added)
+    assert plan.changes == tuple(SyncChange(path=path, verb=Verb.CREATED) for path in paths)
+    assert written_paths(plan) == [*paths, HUB_LOCK_PATH]

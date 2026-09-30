@@ -26,6 +26,7 @@ from agent_hub.cli.command_exits import (
 from agent_hub.cli.hub_config_reader import load_hub_json_or_exit
 from agent_hub.cli.sync_report import change_lines, conflict_lines
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_files.extension_inputs import NO_EXTENSIONS
 from agent_hub.core.hub_files.hub_lock import (
     ADOPT_POINTER,
     HUB_JSON_PATH,
@@ -130,8 +131,14 @@ def _plan_or_exit(
         tree: TreeSnapshot = read_planned_tree(root, paths=paths, wanted=wanted)
     except GeneratorError as error:
         fail_generator(error)
+    # The render above has no extension inputs (spec Q-20 wires them in), so the plan has none.
     return plan_sync(
-        rendered=rendered, config=config, lock=lock, lock_content=lock_content, tree=tree
+        rendered=rendered,
+        config=config,
+        lock=lock,
+        lock_content=lock_content,
+        tree=tree,
+        extensions=NO_EXTENSIONS,
     )
 
 

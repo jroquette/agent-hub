@@ -6,6 +6,7 @@ import pytest
 from agent_hub.core.hub_files.extension_inputs import (
     NO_EXTENSIONS,
     ExtensionInputs,
+    entry_name_key,
     extension_inputs_from,
 )
 from agent_hub.core.hub_files.plan_init import PathProblem
@@ -51,8 +52,10 @@ def test_freezes_value_when_built() -> None:
 
 
 def test_sorts_names_when_built_unsorted() -> None:
-    inputs = ExtensionInputs(project_json={}, agents=("b.md", "a.md"), skills=("z", "y"))
+    project_json = {"b.project.json": b"{}\n", "a.project.json": b"[]\n"}
+    inputs = ExtensionInputs(project_json=project_json, agents=("b.md", "a.md"), skills=("z", "y"))
 
+    assert list(inputs.project_json) == ["a.project.json", "b.project.json"]
     assert inputs.agents == ("a.md", "b.md")
     assert inputs.skills == ("y", "z")
 
@@ -150,6 +153,8 @@ def test_raises_when_sibling_content_not_read() -> None:
         pytest.param(f"{AGENTS}/a\\b.md", a_file(), "holds a backslash", id="backslash"),
         pytest.param(f"{SKILLS}/r\udcffx", FolderEntry(), "not UTF-8", id="surrogate"),
         pytest.param(f"{AGENTS}/a\nb.md", a_file(), "not printable", id="newline"),
+        # E34: the first reason that matches wins.
+        pytest.param(f"{AGENTS}/a\\\nb.md", a_file(), "holds a backslash", id="backslash-newline"),
     ],
 )
 def test_reports_problem_when_entry_name_unlinkable(
@@ -164,6 +169,8 @@ def test_reports_every_problem_when_several_inputs_bad() -> None:
     entries: dict[str, TreeEntry] = {
         SETTINGS: FolderEntry(),
         f"{SKILLS}/b\\x": FolderEntry(),
+        # Out of path order on purpose: the result is sorted, whatever the snapshot's order.
+        f"{AGENTS}/b\\x.md": a_file(),
         f"{AGENTS}/a\\x.md": a_file(),
     }
 
@@ -172,6 +179,7 @@ def test_reports_every_problem_when_several_inputs_bad() -> None:
     assert found == (
         PathProblem(SETTINGS, "not a regular file"),
         PathProblem(f"{AGENTS}/a\\x.md", "cannot be linked: holds a backslash"),
+        PathProblem(f"{AGENTS}/b\\x.md", "cannot be linked: holds a backslash"),
         PathProblem(f"{SKILLS}/b\\x", "cannot be linked: holds a backslash"),
     )
 
@@ -190,3 +198,30 @@ def test_skips_unlinkable_name_when_entry_never_linked() -> None:
 def test_returns_empty_value_when_nothing_present() -> None:
     assert build({}) == NO_EXTENSIONS
     assert ExtensionInputs(project_json={}, agents=(), skills=()) == NO_EXTENSIONS
+
+
+@pytest.mark.parametrize(
+    ("one", "other"),
+    [
+        pytest.param("evaluator.md", "evaluator.md", id="same"),
+        pytest.param("Evaluator.md", "evaluator.md", id="case"),
+        pytest.param("cafe\u0301.md", "caf\u00e9.md", id="nfd-nfc"),
+        pytest.param("CAFE\u0301.md", "caf\u00e9.md", id="case-and-form"),
+        pytest.param("STRASSE", "stra\u00dfe", id="casefold-not-lower"),
+        # Folding the capital iota's NFC form gives a decomposed result: NFC again composes it.
+        pytest.param("\u0399\u0308\u0301", "\u0390", id="nfc-after-casefold"),
+    ],
+)
+def test_gives_one_key_when_names_differ_only_in_case_or_form(one: str, other: str) -> None:
+    assert entry_name_key(one) == entry_name_key(other)
+
+
+@pytest.mark.parametrize(
+    ("one", "other"),
+    [
+        pytest.param("evaluator.md", "evaluator.mdx", id="suffix"),
+        pytest.param("cafe.md", "caf\u00e9.md", id="accent"),
+    ],
+)
+def test_gives_two_keys_when_names_differ(one: str, other: str) -> None:
+    assert entry_name_key(one) != entry_name_key(other)
