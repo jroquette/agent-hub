@@ -8,13 +8,15 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Final
 
-from agent_hub.core.doctor.finding import Finding, Rule
+from agent_hub.core.doctor.finding import Finding, Read, Rule
 from agent_hub.core.doctor.snapshot import ConfigFailure, DoctorSnapshot
 from agent_hub.core.hub_config.doctor_rules import CONFIG_SCHEMA_RULE, RULE_MODULES, Severity
 from agent_hub.core.hub_config.model import HubConfig
 
 # The rules that read ``hub.json`` itself: the only ones run on a failed config, never retuned.
 CONFIG_RULES: Final = (CONFIG_SCHEMA_RULE, "platform.version")
+# The fix of the one finding a failed file listing gives (E7): the listing is git's, or a walk.
+LISTING_FIX: Final = "make git ls-files work in this folder, then run hub doctor again"
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -108,7 +110,10 @@ def _only_problem(
 
 
 def run_rules(selection: Selection, snapshot: DoctorSnapshot) -> tuple[Finding, ...]:
-    """Every finding of the selected rules, each check called once, retuned, then sorted."""
+    """Every finding of the selected rules, each check called once, retuned, then sorted.
+
+    A failed hub listing adds one finding, after the retune, so its level is never changed.
+    """
     failed = isinstance(snapshot.config, ConfigFailure)
     findings: list[Finding] = []
     for rule in selection.rules:
@@ -119,7 +124,25 @@ def run_rules(selection: Selection, snapshot: DoctorSnapshot) -> tuple[Finding, 
             finding if severity is None else replace(finding, severity=severity)
             for finding in rule.check(snapshot)
         )
+    listing = _listing_finding(selection, snapshot)
+    if listing is not None:
+        findings.append(listing)
     return sort_findings(findings)
+
+
+def _listing_finding(selection: Selection, snapshot: DoctorSnapshot) -> Finding | None:
+    """The one error of a failed hub listing, on the first selected rule by id that reads it."""
+    readers = sorted(rule.id for rule in selection.rules if Read.HUB_LISTING in rule.reads)
+    if snapshot.hub.problem is None or not readers:
+        return None
+    return Finding(
+        rule=readers[0],
+        severity=Severity.ERROR,
+        path=".",
+        line=None,
+        message=snapshot.hub.problem,
+        fix=LISTING_FIX,
+    )
 
 
 def sort_findings(findings: Iterable[Finding]) -> tuple[Finding, ...]:
