@@ -3,7 +3,15 @@ from agent_hub.core.doctor.registry import REGISTRY
 from agent_hub.core.hub_config.doctor_rules import RULE_IDS, RULE_MODULES, Severity
 
 # The rules this release ships, in RULE_IDS order; each later rule slice appends its own (E21 b).
-RELEASED_IDS = ("config.schema", "platform.version")
+RELEASED_IDS = (
+    "config.schema",
+    "platform.version",
+    "lock.drift",
+    "settings.weakening",
+    "hooks.guard-extension",
+    "makefile.override",
+    "features.tracker",
+)
 
 # The "Default" column of docs/design/hub-doctor.md § Rules.
 DESIGN_SEVERITIES = {

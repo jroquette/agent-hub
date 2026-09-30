@@ -17,6 +17,7 @@ from agent_hub.core.hub_config.doctor_rules import (
     Severity,
 )
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.versions import cut_echo
 
 # The rules that read ``hub.json`` itself: the only ones run on a failed config, never retuned.
 CONFIG_RULES: Final = (CONFIG_SCHEMA_RULE, PLATFORM_VERSION_RULE)
@@ -25,6 +26,8 @@ CONFIG_RULES: Final = (CONFIG_SCHEMA_RULE, PLATFORM_VERSION_RULE)
 LISTING_FIX: Final = (
     "fix the cause above so every file can be listed and read, then run hub doctor again"
 )
+# The fix of the one finding a rule whose check raised gives instead of its findings (E27).
+CRASH_FIX: Final = "report this as a hub doctor bug"
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -120,23 +123,55 @@ def _only_problem(
 def run_rules(selection: Selection, snapshot: DoctorSnapshot) -> tuple[Finding, ...]:
     """Every finding of the selected rules, each check called once, retuned, then sorted.
 
-    A hub tree that could not be listed or read adds one finding, after the retune, so its
-    level is never changed.
+    A rule whose check raises an ``Exception`` loses its findings and gives one error instead
+    (E27); the other rules still run. That error, and the one of a hub tree that could not be
+    listed or read, are added after the retune, so their level is never changed.
     """
     failed = isinstance(snapshot.config, ConfigFailure)
     findings: list[Finding] = []
+    crashes: list[Finding] = []
     for rule in selection.rules:
         if failed and rule.id not in CONFIG_RULES:
             continue
         severity = selection.severities.get(rule.id)
+        emitted = _checked(rule, snapshot)
+        if isinstance(emitted, Finding):
+            crashes.append(emitted)
+            continue
         findings.extend(
             finding if severity is None else replace(finding, severity=severity)
-            for finding in rule.check(snapshot)
+            for finding in emitted
         )
+    findings.extend(crashes)
     problem = _tree_problem_finding(selection, snapshot)
     if problem is not None:
         findings.append(problem)
     return sort_findings(findings)
+
+
+def _checked(rule: Rule, snapshot: DoctorSnapshot) -> tuple[Finding, ...] | Finding:
+    """The rule's findings, or the one error that replaces them when its check raises (E27).
+
+    ``KeyboardInterrupt``, ``SystemExit`` and ``GeneratorExit`` are not ``Exception`` and
+    propagate; the message is cut, and the report escapes it. An error whose text itself
+    raises reads ``<unprintable>``.
+    """
+    try:
+        return tuple(rule.check(snapshot))
+    except Exception as error:  # noqa: BLE001 - any rule bug becomes a finding, not a lost run
+        try:
+            text = str(error)
+        except Exception:  # noqa: BLE001 - a broken __str__ must not undo the finding
+            text = "<unprintable>"
+        detail = cut_echo(text)
+        return Finding(
+            rule=rule.id,
+            severity=Severity.ERROR,
+            path=".",
+            line=None,
+            message=f"rule crashed: {type(error).__name__}: {detail}",
+            fix=CRASH_FIX,
+        )
 
 
 def _tree_problem_finding(selection: Selection, snapshot: DoctorSnapshot) -> Finding | None:

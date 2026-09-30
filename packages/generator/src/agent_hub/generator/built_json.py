@@ -69,13 +69,22 @@ def managed_settings(config: HubConfig) -> JsonValue:
         "$schema": _SETTINGS_SCHEMA,
         "attribution": {"commit": "", "pr": ""},
         "includeCoAuthoredBy": False,
-        "hooks": {hook.event: [_hook_group(hook)] for hook in HOOK_EVENTS},
+        "hooks": base_hooks_block(),
         "permissions": {
             "allow": list(_ALLOWED_COMMANDS),
             "deny": list(_DENIED_READS),
             "additionalDirectories": [f"../{repo.dir}" for repo in config.repos],
         },
     }
+
+
+def base_hooks_block() -> dict[str, JsonValue]:
+    """The ``hooks`` value of the managed settings: one group per event, in ``HOOK_EVENTS`` order.
+
+    hub doctor's ``settings.weakening`` rule checks ``settings.json`` against it without a render
+    (spec Q-14). Each call builds a new value.
+    """
+    return {hook.event: [_hook_group(hook)] for hook in HOOK_EVENTS}
 
 
 def _hook_group(hook: HookEvent) -> JsonValue:

@@ -18,26 +18,31 @@ from agent_hub.core.hub_config.config_object import (
 
 CONFIG_SCHEMA_RULE: Final = "config.schema"
 PLATFORM_VERSION_RULE: Final = "platform.version"
+LOCK_DRIFT_RULE: Final = "lock.drift"
+SETTINGS_WEAKENING_RULE: Final = "settings.weakening"
+GUARD_EXTENSION_RULE: Final = "hooks.guard-extension"
+MAKEFILE_OVERRIDE_RULE: Final = "makefile.override"
+FEATURES_TRACKER_RULE: Final = "features.tracker"
 
 RULE_IDS: Final = (
     CONFIG_SCHEMA_RULE,
     PLATFORM_VERSION_RULE,
-    "lock.drift",
+    LOCK_DRIFT_RULE,
     "links.dead",
     "instructions.size",
     "instructions.refs",
     "instructions.duplicates",
     "rules.frontmatter",
     "settings.valid",
-    "settings.weakening",
+    SETTINGS_WEAKENING_RULE,
     "permissions.bypass",
     "secrets.config",
     "mcp.pinned",
     "attribution.ai",
     "brain.leak",
-    "hooks.guard-extension",
-    "makefile.override",
-    "features.tracker",
+    GUARD_EXTENSION_RULE,
+    MAKEFILE_OVERRIDE_RULE,
+    FEATURES_TRACKER_RULE,
     "bench.tasks",
 )
 
