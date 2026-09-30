@@ -10,12 +10,14 @@ name (the last segment of ``project.hub_repo``, whatever folder the hub sits in)
 pending AC's verification keeps its exit code; ``passes: true`` needs evidence. When a sibling
 ``spec.md`` is listed, the ``AC-…`` ids it names anywhere (a range's ends and a placeholder
 included, which the hub's spec rule relies on) and the record's ids are the same set, each side
-reported in numeric order. Every finding names the record, except a spec that cannot be read
-(not UTF-8, or a link: links are never followed), which names the spec; the record is then
-checked without the cross-check.
+reported in numeric order (compared as digit strings, so an id of any length orders). An id is
+echoed cut to 80 characters. Every finding names the record, except a spec that cannot be read
+(not UTF-8, a link: links are never followed, or a failed read), which names the spec; the
+record is then checked without the cross-check.
 """
 
 import re
+import unicodedata
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Final, NamedTuple
@@ -25,6 +27,7 @@ from agent_hub.core.doctor.snapshot import DoctorSnapshot
 from agent_hub.core.hub_config.doctor_rules import FEATURES_TRACKER_RULE, RULE_MODULES, Severity
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ROOT_PATH
+from agent_hub.core.hub_config.versions import cut_echo
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, TreeEntry
 from agent_hub.core.json_form import InvalidJsonError, JsonValue, load_json_bytes
 
@@ -40,6 +43,8 @@ JSON_FIX: Final = "fix the JSON of the record"
 LINK_FIX: Final = "replace it with the file itself"
 TEXT_FIX: Final = "save it as UTF-8 text"
 NOT_READ: Final = "not read as a regular file (links are never followed)"
+UNREAD: Final = "could not be read"
+UNREAD_FIX: Final = "run hub doctor again"
 MASKED: Final = (
     "`verification` must keep its exit code (no trailing `echo $?`, `|| true` or `| tail`)"
 )
@@ -121,21 +126,32 @@ def _finding(path: str, problem: _Problem) -> Finding:
     return FEATURES_TRACKER.finding(path=path, message=problem.message, fix=problem.fix)
 
 
-def _document(entry: TreeEntry | None) -> JsonValue | _Problem:
-    if not isinstance(entry, FileEntry) or entry.content is None:
+def _content(entry: TreeEntry | None) -> bytes | _Problem:
+    """A listed file's bytes, or why there are none: not a regular file, or its read failed."""
+    if not isinstance(entry, FileEntry):
         return _Problem(NOT_READ, LINK_FIX)
+    if entry.content is None:
+        return _Problem(UNREAD, UNREAD_FIX)
+    return entry.content
+
+
+def _document(entry: TreeEntry | None) -> JsonValue | _Problem:
+    content = _content(entry)
+    if isinstance(content, _Problem):
+        return content
     try:
-        return load_json_bytes(entry.content)
+        return load_json_bytes(content)
     except InvalidJsonError as error:
         return _Problem(f"{ROOT_PATH}: {error.message}", JSON_FIX)
 
 
 def _spec_text(entry: TreeEntry | None) -> str | _Problem:
     """The spec's text; any UTF-8 is read (a NUL too), as the old check opened it."""
-    if not isinstance(entry, FileEntry) or entry.content is None:
-        return _Problem(NOT_READ, LINK_FIX)
+    content = _content(entry)
+    if isinstance(content, _Problem):
+        return content
     try:
-        return entry.content.decode("utf-8")
+        return content.decode("utf-8")
     except UnicodeDecodeError as error:
         return _Problem(f"not UTF-8 text: byte {error.start} cannot be decoded", TEXT_FIX)
 
@@ -186,7 +202,7 @@ def _ac_problems(
     ac_id = ac.get("id")
     if isinstance(ac_id, str):
         # From here the AC is named by its id.
-        where = ac_id
+        where = cut_echo(ac_id)
         problems.extend(_id_problems(ac_id, seen))
     problems.extend(_value_problems(where, ac, project=project))
     return problems
@@ -198,10 +214,11 @@ def _filled(value: JsonValue) -> bool:
 
 def _id_problems(ac_id: str, seen: dict[str, None]) -> list[_Problem]:
     problems = []
+    shown = cut_echo(ac_id)
     if not _AC_ID.fullmatch(ac_id):
-        problems.append(_Problem(f"{ac_id}: id must look like AC-<n>", RECORD_FIX))
+        problems.append(_Problem(f"{shown}: id must look like AC-<n>", RECORD_FIX))
     if ac_id in seen:
-        problems.append(_Problem(f"{ac_id}: duplicate id", RECORD_FIX))
+        problems.append(_Problem(f"{shown}: duplicate id", RECORD_FIX))
     seen[ac_id] = None
     return problems
 
@@ -227,15 +244,26 @@ def _value_problems(
 def _cross_check(spec: str, seen: Mapping[str, None]) -> Iterator[_Problem]:
     in_spec = dict.fromkeys(_SPEC_ID.findall(spec))
     for missing in sorted((ac_id for ac_id in in_spec if ac_id not in seen), key=_ac_key):
-        yield _Problem(f"{missing}: in spec.md but not in features.json", SPEC_FIX)
+        yield _Problem(f"{cut_echo(missing)}: in spec.md but not in features.json", SPEC_FIX)
     for extra in sorted((ac_id for ac_id in seen if ac_id not in in_spec), key=_ac_key):
-        yield _Problem(f"{extra}: in features.json but not in spec.md", SPEC_FIX)
+        yield _Problem(f"{cut_echo(extra)}: in features.json but not in spec.md", SPEC_FIX)
 
 
-def _ac_key(ac_id: str) -> tuple[tuple[int, ...], str]:
-    """Numeric order (``AC-2`` before ``AC-10``); a malformed id first, then by its text."""
-    numbers = tuple(int(part) for part in ac_id[3:].split(".")) if _AC_ID.fullmatch(ac_id) else ()
-    return numbers, ac_id
+def _ac_key(ac_id: str) -> tuple[tuple[tuple[int, str], ...], str]:
+    """Numeric order (``AC-2`` before ``AC-10``); a malformed id first, then by its text.
+
+    Each number is compared as its digit string, never through ``int`` (which refuses more
+    than 4300 digits): leading zeros dropped, shorter first, then digit by digit by value.
+    """
+    if not _AC_ID.fullmatch(ac_id):
+        return (), ac_id
+    return tuple(_number_key(part) for part in ac_id[3:].split(".")), ac_id
+
+
+def _number_key(digits: str) -> tuple[int, str]:
+    """A decimal number's order key; any script's digits count by their value."""
+    ascii_digits = "".join(str(unicodedata.decimal(digit)) for digit in digits).lstrip("0")
+    return len(ascii_digits), ascii_digits
 
 
 FEATURES_TRACKER: Final = Rule(

@@ -25,6 +25,14 @@ JSON_FIX = "fix the JSON of the record"
 LINK_FIX = "replace it with the file itself"
 TEXT_FIX = "save it as UTF-8 text"
 NOT_READ = "not read as a regular file (links are never followed)"
+UNREAD = "could not be read"
+UNREAD_FIX = "run hub doctor again"
+# An id past Python's int-from-string digit limit (4300): the order must not convert it.
+LONG_ID = "AC-" + "1" * 5000
+LONG_ZERO_ID = "AC-" + "0" * 5000 + "3"
+# Ids are echoed cut to 80 characters, ``…`` included.
+LONG_SHOWN = "AC-" + "1" * 76 + "…"
+LONG_ZERO_SHOWN = "AC-" + "0" * 76 + "…"
 MASKED = "`verification` must keep its exit code (no trailing `echo $?`, `|| true` or `| tail`)"
 REPOS = "repo must be one of api, demo-hub, web"
 NEEDS_EVIDENCE = "passes=true needs evidence (command + result)"
@@ -258,6 +266,17 @@ def test_accepts_record_when_linear_absent(snapshot_of: SnapshotFactory) -> None
             ],
             id="numeric-order",
         ),
+        # ``\\d`` takes any script's decimal digits; they order by their value.
+        pytest.param(
+            "- AC-1\n- AC-9\n- AC-\u0661\u0660\n- AC-\u0661.\u0662\n".encode(),
+            (an_ac(1),),
+            [
+                "AC-\u0661.\u0662: in spec.md but not in features.json",
+                "AC-9: in spec.md but not in features.json",
+                "AC-\u0661\u0660: in spec.md but not in features.json",
+            ],
+            id="other-script-digits",
+        ),
         pytest.param(
             b"- AC-1.1: Given ...\n- AC-1.2: Given ...\n- AC-1.10: Given ...\n",
             (an_ac(1, id="AC-1.1"), an_ac(3, id="AC-1.3")),
@@ -304,6 +323,40 @@ def test_cross_checks_spec_when_sibling_present(
         (RECORD, message, RECORD_FIX if "look like" in message else SPEC_FIX)
         for message in expected
     ]
+
+
+def test_orders_long_id_when_spec_names_it(snapshot_of: SnapshotFactory) -> None:
+    spec = f"- AC-1\n- {LONG_ID}\n- AC-2\n".encode()
+
+    assert checked(snapshot_of, a_record(an_ac(1)), spec=spec) == [
+        (RECORD, "AC-2: in spec.md but not in features.json", SPEC_FIX),
+        (RECORD, f"{LONG_SHOWN}: in spec.md but not in features.json", SPEC_FIX),
+    ]
+
+
+def test_orders_long_ids_when_record_holds_them(snapshot_of: SnapshotFactory) -> None:
+    # Leading zeros do not count: ``AC-00…03`` is 3, after 2 and before the 5000-digit id.
+    record = a_record(an_ac(1), an_ac(5, id=LONG_ID), an_ac(3, id=LONG_ZERO_ID), an_ac(2))
+
+    assert checked(snapshot_of, record, spec=b"AC-1\n") == [
+        (RECORD, "AC-2: in features.json but not in spec.md", SPEC_FIX),
+        (RECORD, f"{LONG_ZERO_SHOWN}: in features.json but not in spec.md", SPEC_FIX),
+        (RECORD, f"{LONG_SHOWN}: in features.json but not in spec.md", SPEC_FIX),
+    ]
+
+
+def test_cuts_echoed_id_when_over_80_characters(snapshot_of: SnapshotFactory) -> None:
+    long_bad = "R-" + "x" * 100
+    record = a_record(an_ac(1, id=long_bad, repo="other"), an_ac(2, id=long_bad))
+    shown = "R-" + "x" * 77 + "…"
+
+    assert len(shown) == 80
+    assert checked(snapshot_of, record) == on_record(
+        f"{shown}: id must look like AC-<n>",
+        f"{shown}: {REPOS}",
+        f"{shown}: id must look like AC-<n>",
+        f"{shown}: duplicate id",
+    )
 
 
 def test_skips_cross_check_when_spec_absent_or_unlisted(snapshot_of: SnapshotFactory) -> None:
@@ -372,7 +425,6 @@ def test_reports_not_utf8_when_record_undecodable(snapshot_of: SnapshotFactory) 
     "entry",
     [
         pytest.param(LinkEntry(target="../other/features.json", outside=False), id="link"),
-        pytest.param(FileEntry(executable=False, content=None), id="unread"),
     ],
 )
 def test_reports_record_when_not_regular_file(
@@ -381,6 +433,14 @@ def test_reports_record_when_not_regular_file(
     snapshot = snapshot_of(config=a_config(), entries={RECORD: entry})
 
     assert findings_of(snapshot) == [(RECORD, NOT_READ, LINK_FIX)]
+
+
+def test_reports_record_when_regular_but_unread(snapshot_of: SnapshotFactory) -> None:
+    # A regular file whose read failed is no link: it asks for another run.
+    entry = FileEntry(executable=False, content=None)
+    snapshot = snapshot_of(config=a_config(), entries={RECORD: entry})
+
+    assert findings_of(snapshot) == [(RECORD, UNREAD, UNREAD_FIX)]
 
 
 @pytest.mark.parametrize(
@@ -397,7 +457,7 @@ def test_reports_record_when_not_regular_file(
             id="link",
         ),
         pytest.param(
-            FileEntry(executable=False, content=None), (SPEC, NOT_READ, LINK_FIX), id="unread"
+            FileEntry(executable=False, content=None), (SPEC, UNREAD, UNREAD_FIX), id="unread"
         ),
     ],
 )
