@@ -241,17 +241,20 @@ def _leftovers(entries: Mapping[str, TreeEntry], planned: set[str]) -> tuple[str
 
 def _entries_by_key(
     rendered: RenderedHub, *, folder: str, own: Iterable[tuple[str, str]]
-) -> dict[str, set[str]]:
-    """The entry paths of ``.claude/<folder>``'s links and ``own`` pairs, by name key (E37)."""
+) -> dict[str, dict[str, None]]:
+    """The entry paths of ``.claude/<folder>``'s links and ``own`` pairs, by name key (E37).
+
+    Each key keeps its paths in the order found (a dict, not a set), so no order hangs on hashing.
+    """
     prefix = f".claude/{folder}/"
     linked = [
         (link.path.removeprefix(prefix), link.target.removeprefix(_UP_TO_ROOT))
         for link in rendered.links
         if link.path.startswith(prefix)
     ]
-    grouped: dict[str, set[str]] = {}
+    grouped: dict[str, dict[str, None]] = {}
     for name, entry in [*linked, *own]:
-        grouped.setdefault(entry_name_key(name), set()).add(entry)
+        grouped.setdefault(entry_name_key(name), {})[entry] = None
     return grouped
 
 
@@ -269,7 +272,7 @@ def _name_clashes(
         own = [(name, base + name) for name in names]
         grouped = _entries_by_key(rendered, folder=folder, own=own)
         for name, entry in own:
-            for other in sorted(grouped[entry_name_key(name)] - {entry}):
+            for other in sorted(o for o in grouped[entry_name_key(name)] if o != entry):
                 message = _TWICE if other.startswith(base) else _IN_BOTH
                 cause = message.format(project=project, other=other, own=entry)
                 problems.append(PathProblem(f".claude/{folder}/{name}", cause))

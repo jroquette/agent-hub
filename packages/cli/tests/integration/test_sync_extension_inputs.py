@@ -283,7 +283,10 @@ def test_refuses_project_entry_when_init_runs(
 def test_exits_conflict_when_project_link_path_taken(
     demo_hub: Path, run_sync: SyncRunner, tree_digest: TreeDigest
 ) -> None:
-    """Q-20: the link folders are listed, so a file the project put there is never replaced."""
+    """Q-20: each listed name's link path is looked at.
+
+    So a file the project put there is never replaced.
+    """
     (demo_hub / "plugin/demo/agents/triager.md").write_bytes(b"# Triager\n")
     (demo_hub / ".claude/agents/triager.md").write_bytes(b"# Our own copy\n")
     before = tree_digest(demo_hub)

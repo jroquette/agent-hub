@@ -209,7 +209,8 @@ def _plan_or_exit(root: str, *, config: HubConfig, hub_json: bytes) -> tuple[Ini
     """The init plan and whether the root holds ``.git``; a refusal prints every path, sorted.
 
     A kept ``*.project.json`` sibling merges into its ``X.json`` (spec D2). Project agents and
-    skills are not linked: at init they are unknown entries, refused like any other (Q-22).
+    skills are not linked: at init they are unknown entries, refused like any other (Q-22). Dropping
+    their names from the inputs is defensive, not observable: the refusal comes first.
     """
     try:
         siblings = project_json_siblings(config)

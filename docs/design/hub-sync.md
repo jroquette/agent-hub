@@ -32,7 +32,7 @@ a function of the render and the config only (`build_hub_lock`), written by `ini
 3. **Read** after the render, only what is planned: every rendered path and every lock path but `hub.json` and
    `hub.lock`, each ancestor looked at without following it and the descent stopped at the first that is not a folder;
    content only for the files compared (rendered managed, managed file entries); the listing of each folder holding a
-   planned path (the root too), for leftovers; and of `plugin/<project>/{agents,skills}`, each name found looked at in
+   planned path (the root too), for leftovers; and of `plugin/<project>/{agents,skills}`, each name it links looked at in
    `.claude/<folder>/`, never listed. Unknown entries (run output, FIFOs, unreadable folders, extra `.claude/skills/`
    entries) are never read or touched. An I/O error exits 1 naming the path.
 4. **Plan** in memory (core `plan_sync`), each path in this order: (a) an ancestor that is a link or not a folder:
