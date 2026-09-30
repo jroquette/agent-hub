@@ -3,11 +3,11 @@ from collections.abc import Callable
 import pytest
 
 from agent_hub.core.doctor.finding import Read
-from agent_hub.core.doctor.settings_rules import SETTINGS_WEAKENING
+from agent_hub.core.doctor.settings_rules import SETTINGS_WEAKENING, _group_key
 from agent_hub.core.doctor.snapshot import DoctorSnapshot
 from agent_hub.core.hub_config.doctor_rules import Severity
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, FolderEntry, LinkEntry, TreeEntry
-from agent_hub.core.json_form import JsonValue, dump_json
+from agent_hub.core.json_form import JsonValue, dump_json, load_json_bytes
 
 type SnapshotFactory = Callable[..., DoctorSnapshot]
 type Shown = tuple[Severity, str | None, str, str]
@@ -18,6 +18,8 @@ SYNC_FIX = "run hub sync"
 PROJECT_FIX = "fix or delete it: hub sync cannot merge it either"
 REFUSED = "refused: a project cannot set this key (it weakens the harness)"
 CHANGED = "a base hook group is missing or changed"
+# Deep enough that the indented byte form is huge (its size grows with the depth squared).
+DEEP = 20_000
 
 
 def a_group(command: str, *, timeout: JsonValue, matcher: str | None = None) -> JsonValue:
@@ -102,6 +104,15 @@ def test_ignores_key_when_refused_name_nested_elsewhere(snapshot_of: SnapshotFac
     assert findings_of(hub_of(snapshot_of, files=files)) == []
 
 
+def test_reports_refused_key_when_settings_hold_it(snapshot_of: SnapshotFactory) -> None:
+    # A synced settings.json never holds one: it was written there by hand.
+    settings = dump_json({"disableAllHooks": False, "hooks": base_block()})
+
+    assert findings_of(hub_of(snapshot_of, files={SETTINGS: settings})) == [
+        (Severity.ERROR, SETTINGS, f"disableAllHooks: {REFUSED}", SYNC_FIX)
+    ]
+
+
 def _without_stop_group() -> JsonValue:
     return base_block() | {"Stop": []}
 
@@ -163,12 +174,6 @@ def _with_own_groups() -> JsonValue:
     "settings",
     [
         pytest.param(settings_with(_with_own_groups()), id="group-and-event"),
-        pytest.param(
-            settings_with(base_block()).replace(
-                b'"Stop": [', b'"Stop": [{"hooks": [], "timeout": NaN}, '
-            ),
-            id="group-without-json-form",
-        ),
     ],
 )
 def test_accepts_project_hook_group_when_added_beside_base(
@@ -197,6 +202,28 @@ def test_accepts_project_hook_group_when_added_beside_base(
             id="link",
         ),
         pytest.param({SETTINGS: FolderEntry()}, "not a regular file", id="folder"),
+        pytest.param(
+            {
+                SETTINGS: FileEntry(
+                    executable=False,
+                    content=settings_with(base_block()).replace(
+                        b'"Stop": [', b'"Stop": [{"hooks": [], "timeout": NaN}, '
+                    ),
+                )
+            },
+            "$: not valid JSON here: NaN is not a JSON number",
+            id="nan-beside-base",
+        ),
+        pytest.param(
+            {
+                SETTINGS: FileEntry(
+                    executable=False,
+                    content=settings_with(base_block()).replace(b"{\n", b'{\n  "hooks": {},\n', 1),
+                )
+            },
+            '$: not valid JSON here: the key "hooks" appears more than once',
+            id="repeated-key",
+        ),
     ],
 )
 def test_reports_error_when_settings_absent_or_invalid(
@@ -270,3 +297,14 @@ def test_reports_nothing_when_base_hooks_not_read(snapshot_of: SnapshotFactory) 
     project = dump_json({"disableAllHooks": False})
 
     assert findings_of(snapshot_of(files={PROJECT: project}, base_hooks=None)) == []
+
+
+def test_compares_deep_group_by_linear_key_when_project_nests_it(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    deep = b"[" * DEEP + b"]" * DEEP
+    settings = settings_with(base_block()).replace(b'"Stop": [', b'"Stop": [' + deep + b", ", 1)
+
+    assert findings_of(hub_of(snapshot_of, files={SETTINGS: settings})) == []
+    # The indented byte form of this group is quadratic (about 400 M characters); the key is not.
+    assert len(_group_key(load_json_bytes(deep, strict=True))) <= 3 * DEEP
