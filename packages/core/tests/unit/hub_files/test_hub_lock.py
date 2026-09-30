@@ -1,4 +1,5 @@
 import hashlib
+import inspect
 import json
 import re
 from collections.abc import Callable
@@ -8,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.hub_files.hub_lock import (
     HUB_JSON_PATH,
     HUB_LOCK_PATH,
@@ -16,6 +18,7 @@ from agent_hub.core.hub_files.hub_lock import (
     ManagedFileEntry,
     build_hub_lock,
     lock_bytes,
+    read_hub_lock,
 )
 from agent_hub.core.hub_files.rendered_file import Ownership
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
@@ -266,3 +269,264 @@ def test_writes_lock_form_when_bytes_made(lock: HubLock) -> None:
     assert written.startswith(b'{\n  "files": {\n    ".claude/agents/x.md": {\n')
     assert written.endswith(b"}\n")
     assert not written.endswith(b"\n\n")
+
+
+def _read_mutated(lock: HubLock, mutate: Callable[[dict[str, Any]], None]) -> object:
+    value = written_value(lock)
+    mutate(value)
+    return read_hub_lock(dump_json(value))
+
+
+def test_reads_same_lock_as_model_when_bytes_valid(lock: HubLock) -> None:
+    content = lock_bytes(lock)
+
+    read = read_hub_lock(content)
+
+    assert read == HubLock.model_validate(json.loads(content))
+    assert isinstance(read, HubLock)
+    assert lock_bytes(read) == content
+
+
+def test_accepts_lock_when_hub_json_entry_missing(lock: HubLock) -> None:
+    # ``plan_sync`` adds the entry back with a lock-only rewrite (E1): the reader accepts it.
+    value = written_value(lock)
+    del value["files"][HUB_JSON_PATH]
+
+    read = read_hub_lock(dump_json(value))
+
+    assert read == HubLock.model_validate(value)
+
+
+def _root(message: str) -> tuple[ConfigProblem, ...]:
+    return (ConfigProblem("$", message),)
+
+
+# Each expected tuple is what pydantic reported in the slice 2 probe, after the reader's rules
+# (plan E3): the arm chosen by the entry's shape, class names and "Value error, " dropped.
+MALFORMED_BYTES: dict[str, tuple[bytes, tuple[ConfigProblem, ...]]] = {
+    "invalid-json": (
+        b'{"files": }',
+        _root("not valid JSON: Expecting value at line 1 column 11"),
+    ),
+    "not-utf8": (b'{"files": "\xff"}', _root("not UTF-8 text: byte 11 cannot be decoded")),
+    "byte-order-mark": (
+        b"\xef\xbb\xbf{}",
+        _root("not valid JSON: the file starts with a UTF-8 byte order mark; save it without one"),
+    ),
+    "array-root": (b"[]\n", _root("Input should be a valid dictionary")),
+}
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"), MALFORMED_BYTES.values(), ids=MALFORMED_BYTES.keys()
+)
+def test_reports_lines_when_lock_bytes_malformed(
+    *, content: bytes, expected: tuple[ConfigProblem, ...]
+) -> None:
+    assert read_hub_lock(content) == expected
+
+
+def _two_bad_entries(value: dict[str, Any]) -> None:
+    value["files"]["a.md"] = {"ownership": "managed", "executable": False}
+    value["files"]["b.md"] = {"ownership": "seeded", "x": 1}
+
+
+MALFORMED: dict[str, tuple[Callable[[dict[str, Any]], None], tuple[ConfigProblem, ...]]] = {
+    "unknown-key": (
+        lambda value: value.update(extra=1),
+        (ConfigProblem("extra", "Extra inputs are not permitted"),),
+    ),
+    "lock-version-2": (
+        lambda value: value.update(lock_version=2),
+        (ConfigProblem("lock_version", "Input should be 1"),),
+    ),
+    "lock-version-true": (
+        lambda value: value.update(lock_version=True),
+        (ConfigProblem("lock_version", "must be an integer"),),
+    ),
+    "managed-file-without-sha256": (
+        _set_file("a.md", {"ownership": "managed", "executable": False}),
+        (ConfigProblem('files["a.md"].sha256', "Field required"),),
+    ),
+    "seeded-with-sha256": (
+        _set_file("a.md", {"ownership": "seeded", "sha256": _HASH}),
+        (ConfigProblem('files["a.md"].sha256', "Extra inputs are not permitted"),),
+    ),
+    "entry-string": (
+        _set_file("a.md", "x"),  # type: ignore[arg-type]
+        (ConfigProblem('files["a.md"]', "Input should be a valid dictionary"),),
+    ),
+    "unsorted-modules": (
+        lambda value: value.update(modules=["cloud", "bench"]),
+        _root("modules must be sorted and unique"),
+    ),
+    "hub-lock-key": (
+        _set_file(HUB_LOCK_PATH, {"ownership": "seeded"}),
+        _root("files must not list hub.lock"),
+    ),
+    "git-key": (
+        _set_file(".git/x", {"ownership": "seeded"}),
+        _root("files must not list anything under .git, got '.git/x'"),
+    ),
+    "absolute-key": (
+        _set_file("/abs", {"ownership": "seeded"}),
+        (ConfigProblem('files["/abs"]', "path '/abs' must be relative, not absolute"),),
+    ),
+    # pydantic's " or instance of <Class>" is dropped only from a type error: a key or a target
+    # that holds the same words keeps its full text.
+    "absolute-key-with-instance-of": (
+        _set_file("/abs or instance of y", {"ownership": "seeded"}),
+        (
+            ConfigProblem(
+                'files["/abs or instance of y"]',
+                "path '/abs or instance of y' must be relative, not absolute",
+            ),
+        ),
+    ),
+    "git-key-with-instance-of": (
+        _set_file(".git/ or instance of x", {"ownership": "seeded"}),
+        _root("files must not list anything under .git, got '.git/ or instance of x'"),
+    ),
+    "link-target-with-instance-of": (
+        _set_file("a.md", {"ownership": "managed", "symlink": "/x or instance of q"}),
+        _root("files['a.md'].symlink '/x or instance of q' must be relative, not absolute"),
+    ),
+    "two-bad-entries": (
+        _two_bad_entries,
+        (
+            ConfigProblem('files["a.md"].sha256', "Field required"),
+            ConfigProblem('files["b.md"].x', "Extra inputs are not permitted"),
+        ),
+    ),
+}
+
+
+@pytest.mark.parametrize(("mutate", "expected"), MALFORMED.values(), ids=MALFORMED.keys())
+def test_reports_lines_when_lock_malformed(
+    *,
+    lock: HubLock,
+    mutate: Callable[[dict[str, Any]], None],
+    expected: tuple[ConfigProblem, ...],
+) -> None:
+    assert _read_mutated(lock, mutate) == expected
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"ownership": "managed", "executable": False, "sha256": _HASH},
+        {"ownership": "managed", "symlink": "AGENTS.md"},
+    ],
+    ids=["file", "link"],
+)
+def test_refuses_managed_hub_json_when_lock_read(lock: HubLock, entry: dict[str, Any]) -> None:
+    value = written_value(lock)
+    value["files"][HUB_JSON_PATH] = entry
+    HubLock.model_validate(value)  # the model accepts it: only the reader refuses it (plan E1)
+
+    assert read_hub_lock(dump_json(value)) == (
+        ConfigProblem('files["hub.json"]', "must be seeded: hub.json is the project's"),
+    )
+
+
+# One case per clause of the arm choice (plan E3 c), each with an input only that clause decides:
+# ``symlink`` wins over a seeded ownership, a seeded ownership over the file arm.
+BY_SHAPE: dict[str, tuple[dict[str, Any], ConfigProblem]] = {
+    "symlink-present": (
+        {"ownership": "seeded", "symlink": "b.md"},
+        ConfigProblem('files["a.md"].ownership', "Input should be 'managed'"),
+    ),
+    "ownership-seeded": (
+        {"ownership": "seeded", "executable": False},
+        ConfigProblem('files["a.md"].executable', "Extra inputs are not permitted"),
+    ),
+    "neither": (
+        {"ownership": "bogus", "sha256": _HASH, "executable": False},
+        ConfigProblem('files["a.md"].ownership', "Input should be 'managed'"),
+    ),
+}
+
+
+@pytest.mark.parametrize(("entry", "expected"), BY_SHAPE.values(), ids=BY_SHAPE.keys())
+def test_names_arm_by_shape_when_union_fails(
+    *, lock: HubLock, entry: dict[str, Any], expected: ConfigProblem
+) -> None:
+    assert _read_mutated(lock, _set_file("a.md", entry)) == (expected,)
+
+
+def test_drops_repeated_lines_when_errors_repeat(lock: HubLock) -> None:
+    # A non-object entry fails every arm with the same message once the class name is dropped:
+    # pydantic reports three errors, the reader prints one line.
+    value = written_value(lock)
+    value["files"]["a.md"] = 1
+    value["files"]["b.md"] = []
+
+    assert read_hub_lock(dump_json(value)) == (
+        ConfigProblem('files["a.md"]', "Input should be a valid dictionary"),
+        ConfigProblem('files["b.md"]', "Input should be a valid dictionary"),
+    )
+
+
+# ``load_json_bytes`` reads a ``\ud800`` escape as a lone surrogate, which the model accepts in a
+# path or a link target but which cannot be written back as UTF-8 or used as a file name.
+SURROGATES: dict[str, tuple[bytes, tuple[ConfigProblem, ...]]] = {
+    "path": (
+        b'"a\\ud800.md": {"ownership": "seeded"}',
+        (ConfigProblem('files["a\\ud800.md"]', "not UTF-8 text: holds a lone surrogate"),),
+    ),
+    "link-target": (
+        b'"a.md": {"ownership": "managed", "symlink": "b\\udc00"}',
+        (ConfigProblem('files["a.md"].symlink', "not UTF-8 text: holds a lone surrogate"),),
+    ),
+}
+
+
+@pytest.mark.parametrize(("entry", "expected"), SURROGATES.values(), ids=SURROGATES.keys())
+def test_refuses_text_when_lock_holds_lone_surrogate(
+    *, lock: HubLock, entry: bytes, expected: tuple[ConfigProblem, ...]
+) -> None:
+    content = lock_bytes(lock).replace(b'"files": {\n', b'"files": {\n' + entry + b",\n", 1)
+    assert HubLock.model_validate(json.loads(content))  # the model accepts it; the reader does not
+
+    assert read_hub_lock(content) == expected
+
+
+LONE_SURROGATE_LINE = "not UTF-8 text: holds a lone surrogate"
+
+# The scan runs before the model, so a lone surrogate anywhere gives its own line at its path and
+# no pydantic text ("unable to parse raw data") from the fields that hold it.
+SURROGATES_ANYWHERE: dict[str, tuple[Callable[[dict[str, Any]], None], tuple[str, ...]]] = {
+    "entry-key-and-value": (
+        _set_file("a\ud800", {"ownership": "\udc00"}),
+        ('files["a\\ud800"]', 'files["a\\ud800"].ownership'),
+    ),
+    "platform-version": (
+        lambda value: value.update(platform_version="1.0.0\ud800"),
+        ("platform_version",),
+    ),
+    "module": (lambda value: value.update(modules=["bench", "\udc00"]), ("modules[1]",)),
+    "top-level-key": (lambda value: value.update({"\ud800": 1}), ('["\\ud800"]',)),
+}
+
+
+@pytest.mark.parametrize(
+    ("mutate", "paths"), SURROGATES_ANYWHERE.values(), ids=SURROGATES_ANYWHERE.keys()
+)
+def test_reports_only_surrogate_lines_when_lock_holds_them_anywhere(
+    *, lock: HubLock, mutate: Callable[[dict[str, Any]], None], paths: tuple[str, ...]
+) -> None:
+    value = written_value(lock)
+    mutate(value)
+    content = json.dumps(value).encode()  # escaped: ``\ud800`` in the bytes, as a file holds it
+
+    assert read_hub_lock(content) == tuple(
+        ConfigProblem(path, LONE_SURROGATE_LINE) for path in paths
+    )
+
+
+def test_does_no_io_when_lock_read() -> None:
+    # The purity scan covers the module's source; this pins that the reader takes bytes only.
+    parameters = inspect.signature(read_hub_lock).parameters
+
+    assert list(parameters) == ["content"]
+    assert parameters["content"].annotation is bytes

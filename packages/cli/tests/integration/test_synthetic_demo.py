@@ -1,5 +1,8 @@
 """The synthetic ``demo`` inits (Q-12): the lock on disk, modes, identical trees and the golden.
 
+A sync of a fresh ``demo`` init prints ``up to date`` and writes nothing (AGH-14 AC-14.7), and a
+pending ``demo`` hub synced in process and as a child writes identical trees (AC-14.16).
+
 ``DEMO`` is ``demo_config_file`` (the example config without modules, pinned to the running CLI)
 and ``DEMO_FLAGS`` is ``demo_flags``. The golden harness of ``demo.hub.lock`` is the conftest's
 ``lock_golden``; its self-tests set or clear ``GOLDEN_UPDATE`` and ``CI`` themselves.
@@ -17,8 +20,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
+from agent_hub.cli import sync_command
 from agent_hub.cli.main import app
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.hub_lock import build_hub_lock, lock_bytes
@@ -34,6 +38,7 @@ REAL_GIT = shutil.which("git")
 type LockGolden = Callable[..., None]
 type TreeDigest = Callable[[Path], dict[str, Any]]
 type ChildEnv = Callable[[Mapping[str, str]], dict[str, str]]
+type SyncRunner = Callable[..., Result]
 # A subprocess init differs from the in-process one in all of these but its inputs.
 CHILD_HASH_SEED = "123"
 CHILD_TZ = "Pacific/Kiritimati"
@@ -306,3 +311,184 @@ def test_writes_identical_trees_when_demo_initialized_twice(
     run_init([*demo_flags, "--dir", str(first)])
     run_init([*demo_flags, "--dir", str(second)])
     assert tree_digest(first) == tree_digest(second)
+
+
+def test_writes_nothing_when_sync_runs_on_fresh_init(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    demo_config_file: Path,
+    run_sync: SyncRunner,
+    tree_digest: TreeDigest,
+    adapter_calls: list[tuple[str, str]],
+) -> None:
+    root = init_demo(demo_config_file, tmp_path / "hub")
+    before = tree_digest(root)
+    lock_mtime = (root / "hub.lock").stat().st_mtime_ns
+    applied: list[object] = []
+    # Plan erratum E4: with nothing pending the adapter is not called at all.
+    monkeypatch.setattr(sync_command, "apply_sync", lambda *args, **kwargs: applied.append(args))
+    adapter_calls.clear()
+
+    for _ in range(2):
+        result = run_sync(root)
+
+        assert (result.exit_code, result.stdout, result.stderr) == (0, "up to date\n", "")
+    assert adapter_calls == []
+    assert applied == []
+    assert tree_digest(root) == before
+    assert (root / "hub.lock").stat().st_mtime_ns == lock_mtime
+
+
+MAKEFILE_LINE = b"local: ; @true\n"
+AGENTS_LINE = b"- A rule the project wrote here.\n"
+
+
+def appended_diff(render: bytes, *, path: str, line: bytes) -> list[str]:
+    """Spec Q-4's diff of ``path`` when the project appended ``line`` to its render."""
+    lines = render.decode().splitlines()
+    start = len(lines) - 2
+    return [
+        f"--- {path} (on disk)",
+        f"+++ {path} (render)",
+        f"@@ -{start},4 +{start},3 @@",
+        *(f" {kept}" for kept in lines[-3:]),
+        f"-{line.decode().removesuffix(chr(10))}",
+    ]
+
+
+@pytest.mark.parametrize("edited", [["Makefile"], ["Makefile", "AGENTS.md"]], ids=["one", "two"])
+def test_exits_conflict_when_managed_file_edited(
+    demo_hub: Path,
+    run_sync: SyncRunner,
+    *,
+    tree_digest: TreeDigest,
+    adapter_calls: list[tuple[str, str]],
+    edited: list[str],
+) -> None:
+    appended = {"Makefile": MAKEFILE_LINE, "AGENTS.md": AGENTS_LINE}
+    renders = {path: (demo_hub / path).read_bytes() for path in edited}
+    for path in edited:
+        with (demo_hub / path).open("ab") as file:
+            file.write(appended[path])
+    before = tree_digest(demo_hub)
+    adapter_calls.clear()
+    # One report per path, in path order, then ADR 0009's way out.
+    expected = [
+        line
+        for path in sorted(edited)
+        for line in appended_diff(renders[path], path=path, line=appended[path])
+    ]
+    expected.append(
+        "move the change to an extension file (hub.json, a *.project.* file, Makefile.project),"
+        " restore or delete the file, then re-run hub sync"
+    )
+
+    for args in [(), ("--check",)]:
+        result = run_sync(demo_hub, *args)
+
+        assert (result.exit_code, result.stdout) == (3, ""), result.output
+        assert result.stderr.splitlines() == expected
+    assert adapter_calls == []
+    assert tree_digest(demo_hub) == before
+
+
+def test_prints_up_to_date_when_sync_reruns(
+    tmp_path: Path,
+    *,
+    demo_config_file: Path,
+    run_sync: SyncRunner,
+    tree_digest: TreeDigest,
+    adapter_calls: list[tuple[str, str]],
+) -> None:
+    root = init_demo(demo_config_file, tmp_path / "hub")
+    fresh = tree_digest(root)
+    (root / "AGENTS.md").unlink()
+    lock = json.loads((root / "hub.lock").read_bytes())
+    lock["platform_version"] = "0.0.1"
+    (root / "hub.lock").write_bytes(dump_json(lock))
+
+    applied = run_sync(root)
+
+    assert (applied.exit_code, applied.stderr) == (0, ""), applied.output
+    assert applied.stdout == "restored AGENTS.md\nupdated hub.lock\n"
+    assert tree_digest(root) == fresh
+    lock_mtime = (root / "hub.lock").stat().st_mtime_ns
+    adapter_calls.clear()
+    rerun = run_sync(root)
+    assert (rerun.exit_code, rerun.stdout, rerun.stderr) == (0, "up to date\n", "")
+    assert adapter_calls == []
+    assert tree_digest(root) == fresh
+    assert (root / "hub.lock").stat().st_mtime_ns == lock_mtime
+
+
+OLDER_RENDER = b"# rendered by an older release\n"
+
+
+def make_all_pending(root: Path) -> None:
+    """The pending-changes cases at once: restore, create, update, delete and a lock header."""
+    lock = json.loads((root / "hub.lock").read_bytes())
+    (root / "AGENTS.md").unlink()
+    (root / "CLAUDE.md").unlink()
+    del lock["files"]["CLAUDE.md"]
+    (root / "Makefile").write_bytes(OLDER_RENDER)
+    older = {"executable": False, "sha256": hashlib.sha256(OLDER_RENDER).hexdigest()}
+    lock["files"]["Makefile"].update(older)
+    (root / "old").mkdir()
+    (root / "old" / "file.md").write_bytes(OLDER_RENDER)
+    lock["files"]["old/file.md"] = {"ownership": "managed", **older}
+    lock["platform_version"] = "0.0.1"
+    (root / "hub.lock").write_bytes(dump_json(lock))
+
+
+def test_writes_identical_trees_when_sync_runs_twice(
+    tmp_path: Path,
+    demo_hub: Path,
+    *,
+    run_sync: SyncRunner,
+    tree_digest: TreeDigest,
+    child_env: ChildEnv,
+    set_umask: Callable[[int], None],
+    lock_golden: LockGolden,
+    no_git_path: Path,
+) -> None:
+    make_all_pending(demo_hub)
+    child_root = tmp_path / "child"
+    shutil.copytree(demo_hub, child_root, symlinks=True)
+    # A umask other than the child's, whatever the developer's shell uses.
+    set_umask(0o022)
+    env = child_env(
+        {
+            **os.environ,
+            "PATH": str(no_git_path),
+            "HOME": str(tmp_path / "child-home"),
+            "PYTHONHASHSEED": CHILD_HASH_SEED,
+            "TZ": CHILD_TZ,
+            "LC_ALL": "C",
+        }
+    )
+
+    in_process = run_sync(demo_hub)
+    child = subprocess.run(  # noqa: S603 - this interpreter, fixed code, a tmp_path folder
+        [sys.executable, "-c", "from agent_hub.cli.main import app; app(prog_name='hub')", "sync"],
+        cwd=child_root,
+        env=env,
+        umask=CHILD_UMASK,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=CHILD_TIMEOUT,
+    )
+
+    assert (in_process.exit_code, in_process.stderr) == (0, ""), in_process.output
+    assert (child.returncode, child.stderr) == (0, ""), child.stderr
+    assert in_process.stdout.splitlines()[-1] == "updated hub.lock"
+    assert child.stdout == in_process.stdout
+    # The child's umask really differed: some permission bits of the written files differ.
+    assert tree_digest(child_root) != tree_digest(demo_hub)
+    # Nothing but those bits differs.
+    assert shape(tree_digest(child_root)) == shape(tree_digest(demo_hub))
+    lock = (demo_hub / "hub.lock").read_bytes()
+    assert (child_root / "hub.lock").read_bytes() == lock
+    # Compare only: a lock written by sync never rewrites the init golden, even in update mode.
+    lock_golden(lock, update=False)
