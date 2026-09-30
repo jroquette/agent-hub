@@ -9,6 +9,7 @@ RELEASED_IDS = (
     "lock.drift",
     "settings.weakening",
     "hooks.guard-extension",
+    "makefile.override",
 )
 
 # The "Default" column of docs/design/hub-doctor.md § Rules.
