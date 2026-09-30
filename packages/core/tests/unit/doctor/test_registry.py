@@ -8,6 +8,7 @@ RELEASED_IDS = (
     "platform.version",
     "lock.drift",
     "instructions.size",
+    "instructions.refs",
     "instructions.duplicates",
     "settings.weakening",
     "hooks.guard-extension",

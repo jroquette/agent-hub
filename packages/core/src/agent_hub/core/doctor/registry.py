@@ -10,7 +10,11 @@ from agent_hub.core.doctor.config_rules import CONFIG_SCHEMA, PLATFORM_VERSION
 from agent_hub.core.doctor.features_rule import FEATURES_TRACKER
 from agent_hub.core.doctor.finding import Rule
 from agent_hub.core.doctor.guard_extension_rule import GUARD_EXTENSION
-from agent_hub.core.doctor.instruction_rules import INSTRUCTIONS_DUPLICATES, INSTRUCTIONS_SIZE
+from agent_hub.core.doctor.instruction_rules import (
+    INSTRUCTIONS_DUPLICATES,
+    INSTRUCTIONS_REFS,
+    INSTRUCTIONS_SIZE,
+)
 from agent_hub.core.doctor.lock_rules import LOCK_DRIFT
 from agent_hub.core.doctor.makefile_rules import MAKEFILE_OVERRIDE
 from agent_hub.core.doctor.settings_rules import SETTINGS_WEAKENING
@@ -20,6 +24,7 @@ REGISTRY: Final[tuple[Rule, ...]] = (
     PLATFORM_VERSION,
     LOCK_DRIFT,
     INSTRUCTIONS_SIZE,
+    INSTRUCTIONS_REFS,
     INSTRUCTIONS_DUPLICATES,
     SETTINGS_WEAKENING,
     GUARD_EXTENSION,

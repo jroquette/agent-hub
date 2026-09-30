@@ -1,13 +1,16 @@
-"""``instructions.size`` and ``instructions.duplicates``: the port of the hub's old config lint.
+"""``instructions.size``, ``.refs`` and ``.duplicates``: the port of the old config lint.
 
-Line limits (spec AC-11.19, Q-6) and instruction lines repeated across instruction files
-(AC-11.20). A file that is not text is the runner's to report (E28): each rule skips it.
+Line limits (spec AC-11.19, Q-6), references to paths, ``make`` targets and ``pnpm`` scripts that
+do not exist, and instruction lines repeated across instruction files (AC-11.20). A file that is
+not text is the runner's to report (E28): each rule skips it.
 """
 
+import json
 from collections.abc import Callable, Mapping
 
 import pytest
 
+from agent_hub.core.doctor import instruction_rules
 from agent_hub.core.doctor.finding import Read, Rule
 from agent_hub.core.doctor.instruction_rules import INSTRUCTIONS_DUPLICATES, INSTRUCTIONS_SIZE
 from agent_hub.core.doctor.snapshot import DoctorSnapshot
@@ -304,3 +307,287 @@ class TestDuplicates:
         )
 
         assert duplicates(snapshot) == [("GEMINI.md", 1, "duplicates CLAUDE.md:1")]
+
+
+STALE_FIX = "update the path or remove the line"
+MAKE_FIX = "use an existing target or add it"
+PNPM_FIX = "use an existing script"
+
+
+def refs(snapshot: DoctorSnapshot) -> list[tuple[str | None, int | None, str, str]]:
+    # Read through the module, so a missing rule fails each test rather than the collection.
+    rule: Rule = instruction_rules.INSTRUCTIONS_REFS
+    found = list(rule.check(snapshot))
+    assert all(finding.rule == "instructions.refs" for finding in found)
+    assert all(finding.severity is Severity.ERROR for finding in found)
+    return [(finding.path, finding.line, finding.message, finding.fix) for finding in found]
+
+
+def stale(path: str, line: int, ref: str) -> tuple[str, int, str, str]:
+    return (path, line, f"stale reference `{ref}` (no such path)", STALE_FIX)
+
+
+class TestRefs:
+    def test_declares_design_id_when_rule_read(self) -> None:
+        rule: Rule = instruction_rules.INSTRUCTIONS_REFS
+
+        assert rule.id == "instructions.refs"
+        assert rule.reads == frozenset({Read.INSTRUCTION_FILES})
+        assert rule.severity is Severity.ERROR
+        assert rule.module is None
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            pytest.param("[site](https://example.com/docs/a.md)", id="url"),
+            pytest.param("[mail](mailto:team@example.com)", id="mailto"),
+            pytest.param("[home](~/notes/a.md)", id="home"),
+            pytest.param("[abs](/etc/hub/a.md)", id="absolute"),
+            pytest.param("[sibling](../other-repo/AGENTS.md)", id="parent"),
+            pytest.param("[x](docs/<name>.md)", id="angle-placeholder"),
+            pytest.param("`path/to/file.md`", id="path-to"),
+            pytest.param("`docs/.../x.md`", id="dots"),
+            pytest.param("[x](docs/…/x.md)", id="ellipsis"),
+            pytest.param("[x]($HUB_ROOT/x.md)", id="variable"),
+            pytest.param("[x](${HUB_ROOT}/x.md)", id="braced-variable"),
+            pytest.param("`origin/main`", id="origin"),
+            pytest.param("`upstream/feature/x`", id="upstream"),
+            pytest.param("`application/json`", id="mime-application"),
+            pytest.param("`text/plain`", id="mime-text"),
+            pytest.param("`multipart/form-data`", id="mime-multipart"),
+            pytest.param("`jdoe/dem-12-collector`", id="branch-prefix"),
+            pytest.param("`.claude/worktrees`", id="worktrees"),
+            pytest.param("`.claude/settings.local.json`", id="local-settings"),
+            pytest.param("[deps](node_modules)", id="node-modules"),
+            pytest.param("[env](.venv)", id="venv"),
+            pytest.param("[any](*.md)", id="glob-from-root"),
+            pytest.param("---\nsee `docs/missing.md`\n---\n# Body", id="frontmatter"),
+            # An unterminated frontmatter runs to the end of the file, as in the old lint.
+            pytest.param("---\n# Body\nsee `docs/missing.md`", id="unterminated-frontmatter"),
+            pytest.param("`some words`", id="not-pathy"),
+        ],
+    )
+    def test_skips_reference_when_not_a_path(self, snapshot_of: SnapshotFactory, text: str) -> None:
+        snapshot = snapshot_of(files={"AGENTS.md": f"{text}\n".encode()})
+
+        assert refs(snapshot) == []
+
+    def test_reports_reference_when_path_missing(self, snapshot_of: SnapshotFactory) -> None:
+        text = (
+            "# Agents\n"
+            "Read [the guide](docs/missing.md#part) first.\n"
+            "Run `scripts/gone.py`, and `scripts/gone.py` again, or [it](scripts/gone.py).\n"
+            "Not the branch `other/dem-1-x`.\n"
+        )
+        snapshot = snapshot_of(files={"AGENTS.md": text.encode()})
+
+        assert refs(snapshot) == [
+            stale("AGENTS.md", 2, "docs/missing.md"),
+            # Links first, then code spans, as the old lint listed them; each one is reported.
+            stale("AGENTS.md", 3, "scripts/gone.py"),
+            stale("AGENTS.md", 3, "scripts/gone.py"),
+            stale("AGENTS.md", 3, "scripts/gone.py"),
+            stale("AGENTS.md", 4, "other/dem-1-x"),
+        ]
+
+    def test_reports_files_in_sorted_order_when_listed_in_reverse(
+        self, snapshot_of: SnapshotFactory
+    ) -> None:
+        files = {"CLAUDE.md": b"`a/gone.md`\n", "AGENTS.md": b"x\r\n`b/gone.md`\r\n"}
+        snapshot = snapshot_of(files=files, listed=tuple(sorted(files, reverse=True)))
+
+        assert refs(snapshot) == [
+            stale("AGENTS.md", 2, "b/gone.md"),
+            stale("CLAUDE.md", 1, "a/gone.md"),
+        ]
+
+    @pytest.mark.parametrize(
+        ("text", "listed"),
+        [
+            pytest.param("[x](other.md)", ".claude/rules/other.md", id="file-folder"),
+            pytest.param("[x](./other.md)", ".claude/rules/other.md", id="dot-slash"),
+            pytest.param("`docs/guide.md`", "docs/guide.md", id="root"),
+            pytest.param("[x](sub/../other.md)", ".claude/rules/other.md", id="dot-dot-inside"),
+            pytest.param("`docs/design/`", "docs/design/a.md", id="folder-of-listed-file"),
+            pytest.param("[x](docs)", "docs/design/a.md", id="top-folder"),
+            pytest.param("`src/app/main`", "src/app/main.py", id="extension-py"),
+            pytest.param("`src/app/view`", "src/app/view.tsx", id="extension-tsx"),
+            pytest.param("`widget.ts`", "packages/ui/widget.ts", id="basename"),
+            pytest.param("[x](widget)", "packages/ui/widget.js", id="basename-extension"),
+            pytest.param("[x](design)", "docs/design/a.md", id="basename-folder"),
+            pytest.param("`ui/widget.ts`", "packages/ui/widget.ts", id="suffix"),
+            pytest.param("`app/main`", "src/app/main.py", id="suffix-extension"),
+            pytest.param("`web/design`", "apps/web/design/a.md", id="suffix-folder"),
+            pytest.param("[x](tests/test_a.py::test_b)", "tests/test_a.py", id="test-id"),
+            pytest.param("[x](@/lib/a.ts)", "src/lib/a.ts", id="at-alias"),
+            pytest.param("`docs/*.md`", "docs/a.md", id="glob"),
+            pytest.param("`docs/{a,b}.md`", "docs/a.md", id="braces"),
+        ],
+    )
+    def test_resolves_reference_when_listed_file_or_folder(
+        self, snapshot_of: SnapshotFactory, *, text: str, listed: str
+    ) -> None:
+        files = {RULE: f"{text}\n".encode(), listed: b"x\n"}
+
+        assert refs(snapshot_of(files=files)) == []
+        # The same reference with nothing listed under it is reported.
+        assert refs(snapshot_of(files={RULE: f"{text}\n".encode()})) != []
+
+    def test_resolves_reference_when_fixed_path_unlisted(
+        self, snapshot_of: SnapshotFactory
+    ) -> None:
+        # A fixed path is looked at by path even when the listing leaves it out (it exists).
+        snapshot = snapshot_of(
+            files={"AGENTS.md": b"`.mcp.json` and `docs/x.md`\n", ".mcp.json": b"{}\n"},
+            listed=("AGENTS.md",),
+        )
+
+        assert refs(snapshot) == [stale("AGENTS.md", 1, "docs/x.md")]
+
+    def test_reports_reference_when_it_leaves_hub(self, snapshot_of: SnapshotFactory) -> None:
+        # Resolved against the listing only: a path out of the hub is never looked at.
+        # (A reference that starts with ``../`` is skipped; one that only climbs later is not.)
+        ref = "sub/../../../../AGENTS.md"
+        snapshot = snapshot_of(files={RULE: f"[x]({ref})\n".encode(), "AGENTS.md": b"x\n"})
+
+        assert refs(snapshot) == [stale(RULE, 1, ref)]
+
+    def test_checks_make_targets_when_makefile_present(self, snapshot_of: SnapshotFactory) -> None:
+        makefile = b"check-fast: lint\n\tx\nlint:\n\tx\nvenv := .venv\n.PHONY: lint\n"
+        text = b"Run make check-fast, make lint and make venv. Then make sure: make deploy.\n"
+        snapshot = snapshot_of(files={"AGENTS.md": text, "Makefile": makefile})
+
+        assert refs(snapshot) == [
+            ("AGENTS.md", 1, "`make sure` is not a Makefile target", MAKE_FIX),
+            ("AGENTS.md", 1, "`make deploy` is not a Makefile target", MAKE_FIX),
+        ]
+
+    def test_checks_pnpm_scripts_when_package_json_present(
+        self, snapshot_of: SnapshotFactory
+    ) -> None:
+        package = json.dumps({"scripts": {"test": "vitest", "lint:fix": "eslint"}}).encode()
+        text = (
+            b"pnpm install, pnpm test, pnpm run lint:fix, pnpm exec x, pnpm dlx y.\n"
+            b"pnpm build\npnpm run deploy:prod\n"
+        )
+        snapshot = snapshot_of(files={"AGENTS.md": text, "package.json": package})
+
+        assert refs(snapshot) == [
+            ("AGENTS.md", 2, "`pnpm build` is not a package.json script", PNPM_FIX),
+            ("AGENTS.md", 3, "`pnpm deploy:prod` is not a package.json script", PNPM_FIX),
+        ]
+
+    @pytest.mark.parametrize(
+        "files",
+        [
+            pytest.param({}, id="both-absent"),
+            pytest.param({"Makefile": b"# no targets\n"}, id="makefile-without-targets"),
+            pytest.param({"package.json": b'{"scripts": {}}'}, id="no-scripts"),
+            pytest.param({"package.json": b'{"name": "x"}'}, id="scripts-absent"),
+        ],
+    )
+    def test_skips_targets_when_makefile_or_package_json_absent(
+        self, snapshot_of: SnapshotFactory, files: dict[str, bytes]
+    ) -> None:
+        snapshot = snapshot_of(files={"AGENTS.md": b"make sure, pnpm build\n", **files})
+
+        assert refs(snapshot) == []
+
+    @pytest.mark.parametrize(
+        "name",
+        [pytest.param("Makefile", id="makefile"), pytest.param("package.json", id="package-json")],
+    )
+    def test_skips_targets_when_file_is_link(self, snapshot_of: SnapshotFactory, name: str) -> None:
+        # Links are never followed (D3), even to a file that would define the name.
+        snapshot = snapshot_of(
+            files={"AGENTS.md": b"make sure, pnpm build\n", "other": b"x\n"},
+            links={name: "other"},
+        )
+
+        assert refs(snapshot) == []
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            pytest.param(b'{"scripts": {"test": 1}', id="not-json"),
+            pytest.param(b'["scripts"]', id="top-level-list"),
+            pytest.param(b'{"scripts": ["test"]}', id="scripts-list"),
+            pytest.param(b'{"scripts": "test"}', id="scripts-string"),
+            pytest.param(b'{"scripts": {"test": "\xff"}}', id="not-utf8"),
+            pytest.param(b"[" * 100_000 + b"]" * 100_000, id="too-deep"),
+            pytest.param(b'{"scripts": {"t": ' + b"1" * 5000 + b"}}", id="too-many-digits"),
+        ],
+    )
+    def test_skips_scripts_when_package_json_invalid(
+        self, snapshot_of: SnapshotFactory, content: bytes
+    ) -> None:
+        # E11: as if there were no scripts; the file's own problem is not this rule's.
+        snapshot = snapshot_of(files={"AGENTS.md": b"pnpm build\n", "package.json": content})
+
+        assert refs(snapshot) == []
+
+    def test_skips_linked_instruction_file_when_refs_checked(
+        self, snapshot_of: SnapshotFactory
+    ) -> None:
+        # E1: a file link at an instruction path is not an instruction file.
+        agent = b"See `docs/gone.md`.\n"
+        target = "plugin/hub-workflow/agents/x.md"
+        linked = snapshot_of(files={target: agent}, links={".claude/agents/x.md": target})
+        regular = snapshot_of(files={target: agent, ".claude/agents/x.md": agent})
+
+        assert refs(linked) == []
+        assert refs(regular) == [stale(".claude/agents/x.md", 1, "docs/gone.md")]
+
+    @pytest.mark.parametrize(
+        "suffix",
+        [pytest.param(b"\xff", id="undecodable"), pytest.param(b"\x00", id="nul")],
+    )
+    def test_skips_file_when_not_text(self, snapshot_of: SnapshotFactory, suffix: bytes) -> None:
+        # E28: the runner reports the file once; the rule gives nothing on it.
+        text = b"`docs/gone.md`\n"
+        snapshot = snapshot_of(files={"AGENTS.md": text + suffix, "CLAUDE.md": text})
+
+        assert refs(snapshot) == [stale("CLAUDE.md", 1, "docs/gone.md")]
+
+    def test_skips_file_when_content_unread(self, snapshot_of: SnapshotFactory) -> None:
+        snapshot = snapshot_of(entries={"AGENTS.md": FileEntry(executable=False, content=None)})
+
+        assert refs(snapshot) == []
+
+    def test_cuts_echoed_reference_when_long(self, snapshot_of: SnapshotFactory) -> None:
+        long_ref = "docs/" + "a" * 200 + ".md"
+        snapshot = snapshot_of(files={"AGENTS.md": f"`{long_ref}` make {'b' * 200}\n".encode()})
+
+        messages = [message for _, _, message, _ in refs(snapshot)]
+        assert messages == [f"stale reference `{long_ref[:79]}…` (no such path)"]
+        assert all(len(message) < 120 for message in messages)
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            pytest.param("](" * 300_000, id="link-openers"),
+            pytest.param("](a#" * 250_000, id="link-fragments-unclosed"),
+            pytest.param("`" * 1_000_000, id="backticks"),
+            pytest.param("`a/" + "b/" * 500_000 + "!`", id="long-path-span"),
+            pytest.param("](" + "<" * 1_000_000 + ")", id="placeholder-openers"),
+            pytest.param("make " * 200_000, id="make-words"),
+        ],
+    )
+    def test_reads_line_in_linear_time_when_hostile(
+        self, snapshot_of: SnapshotFactory, line: str
+    ) -> None:
+        # 1 MiB of one line: a backtracking or per-reference scan would not finish here.
+        snapshot = snapshot_of(files={"AGENTS.md": f"{line}\n".encode(), "Makefile": b"check:\n"})
+
+        assert len(refs(snapshot)) <= len(line)
+
+    def test_resolves_many_references_when_hub_large(self, snapshot_of: SnapshotFactory) -> None:
+        # The basename and suffix searches use sets built once, not a scan per reference.
+        listed = {f"packages/p{n}/src/m{n}.py": b"x\n" for n in range(20_000)}
+        text = "".join(f"`m{n}.py` `p{n}/src/m{n}` `src/gone{n}.py`\n" for n in range(20_000))
+        snapshot = snapshot_of(files={"AGENTS.md": text.encode(), **listed})
+
+        found = refs(snapshot)
+
+        assert len(found) == 20_000
+        assert found[-1] == stale("AGENTS.md", 20_000, "src/gone19999.py")

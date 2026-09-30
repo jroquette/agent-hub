@@ -20,6 +20,7 @@ CONFIG_SCHEMA_RULE: Final = "config.schema"
 PLATFORM_VERSION_RULE: Final = "platform.version"
 LOCK_DRIFT_RULE: Final = "lock.drift"
 INSTRUCTIONS_SIZE_RULE: Final = "instructions.size"
+INSTRUCTIONS_REFS_RULE: Final = "instructions.refs"
 INSTRUCTIONS_DUPLICATES_RULE: Final = "instructions.duplicates"
 SETTINGS_WEAKENING_RULE: Final = "settings.weakening"
 GUARD_EXTENSION_RULE: Final = "hooks.guard-extension"
@@ -32,7 +33,7 @@ RULE_IDS: Final = (
     LOCK_DRIFT_RULE,
     "links.dead",
     INSTRUCTIONS_SIZE_RULE,
-    "instructions.refs",
+    INSTRUCTIONS_REFS_RULE,
     INSTRUCTIONS_DUPLICATES_RULE,
     "rules.frontmatter",
     "settings.valid",
