@@ -23,6 +23,11 @@ _UNLINKABLE: Final = "cannot be linked"
 LINKED_TYPES: Final[Mapping[str, type[FileEntry] | type[FolderEntry]]] = MappingProxyType(
     {"agents": FileEntry, "skills": FolderEntry}
 )
+# Keys a sibling may not set, whatever their value: they weaken the harness (ADR 0009). One
+# definition, for the generator's merge and hub doctor's ``settings.weakening`` rule.
+REFUSED_KEYS: Final[Mapping[str, tuple[tuple[str, ...], ...]]] = MappingProxyType(
+    {".claude/settings.project.json": (("disableAllHooks",), ("permissions", "defaultMode"))}
+)
 
 
 def unlinkable_reason(name: str) -> str | None:
