@@ -7,7 +7,8 @@ gives the same bytes (spec Q-9).
 ``load_json_bytes`` reads ``hub.json`` and ``hub.lock`` back: each problem is one message, the
 same for every file, which the caller prefixes with the file's name. Its strict mode, for the
 seeded ``*.project.json`` siblings (spec Q-18), also refuses what ``json`` accepts but is not one
-JSON value: a repeated key, ``NaN``/``Infinity`` and a number too large for a float.
+JSON value: a repeated key, ``NaN``/``Infinity``, a number too large for a float and a lone
+surrogate escape in a string or key.
 """
 
 import io
@@ -46,7 +47,8 @@ def load_json_bytes(content: bytes, *, strict: bool = False) -> JsonValue:
     Raises ``InvalidJsonError`` when the bytes are not UTF-8, start with a byte order mark, are not
     JSON, hold a number of more than 4300 digits or are nested too deeply. With ``strict``, also
     when an object repeats a key (never "last one wins"), or a number is ``NaN``, ``Infinity``,
-    ``-Infinity`` or too large for a float.
+    ``-Infinity`` or too large for a float, or a string or key holds a lone surrogate escape
+    (``\\ud800``: no UTF-8 form).
     """
     return _parse(_decode(content), strict=strict)
 
@@ -99,7 +101,33 @@ def _load_strict(text: str) -> JsonValue:
         parse_constant=_refuse_constant,
         parse_float=_finite_float,
     )
+    _refuse_lone_surrogates(value)
     return value
+
+
+def _refuse_lone_surrogates(value: JsonValue) -> None:
+    # A ``\ud800`` escape parses to a lone surrogate, which has no UTF-8 form: the byte form
+    # could not write it back. Walked with a stack: a value nested deeper than the recursion limit
+    # still gets the merge's one-line message.
+    pending: list[JsonValue] = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, dict):
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)
+        elif isinstance(item, str) and not _is_utf8(item):
+            raise _StrictError("a string holds a lone surrogate escape")
+
+
+def _is_utf8(text: str) -> bool:
+    # Only a lone surrogate has no UTF-8 form.
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def _unique_keys(pairs: list[tuple[str, JsonValue]]) -> JsonValue:

@@ -97,6 +97,7 @@ def test_merges_same_bytes_when_run_twice() -> None:
 
 
 REFUSED = "refused: a project cannot set this key (it weakens the harness)"
+SURROGATE = "not valid JSON here: a string holds a lone surrogate escape"
 
 
 @pytest.mark.parametrize(
@@ -132,6 +133,8 @@ REFUSED = "refused: a project cannot set this key (it weakens the harness)"
         (b'{"disableAllHooks": false}', f"disableAllHooks: {REFUSED}"),
         (b'{"permissions": {"defaultMode": "plan"}}', f"permissions.defaultMode: {REFUSED}"),
         (b'{"a b": {"c": null}}', '["a b"].c: null is refused: the merge never deletes a key'),
+        (b'{"env": {"A": "\\ud800"}}', f"$: {SURROGATE}"),
+        (b'{"\\ud800": 1}', f"$: {SURROGATE}"),
     ],
     ids=[
         "invalid-json",
@@ -149,6 +152,8 @@ REFUSED = "refused: a project cannot set this key (it weakens the harness)"
         "disable-all-hooks",
         "default-mode",
         "quoted-key",
+        "lone-surrogate-value",
+        "lone-surrogate-key",
     ],
 )
 def test_refuses_sibling_when_malformed_or_weakening(content: bytes, line: str) -> None:

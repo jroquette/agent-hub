@@ -44,7 +44,8 @@ class MergeError(GeneratorError):
 def merge_json(template: JsonValue, project: bytes, *, path: str) -> bytes:
     """Return ``project`` (the sibling at ``path``) merged over ``template``, in the byte form.
 
-    Raises ``MergeError`` for the first problem met, in the sibling's own key order.
+    Raises ``MergeError`` for a refused key first, then the first problem in the sibling's own key
+    order.
     """
     try:
         value = load_json_bytes(project, strict=True)
