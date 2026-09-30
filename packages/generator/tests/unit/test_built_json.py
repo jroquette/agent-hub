@@ -2,7 +2,13 @@ import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing.builders import a_hub_document
-from agent_hub.generator.built_json import managed_settings, project_manifest, project_settings
+from agent_hub.generator.built_json import (
+    HOOK_EVENTS,
+    base_hooks_block,
+    managed_settings,
+    project_manifest,
+    project_settings,
+)
 
 
 def a_config_named(name: str) -> HubConfig:
@@ -92,3 +98,19 @@ def test_renders_repos_in_config_order_when_repos_reordered() -> None:
     assert isinstance(settings["permissions"], dict)
 
     assert settings["permissions"]["additionalDirectories"] == ["../zeta", "../alpha"]
+
+
+def test_equals_managed_hooks_when_base_block_read(demo_config: HubConfig) -> None:
+    # Spec AC-11.12 (Q-14): hub doctor's settings.weakening compares against this value, so it is
+    # the managed settings' own ``hooks``, not a copy, and reading it renders nothing.
+    settings = managed_settings(demo_config)
+    assert isinstance(settings, dict)
+
+    block = base_hooks_block()
+
+    assert block == settings["hooks"]
+    assert list(block) == [hook.event for hook in HOOK_EVENTS]
+    assert len(block) == 6
+    # Each call builds a new value: a caller that edits one cannot change the next.
+    block["Stop"] = []
+    assert base_hooks_block() == settings["hooks"]
