@@ -372,6 +372,25 @@ MALFORMED: dict[str, tuple[Callable[[dict[str, Any]], None], tuple[ConfigProblem
         _set_file("/abs", {"ownership": "seeded"}),
         (ConfigProblem('files["/abs"]', "path '/abs' must be relative, not absolute"),),
     ),
+    # pydantic's " or instance of <Class>" is dropped only from a type error: a key or a target
+    # that holds the same words keeps its full text.
+    "absolute-key-with-instance-of": (
+        _set_file("/abs or instance of y", {"ownership": "seeded"}),
+        (
+            ConfigProblem(
+                'files["/abs or instance of y"]',
+                "path '/abs or instance of y' must be relative, not absolute",
+            ),
+        ),
+    ),
+    "git-key-with-instance-of": (
+        _set_file(".git/ or instance of x", {"ownership": "seeded"}),
+        _root("files must not list anything under .git, got '.git/ or instance of x'"),
+    ),
+    "link-target-with-instance-of": (
+        _set_file("a.md", {"ownership": "managed", "symlink": "/x or instance of q"}),
+        _root("files['a.md'].symlink '/x or instance of q' must be relative, not absolute"),
+    ),
     "two-bad-entries": (
         _two_bad_entries,
         (
@@ -470,6 +489,39 @@ def test_refuses_text_when_lock_holds_lone_surrogate(
     assert HubLock.model_validate(json.loads(content))  # the model accepts it; the reader does not
 
     assert read_hub_lock(content) == expected
+
+
+LONE_SURROGATE_LINE = "not UTF-8 text: holds a lone surrogate"
+
+# The scan runs before the model, so a lone surrogate anywhere gives its own line at its path and
+# no pydantic text ("unable to parse raw data") from the fields that hold it.
+SURROGATES_ANYWHERE: dict[str, tuple[Callable[[dict[str, Any]], None], tuple[str, ...]]] = {
+    "entry-key-and-value": (
+        _set_file("a\ud800", {"ownership": "\udc00"}),
+        ('files["a\\ud800"]', 'files["a\\ud800"].ownership'),
+    ),
+    "platform-version": (
+        lambda value: value.update(platform_version="1.0.0\ud800"),
+        ("platform_version",),
+    ),
+    "module": (lambda value: value.update(modules=["bench", "\udc00"]), ("modules[1]",)),
+    "top-level-key": (lambda value: value.update({"\ud800": 1}), ('["\\ud800"]',)),
+}
+
+
+@pytest.mark.parametrize(
+    ("mutate", "paths"), SURROGATES_ANYWHERE.values(), ids=SURROGATES_ANYWHERE.keys()
+)
+def test_reports_only_surrogate_lines_when_lock_holds_them_anywhere(
+    *, lock: HubLock, mutate: Callable[[dict[str, Any]], None], paths: tuple[str, ...]
+) -> None:
+    value = written_value(lock)
+    mutate(value)
+    content = json.dumps(value).encode()  # escaped: ``\ud800`` in the bytes, as a file holds it
+
+    assert read_hub_lock(content) == tuple(
+        ConfigProblem(path, LONE_SURROGATE_LINE) for path in paths
+    )
 
 
 def test_does_no_io_when_lock_read() -> None:

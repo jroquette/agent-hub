@@ -8,6 +8,8 @@ back into the lock or into one problem per line.
 """
 
 import hashlib
+import re
+from collections.abc import Iterator
 from typing import Annotated, Final, Literal, Self
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, model_validator
@@ -166,12 +168,16 @@ def read_hub_lock(content: bytes) -> HubLock | tuple[ConfigProblem, ...]:
 
     The JSON problems read as ``hub.json``'s do. A lock the model accepts is still refused when it
     records ``hub.json`` as managed (sync would then compare, rewrite or delete the project's file)
-    or holds a path or link target with a lone surrogate (a ``\\ud800`` escape: no UTF-8 bytes).
+    records ``hub.json`` as managed. A key or a string with a lone surrogate (a ``\\ud800``
+    escape: no UTF-8 bytes) is reported before the model sees it, one line where each one is.
     """
     try:
         value = load_json_bytes(content)
     except InvalidJsonError as error:
         return (ConfigProblem(ROOT_PATH, error.message),)
+    surrogates = tuple(_surrogate_problems(value, ()))
+    if surrogates:
+        return surrogates
     try:
         lock = HubLock.model_validate(value)
     except ValidationError as error:
@@ -184,11 +190,22 @@ def _entry_problems(lock: HubLock) -> tuple[ConfigProblem, ...]:
     for path, entry in lock.files.items():
         if path == HUB_JSON_PATH and not isinstance(entry, SeededEntry):
             problems.append(ConfigProblem(json_path(("files", path)), HUB_JSON_NOT_SEEDED))
-        if not _is_utf8(path):
-            problems.append(ConfigProblem(json_path(("files", path)), LONE_SURROGATE))
-        if isinstance(entry, ManagedLinkEntry) and not _is_utf8(entry.symlink):
-            problems.append(ConfigProblem(json_path(("files", path, "symlink")), LONE_SURROGATE))
     return tuple(problems)
+
+
+def _surrogate_problems(value: JsonValue, loc: Location) -> Iterator[ConfigProblem]:
+    # Every key and string of the document, in its order: pydantic would otherwise read one as
+    # "unable to parse raw data" or print it with replacement characters.
+    if isinstance(value, str) and not _is_utf8(value):
+        yield ConfigProblem(json_path(loc), LONE_SURROGATE)
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            if not _is_utf8(key):
+                yield ConfigProblem(json_path((*loc, key)), LONE_SURROGATE)
+            yield from _surrogate_problems(item, (*loc, key))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            yield from _surrogate_problems(item, (*loc, index))
 
 
 def _is_utf8(text: str) -> bool:
@@ -200,15 +217,17 @@ def _is_utf8(text: str) -> bool:
     return True
 
 
-# pydantic names the class it tried in a location or a message, a name the file does not hold.
+# pydantic names the class it tried in a location or in a type error's message ("Input should be
+# a valid dictionary or instance of SeededEntry"), a name the file does not hold.
 _VALUE_ERROR_PREFIX = "Value error, "
-_INSTANCE_OF = " or instance of "
+_MODEL_TYPE_ERROR = "model_type"
+_INSTANCE_OF = re.compile(r" or instance of \w+$")
 
 
 def _problems_from(error: ValidationError, value: JsonValue) -> tuple[ConfigProblem, ...]:
     entries = value.get("files") if isinstance(value, dict) else None
     problems = (
-        ConfigProblem(json_path(location), one_line(_message(detail["msg"])))
+        ConfigProblem(json_path(location), one_line(_message(detail["msg"], detail["type"])))
         for detail in error.errors()
         if (location := _entry_location(detail["loc"], entries)) is not None
     )
@@ -242,5 +261,8 @@ def _arm_by_shape(entry: dict[str, JsonValue]) -> str:
     return ManagedFileEntry.__name__
 
 
-def _message(message: str) -> str:
-    return message.removeprefix(_VALUE_ERROR_PREFIX).partition(_INSTANCE_OF)[0]
+def _message(message: str, error_type: str) -> str:
+    # Only a type error ends with the class name: a key or a target may hold the same words.
+    if error_type == _MODEL_TYPE_ERROR:
+        return _INSTANCE_OF.sub("", message)
+    return message.removeprefix(_VALUE_ERROR_PREFIX)
