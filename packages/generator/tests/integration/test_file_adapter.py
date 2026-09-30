@@ -18,7 +18,7 @@ import signal
 import socket
 import stat
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import FrameType
 from typing import Any
@@ -46,7 +46,12 @@ from agent_hub.generator.file_adapter import (
     ensure_root,
     remove_leftovers,
 )
-from agent_hub.generator.hub_tree import read_hub_tree, read_planned_tree, read_root_entry
+from agent_hub.generator.hub_tree import (
+    LinkFolder,
+    read_hub_tree,
+    read_planned_tree,
+    read_root_entry,
+)
 
 # A reader blocked on a FIFO has hung: no read of a small tree takes this long.
 HANG_SECONDS = 5
@@ -1485,6 +1490,8 @@ class ReadCalls:
     opened: list[str]
     looked: list[str]
     listed: list[FolderId]
+    # Each ``os.stat`` by name with the folder its ``dir_fd`` named.
+    looked_in: list[tuple[FolderId, str]] = field(default_factory=list)
 
     def names(self) -> set[str]:
         return {Path(name).name for name in [*self.opened, *self.looked]}
@@ -1501,6 +1508,8 @@ def record_reads(monkeypatch: pytest.MonkeyPatch) -> ReadCalls:
     def looked(path: Any, **kwargs: Any) -> os.stat_result:
         if not isinstance(path, int):
             calls.looked.append(os.fsdecode(path))
+            if kwargs.get("dir_fd") is not None:
+                calls.looked_in.append((folder_id(kwargs["dir_fd"]), os.fsdecode(path)))
         return real_stat(path, **kwargs)
 
     def listed(path: Any) -> Any:
@@ -1755,7 +1764,7 @@ def test_looks_at_link_paths_of_listed_names_when_links_in_given(
         paths={".claude/agents/base.md"},
         wanted=set(),
         listed={"plugin/demo/agents"},
-        links_in={"plugin/demo/agents": ".claude/agents"},
+        links_in={"plugin/demo/agents": LinkFolder(".claude/agents", linked=FileEntry)},
     )
 
     # ``b.md`` has no entry at its link path; ``other.md`` is never looked at.
@@ -1773,13 +1782,56 @@ def test_looks_at_link_paths_of_listed_names_when_links_in_given(
     assert "other.md" not in calls.names()
 
 
+def test_looks_only_at_linkable_names_when_links_in_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dotfile, or an entry of a type that is not linked, has no link path to look at."""
+    root = tmp_path / "root"
+    project = root / "plugin" / "demo"
+    write_file(project / "agents" / ".gitkeep", b"")
+    write_file(project / "agents" / "a.md", b"agent\n")
+    write_file(project / "agents" / "notes" / "n.md", b"a folder under agents\n")
+    write_file(project / "skills" / "notes.txt", b"a file under skills\n")
+    write_file(project / "skills" / "review" / "SKILL.md", b"skill\n")
+    for name in (".gitkeep", "a.md", "notes"):
+        write_file(root / ".claude" / "agents" / name, b"the project's own\n")
+    for name in ("notes.txt", "review"):
+        write_file(root / ".claude" / "skills" / name, b"the project's own\n")
+    calls = record_reads(monkeypatch)
+
+    snapshot = read_planned_tree(
+        root,
+        paths=(),
+        wanted=(),
+        listed={"plugin/demo/agents", "plugin/demo/skills"},
+        links_in={
+            "plugin/demo/agents": LinkFolder(".claude/agents", linked=FileEntry),
+            "plugin/demo/skills": LinkFolder(".claude/skills", linked=FolderEntry),
+        },
+    )
+
+    agents, skills = (folder_id(root / ".claude" / name) for name in ("agents", "skills"))
+    assert (agents, ".gitkeep") not in calls.looked_in
+    assert (agents, "notes") not in calls.looked_in
+    assert (skills, "notes.txt") not in calls.looked_in
+    assert calls.looked_in.count((agents, "a.md")) == 1
+    assert calls.looked_in.count((skills, "review")) == 1
+    assert sorted(path for path in snapshot.entries if path.startswith(".claude")) == [
+        ".claude",
+        ".claude/agents",
+        ".claude/agents/a.md",
+        ".claude/skills",
+        ".claude/skills/review",
+    ]
+
+
 def test_raises_before_reading_when_links_in_folder_not_listed(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="links_in names a folder that is not listed"):
         read_planned_tree(
             tmp_path / "absent",
             paths=(),
             wanted=(),
-            links_in={"plugin/demo/agents": ".claude/agents"},
+            links_in={"plugin/demo/agents": LinkFolder(".claude/agents", linked=FileEntry)},
         )
 
 

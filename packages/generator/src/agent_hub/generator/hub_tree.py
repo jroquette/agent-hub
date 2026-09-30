@@ -105,6 +105,14 @@ def read_root_entry(root: Path, name: str) -> TreeEntry | None:
 
 
 @dataclass(frozen=True)
+class LinkFolder:
+    """Where the entries of a listed folder are linked, and the entry type that is linked."""
+
+    path: str
+    linked: type[FileEntry] | type[FolderEntry]
+
+
+@dataclass(frozen=True)
 class _Descent:
     """The folders one planned read reached: open descriptors by path (``""`` is the root)."""
 
@@ -119,7 +127,7 @@ def read_planned_tree(
     paths: Collection[str],
     wanted: Collection[str],
     listed: Collection[str] = (),
-    links_in: Mapping[str, str] = MappingProxyType({}),
+    links_in: Mapping[str, LinkFolder] = MappingProxyType({}),
 ) -> TreeSnapshot:
     """Return only what ``hub sync`` plans under ``root``; ``root`` is already a real path.
 
@@ -154,7 +162,8 @@ def read_planned_tree(
             if _reach(folder, descent) is not None:
                 _record_names(folder, descent, names=None, every=True)
         for folder, link_folder in links_in.items():
-            _look_in(link_folder, names=_names_under(folder, descent.walk), descent=descent)
+            names = _linkable_names(folder, linked=link_folder.linked, walk=descent.walk)
+            _look_in(link_folder.path, names=names, descent=descent)
     finally:
         for folder_fd in descent.folders.values():
             os.close(folder_fd)
@@ -184,9 +193,9 @@ def _reach(folder: str, descent: _Descent) -> int | None:
 
 
 def _check_planned(
-    paths: Collection[str], *, listed: Collection[str], links_in: Mapping[str, str]
+    paths: Collection[str], *, listed: Collection[str], links_in: Mapping[str, LinkFolder]
 ) -> None:
-    for path in [*paths, *listed, *links_in.values()]:
+    for path in [*paths, *listed, *(link_folder.path for link_folder in links_in.values())]:
         _check_plain(path)
     for folder in links_in:
         if folder not in listed:
@@ -194,17 +203,26 @@ def _check_planned(
             raise ValueError(msg)
 
 
-def _names_under(folder: str, walk: _Walk) -> list[str]:
+def _linkable_names(
+    folder: str, *, linked: type[FileEntry] | type[FolderEntry], walk: _Walk
+) -> list[str]:
+    """The names right under ``folder`` whose entry is of type ``linked``, dotfiles never."""
     prefix = f"{folder}/"
     return [
-        path.removeprefix(prefix)
-        for path in walk.entries
-        if path.startswith(prefix) and "/" not in path.removeprefix(prefix)
+        name
+        for path, entry in walk.entries.items()
+        if path.startswith(prefix) and isinstance(entry, linked)
+        for name in [path.removeprefix(prefix)]
+        if "/" not in name and not name.startswith(".")
     ]
 
 
 def _look_in(folder: str, *, names: list[str], descent: _Descent) -> None:
-    """Record each of ``names`` present in ``folder``, which is looked at by name, never listed."""
+    """Record each of ``names`` present in ``folder``, which is looked at by name, never listed.
+
+    The names are only those a link is planned for (see ``_linkable_names``), so a dotfile or an
+    entry of another type never makes the link folder be looked into.
+    """
     folder_fd = _reach(folder, descent) if names else None
     if folder_fd is not None:
         for name in names:

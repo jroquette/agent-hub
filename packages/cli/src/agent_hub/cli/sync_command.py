@@ -30,6 +30,7 @@ from agent_hub.cli.command_exits import (
 from agent_hub.cli.hub_config_reader import load_hub_json_or_exit
 from agent_hub.cli.sync_report import change_lines, conflict_lines
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_files.extension_inputs import LINKED_TYPES
 from agent_hub.core.hub_files.hub_lock import (
     ADOPT_POINTER,
     HUB_JSON_PATH,
@@ -46,7 +47,7 @@ from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, TreeSnapshot
 from agent_hub.generator.errors import GeneratorError
 from agent_hub.generator.file_adapter import apply_sync
-from agent_hub.generator.hub_tree import read_planned_tree, read_root_entry
+from agent_hub.generator.hub_tree import LinkFolder, read_planned_tree, read_root_entry
 from agent_hub.generator.render_hub import project_json_siblings, render_hub
 
 # A change the project made to a managed path: nothing is written (ADR 0009).
@@ -125,9 +126,12 @@ def _planned_paths(rendered: RenderedHub, lock: HubLock) -> tuple[list[str], set
     return paths, wanted - {HUB_JSON_PATH}
 
 
-def _links_in(project: str) -> dict[str, str]:
+def _links_in(project: str) -> dict[str, LinkFolder]:
     """The project's agent and skill folders, each with the folder that holds their links."""
-    return {f"plugin/{project}/{folder}": f".claude/{folder}" for folder in ("agents", "skills")}
+    return {
+        f"plugin/{project}/{folder}": LinkFolder(f".claude/{folder}", linked=linked)
+        for folder, linked in LINKED_TYPES.items()
+    }
 
 
 def _plan_or_exit(

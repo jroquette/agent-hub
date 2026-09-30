@@ -19,6 +19,10 @@ from agent_hub.core.hub_files.tree_snapshot import FileEntry, FolderEntry, TreeE
 PROJECT_JSON_SUFFIX: Final = ".project.json"
 _NOT_REGULAR: Final = "not a regular file"
 _UNLINKABLE: Final = "cannot be linked"
+# The project folders whose entries are linked into ``.claude/<folder>``, by the linked type.
+LINKED_TYPES: Final[Mapping[str, type[FileEntry] | type[FolderEntry]]] = MappingProxyType(
+    {"agents": FileEntry, "skills": FolderEntry}
+)
 
 
 def unlinkable_reason(name: str) -> str | None:
@@ -148,8 +152,12 @@ def extension_inputs_from(
         if content is not None:
             project_json[path] = content
     base = f"plugin/{project}"
-    agents = _entry_names(tree, folder=f"{base}/agents", linked=FileEntry, problems=problems)
-    skills = _entry_names(tree, folder=f"{base}/skills", linked=FolderEntry, problems=problems)
+    agents, skills = (
+        _entry_names(
+            tree, folder=f"{base}/{folder}", linked=LINKED_TYPES[folder], problems=problems
+        )
+        for folder in ("agents", "skills")
+    )
     if problems:
         return tuple(sorted(problems))
     return ExtensionInputs(project_json=project_json, agents=tuple(agents), skills=tuple(skills))
