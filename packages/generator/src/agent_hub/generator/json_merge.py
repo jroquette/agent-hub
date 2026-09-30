@@ -9,22 +9,17 @@ bad JSON and a key that weakens the harness are refused, each as one line
 Pure: the sibling's bytes come in, the merged file's bytes go out.
 """
 
-from collections.abc import Mapping, Sequence
-from types import MappingProxyType
+from collections.abc import Sequence
 from typing import Final
 
 from agent_hub.core.hub_config.problems import json_path
+from agent_hub.core.hub_files.extension_inputs import REFUSED_KEYS
 from agent_hub.core.json_form import InvalidJsonError, load_json_bytes
 from agent_hub.generator.errors import GeneratorError
 from agent_hub.generator.json_form import JsonValue, dump_json
 
 type KeyPath = tuple[str | int, ...]
 
-# Keys a sibling may not set, whatever their value: they weaken the harness. One definition, for
-# the merge now and hub doctor's ``settings.weakening`` rule later (ADR 0009).
-REFUSED_KEYS: Final[Mapping[str, tuple[tuple[str, ...], ...]]] = MappingProxyType(
-    {".claude/settings.project.json": (("disableAllHooks",), ("permissions", "defaultMode"))}
-)
 _REFUSED: Final = "refused: a project cannot set this key (it weakens the harness)"
 _NULL: Final = "null is refused: the merge never deletes a key"
 # The parser's own words for a value nested too deeply (``agent_hub.core.json_form``).

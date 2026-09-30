@@ -2,10 +2,11 @@ import json
 
 import pytest
 
+from agent_hub.core.hub_files.extension_inputs import REFUSED_KEYS
 from agent_hub.core.json_form import dump_json
 from agent_hub.generator.errors import GeneratorError
 from agent_hub.generator.json_form import JsonValue
-from agent_hub.generator.json_merge import REFUSED_KEYS, MergeError, merge_json
+from agent_hub.generator.json_merge import MergeError, merge_json
 
 SETTINGS = ".claude/settings.project.json"
 # Shaped like the managed settings: an object of objects and arrays, and a scalar.
