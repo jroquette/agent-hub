@@ -23,9 +23,11 @@ from typer.testing import CliRunner, Result
 from agent_hub.cli.main import app
 from agent_hub.core.json_form import dump_json
 
-# The conftest's in-process doctor run and its path recorder (tests cannot import a conftest in
-# importlib mode).
+# The conftest's in-process doctor run, its path recorder and the recorder's filters (tests
+# cannot import a conftest in importlib mode).
 type DoctorRunner = Callable[..., Result]
+type ReadsIn = Callable[[list[PathRead], Path], set[str]]
+type Ancestors = Callable[..., set[str]]
 
 
 class PathRead(NamedTuple):
@@ -102,28 +104,6 @@ def schema_line(message: str) -> str:
     return f"error config.schema hub.json: {message} {SCHEMA_FIX}"
 
 
-def reads_in(reads: list[PathRead], folder: Path) -> set[str]:
-    """The paths read inside ``folder`` (itself included), and every read relative to a folder."""
-    # Taken before ``realpath``, whose own looks the recorder would add.
-    recorded = list(reads)
-    real = os.path.realpath(folder)
-    return {
-        read.path
-        for read in recorded
-        if read.path.startswith("<fd") or read.path == real or read.path.startswith(real + os.sep)
-    }
-
-
-def ancestors(folder: str, *, up_to: Path) -> set[str]:
-    """``folder`` and each folder above it, up to and including ``up_to`` (real paths)."""
-    top = os.path.realpath(up_to)
-    found = {top}
-    while folder != top:
-        found.add(folder)
-        folder = os.path.dirname(folder)
-    return found
-
-
 def commit_all(root: Path) -> None:
     """Make ``root`` a git work tree with every file committed, with a hermetic git."""
     git = shutil.which("git")
@@ -163,6 +143,8 @@ def test_exits_two_when_cwd_not_hub(
     run_doctor: DoctorRunner,
     *,
     path_reads: list[PathRead],
+    reads_in: ReadsIn,
+    ancestors: Ancestors,
     case: str,
 ) -> None:
     if case == "empty-folder":
@@ -313,7 +295,9 @@ class TestExitCodes:
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        *,
         path_reads: list[PathRead],
+        reads_in: ReadsIn,
     ) -> None:
         # Outside any hub: the refusal comes before the root and hub.json are looked at.
         monkeypatch.chdir(tmp_path)

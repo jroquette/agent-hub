@@ -136,8 +136,11 @@ def test_exits_zero_when_installed_hub_doctors_fresh_init(
     # DEMO's one repo next to the hub, empty, so the run stays clean once repos are read.
     (work_dir / "demo-api").mkdir()
     env = {**installed_hub.env, "HOME": str(tmp_path / "home")}
-    for variable in DROPPED_VARIABLES:
+    # No harness mode, and no git location or config of the caller: git reads the test HOME only.
+    for variable in [*DROPPED_VARIABLES, "XDG_CONFIG_HOME"]:
         env.pop(variable, None)
+    for variable in [name for name in env if name.startswith("GIT_")]:
+        env.pop(variable)
     root = work_dir / "t"
     initialized = run(
         [str(installed_hub.executable), "init", *DEMO_FLAGS, "--dir", str(root)],
