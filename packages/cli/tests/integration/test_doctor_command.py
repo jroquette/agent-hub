@@ -677,7 +677,9 @@ def test_reports_listing_problem_once_when_git_missing(
 
     lines = lines_of(run_doctor(demo_hub, *only), exit_code=1)
 
+    # E35: E24's owner is the first rule by id reading the listing, E28's file sets included.
+    owner = "features.tracker" if only else "attribution.ai"
     assert lines == [
-        f"error features.tracker .: could not list the files: git not found {LISTING_FIX}",
+        f"error {owner} .: could not list the files: git not found {LISTING_FIX}",
         ONE_ERROR,
     ]

@@ -465,6 +465,13 @@ class TestRefs:
 
         assert refs(snapshot) == []
 
+    def test_skips_lock_reference_when_lock_absent(self, snapshot_of: SnapshotFactory) -> None:
+        # E35: a hub not yet adopted has no hub.lock; that is lock.drift's finding, never a
+        # second one here.
+        snapshot = snapshot_of(files={"AGENTS.md": b"Never edit `hub.lock` by hand.\n"})
+
+        assert refs(snapshot) == []
+
     def test_reports_reference_when_under_linked_folder(self, snapshot_of: SnapshotFactory) -> None:
         # E31, D3: a linked folder is one listed link; nothing under it is listed, so a path
         # under it is stale (the old lint followed the link on disk), while the link resolves.
