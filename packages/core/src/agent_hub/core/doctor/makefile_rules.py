@@ -6,7 +6,10 @@ The managed targets are read from ``Makefile``'s own text, never a fixed list. A
 logical line (``\\``-continued physical lines joined) outside a ``define`` block that does not
 start with a tab (a recipe line) and names its targets before ``:`` or ``::``; an assignment
 (``:=``, ``::=``, ``:::=``, ``=``, ``?=``, ``+=``) or a comment is none. Special targets such as
-``.PHONY`` are not managed targets. Either file absent or not text: nothing to check.
+``.PHONY`` are not managed targets. A grouped rule (GNU make 4.3+, ``&:`` or ``&::``) names its
+targets the same way, and a target named twice on one line is reported once. Targets written
+through variables (``$(T):``) are not expanded, and files pulled in by ``-include`` are not
+followed. Either file absent or not text: nothing to check.
 """
 
 import re
@@ -21,9 +24,10 @@ MANAGED_MAKEFILE: Final = "Makefile"
 PROJECT_MAKEFILE: Final = "Makefile.project"
 FIX: Final = "rename the project target"
 
-# Targets, separated by blanks, then ``:`` or ``::`` not starting an assignment operator. Only
-# spaces may lead: a line led by a tab is a recipe line.
-_RULE_LINE: Final = re.compile(r" *([^\s:#=]+(?:\s+[^\s:#=]+)*)\s*::?(?![:=])")
+# Targets, separated by blanks, then ``:`` or ``::`` (``&`` first for a grouped rule) not starting
+# an assignment operator. Only spaces may lead: a line led by a tab is a recipe line. No name
+# character is a blank, so each name ends where the next part starts: matching stays linear.
+_RULE_LINE: Final = re.compile(r" *([^\s:#=&]+(?:\s+[^\s:#=&]+)*)\s*&?::?(?![:=])")
 _DEFINE: Final = re.compile(r" *(?:(?:override|export|private)\s+)*define(?:\s|$)")
 _ENDEF: Final = re.compile(r" *endef(?:\s|$)")
 # ``.PHONY``, ``.DEFAULT``, ``.SUFFIXES`` and the other names make gives a meaning.
@@ -66,7 +70,7 @@ def _rule_lines(text: str) -> Iterator[tuple[int, tuple[str, ...]]]:
             if _ENDEF.match(line):
                 depth -= 1
         elif match := _RULE_LINE.match(line):
-            yield number, tuple(match.group(1).split())
+            yield number, tuple(dict.fromkeys(match.group(1).split()))
 
 
 def _logical_lines(text: str) -> Iterator[tuple[int, str]]:

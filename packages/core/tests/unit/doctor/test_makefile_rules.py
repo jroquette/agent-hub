@@ -101,6 +101,10 @@ def test_reads_nothing_beyond_fixed_paths_when_rule_declared() -> None:
             [a_warning("help", 4)],
             id="after-override-define",
         ),
+        # GNU make 4.3+ grouped targets: ``&`` before the separator is no part of a name.
+        pytest.param("check&: x\n", [a_warning("check", 1)], id="grouped-target"),
+        pytest.param("lint check &: x\n", [a_warning("check", 1)], id="grouped-targets"),
+        pytest.param("check check:\n", [a_warning("check", 1)], id="repeated-target"),
     ],
 )
 def test_warns_when_project_makefile_redefines_target(
