@@ -279,3 +279,16 @@ def test_carries_no_line_when_nested_too_deeply(monkeypatch: pytest.MonkeyPatch)
 def test_carries_no_line_when_built_without_one() -> None:
     assert InvalidJsonError(TOO_DEEP).line is None
     assert InvalidJsonError(TOO_DEEP, line=4).line == 4
+
+
+def test_cuts_repeated_key_when_key_long() -> None:
+    # A key is echoed cut to ECHO_LIMIT, so a 1,000,000-character key gives a bounded message.
+    key = "k" * 1_000_000
+    content = f'{{"{key}": 1, "{key}": 2}}'.encode()
+
+    with pytest.raises(InvalidJsonError) as raised:
+        load_json_bytes(content, strict=True)
+
+    shown = '"' + "k" * 78 + "\N{HORIZONTAL ELLIPSIS}"
+    assert raised.value.message == f"not valid JSON here: the key {shown} appears more than once"
+    assert len(raised.value.message) < 150

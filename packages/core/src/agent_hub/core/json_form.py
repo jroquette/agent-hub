@@ -16,6 +16,7 @@ import json
 import math
 
 from agent_hub.core.errors import AgentHubError
+from agent_hub.core.hub_config.versions import cut_echo
 
 type JsonValue = dict[str, JsonValue] | list[JsonValue] | str | int | float | bool | None
 
@@ -140,8 +141,9 @@ def _unique_keys(pairs: list[tuple[str, JsonValue]]) -> JsonValue:
     value: dict[str, JsonValue] = {}
     for key, item in pairs:
         if key in value:
-            # Written as a JSON string: a key holding a line break stays on one line.
-            raise _StrictError(f"the key {json.dumps(key)} appears more than once")
+            # Written as a JSON string: a key holding a line break stays on one line; cut, so a
+            # huge key gives a message of bounded length.
+            raise _StrictError(f"the key {cut_echo(json.dumps(key))} appears more than once")
         value[key] = item
     return value
 

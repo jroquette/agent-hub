@@ -2,15 +2,17 @@
 
 The port of the hub's old ``agent_config_lint.py`` settings, bypass and MCP checks. Both JSON
 files are fixed paths, read only as regular files (a link is never followed, D3):
-``.claude/settings.json`` strictly, as ``settings.weakening`` reads it (E25), ``.mcp.json`` as the
-old lint read it. A finding in either file is at line 1, as the old lint put it, except a parse
-error, at the parser's line when it has one (E6).
+``.claude/settings.json`` strictly for ``settings.valid``, as ``settings.weakening`` reads it
+(E25), and as the old lint read it for ``permissions.bypass`` (E34 f); ``.mcp.json`` as the old
+lint read it (E34 b). A linked or unread file gives no finding (E34 d). A finding in either
+file is at line 1, as the old lint put it, except a parse error, at the parser's line when it
+has one (E6).
 
 - ``settings.valid``: each file parses and its top level is an object (E11); settings hold no
   deprecated key, one finding per key in sorted order.
 - ``permissions.bypass``: settings' ``permissions.defaultMode`` is not ``bypassPermissions``; no key
   or string of either file holds the skip-permissions flag; nor does a line of a UTF-8 file of
-  the hub's files (E31: the listing and the fixed paths present) under ``scripts/`` or
+  the hub's files (E31, E34 e: the listing and the fixed paths present) under ``scripts/`` or
   ``.github/workflows/``, or ``Makefile`` or ``package.json``, save exactly
   ``scripts/agent_config_lint.py`` (Q-8). A file that is not text is skipped (Q-19).
 - ``mcp.pinned``: each ``.mcp.json`` server, in key order, is not ``@latest`` and, run by
@@ -68,10 +70,12 @@ FILE_FLAG_FIX: Final = "run agents with an allowlist and the sandbox instead"
 PIN_FIX: Final = "pin an exact version (pkg@1.2.3) or use the official remote URL"
 
 _VERSION: Final = re.compile(r"@\d")
-_LOADERS: Final[tuple[tuple[str, Callable[[bytes], JsonValue]], ...]] = (
-    (SETTINGS_PATH, load_settings),
-    (MCP_PATH, load_json_bytes),
-)
+type _Loaders = tuple[tuple[str, Callable[[bytes], JsonValue]], ...]
+# settings.valid reads settings.json strictly, as settings.weakening does (E25).
+_STRICT_LOADERS: Final[_Loaders] = ((SETTINGS_PATH, load_settings), (MCP_PATH, load_json_bytes))
+# permissions.bypass reads both leniently, as the old lint did: a strict-parse error is
+# settings.valid's and never hides a bypass, even when only this rule runs (E34 f).
+_LENIENT_LOADERS: Final[_Loaders] = ((SETTINGS_PATH, load_json_bytes), (MCP_PATH, load_json_bytes))
 
 
 class _Absent:
@@ -79,7 +83,7 @@ class _Absent:
 
 
 def _settings_valid(snapshot: DoctorSnapshot) -> Iterator[Finding]:
-    for path, document in _documents(snapshot.hub):
+    for path, document in _documents(snapshot.hub, loaders=_STRICT_LOADERS):
         if isinstance(document, InvalidJsonError):
             yield SETTINGS_VALID.finding(
                 path=path, line=document.line, message=document.message, fix=SYNTAX_FIX
@@ -105,7 +109,7 @@ def _permissions_bypass(snapshot: DoctorSnapshot) -> Iterator[Finding]:
 
 
 def _config_bypass(hub: HubFiles) -> Iterator[Finding]:
-    for path, document in _documents(hub):
+    for path, document in _documents(hub, loaders=_LENIENT_LOADERS):
         if isinstance(document, InvalidJsonError):
             continue
         if path == SETTINGS_PATH and _is_bypass_mode(document):
@@ -140,9 +144,11 @@ def _mcp_pinned(snapshot: DoctorSnapshot) -> Iterator[Finding]:
             )
 
 
-def _documents(hub: HubFiles) -> Iterator[tuple[str, JsonValue | InvalidJsonError]]:
+def _documents(
+    hub: HubFiles, *, loaders: _Loaders
+) -> Iterator[tuple[str, JsonValue | InvalidJsonError]]:
     """Each JSON file present as a regular file with content, in path order, parsed or not."""
-    for path, load in _LOADERS:
+    for path, load in loaders:
         document = _document(hub, path=path, load=load)
         if not isinstance(document, _Absent):
             yield path, document
