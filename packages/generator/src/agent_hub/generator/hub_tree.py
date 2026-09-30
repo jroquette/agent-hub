@@ -17,6 +17,9 @@ names in their parent folders. The same descriptor rules hold, so unknown parts 
 run output, FIFOs, unreadable folders) are never opened, listed or looked at. Paths there must be
 plain and relative (a ``ValueError`` before anything is read), since ``..`` climbs out even under
 ``O_NOFOLLOW``.
+
+``hub doctor`` reads more (spec AC-11.3, E8): ``read_every_file`` walks as ``read_hub_tree``
+does, reads every regular file, and leaves out nested repositories, as git would.
 """
 
 import os
@@ -50,8 +53,11 @@ _NOT_UNDER_ROOT: Final = "not a relative path inside the hub"
 @dataclass(frozen=True)
 class _Walk:
     real_root: str
-    wanted: Collection[str]
+    # ``None``: every regular file is read.
+    wanted: Collection[str] | None
     entries: dict[str, TreeEntry]
+    # Leave out every folder below the root that holds a ``.git`` entry (a nested repository).
+    skip_nested: bool = False
 
 
 def read_hub_tree(root: Path, *, wanted: Collection[str]) -> TreeSnapshot:
@@ -60,6 +66,19 @@ def read_hub_tree(root: Path, *, wanted: Collection[str]) -> TreeSnapshot:
     An absent root gives an empty snapshot. Raises ``GeneratorError`` when the root is not a
     folder, or naming the path when anything under it cannot be looked at or read.
     """
+    return _walk_tree(root, wanted=wanted, skip_nested=False)
+
+
+def read_every_file(root: Path) -> TreeSnapshot:
+    """Return every entry under ``root`` as ``read_hub_tree`` does, each regular file read.
+
+    Nested repositories are left out (spec E8): a folder below the root that holds a ``.git``
+    entry, file or folder, is neither recorded nor descended, as git never lists one.
+    """
+    return _walk_tree(root, wanted=None, skip_nested=True)
+
+
+def _walk_tree(root: Path, *, wanted: Collection[str] | None, skip_nested: bool) -> TreeSnapshot:
     shown = os.fspath(root)
     try:
         mode = os.lstat(root).st_mode
@@ -70,7 +89,9 @@ def read_hub_tree(root: Path, *, wanted: Collection[str]) -> TreeSnapshot:
     if not stat.S_ISDIR(mode):
         msg = f"{shown}: not a folder"
         raise GeneratorError(msg)
-    walk = _Walk(real_root=os.path.realpath(root), wanted=wanted, entries={})
+    walk = _Walk(
+        real_root=os.path.realpath(root), wanted=wanted, entries={}, skip_nested=skip_nested
+    )
     root_fd = _open_folder(shown, None, path=shown)
     try:
         names = _list(root_fd, path=shown)
@@ -269,7 +290,11 @@ def _read_folder(folder_fd: int, names: list[str], *, prefix: str, walk: _Walk) 
         if isinstance(entry, FolderEntry):
             child_fd = _open_folder(name, folder_fd, path=path)
             try:
-                _read_folder(child_fd, _list(child_fd, path=path), prefix=path + "/", walk=walk)
+                child_names = _list(child_fd, path=path)
+                if walk.skip_nested and _GIT in child_names:
+                    del walk.entries[path]
+                    continue
+                _read_folder(child_fd, child_names, prefix=path + "/", walk=walk)
             finally:
                 os.close(child_fd)
 
@@ -311,7 +336,7 @@ def _typed_entry(folder_fd: int, name: str, *, mode: int, path: str, walk: _Walk
         if not stat.S_ISREG(mode):
             return OtherEntry(kind=_other_kind(mode))
         executable = bool(mode & stat.S_IXUSR)
-        if path not in walk.wanted:
+        if walk.wanted is not None and path not in walk.wanted:
             return FileEntry(executable=executable, content=None)
         return _read_file(folder_fd, name, executable=executable)
     except OSError as error:
