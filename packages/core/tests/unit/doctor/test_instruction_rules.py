@@ -6,6 +6,7 @@ not text is the runner's to report (E28): each rule skips it.
 """
 
 import json
+import re
 from collections.abc import Callable, Mapping
 
 import pytest
@@ -556,38 +557,283 @@ class TestRefs:
 
     def test_cuts_echoed_reference_when_long(self, snapshot_of: SnapshotFactory) -> None:
         long_ref = "docs/" + "a" * 200 + ".md"
-        snapshot = snapshot_of(files={"AGENTS.md": f"`{long_ref}` make {'b' * 200}\n".encode()})
+        target, script = "b" * 200, "c" * 200
+        snapshot = snapshot_of(
+            files={
+                "AGENTS.md": f"`{long_ref}` make {target} pnpm {script}\n".encode(),
+                "Makefile": b"check:\n",
+                "package.json": b'{"scripts": {"test": "x"}}',
+            }
+        )
 
-        messages = [message for _, _, message, _ in refs(snapshot)]
-        assert messages == [f"stale reference `{long_ref[:79]}…` (no such path)"]
-        assert all(len(message) < 120 for message in messages)
+        assert [message for _, _, message, _ in refs(snapshot)] == [
+            f"stale reference `{long_ref[:79]}…` (no such path)",
+            f"`make {target[:79]}…` is not a Makefile target",
+            f"`pnpm {script[:79]}…` is not a package.json script",
+        ]
+
+    @pytest.mark.parametrize(
+        ("line", "expected"),
+        [
+            pytest.param("](" * 500_000, [], id="link-openers"),
+            pytest.param("](a#" * 250_000, [], id="link-fragments-unclosed"),
+            pytest.param("`" * 1_000_000, [], id="backticks"),
+            pytest.param("`a/" + "b/" * 500_000 + "!`", [], id="long-path-span"),
+            pytest.param(
+                "](" + "<" * 1_000_000 + ")",
+                [stale("AGENTS.md", 1, "<" * 79 + "…")],
+                id="placeholder-openers",
+            ),
+            pytest.param(
+                "make " * 200_000,
+                [("AGENTS.md", 1, "`make make` is not a Makefile target", MAKE_FIX)] * 100_000,
+                id="make-words",
+            ),
+        ],
+    )
+    def test_reports_exact_findings_when_line_hostile(
+        self, snapshot_of: SnapshotFactory, *, line: str, expected: list[Shown4]
+    ) -> None:
+        # One line of about 1 MiB of openers, backticks or brackets.
+        snapshot = snapshot_of(files={"AGENTS.md": f"{line}\n".encode(), "Makefile": b"check:\n"})
+
+        found = refs(snapshot)
+
+        assert found == expected
 
     @pytest.mark.parametrize(
         "line",
         [
-            pytest.param("](" * 300_000, id="link-openers"),
-            pytest.param("](a#" * 250_000, id="link-fragments-unclosed"),
-            pytest.param("`" * 1_000_000, id="backticks"),
-            pytest.param("`a/" + "b/" * 500_000 + "!`", id="long-path-span"),
-            pytest.param("](" + "<" * 1_000_000 + ")", id="placeholder-openers"),
-            pytest.param("make " * 200_000, id="make-words"),
+            pytest.param("](" * 50_000, id="openers"),
+            pytest.param("](a#" * 50_000, id="fragments-unclosed"),
+            pytest.param("](a" * 50_000 + ")", id="one-close"),
         ],
     )
-    def test_reads_line_in_linear_time_when_hostile(
-        self, snapshot_of: SnapshotFactory, line: str
+    def test_scans_each_link_run_once_when_openers_repeat(
+        self, monkeypatch: pytest.MonkeyPatch, line: str
     ) -> None:
-        # 1 MiB of one line: a backtracking or per-reference scan would not finish here.
-        snapshot = snapshot_of(files={"AGENTS.md": f"{line}\n".encode(), "Makefile": b"check:\n"})
+        # The old pattern rescans the rest of the line from every "](": count what is scanned.
+        scanned = ScanCounter(instruction_rules._LINK_TARGET_STOP)
+        monkeypatch.setattr(instruction_rules, "_LINK_TARGET_STOP", scanned)
 
-        assert len(refs(snapshot)) <= len(line)
+        list(instruction_rules._link_targets(line))
+
+        assert scanned.characters <= len(line)
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "[a](b)",
+            "[a](b#c)",
+            "[a](b#c",
+            "[a](b c)",
+            "[a](b\tc)",
+            "](",
+            "[a]()",
+            "[a](#x)",
+            "[a](b)(c)",
+            "[a](](b))",
+            "](a#](b)",
+            "](a](b)",
+            "](a#b)c)",
+            "[x](a)[y](b#z)",
+            "text](a) more](b#)",
+            "](a)](",
+            "]((a)",
+            "](a](b#c](d)",
+            "](a#b](c)",
+        ],
+    )
+    def test_finds_old_link_targets_when_line_crafted(self, line: str) -> None:
+        assert list(instruction_rules._link_targets(line)) == OLD_LINK.findall(line)
+
+    @pytest.mark.parametrize(
+        "ref",
+        ["<a>", "a<b", "a>b<", "<>", "<<>", "a<b>c", "a>b<c>", "x", "path/to/", "$A", "${", "…"],
+    )
+    def test_matches_old_placeholder_when_ref_crafted(self, ref: str) -> None:
+        assert instruction_rules._is_placeholder(ref) is (OLD_PLACEHOLDER.search(ref) is not None)
 
     def test_resolves_many_references_when_hub_large(self, snapshot_of: SnapshotFactory) -> None:
-        # The basename and suffix searches use sets built once, not a scan per reference.
         listed = {f"packages/p{n}/src/m{n}.py": b"x\n" for n in range(20_000)}
         text = "".join(f"`m{n}.py` `p{n}/src/m{n}` `src/gone{n}.py`\n" for n in range(20_000))
         snapshot = snapshot_of(files={"AGENTS.md": text.encode(), **listed})
 
         found = refs(snapshot)
 
-        assert len(found) == 20_000
-        assert found[-1] == stale("AGENTS.md", 20_000, "src/gone19999.py")
+        assert found == [stale("AGENTS.md", n + 1, f"src/gone{n}.py") for n in range(20_000)]
+
+    def test_resolves_by_name_and_end_when_paths_deep(self, snapshot_of: SnapshotFactory) -> None:
+        # Five chains 600 folders deep: every folder and every end of a path is searched.
+        chains = [[f"c{n}", *(f"s{depth}" for depth in range(599))] for n in range(5)]
+        files = {"/".join([*chain, f"f{n}.md"]): b"x\n" for n, chain in enumerate(chains)}
+        text = (
+            "`f3.md` `s598/f3.md` `c2/s0/s1` `s10/s11/s12/` `s597/s598`\n`s598/gone.md` `c1/s1`\n"
+        )
+        snapshot = snapshot_of(files={"AGENTS.md": text.encode(), **files})
+
+        assert refs(snapshot) == [
+            stale("AGENTS.md", 2, "s598/gone.md"),
+            stale("AGENTS.md", 2, "c1/s1"),
+        ]
+
+    def test_keeps_path_tree_linear_when_paths_deep(self) -> None:
+        # One node per distinct folder or file, never one per folder's ancestors or ends.
+        paths = [
+            "/".join([f"c{n}", *(f"s{depth}" for depth in range(599)), "f.md"]) for n in range(5)
+        ]
+
+        tree = instruction_rules._path_tree(paths)
+
+        assert nodes_of(tree) == sum(path.count("/") + 1 for path in paths)
+
+    @pytest.mark.parametrize(
+        ("segments", "flagged"),
+        [pytest.param(32, False, id="at-bound"), pytest.param(33, True, id="over-bound")],
+    )
+    def test_searches_end_up_to_bound_when_reference_deep(
+        self, snapshot_of: SnapshotFactory, *, segments: int, flagged: bool
+    ) -> None:
+        # A deeper reference counts only from its folder or the root (SEARCHED_SEGMENTS).
+        path = "/".join(f"s{depth}" for depth in range(40))
+        ref = "/".join(path.split("/")[-segments:])
+        snapshot = snapshot_of(files={"AGENTS.md": f"`{ref}`\n".encode(), path: b"x\n"})
+
+        shown = ref if len(ref) <= 80 else f"{ref[:79]}…"
+        assert refs(snapshot) == ([stale("AGENTS.md", 1, shown)] if flagged else [])
+
+    @pytest.mark.parametrize(
+        ("entry", "ref"),
+        [
+            pytest.param(
+                FileEntry(executable=False, content=b"x\n"), "`hub.lock.d/x.md`", id="lock-path"
+            ),
+            pytest.param(
+                FileEntry(executable=False, content=b"x\n"), "`x.md`", id="lock-path-name"
+            ),
+            pytest.param(
+                FileEntry(executable=False, content=None), "`hub.lock.d/x.md`", id="leftover"
+            ),
+        ],
+    )
+    def test_reports_reference_when_only_unlisted_entry(
+        self, snapshot_of: SnapshotFactory, *, entry: FileEntry, ref: str
+    ) -> None:
+        # E31: only the listing and the fixed paths present count; the lock's paths and the
+        # leftover names the reader also records do not, so --only never changes the result.
+        snapshot = snapshot_of(
+            files={"AGENTS.md": f"{ref}\n".encode()},
+            entries={"hub.lock.d/x.md": entry},
+            listed=("AGENTS.md",),
+        )
+
+        assert refs(snapshot) == [stale("AGENTS.md", 1, ref.strip("`"))]
+
+    def test_checks_project_makefile_targets_when_included(
+        self, snapshot_of: SnapshotFactory
+    ) -> None:
+        # E31: the managed Makefile includes Makefile.project; a target there is a target.
+        snapshot = snapshot_of(
+            files={
+                "AGENTS.md": b"make check, make deploy, make sure\n",
+                "Makefile": b"check:\n\t-include Makefile.project\n",
+                "Makefile.project": b"deploy:\n\tx\n",
+            }
+        )
+
+        assert refs(snapshot) == [
+            ("AGENTS.md", 1, "`make sure` is not a Makefile target", MAKE_FIX)
+        ]
+
+    @pytest.mark.parametrize(
+        ("files", "flagged"),
+        [
+            pytest.param({"Makefile": b"check:\n\xff"}, [], id="not-utf8"),
+            pytest.param({"Makefile": b"check:\n\x00"}, [], id="nul"),
+            pytest.param({"Makefile.project": b"deploy:\n"}, ["check", "sure"], id="project-only"),
+            pytest.param(
+                {"Makefile": b"check:\n\x00", "Makefile.project": b"deploy:\n"},
+                ["check", "sure"],
+                id="nul-makefile-project-text",
+            ),
+        ],
+    )
+    def test_reads_makefile_targets_when_text(
+        self, snapshot_of: SnapshotFactory, *, files: dict[str, bytes], flagged: list[str]
+    ) -> None:
+        # A Makefile that is not text gives no targets; with none at all, nothing is checked.
+        snapshot = snapshot_of(files={"AGENTS.md": b"make check make deploy make sure\n", **files})
+
+        assert refs(snapshot) == [
+            ("AGENTS.md", 1, f"`make {name}` is not a Makefile target", MAKE_FIX)
+            for name in flagged
+        ]
+
+    def test_skips_project_makefile_when_link(self, snapshot_of: SnapshotFactory) -> None:
+        snapshot = snapshot_of(
+            files={"AGENTS.md": b"make deploy\n", "Makefile": b"check:\n", "other": b"deploy:\n"},
+            links={"Makefile.project": "other"},
+        )
+
+        assert refs(snapshot) == [
+            ("AGENTS.md", 1, "`make deploy` is not a Makefile target", MAKE_FIX)
+        ]
+
+    @pytest.mark.parametrize(
+        ("makefile", "flagged"),
+        [
+            # The old whole-text pattern: blanks, line breaks included, may precede the ":".
+            pytest.param(b"deploy\n: all\ncheck:\n", [], id="colon-on-next-line"),
+            # E29: a lone \r does not end a line, so "deploy" is not at a line's start.
+            pytest.param(b"check: x\rdeploy: y\n", ["deploy"], id="lone-cr"),
+        ],
+    )
+    def test_reads_makefile_lines_when_breaks_vary(
+        self, snapshot_of: SnapshotFactory, *, makefile: bytes, flagged: list[str]
+    ) -> None:
+        snapshot = snapshot_of(files={"AGENTS.md": b"make deploy\n", "Makefile": makefile})
+
+        assert refs(snapshot) == [
+            ("AGENTS.md", 1, f"`make {name}` is not a Makefile target", MAKE_FIX)
+            for name in flagged
+        ]
+
+    def test_keeps_last_scripts_when_key_repeated(self, snapshot_of: SnapshotFactory) -> None:
+        # Read as the old json.load (and pnpm) do: the last "scripts" wins.
+        package = b'{"scripts": {"build": "x"}, "scripts": {"test": "y"}}'
+        snapshot = snapshot_of(
+            files={"AGENTS.md": b"pnpm test pnpm build\n", "package.json": package}
+        )
+
+        assert refs(snapshot) == [
+            ("AGENTS.md", 1, "`pnpm build` is not a package.json script", PNPM_FIX)
+        ]
+
+
+type Shown4 = tuple[str | None, int | None, str, str]
+
+# The old lint's patterns, to compare the hand-written scans with.
+OLD_LINK = re.compile(r"\]\(([^)#\s]+)(?:#[^)]*)?\)")
+OLD_PLACEHOLDER = re.compile(r"<[^>]*>|path/to/|\.\.\.|…|\$\{?[A-Z_]+")
+
+
+class ScanCounter:
+    """A stand-in for a compiled pattern that counts the characters its searches pass over."""
+
+    def __init__(self, pattern: re.Pattern[str]) -> None:
+        self.pattern = pattern
+        self.characters = 0
+
+    def search(self, text: str, start: int) -> re.Match[str] | None:
+        found = self.pattern.search(text, start)
+        self.characters += (len(text) if found is None else found.start()) - start
+        return found
+
+
+def nodes_of(tree: object) -> int:
+    count, pending = 0, [tree]
+    while pending:
+        children = pending.pop().children  # type: ignore[attr-defined]
+        count += len(children)
+        pending.extend(children.values())
+    return count

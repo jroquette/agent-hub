@@ -17,12 +17,14 @@ files (``config_lint``; spec AC-11.19, AC-11.20, Q-6). Lines are ``config_lint.t
   skipped when it is a URL, ``mailto:``, ``~``, absolute or ``../`` path, a placeholder (``<x>``,
   ``path/to/``, ``...``, ``…``, ``$VAR``), ``origin/…``/``upstream/…``, a MIME type or a branch
   under ``project.branch_prefix``. It resolves, after cutting a ``::`` test id and a glob's tail
-  (``@/`` read as ``src/``), against the listed files and their folders from the file's folder
-  or the root, then by name (``.claude/worktrees``, ``node_modules``… are there by design), then
-  as the end of a listed path, with ``.ts``, ``.tsx``, ``.js`` or ``.py`` added. Nothing out of
-  the hub and no link is followed (D3). ``make`` targets are checked only when ``Makefile`` names
-  one (``X :=`` counts, as in the old lint), ``pnpm`` scripts only when ``package.json`` is a JSON
-  object with a non-empty ``scripts`` object (E11); either file as a link is not read.
+  (``@/`` read as ``src/``), against the listed paths, the fixed paths present and their
+  folders (E31), from the file's folder or the root; then by name (``.claude/worktrees``,
+  ``node_modules``… are there by design); then as the end of such a path or folder, with ``.ts``,
+  ``.tsx``, ``.js`` or ``.py`` added, for a reference of at most ``SEARCHED_SEGMENTS`` segments.
+  Nothing out of the hub and no link is followed (D3). ``make`` targets are checked only when
+  ``Makefile`` or ``Makefile.project`` names one (``X :=`` counts, as in the old lint), ``pnpm``
+  scripts only when ``package.json`` is a JSON object with a non-empty ``scripts`` object (E11);
+  such a file that is a link or not text is not read.
 - Duplicates: a line normalized as the old lint did (stripped, list markers and digits dropped
   from its start, blanks collapsed, lowercased) of 60 or more characters, not a table, fence or
   heading line, that an earlier file in sorted path order holds is flagged on the later file,
@@ -34,7 +36,7 @@ A file that is not text is skipped: the runner reports it once (E28).
 
 import posixpath
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from fnmatch import translate
 from types import MappingProxyType
@@ -50,7 +52,7 @@ from agent_hub.core.doctor.config_lint import (
     text_lines,
 )
 from agent_hub.core.doctor.finding import Finding, Read, Rule
-from agent_hub.core.doctor.snapshot import DoctorSnapshot, HubFiles, text_of
+from agent_hub.core.doctor.snapshot import DoctorSnapshot, HubFiles, hub_paths, text_of
 from agent_hub.core.hub_config.doctor_rules import (
     INSTRUCTIONS_DUPLICATES_RULE,
     INSTRUCTIONS_REFS_RULE,
@@ -157,7 +159,11 @@ def _normalized(line: str) -> str | None:
 STALE_FIX: Final = "update the path or remove the line"
 MAKE_FIX: Final = "use an existing target or add it"
 PNPM_FIX: Final = "use an existing script"
-MAKEFILE: Final = "Makefile"
+# The managed ``Makefile`` ends with ``-include Makefile.project``: both define targets.
+MAKEFILES: Final = ("Makefile", "Makefile.project")
+# The deepest reference, in segments, that the name and end search looks for; a deeper one
+# counts only from its folder or the root. The bound keeps that search linear in the hub's paths.
+SEARCHED_SEGMENTS: Final = 32
 PACKAGE_JSON: Final = "package.json"
 # Paths an instruction may name that a hub never lists, by design.
 IGNORED_BY_DESIGN: Final = frozenset(
@@ -185,41 +191,29 @@ _LINK_TARGET_STOP: Final = re.compile(r"[)#\s]")
 _GLOB: Final = re.compile(r"[*{}]")
 _EXTENSIONS: Final = ("", ".ts", ".tsx", ".js", ".py")
 
-# Reversed path segments: a path ends with ``a/b`` when ``b`` then ``a`` can be walked.
-type _Tails = dict[str, _Tails]
 
+class _Trie:
+    """A tree of path segments: the hub's paths (a node per file or folder), or references."""
 
-@dataclass(frozen=True, kw_only=True, slots=True)
-class _HubPaths:
-    """Every path looked at and every folder above one, and their ends, built once per run."""
+    __slots__ = ("children", "reached")
 
-    known: frozenset[str]
-    tails: _Tails
+    def __init__(self) -> None:
+        self.children: dict[str, _Trie] = {}
+        self.reached = False
 
-    def resolves(self, ref: str, *, folder: str) -> bool:
-        """Whether a reference names a listed file or folder, as the old lint resolved it."""
-        ref = ref.split("::", 1)[0].rstrip("/")
-        ref = f"src/{ref[2:]}" if ref.startswith("@/") else ref
-        glob = _GLOB.search(ref)
-        if glob is not None:
-            ref = ref[: glob.start()].rstrip("/")
-            if not ref:
-                return True
-        for base in (folder, ""):
-            # Out of the hub, the result starts with "..", which is never known.
-            where = posixpath.normpath(posixpath.join(base, ref))
-            if where == "." or where in self.known:
-                return True
-        name = posixpath.normpath(ref)
-        return name in IGNORED_BY_DESIGN or any(
-            self._ends_a_path(name + extension) for extension in _EXTENSIONS
-        )
+    def add(self, segments: Iterable[str]) -> _Trie:
+        node = self
+        for segment in segments:
+            child = node.children.get(segment)
+            if child is None:
+                child = node.children[segment] = _Trie()
+            node = child
+        return node
 
-    def _ends_a_path(self, candidate: str) -> bool:
-        # A known path equal to the candidate or ending with "/" + candidate.
-        node = self.tails
-        for segment in reversed(candidate.split("/")):
-            child = node.get(segment)
+    def holds(self, segments: Iterable[str]) -> bool:
+        node = self
+        for segment in segments:
+            child = node.children.get(segment)
             if child is None:
                 return False
             node = child
@@ -227,8 +221,20 @@ class _HubPaths:
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
+class _Pending:
+    """A reference not found from its folder or the root, until the name and end search runs."""
+
+    path: str
+    line: int
+    ref: str
+    # The candidates' last nodes in the references tree; empty when none is searchable.
+    ends: tuple[_Trie, ...]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
 class _RefContext:
-    paths: _HubPaths
+    paths: _Trie
+    searched: _Trie
     make_targets: frozenset[str]
     pnpm_scripts: frozenset[str]
     branch_prefix: str
@@ -240,18 +246,32 @@ def _instructions_refs(snapshot: DoctorSnapshot) -> Iterator[Finding]:
     if not files:
         return
     context = _RefContext(
-        paths=_hub_paths(hub),
+        paths=_path_tree(_known_paths(snapshot)),
+        searched=_Trie(),
         make_targets=_make_targets(hub),
         pnpm_scripts=_pnpm_scripts(hub),
         branch_prefix=snapshot.hub_config.project.branch_prefix,
     )
+    found: list[Finding | _Pending] = []
     for path in files:
         text = file_text(hub.entries.get(path))
         if isinstance(text, str):
-            yield from _file_refs(path, text=text, context=context)
+            found.extend(_file_refs(path, text=text, context=context))
+    if context.searched.children:
+        _search_ends(context.paths, searched=context.searched)
+    for item in found:
+        if isinstance(item, Finding):
+            yield item
+        elif not any(end.reached for end in item.ends):
+            yield INSTRUCTIONS_REFS.finding(
+                path=item.path,
+                line=item.line,
+                message=f"stale reference `{cut_echo(item.ref)}` (no such path)",
+                fix=STALE_FIX,
+            )
 
 
-def _file_refs(path: str, *, text: str, context: _RefContext) -> Iterator[Finding]:
+def _file_refs(path: str, *, text: str, context: _RefContext) -> Iterator[Finding | _Pending]:
     lines = text_lines(text)
     start = _body_start(text, lines=lines)
     folder = posixpath.dirname(path)
@@ -259,14 +279,57 @@ def _file_refs(path: str, *, text: str, context: _RefContext) -> Iterator[Findin
         for ref in _references(line):
             if not _is_checked(ref, branch_prefix=context.branch_prefix):
                 continue
-            if not context.paths.resolves(ref, folder=folder):
-                yield INSTRUCTIONS_REFS.finding(
-                    path=path,
-                    line=number,
-                    message=f"stale reference `{cut_echo(ref)}` (no such path)",
-                    fix=STALE_FIX,
-                )
+            ends = _unresolved_ends(ref, folder=folder, context=context)
+            if ends is not None:
+                yield _Pending(path=path, line=number, ref=ref, ends=ends)
         yield from _command_findings(path, number=number, line=line, context=context)
+
+
+def _unresolved_ends(ref: str, *, folder: str, context: _RefContext) -> tuple[_Trie, ...] | None:
+    """``None`` when the reference resolves as the old lint's first steps did; else the ends of
+    its name-and-end candidates (``.ts``, ``.tsx``, ``.js``, ``.py`` added) to search for.
+    """
+    ref = ref.split("::", 1)[0].rstrip("/")
+    ref = f"src/{ref[2:]}" if ref.startswith("@/") else ref
+    glob = _GLOB.search(ref)
+    if glob is not None:
+        ref = ref[: glob.start()].rstrip("/")
+        if not ref:
+            return None
+    for base in (folder, ""):
+        # Out of the hub, the result starts with "..", which no hub path holds.
+        where = posixpath.normpath(posixpath.join(base, ref))
+        if where == "." or context.paths.holds(where.split("/")):
+            return None
+    name = posixpath.normpath(ref)
+    if name in IGNORED_BY_DESIGN:
+        return None
+    candidates = (f"{name}{extension}".split("/") for extension in _EXTENSIONS)
+    return tuple(
+        context.searched.add(segments)
+        for segments in candidates
+        if len(segments) <= SEARCHED_SEGMENTS
+    )
+
+
+def _search_ends(paths: _Trie, *, searched: _Trie) -> None:
+    """Mark each searched reference that some hub path or folder ends with.
+
+    One walk over the paths tree carries the searched references' nodes that the segments so far
+    end with; there are never more than ``SEARCHED_SEGMENTS``, so the walk is linear in the
+    paths tree.
+    """
+    pending: list[tuple[_Trie, tuple[_Trie, ...]]] = [(paths, ())]
+    while pending:
+        node, live = pending.pop()
+        for segment, child in node.children.items():
+            reached = []
+            for state in (searched, *live):
+                following = state.children.get(segment)
+                if following is not None:
+                    following.reached = True
+                    reached.append(following)
+            pending.append((child, tuple(reached)))
 
 
 def _command_findings(
@@ -349,28 +412,29 @@ def _is_placeholder(ref: str) -> bool:
     )
 
 
-def _hub_paths(hub: HubFiles) -> _HubPaths:
-    """The listed and looked-at paths and their folders, as a set and as reversed segments."""
-    known = set(hub.listed) | set(hub.entries)
-    for path in tuple(known):
-        cut = path.rfind("/")
-        # Upwards until a folder already there: each folder is added once.
-        while cut > 0 and path[:cut] not in known:
-            known.add(path[:cut])
-            cut = path.rfind("/", 0, cut)
-    tails: _Tails = {}
-    for path in known:
-        node = tails
-        for segment in reversed(path.split("/")):
-            node = node.setdefault(segment, {})
-    return _HubPaths(known=frozenset(known), tails=tails)
+def _known_paths(snapshot: DoctorSnapshot) -> Iterator[str]:
+    """The listed paths and the fixed paths present (E31): never lock paths or leftover names."""
+    hub = snapshot.hub
+    yield from hub.listed
+    yield from (path for path in hub_paths(snapshot.hub_config) if path in hub.entries)
+
+
+def _path_tree(paths: Iterable[str]) -> _Trie:
+    """The paths as a segments tree: each folder is one node, however many paths it holds."""
+    tree = _Trie()
+    for path in paths:
+        tree.add(path.split("/"))
+    return tree
 
 
 def _make_targets(hub: HubFiles) -> frozenset[str]:
-    text = text_of(hub.entries.get(MAKEFILE))
-    if text is None:
-        return frozenset()
-    return frozenset(_MAKE_TARGET.findall("\n".join(text_lines(text))))
+    """The targets of ``Makefile`` and of the ``Makefile.project`` it includes (E31)."""
+    targets: set[str] = set()
+    for name in MAKEFILES:
+        text = text_of(hub.entries.get(name))
+        if text is not None:
+            targets.update(_MAKE_TARGET.findall("\n".join(text_lines(text))))
+    return frozenset(targets)
 
 
 def _pnpm_scripts(hub: HubFiles) -> frozenset[str]:
