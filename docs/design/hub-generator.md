@@ -1,9 +1,10 @@
-# Hub generator: init, sync, adopt, hooks and commands
+# Hub generator: init, hooks, plugin wiring and commands
 
 ## Purpose
 
-Phase 1 contract for `hub init`, `hub sync`, `--adopt`, hooks, plugin wiring, the commands that replace the hub
-scripts, and how the CLI ships. Config: [project-config.md](project-config.md); full rules and reasons: the ADRs.
+Phase 1 contract for what a hub holds and who owns it, `hub init`, hooks, plugin wiring, the commands that replace
+the hub scripts, and how the CLI ships. `hub.lock`, `hub sync`, `--adopt` and the write path:
+[hub-sync.md](hub-sync.md). Config: [project-config.md](project-config.md); full rules and reasons: the ADRs.
 
 ## Contract
 
@@ -30,43 +31,9 @@ Output depends only on `hub.json` (values validated or quoted: [project-config.m
 version and the seeded extension inputs (`*.project.json`, `AGENTS.project.md`, entries under `plugin/<project>/`); text
 templates use `@@` placeholders, always substituted. A project changes a managed file only via `hub.json` or a seeded
 sibling: `CLAUDE.md` imports `@AGENTS.md` and `@AGENTS.project.md`; the `Makefile` includes `mk/<module>.mk` per
-selected module, then `-include Makefile.project`; a `*.project.json` is deep-merged at the next sync (strict: bad input
-or a harness-weakening key exits 1). Every JSON the generator builds or merges (settings, manifests, merged
+selected module, then `-include Makefile.project`; a `*.project.json` is deep-merged at the next sync
+([hub-sync.md](hub-sync.md)). Every JSON the generator builds or merges (settings, manifests, merged
 `*.project.json`, `hub.lock`) has one form: sorted keys, 2-space indent, UTF-8, final newline.
-
-### hub.lock and hub sync
-
-`hub.lock` (JSON): `lock_version` (1), `platform_version`, `schema_version`, `modules` (sorted) and `files` by path: a
-managed file (SHA-256 of the LF bytes written, executable bit), a managed link (relative target) or seeded (no hash).
-"Equal": same bytes and executable bit, or same link target.
-
-1. Load this checkout's `hub.json` (a worktree syncs itself), checking in order: running CLI = `platform.version`,
-   `schema_version`, the model; `hub.lock` exists. Else exit 1 naming the fix (the pinned `uvx` command, `--adopt`).
-2. Plan in memory, sorted, only paths rendered or in the lock (others, extra `.claude/skills/` entries too, are never
-   touched). Equal to the render: clean, recorded. Managed in the lock: equal to its entry → rewrite; missing → write,
-   `restored <path>`; no longer rendered → delete if equal (a rename is a delete plus a create). Rendered managed, no
-   entry, absent: write, `created <path>`. Seeded, no entry: created if absent, else recorded; in the lock: never
-   touched, even if deleted. Managed to seeded: the file (or its absence) stays. Conflict: a managed file differing from
-   entry and render; a rendered managed path on disk with no managed entry; a file or directory where a link belongs, or
-   the reverse; a name in both plugins; a symlinked ancestor. Print a diff or cause per path, write nothing, exit 3. Way
-   out: move the change to an extension file, restore or delete the file, re-run.
-3. Write each path through `.<name>.hub-tmp-<8 random hex>` in its folder (`O_CREAT|O_EXCL|O_NOFOLLOW`, 0o600; a link:
-   `os.symlink`), give it its final mode, `os.replace` it; `hub.lock` last. On an error the adapter removes its own temp
-   entry. A file or link (not a folder) of that shape is a leftover, never unknown or locked, removed after the plan
-   passes, before any write (init: the whole tree but `.git`; sync: planned folders). Nothing to do: `up to date`. The
-   writer opens the root once per apply, checked against its real path by device and inode. Reader and writer descend by
-   `O_DIRECTORY|O_NOFOLLOW` descriptors, so neither follows a symlinked ancestor of a path it touches, nor opens a
-   non-regular file; a link resolving outside the hub is refused (accepted risk: both resolve that by path, so a folder
-   swapped meanwhile can escape it; the writer's root check narrows that window). Exits: 0 done; 1 error (config, merge,
-   version, I/O); 2 usage; 3 conflict; 4 `--check` (writes nothing): changes pending, creations included.
-
-`--adopt` joins a hand-made hub; re-runnable, needs no `hub.lock`, never commits. Lock paths follow sync; others, in the
-same run: equal → recorded managed; missing managed → written; seeded → recorded, created when absent (an empty
-`plugin/<project>/` too); a differing file → listed (`<path>: +a -b lines`), untouched, out of the lock; a directory
-link where a directory of per-entry links is rendered (e.g. `.claude/skills`) → listed as a migration. The partial
-`hub.lock` is saved, then exit 3 if anything is listed, else 0. `--accept PATH` (repeatable) takes the template version
-of a listed difference or migration (the directory link becomes a real directory of links), overwriting the working
-file; other conflicts are listed and refused, like a path not listed this run (exit 2).
 
 ### hub init
 
@@ -80,7 +47,8 @@ its flag and why (no value, `git not found`, `git timed out`, `git could not run
 the pinned `uvx` command), schema and model, and copies it byte for byte; selected modules exit 1 until module templates
 ship. `--dir` (default: the cwd) is created after every check. The target may hold only `.git`, seeded files (kept),
 paths equal to their render and leftovers: a `hub.lock` exits 1 pointing to `hub sync`; a differing managed path, an
-unknown entry or a `hub.json` other than this run's to `hub sync --adopt`; any other problem names its cause. Output:
+unknown entry or a `hub.json` other than this run's to `hub sync --adopt`; any other problem names its cause. It writes
+through the sync writer ([hub-sync.md](hub-sync.md), Apply), `hub.lock` last. Output:
 `created N files (M managed, K seeded) and L links in <root>`; if any, `kept X files already there (Y seeded, Z equal to
 the render)` (`and L links`) and `removed X leftover temporary files`; next steps. Exits: 0 done, 1 error, 2 usage.
 

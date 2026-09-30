@@ -36,7 +36,7 @@ doctor loads the manifests of the selected modules only.
 |---|---|---|---|
 | `config.schema` | error | `hub.json` against `HubConfig`, including `schema_version` and `doctor.rules` ids; cannot be disabled or retuned | [ADR 0010](../adr/0010-hub-json-config-contract.md) |
 | `platform.version` | error | the running CLI equals `platform.version` (a shim always runs the pin; a direct `hub` may not) | [ADR 0013](../adr/0013-release-by-git-tags.md) |
-| `lock.drift` | error | each managed file exists and matches its `hub.lock` entry (a missing one: `hub sync` restores it); a lock older than the pin: warning "sync pending"; newer: warning "downgrade"; no `hub.lock`: warning "not adopted" | [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md) |
+| `lock.drift` | error | each managed file exists and matches its `hub.lock` entry (a missing one: `hub sync` restores it); a lock older than the pin: warning "sync pending"; newer: warning "downgrade"; no `hub.lock`: warning "not adopted" | [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md), [hub-sync.md](hub-sync.md) |
 | `links.dead` | error | relative Markdown links resolve to an existing file (hub and repos) | new |
 | `instructions.size` | error | line limits: `AGENTS.md` 100, `CLAUDE.md` 150, `CLAUDE.local.md` 50, `.claude/rules/*.md` 80 | config lint |
 | `instructions.refs` | error | paths, make targets and package scripts named in instruction files exist | config lint |
@@ -75,9 +75,10 @@ object with a `findings` list (the finding fields above) and the totals, for scr
 
 0 when no finding has severity `error`; 1 when at least one does; 2 on a usage error, an unknown rule id in `--only`,
 a rule in `--only` whose module is not selected, or a directory that is not a hub (no `hub.json` found; the message
-says so). The pin is checked before `schema_version`, as in `hub sync`: on a pin mismatch the `platform.version` error
-is reported and `config.schema` reports no `schema_version` mismatch (the pinned release, which fixes both, judges it).
-On an invalid config only `config.schema` runs; a missing `hub.lock` does not stop the other rules.
+says so). The pin is checked before `schema_version`, as in `hub sync` ([hub-sync.md](hub-sync.md)): on a pin
+mismatch the `platform.version` error is reported and `config.schema` reports no `schema_version` mismatch (the pinned
+release, which fixes both, judges it). On an invalid config only `config.schema` runs; a missing `hub.lock` does not
+stop the other rules.
 
 ### Configuration
 

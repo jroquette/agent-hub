@@ -18,7 +18,7 @@ def test_dumps_sorted_indented_utf8_when_value_given() -> None:
 
 
 def test_matches_lock_form_when_nested_value_dumped() -> None:
-    # Shaped like hub.lock (docs/design/hub-generator.md § hub.lock and hub sync): nested objects
+    # Shaped like hub.lock (docs/design/hub-sync.md § hub.lock): nested objects
     # and lists, keys given out of order at every level.
     value = {
         "platform_version": "0.1.0",
