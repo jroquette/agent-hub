@@ -484,9 +484,11 @@ def test_writes_identical_trees_when_sync_runs_twice(
     assert (child.returncode, child.stderr) == (0, ""), child.stderr
     assert in_process.stdout.splitlines()[-1] == "updated hub.lock"
     assert child.stdout == in_process.stdout
-    # Another umask: the permission bits of the written files differ, nothing else does.
+    # The child's umask really differed: some permission bits of the written files differ.
     assert tree_digest(child_root) != tree_digest(demo_hub)
+    # Nothing but those bits differs.
     assert shape(tree_digest(child_root)) == shape(tree_digest(demo_hub))
     lock = (demo_hub / "hub.lock").read_bytes()
     assert (child_root / "hub.lock").read_bytes() == lock
-    lock_golden(lock)
+    # Compare only: a lock written by sync never rewrites the init golden, even in update mode.
+    lock_golden(lock, update=False)
