@@ -30,6 +30,8 @@ def test_keeps_dotted_name_when_url_has_no_git_suffix() -> None:
     [
         # Host: exactly github.com, in every form.
         "https://gitlab.com/acme/demo-hub.git",
+        # Another host whose name and path still form a valid owner/name.
+        "https://gitlab.com/demo-hub",
         "https://github.com.evil.io/acme/demo-hub",
         "git@github.com.evil.io:acme/demo-hub.git",
         "ssh://git@github.com.evil.io/acme/demo-hub",
