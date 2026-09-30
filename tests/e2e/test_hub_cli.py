@@ -38,11 +38,13 @@ def test_prints_version_when_installed_as_uv_tool(
     installed_hub: InstalledHub, repo_root: Path, run: Callable[..., CompletedProcess[str]]
 ) -> None:
     cli_project = tomllib.loads((repo_root / "packages/cli/pyproject.toml").read_text())
+    meta_project = tomllib.loads((repo_root / "packages/agent-hub/pyproject.toml").read_text())
 
     result = run([str(installed_hub.executable), "--version"], env=installed_hub.env)
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == cli_project["project"]["version"]
+    assert result.stdout.strip() == meta_project["project"]["version"]
 
 
 def test_collects_twice_when_installed_as_uv_tool(

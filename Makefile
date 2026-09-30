@@ -11,8 +11,8 @@ COV := --cov=agent_hub.core --cov=agent_hub.storage --cov=agent_hub.collector \
        --cov=packages/storage/src/agent_hub/storage/migrations --cov-branch --cov-report=
 ALEMBIC := $(RUN) python -m agent_hub.storage.migration
 
-.PHONY: help format lint typecheck layout test-fast check-fast test-integration test-e2e imports \
-        migrations coverage check hub-schema
+.PHONY: help format lint typecheck layout lockstep test-fast check-fast test-integration test-e2e \
+        imports migrations coverage check hub-schema
 
 help: ## List the targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "%-16s %s\n", $$1, $$2}'
@@ -29,11 +29,14 @@ typecheck: ## mypy --strict (config in mypy.ini)
 layout: ## test layout and names, forbidden modules, packages listed in gate configs
 	$(RUN) python -m scripts.check_test_layout
 
+lockstep: ## agent-hub-cli and agent-hub share one version (scripts/check_release.py)
+	$(RUN) python -m scripts.check_release
+
 test-fast: ## unit and contract tests; starts fresh coverage data
 	$(RUN) coverage erase
 	$(RUN) pytest -m "unit or contract" $(COV)
 
-check-fast: format lint typecheck layout test-fast ## the fast gate, run while working
+check-fast: format lint typecheck layout lockstep test-fast ## the fast gate, run while working
 
 test-integration: ## integration tests (real SQLite files under tmp_path); appends coverage
 	$(RUN) pytest -m integration $(COV) --cov-append

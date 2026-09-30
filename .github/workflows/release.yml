@@ -1,0 +1,68 @@
+# A release is an annotated tag vX.Y.Z on a commit of main, made by the owner by hand (ADR 0013,
+# docs/CONTRIBUTING.md). This job checks each pushed v* tag: its form and the cli and meta versions
+# (scripts/check_release.py), that its commit is on main, and that the pinned uvx command prints
+# that version. Read-only: it creates, moves and publishes nothing. No full gate here: main
+# already passed `make check`.
+# The tag goes through env, never ${{ }} inside run: (script injection).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # fetch-depth 0 fetches every branch and tag, so origin/main exists for the ancestry check.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # Same pin as ci.yml.
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.19"
+      # First, so the later steps only ever print a validated vX.Y.Z.
+      - name: Check the tag form and the cli and meta versions
+        env:
+          TAG: ${{ github.ref_name }}
+        run: uv run --no-project --python 3.14 python scripts/check_release.py --tag="$TAG"
+      # ^{commit} handles annotated and lightweight tags (checkout may fetch the tag as lightweight).
+      - name: Check the tag is on main
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          git rev-parse --verify -q origin/main > /dev/null || { echo "tag $TAG: origin/main is missing from the checkout" >&2; exit 1; }
+          commit="$(git rev-parse --verify -q "refs/tags/$TAG^{commit}")" || { echo "tag $TAG: not found in the checkout" >&2; exit 1; }
+          git merge-base --is-ancestor "$commit" origin/main || { echo "tag $TAG: its commit is not on main" >&2; exit 1; }
+          echo "tag $TAG: its commit is on main"
+      # Run outside the checkout, as a user would. The token reaches git only through the
+      # GIT_CONFIG_* rewrite below (never in the URL, never printed); uv fetches with system git.
+      - name: Check the pinned uvx command prints the version
+        working-directory: ${{ runner.temp }}
+        env:
+          TAG: ${{ github.ref_name }}
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/
+        run: |
+          printed="$(uvx --from git+https://github.com/jroquette/agent-hub@"$TAG"#subdirectory=packages/agent-hub hub --version)" \
+            || { echo "tag $TAG: the pinned uvx command failed (see uv's error above)" >&2; exit 1; }
+          if [ "$printed" != "${TAG#v}" ]; then
+            echo "tag $TAG: the pinned uvx command printed ${printed@Q}, expected ${TAG#v}" >&2
+            exit 1
+          fi
+          echo "tag $TAG: the pinned uvx command printed $printed"
