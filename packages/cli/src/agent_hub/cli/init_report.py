@@ -11,10 +11,11 @@ from typing import Final
 
 from agent_hub.core.hub_files.plan_init import InitPlan
 
-# Only commands that work in this release: AGH-15 adds ./agent, AGH-14 the hub sync step.
+# Only commands that work in this release: AGH-15 adds ./agent.
 _REVIEW_STEP: Final = "review hub.json, AGENTS.project.md and README.md"
 _COMMIT_STEP: Final = 'git add -A && git commit -m "Create the hub"'
 _CLAUDE_STEP: Final = "start Claude Code in the hub folder: claude"
+_UPGRADE_STEP: Final = "to upgrade later: edit platform.version in hub.json, then run hub sync"
 _FIRST_PRINTABLE: Final = " "
 _LAST_PRINTABLE: Final = "~"
 
@@ -66,5 +67,6 @@ def next_steps(root: str, *, git_present: bool) -> list[str]:
         _REVIEW_STEP,
         _COMMIT_STEP,
         _CLAUDE_STEP,
+        _UPGRADE_STEP,
     ]
     return ["Next steps:", *(f"  {number}. {step}" for number, step in enumerate(steps, start=1))]
