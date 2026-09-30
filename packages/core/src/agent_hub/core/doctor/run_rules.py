@@ -153,12 +153,17 @@ def _checked(rule: Rule, snapshot: DoctorSnapshot) -> tuple[Finding, ...] | Find
     """The rule's findings, or the one error that replaces them when its check raises (E27).
 
     ``KeyboardInterrupt``, ``SystemExit`` and ``GeneratorExit`` are not ``Exception`` and
-    propagate; the message is cut, and the report escapes it.
+    propagate; the message is cut, and the report escapes it. An error whose text itself
+    raises reads ``<unprintable>``.
     """
     try:
         return tuple(rule.check(snapshot))
     except Exception as error:  # noqa: BLE001 - any rule bug becomes a finding, not a lost run
-        detail = cut_echo(str(error))
+        try:
+            text = str(error)
+        except Exception:  # noqa: BLE001 - a broken __str__ must not undo the finding
+            text = "<unprintable>"
+        detail = cut_echo(text)
         return Finding(
             rule=rule.id,
             severity=Severity.ERROR,

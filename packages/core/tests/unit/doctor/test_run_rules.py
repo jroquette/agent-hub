@@ -665,7 +665,13 @@ def test_prefers_listing_reader_when_earlier_rule_reads_no_listing(
 CRASH_FIX = "report this as a hub doctor bug"
 
 
-def a_crashing_rule(rule_id: str, error: BaseException, *, severity: Severity) -> Rule:
+def a_crashing_rule(
+    rule_id: str,
+    error: BaseException,
+    *,
+    severity: Severity,
+    reads: frozenset[Read] = frozenset(),
+) -> Rule:
     """A rule whose check yields one finding, then raises ``error``."""
 
     def check(snapshot: DoctorSnapshot) -> Iterator[Finding]:
@@ -678,7 +684,7 @@ def a_crashing_rule(rule_id: str, error: BaseException, *, severity: Severity) -
         severity=severity,
         summary=f"The crashing {rule_id} rule.",
         module=None,
-        reads=frozenset(),
+        reads=reads,
         check=check,
     )
 
@@ -752,3 +758,37 @@ def test_propagates_when_rule_raises_base_exception(
 
     with pytest.raises(type(error)):
         run_rules(selected(registry, config=config), snapshot_of(config=config))
+
+
+def test_reports_crash_then_tree_problem_when_listing_reader_raises(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    registry = (
+        a_crashing_rule("lock.drift", ValueError("boom"), severity=Severity.WARNING, reads=LISTING),
+    )
+    config = a_config()
+    snapshot = snapshot_of(config=config)
+    failed = replace(snapshot, hub=replace(snapshot.hub, problem=LISTING_PROBLEM))
+
+    findings = run_rules(selected(registry, config=config), failed)
+
+    assert findings == (
+        crash_finding("lock.drift", "rule crashed: ValueError: boom"),
+        tree_finding("lock.drift"),
+    )
+
+
+class UnprintableError(Exception):
+    def __str__(self) -> str:
+        raise RuntimeError("no text")
+
+
+def test_reports_unprintable_when_error_text_raises(snapshot_of: SnapshotFactory) -> None:
+    registry = (a_crashing_rule("lock.drift", UnprintableError(), severity=Severity.WARNING),)
+    config = a_config()
+
+    findings = run_rules(selected(registry, config=config), snapshot_of(config=config))
+
+    assert findings == (
+        crash_finding("lock.drift", "rule crashed: UnprintableError: <unprintable>"),
+    )
