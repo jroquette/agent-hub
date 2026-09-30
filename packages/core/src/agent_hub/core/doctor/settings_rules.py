@@ -115,17 +115,37 @@ def _settings_finding(message: str) -> Finding:
 
 
 def _keeps(base_groups: JsonValue, groups: JsonValue) -> bool:
-    """Whether ``groups`` (an event's array) holds each base group, compared by JSON form."""
-    held = {_group_key(group) for group in groups} if isinstance(groups, list) else set()
+    """Whether ``groups`` (an event's array) holds each base group, compared by JSON form.
+
+    A group nested deeper than every base group can equal none of them, so it is never keyed:
+    that bounds the cost, and ``json.dumps`` never walks a value deeper than the C stack allows.
+    """
     wanted = base_groups if isinstance(base_groups, list) else [base_groups]
+    limit = max((_depth(group) for group in wanted), default=0)
+    items = groups if isinstance(groups, list) else []
+    held = {_group_key(item) for item in items if _depth(item) <= limit}
     return all(_group_key(group) in held for group in wanted)
+
+
+def _depth(value: JsonValue) -> int:
+    """How deeply ``value`` nests (a scalar is 0), walked with a stack: no recursion limit."""
+    deepest = 0
+    pending: list[tuple[JsonValue, int]] = [(value, 0)]
+    while pending:
+        item, depth = pending.pop()
+        deepest = max(deepest, depth)
+        if isinstance(item, dict):
+            pending.extend((child, depth + 1) for child in item.values())
+        elif isinstance(item, list):
+            pending.extend((child, depth + 1) for child in item)
+    return deepest
 
 
 def _group_key(value: JsonValue) -> str:
     """The merge's equality (``dump_json``'s: ``true`` is not ``1``, ``1`` not ``1.0``), compact.
 
     ``dump_json``'s indent grows with the square of the depth; this key grows with the size.
-    The strict parse refused NaN and infinities, and its nesting limit bounds what reaches here.
+    The strict parse refused NaN and infinities; ``_keeps`` bounds the depth that reaches here.
     """
     return json.dumps(
         value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False

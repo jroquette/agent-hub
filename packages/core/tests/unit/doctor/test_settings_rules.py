@@ -308,3 +308,22 @@ def test_compares_deep_group_by_linear_key_when_project_nests_it(
     assert findings_of(hub_of(snapshot_of, files={SETTINGS: settings})) == []
     # The indented byte form of this group is quadratic (about 400 M characters); the key is not.
     assert len(_group_key(load_json_bytes(deep, strict=True))) <= 3 * DEEP
+
+
+def test_reports_no_crash_when_project_group_nests_objects_deeply(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    # Deeper than json.dumps can walk on the C stack; whether the parser accepts it depends on
+    # the machine's stack, so either outcome is right as long as nothing is raised.
+    deep = b'{"a":' * 60_000 + b"1" + b"}" * 60_000
+    settings = settings_with(base_block()).replace(b'"Stop": [', b'"Stop": [' + deep + b", ", 1)
+
+    found = findings_of(hub_of(snapshot_of, files={SETTINGS: settings}))
+
+    too_deep = (
+        Severity.ERROR,
+        SETTINGS,
+        "$: not valid JSON here: it is nested too deeply",
+        SYNC_FIX,
+    )
+    assert found in ([], [too_deep])
