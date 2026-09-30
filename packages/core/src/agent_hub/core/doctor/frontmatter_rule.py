@@ -17,9 +17,9 @@ Scale: a glob longer than ``MAX_GLOB_LENGTH`` characters, or whose braces expand
 run, in time linear in its length (an ``[`` that ``fnmatch`` reads as a literal is closed first),
 and matched only against the paths that start with its literal head, each path once as a file
 and once for its folders, so no folder is ever built as a string. A run spends at most
-``MAX_GLOB_MATCHES`` such path matches on all its globs (E33); a glob that would pass that budget,
-and every glob after it, is reported as not checked. A file that is not text is skipped: the
-runner reports it once (E28).
+``MAX_GLOB_CHARACTERS`` path characters on such matches (E33); the glob that would pass that
+budget, and every glob after it not decided before, is reported as not checked. A file that is
+not text is skipped: the runner reports it once (E28).
 """
 
 import re
@@ -54,10 +54,11 @@ NAMED_FIELDS: Final = ("name", "description")
 # matched against the hub's paths, so both bound the work one frontmatter line can ask for.
 MAX_GLOB_LENGTH: Final = 256
 MAX_GLOB_EXPANSIONS: Final = 64
-# The path matches one run may spend on all globs (E33): each glob variant tried on one path is
-# one. Globs are tried in file order, then in their order in the file; a glob whose matching
-# would pass the budget, and every glob after it, gets a "not checked" finding instead.
-MAX_GLOB_MATCHES: Final = 2_000_000
+# The path characters one run may spend matching globs (E33): a glob variant tried on one path
+# costs the path's length + 1, as a match's time grows with it. Globs are tried in file order,
+# then in their order in the file; the glob whose matching would pass the budget, and every glob
+# not decided before it, gets a "not checked" finding instead.
+MAX_GLOB_CHARACTERS: Final = 64_000_000
 
 UNTERMINATED_MESSAGE: Final = "unterminated frontmatter"
 UNTERMINATED_FIX: Final = "close the frontmatter with `---`"
@@ -119,18 +120,20 @@ class _Globs:
     """Whether each glob matches a hub path or folder, each glob worked out once per run.
 
     The hub's paths are sorted on first use, so a hub whose rules name no glob never sorts them.
-    Matching spends the run's budget (E33): one unit per path a glob variant is tried on; once
-    it is spent, the glob being matched and every glob not yet worked out are not checked.
+    Matching spends the run's budget (E33): a path a glob variant is tried on costs its length
+    + 1, charged before the match; once a match does not fit, the glob being matched and every
+    glob not yet worked out are not checked, even one that would cost nothing.
     """
 
-    __slots__ = ("_budget", "_paths", "_problems", "_source", "_spent")
+    __slots__ = ("_budget", "_exhausted", "_paths", "_problems", "_source", "_spent")
 
     def __init__(self, source: Callable[[], Iterable[str]]) -> None:
         self._source = source
         self._paths: tuple[str, ...] | None = None
         self._problems: dict[str, tuple[str, str] | None] = {}
-        self._budget = MAX_GLOB_MATCHES
+        self._budget = MAX_GLOB_CHARACTERS
         self._spent = 0
+        self._exhausted = False
 
     def problem(self, glob: str) -> tuple[str, str] | None:
         """The message and fix of a flagged glob (too long, too many expansions, no match, not
@@ -150,7 +153,7 @@ class _Globs:
         tried = dict.fromkeys(
             variant for each in expanded for variant in (each, each.replace("/**/", "/"))
         )
-        if self._spent >= self._budget:
+        if self._exhausted:
             return f"{shown} {UNCHECKED_MESSAGE}", UNCHECKED_FIX
         for variant in tried:
             matched = self._matches(variant)
@@ -171,9 +174,11 @@ class _Globs:
             path = paths[index]
             if not path.startswith(head):
                 return False
-            if self._spent >= self._budget:
+            cost = len(path) + 1
+            if self._spent + cost > self._budget:
+                self._exhausted = True
                 return None
-            self._spent += 1
+            self._spent += cost
             if file_pattern.fullmatch(path) or folder_pattern.match(path):
                 return True
         return False

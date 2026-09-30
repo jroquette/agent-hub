@@ -533,27 +533,30 @@ class TestBudget:
     def test_spends_run_budget_when_globs_many(
         self, snapshot_of: SnapshotFactory, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # E33, structural: with a budget of 10 path matches, "src/a0.py" tries 1 path and "*.rs"
-        # all 7; "*.txt" would pass the budget, so it and every later glob are not checked (a
-        # glob decided before, "src/a0.py", keeps its result).
-        monkeypatch.setattr(frontmatter_rule, "MAX_GLOB_MATCHES", 10)
+        # E33, structural: a path tried costs its length + 1 (rules files 19, src files 10), so
+        # with a budget of 120 "src/a0.py" spends 10 and "*.rs" all 88. "*.txt" would pass the
+        # budget; it and every later glob not decided before are not checked, even "zzz/*",
+        # which would cost nothing ("src/a0.py" keeps its result).
+        monkeypatch.setattr(frontmatter_rule, "MAX_GLOB_CHARACTERS", 120)
         counters = count_patterns(monkeypatch)
         files = {f"src/a{n}.py": b"" for n in range(5)}
         first = {".claude/rules/a.md": a_rule("src/a0.py", "*.rs", "*.txt")}
-        later = {".claude/rules/b.md": a_rule("src/a1.py", "src/a0.py")}
+        later = {".claude/rules/b.md": a_rule("src/a1.py", "src/a0.py", "zzz/*")}
         snapshot = snapshot_of(files={**first, **later, **files})
 
         assert found(snapshot) == [
             unmatched(".claude/rules/a.md", "*.rs"),
             unchecked(".claude/rules/a.md", "*.txt"),
             unchecked(".claude/rules/b.md", "src/a1.py"),
+            unchecked(".claude/rules/b.md", "zzz/*"),
         ]
-        assert sum(counter.calls for counter in counters[0::2]) <= 10
+        assert spent(counters) == 10 + 88 + 19
+        assert spent(counters) <= 120
 
     def test_checks_every_glob_when_budget_enough(
         self, snapshot_of: SnapshotFactory, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(frontmatter_rule, "MAX_GLOB_MATCHES", 15)
+        monkeypatch.setattr(frontmatter_rule, "MAX_GLOB_CHARACTERS", 10 + 88 + 88)
         files = {f"src/a{n}.py": b"" for n in range(5)}
         rules = {".claude/rules/a.md": a_rule("src/a0.py", "*.rs", "*.txt")}
         snapshot = snapshot_of(files={**rules, **files})
@@ -563,8 +566,35 @@ class TestBudget:
             unmatched(".claude/rules/a.md", "*.txt"),
         ]
 
+    @pytest.mark.parametrize(
+        ("length", "checked"),
+        [pytest.param(6, True, id="short-paths"), pytest.param(200, False, id="long-paths")],
+    )
+    def test_spends_budget_faster_when_paths_long(
+        self,
+        snapshot_of: SnapshotFactory,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        length: int,
+        checked: bool,
+    ) -> None:
+        # The same ten paths and glob: short paths fit a budget of 1000 characters, long ones not.
+        monkeypatch.setattr(frontmatter_rule, "MAX_GLOB_CHARACTERS", 1000)
+        counters = count_patterns(monkeypatch)
+        files = {f"{n}".rjust(length - 3, "x") + ".py": b"" for n in range(10)}
+        snapshot = snapshot_of(files={RULE: a_rule("*.rs"), **files})
+
+        expected = unmatched(RULE, "*.rs") if checked else unchecked(RULE, "*.rs")
+        assert found(snapshot) == [expected]
+        assert spent(counters) <= 1000
+
     def test_bounds_run_when_default_budget(self) -> None:
-        assert frontmatter_rule.MAX_GLOB_MATCHES == 2_000_000
+        assert frontmatter_rule.MAX_GLOB_CHARACTERS == 64_000_000
+
+
+def spent(counters: list[MatchCounter]) -> int:
+    """The budget the file patterns' matches spent: each path's length + 1."""
+    return sum(counter.characters + counter.calls for counter in counters[0::2])
 
 
 def count_patterns(monkeypatch: pytest.MonkeyPatch) -> list[MatchCounter]:
