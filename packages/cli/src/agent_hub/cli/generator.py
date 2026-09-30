@@ -1,4 +1,6 @@
-"""The hub generator commands (SPEC layer 1): ``init`` writes a hub; ``sync``, ``doctor`` are stubs.
+"""The hub generator commands (SPEC layer 1): ``init`` writes a hub; ``doctor`` is a stub.
+
+``sync`` is in ``sync_command``.
 
 ``init`` runs the pipeline of the AGH-12 spec, and every step that fails exits 1 before any write:
 the config (from ``--config``, or from the flags plus git-read defaults), the D3 module refusal, the
@@ -120,11 +122,6 @@ def init(
     _apply_or_exit(root, plan)
     for line in [*created_lines(plan, root), "", *next_steps(root, git_present=git_present)]:
         typer.echo(line)
-
-
-def sync() -> None:
-    """Reapply the hub templates without overwriting what the project customized."""
-    _not_implemented()
 
 
 def doctor() -> None:

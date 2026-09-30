@@ -10,10 +10,9 @@ from agent_hub.cli.main import app
 @pytest.mark.parametrize(
     "args",
     [
-        ["sync"],
         ["doctor"],
     ],
-    ids=["sync", "doctor"],
+    ids=["doctor"],
 )
 def test_exits_two_when_stub_command_run(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, args: list[str]
