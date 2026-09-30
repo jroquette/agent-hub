@@ -26,7 +26,7 @@ The spec is in `docs/SPEC.md`: read it before any task. The directions already s
 
 Set up once per clone or worktree with `uv sync --all-packages` (the `make` targets also sync on their own).
 
-- `make check-fast`: while working (format, lint, mypy --strict, test layout, unit and contract tests).
+- `make check-fast`: while working (format, lint, mypy --strict, test layout, version lockstep, unit and contract tests).
 - `make check`: before a PR, and what CI runs (`check-fast` + integration, e2e, import contracts, migrations, coverage floors).
 
 Redirect the output to a file and check the exit code: `make check > check.log 2>&1; echo $?`. Never run them with `-j`.
