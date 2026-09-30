@@ -3,8 +3,8 @@
 This module reads the file; core's ``check_hub_document`` checks it, in the order of
 docs/design/project-config.md § Versioning: the pin, then ``schema_version``, then the model.
 The file is read once, as bytes, so a caller that copies it gets exactly what was checked.
-``read_hub_json`` returns the problems; ``load_hub_json_or_exit`` prints one line per problem
-and exits 1.
+``read_hub_bytes`` returns only the bytes read and ``read_hub_json`` the problems;
+``load_hub_json_or_exit`` prints one line per problem and exits 1.
 """
 
 import json
@@ -45,9 +45,18 @@ class _Unread(NamedTuple):
 
 
 def read_hub_json(path: Path) -> LoadedHubJson | tuple[ConfigProblem, ...]:
-    """The bytes and validated config in ``path``, or the problems that stop its use."""
+    """The bytes and validated config in ``path``, or the problems that stop its use.
+
+    Tell the two apart with ``isinstance(result, LoadedHubJson)``: a NamedTuple is a tuple too.
+    """
     loaded = _load(path)
     return (loaded.problem,) if isinstance(loaded, _Unread) else loaded
+
+
+def read_hub_bytes(path: Path) -> bytes | tuple[ConfigProblem, ...]:
+    """The bytes in ``path`` as read, or the problem that stopped the read; nothing is checked."""
+    content = _read_bytes(path)
+    return (content.problem,) if isinstance(content, _Unread) else content
 
 
 def load_hub_json_or_exit(path: Path, *, missing_hint: str | None = None) -> LoadedHubJson:
