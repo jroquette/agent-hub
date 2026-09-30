@@ -96,8 +96,9 @@ its exit code passes through. A script is deleted when its command lands, after 
 
 ### Distribution
 
-Releases are semver tags `vX.Y.Z` on agent-hub `main`, made by the owner and checked against the meta-package version by
-CI; no PyPI. A shim runs the pinned release with no install (uv caches each version):
+Releases are semver tags `vX.Y.Z` on agent-hub `main`, made by the owner and checked by `release.yml` against the
+meta-package version, which `agent-hub-cli` shares in lockstep (`make lockstep`); no PyPI. A shim runs the pinned
+release with no install (uv caches each version):
 `uvx --from git+https://github.com/jroquette/agent-hub@v<platform.version>#subdirectory=packages/agent-hub hub …`.
 `hub init` takes the same source via `uvx` or `uv tool install`. Private access: a read-only secret in hub CI; the repo
 attached or `GH_TOKEN` in other projects' cloud sessions (the `cloud` setup checks access, warms the cache). Credentials

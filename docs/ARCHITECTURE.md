@@ -35,8 +35,9 @@ packages/<pkg>/
   tests/integration/          # real SQLite files under tmp_path
 ```
 
-Repo tooling (the layout checker, coverage floors, PR-title lint, the pytest level plugin) lives in `scripts/`, with its
-tests in the root `tests/unit/scripts/`. The root `tests/e2e/` holds the end-to-end tests. See [TESTING.md](TESTING.md).
+Repo tooling (the layout checker, coverage floors, PR-title lint, the release check, the pytest level plugin) lives in
+`scripts/`, with its tests in the root `tests/unit/scripts/`. The root `tests/e2e/` holds the end-to-end tests. See
+[TESTING.md](TESTING.md).
 
 **Python and uv.** The workspace targets Python 3.14 (`.python-version` = `3.14`, `requires-python = ">=3.14"`); 3.14 is
 the first release whose stdlib has `uuid.uuid7`, which the API ids use. uv must be 0.9.0 or newer
