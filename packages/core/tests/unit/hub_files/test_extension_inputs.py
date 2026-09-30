@@ -210,6 +210,9 @@ def test_returns_empty_value_when_nothing_present() -> None:
         pytest.param("STRASSE", "stra\u00dfe", id="casefold-not-lower"),
         # Folding the capital iota's NFC form gives a decomposed result: NFC again composes it.
         pytest.param("\u0399\u0308\u0301", "\u0390", id="nfc-after-casefold"),
+        # Marks out of canonical order: folding U+0345 first gives a spacing iota, so without the
+        # inner NFC the two forms of one name fold apart.
+        pytest.param("\u03b1\u0345\u0301", "\u1fb4", id="nfc-before-casefold"),
     ],
 )
 def test_gives_one_key_when_names_differ_only_in_case_or_form(one: str, other: str) -> None:

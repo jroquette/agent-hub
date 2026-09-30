@@ -18,6 +18,7 @@ from typing import Annotated, Final
 import typer
 
 from agent_hub.cli.command_exits import (
+    extension_inputs_or_exit,
     fail,
     fail_generator,
     not_implemented,
@@ -31,6 +32,7 @@ from agent_hub.cli.init_report import created_lines, next_steps, shown_path
 from agent_hub.core.hub_config.document_check import check_hub_document
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
+from agent_hub.core.hub_files.extension_inputs import ExtensionInputs
 from agent_hub.core.hub_files.hub_lock import HUB_JSON_PATH
 from agent_hub.core.hub_files.plan_init import InitPlan, InitRefusal, plan_init
 from agent_hub.core.hub_files.rendered_file import Ownership
@@ -39,7 +41,7 @@ from agent_hub.core.json_form import dump_json
 from agent_hub.generator.errors import GeneratorError
 from agent_hub.generator.file_adapter import apply_writes, ensure_root, remove_leftovers
 from agent_hub.generator.hub_tree import read_hub_tree
-from agent_hub.generator.render_hub import render_hub
+from agent_hub.generator.render_hub import project_json_siblings, render_hub
 
 _BRANCH_PREFIX: Final = "branch_prefix"
 _DEFAULTABLE: Final = (AUTHOR_NAME, AUTHOR_EMAIL, HUB_REPO)
@@ -197,17 +199,27 @@ def _check_root_or_exit(root: str) -> None:
         fail(f"{shown_path(root)}: not a folder")
 
 
-def _wanted(rendered: RenderedHub) -> frozenset[str]:
-    """The files the planner compares by content: every managed file, and ``hub.json``."""
+def _wanted(rendered: RenderedHub, *, siblings: Iterable[str]) -> frozenset[str]:
+    """The files read by content: every managed file, ``hub.json`` and the ``*.project.json``."""
     managed = (file.path for file in rendered.files if file.ownership is Ownership.MANAGED)
-    return frozenset({*managed, HUB_JSON_PATH})
+    return frozenset({*managed, HUB_JSON_PATH, *siblings})
 
 
 def _plan_or_exit(root: str, *, config: HubConfig, hub_json: bytes) -> tuple[InitPlan, bool]:
-    """The init plan and whether the root holds ``.git``; a refusal prints every path, sorted."""
+    """The init plan and whether the root holds ``.git``; a refusal prints every path, sorted.
+
+    A kept ``*.project.json`` sibling merges into its ``X.json`` (spec D2). Project agents and
+    skills are not linked: at init they are unknown entries, refused like any other (Q-22).
+    """
     try:
-        rendered = render_hub(config)
-        tree = read_hub_tree(Path(root), wanted=_wanted(rendered))
+        siblings = project_json_siblings(config)
+        tree = read_hub_tree(Path(root), wanted=_wanted(render_hub(config), siblings=siblings))
+    except GeneratorError as error:
+        fail_generator(error)
+    found = extension_inputs_or_exit(tree, project=config.project.name, siblings=siblings)
+    extensions = ExtensionInputs(project_json=found.project_json, agents=(), skills=())
+    try:
+        rendered = render_hub(config, extensions)
     except GeneratorError as error:
         fail_generator(error)
     planned = plan_init(rendered=rendered, config=config, hub_json=hub_json, tree=tree)

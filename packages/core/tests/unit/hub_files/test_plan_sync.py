@@ -1155,6 +1155,29 @@ def test_reports_clash_when_project_names_differ_only_in_case_or_form(
     )
 
 
+def test_reports_both_lines_when_project_names_clash_with_base_and_each_other(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    """One path may get both lines, the other entries in code-point order (E42)."""
+    rendered = with_links(a_rendered_hub(), *base_links())
+    lock = a_lock(rendered, config)
+    extensions = names_in("agents", "EVALUATOR.md", "Evaluator.md")
+
+    result = run(rendered, lock, synced_tree(rendered), extensions=extensions)
+
+    twice = "named twice in plugin/demo, ignoring case and Unicode form"
+    base = "plugin/hub-workflow/agents/evaluator.md"
+    upper, title = "plugin/demo/agents/EVALUATOR.md", "plugin/demo/agents/Evaluator.md"
+    assert result == SyncConflicts(
+        problems=(
+            PathProblem(".claude/agents/EVALUATOR.md", f"{twice} ({title} and {upper})"),
+            PathProblem(".claude/agents/EVALUATOR.md", f"in both plugins ({base} and {upper})"),
+            PathProblem(".claude/agents/Evaluator.md", f"{twice} ({upper} and {title})"),
+            PathProblem(".claude/agents/Evaluator.md", f"in both plugins ({base} and {title})"),
+        )
+    )
+
+
 def test_accepts_project_link_when_name_unique(
     a_rendered_hub: HubFactory, config: HubConfig
 ) -> None:
