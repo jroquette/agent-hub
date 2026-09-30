@@ -59,6 +59,7 @@ CORE_MODULES = (
     "doctor/guard_extension_rule.py",
     "doctor/makefile_rules.py",
     "doctor/features_rule.py",
+    "doctor/config_lint.py",
 )
 
 # Design decision 4 of the plan, word for word: each refusal names the cause or the way out.
