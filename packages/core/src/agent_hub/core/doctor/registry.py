@@ -1,0 +1,12 @@
+"""The rules this release of ``hub doctor`` ships, in ``RULE_IDS`` order.
+
+A known id missing here is "not in this release" (docs/design/hub-doctor.md § Rules); each
+release that adds rules appends them.
+"""
+
+from typing import Final
+
+from agent_hub.core.doctor.config_rules import CONFIG_SCHEMA, PLATFORM_VERSION
+from agent_hub.core.doctor.finding import Rule
+
+REGISTRY: Final[tuple[Rule, ...]] = (CONFIG_SCHEMA, PLATFORM_VERSION)

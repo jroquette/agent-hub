@@ -17,10 +17,11 @@ from agent_hub.core.hub_config.config_object import (
 )
 
 CONFIG_SCHEMA_RULE: Final = "config.schema"
+PLATFORM_VERSION_RULE: Final = "platform.version"
 
 RULE_IDS: Final = (
     CONFIG_SCHEMA_RULE,
-    "platform.version",
+    PLATFORM_VERSION_RULE,
     "lock.drift",
     "links.dead",
     "instructions.size",

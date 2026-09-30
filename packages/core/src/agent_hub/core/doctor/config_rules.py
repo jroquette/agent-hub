@@ -11,14 +11,18 @@ from typing import Final
 
 from agent_hub.core.doctor.finding import Finding, Rule
 from agent_hub.core.doctor.snapshot import ConfigFailure, DoctorSnapshot, PinMismatch
-from agent_hub.core.hub_config.doctor_rules import CONFIG_SCHEMA_RULE, RULE_MODULES, Severity
+from agent_hub.core.hub_config.doctor_rules import (
+    CONFIG_SCHEMA_RULE,
+    PLATFORM_VERSION_RULE,
+    RULE_MODULES,
+    Severity,
+)
 from agent_hub.core.hub_config.document_check import check_hub_document
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ROOT_PATH, ConfigProblem
 from agent_hub.core.hub_config.versions import cut_echo, pinned_release, pinned_release_command
 from agent_hub.core.json_form import InvalidJsonError, load_json_bytes
 
-PLATFORM_VERSION_RULE: Final = "platform.version"
 CONFIG_PATH: Final = "hub.json"
 CONFIG_SCHEMA_FIX: Final = "fix hub.json (docs/design/project-config.md)"
 PINNED_RELEASE_FIX: Final = "run the pinned release"
