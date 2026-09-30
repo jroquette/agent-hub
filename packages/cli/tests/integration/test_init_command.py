@@ -391,18 +391,53 @@ def test_creates_dir_with_parents_when_checks_pass(
     assert (nested / "hub.lock").is_file()
 
 
+@pytest.mark.parametrize(
+    ("name", "escaped"),
+    [("hub-file", False), ("hub-caf\N{LATIN SMALL LETTER E WITH ACUTE}", True)],
+    ids=["ascii", "non-ascii"],
+)
 def test_exits_one_when_dir_is_file(
-    git_on_path: Any, tmp_path: Path, demo_flags: list[str]
+    git_on_path: Any, tmp_path: Path, demo_flags: list[str], *, name: str, escaped: bool
 ) -> None:
-    a_file = tmp_path / "hub-file"
+    a_file = tmp_path / name
     a_file.write_bytes(b"not a folder\n")
 
     result = run_init([*demo_flags, "--dir", str(a_file)])
 
     assert result.exit_code == 1
     assert result.stdout == ""
-    assert result.stderr.splitlines() == [f"{real(a_file)}: not a folder"]
+    # A path that is not printable ASCII is shown as a JSON string.
+    shown = json.dumps(real(a_file)) if escaped else real(a_file)
+    assert result.stderr.splitlines() == [f"{shown}: not a folder"]
     assert a_file.read_bytes() == b"not a folder\n"
+
+
+@pytest.mark.parametrize(
+    "directory",
+    [None, "sub", "caf\N{LATIN SMALL LETTER E WITH ACUTE}"],
+    ids=["no-dir", "relative-dir", "escaped-dir"],
+)
+def test_names_folder_when_cwd_deleted(
+    git_on_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    demo_flags: list[str],
+    directory: str | None,
+) -> None:
+    gone = tmp_path / "gone"
+    gone.mkdir()
+    monkeypatch.chdir(gone)
+    gone.rmdir()
+    args = [*demo_flags] if directory is None else [*demo_flags, "--dir", directory]
+
+    result = run_init(args)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    shown = json.dumps(directory) if directory and not directory.isascii() else directory or "."
+    assert result.stderr.splitlines() == [f"{shown}: {os.strerror(errno.ENOENT)}"]
+    assert not gone.exists()
 
 
 def test_writes_into_link_target_when_dir_is_symlink(
