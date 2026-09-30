@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+from agent_hub.core.doctor import run_rules as run_rules_module
 from agent_hub.core.doctor.finding import Finding, Read, Rule
 from agent_hub.core.doctor.run_rules import (
     Selection,
@@ -663,6 +664,26 @@ def test_prefers_listing_reader_when_earlier_rule_reads_no_listing(
     assert findings == (tree_finding(TRACKER),)
 
 
+def test_prefers_file_set_reader_when_earlier_rule_reads_no_listing(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    # A rule that reads a file set reads the listing it comes from, with no HUB_LISTING (E28).
+    spies = Spies()
+    registry = (
+        spies.rule("config.schema"),
+        spies.rule("attribution.ai"),
+        spies.rule("instructions.size", reads=frozenset({Read.INSTRUCTION_FILES})),
+    )
+    config = a_config()
+    snapshot = snapshot_of(config=config)
+    failed = replace(snapshot, hub=replace(snapshot.hub, problem=LISTING_PROBLEM))
+
+    findings = run_rules(selected(registry, config=config), failed)
+
+    assert "instructions.size" > "attribution.ai"
+    assert findings == (tree_finding("instructions.size"),)
+
+
 CRASH_FIX = "report this as a hub doctor bug"
 
 
@@ -911,6 +932,23 @@ def test_reports_no_text_problem_when_no_reader_selected(
     snapshot = snapshot_of(config=config, files={"AGENTS.md": UNDECODABLE})
 
     assert run_rules(selected(registry, config=config, only=only), snapshot) == ()
+
+
+def test_builds_no_file_set_when_no_reader_selected(
+    snapshot_of: SnapshotFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A run that no rule reading a file set is part of never walks the listing for them.
+    def refused(hub: object) -> tuple[str, ...]:
+        raise AssertionError(hub)
+
+    monkeypatch.setattr(run_rules_module, "instruction_files", refused)
+    monkeypatch.setattr(run_rules_module, "plugin_files", refused)
+    spies = Spies()
+    registry = (spies.rule("config.schema"), spies.rule(TRACKER, reads=LISTING))
+    config = a_config()
+    snapshot = snapshot_of(config=config, files={"AGENTS.md": UNDECODABLE})
+
+    assert run_rules(selected(registry, config=config), snapshot) == ()
 
 
 def test_reports_no_text_problem_when_config_failed(snapshot_of: SnapshotFactory) -> None:
