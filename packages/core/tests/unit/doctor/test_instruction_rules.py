@@ -453,6 +453,28 @@ class TestRefs:
 
         assert refs(snapshot) == [stale(RULE, 1, ref)]
 
+    def test_resolves_reference_when_listed_link_dangles(
+        self, snapshot_of: SnapshotFactory
+    ) -> None:
+        # E31: references resolve against the listing, not the disk; a listed link is a path
+        # there, whether its target exists or not (the old lint's disk check said it did not).
+        snapshot = snapshot_of(
+            files={"AGENTS.md": b"`docs/gone.md` and [x](docs/gone.md)\n"},
+            links={"docs/gone.md": "../nowhere/gone.md"},
+        )
+
+        assert refs(snapshot) == []
+
+    def test_reports_reference_when_under_linked_folder(self, snapshot_of: SnapshotFactory) -> None:
+        # E31, D3: a linked folder is one listed link; nothing under it is listed, so a path
+        # under it is stale (the old lint followed the link on disk), while the link resolves.
+        snapshot = snapshot_of(
+            files={"AGENTS.md": b"`vendor/lib/a.md` in `vendor/`\n"},
+            links={"vendor": "../shared/vendor"},
+        )
+
+        assert refs(snapshot) == [stale("AGENTS.md", 1, "vendor/lib/a.md")]
+
     def test_checks_make_targets_when_makefile_present(self, snapshot_of: SnapshotFactory) -> None:
         makefile = b"check-fast: lint\n\tx\nlint:\n\tx\nvenv := .venv\n.PHONY: lint\n"
         text = b"Run make check-fast, make lint and make venv. Then make sure: make deploy.\n"

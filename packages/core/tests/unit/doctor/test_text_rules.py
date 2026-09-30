@@ -514,6 +514,20 @@ class TestScannedFiles:
         assert found(ATTRIBUTION_AI, snapshot) == []
         assert found(SECRETS_CONFIG, snapshot) == []
 
+    def test_reports_plugin_path_once_when_agent_linked_into_plugin(
+        self, snapshot_of: SnapshotFactory
+    ) -> None:
+        # D3, E1: a hub links each plugin agent into .claude/agents/ one file at a time; the old
+        # walk read the match twice (through the link and in plugin/), the link is never read now.
+        agent = "plugin/p/agents/a.md"
+        content = f"{AT_MINIMUM['GitHub token']}\n{TRAILER}\n".encode()
+        snapshot = snapshot_of(
+            files={agent: content}, links={".claude/agents/a.md": "../../" + agent}
+        )
+
+        assert found(SECRETS_CONFIG, snapshot) == [secret(agent, 1, "GitHub token")]
+        assert found(ATTRIBUTION_AI, snapshot) == [attribution(agent, 2, "AI co-author trailer")]
+
     def test_reports_not_text_once_when_rules_read_it_first(
         self, snapshot_of: SnapshotFactory
     ) -> None:

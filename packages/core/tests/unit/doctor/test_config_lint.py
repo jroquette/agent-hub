@@ -832,6 +832,15 @@ GOLDENS: dict[str, tuple[Callable[[], GoldenCase], tuple[Flagged, ...]]] = {
 }
 
 
+# The two goldens whose flagged set differs, as the old lint reported them.
+NON_GIT_FALLBACK_GOLDEN: tuple[Flagged, ...] = (
+    (REFS, AGENTS, 2),
+    (REFS, AGENTS, 3),
+    (BYPASS, "Makefile", 2),
+)
+PERMISSIONS_BYPASS_SCRIPTS_GOLDEN: tuple[Flagged, ...] = ((BYPASS, "Makefile", 2),)
+
+
 def golden_config() -> HubConfig:
     # The hub copy's hub.json: branch prefix ``dev/``, tracker team ``TST``.
     document = a_hub_document()
@@ -878,3 +887,120 @@ class TestGoldenCases:
         # E27's guard turns a raising rule into a finding: none may hide a rule failure here.
         assert not [f for f in findings if f.message.startswith("rule crashed")]
         assert flagged(findings) == expected(golden)
+
+
+class TestPortDivergences:
+    """One test per spec § Port differences row that a golden case shows (AC-11.18, D4)."""
+
+    def test_reports_without_line_when_instructions_size_exceeded(
+        self, snapshot_of: SnapshotFactory
+    ) -> None:
+        # The old lint put the count in the line (``AGENTS.md:101``); the doctor names no line.
+        findings = run_case(snapshot_of, instructions_size_case())
+
+        assert [(f.path, f.line, f.message) for f in findings if f.path == AGENTS] == [
+            (AGENTS, None, "101 lines, limit 100")
+        ]
+        assert {f.line for f in findings} == {None}
+
+    def test_lists_github_and_node_modules_when_walked(self, snapshot_of: SnapshotFactory) -> None:
+        # ``non_git_fallback``: the old walk dropped every path holding ``.git`` (so ``.github/``)
+        # or ``node_modules``; only ``.git`` is skipped now (D3), so both references resolve and
+        # the workflow's flag is found.
+        findings = run_case(snapshot_of, non_git_fallback_case())
+
+        assert flagged(findings) == expected(
+            (
+                *(item for item in NON_GIT_FALLBACK_GOLDEN if item[0] != REFS),
+                (BYPASS, ".github/workflows/ci.yml", 1),
+            )
+        )
+
+    def test_flags_untracked_script_when_listed(self, snapshot_of: SnapshotFactory) -> None:
+        # ``permissions_bypass_scripts``: the old scan read tracked files only; the listing holds
+        # untracked, unignored files too (D3, Q-4), so ``scripts/x.sh`` is flagged.
+        findings = run_case(snapshot_of, permissions_bypass_scripts_case())
+
+        assert flagged(findings) == expected(
+            (*PERMISSIONS_BYPASS_SCRIPTS_GOLDEN, (BYPASS, "scripts/x.sh", 1))
+        )
+
+    def test_ignores_linked_commands_folder_when_listed(self, snapshot_of: SnapshotFactory) -> None:
+        # ``agent_skill_frontmatter``: the old walk went into the linked ``.claude/commands``
+        # folder (its count line said 4 instruction files); links are never followed (D3), so
+        # the flagged set is the golden's and ``c.md`` is no instruction file.
+        case = agent_skill_frontmatter_case()
+        snapshot = case_snapshot(snapshot_of, case)
+
+        assert flagged(run_case(snapshot_of, case)) == expected(
+            GOLDENS["agent_skill_frontmatter"][1]
+        )
+        assert instruction_files(snapshot.hub) == (
+            DOT + "agents/a.md",
+            DOT + "agents/b.md",
+            DOT + "agents/ok.md",
+        )
+
+    def test_ignores_linked_agent_file_when_listed(self, snapshot_of: SnapshotFactory) -> None:
+        # E1: a hub links each plugin agent into ``.claude/agents/`` one file at a time; the old
+        # walk opened the link and checked the plugin's text as an instruction file. The same
+        # ``clean`` hub with such a link, to an agent of 200 lines holding a stale reference,
+        # stays clean: the link is no instruction file and the plugin file is not one either.
+        agent = frontmatter(name="big", description="A long agent") + "See `gone/x.md`.\n"
+        base = clean_case()
+        case = GoldenCase(
+            files={**base.files, "plugin/p/agents/big.md": agent + numbered(196, "step")},
+            links={DOT + "agents/big.md": "../../plugin/p/agents/big.md"},
+        )
+
+        assert run_case(snapshot_of, case) == ()
+
+    def test_splits_settings_checks_when_ids_differ(self, snapshot_of: SnapshotFactory) -> None:
+        # One old check, three ids now: the files' validity and deprecated keys under
+        # ``settings.valid``, the bypass mode and flag under ``permissions.bypass``.
+        invalid = run_case(snapshot_of, settings_valid_invalid_json_case())
+        bypass = run_case(snapshot_of, permissions_bypass_settings_case())
+
+        assert {(f.rule, f.path) for f in invalid} == {(VALID, SETTINGS), (VALID, MCP)}
+        assert {(f.rule, f.path, f.message) for f in bypass} == {
+            (VALID, SETTINGS, "deprecated settings key `ignorePatterns`"),
+            (BYPASS, SETTINGS, "`bypassPermissions` in shared settings"),
+            (BYPASS, SETTINGS, f"`{FLAG}` in config"),
+            (BYPASS, MCP, f"`{FLAG}` in config"),
+            (BYPASS, ".github/workflows/ci.yml", f"`{FLAG}`"),
+        }
+
+    def test_flags_near_named_script_when_exception_anchored(
+        self, snapshot_of: SnapshotFactory
+    ) -> None:
+        # Q-8: the old scan skipped any path ending ``agent_config_lint.py``; only exactly
+        # ``scripts/agent_config_lint.py`` is skipped now.
+        base = permissions_bypass_scripts_case()
+        case = GoldenCase(
+            files={
+                **base.files,
+                "scripts/sub/" + LINT_NAME.removeprefix("scripts/"): "# " + FLAG + "\n",
+            }
+        )
+
+        paths = {f.path for f in run_case(snapshot_of, case)}
+
+        assert "scripts/sub/agent_config_lint.py" in paths
+        assert LINT_NAME not in paths
+
+    def test_reports_error_when_instruction_file_not_utf8(
+        self, snapshot_of: SnapshotFactory
+    ) -> None:
+        # Q-19: the old lint crashed on an instruction file that does not decode; the ``clean``
+        # hub with such an ``AGENTS.md`` gives one error, from the first rule that reads it.
+        base = clean_case()
+        case = GoldenCase(files={**base.files, AGENTS: b"# Agents\n\xff\n"})
+
+        findings = run_case(snapshot_of, case)
+
+        assert [(f.rule, f.path, f.line, f.message) for f in findings] == [
+            (SIZE, AGENTS, None, "not UTF-8 text: byte 9 cannot be decoded")
+        ]
+
+    # ``attribution_ai_no_hub`` has no test here: without ``hub.json`` the folder is not a hub,
+    # and ``hub doctor`` exits 2 before any rule runs (AC-11.2, the cli's doctor command tests).

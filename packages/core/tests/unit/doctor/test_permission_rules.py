@@ -136,6 +136,22 @@ class TestSettingsValid:
 
         assert found(SETTINGS_VALID, snapshot) == [(path, None, message, SYNTAX_FIX)]
 
+    @pytest.mark.parametrize("path", [SETTINGS, MCP])
+    def test_reports_without_line_when_number_over_digit_limit(
+        self, snapshot_of: SnapshotFactory, path: str
+    ) -> None:
+        # E34: a number of more than 4300 digits, which the old lint's parse crashed on, is one
+        # error with no line in either file; 4300 digits still read.
+        over = snapshot_of(files={path: b'{"a": ' + b"1" * 4301 + b"}"})
+        at_limit = snapshot_of(files={path: b'{"a": ' + b"1" * 4300 + b"}"})
+        message = (
+            "not valid JSON here: a number has more than 4300 digits, which this reader does not"
+            " accept"
+        )
+
+        assert found(SETTINGS_VALID, over) == [(path, None, message, SYNTAX_FIX)]
+        assert found(SETTINGS_VALID, at_limit) == []
+
     def test_reads_mcp_leniently_when_key_repeated(self, snapshot_of: SnapshotFactory) -> None:
         # .mcp.json keeps the old lint's reader: a repeated key or NaN is not an error there.
         snapshot = snapshot_of(files={MCP: b'{"a": 1, "a": NaN}'})
