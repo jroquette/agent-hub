@@ -98,8 +98,13 @@ def hub_paths(config: HubConfig) -> tuple[str, ...]:
         "Makefile",
         "Makefile.project",
         "package.json",
-        f"plugin/{config.project.name}/hooks/project_guard.py",
+        guard_extension_path(config),
     )
+
+
+def guard_extension_path(config: HubConfig) -> str:
+    """The project's guard extension, which the base guard runs (hub-generator.md § Hooks)."""
+    return f"plugin/{config.project.name}/hooks/project_guard.py"
 
 
 def text_of(entry: TreeEntry | None) -> str | None:
