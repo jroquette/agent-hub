@@ -83,8 +83,12 @@ def test_counts_totals_when_findings_mixed(totals: Totals, expected: str) -> Non
         ("a\nb.md", "plain", "error lock.drift a\\nb.md: plain Fix: run hub sync"),
         ("a.md", "one\ntwo", "error lock.drift a.md: one\\ntwo Fix: run hub sync"),
         ("a.md", "esc \x1b[31m", "error lock.drift a.md: esc \\x1b[31m Fix: run hub sync"),
-        ("a\r.md", "line sep", "error lock.drift a\\r.md: line\\u2028sep Fix: run hub sync"),
+        ("a\r.md", "line\u2028sep", "error lock.drift a\\r.md: line\\u2028sep Fix: run hub sync"),
         ("é.md", "tab\there", "error lock.drift é.md: tab\\there Fix: run hub sync"),
+        ("a.md", "a\u202eb", "error lock.drift a.md: a\\u202eb Fix: run hub sync"),
+        ("a.md", "a\x00b", "error lock.drift a.md: a\\x00b Fix: run hub sync"),
+        ("a.md", "\x1b]0;t\x07", "error lock.drift a.md: \\x1b]0;t\\x07 Fix: run hub sync"),
+        ("\udcff.md", "plain", "error lock.drift \\udcff.md: plain Fix: run hub sync"),
     ],
 )
 def test_escapes_control_character_when_path_or_message_holds_one(
@@ -152,6 +156,16 @@ def test_keeps_raw_text_when_json_holds_control_character() -> None:
     assert finding["path"] == "a\nb.md"
     assert finding["message"] == "one\x1btwo"
     assert b'"path": "a\\nb.md"' in output
+
+
+def test_escapes_lone_surrogate_when_json_path_holds_one() -> None:
+    # A file name that is not UTF-8 reaches the doctor as a lone surrogate (``os.scandir``, git).
+    output = report_json((a_finding(path="\udcff.md", message="bad \udcff", fix="rename \udcff"),))
+
+    finding = json.loads(output)["findings"][0]
+    assert finding["path"] == "\\udcff.md"
+    assert finding["message"] == "bad \\udcff"
+    assert finding["fix"] == "rename \\udcff"
 
 
 def test_prints_empty_findings_when_json_has_none() -> None:

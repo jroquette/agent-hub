@@ -5,7 +5,8 @@ A line reads ``<severity> <rule> <path>[:<line>]: <message> Fix: <fix>``, or
 ``sort_findings`` orders them, and the last line always holds the three counts, singular at 1
 (spec D2). The path, the message and the fix each go through ``one_line``, so a file name or
 file text holding a line break or another unprintable character stays on its one line (plan
-erratum E14). ``--json`` keeps the raw values: JSON escapes them.
+erratum E14). ``--json`` keeps the raw values, which JSON escapes, except a lone surrogate (a
+file name that is not UTF-8): UTF-8 cannot encode it, so it is written backslash-escaped.
 """
 
 from collections.abc import Iterable, Sequence
@@ -66,10 +67,15 @@ def _finding_objects(findings: Sequence[Finding]) -> list[JsonValue]:
         {
             "rule": finding.rule,
             "severity": str(finding.severity),
-            "path": finding.path,
+            "path": None if finding.path is None else _encodable(finding.path),
             "line": finding.line,
-            "message": finding.message,
-            "fix": finding.fix,
+            "message": _encodable(finding.message),
+            "fix": _encodable(finding.fix),
         }
         for finding in findings
     ]
+
+
+def _encodable(text: str) -> str:
+    """``text`` with each lone surrogate as its ``\\udcff`` escape; valid text unchanged."""
+    return text.encode("utf-8", "backslashreplace").decode("utf-8")
