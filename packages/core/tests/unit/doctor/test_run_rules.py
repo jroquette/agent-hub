@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import replace
 from typing import Any
 
@@ -18,6 +18,7 @@ from agent_hub.core.doctor.snapshot import ConfigFailure, DoctorSnapshot
 from agent_hub.core.hub_config.doctor_rules import Severity
 from agent_hub.core.hub_config.document_check import check_hub_document
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.versions import cut_echo
 from agent_hub.core.testing.builders import a_hub_document
 
 type SnapshotFactory = Callable[..., DoctorSnapshot]
@@ -659,3 +660,95 @@ def test_prefers_listing_reader_when_earlier_rule_reads_no_listing(
 
     assert TRACKER > "attribution.ai"
     assert findings == (tree_finding(TRACKER),)
+
+
+CRASH_FIX = "report this as a hub doctor bug"
+
+
+def a_crashing_rule(rule_id: str, error: BaseException, *, severity: Severity) -> Rule:
+    """A rule whose check yields one finding, then raises ``error``."""
+
+    def check(snapshot: DoctorSnapshot) -> Iterator[Finding]:
+        del snapshot
+        yield a_finding(rule_id, path="Makefile", line=2, message="partial", severity=severity)
+        raise error
+
+    return Rule(
+        id=rule_id,
+        severity=severity,
+        summary=f"The crashing {rule_id} rule.",
+        module=None,
+        reads=frozenset(),
+        check=check,
+    )
+
+
+def crash_finding(rule: str, message: str) -> Finding:
+    return Finding(
+        rule=rule, severity=Severity.ERROR, path=".", line=None, message=message, fix=CRASH_FIX
+    )
+
+
+@pytest.mark.parametrize("retune", [False, True], ids=["default", "set-to-info"])
+def test_reports_one_error_when_rule_raises(snapshot_of: SnapshotFactory, *, retune: bool) -> None:
+    spies = Spies()
+    registry = (
+        spies.rule("config.schema"),
+        a_crashing_rule("lock.drift", ValueError("boom\nline"), severity=Severity.WARNING),
+        spies.rule("makefile.override", emits=[(Severity.WARNING, "Makefile", 1, "kept")]),
+    )
+    config = a_config(rules={"lock.drift": {"severity": "info"}} if retune else None)
+
+    findings = run_rules(selected(registry, config=config), snapshot_of(config=config))
+
+    assert findings == (
+        crash_finding("lock.drift", "rule crashed: ValueError: boom\nline"),
+        a_finding(
+            "makefile.override", path="Makefile", line=1, message="kept", severity=Severity.WARNING
+        ),
+    )
+    assert spies.calls == ["config.schema", "makefile.override"]
+
+
+def test_cuts_message_when_rule_raises_long_error(snapshot_of: SnapshotFactory) -> None:
+    registry = (a_crashing_rule("lock.drift", ValueError("x" * 500), severity=Severity.WARNING),)
+    config = a_config()
+
+    findings = run_rules(selected(registry, config=config), snapshot_of(config=config))
+
+    assert findings == (
+        crash_finding("lock.drift", "rule crashed: ValueError: " + cut_echo("x" * 500)),
+    )
+    assert len(findings[0].message) < 120
+
+
+def test_reports_crash_when_only_names_crashing_rule(snapshot_of: SnapshotFactory) -> None:
+    spies = Spies()
+    registry = (
+        spies.rule("config.schema"),
+        a_crashing_rule("lock.drift", KeyError("gone"), severity=Severity.WARNING),
+        spies.rule("makefile.override"),
+    )
+    config = a_config()
+
+    findings = run_rules(
+        selected(registry, config=config, only=["lock.drift"]), snapshot_of(config=config)
+    )
+
+    assert findings == (crash_finding("lock.drift", "rule crashed: KeyError: 'gone'"),)
+    assert spies.calls == ["config.schema"]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [KeyboardInterrupt(), SystemExit(3), GeneratorExit()],
+    ids=["keyboard-interrupt", "system-exit", "generator-exit"],
+)
+def test_propagates_when_rule_raises_base_exception(
+    snapshot_of: SnapshotFactory, error: BaseException
+) -> None:
+    registry = (a_crashing_rule("lock.drift", error, severity=Severity.WARNING),)
+    config = a_config()
+
+    with pytest.raises(type(error)):
+        run_rules(selected(registry, config=config), snapshot_of(config=config))
