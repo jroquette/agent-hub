@@ -38,12 +38,15 @@ class HubFiles:
 
     ``entries`` holds every path looked at (listed or fixed, present ones only); ``listed`` is
     the sorted listing of the tree, empty when no rule asked for it; ``problem`` says why the
-    listing could not be made.
+    listing could not be made or a path read. ``paths_read`` is whether every path looked at by
+    path was read: when not, an absent one may be one the read never reached, so no rule may
+    call it missing; a failed listing alone leaves it true.
     """
 
     entries: Mapping[str, TreeEntry]
     listed: tuple[str, ...]
     problem: str | None
+    paths_read: bool
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

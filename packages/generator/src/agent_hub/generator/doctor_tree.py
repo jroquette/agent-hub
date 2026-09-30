@@ -91,12 +91,18 @@ def read_doctor_tree(root: Path, *, by_path: Collection[str], listing: bool) -> 
             entries=_sorted(fixed),
             listed=(),
             problem=_LISTING_FAILED + one_line(str(error)),
+            paths_read=fixed_problem is None,
         )
     entries = {**found.entries, **looked, **fixed}
     listed = tuple(
         path for path in found.paths if isinstance(entries.get(path), FileEntry | LinkEntry)
     )
-    return HubFiles(entries=_sorted(entries), listed=listed, problem=fixed_problem)
+    return HubFiles(
+        entries=_sorted(entries),
+        listed=listed,
+        problem=fixed_problem,
+        paths_read=fixed_problem is None,
+    )
 
 
 def _read_fixed(root: Path, by_path: Collection[str]) -> tuple[dict[str, TreeEntry], str | None]:
@@ -105,9 +111,15 @@ def _read_fixed(root: Path, by_path: Collection[str]) -> tuple[dict[str, TreeEnt
     problems: list[str] = []
     for path in sorted(by_path):
         try:
-            entries |= read_planned_tree(root, paths=[path], wanted=[path]).entries
+            found = read_planned_tree(root, paths=[path], wanted=[path]).entries
         except GeneratorError as error:
             problems.append(_READING_FAILED + one_line(str(error)))
+            continue
+        # A read also records the leftover-shaped names of the folders it lists, unread: such a
+        # name never replaces an entry recorded before, and a path's own read always does.
+        entries = {**found, **entries}
+        if path in found:
+            entries[path] = found[path]
     return entries, next(iter(problems), None)
 
 

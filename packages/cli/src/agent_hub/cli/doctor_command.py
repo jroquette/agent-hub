@@ -58,7 +58,7 @@ NOT_A_HUB: Final = (
 # At least one finding is an error.
 FINDINGS_FAILED: Final = 1
 # A failed config reads no file: only the config rules run, and they read hub.json alone.
-_NO_FILES: Final = HubFiles(entries={}, listed=(), problem=None)
+_NO_FILES: Final = HubFiles(entries={}, listed=(), problem=None, paths_read=True)
 
 
 def doctor(

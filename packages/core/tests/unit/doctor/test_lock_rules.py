@@ -343,3 +343,45 @@ def test_declares_lock_paths_when_rule_defined() -> None:
     assert LOCK_DRIFT.id == "lock.drift"
     assert LOCK_DRIFT.severity is Severity.ERROR
     assert [read.value for read in LOCK_DRIFT.reads] == ["lock_paths"]
+
+
+def test_reports_missing_when_only_listing_failed(snapshot_of: SnapshotFactory) -> None:
+    # Every path was read by path: only the listing failed, so an absent path is missing.
+    snapshot = hub_as_locked(
+        snapshot_of,
+        files={"AGENTS.md": b"# Agents\n"},
+        problem="could not list the files: git not found",
+        paths_read=True,
+    )
+
+    assert findings_of(snapshot) == [(Severity.ERROR, ".claude/settings.json", MISSING, SYNC_FIX)]
+
+
+def test_reports_unread_content_when_managed_file_not_read(snapshot_of: SnapshotFactory) -> None:
+    snapshot = hub_as_locked(
+        snapshot_of, entries={"scripts/run.sh": FileEntry(executable=True, content=None)}
+    )
+
+    assert findings_of(snapshot) == [
+        (
+            Severity.ERROR,
+            "scripts/run.sh",
+            "content was not read, so it cannot be compared with its hub.lock entry",
+            "run hub doctor again",
+        )
+    ]
+
+
+def test_cuts_link_targets_when_too_long_to_echo(snapshot_of: SnapshotFactory) -> None:
+    on_disk = "../" + "a" * 200
+    locked = "../../" + "b" * 200
+    lock = a_lock({".claude/agents/lead.md": ManagedLinkEntry(ownership="managed", symlink=locked)})
+    snapshot = snapshot_of(links={".claude/agents/lead.md": on_disk}, lock=lock)
+
+    [(_, _, message, _)] = findings_of(snapshot)
+
+    # Each target is cut to 80 characters, its last one an ellipsis.
+    assert message == (
+        "link target differs from its hub.lock entry"
+        f" (on disk -> {on_disk[:79]}…, hub.lock -> {locked[:79]}…)"
+    )
