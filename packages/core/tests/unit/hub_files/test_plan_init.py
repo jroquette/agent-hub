@@ -47,6 +47,7 @@ CORE_MODULES = (
     "hub_files/tree_snapshot.py",
     "hub_files/plan_init.py",
     "hub_files/plan_sync.py",
+    "hub_files/extension_inputs.py",
 )
 
 # Design decision 4 of the plan, word for word: each refusal names the cause or the way out.

@@ -3,7 +3,7 @@ import pytest
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
 from agent_hub.core.hub_files.rendered_link import RenderedLink
 from agent_hub.generator.errors import GeneratorError
-from agent_hub.generator.links import plugin_links
+from agent_hub.generator.links import plugin_links, project_links
 
 
 def a_file(path: str, **overrides: object) -> RenderedFile:
@@ -127,3 +127,75 @@ def test_marks_links_generic_managed_when_derived() -> None:
     for link in links:
         assert type(link) is RenderedLink
         assert (link.kind, link.ownership, link.module) == (Kind.GENERIC, Ownership.MANAGED, None)
+
+
+def test_links_project_entries_when_names_given() -> None:
+    links = project_links(
+        project="demo", agents=("reviewer.md", "notes"), skills=("review",), taken=()
+    )
+
+    # Names only (Q-17): whatever each name holds, it gets one link, sorted by path.
+    assert link_rows(links) == [
+        (".claude/agents/notes", "../../plugin/demo/agents/notes"),
+        (".claude/agents/reviewer.md", "../../plugin/demo/agents/reviewer.md"),
+        (".claude/skills/review", "../../plugin/demo/skills/review"),
+    ]
+    for link in links:
+        assert type(link) is RenderedLink
+        assert (link.kind, link.ownership, link.module) == (Kind.GENERIC, Ownership.MANAGED, None)
+    assert project_links(project="demo", agents=(), skills=(), taken=()) == ()
+
+
+def test_skips_project_name_when_base_link_taken() -> None:
+    base = plugin_links(
+        [
+            a_file("plugin/hub-workflow/agents/planner.md"),
+            a_file("plugin/hub-workflow/skills/recall/SKILL.md"),
+        ]
+    )
+
+    links = project_links(
+        project="demo",
+        agents=("planner.md", "mine.md"),
+        skills=("recall", "review"),
+        taken={link.path for link in base},
+    )
+
+    # The base plugin keeps its link; the planner reports the clash (spec Q-17, plan E8).
+    assert link_rows(links) == [
+        (".claude/agents/mine.md", "../../plugin/demo/agents/mine.md"),
+        (".claude/skills/review", "../../plugin/demo/skills/review"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("agent", "skill"),
+    [
+        pytest.param("Planner.md", "RECALL", id="case"),
+        pytest.param("pla\u0301nner.md", "re\u0301call", id="nfd"),
+    ],
+)
+def test_skips_project_name_when_base_link_taken_under_another_case_or_form(
+    agent: str, skill: str
+) -> None:
+    """E37: names equal after NFC and casefold are one entry on APFS; the base keeps its link."""
+    base = plugin_links(
+        [
+            a_file("plugin/hub-workflow/agents/pl\u00e1nner.md"),
+            a_file("plugin/hub-workflow/agents/planner.md"),
+            a_file("plugin/hub-workflow/skills/r\u00e9call/SKILL.md"),
+            a_file("plugin/hub-workflow/skills/recall/SKILL.md"),
+        ]
+    )
+
+    links = project_links(
+        project="demo",
+        agents=(agent, "mine.md"),
+        skills=(skill, "review"),
+        taken={link.path for link in base},
+    )
+
+    assert link_rows(links) == [
+        (".claude/agents/mine.md", "../../plugin/demo/agents/mine.md"),
+        (".claude/skills/review", "../../plugin/demo/skills/review"),
+    ]

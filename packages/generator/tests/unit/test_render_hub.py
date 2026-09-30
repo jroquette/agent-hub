@@ -17,13 +17,16 @@ import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
+from agent_hub.core.hub_files.extension_inputs import NO_EXTENSIONS, ExtensionInputs
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.hub_files.rendered_link import RenderedLink
 from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.generator.built_json import managed_settings
 from agent_hub.generator.errors import GeneratorError, TemplateError
 from agent_hub.generator.hub_template import render_template
 from agent_hub.generator.json_form import JsonValue
+from agent_hub.generator.json_merge import MergeError, merge_json
 from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_mapping
 from agent_hub.generator.registry import REGISTRY, TemplateEntry, TemplateSource
 from agent_hub.generator.render_hub import render_entries, render_hub
@@ -704,8 +707,150 @@ def test_imports_at_module_level_when_rendered(demo_render: dict[str, RenderedFi
     assert {path: imports for path, imports in found.items() if imports} == FUNCTION_IMPORTS
 
 
-def test_takes_no_project_entry_input_when_signature_read() -> None:
-    assert list(inspect.signature(render_hub).parameters) == ["config"]
+def test_takes_config_and_extensions_when_signature_read() -> None:
+    parameters = inspect.signature(render_hub).parameters
+
+    assert list(parameters) == ["config", "extensions"]
+    assert parameters["extensions"].default is NO_EXTENSIONS
+
+
+def test_renders_same_bytes_when_extensions_empty(demo_config: HubConfig) -> None:
+    empty = ExtensionInputs(project_json={}, agents=(), skills=())
+
+    rendered = render_hub(demo_config, empty)
+
+    # Every file (bytes, bit, classification) and every link as the one-argument render.
+    assert rendered == render_hub(demo_config)
+    assert render_digest(rendered) == render_digest(render_entries(demo_config, REGISTRY))
+
+
+def test_merges_settings_when_sibling_given(demo_config: HubConfig) -> None:
+    sibling = b'{"permissions": {"allow": ["Bash(make *)"]}, "env": {"X": "1"}}'
+    extensions = ExtensionInputs(
+        project_json={".claude/settings.project.json": sibling}, agents=(), skills=()
+    )
+    plain = {file.path: file for file in render_hub(demo_config).files}
+
+    rendered = render_hub(demo_config, extensions)
+
+    files = {file.path: file for file in rendered.files}
+    settings = files[".claude/settings.json"]
+    assert settings.content == merge_json(
+        managed_settings(demo_config), sibling, path=".claude/settings.project.json"
+    )
+    value = json.loads(settings.content)
+    assert value["permissions"]["allow"][-1] == "Bash(make *)"
+    assert value["env"] == {"X": "1"}
+    assert settings.model_copy(update={"content": b""}) == plain[
+        ".claude/settings.json"
+    ].model_copy(update={"content": b""})
+    # Only the merged file changes: the seeded sibling keeps its template bytes.
+    assert {path: file for path, file in files.items() if path != ".claude/settings.json"} == {
+        path: file for path, file in plain.items() if path != ".claude/settings.json"
+    }
+    assert rendered.links == render_hub(demo_config).links
+
+
+def test_raises_merge_error_when_sibling_refused(demo_config: HubConfig) -> None:
+    extensions = ExtensionInputs(
+        project_json={".claude/settings.project.json": b'{"disableAllHooks": true}'},
+        agents=(),
+        skills=(),
+    )
+
+    with pytest.raises(MergeError, match=r"^\.claude/settings\.project\.json: disableAllHooks: "):
+        render_hub(demo_config, extensions)
+
+
+@pytest.mark.parametrize(
+    "path", ["AGENTS.project.json", ".claude/other.project.json", "plugin/demo/x.project.json"]
+)
+def test_raises_value_error_when_sibling_not_rendered_pair(
+    demo_config: HubConfig, path: str
+) -> None:
+    extensions = ExtensionInputs(project_json={path: b"{}"}, agents=(), skills=())
+
+    # A caller bug: only a seeded built ``X.project.json`` next to a managed built ``X.json``.
+    with pytest.raises(ValueError, match=re.escape(path)):
+        render_hub(demo_config, extensions)
+
+
+def a_json_pair(
+    *, sibling: Ownership, target: Ownership, sibling_built: bool = True, target_built: bool = True
+) -> list[TemplateEntry]:
+    """A ``x.project.json`` and ``x.json`` entry pair: each built or from a template source."""
+
+    def entry(path: str, ownership: Ownership, *, built: bool) -> TemplateEntry:
+        if built:
+            return TemplateEntry(
+                path=path, build=lambda _: {"a": 1}, kind=Kind.GENERIC, ownership=ownership
+            )
+        return a_template_entry(path, "templates/Makefile.project.tmpl", ownership=ownership)
+
+    return [
+        entry("x.project.json", sibling, built=sibling_built),
+        entry("x.json", target, built=target_built),
+    ]
+
+
+def test_merges_custom_pair_when_sibling_seeded_and_target_managed(
+    demo_config: HubConfig,
+) -> None:
+    entries = a_json_pair(sibling=Ownership.SEEDED, target=Ownership.MANAGED)
+    extensions = ExtensionInputs(project_json={"x.project.json": b'{"b": 2}'}, agents=(), skills=())
+
+    rendered = {file.path: file for file in render_entries(demo_config, entries, extensions).files}
+
+    assert json.loads(rendered["x.json"].content) == {"a": 1, "b": 2}
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        a_json_pair(sibling=Ownership.MANAGED, target=Ownership.MANAGED),
+        a_json_pair(sibling=Ownership.SEEDED, target=Ownership.SEEDED),
+        a_json_pair(sibling=Ownership.SEEDED, target=Ownership.MANAGED, sibling_built=False),
+        a_json_pair(sibling=Ownership.SEEDED, target=Ownership.MANAGED, target_built=False),
+        a_json_pair(sibling=Ownership.SEEDED, target=Ownership.MANAGED)[:1],
+    ],
+    ids=[
+        "sibling-managed",
+        "target-seeded",
+        "sibling-from-template",
+        "target-from-template",
+        "target-not-rendered",
+    ],
+)
+def test_raises_value_error_when_custom_pair_not_seeded_and_managed_built(
+    demo_config: HubConfig, entries: list[TemplateEntry]
+) -> None:
+    extensions = ExtensionInputs(project_json={"x.project.json": b"{}"}, agents=(), skills=())
+
+    with pytest.raises(ValueError, match=r"^x\.project\.json: not a seeded sibling "):
+        render_entries(demo_config, entries, extensions)
+
+
+def test_links_project_entries_when_extensions_name_them(demo_config: HubConfig) -> None:
+    extensions = ExtensionInputs(
+        project_json={}, agents=("planner.md", "reviewer.md"), skills=("review",)
+    )
+    plain = render_hub(demo_config)
+
+    rendered = render_hub(demo_config, extensions)
+
+    links = {link.path: link for link in rendered.links}
+    assert [link.path for link in rendered.links] == sorted(links)
+    assert set(links) - {link.path for link in plain.links} == {
+        ".claude/agents/reviewer.md",
+        ".claude/skills/review",
+    }
+    assert links[".claude/agents/reviewer.md"].target == "../../plugin/demo/agents/reviewer.md"
+    assert links[".claude/skills/review"].target == "../../plugin/demo/skills/review"
+    # A name the base plugin also has keeps the base link (the planner reports the clash).
+    assert links[".claude/agents/planner.md"].target == (
+        "../../plugin/hub-workflow/agents/planner.md"
+    )
+    assert rendered.files == plain.files
 
 
 def test_renders_same_bytes_when_rendered_twice(demo_config: HubConfig) -> None:
@@ -2160,6 +2305,7 @@ RENDERING_MODULES = frozenset(
         "errors.py",
         "hub_template.py",
         "json_form.py",
+        "json_merge.py",
         "links.py",
         "placeholders.py",
         "registry.py",

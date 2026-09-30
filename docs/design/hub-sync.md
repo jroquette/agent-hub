@@ -2,8 +2,8 @@
 
 ## Purpose
 
-Phase 1 contract for `hub.lock`, `hub sync [--check]`, `hub sync --adopt`, the one write path `hub init` shares and the
-`*.project.json` merge. What is rendered and who owns it, `hub init`, hooks and commands:
+Phase 1 contract for `hub.lock`, `hub sync [--check]`, `hub sync --adopt`, the one write path `hub init` shares, the
+`*.project.json` merge and the project-entry links. What is rendered and who owns it, `hub init`, hooks and commands:
 [hub-generator.md](hub-generator.md). Config: [project-config.md](project-config.md); reasons: the ADRs.
 
 ## Contract
@@ -30,15 +30,15 @@ a function of the render and the config only (`build_hub_lock`), written by `ini
    project's`; a key or string holding a lone surrogate: `not UTF-8 text: holds a lone surrogate`, reported alone).
    Both end with `hub.lock: restore it from git, or run hub sync --adopt`.
 3. **Read** after the render, only what is planned: every rendered path and every lock path but `hub.json` and
-   `hub.lock`, each ancestor looked at without following it and the descent stopped at the first that is not a
-   folder; content only for the files compared (rendered managed, managed file entries); and the listing of each
-   folder holding a planned path (the root too), for leftovers. Unknown entries (run output, FIFOs, unreadable
-   folders, extra `.claude/skills/` entries) are never read or touched. An I/O error exits 1 naming the path.
+   `hub.lock`, each ancestor looked at without following it and the descent stopped at the first that is not a folder;
+   content only for the files compared (rendered managed, managed file entries); the listing of each folder holding a
+   planned path (the root too), for leftovers; and of `plugin/<project>/{agents,skills}`, each name it links looked at in
+   `.claude/<folder>/`, never listed. Unknown entries (run output, FIFOs, unreadable folders, extra `.claude/skills/`
+   entries) are never read or touched. An I/O error exits 1 naming the path.
 4. **Plan** in memory (core `plan_sync`), each path in this order: (a) an ancestor that is a link or not a folder:
-   conflict; (b) a link on disk resolving outside the hub: conflict; (c) equal to the render: clean, recorded,
-   whatever the lock says (so a file an interrupted sync wrote is never a conflict); (d) the type rule; (e) ownership.
-   (a) and (b) apply to the paths sync writes, deletes or compares; a seeded path with a lock entry is never looked
-   at.
+   conflict; (b) a link on disk resolving outside the hub: conflict; (c) equal to the render: clean, recorded, whatever
+   the lock says (so a file an interrupted sync wrote is never a conflict); (d) the type rule; (e) ownership. (a) and
+   (b) apply to the paths sync writes, deletes or compares; a seeded path with a lock entry is never looked at.
    - **Rendered managed.** Managed entry: absent → write, `restored`; disk equal to the entry → write, `updated`;
      else conflict. No entry or a seeded one: absent → write, `created` (never `restored`); present → conflict.
    - **Rendered seeded.** No entry: absent → write, `created`; a regular file → recorded; a link, folder or other →
@@ -72,9 +72,9 @@ a function of the render and the config only (`build_hub_lock`), written by `ini
   `executable bit differs (on disk +x, render -x)`, `link target differs (on disk -> X, render -> Y)`,
   `differs from its hub.lock entry and is no longer rendered` (bytes, bit or target), `symlinked ancestor A`,
   `a file where a folder belongs: A`, `resolves outside the hub`, or `init`'s type wording (`a link where a file
-  belongs`, `not a regular file`, …). A name in both plugins stays exit 1 (`GeneratorError`) until the second PR.
-- **Exits:** 0 done or up to date; 1 error (config, modules, lock, I/O; one escaped line each, stderr); 2 usage (and
-  `--adopt` until AGH-16); 3 conflict; 4 `--check` with changes pending.
+  belongs`, `not a regular file`, …). A name clash: below.
+- **Exits:** 0 done or up to date; 1 error (config, modules, lock, extension inputs, I/O; one escaped line each,
+  stderr); 2 usage (and `--adopt` until AGH-16); 3 conflict; 4 `--check` with changes pending.
 
 ### Apply
 
@@ -102,17 +102,38 @@ of a listed difference or migration (the directory link becomes a real directory
 file; other conflicts are listed and refused, like a path not listed this run (exit 2). Until AGH-16, `--adopt` is
 declared and exits 2 with `not implemented yet (Phase 1)` before anything is read.
 
-### Project JSON
+### Project JSON and project entries
 
-A seeded `X.project.json` next to a managed built `X.json` (Phase 1: `.claude/settings.project.json`) is deep-merged
-into it at the next sync and at `init` (strict: bad input or a harness-weakening key exits 1). The render reads it once
-the extension inputs land (AGH-14, second PR); until then `.claude/settings.json` is the template's.
+A seeded built `X.project.json` pairs with a managed built `X.json` (Phase 1: `.claude/settings.project.json`); `sync`
+and `init` read a present sibling and deep-merge it into `X.json` (absent or deleted: the template's). Objects merge by
+key, the project wins on scalars, arrays are the template's items then the project's, a repeat dropped keeping the first
+(equal: the same `dump_json` bytes, so `true` ≠ `1`, `1` ≠ `1.0`); a rerun gives the same bytes. The merge only adds. A
+bad sibling exits 1, nothing written, with one line `P: <key path>: <message>` (key paths as `problems.json_path`:
+`permissions.allow`, `hooks[0]`, `$` the root): a refused key first, else the first problem in the sibling's key order.
+At `$`: the parser's words (not UTF-8, a BOM, bad JSON, over 4300 digits, nested too deeply) and, strictly, `not valid
+JSON here: ` then `the key "<k>" appears more than once`, `NaN|Infinity|-Infinity is not a JSON number`, `a number is
+too large for this reader` or `a string holds a lone surrogate escape` (a key too). Refused by presence in
+`.claude/settings.project.json`: `disableAllHooks` and `permissions.defaultMode`, `refused: a project cannot set this
+key (it weakens the harness)`. An object or array against another type, the root included: `<an object|an array|a
+string|a boolean|a number|null> where the template has <…>`. A `null` at any depth, in new keys and items too: `null is
+refused: the merge never deletes a key`. A link, folder or other non-regular sibling: `P: not a regular file`.
+
+`sync` links each regular file in `plugin/<project>/agents` and each real folder in `skills`, whatever it holds:
+`.claude/<folder>/<name>` → `../../plugin/<project>/<folder>/<name>`, managed and locked like a base link. Names
+starting with `.`, links, other types and nested paths are left alone; a file already at a link path is a conflict,
+never replaced. A name the lock cannot hold exits 1 (nothing written): `plugin/<project>/<folder>/<name>: cannot be
+linked: <reason>`, first of `not UTF-8`, `holds a backslash`, `not printable`. Names equal after NFC and `casefold()`
+are one (one entry on APFS); a clash is a conflict, exit 3, the base link kept: `.claude/<folder>/<name>: in both
+plugins (<base entry> and plugin/<project>/<folder>/<name>)`, or at each of two project names `named twice in
+plugin/<project>, ignoring case and Unicode form (<other> and <own>)`. A case-only rename deletes and creates the link
+on Linux; on APFS it finds the old link: `link target differs`, exit 3, until that link is deleted. `init` merges a kept
+sibling but links no entry: an unlinkable name exits 1, others are unknown (`hub sync --adopt`).
 
 ## Invariants
 
 - Sync plans every path before its first write; a load error or a conflict writes, creates and deletes nothing.
-- It deletes only a managed path equal to its entry and leftovers in listed folders; it never writes `hub.json`,
-  never removes a folder, and never reads or touches a path neither rendered nor in the lock.
+- It deletes only a managed path equal to its entry and leftovers in listed folders; it never writes `hub.json`, never
+  removes a folder, and never reads or touches a path neither rendered nor in the lock, bar listing project entries.
 - Same `hub.json`, release and extension inputs, same tree and `hub.lock` bytes; after any successful sync the lock is
   `build_hub_lock` of the render, and a second sync prints `up to date` and writes nothing, not even `hub.lock`.
 - The planner is pure core code; reads and writes go through the generator's adapter from the held root.

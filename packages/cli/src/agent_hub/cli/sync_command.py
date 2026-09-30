@@ -4,7 +4,10 @@ The pipeline of the AGH-14 spec, in the current folder (its real path, taken onc
 step that fails exits 1 before anything is read after it: ``hub.json`` (pin, schema, model), the
 module refusal, then ``hub.lock``, read once without following a link (absent: the ``--adopt``
 pointer; not a regular file or malformed: one line per problem, then the way out). Then the
-render, a read of only the planned paths, and core's planner. A conflict exits 3 with its report
+render, a read of only the planned paths (plus a listing of the project's agent and skill folders
+and a look at the link path of each name found there), the project's extension inputs from that
+one read (a bad ``*.project.json`` sibling or an entry name the lock cannot hold exits 1), the
+render with them, and core's planner. A conflict exits 3 with its report
 on stderr and nothing written. With nothing pending, ``up to date`` and no write at all (the
 adapter is not called). ``--check`` prints the ``would`` lines and exits 4. Otherwise the plan is
 applied with one open of the root (leftovers, deletes, folders, files, links, ``hub.lock`` last)
@@ -17,6 +20,7 @@ from typing import Annotated, Final
 import typer
 
 from agent_hub.cli.command_exits import (
+    extension_inputs_or_exit,
     fail,
     fail_generator,
     not_implemented,
@@ -26,6 +30,7 @@ from agent_hub.cli.command_exits import (
 from agent_hub.cli.hub_config_reader import load_hub_json_or_exit
 from agent_hub.cli.sync_report import change_lines, conflict_lines
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_files.extension_inputs import LINKED_TYPES
 from agent_hub.core.hub_files.hub_lock import (
     ADOPT_POINTER,
     HUB_JSON_PATH,
@@ -42,8 +47,8 @@ from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, TreeSnapshot
 from agent_hub.generator.errors import GeneratorError
 from agent_hub.generator.file_adapter import apply_sync
-from agent_hub.generator.hub_tree import read_planned_tree, read_root_entry
-from agent_hub.generator.render_hub import render_hub
+from agent_hub.generator.hub_tree import LinkFolder, read_planned_tree, read_root_entry
+from agent_hub.generator.render_hub import project_json_siblings, render_hub
 
 # A change the project made to a managed path: nothing is written (ADR 0009).
 CONFLICT: Final = 3
@@ -121,17 +126,46 @@ def _planned_paths(rendered: RenderedHub, lock: HubLock) -> tuple[list[str], set
     return paths, wanted - {HUB_JSON_PATH}
 
 
+def _links_in(project: str) -> dict[str, LinkFolder]:
+    """The project's agent and skill folders, each with the folder that holds their links."""
+    return {
+        f"plugin/{project}/{folder}": LinkFolder(f".claude/{folder}", linked=linked)
+        for folder, linked in LINKED_TYPES.items()
+    }
+
+
 def _plan_or_exit(
     root: Path, *, config: HubConfig, lock: HubLock, lock_content: bytes
 ) -> SyncPlan | SyncConflicts:
+    """One tree read for both renders (spec Q-20).
+
+    The paths come from the render without extension inputs: the inputs only change the bytes of
+    a merged ``X.json`` and add a ``.claude`` link per project entry, whose path the read looks at
+    for each name it lists (so a project's own file there is a conflict, never replaced).
+    """
+    project = config.project.name
     try:
-        rendered = render_hub(config)
-        paths, wanted = _planned_paths(rendered, lock)
-        tree: TreeSnapshot = read_planned_tree(root, paths=paths, wanted=wanted)
+        siblings = project_json_siblings(config)
+        paths, wanted = _planned_paths(render_hub(config), lock)
+        links_in = _links_in(project)
+        tree: TreeSnapshot = read_planned_tree(
+            root, paths=paths, wanted={*wanted, *siblings}, listed=links_in, links_in=links_in
+        )
+    except GeneratorError as error:
+        fail_generator(error)
+    extensions = extension_inputs_or_exit(tree, project=project, siblings=siblings)
+    try:
+        # A sibling that cannot be merged is a ``MergeError``: one line, exit 1.
+        rendered = render_hub(config, extensions)
     except GeneratorError as error:
         fail_generator(error)
     return plan_sync(
-        rendered=rendered, config=config, lock=lock, lock_content=lock_content, tree=tree
+        rendered=rendered,
+        config=config,
+        lock=lock,
+        lock_content=lock_content,
+        tree=tree,
+        extensions=extensions,
     )
 
 
