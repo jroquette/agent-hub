@@ -34,7 +34,8 @@ BRIEF_RULES: list[dict[str, Any]] = [
     {"argv_has": ["run", "acme/api"], "stdout": "lint\nbuild\nlint\n"},
     {"argv_has": ["acme/web"], "stdout": ""},
 ]
-GH_DELAY = 0.5
+# How long each fake gh call waits at the barrier for the others (inside the gh phase budget).
+BARRIER_WAIT = 4.0
 
 
 def test_rebuilds_hub_workspace_when_brief_fixture_built(brief_workspace: Workspace) -> None:
@@ -244,22 +245,25 @@ def test_keeps_repo_order_when_gh_answers_out_of_order(brief_workspace: Workspac
     ]
 
 
-def test_runs_gh_concurrently_when_network_on(brief_workspace: Workspace) -> None:
+def test_runs_gh_concurrently_when_network_on(
+    brief_workspace: Workspace, golden_sections: Callable[[Path], dict[str, bytes]]
+) -> None:
+    # Every call waits at a barrier for all six: made one after another, the first would give up.
+    folder = brief_workspace.root / "elsewhere" / "barrier"
+    folder.mkdir()
+    barrier = {"dir": str(folder), "count": 6, "wait": BARRIER_WAIT}
     brief_workspace.answer(
         [
-            {"argv_has": ["acme/demo-hub"], "rc": 1, "delay": GH_DELAY},
-            *({**rule, "delay": GH_DELAY} for rule in BRIEF_RULES),
+            {"argv_has": ["acme/demo-hub"], "rc": 1, "barrier": barrier},
+            *({**rule, "barrier": barrier} for rule in BRIEF_RULES),
         ]
     )
-    started = time.monotonic()
 
     result = run_brief(brief_workspace)
 
-    elapsed = time.monotonic() - started
     assert result.exit_code == 0, result.output
-    assert len(brief_workspace.calls().splitlines()) == 6
-    # Six calls one after another would take 6 x GH_DELAY.
-    assert elapsed < 3 * GH_DELAY
+    assert result.stdout_bytes == golden_of("fresh_network", golden_sections)["stdout"]
+    assert len(list(folder.iterdir())) == 6
 
 
 class TestNetwork:

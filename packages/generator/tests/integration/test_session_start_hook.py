@@ -10,9 +10,12 @@ answers the resolve step as ``FAKE_UVX_RESOLVE`` says (``ok``, ``fail``, ``sleep
 as ``FAKE_UVX_BRIEF`` says (``brief``, ``exit3``, ``empty``, ``sleep``, ``long``).
 """
 
+import contextlib
+import fcntl
 import json
 import os
 import re
+import signal
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -30,10 +33,27 @@ VERSION = "1.2.3"
 BRIEF = "# Brief\nAll repos green.\n"
 # The deadline of both calls in the rendered hook, and the one a timeout run lowers it to (s).
 BRIEF_TIMEOUT = 10
-TEST_TIMEOUT = 1
-# How long a sleeping call's child (the ``hub`` command under uvx) sleeps before writing: each of
-# the two calls fits the lowered deadline, both together do not.
-CALL_SLEEP = 0.6 * TEST_TIMEOUT
+TEST_TIMEOUT = 2
+# A slow resolve step fits the lowered deadline with a wide margin; the brief then hangs past it.
+RESOLVE_SLEEP = 0.5
+# Each of two slow calls fits the lowered deadline with a margin; together they do not.
+SLOW_CALL = 0.7 * TEST_TIMEOUT
+# The lock probe: how long a killed holder may take to release its lock.
+PROBE_DEADLINE = 5.0
+# A hanging call's processes: ``hub`` (uvx's child) and its own child (as ``hub brief``'s git or
+# gh), in the call's process group, each holding an exclusive lock until it dies.
+HOLDER = """\
+import fcntl, os, subprocess, sys, time
+lock = open(sys.argv[1], "w")
+fcntl.flock(lock, fcntl.LOCK_EX)
+with open(sys.argv[1] + ".pid", "w") as fh:
+    fh.write(str(os.getpid()))
+if len(sys.argv) > 2:
+    subprocess.Popen([sys.executable, __file__, sys.argv[2]], start_new_session=False)
+    while not os.path.exists(sys.argv[2] + ".pid"):
+        time.sleep(0.01)
+time.sleep(60)
+"""
 BRIEF_CAP = 8000
 # A brief longer than the cap; its cut falls inside a word.
 LONG_BRIEF = "# Brief\n" + "".join(
@@ -64,16 +84,19 @@ SNAPSHOT_HEAD = "\n\n## Snapshot before compaction\n"
 # argv: the log file, then uvx's arguments. A POSIX shell wrapper execs it on the interpreter.
 FAKE_UVX = (
     """\
-import json, os, subprocess, sys
+import json, os, subprocess, sys, time
 log, args = sys.argv[1], sys.argv[2:]
 kind = "resolve" if args[-1:] == ["--version"] else "brief"
 mode = os.environ.get("FAKE_UVX_" + kind.upper(), "ok" if kind == "resolve" else "brief")
 call = {"args": args, "cwd": os.getcwd(), "root": os.environ.get("AGENT_HUB_ROOT")}
 with open(log, "a", encoding="utf-8") as fh:
     fh.write(json.dumps(call) + "\\n")
-if mode == "sleep":  # like uvx, wait on a child (the hub command) that may outlive the deadline
-    late = "import sys, time; time.sleep(SLEEP_SECONDS); open(sys.argv[1], 'w').write('late')"
-    subprocess.run([sys.executable, "-c", late, log + "." + kind + ".late"])
+if mode == "slow":  # answers, late
+    time.sleep(float(os.environ.get("FAKE_UVX_SLOW", RESOLVE_SECONDS)))
+    sys.stdout.write("1.2.3\\n" if kind == "resolve" else BRIEF_TEXT)
+elif mode == "hang":  # like uvx, wait on its child (hub), which has a child of its own
+    holder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "holder.py")
+    subprocess.run([sys.executable, holder, log + ".hub.lock", log + ".tool.lock"])
 elif mode == "fail":  # the release cannot be resolved
     sys.stderr.write("error: cannot fetch the release\\n")
     sys.exit(1)
@@ -88,7 +111,7 @@ elif mode == "long":
     sys.stdout.write(LONG_TEXT)
 """.replace("BRIEF_TEXT", repr(BRIEF))
     .replace("LONG_TEXT", repr(LONG_BRIEF))
-    .replace("SLEEP_SECONDS", repr(CALL_SLEEP))
+    .replace("RESOLVE_SECONDS", repr(RESOLVE_SLEEP))
 )
 FALLBACK_HEADER = re.compile(
     r"# Brief \(fallback: hub brief (no uv|no version|resolve failed|timed out"
@@ -150,6 +173,7 @@ def install_uvx(bin_dir: Path, *, python: str, log: Path, interpreter: str = "/b
     """The fake ``uvx`` in ``bin_dir``: a shell wrapper that execs ``FAKE_UVX`` on ``python``."""
     script = bin_dir.parent / "fake_uvx.py"
     script.write_text(FAKE_UVX, encoding="utf-8")
+    (bin_dir.parent / "holder.py").write_text(HOLDER, encoding="utf-8")
     wrapper = bin_dir / "uvx"
     wrapper.write_text(
         f'#!{interpreter}\nexec "{python}" "{script}" "{log}" "$@"\n', encoding="utf-8"
@@ -271,6 +295,21 @@ def test_names_cause_when_brief_unavailable(
     assert len(calls(uvx_log)) == called
 
 
+def is_lock_free_within(lock_path: Path, deadline: float) -> bool:
+    """True once an exclusive lock on ``lock_path`` can be taken ("r+": it must exist)."""
+    end = time.monotonic() + deadline
+    with lock_path.open("r+") as lock:
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                if time.monotonic() > end:
+                    return False
+                time.sleep(0.01)
+            else:
+                return True
+
+
 def test_kills_group_when_calls_exceed_deadline(
     hub: Path,
     *,
@@ -280,12 +319,46 @@ def test_kills_group_when_calls_exceed_deadline(
     uvx_log: Path,
 ) -> None:
     # The rendered 10 s is pinned by test_keeps_brief_timeout_inside_hook_timeout_when_rendered;
-    # this run lowers it to TEST_TIMEOUT. Each call fits it; the two together do not.
+    # this run lowers it to TEST_TIMEOUT. The resolve step fits it; the brief then hangs.
     install_uvx(bin_dir, python=hook_python, log=uvx_log)
     event = {"session_id": "abcdef123456", "cwd": str(hub), "source": "startup"}
-    env = {"FAKE_UVX_RESOLVE": "sleep", "FAKE_UVX_BRIEF": "sleep"}
+    env = {"FAKE_UVX_RESOLVE": "slow", "FAKE_UVX_BRIEF": "hang"}
+    locks = [uvx_log.with_name(uvx_log.name + suffix) for suffix in (".hub.lock", ".tool.lock")]
 
-    began = time.monotonic()
+    try:
+        completed = run_hook_with_constant(
+            hook_python,
+            hub / HOOK,
+            constant=("BRIEF_TIMEOUT", TEST_TIMEOUT),
+            stdin=json.dumps(event).encode(),
+            cwd=hub.parent,
+            env={"PATH": str(bin_dir), "HOME": str(bin_dir.parent / "home")} | env,
+        )
+
+        assert context_of(completed) == expected_mini_brief("timed out")
+        assert [call["args"][-1] for call in calls(uvx_log)] == ["--version", "brief"]
+        for lock in locks:
+            assert lock.with_name(lock.name + ".pid").exists(), f"{lock.name}: never held"
+            assert is_lock_free_within(lock, PROBE_DEADLINE), f"{lock.name}: still held"
+    finally:
+        for lock in locks:
+            with contextlib.suppress(FileNotFoundError, ProcessLookupError, ValueError):
+                os.kill(int(lock.with_name(lock.name + ".pid").read_text()), signal.SIGKILL)
+
+
+def test_times_out_when_calls_together_exceed_deadline(
+    hub: Path,
+    *,
+    hook_python: str,
+    run_hook_with_constant: RunHook,
+    bin_dir: Path,
+    uvx_log: Path,
+) -> None:
+    # One deadline for both calls: each alone would fit it.
+    install_uvx(bin_dir, python=hook_python, log=uvx_log)
+    event = {"session_id": "abcdef123456", "cwd": str(hub), "source": "startup"}
+    env = {"FAKE_UVX_RESOLVE": "slow", "FAKE_UVX_BRIEF": "slow", "FAKE_UVX_SLOW": str(SLOW_CALL)}
+
     completed = run_hook_with_constant(
         hook_python,
         hub / HOOK,
@@ -294,15 +367,9 @@ def test_kills_group_when_calls_exceed_deadline(
         cwd=hub.parent,
         env={"PATH": str(bin_dir), "HOME": str(bin_dir.parent / "home")} | env,
     )
-    took = time.monotonic() - began
-    # Past the time the brief's child would have written its file, had it lived.
-    time.sleep(max(0.0, 2 * CALL_SLEEP + 0.5 - took))
 
     assert context_of(completed) == expected_mini_brief("timed out")
     assert [call["args"][-1] for call in calls(uvx_log)] == ["--version", "brief"]
-    assert TEST_TIMEOUT <= took < 2 * CALL_SLEEP + 0.5
-    assert uvx_log.with_name(uvx_log.name + ".resolve.late").exists()
-    assert not uvx_log.with_name(uvx_log.name + ".brief.late").exists()  # the group killed
 
 
 def test_keeps_brief_timeout_inside_hook_timeout_when_rendered(
