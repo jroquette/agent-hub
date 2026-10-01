@@ -454,17 +454,16 @@ def test_keeps_brief_when_snapshot_not_utf8(
     assert context_of(completed) == expected
 
 
-def test_calls_uvx_only_from_session_start_when_templates_read(demo_config: HubConfig) -> None:
+def test_calls_uvx_only_from_shim_and_session_start_when_templates_read(
+    demo_config: HubConfig,
+) -> None:
     texts = {file.path: file.content.decode("utf-8") for file in render_hub(demo_config).files}
     uvx = re.compile(r"\buvx\b")
 
-    callers = {
-        path
-        for path, text in texts.items()
-        if uvx.search(text) and (path.startswith("plugin/") or path.endswith(".py"))
-    }
+    # Every rendered file: the shim has no suffix and lives at the root.
+    callers = {path for path, text in texts.items() if uvx.search(text)}
 
-    assert callers == {HOOK}
+    assert callers == {"hub", HOOK}
     assert [path for path, text in texts.items() if "scripts/brief.py" in text] == []
 
 
