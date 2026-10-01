@@ -3,21 +3,25 @@
 The hub is ``AGENT_HUB_ROOT`` or the cwd; run from a worktree of the hub repo, the main checkout
 is the hub (its ``hub.json``, its workspace). Each repo ``<ws>/<dir>`` gets
 ``<dir>/.claude/worktrees/<name>`` on the branch ``<branch_prefix><name>``, from a freshly fetched
-``origin/<default_branch>`` (an existing branch is checked out as it is). Usage problems (the
-name, ``--only``) exit 2 before git runs in any repo; a repo problem exits 1 when it is reached.
-Git runs with no timeout in the caller's process group, so Ctrl-C reaches it.
+``origin/<default_branch>`` (an existing branch is checked out as it is), then runs the repo's
+executable ``scripts/worktree-setup.sh <worktree>``; ``--remove`` runs ``worktree-teardown.sh``
+the same way, then ``git worktree remove`` (never forced; branches are kept). Usage problems (the
+name, ``--only``) exit 2 before git runs in any repo; a repo problem, or a script that fails,
+exits 1 when it is reached, and later repos are left alone. Git and the scripts run with no
+timeout in the caller's process group, so Ctrl-C reaches them.
 """
 
 import os
 import shutil
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Final
 
 import typer
 
-from agent_hub.cli.child_process import ChildResult, git_env, run_child
-from agent_hub.cli.command_exits import fail, not_implemented
+from agent_hub.cli.child_process import ChildResult, git_env, run_child, stream_child
+from agent_hub.cli.command_exits import fail
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
 from agent_hub.cli.hub_root import hub_root_or_exit, main_checkout
 from agent_hub.cli.init_report import shown_path
@@ -33,6 +37,8 @@ WORKTREES_FOLDER: Final = Path(".claude", "worktrees")
 _PREFIX: Final = f"hub {COMMAND}"
 _FETCH_HINT: Final = "; check the network and the remote"
 _CLONE_HINT: Final = "clone it next to the hub"
+SETUP_SCRIPT: Final = "scripts/worktree-setup.sh"
+TEARDOWN_SCRIPT: Final = "scripts/worktree-teardown.sh"
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -73,7 +79,9 @@ def worktree(
     config = load_hub_config_or_exit(hub / FILE_LABEL)
     task = _task_or_refuse(context, config, name=name, only=only, hub=hub, git=git, env=env)
     if remove:
-        not_implemented()
+        for repo in task.repos:
+            _remove(task, repo)
+        return
     for repo in task.repos:
         _create(task, repo)
     for line in _summary(task):
@@ -150,6 +158,45 @@ def _create(task: _Task, repo: str) -> None:
         add = ("worktree", "add", "-q", "-b", task.branch, str(worktree), task.base)
     _git_or_fail(task, checkout, add, step="could not add the worktree")
     typer.echo(f"created  {shown_path(str(worktree))} ({task.branch} from {task.base})")
+    _run_script(task, repo, worktree, script=SETUP_SCRIPT)
+
+
+def _remove(task: _Task, repo: str) -> None:
+    checkout = task.workspace / repo
+    worktree = checkout / WORKTREES_FOLDER / task.name
+    if not worktree.is_dir():
+        return
+    _run_script(task, repo, worktree, script=TEARDOWN_SCRIPT)
+    _git_or_fail(
+        task, checkout, ("worktree", "remove", str(worktree)), step="could not remove the worktree"
+    )
+    typer.echo(f"removed  {shown_path(str(worktree))}")
+
+
+def _run_script(task: _Task, repo: str, worktree: Path, *, script: str) -> None:
+    """Run the repo's ``script`` with argv ``[<worktree>]`` when it is an executable file."""
+    path = worktree / script
+    if not _is_executable_file(path):
+        return
+
+    def show(line: bytes) -> None:
+        typer.echo(f"  {repo}: {line.decode(errors='replace').removesuffix(chr(10))}")
+
+    try:
+        code = stream_child([str(path), str(worktree)], cwd=worktree, env=task.env, on_line=show)
+    except OSError as error:
+        fail(f"{_PREFIX}: {repo}: {script} could not run: {error.strerror or error}")
+    if code != 0:
+        fail(f"{_PREFIX}: {repo}: {script} exited {code}")
+
+
+def _is_executable_file(path: Path) -> bool:
+    # As the shell's [ -x ]: a link is followed; a folder or a FIFO is never run.
+    try:
+        mode = os.stat(path).st_mode
+    except OSError:
+        return False
+    return stat.S_ISREG(mode) and os.access(path, os.X_OK)
 
 
 def _summary(task: _Task) -> list[str]:
