@@ -22,6 +22,8 @@ import pytest
 from click import unstyle
 from typer.testing import Result
 
+from agent_hub.cli import worktree_command
+
 # The conftest's in-process run (tests cannot import a conftest in importlib mode).
 type CommandRunner = Callable[..., Result]
 type Workspace = Any
@@ -39,10 +41,11 @@ PLAIN = 0o644
 
 
 def logging_script(log: Path, word: str, *, exit_code: int = 0) -> bytes:
-    """A POSIX ``sh`` script: logs ``$#`` and ``$1`` to ``log``, says ``word $1``, then exits."""
+    """A POSIX ``sh`` script: logs ``$#``, ``$1``, its cwd and ``GIT_DIR`` to ``log``, says
+    ``word $1``, then exits."""
     return (
         "#!/bin/sh\n"
-        f'printf \'%s %s\\n\' "$#" "$1" >> "{log}"\n'
+        f'printf \'%s %s %s %s\\n\' "$#" "$1" "$(pwd)" "${{GIT_DIR-unset}}" >> "{log}"\n'
         f'echo "{word} $1"\n'
         'test -d "$1" && echo "present"\n'
         f"exit {exit_code}\n"
@@ -68,6 +71,19 @@ def assert_untouched(workspace: Workspace) -> None:
             checkout, "rev-parse", "HEAD"
         )
         assert not (checkout / ".claude").exists()
+
+
+def script_logged(worktree: Path) -> str:
+    """The log line of one run: one argument, the worktree, run in it, no ``GIT_DIR``."""
+    return f"1 {worktree} {worktree} unset\n"
+
+
+def setup_failed(worktree: Path, how: str) -> str:
+    return (
+        f"hub worktree: demo-api: {SETUP} {how}; the worktree is kept: run the script again"
+        f" ({worktree / SETUP} {worktree}) or remove it with"
+        f" ./hub worktree --remove {NAME} --only demo-api\n"
+    )
 
 
 def summary(name: str, repos: str, remove: str) -> list[str]:
@@ -244,8 +260,14 @@ class TestCreate:
 
 class TestScripts:
     def test_runs_setup_once_when_executable(
-        self, demo_workspace: Workspace, run_command: CommandRunner, tmp_path: Path
+        self,
+        demo_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        monkeypatch.setenv("GIT_DIR", str(tmp_path / "decoy.git"))
         log = tmp_path / "setup.log"
         demo_workspace.advance("demo-api", {SETUP: (logging_script(log, "setup"), EXECUTABLE)})
         worktree = demo_workspace.worktree("demo-api", NAME)
@@ -260,7 +282,7 @@ class TestScripts:
             "  demo-api: present",
         ]
         assert again.exit_code == 0, again.output
-        assert log.read_text() == f"1 {worktree}\n"
+        assert log.read_text() == script_logged(worktree)
 
     def test_skips_setup_when_not_executable_or_exists(
         self, demo_workspace: Workspace, run_command: CommandRunner, tmp_path: Path
@@ -288,7 +310,7 @@ class TestScripts:
         result = run_command(demo_workspace.hub, "worktree", NAME)
 
         assert result.exit_code == 1
-        assert result.stderr == f"hub worktree: demo-api: {SETUP} exited 3\n"
+        assert result.stderr == setup_failed(worktree, "exited 3")
         assert result.stdout.splitlines() == [
             f"created  {worktree} ({BRANCH} from origin/trunk)",
             f"  demo-api: setup {worktree}",
@@ -298,6 +320,31 @@ class TestScripts:
         web = demo_workspace.ws / "demo-web"
         assert not (web / ".git" / "FETCH_HEAD").exists()
         assert not (web / ".claude").exists()
+
+    def test_names_signal_when_setup_killed(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        demo_workspace.advance("demo-api", {SETUP: (b"#!/bin/sh\nkill -KILL $$\n", EXECUTABLE)})
+        worktree = demo_workspace.worktree("demo-api", NAME)
+
+        result = run_command(demo_workspace.hub, "worktree", NAME)
+
+        assert result.exit_code == 1
+        assert result.stderr == setup_failed(worktree, "was killed by signal 9")
+        assert worktree.is_dir()
+
+    def test_strips_line_ends_when_script_prints_crlf(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        script = b"#!/bin/sh\nprintf 'one\\r\\ntwo\\r\\n'\n"
+        demo_workspace.advance("demo-api", {SETUP: (script, EXECUTABLE)})
+
+        result = run_command(demo_workspace.hub, "worktree", NAME, "--only", "demo-api")
+
+        assert result.exit_code == 0, result.output
+        # Result.stdout turns "\r\n" into "\n", so the bytes are checked.
+        assert result.stdout_bytes.split(b"\n")[1:3] == [b"  demo-api: one", b"  demo-api: two"]
+        assert b"\r" not in result.stdout_bytes
 
 
 class TestRemove:
@@ -319,7 +366,7 @@ class TestRemove:
             f"removed  {api}",
             f"removed  {web}",
         ]
-        assert log.read_text() == f"1 {api}\n"
+        assert log.read_text() == script_logged(api)
         assert not api.exists()
         assert not web.exists()
 
@@ -352,8 +399,12 @@ class TestRemove:
         assert result.stderr == ""
 
     def test_keeps_worktree_when_dirty_remove_refused(
-        self, demo_workspace: Workspace, run_command: CommandRunner
+        self, demo_workspace: Workspace, run_command: CommandRunner, tmp_path: Path
     ) -> None:
+        log = tmp_path / "teardown.log"
+        demo_workspace.advance(
+            "demo-api", {TEARDOWN: (logging_script(log, "teardown"), EXECUTABLE)}
+        )
         assert run_command(demo_workspace.hub, "worktree", NAME).exit_code == 0
         api = demo_workspace.worktree("demo-api", NAME)
         (api / "draft.txt").write_bytes(b"work in progress\n")
@@ -362,9 +413,11 @@ class TestRemove:
 
         assert result.exit_code == 1
         assert result.stdout == ""
-        assert result.stderr.startswith("hub worktree: demo-api: could not remove the worktree: ")
-        assert "contains modified or untracked files" in result.stderr
-        assert len(result.stderr.splitlines()) == 1
+        assert result.stderr == (
+            f"hub worktree: demo-api: could not remove {api}: it has modified or untracked files\n"
+        )
+        # The teardown never ran on a worktree that stays.
+        assert not log.exists()
         assert (api / "draft.txt").is_file()
         assert demo_workspace.worktree("demo-web", NAME).is_dir()
 
@@ -411,6 +464,28 @@ class TestRepoProblems:
         assert result.stderr.startswith("hub worktree: demo-api: could not fetch origin: ")
         assert result.stderr.endswith("; check the network and the remote\n")
         assert len(result.stderr.splitlines()) == 1
+        assert not (demo_workspace.ws / "demo-api" / ".claude").exists()
+
+    def test_exits_one_when_git_cannot_run(
+        self,
+        demo_workspace: Workspace,
+        run_command: CommandRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        real_run_child = worktree_command.run_child
+
+        def refusing_fetch(argv: list[str], **options: Any) -> Any:
+            if argv[1:2] == ["fetch"]:
+                raise PermissionError(13, "Permission denied")
+            return real_run_child(argv, **options)
+
+        monkeypatch.setattr(worktree_command, "run_child", refusing_fetch)
+
+        result = run_command(demo_workspace.hub, "worktree", NAME)
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert result.stderr == "hub worktree: demo-api: git could not run: Permission denied\n"
         assert not (demo_workspace.ws / "demo-api" / ".claude").exists()
 
     def test_uses_main_checkout_when_run_from_hub_worktree(
