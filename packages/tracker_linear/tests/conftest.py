@@ -489,8 +489,8 @@ def _stopped_envelope(subtype: str, *, cost_usd: float) -> bytes:
 class FakeClaude:
     """A runner for ``McpTrackerClient`` that plays an honest model over a ``FakeTrackerBackend``.
 
-    Each call checks the argv (exact flags; permission mode dontAsk, no built-in tool, ``--allowedTools`` the call kind's
-    tools, ``--disallowedTools`` every other Linear tool), the
+    Each call checks the argv (exact flags; permission mode dontAsk, no built-in tool,
+    ``--allowedTools`` the call kind's tools, ``--disallowedTools`` every other Linear tool), the
     cwd and the environment (no ``LINEAR_API_KEY``), reads the request line (the prompt's last
     line), answers it from the backend and records the call. Reads never change the backend; a
     write changes exactly what it asks, and only to states and labels that exist.
