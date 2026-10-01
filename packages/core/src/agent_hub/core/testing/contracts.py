@@ -218,7 +218,9 @@ class TrackerClientContract:
     ) -> None:
         ready = tracker_client.list_ready("OPS", "agent-ready")
 
-        assert ready == [tracker_backend.issues["OPS-1"]]
+        assert [_sorted_labels(issue) for issue in ready] == [
+            _sorted_labels(tracker_backend.issues["OPS-1"])
+        ]
 
     def test_lists_nothing_when_team_or_label_unknown(
         self, tracker_client: TrackerClient, tracker_backend: FakeTrackerBackend
