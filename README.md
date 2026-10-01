@@ -3,14 +3,14 @@
 <h1 align="center">agent-hub</h1>
 
 <p align="center">
-  <strong>One command gives every project its own home base for AI coding agents:<br>
-  shared rules, memory and workflow across all of its repos, pinned to a version and kept up to date.</strong>
+  <strong>A home base for AI coding agents, for developers who run Claude Code across several repos.<br>
+  One command gives each project shared rules, memory and workflow, pinned to a version and kept up to date.</strong>
 </p>
 
 <p align="center">
-  <a href="../../actions/workflows/ci.yml"><img alt="CI status" src="https://github.com/jroquette/agent-hub/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/jroquette/agent-hub/actions/workflows/ci.yml"><img alt="CI status" src="https://github.com/jroquette/agent-hub/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python 3.14" src="https://img.shields.io/badge/python-3.14-3776AB?logo=python&logoColor=white">
-  <!-- Static badge: bump with each release tag (scripts/check_release.py keeps the package versions in lockstep). -->
+  <!-- Static badge: bump with each release tag (scripts/check_release.py keeps the package versions in lockstep; follow-up: automate). -->
   <img alt="Version 0.4.0" src="https://img.shields.io/badge/version-0.4.0-blue">
   <img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-orange">
 </p>
@@ -25,8 +25,11 @@
 
 <!-- TODO: record a demo GIF (hub init → ./agent) and put it here -->
 
-```console
-$ hub init demo --repos acme/backend,acme/frontend --tracker linear:DEMO --branch-prefix jdoe/ --hub-repo acme/demo-hub
+```bash
+hub init demo --repos acme/backend,acme/frontend --tracker linear:DEMO --branch-prefix jdoe/ --hub-repo acme/demo-hub
+```
+
+```text
 Created 60 files (40 managed, 20 seeded) and 14 links in /home/jdoe/work/demo-hub
 
 Next steps:
