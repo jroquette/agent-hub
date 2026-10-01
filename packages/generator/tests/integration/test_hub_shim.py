@@ -23,7 +23,8 @@ from agent_hub.core.testing.builders import a_hub_document
 
 VERSION = "4.5.6"
 SOURCE = "git+https://github.com/jroquette/agent-hub@v4.5.6#subdirectory=packages/agent-hub"
-SHELLS = ("sh", "dash")
+# Each shell and the arguments that make it POSIX: bash in its POSIX mode.
+SHELLS = {"sh": (), "dash": (), "bash": ("--posix",)}
 INSTALL_URL = "https://docs.astral.sh/uv/getting-started/installation/"
 ACCESS_HINT = (
     "check read access to the repository (a credential, or the repository attached to this session)"
@@ -52,15 +53,16 @@ sys.exit(int(os.environ.get("FAKE_UVX_RC", "0")))
 type Run = Callable[..., subprocess.CompletedProcess[bytes]]
 
 
-@pytest.fixture(params=SHELLS)
-def shell(request: pytest.FixtureRequest) -> str:
+@pytest.fixture(params=sorted(SHELLS))
+def shell(request: pytest.FixtureRequest) -> list[str]:
+    """The shell's command line prefix: its path, then its POSIX-mode options."""
     found = shutil.which(request.param)
     if found is None:
         message = f"no {request.param} on PATH"
         if os.environ.get("CI"):
             pytest.fail(f"{message}, and CI must install one")
         pytest.skip(message)
-    return found
+    return [found, *SHELLS[request.param]]
 
 
 @pytest.fixture
@@ -104,20 +106,24 @@ def link_tool(bin_dir: Path, name: str, target: str | None = None) -> None:
 
 
 @pytest.fixture
-def run(tmp_path: Path, bin_dir: Path, shell: str) -> Run:
-    """Run ``<shell> <script> args`` from ``<tmp>/elsewhere`` with ``PATH`` = the test folder."""
+def run(tmp_path: Path, bin_dir: Path, shell: list[str]) -> Run:
+    """Run ``<shell> <script> args`` in ``<tmp>/elsewhere`` or ``cwd``; PATH: the test folder."""
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
 
     def call(
-        script: Path, *args: str, stdin: bytes = b"", env: dict[str, str] | None = None
+        script: Path | str,
+        *args: str,
+        stdin: bytes = b"",
+        env: dict[str, str] | None = None,
+        cwd: Path | None = None,
     ) -> subprocess.CompletedProcess[bytes]:
         return subprocess.run(  # noqa: S603 - a shell found on PATH, a rendered script
-            [shell, str(script), *args],
+            [*shell, str(script), *args],
             input=stdin,
             capture_output=True,
             check=False,
-            cwd=elsewhere,
+            cwd=cwd or elsewhere,
             env={"PATH": str(bin_dir)} | (env or {}),
             timeout=TIMEOUT,
         )
@@ -173,11 +179,15 @@ def test_names_python_when_python_missing(hub: Path, run: Run, *, bin_dir: Path,
         ("not json", "hub.json"),
         ("no version", "platform.version"),
         ("1.2", "platform.version"),
+        ("1.2.3#x", "platform.version"),
+        ("1.2.3\n", "platform.version"),
+        ("v1.2.3", "platform.version"),
+        (1, "platform.version"),
     ],
-    ids=["absent", "not-json", "no-version", "short"],
+    ids=["absent", "not-json", "no-version", "short", "fragment", "newline", "prefixed", "number"],
 )
 def test_exits_one_when_pin_unreadable(
-    hub: Path, run: Run, *, tools: None, log: Path, pin: str | None, named: str
+    hub: Path, run: Run, *, tools: None, log: Path, pin: str | int | None, named: str
 ) -> None:
     if pin is None:
         (hub / "hub.json").unlink()
@@ -298,3 +308,14 @@ def test_execs_hub_agent_when_agent_runs(
         "root": str(hub),
         "stdin": "",
     }
+
+
+def test_reads_own_folder_when_run_without_slash(
+    hub: Path, run: Run, *, tools: None, log: Path
+) -> None:
+    # `sh hub` from the hub: $0 has no slash, so the shim's folder is the cwd.
+    completed = run("hub", "brief", cwd=hub)
+
+    assert completed.returncode == 0, completed.stderr
+    assert calls(log)[-1]["cwd"] == str(hub)
+    assert calls(log)[-1]["root"] == str(hub)

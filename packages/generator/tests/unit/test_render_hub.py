@@ -1084,7 +1084,8 @@ def test_calls_hub_through_shim_when_recipes_read(demo_config: HubConfig) -> Non
     )
     assert recipe_lines(makefile, "agent") == ["./agent"]
     # The protocol is the ./hub shim's (test_hub_shim.py); the Makefile holds no copy of it.
-    assert "HUB := ./hub" in makefile.splitlines()
+    # The shim by the hub's absolute path, so a recipe that changes folder still finds it.
+    assert 'HUB := "$(CURDIR)/hub"' in makefile.splitlines()
     assert "uvx" not in makefile
 
 

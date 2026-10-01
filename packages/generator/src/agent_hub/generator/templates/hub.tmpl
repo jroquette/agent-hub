@@ -2,7 +2,9 @@
 # The hub command of the release pinned in hub.json (platform.version), read at every run: the
 # resolve step (hub --version), then the real call, which keeps the caller's folder and gets
 # AGENT_HUB_ROOT = this folder. No python3 or no uv: exit 127. The release cannot be resolved:
-# exit 1, the real call never made. Otherwise the exit code is the real call's. Managed by hub sync.
+# exit 1, the real call never made. Otherwise the exit code is the real call's. Run it by its real
+# path: its folder is the hub, so a symlink to it elsewhere (on PATH) would read the link's folder.
+# Managed by hub sync.
 case $0 in
   */*) hub_dir=${0%/*} ;;
   *) hub_dir=. ;;
