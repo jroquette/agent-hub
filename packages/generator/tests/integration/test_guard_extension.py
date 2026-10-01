@@ -282,6 +282,14 @@ def test_tightens_when_extension_asks_or_denies(
             'unexpected answer {"verdict": "ask", "reason": "r", "extra": 1}',
             id="extra_key",
         ),
+        pytest.param(
+            "",
+            "import os\n"
+            'os.write(1, json.dumps({"verdict": "deny", "reason": "first value"}).encode()'
+            ' + b"\\n")\nreturn None',
+            "its output is not one JSON value",
+            id="second_json_value",
+        ),
     ],
 )
 def test_asks_with_cause_when_extension_misbehaves(
