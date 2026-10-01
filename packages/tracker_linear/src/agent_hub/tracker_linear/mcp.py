@@ -3,12 +3,18 @@
 Each port operation is one or more short headless ``claude -p`` calls (``mcp_protocol``): a
 read is one call; a write is one read call, then the adapter decides, then at most one write
 call. Every call runs in ``cwd`` (the hub root) with the caller's environment minus
-``LINEAR_API_KEY``, under the caps given to the constructor (D9), and is allowed only the
-Linear tools its kind needs. The adapter never trusts the model's filtering: ``list_ready``
-filters the reply again by team, label and state type.
+``LINEAR_API_KEY``, under the caps given to the constructor (D9), in permission mode
+``dontAsk``, with no built-in tool, the Linear tools its kind needs allowed and every other
+Linear tool of the snapshot ``LINEAR_TOOLS`` denied. What the flags cannot remove: the user's
+and the project's allow rules still apply to other MCP servers' tools and to Linear tools added
+after the snapshot (``--setting-sources``/``--restricted`` are AGH-39, which needs a live
+check). The adapter never trusts the model's filtering: ``list_ready`` filters the reply again
+by team, label and state type.
 
 Every failure is a one-line ``TrackerError`` naming the operation, the issue id and the fix.
-Nothing is retried. ``last_cost_usd`` is what the last port operation's calls cost.
+Nothing is retried. ``last_cost_usd`` is what the last port operation's calls cost, as each
+result reports it; it is a lower bound when ``claude`` ran but reported no cost (a timeout, an
+output over the cap, output that is not its JSON result).
 """
 
 import json
@@ -222,7 +228,10 @@ class McpTrackerClient:
             self.model,
             "--settings",
             json.dumps({"effortLevel": self.effort}),
-            # No built-in tool; only the kind's Linear tools, and a deny of every other one,
+            # A permissive defaultMode in the user's settings cannot widen the call.
+            "--permission-mode",
+            "dontAsk",
+            # No built-in tool; the kind's Linear tools, and a deny of every other Linear tool,
             # since --allowedTools only adds to the user's and the project's allow-lists.
             "--tools",
             "",
