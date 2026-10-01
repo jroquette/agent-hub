@@ -722,3 +722,13 @@ class TestInjection:
             _client(runner, hub_root).add_label("DEM-1", "bug")
 
         assert len(runner.argvs) == 2
+
+
+def test_reads_no_hub_json_when_sources_scanned() -> None:
+    # The adapter is given its caps and cwd; it never reads the hub's config (AC-27.7).
+    sources = Path(__file__).resolve().parents[2] / "src" / "agent_hub" / "tracker_linear"
+    assert sources.is_dir(), sources  # an empty scan would pass anywhere
+    modules = sorted(sources.rglob("*.py"))
+    assert {module.name for module in modules} >= {"mcp.py", "mcp_protocol.py", "claude_process.py"}
+
+    assert [module.name for module in modules if "hub.json" in module.read_text()] == []
