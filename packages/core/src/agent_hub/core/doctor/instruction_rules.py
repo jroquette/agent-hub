@@ -1,6 +1,6 @@
 """``instructions.size``, ``.refs`` and ``.duplicates``: short, correct, unrepeated instructions.
 
-The port of the hub's old ``agent_config_lint.py`` checks over the listed regular instruction
+The port of the hub's old config lint script's checks over the listed regular instruction
 files (``config_lint``; spec AC-11.19, AC-11.20, Q-6). Lines are ``config_lint.text_lines``
 (E29): ``\\n`` and ``\\r\\n`` end a line, a lone ``\\r`` does not.
 
