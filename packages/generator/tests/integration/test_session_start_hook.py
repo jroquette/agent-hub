@@ -16,8 +16,9 @@ import json
 import os
 import re
 import signal
+import subprocess
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -34,26 +35,33 @@ BRIEF = "# Brief\nAll repos green.\n"
 # The deadline of both calls in the rendered hook, and the one a timeout run lowers it to (s).
 BRIEF_TIMEOUT = 10
 TEST_TIMEOUT = 2
-# A slow resolve step fits the lowered deadline with a wide margin; the brief then hangs past it.
-RESOLVE_SLEEP = 0.5
-# Each of two slow calls fits the lowered deadline with a margin; together they do not.
+# Each of the two calls takes this long: alone it fits the lowered deadline with a margin; both
+# together do not, so only one deadline for both ends the run.
 SLOW_CALL = 0.7 * TEST_TIMEOUT
+# How long a holder waits for the run to reach the point the test is about.
+HOLDER_WAIT = 10.0
 # The lock probe: how long a killed holder may take to release its lock.
 PROBE_DEADLINE = 5.0
 # A hanging call's processes: ``hub`` (uvx's child) and its own child (as ``hub brief``'s git or
 # gh), in the call's process group, each holding an exclusive lock until it dies.
+# The hub holder prints the brief after FAKE_UVX_HOLD seconds (default: never) and exits; the tool
+# holder, its stdout not the call's, holds its lock until killed, as an orphaned git or gh would.
 HOLDER = """\
 import fcntl, os, subprocess, sys, time
 lock = open(sys.argv[1], "w")
 fcntl.flock(lock, fcntl.LOCK_EX)
 with open(sys.argv[1] + ".pid", "w") as fh:
     fh.write(str(os.getpid()))
-if len(sys.argv) > 2:
-    subprocess.Popen([sys.executable, __file__, sys.argv[2]], start_new_session=False)
-    while not os.path.exists(sys.argv[2] + ".pid"):
-        time.sleep(0.01)
-time.sleep(60)
-"""
+if len(sys.argv) < 3:
+    time.sleep(60)
+    sys.exit(0)
+tool = [sys.executable, __file__, sys.argv[2]]
+subprocess.Popen(tool, start_new_session=False, stdout=subprocess.DEVNULL)
+while not os.path.exists(sys.argv[2] + ".pid"):
+    time.sleep(0.01)
+time.sleep(float(os.environ.get("FAKE_UVX_HOLD", "60")))
+sys.stdout.write(BRIEF_TEXT)
+""".replace("BRIEF_TEXT", repr(BRIEF))
 BRIEF_CAP = 8000
 # A brief longer than the cap; its cut falls inside a word.
 LONG_BRIEF = "# Brief\n" + "".join(
@@ -92,7 +100,7 @@ call = {"args": args, "cwd": os.getcwd(), "root": os.environ.get("AGENT_HUB_ROOT
 with open(log, "a", encoding="utf-8") as fh:
     fh.write(json.dumps(call) + "\\n")
 if mode == "slow":  # answers, late
-    time.sleep(float(os.environ.get("FAKE_UVX_SLOW", RESOLVE_SECONDS)))
+    time.sleep(SLOW_SECONDS)
     sys.stdout.write("1.2.3\\n" if kind == "resolve" else BRIEF_TEXT)
 elif mode == "hang":  # like uvx, wait on its child (hub), which has a child of its own
     holder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "holder.py")
@@ -111,7 +119,7 @@ elif mode == "long":
     sys.stdout.write(LONG_TEXT)
 """.replace("BRIEF_TEXT", repr(BRIEF))
     .replace("LONG_TEXT", repr(LONG_BRIEF))
-    .replace("RESOLVE_SECONDS", repr(RESOLVE_SLEEP))
+    .replace("SLOW_SECONDS", repr(SLOW_CALL))
 )
 FALLBACK_HEADER = re.compile(
     r"# Brief \(fallback: hub brief (no uv|no version|resolve failed|timed out"
@@ -310,33 +318,12 @@ def is_lock_free_within(lock_path: Path, deadline: float) -> bool:
                 return True
 
 
-def test_kills_group_when_calls_exceed_deadline(
-    hub: Path,
-    *,
-    hook_python: str,
-    run_hook_with_constant: RunHook,
-    bin_dir: Path,
-    uvx_log: Path,
-) -> None:
-    # The rendered 10 s is pinned by test_keeps_brief_timeout_inside_hook_timeout_when_rendered;
-    # this run lowers it to TEST_TIMEOUT. The resolve step fits it; the brief then hangs.
-    install_uvx(bin_dir, python=hook_python, log=uvx_log)
-    event = {"session_id": "abcdef123456", "cwd": str(hub), "source": "startup"}
-    env = {"FAKE_UVX_RESOLVE": "slow", "FAKE_UVX_BRIEF": "hang"}
+@contextlib.contextmanager
+def holders_reaped(uvx_log: Path) -> Iterator[list[Path]]:
+    """The hanging call's two locks; after the block, each held once and now free (probe)."""
     locks = [uvx_log.with_name(uvx_log.name + suffix) for suffix in (".hub.lock", ".tool.lock")]
-
     try:
-        completed = run_hook_with_constant(
-            hook_python,
-            hub / HOOK,
-            constant=("BRIEF_TIMEOUT", TEST_TIMEOUT),
-            stdin=json.dumps(event).encode(),
-            cwd=hub.parent,
-            env={"PATH": str(bin_dir), "HOME": str(bin_dir.parent / "home")} | env,
-        )
-
-        assert context_of(completed) == expected_mini_brief("timed out")
-        assert [call["args"][-1] for call in calls(uvx_log)] == ["--version", "brief"]
+        yield locks
         for lock in locks:
             assert lock.with_name(lock.name + ".pid").exists(), f"{lock.name}: never held"
             assert is_lock_free_within(lock, PROBE_DEADLINE), f"{lock.name}: still held"
@@ -346,30 +333,61 @@ def test_kills_group_when_calls_exceed_deadline(
                 os.kill(int(lock.with_name(lock.name + ".pid").read_text()), signal.SIGKILL)
 
 
-def test_times_out_when_calls_together_exceed_deadline(
-    hub: Path,
-    *,
-    hook_python: str,
-    run_hook_with_constant: RunHook,
-    bin_dir: Path,
-    uvx_log: Path,
+def test_kills_group_when_calls_exceed_deadline(
+    hub: Path, *, python39: str, run_hook_with_constant: RunHook, bin_dir: Path, uvx_log: Path
 ) -> None:
-    # One deadline for both calls: each alone would fit it.
-    install_uvx(bin_dir, python=hook_python, log=uvx_log)
+    # On the hook's real interpreter only. The rendered 10 s is pinned by
+    # test_keeps_brief_timeout_inside_hook_timeout_when_rendered; this run lowers it. Each call
+    # takes SLOW_CALL (the brief's hub, holding the locks, would then print the brief): one
+    # deadline for both ends the run, and the kill of the brief's group frees both locks.
+    install_uvx(bin_dir, python=python39, log=uvx_log)
     event = {"session_id": "abcdef123456", "cwd": str(hub), "source": "startup"}
-    env = {"FAKE_UVX_RESOLVE": "slow", "FAKE_UVX_BRIEF": "slow", "FAKE_UVX_SLOW": str(SLOW_CALL)}
+    env = {"FAKE_UVX_RESOLVE": "slow", "FAKE_UVX_BRIEF": "hang", "FAKE_UVX_HOLD": str(SLOW_CALL)}
 
-    completed = run_hook_with_constant(
-        hook_python,
-        hub / HOOK,
-        constant=("BRIEF_TIMEOUT", TEST_TIMEOUT),
-        stdin=json.dumps(event).encode(),
-        cwd=hub.parent,
-        env={"PATH": str(bin_dir), "HOME": str(bin_dir.parent / "home")} | env,
-    )
+    with holders_reaped(uvx_log):
+        completed = run_hook_with_constant(
+            python39,
+            hub / HOOK,
+            constant=("BRIEF_TIMEOUT", TEST_TIMEOUT),
+            stdin=json.dumps(event).encode(),
+            cwd=hub.parent,
+            env={"PATH": str(bin_dir), "HOME": str(bin_dir.parent / "home")} | env,
+        )
 
-    assert context_of(completed) == expected_mini_brief("timed out")
-    assert [call["args"][-1] for call in calls(uvx_log)] == ["--version", "brief"]
+        assert context_of(completed) == expected_mini_brief("timed out")
+        assert [call["args"][-1] for call in calls(uvx_log)] == ["--version", "brief"]
+
+
+def test_kills_group_when_hook_interrupted(
+    hub: Path, *, python39: str, bin_dir: Path, uvx_log: Path
+) -> None:
+    # Ctrl-C (SIGINT) to the hook while the brief hangs: the call's group dies with it.
+    install_uvx(bin_dir, python=python39, log=uvx_log)
+    event = {"session_id": "abcdef123456", "cwd": str(hub), "source": "startup"}
+    env = {"PATH": str(bin_dir), "HOME": str(bin_dir.parent / "home"), "FAKE_UVX_BRIEF": "hang"}
+
+    with holders_reaped(uvx_log) as locks:
+        hook = subprocess.Popen(  # noqa: S603 - the 3.9 interpreter, a rendered hook file
+            [python39, str(hub / HOOK)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=hub.parent,
+            env=env,
+        )
+        try:
+            assert hook.stdin is not None
+            hook.stdin.write(json.dumps(event).encode())
+            hook.stdin.close()
+            end = time.monotonic() + HOLDER_WAIT
+            while not all(lock.with_name(lock.name + ".pid").exists() for lock in locks):
+                assert time.monotonic() < end, "the brief's holders never started"
+                time.sleep(0.01)
+            hook.send_signal(signal.SIGINT)
+            hook.wait(timeout=HOLDER_WAIT)
+        finally:
+            hook.kill()
+            hook.wait()
 
 
 def test_keeps_brief_timeout_inside_hook_timeout_when_rendered(

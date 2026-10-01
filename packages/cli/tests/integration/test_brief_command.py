@@ -404,7 +404,7 @@ def test_skips_git_calls_when_git_budget_spent(
 
 
 def test_strips_control_characters_when_gh_prints_them(brief_workspace: Workspace) -> None:
-    title = "#5 \x1b[31mRed\x1b[0m title\x07 done\x9b\n"
+    title = "#5 \x1b[31mRed\x1b[0m title\x07 done\x9b\x7f\n"
     brief_workspace.answer([{"argv_has": ["pr", "acme/api"], "stdout": title}])
 
     result = run_brief(brief_workspace)
@@ -422,3 +422,23 @@ def test_keeps_children_in_caller_group_when_brief_runs(brief_workspace: Workspa
 
     assert result.exit_code == 0, result.output
     assert group_file.read_text() == str(os.getpgrp())
+
+
+def test_keeps_git_in_caller_group_when_brief_runs(
+    brief_workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The SessionStart hook kills its call's process group on its deadline: git must be in it.
+    real_run_child = brief_command.run_child
+    options: list[dict[str, Any]] = []
+
+    def spy(argv: list[str], **given: Any) -> Any:
+        options.append(given)
+        return real_run_child(argv, **given)
+
+    monkeypatch.setattr(brief_command, "run_child", spy)
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    assert len(options) == 10  # three checkouts, the detached one asks for its short HEAD
+    assert all(given["own_session"] is False for given in options)
