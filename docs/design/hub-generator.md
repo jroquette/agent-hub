@@ -63,7 +63,9 @@ from the start, a sibling hub only if the start is in it or a repo it lists. Tha
 `check_fast` the stop gate runs, the `platform.version` SessionStart fetches, default branch, branch prefix, hub,
 workspace), except that `$HUB_CONFIG`'s `ask_before_edit`, `deny_paths` and `deny_hosts` are added to the hook root's,
 never replace them; the extension, `@hub/` anchors and guard-file asks stay pinned to the hook root. Only SessionStart
-calls the CLI: one pinned `uvx … hub brief` (10 s timeout), else a mini brief naming the cause. Guard extension: the
+calls the CLI, from the hub with `AGENT_HUB_ROOT` set: the shim's resolve step (`uvx … hub --version`), then
+`uvx … hub brief`, both within one 10 s deadline; else a mini brief naming the cause (`no version`, `no uv`,
+`resolve failed`, `failed (exit N)`, `failed (no output)`, `failed (cannot start)`, `timed out`). Guard extension: the
 seeded `plugin/<project>/hooks/project_guard.py` of the hook root (never from `CLAUDE_PROJECT_DIR`, the cwd or tool
 input). Unless the base verdict is `deny` (final), it runs in a child `python3` in its own session (3 s, then killed
 with its process group) and only tightens: `check(event, cfg)` returns `None`, `("deny", reason)` or `("ask", reason)`,
