@@ -2,7 +2,9 @@
 
 Also the ``hub.lock`` golden harness (``lock_golden``), a from-scratch child environment
 (``child_env``), the process umask (``set_umask``), and for ``hub sync`` a ``DEMO`` hub built
-once per session (``demo_hub_template``) and copied per test (``demo_hub``), an in-process sync
+once per session (``demo_hub_template``) and copied per test (``demo_hub``), the same with a
+second repo (``demo_two_repo_hub_template``, ``demo_two_repo_hub``) and a synthetic git checkout
+next to it (``demo_checkout``), an in-process sync
 in a folder (``run_sync``) and the writer calls a test makes (``adapter_calls``); for ``hub doctor``
 an in-process run in a folder (``run_doctor``), the paths a run reads (``path_reads``) and their
 filters (``reads_in``, ``ancestors``, ``under``).
@@ -143,16 +145,10 @@ def demo_document() -> dict[str, Any]:
     return demo_document_value()
 
 
-@pytest.fixture(scope="session")
-def demo_hub_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """The tree ``hub init --config DEMO`` writes, built once per session: never change it.
-
-    ``init --config`` reads neither git nor ``HOME``, so the function-scoped fixtures that
-    isolate them are not needed here.
-    """
-    base = tmp_path_factory.mktemp("demo-hub-template")
+def init_template(base: Path, document: dict[str, Any]) -> Path:
+    """The tree ``hub init --config`` writes for ``document`` in ``base / "hub"``."""
     config = base / "hub.json"
-    config.write_bytes(dump_json(demo_document_value()))
+    config.write_bytes(dump_json(document))
     root = base / "hub"
     result = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
     assert result.exit_code == 0, result.stderr
@@ -161,12 +157,90 @@ def demo_hub_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return root
 
 
+@pytest.fixture(scope="session")
+def demo_hub_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The tree ``hub init --config DEMO`` writes, built once per session: never change it.
+
+    ``init --config`` reads neither git nor ``HOME``, so the function-scoped fixtures that
+    isolate them are not needed here.
+    """
+    return init_template(tmp_path_factory.mktemp("demo-hub-template"), demo_document_value())
+
+
 @pytest.fixture
 def demo_hub(tmp_path: Path, demo_hub_template: Path) -> Path:
     """A copy of the ``DEMO`` hub for this test: links kept as links, modes kept."""
     root = tmp_path / "hub"
     shutil.copytree(demo_hub_template, root, symlinks=True)
     return root
+
+
+# The second repo of the two-repo ``DEMO`` (plan E3b), in the generator's ``variant_config`` shape.
+DEMO_SECOND_REPO = {
+    "dir": "demo-web",
+    "github": "acme/demo-web",
+    "check_fast": "make check-fast",
+    "check": "make check",
+}
+
+
+@pytest.fixture(scope="session")
+def demo_two_repo_hub_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """``DEMO`` with ``demo-web`` after ``demo-api`` in ``repos``, built once: never change it."""
+    document = demo_document_value()
+    document["repos"].append(dict(DEMO_SECOND_REPO))
+    return init_template(tmp_path_factory.mktemp("demo-two-repo-hub-template"), document)
+
+
+@pytest.fixture
+def demo_two_repo_hub(tmp_path: Path, demo_two_repo_hub_template: Path) -> Path:
+    """A copy of the two-repo ``DEMO`` hub at ``tmp_path / "hub"``; its checkouts go next to it."""
+    root = tmp_path / "hub"
+    shutil.copytree(demo_two_repo_hub_template, root, symlinks=True)
+    return root
+
+
+type CheckoutFactory = Callable[[str], Path]
+
+
+@pytest.fixture
+def demo_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CheckoutFactory:
+    """``demo_checkout(dir)``: a synthetic git repo at ``tmp_path / dir`` with a committed README.
+
+    Git reads the test's own ``HOME`` and config only, here and in the run (no system or global
+    config, no ``XDG_CONFIG_HOME``), and never looks for a repository above ``tmp_path``.
+    """
+    git = shutil.which("git")
+    assert git is not None, "git is needed for a synthetic checkout"
+    home = tmp_path / "checkout-home"
+    home.mkdir()
+    env = {
+        "HOME": str(home),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CEILING_DIRECTORIES": str(tmp_path),
+    }
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+    def build(name: str) -> Path:
+        root = tmp_path / name
+        # An empty folder may already stand there (plan E3a).
+        root.mkdir(exist_ok=True)
+        (root / "README.md").write_bytes(f"# {name}\n".encode())
+        author = ["-c", "user.name=Jane Doe", "-c", "user.email=jane@example.com"]
+        for args in (
+            ["-c", "init.defaultBranch=main", "init", "-q"],
+            ["add", "-A"],
+            [*author, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"],
+        ):
+            subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
+                [git, *args], cwd=root, env=env, check=True, capture_output=True
+            )
+        return root
+
+    return build
 
 
 type SyncRunner = Callable[..., Result]
