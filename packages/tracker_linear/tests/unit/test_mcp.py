@@ -534,6 +534,8 @@ _OPERATIONS: dict[str, tuple[tuple[Any, ...], tuple[dict[str, Any], ...], str]] 
     "comment": (("DEM-1", "A comment."), ({"id": "DEM-1"},), "comment DEM-1: "),
 }
 _TRANSPORT_FIX = 'set tracker.transport to "api" with LINEAR_API_KEY'
+# Stands for the client's cwd in a failure row; the test puts the real path in its place.
+_HUB_ROOT_MARK = "<hub root>"
 # Each failure of the last call, and the cause and fix its error names.
 _FAILURES: dict[str, tuple[Any, str, str]] = {
     "claude-missing": (
@@ -542,9 +544,14 @@ _FAILURES: dict[str, tuple[Any, str, str]] = {
         "install Claude Code",
     ),
     "cwd-missing": (
-        FileNotFoundError(2, "No such file or directory", "/synthetic/missing-hub"),
-        "cannot start claude in '/synthetic/missing-hub'",
+        FileNotFoundError(2, "No such file or directory", _HUB_ROOT_MARK),
+        f"cannot start claude in '{_HUB_ROOT_MARK}'",
         "run the command in the hub",
+    ),
+    "other-file-missing": (
+        FileNotFoundError(2, "No such file or directory", "/synthetic/elsewhere"),
+        "could not start claude: 'No such file or directory'",
+        _TRANSPORT_FIX,
     ),
     "cannot-start": (
         PermissionError(13, "Permission denied", "claude"),
@@ -596,7 +603,7 @@ _FAILURES: dict[str, tuple[Any, str, str]] = {
 
 _WRITE_OPERATIONS = frozenset({"move_state", "add_label", "remove_label", "comment"})
 # Failures before claude ran: nothing was written, so the fix may say retry or install.
-_START_FAILURES = frozenset({"claude-missing", "cwd-missing", "cannot-start"})
+_START_FAILURES = frozenset({"claude-missing", "cwd-missing", "other-file-missing", "cannot-start"})
 
 
 class TestFailures:
@@ -607,6 +614,10 @@ class TestFailures:
     ) -> None:
         arguments, before, subject = _OPERATIONS[operation]
         error, cause, fix = _FAILURES[failure]
+        if isinstance(error, OSError) and error.filename == _HUB_ROOT_MARK:
+            # As subprocess.Popen raises it: the cwd it was given, a Path here.
+            error = FileNotFoundError(error.errno, error.strerror, hub_root)
+            cause = cause.replace(_HUB_ROOT_MARK, str(hub_root))
         runner = _Scripted(*(_reply(reply) for reply in before), error)
 
         with pytest.raises(TrackerError) as raised:
