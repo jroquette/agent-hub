@@ -73,7 +73,7 @@ class Runner(Protocol):
 class McpTrackerClient:
     """A ``TrackerClient`` that asks the Linear MCP server through ``claude -p`` calls."""
 
-    def __init__(  # noqa: PLR0913 - the caps are D9's constructor parameters, all keyword-only
+    def __init__(
         self,
         *,
         environ: Mapping[str, str],
