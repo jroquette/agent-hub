@@ -27,9 +27,10 @@ The snapshot is read from the cwd's real path (no walk-up) and holds the validat
 the files of the hub and the fixed set of paths the rules read by name. Two inputs are read only when a selected rule
 needs them: the parsed `hub.lock` and its managed paths, looked at by path (`lock.drift`), and the release's base hooks
 block, built by the templates package installed with the running CLI, so doctor still renders no file
-(`settings.weakening`). A later input is the files of each `repos[].dir` checkout next to the hub, where a missing
-checkout gives one `info` finding on the first selected repo-scoped rule (`brain.leak`, else `links.dead`) and those
-rules skip it (`links.dead`, `brain.leak`). A root with no `.git` entry, a hub inside a larger repository included, is
+(`settings.weakening`). A third, read only when a repo rule (`brain.leak`, `links.dead`) is selected, is the files of
+each `repos[].dir` checkout at `../<dir>`: a missing or non-folder `../<dir>` gives one `info`, a checkout that cannot
+be listed one `error` (its cause), both at `../<dir>` on the first selected repo rule by id, never retuned; the repo
+rules skip both. A root with no `.git` entry, a hub inside a larger repository included, is
 walked, skipping `.git` and nested repositories. A root with a `.git` entry is listed with
 `git ls-files -z --cached --others --exclude-standard`, and git must name the root as the work-tree top; git missing,
 failing, timing out or naming another top is a tree problem, never a walk. No link is followed, and git runs only when a
@@ -51,7 +52,7 @@ from core's `RULE_MODULES`; a module's rules are core functions registered when 
 | `config.schema` | error | `hub.json` against `HubConfig`, including `schema_version` and `doctor.rules` ids; cannot be disabled or retuned | [ADR 0010](../adr/0010-hub-json-config-contract.md) |
 | `platform.version` | error | the running CLI equals `platform.version` (a shim always runs the pin; a direct `hub` may not); one finding only; its `doctor.rules` entry has no effect on findings | [ADR 0013](../adr/0013-release-by-git-tags.md) |
 | `lock.drift` | error | each managed file (bytes and executable bit) and link (target, not followed) matches its `hub.lock` entry (a missing one: `hub sync` restores it); a lock `platform_version` older than the pin, compared as numbers: warning "sync pending"; newer: warning "downgrade"; no `hub.lock`: warning "not adopted" | [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md), [hub-sync.md](hub-sync.md) |
-| `links.dead` | error | relative Markdown links resolve to an existing file (hub and repos) | new |
+| `links.dead` | error | in each listed UTF-8 `.md` file of the hub and the repos, inline links, images and reference definitions (CommonMark: a definition only when nothing or a title follows it) resolve from the file's folder, `#fragment`/`?query` cut, to a listed file or folder; skipped: any URI scheme, absolute and fragment-only links, code spans, fenced blocks and HTML comments; a hub link into `../<dir>` is checked against that repo's listing (skipped when the checkout is missing or cannot be listed); any other link leaving the hub or a repo is skipped | new |
 | `instructions.size` | error | line limits of the listed regular instruction files (root `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md`; `.github/copilot-instructions.md` and every `.md` under `.claude/{rules,agents,skills,commands}` or `.github/instructions`): root `AGENTS.md` 100, `CLAUDE.md` 150, `CLAUDE.local.md` 50, every nested one 80, `GEMINI.md` none; `max_lines` merges over them (exact key before glob, then the longest glob). A link is not an instruction file, so a plugin agent linked into `.claude/agents/` gets no `instructions.*` check (it keeps `rules.frontmatter`, `secrets.config` and `attribution.ai` as a plugin file) | config lint |
 | `instructions.refs` | error | paths, `make` targets and `pnpm` scripts an instruction file names below its frontmatter exist: a path resolves against the listed paths and the fixed paths present, and their folders, from the file's folder or the root, then by name or ending (a reference of at most 32 segments); nothing out of the hub or under a link resolves; targets are `Makefile`'s and `Makefile.project`'s, scripts `package.json`'s (not read when linked or not text); `hub.lock` is ignored by design (its absence is `lock.drift`'s); links are not instruction files | config lint |
 | `instructions.duplicates` | error | the same normalized instruction line (60 or more characters; not a table, fence or heading line) in two instruction files, flagged on the later path naming the first; repeats within a file are not; links are not instruction files | config lint |
@@ -62,7 +63,7 @@ from core's `RULE_MODULES`; a module's rules are core functions registered when 
 | `secrets.config` | error | no secret shape (eight kinds: JWT, AWS access key, private key, API key, GitHub token, Linear API key, credential assignment, Fernet-like key) in the instruction and plugin files, `.mcp.json`, `.claude/settings.json`, `CONTRIBUTING.md` or the PR template; once per kind per line, naming the kind, never the text | config lint |
 | `mcp.pinned` | error | each `.mcp.json` server is not `@latest` and, run by `npx`, names a version (`@<digit>`); a server whose `args` are not all strings is skipped; settings' `mcpServers` are not checked | config lint |
 | `attribution.ai` | error | no AI co-author trailer, "Generated with Claude Code" line or `claude/` branch prefix in the files `secrets.config` reads | config lint |
-| `brain.leak` | error | no trimmed brain line of `min_line_length` (default 60) or more characters in a file tracked in a repo | [SPEC](../SPEC.md) direction 2 |
+| `brain.leak` | error | no trimmed line of `min_line_length` (default 60, 1–10000) or more characters of a listed UTF-8 file under `brain/` (frontmatter, an unterminated one read as text, fenced blocks and table rows skipped) is a trimmed line of a listed text file in a repo; reported at the repo `path:line`, naming the brain `path:line`, never the leaked line | [SPEC](../SPEC.md) direction 2 |
 | `hooks.guard-extension` | error | static, never imported or run: the extension (at most 1 MiB, UTF-8) parses from its raw bytes as Python 3.9 (BOM and coding cookie as the runner reads them; best-effort: newer f-string syntax passes), and the last top-level binding of `check` is a `def` that `check(event, cfg)` can call; no file: no finding | [hub-generator.md](hub-generator.md) |
 | `makefile.override` | warning | `Makefile.project` does not redefine a target parsed from the managed `Makefile` (grouped `&:` rules read; `$(T):` targets not expanded; `-include` files not followed) | [hub-generator.md](hub-generator.md) |
 | `features.tracker` | error | each listed `brain/features/*/features.json`: shape, AC ids, evidence, and the cross-check with a listed sibling `spec.md`; links are not followed | feature check |
@@ -70,9 +71,8 @@ from core's `RULE_MODULES`; a module's rules are core functions registered when 
 
 "config lint" and "feature check" are the hub scripts these rules replace ([hub-generator.md](hub-generator.md),
 Commands). Each ported rule keeps the old check's behavior, pinned first by characterization tests, but for what its
-row states. This release registers every rule but `links.dead` and `brain.leak` (a later AGH-11 PR) and `bench.tasks`.
-Until a rule ships, `doctor.rules` accepts its settings and `--only` on it exits 2 (`<id> is not in this release` when
-its module is selected).
+row states. This release registers every rule but `bench.tasks`. Until a rule ships, `doctor.rules` accepts its
+settings and `--only` on it exits 2 (`<id> is not in this release` when its module is selected).
 
 ### Output
 
