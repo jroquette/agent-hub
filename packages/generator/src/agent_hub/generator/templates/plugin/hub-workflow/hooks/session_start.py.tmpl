@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """SessionStart: inject the session brief. After a compaction, also re-inject the pre-compact snapshot.
 
-The brief is the pinned release's `hub brief`: one `uvx --from <platform source>@v<version> hub brief`
-call from the hub, the version read from hub.json (platform.version), with a 10 s timeout inside
-the hook's 20 s; its output is capped at 8000 characters. When it cannot run (no version, no uvx,
-a failure or empty output, the timeout), the mini brief stands in: one header line naming the
-fallback and its cause, brain/now.md capped at 2500 characters and the latest 3 journal files.
-It uses no git and no network."""
+The brief is the pinned release's `hub brief`, resolved as the hub's ./hub shim resolves it: first
+`uvx --from <platform source>@v<version> hub --version`, then the same source's `hub brief`, the
+version read from hub.json (platform.version). Both calls run from the hub with AGENT_HUB_ROOT set
+to it, within one 10 s deadline inside the hook's 20 s; the brief is capped at 8000 characters.
+When it cannot run, the mini brief stands in: one header line naming the fallback and its cause
+(no version, no uv, resolve failed, failed (exit N), failed (no output), failed (cannot start),
+timed out), brain/now.md capped at 2500 characters and the latest 3 journal files. The mini brief
+uses no git and no network."""
 
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -26,7 +29,7 @@ except Exception as error:  # a partial install: skip, never error the session
 
 # The platform's git source at the pinned release; the version comes from hub.json at run time.
 SOURCE = "@@{platform_repository}@v{version}#subdirectory=packages/agent-hub"
-BRIEF_TIMEOUT = 10  # seconds, inside the hook's 20 s
+BRIEF_TIMEOUT = 10  # seconds for both calls together, inside the hook's 20 s
 BRIEF_CAP = 8000
 NOW_CAP = 2500
 SNAPSHOT_CAP = 2500
@@ -40,20 +43,37 @@ def pinned_brief(hub: Path, version: str | None) -> tuple[str, str]:
     uvx = shutil.which("uvx")
     if uvx is None:
         return "", "no uv"
-    argv = [uvx, "--from", SOURCE.format(version=version), "hub", "brief"]
+    release = [uvx, "--from", SOURCE.format(version=version), "hub"]
+    env = dict(os.environ, AGENT_HUB_ROOT=str(hub))
+    deadline = time.monotonic() + BRIEF_TIMEOUT
+    code, _, cause = run_call(release + ["--version"], hub, env, deadline)
+    if cause:
+        return "", cause
+    if code != 0:
+        return "", "resolve failed"
+    code, out, cause = run_call(release + ["brief"], hub, env, deadline)
+    if cause:
+        return "", cause
+    if code != 0:
+        return "", f"failed (exit {code})"
+    brief = out.decode("utf-8", "replace").strip()[:BRIEF_CAP]
+    if not brief:
+        return "", "failed (no output)"
+    return brief, ""
+
+
+def run_call(argv: list[str], hub: Path, env: dict[str, str], deadline: float) -> tuple[int, bytes, str]:
+    """(exit code, stdout, "") of one call from the hub, or (0, b"", cause) when it cannot finish."""
     try:
-        proc = subprocess.Popen(argv, cwd=hub, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
+        proc = subprocess.Popen(argv, cwd=hub, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
     except OSError:  # found on PATH but cannot start
-        return "", "failed"
+        return 0, b"", "failed (cannot start)"
     try:
-        out, _ = proc.communicate(timeout=BRIEF_TIMEOUT)
+        out, _ = proc.communicate(timeout=max(deadline - time.monotonic(), 0))
     except subprocess.TimeoutExpired:
         stop(proc)
-        return "", "timed out"
-    brief = out.decode("utf-8", "replace").strip()[:BRIEF_CAP]
-    if proc.returncode != 0 or not brief:
-        return "", "failed"
-    return brief, ""
+        return 0, b"", "timed out"
+    return proc.returncode, out, ""
 
 
 def stop(proc: subprocess.Popen) -> None:
