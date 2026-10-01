@@ -30,6 +30,7 @@ PERMISSIONS_BYPASS_RULE: Final = "permissions.bypass"
 SECRETS_CONFIG_RULE: Final = "secrets.config"
 MCP_PINNED_RULE: Final = "mcp.pinned"
 ATTRIBUTION_AI_RULE: Final = "attribution.ai"
+BRAIN_LEAK_RULE: Final = "brain.leak"
 GUARD_EXTENSION_RULE: Final = "hooks.guard-extension"
 MAKEFILE_OVERRIDE_RULE: Final = "makefile.override"
 FEATURES_TRACKER_RULE: Final = "features.tracker"
@@ -49,7 +50,7 @@ RULE_IDS: Final = (
     SECRETS_CONFIG_RULE,
     MCP_PINNED_RULE,
     ATTRIBUTION_AI_RULE,
-    "brain.leak",
+    BRAIN_LEAK_RULE,
     GUARD_EXTENSION_RULE,
     MAKEFILE_OVERRIDE_RULE,
     FEATURES_TRACKER_RULE,
@@ -108,10 +109,16 @@ class InstructionsSizeSettings(RuleSettings):
     max_lines: LineLimits | None = absent_by_default()
 
 
+# A bar above any line a person writes checks nothing; the bound keeps a typo out (scale guard).
+MAX_MIN_LINE_LENGTH: Final = 10_000
+
+
 class BrainLeakSettings(RuleSettings):
     """``brain.leak``: the shortest trimmed brain line that counts as a leak."""
 
-    min_line_length: PositiveInt | None = absent_by_default()
+    min_line_length: Annotated[PositiveInt, Field(le=MAX_MIN_LINE_LENGTH)] | None = (
+        absent_by_default()
+    )
 
 
 class DoctorRules(ConfigObject):

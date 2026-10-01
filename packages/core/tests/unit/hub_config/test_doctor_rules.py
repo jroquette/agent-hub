@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from agent_hub.core.hub_config.doctor_rules import (
     CONFIG_SCHEMA_RULE,
+    MAX_MIN_LINE_LENGTH,
     RULE_IDS,
     RULE_MODULES,
     DoctorRules,
@@ -137,6 +138,15 @@ def test_rejects_min_line_length_when_not_positive(length: object) -> None:
     locs = [loc for loc, _ in error_types({"brain.leak": {"min_line_length": length}})]
 
     assert locs == [("brain.leak", "min_line_length")]
+
+
+def test_rejects_min_line_length_when_above_bound() -> None:
+    within = DoctorRules.model_validate({"brain.leak": {"min_line_length": MAX_MIN_LINE_LENGTH}})
+    above = {"brain.leak": {"min_line_length": MAX_MIN_LINE_LENGTH + 1}}
+
+    assert within.brain_leak is not None
+    assert within.brain_leak.min_line_length == MAX_MIN_LINE_LENGTH
+    assert error_types(above) == [(("brain.leak", "min_line_length"), "less_than_equal")]
 
 
 @pytest.mark.parametrize(

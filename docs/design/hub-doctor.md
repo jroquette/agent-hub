@@ -115,8 +115,8 @@ A project tunes rules in `hub.json` → `doctor.rules.<id>` ([project-config.md]
 `enabled` (default `true`), `severity` (overrides the default; not for `config.schema`) and rule options, validated per
 rule. An unknown rule id or option is a `config.schema` error. Options in Phase 1: `instructions.size.max_lines` (file
 or glob to limit, merged over the defaults; keys of 1 to 1024 characters, at most 256 of them, `_` comment keys aside)
-and `brain.leak.min_line_length`. A rule declares its `module`; the rules of a module that is not selected in `modules`
-never run and cannot be configured (a cross-field check of the model, not of the JSON Schema:
+and `brain.leak.min_line_length` (1 to 10000). A rule declares its `module`; the rules of a module that is not
+selected in `modules` never run and cannot be configured (a cross-field check of the model, not of the JSON Schema:
 [project-config.md](project-config.md)).
 
 ## Invariants
