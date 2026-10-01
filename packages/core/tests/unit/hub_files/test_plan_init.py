@@ -70,6 +70,7 @@ CORE_MODULES = (
     "tracker/tracker_client.py",
     "workspace/__init__.py",
     "workspace/worktree_name.py",
+    "workspace/brief_text.py",
 )
 
 # Design decision 4 of the plan, word for word: each refusal names the cause or the way out.

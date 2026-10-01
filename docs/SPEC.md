@@ -64,6 +64,7 @@ hub sync        # reapplies templates without overwriting what the project custo
 hub sync --adopt   # joins a hand-made hub: identical files become managed, differences are listed
 hub doctor      # checks rules, links, dead references and instruction size
 hub worktree NAME [--only REPO]   # isolated worktrees for one task (--remove NAME removes them)
+hub brief [--no-network]   # session brief: now, journal, repo/PR/CI state
 hub collect [FILE|-] [--db PATH]   # ingests canonical events from JSON Lines (stdin when FILE is omitted or -)
 ```
 

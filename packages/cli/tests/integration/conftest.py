@@ -11,10 +11,12 @@ filters (``reads_in``, ``ancestors``, ``under``).
 """
 
 import builtins
+import datetime
 import difflib
 import io
 import json
 import os
+import re
 import shlex
 import shutil
 import stat
@@ -710,3 +712,331 @@ def run_command(monkeypatch: pytest.MonkeyPatch) -> CommandRunner:
         return CliRunner().invoke(app, list(args), env=env)
 
     return run
+
+
+# The hub's brief workspace (hub ``tests/characterization/support/{fixtures,workspace}.py`` at
+# hub commit 8eaebae), rebuilt so that ``hub brief`` reproduces the hub's brief goldens: the same
+# frozen instant, identity, files, commit dates and fake ``gh`` answers. Only ``hub.json`` differs:
+# it is made model-valid (``schema_version``, ``platform``, ``check_fast``/``check``, the author).
+BRIEF_INSTANT = 1768473000  # 2026-01-15T10:30:00Z
+BRIEF_HUB = "demo-hub"
+BRIEF_SYSTEM_PATH = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
+_BRIEF_IDENTITY = ("Test User", "t@example.com")
+_REPO_IGNORES = (".claude/worktrees/", ".venv/", "node_modules/", "__pycache__/")
+_HUB_IGNORES = (
+    *_REPO_IGNORES,
+    ".agent-runs/",
+    "brain/_inbox/sessions/",
+    "brain/auto/workspace/session-snapshot.md",
+)
+# Newer git runs auto-maintenance after commits; its lock files would come and go in a copy.
+_NO_MAINTENANCE = (
+    ("maintenance.auto", "false"),
+    ("maintenance.autoDetach", "false"),
+    ("gc.auto", "0"),
+    ("gc.autoDetach", "false"),
+)
+BRIEF_NOW = "---\nlast_verified: 2026-01-12\n---\n# Now\nShip the collector.\nThen the CLI.\n"
+
+
+def _brief_titles(day: int, count: int, width: int) -> str:
+    return "".join(
+        f"## Day {day} topic {index}: " + "x" * width + "\n" for index in range(1, count + 1)
+    )
+
+
+BRIEF_JOURNAL = {
+    "brain/journal/2026/01/14.md": (
+        "---\ntype: journal\n---\n# 2026-01-14\n"
+        + _brief_titles(14, 4, 80)
+        + "### not a title\nbody text\n"
+    ),
+    "brain/journal/2026/01/13.md": (
+        "# 2026-01-13\n## Fixed the loader\nnotes\n## Reviewed slice A\n"
+    ),
+    "brain/journal/2026/01/10.md": "## Older day in the week\n",
+    "brain/journal/2026/01/06.md": "## Outside the week\n",
+}
+BRIEF_PRS = (
+    "\n".join(
+        [
+            "#41 Add login endpoint",
+            "#40 Refactor the session storage layer so that every adapter shares one connection"
+            " pool and retry policy",
+            "#38 Fix pagination",
+            "#37 Bump dependencies",
+            "#35 Fifth PR is never shown",
+        ]
+    )
+    + "\n"
+)
+# The hub repo's calls match no rule: the fake prints nothing and exits 1.
+BRIEF_GH: list[dict[str, Any]] = [
+    {"argv_has": ["pr", "acme/api"], "stdout": BRIEF_PRS},
+    {"argv_has": ["run", "acme/api"], "stdout": "lint\nbuild\nlint\n"},
+    {"argv_has": ["acme/web"], "stdout": ""},
+]
+# The fake gh: logs each call as one JSON line, sleeps a rule's delay, then answers. Written to
+# the case's bin/ at test time (a tests tree holds no helper module).
+_FAKE_GH = """import json, os, sys, time
+answers, log, invoked, args = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
+call = {"tool": "gh", "cwd": os.getcwd(), "argv": [invoked, *args]}
+with open(log, "a", encoding="utf-8") as stream:
+    stream.write(json.dumps(call, ensure_ascii=False) + "\\n")
+with open(answers, encoding="utf-8") as stream:
+    rules = json.load(stream)
+rule = next((r for r in rules if all(a in args for a in r.get("argv_has", []))), None)
+if rule is None:
+    sys.exit(1)
+barrier = rule.get("barrier")
+if barrier:  # wait until `count` calls have arrived, so only calls made at once can all pass
+    open(os.path.join(barrier["dir"], f"started.{os.getpid()}"), "w").close()
+    end = time.monotonic() + barrier["wait"]
+    while len(os.listdir(barrier["dir"])) < barrier["count"]:
+        if time.monotonic() > end:
+            sys.exit(1)
+        time.sleep(0.01)
+if "group_file" in rule:
+    with open(rule["group_file"], "w", encoding="utf-8") as stream:
+        stream.write(str(os.getpgid(0)))
+time.sleep(rule.get("delay", 0))
+sys.stdout.buffer.write(rule.get("stdout", "").encode())
+sys.stderr.buffer.write(rule.get("stderr", "").encode())
+sys.exit(rule.get("rc", 0))
+"""
+
+
+def brief_at(days_before: int = 0, hhmm: str = "10:30") -> str:
+    """An ISO instant ``days_before`` days before the frozen day, at ``hhmm`` UTC."""
+    day = datetime.datetime.fromtimestamp(BRIEF_INSTANT, datetime.UTC) - datetime.timedelta(
+        days=days_before
+    )
+    return f"{day:%Y-%m-%d}T{hhmm}:00Z"
+
+
+def brief_hub_json() -> dict[str, Any]:
+    """The hub's brief ``hub.json`` (repos ``api``, ``web`` and the absent ``ui``), model-valid."""
+    checks = {"check_fast": "true", "check": "true"}
+    return {
+        "schema_version": 1,
+        "platform": {"version": version("agent-hub-cli")},
+        "project": {
+            "name": "demo",
+            "hub_repo": "acme/demo-hub",
+            "branch_prefix": "dev/",
+            "default_branch": "trunk",
+            "author_name": _BRIEF_IDENTITY[0],
+            "author_email": _BRIEF_IDENTITY[1],
+        },
+        "tracker": {"kind": "linear", "team": "TST"},
+        "repos": [
+            {"dir": "api", "github": "acme/api", **checks},
+            {"dir": "web", "github": "acme/web", **checks},
+            {"dir": "ui", "github": "acme/ui", **checks},
+        ],
+    }
+
+
+def brief_env(root: Path) -> dict[str, str]:
+    """The case environment, built from scratch: the fakes, system tools, a fixed git."""
+    name, email = _BRIEF_IDENTITY
+    env = {
+        "PATH": os.pathsep.join([str(root / "bin"), *BRIEF_SYSTEM_PATH]),
+        "HOME": str(root / "home"),
+        "XDG_CONFIG_HOME": str(root / "home" / ".config"),
+        "TZ": "UTC",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": str(root / "home" / ".gitconfig"),
+        "GIT_AUTHOR_NAME": name,
+        "GIT_AUTHOR_EMAIL": email,
+        "GIT_AUTHOR_DATE": brief_at(),
+        "GIT_COMMITTER_NAME": name,
+        "GIT_COMMITTER_EMAIL": email,
+        "GIT_COMMITTER_DATE": brief_at(),
+        "GIT_ALLOW_PROTOCOL": "file",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_CEILING_DIRECTORIES": str(root),
+        "GIT_CONFIG_COUNT": str(len(_NO_MAINTENANCE)),
+    }
+    for index, (key, value) in enumerate(_NO_MAINTENANCE):
+        env[f"GIT_CONFIG_KEY_{index}"] = key
+        env[f"GIT_CONFIG_VALUE_{index}"] = value
+    return env
+
+
+class BriefWorkspace:
+    """A case root: ``ws/demo-hub`` (the hub), ``ws/api``, ``ws/web``, ``origins/``, ``bin/gh``."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.ws = root / "ws"
+        self.hub = self.ws / BRIEF_HUB
+        self.env = brief_env(root)
+        self.log = root / "log" / "calls.jsonl"
+
+    def git(self, *args: str, cwd: Path, date: str | None = None) -> str:
+        """Run git with the case environment; ``date`` sets both commit dates."""
+        env = dict(self.env)
+        if date is not None:
+            env["GIT_AUTHOR_DATE"] = env["GIT_COMMITTER_DATE"] = date
+        git = shutil.which("git", path=env["PATH"])
+        assert git is not None, "git is needed for the brief workspace"
+        completed = subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
+            [git, *args], cwd=cwd, env=env, check=True, capture_output=True
+        )
+        return completed.stdout.decode().strip()
+
+    def write(self, base: Path, files: Mapping[str, str | bytes | None]) -> None:
+        """Write (text or bytes) or delete (None) ``files`` under ``base``."""
+        for relative, content in files.items():
+            path = base / relative
+            if content is None:
+                path.unlink()
+                continue
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content if isinstance(content, bytes) else content.encode())
+
+    def make_repo(
+        self,
+        path: Path,
+        files: Mapping[str, str],
+        commits: tuple[tuple[int, str, Mapping[str, str]], ...] = (),
+        *,
+        ignores: tuple[str, ...] = _REPO_IGNORES,
+    ) -> Path:
+        """An ``init`` commit at T-30 (``files`` and ``.gitignore``), then each commit in order."""
+        path.mkdir(parents=True, exist_ok=True)
+        self.git("init", "-q", "-b", "trunk", cwd=path)
+        self.write(path, {**files, ".gitignore": "".join(f"{line}\n" for line in ignores)})
+        for index, (days_before, message, more) in enumerate([(30, "init", {}), *commits]):
+            self.write(path, more)
+            self.git("add", "-A", cwd=path)
+            self.git(
+                "commit",
+                "-q",
+                "-m",
+                message,
+                cwd=path,
+                date=brief_at(days_before, f"09:{index:02d}"),
+            )
+        return path
+
+    def bare_origin(self, repo: Path) -> None:
+        bare = self.root / "origins" / f"{repo.name}.git"
+        self.git("clone", "-q", "--bare", str(repo), str(bare), cwd=self.root)
+        self.git("remote", "add", "origin", str(bare), cwd=repo)
+        self.git("fetch", "-q", "origin", cwd=repo)
+
+    def commit_hub(self, files: Mapping[str, str | bytes | None]) -> None:
+        """Write or delete ``files`` in the hub, committed at T-0 09:30 (the hub stays clean)."""
+        self.write(self.hub, files)
+        self.git("add", "-A", cwd=self.hub)
+        self.git("commit", "-q", "-m", "case change", cwd=self.hub, date=brief_at(0, "09:30"))
+
+    def answer(self, rules: list[dict[str, Any]]) -> None:
+        """Set the fake gh's rules: the first whose ``argv_has`` items are all arguments answers."""
+        (self.root / "bin" / "answers.json").write_text(json.dumps(rules, indent=2) + "\n")
+
+    def calls(self) -> bytes:
+        """The fake gh's call log, the root shown as ``<ROOT>``."""
+        return normalized(self.log.read_bytes() if self.log.exists() else b"", self.root)
+
+    def install_gh(self) -> None:
+        bin_dir = self.root / "bin"
+        (bin_dir / "fake_gh.py").write_text(_FAKE_GH)
+        gh = bin_dir / "gh"
+        gh.write_text(
+            f'#!/bin/sh\nexec "{sys.executable}" -I -S "{bin_dir / "fake_gh.py"}"'
+            f' "{bin_dir / "answers.json"}" "{self.log}" "$0" "$@"\n'
+        )
+        gh.chmod(0o755)
+        self.answer(BRIEF_GH)
+
+
+def _build_brief_workspace(root: Path) -> None:
+    for folder in ("ws", "origins", "home/.config", "bin", "log", "elsewhere"):
+        (root / folder).mkdir(parents=True)
+    workspace = BriefWorkspace(root)
+    hub_files = {
+        **BRIEF_JOURNAL,
+        "brain/now.md": BRIEF_NOW,
+        "hub.json": json.dumps(brief_hub_json(), indent=2) + "\n",
+    }
+    workspace.make_repo(workspace.hub, hub_files, ignores=_HUB_IGNORES)
+    workspace.bare_origin(workspace.hub)
+    api = workspace.make_repo(
+        workspace.ws / "api", {"README.md": "api\n"}, ((3, "add app", {"app.py": "x = 1\n"}),)
+    )
+    workspace.bare_origin(api)
+    pusher = root / "elsewhere" / "api-pusher"
+    workspace.git("clone", "-q", str(root / "origins" / "api.git"), str(pusher), cwd=root)
+    workspace.write(pusher, {"app.py": "x = 2\n"})
+    workspace.git("commit", "-q", "-am", "upstream change", cwd=pusher, date=brief_at(1, "09:00"))
+    workspace.git("push", "-q", "origin", "trunk", cwd=pusher)
+    workspace.git("fetch", "-q", "origin", cwd=api)
+    workspace.write(api, {"README.md": "api, edited\n", "notes.txt": "untracked\n"})
+    web = workspace.make_repo(
+        workspace.ws / "web", {"index.html": "<p>web</p>\n"}, ((2, "style", {"a.css": "p{}\n"}),)
+    )
+    workspace.git("checkout", "-q", "--detach", cwd=web)
+
+
+@pytest.fixture(scope="session")
+def brief_workspace_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The brief workspace built once per session: never change it."""
+    root = tmp_path_factory.mktemp("brief-workspace-template").resolve()
+    _build_brief_workspace(root)
+    return root
+
+
+@pytest.fixture
+def brief_workspace(
+    tmp_path: Path, brief_workspace_template: Path, monkeypatch: pytest.MonkeyPatch
+) -> BriefWorkspace:
+    """A copy of the brief workspace at ``tmp_path/root``, its environment set for the run.
+
+    Each origin URL is pointed at the copy; the fake ``gh`` answers ``BRIEF_GH``.
+    """
+    root = (tmp_path / "root").resolve()
+    shutil.copytree(brief_workspace_template, root, symlinks=True)
+    workspace = BriefWorkspace(root)
+    for checkout in (workspace.hub, workspace.ws / "api"):
+        url = workspace.git("remote", "get-url", "origin", cwd=checkout)
+        copied = str(root) + url.removeprefix(str(brief_workspace_template))
+        workspace.git("remote", "set-url", "origin", copied, cwd=checkout)
+    workspace.install_gh()
+    for name in [name for name in os.environ if name.startswith(GIT_VARIABLE_PREFIX)]:
+        monkeypatch.delenv(name)
+    for name, value in workspace.env.items():
+        monkeypatch.setenv(name, value)
+    return workspace
+
+
+def normalized(data: bytes, root: Path) -> bytes:
+    """``data`` with the case root shown as ``<ROOT>``."""
+    return data.replace(str(root).encode(), b"<ROOT>")
+
+
+_GOLDEN_HEADER = re.compile(rb"--- (\w+) \((\d+) bytes\) ---\n")
+
+
+def _golden_sections(path: Path) -> dict[str, bytes]:
+    """The sections of a hub characterization golden: ``{stream: bytes}``, in file order."""
+    data = path.read_bytes()
+    sections: dict[str, bytes] = {}
+    position = 0
+    while position < len(data):
+        header = _GOLDEN_HEADER.match(data, position)
+        assert header is not None, f"{path}: no section header at byte {position}"
+        start = header.end()
+        end = start + int(header.group(2))
+        assert data[end : end + 1] == b"\n", f"{path}: no separator after {header.group(1)!r}"
+        sections[header.group(1).decode()] = data[start:end]
+        position = end + 1
+    return sections
+
+
+@pytest.fixture
+def golden_sections() -> Callable[[Path], dict[str, bytes]]:
+    """Parse a hub characterization golden into ``{stream: bytes}``."""
+    return _golden_sections
