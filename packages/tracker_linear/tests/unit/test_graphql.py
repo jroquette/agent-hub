@@ -471,7 +471,7 @@ class _Answering:
         return self._reply
 
 
-def _errors(message: str, **extensions: str) -> bytes:
+def _errors(message: str, **extensions: object) -> bytes:
     error: dict[str, Any] = {"message": message}
     if extensions:
         error["extensions"] = extensions
@@ -480,6 +480,11 @@ def _errors(message: str, **extensions: str) -> bytes:
 
 _KEY_FIX = r"check that LINEAR_API_KEY"
 _RETRY = r"retry later"
+_GENERIC_ERRORS_FIX = r"check (that DEM-1 exists|the team key and the label name)"
+_REJECTED_FIX = (
+    "check the issue id and the state or label names passed"
+    " (if they are right, Linear's API may have changed)"
+)
 
 # AC-9.4: (reply, cause pattern, fix pattern).
 _FAILURES: dict[str, tuple[tuple[int, bytes] | BaseException, str, str]] = {
@@ -488,12 +493,21 @@ _FAILURES: dict[str, tuple[tuple[int, bytes] | BaseException, str, str]] = {
     "http-429": ((429, b""), r"rate-limited .*HTTP 429", _RETRY),
     "http-500": ((500, b"<html>oops</html>"), r"unavailable .*HTTP 500", _RETRY),
     "http-503": ((503, b""), r"unavailable .*HTTP 503", _RETRY),
-    "http-400-plain": ((400, b'{"data": null}'), r"HTTP 400", r"check"),
+    "http-400-plain": (
+        (400, b'{"data": null}'),
+        r"^Linear rejected the request \(HTTP 400\)$",
+        rf"^{re.escape(_REJECTED_FIX)}$",
+    ),
     "non-json": ((200, b"<html>not json</html>"), r"not JSON", _RETRY),
     "errors-200": (
         (200, _errors("Something failed")),
         r"Linear answered with an error: 'Something failed'",
-        r"check (that DEM-1 exists|the team key and the label name)",
+        _GENERIC_ERRORS_FIX,
+    ),
+    "errors-extension-not-text": (
+        (400, _errors("Too many requests", code=["RATELIMITED"])),
+        r"'Too many requests'",
+        _GENERIC_ERRORS_FIX,
     ),
     "errors-400-ratelimited": (
         (400, _errors("Too many requests", code="RATELIMITED")),
@@ -552,13 +566,18 @@ def test_raises_naming_key_when_key_missing(environ: dict[str, str], operation: 
     assert post.calls == 0
 
 
-@pytest.mark.parametrize("control", ["\n", "\r", "\x00", "\x1b", "\x7f"])
-def test_raises_naming_key_when_key_has_control_character(synthetic_key: str, control: str) -> None:
-    key = f"{synthetic_key}{control}injected"
+@pytest.mark.parametrize(
+    "character", ["\n", "\r", "\x00", "\x1b", "\x7f", " ", "\u2028", "\u00e9", "\u4e00"]
+)
+def test_raises_naming_key_when_key_not_printable_ascii(synthetic_key: str, character: str) -> None:
+    # Outside printable ASCII the key could split a header or fail to encode, quoting itself.
+    key = f"{synthetic_key}{character}injected"
     post = _Answering((200, b"{}"))
     client = LinearGraphqlTrackerClient(environ={LINEAR_API_KEY_VARIABLE: key}, post=post)
 
-    with pytest.raises(TrackerError, match=r"LINEAR_API_KEY has a control character") as raised:
+    with pytest.raises(
+        TrackerError, match=r"LINEAR_API_KEY has a character outside printable ASCII"
+    ) as raised:
         client.get_issue("DEM-1")
 
     assert post.calls == 0
@@ -745,3 +764,17 @@ def test_raises_when_labels_exceed_cap(
     with pytest.raises(TrackerError, match=rf"^{subject}: .*more than {MAX_LABELS} labels"):
         call(_client(fake_linear_api, synthetic_key))
     assert len(fake_linear_api.requests) == 1
+
+
+def test_raises_when_labels_exceed_cap_without_next_page(
+    fake_linear_api: Any, synthetic_key: str
+) -> None:
+    # A server that ignores first: and says there is no next page is still refused.
+    extra = [{"name": f"synthetic-{number}"} for number in range(MAX_LABELS + 1)]
+    alter = _set((*_ISSUE, "labels"), {"nodes": extra, "pageInfo": {"hasNextPage": False}})
+    client = LinearGraphqlTrackerClient(
+        environ={LINEAR_API_KEY_VARIABLE: synthetic_key}, post=_altered(fake_linear_api, alter)
+    )
+
+    with pytest.raises(TrackerError, match=rf"^get_issue DEM-1: .*more than {MAX_LABELS} labels"):
+        client.get_issue("DEM-1")
