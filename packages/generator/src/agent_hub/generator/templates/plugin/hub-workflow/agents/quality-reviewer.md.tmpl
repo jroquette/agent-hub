@@ -14,7 +14,13 @@ Look for, citing `path:line`:
 - **Invariants:** anything that could break the invariants the repo documents or tests (and paths under `hub.json` → `guard.ask_before_edit`).
 - **Idempotency and failure paths:** retries that double-submit, missing rollback after a failed write, swallowed exceptions, mocks returning a different type than the real dependency.
 - **Security:** secrets in code, logs or tests; auth/authorization bypass; unvalidated input at API boundaries.
-- **Tests:** do they prove the behaviour (would they fail if the code were wrong)?
+- **Scale on hostile input** (code that reads user, file or repo content): what do 100k files, 1 MiB on one line,
+  a path 600 folders deep, or every item at its maximum size do? Look for quadratic loops (`x in <list>` inside a loop,
+  every prefix or ancestor built as a string, a per-item retry that rescans), backtracking regexes, unbounded recursion,
+  parsing or echo. Each input needs a bound, and a run needs a budget counted in the unit that drives the cost.
+- **Tests:** do they prove the behaviour (would they fail if the code were wrong)? A scale guard is tested by exact
+  results or a structural counter at the smallest size where the regression shows, never by wall-clock time or "it would
+  hang"; a stated limit is pinned once as a literal.
 
 Severity per finding: `blocker` / `should-fix` / `nit`. Skip nits unless there are none of the others. No gold-plating: do not ask for abstractions the task does not need.
 **Report:** `APPROVE` or `CHANGES`, then the findings. Fixes go back to the same implementer.
