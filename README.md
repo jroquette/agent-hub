@@ -299,8 +299,8 @@ own when they fit.
 <details>
 <summary><strong>The agents behind the commands</strong></summary>
 
-The commands start these agents, each in a fresh context. Every agent reads the brain first and ends with at most one
-learning proposal for `brain/_inbox/`.
+`/feature` starts these agents, each in a fresh context. Each one reads the brain first and ends with a compound step:
+at most one learning proposal for `brain/_inbox/` (the `spec-reviewer` reports plan ambiguities instead).
 
 | Agent | Role | Writes | Read-only? |
 | --- | --- | --- | --- |
@@ -322,20 +322,20 @@ hub finds them. A name already used by `hub-workflow` keeps the base one, and `h
 
 Six hooks run on their own in every session in the hub. You never call them.
 
-- **When a session starts**, the brief from `./hub brief` is put in the agent's context. If the pinned release cannot
+- **When a session starts** (`SessionStart`), the brief from `./hub brief` is put in the agent's context. If the pinned release cannot
   run, a shorter brief built from `brain/now.md` and the last journal days takes its place, and its header says why.
-- **Before each tool call**, the *guard* blocks dangerous actions (force-pushes, pushes to the default branch, reading
+- **Before each tool call** (`PreToolUse`), the *guard* blocks dangerous actions (force-pushes, pushes to the default branch, reading
   secret files, AI attribution) and asks you before risky ones (removing test assertions, editing the hooks or
   `hub.json`, paths in `guard.ask_before_edit`).
-- **After each edit** of a file in a repo, the repo's own formatter and linter run on it (ruff for Python, prettier and
+- **After each edit** (`PostToolUse`) of a file in a repo, the repo's own formatter and linter run on it (ruff for Python, prettier and
   eslint for JavaScript and TypeScript, when the repo has them installed), and any lint left over goes back to the agent.
-- **When the agent wants to finish**, the *stop gate* runs `check_fast` in each repo whose code changed during the
+- **When the agent wants to finish** (`Stop`), the *stop gate* runs `check_fast` in each repo whose code changed during the
   session. While a check fails, it blocks the finish and sends the failures back to the agent. After 3 blocks in a row
   it lets go with a warning, so a session never loops forever. When the checks pass, it reminds the agent to run
   `/handoff`.
-- **Before the context is compacted**, a snapshot (your last request, and the branch and changed files of each
+- **Before the context is compacted** (`PreCompact`), a snapshot (your last request, and the branch and changed files of each
   checkout) is saved to `brain/auto/workspace/session-snapshot.md` and put back in the context afterwards.
-- **When the session ends**, a short log entry is appended to `brain/_inbox/sessions/YYYY-MM-DD.md` for you to review.
+- **When the session ends** (`SessionEnd`), a short log entry is appended to `brain/_inbox/sessions/YYYY-MM-DD.md` for you to review.
 
 <details>
 <summary><strong>What the guard blocks and asks, and how to configure it</strong></summary>
@@ -346,7 +346,8 @@ Six hooks run on their own in every session in the hub. You never call them.
 - `curl … | sh`, and network calls to the hosts in `guard.deny_hosts`;
 - deleting Docker volumes (`docker volume rm|prune`, `compose down -v`) and infrastructure changes (`terraform
   apply|destroy|import`, `aws`, `pulumi up|destroy`, `kubectl apply|delete`);
-- reading secret files (`.env*` other than examples and samples, `*.pem`, `*.key`, `*.p12`, `*.pfx`, SSH private keys),
+- reading secret files (`.env*` other than `.env.example`, `.env.sample`, `.env.template`, `.env.test`, `.env.development` and
+  `.env.staging`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, SSH private keys),
   from any tool or command;
 - AI attribution in commits, tags and pull requests, and `claude/…` branches;
 - touching the `.git` internals, and reading or changing any path in `guard.deny_paths`.
@@ -384,8 +385,8 @@ marketplace: the hooks would run twice.
 
 > [!TIP]
 > **This README was built this way.** Issue AGH-33 went through `/feature`: sized *bounded*, spec and plan approved,
-> tickets, a worktree, the implementation, then the spec and quality reviews, which caught real gaps (a wrong expected
-> output, missing install caveats) before the evaluator and
+> tickets, a worktree, the implementation, then a real run of the Quick Start and the spec and quality reviews, which
+> caught real gaps (a wrong expected output, missing credential and install caveats) before the evaluator and
 > [pull request #24](https://github.com/jroquette/agent-hub/pull/24). The workflow docs it lacked became AGH-40, this
 > section.
 
