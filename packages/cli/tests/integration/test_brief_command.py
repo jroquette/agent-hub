@@ -5,7 +5,18 @@ hub commit ``8eaebae``, byte for byte; ``brief_workspace`` rebuilds that commit'
 workspace (nothing is copied from the hub's brain).
 """
 
+import datetime
+import json
+import os
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any
+
+import pytest
+from typer.testing import CliRunner, Result
+
+from agent_hub.cli import brief_command
+from agent_hub.cli.main import app
 
 # The conftest's workspace (tests cannot import a conftest in importlib mode).
 type Workspace = Any
@@ -24,3 +35,231 @@ def test_rebuilds_hub_workspace_when_brief_fixture_built(brief_workspace: Worksp
     assert brief_workspace.git("status", "--porcelain", cwd=hub) == ""
     assert brief_workspace.git("rev-list", "--count", "HEAD..origin/trunk", cwd=hub) == "0"
     assert not (brief_workspace.ws / "ui").exists()
+
+
+GOLDEN = Path(__file__).parent / "golden" / "brief"
+TODAY = datetime.date(2026, 1, 15)
+LONG_NOW = "---\nlast_verified: 2026-01-14\n---\n# Now\n" + "".join(
+    f"- item {index:03d}: " + "keep the brief short and current " * 3 + "\n"
+    for index in range(1, 61)
+)
+FRESH_NOW = "---\nlast_verified: 2026-01-12\n---\n# Now\nShip the collector.\nThen the CLI.\n"
+JOURNAL = "brain/journal/2026/01/"
+# Each case of hub tests/characterization/test_brief.py: the hub changes, the argv, the gh rules.
+CASES: dict[str, dict[str, Any]] = {
+    "fresh_network": {},
+    "no_network": {"argv": ("--no-network",)},
+    "stale_now": {"changes": {"brain/now.md": FRESH_NOW.replace("2026-01-12", "2026-01-11")}},
+    "undated_now": {
+        "changes": {"brain/now.md": FRESH_NOW.replace("last_verified: 2026-01-12", "type: now")}
+    },
+    "missing_now_no_journal": {
+        "changes": {
+            "brain/now.md": None,
+            f"{JOURNAL}14.md": None,
+            f"{JOURNAL}13.md": None,
+            f"{JOURNAL}10.md": None,
+            f"{JOURNAL}06.md": None,
+            f"{JOURNAL}07.md": "## Eight days ago\n",
+        }
+    },
+    "now_without_heading": {
+        "changes": {
+            "brain/now.md": (
+                "---\nlast_verified: 2026-01-12\n---\nFirst content line.\nSecond content line.\n"
+            )
+        }
+    },
+    "truncated": {"changes": {"brain/now.md": LONG_NOW}},
+    "gh_failing": {"answers": [{"stderr": "HTTP 503\n", "rc": 1}]},
+    "journal_week_edge": {
+        "changes": {
+            f"{JOURNAL}14.md": None,
+            f"{JOURNAL}13.md": None,
+            f"{JOURNAL}10.md": None,
+            f"{JOURNAL}06.md": None,
+            f"{JOURNAL}08.md": "## Exactly seven days ago\n",
+            f"{JOURNAL}07.md": "## Eight days ago\n",
+        }
+    },
+}
+PINNED_COMMAND = (
+    "uvx --from git+https://github.com/jroquette/agent-hub@v0.0.1"
+    "#subdirectory=packages/agent-hub hub"
+)
+
+
+@pytest.fixture(autouse=True)
+def frozen_today(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Today is the hub goldens' frozen day; the cwd that ``run_brief`` changes is restored."""
+    monkeypatch.setattr(brief_command, "today", lambda: TODAY)
+    monkeypatch.chdir(Path.cwd())
+
+
+def run_brief(workspace: Workspace, *args: str, cwd: Path | None = None, **env: str) -> Result:
+    os.chdir(cwd or workspace.hub)
+    return CliRunner().invoke(app, ["brief", *args], env=env or None)
+
+
+def sorted_lines(data: bytes) -> list[bytes]:
+    return sorted(data.splitlines())
+
+
+def golden_of(case: str, golden_sections: Callable[[Path], dict[str, bytes]]) -> dict[str, bytes]:
+    return golden_sections(GOLDEN / f"{case}.golden")
+
+
+@pytest.mark.parametrize("case", list(CASES))
+def test_matches_golden_when_case_runs(
+    brief_workspace: Workspace,
+    golden_sections: Callable[[Path], dict[str, bytes]],
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    case: str,
+) -> None:
+    monkeypatch.chdir(brief_workspace.hub)
+    setup = CASES[case]
+    if "changes" in setup:
+        brief_workspace.commit_hub(setup["changes"])
+    if "answers" in setup:
+        brief_workspace.answer(setup["answers"])
+    golden = golden_of(case, golden_sections)
+
+    result = run_brief(brief_workspace, *setup.get("argv", ()))
+
+    assert result.exit_code == int(golden["rc"]), result.output
+    assert result.stdout_bytes == golden["stdout"]
+    assert result.stderr_bytes == golden["stderr"]
+    # The calls run concurrently (plan E4): their order is not kept, each call is.
+    assert sorted_lines(brief_workspace.calls()) == sorted_lines(golden["calls"])
+
+
+def test_prints_reader_lines_when_hub_json_invalid(
+    brief_workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(brief_workspace.hub)
+    document = json.loads((brief_workspace.hub / "hub.json").read_text())
+    del document["tracker"]
+    brief_workspace.commit_hub({"hub.json": json.dumps(document, indent=2) + "\n"})
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    lines = result.stderr.splitlines()
+    assert lines
+    assert all(line.startswith("hub.json: ") for line in lines), lines
+    assert any("tracker" in line for line in lines), lines
+    assert brief_workspace.calls() == b""
+
+
+def test_refuses_when_pin_differs(
+    brief_workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(brief_workspace.hub)
+    document = json.loads((brief_workspace.hub / "hub.json").read_text())
+    document["platform"]["version"] = "0.0.1"
+    brief_workspace.commit_hub({"hub.json": json.dumps(document, indent=2) + "\n"})
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert PINNED_COMMAND in result.stderr
+    assert brief_workspace.calls() == b""
+
+
+def test_exits_two_when_not_a_hub(brief_workspace: Workspace) -> None:
+    elsewhere = brief_workspace.root / "elsewhere"
+
+    result = run_brief(brief_workspace, cwd=elsewhere)
+
+    assert result.exit_code == 2
+    assert result.stderr == (
+        f"{elsewhere}: not a hub: no hub.json in this folder"
+        " (hub brief runs in the hub folder or through ./hub)\n"
+    )
+    assert brief_workspace.calls() == b""
+
+
+def test_uses_agent_hub_root_when_run_elsewhere(
+    brief_workspace: Workspace, golden_sections: Callable[[Path], dict[str, bytes]]
+) -> None:
+    golden = golden_of("fresh_network", golden_sections)
+
+    result = run_brief(
+        brief_workspace,
+        cwd=brief_workspace.root / "elsewhere",
+        AGENT_HUB_ROOT=str(brief_workspace.hub),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout_bytes == golden["stdout"]
+    # gh runs in the hub whatever the caller's folder (plan E12).
+    assert sorted_lines(brief_workspace.calls()) == sorted_lines(golden["calls"])
+
+
+class TestNetwork:
+    def test_calls_no_gh_when_no_network(
+        self, brief_workspace: Workspace, golden_sections: Callable[[Path], dict[str, bytes]]
+    ) -> None:
+        result = run_brief(brief_workspace, "--no-network")
+
+        assert result.exit_code == 0, result.output
+        assert result.stdout_bytes == golden_of("no_network", golden_sections)["stdout"]
+        assert brief_workspace.calls() == b""
+
+    def test_prints_no_pr_line_when_gh_missing(
+        self, brief_workspace: Workspace, golden_sections: Callable[[Path], dict[str, bytes]]
+    ) -> None:
+        (brief_workspace.root / "bin" / "gh").unlink()
+
+        result = run_brief(brief_workspace)
+
+        assert result.exit_code == 0, result.output
+        assert result.stdout_bytes == golden_of("no_network", golden_sections)["stdout"]
+        assert brief_workspace.calls() == b""
+
+
+def test_writes_nothing_when_brief_runs(
+    brief_workspace: Workspace, tree_digest: Callable[[Path], dict[str, Any]]
+) -> None:
+    indexes = sorted(brief_workspace.ws.glob("*/.git/index"))
+    assert len(indexes) == 3
+    before = tree_digest(brief_workspace.ws)
+    stamps = [index.stat().st_mtime_ns for index in indexes]
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 0, result.output
+    assert tree_digest(brief_workspace.ws) == before
+    assert [index.stat().st_mtime_ns for index in indexes] == stamps
+
+
+def test_warns_undated_when_last_verified_invalid(brief_workspace: Workspace) -> None:
+    now = FRESH_NOW.replace("2026-01-12", "2026-02-30")
+    brief_workspace.commit_hub({"brain/now.md": now})
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines()[3].startswith("> ⚠ now.md is undated: ")
+
+
+def test_replaces_bytes_when_now_not_utf8(brief_workspace: Workspace) -> None:
+    now = FRESH_NOW.encode().replace(b"Then the CLI.", b"Then the \xff CLI.")
+    brief_workspace.commit_hub({"brain/now.md": now})
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines()[4] == "Then the � CLI."
+
+
+def test_keeps_journal_when_file_not_utf8(brief_workspace: Workspace) -> None:
+    brief_workspace.commit_hub({f"{JOURNAL}13.md": b"## Fixed the \xff loader\n"})
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    assert "- 2026-01-13: Fixed the � loader" in result.stdout.splitlines()

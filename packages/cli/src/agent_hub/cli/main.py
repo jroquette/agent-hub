@@ -5,6 +5,7 @@ from typing import Annotated
 
 import typer
 
+from agent_hub.cli.brief_command import brief
 from agent_hub.cli.collect import collect
 from agent_hub.cli.doctor_command import doctor
 from agent_hub.cli.generator import init
@@ -41,3 +42,4 @@ app.command("init")(init)
 app.command("sync")(sync)
 app.command("doctor")(doctor)
 app.command("worktree")(worktree)
+app.command("brief")(brief)
