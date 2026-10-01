@@ -2,13 +2,18 @@
 
 ``FakeLinearApi`` is the adapter's ``post`` transport: it serves the backend the contract suite
 asserts on, reading it on every request (never a snapshot), so a write made through the
-backend is seen by the next read. It checks the request document against the slice of Linear's
-schema it knows (research §6), serves only the fields the query selects and fails the test on
-anything else. Every value here is synthetic: no recorded Linear response, no real key.
+backend is seen by the next read, and a mutation changes the backend. It checks the request
+document against the slice of Linear's schema it knows (research §6), serves only the fields
+the query selects and fails the test on anything else. Issues, states and labels get stable
+synthetic UUIDs; a mutation given anything but a UUID fails the test (D-c). An unknown issue is
+answered as GraphQL answers a failed non-null root field: an ``errors`` array and ``data: null``
+(Linear's exact error text and HTTP status for it are unverified; the live smoke confirms).
+Every value here is synthetic: no recorded Linear response, no real key.
 """
 
 import json
 import re
+import uuid
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -28,13 +33,33 @@ _CLOSED_STATE_TYPES = {"Done": "completed", "Canceled": "canceled", "Duplicate":
 _OPEN_STATE_TYPE = "started"
 _FILTER_KEYS = frozenset({"team", "labels", "state"})
 
-# The root field each operation queries, and that field's arguments with their schema types.
-_OPERATION_ROOTS = {"ListReadyIssues": "issues", "GetIssue": "issue"}
+_STATE_FILTER_KEYS = frozenset({"team", "name"})
+_LABEL_FILTER_KEYS = frozenset({"name", "team"})
+_UPDATE_INPUT_KEYS = frozenset({"stateId", "addedLabelIds", "removedLabelIds"})
+_COMMENT_INPUT_KEYS = frozenset({"issueId", "body"})
+_UUID_NAMESPACE = uuid.NAMESPACE_URL
+NOT_FOUND_MESSAGE = "Entity not found: Issue"
+
+# Each operation's kind and the root field it selects, and each root field's arguments with
+# their schema types.
+_OPERATIONS = {
+    "ListReadyIssues": ("query", "issues"),
+    "GetIssue": ("query", "issue"),
+    "IssueRef": ("query", "issue"),
+    "FindStates": ("query", "workflowStates"),
+    "FindLabels": ("query", "issueLabels"),
+    "UpdateIssue": ("mutation", "issueUpdate"),
+    "CreateComment": ("mutation", "commentCreate"),
+}
 _ROOT_ARGUMENTS = {
     "issues": {"filter": "IssueFilter", "first": "Int", "after": "String"},
     "issue": {"id": "String!"},
+    "workflowStates": {"filter": "WorkflowStateFilter"},
+    "issueLabels": {"filter": "IssueLabelFilter"},
+    "issueUpdate": {"id": "String!", "input": "IssueUpdateInput!"},
+    "commentCreate": {"input": "CommentCreateInput!"},
 }
-_OPERATION = re.compile(r"\s*query\s+(\w+)\s*\(([^)]*)\)\s*(\{.*\})\s*", re.DOTALL)
+_OPERATION = re.compile(r"\s*(query|mutation)\s+(\w+)\s*\(([^)]*)\)\s*(\{.*\})\s*", re.DOTALL)
 _DECLARATION = re.compile(r"\$(\w+)\s*:\s*([\w!\[\]]+)")
 _ARGUMENT = re.compile(r"(\w+)\s*:\s*\$(\w+)")
 _TOKEN = re.compile(r"\([^()]*\)|[{}]|\w+|\S")
@@ -44,13 +69,21 @@ type Json = dict[str, Any]
 type Selection = dict[str, tuple[str, "Selection | None"]]
 
 
+class _NotFoundError(Exception):
+    """Raised by a handler for an id Linear would not find; answered as a GraphQL error."""
+
+
 class FakeLinearApi:
     """A ``post(url, headers, body, *, timeout_s)`` callable that plays Linear's GraphQL API.
 
     The transport only ever POSTs, so the method is the callable itself. Each call asserts the
     endpoint, ``timeout_s == expected_timeout_s``, the JSON content type and body,
     ``Authorization`` equal to the bare key (no ``Bearer``) and the query document, then
-    dispatches on ``operationName``. ``requests``, ``timeouts`` and ``responses`` record each call.
+    dispatches on ``operationName``. ``requests``, ``timeouts`` and ``responses`` record each call
+    (``responses`` holds each answer's ``data``). ``mutation_success = False`` answers every
+    mutation with ``success: false`` and changes nothing. ``issue_teams`` maps an identifier to
+    the team the issue belongs to now (after a move between teams); the identifier's prefix
+    otherwise.
     """
 
     def __init__(
@@ -62,7 +95,9 @@ class FakeLinearApi:
         self.expected_timeout_s = DEFAULT_TIMEOUT_S
         self.requests: list[Json] = []
         self.timeouts: list[float] = []
-        self.responses: list[Json] = []
+        self.responses: list[Json | None] = []
+        self.mutation_success = True
+        self.issue_teams: dict[str, str] = {}
 
     def __call__(
         self, url: str, headers: Mapping[str, str], body: bytes, *, timeout_s: float
@@ -79,8 +114,18 @@ class FakeLinearApi:
         handlers: dict[str, Callable[[Json], Json]] = {
             "ListReadyIssues": self._issues,
             "GetIssue": self._issue,
+            "IssueRef": self._issue,
+            "FindStates": self._states,
+            "FindLabels": self._labels,
+            "UpdateIssue": self._update_issue,
+            "CreateComment": self._create_comment,
         }
-        full = handlers[request["operationName"]](request["variables"])
+        try:
+            full = handlers[request["operationName"]](request["variables"])
+        except _NotFoundError:
+            self.responses.append(None)
+            error = {"message": NOT_FOUND_MESSAGE, "path": [root]}
+            return 200, json.dumps({"errors": [error], "data": None}).encode()
         data = {root: _project(full[root], selection)}
         self.responses.append(data)
         return 200, json.dumps({"data": data}).encode()
@@ -104,13 +149,112 @@ class FakeLinearApi:
         }
 
     def _issue(self, variables: Json) -> Json:
-        return {"issue": self._node(self._backend.issues[variables["id"]])}
+        # Linear's issue(id:) takes the identifier or the UUID.
+        reference = variables["id"]
+        issue = (
+            self._issue_by_uuid(reference)
+            if _is_uuid(reference)
+            else self._backend.issues.get(reference)
+        )
+        if issue is None:
+            raise _NotFoundError
+        return {"issue": self._node(issue)}
+
+    def _states(self, variables: Json) -> Json:
+        state_filter: Json = variables["filter"]
+        assert set(state_filter) == _STATE_FILTER_KEYS, state_filter
+        assert set(state_filter["team"]) == {"key"}, state_filter
+        team, name = _eq(state_filter["team"]["key"]), _eq(state_filter["name"])
+        states = self._backend.states.get(team, ())
+        nodes = [{"id": _state_uuid(team, state.name)} for state in states if state.name == name]
+        return {"workflowStates": {"nodes": nodes}}
+
+    def _labels(self, variables: Json) -> Json:
+        label_filter: Json = variables["filter"]
+        assert set(label_filter) == _LABEL_FILTER_KEYS, label_filter
+        name, team_filter = _eq(label_filter["name"]), label_filter["team"]
+        team: str | None
+        if team_filter == {"null": True}:
+            team, names = None, self._backend.workspace_labels
+        else:
+            assert set(team_filter) == {"key"}, team_filter
+            team = _eq(team_filter["key"])
+            names = self._backend.team_labels.get(team, ())
+        nodes = [{"id": _label_uuid(team, name)}] if name in names else []
+        return {"issueLabels": {"nodes": nodes}}
+
+    def _update_issue(self, variables: Json) -> Json:
+        _assert_uuid(variables["id"], "issueUpdate(id:)")
+        issue = self._issue_by_uuid(variables["id"])
+        if issue is None:
+            raise _NotFoundError
+        update_input: Json = variables["input"]
+        assert len(update_input) == 1, update_input
+        assert set(update_input) <= _UPDATE_INPUT_KEYS, update_input
+        if not self.mutation_success:
+            return {"issueUpdate": {"success": False}}
+        team = self._team(issue)
+        if "stateId" in update_input:
+            states = {
+                _state_uuid(team, state.name): state.name for state in self._backend.states[team]
+            }
+            state_id = _assert_uuid(update_input["stateId"], "stateId")
+            assert state_id in states, f"stateId {state_id} is not a state of team {team}"
+            changes: Json = {"state": states[state_id]}
+        else:
+            labels = self._labels_of_team(team)
+            ids = update_input.get("addedLabelIds", update_input.get("removedLabelIds"))
+            assert isinstance(ids, list), update_input
+            for label_id in ids:
+                assert _assert_uuid(label_id, "a label id") in labels, f"{label_id} not in {team}"
+            names = [labels[label_id] for label_id in ids]
+            if "addedLabelIds" in update_input:
+                kept = (*issue.labels, *(name for name in names if name not in issue.labels))
+            else:
+                kept = tuple(name for name in issue.labels if name not in names)
+            changes = {"labels": kept}
+        self._backend.issues[issue.id] = issue.model_copy(update=changes)
+        return {"issueUpdate": {"success": True}}
+
+    def _create_comment(self, variables: Json) -> Json:
+        comment_input: Json = variables["input"]
+        assert set(comment_input) == _COMMENT_INPUT_KEYS, comment_input
+        _assert_uuid(comment_input["issueId"], "commentCreate(input: {issueId})")
+        assert isinstance(comment_input["body"], str), comment_input
+        issue = self._issue_by_uuid(comment_input["issueId"])
+        if issue is None:
+            raise _NotFoundError
+        if not self.mutation_success:
+            return {"commentCreate": {"success": False}}
+        self._backend.comments.append((issue.id, comment_input["body"]))
+        return {"commentCreate": {"success": True}}
+
+    def _team(self, issue: Issue) -> str:
+        return self.issue_teams.get(issue.id, _team_of(issue))
+
+    def _issue_by_uuid(self, issue_uuid: str) -> Issue | None:
+        matches = [
+            issue for issue in self._backend.issues.values() if _issue_uuid(issue) == issue_uuid
+        ]
+        return matches[0] if matches else None
+
+    def _labels_of_team(self, team: str) -> dict[str, str]:
+        # The labels an issue of the team may carry, by UUID: the team's, then the workspace's.
+        labels = {_label_uuid(None, name): name for name in self._backend.workspace_labels}
+        team_labels = self._backend.team_labels.get(team, ())
+        labels |= {_label_uuid(team, name): name for name in team_labels}
+        return labels
+
+    def _label_node(self, issue: Issue, name: str) -> Json:
+        team = self._team(issue)
+        owner = team if name in self._backend.team_labels.get(team, ()) else None
+        return {"id": _label_uuid(owner, name), "name": name}
 
     def _matches(self, issue: Issue, variables: Json) -> bool:
         # The IssueFilter subset the adapter sends; any other key fails the test.
         issue_filter: Json = variables["filter"]
         assert set(issue_filter) <= _FILTER_KEYS, issue_filter
-        if "team" in issue_filter and _team_of(issue) != issue_filter["team"]["key"]["eq"]:
+        if "team" in issue_filter and self._team(issue) != issue_filter["team"]["key"]["eq"]:
             return False
         if "labels" in issue_filter and (
             issue_filter["labels"]["some"]["name"]["eq"] not in issue.labels
@@ -121,16 +265,23 @@ class FakeLinearApi:
         )
 
     def _node(self, issue: Issue) -> Json:
+        team = self._team(issue)
         return {
+            "id": _issue_uuid(issue),
             "identifier": issue.id,
             "title": issue.title,
             "url": issue.url,
-            "state": {"name": issue.state, "type": self._state_type(issue)},
-            "labels": {"nodes": [{"name": name} for name in issue.labels]},
+            "team": {"key": team},
+            "state": {
+                "id": _state_uuid(team, issue.state),
+                "name": issue.state,
+                "type": self._state_type(issue),
+            },
+            "labels": {"nodes": [self._label_node(issue, name) for name in issue.labels]},
         }
 
     def _state_type(self, issue: Issue) -> str:
-        states = {state.name: state for state in self._backend.states[_team_of(issue)]}
+        states = {state.name: state for state in self._backend.states[self._team(issue)]}
         if not states[issue.state].closed:
             return _OPEN_STATE_TYPE
         return _CLOSED_STATE_TYPES[issue.state]
@@ -142,13 +293,14 @@ def _checked_document(request: Json) -> tuple[str, Selection | None]:
     assert isinstance(query, str)
     match = _OPERATION.fullmatch(query)
     assert match is not None, f"not a single named query: {query!r}"
-    name, declarations, selection_text = match.groups()
+    kind, name, declarations, selection_text = match.groups()
     assert name == request["operationName"]
+    assert kind == _OPERATIONS[name][0], (kind, name)
     declared = dict(_DECLARATION.findall(declarations))
     assert set(declared) == set(variables), (declared, variables)
     selection = _parse_selection(_TOKEN.findall(selection_text))
-    assert list(selection) == [_OPERATION_ROOTS[name]], selection
-    root = _OPERATION_ROOTS[name]
+    root = _OPERATIONS[name][1]
+    assert list(selection) == [root], selection
     arguments_text, root_selection = selection[root]
     for argument, variable in _ARGUMENT.findall(arguments_text):
         _check_variable_type(declared[variable], _ROOT_ARGUMENTS[root][argument])
@@ -206,6 +358,43 @@ def _project(value: Any, selection: Selection | None) -> Any:
 
 def _team_of(issue: Issue) -> str:
     return issue.id.partition("-")[0]
+
+
+def _eq(comparator: Json) -> str:
+    # The StringComparator subset the adapter sends: exactly {"eq": <string>}.
+    assert set(comparator) == {"eq"}, comparator
+    value = comparator["eq"]
+    assert isinstance(value, str), comparator
+    return value
+
+
+def _issue_uuid(issue: Issue) -> str:
+    return str(uuid.uuid5(_UUID_NAMESPACE, f"agent-hub-fake:issue:{issue.id}"))
+
+
+def _state_uuid(team: str, name: str) -> str:
+    return str(uuid.uuid5(_UUID_NAMESPACE, f"agent-hub-fake:state:{team}:{name}"))
+
+
+def _label_uuid(team: str | None, name: str) -> str:
+    # A workspace label (team None) and a team label of the same name are different labels.
+    owner = "" if team is None else team
+    return str(uuid.uuid5(_UUID_NAMESPACE, f"agent-hub-fake:label:{owner}:{name}"))
+
+
+def _is_uuid(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        return str(uuid.UUID(value)) == value
+    except ValueError:
+        return False
+
+
+def _assert_uuid(value: object, where: str) -> str:
+    assert _is_uuid(value), f"{where} must be a UUID (D-c), got {value!r}"
+    assert isinstance(value, str)
+    return value
 
 
 @pytest.fixture
