@@ -1,9 +1,16 @@
 """The Linear GraphQL adapter's reads and writes, over the in-process fake Linear API."""
 
 import copy
+import email.message
+import http.client
+import io
 import json
 import logging
 import re
+import socket
+import urllib.error
+import urllib.request
+import urllib.response
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
@@ -13,6 +20,7 @@ from agent_hub.core.errors import TrackerError
 from agent_hub.core.testing.builders import an_issue
 from agent_hub.core.testing.fakes import FakeTrackerBackend
 from agent_hub.core.tracker.tracker_client import Issue
+from agent_hub.tracker_linear import graphql as graphql_module
 from agent_hub.tracker_linear.graphql import (
     DEFAULT_TIMEOUT_S,
     DONE_STATE_TYPES,
@@ -24,6 +32,7 @@ from agent_hub.tracker_linear.graphql import (
     MAX_RESPONSE_BYTES,
     PAGE_SIZE,
     LinearGraphqlTrackerClient,
+    urllib_post,
 )
 
 _READY_IN_DEM = {"DEM-1", "DEM-2", "DEM-3"}
@@ -493,6 +502,7 @@ _FAILURES: dict[str, tuple[tuple[int, bytes] | BaseException, str, str]] = {
     "http-429": ((429, b""), r"rate-limited .*HTTP 429", _RETRY),
     "http-500": ((500, b"<html>oops</html>"), r"unavailable .*HTTP 500", _RETRY),
     "http-503": ((503, b""), r"unavailable .*HTTP 503", _RETRY),
+    "http-302": ((302, b"moved"), r"^Linear answered a redirect \(HTTP 302\)", r"not followed"),
     "http-400-plain": (
         (400, b'{"data": null}'),
         r"^Linear rejected the request \(HTTP 400\)$",
@@ -778,3 +788,278 @@ def test_raises_when_labels_exceed_cap_without_next_page(
 
     with pytest.raises(TrackerError, match=rf"^get_issue DEM-1: .*more than {MAX_LABELS} labels"):
         client.get_issue("DEM-1")
+
+
+class _Response:
+    """What a patched opener returns (or what an ``HTTPError`` reads from): records reads."""
+
+    def __init__(self, status: int, body: bytes, *, fail: BaseException | None = None) -> None:
+        self.status = status
+        self._body = body
+        self._fail = fail
+        self.read_sizes: list[int] = []
+        self.closed = False
+
+    def read(self, size: int = -1) -> bytes:
+        self.read_sizes.append(size)
+        if self._fail is not None:
+            raise self._fail
+        return self._body if size < 0 else self._body[:size]
+
+    def close(self) -> None:
+        self.closed = True
+
+    def __enter__(self) -> _Response:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+
+class _RecordingBody(io.BytesIO):
+    """An ``HTTPError`` body that records the sizes read from it."""
+
+    def __init__(self, data: bytes) -> None:
+        super().__init__(data)
+        self.read_sizes: list[int | None] = []
+
+    def read(self, size: int | None = -1, /) -> bytes:
+        self.read_sizes.append(size)
+        return super().read(size)
+
+
+class _PatchedOpener:
+    """A stand-in for the module's opener (Q-18: no socket): records, then replies."""
+
+    def __init__(self, reply: Callable[[urllib.request.Request], _Response]) -> None:
+        self._reply = reply
+        self.calls: list[tuple[urllib.request.Request, float]] = []
+
+    def open(self, request: urllib.request.Request, *, timeout: float) -> _Response:
+        self.calls.append((request, timeout))
+        return self._reply(request)
+
+
+def _patch_opener(
+    monkeypatch: pytest.MonkeyPatch, reply: Callable[[urllib.request.Request], _Response]
+) -> _PatchedOpener:
+    opener = _PatchedOpener(reply)
+    monkeypatch.setattr(graphql_module, "_OPENER", opener)
+    return opener
+
+
+def _raising(error: BaseException) -> Callable[[urllib.request.Request], _Response]:
+    def reply(_request: urllib.request.Request) -> _Response:
+        raise error
+
+    return reply
+
+
+def test_posts_json_when_default_transport_used(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_linear_api: Any,
+    synthetic_key: str,
+    tracker_backend: FakeTrackerBackend,
+) -> None:
+    responses: list[_Response] = []
+
+    def reply(request: urllib.request.Request) -> _Response:
+        # The fake checks endpoint, headers, body and timeout as it does for any transport.
+        headers = {
+            "Content-Type": str(request.get_header("Content-type")),
+            "Authorization": str(request.get_header("Authorization")),
+        }
+        assert isinstance(request.data, bytes)
+        status, body = fake_linear_api(
+            request.full_url, headers, request.data, timeout_s=opener.calls[-1][1]
+        )
+        responses.append(_Response(status, body))
+        return responses[-1]
+
+    opener = _patch_opener(monkeypatch, reply)
+    client = LinearGraphqlTrackerClient(environ={LINEAR_API_KEY_VARIABLE: synthetic_key})
+
+    issue = client.get_issue("DEM-1")
+
+    assert _with_sorted_labels(issue) == _with_sorted_labels(tracker_backend.issues["DEM-1"])
+    ((request, timeout),) = opener.calls
+    assert request.get_method() == "POST"
+    assert request.full_url == "https://api.linear.app/graphql"
+    assert request.get_header("Authorization") == synthetic_key
+    assert request.get_header("Content-type") == "application/json"
+    assert timeout == 30.0
+    ((response),) = responses
+    assert response.read_sizes == [MAX_RESPONSE_BYTES + 1]
+    assert response.closed
+
+
+def test_returns_status_and_capped_body_when_server_answers_http_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = _RecordingBody(b"down")
+    error = urllib.error.HTTPError(
+        LINEAR_GRAPHQL_URL, 503, "Service Unavailable", email.message.Message(), body
+    )
+    _patch_opener(monkeypatch, _raising(error))
+
+    answer = urllib_post(LINEAR_GRAPHQL_URL, {}, b"{}", timeout_s=30.0)
+
+    assert answer == (503, b"down")
+    assert body.read_sizes == [MAX_RESPONSE_BYTES + 1]
+    assert body.closed
+
+
+def test_raises_unavailable_when_default_transport_gets_http_error(
+    monkeypatch: pytest.MonkeyPatch, synthetic_key: str
+) -> None:
+    error = urllib.error.HTTPError(
+        LINEAR_GRAPHQL_URL, 502, "Bad Gateway", email.message.Message(), io.BytesIO()
+    )
+    _patch_opener(monkeypatch, _raising(error))
+    client = LinearGraphqlTrackerClient(environ={LINEAR_API_KEY_VARIABLE: synthetic_key})
+
+    with pytest.raises(TrackerError, match=r"^get_issue DEM-1: Linear is unavailable \(HTTP 502\)"):
+        client.get_issue("DEM-1")
+
+
+# Failures below HTTP: (what the opener or the read raises, cause pattern, fix pattern).
+_TRANSPORT_FAILURES: dict[str, tuple[BaseException, bool, str, str]] = {
+    "connect-timeout": (
+        urllib.error.URLError(TimeoutError("timed out")),
+        False,
+        r"no answer from Linear within 30 s",
+        r"retry later",
+    ),
+    "read-timeout": (TimeoutError("timed out"), True, r"no answer from Linear", r"retry later"),
+    "dns": (
+        urllib.error.URLError(socket.gaierror(-2, "Name or service not known")),
+        False,
+        r"could not reach Linear: .*Name or service not known",
+        r"check the network",
+    ),
+    "url-error-text": (
+        urllib.error.URLError("unknown url type"),
+        False,
+        r"could not reach Linear",
+        r"check the network",
+    ),
+    "bad-status-line": (
+        http.client.BadStatusLine("garbage"),
+        False,
+        r"could not reach Linear: .*BadStatusLine",
+        r"check the network",
+    ),
+    "incomplete-read": (
+        http.client.IncompleteRead(b"partial", 10),
+        True,
+        r"could not reach Linear: .*IncompleteRead",
+        r"check the network",
+    ),
+}
+
+
+@pytest.mark.parametrize("failure", list(_TRANSPORT_FAILURES))
+def test_raises_with_fix_when_default_transport_fails(
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    synthetic_key: str,
+    failure: str,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    error, on_read, cause, fix = _TRANSPORT_FAILURES[failure]
+    reply = (lambda _request: _Response(200, b"", fail=error)) if on_read else _raising(error)
+    opener = _patch_opener(monkeypatch, reply)
+    client = LinearGraphqlTrackerClient(environ={LINEAR_API_KEY_VARIABLE: synthetic_key})
+
+    with pytest.raises(TrackerError) as raised:
+        client.get_issue("DEM-1")
+
+    message = str(raised.value)
+    cause_text, _, fix_text = message.removeprefix("get_issue DEM-1: ").rpartition("; ")
+    assert re.search(cause, cause_text), message
+    assert re.search(fix, fix_text), message
+    assert len(opener.calls) == 1  # never retried
+    chain = [
+        raised.value,
+        raised.value.__cause__,
+        getattr(raised.value.__cause__, "__cause__", None),
+    ]
+    for text in (message, caplog.text, *(f"{link!s} {link!r}" for link in chain)):
+        assert synthetic_key not in text
+
+
+class _RedirectingHttps(urllib.request.HTTPSHandler):
+    """Answers every https request with ``status`` and a ``Location`` on another, http host."""
+
+    def __init__(self, status: int) -> None:
+        super().__init__()
+        self._status = status
+        self.requests: list[urllib.request.Request] = []
+
+    def https_open(self, req: urllib.request.Request) -> urllib.response.addinfourl:
+        self.requests.append(req)
+        headers = email.message.Message()
+        headers["Location"] = "http://evil.example/steal"
+        response = urllib.response.addinfourl(
+            io.BytesIO(b"moved"), headers, req.full_url, code=self._status
+        )
+        response.msg = "Redirect"
+        return response
+
+
+class _RecordingHttp(urllib.request.HTTPHandler):
+    """Records any plain http request (a followed redirect) and answers an empty JSON object."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.requests: list[urllib.request.Request] = []
+
+    def http_open(self, req: urllib.request.Request) -> urllib.response.addinfourl:
+        self.requests.append(req)
+        response = urllib.response.addinfourl(
+            io.BytesIO(b"{}"), email.message.Message(), req.full_url, code=200
+        )
+        response.msg = "OK"
+        return response
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_does_not_follow_redirect_when_linear_answers_one(
+    *, monkeypatch: pytest.MonkeyPatch, synthetic_key: str, status: int
+) -> None:
+    # A followed redirect would resend the request, Authorization included, to the Location host.
+    https, http = _RedirectingHttps(status), _RecordingHttp()
+    monkeypatch.setattr(graphql_module, "_OPENER", graphql_module.opener_with(https, http))
+    client = LinearGraphqlTrackerClient(environ={LINEAR_API_KEY_VARIABLE: synthetic_key})
+
+    with pytest.raises(TrackerError, match=rf"^get_issue DEM-1: .*redirect \(HTTP {status}\)"):
+        client.get_issue("DEM-1")
+
+    assert [request.full_url for request in https.requests] == [LINEAR_GRAPHQL_URL]
+    assert http.requests == []
+    assert urllib_post(LINEAR_GRAPHQL_URL, {}, b"{}", timeout_s=30.0) == (status, b"moved")
+    assert len(https.requests) == 2  # noqa: PLR2004 - the client's request, then the direct one
+    assert http.requests == []
+
+
+def test_uses_only_the_refusing_redirect_handler_when_module_loaded() -> None:
+    redirect_handlers = [
+        handler
+        for handler in graphql_module._OPENER.handlers  # noqa: SLF001 - the production opener
+        if isinstance(handler, urllib.request.HTTPRedirectHandler)
+    ]
+
+    assert len(redirect_handlers) == 1
+    assert (
+        redirect_handlers[0].redirect_request(
+            urllib.request.Request(LINEAR_GRAPHQL_URL, data=b"{}", method="POST"),  # noqa: S310 - fixed https endpoint
+            io.BytesIO(),
+            302,
+            "Found",
+            email.message.Message(),
+            "http://evil.example/steal",
+        )
+        is None
+    )

@@ -81,6 +81,12 @@ The folder decides the level; nobody writes level markers by hand.
 - `pytest.ini` also sets `--import-mode=importlib` (test basenames repeat across packages and there are no
   `__init__.py` files in tests trees), `testpaths = packages tests` and `pythonpath = .`.
 - The layout checker uses the same `level_of`, so a test the checker accepts always gets the marker it expects.
+- `live` is the one marker written by hand: a test that calls a real external API (the Linear smoke test,
+  `packages/tracker_linear/tests/integration/test_linear_live.py`). Under `integration/` it also gets `integration`,
+  but `make test-integration` selects `integration and not live`, so `make check` never reaches Linear, even with the
+  variables exported. The only way in is `$R pytest -m live packages/tracker_linear/tests/integration`, and the same
+  plugin still skips each case, naming the first missing variable, unless `LINEAR_API_KEY`, `AGENT_HUB_LIVE_ISSUE` and
+  `AGENT_HUB_LIVE_LABEL` are set and `AGENT_HUB_LIVE=1`.
 
 Select a level with `-m`: `$R pytest -m unit`, `$R pytest -m "unit or contract"`, `$R pytest -m integration`,
 `$R pytest -m e2e`. A single file: `$R pytest packages/core/tests/unit/test_errors.py`.

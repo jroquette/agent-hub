@@ -13,13 +13,19 @@ the fix: a missing or malformed key (before any request), a transport ``OSError`
 an HTTP error status, a body that is not JSON, a GraphQL ``errors`` array at any status, and an
 answer whose shape is not the one the query selects. Nothing is retried. The key is never part
 of a message, a ``repr`` or a log record.
+
+The default transport is ``urllib_post`` (standard library only, AC-9.6); tests pass their own.
 """
 
+import http.client
 import json
 import re
+import urllib.error
+import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol
+from email.message import Message
+from typing import IO, Any, Protocol, override
 
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, Issue
@@ -51,13 +57,72 @@ _UNEXPECTED_FIX = "Linear's API may have changed; report it with the operation n
 
 
 class Post(Protocol):
-    """The HTTP transport: POST ``body`` to ``url`` and return ``(status, response body)``."""
+    """The HTTP transport: POST ``body`` to ``url`` and return ``(status, response body)``.
+
+    ``timeout_s`` bounds each blocking step (connecting, each read), not the whole call.
+    """
 
     def __call__(
         self, url: str, headers: Mapping[str, str], body: bytes, *, timeout_s: float
     ) -> tuple[int, bytes]:
-        """Send one request, giving up after ``timeout_s`` seconds."""
+        """Send one request; a step that waits longer than ``timeout_s`` seconds gives up."""
         ...
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuses every redirect: a followed one would resend ``Authorization`` to its host."""
+
+    @override
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: IO[bytes],
+        code: int,
+        msg: str,
+        headers: Message,
+        newurl: str,
+    ) -> None:
+        # None makes urllib raise HTTPError for the 3xx, which urllib_post returns as an answer.
+        return None
+
+
+def opener_with(*handlers: urllib.request.BaseHandler) -> urllib.request.OpenerDirector:
+    """urllib's default opener (proxies from the environment, verified HTTPS) minus redirects.
+
+    ``handlers`` replace or add to the defaults, as in ``urllib.request.build_opener``.
+    """
+    return urllib.request.build_opener(_NoRedirect, *handlers)
+
+
+_OPENER = opener_with()
+
+
+def urllib_post(
+    url: str, headers: Mapping[str, str], body: bytes, *, timeout_s: float
+) -> tuple[int, bytes]:
+    """The default ``Post``: one ``urllib`` POST, reading at most ``MAX_RESPONSE_BYTES + 1``.
+
+    An HTTP error status, a redirect included (never followed), is an answer, returned as
+    ``(status, body)``. ``timeout_s`` applies to each socket operation (connect, each read), so
+    a slow trickle can take longer in total, and the DNS lookup has no bound. A timeout raises
+    ``TimeoutError``; any other failure raises an ``OSError`` (a malformed HTTP answer becomes a
+    ``ConnectionError``). No message names the headers, so the key never reaches one.
+    """
+    request = urllib.request.Request(url, data=body, headers=dict(headers), method="POST")  # noqa: S310 - fixed https endpoint
+    try:
+        try:
+            response = _OPENER.open(request, timeout=timeout_s)
+        except urllib.error.HTTPError as error:
+            with error:
+                return error.code, error.read(MAX_RESPONSE_BYTES + 1)
+        with response:
+            return response.status, response.read(MAX_RESPONSE_BYTES + 1)
+    except urllib.error.URLError as error:
+        if isinstance(error.reason, TimeoutError):
+            raise TimeoutError(f"no answer within {timeout_s:g} s") from error
+        raise
+    except http.client.HTTPException as error:
+        raise ConnectionError(f"malformed HTTP answer ({type(error).__name__})") from error
 
 
 def _labels_selection(fields: str) -> str:
@@ -146,7 +211,7 @@ class LinearGraphqlTrackerClient:
         timeout_s: float = DEFAULT_TIMEOUT_S,
     ) -> None:
         self._environ = environ
-        self._post = post
+        self._post: Post = urllib_post if post is None else post
         self._timeout_s = timeout_s
 
     def __repr__(self) -> str:
@@ -337,13 +402,6 @@ class LinearGraphqlTrackerClient:
     ) -> Any:
         """POST the query named ``operation_name``; return its ``data``, of the given ``shape``."""
         key = self._api_key(operation, issue_id)
-        if self._post is None:
-            raise TrackerError(
-                operation=operation,
-                issue_id=issue_id,
-                cause="no HTTP transport",
-                fix="pass post= to LinearGraphqlTrackerClient",
-            )
         headers = {"Content-Type": "application/json", "Authorization": key}
         body = json.dumps(
             {"query": query, "operationName": operation_name, "variables": variables}
@@ -483,6 +541,12 @@ def _check_status(operation: str, issue_id: str | None, status: int) -> None:
     if status in {401, 403}:
         cause = f"Linear refused the key (HTTP {status})"
         fix = f"check that {LINEAR_API_KEY_VARIABLE} is a valid Linear API key with access"
+    elif 300 <= status < 400:  # noqa: PLR2004 - HTTP redirects
+        cause = f"Linear answered a redirect (HTTP {status})"
+        fix = (
+            "check for a proxy or network that redirects api.linear.app"
+            " (redirects are not followed, so the key is never sent elsewhere)"
+        )
     elif status == 429:  # noqa: PLR2004 - HTTP Too Many Requests
         cause, fix = f"Linear rate-limited the request (HTTP {status})", "retry later"
     elif status >= 500:  # noqa: PLR2004 - HTTP server errors
