@@ -7,9 +7,16 @@ label, issue id) travel only as GraphQL variables, never in the query text.
 Every write resolves the identifier (``DEM-1``) to the issue's UUID once, with ``issue(id:)``,
 and passes only UUIDs to the mutation (D-c). A write that would change nothing (the current
 state, a present label added, an absent label removed) sends no mutation.
+
+Every failure is a one-line ``TrackerError`` naming the operation, the issue id, the cause and
+the fix: a missing or malformed key (before any request), a transport ``OSError`` or timeout,
+an HTTP error status, a body that is not JSON, a GraphQL ``errors`` array at any status, and an
+answer whose shape is not the one the query selects. Nothing is retried. The key is never part
+of a message, a ``repr`` or a log record.
 """
 
 import json
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -28,6 +35,13 @@ DONE_STATE_TYPES = ("completed", "canceled", "duplicate")
 MAX_QUOTED_CHARS = 200
 
 
+# A response shape: a type (or types) for a leaf, a dict of exactly these fields, or a list of
+# items of one shape.
+type Shape = type | tuple[type, ...] | dict[str, Shape] | list[Shape]
+
+_UNEXPECTED_FIX = "Linear's API may have changed; report it with the operation named here"
+
+
 class Post(Protocol):
     """The HTTP transport: POST ``body`` to ``url`` and return ``(status, response body)``."""
 
@@ -39,6 +53,13 @@ class Post(Protocol):
 
 
 _ISSUE_FIELDS = "identifier title url state { name } labels { nodes { name } }"
+_ISSUE_SHAPE: Shape = {
+    "identifier": str,
+    "title": str,
+    "url": str,
+    "state": {"name": str},
+    "labels": {"nodes": [{"name": str}]},
+}
 
 _LIST_READY_ISSUES = (
     "query ListReadyIssues($filter: IssueFilter!, $first: Int!, $after: String) {"
@@ -46,12 +67,27 @@ _LIST_READY_ISSUES = (
     f" nodes {{ {_ISSUE_FIELDS} }} pageInfo {{ hasNextPage endCursor }} }} }}"
 )
 
+_LIST_READY_SHAPE: Shape = {
+    "issues": {
+        "nodes": [_ISSUE_SHAPE],
+        "pageInfo": {"hasNextPage": bool, "endCursor": (str, type(None))},
+    }
+}
+
 _GET_ISSUE = f"query GetIssue($id: String!) {{ issue(id: $id) {{ {_ISSUE_FIELDS} }} }}"
 
 _ISSUE_REF = (
     "query IssueRef($id: String!) {"
     " issue(id: $id) { id team { key } state { name } labels { nodes { id name } } } }"
 )
+_ISSUE_REF_SHAPE: Shape = {
+    "issue": {
+        "id": str,
+        "team": {"key": str},
+        "state": {"name": str},
+        "labels": {"nodes": [{"id": str, "name": str}]},
+    }
+}
 
 _FIND_STATES = (
     "query FindStates($filter: WorkflowStateFilter!) {"
@@ -61,6 +97,8 @@ _FIND_STATES = (
 _FIND_LABELS = (
     "query FindLabels($filter: IssueLabelFilter!) { issueLabels(filter: $filter) { nodes { id } } }"
 )
+
+_NODE_IDS_SHAPE: Shape = {"nodes": [{"id": str}]}
 
 _UPDATE_ISSUE = (
     "mutation UpdateIssue($id: String!, $input: IssueUpdateInput!) {"
@@ -98,6 +136,10 @@ class LinearGraphqlTrackerClient:
         self._post = post
         self._timeout_s = timeout_s
 
+    def __repr__(self) -> str:
+        # Names no environment value: the key lives in ``environ``.
+        return f"LinearGraphqlTrackerClient(timeout_s={self._timeout_s})"
+
     def list_ready(self, team: str, label: str) -> list[Issue]:
         """Return the team's issues with the label whose state is not done, following pages."""
         issue_filter = {
@@ -114,12 +156,15 @@ class LinearGraphqlTrackerClient:
                 operation_name="ListReadyIssues",
                 query=_LIST_READY_ISSUES,
                 variables={"filter": issue_filter, "first": PAGE_SIZE, "after": after},
+                shape=_LIST_READY_SHAPE,
             )
             connection = data["issues"]
             issues.extend(_issue_from_node(node) for node in connection["nodes"])
             if not connection["pageInfo"]["hasNextPage"]:
                 return issues
             after = connection["pageInfo"]["endCursor"]
+            if after is None:
+                raise _unexpected("list_ready", None, "a next page without a cursor")
 
     def get_issue(self, issue_id: str) -> Issue:
         """Return the issue with the identifier ``issue_id``."""
@@ -130,6 +175,7 @@ class LinearGraphqlTrackerClient:
             operation_name="GetIssue",
             query=_GET_ISSUE,
             variables={"id": issue_id},
+            shape={"issue": _ISSUE_SHAPE},
         )
         return _issue_from_node(data["issue"])
 
@@ -143,6 +189,7 @@ class LinearGraphqlTrackerClient:
             issue_id=issue_id,
             operation_name="FindStates",
             query=_FIND_STATES,
+            root="workflowStates",
             issue_filter={"team": {"key": {"eq": ref.team}}, "name": {"eq": state_name}},
         )
         if not states:
@@ -181,6 +228,7 @@ class LinearGraphqlTrackerClient:
             operation_name="CreateComment",
             query=_CREATE_COMMENT,
             variables={"input": {"issueId": ref.uuid, "body": body}},
+            shape={"commentCreate": {"success": bool}},
         )
         _check_success("comment", issue_id, data["commentCreate"])
 
@@ -193,6 +241,7 @@ class LinearGraphqlTrackerClient:
             operation_name="IssueRef",
             query=_ISSUE_REF,
             variables={"id": issue_id},
+            shape=_ISSUE_REF_SHAPE,
         )
         node = data["issue"]
         return _IssueRef(
@@ -211,6 +260,7 @@ class LinearGraphqlTrackerClient:
                 issue_id=ref.issue_id,
                 operation_name="FindLabels",
                 query=_FIND_LABELS,
+                root="issueLabels",
                 issue_filter={"name": {"eq": name}, "team": team_filter},
             )
             if labels:
@@ -229,6 +279,7 @@ class LinearGraphqlTrackerClient:
         issue_id: str,
         operation_name: str,
         query: str,
+        root: str,
         issue_filter: dict[str, Any],
     ) -> list[str]:
         data = self._request(
@@ -237,9 +288,9 @@ class LinearGraphqlTrackerClient:
             operation_name=operation_name,
             query=query,
             variables={"filter": issue_filter},
+            shape={root: _NODE_IDS_SHAPE},
         )
-        (connection,) = data.values()
-        return [node["id"] for node in connection["nodes"]]
+        return [node["id"] for node in data[root]["nodes"]]
 
     def _update(self, operation: str, ref: _IssueRef, update_input: dict[str, Any]) -> None:
         data = self._request(
@@ -248,6 +299,7 @@ class LinearGraphqlTrackerClient:
             operation_name="UpdateIssue",
             query=_UPDATE_ISSUE,
             variables={"id": ref.uuid, "input": update_input},
+            shape={"issueUpdate": {"success": bool}},
         )
         _check_success(operation, ref.issue_id, data["issueUpdate"])
 
@@ -259,8 +311,10 @@ class LinearGraphqlTrackerClient:
         operation_name: str,
         query: str,
         variables: dict[str, Any],
+        shape: Shape,
     ) -> Any:
-        """POST the query, named ``operation_name`` in its text, and return its ``data``."""
+        """POST the query named ``operation_name``; return its ``data``, of the given ``shape``."""
+        key = self._api_key(operation, issue_id)
         if self._post is None:
             raise TrackerError(
                 operation=operation,
@@ -268,24 +322,76 @@ class LinearGraphqlTrackerClient:
                 cause="no HTTP transport",
                 fix="pass post= to LinearGraphqlTrackerClient",
             )
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": self._environ[LINEAR_API_KEY_VARIABLE],
-        }
+        headers = {"Content-Type": "application/json", "Authorization": key}
         body = json.dumps(
             {"query": query, "operationName": operation_name, "variables": variables}
         ).encode()
-        _status, response = self._post(LINEAR_GRAPHQL_URL, headers, body, timeout_s=self._timeout_s)
-        payload = json.loads(response)
-        errors = payload.get("errors")
+        try:
+            status, response = self._post(
+                LINEAR_GRAPHQL_URL, headers, body, timeout_s=self._timeout_s
+            )
+        except TimeoutError as error:
+            raise TrackerError(
+                operation=operation,
+                issue_id=issue_id,
+                cause=f"no answer from Linear within {self._timeout_s:g} s",
+                fix="retry later",
+            ) from error
+        except OSError as error:
+            raise TrackerError(
+                operation=operation,
+                issue_id=issue_id,
+                cause=f"could not reach Linear: {_quoted(error)}",
+                fix="check the network connection to api.linear.app, then retry",
+            ) from error
+        _check_status(operation, issue_id, status)
+        try:
+            payload = json.loads(response)
+        except ValueError as error:
+            raise TrackerError(
+                operation=operation,
+                issue_id=issue_id,
+                cause=f"Linear answered a body that is not JSON (HTTP {status})",
+                fix="retry later",
+            ) from error
+        errors = payload.get("errors") if isinstance(payload, dict) else None
         if errors:
             raise TrackerError(
                 operation=operation,
                 issue_id=issue_id,
                 cause=f"Linear answered with an error: {_first_message(errors)}",
-                fix="check the issue id and the names passed",
+                fix=_errors_fix(errors, issue_id),
             )
-        return payload["data"]
+        if not 200 <= status < 300:  # noqa: PLR2004 - the HTTP success range
+            raise TrackerError(
+                operation=operation,
+                issue_id=issue_id,
+                cause=f"Linear answered HTTP {status}",
+                fix="check the request named here, then retry",
+            )
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not _fits(data, shape):
+            raise _unexpected(operation, issue_id, f"{operation_name} answered another shape")
+        return data
+
+    def _api_key(self, operation: str, issue_id: str | None) -> str:
+        """The key from ``environ``, checked before any request; its value is never quoted."""
+        key = self._environ.get(LINEAR_API_KEY_VARIABLE, "")
+        if not key:
+            raise TrackerError(
+                operation=operation,
+                issue_id=issue_id,
+                cause=f"{LINEAR_API_KEY_VARIABLE} is not set",
+                fix=f"export {LINEAR_API_KEY_VARIABLE} with a Linear personal API key",
+            )
+        if any(unicodedata.category(char) == "Cc" for char in key):
+            raise TrackerError(
+                operation=operation,
+                issue_id=issue_id,
+                cause=f"{LINEAR_API_KEY_VARIABLE} has a control character",
+                fix=f"set {LINEAR_API_KEY_VARIABLE} to the key alone, without newlines",
+            )
+        return key
 
 
 def _check_issue_id(operation: str, issue_id: str) -> None:
@@ -308,11 +414,71 @@ def _check_success(operation: str, issue_id: str, payload: Mapping[str, Any]) ->
         )
 
 
+def _check_status(operation: str, issue_id: str | None, status: int) -> None:
+    """Raise for the HTTP statuses whose fix does not depend on the body."""
+    if status in {401, 403}:
+        cause = f"Linear refused the key (HTTP {status})"
+        fix = f"check that {LINEAR_API_KEY_VARIABLE} is a valid Linear API key with access"
+    elif status == 429:  # noqa: PLR2004 - HTTP Too Many Requests
+        cause, fix = f"Linear rate-limited the request (HTTP {status})", "retry later"
+    elif status >= 500:  # noqa: PLR2004 - HTTP server errors
+        cause, fix = f"Linear is unavailable (HTTP {status})", "retry later"
+    else:
+        return
+    raise TrackerError(operation=operation, issue_id=issue_id, cause=cause, fix=fix)
+
+
+def _errors_fix(errors: Any, issue_id: str | None) -> str:
+    """The fix for a GraphQL ``errors`` array, from its ``extensions`` when they say more."""
+    kinds = " ".join(
+        str(value).lower()
+        for error in (errors if isinstance(errors, list) else [])
+        if isinstance(error, dict) and isinstance(error.get("extensions"), dict)
+        for name, value in error["extensions"].items()
+        if name in {"code", "type"}
+    )
+    if "ratelimited" in kinds:
+        return "retry later"
+    if "authentication" in kinds or "forbidden" in kinds:
+        return f"check that {LINEAR_API_KEY_VARIABLE} is a valid Linear API key with access"
+    if issue_id is not None:
+        return f"check that {issue_id} exists in Linear and the key can read it"
+    return "check the team key and the label name"
+
+
+def _fits(value: Any, shape: Shape) -> bool:
+    """Whether ``value`` has ``shape``: exactly the selected fields, each of its type."""
+    if isinstance(shape, dict):
+        return (
+            isinstance(value, dict)
+            and value.keys() == shape.keys()
+            and all(_fits(value[name], field) for name, field in shape.items())
+        )
+    if isinstance(shape, list):
+        (item,) = shape
+        return isinstance(value, list) and all(_fits(element, item) for element in value)
+    return isinstance(value, shape)
+
+
+def _unexpected(operation: str, issue_id: str | None, detail: str) -> TrackerError:
+    return TrackerError(
+        operation=operation,
+        issue_id=issue_id,
+        cause=f"unexpected response from Linear: {detail}",
+        fix=_UNEXPECTED_FIX,
+    )
+
+
 def _first_message(errors: Any) -> str:
     """The first GraphQL error's message, quoted and cut: it is untrusted text."""
-    first = errors[0] if isinstance(errors, list) else None
+    first = errors[0] if isinstance(errors, list) and errors else None
     message = first.get("message") if isinstance(first, dict) else None
-    return repr(str(message)[:MAX_QUOTED_CHARS])
+    return _quoted(message)
+
+
+def _quoted(text: object) -> str:
+    """Untrusted text, cut to ``MAX_QUOTED_CHARS`` and quoted (escapes included)."""
+    return repr(str(text)[:MAX_QUOTED_CHARS])
 
 
 def _issue_from_node(node: Mapping[str, Any]) -> Issue:
