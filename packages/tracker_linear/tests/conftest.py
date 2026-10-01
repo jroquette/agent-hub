@@ -79,7 +79,9 @@ class FakeLinearApi:
     The transport only ever POSTs, so the method is the callable itself. Each call asserts the
     endpoint, ``timeout_s == expected_timeout_s``, the JSON content type and body,
     ``Authorization`` equal to the bare key (no ``Bearer``) and the query document, then
-    dispatches on ``operationName``. ``requests``, ``timeouts`` and ``responses`` record each call
+    dispatches on ``operationName``. ``page_size`` caps the issues per page; a nested connection
+    selected with ``(first: N)`` (an issue's labels) serves its first ``N`` nodes and a
+    ``pageInfo``. ``requests``, ``timeouts`` and ``responses`` record each call
     (``responses`` holds each answer's ``data``). ``mutation_success = False`` answers every
     mutation with ``success: false`` and changes nothing. ``issue_teams`` maps an identifier to
     the team the issue belongs to now (after a move between teams); the identifier's prefix
@@ -91,7 +93,7 @@ class FakeLinearApi:
     ) -> None:
         self._backend = backend
         self._key = key
-        self._page_size = page_size
+        self.page_size = page_size
         self.expected_timeout_s = DEFAULT_TIMEOUT_S
         self.requests: list[Json] = []
         self.timeouts: list[float] = []
@@ -136,7 +138,7 @@ class FakeLinearApi:
             issue for issue in self._backend.issues.values() if self._matches(issue, variables)
         ]
         start = int(variables["after"]) if variables.get("after") is not None else 0
-        end = start + min(variables["first"], self._page_size)
+        end = start + min(variables["first"], self.page_size)
         has_next_page = end < len(matches)
         return {
             "issues": {
@@ -351,9 +353,17 @@ def _project(value: Any, selection: Selection | None) -> Any:
     projected: Json = {}
     for name, (arguments, child) in selection.items():
         assert name in value, f"field {name!r} is not served here"
-        assert arguments == "", f"arguments on {name!r} are not supported"
-        projected[name] = _project(value[name], child)
+        field = _first_page(value[name], arguments) if arguments else value[name]
+        projected[name] = _project(field, child)
     return projected
+
+
+def _first_page(connection: Any, arguments: str) -> Json:
+    # The only argument served on a nested field: a literal first: N on a connection.
+    match = re.fullmatch(r"\(\s*first\s*:\s*(\d+)\s*\)", arguments)
+    assert match is not None, f"unsupported arguments {arguments!r}"
+    first, nodes = int(match.group(1)), connection["nodes"]
+    return {"nodes": nodes[:first], "pageInfo": {"hasNextPage": len(nodes) > first}}
 
 
 def _team_of(issue: Issue) -> str:
