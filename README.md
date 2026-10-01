@@ -382,6 +382,13 @@ marketplace: the hooks would run twice.
 
 </details>
 
+> [!TIP]
+> **This README was built this way.** Issue AGH-33 went through `/feature`: sized *bounded*, spec and plan approved,
+> tickets, a worktree, the implementation, then the spec and quality reviews, which caught real gaps (a wrong expected
+> output, missing install caveats) before the evaluator and
+> [pull request #24](https://github.com/jroquette/agent-hub/pull/24). The workflow docs it lacked became AGH-40, this
+> section.
+
 ## 📖 Usage guide
 
 ### Tutorial: from an empty folder to a working session
