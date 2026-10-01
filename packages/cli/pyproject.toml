@@ -4,13 +4,14 @@ version = "0.3.0"
 description = "The hub command line interface of agent-hub."
 requires-python = ">=3.14"
 dependencies = ["agent-hub-core", "agent-hub-storage", "agent-hub-collector", "agent-hub-generator",
-                "typer"]
+                "agent-hub-tracker-linear", "typer"]
 
 [tool.uv.sources]
 agent-hub-core = { workspace = true }
 agent-hub-storage = { workspace = true }
 agent-hub-collector = { workspace = true }
 agent-hub-generator = { workspace = true }
+agent-hub-tracker-linear = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

@@ -7,7 +7,7 @@ RUN := uv run --locked --all-packages
 # Alembic loads the migration scripts by path under synthetic module names, which package sources
 # never match, so their directory is a source of its own.
 COV := --cov=agent_hub.core --cov=agent_hub.storage --cov=agent_hub.collector \
-       --cov=agent_hub.generator --cov=agent_hub.cli \
+       --cov=agent_hub.generator --cov=agent_hub.tracker_linear --cov=agent_hub.cli \
        --cov=packages/storage/src/agent_hub/storage/migrations --cov-branch --cov-report=
 ALEMBIC := $(RUN) python -m agent_hub.storage.migration
 
@@ -38,8 +38,8 @@ test-fast: ## unit and contract tests; starts fresh coverage data
 
 check-fast: format lint typecheck layout lockstep test-fast ## the fast gate, run while working
 
-test-integration: ## integration tests (real SQLite files under tmp_path); appends coverage
-	$(RUN) pytest -m integration $(COV) --cov-append
+test-integration: ## integration tests (real SQLite files under tmp_path), never live ones; appends coverage
+	$(RUN) pytest -m "integration and not live" $(COV) --cov-append
 
 test-e2e: ## e2e tests: hub installed with uv tool install, gate self-test (not in coverage)
 	$(RUN) pytest -m e2e

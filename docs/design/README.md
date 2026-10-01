@@ -27,3 +27,4 @@ The product and its phases are in [SPEC.md](../SPEC.md). Phase 1 is designed as 
 - [ADR 0011](../adr/0011-templates-as-package-data.md): hub templates ship as package data in a generator package.
 - [ADR 0012](../adr/0012-cli-subsumes-hub-scripts.md): hub logic moves into the CLI, except the hooks.
 - [ADR 0013](../adr/0013-release-by-git-tags.md): the CLI is released by semver git tags and pinned per hub.
+- [ADR 0014](../adr/0014-tracker-port-linear-graphql.md): the tracker is a core port; Linear is reached over GraphQL.

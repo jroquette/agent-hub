@@ -160,7 +160,7 @@ flowchart LR
 
 The sessions and GitHub/Linear feed the collector, and the web app reads everything through the API. The app's actions go back to the workflow executor. The API also reads the hub repos to show brain, rules and workflows.
 
-- **Stack (decided, ADRs 0001–0004, 0008 and 0011):** Python 3.14 in a uv workspace with one package per component (`core`, `storage`, `collector`, `generator`, `cli`; `api` later) under a lean hexagonal architecture: entities, use cases and ports in `core`, adapters in the other packages. Persistence is SQLAlchemy Core + Alembic on SQLite, moving to Postgres via config when there are multiple users. FastAPI + Pydantic for the API and React on the front end come in Phase 2.
+- **Stack (decided, ADRs 0001–0004, 0008, 0011 and 0014):** Python 3.14 in a uv workspace with one package per component (`core`, `storage`, `collector`, `generator`, `tracker_linear`, `cli`; `api` later) under a lean hexagonal architecture: entities, use cases and ports in `core`, adapters in the other packages. Persistence is SQLAlchemy Core + Alembic on SQLite, moving to Postgres via config when there are multiple users. FastAPI + Pydantic for the API and React on the front end come in Phase 2.
 - **Hooks as sensors:** the generated hub installs Claude Code hooks that send events to the local collector. Without the collector running, the hooks fail silently and the session carries on normally.
 - **Adapters:** Claude Code is the first. Other agents (Codex, Cursor) come in as adapters that emit the same canonical event.
 
@@ -188,7 +188,7 @@ The recommendations are a starting point.
 | Agent scope | Only Claude Code, or several from the start | Only Claude Code in v1, with the canonical event ready for adapters |
 | Where it runs | Local-first or hosted service | Local-first in v1. Hosted only when there is a second user |
 | Stack | **Decided:** see [ADR 0001](adr/0001-uv-workspace-with-namespace-packages.md), [ADR 0002](adr/0002-lean-hexagonal-architecture.md), [ADR 0003](adr/0003-persistence-sqlalchemy-core-and-alembic.md), [ADR 0004](adr/0004-rest-api-standard.md) and [ADR 0008](adr/0008-cli-as-composition-root.md) | — |
-| Task tracker | **Decided:** a generic core port (`TrackerClient`) with Linear as the first adapter, selected by `tracker.kind` in `hub.json` ([project-config.md](design/project-config.md)) | — |
+| Task tracker | **Decided:** a generic core port (`TrackerClient`) with Linear as the first adapter, selected by `tracker.kind` in `hub.json` ([project-config.md](design/project-config.md)): the Linear GraphQL adapter in `tracker_linear`, keyed by the `LINEAR_API_KEY` environment variable, never by `hub.json` ([ADR 0014](adr/0014-tracker-port-linear-graphql.md)); an MCP transport is deferred to AGH-28 | — |
 
 ## Defined directions (2026-09-27)
 

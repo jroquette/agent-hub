@@ -15,6 +15,7 @@ forbidden_modules =
     agent_hub.storage
     agent_hub.collector
     agent_hub.generator
+    agent_hub.tracker_linear
     agent_hub.cli
     sqlalchemy
     alembic
@@ -27,4 +28,4 @@ name = cli is the composition root
 type = layers
 layers =
     agent_hub.cli
-    agent_hub.storage | agent_hub.collector | agent_hub.generator
+    agent_hub.storage | agent_hub.collector | agent_hub.generator | agent_hub.tracker_linear

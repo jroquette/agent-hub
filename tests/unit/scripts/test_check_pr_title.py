@@ -27,6 +27,10 @@ def test_accepts_title_when_generator_scope_used() -> None:
     assert problems("feat(generator): render the hub templates") == []
 
 
+def test_accepts_title_when_tracker_scope_used() -> None:
+    assert problems("feat(tracker): read issues over Linear GraphQL") == []
+
+
 def test_rejects_title_when_scope_missing() -> None:
     assert problems("feat: ingest hook events") != []
 
