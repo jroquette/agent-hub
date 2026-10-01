@@ -24,6 +24,7 @@ from agent_hub.tracker_linear.graphql import DONE_STATE_TYPES, LINEAR_API_KEY_VA
 from agent_hub.tracker_linear.mcp_protocol import (
     MAX_QUOTED_CHARS,
     MAX_READY_ISSUES,
+    MAX_REPLY_BYTES,
     TOOLS,
     TRANSPORT_FIX,
     CommentSaved,
@@ -219,22 +220,70 @@ class McpTrackerClient:
         env = {
             name: value for name, value in self._environ.items() if name != LINEAR_API_KEY_VARIABLE
         }
-        output = self.runner(argv, cwd=self.cwd, env=env, timeout_s=self.timeout_s)
+        output = self._run(call, argv, env)
         return parse_reply(call, self._result(call, output))
+
+    def _run(self, call: McpCall[Any], argv: list[str], env: dict[str, str]) -> ClaudeOutput:
+        """Run the call; a runner failure becomes a ``TrackerError`` naming its fix."""
+        try:
+            return self.runner(argv, cwd=self.cwd, env=env, timeout_s=self.timeout_s)
+        except TimeoutError:
+            # Before OSError, of which TimeoutError is a subclass.
+            raise _error(
+                call, f"no answer from claude within {self.timeout_s:g} s", _RETRY_FIX
+            ) from None
+        except FileNotFoundError as error:
+            if error.filename == argv[0]:
+                raise _error(
+                    call,
+                    "claude (Claude Code) is not on PATH",
+                    f"install Claude Code, {TRANSPORT_FIX}",
+                ) from None
+            raise _error(
+                call,
+                f"cannot start claude in {str(error.filename)!r}: no such directory",
+                "run the command in the hub, or set AGENT_HUB_ROOT to it",
+            ) from None
+        except OSError as error:
+            raise _error(
+                call, f"could not start claude: {_quoted_text(error.strerror)}", _RETRY_FIX
+            ) from None
 
     def _result(self, call: McpCall[Any], output: ClaudeOutput) -> str:
         """The model's reply text from ``claude``'s JSON result; its cost is recorded first."""
+        if len(output.stdout) > MAX_REPLY_BYTES:
+            raise _error(
+                call, f"claude's output is over {MAX_REPLY_BYTES // 1024**2} MiB", _RETRY_FIX
+            )
         try:
             fields = _result_fields(load_json_bytes(output.stdout, strict=True))
         except InvalidJsonError:
             fields = None
         if fields is None:
-            raise _error(
-                call, f"claude printed no JSON result: {_quoted(output.stdout)}", _RETRY_FIX
-            )
-        text, _is_error, cost_usd = fields
+            raise _no_result(call, output)
+        text, is_error, cost_usd = fields
         self.last_cost_usd += cost_usd
+        if is_error:
+            raise _error(
+                call,
+                f"claude reported an error: {_quoted_text(text)}",
+                f"check that claude is logged in and within its budget, {TRANSPORT_FIX}",
+            )
+        if output.returncode != 0:
+            raise _no_result(call, output)
         return text
+
+
+def _no_result(call: McpCall[Any], output: ClaudeOutput) -> TrackerError:
+    """The error for a call that gave no usable result: a failed exit, else no JSON."""
+    if output.returncode != 0:
+        detail = (output.stderr or output.stdout).decode(errors="replace").strip()
+        return _error(
+            call,
+            f"claude exited with status {output.returncode}: {_quoted_text(detail)}",
+            f"run claude -p in the hub to see why, {TRANSPORT_FIX}",
+        )
+    return _error(call, f"claude printed no JSON result: {_quoted(output.stdout)}", _RETRY_FIX)
 
 
 def _result_fields(value: JsonValue) -> tuple[str, bool, float] | None:
@@ -279,6 +328,11 @@ def _error(call: McpCall[Any], cause: str, fix: str) -> TrackerError:
     return TrackerError(operation=call.operation, issue_id=call.issue_id, cause=cause, fix=fix)
 
 
-def _quoted(text: bytes) -> str:
+def _quoted(output: bytes) -> str:
     """Untrusted output, decoded, cut to ``MAX_QUOTED_CHARS`` and quoted."""
-    return repr(text.decode(errors="replace")[:MAX_QUOTED_CHARS])
+    return _quoted_text(output.decode(errors="replace"))
+
+
+def _quoted_text(text: object) -> str:
+    """Untrusted text, cut to ``MAX_QUOTED_CHARS`` and quoted (escapes included)."""
+    return repr(str(text)[:MAX_QUOTED_CHARS])

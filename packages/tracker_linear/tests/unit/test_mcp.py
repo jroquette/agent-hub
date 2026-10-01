@@ -12,6 +12,7 @@ from agent_hub.core.errors import TrackerError
 from agent_hub.core.testing.fakes import FakeTrackerBackend
 from agent_hub.tracker_linear.claude_process import ClaudeOutput, run_claude
 from agent_hub.tracker_linear.mcp import McpTrackerClient
+from agent_hub.tracker_linear.mcp_protocol import MAX_COMMENT_CHARS, MAX_NAMES, MAX_REPLY_BYTES
 
 _SYNTHETIC_KEY = "lin" + "_api_" + "x" * 40
 _ENVIRON = {"PATH": "/usr/bin", "HOME": "/home/synthetic", "LINEAR_API_KEY": _SYNTHETIC_KEY}
@@ -468,3 +469,154 @@ class TestWriteTools:
         write = fake_claude.calls[1]
         assert write.tools == tuple(_PREFIX + name for name in _WRITE_TOOLS[operation])
         assert write.argv[-2:] == ("--allowedTools", *write.tools)
+
+
+# Each operation, the replies that come before its failing call, and its error subject.
+_OPERATIONS: dict[str, tuple[tuple[Any, ...], tuple[dict[str, Any], ...], str]] = {
+    "list_ready": (("DEM", "agent-ready"), (), "list_ready: "),
+    "get_issue": (("DEM-1",), (), "get_issue DEM-1: "),
+    "move_state": (
+        ("DEM-1", "In Progress"),
+        ({"id": "DEM-1", "state": "Todo", "states": ["Todo", "In Progress"]},),
+        "move_state DEM-1: ",
+    ),
+    "add_label": (
+        ("DEM-1", "bug"),
+        ({"id": "DEM-1", "labels": [], "available_labels": ["bug"]},),
+        "add_label DEM-1: ",
+    ),
+    "remove_label": (
+        ("DEM-1", "bug"),
+        ({"id": "DEM-1", "labels": ["bug"], "available_labels": ["bug"]},),
+        "remove_label DEM-1: ",
+    ),
+    "comment": (("DEM-1", "A comment."), ({"id": "DEM-1"},), "comment DEM-1: "),
+}
+_TRANSPORT_FIX = 'set tracker.transport to "api" with LINEAR_API_KEY'
+# Each failure of the last call, and the cause and fix its error names.
+_FAILURES: dict[str, tuple[Any, str, str]] = {
+    "claude-missing": (
+        FileNotFoundError(2, "claude is not on PATH", "claude"),
+        "claude (Claude Code) is not on PATH",
+        "install Claude Code",
+    ),
+    "cwd-missing": (
+        FileNotFoundError(2, "No such file or directory", "/synthetic/missing-hub"),
+        "cannot start claude in '/synthetic/missing-hub'",
+        "run the command in the hub",
+    ),
+    "cannot-start": (
+        PermissionError(13, "Permission denied", "claude"),
+        "could not start claude: 'Permission denied'",
+        _TRANSPORT_FIX,
+    ),
+    "non-zero-exit": (
+        ClaudeOutput(returncode=1, stdout=b"", stderr=b"synthetic failure\n"),
+        "claude exited with status 1: 'synthetic failure'",
+        "run claude -p in the hub to see why",
+    ),
+    "timeout": (
+        TimeoutError("claude timed out after 120 s"),
+        "no answer from claude within 120 s",
+        _TRANSPORT_FIX,
+    ),
+    "not-json": (
+        b"Error: something went wrong",
+        "claude printed no JSON result: 'Error: something went wrong'",
+        _TRANSPORT_FIX,
+    ),
+    "is-error": (
+        _envelope("Credit balance is too low", is_error=True),
+        "claude reported an error: 'Credit balance is too low'",
+        "check that claude is logged in",
+    ),
+    "tools-unavailable": (
+        _reply({"error": "tools unavailable"}),
+        "the Linear MCP tools are not available to claude",
+        "connect the Linear MCP server in Claude Code",
+    ),
+    "other-shape": (
+        _reply({"answer": "done"}),
+        "the reply has another shape",
+        _TRANSPORT_FIX,
+    ),
+}
+
+
+class TestFailures:
+    @pytest.mark.parametrize("failure", list(_FAILURES))
+    @pytest.mark.parametrize("operation", list(_OPERATIONS))
+    def test_raises_one_line_naming_fix_when_call_fails(
+        self, hub_root: Path, *, operation: str, failure: str
+    ) -> None:
+        arguments, before, subject = _OPERATIONS[operation]
+        error, cause, fix = _FAILURES[failure]
+        runner = _Scripted(*(_reply(reply) for reply in before), error)
+
+        with pytest.raises(TrackerError) as raised:
+            getattr(_client(runner, hub_root), operation)(*arguments)
+
+        message = str(raised.value)
+        assert message.startswith(subject + cause), message
+        assert fix in message.partition("; ")[2], message
+        assert "\n" not in message
+        assert (raised.value.operation, raised.value.issue_id) == (
+            operation,
+            None if operation == "list_ready" else "DEM-1",
+        )
+        # The failing call was made once: never retried.
+        assert len(runner.argvs) == len(before) + 1
+
+    def test_names_timeout_given_when_call_times_out(self, hub_root: Path) -> None:
+        runner = _Scripted(TimeoutError("claude timed out after 7.5 s"))
+
+        with pytest.raises(TrackerError, match="no answer from claude within 7.5 s"):
+            _client(runner, hub_root, timeout_s=7.5).get_issue("DEM-1")
+
+    def test_records_cost_when_claude_reports_error(self, hub_root: Path) -> None:
+        runner = _Scripted(
+            _envelope("Max budget reached", is_error=True, cost_usd=0.3125),
+        )
+        client = _client(runner, hub_root)
+
+        with pytest.raises(TrackerError, match="claude reported an error"):
+            client.get_issue("DEM-1")
+
+        assert client.last_cost_usd == 0.3125
+
+    def test_names_no_environment_value_when_call_fails(self, hub_root: Path) -> None:
+        runner = _Scripted(ClaudeOutput(returncode=1, stdout=b"", stderr=b"exit"))
+
+        with pytest.raises(TrackerError) as raised:
+            _client(runner, hub_root).get_issue("DEM-1")
+
+        assert _SYNTHETIC_KEY not in str(raised.value)
+        assert "/home/synthetic" not in str(raised.value)
+
+
+class TestBounds:
+    def test_refuses_output_when_over_reply_bound(self, hub_root: Path) -> None:
+        reply = _reply({"id": "DEM-1"})
+        padded = reply + b" " * (MAX_REPLY_BYTES - len(reply))
+
+        with pytest.raises(TrackerError, match="the reply has another shape"):
+            _client(_Scripted(padded), hub_root).get_issue("DEM-1")
+        with pytest.raises(TrackerError, match=r"^get_issue DEM-1: claude's output is over 1 MiB"):
+            _client(_Scripted(padded + b" "), hub_root).get_issue("DEM-1")
+
+    def test_refuses_reply_when_names_over_bound(self, hub_root: Path) -> None:
+        read = {"id": "DEM-1", "state": "Todo", "states": ["s"] * (MAX_NAMES + 1)}
+        runner = _Scripted(_reply(read))
+
+        with pytest.raises(TrackerError, match=f"more than {MAX_NAMES} names"):
+            _client(runner, hub_root).move_state("DEM-1", "s")
+
+        assert len(runner.argvs) == 1
+
+    def test_refuses_comment_when_body_too_long(self, hub_root: Path) -> None:
+        runner = _Scripted()
+
+        with pytest.raises(TrackerError, match=r"^comment DEM-1: comment too long"):
+            _client(runner, hub_root).comment("DEM-1", "x" * (MAX_COMMENT_CHARS + 1))
+
+        assert runner.argvs == []
