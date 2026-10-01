@@ -326,6 +326,21 @@ def test_asks_with_cause_when_extension_misbehaves(
     assert deny == base["deny"]
 
 
+def test_asks_with_cause_when_extension_lacks_check(hub: Path, guard: Guard) -> None:
+    # AC-9.3 (AGH-13): install() always defines check, so this file is written as is
+    (hub / EXTENSION).write_text("def chek(event, cfg):\n    return None\n", encoding="utf-8")
+    events = base_events(hub)
+
+    allow, ask, deny = guard(hub / HOOKS, list(events.values()))
+    base = base_verdicts(hub, guard)
+
+    cause = "exit 3 (AttributeError: module 'hub_project_guard' has no attribute 'check')"
+    assert allow == ("ask", f"{PREFIX}project guard: {cause}; confirm")
+    assert base["ask"] is not None
+    assert ask == ("ask", f"{base['ask'][1]}; project guard: {cause}; confirm")
+    assert deny == base["deny"]
+
+
 # The guard's extension timeout in the rendered hook, and the one a timeout run lowers it to.
 EXTENSION_TIMEOUT = 3
 TEST_TIMEOUT = 1
