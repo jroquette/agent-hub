@@ -27,6 +27,7 @@ from agent_hub.cli.main import app
 from agent_hub.core.doctor.finding import Read, Rule
 from agent_hub.core.doctor.registry import REGISTRY
 from agent_hub.core.hub_config.doctor_rules import Severity
+from agent_hub.core.hub_config.versions import cut_echo
 from agent_hub.core.json_form import dump_json
 from agent_hub.generator import render_hub as render_hub_module
 
@@ -773,12 +774,12 @@ def test_reports_error_when_checkout_cannot_be_listed(
 
     lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=1)
 
-    assert lines == [
-        "error brain.leak ../demo-web: could not list the files: git exited with 128:"
+    problem = (
+        "could not list the files: git exited with 128:"
         " fatal: not a git repository (or any of the parent directories): .git"
-        f" {LISTING_FIX}",
-        ONE_ERROR,
-    ]
+    )
+    # The report cuts a long problem (a git stderr line, a deep path).
+    assert lines == [f"error brain.leak ../demo-web: {cut_echo(problem)} {LISTING_FIX}", ONE_ERROR]
 
 
 BRAIN_LINE = "A synthetic brain line, long enough for brain.leak to compare it."
@@ -806,3 +807,23 @@ def test_checks_rest_of_checkout_when_one_file_unreadable(
         " Fix: reword or remove the line here, or reword the brain note if it quotes this file",
         ONE_ERROR,
     ]
+
+
+def test_reports_error_when_checkout_cannot_be_looked_at(
+    demo_two_repo_hub: Path,
+    run_doctor: DoctorRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    demo_checkout: CheckoutFactory,
+) -> None:
+    # A ../<dir> that cannot be looked at may be a checkout: E36's error, never Q-9's info.
+    demo_checkout("demo-api")
+    web = demo_two_repo_hub.parent / "demo-web"
+    web.mkdir()
+    (web / "README.md").write_bytes(b"# Web\n")
+    monkeypatch.setattr(os, "lstat", refusing_name("demo-web", os.lstat))
+
+    lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=1)
+
+    problem = f"could not list the files: {os.path.realpath(web)}: Permission denied"
+    assert lines == [f"error brain.leak ../demo-web: {cut_echo(problem)} {LISTING_FIX}", ONE_ERROR]

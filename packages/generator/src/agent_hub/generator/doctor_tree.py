@@ -33,7 +33,12 @@ from agent_hub.core.doctor.snapshot import HubFiles
 from agent_hub.core.hub_config.problems import one_line
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, LinkEntry, TreeEntry
 from agent_hub.generator.errors import GeneratorError
-from agent_hub.generator.hub_tree import list_every_file, read_every_file, read_planned_tree
+from agent_hub.generator.hub_tree import (
+    list_every_file,
+    read_every_file,
+    read_listed_files,
+    read_planned_tree,
+)
 
 GIT_TIMEOUT_SECONDS = 10.0
 # Git's repository-local variables (``git rev-parse --local-env-vars``, git 2.43): each makes
@@ -113,11 +118,20 @@ def read_checkout(root: Path) -> HubFiles:
     """The listed files of the repo checkout at ``root`` (already a real path), each one read.
 
     The listing is made as ``read_doctor_tree`` makes it; when it cannot be (git missing or
-    failing, a folder of the walk unreadable) that is the ``problem`` and nothing is listed. A
-    listed file that cannot be read is recorded with no content and stays listed.
+    failing, a folder of the walk unreadable) that is the ``problem`` and nothing is listed. The
+    listed files are then read in one pass; one that cannot be read, or whose folder cannot be
+    opened, is recorded with no content and stays listed.
     """
     try:
         found = _list_tree(root, read_files=False)
+        unread = sorted(
+            path
+            for path in found.paths
+            if path not in found.entries
+            or (isinstance(entry := found.entries[path], FileEntry) and entry.content is None)
+        )
+        # Only the root itself failing to open (gone since the listing) raises here.
+        looked, refused = read_listed_files(root, unread)
     except (GeneratorError, _GitError) as error:
         return HubFiles(
             entries={},
@@ -125,44 +139,16 @@ def read_checkout(root: Path) -> HubFiles:
             problem=_LISTING_FAILED + one_line(str(error)),
             paths_read=True,
         )
-    unread = sorted(
-        path
-        for path in found.paths
-        if path not in found.entries
-        or (isinstance(entry := found.entries[path], FileEntry) and entry.content is None)
-    )
-    entries = {**found.entries, **_read_each(root, unread, known=found.entries)}
+    unread_file = FileEntry(executable=False, content=None)
+    entries = {
+        **found.entries,
+        **looked,
+        **{path: found.entries.get(path, unread_file) for path in refused},
+    }
     listed = tuple(
         path for path in found.paths if isinstance(entries.get(path), FileEntry | LinkEntry)
     )
     return HubFiles(entries=_sorted(entries), listed=listed, problem=None, paths_read=True)
-
-
-def _read_each(
-    root: Path, paths: Collection[str], *, known: Mapping[str, TreeEntry]
-) -> dict[str, TreeEntry]:
-    """The entries of ``paths``, read together, else one by one when one cannot be read.
-
-    A path that cannot be read keeps what the listing knew of it, else a file with no content.
-    """
-    if not paths:
-        return {}
-    try:
-        return dict(read_planned_tree(root, paths=paths, wanted=paths).entries)
-    except GeneratorError:
-        pass
-    entries: dict[str, TreeEntry] = {}
-    for path in paths:
-        try:
-            found = read_planned_tree(root, paths=[path], wanted=[path]).entries
-        except GeneratorError:
-            entries[path] = known.get(path, FileEntry(executable=False, content=None))
-            continue
-        # As ``_read_fixed``: a leftover-shaped name never replaces a path's own read.
-        entries = {**found, **entries}
-        if path in found:
-            entries[path] = found[path]
-    return entries
 
 
 def _read_fixed(root: Path, by_path: Collection[str]) -> tuple[dict[str, TreeEntry], str | None]:

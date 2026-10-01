@@ -535,3 +535,31 @@ def test_reports_problem_when_checkout_cannot_be_listed(
         problem=f"could not list the files: {refused}: Permission denied",
         paths_read=True,
     )
+
+
+@pytest.mark.parametrize("tree_kind", ["walked", "listed"])
+def test_lists_each_folder_once_when_checkout_file_refused(
+    work_tree: Path, monkeypatch: pytest.MonkeyPatch, *, tree_kind: str
+) -> None:
+    # One refused file among many is read in the same pass as the others: no folder is listed
+    # again per file (a structural count, no wall clock).
+    if tree_kind == "walked":
+        shutil.rmtree(work_tree / ".git")
+    write(work_tree, {f"docs/many/n{index:03}.md": "n\n" for index in range(200)})
+    refuse("n100.md", call="open", monkeypatch=monkeypatch)
+    listings: list[object] = []
+    real_scandir = os.scandir
+
+    def counting_scandir(path: object = ".") -> object:
+        listings.append(path)
+        return real_scandir(path)  # type: ignore[call-overload]
+
+    monkeypatch.setattr(os, "scandir", counting_scandir)
+
+    checkout = read_checkout(work_tree)
+
+    assert checkout.problem is None
+    assert checkout.entries["docs/many/n100.md"] == FileEntry(executable=False, content=None)
+    assert checkout.entries["docs/many/n101.md"] == FileEntry(executable=False, content=b"n\n")
+    # The walk lists the root, docs and docs/many once each; git's listing lists none.
+    assert len(listings) <= 3

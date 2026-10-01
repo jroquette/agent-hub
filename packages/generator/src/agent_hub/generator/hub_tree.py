@@ -205,6 +205,52 @@ def read_planned_tree(
     )
 
 
+def read_listed_files(
+    root: Path, paths: Collection[str]
+) -> tuple[dict[str, TreeEntry], frozenset[str]]:
+    """Look at each of ``paths`` under ``root`` (a real path) in one pass, each regular file read.
+
+    For a tree already listed (``hub doctor``'s repo checkouts): each folder above a path is
+    opened once and never listed, and the descriptor rules above hold. Returns the entries found
+    (the folders above the paths included) and the paths that could not be looked at or read, a
+    folder above them included; those have no entry. An absent path has none either. Raises
+    ``ValueError`` for a path that is not plain and relative, before anything is read, and
+    ``GeneratorError`` when the root cannot be opened.
+    """
+    for path in paths:
+        _check_plain(path)
+    shown = os.fspath(root)
+    descent = _Descent(
+        walk=_Walk(real_root=os.path.realpath(root), wanted=frozenset(paths), entries={}),
+        folders={"": _open_folder(shown, None, path=shown)},
+        unreachable=set(),
+    )
+    refused: set[str] = set()
+    refused_folders: set[str] = set()
+    try:
+        for path in paths:
+            folder, _, name = path.rpartition("/")
+            if folder in refused_folders:
+                refused.add(path)
+                continue
+            try:
+                folder_fd = _reach(folder, descent)
+            except GeneratorError:
+                refused_folders.add(folder)
+                refused.add(path)
+                continue
+            try:
+                if folder_fd is not None:
+                    _look(folder_fd, name, path=path, walk=descent.walk)
+            except GeneratorError:
+                refused.add(path)
+    finally:
+        for folder_fd in descent.folders.values():
+            os.close(folder_fd)
+    entries = descent.walk.entries
+    return {path: entries[path] for path in sorted(entries)}, frozenset(refused)
+
+
 def _reach(folder: str, descent: _Descent) -> int | None:
     """The open descriptor of ``folder``, or ``None`` when it or an ancestor is not a folder."""
     if folder in descent.folders:
