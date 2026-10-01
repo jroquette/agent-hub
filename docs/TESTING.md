@@ -40,7 +40,9 @@ The second is `TrackerClientContract`, whose tests take a `tracker_client` fixtu
 writes (`a_seeded_tracker_backend()`, synthetic issues only); the suite asserts on the backend's state. It runs against
 `InMemoryTrackerClient` (`packages/core/tests/contract/`) and against `LinearGraphqlTrackerClient`
 (`packages/tracker_linear/tests/contract/`), whose transport is `FakeLinearApi`, an in-process fake of Linear's GraphQL
-API over the same backend (`packages/tracker_linear/tests/conftest.py`), so no socket opens.
+API over the same backend (`packages/tracker_linear/tests/conftest.py`), so no socket opens, and against
+`McpTrackerClient`, whose runner is `FakeClaude`, an honest model over the same backend in the same conftest, so no
+`claude` process starts.
 
 A test that runs a rendered hook or script takes the `hook_python` fixture, so it runs on the current Python and on a
 real Python 3.9 (the system `python3` on macOS); without a 3.9 on `PATH` that case skips, and under `CI` it fails. A
