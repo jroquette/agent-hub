@@ -8,6 +8,7 @@ workspace (nothing is copied from the hub's brain).
 import datetime
 import json
 import os
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,20 @@ from agent_hub.cli.main import app
 
 # The conftest's workspace (tests cannot import a conftest in importlib mode).
 type Workspace = Any
+
+# The conftest's BRIEF_GH rules for api and web (the hub's calls match none).
+BRIEF_PRS = (
+    "#41 Add login endpoint\n"
+    "#40 Refactor the session storage layer so that every adapter shares one connection pool"
+    " and retry policy\n"
+    "#38 Fix pagination\n#37 Bump dependencies\n#35 Fifth PR is never shown\n"
+)
+BRIEF_RULES: list[dict[str, Any]] = [
+    {"argv_has": ["pr", "acme/api"], "stdout": BRIEF_PRS},
+    {"argv_has": ["run", "acme/api"], "stdout": "lint\nbuild\nlint\n"},
+    {"argv_has": ["acme/web"], "stdout": ""},
+]
+GH_DELAY = 0.5
 
 
 def test_rebuilds_hub_workspace_when_brief_fixture_built(brief_workspace: Workspace) -> None:
@@ -197,6 +212,54 @@ def test_uses_agent_hub_root_when_run_elsewhere(
     assert result.stdout_bytes == golden["stdout"]
     # gh runs in the hub whatever the caller's folder (plan E12).
     assert sorted_lines(brief_workspace.calls()) == sorted_lines(golden["calls"])
+
+
+def test_keeps_repo_order_when_gh_answers_out_of_order(brief_workspace: Workspace) -> None:
+    # The hub answers last, then api, then web: the reverse of the output order.
+    brief_workspace.answer(
+        [
+            {"argv_has": ["pr", "acme/demo-hub"], "stdout": "#9 Hub change\n", "delay": 0.6},
+            {"argv_has": ["run", "acme/demo-hub"], "stdout": "hub-ci\n", "delay": 0.6},
+            *({**rule, "delay": 0.3} for rule in BRIEF_RULES[:2]),
+            {"argv_has": ["pr", "acme/web"], "stdout": "#7 Web change\n"},
+            {"argv_has": ["run", "acme/web"], "stdout": "web-ci\n"},
+        ]
+    )
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    repos = lines[lines.index("## Repos") + 1 : lines.index("## Repos") + 9]
+    assert repos == [
+        "- hub: trunk, 0 changed file(s), 0 behind origin/trunk",
+        "  open PRs: #9 Hub change",
+        "  ⚠ failing on main: hub-ci",
+        "- api: trunk, 2 changed file(s), 1 behind origin/trunk",
+        "  open PRs: #41 Add login endpoint | #40 Refactor the session storage layer so that"
+        " every adapter shares on | #38 Fix pagination | #37 Bump dependencies",
+        "  ⚠ failing on main: build, lint",
+        "- web: detached@dd68590, 0 changed file(s), ? behind origin/trunk",
+        "  open PRs: #7 Web change",
+    ]
+
+
+def test_runs_gh_concurrently_when_network_on(brief_workspace: Workspace) -> None:
+    brief_workspace.answer(
+        [
+            {"argv_has": ["acme/demo-hub"], "rc": 1, "delay": GH_DELAY},
+            *({**rule, "delay": GH_DELAY} for rule in BRIEF_RULES),
+        ]
+    )
+    started = time.monotonic()
+
+    result = run_brief(brief_workspace)
+
+    elapsed = time.monotonic() - started
+    assert result.exit_code == 0, result.output
+    assert len(brief_workspace.calls().splitlines()) == 6
+    # Six calls one after another would take 6 x GH_DELAY.
+    assert elapsed < 3 * GH_DELAY
 
 
 class TestNetwork:

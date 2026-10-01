@@ -2,9 +2,10 @@
 
 The hub is ``AGENT_HUB_ROOT`` or the cwd, and its repos are ``../<dir>``. Git runs in each
 checkout with ``GIT_OPTIONAL_LOCKS=0`` and git's location variables dropped, so the brief writes
-nothing; ``gh`` runs in the hub, and the output keeps the order of ``hub.json``. Every call has a
-timeout; a failed, slow or missing tool only leaves its value out, as the old script did. The
-text itself is ``agent_hub.core.workspace.brief_text``.
+nothing; ``gh`` runs in the hub, its calls at once (at most ``MAX_GH_WORKERS``, spec Q-4), and the
+output keeps the order of ``hub.json``. Every call has a timeout; a failed, slow or missing tool
+only leaves its value out, as the old script did. The text itself is
+``agent_hub.core.workspace.brief_text``.
 """
 
 import datetime
@@ -13,6 +14,7 @@ import os
 import shutil
 import stat
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Annotated, Final, NamedTuple
 
@@ -35,6 +37,7 @@ from agent_hub.core.workspace.brief_text import (
 COMMAND: Final = "brief"
 BRIEF_GIT_TIMEOUT: Final = 6.0
 BRIEF_GH_TIMEOUT: Final = 6.0
+MAX_GH_WORKERS: Final = 8
 NOW_PATH: Final = "brain/now.md"
 JOURNAL_GLOB: Final = "brain/journal/[0-9]*/[0-9]*/[0-9][0-9].md"
 HUB_LINE_NAME: Final = "hub"
@@ -181,14 +184,15 @@ def _git_output(git: str | None, folder: Path, arguments: Sequence[str]) -> str:
 
 
 def _gh_outputs(gh: str, root: Path, *, repos: Sequence[str], branch: str) -> list[tuple[str, str]]:
-    """Each repo's open PRs and failing run names, in ``repos`` order."""
+    """Each repo's open PRs and failing run names, the calls made at once, in ``repos`` order."""
     calls = []
     for repo in repos:
         calls.append(["pr", "list", "-R", repo, "--author", "@me", "--json", "number,title"])
         calls[-1] += ["-q", _PR_QUERY]
         calls.append(["run", "list", "-R", repo, "--branch", branch, "-L", "3"])
         calls[-1] += ["--json", "name,conclusion", "-q", _FAILED_RUNS_QUERY]
-    outputs = [_gh_output(gh, root, arguments) for arguments in calls]
+    with ThreadPoolExecutor(max_workers=MAX_GH_WORKERS) as pool:
+        outputs = list(pool.map(lambda arguments: _gh_output(gh, root, arguments), calls))
     return [(outputs[index], outputs[index + 1]) for index in range(0, len(outputs), 2)]
 
 
