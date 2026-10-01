@@ -1,9 +1,11 @@
 """The rendered ``./hub`` shim and ``./agent`` launcher (AC-15.10, AC-15.11).
 
-The demo hub is rendered into ``<tmp>/ws/demo-hub`` and pinned to ``4.5.6``. Each case runs the
-shim as ``[<shell>, <hub>/hub, …]`` under ``sh`` and ``dash`` (dash is required under ``CI``,
-skipped locally without one) from ``<tmp>/elsewhere``, with a ``PATH`` that holds only a test
-folder: a fake ``uvx`` (a Python logger: every argument as one JSON list item, the cwd,
+The demo render's ``hub`` and ``agent`` (rendered once per module) go into ``<tmp>/ws/demo-hub``
+with a ``hub.json`` pinned to ``4.5.6``: the shim reads nothing else. Each case runs the shim as
+``[<shell>, <hub>/hub, …]`` from ``<tmp>/elsewhere``: every case under ``sh``; the portability
+cases (arguments, exit codes, the hub's real path, ``$0`` without a slash) also under ``dash``
+(required under ``CI``, skipped locally without one) and ``bash --posix``. ``PATH`` holds only a
+test folder: a fake ``uvx`` (a Python logger: every argument as one JSON list item, the cwd,
 ``AGENT_HUB_ROOT`` and stdin) and a ``python3`` link, each only when the case wants it.
 """
 
@@ -20,11 +22,14 @@ import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.generator.render_hub import render_hub
 
 VERSION = "4.5.6"
 SOURCE = "git+https://github.com/jroquette/agent-hub@v4.5.6#subdirectory=packages/agent-hub"
-# Each shell and the arguments that make it POSIX: bash in its POSIX mode.
+# Each shell and the arguments that make it POSIX: bash in its POSIX mode. Every case runs under
+# sh; the portability cases (marked with ``ALL_SHELLS``) under each.
 SHELLS = {"sh": (), "dash": (), "bash": ("--posix",)}
+ALL_SHELLS = pytest.mark.parametrize("shell", sorted(SHELLS), indirect=True)
 INSTALL_URL = "https://docs.astral.sh/uv/getting-started/installation/"
 ACCESS_HINT = (
     "check read access to the repository (a credential, or the repository attached to this session)"
@@ -53,7 +58,7 @@ sys.exit(int(os.environ.get("FAKE_UVX_RC", "0")))
 type Run = Callable[..., subprocess.CompletedProcess[bytes]]
 
 
-@pytest.fixture(params=sorted(SHELLS))
+@pytest.fixture(params=["sh"])
 def shell(request: pytest.FixtureRequest) -> list[str]:
     """The shell's command line prefix: its path, then its POSIX-mode options."""
     found = shutil.which(request.param)
@@ -65,10 +70,23 @@ def shell(request: pytest.FixtureRequest) -> list[str]:
     return [found, *SHELLS[request.param]]
 
 
+@pytest.fixture(scope="module")
+def shim_files() -> dict[str, bytes]:
+    """The demo render's ``hub`` and ``agent``: rendered once for the module."""
+    rendered = render_hub(HubConfig.model_validate(a_hub_document()))
+    files = {file.path: file for file in rendered.files if file.path in ("hub", "agent")}
+    assert all(file.executable for file in files.values())
+    return {path: file.content for path, file in files.items()}
+
+
 @pytest.fixture
-def hub(rendered_hub: Callable[[HubConfig], Path], demo_config: HubConfig) -> Path:
-    """The rendered demo hub, pinned to VERSION."""
-    root = rendered_hub(demo_config).resolve()
+def hub(tmp_path: Path, shim_files: dict[str, bytes]) -> Path:
+    """``<tmp>/ws/demo-hub`` holding the executable shim and launcher, pinned to VERSION."""
+    root = (tmp_path / "ws" / "demo-hub").resolve()
+    root.mkdir(parents=True)
+    for name, content in shim_files.items():
+        (root / name).write_bytes(content)
+        (root / name).chmod(0o755)
     write_pin(root, VERSION)
     return root
 
@@ -221,6 +239,7 @@ def test_names_access_when_resolve_fails(hub: Path, run: Run, *, tools: None, lo
     assert [call["args"] for call in calls(log)] == [["--from", SOURCE, "hub", "--version"]]
 
 
+@ALL_SHELLS
 @pytest.mark.parametrize("code", [0, 3, 4])
 def test_passes_exit_code_through_when_real_call_exits(
     hub: Path, run: Run, *, tools: None, log: Path, code: int
@@ -235,6 +254,7 @@ def test_passes_exit_code_through_when_real_call_exits(
     ]
 
 
+@ALL_SHELLS
 def test_passes_arguments_byte_identical_when_called(
     hub: Path, run: Run, *, tools: None, log: Path
 ) -> None:
@@ -257,6 +277,7 @@ def test_passes_stdin_when_called(hub: Path, run: Run, *, tools: None, log: Path
     assert [call["stdin"] for call in calls(log)] == ["", data.decode()]
 
 
+@ALL_SHELLS
 def test_keeps_cwd_and_exports_root_when_called(
     hub: Path, run: Run, *, tools: None, log: Path, tmp_path: Path
 ) -> None:
@@ -310,6 +331,7 @@ def test_execs_hub_agent_when_agent_runs(
     }
 
 
+@ALL_SHELLS
 def test_reads_own_folder_when_run_without_slash(
     hub: Path, run: Run, *, tools: None, log: Path
 ) -> None:
