@@ -3,7 +3,8 @@
 How the agent-hub code is organized and where new code goes. The product itself is described in [SPEC.md](SPEC.md); the
 decisions behind this layout are [ADR 0001](adr/0001-uv-workspace-with-namespace-packages.md) (workspace),
 [ADR 0002](adr/0002-lean-hexagonal-architecture.md) (hexagonal architecture) and
-[ADR 0003](adr/0003-persistence-sqlalchemy-core-and-alembic.md) (persistence). The Phase 1 to 4 designs (hub config,
+[ADR 0003](adr/0003-persistence-sqlalchemy-core-and-alembic.md) (persistence); the tracker port is
+[ADR 0014](adr/0014-tracker-port-linear-graphql.md). The Phase 1 to 4 designs (hub config,
 generator, doctor, domain model, events, workflows) are indexed in [design/README.md](design/README.md).
 
 ## Packages
@@ -14,12 +15,13 @@ The repo is a uv workspace. The root `pyproject.toml` is virtual (no `[project]`
 
 | Package dir | Distribution | Module root | Role |
 |---|---|---|---|
-| `packages/core` | `agent-hub-core` | `agent_hub.core` | Domain: entities, canonical event, Pydantic schemas, use cases, ports, the one JSON byte form and its parser (`agent_hub.core.json_form`: `dump_json`, `load_json_bytes`), the rendered-hub contract types and `hub.lock` (`agent_hub.core.hub_files`: `RenderedFile`, `RenderedLink`, `RenderedHub`; the lock model `HubLock` with `build_hub_lock`, `lock_bytes` and the reader `read_hub_lock`; the tree snapshot types; the extension inputs `ExtensionInputs` with `extension_inputs_from`, `entry_name_key` and `REFUSED_KEYS`, the keys a `*.project.json` sibling may not set (`extension_inputs.py`); the init planner `plan_init` and the sync planner `plan_sync`); the doctor in `agent_hub.core.doctor` (the finding, rule and snapshot types, the runner `run_rules.py` that selects, runs, retunes and sorts rules, the `registry.py` of released rules, and the rules, e.g. `config_rules.py`); test support in `agent_hub.core.testing` |
+| `packages/core` | `agent-hub-core` | `agent_hub.core` | Domain: entities, canonical event, Pydantic schemas, use cases, ports, the one JSON byte form and its parser (`agent_hub.core.json_form`: `dump_json`, `load_json_bytes`), the rendered-hub contract types and `hub.lock` (`agent_hub.core.hub_files`: `RenderedFile`, `RenderedLink`, `RenderedHub`; the lock model `HubLock` with `build_hub_lock`, `lock_bytes` and the reader `read_hub_lock`; the tree snapshot types; the extension inputs `ExtensionInputs` with `extension_inputs_from`, `entry_name_key` and `REFUSED_KEYS`, the keys a `*.project.json` sibling may not set (`extension_inputs.py`); the init planner `plan_init` and the sync planner `plan_sync`); the tracker port `TrackerClient` and the `Issue` value object (`agent_hub.core.tracker.tracker_client`); the doctor in `agent_hub.core.doctor` (the finding, rule and snapshot types, the runner `run_rules.py` that selects, runs, retunes and sorts rules, the `registry.py` of released rules, and the rules, e.g. `config_rules.py`); test support in `agent_hub.core.testing` |
 | `packages/storage` | `agent-hub-storage` | `agent_hub.storage` | Storage adapter: SQLAlchemy Core tables (`agent_hub.storage.db.metadata`), the SQLite `EventStore` and the Alembic migrations, shipped inside the package (`agent_hub/storage/migrations/`) |
 | `packages/collector` | `agent-hub-collector` | `agent_hub.collector` | Collector adapter: receives hook events and transcripts and feeds them to core |
 | `packages/generator` | `agent-hub-generator` | `agent_hub.generator` | Hub generator: the hub templates as package data (base rules, brain skeleton, the base plugin `plugin/hub-workflow/` with its hooks and their stdlib reader, the seeded project plugin under the project's name, the transcript and retro scripts), the `@@` renderer, the JSON built in code (`built_json.py`: `.claude/settings.json`, the project settings and manifest, and `base_hooks_block`, the release's base hooks for `hub doctor`), the classification registry and `render_hub(config, extensions)`, which returns a `RenderedHub` (files and plugin links; `project_json_siblings` names the `*.project.json` it merges), with `json_merge.py` (`merge_json`, the strict merge of a `*.project.json` sibling) and `links.py` (`plugin_links`, `project_links` for the project's agents and skills); and the file adapter, never following a link: `hub_tree.py` reads a hub tree, one root entry (`read_root_entry`) or only the planned paths (`read_planned_tree`), `doctor_tree.py` lists and reads a tree for `hub doctor` (`read_doctor_tree`: `git ls-files` or a walk, plus fixed paths by path), `file_adapter.py` writes a plan through temporary files and applies a sync plan with its deletes through one held root (`apply_sync`) ([ADR 0011](adr/0011-templates-as-package-data.md)) |
-| `packages/cli` | `agent-hub-cli` | `agent_hub.cli` | The `hub` command (Typer); entry point `agent_hub.cli.main:app`. The composition root: `command_exits` (the exit helpers the hub commands share), `sync_command` (`hub sync`: load, render, read, plan, apply), `sync_report` (its change lines and conflict report), `doctor_command` (`hub doctor`: read the config and the tree, run the rules, exit 0, 1 or 2) and `doctor_report` (its finding lines, totals and JSON) |
-| `packages/agent-hub` | `agent-hub` | `agent_hub_meta` (placeholder) | Meta-package: depends on the five above and declares the `hub` script, so `uv tool install agent-hub` installs everything |
+| `packages/tracker_linear` | `agent-hub-tracker-linear` | `agent_hub.tracker_linear` | Tracker adapter: `LinearGraphqlTrackerClient` (`graphql.py`) implements `TrackerClient` over Linear's GraphQL API with the standard library (`urllib`, no redirects followed, a 30 s timeout per socket operation); the key comes only from `LINEAR_API_KEY`, read at call time ([ADR 0014](adr/0014-tracker-port-linear-graphql.md)) |
+| `packages/cli` | `agent-hub-cli` | `agent_hub.cli` | The `hub` command (Typer); entry point `agent_hub.cli.main:app`. The composition root: `command_exits` (the exit helpers the hub commands share), `sync_command` (`hub sync`: load, render, read, plan, apply), `sync_report` (its change lines and conflict report), `doctor_command` (`hub doctor`: read the config and the tree, run the rules, exit 0, 1 or 2) and `doctor_report` (its finding lines, totals and JSON), and `tracker_client` (`resolve_tracker_client`: the `TrackerClient` adapter for `tracker.kind`) |
+| `packages/agent-hub` | `agent-hub` | `agent_hub_meta` (placeholder) | Meta-package: depends on the six above and declares the `hub` script, so `uv tool install agent-hub` installs everything |
 
 Later, in Phase 2: `packages/api` (`agent_hub.api`, FastAPI, see [API.md](API.md)) and `apps/web` (React). They do not
 exist yet.
@@ -49,19 +51,22 @@ the machine can satisfy `3.14`. Fix with `uv self update` and `uv python install
 1. Every package may depend on `core`.
 2. `core` depends on nothing internal, and not on the adapter libraries `sqlalchemy`, `alembic` or `typer`.
 3. `agent_hub.cli` is the composition root ([ADR 0008](adr/0008-cli-as-composition-root.md)): it may import the adapter
-   packages `storage`, `collector` and `generator` to build adapters and pass them to core use cases. Nothing imports
-   `cli`.
-4. The adapter packages (`storage`, `collector`, `generator`) never import each other; they depend only on `core`.
+   packages `storage`, `collector`, `generator` and `tracker_linear` to build adapters and pass them to core use cases.
+   Nothing imports `cli`.
+4. The adapter packages (`storage`, `collector`, `generator`, `tracker_linear`) never import each other; they depend
+   only on `core`.
 
 ```mermaid
 flowchart BT
   storage[agent_hub.storage] --> core[agent_hub.core]
   collector[agent_hub.collector] --> core
   generator[agent_hub.generator] --> core
+  tracker_linear[agent_hub.tracker_linear] --> core
   cli[agent_hub.cli] --> core
   cli --> storage
   cli --> collector
   cli --> generator
+  cli --> tracker_linear
   api["agent_hub.api (Phase 2)"] -.-> core
 ```
 
@@ -69,10 +74,11 @@ import-linter enforces the rule with the contracts in `.importlinter` (`root_pac
 `include_external_packages = True`):
 
 - `core imports nothing internal` (forbidden): `agent_hub.core` must not import `agent_hub.storage`,
-  `agent_hub.collector`, `agent_hub.generator`, `agent_hub.cli`, `sqlalchemy`, `alembic` or `typer`.
+  `agent_hub.collector`, `agent_hub.generator`, `agent_hub.tracker_linear`, `agent_hub.cli`, `sqlalchemy`, `alembic` or
+  `typer`.
 - `cli is the composition root` (layers): `agent_hub.cli` above the independent sibling layers
-  `agent_hub.storage | agent_hub.collector | agent_hub.generator`. A lower layer importing a higher one, or one sibling
-  importing another, breaks it.
+  `agent_hub.storage | agent_hub.collector | agent_hub.generator | agent_hub.tracker_linear`. A lower layer importing a
+  higher one, or one sibling importing another, breaks it.
 
 Run it with `make imports` (part of `make check`). A broken contract fails with its name followed by `BROKEN`.
 
@@ -85,7 +91,7 @@ Adding a package: create `packages/<pkg>/` with the shape above, then register i
 `mypy_path`), in both `.importlinter` contracts (core's forbidden list and the layers list) and in the Makefile `COV`
 list. The layout checker rule `package-registered` fails `make check-fast` until all of these are done. Then add it to
 the PR-title scopes (`SCOPES` in `scripts/check_pr_title.py` and the list in CONTRIBUTING.md) and create its
-`pkg:<name>` area label.
+`pkg:<name>` area label; the `tracker_*` adapters share the `tracker` scope and the `pkg:tracker` label.
 
 ## Hexagonal layout
 
@@ -97,14 +103,15 @@ the PR-title scopes (`SCOPES` in `scripts/check_pr_title.py` and the list in CON
   `GenerateHub`). They take ports as arguments and return domain models.
 - **Ports** (in core): interfaces for what the SPEC expects to swap: `EventStore` (SQLite now, Postgres later),
   `TrackerClient` (Linear first), `TranscriptSource` (Claude Code first). No port where no swap is expected.
-- **Adapters** (other packages): `storage` implements `EventStore`; `collector` turns hook events and transcripts into
-  canonical events and calls the ingestion use case; `cli` (and later `api`) parse input, call ONE use case and render
-  the result; `generator` renders a hub's files and links from `HubConfig` and the extension inputs (and reads a hub
-  tree and applies core's init and sync plans to disk) and implements no port
-  ([ADR 0011](adr/0011-templates-as-package-data.md)). Adapters translate external errors into the package's domain
-  exceptions at the boundary.
+- **Adapters** (other packages): `storage` implements `EventStore`; `tracker_linear` implements `TrackerClient`;
+  `collector` turns hook events and transcripts into canonical events and calls the ingestion use case; `cli` (and later
+  `api`) parse input, call ONE use case and render the result; `generator` renders a hub's files and links from
+  `HubConfig` and the extension inputs (and reads a hub tree and applies core's init and sync plans to disk) and
+  implements no port ([ADR 0011](adr/0011-templates-as-package-data.md)). Adapters translate external errors into the
+  package's domain exceptions at the boundary.
 - **Errors**: `agent_hub.core.errors.AgentHubError` is the root; each package has its own `errors.py` with subclasses
-  (`StorageError`, `CollectorError`, `GeneratorError`, …).
+  (`StorageError`, `CollectorError`, `GeneratorError`, …). A port's own failure lives in core, e.g. `TrackerError`,
+  which every `TrackerClient` adapter raises.
 
 ```mermaid
 flowchart LR
@@ -119,7 +126,7 @@ flowchart LR
   end
   subgraph adapters_out[Driven adapters]
     storage[storage: EventStore]
-    tracker["tracker client (later)"]
+    tracker[tracker_linear: TrackerClient]
   end
   cli --> usecases
   api --> usecases
@@ -141,6 +148,13 @@ non-empty and absolute, else the account's home from the password database; with
 for `--db` or `AGENT_HUB_DB` (`agent_hub.cli.database_path`). SQLite runs in WAL mode, and the engine opens a connection
 per use (no pool).
 
+The second port is `TrackerClient` (`agent_hub.core.tracker.tracker_client`): list the ready issues of a team, get an
+issue, move its state, add or remove a label and comment, each failure a `TrackerError`. Its fake is
+`InMemoryTrackerClient`, and its contract suite `TrackerClientContract` runs against both the fake and
+`LinearGraphqlTrackerClient` (`agent_hub.tracker_linear.graphql`) over an in-process fake of Linear's API. The CLI picks
+the adapter from `tracker.kind` with `resolve_tracker_client` (`agent_hub.cli.tracker_client`); no command uses it yet
+(`hub next` and `hub run` come with AGH-27).
+
 ## Where does this code go
 
 Paths are under `packages/<pkg>/src/agent_hub/<pkg>/` unless shown in full. `<area>` is a domain area folder such as
@@ -151,7 +165,7 @@ Paths are under `packages/<pkg>/src/agent_hub/<pkg>/` unless shown in full. `<ar
 | Entity (domain model) | `core`: `<area>/<entity>.py` | Frozen Pydantic model; no I/O |
 | Use case | `core`: `<area>/<verb_object>.py`, e.g. `ingestion/ingest_transcript.py` | Named verb + object; depends on ports only |
 | Port | `core`: `<area>/<port>.py`, e.g. `events/event_store.py` | Only where a swap is expected (ADR 0002) |
-| Domain exception | the package's `errors.py` | Subclass of the package's root error, itself under `AgentHubError` |
+| Domain exception | the package's `errors.py` | Subclass of the package's root error, itself under `AgentHubError`; an adapter that only raises its port's core error (e.g. `TrackerError`) needs no `errors.py` |
 | Adapter | the adapter package, e.g. `storage/<port>.py` | Implements a core port; translates external errors |
 | Table | `storage`: `db.py` (`metadata`) | The single place tables are declared |
 | Migration | `packages/storage/src/agent_hub/storage/migrations/versions/<NNNN>_<slug>.py` | Created with `python -m agent_hub.storage.migration revision --rev-id <NNNN>`; the Alembic config is built in code (`agent_hub.storage.migration.alembic_config`); see [CONTRIBUTING.md](CONTRIBUTING.md) |
