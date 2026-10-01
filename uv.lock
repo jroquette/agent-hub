@@ -29,7 +29,7 @@ dev = [
 
 [[package]]
 name = "agent-hub"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "packages/agent-hub" }
 dependencies = [
     { name = "agent-hub-cli" },
@@ -50,7 +50,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-hub-cli"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "packages/cli" }
 dependencies = [
     { name = "agent-hub-collector" },
