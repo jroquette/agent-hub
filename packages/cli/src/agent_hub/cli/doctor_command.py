@@ -25,7 +25,7 @@ from agent_hub.cli.doctor_report import report_json, report_lines
 from agent_hub.cli.hub_config_reader import DISTRIBUTION, FILE_LABEL, read_hub_bytes
 from agent_hub.cli.init_report import shown_path
 from agent_hub.core.doctor.config_rules import config_state
-from agent_hub.core.doctor.finding import Read
+from agent_hub.core.doctor.finding import LISTING_READS, Read
 from agent_hub.core.doctor.lock_rules import lock_paths, lock_state
 from agent_hub.core.doctor.registry import REGISTRY
 from agent_hub.core.doctor.run_rules import (
@@ -124,12 +124,12 @@ def _hub_snapshot(
     """The lock, the files and the base hooks block the selected rules read.
 
     The files are the fixed paths, the lock's managed paths when a rule reads them, and the
-    listing when one needs it.
+    listing when one needs it or a file set that comes from it.
     """
     reads = {read for rule in selection.rules for read in rule.reads}
     lock = _lock_or_none(root) if Read.LOCK_PATHS in reads else None
     by_path = sorted({*hub_paths(config), *lock_paths(lock)})
-    hub = read_doctor_tree(Path(root), by_path=by_path, listing=Read.HUB_LISTING in reads)
+    hub = read_doctor_tree(Path(root), by_path=by_path, listing=not LISTING_READS.isdisjoint(reads))
     base_hooks = base_hooks_block() if Read.BASE_HOOKS in reads else None
     return DoctorSnapshot(
         config=config, running_version=running, hub=hub, lock=lock, base_hooks=base_hooks

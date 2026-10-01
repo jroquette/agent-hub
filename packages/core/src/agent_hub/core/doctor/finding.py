@@ -3,6 +3,7 @@
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Final
 
 from agent_hub.core.doctor.snapshot import DoctorSnapshot
 from agent_hub.core.hub_config.doctor_rules import Severity
@@ -40,6 +41,14 @@ class Read(StrEnum):
     HUB_LISTING = "hub_listing"
     REPOS = "repos"
     BASE_HOOKS = "base_hooks"
+    # A rule that reads the text of the instruction files, or of the plugins' agent and skill
+    # files (``config_lint``). Those sets come from the listing, so it needs no ``HUB_LISTING``.
+    INSTRUCTION_FILES = "instruction_files"
+    PLUGIN_FILES = "plugin_files"
+
+
+# The reads the hub listing serves: the listing itself, and the file sets that come from it.
+LISTING_READS: Final = frozenset({Read.HUB_LISTING, Read.INSTRUCTION_FILES, Read.PLUGIN_FILES})
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

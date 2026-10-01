@@ -49,12 +49,21 @@ def _settings_weakening(snapshot: DoctorSnapshot) -> Iterable[Finding]:
     )
 
 
-def _loaded(entry: TreeEntry, *, strict: bool) -> JsonValue | _Unreadable:
+def load_settings(content: bytes) -> JsonValue:
+    """The JSON value of ``settings.json`` or a seeded sibling, read strictly (E25): a repeated
+    key, ``NaN`` or an infinity is refused, as a file Claude Code may reject keeps nothing.
+
+    Raises ``InvalidJsonError``; every rule that reads these files reads them this way.
+    """
+    return load_json_bytes(content, strict=True)
+
+
+def _loaded(entry: TreeEntry) -> JsonValue | _Unreadable:
     """The JSON value of a regular file read with its content, never through a link."""
     if not isinstance(entry, FileEntry) or entry.content is None:
         return _Unreadable(NOT_REGULAR)
     try:
-        return load_json_bytes(entry.content, strict=strict)
+        return load_settings(entry.content)
     except InvalidJsonError as error:
         return _Unreadable(f"{ROOT_PATH}: {error.message}")
 
@@ -65,7 +74,7 @@ def _project_findings(entries: Mapping[str, TreeEntry]) -> Iterator[Finding]:
         if entry is None:
             continue
         # Strict, as the merge reads a sibling: what it refuses, the rule cannot vouch for.
-        document = _loaded(entry, strict=True)
+        document = _loaded(entry)
         if isinstance(document, _Unreadable):
             yield SETTINGS_WEAKENING.finding(path=path, message=document.message, fix=PROJECT_FIX)
             continue
@@ -91,7 +100,7 @@ def _settings_findings(
     if entry is None:
         # With a failed read, it may be the path the read failed on: the runner says so.
         return (_settings_finding(MISSING),) if all_read else ()
-    document = _loaded(entry, strict=True)
+    document = _loaded(entry)
     if isinstance(document, _Unreadable):
         return (_settings_finding(document.message),)
     refused = (

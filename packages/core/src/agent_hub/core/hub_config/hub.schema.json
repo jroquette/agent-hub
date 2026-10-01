@@ -160,10 +160,12 @@
             "exclusiveMinimum": 0,
             "type": "integer"
           },
+          "maxProperties": 256,
           "patternProperties": {
             "^_": {}
           },
           "propertyNames": {
+            "maxLength": 1024,
             "minLength": 1
           },
           "type": "object"
