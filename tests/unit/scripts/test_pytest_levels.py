@@ -185,3 +185,28 @@ def test_rejects_live_marker_when_transport_unknown(monkeypatch: pytest.MonkeyPa
 
     with pytest.raises(pytest.UsageError, match="'connector'"):
         _collect(item)
+
+
+@pytest.mark.parametrize(
+    ("mark", "named"),
+    [
+        (pytest.mark.live(transport="mcp").mark, "transport"),
+        (pytest.mark.live(["mcp"]).mark, "['mcp']"),
+        (pytest.mark.live(None).mark, "None"),
+        (pytest.mark.live("mcp", "api").mark, "'api'"),
+    ],
+    ids=["keyword", "unhashable", "none", "two-arguments"],
+)
+def test_rejects_live_marker_when_argument_not_one_string(
+    monkeypatch: pytest.MonkeyPatch, *, mark: pytest.Mark, named: str
+) -> None:
+    _set_live_variables(monkeypatch)
+    item = _FakeItem("packages/tracker_linear/tests/integration/test_live.py")
+    item.markers.append(mark)
+
+    with pytest.raises(pytest.UsageError) as raised:
+        _collect(item)
+
+    message = str(raised.value)
+    assert named in message
+    assert "live('mcp')" in message
