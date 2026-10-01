@@ -448,22 +448,26 @@ class TestScale:
         assert dead(notes(snapshot_of, text)) == [(NOTES, 20_002, dead_link("gone2.md"))]
 
     @pytest.mark.parametrize(
-        "line",
+        ("line", "busy"),
         [
-            pytest.param("[](" * 1_000, id="openers"),
-            pytest.param("[a](<" * 1_000 + ")" * 1_000, id="pointy-unclosed"),
-            pytest.param("[a](b " * 1_000 + ")" * 1_000, id="titles"),
-            pytest.param(("[a](" + " " * 10 + "b)") * 1_000, id="blanks"),
-            pytest.param("[a](b)" * 1_000, id="bare"),
-            pytest.param("[" * 1_000 + "](x" * 1_000 + ")" * 1_000, id="overlapping"),
+            pytest.param("[](" * 1_000, "_OPENER", id="openers"),
+            pytest.param("[a](<" * 1_000 + ")" * 1_000, "_POINTY_END", id="pointy-unclosed"),
+            pytest.param("[a](b " * 1_000 + ")" * 1_000, "_DESTINATION_END", id="titles"),
+            pytest.param(("[a](" + " " * 10 + "b)") * 1_000, "_NOT_BLANK", id="blanks"),
+            pytest.param("[a](b)" * 1_000, "_DESTINATION_END", id="bare"),
+            pytest.param("[" * 1_000 + "](x" * 1_000 + ")" * 1_000, "_OPENER", id="overlapping"),
             # Runs of 1 to 44 backticks, none closed: a closer looked for from each run rescans.
-            pytest.param("".join("`" * length + "a" * 10 for length in range(1, 45)), id="spans"),
-            pytest.param("<!-- -->" * 1_000, id="comments"),
-            pytest.param("<!--" * 1_000, id="comment-openers"),
+            pytest.param(
+                "".join("`" * length + "a" * 10 for length in range(1, 45)),
+                "_BACKTICKS",
+                id="spans",
+            ),
+            pytest.param("<!-- -->" * 1_000, "_COMMENT_CLOSE", id="comments"),
+            pytest.param("<!--" * 1_000, "_COMMENT_CLOSE", id="comment-openers"),
         ],
     )
     def test_scans_each_character_once_when_openers_repeat(
-        self, monkeypatch: pytest.MonkeyPatch, line: str
+        self, monkeypatch: pytest.MonkeyPatch, line: str, busy: str
     ) -> None:
         counters = {
             name: ScanCounter(getattr(links_rule, name))
@@ -488,6 +492,8 @@ class TestScale:
         assert {name: counter.characters <= len(line) for name, counter in counters.items()} == {
             name: True for name in counters
         }
+        # The case's own pattern did scan: the stand-ins were the ones used.
+        assert counters[busy].characters > 0
 
     def test_resolves_links_when_paths_deep(self, snapshot_of: SnapshotFactory) -> None:
         # 100 files 600 folders deep, each linking up to the root and to a missing sibling.
