@@ -992,6 +992,7 @@ def test_asks_when_hub_checkout_named_apart_from_project(
         verdict
         for verdict in other
         if verdict is None
+        or verdict[0] != "ask"
         or "brain/ is curated" not in verdict[1]
         or "@hub/brain/decisions" in verdict[1]
     ] == []
