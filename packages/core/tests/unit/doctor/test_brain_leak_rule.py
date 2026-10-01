@@ -166,15 +166,53 @@ def test_skips_brain_file_when_binary(snapshot_of: SnapshotFactory, prefix: byte
     assert leaks(snapshot) == []
 
 
-def test_skips_link_when_brain_or_repo_path_is_link(snapshot_of: SnapshotFactory) -> None:
+@pytest.mark.parametrize("side", ["brain", "repo"])
+def test_skips_link_when_brain_or_repo_path_is_link(
+    snapshot_of: SnapshotFactory, side: str
+) -> None:
+    # The line is in a regular file on one side and only behind a listed link on the other.
+    text = f"{sentence(70)}\n".encode()
+    if side == "brain":
+        snapshot = snapshot_of(
+            files={"docs/n.md": text},
+            links={NOTE: "../docs/n.md"},
+            repos={"demo-api": {"README.md": text}},
+        )
+    else:
+        snapshot = snapshot_of(
+            files={NOTE: text},
+            repos={"demo-api": {"docs/n.md": text}},
+            repo_links={"demo-api": {"README.md": "docs/n.md"}},
+            repo_listed={"demo-api": ("README.md",)},
+        )
+
+    assert leaks(snapshot) == []
+
+
+def test_skips_repo_file_when_not_listed(snapshot_of: SnapshotFactory) -> None:
     line = sentence(70)
     snapshot = snapshot_of(
-        files={"docs/n.md": f"{line}\n".encode()},
-        links={NOTE: "../docs/n.md"},
-        repos={"demo-api": {"README.md": f"{line}\n".encode()}},
+        files={NOTE: f"{line}\n".encode()},
+        repos={"demo-api": {"README.md": b"x\n", "ignored.md": f"{line}\n".encode()}},
+        repo_listed={"demo-api": ("README.md",)},
     )
 
     assert leaks(snapshot) == []
+
+
+def test_skips_checkout_when_listing_failed(snapshot_of: SnapshotFactory) -> None:
+    # E36: a checkout that could not be listed is treated as a missing one.
+    line = sentence(70)
+    snapshot = snapshot_of(
+        files={NOTE: f"{line}\n".encode()},
+        repos={
+            "demo-api": {"README.md": f"{line}\n".encode()},
+            "demo-web": {"README.md": f"{line}\n".encode()},
+        },
+        repo_problems={"demo-api": "git ls-files failed"},
+    )
+
+    assert leaks(snapshot) == [("../demo-web/README.md", 1, in_brain(NOTE, 1))]
 
 
 def test_skips_repo_when_checkout_missing(snapshot_of: SnapshotFactory) -> None:

@@ -7,21 +7,26 @@ Q-19), of the hub and of each checked-out repo, line by line (``config_lint.text
   and the ``(`` closed by a ``)``), and reference definitions, ``[label]: destination`` (at most
   three spaces in; the first definition of a label wins, as in CommonMark). A destination may be
   wrapped in ``<…>``; a bare one ends at a blank or at the link's ``)``, and keeps balanced
-  parentheses. Fenced blocks (``` ``` ``` or ``~~~``, at any indent, to the closing fence or the
-  file's end) and code spans (a run of backticks to the next run of the same length, on its
-  line) are skipped. Backslash escapes are not read.
-- Not checked: a destination with a scheme (``http:``, ``https:``, ``mailto:``…), a fragment
+  parentheses. A definition is a line only when nothing or a title (``"``, ``'`` or ``(`` after a
+  blank) follows its destination; else it is prose. Fenced blocks (``config_lint.unfenced_lines``),
+  HTML comments (``<!--`` to ``-->``, on one line or several; ``<!-->`` is a whole one) and
+  code spans (a run of backticks to the next run of the same length, on its line) are skipped;
+  an indented code block is read (E37). Backslash escapes are not read.
+- Not checked: a destination with a URI scheme (a letter, then 1 to 31 letters, digits, ``+``,
+  ``.`` or ``-``, then ``:``; so ``http:``, ``mailto:``, but not ``C:``), a fragment
   only, an absolute one, or an empty one. Else the ``#fragment`` and ``?query`` are cut, the
   rest is percent-decoded and resolved from the file's folder.
 - Exists: a listed path or a folder with a listed path under it; for the hub, also the fixed
   paths present (``config_lint.known_paths``, E31), and every fixed path when not all were read.
   A link is never followed (D3). A hub link into ``../<dir>/`` for a ``repos[].dir`` is checked
   against that checkout's listing, and skipped when the checkout is missing (the runner reports
-  it, Q-9); any other link that leaves the hub, or a repo, is not checked.
+  it, Q-9) or could not be listed (E36), whose own files are not read either; any other link
+  that leaves the hub, or a repo, is not checked (E37).
 
 A repo's findings are at ``../<dir>/<path>``. Every scan is linear in its line (each search
-resumes where the last one stopped) and every path is resolved through a segments tree, so a
-hostile line, a deep path or many files never cost more than their size.
+resumes where the last one stopped, and the destinations never overlap) and every path is
+resolved through a segments tree, so a hostile line, a deep path or many files never cost more
+than their size.
 """
 
 import re
@@ -37,6 +42,7 @@ from agent_hub.core.doctor.config_lint import (
     known_paths,
     path_tree,
     text_lines,
+    unfenced_lines,
 )
 from agent_hub.core.doctor.finding import Finding, Read, Rule
 from agent_hub.core.doctor.snapshot import DoctorSnapshot, HubFiles, hub_paths
@@ -54,10 +60,13 @@ _DESTINATION_END: Final = re.compile(r"[\x00-\x20\x7f]")
 _POINTY_END: Final = re.compile(r"[<>]")
 _BRACKETS: Final = re.compile(r"[\[\]()]")
 _BACKTICKS: Final = re.compile(r"`+")
-_FENCE: Final = re.compile(r"[ \t]*(`{3,}|~{3,})(.*)")
 # A scheme of 2 to 32 characters, so neither a path nor a Windows drive reads as one.
 _SCHEME: Final = re.compile(r"[A-Za-z][A-Za-z0-9+.-]{1,31}:")
 _PATH_END: Final = re.compile(r"[#?]")
+_TITLE_OPENERS: Final = ('"', "'", "(")
+_COMMENT_OPEN: Final = re.compile(r"<!--")
+_COMMENT_CLOSE: Final = re.compile(r"-->")
+_COMMENT_CLOSE_LENGTH: Final = 3
 _HERE: Final = frozenset({"", "."})
 _UP: Final = ".."
 
@@ -66,7 +75,9 @@ class _Scan:
     """A pattern's next match at or after a position, asked at positions that never go back.
 
     A search that found ``found`` from ``asked`` answers every position up to ``found``, so the
-    line is passed over once however many openers ask (the length of the line when none).
+    line is passed over once however many openers ask (the length of the line when none). Only
+    the bare destination's end needs it: many destinations can end at one far blank, while each
+    other search starts at its own ``](``, ``(`` or ``<`` and stops before the next one.
     """
 
     __slots__ = ("_asked", "_found", "_line", "_pattern")
@@ -98,8 +109,11 @@ class _Tree:
 
 
 def _links_dead(snapshot: DoctorSnapshot) -> Iterator[Finding]:
+    # A checkout that could not be listed is treated as a missing one (E36).
     checkouts = {
-        repo.dir: None if repo.files is None else path_tree(repo.files.listed)
+        repo.dir: None
+        if repo.files is None or repo.files.problem is not None
+        else path_tree(repo.files.listed)
         for repo in snapshot.repos
     }
     hub = _Tree(
@@ -195,19 +209,13 @@ def _link_path(destination: str) -> str | None:
 
 
 def _destinations(text: str) -> Iterator[tuple[int, str]]:
-    """Each line's link destinations, outside fenced blocks and code spans, by line number."""
-    fence: tuple[str, int] | None = None
+    """Each line's link destinations, outside fences, comments and code spans, by line number."""
     labels: set[str] = set()
-    for number, line in enumerate(text_lines(text), start=1):
-        marker = _fence_marker(line)
-        if fence is not None:
-            if marker is not None and _closes(marker, fence=fence):
-                fence = None
+    in_comment = False
+    for number, line in unfenced_lines(text_lines(text)):
+        visible, in_comment = _visible(line, in_comment=in_comment)
+        if visible is None:
             continue
-        if marker is not None and _opens(marker):
-            fence = (marker[0], marker[1])
-            continue
-        visible = _without_code_spans(line)
         definition = _definition(visible)
         if definition is None:
             yield from ((number, target) for target in _inline_targets(visible))
@@ -217,23 +225,35 @@ def _destinations(text: str) -> Iterator[tuple[int, str]]:
                 yield number, definition[1]
 
 
-def _fence_marker(line: str) -> tuple[str, int, str] | None:
-    """The fence character, the run's length and what follows, when the line starts a run."""
-    match = _FENCE.fullmatch(line)
-    if match is None:
-        return None
-    return match[1][0], len(match[1]), match[2]
+def _visible(line: str, *, in_comment: bool) -> tuple[str | None, bool]:
+    """The line with its code spans and HTML comments blanked (``None`` when a comment open
+    before it takes it whole), and whether a comment is still open at its end.
+    """
+    if in_comment:
+        close = _position(_COMMENT_CLOSE, line, start=0)
+        if close == len(line):
+            return None, True
+        line = line[close + _COMMENT_CLOSE_LENGTH :]
+    return _without_comments(_without_code_spans(line))
 
 
-def _opens(marker: tuple[str, int, str]) -> bool:
-    # A backtick fence's info string holds no backtick (else the line is a code span).
-    character, _, info = marker
-    return character == "~" or "`" not in info
-
-
-def _closes(marker: tuple[str, int, str], *, fence: tuple[str, int]) -> bool:
-    character, length, rest = marker
-    return character == fence[0] and length >= fence[1] and not rest.strip(" \t")
+def _without_comments(line: str) -> tuple[str, bool]:
+    """The line with each ``<!-- … -->`` blanked to one space, and whether the last one stays
+    open; each search starts where the last one stopped.
+    """
+    pieces: list[str] = []
+    kept = 0
+    opening = _position(_COMMENT_OPEN, line, start=0)
+    while opening < len(line):
+        pieces.extend((line[kept:opening], " "))
+        # From the opener's dashes, so "<!-->" and "<!--->" close themselves (CommonMark 0.31).
+        close = _position(_COMMENT_CLOSE, line, start=opening + 2)
+        if close == len(line):
+            return "".join(pieces), True
+        kept = close + _COMMENT_CLOSE_LENGTH
+        opening = _position(_COMMENT_OPEN, line, start=kept)
+    pieces.append(line[kept:])
+    return "".join(pieces), False
 
 
 def _without_code_spans(line: str) -> str:
@@ -285,14 +305,22 @@ def _definition(line: str) -> tuple[str, str] | None:
 
 
 def _definition_destination(rest: str) -> str | None:
+    """The destination when only blanks or a title follow it; ``None`` when the line is prose."""
     if rest.startswith("<"):
         end = rest.find(">")
         if end == -1 or rest.find("<", 1, end) != -1:
             return None
-        return rest[1:end]
-    end_match = _DESTINATION_END.search(rest)
-    destination = rest if end_match is None else rest[: end_match.start()]
-    return destination or None
+        destination, after = rest[1:end], rest[end + 1 :]
+    else:
+        end_match = _DESTINATION_END.search(rest)
+        end = len(rest) if end_match is None else end_match.start()
+        destination, after = rest[:end], rest[end:]
+        if not destination:
+            return None
+    title = after.lstrip(" \t")
+    if title and (title == after or not title.startswith(_TITLE_OPENERS)):
+        return None
+    return destination
 
 
 def _inline_targets(line: str) -> Iterator[str]:
@@ -304,33 +332,37 @@ def _inline_targets(line: str) -> Iterator[str]:
     if "](" not in line:
         return
     linked, closes = _pairs(line)
-    openers = _Scan(_OPENER, line)
-    scans = (_Scan(_NOT_BLANK, line), _Scan(_DESTINATION_END, line), _Scan(_POINTY_END, line))
-    at = openers.at_or_after(0)
+    ends = _Scan(_DESTINATION_END, line)
+    at = _position(_OPENER, line, start=0)
     while at < len(line):
         close = closes.get(at + 1) if at in linked else None
-        span = None if close is None else _destination_span(line, at=at, close=close, scans=scans)
+        span = None if close is None else _destination_span(line, at=at, close=close, ends=ends)
         if span is None:
-            at = openers.at_or_after(at + 1)
+            at = _position(_OPENER, line, start=at + 1)
             continue
         begin, end, resume = span
         if end > begin:
             yield line[begin:end]
-        at = openers.at_or_after(resume)
+        at = _position(_OPENER, line, start=resume)
+
+
+def _position(pattern: re.Pattern[str], line: str, *, start: int) -> int:
+    """Where the pattern next matches at or after ``start``; the line's length when nowhere."""
+    match = pattern.search(line, start)
+    return len(line) if match is None else match.start()
 
 
 def _destination_span(
-    line: str, *, at: int, close: int, scans: tuple[_Scan, _Scan, _Scan]
+    line: str, *, at: int, close: int, ends: _Scan
 ) -> tuple[int, int, int] | None:
     """Where the destination of the ``](`` at ``at`` begins and ends, and where to look next;
     ``None`` when a ``<`` opens a destination that no ``>`` closes before the link's ``)``.
     """
-    blanks, ends, pointy = scans
-    begin = blanks.at_or_after(at + 2)
+    begin = _position(_NOT_BLANK, line, start=at + 2)
     if begin >= close:
         return begin, begin, close
     if line[begin] == "<":
-        end = pointy.at_or_after(begin + 1)
+        end = _position(_POINTY_END, line, start=begin + 1)
         if end >= close or line[end] != ">":
             return None
         return begin + 1, end, end + 1

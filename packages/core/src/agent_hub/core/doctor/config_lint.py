@@ -11,6 +11,9 @@ an instruction file (spec D3, plan E1: a hub links each plugin agent into ``.cla
   path (a whole segment: ``agentsx`` is another folder).
 - Agent and skill files: the instruction files under ``.claude/agents`` or ``.claude/skills``
   and the plugin files.
+- Fences: ``unfenced_lines`` drops fenced blocks (``` ``` ``` or ``~~~``, at any indent, to the
+  closing fence or the text's end), the lines the Markdown rules read (``links.dead``,
+  ``brain.leak``).
 - Paths: ``path_tree`` holds a tree's paths and their folders as segments (``PathTrie``), so
   a reference resolves in time linear in its length (``instructions.refs``, ``links.dead``).
 
@@ -18,7 +21,7 @@ Each set is sorted by path string, the order in which a later file is "later" (d
 """
 
 import re
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final
 
@@ -52,6 +55,8 @@ NUL: Final = b"\x00"
 # The old lint's field and list-item lines, each matched from the line's start.
 _FIELD: Final = re.compile(r"([A-Za-z_-]+):\s*(.*)")
 _ITEM: Final = re.compile(r"\s+-\s+(.*)")
+# A run of three or more backticks or tildes that starts a line (after blanks), and the rest.
+_FENCE: Final = re.compile(r"[ \t]*(`{3,}|~{3,})(.*)")
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -179,6 +184,46 @@ def text_lines(text: str) -> tuple[str, ...]:
     also split there).
     """
     return tuple(line.removesuffix("\r") for line in lines_of(text))
+
+
+def unfenced_lines(lines: Sequence[str], *, start: int = 0) -> Iterator[tuple[int, str]]:
+    """The lines from index ``start`` outside fenced blocks, each with its 1-based number.
+
+    A fence opens on a run of three or more backticks or tildes (a backtick run's info string
+    holds no backtick, else the line is a code span) and closes on a run of the same character,
+    at least as long, with only blanks after it; one never closed runs to the text's end. The
+    fence lines are dropped too; an indented code block is not a fence (CommonMark's 3-space
+    bound is not kept, so a fence nested in a list item is one too).
+    """
+    fence: tuple[str, int] | None = None
+    for number in range(start + 1, len(lines) + 1):
+        line = lines[number - 1]
+        marker = _fence_marker(line)
+        if fence is not None:
+            if marker is not None and _closes(marker, fence=fence):
+                fence = None
+        elif marker is not None and _opens(marker):
+            fence = (marker[0], marker[1])
+        else:
+            yield number, line
+
+
+def _fence_marker(line: str) -> tuple[str, int, str] | None:
+    """The fence character, the run's length and what follows, when the line starts a run."""
+    match = _FENCE.fullmatch(line)
+    if match is None:
+        return None
+    return match[1][0], len(match[1]), match[2]
+
+
+def _opens(marker: tuple[str, int, str]) -> bool:
+    character, _, info = marker
+    return character == "~" or "`" not in info
+
+
+def _closes(marker: tuple[str, int, str], *, fence: tuple[str, int]) -> bool:
+    character, length, rest = marker
+    return character == fence[0] and length >= fence[1] and not rest.strip(" \t")
 
 
 def line_count(text: str) -> int:
