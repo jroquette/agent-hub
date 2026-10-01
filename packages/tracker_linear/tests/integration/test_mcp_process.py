@@ -9,7 +9,9 @@ import fcntl
 import json
 import os
 import signal
+import subprocess
 import sys
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -50,9 +52,14 @@ path = os.environ["FAKE_CLAUDE_RECORD"]
 with open(path + ".tmp", "w") as stream:
     json.dump(record, stream)
 os.replace(path + ".tmp", path)
-if mode == "hang":
+if mode in {"hang", "sleep"}:
     while True:
         time.sleep(1)
+if mode == "big":
+    # More than a pipe buffer on each stream: the runner must drain both while waiting.
+    sys.stderr.write("e" * (1 << 20))
+    sys.stdout.write("o" * (1 << 20))
+    sys.exit(0)
 print(json.dumps({"type": "result", "result": "answer"}))
 print("a line on stderr", file=sys.stderr)
 sys.exit(int(os.environ["FAKE_CLAUDE_EXIT"]))
@@ -167,8 +174,10 @@ def test_kills_child_when_timeout_passes(
 ) -> None:
     env = _env(tmp_path, fake_bin, mode="hang")
 
-    with pytest.raises(TimeoutError, match=r"claude timed out after 3 s"):
-        run_claude([CLAUDE_PROGRAM, "-p", "x"], cwd=hub_root, env=env, timeout_s=3.0)
+    # The test asserts outcomes, not the clock: 10 s only leaves a slow runner time to start
+    # the fake and take the lock before the deadline.
+    with pytest.raises(TimeoutError, match=r"claude timed out after 10 s"):
+        run_claude([CLAUDE_PROGRAM, "-p", "x"], cwd=hub_root, env=env, timeout_s=10.0)
 
     # The child started and took the lock; the lock is free now because the child is gone.
     record = _record(tmp_path)
@@ -221,3 +230,56 @@ def test_raises_when_child_path_empty_or_absent(
 
     with pytest.raises(FileNotFoundError, match="claude"):
         run_claude([CLAUDE_PROGRAM, "-p", "x"], cwd=hub_root, env=env, timeout_s=30.0)
+
+
+def test_returns_all_output_when_streams_exceed_pipe_buffer(
+    tmp_path: Path, fake_bin: Path, hub_root: Path
+) -> None:
+    env = _env(tmp_path, fake_bin, mode="big")
+
+    output = run_claude([CLAUDE_PROGRAM, "-p", "x"], cwd=hub_root, env=env, timeout_s=30.0)
+
+    assert output == ClaudeOutput(returncode=0, stdout=b"o" * (1 << 20), stderr=b"e" * (1 << 20))
+
+
+def test_resolves_relative_path_entry_when_cwd_differs(
+    tmp_path: Path, fake_bin: Path, hub_root: Path, *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # "bin" names the fake from the caller's cwd, not from the child's cwd (the hub root).
+    monkeypatch.chdir(tmp_path)
+    env = {**_env(tmp_path, fake_bin), "PATH": fake_bin.name}
+
+    run_claude([CLAUDE_PROGRAM, "-p", "x"], cwd=hub_root, env=env, timeout_s=30.0)
+
+    assert _record(tmp_path)["cwd"] == str(hub_root)
+
+
+def _wait_for(path: Path) -> None:
+    deadline = time.monotonic() + 30
+    while not path.exists():
+        assert time.monotonic() < deadline, f"{path.name} never appeared"
+        time.sleep(0.01)
+
+
+def test_reaps_child_when_interrupted(
+    tmp_path: Path, fake_bin: Path, hub_root: Path, *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    children: list[subprocess.Popen[bytes]] = []
+
+    def interrupted(child: subprocess.Popen[bytes], timeout: float | None = None) -> None:
+        children.append(child)
+        _wait_for(tmp_path / "record.json")
+        # Popen's exit waits 0.25 s for a child after Ctrl-C; with 0, only the runner reaps.
+        child._sigint_wait_secs = 0  # type: ignore[attr-defined]
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", interrupted)
+    env = _env(tmp_path, fake_bin, mode="sleep")
+
+    with pytest.raises(KeyboardInterrupt):
+        run_claude([CLAUDE_PROGRAM, "-p", "x"], cwd=hub_root, env=env, timeout_s=30.0)
+
+    [child] = children
+    assert child.returncode == -signal.SIGKILL
+    with pytest.raises(ChildProcessError):
+        os.waitpid(child.pid, os.WNOHANG)

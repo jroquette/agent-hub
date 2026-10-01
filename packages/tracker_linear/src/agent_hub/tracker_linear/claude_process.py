@@ -11,6 +11,7 @@ environment a call is given decides which ``claude`` runs.
 
 import contextlib
 import errno
+import os
 import shutil
 import subprocess
 from collections.abc import Mapping, Sequence
@@ -33,13 +34,16 @@ def run_claude(
 ) -> ClaudeOutput:
     """Run ``argv`` in ``cwd`` with exactly ``env``; stdin is empty, both streams are captured.
 
-    ``argv[0]`` is looked up on ``env``'s ``PATH`` (an absent or empty one finds nothing).
+    ``argv[0]`` is looked up on ``env``'s ``PATH`` (an absent or empty one finds nothing) and
+    made absolute.
     Raises ``FileNotFoundError`` when it is not there, and ``TimeoutError`` after
     ``timeout_s`` seconds, once the child is killed.
     """
     program = shutil.which(argv[0], path=env.get("PATH") or "")
     if program is None:
         raise FileNotFoundError(errno.ENOENT, f"{argv[0]} is not on PATH", argv[0])
+    # A relative PATH entry is found from the caller's cwd; the child starts in ``cwd``.
+    program = os.path.abspath(program)
     with (
         subprocess.Popen(  # noqa: S603 - an argv list, never a shell; the tool is claude
             [program, *argv[1:]],
@@ -63,5 +67,7 @@ def run_claude(
 
 
 def _kill(child: subprocess.Popen[bytes]) -> None:
+    """Kill the child and reap it, so no zombie is left even when the caller is interrupted."""
     with contextlib.suppress(ProcessLookupError):
         child.kill()
+    child.wait()
