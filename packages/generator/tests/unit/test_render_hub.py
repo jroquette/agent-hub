@@ -45,6 +45,7 @@ DESIGN_PATHS = (
     "Makefile",
     "Makefile.project",
     "README.md",
+    "agent",
     "brain/_inbox/.gitkeep",
     "brain/decisions/index.md",
     "brain/domain/.gitkeep",
@@ -55,6 +56,7 @@ DESIGN_PATHS = (
     "brain/learnings/.gitkeep",
     "brain/now.md",
     "brain/playbooks/.gitkeep",
+    "hub",
     "hub.schema.json",
     "plugin/demo/.claude-plugin/plugin.json",
     "plugin/demo/agents/.gitkeep",
@@ -1081,7 +1083,10 @@ def test_calls_hub_through_shim_when_recipes_read(demo_config: HubConfig) -> Non
         recipe_lines(makefile, "check")
     )
     assert recipe_lines(makefile, "agent") == ["./agent"]
-    assert "HUB = hub() {" in makefile
+    # The protocol is the ./hub shim's (test_hub_shim.py); the Makefile holds no copy of it.
+    # The shim by the hub's absolute path, so a recipe that changes folder still finds it.
+    assert "HUB := '$(subst ','\\'',$(CURDIR))/hub'" in makefile.splitlines()
+    assert "uvx" not in makefile
 
 
 def test_includes_modules_then_project_when_makefile_rendered(demo_config: HubConfig) -> None:
@@ -1127,7 +1132,7 @@ def test_names_no_hubconfig_when_templates_read() -> None:
 # AC-4.19 (Q-15): the hub scripts that `hub` commands replace. No rendered agent or skill names
 # one, with or without its folder (the hub's planner also named `features_check.py` bare).
 HUB_SCRIPT_NAMES = ("brief.py", "features_check.py", "worktree.sh", "hubconfig")
-FEATURE_CHECK_COMMAND = "hub doctor --only features.tracker"
+FEATURE_CHECK_COMMAND = "./hub doctor --only features.tracker"
 AGENT_FRONTMATTER_KEYS = ["name", "description", "tools", "model"]
 
 
@@ -1178,9 +1183,9 @@ def test_keeps_frontmatter_when_agents_rendered(demo_render: dict[str, RenderedF
 # AC-4.19 (Q-15, plan design 7): the `hub` command and the make target that runs it through the
 # shim, where one exists; the tracker check has no target yet and stays bare.
 SKILL_COMMANDS = {
-    "kickoff": ("`hub brief` (`make brain-brief`)",),
+    "kickoff": ("`./hub brief` (`make brain-brief`)",),
     "feature": (
-        "`hub worktree <team>-<n>-<slug> [--only <repo>]` (`make worktree NAME=…`)",
+        "`./hub worktree <team>-<n>-<slug> [--only <repo>]` (`make worktree NAME=…`)",
         f"`{FEATURE_CHECK_COMMAND}`",
     ),
 }
@@ -1380,6 +1385,30 @@ def test_fails_check_when_hub_test_fails(
     assert "the hub gate fails" in completed.stderr
 
 
+def test_runs_shim_when_hub_folder_name_needs_quoting(
+    variant_config: HubConfig,
+    *,
+    rendered_tree: Callable[..., Path],
+    fake_uv_bin: Path,
+    tmp_path: Path,
+) -> None:
+    # A folder name with a double quote, a dollar sign, an apostrophe and a space: the shim's
+    # path must reach the shell as one word, unexpanded.
+    root = rendered_tree(render_hub(variant_config), root=tmp_path / "d$HOME\"q it's")
+    document = a_hub_document()
+    document["platform"]["version"] = RUN_VERSION
+    (root / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+
+    completed = run_make(root, fake_uv_bin, "brain-brief")
+
+    assert completed.returncode == 0, completed.stderr
+    source = pinned_source(RUN_VERSION)
+    assert logged_calls(fake_uv_bin) == [
+        f"uvx --from {source} hub --version",
+        f"uvx --from {source} hub brief",
+    ]
+
+
 @pytest.mark.parametrize(
     ("arguments", "hub_call"),
     [
@@ -1424,6 +1453,7 @@ def test_imports_both_rule_files_when_claude_rendered(demo_config: HubConfig) ->
     lines = text_of(demo_config, "CLAUDE.md").splitlines()
 
     assert lines[:2] == ["@AGENTS.md", "@AGENTS.project.md"]
+    assert sum("`./agent` (`make agent`)" in line for line in lines) == 1
 
 
 # AC-3.19 (Q7, O4): the hygiene hooks of the pinned pre-commit-hooks release.
@@ -1434,18 +1464,32 @@ PINNED_SETUP_UV = re.compile(
 )
 
 
+# The hub-doctor hook's entry: the shim, run from the hub root (pre-commit's cwd).
+HUB_DOCTOR_ENTRY = "./hub doctor"
+
+
 def pre_commit_entry(text: str) -> str:
-    """The ``entry: |-`` block scalar of the one hook that has one, dedented."""
-    lines = text.splitlines()
-    start = next(index for index, line in enumerate(lines) if line.strip() == "entry: |-")
-    key_indent = len(lines[start]) - len(lines[start].lstrip())
-    block = []
-    for line in lines[start + 1 :]:
-        if line.strip() and len(line) - len(line.lstrip()) <= key_indent:
-            break
-        block.append(line)
-    content_indent = min(len(line) - len(line.lstrip()) for line in block if line.strip())
-    return "\n".join(line[content_indent:] for line in block)
+    """The value of the one ``entry:`` key, as written."""
+    entries = [line.strip() for line in text.splitlines() if line.strip().startswith("entry:")]
+    assert len(entries) == 1, entries
+    return entries[0].removeprefix("entry:").strip()
+
+
+def run_pre_commit_entry(
+    config: HubConfig, root: Path, env: Mapping[str, str]
+) -> subprocess.CompletedProcess[str]:
+    """Run the hub-doctor entry as pre-commit runs a ``language: system`` hook: split, no shell."""
+    command = shlex.split(pre_commit_entry(text_of(config, ".pre-commit-config.yaml")))
+    assert command == ["./hub", "doctor"]
+    return subprocess.run(  # noqa: S603 - the rendered shim by absolute path, no shell
+        [str(root / "hub"), *command[1:]],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+        cwd=root,
+        env=dict(env),
+    )
 
 
 @pytest.mark.parametrize(("config_name", "branch"), [("demo", "main"), ("variant", "trunk")])
@@ -1493,21 +1537,9 @@ def test_runs_hub_doctor_through_shim_when_pre_commit_entry_run(
     fake_uv_bin: Path,
 ) -> None:
     root = a_hub_tree(variant_config, rendered_tree)
-    # pre-commit splits a `language: system` entry with shlex, then runs it without a shell.
-    command = shlex.split(pre_commit_entry(text_of(variant_config, ".pre-commit-config.yaml")))
-    bash = shutil.which("bash")
-    assert bash is not None, "the pre-commit entry runs bash: install it"
-    assert command[0] == "bash"
+    assert pre_commit_entry(text_of(variant_config, ".pre-commit-config.yaml")) == HUB_DOCTOR_ENTRY
 
-    completed = subprocess.run(  # noqa: S603 - absolute bash, the rendered entry, no shell
-        [bash, *command[1:]],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=60,
-        cwd=root,
-        env=run_env(fake_uv_bin),
-    )
+    completed = run_pre_commit_entry(variant_config, root, run_env(fake_uv_bin))
 
     assert completed.returncode == 0, completed.stderr
     source = pinned_source(RUN_VERSION)
@@ -1532,15 +1564,17 @@ def test_quotes_placeholders_when_yaml_template_read() -> None:
     }
 
     assert set(yaml_texts) == {"github/workflows/ci.yml.tmpl", "pre-commit-config.yaml.tmpl"}
+    found = dict.fromkeys(yaml_texts, 0)
     for name, text in yaml_texts.items():
-        found = 0
         for line in text.splitlines():
             for match in PLACEHOLDER.finditer(line):
-                found += 1
+                found[name] += 1
                 before, after = line[: match.start()], line[match.end() :]
                 assert before.count('"') % 2 == 1, f"{name}: {line!r}"
                 assert '"' in after, f"{name}: {line!r}"
-        assert found, f"{name} has no placeholder"
+    # The pre-commit entry is ./hub doctor: the pinned source lives in the shim (AGH-15).
+    assert found["github/workflows/ci.yml.tmpl"] > 0
+    assert found["pre-commit-config.yaml.tmpl"] == 0
 
 
 def test_quotes_values_when_variant_yaml_rendered() -> None:
@@ -1599,10 +1633,10 @@ FAKE_UVX_RC = "FAKE_UVX_RC"
 
 @pytest.fixture
 def no_uv_path(tmp_path: Path) -> str:
-    """A PATH folder holding only what the shims need besides uv: python3 and bash."""
+    """A PATH folder holding only what the shims need besides uv: python3 and sh."""
     folder = tmp_path / "no-uv-bin"
     folder.mkdir()
-    for tool in ("python3", "bash"):
+    for tool in ("python3", "sh"):
         found = shutil.which(tool)
         assert found is not None, f"the shim tests need {tool} on PATH"
         (folder / tool).symlink_to(found)
@@ -1620,18 +1654,7 @@ def run_shim(
     """Run the Makefile shim (``make brain-brief``) or the pre-commit hub-doctor entry."""
     if runner == "make":
         return run_make(root, fake_uv_bin, "brain-brief", env_overrides=env_overrides)
-    command = shlex.split(pre_commit_entry(text_of(config, ".pre-commit-config.yaml")))
-    bash = shutil.which("bash")
-    assert bash is not None, "the pre-commit entry runs bash: install it"
-    return subprocess.run(  # noqa: S603 - absolute bash, the rendered entry, no shell
-        [bash, *command[1:]],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=60,
-        cwd=root,
-        env=run_env(fake_uv_bin, env_overrides),
-    )
+    return run_pre_commit_entry(config, root, run_env(fake_uv_bin, env_overrides))
 
 
 def assert_shim_exit(runner: str, completed: subprocess.CompletedProcess[str], code: int) -> None:
@@ -2078,11 +2101,7 @@ def test_holds_no_project_identifier_when_demo_rendered(demo_config: HubConfig) 
     for path, text in texts.items():
         assert rendered_identifiers(text) == [], path
     carriers = {path for path, text in texts.items() if PLATFORM_CARRIER.search(text)}
-    assert carriers == {
-        ".pre-commit-config.yaml",
-        "Makefile",
-        "plugin/hub-workflow/hooks/session_start.py",
-    }
+    assert carriers == {"hub", "plugin/hub-workflow/hooks/session_start.py"}
 
 
 def test_holds_no_project_identifier_when_demo_paths_and_links_listed(
@@ -2153,6 +2172,8 @@ RUN_TIME_BRAIN_PATHS = {
     "brain/_inbox/mining/": "scripts/mine_transcripts.py",
     "brain/_inbox/sessions/": "plugin/hub-workflow/hooks/session_end.py",
     "brain/auto/workspace/session-snapshot.md": "plugin/hub-workflow/hooks/pre_compact.py",
+    # Written by `hub agent`, which the launcher runs.
+    "brain/auto/agent-context.md": "agent",
     "brain/learnings/gotchas/": "plugin/hub-workflow/skills/learn/SKILL.md",
 }
 
@@ -2269,6 +2290,7 @@ AGH10_GITIGNORE = (
     ".agent-runs/",
 )
 RUN_TIME_OUTPUTS = (
+    "brain/auto/agent-context.md",
     "brain/_inbox/sessions/",
     "brain/auto/workspace/session-snapshot.md",
     "brain/_inbox/mining/",

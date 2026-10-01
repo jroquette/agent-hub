@@ -1,1 +1,1 @@
-"""Workspace rules behind the hub commands (task worktree names, the session brief text), pure."""
+"""Workspace rules behind the hub commands: worktree names, brief text, agent launch; pure."""

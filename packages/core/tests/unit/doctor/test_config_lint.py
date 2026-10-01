@@ -918,11 +918,16 @@ class TestPortDivergences:
 
     def test_flags_untracked_script_when_listed(self, snapshot_of: SnapshotFactory) -> None:
         # ``permissions_bypass_scripts``: the old scan read tracked files only; the listing holds
-        # untracked, unignored files too (D3, Q-4), so ``scripts/x.sh`` is flagged.
+        # untracked, unignored files too (D3, Q-4), so ``scripts/x.sh`` is flagged. The old lint
+        # skipped its own file; AGH-15 D7 removed that exception, so it is flagged too.
         findings = run_case(snapshot_of, permissions_bypass_scripts_case())
 
         assert flagged(findings) == expected(
-            (*PERMISSIONS_BYPASS_SCRIPTS_GOLDEN, (BYPASS, "scripts/x.sh", 1))
+            (
+                *PERMISSIONS_BYPASS_SCRIPTS_GOLDEN,
+                (BYPASS, "scripts/x.sh", 1),
+                (BYPASS, LINT_NAME, 1),
+            )
         )
 
     def test_ignores_linked_commands_folder_when_listed(self, snapshot_of: SnapshotFactory) -> None:
@@ -970,11 +975,9 @@ class TestPortDivergences:
             (BYPASS, ".github/workflows/ci.yml", f"`{FLAG}`"),
         }
 
-    def test_flags_near_named_script_when_exception_anchored(
-        self, snapshot_of: SnapshotFactory
-    ) -> None:
-        # Q-8: the old scan skipped any path ending ``agent_config_lint.py``; only exactly
-        # ``scripts/agent_config_lint.py`` is skipped now.
+    def test_flags_every_lint_named_script_when_scanned(self, snapshot_of: SnapshotFactory) -> None:
+        # Q-8: the old scan skipped any path ending ``agent_config_lint.py``; AGH-15 D7 removed
+        # the last, anchored exception, so no such path is skipped.
         base = permissions_bypass_scripts_case()
         case = GoldenCase(
             files={
@@ -986,7 +989,7 @@ class TestPortDivergences:
         paths = {f.path for f in run_case(snapshot_of, case)}
 
         assert "scripts/sub/agent_config_lint.py" in paths
-        assert LINT_NAME not in paths
+        assert LINT_NAME in paths
 
     def test_reports_error_when_instruction_file_not_utf8(
         self, snapshot_of: SnapshotFactory

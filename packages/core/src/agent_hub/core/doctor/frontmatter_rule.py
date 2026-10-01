@@ -1,6 +1,6 @@
 """``rules.frontmatter``: closed frontmatter, rule globs that match, named agents and skills.
 
-The port of the hub's old ``agent_config_lint.py`` frontmatter checks over the listed regular
+The port of the hub's old config lint script's frontmatter checks over the listed regular
 instruction and plugin files (``config_lint``; spec AC-11.21, Q-5), each finding at line 1:
 
 - An instruction or plugin file whose first line is ``---`` and that no later line closes is

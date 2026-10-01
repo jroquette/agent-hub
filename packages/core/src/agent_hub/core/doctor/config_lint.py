@@ -1,6 +1,6 @@
 """The files the config-lint rules read, and their text and frontmatter (spec D4, Q-5, Q-6).
 
-The shared machinery of the hub's old ``agent_config_lint.py``, over the snapshot's listing:
+The shared machinery of the hub's old config lint script, over the snapshot's listing:
 only listed regular files count, so a link, to a file or a folder, is never followed and never
 an instruction file (spec D3, plan E1: a hub links each plugin agent into ``.claude/agents/``).
 

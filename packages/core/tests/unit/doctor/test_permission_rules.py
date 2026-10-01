@@ -337,7 +337,9 @@ class TestPermissionsBypass:
 
         assert found(PERMISSIONS_BYPASS, snapshot) == []
 
-    def test_skips_exactly_lint_script_when_scanning(self, snapshot_of: SnapshotFactory) -> None:
+    def test_flags_lint_script_name_when_scanning(self, snapshot_of: SnapshotFactory) -> None:
+        # AGH-15 D7: the old lint script is gone, and so is its exception: no path is skipped
+        # by name.
         line = f"# {FLAG}\n".encode()
         snapshot = snapshot_of(
             files={
@@ -348,6 +350,7 @@ class TestPermissionsBypass:
         )
 
         assert found(PERMISSIONS_BYPASS, snapshot) == [
+            (LINT_SCRIPT, 1, *FLAG_IN_FILE),
             ("scripts/sub/agent_config_lint.py", 1, *FLAG_IN_FILE),
             ("scripts/x_agent_config_lint.py", 1, *FLAG_IN_FILE),
         ]

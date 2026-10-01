@@ -16,7 +16,7 @@ Kind: `generic` (same for every project), `module` (only when selected in `modul
 | Entry in a generated hub | Kind | Ownership |
 |---|---|---|
 | `hub.json` (`hub.lock` is tool state: written by init and sync, not listed in itself) | project-owned | seeded |
-| `hub.schema.json`, `AGENTS.md` and `CLAUDE.md` (base rules), `Makefile`, `agent` launcher (shim), `.pre-commit-config.yaml`, `.github/workflows/ci.yml` | generic | managed |
+| `hub.schema.json`, `AGENTS.md` and `CLAUDE.md` (base rules), `Makefile`, `hub` shim, `agent` launcher, `.pre-commit-config.yaml`, `.github/workflows/ci.yml` | generic | managed |
 | `AGENTS.project.md` (project rules, created empty); `Makefile.project`; `README.md`; `.gitignore` (base entries) | project-owned (`README.md`, `.gitignore` generic) | seeded |
 | `.claude/settings.json` (merged with a seeded `.claude/settings.project.json`; it runs the base hooks, so a hub never enables `hub-workflow`: Claude Code drops only identical duplicate hook commands), `.claude/agents/` and `.claude/skills/` (one link per entry of both plugins, since cloud sessions do not install repo-declared plugins; not dotfiles such as `.gitkeep`; a new project entry is linked at the next sync) | generic (+ project-owned) | managed (+ seeded) |
 | `plugin/hub-workflow/**` (base agents, skills, hooks; same name in every hub; on adoption, Loki's `loki-workflow` becomes it plus `plugin/loki/`) | generic | managed |
@@ -81,20 +81,24 @@ ask on edits of the hooks folders. Proof: integration tests.
 
 | Hub item(s) | Becomes | Note |
 |---|---|---|
-| `worktree.sh`, `make worktree`, `make worktree-remove` | `hub worktree <name> [--only REPO]`, `--remove <name>` | keeps the per-repo setup/teardown scripts |
-| `brief.py`, `make brain-brief` | `hub brief` | SessionStart calls it (Hooks) |
+| `worktree.sh`, `make worktree`, `make worktree-remove` | `./hub worktree <name> [--only REPO]`, `--remove <name>` | keeps the per-repo setup/teardown scripts |
+| `brief.py`, `make brain-brief` | `./hub brief [--no-network]` | SessionStart calls it (Hooks) |
 | `agent_runner.py`, `make next`, `make run-issue` | `hub next`, `hub run <issue> --repo REPO [--live]` | through `TrackerClient` |
-| `agent`, `make agent` | shim for `hub agent` | adds each repo dir and appends its `AGENTS.md` |
+| `agent`, `make agent` | `./agent`: `exec ./hub agent "$@"` | `--add-dir` per repo dir; the repos' `AGENTS.md` in `brain/auto/agent-context.md` (rewritten per launch, gitignored); then `exec claude` |
 | `bench.py`, `make bench`, `make bench-validate` | `hub bench [--validate]`, module `bench` | cases stay in the brain |
 | `agent_config_lint.py`, `features_check.py`; `hubconfig.py` | doctor rules ([hub-doctor.md](hub-doctor.md)); `hubconfig.py` dropped (the CLI reads `HubConfig`) | skills run `hub doctor --only features.tracker` |
 | `cloud-setup.sh` | stays a hub file, module `cloud` | bootstraps access and the uv cache, so it cannot need the CLI |
 | `mine_transcripts.py`, `recall_transcripts.py`, `retro_metrics.py`, `make mine`, `make retro`; `guard.py`, `hubhooks.py`, `hooks.json`, `post_edit.py`, `stop_gate.py`, `session_start.py`, `session_end.py`, `pre_compact.py` | stay hub files, managed | scripts: AGH-5 R12, Phase 2 redesigns them; hooks: the hooks exception, AGH-5 D9 ([ADR 0012](../adr/0012-cli-subsumes-hub-scripts.md)) |
 | `make usage`, `make check`, `make help` | stay targets; `check` runs `hub doctor` and the hub's own tests | `usage` wraps an external cost tool until the Phase 2 cost view; hook tests move to agent-hub |
 
-A shim reads `platform.version` from `hub.json` at run time (stdlib `python3` one-liner). No uv: install hint, exit 127.
-A resolve step, `uvx --from <pinned source> hub --version`, fails: names the missing access, exit 1. Then the real call;
-its exit code passes through. A script is deleted when its command lands, after characterization tests of the untested
-(brief, bench, retro, lint, cloud setup). Order: `worktree`, `brief`, `doctor`, `agent`, `next`/`run`, `bench`.
+Every caller (Makefile `HUB`: `$(CURDIR)/hub` single-quoted; pre-commit `./hub doctor`; skills; `./agent`) goes
+through the managed POSIX `sh` shim `./hub`, run by its real path (a symlink elsewhere reads the link's folder): it
+reads `platform.version` from its own folder's `hub.json` at run time (stdlib `python3`; no `python3` or no uv: exit
+127; a bad pin: exit 1), runs the resolve step `uvx --from <pinned source> hub --version` (fails: exit 1 naming the
+source and the missing access, no real call), then `exec`s the real call, which keeps the caller's cwd, gets
+`AGENT_HUB_ROOT` = the shim's folder, and passes its exit code through. Windows is not supported. A script is deleted
+when its command lands, after characterization tests of the untested (brief, bench, retro, lint, cloud setup).
+Order: `worktree`, `brief`, `doctor`, `agent`, `next`/`run`, `bench`.
 
 ### Distribution
 

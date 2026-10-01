@@ -34,6 +34,9 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "CLAUDE.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "Makefile": (Kind.GENERIC, Ownership.MANAGED, None),
     "hub.schema.json": (Kind.GENERIC, Ownership.MANAGED, None),
+    # Row "`hub` (the shim), `agent` (the launcher)": generic, managed (AGH-15 D-shim).
+    "agent": (Kind.GENERIC, Ownership.MANAGED, None),
+    "hub": (Kind.GENERIC, Ownership.MANAGED, None),
     # Row "`AGENTS.project.md` (project rules, created empty); `Makefile.project`; `README.md`;
     # `.gitignore` (base entries)": project-owned (`README.md`, `.gitignore` generic), seeded.
     ".gitignore": (Kind.GENERIC, Ownership.SEEDED, None),
@@ -107,6 +110,8 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
 # file are not: the six hooks `hooks.json` runs and the three scripts.
 EXECUTABLE_PATHS = frozenset(
     {
+        "agent",
+        "hub",
         *(
             f"plugin/hub-workflow/hooks/{name}.py"
             for name in (
@@ -127,7 +132,7 @@ EXECUTABLE_PATHS = frozenset(
 
 # AC-3.12 (spec D5 "Out"): later issues generate these, never AGH-10's registry. AGH-19
 # (AC-4.29) brings `plugin/`, `.claude/` and `scripts/` into scope.
-OUT_OF_SCOPE_FILES = ("hub.json", "hub.lock", "agent")
+OUT_OF_SCOPE_FILES = ("hub.json", "hub.lock")
 OUT_OF_SCOPE_FOLDERS = (".claude-plugin/", "mk/")
 
 

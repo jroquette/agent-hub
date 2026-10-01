@@ -64,7 +64,7 @@ def next_steps(root: Path, *, git_init: bool) -> list[str]:
         *(["git init"] if git_init else []),
         "review hub.json, AGENTS.project.md and README.md",
         'git add -A && git commit -m "Create the hub"',
-        "start Claude Code in the hub folder: claude",
+        "start Claude Code with every repo attached: ./agent",
         "to upgrade later: edit platform.version in hub.json, then run hub sync",
     ]
     return ["Next steps:", *(f"  {number}. {step}" for number, step in enumerate(steps, 1))]

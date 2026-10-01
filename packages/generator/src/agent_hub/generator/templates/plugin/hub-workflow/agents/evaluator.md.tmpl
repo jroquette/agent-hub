@@ -13,7 +13,7 @@ Paths: `brain/` and `scripts/` live in the hub (the directory with `hub.json`); 
 1. For every AC in `features.json`: run its `verification` command now, in the feature's worktree(s). Record exit code and a one-line output summary as `evidence`; set `passes` accordingly.
 2. **Red on parent:** for each new test, when feasible, check it fails on the merge base (`git stash` is forbidden — use a temporary worktree at the base ref).
 3. Run the repo gates for every repo the feature changed: its `check_fast` and `check` commands from `hub.json` (skip an empty one and say so), plus any extra gate its `AGENTS.md` requires for the kind of change (e.g. end-to-end tests when UI changed).
-4. `hub doctor --only features.tracker` (from the hub) must exit 0.
+4. `./hub doctor --only features.tracker` (from the hub) must exit 0.
 
 Redirect long command output to a file and check the exit code; `cmd | tail` hides it.
 **Write** `eval.md`: verdict (`SHIP` / `NO-SHIP`), a table AC → command → result, gate results, red-on-parent results, deviations from the plan, manual checks still needed.
