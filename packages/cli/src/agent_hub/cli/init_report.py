@@ -11,10 +11,10 @@ from typing import Final
 
 from agent_hub.core.hub_files.plan_init import InitPlan
 
-# Only commands that work in this release: AGH-15 adds ./agent.
+# Only commands that work in this release; ./agent starts Claude Code with every repo attached.
 _REVIEW_STEP: Final = "review hub.json, AGENTS.project.md and README.md"
 _COMMIT_STEP: Final = 'git add -A && git commit -m "Create the hub"'
-_CLAUDE_STEP: Final = "start Claude Code in the hub folder: claude"
+_CLAUDE_STEP: Final = "start Claude Code with every repo attached: ./agent"
 _UPGRADE_STEP: Final = "to upgrade later: edit platform.version in hub.json, then run hub sync"
 _FIRST_PRINTABLE: Final = " "
 _LAST_PRINTABLE: Final = "~"

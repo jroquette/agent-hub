@@ -1,6 +1,6 @@
 """``secrets.config`` and ``attribution.ai`` (spec AC-11.23, plan E11).
 
-The port of the hub's old ``agent_config_lint.py`` text checks. Each line (``text_lines``, E29)
+The port of the hub's old config lint script's text checks. Each line (``text_lines``, E29)
 of the scanned files is searched for the old lint's nine secret shapes and three AI-attribution
 patterns; a finding names the kind at the file's line, never the text it matched.
 

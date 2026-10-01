@@ -1,6 +1,6 @@
 """``settings.valid``, ``permissions.bypass`` and ``mcp.pinned`` (spec AC-11.22, Q-8).
 
-The port of the hub's old ``agent_config_lint.py`` settings, bypass and MCP checks. Both JSON
+The port of the hub's old config lint script's settings, bypass and MCP checks. Both JSON
 files are fixed paths, read only as regular files (a link is never followed, D3):
 ``.claude/settings.json`` strictly for ``settings.valid``, as ``settings.weakening`` reads it
 (E25), and as the old lint read it for ``permissions.bypass`` (E34 f); ``.mcp.json`` as the old
@@ -13,8 +13,9 @@ has one (E6).
 - ``permissions.bypass``: settings' ``permissions.defaultMode`` is not ``bypassPermissions``; no key
   or string of either file holds the skip-permissions flag; nor does a line of a UTF-8 file of
   the hub's files (E31, E34 e: the listing and the fixed paths present) under ``scripts/`` or
-  ``.github/workflows/``, or ``Makefile`` or ``package.json``, save exactly
-  ``scripts/agent_config_lint.py`` (Q-8). A file that is not text is skipped (Q-19).
+  ``.github/workflows/``, or ``Makefile`` or ``package.json``; no path is skipped by name (the
+  old lint script's own exception went with it, AGH-15 D7). A file that is not text is skipped
+  (Q-19).
 - ``mcp.pinned``: each ``.mcp.json`` server, in key order, is not ``@latest`` and, run by
   ``npx``, names a version (``@<digit>``); settings' ``mcpServers`` are not checked.
 
@@ -52,8 +53,6 @@ CONFIG_FLAG: Final = "dangerously-skip-permissions"
 FILE_FLAG: Final = f"--{CONFIG_FLAG}"
 SCANNED_FOLDERS: Final = ("scripts/", ".github/workflows/")
 SCANNED_FILES: Final = frozenset({"Makefile", "package.json"})
-# The old lint itself names the flag; AGH-15 removes the script and this exception (Q-8).
-LINT_SCRIPT: Final = "scripts/agent_config_lint.py"
 NPX: Final = "npx"
 LATEST: Final = "@latest"
 
@@ -195,9 +194,7 @@ def _scanned_paths(hub: HubFiles, *, config: HubConfig) -> list[str]:
     """The hub's files the flag scan reads, once each, sorted (a fixed path may be listed)."""
     paths = dict.fromkeys(known_paths(hub, config=config))
     return sorted(
-        path
-        for path in paths
-        if path != LINT_SCRIPT and (path.startswith(SCANNED_FOLDERS) or path in SCANNED_FILES)
+        path for path in paths if path.startswith(SCANNED_FOLDERS) or path in SCANNED_FILES
     )
 
 

@@ -1040,3 +1040,38 @@ def _golden_sections(path: Path) -> dict[str, bytes]:
 def golden_sections() -> Callable[[Path], dict[str, bytes]]:
     """Parse a hub characterization golden into ``{stream: bytes}``."""
     return _golden_sections
+
+
+# ``hub agent``'s workspace (AC-15.8): a DEMO hub listing repos ``a``, ``b`` and ``c``.
+AGENT_REPOS = ("a", "b", "c")
+
+
+def agent_document() -> dict[str, Any]:
+    document = demo_document_value()
+    document["repos"] = [
+        {"dir": name, "github": f"acme/{name}", "check_fast": "true", "check": "true"}
+        for name in AGENT_REPOS
+    ]
+    document["guard"] = {"ask_before_edit": []}
+    return document
+
+
+@pytest.fixture(scope="session")
+def agent_workspace_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """``ws/hub``: the hub ``hub init --config`` writes for the agent document, built once."""
+    workspace = tmp_path_factory.mktemp("agent-workspace-template") / "ws"
+    workspace.mkdir()
+    hub = init_template(workspace, agent_document())
+    (workspace / "hub.json").unlink()
+    return hub.parent
+
+
+@pytest.fixture
+def agent_workspace(tmp_path: Path, agent_workspace_template: Path) -> Path:
+    """A copy at ``tmp_path/ws``: the hub, ``a`` with an ``AGENTS.md``, ``b`` without, no ``c``."""
+    workspace = tmp_path / "ws"
+    shutil.copytree(agent_workspace_template, workspace, symlinks=True)
+    (workspace / "a").mkdir()
+    (workspace / "a" / "AGENTS.md").write_bytes(b"# a\nRun make check.\n")
+    (workspace / "b").mkdir()
+    return workspace

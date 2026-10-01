@@ -115,7 +115,7 @@ _LICENSE_TEXTS: Final = ("Apache-2.0.txt", "MIT-compound-engineering-plugin.txt"
 
 
 def _entry_point(path: str) -> TemplateEntry:
-    """A Python entry point with a `#!` line: managed, executable, from `<path>.tmpl`."""
+    """An entry point with a `#!` line: managed, executable, from `<path>.tmpl`."""
     return TemplateEntry(
         path=path,
         source=_template(f"{path}.tmpl"),
@@ -148,6 +148,8 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
     _generic_managed("Makefile", "Makefile.tmpl"),
     _project_seeded("Makefile.project", "Makefile.project.tmpl"),
     _generic_seeded("README.md", "README.md.tmpl"),
+    # The launcher and the shim every hub command goes through (D-shim).
+    _entry_point("agent"),
     # Each .gitkeep has its own empty source: every template file is used by exactly one entry.
     _generic_seeded("brain/_inbox/.gitkeep", "brain/_inbox/gitkeep.tmpl"),
     _generic_seeded("brain/decisions/index.md", "brain/decisions/index.md.tmpl"),
@@ -159,6 +161,7 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
     _generic_seeded("brain/learnings/.gitkeep", "brain/learnings/gitkeep.tmpl"),
     _generic_seeded("brain/now.md", "brain/now.md.tmpl"),
     _generic_seeded("brain/playbooks/.gitkeep", "brain/playbooks/gitkeep.tmpl"),
+    _entry_point("hub"),
     TemplateEntry(
         path="hub.schema.json",
         source=TemplateSource(SCHEMA_PACKAGE, SCHEMA_FILE),

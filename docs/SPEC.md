@@ -65,6 +65,7 @@ hub sync --adopt   # joins a hand-made hub: identical files become managed, diff
 hub doctor      # checks rules, links, dead references and instruction size
 hub worktree NAME [--only REPO]   # isolated worktrees for one task (--remove NAME removes them)
 hub brief [--no-network]   # session brief: now, journal, repo/PR/CI state
+hub agent [ARGS…]   # claude with every repo attached (./agent)
 hub collect [FILE|-] [--db PATH]   # ingests canonical events from JSON Lines (stdin when FILE is omitted or -)
 ```
 

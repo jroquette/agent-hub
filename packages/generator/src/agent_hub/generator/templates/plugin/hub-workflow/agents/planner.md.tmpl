@@ -17,9 +17,9 @@ Paths: `brain/` and `scripts/` live in the hub (the directory with `hub.json`). 
    ```
    One entry per AC in the spec, `passes: false`, `evidence: null`. `verification` is the exact command from the plan,
    and its own exit status is the verdict: drop the plan's `; echo rc=$?` idiom and never end in `|| true` or `| tail`
-   (redirecting output to a file is fine). `hub doctor --only features.tracker` rejects a pending AC whose command
+   (redirecting output to a file is fine). `./hub doctor --only features.tracker` rejects a pending AC whose command
    masks its exit code.
-2. Validate: `hub doctor --only features.tracker` (from the hub) must exit 0.
+2. Validate: `./hub doctor --only features.tracker` (from the hub) must exit 0.
 3. Write `brain/features/<slug>/issues.md`: one issue per PR slice, in contract order, each with
    **Goal / Context / Constraints / Done when** + its AC ids, the repo, and a label: `tracker.ready_label` from `hub.json`
    (full test coverage, no path under `guard.ask_before_edit`, no open question) or `needs-human`.

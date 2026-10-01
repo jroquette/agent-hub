@@ -1,0 +1,41 @@
+#!/bin/sh
+# The hub command of the release pinned in hub.json (platform.version), read at every run: the
+# resolve step (hub --version), then the real call, which keeps the caller's folder and gets
+# AGENT_HUB_ROOT = this folder. No python3 or no uv: exit 127. The release cannot be resolved:
+# exit 1, the real call never made. Otherwise the exit code is the real call's. Run it by its real
+# path: its folder is the hub, so a symlink to it elsewhere (on PATH) would read the link's folder.
+# Managed by hub sync.
+case $0 in
+  */*) hub_dir=${0%/*} ;;
+  *) hub_dir=. ;;
+esac
+hub_dir=$(CDPATH= cd -P -- "$hub_dir" && pwd -P) || exit 1
+command -v python3 >/dev/null 2>&1 || {
+  echo "hub: python3 is not installed; it reads platform.version from hub.json" >&2
+  exit 127
+}
+version=$(python3 -I -S -c '
+import json, re, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as stream:
+        document = json.load(stream)
+except (OSError, ValueError):
+    sys.exit("hub: cannot read hub.json as JSON: " + sys.argv[1])
+platform = document.get("platform") if isinstance(document, dict) else None
+version = platform.get("version") if isinstance(platform, dict) else None
+if not (isinstance(version, str) and re.fullmatch("[0-9]+[.][0-9]+[.][0-9]+", version)):
+    sys.exit("hub: platform.version in hub.json must be X.Y.Z")
+print(version)
+' "$hub_dir/hub.json") || exit 1
+command -v uvx >/dev/null 2>&1 || {
+  echo "hub: uv is not installed; see https://docs.astral.sh/uv/getting-started/installation/" >&2
+  exit 127
+}
+source="@@{platform_repository}@v$version#subdirectory=packages/agent-hub"
+uvx --from "$source" hub --version </dev/null >/dev/null || {
+  echo "hub: cannot run agent-hub $version from $source; check read access to the repository (a credential, or the repository attached to this session)" >&2
+  exit 1
+}
+AGENT_HUB_ROOT=$hub_dir
+export AGENT_HUB_ROOT
+exec uvx --from "$source" hub "$@"
