@@ -89,7 +89,7 @@ each session did, decided and learned.
 - 📌 **Same behavior on every machine.** Each hub pins one release of the tool, so your laptop, CI and cloud sessions
   run exactly the same version, with no global install.
 - 🛡️ **Guardrails built in.** The generated hooks block secrets, pushes to `main`, force-pushes and AI attribution, and
-  stop a session while the repo's fast checks fail on the code it changed.
+  keep a session from finishing while the repo's fast checks fail on the code it changed.
 - 🩺 **Catch problems early.** `hub doctor` finds broken links, missing files, oversized instruction files and drift
   from the template, each with a one-line fix.
 - 🧠 **Memory you control.** Agents propose what they learned into an inbox; only a human promotes it into the brain.
@@ -317,6 +317,70 @@ learning proposal for `brain/_inbox/`.
 **Add your own.** Put a skill in `plugin/<project>/skills/<name>/SKILL.md` or an agent in
 `plugin/<project>/agents/<name>.md`, then run `./hub sync`: it links them into `.claude/`, where every session in the
 hub finds them. A name already used by `hub-workflow` keeps the base one, and `hub sync` reports the clash.
+
+### What the hooks do for you
+
+Six hooks run on their own in every session in the hub. You never call them.
+
+- **When a session starts**, the brief from `./hub brief` is put in the agent's context. If the pinned release cannot
+  run, a shorter brief built from `brain/now.md` and the last journal days takes its place, and its header says why.
+- **Before each tool call**, the *guard* blocks dangerous actions (force-pushes, pushes to the default branch, reading
+  secret files, AI attribution) and asks you before risky ones (removing test assertions, editing the hooks or
+  `hub.json`, paths in `guard.ask_before_edit`).
+- **After each edit** of a file in a repo, the repo's own formatter and linter run on it (ruff for Python, prettier and
+  eslint for JavaScript and TypeScript, when the repo has them installed), and any lint left over goes back to the agent.
+- **When the agent wants to finish**, the *stop gate* runs `check_fast` in each repo whose code changed during the
+  session. While a check fails, it blocks the finish and sends the failures back to the agent. After 3 blocks in a row
+  it lets go with a warning, so a session never loops forever. When the checks pass, it reminds the agent to run
+  `/handoff`.
+- **Before the context is compacted**, a snapshot (your last request, and the branch and changed files of each
+  checkout) is saved to `brain/auto/workspace/session-snapshot.md` and put back in the context afterwards.
+- **When the session ends**, a short log entry is appended to `brain/_inbox/sessions/YYYY-MM-DD.md` for you to review.
+
+<details>
+<summary><strong>What the guard blocks and asks, and how to configure it</strong></summary>
+
+**Blocked, always:**
+
+- force-pushes and pushes to `main`, `master` or `project.default_branch`;
+- `curl … | sh`, and network calls to the hosts in `guard.deny_hosts`;
+- deleting Docker volumes (`docker volume rm|prune`, `compose down -v`) and infrastructure changes (`terraform
+  apply|destroy|import`, `aws`, `pulumi up|destroy`, `kubectl apply|delete`);
+- reading secret files (`.env*` other than examples and samples, `*.pem`, `*.key`, `*.p12`, `*.pfx`, SSH private keys),
+  from any tool or command;
+- AI attribution in commits, tags and pull requests, and `claude/…` branches;
+- touching the `.git` internals, and reading or changing any path in `guard.deny_paths`.
+
+**Asked first:**
+
+- editing the guard's own files (`plugin/hub-workflow/hooks/`, `plugin/<project>/hooks/`, `.claude/settings*.json`,
+  `hub.json`, `hub.lock`), or removing or moving their folders;
+- removing assertions from a test, or adding skip, xfail, quarantine or fixme markers;
+- deleting or `sed`-editing test files from the shell;
+- writing in `brain/` outside `now.md`, `journal/`, `_inbox/`, `auto/` and `features/`;
+- editing a path in `guard.ask_before_edit`.
+
+Everything else goes through Claude Code's normal permission rules.
+
+**Configuration.** The lists come from `hub.json`: `guard.ask_before_edit`, `guard.deny_paths` and `guard.deny_hosts`,
+plus `project.default_branch` and `project.branch_prefix`. An entry `@hub/<path>` means `<path>` inside the hub. A
+`hub.json` named by `$HUB_CONFIG` can only add entries to these lists, never remove them.
+
+**Your own rules.** The seeded `plugin/<project>/hooks/project_guard.py` defines `check(event, cfg)`, which returns
+`None`, or `("ask", reason)` or `("deny", reason)`; by default it does nothing. It runs in a separate process with a
+3-second timeout, only when the base guard did not already deny, and it can only make the verdict stricter. A crash, a
+timeout or an unexpected answer becomes an ask that names the cause. `hub doctor` (rule `hooks.guard-extension`)
+checks that the file parses and defines `check`.
+
+**When something goes wrong.** If the guard itself fails, it asks you; it never lets a call through unchecked. The
+other hooks fail open: on an error they print one line and let the session continue. All hooks are Python 3.9
+standard-library scripts run by the system `python3`.
+
+**Where they are wired.** The hub's `.claude/settings.json` runs the hooks from `plugin/hub-workflow/hooks/`, so they
+also work in cloud sessions, which do not install plugins. Do not also enable `hub-workflow` from a plugin
+marketplace: the hooks would run twice.
+
+</details>
 
 ## 📖 Usage guide
 
