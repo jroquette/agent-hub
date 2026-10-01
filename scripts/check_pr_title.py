@@ -16,6 +16,7 @@ SCOPES = (
     "collector",
     "cli",
     "generator",
+    "tracker",
     "api",
     "web",
     "repo",

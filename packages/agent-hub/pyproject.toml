@@ -4,13 +4,14 @@ version = "0.3.0"
 description = "Installs every agent-hub package and the hub command."
 requires-python = ">=3.14"
 dependencies = ["agent-hub-core", "agent-hub-storage", "agent-hub-collector", "agent-hub-generator",
-                "agent-hub-cli"]
+                "agent-hub-tracker-linear", "agent-hub-cli"]
 
 [tool.uv.sources]
 agent-hub-core = { workspace = true }
 agent-hub-storage = { workspace = true }
 agent-hub-collector = { workspace = true }
 agent-hub-generator = { workspace = true }
+agent-hub-tracker-linear = { workspace = true }
 agent-hub-cli = { workspace = true }
 
 [project.scripts]
