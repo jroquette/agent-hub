@@ -31,7 +31,10 @@ def snapshot_of() -> SnapshotFactory:
     ``paths_read`` whether every fixed and lock path was read (by default, when no ``problem``
     is given); ``base_hooks`` is
     the release's base hooks block, ``None`` when it was not built. ``repos`` maps each repo
-    dir to its checkout's regular files by bytes (all listed), ``None`` when it has no checkout.
+    dir to its checkout's regular files by bytes, ``None`` when it has no checkout; keyed by repo
+    dir, ``repo_links`` adds links by target, ``repo_listed`` replaces the checkout's listing
+    (every file and link given, sorted, by default) and ``repo_problems`` says why it could not
+    all be listed or read.
     """
 
     def build(
@@ -46,6 +49,9 @@ def snapshot_of() -> SnapshotFactory:
         paths_read: bool | None = None,
         base_hooks: Mapping[str, JsonValue] | None = None,
         repos: Mapping[str, Mapping[str, bytes] | None] | None = None,
+        repo_links: Mapping[str, Mapping[str, str]] | None = None,
+        repo_listed: Mapping[str, tuple[str, ...]] | None = None,
+        repo_problems: Mapping[str, str] | None = None,
     ) -> DoctorSnapshot:
         found: dict[str, TreeEntry] = {
             path: FileEntry(executable=False, content=content)
@@ -67,7 +73,17 @@ def snapshot_of() -> SnapshotFactory:
             lock=lock,
             base_hooks=base_hooks,
             repos=tuple(
-                RepoFiles(dir=repo, files=None if files is None else _checkout_of(files))
+                RepoFiles(
+                    dir=repo,
+                    files=None
+                    if files is None
+                    else _checkout_of(
+                        files,
+                        links=(repo_links or {}).get(repo, {}),
+                        listed=(repo_listed or {}).get(repo),
+                        problem=(repo_problems or {}).get(repo),
+                    ),
+                )
                 for repo, files in (repos or {}).items()
             ),
         )
@@ -75,13 +91,21 @@ def snapshot_of() -> SnapshotFactory:
     return build
 
 
-def _checkout_of(files: Mapping[str, bytes]) -> HubFiles:
-    """A checkout whose regular files are all listed and read."""
+def _checkout_of(
+    files: Mapping[str, bytes],
+    *,
+    links: Mapping[str, str],
+    listed: tuple[str, ...] | None,
+    problem: str | None,
+) -> HubFiles:
+    """A checkout of regular files by bytes and links by target, listed as given or all."""
+    found: dict[str, TreeEntry] = {
+        path: FileEntry(executable=False, content=content) for path, content in files.items()
+    }
+    found |= {path: LinkEntry(target=target, outside=False) for path, target in links.items()}
     return HubFiles(
-        entries={
-            path: FileEntry(executable=False, content=content) for path, content in files.items()
-        },
-        listed=tuple(sorted(files)),
-        problem=None,
-        paths_read=True,
+        entries=found,
+        listed=tuple(sorted(found)) if listed is None else listed,
+        problem=problem,
+        paths_read=problem is None,
     )
