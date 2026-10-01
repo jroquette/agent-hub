@@ -1,6 +1,10 @@
 import pytest
 
-from agent_hub.core.workspace.worktree_name import worktree_branch, worktree_name_problem
+from agent_hub.core.workspace.worktree_name import (
+    worktree_branch,
+    worktree_name_example,
+    worktree_name_problem,
+)
 
 
 @pytest.mark.parametrize("name", ["dem-7", "dem-7-collector", "dem-12-a.b_c"])
@@ -27,3 +31,7 @@ def test_refuses_trailing_newline_when_name_ends_with_one() -> None:
 def test_joins_prefix_when_branch_built() -> None:
     assert worktree_branch("dem-7-x", prefix="jdoe/") == "jdoe/dem-7-x"
     assert worktree_branch("dem-7-x", prefix="") == "dem-7-x"
+
+
+def test_lowercases_team_when_example_built() -> None:
+    assert worktree_name_example("DEM") == "dem-7-collector"
