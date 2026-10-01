@@ -979,7 +979,7 @@ def test_reports_no_text_problem_when_files_are_text(snapshot_of: SnapshotFactor
 
 REPOS = frozenset({Read.REPOS})
 LINKS, LEAK = "links.dead", "brain.leak"
-CHECKOUT_FIX = "clone the repo into ../demo-web so its files are checked too"
+CHECKOUT_FIX = "clone the repo next to the hub"
 
 
 def a_two_repo_config(*, rules: dict[str, Any] | None = None, extra: str = "demo-web") -> HubConfig:
@@ -1021,7 +1021,7 @@ def checkout_finding(rule: str, *, repo: str = "demo-web") -> Finding:
         path=f"../{repo}",
         line=None,
         message=f"repo {repo} is not checked out next to the hub; its repo checks are skipped",
-        fix=f"clone the repo into ../{repo} so its files are checked too",
+        fix=CHECKOUT_FIX,
     )
 
 
@@ -1148,6 +1148,106 @@ def test_cuts_repo_dir_when_missing_checkout_dir_long(snapshot_of: SnapshotFacto
             path=f"../{long_dir}",
             line=None,
             message=f"repo {shown} is not checked out next to the hub; its repo checks are skipped",
-            fix=f"clone the repo into ../{shown} so its files are checked too",
+            fix=CHECKOUT_FIX,
         ),
     )
+
+
+REPO_PROBLEM = "could not list the files: git ls-files failed: fatal: detected dubious ownership"
+
+
+def repo_problem_finding(rule: str, *, repo: str = "demo-web") -> Finding:
+    """The one error a checkout that could not be listed gives (E36): path ``../<dir>``."""
+    return Finding(
+        rule=rule,
+        severity=Severity.ERROR,
+        path=f"../{repo}",
+        line=None,
+        message=REPO_PROBLEM,
+        fix=TREE_FIX,
+    )
+
+
+@pytest.mark.parametrize(
+    ("rules", "only", "rule"),
+    [
+        pytest.param({}, [], LEAK, id="first-by-id"),
+        pytest.param({}, [LINKS], LINKS, id="only-links"),
+        pytest.param({}, [LEAK], LEAK, id="only-leak"),
+        pytest.param({LEAK: {"enabled": False}}, [], LINKS, id="leak-disabled"),
+        pytest.param({LEAK: {"severity": "info"}}, [LEAK], LEAK, id="reader-retuned"),
+    ],
+)
+def test_reports_repo_listing_problem_once_when_repo_rule_selected(
+    snapshot_of: SnapshotFactory, *, rules: dict[str, Any], only: list[str], rule: str
+) -> None:
+    spies = Spies()
+    config = a_two_repo_config(rules=rules)
+    snapshot = snapshot_of(
+        config=config,
+        repos={"demo-api": {"README.md": b"# Api\n"}, "demo-web": {"README.md": b"# Web\n"}},
+        repo_problems={"demo-web": REPO_PROBLEM},
+    )
+
+    findings = run_rules(selected(a_repo_registry(spies), config=config, only=only), snapshot)
+
+    problems = [finding for finding in findings if finding.path == "../demo-web"]
+    assert problems == [repo_problem_finding(rule)]
+    assert count_findings(problems).errors == 1
+
+
+def test_reports_each_repo_listing_problem_when_two_fail(snapshot_of: SnapshotFactory) -> None:
+    spies = Spies()
+    config = a_two_repo_config()
+    # Given out of path order, one missing as well: the findings are sorted by path.
+    snapshot = snapshot_of(
+        config=config,
+        repos={"demo-web": {}, "demo-api": {}, "demo-gone": None},
+        repo_problems={"demo-web": REPO_PROBLEM, "demo-api": REPO_PROBLEM},
+    )
+
+    findings = run_rules(selected(a_repo_registry(spies), config=config, only=[LINKS]), snapshot)
+
+    assert findings == (
+        repo_problem_finding(LINKS, repo="demo-api"),
+        checkout_finding(LINKS, repo="demo-gone"),
+        repo_problem_finding(LINKS, repo="demo-web"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("rules", "only"),
+    [
+        pytest.param({}, [TRACKER], id="repo-rules-not-named"),
+        pytest.param({LINKS: {"enabled": False}, LEAK: {"enabled": False}}, [], id="disabled"),
+    ],
+)
+def test_skips_repo_listing_problem_when_no_repo_rule_selected(
+    snapshot_of: SnapshotFactory, *, rules: dict[str, Any], only: list[str]
+) -> None:
+    spies = Spies()
+    config = a_two_repo_config(rules=rules)
+    snapshot = snapshot_of(
+        config=config, repos={"demo-api": {}}, repo_problems={"demo-api": REPO_PROBLEM}
+    )
+
+    findings = run_rules(selected(a_repo_registry(spies), config=config, only=only), snapshot)
+
+    assert findings == ()
+
+
+def test_reports_no_repo_listing_problem_when_config_failed(snapshot_of: SnapshotFactory) -> None:
+    spies = Spies()
+    registry = (
+        spies.rule("config.schema", emits=[(Severity.ERROR, "hub.json", None, "problem")]),
+        spies.rule(LEAK, reads=REPOS),
+    )
+    snapshot = snapshot_of(
+        config=failure_of(with_rules({"nope": {}})),
+        repos={"demo-api": {}},
+        repo_problems={"demo-api": REPO_PROBLEM},
+    )
+
+    findings = run_rules(Selection(rules=registry, notes=(), severities={}), snapshot)
+
+    assert [(f.rule, f.path) for f in findings] == [("config.schema", "hub.json")]
