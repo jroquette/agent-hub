@@ -11,6 +11,7 @@ from agent_hub.tracker_linear.mcp_protocol import (
     LINEAR_TOOL_PREFIX,
     MAX_COMMENT_CHARS,
     MAX_LABELS,
+    MAX_NAME_CHARS,
     MAX_NAMES,
     MAX_QUOTED_CHARS,
     MAX_READY_ISSUES,
@@ -124,6 +125,7 @@ def _line(value: object) -> str:
         ("MAX_READY_ISSUES", MAX_READY_ISSUES, 100),
         ("MAX_LABELS", MAX_LABELS, 50),
         ("MAX_NAMES", MAX_NAMES, 250),
+        ("MAX_NAME_CHARS", MAX_NAME_CHARS, 256),
         ("MAX_COMMENT_CHARS", MAX_COMMENT_CHARS, 10_000),
         ("MAX_QUOTED_CHARS", MAX_QUOTED_CHARS, 200),
         ("LINEAR_TOOL_PREFIX", LINEAR_TOOL_PREFIX, "mcp__Linear__"),
@@ -137,11 +139,15 @@ def test_writes_one_sorted_line_when_request_built() -> None:
     line = request_line("save_comment", {"issue_id": "DEM-1", "body": 'a\n"b"é'})
 
     assert line == (
-        '{"arguments": {"body": "a\\n\\"b\\"\\u00e9", "issue_id": "DEM-1"}, '
-        '"operation": "save_comment"}'
+        '{"arguments": {"body": "a\\n\\"b\\"\\u00e9", "issue\\u005fid": "DEM-1"}, '
+        '"operation": "save\\u005fcomment"}'
     )
     assert "\n" not in line
     assert line.isascii()
+    assert json.loads(line) == {
+        "arguments": {"body": 'a\n"b"\u00e9', "issue_id": "DEM-1"},
+        "operation": "save_comment",
+    }
 
 
 def test_writes_label_set_as_list_when_request_built() -> None:
@@ -390,3 +396,68 @@ def test_quotes_error_when_reply_error_unknown(call: McpCall[Any], reply: str) -
         parse_reply(call, reply)
 
     assert 'tracker.transport to "api"' in str(raised.value)
+
+
+_PREFIXED = "see mcp__Linear__save_issue, then mcp__x"
+
+
+@pytest.mark.parametrize(
+    ("call", "argument", "value"),
+    [
+        (save_comment_call("DEM-1", _PREFIXED), "body", _PREFIXED),
+        (save_labels_call("add_label", "DEM-1", ("mcp__x", "a_b")), "labels", ["mcp__x", "a_b"]),
+        (save_state_call("DEM-1", "mcp__Done"), "state", "mcp__Done"),
+        (list_ready_call("DEM", "mcp__ready"), "label", "mcp__ready"),
+    ],
+    ids=["comment", "labels", "state", "ready-label"],
+)
+def test_hides_prefix_when_argument_holds_it(
+    call: McpCall[Any], argument: str, value: object
+) -> None:
+    text = prompt(call)
+
+    assert "mcp__" not in text
+    assert json.loads(text.splitlines()[-1])["arguments"][argument] == value
+
+
+_LONG_NAME = "n" * (MAX_NAME_CHARS + 1)
+
+
+@pytest.mark.parametrize(
+    ("build", "operation"),
+    [
+        (lambda name: list_ready_call("DEM", name), "list_ready"),
+        (lambda name: list_ready_call(name, "agent-ready"), "list_ready"),
+        (lambda name: save_state_call("DEM-1", name), "move_state DEM-1"),
+        (lambda name: save_labels_call("add_label", "DEM-1", ("a", name)), "add_label DEM-1"),
+    ],
+    ids=["ready-label", "team", "state", "label"],
+)
+def test_refuses_name_when_request_name_over_cap(build: Any, operation: str) -> None:
+    build("n" * MAX_NAME_CHARS)
+
+    with pytest.raises(TrackerError, match=f"^{operation}: .*over {MAX_NAME_CHARS} characters"):
+        build(_LONG_NAME)
+
+
+@pytest.mark.parametrize(
+    ("call", "reply"),
+    [
+        (state_read_call("DEM-1"), {"id": "DEM-1", "state": "Todo", "states": [_LONG_NAME]}),
+        (state_read_call("DEM-1"), {"id": "DEM-1", "state": _LONG_NAME, "states": []}),
+        (
+            label_read_call("add_label", "DEM-1"),
+            {"id": "DEM-1", "labels": [], "available_labels": [_LONG_NAME]},
+        ),
+        (save_labels_call("add_label", "DEM-1", ("a",)), {"id": "DEM-1", "labels": [_LONG_NAME]}),
+        (get_issue_call("DEM-1"), {"issue": {**_ISSUE_JSON, "labels": [_LONG_NAME]}}),
+        (
+            list_ready_call("DEM", "agent-ready"),
+            {"issues": [{**_ISSUE_JSON, "state_type": _LONG_NAME}], "more": False},
+        ),
+    ],
+    ids=["states", "state", "available-labels", "saved-labels", "issue-labels", "state-type"],
+)
+def test_refuses_reply_when_name_over_cap(call: McpCall[Any], reply: dict[str, Any]) -> None:
+    with pytest.raises(TrackerError, match=f"a name over {MAX_NAME_CHARS} characters"):
+        parse_reply(call, _line(reply))
