@@ -243,12 +243,16 @@ class CommentSaved:
 
 @dataclass(frozen=True, slots=True)
 class _Many:
-    """A list of ``item``s, at most ``limit``; more is refused with its own cause and fix."""
+    """A list of ``item``s, at most ``limit``; more is refused with its own cause and fix.
+
+    With ``unique_key``, no two items may hold the same value under that key.
+    """
 
     item: Shape
     limit: int
     noun: str
     fix: str
+    unique_key: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -287,6 +291,7 @@ _SHAPES: Mapping[CallKind, Shape] = {
             MAX_READY_ISSUES,
             "issues",
             "close or unlabel issues in Linear, or list a narrower label",
+            unique_key="id",
         ),
         "more": bool,
     },
@@ -557,14 +562,23 @@ def _problem(value: object, shape: Shape) -> tuple[str, str] | None:
             return "", _SHAPE_FIX
         return _first((_problem(value[name], field) for name, field in shape.items()))
     if isinstance(shape, _Many):
-        if not isinstance(value, list):
-            return "", _SHAPE_FIX
-        if len(value) > shape.limit:
-            return f"the reply lists more than {shape.limit} {shape.noun}", shape.fix
-        return _first(_problem(item, shape.item) for item in value)
+        return _many_problem(value, shape)
     if isinstance(shape, _Text):
         return _text_problem(value, shape)
     return None if isinstance(value, shape) else ("", _SHAPE_FIX)
+
+
+def _many_problem(value: object, shape: _Many) -> tuple[str, str] | None:
+    if not isinstance(value, list):
+        return "", _SHAPE_FIX
+    if len(value) > shape.limit:
+        return f"the reply lists more than {shape.limit} {shape.noun}", shape.fix
+    problem = _first(_problem(item, shape.item) for item in value)
+    if problem is None and shape.unique_key is not None:
+        keys = [item[shape.unique_key] for item in value]
+        if len(set(keys)) != len(keys):
+            return "", _SHAPE_FIX
+    return problem
 
 
 def _text_problem(value: object, shape: _Text) -> tuple[str, str] | None:

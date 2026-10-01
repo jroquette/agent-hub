@@ -873,3 +873,11 @@ class TestErrorResults:
         message = str(raised.value)
         assert repr("s" * 200) in message, message
         assert "s" * 201 not in message
+
+
+def test_refuses_list_when_issue_repeated(hub_root: Path) -> None:
+    item = _ready_item("DEM-1", "started", ["agent-ready"])
+    runner = _Scripted(_reply({"issues": [item, item], "more": False}))
+
+    with pytest.raises(TrackerError, match=r"^list_ready: the reply has another shape"):
+        _client(runner, hub_root).list_ready("DEM", "agent-ready")

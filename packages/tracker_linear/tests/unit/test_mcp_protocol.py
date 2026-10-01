@@ -284,12 +284,15 @@ def test_rejects_ready_issue_when_field_wrong(issue_change: dict[str, Any], frag
 
 
 def test_rejects_reply_when_issues_over_bound() -> None:
-    issue = {**_ISSUE_JSON, "state_type": "started"}
+    issues = [
+        {**_ISSUE_JSON, "id": f"DEM-{number}", "state_type": "started"}
+        for number in range(1, MAX_READY_ISSUES + 2)
+    ]
     call = list_ready_call("DEM", "agent-ready")
 
-    parse_reply(call, _line({"issues": [issue] * MAX_READY_ISSUES, "more": False}))
+    parse_reply(call, _line({"issues": issues[:MAX_READY_ISSUES], "more": False}))
     with pytest.raises(TrackerError, match=f"more than {MAX_READY_ISSUES} issues"):
-        parse_reply(call, _line({"issues": [issue] * (MAX_READY_ISSUES + 1), "more": False}))
+        parse_reply(call, _line({"issues": issues, "more": False}))
 
 
 @pytest.mark.parametrize(
@@ -623,3 +626,13 @@ def test_names_operation_and_issue_when_call_error_built() -> None:
     assert str(error) == "move_state DEM-1: a cause; a fix"
     assert str(write_error).startswith(f"move_state DEM-1: a cause; {_WRITE_FIX}")
     assert quoted("x" * 500) == repr("x" * MAX_QUOTED_CHARS)
+
+
+def test_rejects_reply_when_issue_listed_twice() -> None:
+    first = {**_ISSUE_JSON, "state_type": "started"}
+    again = {**first, "title": "Another title"}
+
+    with pytest.raises(TrackerError, match=r"^list_ready: the reply has another shape"):
+        parse_reply(
+            list_ready_call("DEM", "agent-ready"), _line({"issues": [first, again], "more": False})
+        )
