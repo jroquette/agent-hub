@@ -30,14 +30,14 @@ block, built by the templates package installed with the running CLI, so doctor 
 (`settings.weakening`). A third, read only when a repo rule (`brain.leak`, `links.dead`) is selected, is the files of
 each `repos[].dir` checkout at `../<dir>`: a missing or non-folder `../<dir>` gives one `info`, a checkout that cannot
 be listed one `error` (its cause), both at `../<dir>` on the first selected repo rule by id, never retuned; the repo
-rules skip both. A root with no `.git` entry, a hub inside a larger repository included, is
-walked, skipping `.git` and nested repositories. A root with a `.git` entry is listed with
-`git ls-files -z --cached --others --exclude-standard`, and git must name the root as the work-tree top; git missing,
-failing, timing out or naming another top is a tree problem, never a walk. No link is followed, and git runs only when a
-selected rule needs a listing. A tree problem (a failed listing or read of the hub) is one `error` finding at path `.`
-on the first selected rule, by id, that reads the listing, else the first by id other than `config.schema` and
-`platform.version` (none when only those run), never retuned; its message is the cause (`could not list the files: …`
-or `could not read the files: <path>: …`), its fix one line. Fixed paths are read one by one before the listing, so a
+rules skip both. A linked `../<dir>` is resolved once to its real path. A root with no `.git` entry, a hub inside a
+larger repository included, is walked, skipping `.git` and nested repositories. A root with a `.git` entry is listed
+with `git ls-files -z --cached --others --exclude-standard`, and git must name the root as the work-tree top; git
+missing, failing, timing out or naming another top is a tree problem, never a walk. No link is followed, and git runs
+only when a selected rule needs a listing. A tree problem (a failed listing or read of the hub) is one `error` finding
+at path `.` on the first selected rule, by id, that reads the listing, else the first by id other than `config.schema`
+and `platform.version` (none when only those run), never retuned; its message is the cause (`could not list the files:
+…` or `could not read the files: <path>: …`), its fix one line. Fixed paths are read one by one before the listing, so a
 failed listing keeps them; after a failed read no rule calls an absent path missing. A rule whose check raises gives one
 `error` of that rule at `.` (`rule crashed: <type>: <message>`), never retuned, and the other rules keep running. An
 instruction or plugin file that is not UTF-8 text (a NUL included) is one `error` at its path (`not UTF-8 text: …`),
