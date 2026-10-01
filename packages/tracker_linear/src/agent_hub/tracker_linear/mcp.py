@@ -27,7 +27,12 @@ from typing import Any, Protocol
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.json_form import InvalidJsonError, JsonValue, load_json_bytes
 from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, Issue
-from agent_hub.tracker_linear.claude_process import CLAUDE_PROGRAM, ClaudeOutput, run_claude
+from agent_hub.tracker_linear.claude_process import (
+    CLAUDE_PROGRAM,
+    ClaudeOutput,
+    ClaudeRunError,
+    run_claude,
+)
 from agent_hub.tracker_linear.graphql import DONE_STATE_TYPES, LINEAR_API_KEY_VARIABLE
 from agent_hub.tracker_linear.mcp_protocol import (
     DENIED,
@@ -72,7 +77,10 @@ class Runner(Protocol):
     def __call__(
         self, argv: Sequence[str], *, cwd: Path | str, env: Mapping[str, str], timeout_s: float
     ) -> ClaudeOutput:
-        """Run one call; ``TimeoutError`` past ``timeout_s``, ``OSError`` if it cannot start."""
+        """Run one call; ``TimeoutError`` past ``timeout_s``, ``OSError`` if it cannot start.
+
+        ``ClaudeRunError`` (an ``OSError``) is an OS error after the call started.
+        """
         ...
 
 
@@ -254,6 +262,11 @@ class McpTrackerClient:
             # Before OSError, of which TimeoutError is a subclass.
             raise call_error(
                 call, f"no answer from claude within {self.timeout_s:g} s", _RETRY_FIX
+            ) from None
+        except ClaudeRunError as error:
+            # claude ran: a write call may have written.
+            raise call_error(
+                call, f"claude failed while running: {quoted(error.strerror)}", _RETRY_FIX
             ) from None
         except FileNotFoundError as error:
             if str(error.filename) == str(self.cwd):

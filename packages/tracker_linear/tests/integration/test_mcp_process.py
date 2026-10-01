@@ -20,6 +20,7 @@ import pytest
 from agent_hub.tracker_linear.claude_process import (
     CLAUDE_PROGRAM,
     ClaudeOutput,
+    ClaudeRunError,
     run_claude,
 )
 
@@ -291,3 +292,40 @@ def test_reaps_child_when_interrupted(
     assert child.returncode == -signal.SIGKILL
     with pytest.raises(ChildProcessError):
         os.waitpid(child.pid, os.WNOHANG)
+
+
+def test_raises_run_error_and_reaps_when_reading_fails_after_start(
+    tmp_path: Path, fake_bin: Path, hub_root: Path, *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    children: list[subprocess.Popen[bytes]] = []
+
+    def failing(child: subprocess.Popen[bytes], timeout: float | None = None) -> None:
+        children.append(child)
+        _wait_for(tmp_path / "record.json")
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", failing)
+    env = _env(tmp_path, fake_bin, mode="sleep")
+
+    with pytest.raises(ClaudeRunError, match="Input/output error") as raised:
+        run_claude([CLAUDE_PROGRAM, "-p", "x"], cwd=hub_root, env=env, timeout_s=30.0)
+
+    assert isinstance(raised.value, OSError)
+    [child] = children
+    assert child.returncode == -signal.SIGKILL
+
+
+def test_raises_plain_error_when_claude_cannot_start(
+    tmp_path: Path, fake_bin: Path, hub_root: Path
+) -> None:
+    # Before the child exists: not a ClaudeRunError, so the caller knows nothing ran.
+    with pytest.raises(OSError) as raised:
+        run_claude(
+            [CLAUDE_PROGRAM, "-p", "x"],
+            cwd=hub_root / "missing",
+            env=_env(tmp_path, fake_bin),
+            timeout_s=30.0,
+        )
+
+    assert not isinstance(raised.value, ClaudeRunError)
+    assert not (tmp_path / "record.json").exists()
