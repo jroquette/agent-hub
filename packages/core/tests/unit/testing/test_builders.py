@@ -130,7 +130,8 @@ def test_gives_each_seeded_issue_own_description_when_backend_built() -> None:
     dem_1 = issues["DEM-1"].description.splitlines()
     assert len(dem_1) > 3
     assert any(line.startswith("- ") for line in dem_1)
-    assert any(line.startswith("```") for line in dem_1)
+    assert any(line.startswith("```") and line != "```" for line in dem_1)
+    assert dem_1.count("```") == 1
 
 
 def test_returns_fresh_backend_when_tracker_backend_built_twice() -> None:

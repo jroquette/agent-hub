@@ -13,8 +13,8 @@ class Issue(BaseModel):
     """An issue as the workflow sees it; ``id`` is the tracker's identifier, such as ``DEM-1``.
 
     ``description`` is the issue's Markdown body as the tracker holds it, ``""`` when it has
-    none; it is untrusted text. ``labels`` holds label names; the repo-routing label is one of
-    them.
+    none (an adapter maps the tracker's null or absent body to ``""``); it is untrusted text.
+    ``labels`` holds label names; the repo-routing label is one of them.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
