@@ -30,7 +30,7 @@ hub init demo --repos acme/backend,acme/frontend --tracker linear:DEMO --branch-
 ```
 
 ```text
-Created 60 files (40 managed, 20 seeded) and 14 links in /home/jdoe/work/demo-hub
+created 60 files (40 managed, 20 seeded) and 14 links in /home/jdoe/work/demo-hub
 
 Next steps:
   1. cd /home/jdoe/work/demo-hub
@@ -156,7 +156,7 @@ uvx --from 'git+https://github.com/jroquette/agent-hub@v0.4.0#subdirectory=packa
   hub init demo --repos acme/backend,acme/frontend --tracker linear:DEMO --branch-prefix jdoe/ --hub-repo acme/demo-hub
 ```
 
-You should see `Created 60 files (40 managed, 20 seeded) and 14 links` followed by the next steps.
+You should see `created 60 files (40 managed, 20 seeded) and 14 links` followed by the next steps.
 
 **4. Check the new hub.** From now on, use the hub's own `./hub` shim.
 
@@ -172,7 +172,15 @@ info brain.leak ../frontend: repo frontend is not checked out next to the hub; i
 0 errors, 0 warnings, 2 infos
 ```
 
-**5. Commit it and start an agent session.**
+**5. Check that the hub matches its release.** `--check` only plans and writes nothing.
+
+```bash
+./hub sync --check
+```
+
+You should see `up to date`.
+
+**6. Commit it and start an agent session.**
 
 ```bash
 git add -A && git commit -m "Create the hub"
@@ -181,7 +189,8 @@ git add -A && git commit -m "Create the hub"
 
 > [!NOTE]
 > `./agent` (and `hub agent`) attaches the repos listed in `hub.json` that are cloned next to the hub (`../backend`,
-> `../frontend` in this example) and passes every other argument to `claude`.
+> `../frontend` in this example), prints a `not attached` warning for each one it cannot find, and passes every
+> other argument to `claude`.
 
 ## 📖 Usage guide
 
