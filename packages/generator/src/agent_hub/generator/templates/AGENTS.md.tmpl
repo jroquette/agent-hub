@@ -14,11 +14,11 @@ is a hub bug: log it in `brain/_inbox/`.
   `platform.version`. Project targets go in `Makefile.project`.
 - `brain/`: curated, versioned project memory. Start at `brain/index.md`; `brain/now.md` is the current focus. Read on
   demand, never in bulk.
-- `hub sync` rewrites these managed files: `AGENTS.md`, `CLAUDE.md`, `Makefile`, `hub.schema.json`,
-  `.claude/settings.json`, `.github/workflows/ci.yml`, `.pre-commit-config.yaml`, `plugin/hub-workflow/`,
-  `scripts/mine_transcripts.py`, `scripts/recall_transcripts.py`, `scripts/retro_metrics.py`. Change them only through
-  `hub.json` or their seeded sibling (`AGENTS.project.md`, `Makefile.project`, `.claude/settings.project.json`,
-  `plugin/@@{project_name}/`), which `hub sync` never touches.
+- `hub sync` rewrites these managed files: `AGENTS.md`, `CLAUDE.md`, `Makefile`, `hub`, `agent`,
+  `hub.schema.json`, `.claude/settings.json`, `.github/workflows/ci.yml`, `.pre-commit-config.yaml`,
+  `plugin/hub-workflow/`, `scripts/mine_transcripts.py`, `scripts/recall_transcripts.py`, `scripts/retro_metrics.py`.
+  Change them only through `hub.json` or their seeded sibling (`AGENTS.project.md`, `Makefile.project`,
+  `.claude/settings.project.json`, `plugin/@@{project_name}/`), which `hub sync` never touches.
 - `.claude/settings.json` already runs the `hub-workflow` hooks, so that plugin must not be enabled from a marketplace
   in this hub: Claude Code drops only identical duplicate hook commands, so every hook would run twice.
 - Repos, checked out next to this hub: @@{repo_dirs}.
