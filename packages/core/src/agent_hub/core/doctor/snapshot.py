@@ -1,4 +1,4 @@
-"""What ``hub doctor`` knows of a hub: its config (or why it failed), lock, files, base hooks.
+"""What ``hub doctor`` knows of a hub: its config (or why), lock, files, base hooks, repos.
 
 The cli fills a ``DoctorSnapshot``; rules read it and never touch the disk. Paths are relative
 POSIX paths from the hub root.
@@ -53,6 +53,18 @@ class HubFiles:
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
+class RepoFiles:
+    """One ``repos[].dir`` of ``hub.json`` and the files of its checkout at ``../<dir>``.
+
+    ``files`` is ``None`` when ``../<dir>`` is absent or not a folder (spec Q-9); a checkout's
+    paths are relative to the checkout, as the hub's are to the hub.
+    """
+
+    dir: str
+    files: HubFiles | None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
 class LockAbsent:
     """No ``hub.lock`` entry in the hub folder: the hub was never adopted."""
 
@@ -73,7 +85,8 @@ class DoctorSnapshot:
     ``lock`` is ``None`` when it was not read: no selected rule reads it, the config failed, or
     ``hub.lock`` could not be read (the hub's files then say why, as ``hub.lock`` is a fixed path).
     ``base_hooks`` is the ``hooks`` block of the running release's managed settings, ``None``
-    when no selected rule reads it or the config failed.
+    when no selected rule reads it or the config failed. ``repos`` holds one entry per
+    ``repos[].dir``, in ``hub.json`` order, when a selected rule reads them; else it is empty.
     """
 
     config: HubConfig | ConfigFailure
@@ -81,6 +94,7 @@ class DoctorSnapshot:
     hub: HubFiles
     lock: LockState | None
     base_hooks: Mapping[str, JsonValue] | None
+    repos: tuple[RepoFiles, ...]
 
     @property
     def hub_config(self) -> HubConfig:

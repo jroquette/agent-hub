@@ -4,7 +4,13 @@ from collections.abc import Callable, Mapping
 
 import pytest
 
-from agent_hub.core.doctor.snapshot import ConfigFailure, DoctorSnapshot, HubFiles, LockState
+from agent_hub.core.doctor.snapshot import (
+    ConfigFailure,
+    DoctorSnapshot,
+    HubFiles,
+    LockState,
+    RepoFiles,
+)
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, LinkEntry, TreeEntry
 from agent_hub.core.json_form import JsonValue
@@ -24,7 +30,8 @@ def snapshot_of() -> SnapshotFactory:
     when it was not; ``problem`` is why the hub's files could not all be listed or read, and
     ``paths_read`` whether every fixed and lock path was read (by default, when no ``problem``
     is given); ``base_hooks`` is
-    the release's base hooks block, ``None`` when it was not built.
+    the release's base hooks block, ``None`` when it was not built. ``repos`` maps each repo
+    dir to its checkout's regular files by bytes (all listed), ``None`` when it has no checkout.
     """
 
     def build(
@@ -38,6 +45,7 @@ def snapshot_of() -> SnapshotFactory:
         problem: str | None = None,
         paths_read: bool | None = None,
         base_hooks: Mapping[str, JsonValue] | None = None,
+        repos: Mapping[str, Mapping[str, bytes] | None] | None = None,
     ) -> DoctorSnapshot:
         found: dict[str, TreeEntry] = {
             path: FileEntry(executable=False, content=content)
@@ -58,6 +66,22 @@ def snapshot_of() -> SnapshotFactory:
             ),
             lock=lock,
             base_hooks=base_hooks,
+            repos=tuple(
+                RepoFiles(dir=repo, files=None if files is None else _checkout_of(files))
+                for repo, files in (repos or {}).items()
+            ),
         )
 
     return build
+
+
+def _checkout_of(files: Mapping[str, bytes]) -> HubFiles:
+    """A checkout whose regular files are all listed and read."""
+    return HubFiles(
+        entries={
+            path: FileEntry(executable=False, content=content) for path, content in files.items()
+        },
+        listed=tuple(sorted(files)),
+        problem=None,
+        paths_read=True,
+    )
