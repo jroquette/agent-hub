@@ -36,6 +36,11 @@ adapter. The first suite is `EventStoreContract`: a class of tests that take an 
 implementation's `tests/contract/conftest.py` provides that fixture (`packages/core/tests/contract/` returns an
 `InMemoryEventStore`; `packages/storage/tests/contract/` returns `open_event_store(tmp_path / "events.db")`, a migrated
 SQLite file), and a test module subclasses the suite (`class TestSqliteEventStore(EventStoreContract)`).
+The second is `TrackerClientContract`, whose tests take a `tracker_client` fixture and the `tracker_backend` it reads and
+writes (`a_seeded_tracker_backend()`, synthetic issues only); the suite asserts on the backend's state. It runs against
+`InMemoryTrackerClient` (`packages/core/tests/contract/`) and against `LinearGraphqlTrackerClient`
+(`packages/tracker_linear/tests/contract/`), whose transport is `FakeLinearApi`, an in-process fake of Linear's GraphQL
+API over the same backend (`packages/tracker_linear/tests/conftest.py`), so no socket opens.
 
 A test that runs a rendered hook or script takes the `hook_python` fixture, so it runs on the current Python and on a
 real Python 3.9 (the system `python3` on macOS); without a 3.9 on `PATH` that case skips, and under `CI` it fails. A
@@ -84,9 +89,10 @@ The folder decides the level; nobody writes level markers by hand.
 - `live` is the one marker written by hand: a test that calls a real external API (the Linear smoke test,
   `packages/tracker_linear/tests/integration/test_linear_live.py`). Under `integration/` it also gets `integration`,
   but `make test-integration` selects `integration and not live`, so `make check` never reaches Linear, even with the
-  variables exported. The only way in is `$R pytest -m live packages/tracker_linear/tests/integration`, and the same
-  plugin still skips each case, naming the first missing variable, unless `LINEAR_API_KEY`, `AGENT_HUB_LIVE_ISSUE` and
-  `AGENT_HUB_LIVE_LABEL` are set and `AGENT_HUB_LIVE=1`.
+  variables exported. Any other pytest run that collects it (for example
+  `$R pytest -m live packages/tracker_linear/tests/integration`) reaches Linear only when `LINEAR_API_KEY`,
+  `AGENT_HUB_LIVE_ISSUE` and `AGENT_HUB_LIVE_LABEL` are set and `AGENT_HUB_LIVE=1`; otherwise the same plugin skips each
+  case, naming the first missing variable.
 
 Select a level with `-m`: `$R pytest -m unit`, `$R pytest -m "unit or contract"`, `$R pytest -m integration`,
 `$R pytest -m e2e`. A single file: `$R pytest packages/core/tests/unit/test_errors.py`.

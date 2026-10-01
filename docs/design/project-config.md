@@ -95,10 +95,10 @@ name the source and target repos) and `marketplace` (the optional plugin marketp
 
 ### Tracker
 
-`tracker.kind` selects the adapter behind the core port `TrackerClient` (list ready issues, get an issue, move its
-state, add a label, comment). Linear is the first adapter, in its own adapter package, registered like any adapter
-([ARCHITECTURE.md](../ARCHITECTURE.md)). Its API token comes from an environment variable, never from `hub.json`.
-`hub next` and `hub run` are tested against its fake and contract suite.
+`tracker.kind` selects the adapter behind the core port `TrackerClient` (list ready issues, get one, move its state, add
+or remove a label, comment). `linear` is the GraphQL adapter `tracker_linear` ([ARCHITECTURE.md](../ARCHITECTURE.md));
+its key comes only from `LINEAR_API_KEY`, read at call time, never from `hub.json`. An MCP transport is deferred
+(AGH-28). Callers test against `InMemoryTrackerClient`; every adapter passes `TrackerClientContract`.
 
 ### Project guards
 
@@ -142,7 +142,7 @@ repo stay as they are; one rooted at the hub's directory name is rewritten as `@
 - [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md) (`hub.json` is seeded) and
   [ADR 0013](../adr/0013-release-by-git-tags.md) (`platform.version` pins the CLI release).
 - [ADR 0002](../adr/0002-lean-hexagonal-architecture.md): the model lives in core; `TrackerClient` is a port because a
-  swap is expected ([SPEC](../SPEC.md)).
+  swap is expected ([SPEC](../SPEC.md)); [ADR 0014](../adr/0014-tracker-port-linear-graphql.md): the GraphQL adapter.
 
 ## Open questions
 

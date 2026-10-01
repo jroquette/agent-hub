@@ -57,7 +57,7 @@ different policy. `tests/e2e/test_quality_gates.py` fails if the exact code is r
 
 | Rule | Enforcement |
 |---|---|
-| Named domain exceptions in a per-package hierarchy: `agent_hub.core.errors.AgentHubError` is the root; each package has `errors.py` with its own base (`StorageError`, `CollectorError`) and subclasses. | review-only |
+| Named domain exceptions in a per-package hierarchy: `agent_hub.core.errors.AgentHubError` is the root; each package has `errors.py` with its own base (`StorageError`, `CollectorError`) and subclasses. An adapter that only raises its port's core error (e.g. `TrackerError` from `tracker_linear`) needs no `errors.py`. | review-only |
 | Never swallow errors: no `except Exception: pass`, no bare `except`. | enforced by ruff: `E722` (bare `except` that does not re-raise), `BLE001` and `S110` (`except Exception: pass`) |
 | Adapters translate external errors (database, HTTP, file formats) into the package's domain exceptions at the boundary; core never sees a library exception. | review-only |
 
