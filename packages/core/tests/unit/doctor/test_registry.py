@@ -7,6 +7,7 @@ RELEASED_IDS = (
     "config.schema",
     "platform.version",
     "lock.drift",
+    "links.dead",
     "instructions.size",
     "instructions.refs",
     "instructions.duplicates",
