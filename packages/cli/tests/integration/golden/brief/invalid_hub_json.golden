@@ -1,0 +1,14 @@
+--- rc (2 bytes) ---
+1
+
+--- stdout (0 bytes) ---
+
+--- stderr (61 bytes) ---
+Traceback (most recent call last):
+  ...
+KeyError: 'tracker'
+
+--- fs (0 bytes) ---
+
+--- calls (0 bytes) ---
+
