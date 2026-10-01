@@ -9,6 +9,7 @@ from agent_hub.cli.collect import collect
 from agent_hub.cli.doctor_command import doctor
 from agent_hub.cli.generator import init
 from agent_hub.cli.sync_command import sync
+from agent_hub.cli.worktree_command import worktree
 
 app = typer.Typer(name="hub", no_args_is_help=True)
 
@@ -39,3 +40,4 @@ app.command("collect")(collect)
 app.command("init")(init)
 app.command("sync")(sync)
 app.command("doctor")(doctor)
+app.command("worktree")(worktree)
