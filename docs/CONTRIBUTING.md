@@ -160,7 +160,7 @@ regeneration in its PR.
 ## Releases
 
 A release is an annotated tag `vX.Y.Z` on a commit of `main` ([ADR 0013](adr/0013-release-by-git-tags.md)). The owner
-makes it by hand; no workflow or agent creates tags.
+makes it, by hand or through an agent session the owner asks to; no workflow creates tags.
 
 1. The release PR sets `version` in `packages/cli/pyproject.toml` and `packages/agent-hub/pyproject.toml` to `X.Y.Z`,
    runs `uv lock` and commits `uv.lock`. `make lockstep` (in `make check-fast`) fails while the two versions differ.
