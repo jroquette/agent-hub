@@ -388,6 +388,8 @@ def test_names_mcp_server_when_tools_unavailable(call: McpCall[Any]) -> None:
         parse_reply(call, '{"error": "tools unavailable"}')
 
     assert str(raised.value).startswith(call.operation)
+    # Read or write, the cause still names the missing tools.
+    assert "the Linear MCP tools are not available to claude" in str(raised.value)
 
 
 def test_names_issue_when_reply_says_not_found() -> None:
@@ -544,7 +546,42 @@ def test_rejects_reply_when_issue_id_malformed(
         parse_reply(call, _line(reply(issue_id)))
 
 
-_WRITE_VERBS = ("save_", "create_", "delete_", "update_")
+# Every tool of the snapshot that can change something in Linear, as a literal.
+_WRITE_CAPABLE = {
+    LINEAR_TOOL_PREFIX + name
+    for name in (
+        "create_attachment",
+        "create_attachment_from_upload",
+        "create_issue_label",
+        "delete_attachment",
+        "delete_comment",
+        "delete_diff_comment",
+        "delete_status_update",
+        "mark_notification",
+        "merge_diff",
+        "prepare_attachment_upload",
+        "resolve_diff_thread",
+        "restore_issue_label",
+        "restore_project_label",
+        "retire_issue_label",
+        "retire_project_label",
+        "save_comment",
+        "save_diff_comment",
+        "save_document",
+        "save_issue",
+        "save_issue_label",
+        "save_milestone",
+        "save_project",
+        "save_project_label",
+        "save_release",
+        "save_release_note",
+        "save_status_update",
+        "share_issue",
+        "submit_diff_review",
+        "unshare_issue",
+        "update_diff",
+    )
+}
 
 
 def test_holds_every_allowed_tool_when_snapshot_read() -> None:
@@ -568,11 +605,15 @@ def test_denies_every_write_tool_when_call_reads(kind: CallKind) -> None:
     writes = {
         tool
         for tool in LINEAR_TOOLS
-        if tool.removeprefix(LINEAR_TOOL_PREFIX).startswith(_WRITE_VERBS)
+        if tool.removeprefix(LINEAR_TOOL_PREFIX).startswith(
+            ("save_", "create_", "delete_", "update_")
+        )
     }
 
     assert len(writes) == 19
-    assert writes <= set(DENIED[kind])
+    assert writes <= _WRITE_CAPABLE <= set(LINEAR_TOOLS)
+    assert len(_WRITE_CAPABLE) == 30
+    assert set(DENIED[kind]) >= _WRITE_CAPABLE
 
 
 _WRITE_FIX = "check the issue in Linear: the write may have been made"
