@@ -28,6 +28,7 @@ from typing import Any, NamedTuple
 import pytest
 from typer.testing import CliRunner, Result
 
+from agent_hub.cli.hub_root import HUB_ROOT_VARIABLE
 from agent_hub.cli.main import app
 from agent_hub.core.json_form import dump_json
 from agent_hub.core.testing.builders import a_hub_document
@@ -58,9 +59,13 @@ GIT_VARIABLE_PREFIX = "GIT_"
 
 @pytest.fixture(autouse=True)
 def no_git_location(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Run every test as if git found the repo from the folder: every ``GIT_*`` variable unset."""
+    """Run every test as if git found the repo from the folder: every ``GIT_*`` variable unset.
+
+    ``AGENT_HUB_ROOT`` is unset too, so a command takes the hub from the folder it runs in.
+    """
     for variable in [name for name in os.environ if name.startswith(GIT_VARIABLE_PREFIX)]:
         monkeypatch.delenv(variable)
+    monkeypatch.delenv(HUB_ROOT_VARIABLE, raising=False)
 
 
 class FakeGit(NamedTuple):
