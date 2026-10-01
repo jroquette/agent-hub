@@ -38,14 +38,15 @@ GRANDCHILD = textwrap.dedent(
     time.sleep({SLEEP_FOREVER})
     """
 )
-# The child waits until the grandchild holds the lock, so a kill always finds both alive.
+# The child exits once the grandchild holds the lock. The grandchild keeps the inherited stdout
+# open, so the read goes on until the timeout or the interruption, and only a kill of the whole
+# group frees the lock: without it the run returns while the grandchild still holds it.
 CHILD = textwrap.dedent(
     f"""
     import os, subprocess, sys, time
     subprocess.Popen([sys.executable, "-I", "-S", "-c", {GRANDCHILD!r}])
     while not os.path.exists("started"):
         time.sleep(0.01)
-    time.sleep({SLEEP_FOREVER})
     """
 )
 
@@ -59,6 +60,7 @@ def grandchild_reaped(folder: Path) -> Iterator[None]:
     """After the block, assert the grandchild started and died; kill it if it is still alive."""
     try:
         yield
+        assert (folder / "started").exists(), "the grandchild never started"
         assert is_lock_free_within(folder / "lock", PROBE_DEADLINE), "the grandchild is alive"
     finally:
         with contextlib.suppress(FileNotFoundError, ProcessLookupError, ValueError):
@@ -67,7 +69,8 @@ def grandchild_reaped(folder: Path) -> Iterator[None]:
 
 def is_lock_free_within(lock_path: Path, deadline: float) -> bool:
     end = time.monotonic() + deadline
-    with lock_path.open("w") as lock:
+    # "r+": a missing lock file raises instead of being created free.
+    with lock_path.open("r+") as lock:
         while True:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
