@@ -27,7 +27,6 @@ from agent_hub.cli.main import app
 from agent_hub.core.doctor.finding import Read, Rule
 from agent_hub.core.doctor.registry import REGISTRY
 from agent_hub.core.hub_config.doctor_rules import Severity
-from agent_hub.core.hub_config.versions import cut_echo
 from agent_hub.core.json_form import dump_json
 from agent_hub.generator import render_hub as render_hub_module
 
@@ -774,12 +773,12 @@ def test_reports_error_when_checkout_cannot_be_listed(
 
     lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=1)
 
-    problem = (
-        "could not list the files: git exited with 128:"
+    assert lines == [
+        "error brain.leak ../demo-web: could not list the files: git exited with 128:"
         " fatal: not a git repository (or any of the parent directories): .git"
-    )
-    # The report cuts a long problem (a git stderr line, a deep path).
-    assert lines == [f"error brain.leak ../demo-web: {cut_echo(problem)} {LISTING_FIX}", ONE_ERROR]
+        f" {LISTING_FIX}",
+        ONE_ERROR,
+    ]
 
 
 BRAIN_LINE = "A synthetic brain line, long enough for brain.leak to compare it."
@@ -825,5 +824,8 @@ def test_reports_error_when_checkout_cannot_be_looked_at(
 
     lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=1)
 
-    problem = f"could not list the files: {os.path.realpath(web)}: Permission denied"
-    assert lines == [f"error brain.leak ../demo-web: {cut_echo(problem)} {LISTING_FIX}", ONE_ERROR]
+    assert lines == [
+        f"error brain.leak ../demo-web: could not list the files: {os.path.realpath(web)}:"
+        f" Permission denied {LISTING_FIX}",
+        ONE_ERROR,
+    ]

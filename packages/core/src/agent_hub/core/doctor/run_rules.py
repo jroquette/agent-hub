@@ -249,7 +249,7 @@ def _tree_problem_finding(selection: Selection, snapshot: DoctorSnapshot) -> Fin
         severity=Severity.ERROR,
         path=".",
         line=None,
-        message=cut_echo(snapshot.hub.problem),
+        message=snapshot.hub.problem,
         fix=LISTING_FIX,
     )
 
@@ -287,7 +287,7 @@ def _checkout_findings(selection: Selection, snapshot: DoctorSnapshot) -> list[F
                     severity=Severity.ERROR,
                     path=f"../{repo.dir}",
                     line=None,
-                    message=cut_echo(repo.files.problem),
+                    message=repo.files.problem,
                     fix=LISTING_FIX,
                 )
             )
