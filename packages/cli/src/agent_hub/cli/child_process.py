@@ -16,9 +16,23 @@ from typing import NamedTuple
 
 from agent_hub.cli.errors import ChildTimedOutError
 
-# Set by the caller (a git hook, a worktree script), each would point git at another repo or
-# index than the one the command names with its cwd.
-GIT_LOCATION_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE")
+# Git's repository-local variables (``git rev-parse --local-env-vars``) except the GIT_CONFIG*
+# ones. Set by the caller (a git hook, a worktree script), each would point git at another repo,
+# index or object store than the one the command names with its cwd.
+GIT_LOCATION_VARIABLES = (
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+)
 _OPTIONAL_LOCKS_VARIABLE = "GIT_OPTIONAL_LOCKS"
 
 
@@ -36,13 +50,15 @@ def run_child(
     cwd: Path | str,
     env: Mapping[str, str],
     timeout: float | None,
-    new_session: bool,
 ) -> ChildResult:
     """Run ``argv`` in ``cwd`` with exactly ``env``; stdin is empty, both streams are captured.
+
+    With a ``timeout`` the child runs in a new session; without one, in the caller's group.
 
     Raises ``ChildTimedOutError`` after ``timeout`` seconds, and ``OSError`` (for example
     ``FileNotFoundError``) when the tool cannot start.
     """
+    new_session = timeout is not None
     with subprocess.Popen(  # noqa: S603 - an argv list, never a shell; callers pass the tool
         list(argv),
         cwd=cwd,
@@ -56,7 +72,7 @@ def run_child(
             stdout, stderr = child.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
             _kill(child, group=new_session)
-            raise ChildTimedOutError(program=argv[0], timeout=timeout or 0) from None
+            raise ChildTimedOutError(program=argv[0], timeout=timeout or 0.0) from None
         except BaseException:
             _kill(child, group=new_session)
             raise

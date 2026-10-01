@@ -69,6 +69,26 @@ def test_uses_variable_when_agent_hub_root_set(
     assert hub_root_or_exit({HUB_ROOT_VARIABLE: str(hub)}, command="worktree") == hub.resolve()
 
 
+def test_uses_real_path_when_variable_names_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = a_hub(tmp_path / "hub")
+    link = tmp_path / "link"
+    link.symlink_to(hub)
+    monkeypatch.chdir(tmp_path)
+
+    assert hub_root_or_exit({HUB_ROOT_VARIABLE: str(link)}, command="worktree") == hub.resolve()
+
+
+def test_resolves_against_cwd_when_variable_relative(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = a_hub(tmp_path / "hub")
+    monkeypatch.chdir(tmp_path)
+
+    assert hub_root_or_exit({HUB_ROOT_VARIABLE: "hub"}, command="worktree") == hub.resolve()
+
+
 def test_uses_cwd_when_variable_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     hub = a_hub(tmp_path / "hub")
     monkeypatch.chdir(hub)
@@ -105,6 +125,18 @@ def test_finds_main_checkout_when_root_is_hub_worktree(tmp_path: Path) -> None:
 
     assert main_checkout(worktree, git=found_git(), environ=decoy) == hub.resolve()
     assert main_checkout(hub, git=found_git(), environ=decoy) == hub.resolve()
+
+
+def test_keeps_root_when_worktree_of_bare_repo(tmp_path: Path) -> None:
+    environ = git_environ(tmp_path)
+    hub = a_git_hub(tmp_path / "hub", environ)
+    bare = tmp_path / "bare.git"
+    run_git(tmp_path, environ, "clone", "-q", "--bare", str(hub), str(bare))
+    worktree = tmp_path / "from-bare"
+    run_git(bare, environ, "worktree", "add", "-q", "-b", "x", str(worktree))
+
+    # Its git data is a bare repo, not the .git folder of a checkout: no main checkout to take.
+    assert main_checkout(worktree, git=found_git(), environ=environ) == worktree
 
 
 def test_keeps_root_when_hub_not_git(tmp_path: Path) -> None:
