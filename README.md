@@ -214,7 +214,7 @@ the rest, and the hooks keep them inside the project's rules.
 1. **Start with `/kickoff`** (or after `/clear`). It shows the session brief (`./hub brief`), reads `brain/now.md` and
    the newest journal day, runs `check_fast` in each repo that has local changes, and proposes the next item. It asks
    before starting and never edits anything.
-2. **Do the work.** Use `/feature` for a change, `/research` or `/recall` for questions.
+2. **Do the work.** Use `/feature` for a change, `/research` or `/recall` for questions (see [Skills and agents](#skills-and-agents)).
 3. **End with `/handoff`.** It rewrites `brain/now.md` (focus, work in flight, the exact next step, risks to watch)
    and appends what was done, verified and learned to the day's journal, `brain/journal/YYYY/MM/DD.md`. The next
    session picks up from there without you explaining it again.
@@ -280,6 +280,43 @@ The size decides the ceremony:
 >   no tracker command in 0.4.0.
 >
 > Set both up in Claude Code yourself before your first `/feature`.
+
+### Skills and agents
+
+| Command | What it does | When to use it |
+| --- | --- | --- |
+| `/kickoff` | Shows the brief, runs the fast checks in repos with changes, proposes the next item | At the start of a session, or after `/clear` |
+| `/feature <idea or issue>` | Takes an idea to a merged, verified change (above) | For any change to the repos |
+| `/handoff [title]` | Updates `brain/now.md` and the day's journal | At the end of a session |
+| `/research <question or issue>` | Documents how the code works today, with `path:line` references and no critique; writes `research.md` | Before planning, or for a question that spans many files |
+| `/create-plan <issue or slug>` | Turns a spec and its research into `plan.md`: small tasks, contracts first, each with a verification command; waits for your approval before any code | When a spec is ready and needs a plan |
+| `/recall <topic>` | Answers "what do we know about X, why was Y decided" from the brain, ADRs and past session transcripts, with sources | Before deciding something again |
+| `/learn <one sentence>` | Proposes one verified, non-obvious learning to `brain/_inbox/`; you decide whether and where it lands | When the next session should know something |
+
+Claude runs `/kickoff`, `/feature`, `/handoff` and `/learn` only when you type them; it may use the other three on its
+own when they fit.
+
+<details>
+<summary><strong>The agents behind the commands</strong></summary>
+
+The commands start these agents, each in a fresh context. Every agent reads the brain first and ends with at most one
+learning proposal for `brain/_inbox/`.
+
+| Agent | Role | Writes | Read-only? |
+| --- | --- | --- | --- |
+| `requirements-analyst` | Drafts the spec: acceptance criteria in Given/When/Then, non-functional requirements, invariants, open questions | `spec.md` | Writes only the spec |
+| `researcher` | Documents how the code works today across the repos, with `path:line` evidence | `research.md` | Yes, apart from `research.md` |
+| `architect` | Turns the approved spec and research into a plan, with ADR drafts for architectural decisions | `plan.md`, `adr-draft-<topic>.md` | No code or tests |
+| `planner` | Turns the approved plan into one entry per acceptance criterion and tracker issue drafts; does not call the tracker | `features.json`, `issues.md` | Writes only those two files |
+| `spec-reviewer` | After each task: does the diff match the spec and plan, nothing missing and nothing extra | PASS or FAIL | Yes (no write tool) |
+| `quality-reviewer` | After `spec-reviewer` passes: domain invariants, security and secrets, idempotency | APPROVE or CHANGES | Yes (no write tool) |
+| `evaluator` | Final verdict: re-runs every verification, `check_fast`, `check` and `hub doctor` | `eval.md` (SHIP or NO-SHIP), `features.json` | Writes only those two files |
+
+</details>
+
+**Add your own.** Put a skill in `plugin/<project>/skills/<name>/SKILL.md` or an agent in
+`plugin/<project>/agents/<name>.md`, then run `./hub sync`: it links them into `.claude/`, where every session in the
+hub finds them. A name already used by `hub-workflow` keeps the base one, and `hub sync` reports the clash.
 
 ## 📖 Usage guide
 
