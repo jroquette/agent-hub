@@ -17,7 +17,7 @@ import pytest
 
 from agent_hub.core.doctor.snapshot import HubFiles
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, LinkEntry, OtherEntry
-from agent_hub.generator.doctor_tree import read_doctor_tree
+from agent_hub.generator.doctor_tree import read_checkout, read_doctor_tree
 
 # Found before any test puts a fake first on PATH.
 REAL_GIT = shutil.which("git")
@@ -479,3 +479,59 @@ def test_writes_nothing_when_tree_read(work_tree: Path, monkeypatch: pytest.Monk
     assert writes == []
     assert digest(work_tree) == before
     assert (work_tree / ".git" / "index").stat().st_mtime_ns == index_time
+
+
+@pytest.mark.parametrize("tree_kind", ["walked", "listed"])
+def test_reads_checkout_as_tree_when_every_file_readable(
+    work_tree: Path, *, tree_kind: str
+) -> None:
+    if tree_kind == "walked":
+        shutil.rmtree(work_tree / ".git")
+    write(work_tree, {"run.sh": "#!/bin/sh\n"})
+    (work_tree / "run.sh").chmod(0o755)
+    (work_tree / "CLAUDE.md").symlink_to("AGENTS.md")
+
+    checkout = read_checkout(work_tree)
+
+    assert checkout.problem is None
+    assert checkout.entries["run.sh"] == FileEntry(executable=True, content=b"#!/bin/sh\n")
+    assert checkout == read_doctor_tree(work_tree, by_path=(), listing=True)
+
+
+@pytest.mark.parametrize("tree_kind", ["walked", "listed"])
+def test_keeps_checkout_listed_when_one_file_unreadable(
+    work_tree: Path, monkeypatch: pytest.MonkeyPatch, *, tree_kind: str
+) -> None:
+    # Only a listing that fails is the checkout's problem (plan E36): an unreadable file stays
+    # listed with no content, so the repo rules skip that file, never the whole checkout.
+    if tree_kind == "walked":
+        shutil.rmtree(work_tree / ".git")
+    refuse("a.md", call="open", monkeypatch=monkeypatch)
+
+    checkout = read_checkout(work_tree)
+
+    assert checkout.problem is None
+    assert checkout.paths_read is True
+    assert "docs/a.md" in checkout.listed
+    assert checkout.entries["docs/a.md"] == FileEntry(executable=False, content=None)
+    assert checkout.entries["AGENTS.md"] == FileEntry(executable=False, content=b"# Agents\n")
+    assert checkout.entries["notes.md"] == FileEntry(executable=False, content=b"untracked\n")
+
+
+@pytest.mark.parametrize("tree_kind", ["walked", "git entry"])
+def test_reports_problem_when_checkout_cannot_be_listed(
+    work_tree: Path, monkeypatch: pytest.MonkeyPatch, *, tree_kind: str
+) -> None:
+    if tree_kind == "walked":
+        shutil.rmtree(work_tree / ".git")
+    refused = ".git" if tree_kind == "git entry" else "docs"
+    refuse(refused, call="lstat" if tree_kind == "git entry" else "open", monkeypatch=monkeypatch)
+
+    checkout = read_checkout(work_tree)
+
+    assert checkout == HubFiles(
+        entries={},
+        listed=(),
+        problem=f"could not list the files: {refused}: Permission denied",
+        paths_read=True,
+    )

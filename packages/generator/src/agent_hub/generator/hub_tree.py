@@ -19,7 +19,8 @@ plain and relative (a ``ValueError`` before anything is read), since ``..`` clim
 ``O_NOFOLLOW``.
 
 ``hub doctor`` reads more (spec AC-11.3, E8): ``read_every_file`` walks as ``read_hub_tree``
-does, reads every regular file, and leaves out nested repositories, as git would.
+does, reads every regular file, and leaves out nested repositories, as git would;
+``list_every_file`` walks the same way and reads no file.
 """
 
 import os
@@ -76,6 +77,15 @@ def read_every_file(root: Path) -> TreeSnapshot:
     entry, file or folder, is neither recorded nor descended, as git never lists one.
     """
     return _walk_tree(root, wanted=None, skip_nested=True)
+
+
+def list_every_file(root: Path) -> TreeSnapshot:
+    """Return every entry under ``root`` as ``read_every_file`` does, no file read.
+
+    Each regular file is recorded with no content, so a file that cannot be read never fails
+    the walk; a folder that cannot be listed still does.
+    """
+    return _walk_tree(root, wanted=(), skip_nested=True)
 
 
 def _walk_tree(root: Path, *, wanted: Collection[str] | None, skip_nested: bool) -> TreeSnapshot:
