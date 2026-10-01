@@ -16,6 +16,7 @@ from agent_hub.core.doctor.instruction_rules import (
     INSTRUCTIONS_REFS,
     INSTRUCTIONS_SIZE,
 )
+from agent_hub.core.doctor.links_rule import LINKS_DEAD
 from agent_hub.core.doctor.lock_rules import LOCK_DRIFT
 from agent_hub.core.doctor.makefile_rules import MAKEFILE_OVERRIDE
 from agent_hub.core.doctor.permission_rules import MCP_PINNED, PERMISSIONS_BYPASS, SETTINGS_VALID
@@ -26,6 +27,7 @@ REGISTRY: Final[tuple[Rule, ...]] = (
     CONFIG_SCHEMA,
     PLATFORM_VERSION,
     LOCK_DRIFT,
+    LINKS_DEAD,
     INSTRUCTIONS_SIZE,
     INSTRUCTIONS_REFS,
     INSTRUCTIONS_DUPLICATES,

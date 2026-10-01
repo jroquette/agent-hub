@@ -11,7 +11,7 @@ from collections.abc import Callable, Mapping
 
 import pytest
 
-from agent_hub.core.doctor import instruction_rules
+from agent_hub.core.doctor import config_lint, instruction_rules
 from agent_hub.core.doctor.finding import Read, Rule
 from agent_hub.core.doctor.instruction_rules import INSTRUCTIONS_DUPLICATES, INSTRUCTIONS_SIZE
 from agent_hub.core.doctor.snapshot import DoctorSnapshot
@@ -713,7 +713,7 @@ class TestRefs:
             "/".join([f"c{n}", *(f"s{depth}" for depth in range(599)), "f.md"]) for n in range(5)
         ]
 
-        tree = instruction_rules._path_tree(paths)
+        tree = config_lint.path_tree(paths)
 
         assert nodes_of(tree) == sum(path.count("/") + 1 for path in paths)
 
@@ -860,7 +860,7 @@ class ScanCounter:
         return found
 
 
-def nodes_of(tree: instruction_rules._Trie) -> int:
+def nodes_of(tree: config_lint.PathTrie) -> int:
     count, pending = 0, [tree]
     while pending:
         children = pending.pop().children

@@ -19,6 +19,7 @@ from agent_hub.core.hub_config.config_object import (
 CONFIG_SCHEMA_RULE: Final = "config.schema"
 PLATFORM_VERSION_RULE: Final = "platform.version"
 LOCK_DRIFT_RULE: Final = "lock.drift"
+LINKS_DEAD_RULE: Final = "links.dead"
 INSTRUCTIONS_SIZE_RULE: Final = "instructions.size"
 INSTRUCTIONS_REFS_RULE: Final = "instructions.refs"
 INSTRUCTIONS_DUPLICATES_RULE: Final = "instructions.duplicates"
@@ -37,7 +38,7 @@ RULE_IDS: Final = (
     CONFIG_SCHEMA_RULE,
     PLATFORM_VERSION_RULE,
     LOCK_DRIFT_RULE,
-    "links.dead",
+    LINKS_DEAD_RULE,
     INSTRUCTIONS_SIZE_RULE,
     INSTRUCTIONS_REFS_RULE,
     INSTRUCTIONS_DUPLICATES_RULE,

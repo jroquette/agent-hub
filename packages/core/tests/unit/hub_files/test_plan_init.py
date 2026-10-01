@@ -64,6 +64,7 @@ CORE_MODULES = (
     "doctor/frontmatter_rule.py",
     "doctor/permission_rules.py",
     "doctor/text_rules.py",
+    "doctor/links_rule.py",
 )
 
 # Design decision 4 of the plan, word for word: each refusal names the cause or the way out.

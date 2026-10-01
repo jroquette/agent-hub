@@ -11,12 +11,14 @@ an instruction file (spec D3, plan E1: a hub links each plugin agent into ``.cla
   path (a whole segment: ``agentsx`` is another folder).
 - Agent and skill files: the instruction files under ``.claude/agents`` or ``.claude/skills``
   and the plugin files.
+- Paths: ``path_tree`` holds a tree's paths and their folders as segments (``PathTrie``), so
+  a reference resolves in time linear in its length (``instructions.refs``, ``links.dead``).
 
 Each set is sorted by path string, the order in which a later file is "later" (duplicates).
 """
 
 import re
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Final
 
@@ -104,6 +106,49 @@ def known_paths(hub: HubFiles, *, config: HubConfig) -> Iterator[str]:
     """
     yield from hub.listed
     yield from (path for path in hub_paths(config) if path in hub.entries)
+
+
+class PathTrie:
+    """A tree of path segments: a tree's paths (a node per file or folder), or references.
+
+    Each folder is one node however many paths it holds, so the tree is linear in the paths'
+    total length, at any depth (a string per ancestor folder would be quadratic). ``reached``
+    marks a node a search found (``instructions.refs``).
+    """
+
+    __slots__ = ("children", "reached")
+
+    def __init__(self) -> None:
+        self.children: dict[str, PathTrie] = {}
+        self.reached = False
+
+    def add(self, segments: Iterable[str]) -> PathTrie:
+        """The node of the segments, added with any node missing on the way."""
+        node = self
+        for segment in segments:
+            child = node.children.get(segment)
+            if child is None:
+                child = node.children[segment] = PathTrie()
+            node = child
+        return node
+
+    def holds(self, segments: Iterable[str]) -> bool:
+        """Whether the segments, from this node, are a path or folder of the tree."""
+        node = self
+        for segment in segments:
+            child = node.children.get(segment)
+            if child is None:
+                return False
+            node = child
+        return True
+
+
+def path_tree(paths: Iterable[str]) -> PathTrie:
+    """The paths as a segments tree, so each one and each of its folders is held."""
+    tree = PathTrie()
+    for path in paths:
+        tree.add(path.split("/"))
+    return tree
 
 
 def file_text(entry: TreeEntry | None) -> str | TextProblem | None:
