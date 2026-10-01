@@ -569,6 +569,11 @@ _FAILURES: dict[str, tuple[Any, str, str]] = {
 }
 
 
+_WRITE_OPERATIONS = frozenset({"move_state", "add_label", "remove_label", "comment"})
+# Failures before claude ran: nothing was written, so the fix may say retry or install.
+_START_FAILURES = frozenset({"claude-missing", "cwd-missing", "cannot-start"})
+
+
 class TestFailures:
     @pytest.mark.parametrize("failure", list(_FAILURES))
     @pytest.mark.parametrize("operation", list(_OPERATIONS))
@@ -584,6 +589,10 @@ class TestFailures:
 
         message = str(raised.value)
         assert message.startswith(subject + cause), message
+        if operation in _WRITE_OPERATIONS and failure not in _START_FAILURES:
+            # The write call ran: it may have written, so the fix never says retry.
+            fix = "check the issue in Linear: the write may have been made"
+            assert "retry" not in message.partition("; ")[2], message
         assert fix in message.partition("; ")[2], message
         assert "\n" not in message
         assert (raised.value.operation, raised.value.issue_id) == (
