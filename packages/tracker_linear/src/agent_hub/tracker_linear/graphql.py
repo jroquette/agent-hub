@@ -3,10 +3,15 @@
 The API key is read from ``environ`` on each call, never at construction, and is sent as the
 bare ``Authorization`` value (a personal API key takes no ``Bearer``). Caller values (team,
 label, issue id) travel only as GraphQL variables, never in the query text.
+
+Every write resolves the identifier (``DEM-1``) to the issue's UUID once, with ``issue(id:)``,
+and passes only UUIDs to the mutation (D-c). A write that would change nothing (the current
+state, a present label added, an absent label removed) sends no mutation.
 """
 
 import json
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from agent_hub.core.errors import TrackerError
@@ -19,6 +24,8 @@ DEFAULT_TIMEOUT_S = 30.0
 PAGE_SIZE = 50
 # WorkflowState.type values that count as done (D-a); list_ready leaves them out.
 DONE_STATE_TYPES = ("completed", "canceled", "duplicate")
+# Untrusted text (a Linear error message) quoted in an error is cut to this many characters.
+MAX_QUOTED_CHARS = 200
 
 
 class Post(Protocol):
@@ -40,6 +47,41 @@ _LIST_READY_ISSUES = (
 )
 
 _GET_ISSUE = f"query GetIssue($id: String!) {{ issue(id: $id) {{ {_ISSUE_FIELDS} }} }}"
+
+_ISSUE_REF = (
+    "query IssueRef($id: String!) {"
+    " issue(id: $id) { id team { key } state { name } labels { nodes { id name } } } }"
+)
+
+_FIND_STATES = (
+    "query FindStates($filter: WorkflowStateFilter!) {"
+    " workflowStates(filter: $filter) { nodes { id } } }"
+)
+
+_FIND_LABELS = (
+    "query FindLabels($filter: IssueLabelFilter!) { issueLabels(filter: $filter) { nodes { id } } }"
+)
+
+_UPDATE_ISSUE = (
+    "mutation UpdateIssue($id: String!, $input: IssueUpdateInput!) {"
+    " issueUpdate(id: $id, input: $input) { success } }"
+)
+
+_CREATE_COMMENT = (
+    "mutation CreateComment($input: CommentCreateInput!) {"
+    " commentCreate(input: $input) { success } }"
+)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _IssueRef:
+    """What a write needs to know about an issue: its UUID, team, state and labels by name."""
+
+    issue_id: str
+    uuid: str
+    team: str
+    state: str
+    label_ids: dict[str, str]
 
 
 class LinearGraphqlTrackerClient:
@@ -91,6 +133,124 @@ class LinearGraphqlTrackerClient:
         )
         return _issue_from_node(data["issue"])
 
+    def move_state(self, issue_id: str, state_name: str) -> None:
+        """Move the issue to its team's state ``state_name``; the current state is a no-op."""
+        ref = self._issue_ref("move_state", issue_id)
+        if ref.state == state_name:
+            return
+        states = self._node_ids(
+            operation="move_state",
+            issue_id=issue_id,
+            operation_name="FindStates",
+            query=_FIND_STATES,
+            issue_filter={"team": {"key": {"eq": ref.team}}, "name": {"eq": state_name}},
+        )
+        if not states:
+            raise TrackerError(
+                operation="move_state",
+                issue_id=issue_id,
+                cause=f"state {state_name!r} not found in team {ref.team}",
+                fix=f"use the name of a workflow state of team {ref.team}",
+            )
+        self._update("move_state", ref, {"stateId": states[0]})
+
+    def add_label(self, issue_id: str, name: str) -> None:
+        """Add a label of the issue's team or the workspace; a present label is a no-op."""
+        ref = self._issue_ref("add_label", issue_id)
+        if name in ref.label_ids:
+            return
+        label_id = self._label_id("add_label", ref, name)
+        self._update("add_label", ref, {"addedLabelIds": [label_id]})
+
+    def remove_label(self, issue_id: str, name: str) -> None:
+        """Remove a label; a known label the issue does not carry is a no-op."""
+        ref = self._issue_ref("remove_label", issue_id)
+        label_id = ref.label_ids.get(name)
+        if label_id is None:
+            # Absent from the issue: nothing to change, but an unknown name is still an error.
+            self._label_id("remove_label", ref, name)
+            return
+        self._update("remove_label", ref, {"removedLabelIds": [label_id]})
+
+    def comment(self, issue_id: str, body: str) -> None:
+        """Add one comment with ``body`` to the issue."""
+        ref = self._issue_ref("comment", issue_id)
+        data = self._request(
+            operation="comment",
+            issue_id=issue_id,
+            operation_name="CreateComment",
+            query=_CREATE_COMMENT,
+            variables={"input": {"issueId": ref.uuid, "body": body}},
+        )
+        _check_success("comment", issue_id, data["commentCreate"])
+
+    def _issue_ref(self, operation: str, issue_id: str) -> _IssueRef:
+        """Resolve the identifier to the issue's UUID, team, state and labels (one request)."""
+        _check_issue_id(operation, issue_id)
+        data = self._request(
+            operation=operation,
+            issue_id=issue_id,
+            operation_name="IssueRef",
+            query=_ISSUE_REF,
+            variables={"id": issue_id},
+        )
+        node = data["issue"]
+        return _IssueRef(
+            issue_id=issue_id,
+            uuid=node["id"],
+            team=node["team"]["key"],
+            state=node["state"]["name"],
+            label_ids={label["name"]: label["id"] for label in node["labels"]["nodes"]},
+        )
+
+    def _label_id(self, operation: str, ref: _IssueRef, name: str) -> str:
+        """Return the id of the team's label ``name``, else the workspace's; raise when neither."""
+        for team_filter in ({"key": {"eq": ref.team}}, {"null": True}):
+            labels = self._node_ids(
+                operation=operation,
+                issue_id=ref.issue_id,
+                operation_name="FindLabels",
+                query=_FIND_LABELS,
+                issue_filter={"name": {"eq": name}, "team": team_filter},
+            )
+            if labels:
+                return labels[0]
+        raise TrackerError(
+            operation=operation,
+            issue_id=ref.issue_id,
+            cause=f"label {name!r} not found in team {ref.team} or the workspace",
+            fix="create the label in Linear first",
+        )
+
+    def _node_ids(
+        self,
+        *,
+        operation: str,
+        issue_id: str,
+        operation_name: str,
+        query: str,
+        issue_filter: dict[str, Any],
+    ) -> list[str]:
+        data = self._request(
+            operation=operation,
+            issue_id=issue_id,
+            operation_name=operation_name,
+            query=query,
+            variables={"filter": issue_filter},
+        )
+        (connection,) = data.values()
+        return [node["id"] for node in connection["nodes"]]
+
+    def _update(self, operation: str, ref: _IssueRef, update_input: dict[str, Any]) -> None:
+        data = self._request(
+            operation=operation,
+            issue_id=ref.issue_id,
+            operation_name="UpdateIssue",
+            query=_UPDATE_ISSUE,
+            variables={"id": ref.uuid, "input": update_input},
+        )
+        _check_success(operation, ref.issue_id, data["issueUpdate"])
+
     def _request(
         self,
         *,
@@ -116,7 +276,16 @@ class LinearGraphqlTrackerClient:
             {"query": query, "operationName": operation_name, "variables": variables}
         ).encode()
         _status, response = self._post(LINEAR_GRAPHQL_URL, headers, body, timeout_s=self._timeout_s)
-        return json.loads(response)["data"]
+        payload = json.loads(response)
+        errors = payload.get("errors")
+        if errors:
+            raise TrackerError(
+                operation=operation,
+                issue_id=issue_id,
+                cause=f"Linear answered with an error: {_first_message(errors)}",
+                fix="check the issue id and the names passed",
+            )
+        return payload["data"]
 
 
 def _check_issue_id(operation: str, issue_id: str) -> None:
@@ -127,6 +296,23 @@ def _check_issue_id(operation: str, issue_id: str) -> None:
             cause="malformed issue id",
             fix="pass an identifier such as DEM-1",
         )
+
+
+def _check_success(operation: str, issue_id: str, payload: Mapping[str, Any]) -> None:
+    if payload["success"] is not True:
+        raise TrackerError(
+            operation=operation,
+            issue_id=issue_id,
+            cause="Linear reported no success",
+            fix="check the issue in Linear, then try again",
+        )
+
+
+def _first_message(errors: Any) -> str:
+    """The first GraphQL error's message, quoted and cut: it is untrusted text."""
+    first = errors[0] if isinstance(errors, list) else None
+    message = first.get("message") if isinstance(first, dict) else None
+    return repr(str(message)[:MAX_QUOTED_CHARS])
 
 
 def _issue_from_node(node: Mapping[str, Any]) -> Issue:
