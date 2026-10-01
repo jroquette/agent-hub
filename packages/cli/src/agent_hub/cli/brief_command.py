@@ -50,8 +50,8 @@ JOURNAL_GLOB: Final = "brain/journal/[0-9]*/[0-9]*/[0-9][0-9].md"
 HUB_LINE_NAME: Final = "hub"
 _PR_QUERY: Final = '.[] | "#\\(.number) \\(.title)"'
 _FAILED_RUNS_QUERY: Final = '.[] | select(.conclusion=="failure") | .name'
-# C0 and C1 controls but line feed and tab: a PR title must not move the cursor or recolor.
-_CONTROLS = re.compile("[\x00-\x08\x0b-\x1f\x80-\x9f]")
+# C0 controls but line feed and tab, DEL and C1: a PR title must not move the cursor or recolor.
+_CONTROLS = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
 
 class _Checkout(NamedTuple):
@@ -210,16 +210,10 @@ def _gh_outputs(gh: str, root: Path, *, repos: Sequence[str], branch: str) -> li
         calls.append(["run", "list", "-R", repo, "--branch", branch, "-L", "3"])
         calls[-1] += ["--json", "name,conclusion", "-q", _FAILED_RUNS_QUERY]
     deadline = time.monotonic() + GH_PHASE_BUDGET
-    pool = ThreadPoolExecutor(max_workers=MAX_GH_WORKERS)
-    try:
+    with ThreadPoolExecutor(max_workers=MAX_GH_WORKERS) as pool:
         outputs = list(
             pool.map(lambda arguments: _gh_output(gh, root, arguments, deadline=deadline), calls)
         )
-    except BaseException:
-        # Ctrl-C: the calls not started are dropped; the running ones end with their timeouts.
-        pool.shutdown(wait=False, cancel_futures=True)
-        raise
-    pool.shutdown()
     return [(outputs[index], outputs[index + 1]) for index in range(0, len(outputs), 2)]
 
 
