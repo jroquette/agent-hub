@@ -454,17 +454,6 @@ class TestWrites:
         assert runner.argvs == []
 
 
-class TestTools:
-    def test_allows_listing_tool_when_list_ready_runs(
-        self, fake_claude: Any, hub_root: Path
-    ) -> None:
-        _client(fake_claude, hub_root).list_ready("DEM", "agent-ready")
-
-        assert [call.tools for call in fake_claude.calls] == [
-            (f"{_PREFIX}list_issues", f"{_PREFIX}list_issue_statuses")
-        ]
-
-
 def _requests(fake_claude: Any) -> list[tuple[str, dict[str, Any]]]:
     return [(call.operation, call.arguments) for call in fake_claude.calls]
 
@@ -489,7 +478,16 @@ _WRITES = {
 }
 
 
-class TestWriteTools:
+class TestTools:
+    def test_allows_listing_tool_when_list_ready_runs(
+        self, fake_claude: Any, hub_root: Path
+    ) -> None:
+        _client(fake_claude, hub_root).list_ready("DEM", "agent-ready")
+
+        assert [call.tools for call in fake_claude.calls] == [
+            (f"{_PREFIX}list_issues", f"{_PREFIX}list_issue_statuses")
+        ]
+
     @pytest.mark.parametrize("operation", list(_WRITES))
     def test_allows_listing_tool_when_write_reads(
         self, fake_claude: Any, hub_root: Path, operation: str
