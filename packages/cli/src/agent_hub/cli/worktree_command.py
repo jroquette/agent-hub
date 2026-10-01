@@ -7,8 +7,10 @@ is the hub (its ``hub.json``, its workspace). Each repo ``<ws>/<dir>`` gets
 executable ``scripts/worktree-setup.sh <worktree>``; ``--remove`` runs ``worktree-teardown.sh``
 the same way, then ``git worktree remove`` (never forced; branches are kept). Usage problems (the
 name, ``--only``) exit 2 before git runs in any repo; a repo problem, or a script that fails,
-exits 1 when it is reached, and later repos are left alone. Git and the scripts run with no
-timeout in the caller's process group, so Ctrl-C reaches them.
+exits 1 when it is reached, and later repos are left alone. A worktree with modified or
+untracked files is never torn down. Git and the scripts run with no timeout in the caller's
+process group, so Ctrl-C reaches them. The scripts run with the worktree as their cwd and git's
+location variables dropped.
 """
 
 import os
@@ -37,6 +39,7 @@ WORKTREES_FOLDER: Final = Path(".claude", "worktrees")
 _PREFIX: Final = f"hub {COMMAND}"
 _FETCH_HINT: Final = "; check the network and the remote"
 _CLONE_HINT: Final = "clone it next to the hub"
+_DIRTY: Final = "it has modified or untracked files"
 SETUP_SCRIPT: Final = "scripts/worktree-setup.sh"
 TEARDOWN_SCRIPT: Final = "scripts/worktree-teardown.sh"
 
@@ -149,14 +152,18 @@ def _create(task: _Task, repo: str) -> None:
     if worktree.is_dir():
         typer.echo(f"exists   {shown_path(str(worktree))}")
         return
-    _git_or_fail(task, checkout, ("fetch", "-q", "origin"), step="could not fetch origin")
-    has_branch = _git(task, checkout, ("show-ref", "--verify", "-q", f"refs/heads/{task.branch}"))
+    _git_or_fail(
+        task, checkout, ("fetch", "-q", "origin"), repo=repo, step="could not fetch origin"
+    )
+    has_branch = _git(
+        task, checkout, ("show-ref", "--verify", "-q", f"refs/heads/{task.branch}"), repo=repo
+    )
     add: tuple[str, ...]
     if has_branch.returncode == 0:
         add = ("worktree", "add", "-q", str(worktree), task.branch)
     else:
         add = ("worktree", "add", "-q", "-b", task.branch, str(worktree), task.base)
-    _git_or_fail(task, checkout, add, step="could not add the worktree")
+    _git_or_fail(task, checkout, add, repo=repo, step="could not add the worktree")
     typer.echo(f"created  {shown_path(str(worktree))} ({task.branch} from {task.base})")
     _run_script(task, repo, worktree, script=SETUP_SCRIPT)
 
@@ -166,9 +173,18 @@ def _remove(task: _Task, repo: str) -> None:
     worktree = checkout / WORKTREES_FOLDER / task.name
     if not worktree.is_dir():
         return
+    # git worktree remove would refuse a dirty worktree, but only after the teardown ran.
+    status = _git(task, worktree, ("status", "--porcelain"), repo=repo)
+    if status.returncode != 0 or status.stdout:
+        reason = _first_line(status) if status.returncode != 0 else _DIRTY
+        fail(f"{_PREFIX}: {repo}: could not remove {shown_path(str(worktree))}: {reason}")
     _run_script(task, repo, worktree, script=TEARDOWN_SCRIPT)
     _git_or_fail(
-        task, checkout, ("worktree", "remove", str(worktree)), step="could not remove the worktree"
+        task,
+        checkout,
+        ("worktree", "remove", str(worktree)),
+        repo=repo,
+        step="could not remove the worktree",
     )
     typer.echo(f"removed  {shown_path(str(worktree))}")
 
@@ -180,14 +196,24 @@ def _run_script(task: _Task, repo: str, worktree: Path, *, script: str) -> None:
         return
 
     def show(line: bytes) -> None:
-        typer.echo(f"  {repo}: {line.decode(errors='replace').removesuffix(chr(10))}")
+        text = line.removesuffix(b"\n").removesuffix(b"\r").decode(errors="replace")
+        typer.echo(f"  {repo}: {text}")
 
     try:
         code = stream_child([str(path), str(worktree)], cwd=worktree, env=task.env, on_line=show)
     except OSError as error:
         fail(f"{_PREFIX}: {repo}: {script} could not run: {error.strerror or error}")
-    if code != 0:
-        fail(f"{_PREFIX}: {repo}: {script} exited {code}")
+    if code == 0:
+        return
+    ended = f"was killed by signal {-code}" if code < 0 else f"exited {code}"
+    hint = ""
+    if script == SETUP_SCRIPT:
+        hint = (
+            f"; the worktree is kept: run the script again ({shown_path(str(path))}"
+            f" {shown_path(str(worktree))}) or remove it with"
+            f" ./hub {COMMAND} --remove {task.name} --only {repo}"
+        )
+    fail(f"{_PREFIX}: {repo}: {script} {ended}{hint}")
 
 
 def _is_executable_file(path: Path) -> bool:
@@ -211,15 +237,20 @@ def _summary(task: _Task) -> list[str]:
     ]
 
 
-def _git(task: _Task, folder: Path, arguments: tuple[str, ...]) -> ChildResult:
-    return run_child([task.git, *arguments], cwd=folder, env=task.env, timeout=None)
+def _git(task: _Task, folder: Path, arguments: tuple[str, ...], *, repo: str) -> ChildResult:
+    try:
+        return run_child([task.git, *arguments], cwd=folder, env=task.env, timeout=None)
+    except OSError as error:
+        fail(f"{_PREFIX}: {repo}: git could not run: {error.strerror or error}")
 
 
-def _git_or_fail(task: _Task, folder: Path, arguments: tuple[str, ...], *, step: str) -> None:
-    result = _git(task, folder, arguments)
+def _git_or_fail(
+    task: _Task, folder: Path, arguments: tuple[str, ...], *, repo: str, step: str
+) -> None:
+    result = _git(task, folder, arguments, repo=repo)
     if result.returncode != 0:
         hint = _FETCH_HINT if arguments[0] == "fetch" else ""
-        fail(f"{_PREFIX}: {folder.name}: {step}: {_first_line(result)}{hint}")
+        fail(f"{_PREFIX}: {repo}: {step}: {_first_line(result)}{hint}")
 
 
 def _first_line(result: ChildResult) -> str:
