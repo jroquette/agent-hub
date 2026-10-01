@@ -25,7 +25,7 @@ from agent_hub.core.testing.builders import a_seeded_tracker_backend
 from agent_hub.core.testing.fakes import FakeTrackerBackend
 from agent_hub.core.tracker.tracker_client import Issue
 from agent_hub.tracker_linear.claude_process import ClaudeOutput
-from agent_hub.tracker_linear.mcp_protocol import TOOLS, CallKind
+from agent_hub.tracker_linear.mcp_protocol import LINEAR_TOOLS, TOOLS, CallKind
 
 # Pinned here as literals, not imported from the adapter, so a wrong adapter constant fails.
 LINEAR_ENDPOINT = "https://api.linear.app/graphql"
@@ -477,7 +477,8 @@ def _envelope(
 class FakeClaude:
     """A runner for ``McpTrackerClient`` that plays an honest model over a ``FakeTrackerBackend``.
 
-    Each call checks the argv (exact flags; ``--allowedTools`` is the call kind's tool list), the
+    Each call checks the argv (exact flags; no built-in tool, ``--allowedTools`` the call kind's
+    tools, ``--disallowedTools`` every other Linear tool), the
     cwd and the environment (no ``LINEAR_API_KEY``), reads the request line (the prompt's last
     line), answers it from the backend and records the call. Reads never change the backend; a
     write changes exactly what it asks, and only to states and labels that exist.
@@ -503,7 +504,19 @@ class FakeClaude:
         prompt = argv[2]
         request = json.loads(prompt.splitlines()[-1])
         kind = CallKind(request["operation"])
-        assert list(argv) == ["claude", "-p", prompt, *self._flags, "--allowedTools", *TOOLS[kind]]
+        denied = [tool for tool in LINEAR_TOOLS if tool not in TOOLS[kind]]
+        assert list(argv) == [
+            "claude",
+            "-p",
+            prompt,
+            *self._flags,
+            "--tools",
+            "",
+            "--allowedTools",
+            *TOOLS[kind],
+            "--disallowedTools",
+            *denied,
+        ]
         assert cwd == self._cwd
         assert "LINEAR_API_KEY" not in env
         assert timeout_s == self._timeout_s
