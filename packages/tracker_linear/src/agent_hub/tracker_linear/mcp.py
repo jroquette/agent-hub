@@ -247,6 +247,13 @@ class McpTrackerClient:
                 call, f"no answer from claude within {self.timeout_s:g} s", _RETRY_FIX
             ) from None
         except FileNotFoundError as error:
+            if str(error.filename) == str(self.cwd):
+                raise call_error(
+                    call,
+                    f"cannot start claude in {str(self.cwd)!r}: no such directory",
+                    "run the command in the hub, or set AGENT_HUB_ROOT to it",
+                    call_ran=False,
+                ) from None
             if error.filename == argv[0]:
                 raise call_error(
                     call,
@@ -254,19 +261,9 @@ class McpTrackerClient:
                     f"install Claude Code, {TRANSPORT_FIX}",
                     call_ran=False,
                 ) from None
-            raise call_error(
-                call,
-                f"cannot start claude in {str(error.filename)!r}: no such directory",
-                "run the command in the hub, or set AGENT_HUB_ROOT to it",
-                call_ran=False,
-            ) from None
+            raise _start_error(call, error) from None
         except OSError as error:
-            raise call_error(
-                call,
-                f"could not start claude: {quoted(error.strerror)}",
-                _RETRY_FIX,
-                call_ran=False,
-            ) from None
+            raise _start_error(call, error) from None
 
     def _result(self, call: McpCall[Any], output: ClaudeOutput) -> str:
         """The model's reply text from ``claude``'s JSON result; its cost is recorded first."""
@@ -344,6 +341,12 @@ def _stopped_cause(envelope: _Envelope) -> str:
     if not envelope.errors:
         return f"claude stopped: {name}"
     return f"claude stopped: {name}: {quoted('; '.join(envelope.errors))}"
+
+
+def _start_error(call: McpCall[Any], error: OSError) -> TrackerError:
+    return call_error(
+        call, f"could not start claude: {quoted(error.strerror)}", _RETRY_FIX, call_ran=False
+    )
 
 
 def _no_result(call: McpCall[Any], output: ClaudeOutput) -> TrackerError:
