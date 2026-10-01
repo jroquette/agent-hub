@@ -958,6 +958,45 @@ def test_ignores_other_hub_when_at_hub_resolved(
     assert own[0][0] == "deny"
 
 
+def test_asks_when_hub_checkout_named_apart_from_project(
+    guarded_hub: Path, guard: Guard, *, rendered_tree: Callable[..., Path]
+) -> None:
+    # AC-9.6 (AGH-13): project "demo" checked out as ws/my-checkout; the sibling ws/demo-hub
+    # (guarded_hub) has the same lists, so an @hub derived from the name would land there.
+    checkout = render_guarded(rendered_tree, guarded_hub.parent / "my-checkout")
+    (checkout / "plugin" / "demo" / "hooks" / "project_guard.py").unlink()
+    mine = checkout / "brain" / "decisions" / "0001-x.md"
+    theirs = guarded_hub / "brain" / "decisions" / "0001-x.md"
+    edits = [(event, checkout) for event in edit_events(mine)[:2]]
+    sibling = [
+        (event | {"cwd": str(guarded_hub)}, guarded_hub) for event in edit_events(theirs)[:2]
+    ]
+
+    verdicts = guard(checkout / HOOKS, [*edits, bash_run("rm notes/a.md", checkout), *sibling])
+
+    asked, removed, other = verdicts[:2], verdicts[2], verdicts[3:]
+    assert [
+        verdict
+        for verdict in asked
+        if verdict is None
+        or verdict[0] != "ask"
+        or "guard.ask_before_edit `@hub/brain/decisions`" not in verdict[1]
+    ] == []
+    assert removed == (
+        "ask",
+        "[hub guard] notes/a.md matches guard.ask_before_edit `@hub/notes` (hub.json); confirm"
+        " this change is intended",
+    )
+    # any hub's brain/ is curated, so the sibling's edit asks, but not through this hub's @hub
+    assert [
+        verdict
+        for verdict in other
+        if verdict is None
+        or "brain/ is curated" not in verdict[1]
+        or "@hub/brain/decisions" in verdict[1]
+    ] == []
+
+
 # Review fixes: each only adds a path form the guard sees through, or an ask.
 
 
