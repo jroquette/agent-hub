@@ -127,3 +127,61 @@ def test_leaves_skip_off_when_test_not_live(monkeypatch: pytest.MonkeyPatch) -> 
     _collect(item)
 
     assert _skip_reasons(item) == []
+
+
+def _mcp_live_item() -> _FakeItem:
+    item = _FakeItem("packages/tracker_linear/tests/integration/test_mcp_live.py")
+    item.markers.append(pytest.mark.live("mcp").mark)
+    return item
+
+
+def test_needs_no_key_when_mcp_live_marked(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_live_variables(monkeypatch, LINEAR_API_KEY=None)
+    item = _mcp_live_item()
+
+    _collect(item)
+
+    assert _skip_reasons(item) == []
+
+
+def test_needs_key_when_live_marked_bare(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_live_variables(monkeypatch, LINEAR_API_KEY=None)
+    item = _FakeItem("packages/tracker_linear/tests/integration/test_live.py", "live")
+
+    _collect(item)
+
+    [reason] = _skip_reasons(item)
+    assert _names(reason, "LINEAR_API_KEY")
+
+
+@pytest.mark.parametrize(
+    ("missing", "first"),
+    [
+        (("AGENT_HUB_LIVE",), "AGENT_HUB_LIVE"),
+        (("AGENT_HUB_LIVE_ISSUE", "AGENT_HUB_LIVE_LABEL"), "AGENT_HUB_LIVE_ISSUE"),
+        (("AGENT_HUB_LIVE_LABEL",), "AGENT_HUB_LIVE_LABEL"),
+    ],
+    ids=["switch", "issue-and-label", "label"],
+)
+def test_names_first_missing_variable_when_mcp_live_skipped(
+    monkeypatch: pytest.MonkeyPatch, *, missing: tuple[str, ...], first: str
+) -> None:
+    _set_live_variables(monkeypatch, LINEAR_API_KEY=None, **dict.fromkeys(missing))
+    item = _mcp_live_item()
+
+    _collect(item)
+
+    [reason] = _skip_reasons(item)
+    assert _names(reason, first)
+    assert not _names(reason, "LINEAR_API_KEY")
+    assert [name for name in missing if name != first and _names(reason, name)] == []
+    assert not any(value in reason for value in LIVE_VARIABLES.values() if len(value) > 1)
+
+
+def test_rejects_live_marker_when_transport_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_live_variables(monkeypatch)
+    item = _FakeItem("packages/tracker_linear/tests/integration/test_live.py")
+    item.markers.append(pytest.mark.live("connector").mark)
+
+    with pytest.raises(pytest.UsageError, match="'connector'"):
+        _collect(item)
