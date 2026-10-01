@@ -174,7 +174,7 @@
     "plugin/hub-workflow/agents/architect.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "232f83a754ead65d922d4da15e6e4d594b4778b2186f806291fba307bd5ab1ee"
+      "sha256": "b417ed82fc64f5ce1e48cd5c3a2ea613d9352868a8cb1c2a588da5196d9cd594"
     },
     "plugin/hub-workflow/agents/evaluator.md": {
       "executable": false,
@@ -189,7 +189,7 @@
     "plugin/hub-workflow/agents/quality-reviewer.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "7adbe4d67028bbadcdae6ea92e2d8c0c11353c372ec76845f437510cddd56b34"
+      "sha256": "fd267809d50da2df878ce62da65aa7d2f75509d39b5401aa38f081b15b81f716"
     },
     "plugin/hub-workflow/agents/requirements-analyst.md": {
       "executable": false,
