@@ -189,7 +189,9 @@ class TrackerClientContract:
 
     ``tracker_backend`` is ``a_seeded_tracker_backend()``; the suite asserts on its state, never
     on what the client says it did, so it runs the same against the fake and an adapter whose
-    fake server serves that backend. ``list_ready`` is unordered and compared as a set.
+    fake server serves that backend. ``list_ready`` is unordered and compared as a set. An adapter's
+    fake server serves an empty description the way its tracker does (null or absent), so the suite
+    exercises the mapping to ``""``.
     """
 
     def test_lists_open_team_issues_with_label_when_ready_issues_listed(
