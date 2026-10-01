@@ -1,7 +1,9 @@
-"""The Linear GraphQL adapter's reads, over the in-process fake Linear API (no socket)."""
+"""The Linear GraphQL adapter's reads and writes, over the in-process fake Linear API."""
 
+import copy
 import json
-from collections.abc import Iterator, Mapping
+import re
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 import pytest
@@ -20,6 +22,7 @@ from agent_hub.tracker_linear.graphql import (
 )
 
 _READY_IN_DEM = {"DEM-1", "DEM-2", "DEM-3"}
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
 class _RecordingEnviron(Mapping[str, str]):
@@ -165,6 +168,214 @@ def test_reads_key_only_at_call_time_when_client_constructed(
     assert LINEAR_API_KEY_VARIABLE in environ.reads
 
 
+def _operation_names(fake_linear_api: Any) -> list[str]:
+    return [request["operationName"] for request in fake_linear_api.requests]
+
+
+def _is_uuid(value: object) -> bool:
+    return isinstance(value, str) and _UUID.fullmatch(value) is not None
+
+
+def test_resolves_identifier_once_when_issue_moved(
+    fake_linear_api: Any, synthetic_key: str, tracker_backend: FakeTrackerBackend
+) -> None:
+    _client(fake_linear_api, synthetic_key).move_state("DEM-1", "In Progress")
+
+    assert _operation_names(fake_linear_api) == ["IssueRef", "FindStates", "UpdateIssue"]
+    lookup, states, update = fake_linear_api.requests
+    issue_uuid = fake_linear_api.responses[0]["issue"]["id"]
+    assert lookup["variables"] == {"id": "DEM-1"}
+    assert states["variables"]["filter"] == {
+        "team": {"key": {"eq": "DEM"}},
+        "name": {"eq": "In Progress"},
+    }
+    assert "In Progress" not in states["query"]
+    assert _is_uuid(issue_uuid)
+    assert update["variables"]["id"] == issue_uuid
+    (state_id,) = update["variables"]["input"].values()
+    assert set(update["variables"]["input"]) == {"stateId"}
+    assert _is_uuid(state_id)
+    assert tracker_backend.issues["DEM-1"].state == "In Progress"
+
+
+def test_sends_no_mutation_when_moved_to_current_state(
+    fake_linear_api: Any, synthetic_key: str
+) -> None:
+    _client(fake_linear_api, synthetic_key).move_state("DEM-1", "Todo")
+
+    assert _operation_names(fake_linear_api) == ["IssueRef"]
+
+
+def test_sends_no_mutation_when_present_label_added(
+    fake_linear_api: Any, synthetic_key: str
+) -> None:
+    _client(fake_linear_api, synthetic_key).add_label("DEM-1", "demo-api")
+
+    assert _operation_names(fake_linear_api) == ["IssueRef"]
+
+
+def test_sends_no_mutation_when_absent_label_removed(
+    fake_linear_api: Any, synthetic_key: str
+) -> None:
+    # agent-failed is a workspace label: the team lookup misses, the workspace one finds it.
+    _client(fake_linear_api, synthetic_key).remove_label("DEM-1", "agent-failed")
+
+    assert _operation_names(fake_linear_api) == ["IssueRef", "FindLabels", "FindLabels"]
+
+
+def test_looks_up_team_label_only_when_team_has_it(
+    fake_linear_api: Any, synthetic_key: str
+) -> None:
+    _client(fake_linear_api, synthetic_key).add_label("DEM-1", "bug")
+
+    assert _operation_names(fake_linear_api) == ["IssueRef", "FindLabels", "UpdateIssue"]
+    assert fake_linear_api.requests[1]["variables"]["filter"] == {
+        "name": {"eq": "bug"},
+        "team": {"key": {"eq": "DEM"}},
+    }
+    update = fake_linear_api.requests[2]["variables"]
+    assert set(update["input"]) == {"addedLabelIds"}
+    assert all(_is_uuid(label_id) for label_id in update["input"]["addedLabelIds"])
+
+
+def test_looks_up_workspace_label_when_team_has_none(
+    fake_linear_api: Any, synthetic_key: str
+) -> None:
+    _client(fake_linear_api, synthetic_key).add_label("DEM-7", "agent-failed")
+
+    assert _operation_names(fake_linear_api) == [
+        "IssueRef",
+        "FindLabels",
+        "FindLabels",
+        "UpdateIssue",
+    ]
+    team_lookup, workspace_lookup = fake_linear_api.requests[1:3]
+    assert team_lookup["variables"]["filter"]["team"] == {"key": {"eq": "DEM"}}
+    assert workspace_lookup["variables"]["filter"] == {
+        "name": {"eq": "agent-failed"},
+        "team": {"null": True},
+    }
+
+
+def test_removes_label_by_its_id_when_label_present(
+    fake_linear_api: Any, synthetic_key: str
+) -> None:
+    _client(fake_linear_api, synthetic_key).remove_label("DEM-1", "agent-ready")
+
+    assert _operation_names(fake_linear_api) == ["IssueRef", "UpdateIssue"]
+    update = fake_linear_api.requests[1]["variables"]
+    assert update["id"] == fake_linear_api.responses[0]["issue"]["id"]
+    assert set(update["input"]) == {"removedLabelIds"}
+
+
+def test_comments_with_issue_uuid_when_issue_commented(
+    fake_linear_api: Any, synthetic_key: str, tracker_backend: FakeTrackerBackend
+) -> None:
+    body = 'A "quoted" body } with braces'
+
+    _client(fake_linear_api, synthetic_key).comment("DEM-2", body)
+
+    assert _operation_names(fake_linear_api) == ["IssueRef", "CreateComment"]
+    comment = fake_linear_api.requests[1]
+    assert comment["variables"] == {
+        "input": {"issueId": fake_linear_api.responses[0]["issue"]["id"], "body": body}
+    }
+    assert body not in comment["query"]
+    assert tracker_backend.comments == [("DEM-2", body)]
+
+
+@pytest.mark.parametrize(
+    ("operation", "call", "mutation"),
+    [
+        ("move_state", lambda client: client.move_state("DEM-1", "In Progress"), "UpdateIssue"),
+        ("add_label", lambda client: client.add_label("DEM-1", "bug"), "UpdateIssue"),
+        ("remove_label", lambda client: client.remove_label("DEM-1", "agent-ready"), "UpdateIssue"),
+        ("comment", lambda client: client.comment("DEM-1", "A comment."), "CreateComment"),
+    ],
+)
+def test_raises_naming_id_when_mutation_not_successful(
+    *,
+    fake_linear_api: Any,
+    synthetic_key: str,
+    tracker_backend: FakeTrackerBackend,
+    operation: str,
+    call: Callable[[LinearGraphqlTrackerClient], None],
+    mutation: str,
+) -> None:
+    fake_linear_api.mutation_success = False
+    before = copy.deepcopy(tracker_backend)
+
+    with pytest.raises(TrackerError, match=rf"^{operation} DEM-1: Linear reported no success"):
+        call(_client(fake_linear_api, synthetic_key))
+
+    assert tracker_backend == before
+    # Never retried: exactly one mutation was sent.
+    assert _operation_names(fake_linear_api).count(mutation) == 1
+
+
+def test_raises_without_retry_when_comment_answers_errors(
+    fake_linear_api: Any, synthetic_key: str, tracker_backend: FakeTrackerBackend
+) -> None:
+    # The issue is deleted between the lookup and the mutation: Linear answers with errors.
+    def deleting_post(
+        url: str, headers: Mapping[str, str], body: bytes, *, timeout_s: float
+    ) -> tuple[int, bytes]:
+        answer = fake_linear_api(url, headers, body, timeout_s=timeout_s)
+        tracker_backend.issues.pop("DEM-1", None)
+        return answer
+
+    client = LinearGraphqlTrackerClient(
+        environ={LINEAR_API_KEY_VARIABLE: synthetic_key}, post=deleting_post
+    )
+
+    with pytest.raises(TrackerError, match=r"^comment DEM-1: Linear answered with an error"):
+        client.comment("DEM-1", "A synthetic comment.")
+
+    assert _operation_names(fake_linear_api) == ["IssueRef", "CreateComment"]
+    assert tracker_backend.comments == []
+
+
+def test_scopes_states_by_served_team_when_issue_moved_to_other_team(
+    fake_linear_api: Any, synthetic_key: str, tracker_backend: FakeTrackerBackend
+) -> None:
+    # DEM-9 now belongs to OPS (moved between teams; the identifier keeps its old prefix).
+    tracker_backend.issues["DEM-9"] = an_issue(id="DEM-9", state="Todo")
+    fake_linear_api.issue_teams["DEM-9"] = "OPS"
+    client = _client(fake_linear_api, synthetic_key)
+
+    client.move_state("DEM-9", "Done")
+
+    assert fake_linear_api.requests[1]["variables"]["filter"]["team"] == {"key": {"eq": "OPS"}}
+    assert tracker_backend.issues["DEM-9"].state == "Done"
+    # Duplicate is a DEM state only: OPS refuses it.
+    with pytest.raises(TrackerError, match=r"^move_state DEM-9: state 'Duplicate' not found"):
+        client.move_state("DEM-9", "Duplicate")
+
+
+def test_raises_quoting_linear_error_when_issue_answers_errors(
+    fake_linear_api: Any, synthetic_key: str
+) -> None:
+    with pytest.raises(TrackerError, match=r"^move_state DEM-999: .*Entity not found: Issue"):
+        _client(fake_linear_api, synthetic_key).move_state("DEM-999", "Todo")
+
+    assert _operation_names(fake_linear_api) == ["IssueRef"]
+
+
+def test_lets_transport_assertion_through_when_fake_fails(synthetic_key: str) -> None:
+    # A failing fake (or a bug) must surface as itself, never as a TrackerError.
+    def failing_post(
+        url: str, headers: Mapping[str, str], body: bytes, *, timeout_s: float
+    ) -> tuple[int, bytes]:
+        raise AssertionError("fake rejected the request")
+
+    client = LinearGraphqlTrackerClient(
+        environ={LINEAR_API_KEY_VARIABLE: synthetic_key}, post=failing_post
+    )
+
+    with pytest.raises(AssertionError, match="fake rejected"):
+        client.add_label("DEM-1", "bug")
+
+
 def test_fake_rejects_identifier_when_mutation_needs_uuid(
     fake_linear_api: Any, synthetic_key: str
 ) -> None:
@@ -210,3 +421,15 @@ def test_fake_answers_errors_when_issue_unknown(fake_linear_api: Any, synthetic_
     assert status == 200
     assert answer["data"] is None
     assert answer["errors"][0]["message"] == "Entity not found: Issue"
+
+
+def test_serves_stable_uuids_when_issue_read_twice(
+    fake_linear_api: Any, synthetic_key: str
+) -> None:
+    client = _client(fake_linear_api, synthetic_key)
+    client.comment("DEM-1", "first")
+    client.comment("DEM-1", "second")
+    client.comment("DEM-2", "third")
+
+    first, second, third = (fake_linear_api.responses[index]["issue"]["id"] for index in (0, 2, 4))
+    assert first == second != third
