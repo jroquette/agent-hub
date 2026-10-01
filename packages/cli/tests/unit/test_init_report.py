@@ -98,7 +98,7 @@ def test_prints_removed_line_when_leftovers_removed() -> None:
                 "  2. git init",
                 "  3. review hub.json, AGENTS.project.md and README.md",
                 '  4. git add -A && git commit -m "Create the hub"',
-                "  5. start Claude Code in the hub folder: claude",
+                "  5. start Claude Code with every repo attached: ./agent",
                 "  6. to upgrade later: edit platform.version in hub.json, then run hub sync",
             ],
         ),
@@ -109,7 +109,7 @@ def test_prints_removed_line_when_leftovers_removed() -> None:
                 "  1. cd /work/demo-hub",
                 "  2. review hub.json, AGENTS.project.md and README.md",
                 '  3. git add -A && git commit -m "Create the hub"',
-                "  4. start Claude Code in the hub folder: claude",
+                "  4. start Claude Code with every repo attached: ./agent",
                 "  5. to upgrade later: edit platform.version in hub.json, then run hub sync",
             ],
         ),
@@ -120,8 +120,11 @@ def test_adds_git_init_step_only_when_git_absent(*, git_present: bool, expected:
     steps = next_steps(ROOT, git_present=git_present)
 
     assert steps == expected
-    # Only what works in this release (spec Q-2).
-    assert not any(name in "\n".join(steps) for name in ("./agent", "make agent"))
+    # AGH-15 ships ./agent: named once, as the launcher (no make target, no bare claude).
+    text = "\n".join(steps)
+    assert text.count("./agent") == 1
+    assert "make agent" not in text
+    assert ": claude" not in text
 
 
 @pytest.mark.parametrize("git_present", [False, True], ids=["git-absent", "git-present"])
@@ -131,8 +134,11 @@ def test_ends_with_upgrade_step_when_steps_listed(*, git_present: bool) -> None:
     last = steps[-1]
     assert "platform.version" in last
     assert "hub sync" in last
-    # Still only what works in this release (spec Q-2, Q-8).
-    assert not any(name in "\n".join(steps) for name in ("./agent", "make agent"))
+    # Still: ./agent named once, as the launcher itself (no make target, no bare claude).
+    text = "\n".join(steps)
+    assert text.count("./agent") == 1
+    assert "make agent" not in text
+    assert ": claude" not in text
 
 
 def test_quotes_root_when_path_has_spaces() -> None:
