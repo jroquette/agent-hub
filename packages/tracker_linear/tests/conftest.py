@@ -458,18 +458,30 @@ class ClaudeCall:
     tools: tuple[str, ...]
 
 
-def _envelope(
-    result: str, *, cost_usd: float = FAKE_CALL_COST_USD, is_error: bool = False
-) -> bytes:
+def _envelope(result: str, *, cost_usd: float = FAKE_CALL_COST_USD) -> bytes:
     """What ``claude -p --output-format json`` prints: one JSON object around the reply."""
     return json.dumps(
         {
             "type": "result",
-            "subtype": "error_during_execution" if is_error else "success",
-            "is_error": is_error,
+            "subtype": "success",
+            "is_error": False,
             "result": result,
             "total_cost_usd": cost_usd,
             "num_turns": 2,
+        }
+    ).encode()
+
+
+def _stopped_envelope(subtype: str, *, cost_usd: float) -> bytes:
+    """What ``claude -p --output-format json`` prints when it stops early: no ``result``."""
+    return json.dumps(
+        {
+            "type": "result",
+            "subtype": subtype,
+            "is_error": True,
+            "errors": [f"synthetic: {subtype}"],
+            "total_cost_usd": cost_usd,
+            "num_turns": 6,
         }
     ).encode()
 
@@ -491,8 +503,13 @@ class FakeClaude:
         cwd: Path,
         flags: tuple[str, ...] = MCP_DEFAULT_FLAGS,
         timeout_s: float = MCP_TIMEOUT_S,
+        stops: str | None = None,
+        stop_cost_usd: float = 0.0,
     ) -> None:
         self.backend = backend
+        # When set, every call stops early with this subtype (error_max_turns, ...) at that cost.
+        self.stops = stops
+        self.stop_cost_usd = stop_cost_usd
         self.calls: list[ClaudeCall] = []
         self._cwd = cwd
         self._flags = flags
@@ -531,6 +548,9 @@ class FakeClaude:
                 tools=tuple(TOOLS[kind]),
             )
         )
+        if self.stops is not None:
+            stopped = _stopped_envelope(self.stops, cost_usd=self.stop_cost_usd)
+            return ClaudeOutput(returncode=1, stdout=stopped, stderr=b"")
         reply = self.reply(kind, request["arguments"])
         return ClaudeOutput(returncode=0, stdout=_envelope(json.dumps(reply)), stderr=b"")
 

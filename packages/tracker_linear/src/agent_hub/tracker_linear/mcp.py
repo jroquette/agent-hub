@@ -12,7 +12,9 @@ Nothing is retried. ``last_cost_usd`` is what the last port operation's calls co
 """
 
 import json
+import re
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -23,6 +25,7 @@ from agent_hub.tracker_linear.claude_process import CLAUDE_PROGRAM, ClaudeOutput
 from agent_hub.tracker_linear.graphql import DONE_STATE_TYPES, LINEAR_API_KEY_VARIABLE
 from agent_hub.tracker_linear.mcp_protocol import (
     DENIED,
+    MAX_QUOTED_CHARS,
     MAX_READY_ISSUES,
     MAX_REPLY_BYTES,
     TOOLS,
@@ -53,6 +56,8 @@ DEFAULT_EFFORT = "medium"
 DEFAULT_TIMEOUT_S = 120.0
 
 _RETRY_FIX = f"retry {TRANSPORT_FIX}"
+# A subtype shown as is (error_max_turns); anything else is quoted.
+_SUBTYPE = re.compile(r"[a-z_]{1,64}")
 
 
 class Runner(Protocol):
@@ -270,48 +275,87 @@ class McpTrackerClient:
                 call, f"claude's output is over {MAX_REPLY_BYTES // 1024**2} MiB", _RETRY_FIX
             )
         try:
-            fields = _result_fields(load_json_bytes(output.stdout, strict=True))
+            value = load_json_bytes(output.stdout, strict=True)
         except InvalidJsonError:
-            fields = None
-        if fields is None:
+            value = None
+        # Any result that names a cost was paid for, even when nothing else in it is usable.
+        self.last_cost_usd += _cost_usd(value)
+        envelope = _envelope(value)
+        if envelope is None:
             raise _no_result(call, output)
-        text, is_error, cost_usd = fields
-        self.last_cost_usd += cost_usd
-        if is_error:
+        if envelope.is_error:
             raise call_error(
                 call,
-                f"claude reported an error: {quoted(text)}",
+                _stopped_cause(envelope),
                 f"check that claude is logged in and within its budget, {TRANSPORT_FIX}",
             )
-        if output.returncode != 0:
+        if output.returncode != 0 or envelope.result is None:
             raise _no_result(call, output)
-        return text
+        return envelope.result
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _Envelope:
+    """``claude``'s JSON result: an error result (stopped early) may have no ``result``."""
+
+    is_error: bool
+    result: str | None
+    subtype: str | None
+    errors: tuple[str, ...]
+
+
+def _is_cost(value: JsonValue) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def _cost_usd(value: JsonValue) -> float:
+    """The result's ``total_cost_usd`` when it is a number, else 0."""
+    cost = value.get("total_cost_usd") if isinstance(value, dict) else None
+    if isinstance(cost, bool) or not isinstance(cost, int | float):
+        return 0.0
+    return float(cost)
+
+
+def _envelope(value: JsonValue) -> _Envelope | None:
+    """``value`` read as ``claude``'s result, or None when it is not one."""
+    if not isinstance(value, dict) or not isinstance(value.get("is_error"), bool):
+        return None
+    is_error, result, subtype, errors = (
+        value.get(name) for name in ("is_error", "result", "subtype", "errors")
+    )
+    if not (isinstance(result, str) or (is_error and result is None)):
+        return None
+    if not isinstance(subtype, str | None) or not _is_cost(value.get("total_cost_usd")):
+        return None
+    return _Envelope(
+        is_error=bool(is_error),
+        result=result if isinstance(result, str) else None,
+        subtype=subtype,
+        errors=tuple(str(error) for error in errors) if isinstance(errors, list) else (),
+    )
+
+
+def _stopped_cause(envelope: _Envelope) -> str:
+    """Why an error result stopped: its text, else its subtype and errors (quoted, cut)."""
+    if envelope.result is not None:
+        return f"claude reported an error: {quoted(envelope.result)}"
+    subtype = envelope.subtype or "error"
+    name = subtype if _SUBTYPE.fullmatch(subtype) else quoted(subtype)
+    if not envelope.errors:
+        return f"claude stopped: {name}"
+    return f"claude stopped: {name}: {quoted('; '.join(envelope.errors))}"
 
 
 def _no_result(call: McpCall[Any], output: ClaudeOutput) -> TrackerError:
     """The error for a call that gave no usable result: a failed exit, else no JSON."""
     if output.returncode != 0:
-        detail = (output.stderr or output.stdout).decode(errors="replace").strip()
+        detail = _head(output.stderr or output.stdout).strip()
         return call_error(
             call,
             f"claude exited with status {output.returncode}: {quoted(detail)}",
             f"run claude -p in the hub to see why, {TRANSPORT_FIX}",
         )
     return call_error(call, f"claude printed no JSON result: {_quoted(output.stdout)}", _RETRY_FIX)
-
-
-def _result_fields(value: JsonValue) -> tuple[str, bool, float] | None:
-    """``claude``'s result object read as (reply text, is_error, cost), or None if it is not one."""
-    if not isinstance(value, dict):
-        return None
-    text, is_error, cost_usd = (
-        value.get(name) for name in ("result", "is_error", "total_cost_usd")
-    )
-    if not isinstance(text, str) or not isinstance(is_error, bool):
-        return None
-    if isinstance(cost_usd, bool) or not isinstance(cost_usd, int | float):
-        return None
-    return text, is_error, float(cost_usd)
 
 
 def _team_of(issue_id: str) -> str:
@@ -338,6 +382,11 @@ def _check_same_issue(operation: str, issue_id: str, replied: str) -> None:
         )
 
 
+def _head(output: bytes) -> str:
+    """The start of untrusted output, decoded: never more bytes than a quote can show."""
+    return output[: 4 * MAX_QUOTED_CHARS].decode(errors="replace")
+
+
 def _quoted(output: bytes) -> str:
     """Untrusted output, decoded, cut to ``MAX_QUOTED_CHARS`` and quoted."""
-    return quoted(output.decode(errors="replace"))
+    return quoted(_head(output))
