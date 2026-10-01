@@ -15,6 +15,9 @@ Paths: `brain/` and `scripts/` live in the hub (the directory with `hub.json`); 
 - Each task: exact paths, the intended change, the failing test to write first, and the verification command
   (a single test, or the repo's `check_fast` from `hub.json`).
 - Every `AC-n` maps to at least one test; list the mapping in a table.
+- Inputs the feature reads from users, files or other repos: state each one's bounds (size, depth, count) and the run's
+  budget up front, and name which rule or step reports a failed read of each input, with a test for it.
+- An erratum that changes behaviour names the test that pins it.
 - PR slices ≤ ~300 changed lines, one concern each. Follow the repo's conventions for configuration (its `AGENTS.md` and ADRs).
 - A decision that changes architecture gets an ADR draft next to the plan (`adr-draft-<topic>.md`), never directly in a repo's ADR folder.
 
