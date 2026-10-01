@@ -527,16 +527,13 @@ From the phases in [docs/SPEC.md](docs/SPEC.md#mvp-and-phases). Each phase start
 - [x] `hub doctor` with its rule set
 - [x] `hub worktree`, `hub brief`, `hub agent`, and the `./hub` and `./agent` shims pinned per hub (release 0.4.0)
 - [x] Tracker port with a Linear GraphQL adapter
-<!-- TODO: dogfooding (docs/SPEC.md "MVP and phases", Phase 1: "hub init generating the platform's own hub"): no evidence
-     in this repo that it is done; add it back as a Done item once confirmed -->
 
 **Now: Phase 1, hub generator**
 
-<!-- TODO: `hub next` and `hub run` (not implemented in 0.4.0) are not in docs/SPEC.md "MVP and phases"; they appear in its
-     Layer 1 table and in docs/design/hub-generator.md. Add them to the phases, then list them here -->
+- [ ] Dogfooding: `hub init` generating the platform's own hub
+- [ ] `hub next` and `hub run`: take an `agent-ready` issue to a PR through the tracker port (not implemented in 0.4.0)
 - [ ] `hub sync --adopt`: join a hand-made hub (not implemented in 0.4.0)
-<!-- TODO: optional modules (not implemented in 0.4.0) are not in docs/SPEC.md "MVP and phases"; they appear in its Layer 1
-     text and in docs/design/project-config.md. Add them to the phases, then list them here -->
+- [ ] Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`) (not implemented in 0.4.0)
 - [ ] Gate: an existing project's hand-made hub recreated with the same `make check` and bench
 
 **Next**
