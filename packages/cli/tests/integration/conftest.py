@@ -788,6 +788,14 @@ with open(answers, encoding="utf-8") as stream:
 rule = next((r for r in rules if all(a in args for a in r.get("argv_has", []))), None)
 if rule is None:
     sys.exit(1)
+barrier = rule.get("barrier")
+if barrier:  # wait until `count` calls have arrived, so only calls made at once can all pass
+    open(os.path.join(barrier["dir"], f"started.{os.getpid()}"), "w").close()
+    end = time.monotonic() + barrier["wait"]
+    while len(os.listdir(barrier["dir"])) < barrier["count"]:
+        if time.monotonic() > end:
+            sys.exit(1)
+        time.sleep(0.01)
 if "group_file" in rule:
     with open(rule["group_file"], "w", encoding="utf-8") as stream:
         stream.write(str(os.getpgid(0)))
