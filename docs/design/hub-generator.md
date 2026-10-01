@@ -91,13 +91,13 @@ ask on edits of the hooks folders. Proof: integration tests.
 | `mine_transcripts.py`, `recall_transcripts.py`, `retro_metrics.py`, `make mine`, `make retro`; `guard.py`, `hubhooks.py`, `hooks.json`, `post_edit.py`, `stop_gate.py`, `session_start.py`, `session_end.py`, `pre_compact.py` | stay hub files, managed | scripts: AGH-5 R12, Phase 2 redesigns them; hooks: the hooks exception, AGH-5 D9 ([ADR 0012](../adr/0012-cli-subsumes-hub-scripts.md)) |
 | `make usage`, `make check`, `make help` | stay targets; `check` runs `hub doctor` and the hub's own tests | `usage` wraps an external cost tool until the Phase 2 cost view; hook tests move to agent-hub |
 
-Every caller (Makefile `HUB := "$(CURDIR)/hub"`, pre-commit `./hub doctor`, skills, `./agent`) goes through the managed
-POSIX `sh` shim `./hub`, run by its real path (a symlink elsewhere reads the link's folder): it reads `platform.version`
-from its own folder's `hub.json` at run time (stdlib `python3`; no `python3` or no uv: exit 127; a bad pin: exit 1),
-runs the resolve step `uvx --from <pinned source> hub --version` (fails: exit 1 naming the source and the missing
-access, no real call), then `exec`s the real call, which keeps the caller's cwd, gets `AGENT_HUB_ROOT` = the shim's
-folder, and passes its exit code through. Windows is not supported. A script is deleted when its command lands, after
-characterization tests of the untested (brief, bench, retro, lint, cloud setup).
+Every caller (Makefile `HUB`: `$(CURDIR)/hub` single-quoted; pre-commit `./hub doctor`; skills; `./agent`) goes
+through the managed POSIX `sh` shim `./hub`, run by its real path (a symlink elsewhere reads the link's folder): it
+reads `platform.version` from its own folder's `hub.json` at run time (stdlib `python3`; no `python3` or no uv: exit
+127; a bad pin: exit 1), runs the resolve step `uvx --from <pinned source> hub --version` (fails: exit 1 naming the
+source and the missing access, no real call), then `exec`s the real call, which keeps the caller's cwd, gets
+`AGENT_HUB_ROOT` = the shim's folder, and passes its exit code through. Windows is not supported. A script is deleted
+when its command lands, after characterization tests of the untested (brief, bench, retro, lint, cloud setup).
 Order: `worktree`, `brief`, `doctor`, `agent`, `next`/`run`, `bench`.
 
 ### Distribution

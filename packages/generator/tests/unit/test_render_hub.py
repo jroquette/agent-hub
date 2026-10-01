@@ -1085,7 +1085,7 @@ def test_calls_hub_through_shim_when_recipes_read(demo_config: HubConfig) -> Non
     assert recipe_lines(makefile, "agent") == ["./agent"]
     # The protocol is the ./hub shim's (test_hub_shim.py); the Makefile holds no copy of it.
     # The shim by the hub's absolute path, so a recipe that changes folder still finds it.
-    assert 'HUB := "$(CURDIR)/hub"' in makefile.splitlines()
+    assert "HUB := '$(subst ','\\'',$(CURDIR))/hub'" in makefile.splitlines()
     assert "uvx" not in makefile
 
 
@@ -1383,6 +1383,30 @@ def test_fails_check_when_hub_test_fails(
 
     assert completed.returncode != 0
     assert "the hub gate fails" in completed.stderr
+
+
+def test_runs_shim_when_hub_folder_name_needs_quoting(
+    variant_config: HubConfig,
+    *,
+    rendered_tree: Callable[..., Path],
+    fake_uv_bin: Path,
+    tmp_path: Path,
+) -> None:
+    # A folder name with a double quote, a dollar sign, an apostrophe and a space: the shim's
+    # path must reach the shell as one word, unexpanded.
+    root = rendered_tree(render_hub(variant_config), root=tmp_path / "d$HOME\"q it's")
+    document = a_hub_document()
+    document["platform"]["version"] = RUN_VERSION
+    (root / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+
+    completed = run_make(root, fake_uv_bin, "brain-brief")
+
+    assert completed.returncode == 0, completed.stderr
+    source = pinned_source(RUN_VERSION)
+    assert logged_calls(fake_uv_bin) == [
+        f"uvx --from {source} hub --version",
+        f"uvx --from {source} hub brief",
+    ]
 
 
 @pytest.mark.parametrize(
