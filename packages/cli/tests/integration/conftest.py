@@ -28,6 +28,7 @@ from typing import Any, NamedTuple
 import pytest
 from typer.testing import CliRunner, Result
 
+from agent_hub.cli.hub_root import HUB_ROOT_VARIABLE
 from agent_hub.cli.main import app
 from agent_hub.core.json_form import dump_json
 from agent_hub.core.testing.builders import a_hub_document
@@ -58,9 +59,13 @@ GIT_VARIABLE_PREFIX = "GIT_"
 
 @pytest.fixture(autouse=True)
 def no_git_location(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Run every test as if git found the repo from the folder: every ``GIT_*`` variable unset."""
+    """Run every test as if git found the repo from the folder: every ``GIT_*`` variable unset.
+
+    ``AGENT_HUB_ROOT`` is unset too, so a command takes the hub from the folder it runs in.
+    """
     for variable in [name for name in os.environ if name.startswith(GIT_VARIABLE_PREFIX)]:
         monkeypatch.delenv(variable)
+    monkeypatch.delenv(HUB_ROOT_VARIABLE, raising=False)
 
 
 class FakeGit(NamedTuple):
@@ -565,3 +570,143 @@ def child_env() -> Callable[[Mapping[str, str]], dict[str, str]]:
         return {name: value for name, value in values.items() if name not in CHILD_DROPPED}
 
     return build
+
+
+# The spec's "DEMO workspace" (AC-15.1 to AC-15.4): a DEMO hub whose default branch is trunk and
+# whose two repos are clones of local bare origins, each origin advanced after the clone.
+WORKSPACE_BRANCH = "trunk"
+WORKSPACE_REPOS = ("demo-api", "demo-web")
+_WORKSPACE_IDENTITY = ("-c", "user.name=Jane Doe", "-c", "user.email=jane@example.com")
+
+
+def _workspace_git_env(home: Path) -> dict[str, str]:
+    """Git with this home only: no system or global config, no location variable."""
+    return {
+        "PATH": os.environ["PATH"],
+        "HOME": str(home),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+    }
+
+
+def _run_git(folder: Path, env: Mapping[str, str], *args: str) -> str:
+    git = shutil.which("git")
+    assert git is not None, "git is needed for a DEMO workspace"
+    completed = subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
+        [os.path.abspath(git), *_WORKSPACE_IDENTITY, "-c", "commit.gpgsign=false", *args],
+        cwd=folder,
+        env=dict(env),
+        check=True,
+        capture_output=True,
+    )
+    return completed.stdout.decode().strip()
+
+
+class DemoWorkspace:
+    """A ``DEMO`` workspace: ``ws/hub``, one clone per repo, their bare origins in ``origins``."""
+
+    def __init__(self, base: Path, env: Mapping[str, str]) -> None:
+        self.base = base
+        self.ws = base / "ws"
+        self.hub = self.ws / "hub"
+        self.origins = base / "origins"
+        self.env = dict(env)
+
+    def git(self, folder: Path, *args: str) -> str:
+        """Run git in ``folder`` and return its stripped stdout; a failure fails the test."""
+        return _run_git(folder, self.env, *args)
+
+    def origin(self, repo: str) -> Path:
+        return self.origins / f"{repo}.git"
+
+    def origin_head(self, repo: str) -> str:
+        return self.git(self.origin(repo), "rev-parse", WORKSPACE_BRANCH)
+
+    def worktree(self, repo: str, name: str) -> Path:
+        return self.ws / repo / ".claude" / "worktrees" / name
+
+    def advance(self, repo: str, files: Mapping[str, tuple[bytes, int]] | None = None) -> str:
+        """Push one commit to ``repo``'s origin (``files``: path → content and mode); its sha."""
+        pusher = self.base / "pusher"
+        shutil.rmtree(pusher, ignore_errors=True)
+        self.git(self.base, "clone", "-q", str(self.origin(repo)), str(pusher))
+        written = dict(files or {"CHANGES.md": (f"{self.origin_head(repo)}\n".encode(), 0o644)})
+        for path, (content, mode) in written.items():
+            target = pusher / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+            target.chmod(mode)
+        self.git(pusher, "add", "-A")
+        self.git(pusher, "commit", "-q", "-m", "advance")
+        self.git(pusher, "push", "-q", "origin", WORKSPACE_BRANCH)
+        shutil.rmtree(pusher)
+        return self.origin_head(repo)
+
+
+def _build_workspace(base: Path) -> DemoWorkspace:
+    home = base / "home"
+    home.mkdir()
+    workspace = DemoWorkspace(base, _workspace_git_env(home))
+    document = demo_document_value()
+    document["project"]["default_branch"] = WORKSPACE_BRANCH
+    document["repos"].append(dict(DEMO_SECOND_REPO))
+    config = base / "workspace-hub.json"
+    config.write_bytes(dump_json(document))
+    result = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(workspace.hub)])
+    assert result.exit_code == 0, result.stderr
+    config.unlink()
+    for repo in WORKSPACE_REPOS:
+        seed = base / "seed" / repo
+        seed.mkdir(parents=True)
+        workspace.git(seed, "-c", f"init.defaultBranch={WORKSPACE_BRANCH}", "init", "-q")
+        (seed / "README.md").write_bytes(f"# {repo}\n".encode())
+        workspace.git(seed, "add", "-A")
+        workspace.git(seed, "commit", "-q", "-m", "init")
+        workspace.git(base, "clone", "-q", "--bare", str(seed), str(workspace.origin(repo)))
+        workspace.git(base, "clone", "-q", str(workspace.origin(repo)), str(workspace.ws / repo))
+        workspace.advance(repo)
+    shutil.rmtree(base / "seed")
+    return workspace
+
+
+@pytest.fixture(scope="session")
+def demo_workspace_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The ``DEMO`` workspace built once per session: never change it."""
+    return _build_workspace(tmp_path_factory.mktemp("demo-workspace-template")).base
+
+
+@pytest.fixture
+def demo_workspace(
+    tmp_path: Path, demo_workspace_template: Path, monkeypatch: pytest.MonkeyPatch
+) -> DemoWorkspace:
+    """A copy of the ``DEMO`` workspace in ``tmp_path``, each clone's origin pointed at its copy.
+
+    The command's git reads no system or global config and finds no repo above ``tmp_path``.
+    """
+    base = tmp_path / "workspace"
+    shutil.copytree(demo_workspace_template, base, symlinks=True)
+    workspace = DemoWorkspace(base, _workspace_git_env(base / "home"))
+    for repo in WORKSPACE_REPOS:
+        workspace.git(
+            workspace.ws / repo, "remote", "set-url", "origin", str(workspace.origin(repo))
+        )
+    for name, value in workspace.env.items():
+        if name != "PATH":
+            monkeypatch.setenv(name, value)
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    return workspace
+
+
+type CommandRunner = Callable[..., Result]
+
+
+@pytest.fixture
+def run_command(monkeypatch: pytest.MonkeyPatch) -> CommandRunner:
+    """Run ``hub <args>`` in process with ``root`` as the current folder; ``env`` as CliRunner's."""
+
+    def run(root: Path, *args: str, env: Mapping[str, str | None] | None = None) -> Result:
+        monkeypatch.chdir(root)
+        return CliRunner().invoke(app, list(args), env=env)
+
+    return run
