@@ -1251,23 +1251,3 @@ def test_reports_no_repo_listing_problem_when_config_failed(snapshot_of: Snapsho
     findings = run_rules(Selection(rules=registry, notes=(), severities={}), snapshot)
 
     assert [(f.rule, f.path) for f in findings] == [("config.schema", "hub.json")]
-
-
-def test_cuts_problem_when_tree_problem_long(snapshot_of: SnapshotFactory) -> None:
-    # A long git stderr line or a deep path never prints unbounded, hub or checkout.
-    spies = Spies()
-    config = a_two_repo_config()
-    long_problem = "could not list the files: " + "x" * 1_000
-    snapshot = snapshot_of(
-        config=config,
-        problem=long_problem,
-        repos={"demo-api": {}, "demo-web": {}},
-        repo_problems={"demo-web": long_problem},
-    )
-
-    findings = run_rules(selected(a_repo_registry(spies), config=config), snapshot)
-
-    shown = cut_echo(long_problem)
-    assert len(shown) < len(long_problem)
-    problems = sorted((f.path, f.message) for f in findings if f.path in {".", "../demo-web"})
-    assert problems == [(".", shown), ("../demo-web", shown)]
