@@ -34,6 +34,7 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `tracker.team` | string, the tracker's team key | req. | `hub next`, `hub run`, worktree names |
 | `tracker.ready_label` | string | `agent-ready` | `hub next` |
 | `tracker.failed_label` | string | `agent-failed` | `hub run` on failure |
+| `tracker.transport` | closed list: `api`, `mcp` | `api` | `hub next`, `hub run` (adapter; Tracker, below) |
 | `repos[]` | list, at least one item | req. | launcher, worktrees, hooks, cloud setup |
 | `repos[].dir` | one path segment (Rendered values), unique across `repos` ignoring case | req. | the sibling directory next to the hub |
 | `repos[].github` | `owner/name` | req. | cloud setup, `hub run` |
@@ -95,10 +96,9 @@ name the source and target repos) and `marketplace` (the optional plugin marketp
 
 ### Tracker
 
-`tracker.kind` selects the adapter behind the core port `TrackerClient` (list ready issues, get one, move its state, add
-or remove a label, comment). `linear` is the GraphQL adapter `tracker_linear` ([ARCHITECTURE.md](../ARCHITECTURE.md));
-its key comes only from `LINEAR_API_KEY`, read at call time, never from `hub.json`. An MCP transport is deferred
-(AGH-28). Callers test against `InMemoryTrackerClient`; every adapter passes `TrackerClientContract`.
+`tracker.kind` and `tracker.transport` pick the `TrackerClient` adapter: `api` is `LinearGraphqlTrackerClient` (key only
+from `LINEAR_API_KEY`, at call time, never `hub.json`); `mcp` is `McpTrackerClient`, short `claude -p` calls to the user's
+Linear MCP server ([ADR 0015](../adr/0015-linear-mcp-tracker-transport.md)). Both pass `TrackerClientContract`.
 
 ### Project guards
 
