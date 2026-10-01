@@ -210,7 +210,8 @@ This is the most common path: a project with two repos tracked in Linear.
 
 2. **Generate the hub** with `hub init` (Quick Start, step 3). It writes three kinds of things:
    - **managed** files, owned by the platform and rewritten by `hub sync` (base rules in `AGENTS.md`, the
-     `plugin/hub-workflow/` plugin, `.claude/settings.json`, the `./hub` and `./agent` shims, the `Makefile`);
+     `plugin/hub-workflow/` plugin, `.claude/settings.json`, the `./hub` and `./agent` shims, the `Makefile`, whose `next` and `run-issue` targets call `hub next` and
+     `hub run`, not implemented in 0.4.0);
    - **seeded** files, written once and then yours (`hub.json`, `AGENTS.project.md`, `Makefile.project`, the `brain/`
      skeleton, the project plugin `plugin/<project>/`);
    - **links** from `.claude/agents/` and `.claude/skills/` into the plugins.
@@ -337,7 +338,7 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `guard.ask_before_edit` | no | `[]` | Paths where the guard asks before an edit |
 | `guard.deny_paths` | no | `[]` | Paths the guard never lets the agent read or edit |
 | `guard.deny_hosts` | no | `[]` | Hosts the guard blocks network calls to |
-| `modules` | no | `{}` | Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`), reserved for upcoming releases |
+| `modules` | no | `{}` | Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`); not implemented in 0.4.0: `hub init` and `hub sync` refuse a non-empty value |
 | `doctor.rules` | no | `{}` | Per-rule `hub doctor` settings |
 
 Example (synthetic project):
@@ -460,7 +461,7 @@ enforces this in `make check`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE
 | `hub collect [FILE\|-] [--db PATH]` | Ingest canonical events from JSON Lines, all or nothing |
 | `hub --version` | Print the version |
 
-`hub sync --adopt` (join a hand-made hub) is declared but not implemented yet and exits 2. Command contracts:
+`hub sync --adopt` (join a hand-made hub) is declared but not implemented in 0.4.0: it exits 2. Command contracts:
 [docs/design/hub-generator.md](docs/design/hub-generator.md), [hub-sync.md](docs/design/hub-sync.md),
 [hub-doctor.md](docs/design/hub-doctor.md).
 
@@ -530,9 +531,9 @@ From the phases in [docs/SPEC.md](docs/SPEC.md#mvp-and-phases). Each phase start
 
 **Now: Phase 1, hub generator**
 
-- [ ] `hub next` and `hub run`: take an `agent-ready` issue to a PR through the tracker port
-- [ ] `hub sync --adopt`: join a hand-made hub
-- [ ] Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`)
+- [ ] `hub next` and `hub run`: take an `agent-ready` issue to a PR through the tracker port (not implemented in 0.4.0)
+- [ ] `hub sync --adopt`: join a hand-made hub (not implemented in 0.4.0)
+- [ ] Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`) (not implemented in 0.4.0)
 - [ ] Gate: an existing project's hand-made hub recreated with the same `make check` and bench
 
 **Next**
