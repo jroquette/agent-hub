@@ -19,7 +19,8 @@ plain and relative (a ``ValueError`` before anything is read), since ``..`` clim
 ``O_NOFOLLOW``.
 
 ``hub doctor`` reads more (spec AC-11.3, E8): ``read_every_file`` walks as ``read_hub_tree``
-does, reads every regular file, and leaves out nested repositories, as git would.
+does, reads every regular file, and leaves out nested repositories, as git would;
+``list_every_file`` walks the same way and reads no file.
 """
 
 import os
@@ -76,6 +77,15 @@ def read_every_file(root: Path) -> TreeSnapshot:
     entry, file or folder, is neither recorded nor descended, as git never lists one.
     """
     return _walk_tree(root, wanted=None, skip_nested=True)
+
+
+def list_every_file(root: Path) -> TreeSnapshot:
+    """Return every entry under ``root`` as ``read_every_file`` does, no file read.
+
+    Each regular file is recorded with no content, so a file that cannot be read never fails
+    the walk; a folder that cannot be listed still does.
+    """
+    return _walk_tree(root, wanted=(), skip_nested=True)
 
 
 def _walk_tree(root: Path, *, wanted: Collection[str] | None, skip_nested: bool) -> TreeSnapshot:
@@ -193,6 +203,52 @@ def read_planned_tree(
         entries={path: entries[path] for path in sorted(entries)},
         git_present=_GIT in root_names,
     )
+
+
+def read_listed_files(
+    root: Path, paths: Collection[str]
+) -> tuple[dict[str, TreeEntry], frozenset[str]]:
+    """Look at each of ``paths`` under ``root`` (a real path) in one pass, each regular file read.
+
+    For a tree already listed (``hub doctor``'s repo checkouts): each folder above a path is
+    opened once and never listed, and the descriptor rules above hold. Returns the entries found
+    (the folders above the paths included) and the paths that could not be looked at or read, a
+    folder above them included; those have no entry. An absent path has none either. Raises
+    ``ValueError`` for a path that is not plain and relative, before anything is read, and
+    ``GeneratorError`` when the root cannot be opened.
+    """
+    for path in paths:
+        _check_plain(path)
+    shown = os.fspath(root)
+    descent = _Descent(
+        walk=_Walk(real_root=os.path.realpath(root), wanted=frozenset(paths), entries={}),
+        folders={"": _open_folder(shown, None, path=shown)},
+        unreachable=set(),
+    )
+    refused: set[str] = set()
+    refused_folders: set[str] = set()
+    try:
+        for path in paths:
+            folder, _, name = path.rpartition("/")
+            if folder in refused_folders:
+                refused.add(path)
+                continue
+            try:
+                folder_fd = _reach(folder, descent)
+            except GeneratorError:
+                refused_folders.add(folder)
+                refused.add(path)
+                continue
+            try:
+                if folder_fd is not None:
+                    _look(folder_fd, name, path=path, walk=descent.walk)
+            except GeneratorError:
+                refused.add(path)
+    finally:
+        for folder_fd in descent.folders.values():
+            os.close(folder_fd)
+    entries = descent.walk.entries
+    return {path: entries[path] for path in sorted(entries)}, frozenset(refused)
 
 
 def _reach(folder: str, descent: _Descent) -> int | None:

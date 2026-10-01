@@ -6,6 +6,7 @@ release that adds rules appends them.
 
 from typing import Final
 
+from agent_hub.core.doctor.brain_leak_rule import BRAIN_LEAK
 from agent_hub.core.doctor.config_rules import CONFIG_SCHEMA, PLATFORM_VERSION
 from agent_hub.core.doctor.features_rule import FEATURES_TRACKER
 from agent_hub.core.doctor.finding import Rule
@@ -16,6 +17,7 @@ from agent_hub.core.doctor.instruction_rules import (
     INSTRUCTIONS_REFS,
     INSTRUCTIONS_SIZE,
 )
+from agent_hub.core.doctor.links_rule import LINKS_DEAD
 from agent_hub.core.doctor.lock_rules import LOCK_DRIFT
 from agent_hub.core.doctor.makefile_rules import MAKEFILE_OVERRIDE
 from agent_hub.core.doctor.permission_rules import MCP_PINNED, PERMISSIONS_BYPASS, SETTINGS_VALID
@@ -26,6 +28,7 @@ REGISTRY: Final[tuple[Rule, ...]] = (
     CONFIG_SCHEMA,
     PLATFORM_VERSION,
     LOCK_DRIFT,
+    LINKS_DEAD,
     INSTRUCTIONS_SIZE,
     INSTRUCTIONS_REFS,
     INSTRUCTIONS_DUPLICATES,
@@ -36,6 +39,7 @@ REGISTRY: Final[tuple[Rule, ...]] = (
     SECRETS_CONFIG,
     MCP_PINNED,
     ATTRIBUTION_AI,
+    BRAIN_LEAK,
     GUARD_EXTENSION,
     MAKEFILE_OVERRIDE,
     FEATURES_TRACKER,

@@ -34,6 +34,11 @@ LISTING_FIX: Final = (
 )
 # The fix of the one finding a rule whose check raised gives instead of its findings (E27).
 CRASH_FIX: Final = "report this as a hub doctor bug"
+# The info a repo with no checkout at ``../<dir>`` gives (Q-9), filled with the cut ``dir``.
+CHECKOUT_MESSAGE: Final = (
+    "repo {dir} is not checked out next to the hub; its repo checks are skipped"
+)
+CHECKOUT_FIX: Final = "clone the repo next to the hub"
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -131,8 +136,9 @@ def run_rules(selection: Selection, snapshot: DoctorSnapshot) -> tuple[Finding, 
 
     A rule whose check raises an ``Exception`` loses its findings and gives one error instead
     (E27); the other rules still run. That error, the ones of files the config-lint rules read
-    that are not text (E28), and the one of a hub tree that could not be listed or read, are
-    added after the retune, so their level is never changed.
+    that are not text (E28), the one of each tree that could not be listed or read (E24, E36),
+    and the info of each repo with no checkout (Q-9), are added after the retune, so their level is
+    never changed.
     """
     failed = isinstance(snapshot.config, ConfigFailure)
     findings: list[Finding] = []
@@ -154,6 +160,7 @@ def run_rules(selection: Selection, snapshot: DoctorSnapshot) -> tuple[Finding, 
     problem = _tree_problem_finding(selection, snapshot)
     if problem is not None:
         findings.append(problem)
+    findings.extend(_checkout_findings(selection, snapshot))
     return sort_findings(findings)
 
 
@@ -245,6 +252,46 @@ def _tree_problem_finding(selection: Selection, snapshot: DoctorSnapshot) -> Fin
         message=snapshot.hub.problem,
         fix=LISTING_FIX,
     )
+
+
+def _checkout_findings(selection: Selection, snapshot: DoctorSnapshot) -> list[Finding]:
+    """One finding per repo checkout the repo rules skip, on the first repo reader (Q-9, E36).
+
+    An info when ``../<dir>`` is absent or not a folder, an error with the problem as message
+    when it could not be listed or read. Each goes on the first selected rule by id that reads
+    the repos (``brain.leak``, else ``links.dead``); with none selected, or on a failed config,
+    there is none.
+    """
+    if isinstance(snapshot.config, ConfigFailure):
+        return []
+    readers = sorted(rule.id for rule in selection.rules if Read.REPOS in rule.reads)
+    if not readers:
+        return []
+    findings: list[Finding] = []
+    for repo in snapshot.repos:
+        if repo.files is None:
+            findings.append(
+                Finding(
+                    rule=readers[0],
+                    severity=Severity.INFO,
+                    path=f"../{repo.dir}",
+                    line=None,
+                    message=CHECKOUT_MESSAGE.format(dir=cut_echo(repo.dir)),
+                    fix=CHECKOUT_FIX,
+                )
+            )
+        elif repo.files.problem is not None:
+            findings.append(
+                Finding(
+                    rule=readers[0],
+                    severity=Severity.ERROR,
+                    path=f"../{repo.dir}",
+                    line=None,
+                    message=repo.files.problem,
+                    fix=LISTING_FIX,
+                )
+            )
+    return findings
 
 
 def sort_findings(findings: Iterable[Finding]) -> tuple[Finding, ...]:
