@@ -50,7 +50,11 @@ def test_requires_description_when_issue_built() -> None:
 
 
 def test_keeps_description_byte_for_byte_when_issue_built() -> None:
-    assert an_issue_value().description == "Collect the events."
+    description = "  Collect\r\nthe \x1b[1mevents\x1b[0m \U0001f600\t\n "
+
+    issue = Issue.model_validate(an_issue_value().model_dump() | {"description": description})
+
+    assert issue.description == description
 
 
 def test_forbids_extra_field_when_issue_built() -> None:

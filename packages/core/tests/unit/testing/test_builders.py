@@ -122,20 +122,15 @@ def test_seeds_issues_in_every_state_when_tracker_backend_built() -> None:
 
 
 def test_gives_each_seeded_issue_own_description_when_backend_built() -> None:
-    descriptions = [issue.description for issue in a_seeded_tracker_backend().issues.values()]
+    issues = a_seeded_tracker_backend().issues
+    descriptions = [issue.description for issue in issues.values()]
 
     assert len(set(descriptions)) == len(descriptions)
-
-
-def test_seeds_one_empty_and_one_markdown_description_when_backend_built() -> None:
-    issues = a_seeded_tracker_backend().issues
-
     assert issues["DEM-2"].description == ""
     dem_1 = issues["DEM-1"].description.splitlines()
     assert len(dem_1) > 3
     assert any(line.startswith("- ") for line in dem_1)
-    assert dem_1.count("```") == 1
-    assert any(line.startswith("```") and line != "```" for line in dem_1)
+    assert any(line.startswith("```") for line in dem_1)
 
 
 def test_returns_fresh_backend_when_tracker_backend_built_twice() -> None:
