@@ -52,6 +52,7 @@ Next steps:
 - [Why use it?](#-why-use-it)
 - [How it works](#-how-it-works)
 - [Quick Start](#-quick-start)
+- [Daily workflow](#-daily-workflow)
 - [Usage guide](#-usage-guide)
 - [Configuration](#-configuration)
 - [Technical reference](#-technical-reference)
@@ -198,6 +199,25 @@ git add -A && git commit -m "Create the hub"
 > `./agent` (and `hub agent`) attaches the repos listed in `hub.json` that are cloned next to the hub (`../backend`,
 > `../frontend` in this example), prints a `not attached` warning for each one it cannot find, and passes every
 > other argument to `claude`.
+
+## 🔄 Daily workflow
+
+Once the hub exists, you work inside Claude Code. The hub gives it a set of slash commands (*skills*) and helper agents
+(*subagents*), shipped in the generated `plugin/hub-workflow/` plugin. You type the commands, for example `/kickoff`, in
+a session started with `./agent` from the hub. The commands hand parts of the work to the agents.
+
+You stay in charge of the decisions: you approve the spec and the plan, and you merge the pull request. The agents do
+the rest, and the hooks keep them inside the project's rules.
+
+### Your session routine
+
+1. **Start with `/kickoff`** (or after `/clear`). It shows the session brief (`./hub brief`), reads `brain/now.md` and
+   the newest journal day, runs `check_fast` in each repo that has local changes, and proposes the next item. It asks
+   before starting and never edits anything.
+2. **Do the work.** Use `/feature` for a change, `/research` or `/recall` for questions.
+3. **End with `/handoff`.** It rewrites `brain/now.md` (focus, work in flight, the exact next step, risks to watch)
+   and appends what was done, verified and learned to the day's journal, `brain/journal/YYYY/MM/DD.md`. The next
+   session picks up from there without you explaining it again.
 
 ## 📖 Usage guide
 
