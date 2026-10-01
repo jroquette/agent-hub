@@ -1,0 +1,29 @@
+--- rc (2 bytes) ---
+0
+
+--- stdout (749 bytes) ---
+# Brief
+
+## Now
+Ship the collector.
+Then the CLI.
+
+## Journal (last 7 days)
+- 2026-01-14: Day 14 topic 1: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; Day 14 topic 2: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; Day 14 topic 3: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx; Day 14
+- 2026-01-13: Fixed the loader; Reviewed slice A
+
+## Repos
+- hub: trunk, 0 changed file(s), 0 behind origin/trunk
+- api: trunk, 2 changed file(s), 1 behind origin/trunk
+- web: detached@dd68590, 0 changed file(s), ? behind origin/trunk
+- ui: not found
+
+Linear: n/a (connector not configured for scripts).
+More: brain/index.md (pull only what the task needs).
+
+--- stderr (0 bytes) ---
+
+--- fs (0 bytes) ---
+
+--- calls (0 bytes) ---
+

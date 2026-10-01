@@ -113,3 +113,27 @@ def test_kills_group_when_interrupted(tmp_path: Path) -> None:
 def test_raises_when_tool_missing(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         run_child([str(tmp_path / "no-such-tool")], cwd=tmp_path, env={}, timeout=None)
+
+
+def test_keeps_caller_group_when_own_session_off(tmp_path: Path) -> None:
+    # A timed-out child in the caller's group is killed alone; what it started stays in the
+    # caller's group, so a kill of that group (the SessionStart hook's) still reaches it.
+    with grandchild_reaped_by_caller(tmp_path), pytest.raises(ChildTimedOutError):
+        run_child(
+            [*PYTHON, "-c", CHILD], cwd=tmp_path, env={}, timeout=CHILD_TIMEOUT, own_session=False
+        )
+
+    assert (tmp_path / "group").read_text() == str(os.getpgrp())
+
+
+@contextlib.contextmanager
+def grandchild_reaped_by_caller(folder: Path) -> Iterator[None]:
+    """After the block, the grandchild runs in this process's group; it is killed afterwards."""
+    try:
+        yield
+        assert (folder / "started").exists(), "the grandchild never started"
+        pid = int((folder / "started").read_text())
+        (folder / "group").write_text(str(os.getpgid(pid)))
+    finally:
+        with contextlib.suppress(FileNotFoundError, ProcessLookupError, ValueError):
+            os.kill(int((folder / "started").read_text()), signal.SIGKILL)
