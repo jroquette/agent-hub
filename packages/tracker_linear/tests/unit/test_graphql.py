@@ -1,5 +1,6 @@
 """The Linear GraphQL adapter's reads, over the in-process fake Linear API (no socket)."""
 
+import json
 from collections.abc import Iterator, Mapping
 from typing import Any
 
@@ -162,3 +163,50 @@ def test_reads_key_only_at_call_time_when_client_constructed(
 
     client.get_issue("DEM-1")
     assert LINEAR_API_KEY_VARIABLE in environ.reads
+
+
+def test_fake_rejects_identifier_when_mutation_needs_uuid(
+    fake_linear_api: Any, synthetic_key: str
+) -> None:
+    # Pins D-c: mutations take the issue's UUID; the fake fails the test on an identifier.
+    update = {
+        "query": (
+            "mutation UpdateIssue($id: String!, $input: IssueUpdateInput!) {"
+            " issueUpdate(id: $id, input: $input) { success } }"
+        ),
+        "operationName": "UpdateIssue",
+        "variables": {"id": "DEM-1", "input": {"removedLabelIds": []}},
+    }
+    comment = {
+        "query": (
+            "mutation CreateComment($input: CommentCreateInput!) {"
+            " commentCreate(input: $input) { success } }"
+        ),
+        "operationName": "CreateComment",
+        "variables": {"input": {"issueId": "DEM-1", "body": "A synthetic comment."}},
+    }
+    headers = {"Content-Type": "application/json", "Authorization": synthetic_key}
+
+    for request in (update, comment):
+        with pytest.raises(AssertionError, match="UUID"):
+            fake_linear_api(
+                LINEAR_GRAPHQL_URL, headers, json.dumps(request).encode(), timeout_s=30.0
+            )
+
+
+def test_fake_answers_errors_when_issue_unknown(fake_linear_api: Any, synthetic_key: str) -> None:
+    lookup = {
+        "query": "query GetIssue($id: String!) { issue(id: $id) { title } }",
+        "operationName": "GetIssue",
+        "variables": {"id": "DEM-999"},
+    }
+    headers = {"Content-Type": "application/json", "Authorization": synthetic_key}
+
+    status, body = fake_linear_api(
+        LINEAR_GRAPHQL_URL, headers, json.dumps(lookup).encode(), timeout_s=30.0
+    )
+
+    answer = json.loads(body)
+    assert status == 200
+    assert answer["data"] is None
+    assert answer["errors"][0]["message"] == "Entity not found: Issue"
