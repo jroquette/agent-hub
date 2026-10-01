@@ -12,7 +12,12 @@ from agent_hub.core.errors import TrackerError
 from agent_hub.core.testing.fakes import FakeTrackerBackend
 from agent_hub.tracker_linear.claude_process import ClaudeOutput, run_claude
 from agent_hub.tracker_linear.mcp import McpTrackerClient
-from agent_hub.tracker_linear.mcp_protocol import MAX_COMMENT_CHARS, MAX_NAMES, MAX_REPLY_BYTES
+from agent_hub.tracker_linear.mcp_protocol import (
+    LINEAR_TOOLS,
+    MAX_COMMENT_CHARS,
+    MAX_NAMES,
+    MAX_REPLY_BYTES,
+)
 
 _SYNTHETIC_KEY = "lin" + "_api_" + "x" * 40
 _ENVIRON = {"PATH": "/usr/bin", "HOME": "/home/synthetic", "LINEAR_API_KEY": _SYNTHETIC_KEY}
@@ -31,6 +36,23 @@ _DEFAULT_FLAGS = (
     '{"effortLevel": "medium"}',
 )
 _TIMEOUT_S = 120.0
+
+
+def _denied(allowed: tuple[str, ...]) -> tuple[str, ...]:
+    # The snapshot's size is pinned in test_mcp_protocol.py; here its tools are what is denied.
+    return tuple(tool for tool in LINEAR_TOOLS if tool not in allowed)
+
+
+def _tool_flags(argv: tuple[str, ...]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The allowed and denied tools of an argv that ends with the three tool flags."""
+    tools_at = argv.index("--tools")
+    allowed_at = argv.index("--allowedTools")
+    denied_at = argv.index("--disallowedTools")
+    assert argv[tools_at : tools_at + 2] == ("--tools", "")
+    assert tools_at + 2 == allowed_at < denied_at
+    return argv[allowed_at + 1 : denied_at], argv[denied_at + 1 :]
+
+
 _COST_USD = 0.0125
 
 
@@ -96,8 +118,12 @@ class TestReads:
             "-p",
             call.prompt,
             *_DEFAULT_FLAGS,
+            "--tools",
+            "",
             "--allowedTools",
             f"{_PREFIX}get_issue",
+            "--disallowedTools",
+            *_denied((f"{_PREFIX}get_issue",)),
         )
         assert call.cwd == hub_root
         assert "LINEAR_API_KEY" not in call.env
@@ -457,7 +483,7 @@ class TestWriteTools:
 
         read = fake_claude.calls[0]
         assert read.tools == tuple(_PREFIX + name for name in _READ_TOOLS[operation])
-        assert read.argv[-len(read.tools) - 1 :] == ("--allowedTools", *read.tools)
+        assert _tool_flags(read.argv) == (read.tools, _denied(read.tools))
 
     @pytest.mark.parametrize("operation", list(_WRITES))
     def test_allows_only_write_tool_when_write_runs(
@@ -468,7 +494,7 @@ class TestWriteTools:
         assert len(fake_claude.calls) == 2
         write = fake_claude.calls[1]
         assert write.tools == tuple(_PREFIX + name for name in _WRITE_TOOLS[operation])
-        assert write.argv[-2:] == ("--allowedTools", *write.tools)
+        assert _tool_flags(write.argv) == (write.tools, _denied(write.tools))
 
 
 # Each operation, the replies that come before its failing call, and its error subject.

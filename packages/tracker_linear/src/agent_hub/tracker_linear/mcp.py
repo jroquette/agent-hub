@@ -22,6 +22,7 @@ from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, Issue
 from agent_hub.tracker_linear.claude_process import CLAUDE_PROGRAM, ClaudeOutput, run_claude
 from agent_hub.tracker_linear.graphql import DONE_STATE_TYPES, LINEAR_API_KEY_VARIABLE
 from agent_hub.tracker_linear.mcp_protocol import (
+    DENIED,
     MAX_QUOTED_CHARS,
     MAX_READY_ISSUES,
     MAX_REPLY_BYTES,
@@ -214,8 +215,14 @@ class McpTrackerClient:
             self.model,
             "--settings",
             json.dumps({"effortLevel": self.effort}),
+            # No built-in tool; only the kind's Linear tools, and a deny of every other one,
+            # since --allowedTools only adds to the user's and the project's allow-lists.
+            "--tools",
+            "",
             "--allowedTools",
             *TOOLS[call.kind],
+            "--disallowedTools",
+            *DENIED[call.kind],
         ]
         env = {
             name: value for name, value in self._environ.items() if name != LINEAR_API_KEY_VARIABLE

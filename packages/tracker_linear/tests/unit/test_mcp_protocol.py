@@ -8,7 +8,9 @@ import pytest
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.tracker.tracker_client import Issue
 from agent_hub.tracker_linear.mcp_protocol import (
+    DENIED,
     LINEAR_TOOL_PREFIX,
+    LINEAR_TOOLS,
     MAX_COMMENT_CHARS,
     MAX_LABELS,
     MAX_NAME_CHARS,
@@ -529,3 +531,34 @@ def test_rejects_reply_when_issue_id_malformed(
 ) -> None:
     with pytest.raises(TrackerError, match="another shape"):
         parse_reply(call, _line(reply(issue_id)))
+
+
+_WRITE_VERBS = ("save_", "create_", "delete_", "update_")
+
+
+def test_holds_every_allowed_tool_when_snapshot_read() -> None:
+    assert len(LINEAR_TOOLS) == 68
+    assert len(set(LINEAR_TOOLS)) == len(LINEAR_TOOLS)
+    assert all(tool.startswith(LINEAR_TOOL_PREFIX) for tool in LINEAR_TOOLS)
+    assert {tool for tools in TOOLS.values() for tool in tools} <= set(LINEAR_TOOLS)
+
+
+@pytest.mark.parametrize("kind", list(CallKind))
+def test_denies_every_other_tool_when_kind_built(kind: CallKind) -> None:
+    allowed, denied = set(TOOLS[kind]), set(DENIED[kind])
+
+    assert allowed & denied == set()
+    assert allowed | denied == set(LINEAR_TOOLS)
+    assert len(DENIED[kind]) == len(denied)
+
+
+@pytest.mark.parametrize("kind", sorted(set(CallKind) - WRITE_KINDS))
+def test_denies_every_write_tool_when_call_reads(kind: CallKind) -> None:
+    writes = {
+        tool
+        for tool in LINEAR_TOOLS
+        if tool.removeprefix(LINEAR_TOOL_PREFIX).startswith(_WRITE_VERBS)
+    }
+
+    assert len(writes) == 19
+    assert writes <= set(DENIED[kind])
