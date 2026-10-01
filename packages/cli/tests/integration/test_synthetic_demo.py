@@ -43,6 +43,7 @@ type SyncRunner = Callable[..., Result]
 type DoctorRunner = Callable[..., Result]
 type PathFilter = Callable[[list[Any], Path], set[str]]
 type Ancestors = Callable[..., set[str]]
+type CheckoutFactory = Callable[[str], Path]
 # A subprocess init differs from the in-process one in all of these but its inputs.
 CHILD_HASH_SEED = "123"
 CHILD_TZ = "Pacific/Kiritimati"
@@ -404,6 +405,29 @@ def test_finds_nothing_when_doctor_runs_on_fresh_init(
         )
         assert read - walked <= allowed, root.name
         assert tree_digest(tmp_path) == before, root.name
+
+
+def test_counts_info_when_demo_checkout_missing(
+    demo_two_repo_hub: Path, run_doctor: DoctorRunner, demo_checkout: CheckoutFactory
+) -> None:
+    # Both checkouts are synthetic git repos with a committed README.md (AC-11.29).
+    demo_checkout("demo-api")
+    web = demo_checkout("demo-web")
+
+    clean = run_doctor(demo_two_repo_hub)
+    shutil.rmtree(web)
+    missing = run_doctor(demo_two_repo_hub)
+
+    assert (clean.exit_code, clean.stdout.splitlines()[-1:], clean.stderr) == (
+        0,
+        ["0 errors, 0 warnings, 0 infos"],
+        "",
+    )
+    assert (missing.exit_code, missing.stdout.splitlines()[-1:], missing.stderr) == (
+        0,
+        ["0 errors, 0 warnings, 1 info"],
+        "",
+    )
 
 
 MAKEFILE_LINE = b"local: ; @true\n"

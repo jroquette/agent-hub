@@ -37,7 +37,7 @@ A file that is not text is skipped: the runner reports it once (E28).
 
 import posixpath
 import re
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from fnmatch import translate
 from types import MappingProxyType
@@ -45,12 +45,14 @@ from typing import Final
 
 from agent_hub.core.doctor.config_lint import (
     Frontmatter,
+    PathTrie,
     Unterminated,
     file_text,
     instruction_files,
     known_paths,
     line_count,
     parse_frontmatter,
+    path_tree,
     text_lines,
 )
 from agent_hub.core.doctor.finding import Finding, Read, Rule
@@ -196,34 +198,6 @@ _GLOB: Final = re.compile(r"[*{}]")
 _EXTENSIONS: Final = ("", ".ts", ".tsx", ".js", ".py")
 
 
-class _Trie:
-    """A tree of path segments: the hub's paths (a node per file or folder), or references."""
-
-    __slots__ = ("children", "reached")
-
-    def __init__(self) -> None:
-        self.children: dict[str, _Trie] = {}
-        self.reached = False
-
-    def add(self, segments: Iterable[str]) -> _Trie:
-        node = self
-        for segment in segments:
-            child = node.children.get(segment)
-            if child is None:
-                child = node.children[segment] = _Trie()
-            node = child
-        return node
-
-    def holds(self, segments: Iterable[str]) -> bool:
-        node = self
-        for segment in segments:
-            child = node.children.get(segment)
-            if child is None:
-                return False
-            node = child
-        return True
-
-
 @dataclass(frozen=True, kw_only=True, slots=True)
 class _Pending:
     """A reference not found from its folder or the root, until the name and end search runs."""
@@ -232,13 +206,13 @@ class _Pending:
     line: int
     ref: str
     # The candidates' last nodes in the references tree; empty when none is searchable.
-    ends: tuple[_Trie, ...]
+    ends: tuple[PathTrie, ...]
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class _RefContext:
-    paths: _Trie
-    searched: _Trie
+    paths: PathTrie
+    searched: PathTrie
     make_targets: frozenset[str]
     pnpm_scripts: frozenset[str]
     branch_prefix: str
@@ -250,8 +224,8 @@ def _instructions_refs(snapshot: DoctorSnapshot) -> Iterator[Finding]:
     if not files:
         return
     context = _RefContext(
-        paths=_path_tree(known_paths(hub, config=snapshot.hub_config)),
-        searched=_Trie(),
+        paths=path_tree(known_paths(hub, config=snapshot.hub_config)),
+        searched=PathTrie(),
         make_targets=_make_targets(hub),
         pnpm_scripts=_pnpm_scripts(hub),
         branch_prefix=snapshot.hub_config.project.branch_prefix,
@@ -289,7 +263,7 @@ def _file_refs(path: str, *, text: str, context: _RefContext) -> Iterator[Findin
         yield from _command_findings(path, number=number, line=line, context=context)
 
 
-def _unresolved_ends(ref: str, *, folder: str, context: _RefContext) -> tuple[_Trie, ...] | None:
+def _unresolved_ends(ref: str, *, folder: str, context: _RefContext) -> tuple[PathTrie, ...] | None:
     """``None`` when the reference resolves as the old lint's first steps did; else the ends of
     its name-and-end candidates (``.ts``, ``.tsx``, ``.js``, ``.py`` added) to search for.
     """
@@ -316,14 +290,14 @@ def _unresolved_ends(ref: str, *, folder: str, context: _RefContext) -> tuple[_T
     )
 
 
-def _search_ends(paths: _Trie, *, searched: _Trie) -> None:
+def _search_ends(paths: PathTrie, *, searched: PathTrie) -> None:
     """Mark each searched reference that some hub path or folder ends with.
 
     One walk over the paths tree carries the searched references' nodes that the segments so far
     end with; there are never more than ``SEARCHED_SEGMENTS``, so the walk is linear in the
     paths tree.
     """
-    pending: list[tuple[_Trie, tuple[_Trie, ...]]] = [(paths, ())]
+    pending: list[tuple[PathTrie, tuple[PathTrie, ...]]] = [(paths, ())]
     while pending:
         node, live = pending.pop()
         for segment, child in node.children.items():
@@ -414,14 +388,6 @@ def _is_placeholder(ref: str) -> bool:
     return (opening != -1 and ref.find(">", opening) != -1) or (
         _PLACEHOLDER.search(ref) is not None
     )
-
-
-def _path_tree(paths: Iterable[str]) -> _Trie:
-    """The paths as a segments tree: each folder is one node, however many paths it holds."""
-    tree = _Trie()
-    for path in paths:
-        tree.add(path.split("/"))
-    return tree
 
 
 def _make_targets(hub: HubFiles) -> frozenset[str]:

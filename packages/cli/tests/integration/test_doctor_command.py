@@ -35,6 +35,8 @@ from agent_hub.generator import render_hub as render_hub_module
 type DoctorRunner = Callable[..., Result]
 type ReadsIn = Callable[[list[PathRead], Path], set[str]]
 type Ancestors = Callable[..., set[str]]
+type CheckoutFactory = Callable[[str], Path]
+type Under = Callable[[list["PathRead"], Path], set[str]]
 
 
 class PathRead(NamedTuple):
@@ -68,6 +70,16 @@ LISTING_FIX = (
 )
 # The characters of the box Rich may draw around a usage error.
 BOX_CHARACTERS = "│╭╮╰╯─"
+
+
+@pytest.fixture(autouse=True)
+def demo_api_folder(tmp_path: Path) -> None:
+    """DEMO's one repo as an empty folder next to the hub: a checkout with no file (plan E3a).
+
+    So a run of every rule on a ``DEMO`` hub reports no missing checkout; the tests of the
+    checkouts themselves make them git repos (``demo_checkout``) or remove them.
+    """
+    (tmp_path / "demo-api").mkdir()
 
 
 @pytest.fixture
@@ -681,5 +693,139 @@ def test_reports_listing_problem_once_when_git_missing(
     owner = "features.tracker" if only else "attribution.ai"
     assert lines == [
         f"error {owner} .: could not list the files: git not found {LISTING_FIX}",
+        ONE_ERROR,
+    ]
+
+
+MISSING_WEB = (
+    "info brain.leak ../demo-web: repo demo-web is not checked out next to the hub;"
+    " its repo checks are skipped Fix: clone the repo next to the hub"
+)
+
+
+@pytest.mark.parametrize("missing_as", ["absent", "file", "link-to-file"])
+def test_reports_info_when_checkout_missing(
+    demo_two_repo_hub: Path,
+    run_doctor: DoctorRunner,
+    demo_checkout: CheckoutFactory,
+    *,
+    missing_as: str,
+) -> None:
+    demo_checkout("demo-api")
+    web = demo_two_repo_hub.parent / "demo-web"
+    if missing_as == "file":
+        web.write_bytes(b"not a checkout\n")
+    elif missing_as == "link-to-file":
+        (demo_two_repo_hub.parent / "web.txt").write_bytes(b"not a checkout\n")
+        web.symlink_to("web.txt")
+
+    lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=0)
+
+    assert lines == [MISSING_WEB, "0 errors, 0 warnings, 1 info"]
+
+
+def test_reads_checkout_real_path_when_dir_is_link(
+    demo_two_repo_hub: Path, run_doctor: DoctorRunner, demo_checkout: CheckoutFactory
+) -> None:
+    # ../<dir> is taken as its real path once (plan E18): a link to a checkout is a checkout.
+    demo_checkout("demo-api")
+    demo_checkout("web-clone")
+    (demo_two_repo_hub.parent / "demo-web").symlink_to("web-clone")
+
+    lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=0)
+
+    assert lines == [CLEAN]
+
+
+def test_reads_no_repo_when_no_repo_rule_selected(
+    demo_two_repo_hub: Path,
+    run_doctor: DoctorRunner,
+    *,
+    demo_checkout: CheckoutFactory,
+    path_reads: list[PathRead],
+    under: Under,
+) -> None:
+    workspace = demo_two_repo_hub.parent
+    checkouts = [demo_checkout("demo-api"), demo_checkout("demo-web")]
+    path_reads.clear()
+
+    lines = lines_of(run_doctor(demo_two_repo_hub, "--only", "features.tracker"), exit_code=0)
+
+    # Copied first: the filters' own real-path looks would be recorded too.
+    recorded = list(path_reads)
+    assert lines == [CLEAN]
+    assert {path for checkout in checkouts for path in under(recorded, checkout)} == set()
+    outside_hub = under(recorded, workspace) - under(recorded, demo_two_repo_hub)
+    assert outside_hub <= {os.path.realpath(workspace)}
+    # The recorder sees a checkout read when a repo rule runs.
+    path_reads.clear()
+    assert lines_of(run_doctor(demo_two_repo_hub, "--only", "links.dead"), exit_code=0) == [CLEAN]
+    assert under(list(path_reads), checkouts[1]) != set()
+
+
+def test_reports_error_when_checkout_cannot_be_listed(
+    demo_two_repo_hub: Path, run_doctor: DoctorRunner, demo_checkout: CheckoutFactory
+) -> None:
+    # An empty .git folder asks for git's listing, and git finds no repository there (nor above
+    # the test's folder): the checkout is skipped with one error, never silently (plan E36).
+    demo_checkout("demo-api")
+    (demo_two_repo_hub.parent / "demo-web" / ".git").mkdir(parents=True)
+
+    lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=1)
+
+    assert lines == [
+        "error brain.leak ../demo-web: could not list the files: git exited with 128:"
+        " fatal: not a git repository (or any of the parent directories): .git"
+        f" {LISTING_FIX}",
+        ONE_ERROR,
+    ]
+
+
+BRAIN_LINE = "A synthetic brain line, long enough for brain.leak to compare it."
+
+
+def test_checks_rest_of_checkout_when_one_file_unreadable(
+    demo_two_repo_hub: Path,
+    run_doctor: DoctorRunner,
+    *,
+    demo_checkout: CheckoutFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # One file that cannot be read is no listing problem (plan E36): the other files are checked.
+    (demo_two_repo_hub / "brain/note.md").write_text(f"# Note\n\n{BRAIN_LINE}\n", encoding="utf-8")
+    api = demo_checkout("demo-api")
+    (api / "LEAK.md").write_text(f"{BRAIN_LINE}\n", encoding="utf-8")
+    (api / "unreadable.md").write_text(f"{BRAIN_LINE}\n", encoding="utf-8")
+    demo_checkout("demo-web")
+    monkeypatch.setattr(os, "open", refusing_name("unreadable.md", os.open))
+
+    lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=1)
+
+    assert lines == [
+        "error brain.leak ../demo-api/LEAK.md:1: line also in the brain at brain/note.md:3"
+        " Fix: reword or remove the line here, or reword the brain note if it quotes this file",
+        ONE_ERROR,
+    ]
+
+
+def test_reports_error_when_checkout_cannot_be_looked_at(
+    demo_two_repo_hub: Path,
+    run_doctor: DoctorRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    demo_checkout: CheckoutFactory,
+) -> None:
+    # A ../<dir> that cannot be looked at may be a checkout: E36's error, never Q-9's info.
+    demo_checkout("demo-api")
+    web = demo_two_repo_hub.parent / "demo-web"
+    web.mkdir()
+    (web / "README.md").write_bytes(b"# Web\n")
+    monkeypatch.setattr(os, "lstat", refusing_name("demo-web", os.lstat))
+
+    lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=1)
+
+    assert lines == [
+        f"error brain.leak ../demo-web: could not list the files: {os.path.realpath(web)}:"
+        f" Permission denied {LISTING_FIX}",
         ONE_ERROR,
     ]
