@@ -265,21 +265,29 @@ def test_reaps_child_when_interrupted(
     tmp_path: Path, fake_bin: Path, hub_root: Path, *, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     children: list[subprocess.Popen[bytes]] = []
+    # The child's exit status when Popen's own exit starts: Popen waits a little for a child
+    # after Ctrl-C and could reap it itself, so only this shows that the runner reaped it.
+    on_exit: list[int | None] = []
+    popen_exit = subprocess.Popen.__exit__
 
     def interrupted(child: subprocess.Popen[bytes], timeout: float | None = None) -> None:
         children.append(child)
         _wait_for(tmp_path / "record.json")
-        # Popen's exit waits 0.25 s for a child after Ctrl-C; with 0, only the runner reaps.
-        child._sigint_wait_secs = 0  # type: ignore[attr-defined]
         raise KeyboardInterrupt
 
+    def recording_exit(child: subprocess.Popen[bytes], *exc_info: object) -> None:
+        on_exit.append(child.returncode)
+        popen_exit(child, *exc_info)  # type: ignore[arg-type]
+
     monkeypatch.setattr(subprocess.Popen, "communicate", interrupted)
+    monkeypatch.setattr(subprocess.Popen, "__exit__", recording_exit)
     env = _env(tmp_path, fake_bin, mode="sleep")
 
     with pytest.raises(KeyboardInterrupt):
         run_claude([CLAUDE_PROGRAM, "-p", "x"], cwd=hub_root, env=env, timeout_s=30.0)
 
     [child] = children
+    assert on_exit == [-signal.SIGKILL]
     assert child.returncode == -signal.SIGKILL
     with pytest.raises(ChildProcessError):
         os.waitpid(child.pid, os.WNOHANG)

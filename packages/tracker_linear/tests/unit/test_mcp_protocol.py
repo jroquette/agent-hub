@@ -497,8 +497,10 @@ def test_rejects_reply_when_text_not_utf8() -> None:
         (state_read_call("DEM-1"), '{"id": "DEM-1", "state": "\\ud800", "states": []}'),
         (comment_read_call("DEM-1"), '{"id": "DEM-1", "id": "DEM-2"}'),
         (save_comment_call("DEM-1", "x"), '{"id": "DEM-1", "commented": true, "commented": true}'),
+        (comment_read_call("DEM-1"), '{"error": NaN}'),
+        (comment_read_call("DEM-1"), '{"error": 1e400}'),
     ],
-    ids=["escaped-lone-surrogate", "repeated-id", "repeated-flag"],
+    ids=["escaped-lone-surrogate", "repeated-id", "repeated-flag", "nan", "huge-number"],
 )
 def test_rejects_reply_when_json_not_strict(call: McpCall[Any], text: str) -> None:
     with pytest.raises(TrackerError, match="not one line of JSON"):
