@@ -10,7 +10,7 @@ import contextlib
 import os
 import signal
 import subprocess
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import NamedTuple
 
@@ -77,6 +77,27 @@ def run_child(
             _kill(child, group=new_session)
             raise
     return ChildResult(returncode=child.returncode, stdout=stdout, stderr=stderr)
+
+
+def stream_child(
+    argv: Sequence[str],
+    *,
+    cwd: Path | str,
+    env: Mapping[str, str],
+    on_line: Callable[[bytes], None],
+) -> int:
+    """Run ``argv`` in ``cwd`` with exactly ``env``, hand each stdout line to ``on_line``.
+
+    For a script the user may watch (a worktree setup that installs dependencies): no timeout,
+    the caller's process group, stdin and stderr. Returns the exit code; raises ``OSError`` when
+    the script cannot start.
+    """
+    with subprocess.Popen(  # noqa: S603 - an argv list, never a shell; callers pass the script
+        list(argv), cwd=cwd, env=dict(env), stdout=subprocess.PIPE
+    ) as child:
+        for line in child.stdout or ():
+            on_line(line)
+    return child.returncode
 
 
 def git_env(environ: Mapping[str, str], *, optional_locks: bool) -> dict[str, str]:
