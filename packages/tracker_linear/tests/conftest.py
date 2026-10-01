@@ -14,7 +14,9 @@ Every value here is synthetic: no recorded Linear response, no real key.
 import json
 import re
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -22,6 +24,8 @@ import pytest
 from agent_hub.core.testing.builders import a_seeded_tracker_backend
 from agent_hub.core.testing.fakes import FakeTrackerBackend
 from agent_hub.core.tracker.tracker_client import Issue
+from agent_hub.tracker_linear.claude_process import ClaudeOutput
+from agent_hub.tracker_linear.mcp_protocol import TOOLS, CallKind
 
 # Pinned here as literals, not imported from the adapter, so a wrong adapter constant fails.
 LINEAR_ENDPOINT = "https://api.linear.app/graphql"
@@ -422,3 +426,204 @@ def tracker_backend() -> FakeTrackerBackend:
 @pytest.fixture
 def fake_linear_api(tracker_backend: FakeTrackerBackend, synthetic_key: str) -> FakeLinearApi:
     return FakeLinearApi(tracker_backend, key=synthetic_key)
+
+
+# The MCP adapter's caps (D9), pinned here as literals so a wrong adapter default fails.
+MCP_DEFAULT_FLAGS = (
+    "--output-format",
+    "json",
+    "--max-turns",
+    "6",
+    "--max-budget-usd",
+    "0.3",
+    "--model",
+    "haiku",
+    "--settings",
+    '{"effortLevel": "medium"}',
+)
+MCP_TIMEOUT_S = 120.0
+FAKE_CALL_COST_USD = 0.0125
+
+
+@dataclass(frozen=True, kw_only=True)
+class ClaudeCall:
+    """One call the MCP adapter made: what it ran, where, and the request its prompt held."""
+
+    argv: tuple[str, ...]
+    cwd: Path | str
+    env: dict[str, str]
+    prompt: str
+    operation: str
+    arguments: dict[str, Any]
+    tools: tuple[str, ...]
+
+
+def _envelope(
+    result: str, *, cost_usd: float = FAKE_CALL_COST_USD, is_error: bool = False
+) -> bytes:
+    """What ``claude -p --output-format json`` prints: one JSON object around the reply."""
+    return json.dumps(
+        {
+            "type": "result",
+            "subtype": "error_during_execution" if is_error else "success",
+            "is_error": is_error,
+            "result": result,
+            "total_cost_usd": cost_usd,
+            "num_turns": 2,
+        }
+    ).encode()
+
+
+class FakeClaude:
+    """A runner for ``McpTrackerClient`` that plays an honest model over a ``FakeTrackerBackend``.
+
+    Each call checks the argv (exact flags; ``--allowedTools`` is the call kind's tool list), the
+    cwd and the environment (no ``LINEAR_API_KEY``), reads the request line (the prompt's last
+    line), answers it from the backend and records the call. Reads never change the backend; a
+    write changes exactly what it asks, and only to states and labels that exist.
+    """
+
+    def __init__(
+        self,
+        backend: FakeTrackerBackend,
+        *,
+        cwd: Path,
+        flags: tuple[str, ...] = MCP_DEFAULT_FLAGS,
+        timeout_s: float = MCP_TIMEOUT_S,
+    ) -> None:
+        self.backend = backend
+        self.calls: list[ClaudeCall] = []
+        self._cwd = cwd
+        self._flags = flags
+        self._timeout_s = timeout_s
+
+    def __call__(
+        self, argv: Sequence[str], *, cwd: Path | str, env: Mapping[str, str], timeout_s: float
+    ) -> ClaudeOutput:
+        prompt = argv[2]
+        request = json.loads(prompt.splitlines()[-1])
+        kind = CallKind(request["operation"])
+        assert list(argv) == ["claude", "-p", prompt, *self._flags, "--allowedTools", *TOOLS[kind]]
+        assert cwd == self._cwd
+        assert "LINEAR_API_KEY" not in env
+        assert timeout_s == self._timeout_s
+        self.calls.append(
+            ClaudeCall(
+                argv=tuple(argv),
+                cwd=cwd,
+                env=dict(env),
+                prompt=prompt,
+                operation=kind.value,
+                arguments=request["arguments"],
+                tools=tuple(TOOLS[kind]),
+            )
+        )
+        reply = self.reply(kind, request["arguments"])
+        return ClaudeOutput(returncode=0, stdout=_envelope(json.dumps(reply)), stderr=b"")
+
+    def reply(self, kind: CallKind, arguments: dict[str, Any]) -> Json:
+        """The honest answer to one request."""
+        if kind is CallKind.LIST_READY:
+            return self._ready(arguments["team"], arguments["label"])
+        issue = self.backend.issues.get(arguments["issue_id"])
+        if issue is None:
+            return {"error": "not found"}
+        return self._ISSUE_ANSWERS[kind](self, issue, arguments)
+
+    def _ready(self, team: str, label: str) -> Json:
+        issues = [
+            {**_reply_issue(issue), "state_type": self._state_type(issue)}
+            for issue in self.backend.issues.values()
+            if _team_of(issue) == team
+            and label in issue.labels
+            and self._state_type(issue) == _OPEN_STATE_TYPE
+        ]
+        return {"issues": issues, "more": False}
+
+    def _get(self, issue: Issue, _arguments: Json) -> Json:
+        return {"issue": _reply_issue(issue)}
+
+    def _read_state(self, issue: Issue, _arguments: Json) -> Json:
+        states = [state.name for state in self.backend.states[_team_of(issue)]]
+        return {"id": issue.id, "state": issue.state, "states": states}
+
+    def _read_labels(self, issue: Issue, _arguments: Json) -> Json:
+        return {
+            "id": issue.id,
+            "labels": list(issue.labels),
+            "available_labels": list(self._known_labels(issue)),
+        }
+
+    def _read_issue(self, issue: Issue, _arguments: Json) -> Json:
+        return {"id": issue.id}
+
+    def _save_state(self, issue: Issue, arguments: Json) -> Json:
+        state = arguments["state"]
+        assert state in {state.name for state in self.backend.states[_team_of(issue)]}
+        self.backend.issues[issue.id] = issue.model_copy(update={"state": state})
+        return {"id": issue.id, "state": state}
+
+    def _save_labels(self, issue: Issue, arguments: Json) -> Json:
+        labels = tuple(arguments["labels"])
+        assert set(labels) <= set(self._known_labels(issue)), "a label would be created"
+        self.backend.issues[issue.id] = issue.model_copy(update={"labels": labels})
+        return {"id": issue.id, "labels": list(labels)}
+
+    def _save_comment(self, issue: Issue, arguments: Json) -> Json:
+        self.backend.comments.append((issue.id, arguments["body"]))
+        return {"id": issue.id, "commented": True}
+
+    _ISSUE_ANSWERS: Mapping[CallKind, Callable[[FakeClaude, Issue, Json], Json]] = {
+        CallKind.GET_ISSUE: _get,
+        CallKind.READ_STATE: _read_state,
+        CallKind.READ_LABELS: _read_labels,
+        CallKind.READ_ISSUE: _read_issue,
+        CallKind.SAVE_STATE: _save_state,
+        CallKind.SAVE_LABELS: _save_labels,
+        CallKind.SAVE_COMMENT: _save_comment,
+    }
+
+    def _known_labels(self, issue: Issue) -> tuple[str, ...]:
+        return (*self.backend.team_labels.get(_team_of(issue), ()), *self.backend.workspace_labels)
+
+    def _state_type(self, issue: Issue) -> str:
+        states = {state.name: state for state in self.backend.states[_team_of(issue)]}
+        if not states[issue.state].closed:
+            return _OPEN_STATE_TYPE
+        return _CLOSED_STATE_TYPES[issue.state]
+
+
+def _reply_issue(issue: Issue) -> Json:
+    # Linear's MCP server, like its API, gives no description as null.
+    return {
+        "id": issue.id,
+        "title": issue.title,
+        "description": issue.description or None,
+        "url": issue.url,
+        "state": issue.state,
+        "labels": list(issue.labels),
+    }
+
+
+@pytest.fixture
+def hub_root(tmp_path: Path) -> Path:
+    root = tmp_path / "hub"
+    root.mkdir()
+    return root
+
+
+@pytest.fixture
+def fake_claude(tracker_backend: FakeTrackerBackend, hub_root: Path) -> FakeClaude:
+    return FakeClaude(tracker_backend, cwd=hub_root)
+
+
+@pytest.fixture
+def make_fake_claude(
+    tracker_backend: FakeTrackerBackend, hub_root: Path
+) -> Callable[..., FakeClaude]:
+    """Builds a ``FakeClaude`` expecting other caps: ``flags`` and ``timeout_s``."""
+
+    def make(*, flags: tuple[str, ...], timeout_s: float) -> FakeClaude:
+        return FakeClaude(tracker_backend, cwd=hub_root, flags=flags, timeout_s=timeout_s)
+
+    return make
