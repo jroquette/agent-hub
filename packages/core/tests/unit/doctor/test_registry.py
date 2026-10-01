@@ -18,6 +18,7 @@ RELEASED_IDS = (
     "secrets.config",
     "mcp.pinned",
     "attribution.ai",
+    "brain.leak",
     "hooks.guard-extension",
     "makefile.override",
     "features.tracker",

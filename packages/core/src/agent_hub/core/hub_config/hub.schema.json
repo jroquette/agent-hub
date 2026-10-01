@@ -17,6 +17,7 @@
         },
         "min_line_length": {
           "exclusiveMinimum": 0,
+          "maximum": 10000,
           "type": "integer"
         }
       },
