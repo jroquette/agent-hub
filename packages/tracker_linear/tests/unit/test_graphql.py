@@ -2,6 +2,7 @@
 
 import copy
 import json
+import logging
 import re
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any
@@ -17,6 +18,7 @@ from agent_hub.tracker_linear.graphql import (
     DONE_STATE_TYPES,
     LINEAR_API_KEY_VARIABLE,
     LINEAR_GRAPHQL_URL,
+    MAX_QUOTED_CHARS,
     PAGE_SIZE,
     LinearGraphqlTrackerClient,
 )
@@ -59,6 +61,7 @@ def test_pins_constants_when_module_loaded() -> None:
     assert PAGE_SIZE == 50
     assert DONE_STATE_TYPES == ("completed", "canceled", "duplicate")
     assert DEFAULT_TIMEOUT_S == 30.0
+    assert MAX_QUOTED_CHARS == 200
 
 
 def test_passes_default_timeout_when_no_timeout_given(
@@ -433,3 +436,214 @@ def test_serves_stable_uuids_when_issue_read_twice(
 
     first, second, third = (fake_linear_api.responses[index]["issue"]["id"] for index in (0, 2, 4))
     assert first == second != third
+
+
+# Each operation, the issue id it names in an error, and a call that reaches the transport.
+_SIX_OPERATIONS: dict[str, tuple[str | None, Callable[[LinearGraphqlTrackerClient], object]]] = {
+    "list_ready": (None, lambda client: client.list_ready("DEM", "agent-ready")),
+    "get_issue": ("DEM-1", lambda client: client.get_issue("DEM-1")),
+    "move_state": ("DEM-1", lambda client: client.move_state("DEM-1", "Done")),
+    "add_label": ("DEM-1", lambda client: client.add_label("DEM-1", "bug")),
+    "remove_label": ("DEM-1", lambda client: client.remove_label("DEM-1", "agent-ready")),
+    "comment": ("DEM-1", lambda client: client.comment("DEM-1", "A synthetic comment.")),
+}
+
+
+class _Answering:
+    """A transport that answers every request with one reply, or raises it; counts the calls."""
+
+    def __init__(self, reply: tuple[int, bytes] | BaseException) -> None:
+        self._reply = reply
+        self.calls = 0
+
+    def __call__(
+        self, url: str, headers: Mapping[str, str], body: bytes, *, timeout_s: float
+    ) -> tuple[int, bytes]:
+        self.calls += 1
+        if isinstance(self._reply, BaseException):
+            raise self._reply
+        return self._reply
+
+
+def _errors(message: str, **extensions: str) -> bytes:
+    error: dict[str, Any] = {"message": message}
+    if extensions:
+        error["extensions"] = extensions
+    return json.dumps({"errors": [error], "data": None}).encode()
+
+
+_KEY_FIX = r"check that LINEAR_API_KEY"
+_RETRY = r"retry later"
+
+# AC-9.4: (reply, cause pattern, fix pattern).
+_FAILURES: dict[str, tuple[tuple[int, bytes] | BaseException, str, str]] = {
+    "http-401": ((401, _errors("Authentication required")), r"HTTP 401", _KEY_FIX),
+    "http-403": ((403, b"Forbidden"), r"HTTP 403", _KEY_FIX),
+    "http-429": ((429, b""), r"rate-limited .*HTTP 429", _RETRY),
+    "http-500": ((500, b"<html>oops</html>"), r"unavailable .*HTTP 500", _RETRY),
+    "http-503": ((503, b""), r"unavailable .*HTTP 503", _RETRY),
+    "http-400-plain": ((400, b'{"data": null}'), r"HTTP 400", r"check"),
+    "non-json": ((200, b"<html>not json</html>"), r"not JSON", _RETRY),
+    "errors-200": (
+        (200, _errors("Something failed")),
+        r"Linear answered with an error: 'Something failed'",
+        r"check (that DEM-1 exists|the team key and the label name)",
+    ),
+    "errors-400-ratelimited": (
+        (400, _errors("Too many requests", code="RATELIMITED")),
+        r"'Too many requests'",
+        _RETRY,
+    ),
+    "errors-authentication": (
+        (200, _errors("Invalid key", type="authentication error")),
+        r"'Invalid key'",
+        _KEY_FIX,
+    ),
+    "oserror": (OSError("connection refused"), r"could not reach Linear", r"check the network"),
+    "timeout": (TimeoutError(), r"no answer from Linear within 30", _RETRY),
+}
+
+
+@pytest.mark.parametrize("operation", list(_SIX_OPERATIONS))
+@pytest.mark.parametrize("failure", list(_FAILURES))
+def test_raises_with_fix_when_response_fails(
+    *, caplog: pytest.LogCaptureFixture, synthetic_key: str, failure: str, operation: str
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    reply, cause, fix = _FAILURES[failure]
+    issue_id, call = _SIX_OPERATIONS[operation]
+    post = _Answering(reply)
+    client = LinearGraphqlTrackerClient(environ={LINEAR_API_KEY_VARIABLE: synthetic_key}, post=post)
+
+    with pytest.raises(TrackerError) as raised:
+        call(client)
+
+    message = str(raised.value)
+    subject = operation if issue_id is None else f"{operation} {issue_id}"
+    assert message.startswith(f"{subject}: ")
+    assert "\n" not in message
+    cause_text, _, fix_text = message.removeprefix(f"{subject}: ").rpartition("; ")
+    assert re.search(cause, cause_text), message
+    assert re.search(fix, fix_text), message
+    assert (raised.value.operation, raised.value.issue_id) == (operation, issue_id)
+    assert post.calls == 1  # never retried
+    for text in (message, repr(raised.value), str(client), repr(client), caplog.text):
+        assert synthetic_key not in text
+
+
+@pytest.mark.parametrize("operation", list(_SIX_OPERATIONS))
+@pytest.mark.parametrize("environ", [{}, {LINEAR_API_KEY_VARIABLE: ""}], ids=["unset", "empty"])
+def test_raises_naming_key_when_key_missing(environ: dict[str, str], operation: str) -> None:
+    issue_id, call = _SIX_OPERATIONS[operation]
+    post = _Answering((200, b"{}"))
+
+    client = LinearGraphqlTrackerClient(environ=environ, post=post)
+    assert post.calls == 0
+
+    with pytest.raises(TrackerError, match=r"LINEAR_API_KEY is not set") as raised:
+        call(client)
+    assert (raised.value.operation, raised.value.issue_id) == (operation, issue_id)
+    assert post.calls == 0
+
+
+@pytest.mark.parametrize("control", ["\n", "\r", "\x00", "\x1b", "\x7f"])
+def test_raises_naming_key_when_key_has_control_character(synthetic_key: str, control: str) -> None:
+    key = f"{synthetic_key}{control}injected"
+    post = _Answering((200, b"{}"))
+    client = LinearGraphqlTrackerClient(environ={LINEAR_API_KEY_VARIABLE: key}, post=post)
+
+    with pytest.raises(TrackerError, match=r"LINEAR_API_KEY has a control character") as raised:
+        client.get_issue("DEM-1")
+
+    assert post.calls == 0
+    for text in (str(raised.value), repr(raised.value), repr(client)):
+        assert synthetic_key not in text
+        assert "injected" not in text
+
+
+def _altered(fake_linear_api: Any, alter: Callable[[Any], Any]) -> Callable[..., tuple[int, bytes]]:
+    """A transport that lets the fake answer, then rewrites the decoded answer with ``alter``."""
+
+    def post(
+        url: str, headers: Mapping[str, str], body: bytes, *, timeout_s: float
+    ) -> tuple[int, bytes]:
+        status, answer = fake_linear_api(url, headers, body, timeout_s=timeout_s)
+        return status, json.dumps(alter(json.loads(answer))).encode()
+
+    return post
+
+
+def _set(path: tuple[str, ...], value: Any) -> Callable[[Any], Any]:
+    def alter(answer: Any) -> Any:
+        node = answer
+        for key in path[:-1]:
+            node = node[key]
+        node[path[-1]] = value
+        return answer
+
+    return alter
+
+
+def _drop(path: tuple[str, ...]) -> Callable[[Any], Any]:
+    def alter(answer: Any) -> Any:
+        node = answer
+        for key in path[:-1]:
+            node = node[key]
+        del node[path[-1]]
+        return answer
+
+    return alter
+
+
+_ISSUE = ("data", "issue")
+_SHAPE_CHANGES: dict[str, tuple[str, Callable[[Any], Any]]] = {
+    "not-an-object": ("get_issue", lambda answer: [answer]),
+    "data-null-no-errors": ("get_issue", _set(("data",), None)),
+    "root-missing": ("get_issue", _drop(_ISSUE)),
+    "field-missing": ("get_issue", _drop((*_ISSUE, "title"))),
+    "field-wrong-type": ("get_issue", _set((*_ISSUE, "title"), 5)),
+    "field-unexpected": ("get_issue", _set((*_ISSUE, "secret"), "x")),
+    "nodes-not-a-list": ("get_issue", _set((*_ISSUE, "labels", "nodes"), "agent-ready")),
+    "cursor-missing": (
+        "list_ready",
+        _set(("data", "issues", "pageInfo"), {"hasNextPage": True, "endCursor": None}),
+    ),
+    "success-missing": ("comment", lambda answer: _drop_success(answer)),
+}
+
+
+def _drop_success(answer: Any) -> Any:
+    # Only the mutation's answer: the lookup before it stays intact.
+    if "commentCreate" in (answer.get("data") or {}):
+        del answer["data"]["commentCreate"]["success"]
+    return answer
+
+
+@pytest.mark.parametrize("change", list(_SHAPE_CHANGES))
+def test_raises_when_response_shape_unexpected(
+    fake_linear_api: Any, synthetic_key: str, change: str
+) -> None:
+    operation, alter = _SHAPE_CHANGES[change]
+    issue_id, call = _SIX_OPERATIONS[operation]
+    client = LinearGraphqlTrackerClient(
+        environ={LINEAR_API_KEY_VARIABLE: synthetic_key}, post=_altered(fake_linear_api, alter)
+    )
+    subject = operation if issue_id is None else f"{operation} {issue_id}"
+
+    with pytest.raises(TrackerError, match=rf"^{subject}: unexpected response from Linear"):
+        call(client)
+
+
+def test_quotes_linear_message_cut_when_message_long(synthetic_key: str) -> None:
+    long_message = "x" * (MAX_QUOTED_CHARS + 50) + "\nsecond line"
+    post = _Answering((200, _errors(long_message)))
+    client = LinearGraphqlTrackerClient(environ={LINEAR_API_KEY_VARIABLE: synthetic_key}, post=post)
+
+    with pytest.raises(TrackerError) as raised:
+        client.get_issue("DEM-1")
+
+    message = str(raised.value)
+    assert f"'{'x' * MAX_QUOTED_CHARS}'" in message
+    assert "x" * (MAX_QUOTED_CHARS + 1) not in message
+    assert "second line" not in message
+    assert "\n" not in message
