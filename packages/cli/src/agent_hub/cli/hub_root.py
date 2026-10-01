@@ -51,19 +51,26 @@ def main_checkout(root: Path, *, git: str, environ: Mapping[str, str]) -> Path:
 
     ``root`` is used as it is when it is not the top of a git work tree (a hub that is not a
     repo, or a folder inside another repo) or when its repo keeps its git data elsewhere than a
-    ``.git`` folder of a checkout.
+    ``.git`` folder of a checkout. Raises ``OSError`` when ``git`` cannot start.
     """
     result = run_child(
         [git, "rev-parse", "--path-format=absolute", *_ASKED],
         cwd=root,
         env=git_env(environ, optional_locks=False),
         timeout=None,
-        new_session=False,
     )
-    lines = os.fsdecode(result.stdout).splitlines()
+    lines = result.stdout.rstrip(b"\n").split(b"\n")
     if result.returncode != 0 or len(lines) != len(_ASKED):
         return root
-    top, common = (Path(line) for line in lines)
-    if os.path.realpath(top) != os.path.realpath(root) or common.name != _GIT_FOLDER:
+    top, common = (Path(os.fsdecode(line)) for line in lines)
+    if common.name != _GIT_FOLDER or not _is_same_folder(top, root):
         return root
     return Path(os.path.realpath(common.parent))
+
+
+def _is_same_folder(top: Path, root: Path) -> bool:
+    # The file identity, not the spelling: a case-insensitive file system may spell it otherwise.
+    try:
+        return os.path.samefile(top, root)
+    except OSError:
+        return False
