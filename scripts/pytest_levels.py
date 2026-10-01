@@ -60,13 +60,32 @@ def live_skip_reason(environ: Mapping[str, str], *, transport: str | None) -> st
     return None
 
 
+def live_transport(marker: pytest.Mark) -> str | None:
+    """The transport a ``live`` marker names: None when bare, else its one string argument.
+
+    Anything else (a keyword, a second argument, a value that is not a string) is refused
+    rather than read as a bare ``live``, which would quietly demand ``LINEAR_API_KEY``.
+    """
+    usage = f"use live or live({MCP_TRANSPORT!r})"
+    if marker.kwargs:
+        names = ", ".join(sorted(marker.kwargs))
+        raise pytest.UsageError(f"live marker: keyword argument {names} not accepted; {usage}")
+    if not marker.args:
+        return None
+    transport, *extra = marker.args
+    if extra:
+        raise pytest.UsageError(f"live marker: extra argument {extra[0]!r}; {usage}")
+    if not isinstance(transport, str):
+        raise pytest.UsageError(f"live marker: transport {transport!r} is not a string; {usage}")
+    return transport
+
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Add the level marker, socket blocking for unit/contract, and the live gate."""
     for item in items:
         live = item.get_closest_marker(LIVE_MARKER)
         if live is not None:
-            transport = live.args[0] if live.args else None
-            reason = live_skip_reason(os.environ, transport=transport)
+            reason = live_skip_reason(os.environ, transport=live_transport(live))
             if reason is not None:
                 item.add_marker(pytest.mark.skip(reason=reason))
         level = level_of(str(item.path))
