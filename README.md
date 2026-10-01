@@ -219,6 +219,68 @@ the rest, and the hooks keep them inside the project's rules.
    and appends what was done, verified and learned to the day's journal, `brain/journal/YYYY/MM/DD.md`. The next
    session picks up from there without you explaining it again.
 
+### From idea to merged change: `/feature`
+
+`/feature <idea or issue id>` is the golden path. It sizes the work first, then chains the agents below. The hexagons
+are where it stops and waits for you.
+
+```mermaid
+flowchart TD
+  size["/feature: size the work"] --> spec["Spec<br/>requirements-analyst"]
+  spec --> gate1{{"You approve the spec"}}
+  gate1 --> plan["Research and plan<br/>researcher, architect"]
+  plan --> gate2{{"You approve the plan"}}
+  gate2 --> tickets["Tickets<br/>planner"]
+  tickets --> wt["Isolated worktrees<br/>./hub worktree"]
+  wt --> impl["Implement, test first<br/>one fresh subagent per task"]
+  impl --> review["Review each task<br/>spec-reviewer, then quality-reviewer"]
+  review -->|fixes| impl
+  review --> eval["Final check<br/>evaluator, SHIP required"]
+  eval --> pr["Pull request, authored by you"]
+  pr --> merge{{"You merge"}}
+  classDef you stroke-width:3px
+  class gate1,gate2,merge you
+```
+
+The size decides the ceremony:
+
+- **Spike**: throwaway learning. No spec, no tickets and no plan gate; it is timeboxed, the findings go to
+  `research.md`, and nothing is merged.
+- **Bounded**: a few pull requests at most, with a known design. You may approve the spec and the plan together.
+- **Architectural**: new contracts, paths under `guard.ask_before_edit`, or a design across repos. Both gates apply.
+
+<details>
+<summary><strong>What happens at each step</strong></summary>
+
+1. **Size it.** The session asks if the size is unclear.
+2. **Spec.** The `brainstorming` skill asks you questions one at a time in the main session, then
+   `requirements-analyst` writes `brain/features/<slug>/spec.md` with acceptance criteria (Given/When/Then).
+3. **Research and plan.** `researcher` writes `research.md` (or `/research` runs inline for small questions);
+   `architect` writes `plan.md`, small tasks each with a verification command.
+4. **Tickets.** `planner` writes `features.json` (checked by `./hub doctor --only features.tracker`) and `issues.md`;
+   the session then creates the issues in the tracker team from `hub.json`.
+5. **Workspace.** `./hub worktree <team>-<n>-<slug>` creates the worktrees, named after the issue.
+6. **Implement.** One fresh subagent per task, failing test first, the repo's `check_fast` green after each task.
+   Existing assertions are never weakened.
+7. **Review.** `spec-reviewer` checks the diff matches the spec and plan, nothing missing and nothing extra; then
+   `quality-reviewer` checks domain rules, security and idempotency. Fixes go back to the implementer.
+8. **Verify and finish.** `evaluator` re-runs every check and writes `eval.md`; it must say `SHIP`. The pull request is
+   opened on a `project.branch_prefix` branch, authored by you.
+9. **Compound.** You go through the agents' learning proposals in `brain/_inbox/` and decide where each lands;
+   `/handoff` if the work spans sessions.
+
+</details>
+
+> [!IMPORTANT]
+> `/feature` expects two things the hub does not install:
+>
+> - the [superpowers](https://github.com/obra/superpowers) plugin, for its `brainstorming`,
+>   `subagent-driven-development`, `test-driven-development` and `finishing-a-development-branch` skills;
+> - a tracker connector in Claude Code (for example Linear), so the session can create the issues. The `hub` CLI has
+>   no tracker command in 0.4.0.
+>
+> Set both up in Claude Code yourself before your first `/feature`.
+
 ## 📖 Usage guide
 
 ### Tutorial: from an empty folder to a working session
