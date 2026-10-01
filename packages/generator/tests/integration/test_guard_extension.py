@@ -273,6 +273,15 @@ def test_tightens_when_extension_asks_or_denies(
             "exit 2 (last words)",
             id="noisy_stderr",
         ),
+        # AC-9.3: an extra key, a second JSON value, other BaseExceptions (AGH-13)
+        pytest.param(
+            "",
+            "import os\n"
+            'os.write(1, json.dumps({"verdict": "ask", "reason": "r", "extra": 1}).encode())\n'
+            "os._exit(0)",
+            'unexpected answer {"verdict": "ask", "reason": "r", "extra": 1}',
+            id="extra_key",
+        ),
     ],
 )
 def test_asks_with_cause_when_extension_misbehaves(
