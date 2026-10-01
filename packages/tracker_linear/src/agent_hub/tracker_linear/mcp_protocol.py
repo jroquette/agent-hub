@@ -47,6 +47,8 @@ TOOLS_UNAVAILABLE = "tools unavailable"
 NOT_FOUND = "not found"
 
 TRANSPORT_FIX = 'or set tracker.transport to "api" with LINEAR_API_KEY'
+# The fix of a write call that ran and failed: never "retry", since it may have written.
+WRITE_FIX = "check the issue in Linear: the write may have been made, and it is not retried"
 _SHAPE_FIX = f"retry {TRANSPORT_FIX}"
 
 
@@ -474,9 +476,9 @@ def parse_reply[R](call: McpCall[R], text: str) -> R:
     try:
         size = len(text.encode())
     except UnicodeEncodeError:
-        raise _error(call, "the reply is not UTF-8 text", _SHAPE_FIX) from None
+        raise call_error(call, "the reply is not UTF-8 text", _SHAPE_FIX) from None
     if size > MAX_REPLY_BYTES:
-        raise _error(call, f"the reply is over {MAX_REPLY_BYTES // 1024**2} MiB", _SHAPE_FIX)
+        raise call_error(call, f"the reply is over {MAX_REPLY_BYTES // 1024**2} MiB", _SHAPE_FIX)
     line = text.strip()
     data = _one_json_line(call, line)
     if isinstance(data, dict) and data.keys() == {"error"}:
@@ -484,7 +486,7 @@ def parse_reply[R](call: McpCall[R], text: str) -> R:
     problem = _problem(data, _SHAPES[call.kind])
     if problem is not None:
         cause, fix = problem
-        raise _error(call, cause or f"the reply has another shape: {_quoted(line)}", fix)
+        raise call_error(call, cause or f"the reply has another shape: {quoted(line)}", fix)
     return call.reader(data)
 
 
@@ -496,7 +498,7 @@ def _one_json_line(call: McpCall[Any], line: str) -> Any:
     if line and "\n" not in line and "\r" not in line:
         with contextlib.suppress(InvalidJsonError):
             return load_json_bytes(line.encode(), strict=True)
-    raise _error(call, f"the reply is not one line of JSON: {_quoted(line)}", _SHAPE_FIX)
+    raise call_error(call, f"the reply is not one line of JSON: {quoted(line)}", _SHAPE_FIX)
 
 
 def _check_names(operation: str, issue_id: str | None, names: tuple[str, ...]) -> None:
@@ -582,26 +584,34 @@ def _first(problems: Any) -> tuple[str, str] | None:
 def _error_reply(call: McpCall[Any], message: object, line: str) -> TrackerError:
     """The error a reply of the form ``{"error": ...}`` reports."""
     if message == TOOLS_UNAVAILABLE:
-        return _error(
+        return call_error(
             call,
             "the Linear MCP tools are not available to claude",
             f"connect the Linear MCP server in Claude Code, {TRANSPORT_FIX}",
         )
     if message == NOT_FOUND and call.issue_id is not None:
-        return _error(
+        return call_error(
             call,
             f"issue {call.issue_id} not found in Linear",
             f"check that {call.issue_id} exists in Linear",
         )
     if isinstance(message, str):
-        return _error(call, f"the reply answered an error: {_quoted(message)}", _SHAPE_FIX)
-    return _error(call, f"the reply has another shape: {_quoted(line)}", _SHAPE_FIX)
+        return call_error(call, f"the reply answered an error: {quoted(message)}", _SHAPE_FIX)
+    return call_error(call, f"the reply has another shape: {quoted(line)}", _SHAPE_FIX)
 
 
-def _error(call: McpCall[Any], cause: str, fix: str) -> TrackerError:
+def call_error(call: McpCall[Any], cause: str, fix: str, *, call_ran: bool = True) -> TrackerError:
+    """The one-line error of a failed call, naming its port operation and issue.
+
+    A write call that ran may have written before it failed, so its fix is ``WRITE_FIX``
+    whatever ``fix`` says: it is never retried. ``call_ran`` is False when ``claude`` never
+    started, and ``fix`` then stands.
+    """
+    if call_ran and call.kind in WRITE_KINDS:
+        fix = WRITE_FIX
     return TrackerError(operation=call.operation, issue_id=call.issue_id, cause=cause, fix=fix)
 
 
-def _quoted(text: object) -> str:
+def quoted(text: object) -> str:
     """Untrusted text, cut to ``MAX_QUOTED_CHARS`` and quoted (escapes included)."""
     return repr(str(text)[:MAX_QUOTED_CHARS])

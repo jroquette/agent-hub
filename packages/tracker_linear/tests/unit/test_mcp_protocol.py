@@ -30,12 +30,14 @@ from agent_hub.tracker_linear.mcp_protocol import (
     ReadyReply,
     StateRead,
     StateSaved,
+    call_error,
     comment_read_call,
     get_issue_call,
     label_read_call,
     list_ready_call,
     parse_reply,
     prompt,
+    quoted,
     request_line,
     save_comment_call,
     save_labels_call,
@@ -254,8 +256,12 @@ def test_rejects_reply_when_key_extra_or_missing(
     message = str(raised.value)
     subject = call.operation if call.issue_id is None else f"{call.operation} {call.issue_id}"
     assert message.startswith(f"{subject}: ")
-    assert 'tracker.transport to "api"' in message
-    assert "LINEAR_API_KEY" in message
+    if call.kind in WRITE_KINDS:
+        # A write call ran: its fix is the write's, never a retry.
+        assert message.endswith(f"; {_WRITE_FIX}, and it is not retried")
+    else:
+        assert 'tracker.transport to "api"' in message
+        assert "LINEAR_API_KEY" in message
 
 
 @pytest.mark.parametrize(
@@ -373,7 +379,9 @@ def test_quotes_untrusted_text_when_shape_wrong() -> None:
 
 @pytest.mark.parametrize("call", _every_call(), ids=[call.kind.value for call in _every_call()])
 def test_names_mcp_server_when_tools_unavailable(call: McpCall[Any]) -> None:
-    with pytest.raises(TrackerError, match="connect the Linear MCP server") as raised:
+    # A write call's model may have written before it said so: its fix is the write's.
+    fix = _WRITE_FIX if call.kind in WRITE_KINDS else "connect the Linear MCP server"
+    with pytest.raises(TrackerError, match=fix) as raised:
         parse_reply(call, '{"error": "tools unavailable"}')
 
     assert str(raised.value).startswith(call.operation)
@@ -562,3 +570,56 @@ def test_denies_every_write_tool_when_call_reads(kind: CallKind) -> None:
 
     assert len(writes) == 19
     assert writes <= set(DENIED[kind])
+
+
+_WRITE_FIX = "check the issue in Linear: the write may have been made"
+_WRITE_CALLS = [call for call in _every_call() if call.kind in WRITE_KINDS]
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "not json",
+        '{"answer": "done"}',
+        '{"error": "tools unavailable"}',
+        '{"error": "not found"}',
+        '{"error": "rate limited"}',
+        " " * (MAX_REPLY_BYTES + 1),
+        '{"id": "DEM-1"}\ud800',
+    ],
+    ids=[
+        "not-json",
+        "other-shape",
+        "tools-unavailable",
+        "not-found",
+        "other-error",
+        "too-big",
+        "not-utf8",
+    ],
+)
+@pytest.mark.parametrize("call", _WRITE_CALLS, ids=[call.kind.value for call in _WRITE_CALLS])
+def test_never_says_retry_when_write_reply_fails(call: McpCall[Any], reply: str) -> None:
+    with pytest.raises(TrackerError) as raised:
+        parse_reply(call, reply)
+
+    fix = str(raised.value).partition("; ")[2]
+    assert fix.startswith(_WRITE_FIX), fix
+    assert "retry" not in fix
+
+
+def test_keeps_fix_when_read_reply_fails() -> None:
+    with pytest.raises(TrackerError) as raised:
+        parse_reply(comment_read_call("DEM-1"), "not json")
+
+    assert str(raised.value).endswith(
+        '; retry or set tracker.transport to "api" with LINEAR_API_KEY'
+    )
+
+
+def test_names_operation_and_issue_when_call_error_built() -> None:
+    error = call_error(state_read_call("DEM-1"), "a cause", "a fix")
+    write_error = call_error(save_state_call("DEM-1", "Done"), "a cause", "a fix")
+
+    assert str(error) == "move_state DEM-1: a cause; a fix"
+    assert str(write_error).startswith(f"move_state DEM-1: a cause; {_WRITE_FIX}")
+    assert quoted("x" * 500) == repr("x" * MAX_QUOTED_CHARS)

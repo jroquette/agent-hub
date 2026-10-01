@@ -23,21 +23,23 @@ from agent_hub.tracker_linear.claude_process import CLAUDE_PROGRAM, ClaudeOutput
 from agent_hub.tracker_linear.graphql import DONE_STATE_TYPES, LINEAR_API_KEY_VARIABLE
 from agent_hub.tracker_linear.mcp_protocol import (
     DENIED,
-    MAX_QUOTED_CHARS,
     MAX_READY_ISSUES,
     MAX_REPLY_BYTES,
     TOOLS,
     TRANSPORT_FIX,
+    WRITE_FIX,
     CommentSaved,
     LabelsRead,
     McpCall,
     StateSaved,
+    call_error,
     comment_read_call,
     get_issue_call,
     label_read_call,
     list_ready_call,
     parse_reply,
     prompt,
+    quoted,
     save_comment_call,
     save_labels_call,
     save_state_call,
@@ -236,30 +238,35 @@ class McpTrackerClient:
             return self.runner(argv, cwd=self.cwd, env=env, timeout_s=self.timeout_s)
         except TimeoutError:
             # Before OSError, of which TimeoutError is a subclass.
-            raise _error(
+            raise call_error(
                 call, f"no answer from claude within {self.timeout_s:g} s", _RETRY_FIX
             ) from None
         except FileNotFoundError as error:
             if error.filename == argv[0]:
-                raise _error(
+                raise call_error(
                     call,
                     "claude (Claude Code) is not on PATH",
                     f"install Claude Code, {TRANSPORT_FIX}",
+                    call_ran=False,
                 ) from None
-            raise _error(
+            raise call_error(
                 call,
                 f"cannot start claude in {str(error.filename)!r}: no such directory",
                 "run the command in the hub, or set AGENT_HUB_ROOT to it",
+                call_ran=False,
             ) from None
         except OSError as error:
-            raise _error(
-                call, f"could not start claude: {_quoted_text(error.strerror)}", _RETRY_FIX
+            raise call_error(
+                call,
+                f"could not start claude: {quoted(error.strerror)}",
+                _RETRY_FIX,
+                call_ran=False,
             ) from None
 
     def _result(self, call: McpCall[Any], output: ClaudeOutput) -> str:
         """The model's reply text from ``claude``'s JSON result; its cost is recorded first."""
         if len(output.stdout) > MAX_REPLY_BYTES:
-            raise _error(
+            raise call_error(
                 call, f"claude's output is over {MAX_REPLY_BYTES // 1024**2} MiB", _RETRY_FIX
             )
         try:
@@ -271,9 +278,9 @@ class McpTrackerClient:
         text, is_error, cost_usd = fields
         self.last_cost_usd += cost_usd
         if is_error:
-            raise _error(
+            raise call_error(
                 call,
-                f"claude reported an error: {_quoted_text(text)}",
+                f"claude reported an error: {quoted(text)}",
                 f"check that claude is logged in and within its budget, {TRANSPORT_FIX}",
             )
         if output.returncode != 0:
@@ -285,12 +292,12 @@ def _no_result(call: McpCall[Any], output: ClaudeOutput) -> TrackerError:
     """The error for a call that gave no usable result: a failed exit, else no JSON."""
     if output.returncode != 0:
         detail = (output.stderr or output.stdout).decode(errors="replace").strip()
-        return _error(
+        return call_error(
             call,
-            f"claude exited with status {output.returncode}: {_quoted_text(detail)}",
+            f"claude exited with status {output.returncode}: {quoted(detail)}",
             f"run claude -p in the hub to see why, {TRANSPORT_FIX}",
         )
-    return _error(call, f"claude printed no JSON result: {_quoted(output.stdout)}", _RETRY_FIX)
+    return call_error(call, f"claude printed no JSON result: {_quoted(output.stdout)}", _RETRY_FIX)
 
 
 def _result_fields(value: JsonValue) -> tuple[str, bool, float] | None:
@@ -317,7 +324,7 @@ def _check_echo(operation: str, issue_id: str, *, echoed: bool) -> None:
             operation=operation,
             issue_id=issue_id,
             cause="the write reply names another change",
-            fix="check the issue in Linear: the write may have been made, and it is not retried",
+            fix=WRITE_FIX,
         )
 
 
@@ -331,15 +338,6 @@ def _check_same_issue(operation: str, issue_id: str, replied: str) -> None:
         )
 
 
-def _error(call: McpCall[Any], cause: str, fix: str) -> TrackerError:
-    return TrackerError(operation=call.operation, issue_id=call.issue_id, cause=cause, fix=fix)
-
-
 def _quoted(output: bytes) -> str:
     """Untrusted output, decoded, cut to ``MAX_QUOTED_CHARS`` and quoted."""
-    return _quoted_text(output.decode(errors="replace"))
-
-
-def _quoted_text(text: object) -> str:
-    """Untrusted text, cut to ``MAX_QUOTED_CHARS`` and quoted (escapes included)."""
-    return repr(str(text)[:MAX_QUOTED_CHARS])
+    return quoted(output.decode(errors="replace"))
