@@ -89,7 +89,12 @@ def doctor(
     for note in selection.notes:
         typer.echo(note, err=True)
     snapshot = DoctorSnapshot(
-        config=config, running_version=running, hub=_NO_FILES, lock=None, base_hooks=None
+        config=config,
+        running_version=running,
+        hub=_NO_FILES,
+        lock=None,
+        base_hooks=None,
+        repos=(),
     )
     if not isinstance(config, ConfigFailure):
         snapshot = _hub_snapshot(root, config=config, running=running, selection=selection)
@@ -131,8 +136,14 @@ def _hub_snapshot(
     by_path = sorted({*hub_paths(config), *lock_paths(lock)})
     hub = read_doctor_tree(Path(root), by_path=by_path, listing=not LISTING_READS.isdisjoint(reads))
     base_hooks = base_hooks_block() if Read.BASE_HOOKS in reads else None
+    # No registered rule reads the repo checkouts yet, so none is read.
     return DoctorSnapshot(
-        config=config, running_version=running, hub=hub, lock=lock, base_hooks=base_hooks
+        config=config,
+        running_version=running,
+        hub=hub,
+        lock=lock,
+        base_hooks=base_hooks,
+        repos=(),
     )
 
 
