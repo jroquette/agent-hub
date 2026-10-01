@@ -14,7 +14,7 @@ import pytest
 
 ROOT = "agent_hub"
 SCRATCH_ROOT = "scratch_hub"
-PACKAGES = ("core", "storage", "collector", "generator", "cli")
+PACKAGES = ("core", "storage", "collector", "generator", "tracker_linear", "cli")
 COMPOSITION_ROOT = "cli is the composition root"
 CORE_INDEPENDENT = "core imports nothing internal"
 LINT_IMPORTS = str(Path(sys.executable).parent / "lint-imports")
@@ -60,6 +60,13 @@ def lint_imports(
         ("generator", "collector"),
         ("storage", "generator"),
         ("collector", "generator"),
+        ("tracker_linear", "cli"),
+        ("tracker_linear", "storage"),
+        ("tracker_linear", "collector"),
+        ("tracker_linear", "generator"),
+        ("storage", "tracker_linear"),
+        ("collector", "tracker_linear"),
+        ("generator", "tracker_linear"),
     ],
 )
 def test_breaks_composition_root_contract_when_adapter_imports_upward_or_sideways(
@@ -72,17 +79,18 @@ def test_breaks_composition_root_contract_when_adapter_imports_upward_or_sideway
     assert f"{SCRATCH_ROOT}.{importer} -> {SCRATCH_ROOT}.{imported}" in result.stdout
 
 
-def test_breaks_core_contract_when_core_imports_generator(
-    lint_imports: Callable[[str, str], CompletedProcess[str]],
+@pytest.mark.parametrize("imported", ["generator", "tracker_linear"])
+def test_breaks_core_contract_when_core_imports_adapter(
+    lint_imports: Callable[[str, str], CompletedProcess[str]], imported: str
 ) -> None:
-    result = lint_imports("core", "generator")
+    result = lint_imports("core", imported)
 
     assert result.returncode != 0, result.stdout + result.stderr
     assert f"{CORE_INDEPENDENT} BROKEN" in result.stdout, result.stdout
-    assert f"{SCRATCH_ROOT}.core -> {SCRATCH_ROOT}.generator" in result.stdout
+    assert f"{SCRATCH_ROOT}.core -> {SCRATCH_ROOT}.{imported}" in result.stdout
 
 
-@pytest.mark.parametrize("imported", ["storage", "collector", "generator"])
+@pytest.mark.parametrize("imported", ["storage", "collector", "generator", "tracker_linear"])
 def test_keeps_every_contract_when_cli_wires_adapter(
     lint_imports: Callable[[str, str], CompletedProcess[str]], imported: str
 ) -> None:

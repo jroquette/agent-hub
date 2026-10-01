@@ -66,6 +66,8 @@ CORE_MODULES = (
     "doctor/text_rules.py",
     "doctor/links_rule.py",
     "doctor/brain_leak_rule.py",
+    "tracker/__init__.py",
+    "tracker/tracker_client.py",
 )
 
 # Design decision 4 of the plan, word for word: each refusal names the cause or the way out.

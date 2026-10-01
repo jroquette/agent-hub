@@ -7,6 +7,8 @@ from typing import Any
 from uuid import uuid4
 
 from agent_hub.core.events.event import Event
+from agent_hub.core.testing.fakes import FakeTrackerBackend, TrackerState
+from agent_hub.core.tracker.tracker_client import Issue
 
 # The Example of docs/design/project-config.md, a synthetic project.
 _HUB_DOCUMENT: dict[str, Any] = {
@@ -56,3 +58,59 @@ def events_to_jsonl(events: Iterable[Event]) -> str:
 def a_hub_document() -> dict[str, Any]:
     """Build a valid synthetic ``hub.json`` document as plain JSON data; a fresh copy per call."""
     return copy.deepcopy(_HUB_DOCUMENT)
+
+
+def an_issue(**overrides: object) -> Issue:
+    """Build a synthetic open ``DEM`` issue; ``url`` follows ``id`` unless overridden."""
+    fields: dict[str, object] = {
+        "id": "DEM-1",
+        "title": "Add a synthetic feature",
+        "state": "Todo",
+        "labels": ("agent-ready",),
+    } | overrides
+    fields.setdefault("url", f"https://linear.app/demo/issue/{fields['id']}")
+    return Issue.model_validate(fields)
+
+
+_OPEN_STATES = (
+    TrackerState(name="Todo", closed=False),
+    TrackerState(name="In Progress", closed=False),
+)
+_CLOSED_STATES = (
+    TrackerState(name="Done", closed=True),
+    TrackerState(name="Canceled", closed=True),
+)
+
+# (id, state, labels): ready ones in every state, a repo label, an unlabelled one, another team.
+_SEEDED_ISSUES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("DEM-1", "Todo", ("agent-ready", "demo-api")),
+    ("DEM-2", "In Progress", ("agent-ready",)),
+    ("DEM-3", "Todo", ("agent-ready", "bug")),
+    ("DEM-4", "Done", ("agent-ready",)),
+    ("DEM-5", "Canceled", ("agent-ready",)),
+    ("DEM-6", "Duplicate", ("agent-ready",)),
+    ("DEM-7", "Todo", ()),
+    ("OPS-1", "Todo", ("agent-ready",)),
+)
+
+
+def a_seeded_tracker_backend() -> FakeTrackerBackend:
+    """Build the synthetic tracker the contract suite runs on; a fresh backend per call.
+
+    Team ``DEM`` has three open ``agent-ready`` issues (more than one fake page), ready ones in
+    Done, Canceled and Duplicate, and an open unlabelled one; team ``OPS`` has one open ready issue.
+    """
+    return FakeTrackerBackend(
+        states={
+            "DEM": (*_OPEN_STATES, *_CLOSED_STATES, TrackerState(name="Duplicate", closed=True)),
+            "OPS": (*_OPEN_STATES, *_CLOSED_STATES),
+        },
+        team_labels={"DEM": ("demo-api", "bug"), "OPS": ()},
+        workspace_labels=("agent-ready", "agent-failed"),
+        issues={
+            issue_id: an_issue(
+                id=issue_id, title=f"Synthetic issue {issue_id}", state=state, labels=labels
+            )
+            for issue_id, state, labels in _SEEDED_ISSUES
+        },
+    )
