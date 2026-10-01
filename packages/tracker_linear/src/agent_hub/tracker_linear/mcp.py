@@ -26,11 +26,20 @@ from agent_hub.tracker_linear.mcp_protocol import (
     MAX_READY_ISSUES,
     TOOLS,
     TRANSPORT_FIX,
+    CommentSaved,
+    LabelsRead,
     McpCall,
+    StateSaved,
+    comment_read_call,
     get_issue_call,
+    label_read_call,
     list_ready_call,
     parse_reply,
     prompt,
+    save_comment_call,
+    save_labels_call,
+    save_state_call,
+    state_read_call,
 )
 
 DEFAULT_MODEL = "haiku"
@@ -98,7 +107,7 @@ class McpTrackerClient:
         return [
             ready.issue
             for ready in reply.issues
-            if ready.issue.id.partition("-")[0] == team
+            if _team_of(ready.issue.id) == team
             and label in ready.issue.labels
             and ready.state_type not in DONE_STATE_TYPES
         ]
@@ -109,6 +118,73 @@ class McpTrackerClient:
         issue = self._call(get_issue_call(issue_id))
         _check_same_issue("get_issue", issue_id, issue.id)
         return issue
+
+    def move_state(self, issue_id: str, state_name: str) -> None:
+        """Move the issue to its team's state ``state_name``; the current state is a no-op."""
+        self._start("move_state", issue_id)
+        read = self._call(state_read_call(issue_id))
+        _check_same_issue("move_state", issue_id, read.issue_id)
+        if state_name not in read.states:
+            team = _team_of(issue_id)
+            raise TrackerError(
+                operation="move_state",
+                issue_id=issue_id,
+                cause=f"state {state_name!r} not found in team {team}",
+                fix=f"use the name of a workflow state of team {team}",
+            )
+        if read.state == state_name:
+            return
+        saved = self._call(save_state_call(issue_id, state_name))
+        _check_echo(
+            "move_state", issue_id, echoed=saved == StateSaved(issue_id=issue_id, state=state_name)
+        )
+
+    def add_label(self, issue_id: str, name: str) -> None:
+        """Add a label of the issue's team or the workspace; a present label is a no-op."""
+        read = self._label_read("add_label", issue_id, name)
+        if name not in read.labels:
+            self._save_labels("add_label", issue_id, (*read.labels, name))
+
+    def remove_label(self, issue_id: str, name: str) -> None:
+        """Remove a label; a known label the issue does not carry is a no-op."""
+        read = self._label_read("remove_label", issue_id, name)
+        if name in read.labels:
+            labels = tuple(label for label in read.labels if label != name)
+            self._save_labels("remove_label", issue_id, labels)
+
+    def comment(self, issue_id: str, body: str) -> None:
+        """Add one comment with ``body`` to the issue; never retried."""
+        self._start("comment", issue_id)
+        write = save_comment_call(issue_id, body)  # refuses a long body before any call
+        seen = self._call(comment_read_call(issue_id))
+        _check_same_issue("comment", issue_id, seen.issue_id)
+        saved = self._call(write)
+        _check_echo(
+            "comment", issue_id, echoed=saved == CommentSaved(issue_id=issue_id, commented=True)
+        )
+
+    def _label_read(self, operation: str, issue_id: str, name: str) -> LabelsRead:
+        """The read call of a label write; a name neither known nor on the issue raises."""
+        self._start(operation, issue_id)
+        read = self._call(label_read_call(operation, issue_id))
+        _check_same_issue(operation, issue_id, read.issue_id)
+        if name not in read.available_labels and name not in read.labels:
+            raise TrackerError(
+                operation=operation,
+                issue_id=issue_id,
+                cause=f"label {name!r} not found in team {_team_of(issue_id)} or the workspace",
+                fix="create the label in Linear first",
+            )
+        return read
+
+    def _save_labels(self, operation: str, issue_id: str, labels: tuple[str, ...]) -> None:
+        """The write call of a label change: the full label set, echoed back."""
+        saved = self._call(save_labels_call(operation, issue_id, labels))
+        _check_echo(
+            operation,
+            issue_id,
+            echoed=saved.issue_id == issue_id and sorted(saved.labels) == sorted(labels),
+        )
 
     def _start(self, operation: str, issue_id: str) -> None:
         """Begin a port operation on ``issue_id``: reset the cost, refuse a malformed id."""
@@ -173,6 +249,20 @@ def _result_fields(value: JsonValue) -> tuple[str, bool, float] | None:
     if isinstance(cost_usd, bool) or not isinstance(cost_usd, int | float):
         return None
     return text, is_error, float(cost_usd)
+
+
+def _team_of(issue_id: str) -> str:
+    return issue_id.partition("-")[0]
+
+
+def _check_echo(operation: str, issue_id: str, *, echoed: bool) -> None:
+    if not echoed:
+        raise TrackerError(
+            operation=operation,
+            issue_id=issue_id,
+            cause="the write reply names another change",
+            fix="check the issue in Linear: the write may have been made, and it is not retried",
+        )
 
 
 def _check_same_issue(operation: str, issue_id: str, replied: str) -> None:
