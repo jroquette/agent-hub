@@ -80,14 +80,29 @@ class _Scripted:
 
 
 def _envelope(result: str, *, cost_usd: float = _COST_USD, is_error: bool = False) -> bytes:
+    # An API error (is_error) keeps subtype "success" and puts the error text in result.
     return json.dumps(
         {
             "type": "result",
-            "subtype": "error_during_execution" if is_error else "success",
+            "subtype": "success",
             "is_error": is_error,
             "result": result,
             "total_cost_usd": cost_usd,
             "num_turns": 2,
+        }
+    ).encode()
+
+
+def _stopped(subtype: str, *, errors: list[object], cost_usd: float = _COST_USD) -> bytes:
+    """claude's result when it stops early (turns, budget, execution): no result field."""
+    return json.dumps(
+        {
+            "type": "result",
+            "subtype": subtype,
+            "is_error": True,
+            "errors": errors,
+            "total_cost_usd": cost_usd,
+            "num_turns": 6,
         }
     ).encode()
 
@@ -556,6 +571,16 @@ _FAILURES: dict[str, tuple[Any, str, str]] = {
         "claude reported an error: 'Credit balance is too low'",
         "check that claude is logged in",
     ),
+    "max-turns": (
+        ClaudeOutput(returncode=1, stdout=_stopped("error_max_turns", errors=[]), stderr=b""),
+        "claude stopped: error_max_turns;",
+        "check that claude is logged in",
+    ),
+    "max-budget": (
+        _stopped("error_max_budget_usd", errors=["Reached maximum budget ($0.3)"]),
+        "claude stopped: error_max_budget_usd: 'Reached maximum budget ($0.3)'",
+        "check that claude is logged in",
+    ),
     "tools-unavailable": (
         _reply({"error": "tools unavailable"}),
         "the Linear MCP tools are not available to claude",
@@ -767,3 +792,73 @@ def test_reads_no_hub_json_when_sources_scanned() -> None:
     assert {module.name for module in modules} >= {"mcp.py", "mcp_protocol.py", "claude_process.py"}
 
     assert [module.name for module in modules if "hub.json" in module.read_text()] == []
+
+
+_LONG = "s" * 500
+
+
+class TestErrorResults:
+    def test_records_cost_when_claude_stops_early(
+        self, make_fake_claude: Any, hub_root: Path, tracker_backend: FakeTrackerBackend
+    ) -> None:
+        runner = make_fake_claude(flags=_DEFAULT_FLAGS, timeout_s=_TIMEOUT_S)
+        runner.stops, runner.stop_cost_usd = "error_max_turns", 0.296875
+        before = copy.deepcopy(tracker_backend)
+        client = _client(runner, hub_root)
+
+        with pytest.raises(
+            TrackerError, match=r"^move_state DEM-1: claude stopped: error_max_turns"
+        ):
+            client.move_state("DEM-1", "Done")
+
+        assert client.last_cost_usd == 0.296875
+        assert len(runner.calls) == 1
+        assert tracker_backend == before
+
+    @pytest.mark.parametrize(
+        "stdout",
+        [
+            json.dumps({"is_error": False, "total_cost_usd": 0.5}).encode(),
+            json.dumps({"is_error": True, "total_cost_usd": 0.5, "subtype": 5}).encode(),
+            json.dumps({"result": 5, "is_error": False, "total_cost_usd": 0.5}).encode(),
+        ],
+        ids=["no-result", "subtype-not-text", "result-not-text"],
+    )
+    def test_records_cost_when_result_unusable(self, hub_root: Path, stdout: bytes) -> None:
+        client = _client(_Scripted(stdout), hub_root)
+
+        with pytest.raises(TrackerError):
+            client.get_issue("DEM-1")
+
+        assert client.last_cost_usd == 0.5
+
+    @pytest.mark.parametrize("cost", [True, "0.5", None], ids=["bool", "text", "null"])
+    def test_records_no_cost_when_cost_not_number(self, hub_root: Path, cost: object) -> None:
+        stdout = json.dumps({"result": "{}", "is_error": False, "total_cost_usd": cost}).encode()
+        client = _client(_Scripted(stdout), hub_root)
+
+        with pytest.raises(TrackerError, match="claude printed no JSON result"):
+            client.get_issue("DEM-1")
+
+        assert client.last_cost_usd == 0.0
+
+    @pytest.mark.parametrize(
+        "output",
+        [
+            ClaudeOutput(returncode=1, stdout=b"", stderr=_LONG.encode() * 1000),
+            ClaudeOutput(returncode=0, stdout=_LONG.encode(), stderr=b""),
+            ClaudeOutput(returncode=1, stdout=_envelope(_LONG, is_error=True), stderr=b""),
+            ClaudeOutput(
+                returncode=1, stdout=_stopped("error_during_execution", errors=[_LONG]), stderr=b""
+            ),
+            ClaudeOutput(returncode=0, stdout=_reply({"error": _LONG}), stderr=b""),
+        ],
+        ids=["stderr", "stdout", "result", "errors", "reply"],
+    )
+    def test_cuts_quoted_text_when_output_long(self, hub_root: Path, output: ClaudeOutput) -> None:
+        with pytest.raises(TrackerError) as raised:
+            _client(_Scripted(output), hub_root).get_issue("DEM-1")
+
+        message = str(raised.value)
+        assert repr("s" * 200) in message, message
+        assert "s" * 201 not in message
