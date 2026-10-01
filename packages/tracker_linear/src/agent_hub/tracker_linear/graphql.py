@@ -134,7 +134,7 @@ _ISSUE_FIELDS = f"identifier title description url state {{ name }} {_labels_sel
 _ISSUE_SHAPE: Shape = {
     "identifier": str,
     "title": str,
-    "description": str,
+    "description": (str, type(None)),
     "url": str,
     "state": {"name": str},
     "labels": {"nodes": [{"name": str}], "pageInfo": {"hasNextPage": bool}},
@@ -614,7 +614,7 @@ def _issue_from_node(operation: str, issue_id: str | None, node: Mapping[str, An
     return Issue(
         id=node["identifier"],
         title=node["title"],
-        description=node["description"],
+        description=node["description"] or "",
         state=node["state"]["name"],
         labels=tuple(label["name"] for label in _label_nodes(operation, issue_id, node)),
         url=node["url"],
