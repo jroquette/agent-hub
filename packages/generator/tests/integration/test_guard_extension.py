@@ -290,6 +290,12 @@ def test_tightens_when_extension_asks_or_denies(
             "its output is not one JSON value",
             id="second_json_value",
         ),
+        pytest.param(
+            "",
+            'raise KeyboardInterrupt("q")',
+            "exit 3 (KeyboardInterrupt: q)",
+            id="keyboard_interrupt",
+        ),
     ],
 )
 def test_asks_with_cause_when_extension_misbehaves(
