@@ -2,6 +2,7 @@ import json
 from collections.abc import Iterator
 from typing import Any
 
+from agent_hub.core.hub_config.doctor_rules import MAX_LINES_KEY_LENGTH, MAX_LINES_KEYS
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.schema import export_schema_text, read_shipped_schema
 
@@ -37,7 +38,9 @@ def test_forbids_extra_keys_when_object_has_fixed_keys() -> None:
 
     [(path, max_lines)] = maps
     assert path.endswith(".InstructionsSizeSettings.properties.max_lines")
-    assert max_lines["propertyNames"] == {"minLength": 1}
+    # E30: the model's bounds, pinned by number in test_doctor_rules.py.
+    assert max_lines["propertyNames"] == {"minLength": 1, "maxLength": MAX_LINES_KEY_LENGTH}
+    assert max_lines["maxProperties"] == MAX_LINES_KEYS
     assert max_lines["additionalProperties"] == {"exclusiveMinimum": 0, "type": "integer"}
 
 

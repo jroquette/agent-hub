@@ -9,7 +9,8 @@ from agent_hub.core.hub_config.doctor_rules import (
     RULE_MODULES,
     DoctorRules,
 )
-from agent_hub.core.hub_config.model import Modules
+from agent_hub.core.hub_config.model import HubConfig, Modules
+from agent_hub.core.testing.builders import a_hub_document
 
 # Keep in sync with docs/design/hub-doctor.md § Rules.
 RULE_TABLE_IDS = [
@@ -167,3 +168,45 @@ def test_rejects_max_lines_when_file_key_empty() -> None:
     assert error_types({"instructions.size": {"max_lines": {"": 120}}}) == [
         (("instructions.size", "max_lines", "", "[key]"), "string_too_short")
     ]
+
+
+def a_config_with_limits(max_lines: dict[str, int]) -> HubConfig:
+    document = a_hub_document()
+    document["doctor"] = {"rules": {"instructions.size": {"max_lines": max_lines}}}
+    return HubConfig.model_validate(document)
+
+
+def config_error_types(max_lines: dict[str, int]) -> list[tuple[tuple[str | int, ...], str]]:
+    with pytest.raises(ValidationError) as caught:
+        a_config_with_limits(max_lines)
+    return [(error["loc"], error["type"]) for error in caught.value.errors()]
+
+
+MAX_LINES_LOC = ("doctor", "rules", "instructions.size", "max_lines")
+
+
+def test_bounds_max_lines_key_when_longer_than_limit() -> None:
+    # E30: a key is 1 to 1024 characters (fnmatch.translate is quadratic on a long key).
+    longest = "a" * 1024
+    too_long = longest + "a"
+
+    config = a_config_with_limits({longest: 120})
+
+    assert config.doctor.rules.instructions_size is not None
+    assert config.doctor.rules.instructions_size.max_lines == {longest: 120}
+    assert config_error_types({too_long: 120}) == [
+        ((*MAX_LINES_LOC, too_long, "[key]"), "string_too_long")
+    ]
+
+
+def test_bounds_max_lines_map_when_more_keys_than_limit() -> None:
+    # E30: at most 256 keys (each glob key is tried on each instruction file); comment keys
+    # are dropped first, so they do not count.
+    most = {f"f{number}.md": 120 for number in range(256)}
+    too_many = {**most, "one-more.md": 120}
+
+    config = a_config_with_limits({"_why": "comment", **most})
+
+    assert config.doctor.rules.instructions_size is not None
+    assert config.doctor.rules.instructions_size.max_lines == most
+    assert config_error_types(too_many) == [(MAX_LINES_LOC, "too_long")]

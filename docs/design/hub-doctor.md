@@ -38,9 +38,11 @@ on the first selected rule, by id, that reads the listing, else the first by id 
 `platform.version` (none when only those run), never retuned; its message is the cause (`could not list the files: …`
 or `could not read the files: <path>: …`), its fix one line. Fixed paths are read one by one before the listing, so a
 failed listing keeps them; after a failed read no rule calls an absent path missing. A rule whose check raises gives one
-`error` of that rule at `.` (`rule crashed: <type>: <message>`), never retuned, and the other rules keep running. Proof:
-one unit test per rule on an in-memory snapshot, plus one e2e test of the command on a synthetic hub. A rule's `module`
-comes from core's `RULE_MODULES`; a module's rules are core functions registered when the module ships.
+`error` of that rule at `.` (`rule crashed: <type>: <message>`), never retuned, and the other rules keep running. An
+instruction or plugin file that is not UTF-8 text (a NUL included) is one `error` at its path (`not UTF-8 text: …`),
+never retuned, from the first selected rule in registry order that reads it; the other rules skip it. Proof: one unit
+test per rule on an in-memory snapshot, plus one e2e test of the command on a synthetic hub. A rule's `module` comes
+from core's `RULE_MODULES`; a module's rules are core functions registered when the module ships.
 
 ### Rules
 
@@ -50,16 +52,16 @@ comes from core's `RULE_MODULES`; a module's rules are core functions registered
 | `platform.version` | error | the running CLI equals `platform.version` (a shim always runs the pin; a direct `hub` may not); one finding only; its `doctor.rules` entry has no effect on findings | [ADR 0013](../adr/0013-release-by-git-tags.md) |
 | `lock.drift` | error | each managed file (bytes and executable bit) and link (target, not followed) matches its `hub.lock` entry (a missing one: `hub sync` restores it); a lock `platform_version` older than the pin, compared as numbers: warning "sync pending"; newer: warning "downgrade"; no `hub.lock`: warning "not adopted" | [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md), [hub-sync.md](hub-sync.md) |
 | `links.dead` | error | relative Markdown links resolve to an existing file (hub and repos) | new |
-| `instructions.size` | error | line limits: `AGENTS.md` 100, `CLAUDE.md` 150, `CLAUDE.local.md` 50, `.claude/rules/*.md` 80 | config lint |
-| `instructions.refs` | error | paths, make targets and package scripts named in instruction files exist | config lint |
-| `instructions.duplicates` | error | the same instruction line (60 or more characters) in two instruction files | config lint |
-| `rules.frontmatter` | error | `.claude/rules` `paths:` globs match tracked files | config lint |
-| `settings.valid` | error | `.claude/settings.json` is valid JSON, with no deprecated keys | config lint |
+| `instructions.size` | error | line limits of the listed regular instruction files (root `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md`; `.github/copilot-instructions.md` and every `.md` under `.claude/{rules,agents,skills,commands}` or `.github/instructions`): root `AGENTS.md` 100, `CLAUDE.md` 150, `CLAUDE.local.md` 50, every nested one 80, `GEMINI.md` none; `max_lines` merges over them (exact key before glob, then the longest glob). A link is not an instruction file, so a plugin agent linked into `.claude/agents/` gets no `instructions.*` check (it keeps `rules.frontmatter`, `secrets.config` and `attribution.ai` as a plugin file) | config lint |
+| `instructions.refs` | error | paths, `make` targets and `pnpm` scripts an instruction file names below its frontmatter exist: a path resolves against the listed paths and the fixed paths present, and their folders, from the file's folder or the root, then by name or ending (a reference of at most 32 segments); nothing out of the hub or under a link resolves; targets are `Makefile`'s and `Makefile.project`'s, scripts `package.json`'s (not read when linked or not text); `hub.lock` is ignored by design (its absence is `lock.drift`'s); links are not instruction files | config lint |
+| `instructions.duplicates` | error | the same normalized instruction line (60 or more characters; not a table, fence or heading line) in two instruction files, flagged on the later path naming the first; repeats within a file are not; links are not instruction files | config lint |
+| `rules.frontmatter` | error | at line 1 of each listed regular instruction or plugin (`plugin/…/{agents,skills}/…/*.md`) file: a `---` frontmatter is terminated; a `.claude/rules` file with frontmatter has a non-empty `paths:` list whose globs (braces expanded) each match a file or folder in the hub (listed or a fixed path present); an agent or skill file has a `name` and a `description`. A glob over 256 characters or expanding to more than 64 globs is its own finding and not matched; the globs past a run budget of 64,000,000 path characters get `was not checked` | config lint |
+| `settings.valid` | error | `.claude/settings.json` (strict, as `settings.weakening` reads it) and `.mcp.json` (lenient, as the old lint) parse to a JSON object; settings hold no deprecated key (`allowedTools`, `ignorePatterns`); a linked file gives no finding | config lint |
 | `settings.weakening` | error | neither `.claude/settings.project.json` nor `.claude/settings.json` sets `disableAllHooks` or `permissions.defaultMode`; both parse as strict JSON; `settings.json` holds every group of the release's base hooks block, compared by JSON form | [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md) |
-| `permissions.bypass` | error | no bypass permission mode and no skip-permissions flag in settings, scripts, Makefile or CI | config lint |
-| `secrets.config` | error | no secret patterns in agent config files | config lint |
-| `mcp.pinned` | error | MCP servers in `.mcp.json` are pinned to a version | config lint |
-| `attribution.ai` | error | no AI co-author trailer, generated-by line or agent branch prefix in agent config, contributing guide or PR template | config lint |
+| `permissions.bypass` | error | no `bypassPermissions` default mode in `.claude/settings.json`; no skip-permissions flag in a key or string of it or `.mcp.json` (both read leniently, so a `settings.valid` error never hides one), nor in a line of a hub file (listed, or a fixed path present) under `scripts/` or `.github/workflows/`, `Makefile` or `package.json` | config lint |
+| `secrets.config` | error | no secret shape (eight kinds: JWT, AWS access key, private key, API key, GitHub token, Linear API key, credential assignment, Fernet-like key) in the instruction and plugin files, `.mcp.json`, `.claude/settings.json`, `CONTRIBUTING.md` or the PR template; once per kind per line, naming the kind, never the text | config lint |
+| `mcp.pinned` | error | each `.mcp.json` server is not `@latest` and, run by `npx`, names a version (`@<digit>`); a server whose `args` are not all strings is skipped; settings' `mcpServers` are not checked | config lint |
+| `attribution.ai` | error | no AI co-author trailer, "Generated with Claude Code" line or `claude/` branch prefix in the files `secrets.config` reads | config lint |
 | `brain.leak` | error | no trimmed brain line of `min_line_length` (default 60) or more characters in a file tracked in a repo | [SPEC](../SPEC.md) direction 2 |
 | `hooks.guard-extension` | error | static, never imported or run: the extension (at most 1 MiB, UTF-8) parses from its raw bytes as Python 3.9 (BOM and coding cookie as the runner reads them; best-effort: newer f-string syntax passes), and the last top-level binding of `check` is a `def` that `check(event, cfg)` can call; no file: no finding | [hub-generator.md](hub-generator.md) |
 | `makefile.override` | warning | `Makefile.project` does not redefine a target parsed from the managed `Makefile` (grouped `&:` rules read; `$(T):` targets not expanded; `-include` files not followed) | [hub-generator.md](hub-generator.md) |
@@ -67,18 +69,17 @@ comes from core's `RULE_MODULES`; a module's rules are core functions registered
 | `bench.tasks` | error | module `bench`: the benchmark cases file is valid | module `bench` |
 
 "config lint" and "feature check" are the hub scripts these rules replace ([hub-generator.md](hub-generator.md),
-Commands). Each ported rule keeps the old check's behavior, pinned first by characterization tests. This release
-registers `config.schema`, `platform.version`, `lock.drift`, `settings.weakening`, `hooks.guard-extension`,
-`makefile.override` and `features.tracker`; the other rules come in later AGH-11 PRs. Until a rule ships,
-`doctor.rules` accepts its settings and `--only` on it exits 2 (`<id> is not in this release` when its module is
-selected).
+Commands). Each ported rule keeps the old check's behavior, pinned first by characterization tests, but for what its
+row states. This release registers every rule but `links.dead` and `brain.leak` (a later AGH-11 PR) and `bench.tasks`.
+Until a rule ships, `doctor.rules` accepts its settings and `--only` on it exits 2 (`<id> is not in this release` when
+its module is selected).
 
 ### Output
 
 One line per finding, sorted by rule id, path (a finding without one first) and line:
 
 ```text
-error instructions.size AGENTS.md: 132 lines, limit 100 Fix: move detail into linked docs
+error instructions.size AGENTS.md: 132 lines, limit 100 Fix: keep it a map, not a manual: move details to docs or the brain
 warning makefile.override Makefile.project:12: redefines target 'check' Fix: rename the project target
 1 error, 1 warning, 0 infos
 ```
@@ -113,9 +114,10 @@ A project tunes rules in `hub.json` → `doctor.rules.<id>` ([project-config.md]
 
 `enabled` (default `true`), `severity` (overrides the default; not for `config.schema`) and rule options, validated per
 rule. An unknown rule id or option is a `config.schema` error. Options in Phase 1: `instructions.size.max_lines` (file
-or glob to limit, merged over the defaults) and `brain.leak.min_line_length`. A rule declares its `module`; the rules of
-a module that is not selected in `modules` never run and cannot be configured (a cross-field check of the model, not of
-the JSON Schema: [project-config.md](project-config.md)).
+or glob to limit, merged over the defaults; keys of 1 to 1024 characters, at most 256 of them, `_` comment keys aside)
+and `brain.leak.min_line_length`. A rule declares its `module`; the rules of a module that is not selected in `modules`
+never run and cannot be configured (a cross-field check of the model, not of the JSON Schema:
+[project-config.md](project-config.md)).
 
 ## Invariants
 

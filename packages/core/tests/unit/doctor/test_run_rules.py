@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+from agent_hub.core.doctor import run_rules as run_rules_module
 from agent_hub.core.doctor.finding import Finding, Read, Rule
 from agent_hub.core.doctor.run_rules import (
     Selection,
@@ -19,6 +20,7 @@ from agent_hub.core.hub_config.doctor_rules import Severity
 from agent_hub.core.hub_config.document_check import check_hub_document
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.versions import cut_echo
+from agent_hub.core.hub_files.tree_snapshot import FileEntry
 from agent_hub.core.testing.builders import a_hub_document
 
 type SnapshotFactory = Callable[..., DoctorSnapshot]
@@ -662,6 +664,26 @@ def test_prefers_listing_reader_when_earlier_rule_reads_no_listing(
     assert findings == (tree_finding(TRACKER),)
 
 
+def test_prefers_file_set_reader_when_earlier_rule_reads_no_listing(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    # A rule that reads a file set reads the listing it comes from, with no HUB_LISTING (E28).
+    spies = Spies()
+    registry = (
+        spies.rule("config.schema"),
+        spies.rule("attribution.ai"),
+        spies.rule("instructions.size", reads=frozenset({Read.INSTRUCTION_FILES})),
+    )
+    config = a_config()
+    snapshot = snapshot_of(config=config)
+    failed = replace(snapshot, hub=replace(snapshot.hub, problem=LISTING_PROBLEM))
+
+    findings = run_rules(selected(registry, config=config), failed)
+
+    assert "instructions.size" > "attribution.ai"
+    assert findings == (tree_finding("instructions.size"),)
+
+
 CRASH_FIX = "report this as a hub doctor bug"
 
 
@@ -792,3 +814,164 @@ def test_reports_unprintable_when_error_text_raises(snapshot_of: SnapshotFactory
     assert findings == (
         crash_finding("lock.drift", "rule crashed: UnprintableError: <unprintable>"),
     )
+
+
+# E28: a file the config-lint rules read that is not text gives one error, on its first reader.
+INSTRUCTIONS = frozenset({Read.HUB_LISTING, Read.INSTRUCTION_FILES})
+PLUGINS = frozenset({Read.HUB_LISTING, Read.PLUGIN_FILES})
+SIZE, DUPLICATES, FRONTMATTER = "instructions.size", "instructions.duplicates", "rules.frontmatter"
+UNDECODABLE = b"ok\n\xff"
+AGENT = "plugin/demo/agents/a.md"
+
+
+def text_finding(rule: str, path: str, message: str) -> Finding:
+    """The one error a file that is not text gives, on ``rule``: never retuned, no line."""
+    return Finding(
+        rule=rule,
+        severity=Severity.ERROR,
+        path=path,
+        line=None,
+        message=message,
+        fix="save it as UTF-8 text",
+    )
+
+
+def a_config_lint_registry(spies: Spies) -> tuple[Rule, ...]:
+    # In RULE_IDS order: instructions.size comes before instructions.duplicates, though not by id.
+    return (
+        spies.rule("config.schema"),
+        spies.rule(SIZE, reads=INSTRUCTIONS),
+        spies.rule(DUPLICATES, reads=INSTRUCTIONS),
+        spies.rule(FRONTMATTER, reads=INSTRUCTIONS | PLUGINS),
+    )
+
+
+@pytest.mark.parametrize(
+    ("rules", "only", "rule"),
+    [
+        pytest.param({}, [], SIZE, id="first-reader"),
+        pytest.param({SIZE: {"severity": "info"}}, [], SIZE, id="reader-retuned"),
+        pytest.param({SIZE: {"enabled": False}}, [], DUPLICATES, id="first-disabled"),
+        pytest.param({}, [FRONTMATTER], FRONTMATTER, id="first-not-named"),
+    ],
+)
+def test_reports_not_utf8_once_when_instruction_file_undecodable(
+    snapshot_of: SnapshotFactory, *, rules: dict[str, Any], only: list[str], rule: str
+) -> None:
+    spies = Spies()
+    config = a_config(rules=rules)
+    snapshot = snapshot_of(
+        config=config, files={"AGENTS.md": UNDECODABLE, "CLAUDE.md": b"# Fine\n"}
+    )
+
+    findings = run_rules(
+        selected(a_config_lint_registry(spies), config=config, only=only), snapshot
+    )
+
+    assert findings == (
+        text_finding(rule, "AGENTS.md", "not UTF-8 text: byte 3 cannot be decoded"),
+    )
+
+
+def test_reports_each_file_when_first_reader_reads_both_sets(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    spies = Spies()
+    registry = (
+        spies.rule("config.schema"),
+        spies.rule(FRONTMATTER, reads=INSTRUCTIONS | PLUGINS),
+        spies.rule("attribution.ai", reads=PLUGINS),
+    )
+    config = a_config()
+    snapshot = snapshot_of(config=config, files={AGENT: b"a\x00", "AGENTS.md": b"\x00"})
+
+    findings = run_rules(selected(registry, config=config), snapshot)
+
+    assert findings == (
+        text_finding(FRONTMATTER, "AGENTS.md", "not UTF-8 text: NUL at byte 0"),
+        text_finding(FRONTMATTER, AGENT, "not UTF-8 text: NUL at byte 1"),
+    )
+
+
+def test_reports_not_utf8_when_plugin_file_holds_nul(snapshot_of: SnapshotFactory) -> None:
+    spies = Spies()
+    registry = (
+        spies.rule("config.schema"),
+        spies.rule(SIZE, reads=INSTRUCTIONS),
+        spies.rule("attribution.ai", reads=PLUGINS),
+        spies.rule(FRONTMATTER, reads=INSTRUCTIONS | PLUGINS),
+    )
+    config = a_config()
+    snapshot = snapshot_of(config=config, files={AGENT: b"---\nname: a\x00\n"})
+
+    findings = run_rules(selected(registry, config=config), snapshot)
+
+    assert findings == (text_finding("attribution.ai", AGENT, "not UTF-8 text: NUL at byte 11"),)
+
+
+@pytest.mark.parametrize(
+    ("rules", "only"),
+    [
+        pytest.param({}, ["lock.drift"], id="reader-not-named"),
+        pytest.param({SIZE: {"enabled": False}, DUPLICATES: {"enabled": False}}, [], id="disabled"),
+    ],
+)
+def test_reports_no_text_problem_when_no_reader_selected(
+    snapshot_of: SnapshotFactory, *, rules: dict[str, Any], only: list[str]
+) -> None:
+    spies = Spies()
+    registry = (
+        spies.rule("config.schema"),
+        spies.rule("lock.drift", reads=LISTING),
+        spies.rule(SIZE, reads=INSTRUCTIONS),
+        spies.rule(DUPLICATES, reads=INSTRUCTIONS),
+        # A plugin-files reader: the instruction file is not in its set.
+        spies.rule("attribution.ai", reads=PLUGINS),
+    )
+    config = a_config(rules=rules)
+    snapshot = snapshot_of(config=config, files={"AGENTS.md": UNDECODABLE})
+
+    assert run_rules(selected(registry, config=config, only=only), snapshot) == ()
+
+
+def test_builds_no_file_set_when_no_reader_selected(
+    snapshot_of: SnapshotFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A run that no rule reading a file set is part of never walks the listing for them.
+    def refused(hub: object) -> tuple[str, ...]:
+        raise AssertionError(hub)
+
+    monkeypatch.setattr(run_rules_module, "instruction_files", refused)
+    monkeypatch.setattr(run_rules_module, "plugin_files", refused)
+    spies = Spies()
+    registry = (spies.rule("config.schema"), spies.rule(TRACKER, reads=LISTING))
+    config = a_config()
+    snapshot = snapshot_of(config=config, files={"AGENTS.md": UNDECODABLE})
+
+    assert run_rules(selected(registry, config=config), snapshot) == ()
+
+
+def test_reports_no_text_problem_when_config_failed(snapshot_of: SnapshotFactory) -> None:
+    spies = Spies()
+    registry = a_config_lint_registry(spies)
+    snapshot = snapshot_of(
+        config=failure_of(with_rules({"nope": {}})), files={"AGENTS.md": UNDECODABLE}
+    )
+
+    findings = run_rules(Selection(rules=registry, notes=(), severities={}), snapshot)
+
+    assert spies.calls == ["config.schema"]
+    assert findings == ()
+
+
+def test_reports_no_text_problem_when_files_are_text(snapshot_of: SnapshotFactory) -> None:
+    spies = Spies()
+    config = a_config()
+    snapshot = snapshot_of(
+        config=config,
+        files={"AGENTS.md": "# Olá\r\n".encode(), AGENT: b"---\nname: a\n---\n"},
+        # A listed file with no content: its failed read is the hub's problem (E24), not E28's.
+        entries={"CLAUDE.md": FileEntry(executable=False, content=None)},
+    )
+
+    assert run_rules(selected(a_config_lint_registry(spies), config=config), snapshot) == ()
