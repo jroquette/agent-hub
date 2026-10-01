@@ -18,7 +18,10 @@ from agent_hub.tracker_linear.graphql import (
     DONE_STATE_TYPES,
     LINEAR_API_KEY_VARIABLE,
     LINEAR_GRAPHQL_URL,
+    MAX_LABELS,
+    MAX_PAGES,
     MAX_QUOTED_CHARS,
+    MAX_RESPONSE_BYTES,
     PAGE_SIZE,
     LinearGraphqlTrackerClient,
 )
@@ -62,6 +65,9 @@ def test_pins_constants_when_module_loaded() -> None:
     assert DONE_STATE_TYPES == ("completed", "canceled", "duplicate")
     assert DEFAULT_TIMEOUT_S == 30.0
     assert MAX_QUOTED_CHARS == 200
+    assert MAX_RESPONSE_BYTES == 4_194_304
+    assert MAX_PAGES == 20
+    assert MAX_LABELS == 50
 
 
 def test_passes_default_timeout_when_no_timeout_given(
@@ -647,3 +653,95 @@ def test_quotes_linear_message_cut_when_message_long(synthetic_key: str) -> None
     assert "x" * (MAX_QUOTED_CHARS + 1) not in message
     assert "second line" not in message
     assert "\n" not in message
+
+
+def _padded(fake_linear_api: Any, size: int) -> Callable[..., tuple[int, bytes]]:
+    """A transport that pads the fake's answer with trailing spaces to ``size`` bytes."""
+
+    def post(
+        url: str, headers: Mapping[str, str], body: bytes, *, timeout_s: float
+    ) -> tuple[int, bytes]:
+        status, answer = fake_linear_api(url, headers, body, timeout_s=timeout_s)
+        return status, answer.ljust(size)
+
+    return post
+
+
+def test_raises_when_body_too_large(fake_linear_api: Any, synthetic_key: str) -> None:
+    environ = {LINEAR_API_KEY_VARIABLE: synthetic_key}
+    at_cap = LinearGraphqlTrackerClient(
+        environ=environ, post=_padded(fake_linear_api, MAX_RESPONSE_BYTES)
+    )
+    over_cap = LinearGraphqlTrackerClient(
+        environ=environ, post=_padded(fake_linear_api, MAX_RESPONSE_BYTES + 1)
+    )
+
+    assert at_cap.get_issue("DEM-1").id == "DEM-1"
+    with pytest.raises(TrackerError, match=r"^get_issue DEM-1: Linear's answer is over 4 MiB"):
+        over_cap.get_issue("DEM-1")
+
+
+def test_raises_when_json_too_deep(synthetic_key: str) -> None:
+    post = _Answering((200, b"[" * 200_000 + b"]" * 200_000))
+    client = LinearGraphqlTrackerClient(environ={LINEAR_API_KEY_VARIABLE: synthetic_key}, post=post)
+
+    with pytest.raises(TrackerError, match=r"^get_issue DEM-1: Linear's answer is nested too deep"):
+        client.get_issue("DEM-1")
+
+
+def _seed_ready(tracker_backend: FakeTrackerBackend, total: int) -> None:
+    """Add open ``agent-ready`` DEM issues until the team has ``total`` ready ones."""
+    for number in range(100, 100 + total - len(_READY_IN_DEM)):
+        tracker_backend.issues[f"DEM-{number}"] = an_issue(id=f"DEM-{number}")
+
+
+def test_reads_every_page_when_pages_reach_cap(
+    fake_linear_api: Any, synthetic_key: str, tracker_backend: FakeTrackerBackend
+) -> None:
+    _seed_ready(tracker_backend, MAX_PAGES)
+    fake_linear_api.page_size = 1
+
+    ready = _client(fake_linear_api, synthetic_key).list_ready("DEM", "agent-ready")
+
+    assert len(ready) == MAX_PAGES
+    assert len(fake_linear_api.requests) == MAX_PAGES
+
+
+def test_raises_when_pages_exceed_cap(
+    fake_linear_api: Any, synthetic_key: str, tracker_backend: FakeTrackerBackend
+) -> None:
+    _seed_ready(tracker_backend, MAX_PAGES + 1)
+    fake_linear_api.page_size = 1
+
+    with pytest.raises(TrackerError, match=rf"^list_ready: more than {MAX_PAGES} pages"):
+        _client(fake_linear_api, synthetic_key).list_ready("DEM", "agent-ready")
+    assert len(fake_linear_api.requests) == MAX_PAGES
+
+
+@pytest.mark.parametrize("operation", ["list_ready", "get_issue", "add_label"])
+def test_requests_labels_up_to_cap_when_issue_read(
+    *, fake_linear_api: Any, synthetic_key: str, tracker_backend: FakeTrackerBackend, operation: str
+) -> None:
+    labels = ("agent-ready", *(f"synthetic-{number}" for number in range(MAX_LABELS - 1)))
+    tracker_backend.issues["DEM-1"] = an_issue(id="DEM-1", labels=labels)
+
+    _SIX_OPERATIONS[operation][1](_client(fake_linear_api, synthetic_key))
+
+    assert f"labels(first: {MAX_LABELS})" in fake_linear_api.requests[0]["query"]
+    (root,) = fake_linear_api.responses[0].values()
+    nodes = root["nodes"][0] if operation == "list_ready" else root
+    assert len(nodes["labels"]["nodes"]) == MAX_LABELS
+
+
+@pytest.mark.parametrize("operation", ["list_ready", "get_issue", "add_label"])
+def test_raises_when_labels_exceed_cap(
+    *, fake_linear_api: Any, synthetic_key: str, tracker_backend: FakeTrackerBackend, operation: str
+) -> None:
+    labels = ("agent-ready", *(f"synthetic-{number}" for number in range(MAX_LABELS)))
+    tracker_backend.issues["DEM-1"] = an_issue(id="DEM-1", labels=labels)
+    issue_id, call = _SIX_OPERATIONS[operation]
+    subject = operation if issue_id is None else f"{operation} {issue_id}"
+
+    with pytest.raises(TrackerError, match=rf"^{subject}: .*more than {MAX_LABELS} labels"):
+        call(_client(fake_linear_api, synthetic_key))
+    assert len(fake_linear_api.requests) == 1

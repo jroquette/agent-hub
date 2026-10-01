@@ -33,6 +33,12 @@ PAGE_SIZE = 50
 DONE_STATE_TYPES = ("completed", "canceled", "duplicate")
 # Untrusted text (a Linear error message) quoted in an error is cut to this many characters.
 MAX_QUOTED_CHARS = 200
+# A longer answer is refused (the default transport reads at most one byte more).
+MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+# list_ready reads at most this many pages (PAGE_SIZE issues each), then raises.
+MAX_PAGES = 20
+# Labels read per issue; an issue with more raises instead of being read in part.
+MAX_LABELS = 50
 
 
 # A response shape: a type (or types) for a leaf, a dict of exactly these fields, or a list of
@@ -52,13 +58,18 @@ class Post(Protocol):
         ...
 
 
-_ISSUE_FIELDS = "identifier title url state { name } labels { nodes { name } }"
+def _labels_selection(fields: str) -> str:
+    """An issue's labels, at most ``MAX_LABELS``, with whether there are more."""
+    return f"labels(first: {MAX_LABELS}) {{ nodes {{ {fields} }} pageInfo {{ hasNextPage }} }}"
+
+
+_ISSUE_FIELDS = f"identifier title url state {{ name }} {_labels_selection('name')}"
 _ISSUE_SHAPE: Shape = {
     "identifier": str,
     "title": str,
     "url": str,
     "state": {"name": str},
-    "labels": {"nodes": [{"name": str}]},
+    "labels": {"nodes": [{"name": str}], "pageInfo": {"hasNextPage": bool}},
 }
 
 _LIST_READY_ISSUES = (
@@ -78,14 +89,14 @@ _GET_ISSUE = f"query GetIssue($id: String!) {{ issue(id: $id) {{ {_ISSUE_FIELDS}
 
 _ISSUE_REF = (
     "query IssueRef($id: String!) {"
-    " issue(id: $id) { id team { key } state { name } labels { nodes { id name } } } }"
+    f" issue(id: $id) {{ id team {{ key }} state {{ name }} {_labels_selection('id name')} }} }}"
 )
 _ISSUE_REF_SHAPE: Shape = {
     "issue": {
         "id": str,
         "team": {"key": str},
         "state": {"name": str},
-        "labels": {"nodes": [{"id": str, "name": str}]},
+        "labels": {"nodes": [{"id": str, "name": str}], "pageInfo": {"hasNextPage": bool}},
     }
 }
 
@@ -149,7 +160,7 @@ class LinearGraphqlTrackerClient:
         }
         issues: list[Issue] = []
         after: str | None = None
-        while True:
+        for _page in range(MAX_PAGES):
             data = self._request(
                 operation="list_ready",
                 issue_id=None,
@@ -159,12 +170,19 @@ class LinearGraphqlTrackerClient:
                 shape=_LIST_READY_SHAPE,
             )
             connection = data["issues"]
-            issues.extend(_issue_from_node(node) for node in connection["nodes"])
+            issues.extend(
+                _issue_from_node("list_ready", None, node) for node in connection["nodes"]
+            )
             if not connection["pageInfo"]["hasNextPage"]:
                 return issues
             after = connection["pageInfo"]["endCursor"]
             if after is None:
                 raise _unexpected("list_ready", None, "a next page without a cursor")
+        raise TrackerError(
+            operation="list_ready",
+            cause=f"more than {MAX_PAGES} pages of {PAGE_SIZE} issues match",
+            fix="close or unlabel issues in Linear, or list a narrower label",
+        )
 
     def get_issue(self, issue_id: str) -> Issue:
         """Return the issue with the identifier ``issue_id``."""
@@ -177,7 +195,7 @@ class LinearGraphqlTrackerClient:
             variables={"id": issue_id},
             shape={"issue": _ISSUE_SHAPE},
         )
-        return _issue_from_node(data["issue"])
+        return _issue_from_node("get_issue", issue_id, data["issue"])
 
     def move_state(self, issue_id: str, state_name: str) -> None:
         """Move the issue to its team's state ``state_name``; the current state is a no-op."""
@@ -249,7 +267,9 @@ class LinearGraphqlTrackerClient:
             uuid=node["id"],
             team=node["team"]["key"],
             state=node["state"]["name"],
-            label_ids={label["name"]: label["id"] for label in node["labels"]["nodes"]},
+            label_ids={
+                label["name"]: label["id"] for label in _label_nodes(operation, issue_id, node)
+            },
         )
 
     def _label_id(self, operation: str, ref: _IssueRef, name: str) -> str:
@@ -344,35 +364,13 @@ class LinearGraphqlTrackerClient:
                 cause=f"could not reach Linear: {_quoted(error)}",
                 fix="check the network connection to api.linear.app, then retry",
             ) from error
-        _check_status(operation, issue_id, status)
-        try:
-            payload = json.loads(response)
-        except ValueError as error:
-            raise TrackerError(
-                operation=operation,
-                issue_id=issue_id,
-                cause=f"Linear answered a body that is not JSON (HTTP {status})",
-                fix="retry later",
-            ) from error
-        errors = payload.get("errors") if isinstance(payload, dict) else None
-        if errors:
-            raise TrackerError(
-                operation=operation,
-                issue_id=issue_id,
-                cause=f"Linear answered with an error: {_first_message(errors)}",
-                fix=_errors_fix(errors, issue_id),
-            )
-        if not 200 <= status < 300:  # noqa: PLR2004 - the HTTP success range
-            raise TrackerError(
-                operation=operation,
-                issue_id=issue_id,
-                cause=f"Linear answered HTTP {status}",
-                fix="check the request named here, then retry",
-            )
-        data = payload.get("data") if isinstance(payload, dict) else None
-        if not _fits(data, shape):
-            raise _unexpected(operation, issue_id, f"{operation_name} answered another shape")
-        return data
+        return _data(
+            operation=operation,
+            issue_id=issue_id,
+            operation_name=operation_name,
+            answer=(status, response),
+            shape=shape,
+        )
 
     def _api_key(self, operation: str, issue_id: str | None) -> str:
         """The key from ``environ``, checked before any request; its value is never quoted."""
@@ -412,6 +410,67 @@ def _check_success(operation: str, issue_id: str, payload: Mapping[str, Any]) ->
             cause="Linear reported no success",
             fix="check the issue in Linear, then try again",
         )
+
+
+def _data(
+    *,
+    operation: str,
+    issue_id: str | None,
+    operation_name: str,
+    answer: tuple[int, bytes],
+    shape: Shape,
+) -> Any:
+    """The answer's ``data``, of ``shape``; any failure the answer reports raises."""
+    status, response = answer
+    _check_status(operation, issue_id, status)
+    payload = _decoded(operation, issue_id, answer)
+    errors = payload.get("errors") if isinstance(payload, dict) else None
+    if errors:
+        raise TrackerError(
+            operation=operation,
+            issue_id=issue_id,
+            cause=f"Linear answered with an error: {_first_message(errors)}",
+            fix=_errors_fix(errors, issue_id),
+        )
+    if not 200 <= status < 300:  # noqa: PLR2004 - the HTTP success range
+        raise TrackerError(
+            operation=operation,
+            issue_id=issue_id,
+            cause=f"Linear answered HTTP {status}",
+            fix="check the request named here, then retry",
+        )
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not _fits(data, shape):
+        raise _unexpected(operation, issue_id, f"{operation_name} answered another shape")
+    return data
+
+
+def _decoded(operation: str, issue_id: str | None, answer: tuple[int, bytes]) -> Any:
+    """The answer's body as JSON, within ``MAX_RESPONSE_BYTES`` and the parser's nesting limit."""
+    status, response = answer
+    if len(response) > MAX_RESPONSE_BYTES:
+        raise TrackerError(
+            operation=operation,
+            issue_id=issue_id,
+            cause=f"Linear's answer is over {MAX_RESPONSE_BYTES // 1024**2} MiB",
+            fix="list a narrower label, or report it with the operation named here",
+        )
+    try:
+        return json.loads(response)
+    except RecursionError as error:
+        raise TrackerError(
+            operation=operation,
+            issue_id=issue_id,
+            cause="Linear's answer is nested too deep to read",
+            fix=_UNEXPECTED_FIX,
+        ) from error
+    except ValueError as error:
+        raise TrackerError(
+            operation=operation,
+            issue_id=issue_id,
+            cause=f"Linear answered a body that is not JSON (HTTP {status})",
+            fix="retry later",
+        ) from error
 
 
 def _check_status(operation: str, issue_id: str | None, status: int) -> None:
@@ -481,11 +540,26 @@ def _quoted(text: object) -> str:
     return repr(str(text)[:MAX_QUOTED_CHARS])
 
 
-def _issue_from_node(node: Mapping[str, Any]) -> Issue:
+def _issue_from_node(operation: str, issue_id: str | None, node: Mapping[str, Any]) -> Issue:
     return Issue(
         id=node["identifier"],
         title=node["title"],
         state=node["state"]["name"],
-        labels=tuple(label["name"] for label in node["labels"]["nodes"]),
+        labels=tuple(label["name"] for label in _label_nodes(operation, issue_id, node)),
         url=node["url"],
     )
+
+
+def _label_nodes(operation: str, issue_id: str | None, node: Mapping[str, Any]) -> list[Any]:
+    """The issue's label nodes; more than ``MAX_LABELS`` raises (an issue is never read in part)."""
+    labels = node["labels"]
+    if labels["pageInfo"]["hasNextPage"] or len(labels["nodes"]) > MAX_LABELS:
+        subject = "the issue" if "identifier" not in node else f"issue {node['identifier']}"
+        raise TrackerError(
+            operation=operation,
+            issue_id=issue_id,
+            cause=f"{subject} has more than {MAX_LABELS} labels",
+            fix=f"remove labels from it in Linear (at most {MAX_LABELS} are read)",
+        )
+    nodes: list[Any] = labels["nodes"]
+    return nodes
