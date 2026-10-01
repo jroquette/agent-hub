@@ -296,6 +296,12 @@ def test_tightens_when_extension_asks_or_denies(
             "exit 3 (KeyboardInterrupt: q)",
             id="keyboard_interrupt",
         ),
+        pytest.param(
+            'class Halt(BaseException):\n    pass\n\n\nraise Halt("h")',
+            "return None",
+            "exit 3 (Halt: h)",
+            id="base_exception_at_import",
+        ),
     ],
 )
 def test_asks_with_cause_when_extension_misbehaves(
