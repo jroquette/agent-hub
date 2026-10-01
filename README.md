@@ -26,7 +26,8 @@
 <!-- TODO: record a demo GIF (hub init → ./agent) and put it here -->
 
 ```bash
-hub init demo --repos acme/backend,acme/frontend --tracker linear:DEMO --branch-prefix jdoe/ --hub-repo acme/demo-hub
+hub init demo --repos acme/backend,acme/frontend --tracker linear:DEMO \
+  --branch-prefix jdoe/ --hub-repo acme/demo-hub
 ```
 
 ```text
@@ -122,8 +123,8 @@ the repos (git worktrees), and every change reaches `main` only through a pull r
 
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) **0.9.0 or newer** (it installs Python 3.14 for you).
 - `git` and `python3` on your `PATH` (the shims and hooks use the system `python3`, 3.9 or newer).
-- **Read access to this private repository** (your GitHub credentials, or this repository attached to a cloud
-  session).
+- **Read access to this private repository**: your GitHub credentials through a git credential helper (for example
+  `gh auth setup-git`), or this repository attached to a cloud session. Never put a token inside the `git+https://` URL.
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (the `claude` command) to run `./agent`.
 - Optional: [`gh`](https://cli.github.com/) for the PR and CI lines of `hub brief`, and a Linear workspace for the
   tracker.
@@ -145,10 +146,11 @@ You should see `0.4.0`.
 **2. Create an empty folder for the hub.** It should be a sibling of the project's repos.
 
 ```bash
-mkdir demo-hub && cd demo-hub && git init
+mkdir -p demo-hub && cd demo-hub && git init
 ```
 
-**3. Generate the hub.** Replace the project name, repos, tracker team and branch prefix with yours. The author comes
+**3. Generate the hub.** Replace the project name, repos, tracker team, branch prefix and hub repo with yours
+(`--hub-repo` is needed until the folder has a GitHub `origin`). The author comes
 from your git `user.name` and `user.email` unless you pass `--author-name` and `--author-email`.
 
 ```bash
@@ -157,6 +159,11 @@ uvx --from 'git+https://github.com/jroquette/agent-hub@v0.4.0#subdirectory=packa
 ```
 
 You should see `created 60 files (40 managed, 20 seeded) and 14 links` followed by the next steps.
+
+> [!NOTE]
+> `hub init` writes only into an empty folder (a `.git` is fine). Run it again in the same folder and it refuses with
+> `already a hub; run hub sync`, writing nothing. In a folder holding other files it refuses and suggests
+> `hub sync --adopt`, which is not implemented in 0.4.0: use a new empty folder instead.
 
 **4. Check the new hub.** From now on, use the hub's own `./hub` shim.
 
@@ -229,7 +236,7 @@ This is the most common path: a project with two repos tracked in Linear.
    `origin/main`. Remove them with `./hub worktree --remove demo-7-login` (branches are kept).
 
 6. **Keep the hub healthy.** Run `./hub doctor` in CI or before a release of your hub, and upgrade with the recipe
-   below.
+   below. In your hub's CI, `./hub` needs a read-only credential for this repository.
 
 ### Recipes
 
@@ -250,6 +257,9 @@ prints the pinned `uvx` command to use instead.
 
 <details>
 <summary><strong>Create a hub from an existing <code>hub.json</code></strong></summary>
+
+The recipes that call a bare `hub` assume it is installed (Quick Start tip), or prefixed with the `uvx --from …` of
+step 1.
 
 ```bash
 hub init --config path/to/hub.json --dir path/to/new-hub
@@ -375,10 +385,10 @@ Example (synthetic project):
 
 | Name | Required | Default | Description |
 | --- | --- | --- | --- |
-| `LINEAR_API_KEY` | for tracker calls | | Linear API key, read at call time; never stored in `hub.json` |
+| `LINEAR_API_KEY` | for tracker calls (none in 0.4.0) | | Linear API key, read at call time; never stored in `hub.json` |
 | `AGENT_HUB_DB` | no | `$XDG_DATA_HOME/agent-hub/agent-hub.db`, else `~/.local/share/agent-hub/agent-hub.db` | Event database of `hub collect`; `--db` overrides it |
 | `XDG_DATA_HOME` | no | | Used for the default database path when it is absolute |
-| `AGENT_HUB_ROOT` | no | the current folder | The hub folder; the `./hub` shim sets it for you |
+| `AGENT_HUB_ROOT` | no | the current folder | The hub folder for `hub worktree`, `hub brief` and `hub agent` (`hub sync` and `hub doctor` use the current folder); the `./hub` shim sets it for you |
 
 ## 🧱 Technical reference
 
@@ -451,7 +461,7 @@ enforces this in `make check`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE
 
 | Command | What it does |
 | --- | --- |
-| `hub init [PROJECT] --repos … --tracker kind:TEAM --branch-prefix … [--hub-repo …] [--author-name …] [--author-email …] [--dir …]` | Create a hub from flags |
+| `hub init [PROJECT] --repos … --tracker kind:TEAM …` | Create a hub from flags (all flags: Quick Start step 3 and `hub init --help`) |
 | `hub init --config hub.json [--dir …]` | Create a hub from an existing `hub.json` |
 | `hub sync [--check]` | Reapply the templates without overwriting what the project customized |
 | `hub doctor [--only RULE]… [--json]` | Check rules, links, dead references, instruction size and template drift |
@@ -501,9 +511,13 @@ make help                       # list the targets
 
 The two gates:
 
+- `make check-fast`, while working: format, lint, mypy `--strict`, test layout, version lockstep, unit and contract tests.
+- `make check`, before a PR and in CI: `check-fast` plus integration and e2e tests, import contracts, migrations and
+  coverage floors.
+
 ```bash
-make check-fast > check-fast.log 2>&1; echo $?   # while working: format, lint, mypy --strict, layout, lockstep, unit + contract tests
-make check > check.log 2>&1; echo $?             # before a PR, and what CI runs: + integration, e2e, import contracts, migrations, coverage floors
+make check-fast > check-fast.log 2>&1; echo $?
+make check > check.log 2>&1; echo $?
 ```
 
 > [!TIP]
@@ -566,9 +580,10 @@ you. A managed file you edited by hand shows up as a conflict instead of being o
 `hub sync --check` first to see the plan.
 
 **Does it send my code or transcripts anywhere?**
-agent-hub itself runs on your machine and has no server: `hub collect` writes to a local SQLite file. The network calls
-it makes are to GitHub (fetching the pinned release, and `gh` for the PR and CI lines of `hub brief` unless you pass
-`--no-network`) and, for tracker commands, to Linear. Your agent sessions still talk to their model provider as usual.
+agent-hub itself runs on your machine and has no server: `hub collect` writes to a local SQLite file. Its network calls
+go to GitHub: fetching the pinned release, `git fetch` in `hub worktree`, and `gh` for the PR and CI lines of
+`hub brief` unless you pass `--no-network`. The generated `make usage` target downloads `ccusage` from npm. No 0.4.0
+command calls Linear yet; `hub next` and `hub run` will. Your agent sessions still talk to their model provider as usual.
 
 **Which trackers and agents are supported?**
 Linear and Claude Code today. The tracker is a port (`TrackerClient`) and the event model is agent-neutral, so other
