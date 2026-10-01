@@ -80,7 +80,7 @@
     "AGENTS.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "168d74d13589edc6005cf8e126243e880d7cad62e0c24fa437c1b3dfe1886825"
+      "sha256": "9e8f61190df6f31bca8946aad94036ca3e925e1c8f1a9ca1191f5a930f8d58c5"
     },
     "AGENTS.project.md": {
       "ownership": "seeded"
@@ -100,6 +100,11 @@
     },
     "README.md": {
       "ownership": "seeded"
+    },
+    "agent": {
+      "executable": true,
+      "ownership": "managed",
+      "sha256": "07875d80f0c82d32785f93f1c32b1db45ee0ba9cd4fe66e3d2a689f690b01995"
     },
     "brain/_inbox/.gitkeep": {
       "ownership": "seeded"
@@ -130,6 +135,11 @@
     },
     "brain/playbooks/.gitkeep": {
       "ownership": "seeded"
+    },
+    "hub": {
+      "executable": true,
+      "ownership": "managed",
+      "sha256": "62abf43ced0b8da2bb55daaca6d988ecba3577d05e578689a37c3153cd1f0a23"
     },
     "hub.json": {
       "ownership": "seeded"

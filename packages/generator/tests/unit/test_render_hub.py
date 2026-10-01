@@ -45,6 +45,7 @@ DESIGN_PATHS = (
     "Makefile",
     "Makefile.project",
     "README.md",
+    "agent",
     "brain/_inbox/.gitkeep",
     "brain/decisions/index.md",
     "brain/domain/.gitkeep",
@@ -55,6 +56,7 @@ DESIGN_PATHS = (
     "brain/learnings/.gitkeep",
     "brain/now.md",
     "brain/playbooks/.gitkeep",
+    "hub",
     "hub.schema.json",
     "plugin/demo/.claude-plugin/plugin.json",
     "plugin/demo/agents/.gitkeep",
@@ -2081,6 +2083,7 @@ def test_holds_no_project_identifier_when_demo_rendered(demo_config: HubConfig) 
     assert carriers == {
         ".pre-commit-config.yaml",
         "Makefile",
+        "hub",
         "plugin/hub-workflow/hooks/session_start.py",
     }
 
