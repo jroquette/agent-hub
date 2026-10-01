@@ -50,15 +50,18 @@ def run_child(
     cwd: Path | str,
     env: Mapping[str, str],
     timeout: float | None,
+    own_session: bool | None = None,
 ) -> ChildResult:
     """Run ``argv`` in ``cwd`` with exactly ``env``; stdin is empty, both streams are captured.
 
-    With a ``timeout`` the child runs in a new session; without one, in the caller's group.
+    With ``own_session`` (by default: when there is a ``timeout``) the child runs in a new session
+    and a timeout kills its whole group; without it, the child stays in the caller's group, where
+    the caller's own killer reaches it and what it started, and a timeout kills the child alone.
 
     Raises ``ChildTimedOutError`` after ``timeout`` seconds, and ``OSError`` (for example
     ``FileNotFoundError``) when the tool cannot start.
     """
-    new_session = timeout is not None
+    new_session = timeout is not None if own_session is None else own_session
     with subprocess.Popen(  # noqa: S603 - an argv list, never a shell; callers pass the tool
         list(argv),
         cwd=cwd,

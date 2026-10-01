@@ -74,8 +74,8 @@ def now_verified(text: str) -> str | None:
 def select_journal(paths: Sequence[str], *, cutoff: str) -> tuple[str, ...]:
     """The newest ``JOURNAL_COUNT`` journal paths dated ``cutoff`` (ISO) or later.
 
-    A path without a calendar date in it (``2026/02/30.md`` included) counts as undated and is
-    kept, as the old script kept a path with no date.
+    A path without a calendar date in it (``2026/02/30.md`` and year ``0000`` included) counts
+    as undated and is kept, as the old script kept a path with no date.
     """
     kept = [path for path in sorted(paths, reverse=True) if _day_or(path, cutoff) >= cutoff]
     return tuple(kept[:JOURNAL_COUNT])
@@ -148,6 +148,6 @@ def _day_or(path: str, default: str) -> str:
     if found is None:
         return default
     year, month, day = (int(part) for part in found.groups())
-    if not (1 <= month <= _MONTHS and 1 <= day <= calendar.monthrange(year, month)[1]):
+    if year < 1 or not (1 <= month <= _MONTHS and 1 <= day <= calendar.monthrange(year, month)[1]):
         return default
     return f"{year:04d}-{month:02d}-{day:02d}"

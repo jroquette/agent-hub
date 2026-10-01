@@ -11,6 +11,7 @@ as ``FAKE_UVX_BRIEF`` says (``brief``, ``exit3``, ``empty``, ``sleep``, ``long``
 """
 
 import json
+import os
 import re
 import time
 from collections.abc import Callable, Mapping
@@ -91,7 +92,7 @@ elif mode == "long":
 )
 FALLBACK_HEADER = re.compile(
     r"# Brief \(fallback: hub brief (no uv|no version|resolve failed|timed out"
-    r"|failed \(exit -?[0-9]+\)|failed \(no output\)|failed \(cannot start\))\)"
+    r"|failed|failed \(exit -?[0-9]+\)|failed \(no output\)|failed \(cannot start\))\)"
 )
 
 type RunHook = Callable[..., Any]
@@ -403,3 +404,40 @@ def test_ties_brief_source_to_release_command_when_rendered(
     )
 
     assert release_argv(VERSION) == ["--from", source, "hub", "brief"]
+
+
+def test_skips_now_when_not_regular_file(
+    hub: Path, *, hook_python: str, run_hook_file: RunHook, bin_dir: Path
+) -> None:
+    # A FIFO with no writer would block the read for good: it is never opened.
+    (hub / "brain" / "now.md").unlink()
+    os.mkfifo(hub / "brain" / "now.md")
+
+    completed, _ = start(hub, python=hook_python, run_hook_file=run_hook_file, bin_dir=bin_dir)
+
+    assert context_of(completed) == f"# Brief (fallback: hub brief no uv)\n\n{LATEST_JOURNAL}"
+
+
+def test_names_failed_when_pinned_brief_raises(
+    hub: Path,
+    *,
+    hook_python: str,
+    run_hook_with_constant: RunHook,
+    bin_dir: Path,
+    uvx_log: Path,
+) -> None:
+    # A source the version cannot fill: the resolution raises before any call.
+    install_uvx(bin_dir, python=hook_python, log=uvx_log)
+    event = {"session_id": "abcdef123456", "cwd": str(hub), "source": "startup"}
+
+    completed = run_hook_with_constant(
+        hook_python,
+        hub / HOOK,
+        constant=("SOURCE", "{unknown}"),
+        stdin=json.dumps(event).encode(),
+        cwd=hub.parent,
+        env={"PATH": str(bin_dir), "HOME": str(bin_dir.parent / "home")},
+    )
+
+    assert context_of(completed) == expected_mini_brief("failed")
+    assert calls(uvx_log) == []

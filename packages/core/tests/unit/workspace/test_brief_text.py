@@ -179,9 +179,17 @@ def test_selects_two_newest_when_journal_globbed() -> None:
 
 
 def test_keeps_journal_when_path_date_invalid() -> None:
-    paths = ["brain/journal/2026/02/30.md", "brain/journal/2026/01/01.md"]
+    # Not a calendar day (February 30) and not a datetime.date year (0): both undated, kept.
+    paths = [
+        "brain/journal/2026/02/30.md",
+        "brain/journal/2026/01/01.md",
+        "brain/journal/0000/01/05.md",
+    ]
 
-    assert select_journal(paths, cutoff="2026-01-08") == ("brain/journal/2026/02/30.md",)
+    assert select_journal(paths, cutoff="2026-01-08") == (
+        "brain/journal/2026/02/30.md",
+        "brain/journal/0000/01/05.md",
+    )
 
 
 def test_keeps_journal_when_path_undated() -> None:
