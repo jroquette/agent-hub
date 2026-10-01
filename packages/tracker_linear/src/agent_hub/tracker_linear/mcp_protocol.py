@@ -34,6 +34,8 @@ MAX_READY_ISSUES = 100
 MAX_LABELS = 50
 # State or label names a write's read call may list.
 MAX_NAMES = 250
+# A longer state or label name is refused, in a request or a reply.
+MAX_NAME_CHARS = 256
 # A longer comment body is refused before any call.
 MAX_COMMENT_CHARS = 10_000
 # Untrusted text (a reply) quoted in an error is cut to this many characters.
@@ -165,25 +167,33 @@ class _Many:
     fix: str
 
 
-# A reply shape: a type (or types) for a leaf, a dict of exactly these fields, or a bounded list.
-type Shape = type | tuple[type, ...] | dict[str, Shape] | _Many
+@dataclass(frozen=True, slots=True)
+class _Name:
+    """A state or label name: text of at most ``MAX_NAME_CHARS`` characters."""
 
-_NAMES = _Many(str, MAX_NAMES, "names", _SHAPE_FIX)
+
+# A reply shape: a type (or types) for a leaf, a name, a dict of exactly these fields, or a
+# bounded list.
+type Shape = type | tuple[type, ...] | dict[str, Shape] | _Many | _Name
+
+_NAME = _Name()
+
+_NAMES = _Many(_NAME, MAX_NAMES, "names", _SHAPE_FIX)
 _ISSUE_LABELS = _Many(
-    str, MAX_LABELS, "labels", f"remove labels from it in Linear, {TRANSPORT_FIX}"
+    _NAME, MAX_LABELS, "labels", f"remove labels from it in Linear, {TRANSPORT_FIX}"
 )
 _ISSUE_FIELDS: dict[str, Shape] = {
     "id": str,
     "title": str,
     "description": (str, type(None)),
     "url": str,
-    "state": str,
+    "state": _NAME,
     "labels": _ISSUE_LABELS,
 }
 _SHAPES: Mapping[CallKind, Shape] = {
     CallKind.LIST_READY: {
         "issues": _Many(
-            {**_ISSUE_FIELDS, "state_type": str},
+            {**_ISSUE_FIELDS, "state_type": _NAME},
             MAX_READY_ISSUES,
             "issues",
             "close or unlabel issues in Linear, or list a narrower label",
@@ -191,10 +201,10 @@ _SHAPES: Mapping[CallKind, Shape] = {
         "more": bool,
     },
     CallKind.GET_ISSUE: {"issue": _ISSUE_FIELDS},
-    CallKind.READ_STATE: {"id": str, "state": str, "states": _NAMES},
+    CallKind.READ_STATE: {"id": str, "state": _NAME, "states": _NAMES},
     CallKind.READ_LABELS: {"id": str, "labels": _ISSUE_LABELS, "available_labels": _NAMES},
     CallKind.READ_ISSUE: {"id": str},
-    CallKind.SAVE_STATE: {"id": str, "state": str},
+    CallKind.SAVE_STATE: {"id": str, "state": _NAME},
     CallKind.SAVE_LABELS: {"id": str, "labels": _ISSUE_LABELS},
     CallKind.SAVE_COMMENT: {"id": str, "commented": bool},
 }
@@ -257,12 +267,17 @@ _TASKS: Mapping[CallKind, str] = {
 
 
 def request_line(operation: str, arguments: Mapping[str, RequestValue]) -> str:
-    """The request as one line of JSON: keys sorted, non-ASCII and newlines escaped."""
+    """The request as one line of JSON: keys sorted, non-ASCII, newlines and ``_`` escaped.
+
+    Every ``_`` is written ``\\u005f`` (the same JSON value), so a value holding a tool name,
+    such as a comment body, never puts the tool prefix ``mcp__`` into a prompt (D9a).
+    """
     plain = {
         name: list(value) if isinstance(value, tuple) else value
         for name, value in arguments.items()
     }
-    return json.dumps({"operation": operation, "arguments": plain}, sort_keys=True)
+    line = json.dumps({"operation": operation, "arguments": plain}, sort_keys=True)
+    return line.replace("_", "\\u005f")
 
 
 def prompt(call: McpCall[Any]) -> str:
@@ -272,6 +287,7 @@ def prompt(call: McpCall[Any]) -> str:
 
 def list_ready_call(team: str, label: str) -> McpCall[ReadyReply]:
     """The one call of ``list_ready``."""
+    _check_names("list_ready", None, (team, label))
     return McpCall(
         kind=CallKind.LIST_READY,
         operation="list_ready",
@@ -323,6 +339,7 @@ def comment_read_call(issue_id: str) -> McpCall[IssueSeen]:
 
 def save_state_call(issue_id: str, state_name: str) -> McpCall[StateSaved]:
     """The write call of ``move_state``."""
+    _check_names("move_state", issue_id, (state_name,))
     return _issue_call(
         CallKind.SAVE_STATE,
         "move_state",
@@ -336,6 +353,7 @@ def save_labels_call(
     operation: str, issue_id: str, labels: tuple[str, ...]
 ) -> McpCall[LabelsSaved]:
     """The write call of a label ``operation``: the issue's full label set after it."""
+    _check_names(operation, issue_id, labels)
     return _issue_call(
         CallKind.SAVE_LABELS,
         operation,
@@ -384,6 +402,18 @@ def _one_json_line(call: McpCall[Any], line: str) -> Any:
         with contextlib.suppress(ValueError, RecursionError):
             return json.loads(line)
     raise _error(call, f"the reply is not one line of JSON: {_quoted(line)}", _SHAPE_FIX)
+
+
+def _check_names(operation: str, issue_id: str | None, names: tuple[str, ...]) -> None:
+    """Refuse a team, state or label name over ``MAX_NAME_CHARS`` before any call."""
+    for name in names:
+        if len(name) > MAX_NAME_CHARS:
+            raise TrackerError(
+                operation=operation,
+                issue_id=issue_id,
+                cause=f"a name over {MAX_NAME_CHARS} characters ({len(name)})",
+                fix="pass the name of a team, state or label as Linear shows it",
+            )
 
 
 def _issue_call[R](
@@ -435,7 +465,17 @@ def _problem(value: object, shape: Shape) -> tuple[str, str] | None:
         if len(value) > shape.limit:
             return f"the reply lists more than {shape.limit} {shape.noun}", shape.fix
         return _first(_problem(item, shape.item) for item in value)
+    if isinstance(shape, _Name):
+        return _name_problem(value)
     return None if isinstance(value, shape) else ("", _SHAPE_FIX)
+
+
+def _name_problem(value: object) -> tuple[str, str] | None:
+    if not isinstance(value, str):
+        return "", _SHAPE_FIX
+    if len(value) > MAX_NAME_CHARS:
+        return f"the reply holds a name over {MAX_NAME_CHARS} characters", _SHAPE_FIX
+    return None
 
 
 def _first(problems: Any) -> tuple[str, str] | None:
