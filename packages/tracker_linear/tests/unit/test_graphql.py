@@ -165,6 +165,33 @@ def test_maps_response_to_issue_when_issue_fetched(
     assert "DEM-1" not in request["query"]
 
 
+@pytest.mark.parametrize("operation", ["list_ready", "get_issue"])
+def test_selects_description_when_issue_read(
+    *, fake_linear_api: Any, synthetic_key: str, tracker_backend: FakeTrackerBackend, operation: str
+) -> None:
+    read = _SIX_OPERATIONS[operation][1](_client(fake_linear_api, synthetic_key))
+
+    assert re.search(r"\bdescription\b", fake_linear_api.requests[0]["query"])
+    (root,) = fake_linear_api.responses[0].values()
+    nodes = root["nodes"] if operation == "list_ready" else [root]
+    assert all("description" in node for node in nodes)
+    issues = read if isinstance(read, list) else [read]
+    assert [issue.description for issue in issues] == [
+        tracker_backend.issues[issue.id].description for issue in issues
+    ]
+
+
+def test_reads_null_description_as_empty_when_linear_has_none(
+    fake_linear_api: Any, synthetic_key: str
+) -> None:
+    client = LinearGraphqlTrackerClient(
+        environ={LINEAR_API_KEY_VARIABLE: synthetic_key},
+        post=_altered(fake_linear_api, _set((*_ISSUE, "description"), None)),
+    )
+
+    assert client.get_issue("DEM-1").description == ""
+
+
 def test_raises_before_any_request_when_issue_id_malformed(
     fake_linear_api: Any, synthetic_key: str
 ) -> None:
@@ -637,6 +664,7 @@ _SHAPE_CHANGES: dict[str, tuple[str, Callable[[Any], Any]]] = {
     "root-missing": ("get_issue", _drop(_ISSUE)),
     "field-missing": ("get_issue", _drop((*_ISSUE, "title"))),
     "field-wrong-type": ("get_issue", _set((*_ISSUE, "title"), 5)),
+    "description-wrong-type": ("get_issue", _set((*_ISSUE, "description"), 5)),
     "field-unexpected": ("get_issue", _set((*_ISSUE, "secret"), "x")),
     "nodes-not-a-list": ("get_issue", _set((*_ISSUE, "labels", "nodes"), "agent-ready")),
     "cursor-missing": (

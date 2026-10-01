@@ -65,6 +65,7 @@ def an_issue(**overrides: object) -> Issue:
     fields: dict[str, object] = {
         "id": "DEM-1",
         "title": "Add a synthetic feature",
+        "description": "A synthetic description.",
         "state": "Todo",
         "labels": ("agent-ready",),
     } | overrides
@@ -94,6 +95,30 @@ _SEEDED_ISSUES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
 )
 
 
+# Each seeded issue's own description: DEM-2 has none; DEM-1 has several lines of Markdown.
+_SEEDED_DESCRIPTIONS: dict[str, str] = {
+    "DEM-1": (
+        "Add a synthetic feature.\n"
+        "\n"
+        "Steps:\n"
+        "\n"
+        "- read the synthetic input\n"
+        "- write the synthetic output\n"
+        "\n"
+        "```sh\n"
+        "make check\n"
+        "```\n"
+    ),
+    "DEM-2": "",
+    "DEM-3": "Fix the synthetic bug in DEM-3.",
+    "DEM-4": "Synthetic work already done in DEM-4.",
+    "DEM-5": "Synthetic work dropped in DEM-5.",
+    "DEM-6": "Synthetic duplicate of DEM-5.",
+    "DEM-7": "Synthetic issue DEM-7 with no label.",
+    "OPS-1": "Synthetic issue of another team.",
+}
+
+
 def a_seeded_tracker_backend() -> FakeTrackerBackend:
     """Build the synthetic tracker the contract suite runs on; a fresh backend per call.
 
@@ -109,7 +134,11 @@ def a_seeded_tracker_backend() -> FakeTrackerBackend:
         workspace_labels=("agent-ready", "agent-failed"),
         issues={
             issue_id: an_issue(
-                id=issue_id, title=f"Synthetic issue {issue_id}", state=state, labels=labels
+                id=issue_id,
+                title=f"Synthetic issue {issue_id}",
+                description=_SEEDED_DESCRIPTIONS[issue_id],
+                state=state,
+                labels=labels,
             )
             for issue_id, state, labels in _SEEDED_ISSUES
         },

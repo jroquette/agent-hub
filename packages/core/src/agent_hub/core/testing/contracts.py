@@ -189,7 +189,9 @@ class TrackerClientContract:
 
     ``tracker_backend`` is ``a_seeded_tracker_backend()``; the suite asserts on its state, never
     on what the client says it did, so it runs the same against the fake and an adapter whose
-    fake server serves that backend. ``list_ready`` is unordered and compared as a set.
+    fake server serves that backend. ``list_ready`` is unordered and compared as a set. An adapter's
+    fake server serves an empty description the way its tracker does (null or absent), so the suite
+    exercises the mapping to ``""``.
     """
 
     def test_lists_open_team_issues_with_label_when_ready_issues_listed(
@@ -246,6 +248,20 @@ class TrackerClientContract:
     ) -> None:
         for issue_id, seeded in tracker_backend.issues.items():
             assert _sorted_labels(tracker_client.get_issue(issue_id)) == _sorted_labels(seeded)
+
+    def test_returns_seeded_description_when_issue_read(
+        self, tracker_client: TrackerClient, tracker_backend: FakeTrackerBackend
+    ) -> None:
+        # Explicit, so a change to how whole issues are compared cannot hide a lost description.
+        for issue_id, seeded in tracker_backend.issues.items():
+            assert tracker_client.get_issue(issue_id).description == seeded.description
+        ready = [
+            *tracker_client.list_ready("DEM", "agent-ready"),
+            *tracker_client.list_ready("OPS", "agent-ready"),
+        ]
+        assert {issue.id for issue in ready} == {*_SEEDED_READY, "OPS-1"}
+        for issue in ready:
+            assert issue.description == tracker_backend.issues[issue.id].description
 
     def test_moves_issue_when_state_known(
         self, tracker_client: TrackerClient, tracker_backend: FakeTrackerBackend
