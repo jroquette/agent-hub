@@ -1,8 +1,12 @@
 """The TrackerClient port and the Issue it returns (Linear now, through an adapter)."""
 
+import re
 from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict
+
+# An issue identifier: team key, a dash, a number (``DEM-1``). Match it with ``fullmatch``.
+ISSUE_ID_PATTERN = re.compile(r"[A-Z][A-Z0-9]{0,9}-[1-9][0-9]{0,8}")
 
 
 class Issue(BaseModel):
@@ -11,7 +15,7 @@ class Issue(BaseModel):
     ``labels`` holds label names; the repo-routing label is one of them.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str
     title: str
@@ -23,12 +27,17 @@ class Issue(BaseModel):
 class TrackerClient(Protocol):
     """The operations the workflow needs from a task tracker.
 
-    Every failure raises ``TrackerError``. An unknown issue id, state name or label name
-    raises it naming that value, and nothing changes; no state or label is ever created.
+    Every failure raises ``TrackerError``. In ``get_issue`` and the write operations, an
+    unknown issue id, state name or label name raises it naming that value, and nothing
+    changes; no state or label is ever created. ``list_ready`` filters, so an unknown team
+    or label returns ``[]``.
     """
 
     def list_ready(self, team: str, label: str) -> list[Issue]:
-        """Return the issues of ``team`` that carry ``label`` and are not done or canceled."""
+        """Return the issues of ``team`` that carry ``label`` and are not done or canceled.
+
+        An unknown team or label matches no issue and returns ``[]``.
+        """
         ...
 
     def get_issue(self, issue_id: str) -> Issue:
