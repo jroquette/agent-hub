@@ -326,3 +326,95 @@ def test_keeps_journal_when_file_not_utf8(brief_workspace: Workspace) -> None:
 
     assert result.exit_code == 0, result.output
     assert "- 2026-01-13: Fixed the � loader" in result.stdout.splitlines()
+
+
+def test_says_missing_when_now_is_folder(brief_workspace: Workspace) -> None:
+    now = brief_workspace.hub / "brain" / "now.md"
+    now.unlink()
+    now.mkdir()
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines()[2:5] == ["## Now", "(brain/now.md missing)", ""]
+
+
+def test_says_not_found_when_git_is_link(brief_workspace: Workspace) -> None:
+    api = brief_workspace.ws / "api"
+    (api / ".git").rename(brief_workspace.root / "elsewhere" / "api.git")
+    (api / ".git").symlink_to(brief_workspace.root / "elsewhere" / "api.git")
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    assert "- api: not found" in result.stdout.splitlines()
+
+
+def test_ignores_git_dir_when_caller_sets_it(
+    brief_workspace: Workspace,
+    golden_sections: Callable[[Path], dict[str, bytes]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A decoy repo on another branch: read through GIT_DIR, every line would name it.
+    decoy = brief_workspace.root / "elsewhere" / "decoy"
+    decoy.mkdir()
+    brief_workspace.git("init", "-q", "-b", "decoy", cwd=decoy)
+    monkeypatch.setenv("GIT_DIR", str(decoy / ".git"))
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout_bytes == golden_of("no_network", golden_sections)["stdout"]
+
+
+def test_prints_git_state_when_gh_hangs(
+    brief_workspace: Workspace,
+    golden_sections: Callable[[Path], dict[str, bytes]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Every gh call hangs far past the per-call timeout; the gh phase's budget ends them all.
+    monkeypatch.setattr(brief_command, "GH_PHASE_BUDGET", 0.5)
+    brief_workspace.answer([{"stdout": "#1 never shown\n", "delay": 120}])
+    started = time.monotonic()
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout_bytes == golden_of("no_network", golden_sections)["stdout"]
+    assert len(brief_workspace.calls().splitlines()) == 6
+    assert time.monotonic() - started < brief_command.BRIEF_GH_TIMEOUT
+
+
+def test_skips_git_calls_when_git_budget_spent(
+    brief_workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No time left for git: each value is left out, as for a git that fails.
+    monkeypatch.setattr(brief_command, "GIT_PHASE_BUDGET", 0)
+
+    result = run_brief(brief_workspace, "--no-network")
+
+    assert result.exit_code == 0, result.output
+    repos = result.stdout.splitlines()
+    assert "- hub: detached@, 0 changed file(s), ? behind origin/trunk" in repos
+    assert "- api: detached@, 0 changed file(s), ? behind origin/trunk" in repos
+
+
+def test_strips_control_characters_when_gh_prints_them(brief_workspace: Workspace) -> None:
+    title = "#5 \x1b[31mRed\x1b[0m title\x07 done\x9b\n"
+    brief_workspace.answer([{"argv_has": ["pr", "acme/api"], "stdout": title}])
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 0, result.output
+    assert "  open PRs: #5 [31mRed[0m title done" in result.stdout.splitlines()
+
+
+def test_keeps_children_in_caller_group_when_brief_runs(brief_workspace: Workspace) -> None:
+    # The SessionStart hook kills its call's process group on its deadline: gh must be in it.
+    group_file = brief_workspace.root / "elsewhere" / "gh-group"
+    brief_workspace.answer([{"argv_has": ["pr", "acme/api"], "group_file": str(group_file)}])
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 0, result.output
+    assert group_file.read_text() == str(os.getpgrp())

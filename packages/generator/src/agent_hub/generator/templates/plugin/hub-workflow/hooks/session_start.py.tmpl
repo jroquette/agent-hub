@@ -7,14 +7,15 @@ version read from hub.json (platform.version). Both calls run from the hub with 
 to it, within one 10 s deadline inside the hook's 20 s; the brief is capped at 8000 characters.
 When it cannot run, the mini brief stands in: one header line naming the fallback and its cause
 (no version, no uv, resolve failed, failed (exit N), failed (no output), failed (cannot start),
-timed out), brain/now.md capped at 2500 characters and the latest 3 journal files. The mini brief
-uses no git and no network."""
+timed out; failed for any other error), brain/now.md (a regular file only) capped at 2500
+characters and the latest 3 journal files. The mini brief uses no git and no network."""
 
 from __future__ import annotations
 
 import os
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -73,6 +74,9 @@ def run_call(argv: list[str], hub: Path, env: dict[str, str], deadline: float) -
     except subprocess.TimeoutExpired:
         stop(proc)
         return 0, b"", "timed out"
+    except BaseException:  # interrupted: never leave the call's group running
+        stop(proc)
+        raise
     return proc.returncode, out, ""
 
 
@@ -100,8 +104,10 @@ def latest_journal(hub: Path) -> list[str]:
 def mini_brief(hub: Path, cause: str) -> str:
     """The fallback brief: its header (with the cause), now.md capped, the latest journal files."""
     parts = [f"# Brief (fallback: hub brief {cause})"]
+    now = hub / "brain" / "now.md"
     try:
-        parts.append((hub / "brain" / "now.md").read_text(encoding="utf-8", errors="replace")[:NOW_CAP].strip())
+        if stat.S_ISREG(os.stat(now).st_mode):  # a FIFO would block the read
+            parts.append(now.read_text(encoding="utf-8", errors="replace")[:NOW_CAP].strip())
     except OSError:
         pass
     days = latest_journal(hub)
@@ -116,7 +122,10 @@ def main() -> None:
     hub = cfg.hub
     if not hub:
         return
-    brief, cause = pinned_brief(hub, cfg.hub_file.platform.version)
+    try:
+        brief, cause = pinned_brief(hub, cfg.hub_file.platform.version)
+    except Exception:  # an unforeseen error still leaves the session its mini brief
+        brief, cause = "", "failed"
     ctx = brief or mini_brief(hub, cause)
     snap = hub / "brain" / "auto" / "workspace" / "session-snapshot.md"
     if data.get("source") == "compact" and snap.exists():

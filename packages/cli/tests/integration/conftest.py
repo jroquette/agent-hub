@@ -788,6 +788,9 @@ with open(answers, encoding="utf-8") as stream:
 rule = next((r for r in rules if all(a in args for a in r.get("argv_has", []))), None)
 if rule is None:
     sys.exit(1)
+if "group_file" in rule:
+    with open(rule["group_file"], "w", encoding="utf-8") as stream:
+        stream.write(str(os.getpgid(0)))
 time.sleep(rule.get("delay", 0))
 sys.stdout.buffer.write(rule.get("stdout", "").encode())
 sys.stderr.buffer.write(rule.get("stderr", "").encode())
