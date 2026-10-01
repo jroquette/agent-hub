@@ -1,5 +1,6 @@
 """The Linear MCP adapter over an injected runner (ADR 0015): argv, reads, writes, failures."""
 
+import copy
 import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -222,6 +223,195 @@ class TestReads:
         assert client.timeout_s == _TIMEOUT_S
 
 
+def _issue_reply(issue_id: str) -> dict[str, Any]:
+    item = _ready_item(issue_id, "started", ["agent-ready"])
+    return {key: value for key, value in item.items() if key != "state_type"}
+
+
+class TestWrites:
+    def test_reads_then_writes_once_when_change_needed(
+        self, fake_claude: Any, hub_root: Path, tracker_backend: FakeTrackerBackend
+    ) -> None:
+        client = _client(fake_claude, hub_root)
+
+        client.move_state("DEM-1", "In Progress")
+        client.add_label("DEM-1", "bug")
+        client.remove_label("DEM-1", "agent-ready")
+        client.comment("DEM-2", "Run 1a2b3c4d opened a PR.")
+
+        assert _requests(fake_claude) == [
+            ("read_state", {"issue_id": "DEM-1"}),
+            ("save_state", {"issue_id": "DEM-1", "state": "In Progress"}),
+            ("read_labels", {"issue_id": "DEM-1"}),
+            ("save_labels", {"issue_id": "DEM-1", "labels": ["agent-ready", "demo-api", "bug"]}),
+            ("read_labels", {"issue_id": "DEM-1"}),
+            ("save_labels", {"issue_id": "DEM-1", "labels": ["demo-api", "bug"]}),
+            ("read_issue", {"issue_id": "DEM-2"}),
+            ("save_comment", {"issue_id": "DEM-2", "body": "Run 1a2b3c4d opened a PR."}),
+        ]
+        dem_1 = tracker_backend.issues["DEM-1"]
+        assert (dem_1.state, dem_1.labels) == ("In Progress", ("demo-api", "bug"))
+        assert tracker_backend.comments == [("DEM-2", "Run 1a2b3c4d opened a PR.")]
+        assert client.last_cost_usd == 2 * _COST_USD
+
+    @pytest.mark.parametrize(
+        ("operation", "arguments", "read"),
+        [
+            ("move_state", ("DEM-1", "Todo"), "read_state"),
+            ("add_label", ("DEM-1", "demo-api"), "read_labels"),
+            ("remove_label", ("DEM-1", "bug"), "read_labels"),
+        ],
+        ids=["current-state", "present-label", "absent-label"],
+    )
+    def test_makes_no_write_call_when_change_is_noop(
+        self,
+        fake_claude: Any,
+        hub_root: Path,
+        tracker_backend: FakeTrackerBackend,
+        *,
+        operation: str,
+        arguments: tuple[str, str],
+        read: str,
+    ) -> None:
+        before = copy.deepcopy(tracker_backend)
+
+        getattr(_client(fake_claude, hub_root), operation)(*arguments)
+
+        assert [call.operation for call in fake_claude.calls] == [read]
+        assert tracker_backend == before
+
+    @pytest.mark.parametrize(
+        ("operation", "arguments", "cause"),
+        [
+            ("move_state", ("DEM-1", "Shipped"), "state 'Shipped' not found in team DEM"),
+            ("move_state", ("OPS-1", "Duplicate"), "state 'Duplicate' not found in team OPS"),
+            (
+                "add_label",
+                ("DEM-1", "no-such-label"),
+                "label 'no-such-label' not found in team DEM or the workspace",
+            ),
+            (
+                "remove_label",
+                ("OPS-1", "demo-api"),
+                "label 'demo-api' not found in team OPS or the workspace",
+            ),
+        ],
+        ids=["state", "state-of-other-team", "added-label", "removed-label-of-other-team"],
+    )
+    def test_makes_no_write_call_when_name_unknown(
+        self,
+        fake_claude: Any,
+        hub_root: Path,
+        tracker_backend: FakeTrackerBackend,
+        *,
+        operation: str,
+        arguments: tuple[str, str],
+        cause: str,
+    ) -> None:
+        before = copy.deepcopy(tracker_backend)
+
+        with pytest.raises(TrackerError) as raised:
+            getattr(_client(fake_claude, hub_root), operation)(*arguments)
+
+        assert str(raised.value).startswith(f"{operation} {arguments[0]}: {cause}; ")
+        assert len(fake_claude.calls) == 1
+        assert tracker_backend == before
+
+    def test_sends_full_label_set_when_label_added(self, fake_claude: Any, hub_root: Path) -> None:
+        _client(fake_claude, hub_root).add_label("OPS-1", "agent-failed")
+
+        write = fake_claude.calls[-1]
+        assert (write.operation, write.arguments) == (
+            "save_labels",
+            {"issue_id": "OPS-1", "labels": ["agent-ready", "agent-failed"]},
+        )
+
+    @pytest.mark.parametrize(
+        ("operation", "arguments", "read", "write"),
+        [
+            (
+                "move_state",
+                ("DEM-1", "In Progress"),
+                {"id": "DEM-1", "state": "Todo", "states": ["Todo", "In Progress"]},
+                {"id": "DEM-1", "state": "Done"},
+            ),
+            (
+                "move_state",
+                ("DEM-1", "In Progress"),
+                {"id": "DEM-1", "state": "Todo", "states": ["Todo", "In Progress"]},
+                {"id": "DEM-2", "state": "In Progress"},
+            ),
+            (
+                "add_label",
+                ("DEM-1", "bug"),
+                {"id": "DEM-1", "labels": ["demo-api"], "available_labels": ["demo-api", "bug"]},
+                {"id": "DEM-1", "labels": ["demo-api", "bug", "agent-failed"]},
+            ),
+            (
+                "remove_label",
+                ("DEM-1", "demo-api"),
+                {"id": "DEM-1", "labels": ["demo-api"], "available_labels": ["demo-api"]},
+                {"id": "DEM-1", "labels": ["demo-api"]},
+            ),
+            (
+                "comment",
+                ("DEM-1", "A comment."),
+                {"id": "DEM-1"},
+                {"id": "DEM-1", "commented": False},
+            ),
+            (
+                "comment",
+                ("DEM-1", "A comment."),
+                {"id": "DEM-1"},
+                {"id": "DEM-7", "commented": True},
+            ),
+        ],
+        ids=[
+            "other-state",
+            "other-issue",
+            "extra-label",
+            "label-kept",
+            "not-commented",
+            "other-comment-issue",
+        ],
+    )
+    def test_raises_when_write_reply_names_other_change(
+        self,
+        hub_root: Path,
+        *,
+        operation: str,
+        arguments: tuple[str, str],
+        read: dict[str, Any],
+        write: dict[str, Any],
+    ) -> None:
+        runner = _Scripted(_reply(read), _reply(write))
+
+        with pytest.raises(TrackerError, match="the write reply names another change") as raised:
+            getattr(_client(runner, hub_root), operation)(*arguments)
+
+        assert str(raised.value).startswith(f"{operation} {arguments[0]}: ")
+        assert len(runner.argvs) == 2
+
+    def test_raises_when_read_reply_names_other_issue(self, hub_root: Path) -> None:
+        runner = _Scripted(_reply({"id": "DEM-2", "state": "Todo", "states": ["Todo", "Done"]}))
+
+        with pytest.raises(TrackerError, match=r"^move_state DEM-1: the reply names another issue"):
+            _client(runner, hub_root).move_state("DEM-1", "Done")
+
+        assert len(runner.argvs) == 1
+
+    @pytest.mark.parametrize("operation", ["move_state", "add_label", "remove_label", "comment"])
+    def test_refuses_issue_id_before_any_call_when_write_id_malformed(
+        self, hub_root: Path, operation: str
+    ) -> None:
+        runner = _Scripted()
+
+        with pytest.raises(TrackerError, match="malformed issue id"):
+            getattr(_client(runner, hub_root), operation)("dem-1", "x")
+
+        assert runner.argvs == []
+
+
 class TestTools:
     def test_allows_listing_tool_when_list_ready_runs(
         self, fake_claude: Any, hub_root: Path
@@ -235,3 +425,46 @@ class TestTools:
 
 def _requests(fake_claude: Any) -> list[tuple[str, dict[str, Any]]]:
     return [(call.operation, call.arguments) for call in fake_claude.calls]
+
+
+_READ_TOOLS = {
+    "move_state": ("get_issue", "list_issue_statuses"),
+    "add_label": ("get_issue", "list_issue_labels"),
+    "remove_label": ("get_issue", "list_issue_labels"),
+    "comment": ("get_issue",),
+}
+_WRITE_TOOLS = {
+    "move_state": ("save_issue",),
+    "add_label": ("save_issue",),
+    "remove_label": ("save_issue",),
+    "comment": ("save_comment",),
+}
+_WRITES = {
+    "move_state": ("DEM-1", "In Progress"),
+    "add_label": ("DEM-1", "bug"),
+    "remove_label": ("DEM-1", "agent-ready"),
+    "comment": ("DEM-1", "A comment."),
+}
+
+
+class TestWriteTools:
+    @pytest.mark.parametrize("operation", list(_WRITES))
+    def test_allows_listing_tool_when_write_reads(
+        self, fake_claude: Any, hub_root: Path, operation: str
+    ) -> None:
+        getattr(_client(fake_claude, hub_root), operation)(*_WRITES[operation])
+
+        read = fake_claude.calls[0]
+        assert read.tools == tuple(_PREFIX + name for name in _READ_TOOLS[operation])
+        assert read.argv[-len(read.tools) - 1 :] == ("--allowedTools", *read.tools)
+
+    @pytest.mark.parametrize("operation", list(_WRITES))
+    def test_allows_only_write_tool_when_write_runs(
+        self, fake_claude: Any, hub_root: Path, operation: str
+    ) -> None:
+        getattr(_client(fake_claude, hub_root), operation)(*_WRITES[operation])
+
+        assert len(fake_claude.calls) == 2
+        write = fake_claude.calls[1]
+        assert write.tools == tuple(_PREFIX + name for name in _WRITE_TOOLS[operation])
+        assert write.argv[-2:] == ("--allowedTools", *write.tools)
