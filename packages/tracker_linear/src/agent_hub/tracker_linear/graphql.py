@@ -16,7 +16,7 @@ of a message, a ``repr`` or a log record.
 """
 
 import json
-import unicodedata
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -33,6 +33,8 @@ PAGE_SIZE = 50
 DONE_STATE_TYPES = ("completed", "canceled", "duplicate")
 # Untrusted text (a Linear error message) quoted in an error is cut to this many characters.
 MAX_QUOTED_CHARS = 200
+# A key is sent as a header value as is: only printable ASCII, no space, is accepted.
+_API_KEY_PATTERN = re.compile(r"[\x21-\x7e]+")
 # A longer answer is refused (the default transport reads at most one byte more).
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 # list_ready reads at most this many pages (PAGE_SIZE issues each), then raises.
@@ -382,12 +384,12 @@ class LinearGraphqlTrackerClient:
                 cause=f"{LINEAR_API_KEY_VARIABLE} is not set",
                 fix=f"export {LINEAR_API_KEY_VARIABLE} with a Linear personal API key",
             )
-        if any(unicodedata.category(char) == "Cc" for char in key):
+        if not _API_KEY_PATTERN.fullmatch(key):
             raise TrackerError(
                 operation=operation,
                 issue_id=issue_id,
-                cause=f"{LINEAR_API_KEY_VARIABLE} has a control character",
-                fix=f"set {LINEAR_API_KEY_VARIABLE} to the key alone, without newlines",
+                cause=f"{LINEAR_API_KEY_VARIABLE} has a character outside printable ASCII",
+                fix=f"set {LINEAR_API_KEY_VARIABLE} to the key alone, without spaces or newlines",
             )
         return key
 
@@ -436,8 +438,11 @@ def _data(
         raise TrackerError(
             operation=operation,
             issue_id=issue_id,
-            cause=f"Linear answered HTTP {status}",
-            fix="check the request named here, then retry",
+            cause=f"Linear rejected the request (HTTP {status})",
+            fix=(
+                "check the issue id and the state or label names passed"
+                " (if they are right, Linear's API may have changed)"
+            ),
         )
     data = payload.get("data") if isinstance(payload, dict) else None
     if not _fits(data, shape):
@@ -490,11 +495,11 @@ def _check_status(operation: str, issue_id: str | None, status: int) -> None:
 def _errors_fix(errors: Any, issue_id: str | None) -> str:
     """The fix for a GraphQL ``errors`` array, from its ``extensions`` when they say more."""
     kinds = " ".join(
-        str(value).lower()
+        value.lower()
         for error in (errors if isinstance(errors, list) else [])
         if isinstance(error, dict) and isinstance(error.get("extensions"), dict)
         for name, value in error["extensions"].items()
-        if name in {"code", "type"}
+        if name in {"code", "type"} and isinstance(value, str)
     )
     if "ratelimited" in kinds:
         return "retry later"
