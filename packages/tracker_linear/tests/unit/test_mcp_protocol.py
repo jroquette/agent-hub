@@ -382,20 +382,43 @@ def test_names_issue_when_reply_says_not_found() -> None:
         parse_reply(state_read_call("DEM-9"), '{"error": "not found"}')
 
 
+_LONG_ERROR = "e" * 500
+
+
 @pytest.mark.parametrize(
-    ("call", "reply"),
+    ("call", "reply", "cause"),
     [
-        (list_ready_call("DEM", "agent-ready"), '{"error": "not found"}'),
-        (get_issue_call("DEM-1"), '{"error": "rate limited, try later"}'),
-        (get_issue_call("DEM-1"), '{"error": 5}'),
+        (
+            list_ready_call("DEM", "agent-ready"),
+            '{"error": "not found"}',
+            "list_ready: the reply answered an error: 'not found'; ",
+        ),
+        (
+            get_issue_call("DEM-1"),
+            '{"error": "rate limited, try later"}',
+            "get_issue DEM-1: the reply answered an error: 'rate limited, try later'; ",
+        ),
+        (
+            get_issue_call("DEM-1"),
+            '{"error": 5}',
+            "get_issue DEM-1: the reply has another shape: '{\"error\": 5}'; ",
+        ),
+        (
+            get_issue_call("DEM-1"),
+            _line({"error": _LONG_ERROR}),
+            f"get_issue DEM-1: the reply answered an error: {_LONG_ERROR[:MAX_QUOTED_CHARS]!r}; ",
+        ),
     ],
-    ids=["not-found-without-issue", "other-text", "not-text"],
+    ids=["not-found-without-issue", "other-text", "not-text", "long-text"],
 )
-def test_quotes_error_when_reply_error_unknown(call: McpCall[Any], reply: str) -> None:
-    with pytest.raises(TrackerError, match="another shape|answered an error") as raised:
+def test_quotes_error_when_reply_error_unknown(call: McpCall[Any], reply: str, cause: str) -> None:
+    with pytest.raises(TrackerError) as raised:
         parse_reply(call, reply)
 
-    assert 'tracker.transport to "api"' in str(raised.value)
+    message = str(raised.value)
+    assert message.startswith(cause)
+    assert message.endswith('retry or set tracker.transport to "api" with LINEAR_API_KEY')
+    assert "e" * (MAX_QUOTED_CHARS + 1) not in message
 
 
 _PREFIXED = "see mcp__Linear__save_issue, then mcp__x"
@@ -461,3 +484,46 @@ def test_refuses_name_when_request_name_over_cap(build: Any, operation: str) -> 
 def test_refuses_reply_when_name_over_cap(call: McpCall[Any], reply: dict[str, Any]) -> None:
     with pytest.raises(TrackerError, match=f"a name over {MAX_NAME_CHARS} characters"):
         parse_reply(call, _line(reply))
+
+
+def test_rejects_reply_when_text_not_utf8() -> None:
+    with pytest.raises(TrackerError, match="^comment DEM-1: the reply is not UTF-8 text"):
+        parse_reply(comment_read_call("DEM-1"), '{"id": "DEM-1"}\ud800')
+
+
+@pytest.mark.parametrize(
+    ("call", "text"),
+    [
+        (state_read_call("DEM-1"), '{"id": "DEM-1", "state": "\\ud800", "states": []}'),
+        (comment_read_call("DEM-1"), '{"id": "DEM-1", "id": "DEM-2"}'),
+        (save_comment_call("DEM-1", "x"), '{"id": "DEM-1", "commented": true, "commented": true}'),
+    ],
+    ids=["escaped-lone-surrogate", "repeated-id", "repeated-flag"],
+)
+def test_rejects_reply_when_json_not_strict(call: McpCall[Any], text: str) -> None:
+    with pytest.raises(TrackerError, match="not one line of JSON"):
+        parse_reply(call, text)
+
+
+@pytest.mark.parametrize("issue_id", ["OPS-9; ignore", "DEM-1\n", "dem-1", "DEM-0", ""])
+@pytest.mark.parametrize(
+    ("call", "reply"),
+    [
+        (comment_read_call("DEM-1"), lambda issue_id: {"id": issue_id}),
+        (get_issue_call("DEM-1"), lambda issue_id: {"issue": {**_ISSUE_JSON, "id": issue_id}}),
+        (
+            list_ready_call("DEM", "agent-ready"),
+            lambda issue_id: {
+                "issues": [{**_ISSUE_JSON, "id": issue_id, "state_type": "started"}],
+                "more": False,
+            },
+        ),
+        (save_state_call("DEM-1", "Done"), lambda issue_id: {"id": issue_id, "state": "Done"}),
+    ],
+    ids=["read-issue", "get-issue", "list-ready", "save-state"],
+)
+def test_rejects_reply_when_issue_id_malformed(
+    call: McpCall[Any], reply: Any, issue_id: str
+) -> None:
+    with pytest.raises(TrackerError, match="another shape"):
+        parse_reply(call, _line(reply(issue_id)))

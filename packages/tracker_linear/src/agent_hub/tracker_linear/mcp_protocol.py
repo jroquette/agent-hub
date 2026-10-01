@@ -16,13 +16,15 @@ with the request (the echoed change, the requested issue) is the adapter's job.
 
 import contextlib
 import json
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
 from agent_hub.core.errors import TrackerError
-from agent_hub.core.tracker.tracker_client import Issue
+from agent_hub.core.json_form import InvalidJsonError, load_json_bytes
+from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, Issue
 
 # The tools of the user's ``Linear`` MCP server, as Claude Code names them (D-prefix).
 LINEAR_TOOL_PREFIX = "mcp__Linear__"
@@ -167,23 +169,29 @@ class _Many:
     fix: str
 
 
-@dataclass(frozen=True, slots=True)
-class _Name:
-    """A state or label name: text of at most ``MAX_NAME_CHARS`` characters."""
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _Text:
+    """A text leaf: at most ``limit`` characters, or one that fullmatches ``pattern``."""
+
+    limit: int | None = None
+    pattern: re.Pattern[str] | None = None
 
 
-# A reply shape: a type (or types) for a leaf, a name, a dict of exactly these fields, or a
-# bounded list.
-type Shape = type | tuple[type, ...] | dict[str, Shape] | _Many | _Name
+# A reply shape: a type (or types) for a leaf, a checked text, a dict of exactly these fields,
+# or a bounded list.
+type Shape = type | tuple[type, ...] | dict[str, Shape] | _Many | _Text
 
-_NAME = _Name()
+# A state or label name.
+_NAME = _Text(limit=MAX_NAME_CHARS)
+# An issue identifier: a reply naming anything else (``OPS-9; ignore``) has another shape.
+_ISSUE_ID = _Text(pattern=ISSUE_ID_PATTERN)
 
 _NAMES = _Many(_NAME, MAX_NAMES, "names", _SHAPE_FIX)
 _ISSUE_LABELS = _Many(
     _NAME, MAX_LABELS, "labels", f"remove labels from it in Linear, {TRANSPORT_FIX}"
 )
 _ISSUE_FIELDS: dict[str, Shape] = {
-    "id": str,
+    "id": _ISSUE_ID,
     "title": str,
     "description": (str, type(None)),
     "url": str,
@@ -201,12 +209,12 @@ _SHAPES: Mapping[CallKind, Shape] = {
         "more": bool,
     },
     CallKind.GET_ISSUE: {"issue": _ISSUE_FIELDS},
-    CallKind.READ_STATE: {"id": str, "state": _NAME, "states": _NAMES},
-    CallKind.READ_LABELS: {"id": str, "labels": _ISSUE_LABELS, "available_labels": _NAMES},
-    CallKind.READ_ISSUE: {"id": str},
-    CallKind.SAVE_STATE: {"id": str, "state": _NAME},
-    CallKind.SAVE_LABELS: {"id": str, "labels": _ISSUE_LABELS},
-    CallKind.SAVE_COMMENT: {"id": str, "commented": bool},
+    CallKind.READ_STATE: {"id": _ISSUE_ID, "state": _NAME, "states": _NAMES},
+    CallKind.READ_LABELS: {"id": _ISSUE_ID, "labels": _ISSUE_LABELS, "available_labels": _NAMES},
+    CallKind.READ_ISSUE: {"id": _ISSUE_ID},
+    CallKind.SAVE_STATE: {"id": _ISSUE_ID, "state": _NAME},
+    CallKind.SAVE_LABELS: {"id": _ISSUE_ID, "labels": _ISSUE_LABELS},
+    CallKind.SAVE_COMMENT: {"id": _ISSUE_ID, "commented": bool},
 }
 
 _PREAMBLE = (
@@ -383,7 +391,11 @@ def save_comment_call(issue_id: str, body: str) -> McpCall[CommentSaved]:
 
 def parse_reply[R](call: McpCall[R], text: str) -> R:
     """The call's reply read from ``text``; anything but its exact shape raises."""
-    if len(text.encode()) > MAX_REPLY_BYTES:
+    try:
+        size = len(text.encode())
+    except UnicodeEncodeError:
+        raise _error(call, "the reply is not UTF-8 text", _SHAPE_FIX) from None
+    if size > MAX_REPLY_BYTES:
         raise _error(call, f"the reply is over {MAX_REPLY_BYTES // 1024**2} MiB", _SHAPE_FIX)
     line = text.strip()
     data = _one_json_line(call, line)
@@ -397,10 +409,13 @@ def parse_reply[R](call: McpCall[R], text: str) -> R:
 
 
 def _one_json_line(call: McpCall[Any], line: str) -> Any:
-    """``line`` read as JSON; empty, several lines, or not JSON raises."""
+    """``line`` read as strict JSON; empty, several lines, or not strict JSON raises.
+
+    Strict: a repeated key, ``NaN`` or a lone surrogate escape (``\\ud800``) is refused.
+    """
     if line and "\n" not in line and "\r" not in line:
-        with contextlib.suppress(ValueError, RecursionError):
-            return json.loads(line)
+        with contextlib.suppress(InvalidJsonError):
+            return load_json_bytes(line.encode(), strict=True)
     raise _error(call, f"the reply is not one line of JSON: {_quoted(line)}", _SHAPE_FIX)
 
 
@@ -465,16 +480,18 @@ def _problem(value: object, shape: Shape) -> tuple[str, str] | None:
         if len(value) > shape.limit:
             return f"the reply lists more than {shape.limit} {shape.noun}", shape.fix
         return _first(_problem(item, shape.item) for item in value)
-    if isinstance(shape, _Name):
-        return _name_problem(value)
+    if isinstance(shape, _Text):
+        return _text_problem(value, shape)
     return None if isinstance(value, shape) else ("", _SHAPE_FIX)
 
 
-def _name_problem(value: object) -> tuple[str, str] | None:
+def _text_problem(value: object, shape: _Text) -> tuple[str, str] | None:
     if not isinstance(value, str):
         return "", _SHAPE_FIX
-    if len(value) > MAX_NAME_CHARS:
-        return f"the reply holds a name over {MAX_NAME_CHARS} characters", _SHAPE_FIX
+    if shape.pattern is not None and not shape.pattern.fullmatch(value):
+        return "", _SHAPE_FIX
+    if shape.limit is not None and len(value) > shape.limit:
+        return f"the reply holds a name over {shape.limit} characters", _SHAPE_FIX
     return None
 
 
