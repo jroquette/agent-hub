@@ -273,6 +273,35 @@ def test_tightens_when_extension_asks_or_denies(
             "exit 2 (last words)",
             id="noisy_stderr",
         ),
+        # AC-9.3: an extra key, a second JSON value, other BaseExceptions (AGH-13)
+        pytest.param(
+            "",
+            "import os\n"
+            'os.write(1, json.dumps({"verdict": "ask", "reason": "r", "extra": 1}).encode())\n'
+            "os._exit(0)",
+            'unexpected answer {"verdict": "ask", "reason": "r", "extra": 1}',
+            id="extra_key",
+        ),
+        pytest.param(
+            "",
+            "import os\n"
+            'os.write(1, json.dumps({"verdict": "deny", "reason": "first value"}).encode()'
+            ' + b"\\n")\nreturn None',
+            "its output is not one JSON value",
+            id="second_json_value",
+        ),
+        pytest.param(
+            "",
+            'raise KeyboardInterrupt("q")',
+            "exit 3 (KeyboardInterrupt: q)",
+            id="keyboard_interrupt",
+        ),
+        pytest.param(
+            'class Halt(BaseException):\n    pass\n\n\nraise Halt("h")',
+            "return None",
+            "exit 3 (Halt: h)",
+            id="base_exception_at_import",
+        ),
     ],
 )
 def test_asks_with_cause_when_extension_misbehaves(
@@ -294,6 +323,21 @@ def test_asks_with_cause_when_extension_misbehaves(
     assert ask[0] == "ask"
     assert ask[1].startswith(f"{base['ask'][1]}; project guard: ")
     assert cause in ask[1].removeprefix(base["ask"][1])
+    assert deny == base["deny"]
+
+
+def test_asks_with_cause_when_extension_lacks_check(hub: Path, guard: Guard) -> None:
+    # AC-9.3 (AGH-13): install() always defines check, so this file is written as is
+    (hub / EXTENSION).write_text("def chek(event, cfg):\n    return None\n", encoding="utf-8")
+    events = base_events(hub)
+
+    allow, ask, deny = guard(hub / HOOKS, list(events.values()))
+    base = base_verdicts(hub, guard)
+
+    cause = "exit 3 (AttributeError: module 'hub_project_guard' has no attribute 'check')"
+    assert allow == ("ask", f"{PREFIX}project guard: {cause}; confirm")
+    assert base["ask"] is not None
+    assert ask == ("ask", f"{base['ask'][1]}; project guard: {cause}; confirm")
     assert deny == base["deny"]
 
 
