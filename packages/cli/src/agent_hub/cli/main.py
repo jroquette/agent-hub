@@ -5,6 +5,7 @@ from typing import Annotated
 
 import typer
 
+from agent_hub.cli.agent_command import PassThroughCommand, agent
 from agent_hub.cli.brief_command import brief
 from agent_hub.cli.collect import collect
 from agent_hub.cli.doctor_command import doctor
@@ -43,3 +44,4 @@ app.command("sync")(sync)
 app.command("doctor")(doctor)
 app.command("worktree")(worktree)
 app.command("brief")(brief)
+app.command("agent", cls=PassThroughCommand, add_help_option=False)(agent)
