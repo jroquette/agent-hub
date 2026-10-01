@@ -4,8 +4,10 @@ A port operation is made of calls. Each call is one ``McpCall``: its kind, the p
 it serves (for error messages), the issue id when there is one, and the arguments the adapter
 chose. Its prompt is fixed text for the kind plus one JSON request line built from those
 arguments, so no issue title, description or tool prefix ever reaches a prompt (D9a). Each
-kind is allowed only the Linear tools of ``TOOLS``; a read kind holds no write tool, a write
-kind holds exactly one.
+kind is allowed the Linear tools of ``TOOLS`` (a read kind no write tool, a write kind exactly
+one) and denied every other tool of the snapshot ``LINEAR_TOOLS`` (``DENIED``). User and
+project allow rules for other MCP servers' tools, and for Linear tools added after the
+snapshot, still apply (AGH-39).
 
 A reply is the model's final text. It must be one line of JSON of the kind's exact shape,
 within the bounds below; anything else raises a one-line ``TrackerError`` naming the operation,

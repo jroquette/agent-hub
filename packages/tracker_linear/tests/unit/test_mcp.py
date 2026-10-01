@@ -133,6 +133,8 @@ class TestReads:
             "-p",
             call.prompt,
             *_DEFAULT_FLAGS,
+            "--permission-mode",
+            "dontAsk",
             "--tools",
             "",
             "--allowedTools",
