@@ -275,3 +275,23 @@ def test_uses_agent_hub_root_when_run_elsewhere(
         str(agent_workspace / "b"),
     ]
     assert (hub / CONTEXT).is_file()
+
+
+def test_exits_one_when_exec_fails(
+    agent_workspace: Path,
+    *,
+    claude_bin: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (agent_workspace / "c").mkdir()  # every repo present: the failure is the only stderr line
+
+    def refuse(_file: str, _argv: list[str]) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(os, "execvp", refuse)
+
+    result = run_agent(agent_workspace / "hub", monkeypatch=monkeypatch)
+
+    assert result.exit_code == 1, result.output
+    assert result.stderr == "hub agent: cannot start claude: Permission denied\n"
+    assert result.stdout == ""

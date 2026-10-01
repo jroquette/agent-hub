@@ -3,10 +3,10 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-# The hub command of the release pinned in hub.json (platform.version), through the ./hub shim:
-# it reads the pin when a recipe runs, never at render time. No uv: exit 127. The pinned release
-# cannot be resolved: exit 1.
-HUB := ./hub
+# The hub command of the release pinned in hub.json (platform.version), through the hub's ./hub
+# shim by its absolute path (a recipe may change folder): it reads the pin when a recipe runs,
+# never at render time. No uv: exit 127. The pinned release cannot be resolved: exit 1.
+HUB := "$(CURDIR)/hub"
 
 # A command-line value single-quoted for the shell, taken raw (make never expands it): $(call hub_quote,NAME).
 hub_quote = '$(subst ','\'',$(value $(1)))'

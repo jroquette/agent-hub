@@ -93,7 +93,7 @@
     "Makefile": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "c411c234d9cb799538a01bf01aab99cfda4f28f6e395586f3f5ea8b552b7d685"
+      "sha256": "13a4b56a23267bb5e9cea12de289d16aa5d628edfafc19f477e085550638d7bb"
     },
     "Makefile.project": {
       "ownership": "seeded"
@@ -139,7 +139,7 @@
     "hub": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "62abf43ced0b8da2bb55daaca6d988ecba3577d05e578689a37c3153cd1f0a23"
+      "sha256": "ecc23972cb725dd36438b19224804a6434376d0992653260c38b1595a4ac400f"
     },
     "hub.json": {
       "ownership": "seeded"

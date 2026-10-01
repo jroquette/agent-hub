@@ -79,7 +79,10 @@ def agent(context: typer.Context) -> None:
         extra=context.args,
     )
     os.environ[ADDITIONAL_DIRECTORIES_VARIABLE] = "1"
-    os.execvp(CLAUDE, argv)  # noqa: S606 - an argv list, no shell: claude replaces this process
+    try:
+        os.execvp(CLAUDE, argv)  # noqa: S606 - an argv list, no shell: claude replaces this process
+    except OSError as error:
+        fail(f"hub agent: cannot start claude: {error.strerror or error}")
 
 
 def _regular_file_bytes(path: Path) -> bytes | None:
