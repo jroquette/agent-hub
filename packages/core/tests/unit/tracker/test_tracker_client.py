@@ -11,6 +11,7 @@ def an_issue_value() -> Issue:
     return Issue(
         id="DEM-1",
         title="Add the collector",
+        description="Collect the events.",
         state="Todo",
         labels=("agent-ready", "demo-api"),
         url="https://linear.app/demo/issue/DEM-1",
@@ -31,6 +32,7 @@ def test_holds_labels_as_tuple_when_given_a_list() -> None:
         {
             "id": "DEM-1",
             "title": "Add the collector",
+            "description": "Collect the events.",
             "state": "Todo",
             "labels": ["agent-ready", "demo-api"],
             "url": "https://linear.app/demo/issue/DEM-1",
@@ -38,6 +40,28 @@ def test_holds_labels_as_tuple_when_given_a_list() -> None:
     )
 
     assert issue.labels == ("agent-ready", "demo-api")
+
+
+def test_requires_description_when_issue_built() -> None:
+    fields = an_issue_value().model_dump(exclude={"description"})
+
+    with pytest.raises(ValidationError, match="description"):
+        Issue.model_validate(fields)
+
+
+def test_keeps_description_byte_for_byte_when_issue_built() -> None:
+    description = "  Collect\r\nthe \x1b[1mevents\x1b[0m \U0001f600\t\n "
+
+    issue = Issue.model_validate(an_issue_value().model_dump() | {"description": description})
+
+    assert issue.description == description
+
+
+def test_forbids_extra_field_when_issue_built() -> None:
+    fields = an_issue_value().model_dump() | {"body": "x"}
+
+    with pytest.raises(ValidationError):
+        Issue.model_validate(fields)
 
 
 def test_exposes_only_d1_operations_when_port_inspected() -> None:
