@@ -10,7 +10,7 @@ import pytest
 
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.testing.fakes import FakeTrackerBackend
-from agent_hub.tracker_linear.claude_process import ClaudeOutput, run_claude
+from agent_hub.tracker_linear.claude_process import ClaudeOutput, ClaudeRunError, run_claude
 from agent_hub.tracker_linear.mcp import McpTrackerClient
 from agent_hub.tracker_linear.mcp_protocol import (
     LINEAR_TOOLS,
@@ -556,6 +556,11 @@ _FAILURES: dict[str, tuple[Any, str, str]] = {
     "cannot-start": (
         PermissionError(13, "Permission denied", "claude"),
         "could not start claude: 'Permission denied'",
+        _TRANSPORT_FIX,
+    ),
+    "failed-while-running": (
+        ClaudeRunError(5, "Input/output error"),
+        "claude failed while running: 'Input/output error'",
         _TRANSPORT_FIX,
     ),
     "non-zero-exit": (

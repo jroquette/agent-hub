@@ -21,6 +21,13 @@ from typing import NamedTuple
 CLAUDE_PROGRAM = "claude"
 
 
+class ClaudeRunError(OSError):
+    """An OS error after ``claude`` started (reading its output): the call may have acted.
+
+    Any other ``OSError`` from ``run_claude`` means ``claude`` never started.
+    """
+
+
 class ClaudeOutput(NamedTuple):
     """What a finished ``claude`` left: its exit code and the bytes of each stream."""
 
@@ -36,8 +43,9 @@ def run_claude(
 
     ``argv[0]`` is looked up on ``env``'s ``PATH`` (an absent or empty one finds nothing) and
     made absolute.
-    Raises ``FileNotFoundError`` when it is not there, and ``TimeoutError`` after
-    ``timeout_s`` seconds, once the child is killed.
+    Raises ``FileNotFoundError`` when it is not there, another ``OSError`` when it cannot start,
+    ``TimeoutError`` after ``timeout_s`` seconds and ``ClaudeRunError`` for an OS error once it
+    started; in the last two cases the child is killed first.
     """
     program = shutil.which(argv[0], path=env.get("PATH") or "")
     if program is None:
@@ -60,6 +68,9 @@ def run_claude(
         except subprocess.TimeoutExpired:
             _kill(child)
             raise TimeoutError(f"{argv[0]} timed out after {timeout_s:g} s") from None
+        except OSError as error:
+            _kill(child)
+            raise ClaudeRunError(error.errno, error.strerror) from error
         except BaseException:
             _kill(child)
             raise
