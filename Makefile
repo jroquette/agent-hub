@@ -38,8 +38,8 @@ test-fast: ## unit and contract tests; starts fresh coverage data
 
 check-fast: format lint typecheck layout lockstep test-fast ## the fast gate, run while working
 
-test-integration: ## integration tests (real SQLite files under tmp_path); appends coverage
-	$(RUN) pytest -m integration $(COV) --cov-append
+test-integration: ## integration tests (real SQLite files under tmp_path), never live ones; appends coverage
+	$(RUN) pytest -m "integration and not live" $(COV) --cov-append
 
 test-e2e: ## e2e tests: hub installed with uv tool install, gate self-test (not in coverage)
 	$(RUN) pytest -m e2e
