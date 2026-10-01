@@ -1,4 +1,6 @@
+import os
 import sqlite3
+import subprocess
 import tomllib
 from collections.abc import Callable
 from contextlib import closing
@@ -156,3 +158,89 @@ def test_exits_zero_when_installed_hub_doctors_fresh_init(
         "0 errors, 0 warnings, 0 infos\n",
         "",
     ), result.stderr
+
+
+def shim_hub(
+    tmp_path: Path, installed_hub: InstalledHub, run: Callable[..., CompletedProcess[str]]
+) -> tuple[Path, dict[str, str]]:
+    """A fresh ``init DEMO_FLAGS`` hub and an environment whose ``uvx`` is the installed hub.
+
+    The fake ``uvx`` checks that ``--from`` names the pinned source of the installed version,
+    written literally, then drops it and execs the installed ``hub`` with the rest.
+    """
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    assert not work_dir.resolve().is_relative_to(REPO_ROOT)
+    # DEMO's one repo next to the hub, empty, so the doctor run stays clean (hub-doctor E3a).
+    (work_dir / "demo-api").mkdir()
+    env = {**installed_hub.env, "HOME": str(tmp_path / "home")}
+    for variable in [*DROPPED_VARIABLES, "XDG_CONFIG_HOME", "AGENT_HUB_ROOT"]:
+        env.pop(variable, None)
+    for variable in [name for name in env if name.startswith("GIT_")]:
+        env.pop(variable)
+    root = work_dir / "t"
+    initialized = run(
+        [str(installed_hub.executable), "init", *DEMO_FLAGS, "--dir", str(root)],
+        env=env,
+        cwd=work_dir,
+    )
+    assert (initialized.returncode, initialized.stderr) == (0, ""), initialized.stderr
+    version = run([str(installed_hub.executable), "--version"], env=env).stdout.strip()
+    source = (
+        f"git+https://github.com/jroquette/agent-hub@v{version}#subdirectory=packages/agent-hub"
+    )
+    fakes = tmp_path / "fakes"
+    fakes.mkdir()
+    uvx = fakes / "uvx"
+    uvx.write_text(
+        "#!/bin/sh\n"
+        f'[ "$1" = --from ] && [ "$2" = "{source}" ] && [ "$3" = hub ] || {{\n'
+        '  echo "fake uvx: unexpected call: $*" >&2\n'
+        "  exit 90\n"
+        "}\n"
+        "shift 3\n"
+        f'exec "{installed_hub.executable}" "$@"\n'
+    )
+    uvx.chmod(0o755)
+    env["PATH"] = os.pathsep.join([str(fakes), env.get("PATH", os.defpath)])
+    return root, env
+
+
+def test_runs_doctor_and_sync_through_shim_when_fresh_init(
+    tmp_path: Path, installed_hub: InstalledHub, run: Callable[..., CompletedProcess[str]]
+) -> None:
+    root, env = shim_hub(tmp_path, installed_hub, run)
+
+    doctor = run([str(root / "hub"), "doctor"], env=env, cwd=root)
+    sync = run([str(root / "hub"), "sync", "--check"], env=env, cwd=root)
+
+    assert (doctor.returncode, doctor.stdout, doctor.stderr) == (
+        0,
+        "0 errors, 0 warnings, 0 infos\n",
+        "",
+    ), doctor.stderr
+    assert sync.returncode == 0, sync.stdout + sync.stderr
+
+
+def test_execs_claude_when_agent_runs(
+    tmp_path: Path, installed_hub: InstalledHub, run: Callable[..., CompletedProcess[str]]
+) -> None:
+    root, env = shim_hub(tmp_path, installed_hub, run)
+    claude = tmp_path / "fakes" / "claude"
+    claude.write_text('#!/bin/sh\necho "$$"\nexit 7\n')
+    claude.chmod(0o755)
+
+    # ./agent → ./hub → uvx → the installed hub → claude, each an exec: one process throughout.
+    process = subprocess.Popen(  # noqa: S603 - the rendered launcher, fixed arguments
+        [str(root / "agent"), "--version"],
+        cwd=root,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    stdout, stderr = process.communicate(timeout=120)
+
+    assert process.returncode == 7, stderr
+    assert stdout == f"{process.pid}\n"
+    assert (root / "brain" / "auto" / "agent-context.md").is_file()
