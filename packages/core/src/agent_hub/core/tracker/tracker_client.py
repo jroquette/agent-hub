@@ -12,13 +12,16 @@ ISSUE_ID_PATTERN = re.compile(r"[A-Z][A-Z0-9]{0,9}-[1-9][0-9]{0,8}")
 class Issue(BaseModel):
     """An issue as the workflow sees it; ``id`` is the tracker's identifier, such as ``DEM-1``.
 
-    ``labels`` holds label names; the repo-routing label is one of them.
+    ``description`` is the issue's Markdown body as the tracker holds it, ``""`` when it has
+    none; it is untrusted text. ``labels`` holds label names; the repo-routing label is one of
+    them.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str
     title: str
+    description: str
     state: str
     labels: tuple[str, ...]
     url: str

@@ -11,6 +11,18 @@ from agent_hub.core.testing.builders import (
 )
 from agent_hub.core.testing.fakes import TrackerState
 
+SEEDED_DEM_1_DESCRIPTION = """Add a synthetic feature.
+
+Steps:
+
+- read the synthetic input
+- write the synthetic output
+
+```sh
+make check
+```
+"""
+
 
 def test_gives_unique_source_id_when_called_twice() -> None:
     assert an_event().source_id != an_event().source_id
@@ -54,6 +66,14 @@ def test_builds_issue_with_url_of_id_when_id_overridden() -> None:
     assert issue.url == "https://linear.app/demo/issue/DEM-42"
 
 
+def test_defaults_description_when_issue_built() -> None:
+    assert an_issue().description == "A synthetic description."
+
+
+def test_applies_description_when_description_overridden() -> None:
+    assert an_issue(description="").description == ""
+
+
 def test_raises_when_issue_override_names_unknown_field() -> None:
     with pytest.raises(ValidationError):
         an_issue(lables=("x",))
@@ -84,18 +104,38 @@ def test_seeds_teams_states_and_labels_when_tracker_backend_built() -> None:
 def test_seeds_issues_in_every_state_when_tracker_backend_built() -> None:
     backend = a_seeded_tracker_backend()
 
-    seeded = {issue_id: (issue.state, issue.labels) for issue_id, issue in backend.issues.items()}
+    seeded = {
+        issue_id: (issue.state, issue.labels, issue.description)
+        for issue_id, issue in backend.issues.items()
+    }
     assert seeded == {
-        "DEM-1": ("Todo", ("agent-ready", "demo-api")),
-        "DEM-2": ("In Progress", ("agent-ready",)),
-        "DEM-3": ("Todo", ("agent-ready", "bug")),
-        "DEM-4": ("Done", ("agent-ready",)),
-        "DEM-5": ("Canceled", ("agent-ready",)),
-        "DEM-6": ("Duplicate", ("agent-ready",)),
-        "DEM-7": ("Todo", ()),
-        "OPS-1": ("Todo", ("agent-ready",)),
+        "DEM-1": ("Todo", ("agent-ready", "demo-api"), SEEDED_DEM_1_DESCRIPTION),
+        "DEM-2": ("In Progress", ("agent-ready",), ""),
+        "DEM-3": ("Todo", ("agent-ready", "bug"), "Fix the synthetic bug in DEM-3."),
+        "DEM-4": ("Done", ("agent-ready",), "Synthetic work already done in DEM-4."),
+        "DEM-5": ("Canceled", ("agent-ready",), "Synthetic work dropped in DEM-5."),
+        "DEM-6": ("Duplicate", ("agent-ready",), "Synthetic duplicate of DEM-5."),
+        "DEM-7": ("Todo", (), "Synthetic issue DEM-7 with no label."),
+        "OPS-1": ("Todo", ("agent-ready",), "Synthetic issue of another team."),
     }
     assert all(issue.id == issue_id for issue_id, issue in backend.issues.items())
+
+
+def test_gives_each_seeded_issue_own_description_when_backend_built() -> None:
+    descriptions = [issue.description for issue in a_seeded_tracker_backend().issues.values()]
+
+    assert len(set(descriptions)) == len(descriptions)
+
+
+def test_seeds_one_empty_and_one_markdown_description_when_backend_built() -> None:
+    issues = a_seeded_tracker_backend().issues
+
+    assert issues["DEM-2"].description == ""
+    dem_1 = issues["DEM-1"].description.splitlines()
+    assert len(dem_1) > 3
+    assert any(line.startswith("- ") for line in dem_1)
+    assert dem_1.count("```") == 1
+    assert any(line.startswith("```") and line != "```" for line in dem_1)
 
 
 def test_returns_fresh_backend_when_tracker_backend_built_twice() -> None:

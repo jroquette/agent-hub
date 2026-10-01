@@ -130,10 +130,11 @@ def _labels_selection(fields: str) -> str:
     return f"labels(first: {MAX_LABELS}) {{ nodes {{ {fields} }} pageInfo {{ hasNextPage }} }}"
 
 
-_ISSUE_FIELDS = f"identifier title url state {{ name }} {_labels_selection('name')}"
+_ISSUE_FIELDS = f"identifier title description url state {{ name }} {_labels_selection('name')}"
 _ISSUE_SHAPE: Shape = {
     "identifier": str,
     "title": str,
+    "description": str,
     "url": str,
     "state": {"name": str},
     "labels": {"nodes": [{"name": str}], "pageInfo": {"hasNextPage": bool}},
@@ -613,6 +614,7 @@ def _issue_from_node(operation: str, issue_id: str | None, node: Mapping[str, An
     return Issue(
         id=node["identifier"],
         title=node["title"],
+        description=node["description"],
         state=node["state"]["name"],
         labels=tuple(label["name"] for label in _label_nodes(operation, issue_id, node)),
         url=node["url"],

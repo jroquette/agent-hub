@@ -272,6 +272,7 @@ class FakeLinearApi:
             "id": _issue_uuid(issue),
             "identifier": issue.id,
             "title": issue.title,
+            "description": issue.description,
             "url": issue.url,
             "team": {"key": team},
             "state": {
