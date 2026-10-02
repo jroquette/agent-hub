@@ -106,6 +106,15 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "scripts/retro_metrics.py": (Kind.GENERIC, Ownership.MANAGED, None),
 }
 
+# AGH-17 D5 (AC-17.6): each module's files, kind `module`, with the module that selects them. Exact:
+# the registry holds no other module entry.
+MODULE_FILES: dict[str, tuple[Kind, Ownership, str | None]] = {
+    "mk/bench.mk": (Kind.MODULE, Ownership.MANAGED, "bench"),
+    "mk/cloud.mk": (Kind.MODULE, Ownership.MANAGED, "cloud"),
+    "mk/contract-sync.mk": (Kind.MODULE, Ownership.MANAGED, "contract-sync"),
+    "mk/marketplace.mk": (Kind.MODULE, Ownership.MANAGED, "marketplace"),
+}
+
 # AC-4.3 (Q-3): the entry points with a `#!` line are executable; modules and every non-`.py`
 # file are not: the six hooks `hooks.json` runs and the three scripts.
 EXECUTABLE_PATHS = frozenset(
@@ -131,7 +140,8 @@ EXECUTABLE_PATHS = frozenset(
 )
 
 # AC-3.12 (spec D5 "Out"): later issues generate these, never AGH-10's registry. AGH-19
-# (AC-4.29) brings `plugin/`, `.claude/` and `scripts/` into scope.
+# (AC-4.29) brings `plugin/`, `.claude/` and `scripts/` into scope; AGH-17 renders the two folders
+# for module entries only (D5): no base entry lies under them.
 OUT_OF_SCOPE_FILES = ("hub.json", "hub.lock")
 OUT_OF_SCOPE_FOLDERS = (".claude-plugin/", "mk/")
 
@@ -314,7 +324,7 @@ def test_uses_every_template_file_once_when_data_folder_walked() -> None:
 def test_matches_design_classification_when_compared() -> None:
     actual = {entry.path: (entry.kind, entry.ownership, entry.module) for entry in REGISTRY}
 
-    assert actual == EXPECTED
+    assert actual == EXPECTED | MODULE_FILES
     assert {entry.path for entry in REGISTRY if entry.executable} == EXECUTABLE_PATHS
 
 
@@ -332,12 +342,21 @@ def test_starts_with_shebang_when_executable_entry_rendered(demo_config: HubConf
 def test_excludes_out_of_scope_paths_when_outputs_listed() -> None:
     for entry in REGISTRY:
         assert entry.path not in OUT_OF_SCOPE_FILES
-        assert not entry.path.startswith(OUT_OF_SCOPE_FOLDERS), entry.path
+        if entry.module is None:
+            assert not entry.path.startswith(OUT_OF_SCOPE_FOLDERS), entry.path
 
 
-def test_has_no_module_entry_when_registry_walked() -> None:
-    assert all(entry.kind is not Kind.MODULE for entry in REGISTRY)
-    assert all(entry.module is None for entry in REGISTRY)
+def test_maps_each_module_to_its_files_when_registry_walked() -> None:
+    modules = {
+        entry.path: (entry.kind, entry.ownership, entry.module)
+        for entry in REGISTRY
+        if entry.kind is Kind.MODULE or entry.module is not None
+    }
+
+    assert modules == MODULE_FILES
+    # A module entry is selected by its module, and only a module entry has one.
+    for entry in REGISTRY:
+        assert (entry.kind is Kind.MODULE) == (entry.module is not None), entry.path
 
 
 def temp_shaped_segments(paths: list[str]) -> list[str]:

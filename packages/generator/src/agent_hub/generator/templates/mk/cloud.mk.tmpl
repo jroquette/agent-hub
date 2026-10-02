@@ -1,0 +1,5 @@
+# Module cloud (hub.json → modules.cloud). Managed by hub sync; the base Makefile includes it.
+.PHONY: cloud-setup
+
+cloud-setup:  ## Cloud session setup: git identity, access to the pinned release, fetch or clone the repos
+	bash scripts/cloud-setup.sh
