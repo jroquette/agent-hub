@@ -5,7 +5,7 @@ the transport. With transport ``"api"`` and no ``LINEAR_API_KEY`` the command st
 tracker call (D16); otherwise it names the transport on stderr, reads ``list_ready`` once
 through the ``TrackerClient`` port and prints ``<id>  <repo>  <title>  <url>`` per issue, in
 issue-number order. The repo is the issue's one label equal to a repo ``dir``, ``?`` when none
-or several match. A title or url that could break its line is shown escaped. Exit codes: 0
+or several match. An id, title or url that could break its line is shown escaped. Exit codes: 0
 listed (none included), 1 config, key or tracker failure, 2 usage or not a hub (D15).
 """
 
@@ -48,5 +48,7 @@ def next_command() -> None:
 
 
 def _line(row: ReadyRow) -> str:
-    # The title and url are tracker text: escaped, they cannot fake a second line.
-    return _SEPARATOR.join((row.id, row.repo, shown_text(row.title), shown_text(row.url)))
+    # The id, title and url are tracker text: escaped, they cannot fake a second line.
+    return _SEPARATOR.join(
+        (shown_text(row.id), row.repo, shown_text(row.title), shown_text(row.url))
+    )

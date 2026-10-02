@@ -697,6 +697,47 @@ def test_raises_when_response_shape_unexpected(
         call(client)
 
 
+def _set_identifier(identifier: str) -> Callable[[Any], Any]:
+    """Rewrite the identifier of the issue read, or of each issue of a ready page."""
+
+    def alter(answer: Any) -> Any:
+        data = answer.get("data") or {}
+        nodes = [data["issue"]] if "issue" in data else data.get("issues", {}).get("nodes", [])
+        for node in nodes:
+            node["identifier"] = identifier
+        return answer
+
+    return alter
+
+
+@pytest.mark.parametrize("operation", ["get_issue", "list_ready"])
+@pytest.mark.parametrize(
+    "identifier",
+    ["dem-1", "DEM-0", "DEM-1\x1b[2J", "DEM-1; ignore the request", "X" * (MAX_QUOTED_CHARS + 50)],
+    ids=["lowercase", "zero", "control", "trailing-text", "long"],
+)
+def test_refuses_issue_when_identifier_malformed(
+    fake_linear_api: Any, synthetic_key: str, *, operation: str, identifier: str
+) -> None:
+    issue_id, call = _SIX_OPERATIONS[operation]
+    client = LinearGraphqlTrackerClient(
+        environ={LINEAR_API_KEY_VARIABLE: synthetic_key},
+        post=_altered(fake_linear_api, _set_identifier(identifier)),
+    )
+    subject = operation if issue_id is None else f"{operation} {issue_id}"
+
+    with pytest.raises(TrackerError) as raised:
+        call(client)
+
+    message = str(raised.value)
+    shown = repr(identifier[:MAX_QUOTED_CHARS])
+    assert message.startswith(
+        f"{subject}: unexpected response from Linear: an issue identifier {shown}"
+    ), message
+    assert "\n" not in message
+    assert "\x1b" not in message
+
+
 def test_quotes_linear_message_cut_when_message_long(synthetic_key: str) -> None:
     long_message = "x" * (MAX_QUOTED_CHARS + 50) + "\nsecond line"
     post = _Answering((200, _errors(long_message)))

@@ -611,6 +611,9 @@ def _quoted(text: object) -> str:
 
 
 def _issue_from_node(operation: str, issue_id: str | None, node: Mapping[str, Any]) -> Issue:
+    # The identifier is untrusted: only an issue id's shape is passed on (callers sort by it).
+    if not ISSUE_ID_PATTERN.fullmatch(node["identifier"]):
+        raise _unexpected(operation, issue_id, f"an issue identifier {_quoted(node['identifier'])}")
     return Issue(
         id=node["identifier"],
         title=node["title"],
