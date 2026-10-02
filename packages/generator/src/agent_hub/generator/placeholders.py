@@ -4,9 +4,10 @@ Keys are the Rendered values of docs/design/project-config.md, whose patterns ma
 unquoted in shell, Make and Markdown text; in YAML a template double-quotes them, because a valid
 value such as ``on``, ``NO`` or ``1.0`` would otherwise parse as another type (brain frontmatter
 lists repo dirs unquoted; its readers load it without type resolution). Plus the platform
-repository and the Makefile's module include lines. ``project.author_name``,
-``repos[].check_fast``, ``repos[].check`` and ``platform.version`` are never keys: shims read
-them at run time, and the author name needs format quoting.
+repository, the Makefile's module include lines and the ``contract-sync`` source and target
+repo dirs (empty while the module is unselected), so its script never reads ``hub.json``.
+``project.author_name``, ``repos[].check_fast``, ``repos[].check`` and ``platform.version`` are
+never keys: shims read them at run time, and the author name needs format quoting.
 """
 
 from typing import Final
@@ -36,7 +37,20 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
         "guard_deny_hosts": _LIST_SEPARATOR.join(config.guard.deny_hosts),
         "platform_repository": PLATFORM_REPOSITORY,
         "module_includes": _module_includes(config),
+        **_contract_sync_repos(config),
     }
+
+
+def _contract_sync_repos(config: HubConfig) -> dict[str, str]:
+    """The validated ``contract-sync`` repo dirs, rendered into its script; empty when unselected.
+
+    ``HubConfig`` checked both against ``repos[].dir`` (a safe segment), so the script uses them
+    as written instead of reading ``hub.json``, which the stdlib readers do not validate.
+    """
+    settings = config.modules.contract_sync
+    if settings is None:
+        return {"contract_sync_source": "", "contract_sync_target": ""}
+    return {"contract_sync_source": settings.source, "contract_sync_target": settings.target}
 
 
 def _module_includes(config: HubConfig) -> str:

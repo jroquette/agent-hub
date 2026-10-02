@@ -113,10 +113,13 @@ MODULE_FILES: dict[str, tuple[Kind, Ownership, str | None]] = {
     "mk/cloud.mk": (Kind.MODULE, Ownership.MANAGED, "cloud"),
     "mk/contract-sync.mk": (Kind.MODULE, Ownership.MANAGED, "contract-sync"),
     "mk/marketplace.mk": (Kind.MODULE, Ownership.MANAGED, "marketplace"),
+    "scripts/contract-sync.sh": (Kind.MODULE, Ownership.MANAGED, "contract-sync"),
 }
+# The module scripts with a `#!` line, executable like the base entry points (D5).
+MODULE_EXECUTABLE_PATHS = frozenset({"scripts/contract-sync.sh"})
 
-# AC-4.3 (Q-3): the entry points with a `#!` line are executable; modules and every non-`.py`
-# file are not: the six hooks `hooks.json` runs and the three scripts.
+# AC-4.3 (Q-3): the base entry points with a `#!` line are executable; every other base file is
+# not: the six hooks `hooks.json` runs and the three scripts. Module scripts are listed apart.
 EXECUTABLE_PATHS = frozenset(
     {
         "agent",
@@ -325,18 +328,30 @@ def test_matches_design_classification_when_compared() -> None:
     actual = {entry.path: (entry.kind, entry.ownership, entry.module) for entry in REGISTRY}
 
     assert actual == EXPECTED | MODULE_FILES
-    assert {entry.path for entry in REGISTRY if entry.executable} == EXECUTABLE_PATHS
+    assert {entry.path for entry in REGISTRY if entry.executable} == (
+        EXECUTABLE_PATHS | MODULE_EXECUTABLE_PATHS
+    )
 
 
-def test_starts_with_shebang_when_executable_entry_rendered(demo_config: HubConfig) -> None:
-    rendered = render_hub(demo_config).files
+@pytest.mark.parametrize(
+    ("config_name", "expected"),
+    [
+        ("demo_config", EXECUTABLE_PATHS),
+        ("all_modules_config", EXECUTABLE_PATHS | MODULE_EXECUTABLE_PATHS),
+    ],
+    ids=["demo", "all-modules"],
+)
+def test_starts_with_shebang_when_executable_entry_rendered(
+    config_name: str, expected: frozenset[str], request: pytest.FixtureRequest
+) -> None:
+    rendered = render_hub(request.getfixturevalue(config_name)).files
 
     executables = [file for file in rendered if file.executable]
 
-    assert {file.path for file in executables} == EXECUTABLE_PATHS
+    assert {file.path for file in executables} == expected
     for file in executables:
         assert file.content.startswith(b"#!"), file.path
-    assert {file.path for file in rendered if file.content.startswith(b"#!")} == EXECUTABLE_PATHS
+    assert {file.path for file in rendered if file.content.startswith(b"#!")} == expected
 
 
 def test_excludes_out_of_scope_paths_when_outputs_listed() -> None:

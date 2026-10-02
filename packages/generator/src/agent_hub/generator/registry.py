@@ -98,6 +98,18 @@ def _module_managed(path: str, template: str, module: str) -> TemplateEntry:
     )
 
 
+def _module_entry_point(path: str, module: str) -> TemplateEntry:
+    """A module script with a `#!` line: managed, executable, from `<path>.tmpl`."""
+    return TemplateEntry(
+        path=path,
+        source=_template(f"{path}.tmpl"),
+        kind=Kind.MODULE,
+        ownership=Ownership.MANAGED,
+        module=module,
+        executable=True,
+    )
+
+
 def _module_makefile(module: str) -> TemplateEntry:
     """``mk/<id>.mk``: the module's make targets, which the base ``Makefile`` includes (D5)."""
     return _module_managed(f"mk/{module}.mk", f"mk/{module}.mk.tmpl", module)
@@ -240,6 +252,8 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
         )
         for name in _BASE_SKILLS
     ),
+    # Module contract-sync: export in the source repo, then import in the target (spec D1).
+    _module_entry_point("scripts/contract-sync.sh", "contract-sync"),
     # The generic scripts the base `mine`/`retro` targets and the `recall` skill run, copied from
     # the hub; they read `hub.json` through the hooks' reader, loaded by path (spec Q-2).
     _entry_point("scripts/mine_transcripts.py"),
