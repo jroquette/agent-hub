@@ -23,7 +23,8 @@ files (``config_lint``; spec AC-11.19, AC-11.20, Q-6). Lines are ``config_lint.t
   of such a path or folder, with ``.ts``, ``.tsx``, ``.js`` or ``.py`` added, for a reference
   of at most ``SEARCHED_SEGMENTS`` segments.
   Nothing out of the hub and no link is followed (D3). ``make`` targets are checked only when
-  ``Makefile`` or ``Makefile.project`` names one (``X :=`` counts, as in the old lint), ``pnpm``
+  ``Makefile``, ``Makefile.project`` or the ``mk/<id>.mk`` of a selected module (plan E13) names
+  one (``X :=`` counts, as in the old lint), ``pnpm``
   scripts only when ``package.json`` is a JSON object with a non-empty ``scripts`` object (E11);
   such a file that is a link or not text is not read.
 - Duplicates: a line normalized as the old lint did (stripped, list markers and digits dropped
@@ -56,7 +57,7 @@ from agent_hub.core.doctor.config_lint import (
     text_lines,
 )
 from agent_hub.core.doctor.finding import Finding, Read, Rule
-from agent_hub.core.doctor.snapshot import DoctorSnapshot, HubFiles, text_of
+from agent_hub.core.doctor.snapshot import DoctorSnapshot, HubFiles, module_makefiles, text_of
 from agent_hub.core.hub_config.doctor_rules import (
     INSTRUCTIONS_DUPLICATES_RULE,
     INSTRUCTIONS_REFS_RULE,
@@ -64,6 +65,7 @@ from agent_hub.core.hub_config.doctor_rules import (
     RULE_MODULES,
     Severity,
 )
+from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.versions import cut_echo
 from agent_hub.core.hub_files.hub_lock import HUB_LOCK_PATH
 from agent_hub.core.hub_files.tree_snapshot import FileEntry
@@ -164,7 +166,8 @@ def _normalized(line: str) -> str | None:
 STALE_FIX: Final = "update the path or remove the line"
 MAKE_FIX: Final = "use an existing target or add it"
 PNPM_FIX: Final = "use an existing script"
-# The managed ``Makefile`` ends with ``-include Makefile.project``: both define targets.
+# The managed ``Makefile`` includes the selected modules' ``mk/<id>.mk`` and ends with
+# ``-include Makefile.project``: all of them define targets.
 MAKEFILES: Final = ("Makefile", "Makefile.project")
 # The deepest reference, in segments, that the name and end search looks for; a deeper one
 # counts only from its folder or the root. The bound keeps that search linear in the hub's paths.
@@ -226,7 +229,7 @@ def _instructions_refs(snapshot: DoctorSnapshot) -> Iterator[Finding]:
     context = _RefContext(
         paths=path_tree(known_paths(hub, config=snapshot.hub_config)),
         searched=PathTrie(),
-        make_targets=_make_targets(hub),
+        make_targets=_make_targets(hub, config=snapshot.hub_config),
         pnpm_scripts=_pnpm_scripts(hub),
         branch_prefix=snapshot.hub_config.project.branch_prefix,
     )
@@ -390,10 +393,10 @@ def _is_placeholder(ref: str) -> bool:
     )
 
 
-def _make_targets(hub: HubFiles) -> frozenset[str]:
-    """The targets of ``Makefile`` and of the ``Makefile.project`` it includes (E31)."""
+def _make_targets(hub: HubFiles, *, config: HubConfig) -> frozenset[str]:
+    """The targets of ``Makefile`` and of the files it includes (E31, plan E13)."""
     targets: set[str] = set()
-    for name in MAKEFILES:
+    for name in (*MAKEFILES, *module_makefiles(config)):
         text = text_of(hub.entries.get(name))
         if text is not None:
             targets.update(_MAKE_TARGET.findall("\n".join(text_lines(text))))

@@ -6,6 +6,7 @@ release that adds rules appends them.
 
 from typing import Final
 
+from agent_hub.core.doctor.bench_rule import BENCH_TASKS
 from agent_hub.core.doctor.brain_leak_rule import BRAIN_LEAK
 from agent_hub.core.doctor.config_rules import CONFIG_SCHEMA, PLATFORM_VERSION
 from agent_hub.core.doctor.features_rule import FEATURES_TRACKER
@@ -43,4 +44,5 @@ REGISTRY: Final[tuple[Rule, ...]] = (
     GUARD_EXTENSION,
     MAKEFILE_OVERRIDE,
     FEATURES_TRACKER,
+    BENCH_TASKS,
 )

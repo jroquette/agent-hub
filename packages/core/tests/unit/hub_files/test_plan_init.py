@@ -66,6 +66,7 @@ CORE_MODULES = (
     "doctor/text_rules.py",
     "doctor/links_rule.py",
     "doctor/brain_leak_rule.py",
+    "doctor/bench_rule.py",
     "tracker/__init__.py",
     "tracker/tracker_client.py",
     "workspace/__init__.py",
@@ -79,6 +80,8 @@ CORE_MODULES = (
     "runner/run_texts.py",
     "runner/run_record.py",
     "runner/report_writes.py",
+    "bench/__init__.py",
+    "bench/bench_cases.py",
 )
 
 # Design decision 4 of the plan, word for word: each refusal names the cause or the way out.

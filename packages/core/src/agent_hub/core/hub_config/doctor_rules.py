@@ -34,6 +34,7 @@ BRAIN_LEAK_RULE: Final = "brain.leak"
 GUARD_EXTENSION_RULE: Final = "hooks.guard-extension"
 MAKEFILE_OVERRIDE_RULE: Final = "makefile.override"
 FEATURES_TRACKER_RULE: Final = "features.tracker"
+BENCH_TASKS_RULE: Final = "bench.tasks"
 
 RULE_IDS: Final = (
     CONFIG_SCHEMA_RULE,
@@ -54,11 +55,11 @@ RULE_IDS: Final = (
     GUARD_EXTENSION_RULE,
     MAKEFILE_OVERRIDE_RULE,
     FEATURES_TRACKER_RULE,
-    "bench.tasks",
+    BENCH_TASKS_RULE,
 )
 
 # The rules a module owns: they run and may be configured only when the module is selected.
-RULE_MODULES: Final = MappingProxyType({"bench.tasks": "bench"})
+RULE_MODULES: Final = MappingProxyType({BENCH_TASKS_RULE: "bench"})
 
 
 class Severity(StrEnum):

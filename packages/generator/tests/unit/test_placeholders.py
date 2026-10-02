@@ -4,7 +4,7 @@ import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
-from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_mapping
 
 # AC-3.9: the Rendered values of project-config.md, the platform repository (erratum E3) and the
@@ -95,14 +95,17 @@ def test_joins_deny_hosts_when_hosts_listed(hosts: list[str], expected: str) -> 
     ("modules", "expected"),
     [
         ({"cloud": {}, "bench": {}}, "include mk/bench.mk\ninclude mk/cloud.mk\n"),
-        ({"contract-sync": {}}, "include mk/contract-sync.mk\n"),
+        (
+            {"contract-sync": {"source": "demo-api", "target": "demo-web"}},
+            "include mk/contract-sync.mk\n",
+        ),
         ({}, ""),
     ],
 )
 def test_lists_sorted_includes_when_modules_selected(
     modules: dict[str, dict[str, object]], expected: str
 ) -> None:
-    config = config_with(modules=modules)
+    config = config_with(modules=modules, repos=[*a_hub_document()["repos"], a_second_repo()])
 
     assert substitution_mapping(config)["module_includes"] == expected
 
