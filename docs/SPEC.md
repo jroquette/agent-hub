@@ -27,7 +27,8 @@ Success for v1 is recreating `loki-trader-hub` through the platform without losi
 **Non-goals (v1)**
 
 - It is not a new agent or an LLM runtime. The platform orchestrates and observes Claude Code (and others later); it does not replace it.
-- It is not multi-user or SaaS. v1 is local-first, for one owner.
+- It is not a hosted multi-tenant service. v1 is local-first: a hub serves a team of developers who share one hub repo, each
+  running the CLI and the hooks on their own machine or cloud session ([Team use and per-repo config](#team-use-and-per-repo-config)).
 - It does not edit the brain on its own. It keeps the current hub's rule: agents propose in `_inbox/`, and the human decides.
 - It does not promise to read the model's "mind". It shows what the transcript records, nothing more.
 
@@ -111,6 +112,25 @@ closes that (AGH-42).
 | Red-chain, Decimal, paper/testnet | Loki domain rules, in its `AGENTS.project.md` | Stays in the project |
 
 Design rule: the generated hub is versioned files in a private GitHub repo, accessible only to the owners, plus the `hub` CLI pinned per hub; its hooks work without the CLI. That way it works in the terminal, in cloud sessions and without layer 2 running.
+
+### Team use and per-repo config
+
+One hub repo serves every developer of a project, so the committed `hub.json` holds only project values: a value that
+belongs to one developer never lives in it. Real projects also mix repos that differ in branch, check time and tracker
+team, so these keys are added. Each is optional and additive under `schema_version: 1` (a hub without it behaves as
+today), and the CLI's model and the hooks' stdlib reader accept it in the same change.
+
+| Key | Meaning | When absent | Issue |
+| --- | --- | --- | --- |
+| `repos[].default_branch` | The repo's default branch: worktree and PR base, push guard | `project.default_branch` | AGH-46 |
+| `repos[].check_fast_timeout` | Seconds the Stop gate gives the repo's `check_fast`, within the gate's total budget; `check_fast` itself becomes optional | The gate's default | AGH-52 |
+| `tracker.teams` | Several tracker team keys, the first being the default; never set together with `tracker.team` | `[tracker.team]` | AGH-56 |
+| `guard.infra.allow`, `guard.infra.prod_markers` | Regexes over infra commands (`aws`, `cdk`, `terraform`, `pulumi`, `kubectl`, `helm`, `sam`, `serverless`): a prod marker denies, an allowed environment passes (deploy, destroy and delete verbs ask), anything else is denied | Today's infra rule, plus `cdk deploy`/`destroy` denied | AGH-45 |
+| Developer identity: `project.author_name`, `author_email`, `branch_prefix` | Become optional. Effective value: the gitignored `hub.local.json`, else the hub repo's `git config user.name`/`user.email` (prefix: the email's local part plus `/`), else `hub.json` | `hub.json`, so single-developer hubs keep working | AGH-65 |
+
+`hub.local.json` may hold only those identity keys and `tracker.transport`; any other key is an error, and nothing in it
+can relax a guard. Commits are authored by the developer running the session, and cloud setup never writes a shared
+identity into a teammate's global git config.
 
 ## Layer 2: control plane and observability
 
@@ -205,7 +225,7 @@ The recommendations are a starting point.
 | --- | --- | --- |
 | Name and where it lives | **Decided:** `agent-hub`, private repo in the personal account `jroquette` | — |
 | Agent scope | Only Claude Code, or several from the start | Only Claude Code in v1, with the canonical event ready for adapters |
-| Where it runs | Local-first or hosted service | Local-first in v1. Hosted only when there is a second user |
+| Where it runs | Local-first or hosted service | Local-first in v1, shared by a team through the hub repo. Hosted only when there is a second organization |
 | Stack | **Decided:** see [ADR 0001](adr/0001-uv-workspace-with-namespace-packages.md), [ADR 0002](adr/0002-lean-hexagonal-architecture.md), [ADR 0003](adr/0003-persistence-sqlalchemy-core-and-alembic.md), [ADR 0004](adr/0004-rest-api-standard.md) and [ADR 0008](adr/0008-cli-as-composition-root.md) | — |
 | Task tracker | **Decided:** a generic core port (`TrackerClient`) with Linear as the first adapter, selected by `tracker.kind` in `hub.json` ([project-config.md](design/project-config.md)): the Linear GraphQL adapter in `tracker_linear`, keyed by the `LINEAR_API_KEY` environment variable, never by `hub.json` ([ADR 0014](adr/0014-tracker-port-linear-graphql.md)); `tracker.transport: "mcp"` selects the Linear MCP adapter instead, short headless `claude -p` calls to the user's Linear MCP server, each allowed the Linear tools it needs and denied every other Linear tool, with hooks off ([ADR 0015](adr/0015-linear-mcp-tracker-transport.md)) | — |
 
