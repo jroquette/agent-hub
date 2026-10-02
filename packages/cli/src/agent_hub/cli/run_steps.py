@@ -10,6 +10,12 @@ git call capped at ``WORKTREE_GIT_TIMEOUT``. Every child runs in the caller's pr
 ``LINEAR_API_KEY`` (D10). A timeout kills the timed-out child alone; its own children are left
 to the caller's group kill (the residual of E6). The session's verdict is a hint: the commits on
 the branch and the command's own gate decide (the old runner's rule).
+
+Residual risk: the implementing session and the gate run code as the user. Without the tokens
+in their environment they can still read what the user's account can, such as gh's stored
+token or the user's global git config, and change it. Only a sandbox closes that (the sandbox
+follow-up, AGH-42); until then the push guard checks the repo-side config right before each
+push.
 """
 
 import json
@@ -208,8 +214,9 @@ class LiveRun:
 
     def _verify(self) -> None:
         self._enter(Stage.VERIFYING)
-        # The gate checks what the PR will hold: the commits, nothing left beside them.
-        if self._git_output("status", "--porcelain").strip():
+        # The gate checks what the PR will hold: the commits, no tracked change beside them
+        # (untracked files never reach the PR; owner decision, 2026-10-02).
+        if self._git_output("status", "--porcelain", "--untracked-files=no").strip():
             raise StageFailure(Stage.VERIFYING, "uncommitted changes in the worktree")
         gate = self.children.gate
         result = self._child(

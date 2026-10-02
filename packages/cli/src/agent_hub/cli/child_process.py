@@ -61,8 +61,9 @@ def run_child(
     the caller's own killer reaches it and what it started, and a timeout kills the child alone.
 
     With ``output_limit``, each stream goes to a temporary file and only its last
-    ``output_limit`` bytes are read back: the memory a chatty child costs is bounded, and a
-    process it leaves behind holds no pipe the read would wait on.
+    ``output_limit`` bytes are read back: the memory a chatty child costs is bounded, though
+    not the disk (the file holds the whole stream until the call ends), and a process it
+    leaves behind holds no pipe the read would wait on.
 
     Raises ``ChildTimedOutError`` after ``timeout`` seconds, and ``OSError`` (for example
     ``FileNotFoundError``) when the tool cannot start.
