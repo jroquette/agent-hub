@@ -19,9 +19,15 @@ import typer
 from agent_hub.cli.command_exits import fail, not_implemented
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
 from agent_hub.cli.hub_root import hub_root_or_exit, main_checkout
-from agent_hub.cli.init_report import shown_path
+from agent_hub.cli.init_report import shown_path, shown_text
+from agent_hub.cli.run_children import RunChildren, RunOptions, would_run_line
+from agent_hub.cli.run_log import new_run_id
+from agent_hub.cli.tracker_client import missing_key_line, resolve_tracker_client, transport_line
+from agent_hub.core.errors import TrackerError
 from agent_hub.core.hub_config.model import HubConfig
-from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN
+from agent_hub.core.runner.report_writes import REVIEW_STATE, call_line, success_writes
+from agent_hub.core.runner.run_texts import pr_body, success_comment
+from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, Issue, TrackerClient
 
 COMMAND: Final = "run"
 DEFAULT_MAX_TURNS: Final = 40
@@ -29,6 +35,8 @@ DEFAULT_BUDGET_USD: Final = 3.0
 DEFAULT_MODEL: Final = "sonnet"
 MODEL_PATTERN: Final = re.compile(r"[A-Za-z0-9._-]{1,64}")
 _PREFIX: Final = f"hub {COMMAND}"
+# What a dry run shows for what only a live run knows.
+DRY_RUN_TEXT: Final = "(dry run)"
 
 
 class RunStart(StrEnum):
@@ -96,7 +104,58 @@ def run(
     hub = _hub_checkout(root)
     config = load_hub_config_or_exit(hub / FILE_LABEL)
     _refuse_usage(context, config, issue=issue, repo=repo)
+    missing = missing_key_line(config, os.environ, command=COMMAND)
+    if missing is not None:
+        fail(missing)
+    typer.echo(transport_line(config), err=True)
+    options = RunOptions(
+        live=live, max_turns=max_turns, budget=budget, model=model, start=start, effort=effort
+    )
+    client = resolve_tracker_client(config, os.environ, hub_root=hub)
+    picked = _read_issue_or_exit(client, issue)
+    children = RunChildren(config=config, hub=hub, repo=repo, issue_id=issue)
+    if not options.live:
+        _print_dry_run(children, picked, options=options, run_id=new_run_id())
+        return
     not_implemented()
+
+
+def _read_issue_or_exit(client: TrackerClient, issue_id: str) -> Issue:
+    # The one read of the run (D6, D8): a failure ends it before anything is created.
+    try:
+        return client.get_issue(issue_id)
+    except TrackerError as error:
+        fail(str(error))
+
+
+def _print_dry_run(
+    children: RunChildren, issue: Issue, *, options: RunOptions, run_id: str
+) -> None:
+    """Every child and tracker write a live run would make, in order; nothing is changed."""
+    worktree = children.worktree
+    typer.echo(children.worktree_line())
+    if options.start == RunStart.IMPLEMENT:
+        typer.echo(would_run_line(children.session_argv(issue, options), cwd=worktree))
+    typer.echo(would_run_line(children.gate_argv(), cwd=worktree))
+    typer.echo(would_run_line(children.push_argv(), cwd=worktree))
+    body = pr_body(
+        issue_id=issue.id,
+        summary=DRY_RUN_TEXT,
+        gate=children.gate,
+        workspace=str(children.workspace),
+    )
+    typer.echo(would_run_line(children.pr_argv(title=issue.id, body=body), cwd=worktree))
+    comment = success_comment(
+        run_id=run_id,
+        pr_url=DRY_RUN_TEXT,
+        summary=DRY_RUN_TEXT,
+        workspace=str(children.workspace),
+    )
+    failed_label = children.config.tracker.failed_label
+    for write in success_writes(
+        issue, review_state=REVIEW_STATE, failed_label=failed_label, comment=comment
+    ):
+        typer.echo(f"would call: {shown_text(call_line(write))}")
 
 
 def _hub_checkout(root: Path) -> Path:
