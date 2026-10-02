@@ -14,6 +14,7 @@ from typing import Final
 
 import typer
 
+from agent_hub.cli.errors import RunLogError
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.runner.run_record import Stage, run_record
 
@@ -56,11 +57,17 @@ class RunLog:
             data=data or {},
         )
         typer.echo(f"[{self.state}] {event}")
-        self._append(RUNS_FOLDER, moment, suffix=".jsonl", line=json.dumps(line))
+        try:
+            self._append(RUNS_FOLDER, moment, suffix=".jsonl", line=json.dumps(line))
+        except OSError as error:
+            raise RunLogError(error) from error
 
     def inbox(self, line: str) -> None:
         """Append the run's line to the inbox file of the day."""
-        self._append(INBOX_FOLDER, now(), suffix=".md", line=line)
+        try:
+            self._append(INBOX_FOLDER, now(), suffix=".md", line=line)
+        except OSError as error:
+            raise RunLogError(error) from error
 
     def _append(self, folder: Path, moment: datetime.datetime, *, suffix: str, line: str) -> None:
         target = self.hub / folder

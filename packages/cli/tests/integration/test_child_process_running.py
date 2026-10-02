@@ -137,3 +137,43 @@ def grandchild_reaped_by_caller(folder: Path) -> Iterator[None]:
     finally:
         with contextlib.suppress(FileNotFoundError, ProcessLookupError, ValueError):
             os.kill(int((folder / "started").read_text()), signal.SIGKILL)
+
+
+OUTPUT_LIMIT = 1024
+LOUD = textwrap.dedent(
+    """
+    import sys
+    sys.stdout.write("a" * (1 << 20) + "END")
+    sys.stderr.write("e" * (1 << 18) + "ERR")
+    """
+)
+
+
+def test_keeps_output_tail_when_limit_set(tmp_path: Path) -> None:
+    result = run_child(
+        [*PYTHON, "-c", LOUD], cwd=tmp_path, env={}, timeout=None, output_limit=OUTPUT_LIMIT
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == b"a" * (OUTPUT_LIMIT - 3) + b"END"
+    assert result.stderr == b"e" * (OUTPUT_LIMIT - 3) + b"ERR"
+
+
+# The child starts the grandchild, then outlives the timeout itself.
+SLEEPING_CHILD = CHILD + f"time.sleep({SLEEP_FOREVER})\n"
+
+
+def test_returns_when_limited_child_times_out_leaving_grandchild(tmp_path: Path) -> None:
+    # The output goes to files, not pipes: the grandchild left alive holds no pipe, so the run
+    # ends at the timeout; the grandchild stays in the caller's group (E6's residual).
+    with grandchild_reaped_by_caller(tmp_path), pytest.raises(ChildTimedOutError):
+        run_child(
+            [*PYTHON, "-c", SLEEPING_CHILD],
+            cwd=tmp_path,
+            env={},
+            timeout=CHILD_TIMEOUT,
+            own_session=False,
+            output_limit=OUTPUT_LIMIT,
+        )
+
+    assert (tmp_path / "group").read_text() == str(os.getpgrp())

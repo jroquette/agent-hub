@@ -1168,6 +1168,7 @@ _FAKE_MAKE = (
     _FAKE_LOG
     + """log("make")
 code = int(os.environ.get("FAKE_MAKE_EXIT", "0"))
+sys.stdout.write("x" * int(os.environ.get("FAKE_MAKE_BYTES", "0")))
 print("synthetic gate output", file=sys.stderr if code else sys.stdout)
 sys.exit(code)
 """

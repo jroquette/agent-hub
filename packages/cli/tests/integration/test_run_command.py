@@ -22,7 +22,7 @@ import pytest
 from click import unstyle
 from typer.testing import Result
 
-from agent_hub.cli import run_command, run_steps
+from agent_hub.cli import run_command, run_log, run_steps
 from agent_hub.cli.errors import ChildTimedOutError
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.runner.session_prompt import IMPLEMENTING_TOOLS
@@ -948,3 +948,131 @@ class TestCleanTree:
         )
         assert run_workspace.calls("claude") == []
         assert run_workspace.calls("make") == []
+
+
+def records(workspace: Any) -> list[dict[str, Any]]:
+    """Every record the runs wrote to the hub's ``.agent-runs`` files, in order."""
+    found = []
+    for path in sorted((workspace.hub / ".agent-runs").glob("*.jsonl")):
+        found += [json.loads(line) for line in path.read_text().splitlines()]
+    return found
+
+
+@pytest.mark.usefixtures("with_key")
+class TestRunLoose:
+    def test_bounds_child_output_when_gate_prints_more_than_cap(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("FAKE_MAKE_EXIT", "2")
+        monkeypatch.setenv("FAKE_MAKE_BYTES", str(1 << 20))
+        limits: list[object] = []
+        real = run_steps.run_child
+
+        def spy(argv: list[str], **options: Any) -> Any:
+            limits.append(options.get("output_limit"))
+            return real(argv, **options)
+
+        monkeypatch.setattr(run_steps, "run_child", spy)
+
+        result = live(run_command, run_workspace.workspace)
+
+        assert result.exit_code == 1
+        assert limits
+        assert all(
+            limit is not None and limit <= run_steps.SESSION_OUTPUT_LIMIT for limit in limits
+        )
+        assert run_steps.CHILD_OUTPUT_LIMIT == 64 * 1024
+        assert run_steps.SESSION_OUTPUT_LIMIT == 1 << 20
+        (failed,) = [
+            record for record in records(run_workspace.workspace) if record["event"] == "failed"
+        ]
+        assert failed["stage"] == "VERIFYING"
+        assert failed["reason"].endswith("synthetic gate output\n")
+        assert len(failed["reason"]) <= 1_500
+
+    def test_fails_stage_when_git_read_fails(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        clone = workspace.ws / "demo-api"
+        worktree = worktree_of(workspace)
+        workspace.git(
+            clone, "worktree", "add", "-q", "-b", "jdoe/dem-1", str(worktree), "origin/trunk"
+        )
+        workspace.git(clone, "update-ref", "-d", "refs/remotes/origin/trunk")
+
+        result = run_command(
+            workspace.hub, "run", "DEM-1", "--repo", "demo-api", "--live", "--from", "verify"
+        )
+
+        assert result.exit_code == 1
+        (comment,) = [body for _, body in run_tracker.backend.comments]
+        assert " failed at IMPLEMENTING. Diagnosis: git log failed: " in comment
+        assert "no commit on the branch" not in comment
+
+    def test_names_pr_and_writes_not_done_when_record_fails_after_pr_opened(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+        real = run_log.RunLog._append
+
+        def failing(self: Any, folder: Any, moment: Any, *, suffix: str, line: str) -> None:
+            if '"event": "pr_open"' in line:
+                raise PermissionError(13, "Permission denied")
+            real(self, folder, moment, suffix=suffix, line=line)
+
+        monkeypatch.setattr(run_log.RunLog, "_append", failing)
+
+        result = live(run_command, run_workspace.workspace)
+
+        assert result.exit_code == 1
+        assert isinstance(result.exception, SystemExit)
+        lines = result.stderr.splitlines()
+        assert "hub run: could not write the run's records: Permission denied" in lines
+        assert f"hub run: the PR is open: {PR_URL}" in lines
+        assert "not done: move_state(DEM-1, In Review)" in lines
+        assert "not done: remove_label(DEM-1, agent-failed)" in lines
+        assert [line for line in lines if line.startswith("not done: comment(DEM-1, Run ")]
+        assert [call[0] for call in run_tracker.calls] == ["get_issue"]
+
+    def test_records_verdict_when_session_finished(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+
+        result = live(run_command, run_workspace.workspace)
+
+        assert result.exit_code == 0, result.output
+        (finished,) = [
+            record
+            for record in records(run_workspace.workspace)
+            if record["event"] == "agent_finished"
+        ]
+        assert finished["verdict"] == {
+            "status": "done",
+            "summary": SUMMARY,
+            "tests": "make check-fast",
+        }
+        assert finished["subtype"] == "success"
