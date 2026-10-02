@@ -1163,6 +1163,16 @@ sys.exit(code)
 )
 
 
+# A git that logs each call (argv, cwd, environment names) and then runs the real git.
+_FAKE_GIT = (
+    _FAKE_LOG
+    + """if "FAKE_RUN_LOGS" in os.environ:  # a fixture's own git call has no log folder
+    log("git")
+os.execv(REAL_GIT, [REAL_GIT, *sys.argv[1:]])
+"""
+)
+
+
 class RunWorkspace:
     """The DEMO workspace for ``hub run``: its fakes' ``bin`` and their call logs."""
 
@@ -1279,3 +1289,12 @@ class RecordingTracker:
 def run_tracker() -> RecordingTracker:
     """A recording tracker over ``tracker_backend_for_run()``."""
     return RecordingTracker(tracker_backend_for_run())
+
+
+@pytest.fixture
+def logged_git(run_workspace: RunWorkspace) -> RunWorkspace:
+    """The run workspace with its ``git`` replaced by one that logs each call, then runs git."""
+    real = os.path.realpath(run_workspace.bin / "git")
+    (run_workspace.bin / "git").unlink()
+    _write_fake(run_workspace.bin, "git", _FAKE_GIT.replace("REAL_GIT", repr(real)))
+    return run_workspace

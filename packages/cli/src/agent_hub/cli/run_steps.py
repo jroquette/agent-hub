@@ -7,8 +7,9 @@ Each stage raises ``StageFailure`` naming itself and the reason; the report then
 the tracker port. The worktree is made in process with ``hub worktree``'s steps (D7, E18), each
 git call capped at ``WORKTREE_GIT_TIMEOUT``. Every child runs in the caller's process group
 (``own_session=False``) with the environments of ``run_children``: none holds
-``LINEAR_API_KEY`` (D10). The session's verdict is a hint: the commits on the branch and the
-command's own gate decide (the old runner's rule).
+``LINEAR_API_KEY`` (D10). A timeout kills the timed-out child alone; its own children are left
+to the caller's group kill (the residual of E6). The session's verdict is a hint: the commits on
+the branch and the command's own gate decide (the old runner's rule).
 """
 
 import os
@@ -24,7 +25,13 @@ from agent_hub.cli.child_process import ChildResult, run_child
 from agent_hub.cli.command_exits import FAILURE
 from agent_hub.cli.errors import ChildTimedOutError, WorktreeError
 from agent_hub.cli.init_report import shown_text
-from agent_hub.cli.run_children import RunChildren, RunOptions, child_env, session_env
+from agent_hub.cli.run_children import (
+    RunChildren,
+    RunOptions,
+    child_env,
+    session_env,
+    untrusted_env,
+)
 from agent_hub.cli.run_log import RunLog
 from agent_hub.cli.run_report import apply_writes
 from agent_hub.cli.worktree_steps import create_worktree, worktree_task
@@ -166,7 +173,7 @@ class LiveRun:
         self._enter(Stage.VERIFYING)
         gate = self.children.gate
         result = self._child(
-            self.children.gate_argv(), env=child_env(self.environ), timeout=GATE_TIMEOUT
+            self.children.gate_argv(), env=untrusted_env(self.environ), timeout=GATE_TIMEOUT
         )
         if result.returncode != 0:
             output = (result.stdout + result.stderr).decode(errors="replace")
@@ -281,11 +288,18 @@ class LiveRun:
         return str(self.children.workspace)
 
     def _git_output(self, *arguments: str) -> str:
-        result = self._child(["git", *arguments], env=child_env(self.environ), timeout=GIT_TIMEOUT)
+        result = self._child(
+            ["git", *arguments], env=untrusted_env(self.environ), timeout=GIT_TIMEOUT
+        )
         return result.stdout.decode(errors="replace")
 
     def _child(self, argv: Sequence[str], *, env: dict[str, str], timeout: float) -> ChildResult:
-        """Run ``argv`` in the worktree, in the caller's group; a problem fails the stage."""
+        """Run ``argv`` in the worktree, in the caller's group; a problem fails the stage.
+
+        In the caller's group (E6), a timeout kills the direct child only: a process it started
+        survives until the caller's own group is killed (Ctrl-C, a supervisor). The run reports
+        the stage as FAILED either way.
+        """
         stage = self.log.state
         name = argv[0]
         program = shutil.which(name, path=env.get("PATH", ""))

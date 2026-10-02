@@ -20,7 +20,13 @@ from agent_hub.cli.command_exits import fail
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
 from agent_hub.cli.hub_root import hub_root_or_exit, main_checkout
 from agent_hub.cli.init_report import shown_path, shown_text
-from agent_hub.cli.run_children import RunChildren, RunOptions, would_run_line
+from agent_hub.cli.run_children import (
+    CHILD_HIDDEN,
+    RunChildren,
+    RunOptions,
+    without,
+    would_run_line,
+)
 from agent_hub.cli.run_log import RunLog, new_run_id
 from agent_hub.cli.run_steps import LiveRun
 from agent_hub.cli.tracker_client import missing_key_line, resolve_tracker_client, transport_line
@@ -183,7 +189,8 @@ def _hub_checkout(root: Path) -> Path:
     if git is None:
         fail(f"{_PREFIX}: git is not on PATH; install git")
     try:
-        return main_checkout(root, git=os.path.abspath(git), environ=os.environ)
+        environ = without(os.environ, CHILD_HIDDEN)
+        return main_checkout(root, git=os.path.abspath(git), environ=environ)
     except OSError as error:
         fail(f"{_PREFIX}: git could not run: {error.strerror or error}")
 
