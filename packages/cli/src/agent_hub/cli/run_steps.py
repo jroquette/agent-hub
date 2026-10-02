@@ -26,17 +26,7 @@ from agent_hub.cli.child_process import ChildResult, run_child
 from agent_hub.cli.command_exits import FAILURE
 from agent_hub.cli.errors import ChildTimedOutError, RunLogError, WorktreeError
 from agent_hub.cli.init_report import shown_text
-from agent_hub.cli.push_guard import (
-    LOCAL,
-    REMOTE_KEYS,
-    REMOTE_URL,
-    WORKTREE,
-    ConfigSnapshot,
-    changed_keys,
-    file_digest,
-    parse_config_list,
-    risky_keys,
-)
+from agent_hub.cli.push_guard import REMOTE_URL, names_github_repo, parse_scoped_list, risky_keys
 from agent_hub.cli.run_children import (
     RunChildren,
     RunOptions,
@@ -88,8 +78,6 @@ CHILD_OUTPUT_LIMIT: Final = 64 * 1024
 SESSION_OUTPUT_LIMIT: Final = 1 << 20
 _URL_SCHEME = "https://"
 _PREFIX = "hub run"
-# The common git dir (its config) and the worktree's own git dir (its config.worktree).
-_GIT_FOLDERS = ("--git-common-dir", "--git-dir")
 
 
 class StageFailure(Exception):  # noqa: N818 - a stage's outcome, read as "the stage failed"
@@ -117,8 +105,6 @@ class LiveRun:
     worktree: Path = field(init=False)
     # The report's writes not made yet; None until the report starts.
     pending: tuple[TrackerWrite, ...] | None = None
-    # The repo-side git config before the session (or, with --from verify, before the gate).
-    config_before: ConfigSnapshot | None = None
 
     def __post_init__(self) -> None:
         self.worktree = self.children.worktree
@@ -172,7 +158,6 @@ class LiveRun:
 
     def _implement(self) -> None:
         self._enter(Stage.IMPLEMENTING)
-        self.config_before = self._config_snapshot()
         if self.options.start == "verify":
             self.log.record("skip_implement", {"reason": "--from verify"})
         else:
@@ -235,7 +220,7 @@ class LiveRun:
 
     def _open_pr(self) -> None:
         self._enter(Stage.PR_OPEN)
-        self._refuse_changed_config()
+        self._refuse_risky_config()
         env = child_env(self.environ)
         pushed = self._child(self.children.push_argv(), env=env, timeout=PUSH_TIMEOUT)
         if pushed.returncode != 0:
@@ -269,47 +254,19 @@ class LiveRun:
         self.pr_url = url
         self.log.record("pr_open", {"url": url})
 
-    def _refuse_changed_config(self) -> None:
-        """No push when the git config the push reads is not what it was (push_guard)."""
-        after = self._config_snapshot()
-        changed = changed_keys(self.config_before, after) if self.config_before else []
-        if changed:
-            reason = f"git config changed during the run ({', '.join(changed)})"
-            raise StageFailure(Stage.PR_OPEN, f"{reason}; the branch was not pushed")
-        if self.options.start != "verify":
-            return
-        held = set(risky_keys(after))
-        main_url = self._git_output(
-            "config", "--local", "--get-all", REMOTE_URL, cwd=self.children.repo_path, accept=(0, 1)
-        )
-        if tuple(main_url.splitlines()) != after.entries.get(("effective", REMOTE_URL)):
-            held.add(REMOTE_URL)
+    def _refuse_risky_config(self) -> None:
+        """No push when the repo's config holds a key a push would act on, or origin is not
+        the repo's GitHub url (push_guard; checked right before every push)."""
+        listed = self._git_output("config", "--list", "--show-scope", "--includes", "-z")
+        held = risky_keys(parse_scoped_list(listed))
         if held:
-            reason = f"git config holds keys a push would use ({', '.join(sorted(held))})"
+            reason = f"git config holds keys a push would use ({', '.join(held)})"
             raise StageFailure(Stage.PR_OPEN, f"{reason}; the branch was not pushed")
-
-    def _config_snapshot(self) -> ConfigSnapshot:
-        """The repo-side config a push reads: local (and worktree) keys, the effective remote
-        urls, and the bytes of the common ``config`` and the worktree's ``config.worktree``."""
-        entries = parse_config_list(
-            self._git_output("config", "--local", "--list", "-z"), scope=LOCAL
-        )
-        if entries.get((LOCAL, "extensions.worktreeconfig"), ("",))[-1].lower() == "true":
-            worktree = self._git_output("config", "--worktree", "--list", "-z")
-            entries |= parse_config_list(worktree, scope=WORKTREE)
-        for key in REMOTE_KEYS:
-            values = self._git_output("config", "--get-all", key, accept=(0, 1))
-            entries[("effective", key)] = tuple(values.splitlines())
-        folders = self._git_output(
-            "rev-parse", "--path-format=absolute", *_GIT_FOLDERS
-        ).splitlines()
-        if len(folders) != len(_GIT_FOLDERS):
-            raise StageFailure(self.log.state, "git rev-parse gave no git folders")
-        files = {
-            "config": file_digest(_read_bytes(Path(folders[0]) / "config")),
-            "config.worktree": file_digest(_read_bytes(Path(folders[1]) / "config.worktree")),
-        }
-        return ConfigSnapshot(entries=entries, files=files)
+        urls = self._git_output("config", "--get-all", REMOTE_URL, accept=(0, 1)).splitlines()
+        github = self.children.github
+        if not names_github_repo(urls, github=github):
+            reason = f"{REMOTE_URL} is not the GitHub url of {github}"
+            raise StageFailure(Stage.PR_OPEN, f"{reason}; the branch was not pushed")
 
     def _open_pr_url(self, env: dict[str, str]) -> str | None:
         """The url of the branch's open PR, from ``gh pr view``; None when there is none."""
@@ -416,13 +373,11 @@ class LiveRun:
     def _workspace(self) -> str:
         return str(self.children.workspace)
 
-    def _git_output(
-        self, *arguments: str, cwd: Path | None = None, accept: tuple[int, ...] = (0,)
-    ) -> str:
-        """git's stdout in the worktree (or ``cwd``), with the untrusted environment; an exit
-        code outside ``accept`` fails the stage."""
+    def _git_output(self, *arguments: str, accept: tuple[int, ...] = (0,)) -> str:
+        """git's stdout in the worktree, with the untrusted environment; an exit code outside
+        ``accept`` fails the stage."""
         result = self._child(
-            ["git", *arguments], env=untrusted_env(self.environ), timeout=GIT_TIMEOUT, cwd=cwd
+            ["git", *arguments], env=untrusted_env(self.environ), timeout=GIT_TIMEOUT
         )
         if result.returncode not in accept:
             reason = f"git {arguments[0]} failed: {_tail(result.stderr).strip()}"
@@ -448,7 +403,6 @@ class LiveRun:
         env: dict[str, str],
         timeout: float,
         output_limit: int = CHILD_OUTPUT_LIMIT,
-        cwd: Path | None = None,
     ) -> ChildResult:
         """Run ``argv`` in the worktree, in the caller's group; a problem fails the stage.
 
@@ -464,7 +418,7 @@ class LiveRun:
         try:
             return run_child(
                 [os.path.abspath(program), *argv[1:]],
-                cwd=cwd or self.worktree,
+                cwd=self.worktree,
                 env=env,
                 timeout=timeout,
                 own_session=False,
@@ -474,13 +428,6 @@ class LiveRun:
             raise StageFailure(stage, f"{name} timed out after {timeout:g} s") from None
         except OSError as error:
             raise StageFailure(stage, f"{name} could not run: {error.strerror or error}") from None
-
-
-def _read_bytes(path: Path) -> bytes | None:
-    try:
-        return path.read_bytes()
-    except FileNotFoundError:
-        return None
 
 
 def _bounded_child(

@@ -1131,17 +1131,24 @@ summary = os.environ.get("FAKE_CLAUDE_SUMMARY", RUN_SUMMARY)
 verdict = {"status": "done", "summary": summary, "tests": "make check-fast"}
 if mode == "hang":
     time.sleep(600)
-if mode in ("done", "prose", "done-dirty", "config-helper", "config-remote"):
+if mode in ("done", "prose", "done-dirty", "config-helper", "config-remote", "config-benign"):
     commit()
 if mode == "config-helper":
     # A session planting a helper the push would run with the GitHub tokens.
     subprocess.run(["git", "config", "credential.helper", "!echo synthetic"], check=True)
 if mode == "config-remote":
-    subprocess.run(["git", "config", "remote.origin.url", "/elsewhere/demo-api.git"], check=True)
+    url = "https://github.com/acme/other.git"
+    subprocess.run(["git", "config", "remote.origin.url", url], check=True)
+if mode == "config-benign":
+    # What husky or a submodule tool would set: no key a push uses.
+    subprocess.run(["git", "config", "core.hooksPath", ".husky"], check=True)
+    subprocess.run(["git", "config", "submodule.x.url", "https://example.com/x.git"], check=True)
 if mode == "done-dirty":
     with open("notes.txt", "w") as file:
         file.write("left behind\\n")
-if mode in ("done", "done-no-commit", "done-dirty", "config-helper", "config-remote"):
+if mode in (
+    "done", "done-no-commit", "done-dirty", "config-helper", "config-remote", "config-benign"
+):
     answer("Done.\\n" + json.dumps(verdict))
 elif mode == "blocked":
     answer("Stopping.\\n" + json.dumps({"status": "blocked", "summary": "needs a plan"}))
@@ -1248,6 +1255,17 @@ def run_workspace(
     _link_tool(bin_dir, "bash", shutil.which("bash"))
     _link_tool(bin_dir, "python3", sys.executable)
     monkeypatch.setenv("PATH", str(bin_dir))
+    # Each clone's origin is the repo's GitHub url, as in a real workspace; the test's global
+    # git config rewrites it to the local bare origin (a global url.*.insteadOf, which the push
+    # guard leaves alone).
+    rewrites = []
+    for repo in WORKSPACE_REPOS:
+        url = f"https://github.com/acme/{repo}.git"
+        demo_workspace.git(demo_workspace.ws / repo, "remote", "set-url", "origin", url)
+        rewrites.append(f'[url "{demo_workspace.origin(repo)}"]\n\tinsteadOf = {url}\n')
+    global_config = tmp_path / "run-gitconfig"
+    global_config.write_text("".join(rewrites))
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
     monkeypatch.setenv("FAKE_RUN_LOGS", str(logs))
     monkeypatch.delenv("CLAUDECODE", raising=False)
     return RunWorkspace(demo_workspace, bin_dir, logs)

@@ -1775,36 +1775,100 @@ class TestProcesses:
         assert (NESTED_NOTE in result.stderr.splitlines()) is live_run
 
 
+RISKY = "git config holds keys a push would use ({}); the branch was not pushed"
+NOT_GITHUB = "remote.origin.url is not the GitHub url of acme/demo-api; the branch was not pushed"
+
+
 @pytest.mark.usefixtures("with_key")
 class TestPushGuard:
-    @pytest.mark.parametrize(
-        ("mode", "key"),
-        [("config-helper", "credential.helper"), ("config-remote", "remote.origin.url")],
-        ids=["helper", "remote"],
-    )
-    def test_refuses_push_when_session_changes_git_config(
+    """Owner decision 2026-10-02: risky keys only, on every run, and origin must be the repo's
+    GitHub url from hub.json."""
+
+    def test_refuses_push_when_session_plants_helper(
         self,
         run_workspace: Workspace,
         run_command: CommandRunner,
         *,
         run_tracker: Any,
         monkeypatch: pytest.MonkeyPatch,
-        mode: str,
-        key: str,
     ) -> None:
         inject(monkeypatch, run_tracker)
-        monkeypatch.setenv("FAKE_CLAUDE_MODE", mode)
+        monkeypatch.setenv("FAKE_CLAUDE_MODE", "config-helper")
 
         result = live(run_command, run_workspace.workspace)
 
         diagnosis = assert_failed_at(result, run_tracker, "PR_OPEN")
-        assert diagnosis == (
-            f"git config changed during the run ({key}); the branch was not pushed"
-        )
+        assert diagnosis == RISKY.format("credential.helper")
         assert "synthetic" not in diagnosis
-        assert "elsewhere" not in diagnosis
         assert_never_pushed(run_workspace)
         assert run_workspace.calls("gh") == []
+
+    @pytest.mark.parametrize(
+        ("key", "value"),
+        [
+            ("credential.helper", "!echo planted"),
+            ("remote.origin.pushurl", "https://github.com/acme/other.git"),
+            ("core.fsmonitor", "./planted"),
+            ("filter.x.clean", "./planted"),
+            ("remote.origin.receivepack", "./planted"),
+        ],
+        ids=["helper", "pushurl", "fsmonitor", "filter", "receivepack"],
+    )
+    def test_refuses_push_when_plant_survives_refused_run(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        key: str,
+        value: str,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        # Left in the clone's shared config by an earlier run's session.
+        workspace.git(workspace.ws / "demo-api", "config", key, value)
+
+        result = live(run_command, workspace)
+
+        diagnosis = assert_failed_at(result, run_tracker, "PR_OPEN")
+        assert diagnosis == RISKY.format(key)
+        assert "planted" not in diagnosis
+        assert_never_pushed(run_workspace)
+        assert run_workspace.calls("gh") == []
+
+    def test_refuses_push_when_origin_names_another_repo(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("FAKE_CLAUDE_MODE", "config-remote")
+
+        result = live(run_command, run_workspace.workspace)
+
+        assert assert_failed_at(result, run_tracker, "PR_OPEN") == NOT_GITHUB
+        assert_never_pushed(run_workspace)
+        assert run_workspace.calls("gh") == []
+
+    def test_pushes_when_session_sets_benign_keys(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("FAKE_CLAUDE_MODE", "config-benign")
+
+        result = live(run_command, run_workspace.workspace)
+
+        assert result.exit_code == 0, result.output
+        assert "agent-failed" not in run_tracker.backend.issues["DEM-1"].labels
 
     def test_refuses_push_when_from_verify_finds_helper(
         self,
@@ -1823,14 +1887,11 @@ class TestPushGuard:
             workspace.hub, "run", "DEM-1", "--repo", "demo-api", "--live", "--from", "verify"
         )
 
-        diagnosis = assert_failed_at(result, run_tracker, "PR_OPEN")
-        assert diagnosis == (
-            "git config holds keys a push would use (credential.helper); the branch was not pushed"
-        )
+        assert assert_failed_at(result, run_tracker, "PR_OPEN") == RISKY.format("credential.helper")
         assert_never_pushed(run_workspace)
         assert run_workspace.calls("gh") == []
 
-    def test_refuses_push_when_from_verify_finds_worktree_remote(
+    def test_refuses_push_when_worktree_scope_names_another_remote(
         self,
         run_workspace: Workspace,
         run_command: CommandRunner,
@@ -1851,8 +1912,5 @@ class TestPushGuard:
             workspace.hub, "run", "DEM-1", "--repo", "demo-api", "--live", "--from", "verify"
         )
 
-        diagnosis = assert_failed_at(result, run_tracker, "PR_OPEN")
-        assert diagnosis == (
-            "git config holds keys a push would use (remote.origin.url); the branch was not pushed"
-        )
+        assert assert_failed_at(result, run_tracker, "PR_OPEN") == NOT_GITHUB
         assert run_workspace.calls("gh") == []
