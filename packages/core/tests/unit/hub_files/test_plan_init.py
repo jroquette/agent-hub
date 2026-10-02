@@ -72,6 +72,13 @@ CORE_MODULES = (
     "workspace/worktree_name.py",
     "workspace/brief_text.py",
     "workspace/agent_launch.py",
+    "runner/__init__.py",
+    "runner/ready_list.py",
+    "runner/session_prompt.py",
+    "runner/verdict.py",
+    "runner/run_texts.py",
+    "runner/run_record.py",
+    "runner/report_writes.py",
 )
 
 # Design decision 4 of the plan, word for word: each refusal names the cause or the way out.

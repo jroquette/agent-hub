@@ -10,9 +10,10 @@ import contextlib
 import os
 import signal
 import subprocess
+import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import NamedTuple
+from typing import IO, NamedTuple
 
 from agent_hub.cli.errors import ChildTimedOutError
 
@@ -51,6 +52,7 @@ def run_child(
     env: Mapping[str, str],
     timeout: float | None,
     own_session: bool | None = None,
+    output_limit: int | None = None,
 ) -> ChildResult:
     """Run ``argv`` in ``cwd`` with exactly ``env``; stdin is empty, both streams are captured.
 
@@ -58,10 +60,19 @@ def run_child(
     and a timeout kills its whole group; without it, the child stays in the caller's group, where
     the caller's own killer reaches it and what it started, and a timeout kills the child alone.
 
+    With ``output_limit``, each stream goes to a temporary file and only its last
+    ``output_limit`` bytes are read back: the memory a chatty child costs is bounded, though
+    not the disk (the file holds the whole stream until the call ends), and a process it
+    leaves behind holds no pipe the read would wait on.
+
     Raises ``ChildTimedOutError`` after ``timeout`` seconds, and ``OSError`` (for example
     ``FileNotFoundError``) when the tool cannot start.
     """
     new_session = timeout is not None if own_session is None else own_session
+    if output_limit is not None:
+        return _run_to_files(
+            argv, cwd=cwd, env=env, timeout=timeout, new_session=new_session, limit=output_limit
+        )
     with subprocess.Popen(  # noqa: S603 - an argv list, never a shell; callers pass the tool
         list(argv),
         cwd=cwd,
@@ -80,6 +91,42 @@ def run_child(
             _kill(child, group=new_session)
             raise
     return ChildResult(returncode=child.returncode, stdout=stdout, stderr=stderr)
+
+
+def _run_to_files(
+    argv: Sequence[str],
+    *,
+    cwd: Path | str,
+    env: Mapping[str, str],
+    timeout: float | None,
+    new_session: bool,
+    limit: int,
+) -> ChildResult:
+    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+        with subprocess.Popen(  # noqa: S603 - an argv list, never a shell; callers pass the tool
+            list(argv),
+            cwd=cwd,
+            env=dict(env),
+            stdin=subprocess.DEVNULL,
+            stdout=stdout,
+            stderr=stderr,
+            start_new_session=new_session,
+        ) as child:
+            try:
+                child.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                _kill(child, group=new_session)
+                raise ChildTimedOutError(program=argv[0], timeout=timeout or 0.0) from None
+            except BaseException:
+                _kill(child, group=new_session)
+                raise
+        return ChildResult(child.returncode, _tail(stdout, limit), _tail(stderr, limit))
+
+
+def _tail(file: IO[bytes], limit: int) -> bytes:
+    size = file.seek(0, os.SEEK_END)
+    file.seek(max(0, size - limit))
+    return file.read()
 
 
 def stream_child(

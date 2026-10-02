@@ -19,3 +19,18 @@ class ChildTimedOutError(CliError):
 
     def __init__(self, *, program: str, timeout: float) -> None:
         super().__init__(f"{program} timed out after {timeout:g} s")
+
+
+class WorktreeError(CliError):
+    """A worktree step failed: a repo not cloned, a git call or a setup script that failed."""
+
+
+class WorktreeUsageError(WorktreeError):
+    """A worktree task's input is refused: its name, its branch or the repo asked for."""
+
+
+class RunLogError(CliError):
+    """A record or the inbox line of ``hub run`` could not be written."""
+
+    def __init__(self, error: OSError) -> None:
+        super().__init__(f"could not write the run's records: {error.strerror or error}")

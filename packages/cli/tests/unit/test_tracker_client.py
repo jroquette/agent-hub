@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_hub.cli.tracker_client import resolve_tracker_client
+from agent_hub.cli.tracker_client import missing_key_line, resolve_tracker_client, transport_line
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing.builders import a_hub_document
@@ -108,7 +108,7 @@ def test_resolves_same_adapter_when_key_present_or_absent(
 
 
 def test_names_only_command_modules_when_sources_scanned() -> None:
-    # The modules that resolve the adapter; next_command.py and run_command.py join them (PR 3).
+    # The modules that resolve the adapter: the two commands and the resolution itself.
     sources = Path(__file__).resolve().parents[2] / "src" / "agent_hub" / "cli"
     assert sources.is_dir(), sources  # an empty scan would pass anywhere
     naming = sorted(
@@ -117,4 +117,39 @@ def test_names_only_command_modules_when_sources_scanned() -> None:
         if "resolve_tracker_client" in module.read_text()
     )
 
-    assert naming == ["tracker_client.py"]
+    assert naming == ["next_command.py", "run_command.py", "tracker_client.py"]
+
+
+MISSING_KEY = (
+    'hub next: LINEAR_API_KEY is not set; export it, or set tracker.transport: "mcp"'
+    " in hub.json to reach Linear through its MCP server with claude -p"
+)
+
+
+@pytest.mark.parametrize("transport", [None, "api"], ids=["absent", "api"])
+@pytest.mark.parametrize("environ", [{}, {"LINEAR_API_KEY": ""}], ids=["unset", "empty"])
+def test_names_key_and_alternative_when_api_key_missing(
+    transport: str | None, environ: dict[str, str]
+) -> None:
+    line = missing_key_line(_config(transport), environ, command="next")
+
+    assert line == MISSING_KEY
+
+
+def test_passes_when_transport_api_and_key_set() -> None:
+    key = "lin" + "_api_" + "x" * 40
+
+    assert missing_key_line(_config("api"), {"LINEAR_API_KEY": key}, command="run") is None
+
+
+@pytest.mark.parametrize("environ", [{}, {"LINEAR_API_KEY": ""}], ids=["unset", "empty"])
+def test_passes_when_transport_mcp_and_key_absent(environ: dict[str, str]) -> None:
+    assert missing_key_line(_config("mcp"), environ, command="next") is None
+
+
+def test_names_transport_when_line_built() -> None:
+    assert transport_line(_config(None)) == 'tracker: Linear API (tracker.transport "api")'
+    assert transport_line(_config("api")) == 'tracker: Linear API (tracker.transport "api")'
+    assert transport_line(_config("mcp")) == (
+        'tracker: Linear MCP via claude -p (tracker.transport "mcp")'
+    )

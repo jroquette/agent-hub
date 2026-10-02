@@ -32,8 +32,11 @@ from typer.testing import CliRunner, Result
 
 from agent_hub.cli.hub_root import HUB_ROOT_VARIABLE
 from agent_hub.cli.main import app
+from agent_hub.core.errors import TrackerError
 from agent_hub.core.json_form import dump_json
-from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.builders import a_hub_document, an_issue
+from agent_hub.core.testing.fakes import FakeTrackerBackend, InMemoryTrackerClient, TrackerState
+from agent_hub.core.tracker.tracker_client import Issue
 
 GIT_TOPLEVEL_ARGS = "rev-parse --show-toplevel"
 # The spec's DEMO_FLAGS: every value given, so git is never called.
@@ -1075,3 +1078,296 @@ def agent_workspace(tmp_path: Path, agent_workspace_template: Path) -> Path:
     (workspace / "a" / "AGENTS.md").write_bytes(b"# a\nRun make check.\n")
     (workspace / "b").mkdir()
     return workspace
+
+
+# hub run's workspace (AGH-27 PR 3): the DEMO workspace with a PATH of fakes. ``claude``, ``gh``
+# and ``make`` are Python scripts behind /bin/sh wrappers that log each call as one JSON line
+# (argv, cwd, the environment's names, never its values, and the process group); ``git`` and
+# ``bash`` are the real ones, linked, and so is the interpreter (``python3``).
+RUN_PR_URL = "https://github.com/acme/demo-api/pull/99"
+RUN_SUMMARY = "Adds the synthetic change."
+RUN_COST_USD = 0.42
+# The environment values a fake may log as they are: none can hold a secret.
+_LOGGED_VALUES = (
+    "OTEL_RESOURCE_ATTRIBUTES",
+    "GIT_CONFIG_COUNT",
+    *(f"GIT_CONFIG_{part}_{index}" for part in ("KEY", "VALUE") for index in range(4)),
+)
+_FAKE_LOG = """import json, os, sys
+def log(tool, **extra):
+    record = {
+        "argv": sys.argv[1:],
+        "cwd": os.getcwd(),
+        "env": sorted(os.environ),
+        "values": {name: os.environ[name] for name in LOGGED if name in os.environ},
+        "pgid": os.getpgid(0),
+        **extra,
+    }
+    with open(os.path.join(os.environ["FAKE_RUN_LOGS"], tool + ".jsonl"), "a") as file:
+        file.write(json.dumps(record) + "\\n")
+""".replace("LOGGED", repr(_LOGGED_VALUES))
+_FAKE_CLAUDE = (
+    _FAKE_LOG
+    + """import subprocess, time
+argv = sys.argv[1:]
+allowed = argv[argv.index("--allowedTools") + 1:] if "--allowedTools" in argv else []
+if "--disallowedTools" in allowed:
+    allowed = allowed[:allowed.index("--disallowedTools")]
+def answer(result, *, is_error=False, cost=RUN_COST):
+    print(json.dumps({"type": "result", "is_error": is_error, "subtype": "success",
+                      "result": result, "total_cost_usd": cost, "num_turns": 3}))
+if any(tool.startswith("mcp__") for tool in allowed):
+    # A tracker call of the MCP adapter: only get_issue is answered, from FAKE_CLAUDE_ISSUE.
+    log("claude", tracker=True)
+    with open(os.environ["FAKE_CLAUDE_ISSUE"]) as file:
+        answer(json.dumps({"issue": json.load(file)}), cost=0.01)
+    sys.exit(0)
+mode = os.environ.get("FAKE_CLAUDE_MODE", "done")
+log("claude", tracker=False, mode=mode)
+def commit():
+    with open("synthetic_change.txt", "a") as file:
+        file.write("change\\n")
+    identity = ["-c", "user.name=Jane Doe", "-c", "user.email=jane@example.com"]
+    subprocess.run(["git", "add", "synthetic_change.txt"], check=True)
+    subprocess.run(["git", *identity, "commit", "-q", "-m", "feat(api): synthetic change (DEM-1)"],
+                   check=True)
+summary = os.environ.get("FAKE_CLAUDE_SUMMARY", RUN_SUMMARY)
+verdict = {"status": "done", "summary": summary, "tests": "make check-fast"}
+if mode == "hang":
+    time.sleep(600)
+if mode in (
+    "done", "prose", "done-dirty", "done-untracked", "config-helper", "config-remote",
+    "config-benign",
+):
+    commit()
+if mode == "config-helper":
+    # A session planting a helper the push would run with the GitHub tokens.
+    subprocess.run(["git", "config", "credential.helper", "!echo synthetic"], check=True)
+if mode == "config-remote":
+    url = "https://github.com/acme/other.git"
+    subprocess.run(["git", "config", "remote.origin.url", url], check=True)
+if mode == "config-benign":
+    # What husky or a submodule tool would set: no key a push uses.
+    subprocess.run(["git", "config", "core.hooksPath", ".husky"], check=True)
+    subprocess.run(["git", "config", "submodule.x.url", "https://example.com/x.git"], check=True)
+if mode == "done-dirty":
+    # A tracked file changed and not committed.
+    with open("README.md", "a") as file:
+        file.write("left behind\\n")
+if mode == "done-untracked":
+    with open("notes.txt", "w") as file:
+        file.write("left behind\\n")
+if mode in (
+    "done", "done-no-commit", "done-dirty", "done-untracked", "config-helper", "config-remote",
+    "config-benign",
+):
+    answer("Done.\\n" + json.dumps(verdict))
+elif mode == "blocked":
+    answer("Stopping.\\n" + json.dumps({"status": "blocked", "summary": "needs a plan"}))
+elif mode == "blocked-text":
+    answer("BLOCKED: the issue has an open question")
+elif mode == "error":
+    answer("ran out of turns", is_error=True)
+elif mode in ("prose", "silent"):
+    answer("I made the change and ran the tests.")
+""".replace("RUN_COST", repr(RUN_COST_USD)).replace("RUN_SUMMARY", repr(RUN_SUMMARY))
+)
+_RUN_FAKE_GH = (
+    _FAKE_LOG
+    + """mode = os.environ.get("FAKE_GH_MODE", "url")
+log("gh", mode=mode)
+if sys.argv[1:3] == ["pr", "view"]:
+    # The branch's PR: open in mode "exists", none otherwise.
+    if mode != "exists":
+        print("no pull requests found for branch", file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps({"url": PR_URL, "state": "OPEN"}))
+    sys.exit(0)
+if mode in ("fail", "exists"):
+    print("gh: a pull request already exists" if mode == "exists" else "gh: synthetic failure",
+          file=sys.stderr)
+    sys.exit(1)
+print("Creating pull request" if mode == "no-url" else PR_URL)
+""".replace("PR_URL", repr(RUN_PR_URL))
+)
+_FAKE_MAKE = (
+    _FAKE_LOG
+    + """import subprocess, time
+log("make")
+if os.environ.get("FAKE_MAKE_GRANDCHILD"):
+    # A process the gate starts and leaves running; its pid is logged.
+    sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    with open(os.path.join(os.environ["FAKE_RUN_LOGS"], "grandchild.pid"), "w") as file:
+        file.write(str(sleeper.pid))
+time.sleep(float(os.environ.get("FAKE_MAKE_SLEEP", "0")))
+code = int(os.environ.get("FAKE_MAKE_EXIT", "0"))
+sys.stdout.write("x" * int(os.environ.get("FAKE_MAKE_BYTES", "0")))
+print("synthetic gate output", file=sys.stderr if code else sys.stdout)
+sys.exit(code)
+"""
+)
+
+
+# A git that logs each call (argv, cwd, environment names) and then runs the real git.
+_FAKE_GIT = (
+    _FAKE_LOG
+    + """if "FAKE_RUN_LOGS" in os.environ:  # a fixture's own git call has no log folder
+    log("git")
+os.execv(REAL_GIT, [REAL_GIT, *sys.argv[1:]])
+"""
+)
+
+
+class RunWorkspace:
+    """The DEMO workspace for ``hub run``: its fakes' ``bin`` and their call logs."""
+
+    def __init__(self, workspace: Any, bin_dir: Path, logs: Path) -> None:
+        self.workspace = workspace
+        self.bin = bin_dir
+        self.logs = logs
+
+    def calls(self, tool: str) -> list[dict[str, Any]]:
+        """The logged calls of ``tool`` (``claude``, ``gh`` or ``make``), in order."""
+        path = self.logs / f"{tool}.jsonl"
+        if not path.exists():
+            return []
+        return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+def _write_fake(bin_dir: Path, name: str, script: str) -> None:
+    source = bin_dir.parent / "fakes" / f"{name}.py"
+    source.parent.mkdir(exist_ok=True)
+    source.write_text(script)
+    wrapper = bin_dir / name
+    wrapper.write_text(f"#!/bin/sh\nexec '{sys.executable}' '{source}' \"$@\"\n")
+    wrapper.chmod(0o755)
+
+
+def _link_tool(bin_dir: Path, name: str, target: str | None) -> None:
+    assert target is not None, f"{name} is needed for a run workspace"
+    (bin_dir / name).symlink_to(os.path.abspath(target))
+
+
+@pytest.fixture
+def run_workspace(
+    demo_workspace: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> RunWorkspace:
+    """``demo_workspace`` with ``PATH`` = only the fakes, ``git``, ``bash`` and ``python3``.
+
+    ``HOME`` stays under ``tmp_path`` (``demo_workspace``); ``CLAUDECODE`` is unset.
+    """
+    bin_dir = tmp_path / "run-bin"
+    bin_dir.mkdir()
+    logs = tmp_path / "run-logs"
+    logs.mkdir()
+    _write_fake(bin_dir, "claude", _FAKE_CLAUDE)
+    _write_fake(bin_dir, "gh", _RUN_FAKE_GH)
+    _write_fake(bin_dir, "make", _FAKE_MAKE)
+    _link_tool(bin_dir, "git", shutil.which("git"))
+    _link_tool(bin_dir, "bash", shutil.which("bash"))
+    _link_tool(bin_dir, "python3", sys.executable)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    # Each clone's origin is the repo's GitHub url, as in a real workspace; the test's global
+    # git config rewrites it to the local bare origin (a global url.*.insteadOf, which the push
+    # guard leaves alone).
+    rewrites = []
+    for repo in WORKSPACE_REPOS:
+        url = f"https://github.com/acme/{repo}.git"
+        demo_workspace.git(demo_workspace.ws / repo, "remote", "set-url", "origin", url)
+        rewrites.append(f'[url "{demo_workspace.origin(repo)}"]\n\tinsteadOf = {url}\n')
+    # Any other GitHub url goes to a folder that does not exist: no test reaches the network.
+    rewrites.append(f'[url "{tmp_path / "no-network"}/"]\n\tinsteadOf = https://github.com/\n')
+    global_config = tmp_path / "run-gitconfig"
+    global_config.write_text("".join(rewrites))
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+    # Only local repos may be reached: git refuses https, ssh and every other transport.
+    monkeypatch.setenv("GIT_ALLOW_PROTOCOL", "file")
+    monkeypatch.setenv("FAKE_RUN_LOGS", str(logs))
+    monkeypatch.delenv("CLAUDECODE", raising=False)
+    return RunWorkspace(demo_workspace, bin_dir, logs)
+
+
+RUN_DESCRIPTION = "Add a synthetic change.\n\n- touch one file\n- keep the gate green\n"
+
+
+def tracker_backend_for_run(*, failed: bool = True) -> FakeTrackerBackend:
+    """DEM-1 open, ``agent-ready`` and ``demo-api`` (and ``agent-failed`` unless ``failed`` is
+    False); the team's states include ``In Review``."""
+    labels = ("agent-ready", "demo-api", *(("agent-failed",) if failed else ()))
+    issue = an_issue(
+        id="DEM-1", title="Synthetic run issue", description=RUN_DESCRIPTION, labels=labels
+    )
+    return FakeTrackerBackend(
+        states={
+            "DEM": (
+                TrackerState(name="Todo", closed=False),
+                TrackerState(name="In Progress", closed=False),
+                TrackerState(name="In Review", closed=False),
+                TrackerState(name="Done", closed=True),
+            )
+        },
+        team_labels={"DEM": ("demo-api", "demo-web")},
+        workspace_labels=("agent-ready", "agent-failed"),
+        issues={issue.id: issue},
+    )
+
+
+class RecordingTracker:
+    """An ``InMemoryTrackerClient`` that records every port call: ``(operation, *arguments)``.
+
+    An operation named in ``fail_on`` is recorded, then raises ``TrackerError`` as an adapter
+    does, changing nothing.
+    """
+
+    def __init__(self, backend: FakeTrackerBackend) -> None:
+        self.backend = backend
+        self._client = InMemoryTrackerClient(backend)
+        self.calls: list[tuple[str, ...]] = []
+        self.fail_on: set[str] = set()
+
+    def _call(self, operation: str, *arguments: str) -> None:
+        self.calls.append((operation, *arguments))
+        if operation in self.fail_on:
+            issue_id = arguments[0] if operation != "list_ready" else None
+            raise TrackerError(
+                operation=operation, issue_id=issue_id, cause="synthetic outage", fix="retry later"
+            )
+
+    def list_ready(self, team: str, label: str) -> list[Issue]:
+        self._call("list_ready", team, label)
+        return self._client.list_ready(team, label)
+
+    def get_issue(self, issue_id: str) -> Issue:
+        self._call("get_issue", issue_id)
+        return self._client.get_issue(issue_id)
+
+    def move_state(self, issue_id: str, state_name: str) -> None:
+        self._call("move_state", issue_id, state_name)
+        self._client.move_state(issue_id, state_name)
+
+    def add_label(self, issue_id: str, name: str) -> None:
+        self._call("add_label", issue_id, name)
+        self._client.add_label(issue_id, name)
+
+    def remove_label(self, issue_id: str, name: str) -> None:
+        self._call("remove_label", issue_id, name)
+        self._client.remove_label(issue_id, name)
+
+    def comment(self, issue_id: str, body: str) -> None:
+        self._call("comment", issue_id, body)
+        self._client.comment(issue_id, body)
+
+
+@pytest.fixture
+def run_tracker() -> RecordingTracker:
+    """A recording tracker over ``tracker_backend_for_run()``."""
+    return RecordingTracker(tracker_backend_for_run())
+
+
+@pytest.fixture
+def logged_git(run_workspace: RunWorkspace) -> RunWorkspace:
+    """The run workspace with its ``git`` replaced by one that logs each call, then runs git."""
+    real = os.path.realpath(run_workspace.bin / "git")
+    (run_workspace.bin / "git").unlink()
+    _write_fake(run_workspace.bin, "git", _FAKE_GIT.replace("REAL_GIT", repr(real)))
+    return run_workspace

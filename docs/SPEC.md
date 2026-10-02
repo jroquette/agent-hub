@@ -66,6 +66,8 @@ hub doctor      # checks rules, links, dead references and instruction size
 hub worktree NAME [--only REPO]   # isolated worktrees for one task (--remove NAME removes them)
 hub brief [--no-network]   # session brief: now, journal, repo/PR/CI state
 hub agent [ARGS…]   # claude with every repo attached (./agent)
+hub next   # the tracker's ready issues, one line each
+hub run ISSUE --repo REPO [--live] [--budget USD] [--from implement|verify] …   # one issue to a PR through the tracker port
 hub collect [FILE|-] [--db PATH]   # ingests canonical events from JSON Lines (stdin when FILE is omitted or -)
 ```
 
@@ -77,6 +79,19 @@ schema before writing. A batch is all or nothing: an invalid line, a conflict, a
 home directory writes nothing and exits 1, with one line per error (naming the input line when there is one); usage
 errors exit 2. On success it prints `appended N, duplicates M`.
 
+`hub next` reads `list_ready` once and prints `<id>  <repo>  <title>  <url>` per issue, oldest first. `hub run` reads
+the issue once (dry run by default: it prints every command and tracker write), then makes the worktree, runs the
+implementing `claude -p` session (no tracker tool: the issue's text is in its prompt), its own gate, the push and
+`gh pr create`, and reports through the port; records go to the hub's `.agent-runs/` and `brain/_inbox/runs/`. Secret
+scope: no child gets `LINEAR_API_KEY`. What may run the session's code (the session, the gate, git's reads of the
+worktree, `worktree add` and the repo's setup script) gets no GitHub token either. The fetch, the push and `gh` are
+the only calls that hold the tokens, each with git's hooks and fsmonitor off (and the push with signing off). Before
+the fetch and before the push, a guard refuses the call when the repo's git config (local or worktree scope) holds a
+key such a call would act on, or when `origin` is not the repo's GitHub url from `hub.json`. Residual risk: the
+session and the gate run as the user, so they can read the user's stored credentials or change the global git config,
+and a process they leave running could change the config between the guard's check and the call; only a sandbox
+closes that (AGH-42).
+
 **What to extract from `loki-trader-hub`**
 
 | Current piece | Becomes on the platform | Generic or module |
@@ -86,7 +101,7 @@ errors exit 2. On success it prints `appended N, duplicates M`.
 | `agent` (launcher with `--add-dir` and appended AGENTS.md files) | Shim for `hub agent`, which reads the repo list | Generic |
 | `scripts/worktree.sh` | `hub worktree`: isolated per-task worktrees, with their own ports and `.env` | Generic, with per-stack hooks |
 | `scripts/brief.py` | `hub brief`: session brief (now, journal, git/PR/CI state) | Generic |
-| `scripts/agent_runner.py` | `hub next` and `hub run` through the tracker port; later the workflow executor reading the workflow as data | Generic |
+| `scripts/agent_runner.py` | `hub next` (the ready issues) and `hub run` (one issue to a PR, dry run by default) through the tracker port; later the workflow executor reading the workflow as data | Generic |
 | `mine_transcripts.py`, `recall_transcripts.py`, `retro_metrics.py` | Stay hub files until Layer 2 ingestion and analysis replace them (Phase 2) | Generic |
 | `bench.py` | `hub bench`: agent configuration benchmark on closed issues | Module |
 | `agent_config_lint.py`, `features_check.py` | `hub doctor` rules, including feature validation | Generic |

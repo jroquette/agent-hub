@@ -1076,7 +1076,10 @@ def test_calls_hub_through_shim_when_recipes_read(demo_config: HubConfig) -> Non
     ]
     assert recipe_lines(makefile, "run-issue")[1:] == [
         "@$(call hub_check_name,run-issue,ISSUE); $(call hub_check_name,run-issue,REPO); \\",
-        "$(HUB) run $(call hub_quote,ISSUE) --repo $(call hub_quote,REPO) $(if $(LIVE),--live)",
+        "$(call hub_check_name,run-issue,BUDGET); $(call hub_check_name,run-issue,FROM); \\",
+        "$(HUB) run $(call hub_quote,ISSUE) --repo $(call hub_quote,REPO) $(if $(LIVE),--live)"
+        " $(if $(value BUDGET),--budget $(call hub_quote,BUDGET))"
+        " $(if $(value FROM),--from $(call hub_quote,FROM))",
     ]
     assert recipe_lines(makefile, "check")[0] == "@$(HUB) doctor"
     assert "@if [ -d tests ]; then python3 -m unittest discover -s tests -q; fi" in (
@@ -1425,6 +1428,10 @@ def test_runs_shim_when_hub_folder_name_needs_quoting(
             ("run-issue", "ISSUE=DEM-1", "REPO=demo-api", "LIVE=1"),
             "hub run DEM-1 --repo demo-api --live",
         ),
+        (
+            ("run-issue", "ISSUE=DEM-1", "REPO=demo-api", "LIVE=1", "BUDGET=2.5", "FROM=verify"),
+            "hub run DEM-1 --repo demo-api --live --budget 2.5 --from verify",
+        ),
         (("check",), "hub doctor"),
     ],
 )
@@ -1601,6 +1608,8 @@ def test_quotes_values_when_variant_yaml_rendered() -> None:
         ("worktree-remove", "NAME=x;echo INJ"),
         ("run-issue", "ISSUE=DEM-1;echo INJ", "REPO=demo-api"),
         ("run-issue", "ISSUE=DEM-1", "REPO=`echo INJ`"),
+        ("run-issue", "ISSUE=DEM-1", "REPO=demo-api", "BUDGET=1;echo INJ"),
+        ("run-issue", "ISSUE=DEM-1", "REPO=demo-api", "FROM=x y;echo INJ"),
     ],
 )
 def test_rejects_name_when_target_given_shell_syntax(
@@ -2175,6 +2184,8 @@ RUN_TIME_BRAIN_PATHS = {
     # Written by `hub agent`, which the launcher runs.
     "brain/auto/agent-context.md": "agent",
     "brain/learnings/gotchas/": "plugin/hub-workflow/skills/learn/SKILL.md",
+    # Written by `hub run`, which the run-issue target runs (AGH-27).
+    "brain/_inbox/runs/": "Makefile",
 }
 
 
@@ -2357,3 +2368,45 @@ def test_calls_no_io_when_rendering_modules_scanned() -> None:
     ]
 
     assert hits == []
+
+
+def test_passes_budget_and_from_when_run_issue_given(
+    variant_config: HubConfig,
+    rendered_tree: Callable[[RenderedHub], Path],
+    fake_uv_bin: Path,
+) -> None:
+    root = a_hub_tree(variant_config, rendered_tree)
+    hub = f"'{root}/hub'"
+
+    issue = run_make(
+        root,
+        fake_uv_bin,
+        "-n",
+        "run-issue",
+        "ISSUE=DEM-1",
+        "REPO=demo-api",
+        "LIVE=1",
+        "BUDGET=2",
+        "FROM=verify",
+    )
+    ready = run_make(root, fake_uv_bin, "-n", "next")
+
+    assert issue.returncode == 0, issue.stderr
+    assert (
+        f"{hub} run 'DEM-1' --repo 'demo-api' --live --budget '2' --from 'verify'"
+        in issue.stdout.splitlines()
+    )
+    assert ready.returncode == 0, ready.stderr
+    assert ready.stdout.splitlines() == [f"{hub} next"]
+    assert logged_calls(fake_uv_bin) == []
+
+
+RUN_OUTPUTS = ("brain/_inbox/runs/", "artifacts/", ".agent-runs/")
+
+
+def test_ignores_run_outputs_when_gitignore_rendered(demo_config: HubConfig) -> None:
+    gitignore = next(file for file in render_hub(demo_config).files if file.path == ".gitignore")
+    lines = gitignore.content.decode("utf-8").splitlines()
+
+    assert set(RUN_OUTPUTS) <= set(lines)
+    assert len(lines) == len(set(lines))
