@@ -2,10 +2,13 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 import typer
 
+from agent_hub.cli import hub_root
+from agent_hub.cli.child_process import ChildResult, run_child
 from agent_hub.cli.hub_root import (
     HUB_ROOT_VARIABLE,
     NOT_A_HUB_EXIT,
@@ -151,3 +154,22 @@ def test_keeps_root_when_hub_inside_another_repo(tmp_path: Path) -> None:
     hub = a_hub(outer / "nested-hub")
 
     assert main_checkout(hub, git=found_git(), environ=environ) == hub
+
+
+def test_keeps_caller_group_when_main_checkout_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E6: the read stays in the caller's process group, said explicitly, not by default."""
+    environ = git_environ(tmp_path)
+    hub = a_git_hub(tmp_path / "hub", environ)
+    calls: list[dict[str, Any]] = []
+
+    def spy(argv: list[str], **options: Any) -> ChildResult:
+        calls.append(options)
+        return run_child(argv, **options)
+
+    monkeypatch.setattr(hub_root, "run_child", spy)
+
+    assert main_checkout(hub, git=found_git(), environ=environ) == hub.resolve()
+    assert [call.get("own_session", "unset") for call in calls] == [False]
+    assert calls[0]["timeout"] is None

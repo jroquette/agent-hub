@@ -19,3 +19,11 @@ class ChildTimedOutError(CliError):
 
     def __init__(self, *, program: str, timeout: float) -> None:
         super().__init__(f"{program} timed out after {timeout:g} s")
+
+
+class WorktreeError(CliError):
+    """A worktree step failed: a repo not cloned, a git call or a setup script that failed."""
+
+
+class WorktreeUsageError(WorktreeError):
+    """A worktree task's input is refused: its name, its branch or the repo asked for."""
