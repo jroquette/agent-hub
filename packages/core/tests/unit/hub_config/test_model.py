@@ -1,5 +1,7 @@
 import json
 import posixpath
+import re
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -315,6 +317,56 @@ def test_raises_key_error_when_repo_dir_unknown() -> None:
 
     with pytest.raises(KeyError, match="demo-web"):
         config.default_branch_for("demo-web")
+
+
+PROJECT_BRANCH_READ = re.compile(
+    r"\bproject\.default_branch|project_default_branch|\bcfg\.default_branch"
+)
+
+TEMPLATES = "generator/src/agent_hub/generator/templates"
+
+# Lines per file that may read the project branch; a per-repo use calls default_branch_for.
+PROJECT_BRANCH_READERS = {
+    # the helper's fallback and the schema description of repos[].default_branch
+    "core/src/agent_hub/core/hub_config/model.py": 2,
+    # the worktree base, for every repo
+    "cli/src/agent_hub/cli/worktree_steps.py": 1,
+    # the run's base and the PR's --base
+    "cli/src/agent_hub/cli/run_children.py": 2,
+    # the brief's base and gh branch, for every checkout
+    "cli/src/agent_hub/cli/brief_command.py": 2,
+    # project_default_branch for ci.yml and AGENTS.md
+    "generator/src/agent_hub/generator/placeholders.py": 1,
+    # the CI trigger branches
+    f"{TEMPLATES}/github/workflows/ci.yml.tmpl": 2,
+    # the worktree base and the push rule
+    f"{TEMPLATES}/AGENTS.md.tmpl": 2,
+    # CI runs for every repo and the hub log
+    f"{TEMPLATES}/scripts/retro_metrics.py.tmpl": 2,
+    # the protected branch and the deny reason
+    f"{TEMPLATES}/plugin/hub-workflow/hooks/guard.py.tmpl": 2,
+    # Config.default_branch
+    f"{TEMPLATES}/plugin/hub-workflow/hooks/hubhooks.py.tmpl": 1,
+}
+
+
+def test_reads_project_branch_only_in_allowed_files_when_sources_scanned() -> None:
+    packages = Path(__file__).resolve().parents[4]
+    assert packages.is_dir(), packages  # an empty scan would pass anywhere
+    hits = [
+        (source.relative_to(packages).as_posix(), number, line.strip())
+        for source in sorted(packages.glob("*/src/**/*"))
+        if source.is_file() and source.suffix in {".py", ".tmpl"}
+        for number, line in enumerate(source.read_text(encoding="utf-8").splitlines(), 1)
+        if PROJECT_BRANCH_READ.search(line)
+    ]
+    counts: dict[str, int] = {}
+    for name, _number, _line in hits:
+        counts[name] = counts.get(name, 0) + 1
+
+    assert counts == PROJECT_BRANCH_READERS, "\n".join(
+        f"{name}:{number}: {line}" for name, number, line in hits
+    )
 
 
 @pytest.mark.parametrize("host", ["api.example.com", "localhost", "a-b.example.com", "x1"])
