@@ -22,6 +22,10 @@ import pytest
 from click import unstyle
 from typer.testing import Result
 
+from agent_hub.cli import bench_command
+from agent_hub.cli.command_exits import NOT_IMPLEMENTED, NOT_IMPLEMENTED_EXIT_CODE
+from agent_hub.core.bench.bench_cases import MAX_CASES
+
 pytestmark = pytest.mark.disable_socket
 
 # The conftest's in-process run (tests cannot import a conftest in importlib mode).
@@ -95,8 +99,14 @@ def assert_refused(result: Result, message: str) -> None:
 BUDGET = "Invalid value for '--budget': use a number of USD above 0, at most 1000"
 PER_RUN = "Invalid value for '--per-run': use a number of USD above 0"
 ARMS = "Invalid value for '--arms': use with, without or both, comma-separated, each once"
-CASES = "Invalid value for '--cases': use case ids (1 to 64 of A-Z a-z 0-9 . _ -), comma-separated"
-LABEL = "Invalid value for '--label': use 1 to 64 of A-Z a-z 0-9 . _ -"
+CASES = (
+    "Invalid value for '--cases':"
+    " use case ids (1 to 64 of A-Z a-z 0-9 . _ -), comma-separated, each once"
+)
+LABEL = (
+    "Invalid value for '--label':"
+    " use 1 to 64 of A-Z a-z 0-9 . _ -, not . or .., not starting with -"
+)
 
 
 class TestUsage:
@@ -175,6 +185,12 @@ class TestUsage:
             (("--label", "../x"), LABEL),
             (("--label", ""), LABEL),
             (("--label", "x" * 65), LABEL),
+            (("--cases", "T1,T2,T1"), CASES),
+            (("--label", "."), LABEL),
+            (("--label", ".."), LABEL),
+            (("--label=-x",), LABEL),
+            (("--per-run", "15.01"), "--per-run 15.01 is above --budget 15.0"),
+            (("--budget", "1", "--per-run", "2"), "--per-run 2.0 is above --budget 1.0"),
         ],
         ids=[
             "validate-runs",
@@ -200,6 +216,12 @@ class TestUsage:
             "label-path",
             "label-empty",
             "label-long",
+            "cases-repeated",
+            "label-dot",
+            "label-dot-dot",
+            "label-dash",
+            "per-run-over-default-budget",
+            "per-run-over-budget",
         ],
     )
     def test_refuses_option_when_value_invalid(
@@ -215,6 +237,30 @@ class TestUsage:
 
         assert_refused(result, message)
         assert spy.calls == []
+
+    def test_accepts_options_when_values_at_bounds(
+        self, bench_hub: Path, run_command: CommandRunner, spy: Spy
+    ) -> None:
+        cases = ",".join(f"T{n}" for n in range(MAX_CASES))
+
+        result = run_command(
+            bench_hub,
+            "bench",
+            *("--runs", str(bench_command.MAX_RUNS)),
+            *("--parallel", str(bench_command.MAX_PARALLEL)),
+            *("--budget", str(bench_command.MAX_BUDGET_USD)),
+            *("--per-run", str(bench_command.MAX_BUDGET_USD)),
+            *("--label", "x" * 64),
+            *("--cases", cases),
+        )
+
+        # Past every check: the command reaches the stub the next tasks replace.
+        assert result.exit_code == NOT_IMPLEMENTED_EXIT_CODE, result.output
+        assert result.stdout == ""
+        assert result.stderr == f"{NOT_IMPLEMENTED}\n"
+        assert spy.calls == []
+        assert (bench_command.MAX_RUNS, bench_command.MAX_PARALLEL) == (100, 16)
+        assert (bench_command.MAX_BUDGET_USD, MAX_CASES) == (1000, 200)
 
     @pytest.mark.parametrize("effort", ["huge", "HIGH", " low"])
     def test_refuses_effort_when_variable_unknown(
@@ -266,7 +312,9 @@ def run_tool(name: str, *args: str, cwd: Path) -> subprocess.CompletedProcess[st
 
 
 class TestBenchWorkspace:
-    def test_runs_fakes_from_path_when_workspace_built(self, bench_workspace: Workspace) -> None:
+    def test_runs_fakes_from_path_when_workspace_built(
+        self, bench_workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         workspace = bench_workspace
         reply = workspace.result(0.5, 7, "success")
         workspace.answer(
@@ -279,13 +327,11 @@ class TestBenchWorkspace:
             ]
         )
         attributes = "repo=api,bench_case=T1,bench_arm=with"
-        os.environ["OTEL_RESOURCE_ATTRIBUTES"] = attributes
-        try:
-            wrote = run_tool("claude", "-p", "Add the fix", cwd=workspace.api)
-            os.environ["OTEL_RESOURCE_ATTRIBUTES"] = attributes + "out"
-            replied = run_tool("claude", "-p", "x", cwd=workspace.hub)
-        finally:
-            del os.environ["OTEL_RESOURCE_ATTRIBUTES"]
+        monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", attributes)
+        wrote = run_tool("claude", "-p", "Add the fix", cwd=workspace.api)
+        monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", attributes + "out")
+        replied = run_tool("claude", "-p", "x", cwd=workspace.hub)
+        monkeypatch.delenv("OTEL_RESOURCE_ATTRIBUTES")
         unmatched = run_tool("claude", "-p", "y", cwd=workspace.hub)
 
         assert (wrote.returncode, wrote.stdout) == (0, "")
