@@ -77,6 +77,8 @@ CORE_MODULES = (
     "runner/session_prompt.py",
     "runner/verdict.py",
     "runner/run_texts.py",
+    "runner/run_record.py",
+    "runner/report_writes.py",
 )
 
 # Design decision 4 of the plan, word for word: each refusal names the cause or the way out.
