@@ -84,11 +84,13 @@ the issue once (dry run by default: it prints every command and tracker write), 
 implementing `claude -p` session (no tracker tool: the issue's text is in its prompt), its own gate, the push and
 `gh pr create`, and reports through the port; records go to the hub's `.agent-runs/` and `brain/_inbox/runs/`. Secret
 scope: no child gets `LINEAR_API_KEY`. What may run the session's code (the session, the gate, git's reads of the
-worktree, `worktree add` and the repo's setup script) gets no GitHub token either; only the fetch, the push and `gh`
-keep them, the push and `gh` with hooks, fsmonitor and signing forced off. Before the fetch and before the push, a
-guard refuses the call when the repo's git config (local or worktree scope) holds a key such a call would act on, or
-when `origin` is not the repo's GitHub url from `hub.json`. Residual risk: the session and the gate run as the user,
-so they can read the user's stored credentials or change the global git config; only a sandbox closes that (AGH-42).
+worktree, `worktree add` and the repo's setup script) gets no GitHub token either. The fetch, the push and `gh` are
+the only calls that hold the tokens, each with git's hooks and fsmonitor off (and the push with signing off). Before
+the fetch and before the push, a guard refuses the call when the repo's git config (local or worktree scope) holds a
+key such a call would act on, or when `origin` is not the repo's GitHub url from `hub.json`. Residual risk: the
+session and the gate run as the user, so they can read the user's stored credentials or change the global git config,
+and a process they leave running could change the config between the guard's check and the call; only a sandbox
+closes that (AGH-42).
 
 **What to extract from `loki-trader-hub`**
 

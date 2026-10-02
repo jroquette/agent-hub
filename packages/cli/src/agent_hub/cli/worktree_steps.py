@@ -67,9 +67,10 @@ class WorktreeTask:
     git_timeout: float | None
     runner: ChildRunner
     # The fetch's environment (it may need the network's credentials) and options given to
-    # git before "worktree add"; hub worktree uses ``env`` and none.
+    # git before "fetch" and before "worktree add"; hub worktree uses ``env`` and none.
     fetch_env: dict[str, str]
     add_options: tuple[str, ...]
+    fetch_options: tuple[str, ...]
 
 
 def worktree_task(
@@ -84,13 +85,15 @@ def worktree_task(
     runner: ChildRunner = run_child,
     fetch_env: dict[str, str] | None = None,
     add_options: tuple[str, ...] = (),
+    fetch_options: tuple[str, ...] = (),
 ) -> WorktreeTask:
     """The task named ``name`` in the hub's repos (or ``only``), its inputs checked.
 
     ``runner`` runs every git call of the task; ``env`` is the environment of every git call
     and script but the fetch, which gets ``fetch_env`` (by default ``env``); ``add_options``
-    go before ``worktree add``. Raises ``WorktreeUsageError`` for a name not shaped like the
-    issue, a branch git refuses or an unknown ``only``.
+    go before ``worktree add`` and ``fetch_options`` before ``fetch``. Raises
+    ``WorktreeUsageError`` for a name not shaped like the issue, a branch git refuses or an
+    unknown ``only``.
     """
     team = config.tracker.team
     problem = worktree_name_problem(name, team=team)
@@ -127,6 +130,7 @@ def worktree_task(
         runner=runner,
         fetch_env=env if fetch_env is None else fetch_env,
         add_options=add_options,
+        fetch_options=fetch_options,
     )
 
 
@@ -145,7 +149,7 @@ def create_worktree(task: WorktreeTask, repo: str, *, echo: Echo) -> Path:
     _git_or_raise(
         task,
         checkout,
-        ("fetch", "-q", "origin"),
+        (*task.fetch_options, "fetch", "-q", "origin"),
         repo=repo,
         step="could not fetch origin",
         env=task.fetch_env,
@@ -254,7 +258,7 @@ def _git_or_raise(
 ) -> None:
     result = _git(task, folder, arguments, repo=repo, env=env)
     if result.returncode != 0:
-        hint = _FETCH_HINT if arguments[0] == "fetch" else ""
+        hint = _FETCH_HINT if "fetch" in arguments else ""
         raise WorktreeError(f"{repo}: {step}: {_first_line(result)}{hint}")
 
 
