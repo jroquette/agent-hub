@@ -83,6 +83,7 @@ CORE_MODULES = (
     "bench/__init__.py",
     "bench/bench_cases.py",
     "bench/bench_plan.py",
+    "bench/bench_session.py",
 )
 
 # Design decision 4 of the plan, word for word: each refusal names the cause or the way out.
