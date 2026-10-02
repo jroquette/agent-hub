@@ -2,12 +2,19 @@
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import assert_never
+from typing import Final, assert_never
 
+from agent_hub.cli.hub_config_reader import FILE_LABEL
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.tracker.tracker_client import TrackerClient
 from agent_hub.tracker_linear.graphql import LinearGraphqlTrackerClient
 from agent_hub.tracker_linear.mcp import McpTrackerClient
+
+KEY_VARIABLE: Final = "LINEAR_API_KEY"
+_TRANSPORT_TEXTS: Final = {
+    "api": 'tracker: Linear API (tracker.transport "api")',
+    "mcp": 'tracker: Linear MCP via claude -p (tracker.transport "mcp")',
+}
 
 
 def resolve_tracker_client(
@@ -27,3 +34,22 @@ def resolve_tracker_client(
             return LinearGraphqlTrackerClient(environ=environ)
         case unreachable:
             assert_never(unreachable)
+
+
+def missing_key_line(config: HubConfig, environ: Mapping[str, str], *, command: str) -> str | None:
+    """The line ``hub <command>`` stops on when transport ``api`` has no key; None otherwise.
+
+    An empty ``LINEAR_API_KEY`` counts as absent. Only its presence is read, never shown.
+    """
+    if config.tracker.transport != "api" or environ.get(KEY_VARIABLE):
+        return None
+    return (
+        f"hub {command}: {KEY_VARIABLE} is not set; export it, or set"
+        f' tracker.transport: "mcp" in {FILE_LABEL} to reach Linear through its MCP server'
+        " with claude -p"
+    )
+
+
+def transport_line(config: HubConfig) -> str:
+    """The one stderr line naming the transport a command uses (ADR 0015)."""
+    return _TRANSPORT_TEXTS[config.tracker.transport]

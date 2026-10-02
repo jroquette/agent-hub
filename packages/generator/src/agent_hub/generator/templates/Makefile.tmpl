@@ -34,10 +34,12 @@ worktree-remove:  ## Remove a task's worktrees (usage: make worktree-remove NAME
 next:  ## List the tracker's ready issues
 	@$(HUB) next
 
-run-issue:  ## Agent runner, dry run by default (usage: make run-issue ISSUE=<TEAM>-N REPO=<repo dir in hub.json> [LIVE=1])
+# hub run records each live run in .agent-runs/<date>.jsonl and brain/_inbox/runs/<date>.md.
+run-issue:  ## One issue to a PR, dry run by default (usage: make run-issue ISSUE=<TEAM>-N REPO=<repo dir in hub.json> [LIVE=1] [BUDGET=<usd>] [FROM=implement|verify])
 	@test -n $(call hub_quote,ISSUE) -a -n $(call hub_quote,REPO) || (echo "ERROR run-issue: ISSUE and REPO are required. Fix: make run-issue ISSUE=<TEAM>-N REPO=<repo dir in hub.json>"; exit 1)
 	@$(call hub_check_name,run-issue,ISSUE); $(call hub_check_name,run-issue,REPO); \
-	$(HUB) run $(call hub_quote,ISSUE) --repo $(call hub_quote,REPO) $(if $(LIVE),--live)
+	$(call hub_check_name,run-issue,BUDGET); $(call hub_check_name,run-issue,FROM); \
+	$(HUB) run $(call hub_quote,ISSUE) --repo $(call hub_quote,REPO) $(if $(LIVE),--live) $(if $(value BUDGET),--budget $(call hub_quote,BUDGET)) $(if $(value FROM),--from $(call hub_quote,FROM))
 
 usage:  ## Claude Code cost from local transcripts (ccusage), last 7 days by day and model
 	npx -y ccusage@20.0.24 daily --since $$(date -v-7d +%Y%m%d 2>/dev/null || date -d '7 days ago' +%Y%m%d) --breakdown
