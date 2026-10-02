@@ -17,7 +17,7 @@ import json
 import os
 import shutil
 import signal
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
@@ -33,6 +33,7 @@ from agent_hub.cli.sync_report import CONFLICT_WAY_OUT
 from agent_hub.core.hub_files.hub_lock import ADOPT_POINTER
 from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
 from agent_hub.core.json_form import dump_json
+from agent_hub.core.testing.builders import a_second_repo
 
 # The conftest's tree digest and in-process sync (tests cannot import a conftest in importlib
 # mode).
@@ -217,34 +218,84 @@ def test_points_to_adopt_when_lock_absent(
     assert tree_digest(demo_hub) == before
 
 
-@pytest.mark.parametrize("pinned", ["running", "other"])
-def test_refuses_modules_when_config_selects_them(
-    tmp_path: Path,
-    demo_document: dict[str, Any],
-    run_sync: SyncRunner,
-    *,
-    tree_digest: TreeDigest,
-    pinned: str,
-) -> None:
-    demo_document["modules"] = {"cloud": {}, "bench": {}}
-    if pinned == "other":
-        demo_document["platform"]["version"] = "0.0.1"
-    # The modules are refused before the lock is read: an invalid lock prints nothing.
-    root = a_hub(tmp_path, demo_document, lock=b"[")
-    before = tree_digest(root)
+# AGH-17 AC-17.6: the four module ids; each subset is a module set a hub may select.
+MODULE_IDS = ("bench", "cloud", "contract-sync", "marketplace")
+MODULE_SETS = [
+    tuple(module for bit, module in enumerate(MODULE_IDS) if mask >> bit & 1)
+    for mask in range(1 << len(MODULE_IDS))
+]
 
-    lines = assert_load_failed(run_sync(root))
 
-    assert len(lines) == 1
-    if pinned == "running":
-        assert lines == [
-            "hub.json: modules: bench, cloud: not supported yet (module templates ship later)"
-        ]
-    else:
-        # The module check runs after the pin: a pin mismatch still reports the pin.
-        assert PINNED_COMMAND in lines[0]
-        assert "modules" not in lines[0]
-    assert tree_digest(root) == before
+def a_moduled_document(document: dict[str, Any], modules: Iterable[str]) -> dict[str, Any]:
+    """``document`` with a second repo and ``modules`` selected (``contract-sync`` api → web)."""
+    document["repos"].append(a_second_repo())
+    source, target = (repo["dir"] for repo in document["repos"])
+    settings: dict[str, dict[str, str]] = {"contract-sync": {"source": source, "target": target}}
+    document["modules"] = {module: settings.get(module, {}) for module in modules}
+    return document
+
+
+class TestModules:
+    """Spec D5: ``hub sync`` accepts every module set (no module set is refused)."""
+
+    @pytest.mark.parametrize("pinned", ["running", "other"])
+    def test_accepts_modules_when_lock_invalid_or_pin_other(
+        self,
+        tmp_path: Path,
+        demo_document: dict[str, Any],
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        pinned: str,
+    ) -> None:
+        demo_document["modules"] = {"cloud": {}, "bench": {}}
+        if pinned == "other":
+            demo_document["platform"]["version"] = "0.0.1"
+        # Modules pass the load: the lock is read next, and its problem is what fails.
+        root = a_hub(tmp_path, demo_document, lock=b"[")
+        before = tree_digest(root)
+
+        lines = assert_load_failed(run_sync(root))
+
+        if pinned == "running":
+            assert lines[0].startswith("hub.lock: $: not valid JSON"), lines
+            assert lines[-1] == LOCK_WAY_OUT_LINE
+            assert not [line for line in lines if "modules" in line]
+        else:
+            # The pin is checked first: a pin mismatch still reports the pin, alone.
+            assert len(lines) == 1
+            assert PINNED_COMMAND in lines[0]
+            assert "modules" not in lines[0]
+        assert tree_digest(root) == before
+
+    @pytest.mark.parametrize(
+        "modules", MODULE_SETS, ids=["-".join(s) or "none" for s in MODULE_SETS]
+    )
+    def test_accepts_every_module_set_when_synced(
+        self,
+        tmp_path: Path,
+        demo_document: dict[str, Any],
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        modules: tuple[str, ...],
+    ) -> None:
+        config = tmp_path / "hub.json"
+        config.write_bytes(dump_json(a_moduled_document(demo_document, modules)))
+        root = tmp_path / "hub"
+        created = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
+        assert created.exit_code == 0, created.stderr
+        before = tree_digest(root)
+
+        synced = run_sync(root)
+
+        assert synced.exit_code == 0, synced.stderr
+        assert synced.stderr == ""
+        assert tree_digest(root) == before
+        lock = json.loads((root / "hub.lock").read_bytes())
+        assert lock["modules"] == sorted(modules)
+        for module in modules:
+            assert f"mk/{module}.mk" in lock["files"], module
 
 
 type LockMaker = Callable[[Path, dict[str, Any]], None]

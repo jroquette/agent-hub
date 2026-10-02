@@ -1,5 +1,6 @@
 import errno
 import functools
+import hashlib
 import json
 import os
 import shutil
@@ -343,7 +344,7 @@ def test_reports_config_problems_in_order_when_config_invalid(
 
 
 @pytest.mark.parametrize("pinned", ["running", "other"])
-def test_refuses_modules_when_config_selects_them(
+def test_writes_module_files_when_config_selects_them(
     tmp_path: Path, target: Path, demo_document: dict[str, Any], *, pinned: str
 ) -> None:
     demo_document["modules"] = {"cloud": {}, "bench": {}}
@@ -353,20 +354,28 @@ def test_refuses_modules_when_config_selects_them(
 
     result = run_init(["--config", str(config), "--dir", str(target)])
 
-    assert result.exit_code == 1
-    assert result.stdout == ""
-    lines = result.stderr.splitlines()
-    assert len(lines) == 1
-    if pinned == "running":
-        assert (
-            lines[0]
-            == "hub.json: modules: bench, cloud: not supported yet (module templates ship later)"
-        )
-    else:
-        # The module check runs after the pin: a pin mismatch still reports the pin.
+    if pinned == "other":
+        # The pin is checked first: a pin mismatch still reports the pin, and nothing is written.
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        lines = result.stderr.splitlines()
+        assert len(lines) == 1
         assert PINNED_COMMAND in lines[0]
         assert "modules" not in lines[0]
-    assert listing(target) == []
+        assert listing(target) == []
+        return
+    # Spec D5: the selected modules' files are written and recorded, as any rendered file.
+    assert result.exit_code == 0, result.stderr
+    assert result.stderr == ""
+    rendered = render_hub(written_config(target))
+    module_files = {file.path: file for file in rendered.files if file.module is not None}
+    assert {"mk/bench.mk", "mk/cloud.mk"} <= set(module_files)
+    assert {file.module for file in module_files.values()} == {"bench", "cloud"}
+    lock = json.loads((target / "hub.lock").read_bytes())
+    assert lock["modules"] == ["bench", "cloud"]
+    for path, file in module_files.items():
+        assert (target / path).read_bytes() == file.content, path
+        assert lock["files"][path]["sha256"] == hashlib.sha256(file.content).hexdigest(), path
 
 
 def test_writes_into_cwd_when_dir_absent(
@@ -665,9 +674,6 @@ def failing_run(
     if case == "rejected-flag":
         flags[flags.index("--tracker") + 1] = "jira:DEM"
         return [*flags, "--dir", str(nested)], nested
-    if case == "modules":
-        document["modules"] = {"bench": {}}
-        return ["--config", str(write_config(tmp_path, document)), "--dir", str(nested)], nested
     target = tmp_path / "case-hub"
     if case == "dir-is-file":
         target.write_bytes(b"x")
@@ -691,7 +697,6 @@ def failing_run(
     [
         ("missing-flag", "--branch-prefix: Field required"),
         ("rejected-flag", "--tracker: Input should be 'linear'"),
-        ("modules", "hub.json: modules: bench: not supported yet (module templates ship later)"),
         ("dir-is-file", "{target}: not a folder"),
         ("tree-refusal", "notes.txt: not part of the hub; run hub sync --adopt"),
         ("cleanup-error", ".X.hub-tmp-0a1b2c3d: Permission denied"),
@@ -700,7 +705,6 @@ def failing_run(
     ids=[
         "missing-flag",
         "rejected-flag",
-        "modules",
         "dir-is-file",
         "tree-refusal",
         "cleanup-error",

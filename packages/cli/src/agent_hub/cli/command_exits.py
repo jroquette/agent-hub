@@ -12,9 +12,7 @@ from typing import Final, NoReturn
 
 import typer
 
-from agent_hub.cli.hub_config_reader import FILE_LABEL
 from agent_hub.cli.init_report import shown_path, shown_text
-from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.extension_inputs import ExtensionInputs, extension_inputs_from
 from agent_hub.core.hub_files.tree_snapshot import TreeSnapshot
 from agent_hub.generator.errors import GeneratorError
@@ -30,16 +28,6 @@ def not_implemented() -> NoReturn:
     """Stop a stub command (or option): the stub text on stderr, exit 2."""
     typer.echo(NOT_IMPLEMENTED, err=True)
     raise typer.Exit(NOT_IMPLEMENTED_EXIT_CODE)
-
-
-def refuse_modules_or_exit(config: HubConfig) -> None:
-    # D3: no module templates exist yet, and the rendered Makefile would include their files.
-    selected = sorted(config.modules.model_dump(exclude_none=True))
-    if selected:
-        fail(
-            f"{FILE_LABEL}: modules: {', '.join(selected)}:"
-            " not supported yet (module templates ship later)"
-        )
 
 
 def root_or_exit(directory: Path | None) -> str:
