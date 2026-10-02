@@ -19,7 +19,17 @@ def test_lists_commands_when_help_requested() -> None:
     result = CliRunner().invoke(app, ["--help"])
 
     assert result.exit_code == 0
-    for command in ("collect", "init", "sync", "doctor", "worktree", "brief", "agent", "next"):
+    for command in (
+        "collect",
+        "init",
+        "sync",
+        "doctor",
+        "worktree",
+        "brief",
+        "agent",
+        "next",
+        "run",
+    ):
         assert command in unstyle(result.stdout)
 
 
