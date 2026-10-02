@@ -22,6 +22,7 @@ RELEASED_IDS = (
     "hooks.guard-extension",
     "makefile.override",
     "features.tracker",
+    "bench.tasks",
 )
 
 # The "Default" column of docs/design/hub-doctor.md § Rules.
