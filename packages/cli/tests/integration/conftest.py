@@ -1168,7 +1168,14 @@ print("Creating pull request" if mode == "no-url" else PR_URL)
 )
 _FAKE_MAKE = (
     _FAKE_LOG
-    + """log("make")
+    + """import subprocess, time
+log("make")
+if os.environ.get("FAKE_MAKE_GRANDCHILD"):
+    # A process the gate starts and leaves running; its pid is logged.
+    sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    with open(os.path.join(os.environ["FAKE_RUN_LOGS"], "grandchild.pid"), "w") as file:
+        file.write(str(sleeper.pid))
+time.sleep(float(os.environ.get("FAKE_MAKE_SLEEP", "0")))
 code = int(os.environ.get("FAKE_MAKE_EXIT", "0"))
 sys.stdout.write("x" * int(os.environ.get("FAKE_MAKE_BYTES", "0")))
 print("synthetic gate output", file=sys.stderr if code else sys.stdout)

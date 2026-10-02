@@ -49,6 +49,9 @@ _PREFIX: Final = f"hub {COMMAND}"
 # What a dry run shows for what only a live run knows.
 DRY_RUN_TEXT: Final = "(dry run)"
 DRY_RUN_TITLE: Final = "(dry run: subject of the last commit)"
+# Claude Code sets CLAUDECODE in the sessions it runs; a live run there nests claude -p.
+NESTED_VARIABLE: Final = "CLAUDECODE"
+NESTED_NOTE: Final = "note: launching a nested headless claude from inside a Claude session"
 
 
 class RunStart(StrEnum):
@@ -129,6 +132,8 @@ def run(
         picked = _read_issue_or_exit(client, issue, log=None)
         _print_dry_run(children, picked, options=options, run_id=new_run_id())
         return
+    if os.environ.get(NESTED_VARIABLE):
+        typer.echo(NESTED_NOTE, err=True)
     # A live run records from the read on, so a failed read leaves its "failed" record.
     log = RunLog(hub=hub, run_id=new_run_id(), issue_id=issue, repo=repo)
     picked = _read_issue_or_exit(client, issue, log=log)
