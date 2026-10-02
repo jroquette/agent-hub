@@ -329,10 +329,6 @@ TEMPLATES = "generator/src/agent_hub/generator/templates"
 PROJECT_BRANCH_READERS = {
     # the helper's fallback and the schema description of repos[].default_branch
     "core/src/agent_hub/core/hub_config/model.py": 2,
-    # the worktree base, for every repo
-    "cli/src/agent_hub/cli/worktree_steps.py": 1,
-    # the run's base and the PR's --base
-    "cli/src/agent_hub/cli/run_children.py": 2,
     # the brief's base and gh branch, for every checkout
     "cli/src/agent_hub/cli/brief_command.py": 2,
     # project_default_branch for ci.yml and AGENTS.md

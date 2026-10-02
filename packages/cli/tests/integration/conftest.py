@@ -616,8 +616,23 @@ class DemoWorkspace:
     def origin(self, repo: str) -> Path:
         return self.origins / f"{repo}.git"
 
-    def origin_head(self, repo: str) -> str:
-        return self.git(self.origin(repo), "rev-parse", WORKSPACE_BRANCH)
+    def origin_head(self, repo: str, branch: str = WORKSPACE_BRANCH) -> str:
+        return self.git(self.origin(repo), "rev-parse", branch)
+
+    def use_repo_branch(self, repo: str, branch: str) -> None:
+        """Rename ``repo``'s only origin branch to ``branch``, fetch it into the clone (pruned)
+        and set ``repos[].default_branch`` in the hub's ``hub.json``."""
+        self.git(self.origin(repo), "branch", "-m", WORKSPACE_BRANCH, branch)
+        clone = self.ws / repo
+        # By path, not by remote name: hub run's workspace points the remote at a GitHub url.
+        refspec = "+refs/heads/*:refs/remotes/origin/*"
+        self.git(clone, "fetch", "-q", "--prune", str(self.origin(repo)), refspec)
+        self.git(clone, "remote", "set-head", "origin", branch)
+        path = self.hub / "hub.json"
+        document = json.loads(path.read_text())
+        entry = next(entry for entry in document["repos"] if entry["dir"] == repo)
+        entry["default_branch"] = branch
+        path.write_text(json.dumps(document, indent=2) + "\n")
 
     def worktree(self, repo: str, name: str) -> Path:
         return self.ws / repo / ".claude" / "worktrees" / name

@@ -13,6 +13,7 @@ arguments), now exit 2 (spec § Port differences); ``test_rejects_name_without_i
 ``test_refuses_name_when_shape_wrong`` (``auth``, ``dem-auth``, ``abc-1-auth``, ``dem-1auth``).
 """
 
+import json
 import shutil
 from collections.abc import Callable
 from pathlib import Path
@@ -256,6 +257,86 @@ class TestCreate:
         web = demo_workspace.ws / "demo-web"
         assert not (web / ".git" / "FETCH_HEAD").exists()
         assert not (web / ".claude").exists()
+
+    def test_starts_each_repo_from_its_branch_when_repo_sets_one(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        demo_workspace.use_repo_branch("demo-api", "master")
+        bases = {"demo-api": "master", "demo-web": "trunk"}
+
+        result = run_command(demo_workspace.hub, "worktree", NAME)
+
+        assert result.exit_code == 0, result.output
+        assert result.stderr == ""
+        assert result.stdout.splitlines() == [
+            *(
+                f"created  {demo_workspace.worktree(repo, NAME)} ({BRANCH} from origin/{base})"
+                for repo, base in bases.items()
+            ),
+            *summary(NAME, "demo-api demo-web", f"remove   : ./hub worktree --remove {NAME}"),
+        ]
+        for repo, base in bases.items():
+            worktree = demo_workspace.worktree(repo, NAME)
+            assert demo_workspace.git(worktree, "branch", "--show-current") == BRANCH
+            assert demo_workspace.git(worktree, "rev-parse", "HEAD") == (
+                demo_workspace.origin_head(repo, base)
+            )
+
+    def test_starts_only_repo_from_its_branch_when_only_given(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        demo_workspace.use_repo_branch("demo-api", "master")
+
+        result = run_command(demo_workspace.hub, "worktree", NAME, "--only", "demo-api")
+
+        assert result.exit_code == 0, result.output
+        assert result.stdout.splitlines() == [
+            f"created  {demo_workspace.worktree('demo-api', NAME)} ({BRANCH} from origin/master)",
+            *summary(
+                NAME, "demo-api", f"remove   : ./hub worktree --remove {NAME} --only demo-api"
+            ),
+        ]
+        worktree = demo_workspace.worktree("demo-api", NAME)
+        assert demo_workspace.git(worktree, "rev-parse", "HEAD") == (
+            demo_workspace.origin_head("demo-api", "master")
+        )
+        assert not (demo_workspace.ws / "demo-web" / ".claude").exists()
+
+    def test_names_repo_when_its_branch_missing_on_origin(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        hub_json = demo_workspace.hub / "hub.json"
+        document = json.loads(hub_json.read_text())
+        document["repos"][0]["default_branch"] = "master"
+        hub_json.write_text(json.dumps(document, indent=2) + "\n")
+
+        result = run_command(demo_workspace.hub, "worktree", NAME)
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert result.stderr.startswith("hub worktree: demo-api: could not add the worktree: ")
+        assert len(result.stderr.splitlines()) == 1
+        assert not demo_workspace.worktree("demo-api", NAME).exists()
+        assert not (demo_workspace.ws / "demo-web" / ".claude").exists()
+
+
+class TestDemoWorkspace:
+    def test_renames_origin_branch_when_repo_branch_used(self, demo_workspace: Workspace) -> None:
+        head = demo_workspace.origin_head("demo-api")
+        clone = demo_workspace.ws / "demo-api"
+
+        demo_workspace.use_repo_branch("demo-api", "master")
+
+        origin = demo_workspace.origin("demo-api")
+        assert demo_workspace.git(origin, "for-each-ref", "--format=%(refname)") == (
+            "refs/heads/master"
+        )
+        assert demo_workspace.origin_head("demo-api", "master") == head
+        assert demo_workspace.git(clone, "rev-parse", "origin/master") == head
+        remote = demo_workspace.git(clone, "for-each-ref", "--format=%(refname)", "refs/remotes")
+        assert remote.splitlines() == ["refs/remotes/origin/HEAD", "refs/remotes/origin/master"]
+        repos = json.loads((demo_workspace.hub / "hub.json").read_text())["repos"]
+        assert [repo.get("default_branch") for repo in repos] == ["master", None]
 
 
 class TestScripts:
