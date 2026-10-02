@@ -1,78 +1,74 @@
-"""The push's guard: the repo-side git config the push reads must be what it was (D10).
+"""The push's guard: no repo-side git config key a push would act on, and origin is the repo.
 
-The implementing session can edit the repo's git config (the common dir's ``config``, or the
-worktree's ``config.worktree``), and the push runs with the GitHub tokens: a credential helper,
-an ``sshCommand`` or a rewritten remote url set by the session would run with them, or send the
-branch elsewhere. So ``hub run`` takes a snapshot before the session (``--from verify``: before
-the gate) and compares it right before the push; any difference refuses the push. Only key names
+The implementing session can edit the repo's git config, and the push runs with the GitHub
+tokens: a credential helper, an ``sshCommand``, a filter or a rewritten remote set by the
+session, or by an earlier run's session, would run with them or send the branch elsewhere.
+Right before every push (owner decision, 2026-10-02: risky keys only, so husky's
+``core.hooksPath`` or a submodule's url never stop a run) ``hub run`` lists the config at local
+and worktree scope, includes followed, and refuses the push when a ``RISKY`` key is set there,
+or when the effective ``remote.origin.url`` is not the GitHub url of the repo's
+``github`` (``owner/name``) in ``hub.json``, a source the session cannot change. Only key names
 are ever shown, never values.
-
-With ``--from verify`` an earlier run's session may already have changed the config, so the push
-is also refused when a key a push would use (``RISKY_KEYS``) is set at local or worktree scope,
-or when the worktree's ``remote.origin.url`` differs from the repo main checkout's local one.
 """
 
-import hashlib
-from collections.abc import Mapping
-from dataclasses import dataclass
+import re
+from collections.abc import Iterable, Sequence
 from typing import Final
 
-LOCAL: Final = "local"
-WORKTREE: Final = "worktree"
-CONFIG_FILE: Final = "the config file"
+REPO_SCOPES: Final = frozenset({"local", "worktree"})
 REMOTE_URL: Final = "remote.origin.url"
-REMOTE_KEYS: Final = (REMOTE_URL, "remote.origin.pushurl")
-# Keys a push would act on, as git config --list writes them (sections lowercased).
-_RISKY_SECTIONS: Final = ("credential.", "include.", "includeif.", "http.")
-_RISKY_NAMES: Final = frozenset({"core.sshcommand", "core.askpass"})
+# The remote keys a push may use as they are; any other remote.* key is refused.
+ALLOWED_REMOTE_KEYS: Final = frozenset({REMOTE_URL, "remote.origin.fetch"})
+# Keys a push (or what it runs) would act on, as git config --list writes them (lowercased).
+_RISKY_SECTIONS: Final = (
+    "credential.",
+    "include.",
+    "includeif.",
+    "http.",
+    "gpg.",
+    "push.",
+    "filter.",
+    "protocol.",
+)
+_RISKY_NAMES: Final = frozenset(
+    {"core.sshcommand", "core.askpass", "core.gitproxy", "core.fsmonitor"}
+)
 _RISKY_URL_SUFFIXES: Final = (".insteadof", ".pushinsteadof")
+_GITHUB_URL = re.compile(
+    r"(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:)"
+    r"(?P<repo>[^/\s]+/[^/\s]+?)(?:\.git)?/?",
+    re.IGNORECASE,
+)
 
 
-@dataclass(frozen=True, kw_only=True, slots=True)
-class ConfigSnapshot:
-    """The repo-side config: ``(scope, key)`` -> values, and each config file's digest."""
-
-    entries: Mapping[tuple[str, str], tuple[str, ...]]
-    files: Mapping[str, str]
-
-
-def parse_config_list(output: str, *, scope: str) -> dict[tuple[str, str], tuple[str, ...]]:
-    """``git config --list -z`` read: ``key\\nvalue`` items ended by NUL; a key may repeat."""
-    found: dict[tuple[str, str], list[str]] = {}
-    for item in output.split("\0"):
-        if item:
-            key, _, value = item.partition("\n")
-            found.setdefault((scope, key), []).append(value)
-    return {key: tuple(values) for key, values in found.items()}
+def parse_scoped_list(output: str) -> list[tuple[str, str]]:
+    """``git config --list --show-scope -z`` read: ``(scope, key)`` per entry, in order."""
+    items = output.split("\0")
+    return [
+        (scope, entry.partition("\n")[0])
+        for scope, entry in zip(items[0::2], items[1::2], strict=False)
+        if scope and entry
+    ]
 
 
-def file_digest(content: bytes | None) -> str:
-    """A config file's SHA-256, or ``absent``."""
-    return "absent" if content is None else hashlib.sha256(content).hexdigest()
+def risky_keys(entries: Iterable[tuple[str, str]]) -> list[str]:
+    """The keys a push would act on that are set at local or worktree scope, sorted."""
+    return sorted({key for scope, key in entries if scope in REPO_SCOPES and _is_risky(key)})
 
 
-def changed_keys(before: ConfigSnapshot, after: ConfigSnapshot) -> list[str]:
-    """The key names whose values differ, sorted; ``the config file`` when only a file's bytes
-    changed (a comment, a key git does not list)."""
-    keys = before.entries.keys() | after.entries.keys()
-    names = sorted(
-        {
-            key
-            for scope, key in keys
-            if before.entries.get((scope, key)) != after.entries.get((scope, key))
-        }
-    )
-    if not names and before.files != after.files:
-        return [CONFIG_FILE]
-    return names
-
-
-def risky_keys(snapshot: ConfigSnapshot) -> list[str]:
-    """The keys a push would use that are set at local or worktree scope, sorted."""
-    return sorted({key for _, key in snapshot.entries if _is_risky(key.lower())})
+def names_github_repo(urls: Sequence[str], *, github: str) -> bool:
+    """Whether ``urls`` is exactly one GitHub url (https or ssh, ``.git`` optional) of
+    ``github`` (``owner/name``, compared without case, as GitHub does)."""
+    if len(urls) != 1:
+        return False
+    found = _GITHUB_URL.fullmatch(urls[0].strip())
+    return found is not None and found.group("repo").lower() == github.lower()
 
 
 def _is_risky(key: str) -> bool:
+    key = key.lower()
     if key in _RISKY_NAMES or key.startswith(_RISKY_SECTIONS):
         return True
+    if key.startswith("remote."):
+        return key not in ALLOWED_REMOTE_KEYS
     return key.startswith("url.") and key.endswith(_RISKY_URL_SUFFIXES)

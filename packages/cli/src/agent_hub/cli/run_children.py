@@ -93,6 +93,11 @@ class RunChildren:
         return self.workspace / self.repo / WORKTREES / self.slug
 
     @property
+    def github(self) -> str:
+        """The repo's GitHub ``owner/name`` from ``hub.json``, which the session cannot edit."""
+        return next(entry.github for entry in self.config.repos if entry.dir == self.repo)
+
+    @property
     def gate(self) -> str:
         """The repo's full gate, ``check`` (never empty: the model refuses one, E1)."""
         return next(entry.check for entry in self.config.repos if entry.dir == self.repo)
