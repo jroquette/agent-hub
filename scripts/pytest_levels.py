@@ -7,6 +7,9 @@ get pytest-socket's ``disable_socket`` marker, so they cannot reach the network.
 Tests marked ``live`` call a real external API. This plugin is their only gate: each one is
 skipped, naming the first missing variable (never a value), unless ``LINEAR_API_KEY``,
 ``AGENT_HUB_LIVE_ISSUE`` and ``AGENT_HUB_LIVE_LABEL`` are set and ``AGENT_HUB_LIVE`` is ``1``.
+A test marked ``live("mcp")`` reaches Linear through its MCP server, not the key, so it needs
+the same variables but ``LINEAR_API_KEY``, and ``AGENT_HUB_LIVE_HUB``: the hub root ``claude``
+runs from.
 """
 
 import os
@@ -21,6 +24,10 @@ LIVE_MARKER = "live"
 LIVE_SWITCH = "AGENT_HUB_LIVE"
 # Checked in this order; the skip reason names the first one missing.
 LIVE_VARIABLES = ("LINEAR_API_KEY", LIVE_SWITCH, "AGENT_HUB_LIVE_ISSUE", "AGENT_HUB_LIVE_LABEL")
+MCP_TRANSPORT = "mcp"
+# The hub root claude runs from, as in production: only a live("mcp") test needs it.
+LIVE_HUB = "AGENT_HUB_LIVE_HUB"
+MCP_LIVE_VARIABLES = (*(name for name in LIVE_VARIABLES if name != "LINEAR_API_KEY"), LIVE_HUB)
 
 
 def level_of(path: str) -> str | None:
@@ -35,9 +42,19 @@ def level_of(path: str) -> str | None:
     return parts[level_index]
 
 
-def live_skip_reason(environ: Mapping[str, str]) -> str | None:
-    """Why a ``live`` test cannot run under ``environ``, or None when it can."""
-    for name in LIVE_VARIABLES:
+def live_skip_reason(environ: Mapping[str, str], *, transport: str | None) -> str | None:
+    """Why a ``live`` test cannot run under ``environ``, or None when it can.
+
+    ``transport`` is the marker's argument: None for a bare ``live``, ``"mcp"`` for
+    ``live("mcp")``, which needs no ``LINEAR_API_KEY``.
+    """
+    if transport not in {None, MCP_TRANSPORT}:
+        message = (
+            f"live marker: unknown transport {transport!r}; use live or live({MCP_TRANSPORT!r})"
+        )
+        raise pytest.UsageError(message)
+    names = LIVE_VARIABLES if transport is None else MCP_LIVE_VARIABLES
+    for name in names:
         value = environ.get(name, "")
         if name == LIVE_SWITCH and value != "1":
             return f"live test: set {name}=1 to call the real API"
@@ -46,11 +63,32 @@ def live_skip_reason(environ: Mapping[str, str]) -> str | None:
     return None
 
 
+def live_transport(marker: pytest.Mark) -> str | None:
+    """The transport a ``live`` marker names: None when bare, else its one string argument.
+
+    Anything else (a keyword, a second argument, a value that is not a string) is refused
+    rather than read as a bare ``live``, which would quietly demand ``LINEAR_API_KEY``.
+    """
+    usage = f"use live or live({MCP_TRANSPORT!r})"
+    if marker.kwargs:
+        names = ", ".join(sorted(marker.kwargs))
+        raise pytest.UsageError(f"live marker: keyword argument {names} not accepted; {usage}")
+    if not marker.args:
+        return None
+    transport, *extra = marker.args
+    if extra:
+        raise pytest.UsageError(f"live marker: extra argument {extra[0]!r}; {usage}")
+    if not isinstance(transport, str):
+        raise pytest.UsageError(f"live marker: transport {transport!r} is not a string; {usage}")
+    return transport
+
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Add the level marker, socket blocking for unit/contract, and the live gate."""
     for item in items:
-        if item.get_closest_marker(LIVE_MARKER) is not None:
-            reason = live_skip_reason(os.environ)
+        live = item.get_closest_marker(LIVE_MARKER)
+        if live is not None:
+            reason = live_skip_reason(os.environ, transport=live_transport(live))
             if reason is not None:
                 item.add_marker(pytest.mark.skip(reason=reason))
         level = level_of(str(item.path))

@@ -1,4 +1,5 @@
 from collections.abc import Iterator, Mapping
+from pathlib import Path
 
 import pytest
 
@@ -8,6 +9,7 @@ from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.tracker_linear import graphql
 from agent_hub.tracker_linear.graphql import LinearGraphqlTrackerClient
+from agent_hub.tracker_linear.mcp import McpTrackerClient
 
 
 class _SpyEnviron(Mapping[str, str]):
@@ -44,25 +46,75 @@ def _no_transport(*_args: object, **_kwargs: object) -> tuple[int, bytes]:
     raise AssertionError(msg)
 
 
-def test_returns_graphql_adapter_when_tracker_kind_is_linear() -> None:
-    client = resolve_tracker_client(_linear_config(), {})
+def test_returns_graphql_adapter_when_tracker_kind_is_linear(tmp_path: Path) -> None:
+    client = resolve_tracker_client(_linear_config(), {}, hub_root=tmp_path)
 
     assert isinstance(client, LinearGraphqlTrackerClient)
 
 
-def test_reads_no_environment_value_when_resolving() -> None:
+def test_reads_no_environment_value_when_resolving(tmp_path: Path) -> None:
     environ = _SpyEnviron({"LINEAR_API_KEY": "lin_api_synthetic"})
 
-    resolve_tracker_client(_linear_config(), environ)
+    resolve_tracker_client(_linear_config(), environ, hub_root=tmp_path)
 
     assert environ.reads == []
 
 
 def test_first_call_names_missing_key_when_resolved_without_it(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr(graphql, "urllib_post", _no_transport)
-    client = resolve_tracker_client(_linear_config(), {})
+    client = resolve_tracker_client(_linear_config(), {}, hub_root=tmp_path)
 
     with pytest.raises(TrackerError, match="LINEAR_API_KEY is not set"):
         client.get_issue("DEM-1")
+
+
+def _config(transport: str | None) -> HubConfig:
+    document = a_hub_document()
+    if transport is not None:
+        document["tracker"]["transport"] = transport
+    return HubConfig.model_validate(document)
+
+
+def test_resolves_mcp_adapter_in_hub_root_when_transport_mcp(tmp_path: Path) -> None:
+    client = resolve_tracker_client(_config("mcp"), {}, hub_root=tmp_path)
+
+    assert isinstance(client, McpTrackerClient)
+    assert client.cwd == tmp_path
+
+
+@pytest.mark.parametrize("transport", [None, "api"], ids=["absent", "api"])
+def test_resolves_graphql_adapter_when_transport_absent_or_api(
+    tmp_path: Path, transport: str | None
+) -> None:
+    client = resolve_tracker_client(_config(transport), {}, hub_root=tmp_path)
+
+    assert isinstance(client, LinearGraphqlTrackerClient)
+
+
+@pytest.mark.parametrize("transport", ["api", "mcp"])
+@pytest.mark.parametrize("key", ["lin" + "_api_" + "x" * 40, None], ids=["key", "no-key"])
+def test_resolves_same_adapter_when_key_present_or_absent(
+    tmp_path: Path, transport: str, key: str | None
+) -> None:
+    environ = _SpyEnviron({} if key is None else {"LINEAR_API_KEY": key})
+    expected = McpTrackerClient if transport == "mcp" else LinearGraphqlTrackerClient
+
+    client = resolve_tracker_client(_config(transport), environ, hub_root=tmp_path)
+
+    assert type(client) is expected
+    assert environ.reads == []
+
+
+def test_names_only_command_modules_when_sources_scanned() -> None:
+    # The modules that resolve the adapter; next_command.py and run_command.py join them (PR 3).
+    sources = Path(__file__).resolve().parents[2] / "src" / "agent_hub" / "cli"
+    assert sources.is_dir(), sources  # an empty scan would pass anywhere
+    naming = sorted(
+        module.name
+        for module in sources.rglob("*.py")
+        if "resolve_tracker_client" in module.read_text()
+    )
+
+    assert naming == ["tracker_client.py"]

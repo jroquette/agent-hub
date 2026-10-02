@@ -40,7 +40,9 @@ The second is `TrackerClientContract`, whose tests take a `tracker_client` fixtu
 writes (`a_seeded_tracker_backend()`, synthetic issues only); the suite asserts on the backend's state. It runs against
 `InMemoryTrackerClient` (`packages/core/tests/contract/`) and against `LinearGraphqlTrackerClient`
 (`packages/tracker_linear/tests/contract/`), whose transport is `FakeLinearApi`, an in-process fake of Linear's GraphQL
-API over the same backend (`packages/tracker_linear/tests/conftest.py`), so no socket opens.
+API over the same backend (`packages/tracker_linear/tests/conftest.py`), so no socket opens, and against
+`McpTrackerClient`, whose runner is `FakeClaude`, an honest model over the same backend in the same conftest, so no
+`claude` process starts.
 
 A test that runs a rendered hook or script takes the `hook_python` fixture, so it runs on the current Python and on a
 real Python 3.9 (the system `python3` on macOS); without a 3.9 on `PATH` that case skips, and under `CI` it fails. A
@@ -92,7 +94,10 @@ The folder decides the level; nobody writes level markers by hand.
   variables exported. Any other pytest run that collects it (for example
   `$R pytest -m live packages/tracker_linear/tests/integration`) reaches Linear only when `LINEAR_API_KEY`,
   `AGENT_HUB_LIVE_ISSUE` and `AGENT_HUB_LIVE_LABEL` are set and `AGENT_HUB_LIVE=1`; otherwise the same plugin skips each
-  case, naming the first missing variable.
+  case, naming the first missing variable. A test marked `live("mcp")` reaches Linear through its MCP server instead
+  of the key, so it needs the same variables except `LINEAR_API_KEY`, plus `AGENT_HUB_LIVE_HUB`, the hub root `claude`
+  runs from (the cwd production uses). Both smoke tests flip `AGENT_HUB_LIVE_LABEL` on the issue, so it is never the
+  ready label; the MCP one fails at setup when it is `agent-ready` or the hub's `tracker.ready_label`.
 
 Select a level with `-m`: `$R pytest -m unit`, `$R pytest -m "unit or contract"`, `$R pytest -m integration`,
 `$R pytest -m e2e`. A single file: `$R pytest packages/core/tests/unit/test_errors.py`.

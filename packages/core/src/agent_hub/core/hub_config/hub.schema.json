@@ -354,7 +354,7 @@
     },
     "Tracker": {
       "additionalProperties": false,
-      "description": "The task tracker and the labels the runner uses.",
+      "description": "The task tracker, how the CLI reaches it and the labels the runner uses.",
       "patternProperties": {
         "^_": {}
       },
@@ -367,6 +367,15 @@
         "team": {
           "pattern": "^[A-Za-z0-9]+$",
           "title": "Team",
+          "type": "string"
+        },
+        "transport": {
+          "default": "api",
+          "enum": [
+            "api",
+            "mcp"
+          ],
+          "title": "Transport",
           "type": "string"
         },
         "ready_label": {

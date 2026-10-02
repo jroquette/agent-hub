@@ -82,10 +82,13 @@ class Project(ConfigObject):
 
 
 class Tracker(ConfigObject):
-    """The task tracker and the labels the runner uses."""
+    """The task tracker, how the CLI reaches it and the labels the runner uses."""
 
     kind: Literal["linear"]
     team: TeamKey
+    # The adapter: "api" is Linear's GraphQL API with LINEAR_API_KEY, "mcp" the Linear MCP
+    # server through claude -p (ADR 0015).
+    transport: Literal["api", "mcp"] = "api"
     ready_label: FreeString = "agent-ready"
     failed_label: FreeString = "agent-failed"
 

@@ -35,6 +35,7 @@ OPTIONAL_PATHS: tuple[tuple[str | int, ...], ...] = (
     ("project", "default_branch"),
     ("tracker", "ready_label"),
     ("tracker", "failed_label"),
+    ("tracker", "transport"),
     ("repos", 0, "role"),
     ("guard", "ask_before_edit"),
     ("guard", "deny_hosts"),
@@ -298,6 +299,35 @@ def test_keeps_other_fields_when_one_field_has_wrong_type(
     assert loaded["equal"]["repos"] is True
     assert hub_file["schema_version"] is None
     assert hub_file["project"]["name"] == "demo"
+
+
+@pytest.mark.parametrize("transport", ["api", "mcp"])
+def test_reads_transport_when_value_known(
+    tmp_path: Path, hook_python: str, read: Reader, *, transport: str
+) -> None:
+    document = a_hub_document()
+    document["tracker"]["transport"] = transport
+    path = write_hub_file(tmp_path, document)
+
+    assert read(hook_python, path)["hub_file"]["tracker"]["transport"] == transport
+
+
+@pytest.mark.parametrize(
+    "transport", [5, None, True, ["mcp"], ""], ids=["int", "null", "bool", "list", "empty"]
+)
+def test_defaults_transport_when_value_wrong_type(
+    tmp_path: Path, hook_python: str, read: Reader, *, transport: object
+) -> None:
+    document = a_hub_document()
+    document["tracker"]["transport"] = transport
+    path = write_hub_file(tmp_path, document)
+
+    checks = {"transport": ("hub_file.tracker.transport", "TrackerSection().transport")}
+    loaded = read(hook_python, path, checks=checks)
+
+    assert loaded["equal"] == {"transport": True}
+    assert loaded["hub_file"]["tracker"]["transport"] == "api"
+    assert loaded["hub_file"]["tracker"]["team"] == "DEM"
 
 
 def test_falls_back_when_required_keys_missing(

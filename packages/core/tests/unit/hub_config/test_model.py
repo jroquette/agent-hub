@@ -180,6 +180,34 @@ def test_rejects_tracker_kind_when_not_linear(kind: str) -> None:
     assert error_locs(with_value(("tracker", "kind"), kind)) == [("tracker", "kind")]
 
 
+def test_defaults_transport_to_api_when_absent() -> None:
+    document = a_hub_document()
+    assert "transport" not in document["tracker"]
+
+    config = HubConfig.model_validate(document)
+
+    assert config.tracker.transport == "api"
+    # The key is optional with a default, so the schema version does not move.
+    assert config.schema_version == 1
+    assert HubConfig.model_json_schema()["properties"]["schema_version"]["const"] == 1
+
+
+@pytest.mark.parametrize("transport", ["api", "mcp"])
+def test_accepts_transport_when_value_known(transport: str) -> None:
+    config = HubConfig.model_validate(with_value(("tracker", "transport"), transport))
+
+    assert config.tracker.transport == transport
+
+
+@pytest.mark.parametrize("transport", ["connector", "", 1, "API"])
+def test_rejects_transport_when_value_unknown(transport: object) -> None:
+    document = with_value(("tracker", "transport"), transport)
+
+    assert error_locs(document) == [("tracker", "transport")]
+    # A known key with a bad value, not an unknown key.
+    assert error_types(document) == [(("tracker", "transport"), "literal_error")]
+
+
 @pytest.mark.parametrize("prefix", ["jdoe", "jdoe/x", "/", "jdoe//", "../", ".git/", "-x/"])
 def test_rejects_branch_prefix_when_no_trailing_slash(prefix: str) -> None:
     locs = error_locs(with_value(("project", "branch_prefix"), prefix))
