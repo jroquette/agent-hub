@@ -54,6 +54,7 @@ def run_child(
     own_session: bool | None = None,
     output_limit: int | None = None,
     stdout_path: Path | None = None,
+    on_start: Callable[[int], None] | None = None,
 ) -> ChildResult:
     """Run ``argv`` in ``cwd`` with exactly ``env``; stdin is empty, both streams are captured.
 
@@ -66,7 +67,8 @@ def run_child(
     not the disk (the file holds the whole stream until the call ends), and a process it
     leaves behind holds no pipe the read would wait on. With ``stdout_path`` too, stdout goes
     to that file (created or emptied) and stays there; its last ``output_limit`` bytes are read
-    back as well. ``stdout_path`` needs ``output_limit``.
+    back as well. ``stdout_path`` needs ``output_limit``. ``on_start`` gets the child's pid as
+    soon as it runs (in its own session, also its group's id), so that another thread can kill it.
 
     Raises ``ChildTimedOutError`` after ``timeout`` seconds, and ``OSError`` (for example
     ``FileNotFoundError``) when the tool cannot start.
@@ -81,6 +83,7 @@ def run_child(
             new_session=new_session,
             limit=output_limit,
             stdout_path=stdout_path,
+            on_start=on_start,
         )
     if stdout_path is not None:
         msg = "stdout_path needs output_limit"
@@ -95,6 +98,8 @@ def run_child(
         start_new_session=new_session,
     ) as child:
         try:
+            if on_start is not None:
+                on_start(child.pid)
             stdout, stderr = child.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
             _kill(child, group=new_session)
@@ -118,6 +123,7 @@ def _run_to_files(
     new_session: bool,
     limit: int,
     stdout_path: Path | None,
+    on_start: Callable[[int], None] | None,
 ) -> ChildResult:
     with _stdout_file(stdout_path) as stdout, tempfile.TemporaryFile() as stderr:
         with subprocess.Popen(  # noqa: S603 - an argv list, never a shell; callers pass the tool
@@ -130,6 +136,8 @@ def _run_to_files(
             start_new_session=new_session,
         ) as child:
             try:
+                if on_start is not None:
+                    on_start(child.pid)
                 child.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
                 _kill(child, group=new_session)

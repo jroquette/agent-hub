@@ -9,12 +9,17 @@ suite's bench workspace (``bench_workspace``: ``ws/hub`` selecting ``bench``, re
 with a fake ``claude`` on ``PATH``.
 """
 
+import contextlib
 import datetime
+import fcntl
 import json
 import os
+import shlex
 import shutil
+import signal
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -428,6 +433,12 @@ def assert_checkout_untouched(workspace: Workspace) -> None:
     ]
     assert workspace.git(workspace.api, "status", "--porcelain") == ""
     assert workspace.git(workspace.api, "rev-parse", "--abbrev-ref", "HEAD") == "trunk"
+    # The workspace's bench lock is released.
+    assert not lock_path(workspace).exists()
+
+
+def lock_path(workspace: Workspace) -> Path:
+    return bench_folder(workspace) / "bench.lock"
 
 
 class TestValidate:
@@ -603,19 +614,34 @@ class TestValidate:
         )
         assert not bench_folder(workspace).exists()
 
+    @pytest.mark.parametrize("leftover_kind", ["folder", "worktree", "symlink"])
     def test_removes_leftover_dir_when_worktree_path_taken(
-        self, bench_workspace: Workspace, run_command: CommandRunner
+        self, bench_workspace: Workspace, run_command: CommandRunner, *, leftover_kind: str
     ) -> None:
         workspace = bench_workspace
         leftover = bench_folder(workspace) / "wt" / "validate-T1-parent"
-        leftover.mkdir(parents=True)
-        (leftover / "junk.txt").write_text("old\n")
+        outside = workspace.base / "outside"
+        outside.mkdir()
+        (outside / "keep.txt").write_text("kept\n")
+        if leftover_kind == "folder":
+            leftover.mkdir(parents=True)
+            (leftover / "junk.txt").write_text("old\n")
+        elif leftover_kind == "worktree":
+            # Still a registered worktree of api: git must forget it, not only its folder go.
+            workspace.git(
+                workspace.api, "worktree", "add", "-q", "--detach", str(leftover), "trunk"
+            )
+        else:
+            leftover.parent.mkdir(parents=True)
+            leftover.symlink_to(outside, target_is_directory=True)
         workspace.write_cases([workspace.case()])
 
         result = validate(workspace, run_command)
 
         assert (result.exit_code, result.stdout, result.stderr) == (0, OK_LINES, "")
         assert_checkout_untouched(workspace)
+        # A link is removed, never followed.
+        assert [path.name for path in outside.iterdir()] == ["keep.txt"]
 
     @pytest.mark.parametrize(
         ("fields", "reason"),
@@ -670,7 +696,8 @@ class TestValidate:
 
         result = validate(workspace, run_command)
 
-        assert result.exit_code != 0
+        # Typer's exit on Ctrl-C: 128 + SIGINT.
+        assert result.exit_code == 130, result.output
         assert result.stdout == ""
         assert (bench_folder(workspace) / "wt").is_dir()
         assert_checkout_untouched(workspace)
@@ -1235,15 +1262,17 @@ class TestRun:
         result = bench_run(workspace, run_command, "--runs", "1", "--arms", "with")
 
         assert result.exit_code == 0, result.output
-        # Every child in the caller's process group, so Ctrl-C reaches it.
+        # git in the caller's process group; what runs the case's code or the session in its
+        # own, so a timeout kills everything it started.
         assert seen == {
             ("git", 1_800, False),
-            ("bash", 600, False),
-            ("claude", 1_800, False),
-            ("python3", 1_800, False),
+            ("bash", 600, True),
+            ("claude", 1_800, True),
+            ("python3", 1_800, True),
         }
         assert (bench_steps.AGENT_TIMEOUT, bench_steps.GRADER_TIMEOUT) == (1_800, 1_800)
         assert (bench_steps.GIT_TIMEOUT, bench_steps.SETUP_TIMEOUT) == (1_800, 600)
+        assert bench_steps.OUTPUT_LIMIT == 1_048_576
 
     @pytest.mark.parametrize(
         ("broken", "reason"),
@@ -1279,4 +1308,201 @@ class TestRun:
         assert all(line.split(": ", 2)[2].startswith(reason) for line in lines), lines
         assert not (results(workspace) / "L1.jsonl").exists()
         assert workspace.claude_calls() == []
+        assert_checkout_untouched(workspace)
+
+
+# A grandchild a step leaves behind: it holds an exclusive lock on argv[1] until it dies, then
+# appends its pid to argv[1] + ".pid" (a second one can only start once the first is gone).
+SLEEPER = """import fcntl, os, sys, time
+lock = open(sys.argv[1], "w")
+fcntl.flock(lock, fcntl.LOCK_EX)
+with open(sys.argv[1] + ".pid", "a") as pids:
+    pids.write(f"{os.getpid()}\\n")
+time.sleep(60)
+"""
+PROBE_DEADLINE = 5.0
+
+
+def sleeper_command(workspace: Workspace) -> tuple[str, Path]:
+    """A shell command that starts the sleeper in the background and waits; its lock file."""
+    script = workspace.base / "sleeper.py"
+    script.write_text(SLEEPER)
+    lock = workspace.base / "sleeper.lock"
+    return f"python3 {shlex.quote(str(script))} {shlex.quote(str(lock))} & wait", lock
+
+
+def is_lock_free_within(lock: Path, deadline: float) -> bool:
+    end = time.monotonic() + deadline
+    with lock.open("r+") as file:
+        while True:
+            try:
+                fcntl.flock(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                if time.monotonic() > end:
+                    return False
+                time.sleep(0.01)
+            else:
+                return True
+
+
+@contextlib.contextmanager
+def sleepers_killed(lock: Path) -> Iterator[None]:
+    """Kill any sleeper still alive after the block, whatever the block asserted."""
+    try:
+        yield
+    finally:
+        pids = Path(f"{lock}.pid")
+        for pid in pids.read_text().split() if pids.exists() else ():
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(int(pid), signal.SIGKILL)
+
+
+def finished_pid() -> int:
+    """The pid of a process that has ended (and been reaped)."""
+    child = subprocess.Popen([sys.executable, "-c", "pass"])  # noqa: S603 - this interpreter
+    child.wait()
+    return child.pid
+
+
+class TestIsolation:
+    @pytest.mark.parametrize("step", ["setup", "grader"])
+    def test_kills_process_group_when_step_times_out(
+        self,
+        bench_workspace: Workspace,
+        run_command: CommandRunner,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        step: str,
+    ) -> None:
+        from agent_hub.cli import bench_steps  # noqa: PLC0415 - the module this test patches
+
+        workspace = bench_workspace
+        command, lock = sleeper_command(workspace)
+        if step == "setup":
+            monkeypatch.setattr(bench_steps, "SETUP_TIMEOUT", 1.0)
+            broken = workspace.case(setup_cmd=command)
+        else:
+            monkeypatch.setattr(bench_steps, "GRADER_TIMEOUT", 1.0)
+            broken = workspace.case(test_cmd=["bash", "-c", command, "grader"])
+        workspace.write_cases([broken, workspace.case(id="T2")])
+
+        with sleepers_killed(lock):
+            result = validate(workspace, run_command)
+
+            assert result.exit_code == 1, result.output
+            assert result.stderr == (
+                "hub bench: T1 parent: bash timed out after 1 s\n"
+                "hub bench: T1 merge: bash timed out after 1 s\n"
+            )
+            # The next case still runs.
+            assert result.stdout == OK_LINES.replace("T1 ", "T2 ")
+            # The merge's sleeper started only once the parent's had died, and it died too.
+            assert len(Path(f"{lock}.pid").read_text().split()) == 2
+            assert is_lock_free_within(lock, PROBE_DEADLINE), "a sleeper is still alive"
+        assert_checkout_untouched(workspace)
+
+    def test_kills_sessions_when_run_interrupted(
+        self,
+        bench_workspace: Workspace,
+        run_command: CommandRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from agent_hub.cli import bench_steps  # noqa: PLC0415 - the module this test patches
+
+        workspace = bench_workspace
+        command, lock = sleeper_command(workspace)
+        # Bounds the test should the kill fail: the run would end at this timeout.
+        monkeypatch.setattr(bench_steps, "SETUP_TIMEOUT", 30.0)
+        # T1 ends only once T2's setup has started its sleeper; T1's record then interrupts.
+        waiter = f"while [ ! -s {shlex.quote(str(lock))}.pid ]; do :; done; echo ready > setup.txt"
+        workspace.write_cases(
+            [workspace.case(setup_cmd=waiter), workspace.case(id="T2", setup_cmd=command)]
+        )
+
+        def interrupt(*args: Any) -> None:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(bench_steps, "_append_record", interrupt)
+
+        with sleepers_killed(lock):
+            started = time.monotonic()
+            result = bench_run(
+                workspace, run_command, "--runs", "1", "--arms", "with", "--parallel", "2"
+            )
+
+            assert result.exit_code == 130, result.output
+            assert time.monotonic() - started < 30.0
+            assert is_lock_free_within(lock, PROBE_DEADLINE), "the sleeper is still alive"
+        assert_checkout_untouched(workspace)
+
+    @pytest.mark.parametrize("mode", ["validate", "run"])
+    def test_refuses_bench_when_workspace_locked(
+        self, bench_workspace: Workspace, run_command: CommandRunner, *, mode: str
+    ) -> None:
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+        lock = lock_path(workspace)
+        lock.parent.mkdir()
+        # This test's own process: alive while the command runs.
+        lock.write_text(f"{os.getpid()}\n")
+        arguments = ("--validate",) if mode == "validate" else ("--runs", "1")
+
+        result = bench_run(workspace, run_command, *arguments)
+
+        assert (result.exit_code, result.stdout) == (1, "")
+        assert result.stderr == (
+            f"hub bench: another hub bench (pid {os.getpid()}) is running in this workspace;"
+            f" wait for it to end (lock {lock})\n"
+        )
+        assert lock.read_text() == f"{os.getpid()}\n"
+        assert not (bench_folder(workspace) / "wt").exists()
+        assert not (bench_folder(workspace) / "results").exists()
+        assert workspace.claude_calls() == []
+
+    @pytest.mark.parametrize("content", ["stale", "no-pid"])
+    def test_refuses_bench_when_lock_left_behind(
+        self, bench_workspace: Workspace, run_command: CommandRunner, *, content: str
+    ) -> None:
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+        lock = lock_path(workspace)
+        lock.parent.mkdir()
+        pid = finished_pid()
+        lock.write_text(f"{pid}\n" if content == "stale" else "x\n")
+
+        result = validate(workspace, run_command)
+
+        # Never removed by the command: two of them could each take the other's for stale.
+        assert (result.exit_code, result.stdout) == (1, "")
+        held = f"pid {pid}, which is not running" if content == "stale" else "no pid in it"
+        assert result.stderr == (
+            f"hub bench: the lock {lock} was left behind ({held}):"
+            " delete it if no hub bench is running in this workspace\n"
+        )
+        assert lock.exists()
+        assert not (bench_folder(workspace) / "wt").exists()
+
+    def test_takes_lock_with_own_pid_when_bench_runs(
+        self,
+        bench_workspace: Workspace,
+        run_command: CommandRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from agent_hub.cli import bench_steps  # noqa: PLC0415 - the module this test patches
+
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+        seen: list[str] = []
+        real = bench_steps.run_child
+
+        def spy(argv: list[str], **kwargs: Any) -> Any:
+            seen.append(lock_path(workspace).read_text())
+            return real(argv, **kwargs)
+
+        monkeypatch.setattr(bench_steps, "run_child", spy)
+
+        result = validate(workspace, run_command)
+
+        assert (result.exit_code, result.stdout) == (0, OK_LINES)
+        assert set(seen) == {f"{os.getpid()}\n"}
         assert_checkout_untouched(workspace)
