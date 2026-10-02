@@ -920,6 +920,24 @@ class TestCleanTree:
         assert run_workspace.calls("make") == []
         assert run_workspace.calls("gh") == []
 
+    def test_pushes_when_session_leaves_untracked_file(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Owner decision 2026-10-02: tracked files only. An untracked file is never in the PR,
+        # and build output or editor files would otherwise stop runs.
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("FAKE_CLAUDE_MODE", "done-untracked")
+
+        result = live(run_command, run_workspace.workspace)
+
+        assert result.exit_code == 0, result.output
+        assert [call["argv"] for call in run_workspace.calls("make")] == [["check"]]
+
     def test_fails_verifying_when_from_verify_finds_changes(
         self,
         run_workspace: Workspace,
@@ -938,7 +956,8 @@ class TestCleanTree:
         (worktree / "done.txt").write_text("done\n")
         workspace.git(worktree, "add", "done.txt")
         workspace.git(worktree, "commit", "-q", "-m", "feat(api): done (DEM-1)")
-        (worktree / "stray.txt").write_text("stray\n")
+        # A tracked file changed and not committed (an untracked one is no reason to stop).
+        (worktree / "done.txt").write_text("changed\n")
 
         result = run_command(
             workspace.hub, "run", "DEM-1", "--repo", "demo-api", "--live", "--from", "verify"
