@@ -361,7 +361,8 @@ class TestDryRun:
             f"   (cwd {worktree})"
         )
         assert lines[4].startswith(
-            "would run: gh pr create --base trunk --head jdoe/dem-1 --title DEM-1 --body "
+            "would run: gh pr create --base trunk --head jdoe/dem-1"
+            " --title '(dry run: subject of the last commit)' --body "
         )
         assert "Gates green: `make check`." in lines[4]
         assert lines[5:7] == [
@@ -609,7 +610,8 @@ class TestLiveSuccess:
         workspace = run_workspace.workspace
         inject(monkeypatch, run_tracker)
         monkeypatch.setenv("GH_TOKEN", GH_TOKEN_VALUE)
-        script = b'#!/bin/sh\nexport -p > "$1/' + SETUP_LOG.encode() + b'"\n'
+        # Outside the worktree, which must stay clean for the gate.
+        script = b'#!/bin/sh\nexport -p > "$FAKE_RUN_LOGS/' + SETUP_LOG.encode() + b'"\n'
         workspace.advance("demo-api", {"scripts/worktree-setup.sh": (script, 0o755)})
 
         result = live(run_command, workspace)
@@ -637,7 +639,7 @@ class TestLiveSuccess:
         assert OTEL.fullmatch(call["values"]["OTEL_RESOURCE_ATTRIBUTES"])
         for hidden in (KEY_VARIABLE, "GH_TOKEN", "GITHUB_TOKEN"):
             assert hidden not in call["env"]
-        setup = (worktree_of(workspace) / SETUP_LOG).read_text()
+        setup = (run_workspace.logs / SETUP_LOG).read_text()
         assert KEY_VARIABLE not in setup
         assert synthetic_key() not in setup
         (gh,) = run_workspace.calls("gh")
@@ -853,3 +855,96 @@ class TestEnvironments:
         assert result.exit_code == 0, result.output
         ran = marker.read_text() if marker.exists() else ""
         assert "pre-push" not in ran
+
+
+@pytest.mark.usefixtures("with_key")
+class TestRerun:
+    def test_reports_existing_pr_when_rerun_after_pr_opened(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        first = live(run_command, workspace)
+        assert first.exit_code == 0, first.output
+        monkeypatch.setenv("FAKE_GH_MODE", "exists")
+        run_tracker.calls.clear()
+
+        second = live(run_command, workspace)
+
+        assert second.exit_code == 0, second.output
+        issue = run_tracker.backend.issues["DEM-1"]
+        assert "agent-failed" not in issue.labels
+        assert issue.state == "In Review"
+        assert [call[0] for call in run_tracker.calls] == ["get_issue", "move_state", "comment"]
+        comments = [body for _, body in run_tracker.backend.comments]
+        assert len(comments) == 2
+        assert re.fullmatch(
+            rf"Run [0-9a-f]{{8}} opened {re.escape(PR_URL)}\. {SUMMARY}", comments[1]
+        )
+        views = [
+            call["argv"] for call in run_workspace.calls("gh") if call["argv"][:2] == ["pr", "view"]
+        ]
+        assert views == [["pr", "view", "jdoe/dem-1", "--json", "url,state"]]
+
+
+@pytest.mark.usefixtures("with_key")
+class TestCleanTree:
+    def test_fails_verifying_when_session_leaves_changes(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("FAKE_CLAUDE_MODE", "done-dirty")
+
+        result = live(run_command, run_workspace.workspace)
+
+        assert result.exit_code == 1
+        (comment,) = [body for _, body in run_tracker.backend.comments]
+        assert re.fullmatch(
+            r"Run [0-9a-f]{8} failed at VERIFYING\. Diagnosis: uncommitted changes in the worktree",
+            comment,
+        )
+        assert run_workspace.calls("make") == []
+        assert run_workspace.calls("gh") == []
+
+    def test_fails_verifying_when_from_verify_finds_changes(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        worktree = worktree_of(workspace)
+        clone = workspace.ws / "demo-api"
+        workspace.git(
+            clone, "worktree", "add", "-q", "-b", "jdoe/dem-1", str(worktree), "origin/trunk"
+        )
+        (worktree / "done.txt").write_text("done\n")
+        workspace.git(worktree, "add", "done.txt")
+        workspace.git(worktree, "commit", "-q", "-m", "feat(api): done (DEM-1)")
+        (worktree / "stray.txt").write_text("stray\n")
+
+        result = run_command(
+            workspace.hub, "run", "DEM-1", "--repo", "demo-api", "--live", "--from", "verify"
+        )
+
+        assert result.exit_code == 1
+        assert f"exists   {worktree}" in result.stdout.splitlines()
+        (comment,) = [body for _, body in run_tracker.backend.comments]
+        assert comment.endswith(
+            " failed at VERIFYING. Diagnosis: uncommitted changes in the worktree"
+        )
+        assert run_workspace.calls("claude") == []
+        assert run_workspace.calls("make") == []

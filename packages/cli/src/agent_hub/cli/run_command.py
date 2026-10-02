@@ -45,6 +45,7 @@ MODEL_PATTERN: Final = re.compile(r"[A-Za-z0-9._-]{1,64}")
 _PREFIX: Final = f"hub {COMMAND}"
 # What a dry run shows for what only a live run knows.
 DRY_RUN_TEXT: Final = "(dry run)"
+DRY_RUN_TITLE: Final = "(dry run: subject of the last commit)"
 
 
 class RunStart(StrEnum):
@@ -167,7 +168,7 @@ def _print_dry_run(
         gate=children.gate,
         workspace=str(children.workspace),
     )
-    typer.echo(would_run_line(children.pr_argv(title=issue.id, body=body), cwd=worktree))
+    typer.echo(would_run_line(children.pr_argv(title=DRY_RUN_TITLE, body=body), cwd=worktree))
     comment = success_comment(
         run_id=run_id,
         pr_url=DRY_RUN_TEXT,

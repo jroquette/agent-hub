@@ -1129,9 +1129,12 @@ def commit():
 verdict = {"status": "done", "summary": RUN_SUMMARY, "tests": "make check-fast"}
 if mode == "hang":
     time.sleep(600)
-if mode in ("done", "prose"):
+if mode in ("done", "prose", "done-dirty"):
     commit()
-if mode in ("done", "done-no-commit"):
+if mode == "done-dirty":
+    with open("notes.txt", "w") as file:
+        file.write("left behind\\n")
+if mode in ("done", "done-no-commit", "done-dirty"):
     answer("Done.\\n" + json.dumps(verdict))
 elif mode == "blocked":
     answer("Stopping.\\n" + json.dumps({"status": "blocked", "summary": "needs a plan"}))
@@ -1147,8 +1150,16 @@ _RUN_FAKE_GH = (
     _FAKE_LOG
     + """mode = os.environ.get("FAKE_GH_MODE", "url")
 log("gh", mode=mode)
-if mode == "fail":
-    print("gh: synthetic failure", file=sys.stderr)
+if sys.argv[1:3] == ["pr", "view"]:
+    # The branch's PR: open in mode "exists", none otherwise.
+    if mode != "exists":
+        print("no pull requests found for branch", file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps({"url": PR_URL, "state": "OPEN"}))
+    sys.exit(0)
+if mode in ("fail", "exists"):
+    print("gh: a pull request already exists" if mode == "exists" else "gh: synthetic failure",
+          file=sys.stderr)
     sys.exit(1)
 print("Creating pull request" if mode == "no-url" else PR_URL)
 """.replace("PR_URL", repr(RUN_PR_URL))
