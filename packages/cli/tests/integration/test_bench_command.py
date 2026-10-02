@@ -1689,3 +1689,137 @@ class TestIsolation:
         assert (result.exit_code, result.stdout) == (0, OK_LINES)
         assert set(seen) == {f"{os.getpid()}\n"}
         assert_checkout_untouched(workspace)
+
+    @pytest.mark.parametrize("step", ["setup", "grader"])
+    def test_kills_background_processes_when_step_exits_zero(
+        self,
+        bench_workspace: Workspace,
+        run_command: CommandRunner,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        step: str,
+    ) -> None:
+        from agent_hub.cli import bench_steps  # noqa: PLC0415 - the module this test patches
+
+        workspace = bench_workspace
+        # Bounds the test should a sleeper survive: the next step then waits on its lock.
+        monkeypatch.setattr(bench_steps, "SETUP_TIMEOUT", 10.0)
+        monkeypatch.setattr(bench_steps, "GRADER_TIMEOUT", 10.0)
+        command, lock = sleeper_command(workspace)
+        pids = shlex.quote(f"{lock}.pid")
+        # The sleeper in the background, seen started (its own pid logged); then the step goes
+        # on and exits 0.
+        started = (
+            f"{command.removesuffix(' & wait')} & sleeper=$!;"
+            f" until mapfile -t seen < {pids} 2>/dev/null"
+            ' && [[ " ${seen[*]} " == *" $sleeper "* ]]; do :; done'
+        )
+        if step == "setup":
+            case = workspace.case(setup_cmd=f"{started}; echo ready > setup.txt")
+        else:
+            case = workspace.case(
+                test_cmd=["bash", "-c", f'{started}; exec python3 "$@"', "grader"]
+            )
+        workspace.write_cases([case])
+
+        with sleepers_killed(lock):
+            result = validate(workspace, run_command)
+
+            assert (result.exit_code, result.stderr) == (0, ""), result.output
+            assert result.stdout == OK_LINES
+            # Each sleeper died with its step: the next one could take the lock.
+            # One per setup, or per test run (hidden, then related), at each label.
+            count = len(Path(f"{lock}.pid").read_text().split())
+            assert count == (2 if step == "setup" else 4)
+            assert is_lock_free_within(lock, PROBE_DEADLINE), "a sleeper outlived its step"
+        assert_checkout_untouched(workspace)
+
+    def test_links_lock_holding_pid_when_bench_takes_it(
+        self,
+        bench_workspace: Workspace,
+        run_command: CommandRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+        linked: list[tuple[Path, str, bool]] = []
+        real_link = os.link
+
+        def spy_link(source: Any, target: Any, **kwargs: Any) -> None:
+            linked.append((Path(target), Path(source).read_text(), os.path.lexists(target)))
+            real_link(source, target, **kwargs)
+
+        monkeypatch.setattr(os, "link", spy_link)
+
+        result = validate(workspace, run_command)
+
+        # The lock appears whole: a file already holding the pid, linked in one step, so no
+        # reader ever sees it empty.
+        assert (result.exit_code, result.stdout) == (0, OK_LINES)
+        assert linked == [(lock_path(workspace), f"{os.getpid()}\n", False)]
+        assert [path.name for path in bench_folder(workspace).iterdir()] == ["wt"]
+        assert_checkout_untouched(workspace)
+
+    def test_keeps_other_lock_when_lock_replaced_during_bench(
+        self,
+        bench_workspace: Workspace,
+        run_command: CommandRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from agent_hub.cli import bench_steps  # noqa: PLC0415 - the module this test patches
+
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+        lock = lock_path(workspace)
+        other = "4242\n"
+        real = bench_steps.run_child
+
+        def replace_lock(argv: list[str], **kwargs: Any) -> Any:
+            # Someone deleted our lock and another bench took its own.
+            if lock.read_text() != other:
+                lock.unlink()
+                lock.write_text(other)
+            return real(argv, **kwargs)
+
+        monkeypatch.setattr(bench_steps, "run_child", replace_lock)
+
+        result = validate(workspace, run_command)
+
+        assert (result.exit_code, result.stdout) == (0, OK_LINES)
+        assert lock.read_text() == other
+
+    @pytest.mark.parametrize("kind", ["fifo", "symlink"])
+    def test_refuses_bench_when_lock_not_regular_file(
+        self, bench_workspace: Workspace, run_command: CommandRunner, *, kind: str
+    ) -> None:
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+        lock = lock_path(workspace)
+        lock.parent.mkdir()
+        if kind == "fifo":
+            os.mkfifo(lock)
+        else:
+            # Never followed: the pid it points to is not read.
+            held = workspace.base / "held"
+            held.write_text(f"{os.getpid()}\n")
+            lock.symlink_to(held)
+
+        def stuck(signum: int, frame: Any) -> None:
+            msg = "the lock was followed or blocked on"
+            raise TimeoutError(msg)
+
+        previous = signal.signal(signal.SIGALRM, stuck)
+        signal.alarm(5)
+        try:
+            result = validate(workspace, run_command)
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous)
+
+        assert (result.exit_code, result.stdout) == (1, ""), result.output
+        assert result.stderr == (
+            f"hub bench: the lock {lock} was left behind (not a regular file):"
+            " delete it if no hub bench is running in this workspace\n"
+        )
+        assert os.path.lexists(lock)
+        assert not (bench_folder(workspace) / "wt").exists()
