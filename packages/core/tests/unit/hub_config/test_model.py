@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from agent_hub.core.hub_config.model import MODULE_IDS, HubConfig
-from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 
 REQUIRED_KEYS: list[tuple[str | int, ...]] = [
     ("schema_version",),
@@ -531,19 +531,13 @@ def test_accepts_hub_document_when_migrated_with_version_keys() -> None:
     assert config.guard.ask_before_edit[1] == "demo-api/packages/storage/migrations/versions"
 
 
-SECOND_REPO = {
-    "dir": "demo-web",
-    "github": "acme/demo-web",
-    "check_fast": "make check-fast",
-    "check": "make check",
-}
 CONTRACT_SYNC = ("modules", "contract-sync")
 
 
 def a_contract_sync_document(settings: object) -> dict[str, Any]:
     """The example document with ``demo-web`` added and these contract-sync settings."""
     document = a_hub_document()
-    document["repos"].append(dict(SECOND_REPO))
+    document["repos"].append(a_second_repo())
     document["modules"]["contract-sync"] = settings
     return document
 
@@ -743,6 +737,17 @@ class TestContractSync:
         [error] = caught.value.errors()
         assert (error["loc"], error["type"]) == ((*CONTRACT_SYNC, "target"), "same_repo_dir")
         assert error["msg"] == 'target "demo-api" is the source too; give two different repos'
+
+    def test_reports_only_same_repo_when_source_equals_target_and_not_in_repos(self) -> None:
+        """Two steps: the settings' own error stops validation before HubConfig checks repos.
+
+        A fix of ``same_repo_dir`` can then surface ``unknown_repo_dir`` on the next run.
+        """
+        settings = {"source": "nope", "target": "nope"}
+
+        assert error_types(a_contract_sync_document(settings)) == [
+            ((*CONTRACT_SYNC, "target"), "same_repo_dir")
+        ]
 
     @pytest.mark.parametrize("module", ["cloud", "bench", "marketplace"])
     def test_rejects_settings_when_other_module_has_keys(self, module: str) -> None:

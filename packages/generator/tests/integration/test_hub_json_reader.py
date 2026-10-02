@@ -25,7 +25,7 @@ from agent_hub.core.hub_config.model import (
     Repo,
     Tracker,
 )
-from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 from agent_hub.generator.render_hub import render_hub
 
 READER = "plugin/hub-workflow/hooks/stdlib_reader.py"
@@ -184,7 +184,7 @@ def test_reads_contract_sync_settings_as_written_when_present(
     tmp_path: Path, *, hook_python: str, read: Reader, settings: dict[str, object]
 ) -> None:
     document = a_hub_document()
-    document["repos"].append(document["repos"][0] | {"dir": "demo-web", "github": "acme/demo-web"})
+    document["repos"].append(a_second_repo())
     document["modules"]["contract-sync"] = {"_note": "api to web", **settings}
     path = write_hub_file(tmp_path, document)
 

@@ -60,6 +60,19 @@ def a_hub_document() -> dict[str, Any]:
     return copy.deepcopy(_HUB_DOCUMENT)
 
 
+def a_second_repo() -> dict[str, Any]:
+    """Build the ``repos`` entry ``demo-web``, a repo next to ``a_hub_document``'s ``demo-api``.
+
+    Plain JSON data, a fresh copy per call: ``contract-sync`` needs two repos to name.
+    """
+    return {
+        "dir": "demo-web",
+        "github": "acme/demo-web",
+        "check_fast": "make check-fast",
+        "check": "make check",
+    }
+
+
 def an_issue(**overrides: object) -> Issue:
     """Build a synthetic open ``DEM`` issue; ``url`` follows ``id`` unless overridden."""
     fields: dict[str, object] = {

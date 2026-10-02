@@ -4,7 +4,7 @@ import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
-from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_mapping
 
 # AC-3.9: the Rendered values of project-config.md, the platform repository (erratum E3) and the
@@ -22,15 +22,6 @@ RENDERED_KEYS = {
     "guard_deny_hosts",
     "platform_repository",
     "module_includes",
-}
-
-
-# A second repo, so ``contract-sync`` has two different repos to name.
-SECOND_REPO = {
-    "dir": "demo-web",
-    "github": "acme/demo-web",
-    "check_fast": "make check-fast",
-    "check": "make check",
 }
 
 
@@ -114,7 +105,7 @@ def test_joins_deny_hosts_when_hosts_listed(hosts: list[str], expected: str) -> 
 def test_lists_sorted_includes_when_modules_selected(
     modules: dict[str, dict[str, object]], expected: str
 ) -> None:
-    config = config_with(modules=modules, repos=[*a_hub_document()["repos"], SECOND_REPO])
+    config = config_with(modules=modules, repos=[*a_hub_document()["repos"], a_second_repo()])
 
     assert substitution_mapping(config)["module_includes"] == expected
 
