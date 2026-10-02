@@ -61,3 +61,15 @@ def picked_data(
 ) -> dict[str, JsonValue]:
     """The ``picked`` event's data: the old runner's caps, then the tracker's transport (D16)."""
     return {"budget": budget, "max_turns": max_turns, "model": model, "transport": transport}
+
+
+def reported_data(
+    *, ok: bool, failed_stage: Stage | None, total_cost_usd: float, pr: str
+) -> dict[str, JsonValue]:
+    """The ``reported`` event's data, as the retro reads it: ``failed_stage`` None on success."""
+    return {
+        "ok": ok,
+        "total_cost_usd": total_cost_usd,
+        "pr": pr,
+        "failed_stage": None if failed_stage is None else failed_stage.value,
+    }
