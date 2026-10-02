@@ -1,6 +1,6 @@
 # 0015. Linear MCP transport for the tracker port
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-02
 - Deciders: José Henrique Roquette
 
@@ -31,9 +31,9 @@ switch behaviour silently. API only was rejected because it leaves cloud session
 
 - `hub.json` gains the optional key `tracker.transport`, a closed list `"api"` | `"mcp"`, default `"api"`
   ([project-config.md](../design/project-config.md)); `schema_version` stays 1. The CLI uses only what the key says,
-  never the environment. Resolution itself reads no environment value. Landing with the commands (PR 3 of AGH-27):
-  `hub next` and `hub run` refuse `"api"` without `LINEAR_API_KEY` (exit 1) and name the variable and the alternative
-  `tracker.transport: "mcp"`, and each command prints one stderr line naming the transport.
+  never the environment. Resolution itself reads no environment value. Since `hub next` and `hub run` landed
+  (jroquette/agent-hub#28), both refuse `"api"` without `LINEAR_API_KEY` (exit 1) and name the variable and the
+  alternative `tracker.transport: "mcp"`, and each command prints one stderr line naming the transport.
 - `McpTrackerClient` lives in `packages/tracker_linear` (`mcp.py`, with `mcp_protocol.py` and `claude_process.py`). It
   imports only core ([ADR 0008](0008-cli-as-composition-root.md)) and starts `claude` with the standard library's
   `subprocess` in the caller's process group; a timeout kills the child. It reads no `hub.json`.
@@ -42,15 +42,11 @@ switch behaviour silently. API only was rejected because it leaves cloud session
   caller's minus `LINEAR_API_KEY`. `last_cost_usd` (not a port method) is the sum of the `total_cost_usd` of the last
   port operation's calls (one for a read, two for a write), added whenever a result reports it as a number, an error
   result included; it is a lower bound when a call ran but reported no cost (a timeout, an output over the 1 MiB cap,
-  output that is not its JSON result, an OS error after `claude` started). **Changed from the draft
-  approved at the plan gate, which said "the last call's `total_cost_usd`": a write is two calls, and `hub run` adds
-  both to its cost.**
+  output that is not its JSON result, an OS error after `claude` started).
 - A prompt is fixed text plus one JSON request line built by the adapter: the operation and its arguments (issue id,
   team, label or state name, comment body). It never holds an issue title, a description or a tool prefix: every `_` of
   the request line is written `\u005f` (the same JSON value), so an argument holding a tool name cannot put `mcp__`
-  into a prompt. A team, state or label name over 256 characters is refused before any call. **Changed from the draft
-  approved at the plan gate, which had neither the `_` escaping of the request line nor the 256-character refusal.**
-  A reply is one line of strict JSON (no repeated key, no lone surrogate) of a fixed shape per call, checked field by
+  into a prompt. A team, state or label name over 256 characters is refused before any call. A reply is one line of strict JSON (no repeated key, no lone surrogate) of a fixed shape per call, checked field by
   field: every issue id matches the issue id pattern, every state or label name is at most 256 characters; anything
   else is a `TrackerError`.
 - Allowed tools per call (all under the `mcp__Linear__` prefix of the `Linear` server, a constant):
@@ -69,15 +65,13 @@ switch behaviour silently. API only was rejected because it leaves cloud session
   (no built-in tool), `--disallowedTools` with every Linear tool the call is not allowed (a deny wins over any allow),
   and `--permission-mode dontAsk` (a permissive `defaultMode` in the user's settings cannot widen the call). The Linear
   tools are a snapshot of the working `Linear` server's 68 tools taken 2026-10-01 (`LINEAR_TOOLS`); each call denies
-  that snapshot minus its own tools. The snapshot is refreshed when the server changes. **Changed from the draft
-  approved at the plan gate, which passed only `--allowedTools`.**
+  that snapshot minus its own tools. The snapshot is refreshed when the server changes.
 
   Each call also turns every hook off (`"disableAllHooks": true` in its `--settings` JSON, next to `effortLevel`) and
   saves no session (`--no-session-persistence`); the working directory stays the hub root. Run from the hub root, a
   call otherwise runs the hub's hooks: SessionStart injects the session brief into a write call's context, the Stop
   gate runs `check_fast` across worktrees (150 s, over the call's 120 s timeout, and its output can be fed back to
-  the model) and SessionEnd leaves a session stub in the brain inbox per call. **Changed from the draft approved at
-  the plan gate, which let the hub's hooks run.**
+  the model) and SessionEnd leaves a session stub in the brain inbox per call.
 
 - A write is one read call, then the adapter decides: a change that changes nothing makes no write call; an unknown
   state or label name raises naming it, with no write call. Otherwise one write call carries the adapter's full payload
@@ -85,13 +79,31 @@ switch behaviour silently. API only was rejected because it leaves cloud session
   is ever created. A write call that ran and failed (a timeout, an error result, an unusable reply, a wrong echo) says
   to check the issue in Linear, since the write may have been made; it never says to retry. `list_ready` filters the
   reply again in the adapter (team, label, state type), and refuses a reply listing more than 100 issues, one saying
-  more match, or one listing an issue twice, rather than return part of the list. **Changed from the draft approved
-  at the plan gate, which had neither the write-failure wording nor the "more match" and repeated-issue refusals.**
+  more match, or one listing an issue twice, rather than return part of the list.
 - Testing: `TrackerClientContract` runs against the adapter with an injected runner that answers from the seeded
   backend; a process test runs a fake `claude` executable; neither reaches Linear. A live test marked `live("mcp")`
   runs only by hand with `AGENT_HUB_LIVE=1`, `AGENT_HUB_LIVE_ISSUE`, `AGENT_HUB_LIVE_LABEL` and `AGENT_HUB_LIVE_HUB`
   (the hub root its calls run from, as in production; a label that is the hub's ready label fails at setup), and does
-  not need `LINEAR_API_KEY`. The owner runs it on a machine without the key before this ADR is accepted.
+  not need `LINEAR_API_KEY`. Live evidence, 2026-10-02 (Claude Code 2.1.287, model `haiku`, in a cloud session; the
+  owner waived the run on a Mac against the real Linear server): with a fake stdio MCP server named `Linear` in a trusted
+  project whose allow-list holds `mcp__Linear__*`, `Bash(*)` and `Read(*)` with `defaultMode: bypassPermissions`, the
+  adapter's flags let only `get_issue` reach the server (`save_issue`, `save_comment`, Bash and Read were denied), while
+  a control with only `--allowedTools mcp__Linear__get_issue` let `save_issue` through. From the real hub root, a control
+  call without `disableAllHooks` wrote a session stub in the brain inbox; with the adapter's flags nothing was written
+  and the context was about 1,200 tokens smaller (no SessionStart brief). The six tool names exist on the owner's
+  `Linear` server, used through it on 2026-10-02. The live smoke test `test_mcp_live.py` against the real server stays
+  available for any later check.
+
+Changes from the draft approved at the plan gate:
+
+- `last_cost_usd` is the sum over the operation's calls, not the last call's `total_cost_usd`: a write is two calls,
+  and `hub run` adds both to its cost.
+- The request line's `_` escaping and the 256-character refusal of team, state and label names were added.
+- The restriction flags `--tools ""`, `--disallowedTools` and `--permission-mode dontAsk` were added; the draft passed
+  only `--allowedTools`.
+- Hooks are off (`disableAllHooks`) and no session is saved (`--no-session-persistence`); the draft let the hub's hooks
+  run.
+- The write-failure wording and the "more match" and repeated-issue refusals of `list_ready` were added.
 
 ### Consequences
 
