@@ -1076,3 +1076,216 @@ class TestRunLoose:
             "tests": "make check-fast",
         }
         assert finished["subtype"] == "success"
+
+
+FAILED_COMMENT = re.compile(r"Run [0-9a-f]{8} failed at ([A-Z_]+)\. Diagnosis: (.*)", re.DOTALL)
+
+
+def assert_failed_at(result: Result, run_tracker: Any, stage: str) -> str:
+    """Exit 1, ``agent-failed`` added and exactly one comment naming ``stage``; its diagnosis."""
+    assert result.exit_code == 1, result.output
+    assert "agent-failed" in run_tracker.backend.issues["DEM-1"].labels
+    (comment,) = [body for _, body in run_tracker.backend.comments]
+    found = FAILED_COMMENT.fullmatch(comment)
+    assert found is not None, comment
+    assert found.group(1) == stage
+    assert len(found.group(2)) <= 900
+    assert "Agent" not in comment
+    assert [call[0] for call in run_tracker.calls] == ["get_issue", "add_label", "comment"]
+    return found.group(2)
+
+
+def assert_never_pushed(run_workspace: Any) -> None:
+    workspace = run_workspace.workspace
+    branches = workspace.git(workspace.origin("demo-api"), "branch", "--list", "jdoe/dem-1")
+    assert branches == ""
+    assert [
+        call for call in run_workspace.calls("gh") if call["argv"][:2] == ["pr", "create"]
+    ] == []
+
+
+def verify_ready_worktree(workspace: Any) -> None:
+    """The issue's worktree with one commit, as a session would have left it."""
+    worktree = worktree_of(workspace)
+    clone = workspace.ws / "demo-api"
+    workspace.git(clone, "worktree", "add", "-q", "-b", "jdoe/dem-1", str(worktree), "origin/trunk")
+    (worktree / "done.txt").write_text("done\n")
+    workspace.git(worktree, "add", "done.txt")
+    workspace.git(worktree, "commit", "-q", "-m", "feat(api): done before (DEM-1)")
+
+
+@pytest.mark.usefixtures("with_key")
+class TestVerdict:
+    """The old runner's verdict cases (hub tests/test_agent_runner.py at 300559b), live."""
+
+    @pytest.mark.parametrize(
+        ("mode", "diagnosis"),
+        [
+            ("blocked", "the implementing session stopped: needs a plan"),
+            (
+                "blocked-text",
+                "the implementing session stopped: BLOCKED: the issue has an open question",
+            ),
+        ],
+        ids=["verdict", "text"],
+    )
+    def test_fails_implementing_when_blocked(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        mode: str,
+        diagnosis: str,
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("FAKE_CLAUDE_MODE", mode)
+
+        result = live(run_command, run_workspace.workspace)
+
+        assert assert_failed_at(result, run_tracker, "IMPLEMENTING") == diagnosis
+        assert_never_pushed(run_workspace)
+        assert run_workspace.calls("make") == []
+
+    def test_fails_implementing_when_session_errors(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("FAKE_CLAUDE_MODE", "error")
+
+        result = live(run_command, run_workspace.workspace)
+
+        diagnosis = assert_failed_at(result, run_tracker, "IMPLEMENTING")
+        assert diagnosis == "the implementing session errored (success): ran out of turns"
+        assert_never_pushed(run_workspace)
+
+    def test_opens_pr_from_commits_when_no_verdict(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("FAKE_CLAUDE_MODE", "prose")
+
+        result = live(run_command, run_workspace.workspace)
+
+        assert result.exit_code == 0, result.output
+        (create,) = [
+            call for call in run_workspace.calls("gh") if call["argv"][:2] == ["pr", "create"]
+        ]
+        body = create["argv"][-1]
+        assert body == f"DEM-1\n\n{COMMIT_SUBJECT}\n\n## Verification\nGates green: `make check`."
+        (comment,) = [body for _, body in run_tracker.backend.comments]
+        assert comment.endswith(f"opened {PR_URL}. {COMMIT_SUBJECT}")
+
+    @pytest.mark.parametrize("mode", ["silent", "done-no-commit"], ids=["no-verdict", "done"])
+    def test_fails_when_session_leaves_no_commit(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        mode: str,
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("FAKE_CLAUDE_MODE", mode)
+
+        result = live(run_command, run_workspace.workspace)
+
+        diagnosis = assert_failed_at(result, run_tracker, "IMPLEMENTING")
+        assert diagnosis == (
+            "no commit on the branch (the session reported done or gave no verdict)"
+        )
+        assert_never_pushed(run_workspace)
+
+    def test_never_pushes_when_gate_fails(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("FAKE_MAKE_EXIT", "2")
+
+        result = live(run_command, run_workspace.workspace)
+
+        diagnosis = assert_failed_at(result, run_tracker, "VERIFYING")
+        assert diagnosis == "gate failed: make check\nsynthetic gate output\n"
+        assert_never_pushed(run_workspace)
+
+    def test_skips_session_when_from_verify(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        verify_ready_worktree(workspace)
+
+        result = run_command(
+            workspace.hub, "run", "DEM-1", "--repo", "demo-api", "--live", "--from", "verify"
+        )
+
+        assert result.exit_code == 0, result.output
+        assert run_workspace.calls("claude") == []
+        assert [call["argv"] for call in run_workspace.calls("make")] == [["check"]]
+        (comment,) = [body for _, body in run_tracker.backend.comments]
+        assert comment.endswith(f"opened {PR_URL}. feat(api): done before (DEM-1)")
+
+    def test_fails_pr_open_when_gh_prints_no_url(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("FAKE_GH_MODE", "no-url")
+
+        result = live(run_command, run_workspace.workspace)
+
+        assert assert_failed_at(result, run_tracker, "PR_OPEN") == "gh printed no PR url"
+
+    def test_refuses_empty_check_when_hub_json_has_one(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        spy: Spy,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        hub = run_workspace.workspace.hub
+        inject(monkeypatch, run_tracker)
+        document = json.loads((hub / "hub.json").read_text())
+        document["repos"][1]["check"] = ""
+        (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+
+        result = live(run_command, run_workspace.workspace)
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        lines = result.stderr.splitlines()
+        assert lines
+        assert all(line.startswith("hub.json: ") for line in lines), lines
+        assert any("repos[1].check" in line for line in lines), lines
+        assert run_tracker.calls == []
+        assert [name for name, _ in spy.calls if name != "resolve_tracker_client"] == []
+        for tool in ("claude", "gh", "make"):
+            assert run_workspace.calls(tool) == []

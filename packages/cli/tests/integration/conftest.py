@@ -1142,7 +1142,7 @@ elif mode == "blocked-text":
     answer("BLOCKED: the issue has an open question")
 elif mode == "error":
     answer("ran out of turns", is_error=True)
-elif mode == "prose":
+elif mode in ("prose", "silent"):
     answer("I made the change and ran the tests.")
 """.replace("RUN_COST", repr(RUN_COST_USD)).replace("RUN_SUMMARY", repr(RUN_SUMMARY))
 )
