@@ -31,6 +31,7 @@ from agent_hub.cli.run_children import (
     RunChildren,
     RunOptions,
     child_env,
+    push_env,
     session_env,
     untrusted_env,
 )
@@ -221,7 +222,7 @@ class LiveRun:
     def _open_pr(self) -> None:
         self._enter(Stage.PR_OPEN)
         self._refuse_risky_config()
-        env = child_env(self.environ)
+        env = push_env(self.environ)
         pushed = self._child(self.children.push_argv(), env=env, timeout=PUSH_TIMEOUT)
         if pushed.returncode != 0:
             raise StageFailure(Stage.PR_OPEN, f"push failed: {_tail(pushed.stderr)}")
@@ -270,11 +271,7 @@ class LiveRun:
 
     def _open_pr_url(self, env: dict[str, str]) -> str | None:
         """The url of the branch's open PR, from ``gh pr view``; None when there is none."""
-        viewed = self._child(
-            ["gh", "pr", "view", self.children.branch, "--json", "url,state"],
-            env=env,
-            timeout=GH_TIMEOUT,
-        )
+        viewed = self._child(self.children.pr_view_argv(), env=env, timeout=GH_TIMEOUT)
         if viewed.returncode != 0:
             return None
         try:

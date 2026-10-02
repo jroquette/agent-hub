@@ -1088,7 +1088,11 @@ RUN_PR_URL = "https://github.com/acme/demo-api/pull/99"
 RUN_SUMMARY = "Adds the synthetic change."
 RUN_COST_USD = 0.42
 # The environment values a fake may log as they are: none can hold a secret.
-_LOGGED_VALUES = ("OTEL_RESOURCE_ATTRIBUTES",)
+_LOGGED_VALUES = (
+    "OTEL_RESOURCE_ATTRIBUTES",
+    "GIT_CONFIG_COUNT",
+    *(f"GIT_CONFIG_{part}_{index}" for part in ("KEY", "VALUE") for index in range(4)),
+)
 _FAKE_LOG = """import json, os, sys
 def log(tool, **extra):
     record = {
@@ -1263,6 +1267,8 @@ def run_workspace(
         url = f"https://github.com/acme/{repo}.git"
         demo_workspace.git(demo_workspace.ws / repo, "remote", "set-url", "origin", url)
         rewrites.append(f'[url "{demo_workspace.origin(repo)}"]\n\tinsteadOf = {url}\n')
+    # Any other GitHub url goes to a folder that does not exist: no test reaches the network.
+    rewrites.append(f'[url "{tmp_path / "no-network"}/"]\n\tinsteadOf = https://github.com/\n')
     global_config = tmp_path / "run-gitconfig"
     global_config.write_text("".join(rewrites))
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
