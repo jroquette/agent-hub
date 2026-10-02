@@ -1,24 +1,34 @@
 """The implementing session of ``hub run``: its prompt, its tools and its ``claude -p`` argv.
 
 The session gets no tracker tool (spec D-desc): the issue's id, title, url and description are
-in the prompt, after the steps, in a fenced block labelled as untrusted data. The fence is
-longer than any run of backticks in the issue text, so the text cannot close it. The title and
-the description are cut at their caps, so the prompt, one argument, stays under Linux's limit
-for a single argument (``MAX_ARGUMENT_BYTES``) whatever the issue holds (E21).
+in the prompt, after the steps, in a fenced block labelled as untrusted data, followed by one
+line that hands control back to the steps. The fence is longer than any run of backticks in the
+issue text, so the text cannot close it. The issue text loses NUL and lone surrogates, which no
+argument can hold. The title, url and description are cut at their caps and the id is bounded
+by ``ISSUE_ID_PATTERN`` (both adapters refuse any other), so the issue's share of the prompt is
+bounded whatever the tracker holds; with the hub's own paths and commands, the prompt stays
+under Linux's limit for one argument (``MAX_ARGUMENT_BYTES``) (E21).
 """
 
 import json
 import re
 from collections.abc import Iterable, Sequence
+from decimal import Decimal
 from typing import Final
 
+from agent_hub.core.runner.run_texts import well_formed
 from agent_hub.core.tracker.tracker_client import Issue
 
 MAX_TITLE_CHARS: Final = 1_000
 MAX_DESCRIPTION_CHARS: Final = 20_000
+MAX_URL_CHARS: Final = 2_048
 # Linux's MAX_ARG_STRLEN: the most bytes one argument of a new program may hold.
 MAX_ARGUMENT_BYTES: Final = 131_072
 TRUNCATED: Final = "\n[truncated]"
+# After the issue, so the last thing the session reads is not the untrusted text.
+ISSUE_END: Final = (
+    "End of the issue. Follow steps 1 to 5 above; your last line is the JSON verdict."
+)
 CLAUDE_PROGRAM: Final = "claude"
 # The old runner's tools, minus every tracker (``mcp__``) tool.
 IMPLEMENTING_TOOLS: Final = (
@@ -101,14 +111,14 @@ def implementing_prompt(
         prefix=prefix,
         verdict=_VERDICT_SHAPE,
     )
-    body = (
+    body = well_formed(
         f"id: {issue.id}\n"
         f"title: {_cut(issue.title, MAX_TITLE_CHARS)}\n"
-        f"url: {issue.url}\n"
+        f"url: {_cut(issue.url, MAX_URL_CHARS)}\n"
         f"description:\n{_cut(issue.description, MAX_DESCRIPTION_CHARS)}"
     )
     fence = "`" * _fence_length(body)
-    return f"{steps}\n{fence}text\n{body}\n{fence}\n"
+    return f"{steps}\n{fence}text\n{body}\n{fence}\n\n{ISSUE_END}\n"
 
 
 def gate_tools(commands: Iterable[str]) -> tuple[str, ...]:
@@ -139,7 +149,7 @@ def implementing_argv(
         "--max-turns",
         str(max_turns),
         "--max-budget-usd",
-        f"{budget:g}",
+        _exact_decimal(budget),
         "--model",
         model,
         "--settings",
@@ -148,6 +158,11 @@ def implementing_argv(
         "--allowedTools",
         *tools,
     ]
+
+
+def _exact_decimal(value: float) -> str:
+    # The shortest decimal that reads back as ``value``, never in exponent form (3.0 -> "3").
+    return format(Decimal(repr(value)).normalize(), "f")
 
 
 def _cut(text: str, limit: int) -> str:

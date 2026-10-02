@@ -2,9 +2,11 @@ import json
 
 from agent_hub.core.runner.session_prompt import (
     IMPLEMENTING_TOOLS,
+    ISSUE_END,
     MAX_ARGUMENT_BYTES,
     MAX_DESCRIPTION_CHARS,
     MAX_TITLE_CHARS,
+    MAX_URL_CHARS,
     TRUNCATED,
     gate_tools,
     implementing_argv,
@@ -57,7 +59,7 @@ def test_holds_issue_text_in_fenced_block_when_prompt_built() -> None:
         "description:\n"
         "Do the synthetic work.\n\n```sh\nmake check\n```"
     )
-    assert prompt.endswith(f"\n{fence}\n")
+    assert prompt.endswith(f"\n{fence}\n\n{ISSUE_END}\n")
 
 
 def test_cuts_description_when_over_cap() -> None:
@@ -83,9 +85,13 @@ def test_fits_argument_limit_when_fields_at_cap() -> None:
     wide = "\N{GRINNING FACE}"
     for character in (wide, "`"):
         issue = an_issue(
-            title=character * (MAX_TITLE_CHARS + 1),
-            description=character * (MAX_DESCRIPTION_CHARS + 1),
-            url="https://linear.app/demo/issue/DEM-1",
+            # The longest id ISSUE_ID_PATTERN allows (both adapters refuse any other).
+            id="ABCDEFGHIJ-123456789",
+            # Each field alone, uncut, would be over the limit: every cap is needed.
+            title=character * MAX_ARGUMENT_BYTES,
+            description=character * MAX_ARGUMENT_BYTES,
+            url="https://linear.app/" + character * MAX_ARGUMENT_BYTES,
+            labels=tuple(f"label-{index}" for index in range(50)),
         )
 
         prompt = prompt_for(issue, sensitive=("agent-hub/docs/adr", "hub.json"))
@@ -99,7 +105,7 @@ def test_keeps_fence_longer_than_any_backtick_run_when_issue_holds_one() -> None
     prompt = prompt_for(issue)
 
     assert "\n```````text\n" in prompt
-    assert prompt.endswith("\n```````\n")
+    assert prompt.endswith(f"\n```````\n\n{ISSUE_END}\n")
 
 
 def test_names_no_tracker_tool_when_prompt_built() -> None:
@@ -204,3 +210,53 @@ def test_omits_add_dir_when_no_folder_given() -> None:
 
     assert "--add-dir" not in argv
     assert argv[argv.index("--max-budget-usd") + 1] == "0.25"
+
+
+def test_pins_url_cap_and_end_line_when_module_loaded() -> None:
+    assert MAX_URL_CHARS == 2_048
+    assert ISSUE_END == (
+        "End of the issue. Follow steps 1 to 5 above; your last line is the JSON verdict."
+    )
+
+
+def test_cuts_url_when_over_cap() -> None:
+    url = "https://linear.app/" + "u" * MAX_URL_CHARS
+
+    prompt = prompt_for(an_issue(url=url))
+
+    assert f"url: {url[:MAX_URL_CHARS]}{TRUNCATED}\n" in prompt
+    assert url[: MAX_URL_CHARS + 1] not in prompt
+
+
+def test_drops_nul_when_issue_holds_one() -> None:
+    issue = an_issue(title="Synthetic\x00title", description="a\x00b", url="https://x/\x00")
+
+    prompt = prompt_for(issue)
+
+    assert "\x00" not in prompt
+    assert "title: Synthetictitle\n" in prompt
+    assert "description:\nab\n" in prompt
+
+
+def test_replaces_lone_surrogate_when_issue_holds_one() -> None:
+    issue = an_issue(title="Synthetic \ud800 title", description="tail \udfff")
+
+    prompt = prompt_for(issue)
+
+    prompt.encode()  # a lone surrogate would raise here, as exec would refuse the argument
+    assert "title: Synthetic \ufffd title\n" in prompt
+    assert "description:\ntail \ufffd\n" in prompt
+
+
+def test_writes_budget_as_exact_decimal_when_argv_built() -> None:
+    def budget_shown(budget: float) -> str:
+        argv = implementing_argv(
+            prompt="p", max_turns=1, budget=budget, model="m", effort="low", add_dirs=(), tools=()
+        )
+        return argv[argv.index("--max-budget-usd") + 1]
+
+    assert budget_shown(3) == "3"
+    assert budget_shown(3.0) == "3"
+    assert budget_shown(0.5) == "0.5"
+    assert budget_shown(1234567) == "1234567"
+    assert budget_shown(1e-7) == "0.0000001"
