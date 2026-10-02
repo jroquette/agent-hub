@@ -747,6 +747,15 @@ def retro_metrics_bad_run_file(*, ws: Any) -> Run:
     return {"answers": RETRO_GH}
 
 
+def retro_metrics_per_repo_branch(*, ws: Any) -> Run:
+    # api sets its own default branch (AGH-46): its CI runs are read on master; web and the hub
+    # repo keep the project's trunk, and the learnings still come from the hub's origin/trunk.
+    retro_workspace(ws)
+    repos = [dict(ws.HUB_JSON["repos"][0], default_branch="master"), ws.HUB_JSON["repos"][1]]
+    ws.commit_hub({"hub.json": json.dumps(dict(ws.HUB_JSON, repos=repos), indent=2) + "\n"})
+    return {"answers": RETRO_GH}
+
+
 CASES: dict[str, Builder] = {
     "post_edit/empty_stdin": post_edit_empty_stdin,
     "post_edit/missing_file": post_edit_missing_file,
@@ -783,14 +792,15 @@ CASES: dict[str, Builder] = {
     "retro_metrics/gh_bad_json_no_data": retro_metrics_gh_bad_json_no_data,
     "retro_metrics/from_hub_worktree": retro_metrics_from_hub_worktree,
     "retro_metrics/bad_run_file": retro_metrics_bad_run_file,
+    "retro_metrics/per_repo_branch": retro_metrics_per_repo_branch,
 }
-# AGH-7's case count per file under test.
+# AGH-7's case count per file under test, plus AGH-46's retro_metrics/per_repo_branch.
 CASES_PER_FILE = {
     "post_edit": 11,
     "session_start": 9,
     "session_end": 5,
     "pre_compact": 4,
-    "retro_metrics": 6,
+    "retro_metrics": 7,
 }
 
 

@@ -390,7 +390,7 @@ PROJECT_BRANCH_READERS = {
     "generator/src/agent_hub/generator/placeholders.py": 2,
     # the CI trigger branches
     f"{TEMPLATES}/github/workflows/ci.yml.tmpl": 2,
-    # CI runs for every repo and the hub log
+    # the hub repo's CI pair and the hub log
     f"{TEMPLATES}/scripts/retro_metrics.py.tmpl": 2,
     # Config.default_branch, and the project's branch in the protected set (also the root file's)
     f"{TEMPLATES}/plugin/hub-workflow/hooks/hubhooks.py.tmpl": 2,
