@@ -1131,12 +1131,17 @@ summary = os.environ.get("FAKE_CLAUDE_SUMMARY", RUN_SUMMARY)
 verdict = {"status": "done", "summary": summary, "tests": "make check-fast"}
 if mode == "hang":
     time.sleep(600)
-if mode in ("done", "prose", "done-dirty"):
+if mode in ("done", "prose", "done-dirty", "config-helper", "config-remote"):
     commit()
+if mode == "config-helper":
+    # A session planting a helper the push would run with the GitHub tokens.
+    subprocess.run(["git", "config", "credential.helper", "!echo synthetic"], check=True)
+if mode == "config-remote":
+    subprocess.run(["git", "config", "remote.origin.url", "/elsewhere/demo-api.git"], check=True)
 if mode == "done-dirty":
     with open("notes.txt", "w") as file:
         file.write("left behind\\n")
-if mode in ("done", "done-no-commit", "done-dirty"):
+if mode in ("done", "done-no-commit", "done-dirty", "config-helper", "config-remote"):
     answer("Done.\\n" + json.dumps(verdict))
 elif mode == "blocked":
     answer("Stopping.\\n" + json.dumps({"status": "blocked", "summary": "needs a plan"}))
