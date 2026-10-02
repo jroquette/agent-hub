@@ -144,6 +144,44 @@ def test_escapes_title_when_it_holds_newline(
     assert result.stdout == f"DEM-5  ?  {json.dumps(title)}  {url_of('DEM-5')}\n"
 
 
+# Each would move the cursor, clear the screen, reorder the line or end it on a terminal.
+CONTROL_TEXTS = {
+    "csi-escape": "\x1b[2J",
+    "c1-csi": "\x9b",
+    "bidi-override": "\u202e",
+    "line-separator": "\u2028",
+    "newline": "\n",
+}
+
+
+@pytest.mark.usefixtures("with_key")
+@pytest.mark.parametrize("field", ["title", "url"])
+@pytest.mark.parametrize("text", list(CONTROL_TEXTS.values()), ids=list(CONTROL_TEXTS))
+def test_escapes_text_when_it_holds_control_characters(
+    demo_workspace: Workspace,
+    run_command: CommandRunner,
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    text: str,
+) -> None:
+    title, url = "Synthetic title", url_of("DEM-5")
+    if field == "title":
+        title = f"Synthetic {text}title"
+    else:
+        url = f"{url}{text}"
+    issue = an_issue(id="DEM-5", title=title, url=url)
+    inject(monkeypatch, InMemoryTrackerClient(seeded_backend(issue)))
+
+    result = run_command(demo_workspace.hub, "next")
+
+    assert result.exit_code == 0, result.output
+    shown_title = json.dumps(title) if field == "title" else title
+    shown_url = json.dumps(url) if field == "url" else url
+    assert result.stdout == f"DEM-5  ?  {shown_title}  {shown_url}\n"
+    assert text not in result.stdout.removesuffix("\n")
+
+
 @pytest.mark.usefixtures("with_key")
 def test_escapes_id_when_it_holds_newline(
     demo_workspace: Workspace, run_command: CommandRunner, monkeypatch: pytest.MonkeyPatch
