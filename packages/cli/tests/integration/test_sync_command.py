@@ -298,6 +298,107 @@ class TestModules:
         for module in modules:
             assert f"mk/{module}.mk" in lock["files"], module
 
+    # AC-17.12 (ADR 0009): a module added or removed after the first sync.
+
+    def test_reports_pending_when_module_added_and_checked(
+        self, demo_hub: Path, run_sync: SyncRunner, *, tree_digest: TreeDigest
+    ) -> None:
+        select_modules(demo_hub, {"bench": {}})
+        before = tree_digest(demo_hub)
+
+        checked = run_sync(demo_hub, "--check")
+
+        assert (checked.exit_code, checked.stderr) == (4, ""), checked.output
+        assert checked.stdout.splitlines() == [
+            "would update Makefile",
+            "would create mk/bench.mk",
+            "would update hub.lock",
+        ]
+        assert tree_digest(demo_hub) == before
+
+    def test_creates_module_files_when_module_added(
+        self, demo_hub: Path, run_sync: SyncRunner
+    ) -> None:
+        select_modules(demo_hub, {"bench": {}})
+
+        synced = run_sync(demo_hub)
+
+        assert (synced.exit_code, synced.stderr) == (0, ""), synced.output
+        assert synced.stdout.splitlines() == [
+            "updated Makefile",
+            "created mk/bench.mk",
+            "updated hub.lock",
+        ]
+        assert b"include mk/bench.mk\n" in (demo_hub / "Makefile").read_bytes()
+        lock = json.loads((demo_hub / "hub.lock").read_bytes())
+        assert lock["modules"] == ["bench"]
+        assert lock["files"]["mk/bench.mk"]["ownership"] == "managed"
+        assert run_sync(demo_hub, "--check").stdout == "up to date\n"
+
+    def test_deletes_unmodified_files_when_modules_removed(
+        self,
+        demo_hub: Path,
+        demo_hub_template: Path,
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+    ) -> None:
+        select_modules(demo_hub, {"bench": {}, "marketplace": {}})
+        assert run_sync(demo_hub).exit_code == 0
+        select_modules(demo_hub, {})
+
+        synced = run_sync(demo_hub)
+
+        assert (synced.exit_code, synced.stderr) == (0, ""), synced.output
+        assert synced.stdout.splitlines() == [
+            f"deleted {MARKETPLACE}",
+            "updated Makefile",
+            "deleted mk/bench.mk",
+            "deleted mk/marketplace.mk",
+            "updated hub.lock",
+        ]
+        # The seeded sibling is the project's: it stays on disk and leaves the lock.
+        assert (demo_hub / MARKETPLACE_SIBLING).read_bytes() == b"{}\n"
+        lock = json.loads((demo_hub / "hub.lock").read_bytes())
+        assert lock["modules"] == []
+        assert not [path for path in lock["files"] if path.startswith((".claude-plugin/", "mk/"))]
+        assert (demo_hub / "hub.lock").read_bytes() == (demo_hub_template / "hub.lock").read_bytes()
+        # Besides ``modules: {}`` in ``hub.json``, the tree is a fresh one plus the sibling (and
+        # the folders a deleted path leaves, empty).
+        after = tree_digest(demo_hub)
+        fresh = tree_digest(demo_hub_template)
+        assert {
+            path for path in after.keys() | fresh.keys() if after.get(path) != fresh.get(path)
+        } == {
+            ".claude-plugin",
+            MARKETPLACE_SIBLING,
+            "hub.json",
+            "mk",
+        }
+
+    def test_conflicts_when_removed_module_file_edited(
+        self, demo_hub: Path, run_sync: SyncRunner, *, tree_digest: TreeDigest
+    ) -> None:
+        select_modules(demo_hub, {"bench": {}})
+        assert run_sync(demo_hub).exit_code == 0
+        with (demo_hub / "mk" / "bench.mk").open("ab") as makefile:
+            makefile.write(b"local: ; @true\n")
+        select_modules(demo_hub, {})
+        before = tree_digest(demo_hub)
+
+        synced = run_sync(demo_hub)
+
+        assert (synced.exit_code, synced.stdout) == (3, ""), synced.output
+        assert "mk/bench.mk" in synced.stderr
+        assert tree_digest(demo_hub) == before
+
+
+def select_modules(root: Path, modules: dict[str, Any]) -> None:
+    """Rewrite the hub's ``hub.json`` with ``modules`` selected."""
+    document = json.loads((root / "hub.json").read_bytes())
+    document["modules"] = modules
+    (root / "hub.json").write_bytes(dump_json(document))
+
 
 MARKETPLACE = ".claude-plugin/marketplace.json"
 MARKETPLACE_SIBLING = ".claude-plugin/marketplace.project.json"
