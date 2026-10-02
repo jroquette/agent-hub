@@ -118,6 +118,8 @@ _PREFIX: Final = "hub bench"
 # A pid's text is short: more is no pid.
 _LOCK_READ_BYTES: Final = 64
 _LEFT_BEHIND_FIX: Final = "delete it if no hub bench is running in this workspace"
+# ``_lock_pid``'s answer for a lock that is no regular file: never a pid (pids are above 0).
+_NOT_REGULAR: Final = -1
 # Opened without following a link, and without waiting on a FIFO's writer.
 _OPEN_FLAGS: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 
@@ -167,23 +169,47 @@ def workspace_lock_or_exit(workspace: Path) -> Iterator[None]:
     folder = workspace / BENCH_FOLDER
     _make_folder(folder)
     lock = folder / LOCK_NAME
+    ours = _link_lock_or_exit(lock)
     try:
-        descriptor = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o644)
+        yield
+    finally:
+        # Only our own file: a lock someone replaced belongs to another bench. The pid too,
+        # since a new file may reuse a freed inode number.
+        with contextlib.suppress(OSError):
+            found = os.lstat(lock)
+            if (found.st_dev, found.st_ino) == ours and _lock_pid(lock) == os.getpid():
+                lock.unlink()
+
+
+def _link_lock_or_exit(lock: Path) -> tuple[int, int]:
+    """Link a file already holding the pid at ``lock`` (atomic: a reader never sees it empty);
+    its device and inode. Exit 1 naming the lock when one is there."""
+    pid = os.getpid()
+    temporary = lock.with_name(f".{LOCK_NAME}.{pid}.tmp")
+    try:
+        with contextlib.suppress(FileNotFoundError):
+            temporary.unlink()
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+        with os.fdopen(os.open(temporary, flags, 0o644), "w", encoding="ascii") as file:
+            file.write(f"{pid}\n")
+            created = os.fstat(file.fileno())
+        os.link(temporary, lock)
     except FileExistsError:
         fail(_held_line(lock))
     except OSError as error:
         fail(f"{_PREFIX}: {lock}: {error.strerror or error}")
-    try:
-        with os.fdopen(descriptor, "w", encoding="ascii") as file:
-            file.write(f"{os.getpid()}\n")
-        yield
     finally:
         with contextlib.suppress(OSError):
-            lock.unlink()
+            temporary.unlink()
+    return created.st_dev, created.st_ino
 
 
 def _held_line(lock: Path) -> str:
     pid = _lock_pid(lock)
+    if pid == _NOT_REGULAR:
+        return (
+            f"{_PREFIX}: the lock {lock} was left behind (not a regular file): {_LEFT_BEHIND_FIX}"
+        )
     if pid is None:
         return f"{_PREFIX}: the lock {lock} was left behind (no pid in it): {_LEFT_BEHIND_FIX}"
     if _is_running(pid):
@@ -198,11 +224,19 @@ def _held_line(lock: Path) -> str:
 
 
 def _lock_pid(lock: Path) -> int | None:
+    """The pid the lock holds; ``None`` without one; ``_NOT_REGULAR`` for a link, a FIFO or
+    anything else not a regular file (never followed, never waited on)."""
     try:
-        with lock.open("rb") as file:
-            text = file.read(_LOCK_READ_BYTES).strip()
+        descriptor = os.open(lock, _OPEN_FLAGS)
     except OSError:
-        return None
+        return _NOT_REGULAR if os.path.islink(lock) else None
+    with os.fdopen(descriptor, "rb") as file:
+        if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
+            return _NOT_REGULAR
+        try:
+            text = file.read(_LOCK_READ_BYTES).strip()
+        except OSError:
+            return None
     # ASCII digits only, above 0: ``kill(0)`` would name the caller's own group.
     if not (text.isdigit() and text.isascii()) or int(text) <= 0:
         return None
@@ -581,6 +615,9 @@ class BenchSteps:
             raise StepError(f"{name} could not run: {error.strerror or error}") from None
         finally:
             for group in groups:
+                # The leader has ended: what it left in the background (a server, a test
+                # worker) ends with it, never outliving the bench.
+                _kill_group(group)
                 self.children.discard(group)
 
 
