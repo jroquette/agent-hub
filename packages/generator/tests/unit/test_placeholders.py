@@ -8,7 +8,8 @@ from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_mapping
 
 # AC-3.9: the Rendered values of project-config.md, the platform repository (erratum E3), the
-# derived module includes (erratum E2) and contract-sync's two repo dirs (AGH-17 G8). author_name,
+# derived module includes (erratum E2), contract-sync's two repo dirs (AGH-17 G8) and the module
+# files AGENTS.md names (AGH-17 2.11). author_name,
 # check_fast, check and platform.version are read at run time or quoted per format, never
 # placeholders.
 RENDERED_KEYS = {
@@ -23,6 +24,8 @@ RENDERED_KEYS = {
     "guard_deny_hosts",
     "platform_repository",
     "module_includes",
+    "module_files",
+    "module_seeded_files",
     "contract_sync_source",
     "contract_sync_target",
 }
@@ -57,6 +60,10 @@ def test_takes_values_from_model_when_demo_mapped(demo_config: HubConfig) -> Non
         "guard_deny_hosts": "",
         "platform_repository": PLATFORM_REPOSITORY,
         "module_includes": "include mk/bench.mk\ninclude mk/cloud.mk\n",
+        "module_files": (
+            ",\n  and each selected module's files (`mk/<id>.mk`, `scripts/cloud-setup.sh`)"
+        ),
+        "module_seeded_files": "",
         "contract_sync_source": "",
         "contract_sync_target": "",
     }

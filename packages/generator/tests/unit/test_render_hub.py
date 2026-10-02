@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from agent_hub.core.doctor.snapshot import module_makefiles
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
 from agent_hub.core.hub_files.extension_inputs import NO_EXTENSIONS, ExtensionInputs
@@ -27,7 +28,11 @@ from agent_hub.generator.errors import GeneratorError, TemplateError
 from agent_hub.generator.hub_template import render_template
 from agent_hub.generator.json_form import JsonValue
 from agent_hub.generator.json_merge import MergeError, merge_json
-from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_mapping
+from agent_hub.generator.placeholders import (
+    MODULE_MAKEFILE_PATTERN,
+    PLATFORM_REPOSITORY,
+    substitution_mapping,
+)
 from agent_hub.generator.registry import REGISTRY, TemplateEntry, TemplateSource
 from agent_hub.generator.render_hub import project_json_siblings, render_entries, render_hub
 
@@ -117,6 +122,7 @@ FIXTURE_PACKAGE = "render_hub_fixture_templates"
 
 # Run in a child interpreter: renders the builder's demo config and prints ``render_digest``.
 CHILD_SCRIPT = """\
+from agent_hub.core.doctor.snapshot import module_makefiles
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.generator.render_hub import render_hub
@@ -2417,25 +2423,46 @@ MANAGED_FILES_STATEMENT = re.compile(r"rewrites these managed files: (.*?)\.(?:\
 BACKTICKED = re.compile(r"`([^`]+)`")
 
 
-def test_names_every_managed_path_when_agents_rendered(demo_config: HubConfig) -> None:
-    agents = text_of(demo_config, "AGENTS.md")
+# AGH-17 D5: the statement names the selected modules' makefiles by one pattern.
+MODULE_FILES_CLAUSE = re.compile(r"each selected module's files \((.*?)\)", re.DOTALL)
+SEEDED_SIBLINGS_CLAUSE = re.compile(r"their seeded sibling \((.*?)\), which", re.DOTALL)
+
+
+def selected_entries(config: HubConfig) -> list[TemplateEntry]:
+    """The registry entries ``config`` renders: the base ones and its modules'."""
+    selected = config.modules.model_dump(exclude_none=True).keys()
+    return [entry for entry in REGISTRY if entry.module is None or entry.module in selected]
+
+
+def expanded_paths(named: Iterable[str], config: HubConfig) -> list[str]:
+    """``named`` with ``mk/<id>.mk`` read as the makefile of each module ``config`` selects."""
+    return [
+        path
+        for item in named
+        for path in (list(module_makefiles(config)) if item == MODULE_MAKEFILE_PATTERN else [item])
+    ]
+
+
+@pytest.mark.parametrize("config_name", ["variant_config", "demo_config", "all_modules_config"])
+def test_names_every_managed_path_when_agents_rendered(
+    request: pytest.FixtureRequest, config_name: str
+) -> None:
+    config: HubConfig = request.getfixturevalue(config_name)
+    agents = text_of(config, "AGENTS.md")
     statements = MANAGED_FILES_STATEMENT.findall(agents)
 
     assert len(statements) == 1
-    named = BACKTICKED.findall(statements[0])
-    # A module's files are not in this list: they render only when selected (AGH-17 D5).
-    managed = [
-        entry.path
-        for entry in REGISTRY
-        if entry.ownership is Ownership.MANAGED and entry.module is None
-    ]
+    named = expanded_paths(BACKTICKED.findall(statements[0]), config)
+    # The selected modules' files are named too (AGH-17 D5), and only theirs.
+    entries = selected_entries(config)
+    managed = [entry.path for entry in entries if entry.ownership is Ownership.MANAGED]
     assert managed
     assert len(named) == len(set(named))
     # E4.10: an item is a managed file, or a folder (`plugin/hub-workflow/`) that holds at least
     # one registry entry and only managed ones.
     for item in named:
         if item.endswith("/"):
-            under = [entry for entry in REGISTRY if entry.path.startswith(item)]
+            under = [entry for entry in entries if entry.path.startswith(item)]
             assert under, item
             assert all(entry.ownership is Ownership.MANAGED for entry in under), item
         else:
@@ -2446,6 +2473,50 @@ def test_names_every_managed_path_when_agents_rendered(demo_config: HubConfig) -
             item for item in named if item == path or (item.endswith("/") and path.startswith(item))
         ]
         assert len(covering) == 1, (path, covering)
+
+
+@pytest.mark.parametrize(
+    "modules",
+    [
+        {"bench": {}, "cloud": {}, "contract-sync": {}, "marketplace": {}},
+        {"cloud": {}},
+        {"marketplace": {}},
+        {},
+    ],
+    ids=["all", "cloud", "marketplace", "none"],
+)
+def test_names_module_files_when_agents_rendered(modules: dict[str, dict[str, str]]) -> None:
+    if "contract-sync" in modules:
+        modules["contract-sync"] = {"source": "demo-api", "target": "demo-web"}
+    document = a_hub_document()
+    document["repos"].append(a_second_repo())
+    document["modules"] = modules
+    config = HubConfig.model_validate(document)
+    agents = text_of(config, "AGENTS.md")
+    clauses = MODULE_FILES_CLAUSE.findall(agents)
+    seeded_clauses = SEEDED_SIBLINGS_CLAUSE.findall(agents)
+
+    module_entries = [entry for entry in REGISTRY if entry.module in modules]
+    module_managed = [e.path for e in module_entries if e.ownership is Ownership.MANAGED]
+    module_seeded = [e.path for e in module_entries if e.ownership is Ownership.SEEDED]
+    assert len(seeded_clauses) == 1
+    seeded_named = BACKTICKED.findall(seeded_clauses[0])
+    if not modules:
+        # A hub names only the files it holds: no module clause, no module sibling.
+        assert clauses == []
+        assert not [name for name in seeded_named if name.startswith(".claude-plugin/")]
+        return
+    assert len(clauses) == 1
+    named = BACKTICKED.findall(clauses[0])
+    # The makefiles by their pattern, first; then each other managed module file once.
+    assert named[0] == MODULE_MAKEFILE_PATTERN
+    assert sorted(expanded_paths(named, config)) == sorted(module_managed)
+    assert [path for path in module_seeded if path not in seeded_named] == []
+    assert [name for name in seeded_named if name.startswith(".claude-plugin/")] == module_seeded
+    # The clauses keep the list's Markdown form: indented lines, none wider than the template's.
+    statement = agents[agents.index("- `hub sync` rewrites") : agents.index("never touches.")]
+    assert all(line.startswith("  ") for line in statement.splitlines()[1:]), statement
+    assert max(len(line) for line in statement.splitlines()) <= 120, statement
 
 
 # Owner decision on slice 16: `.claude/settings.json` wires the base plugin's hooks, so enabling
