@@ -1363,6 +1363,65 @@ def test_lists_each_base_target_once_when_help_run(
     assert logged_calls(fake_uv_bin) == []
 
 
+# AGH-17 D5 (AC-17.7): each module's make targets, in its `mk/<id>.mk`.
+MODULE_TARGETS = {
+    "mk/bench.mk": ("bench", "bench-validate"),
+    "mk/cloud.mk": ("cloud-setup",),
+    "mk/contract-sync.mk": ("contract-sync",),
+    "mk/marketplace.mk": ("marketplace-validate",),
+}
+PHONY_LINE = re.compile(r"^\.PHONY:(.*)$", re.MULTILINE)
+
+
+def help_names(stdout: str) -> list[str]:
+    return [line.split()[0] for line in stdout.splitlines() if line.strip()]
+
+
+def test_lists_module_targets_when_help_run_with_all_modules(
+    all_modules_config: HubConfig,
+    rendered_tree: Callable[[RenderedHub], Path],
+    fake_uv_bin: Path,
+) -> None:
+    root = a_hub_tree(all_modules_config, rendered_tree)
+
+    completed = run_make(root, fake_uv_bin, "help")
+
+    assert completed.returncode == 0, completed.stderr
+    module_targets = [name for names in MODULE_TARGETS.values() for name in names]
+    assert sorted(help_names(completed.stdout)) == sorted([*BASE_TARGETS, *module_targets])
+    assert logged_calls(fake_uv_bin) == []
+
+
+def test_lists_only_base_targets_when_no_module_selected(
+    variant_config: HubConfig,
+    rendered_tree: Callable[[RenderedHub], Path],
+    fake_uv_bin: Path,
+) -> None:
+    root = a_hub_tree(variant_config, rendered_tree)
+
+    completed = run_make(root, fake_uv_bin, "help")
+
+    assert completed.returncode == 0, completed.stderr
+    assert sorted(help_names(completed.stdout)) == sorted(BASE_TARGETS)
+    assert not (root / "mk").exists()
+
+
+def test_declares_phony_when_module_makefile_rendered(all_modules_config: HubConfig) -> None:
+    rendered = {file.path: file for file in render_hub(all_modules_config).files}
+    makefiles = {path: file for path, file in rendered.items() if path.startswith("mk/")}
+
+    assert sorted(makefiles) == sorted(MODULE_TARGETS)
+    for path, targets in MODULE_TARGETS.items():
+        text = makefiles[path].content.decode("utf-8")
+        assert MAKE_TARGET.findall(text) == list(targets), path
+        phony = PHONY_LINE.findall(text)
+        assert len(phony) == 1, path
+        assert phony[0].split() == list(targets), path
+        for target in targets:
+            # Each target has a help text, so `make help` lists it.
+            assert re.search(rf"^{re.escape(target)}:.*## \S", text, re.MULTILINE), target
+
+
 def test_passes_check_when_hub_has_no_tests(
     variant_config: HubConfig,
     rendered_tree: Callable[[RenderedHub], Path],
