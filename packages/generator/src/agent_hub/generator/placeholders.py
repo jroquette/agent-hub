@@ -11,6 +11,7 @@ them at run time, and the author name needs format quoting.
 
 from typing import Final
 
+from agent_hub.core.doctor.snapshot import module_makefiles
 from agent_hub.core.hub_config.model import HubConfig
 
 # The platform's git source, unpinned: shims append ``@v<platform.version>`` read from hub.json
@@ -41,7 +42,7 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
 def _module_includes(config: HubConfig) -> str:
     """One ``include mk/<id>.mk`` line per selected module, sorted; empty with no module.
 
-    Dumped by alias, so the ids are the closed JSON ids (``contract-sync``), never free text.
+    The paths are the ones ``hub doctor`` reads as managed makefiles, so the two cannot drift;
+    the ids are the closed JSON ids (``contract-sync``), never free text.
     """
-    selected = sorted(config.modules.model_dump(exclude_none=True))
-    return "".join(f"include mk/{module_id}.mk\n" for module_id in selected)
+    return "".join(f"include {path}\n" for path in module_makefiles(config))

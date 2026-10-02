@@ -114,9 +114,19 @@ def hub_paths(config: HubConfig) -> tuple[str, ...]:
         ".mcp.json",
         "Makefile",
         "Makefile.project",
+        *module_makefiles(config),
         "package.json",
         guard_extension_path(config),
     )
+
+
+def module_makefiles(config: HubConfig) -> tuple[str, ...]:
+    """``mk/<id>.mk`` of each selected module, by id: the managed ``Makefile`` includes them.
+
+    A ``mk/`` file of an unselected module is not included, so it defines no target (plan E13).
+    """
+    selected = config.modules.model_dump(exclude_none=True).keys()
+    return tuple(f"mk/{module}.mk" for module in sorted(selected))
 
 
 def guard_extension_path(config: HubConfig) -> str:

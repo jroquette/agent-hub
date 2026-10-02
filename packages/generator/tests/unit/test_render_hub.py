@@ -21,7 +21,7 @@ from agent_hub.core.hub_files.extension_inputs import NO_EXTENSIONS, ExtensionIn
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.hub_files.rendered_link import RenderedLink
-from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 from agent_hub.generator.built_json import managed_settings
 from agent_hub.generator.errors import GeneratorError, TemplateError
 from agent_hub.generator.hub_template import render_template
@@ -312,7 +312,11 @@ def test_renders_module_entry_when_aliased_module_selected() -> None:
         module="contract-sync",
     )
 
-    rendered = render_entries(a_config_with_modules({"contract-sync": {}}), [entry])
+    document = a_hub_document()
+    document["repos"].append(a_second_repo())
+    document["modules"] = {"contract-sync": {"source": "demo-api", "target": "demo-web"}}
+
+    rendered = render_entries(HubConfig.model_validate(document), [entry])
 
     assert [file.path for file in rendered.files] == ["mk/contract-sync.mk"]
 

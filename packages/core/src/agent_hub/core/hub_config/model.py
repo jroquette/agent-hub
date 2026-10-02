@@ -112,7 +112,33 @@ class Guard(ConfigObject):
 
 
 class ModuleSettings(ConfigObject):
-    """The settings of a selected module; none in Phase 1, so only ``{}`` (and ``_`` keys)."""
+    """The settings of a module that takes none: only ``{}`` (and ``_`` keys)."""
+
+
+class ContractSyncSettings(ModuleSettings):
+    """``contract-sync``: the repo that exports the contract and the repo that imports it.
+
+    Both are ``repos[].dir`` entries, checked by ``HubConfig``, which knows the repos.
+    """
+
+    source: RepoDir
+    target: RepoDir
+
+    def cross_field_problems(self) -> list[InitErrorDetails]:
+        """A source that is also the target syncs nothing."""
+        if self.source != self.target:
+            return []
+        return [
+            InitErrorDetails(
+                type=PydanticCustomError(
+                    "same_repo_dir",
+                    "target {dir} is the source too; give two different repos",
+                    {"dir": json.dumps(self.target)},
+                ),
+                loc=("target",),
+                input=self.target,
+            )
+        ]
 
 
 class Modules(ConfigObject):
@@ -120,7 +146,7 @@ class Modules(ConfigObject):
 
     cloud: ModuleSettings | None = absent_by_default()
     bench: ModuleSettings | None = absent_by_default()
-    contract_sync: ModuleSettings | None = absent_by_default(alias="contract-sync")
+    contract_sync: ContractSyncSettings | None = absent_by_default(alias="contract-sync")
     marketplace: ModuleSettings | None = absent_by_default()
 
 
@@ -162,10 +188,11 @@ class HubConfig(ConfigObject):
     doctor: Doctor = Field(default_factory=Doctor)
 
     def cross_field_problems(self) -> list[InitErrorDetails]:
-        """Unique repo dirs (ignoring case), known ``ask_before_edit`` roots, selected modules."""
+        """Unique repo dirs, known guard roots and contract-sync repos, rules of chosen modules."""
         return [
             *self._duplicate_repo_dirs(),
             *self._unknown_guard_roots(),
+            *self._contract_sync_repos(),
             *self._rules_of_unselected_modules(),
         ]
 
@@ -200,6 +227,23 @@ class HubConfig(ConfigObject):
                     ),
                     loc=("guard", "ask_before_edit", index),
                     input=path,
+                )
+
+    def _contract_sync_repos(self) -> Iterator[InitErrorDetails]:
+        settings = self.modules.contract_sync
+        if settings is None:
+            return
+        dirs = {repo.dir for repo in self.repos}
+        for key, value in (("source", settings.source), ("target", settings.target)):
+            if value not in dirs:
+                yield InitErrorDetails(
+                    type=PydanticCustomError(
+                        "unknown_repo_dir",
+                        "repo dir {dir} is not in repos",
+                        {"dir": json.dumps(value)},
+                    ),
+                    loc=("modules", "contract-sync", key),
+                    input=value,
                 )
 
     def _rules_of_unselected_modules(self) -> Iterator[InitErrorDetails]:

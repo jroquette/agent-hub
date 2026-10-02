@@ -190,6 +190,17 @@ def test_reports_nothing_when_makefiles_not_text(
     assert findings_of(snapshot_of(entries=entries)) == []
 
 
+def test_reports_module_target_when_makefile_absent(snapshot_of: SnapshotFactory) -> None:
+    # No Makefile: a selected module's mk/ file still defines managed targets (plan E13).
+    snapshot = snapshot_of(
+        files={"mk/bench.mk": b"bench:\n\t@$(HUB) bench\n", PROJECT: b"check:\nbench:\n"}
+    )
+
+    assert findings_of(snapshot) == [
+        (Severity.WARNING, PROJECT, 2, "redefines target 'bench'", FIX)
+    ]
+
+
 def test_makes_error_when_severity_set_to_error(snapshot_of: SnapshotFactory) -> None:
     document = a_hub_document()
     document["doctor"] = {"rules": {"makefile.override": {"severity": "error"}}}
@@ -204,3 +215,25 @@ def test_makes_error_when_severity_set_to_error(snapshot_of: SnapshotFactory) ->
 
     assert [(finding.severity, finding.line) for finding in findings] == [(Severity.ERROR, 1)]
     assert count_findings(findings).has_errors
+
+
+def test_reports_override_when_project_redefines_module_target(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    # E13: the builder's config selects bench and cloud, not marketplace, whose mk/ file the
+    # Makefile does not include.
+    project = SEEDED + "bench:\n\tx\ncloud-setup:\n\tx\nmarketplace-validate:\n\tx\n"
+    snapshot = snapshot_of(
+        files={
+            "Makefile": MANAGED.encode(),
+            PROJECT: project.encode(),
+            "mk/bench.mk": b".PHONY: bench\nbench:  ## Bench\n\t@$(HUB) bench $(ARGS)\n",
+            "mk/cloud.mk": b"cloud-setup:\n\tbash scripts/cloud-setup.sh\n",
+            "mk/marketplace.mk": b"marketplace-validate:\n\tclaude plugin validate .\n",
+        }
+    )
+
+    assert findings_of(snapshot) == [
+        (Severity.WARNING, PROJECT, 3, "redefines target 'bench'", FIX),
+        (Severity.WARNING, PROJECT, 5, "redefines target 'cloud-setup'", FIX),
+    ]

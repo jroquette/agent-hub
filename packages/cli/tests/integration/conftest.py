@@ -34,7 +34,7 @@ from agent_hub.cli.hub_root import HUB_ROOT_VARIABLE
 from agent_hub.cli.main import app
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.json_form import dump_json
-from agent_hub.core.testing.builders import a_hub_document, an_issue
+from agent_hub.core.testing.builders import a_hub_document, a_second_repo, an_issue
 from agent_hub.core.testing.fakes import FakeTrackerBackend, InMemoryTrackerClient, TrackerState
 from agent_hub.core.tracker.tracker_client import Issue
 
@@ -185,20 +185,11 @@ def demo_hub(tmp_path: Path, demo_hub_template: Path) -> Path:
     return root
 
 
-# The second repo of the two-repo ``DEMO`` (plan E3b), in the generator's ``variant_config`` shape.
-DEMO_SECOND_REPO = {
-    "dir": "demo-web",
-    "github": "acme/demo-web",
-    "check_fast": "make check-fast",
-    "check": "make check",
-}
-
-
 @pytest.fixture(scope="session")
 def demo_two_repo_hub_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """``DEMO`` with ``demo-web`` after ``demo-api`` in ``repos``, built once: never change it."""
     document = demo_document_value()
-    document["repos"].append(dict(DEMO_SECOND_REPO))
+    document["repos"].append(a_second_repo())
     return init_template(tmp_path_factory.mktemp("demo-two-repo-hub-template"), document)
 
 
@@ -654,7 +645,7 @@ def _build_workspace(base: Path) -> DemoWorkspace:
     workspace = DemoWorkspace(base, _workspace_git_env(home))
     document = demo_document_value()
     document["project"]["default_branch"] = WORKSPACE_BRANCH
-    document["repos"].append(dict(DEMO_SECOND_REPO))
+    document["repos"].append(a_second_repo())
     config = base / "workspace-hub.json"
     config.write_bytes(dump_json(document))
     result = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(workspace.hub)])
