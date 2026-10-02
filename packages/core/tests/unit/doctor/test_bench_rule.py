@@ -89,8 +89,9 @@ def test_reports_each_problem_when_cases_invalid(snapshot_of: SnapshotFactory) -
         (
             TASKS,
             '[1].hidden_tests: "../x.py" is not a literal relative path in the repo'
-            " (no empty, `.`, `..` or `.git` segment, no leading `/`, `-` or `:`,"
-            " no `*`, `?`, `[` or control character, 1 to 1024 characters)",
+            " (no empty, `.`, `..` or `.git` segment in any case, no leading `/`, `-` or `:`,"
+            " no `*`, `?`, `[`, `\\`, control, format or surrogate character,"
+            " 1 to 1024 characters)",
             CASE_FIX,
         ),
         (TASKS, '[1].repo: "zz" is not in repos (demo-api)', CASE_FIX),

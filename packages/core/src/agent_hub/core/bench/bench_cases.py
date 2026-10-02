@@ -46,14 +46,19 @@ _OBJECT: Final = "must be an object"
 _BOOLEAN: Final = "must be true or false"
 _NUL: Final = "must not hold a NUL character"
 _PATH_BOUND: Final = (
-    "is not a literal relative path in the repo (no empty, `.`, `..` or `.git` segment,"
-    " no leading `/`, `-` or `:`, no `*`, `?`, `[` or control character,"
-    f" 1 to {MAX_TEST_PATH_CHARS} characters)"
+    "is not a literal relative path in the repo (no empty, `.`, `..` or `.git` segment in any"
+    " case, no leading `/`, `-` or `:`, no `*`, `?`, `[`, `\\`, control, format or surrogate"
+    f" character, 1 to {MAX_TEST_PATH_CHARS} characters)"
 )
-# Segments that name no file of the repo's tree: the tree itself, its parent, git's own store.
+# Segments that name no file of the repo's tree: the tree itself, its parent, git's own store
+# (compared case-folded: a case-insensitive file system reads ``.GIT`` as ``.git``).
 _NOT_FILE_SEGMENTS: Final = frozenset({"", ".", "..", ".git"})
-# Git reads ``:`` at the start as pathspec magic and these as globs; a path must name one file.
-_PATHSPEC_CHARACTERS: Final = frozenset("*?[")
+# Git reads ``:`` at the start as pathspec magic, these as globs and ``\`` as a glob escape; a
+# path must name one file.
+_PATHSPEC_CHARACTERS: Final = frozenset("*?[\\")
+# Control, format (invisible, such as U+200C) and lone surrogate characters: a path shows as
+# another, or cannot be encoded for git at all.
+_HIDDEN_CATEGORIES: Final = frozenset({"Cc", "Cf", "Cs"})
 
 # Explicit ASCII classes and ``fullmatch``: no Unicode digit and no trailing newline gets through.
 _CASE_ID: Final = re.compile(CASE_ID_PATTERN)
@@ -242,14 +247,15 @@ def _is_test_path(path: str) -> bool:
     """One file's relative POSIX path, read by git literally: no option, magic, glob or escape.
 
     ``git checkout <merge> -- <path>`` takes a pathspec: ``.`` or ``*`` would copy the whole
-    merge tree, so every run would pass.
+    merge tree, so every run would pass; ``\\`` escapes the next character of a glob. No
+    character is hidden or unencodable, and no segment is git's store in any case.
     """
     return (
         1 <= len(path) <= MAX_TEST_PATH_CHARS
         and not path.startswith(("-", ":"))
-        and _NOT_FILE_SEGMENTS.isdisjoint(path.split("/"))
+        and _NOT_FILE_SEGMENTS.isdisjoint(path.casefold().split("/"))
         and _PATHSPEC_CHARACTERS.isdisjoint(path)
-        and not any(unicodedata.category(character) == "Cc" for character in path)
+        and not any(unicodedata.category(character) in _HIDDEN_CATEGORIES for character in path)
     )
 
 
