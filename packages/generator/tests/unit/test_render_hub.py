@@ -122,7 +122,6 @@ FIXTURE_PACKAGE = "render_hub_fixture_templates"
 
 # Run in a child interpreter: renders the builder's demo config and prints ``render_digest``.
 CHILD_SCRIPT = """\
-from agent_hub.core.doctor.snapshot import module_makefiles
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.generator.render_hub import render_hub
@@ -938,9 +937,13 @@ def test_renders_same_bytes_when_module_keys_reordered(all_modules_config: HubCo
 
 
 # AGH-17 AC-17.13 (Q-10): constructs of bash 4 or later, which macOS's /bin/bash (3.2) rejects or
-# runs differently, and tracing (``set -x`` would print a token a command line holds).
+# runs differently, and tracing (``set -x`` would print a token a command line holds). The list is
+# partial: a pattern scan of the commonest forms, not a parser; `bash -n` on bash 5 cannot catch
+# them, and AC-17.24 runs the scripts on a real 3.2.
 BASH_FOUR = {
     "declare -A": re.compile(r"\b(?:declare|typeset|local)\s+-[a-zA-Z]*A"),
+    "declare -n": re.compile(r"\b(?:declare|typeset|local)\s+-[a-zA-Z]*n"),
+    "declare -g": re.compile(r"\b(?:declare|typeset)\s+-[a-zA-Z]*g"),
     "mapfile": re.compile(r"\bmapfile\b"),
     "readarray": re.compile(r"\breadarray\b"),
     "coproc": re.compile(r"\bcoproc\b"),
@@ -948,27 +951,24 @@ BASH_FOUR = {
     "[[ -v": re.compile(r"\[\[\s+-v\b"),
     "&>>": re.compile(r"&>>"),
     "|&": re.compile(r"\|&"),
+    ";& or ;;&": re.compile(r";;?&"),
     "negative index": re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\[\s*-[0-9]"),
+    "negative length": re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?:[^}:]*:\s*-[0-9]"),
     "${var@op}": re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?@[A-Za-z]\}"),
+    "shopt -s globstar": re.compile(r"\bshopt\s+-s\b[^\n;]*\bglobstar\b"),
+    "wait -n": re.compile(r"\bwait\s+-n\b"),
+    "EPOCHSECONDS": re.compile(r"\bEPOCH(?:SECONDS|REALTIME)\b"),
+    "printf %(...)T": re.compile(r"%\([^)]*\)T"),
+    "read -i or -N": re.compile(r"\bread\b[^\n;|&]*\s-[a-zA-Z]*[iN]\b"),
     "set -x": re.compile(r"\bset\s+(?:-[a-wyzA-Z]*x|-o\s+xtrace)"),
 }
-SHELL_SHEBANG = re.compile(rb"^#!\s*/(?:usr/)?bin/(?:env\s+)?(?:ba)?sh\b")
-
-
-def shell_paths(rendered: Iterable[RenderedFile]) -> list[str]:
-    """The rendered files a shell reads: scripts (``.sh`` or a sh/bash ``#!``), make recipes."""
-    return [
-        file.path
-        for file in rendered
-        if file.path.endswith((".sh", ".mk"))
-        or file.path == "Makefile"
-        or SHELL_SHEBANG.match(file.content)
-    ]
 
 
 def test_finds_each_construct_when_bash_four_list_read() -> None:
     samples = {
         "declare -A": "declare -A seen=()",
+        "declare -n": "local -n ref=name",
+        "declare -g": "declare -g name=x",
         "mapfile": "mapfile -t lines < f",
         "readarray": "readarray -t lines < f",
         "coproc": "coproc cat",
@@ -976,8 +976,15 @@ def test_finds_each_construct_when_bash_four_list_read() -> None:
         "[[ -v": "[[ -v name ]]",
         "&>>": "cmd &>> log",
         "|&": "cmd |& tee log",
+        ";& or ;;&": "case $x in a) echo a ;& b) echo b ;;& esac",
         "negative index": 'echo "${items[-1]}"',
+        "negative length": 'echo "${name:0:-1}"',
         "${var@op}": 'echo "${name@Q}"',
+        "shopt -s globstar": "shopt -s nullglob globstar",
+        "wait -n": "wait -n",
+        "EPOCHSECONDS": 'echo "$EPOCHSECONDS" "$EPOCHREALTIME"',
+        "printf %(...)T": "printf '%(%Y-%m-%d)T' -1",
+        "read -i or -N": "read -e -i default name; read -N 1 key",
         "set -x": "set -eux",
     }
 
@@ -985,17 +992,25 @@ def test_finds_each_construct_when_bash_four_list_read() -> None:
         name: bool(BASH_FOUR[name].search(text)) for name, text in samples.items()
     } == dict.fromkeys(BASH_FOUR, True)
     # Bash 3.2 forms that look alike stay allowed.
-    for text in ('echo "${name:-a,b}" "${#items[@]}" "${name%,*}"', "set -euo pipefail", "a || b"):
+    for text in (
+        'echo "${name:-a,b}" "${#items[@]}" "${name%,*}" "${name: -1}" "${name:1:2}"',
+        "set -euo pipefail",
+        "a || b && c 2>&1",
+        "case $x in a) echo a ;; esac",
+        'read -r -n 1 key; wait "$pid"; declare -r name=x; shopt -s nullglob',
+        "printf '%s\\n' x",
+    ):
         assert not [name for name, pattern in BASH_FOUR.items() if pattern.search(text)], text
 
 
 def test_uses_no_bash_four_construct_when_module_scripts_rendered(
     all_modules_config: HubConfig,
+    shell_scripts: Callable[[Iterable[RenderedFile]], list[str]],
 ) -> None:
     rendered = render_hub(all_modules_config).files
-    paths = shell_paths(rendered)
-    assert {"scripts/cloud-setup.sh", "scripts/contract-sync.sh", "Makefile", "hub"} <= set(paths)
-    assert set(MODULE_TARGETS) <= set(paths)
+    # Scripts only: make runs the recipes of `Makefile` and `mk/*.mk` on /bin/sh, not bash.
+    paths = shell_scripts(rendered)
+    assert {"scripts/cloud-setup.sh", "scripts/contract-sync.sh", "hub", "agent"} <= set(paths)
 
     found = [
         (file.path, name)
@@ -2486,11 +2501,12 @@ def test_names_every_managed_path_when_agents_rendered(
     ids=["all", "cloud", "marketplace", "none"],
 )
 def test_names_module_files_when_agents_rendered(modules: dict[str, dict[str, str]]) -> None:
-    if "contract-sync" in modules:
-        modules["contract-sync"] = {"source": "demo-api", "target": "demo-web"}
+    # A copy: the parametrize values are shared between runs.
+    settings = {"contract-sync": {"source": "demo-api", "target": "demo-web"}}
+    selected = {module: settings.get(module, value) for module, value in modules.items()}
     document = a_hub_document()
     document["repos"].append(a_second_repo())
-    document["modules"] = modules
+    document["modules"] = selected
     config = HubConfig.model_validate(document)
     agents = text_of(config, "AGENTS.md")
     clauses = MODULE_FILES_CLAUSE.findall(agents)

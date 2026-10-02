@@ -4,20 +4,26 @@ TESTING.md: builders only, no real hub.json; a test that writes does so under ``
 """
 
 import os
+import re
 import shutil
 import stat
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_files.rendered_file import RenderedFile
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 
 _EXECUTABLE_BITS = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
 
 type TreeWriter = Callable[..., Path]
+type ShellScripts = Callable[[Iterable[RenderedFile]], list[str]]
+
+# A sh or bash ``#!`` line: the ``hub`` and ``agent`` shims carry one and no ``.sh`` suffix.
+_SHELL_SHEBANG = re.compile(rb"^#!\s*/(?:usr/)?bin/(?:env\s+)?(?:ba)?sh\b")
 
 # The fake uv tools append one line per call: the tool's name, then its arguments.
 FAKE_UV_TOOLS = ("uv", "uvx")
@@ -125,3 +131,19 @@ def fake_uv_bin(tmp_path: Path) -> Path:
         )
         script.chmod(script.stat().st_mode | _EXECUTABLE_BITS)
     return bin_dir
+
+
+@pytest.fixture
+def shell_scripts() -> ShellScripts:
+    """Return the paths of the rendered shell scripts: each ``.sh`` file and each sh/bash ``#!``
+    file (the shims), in render order. Make recipes are not scripts: make runs them on /bin/sh.
+    """
+
+    def scripts(rendered: Iterable[RenderedFile]) -> list[str]:
+        return [
+            file.path
+            for file in rendered
+            if file.path.endswith(".sh") or _SHELL_SHEBANG.match(file.content)
+        ]
+
+    return scripts
