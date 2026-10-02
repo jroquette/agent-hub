@@ -75,24 +75,38 @@ version=$(hub_value platform.version) || exit 1
 release_source="$release_prefix$version#subdirectory=packages/agent-hub"
 name=$(hub_value project.author_name)
 email=$(hub_value project.author_email)
+# An identity that cannot be written is a WARN: the run goes on.
 local_identity() {
   if [ -n "$name" ] && [ -n "$email" ] && [ -e "$1/.git" ]; then
-    git -C "$1" config user.name "$name"
-    git -C "$1" config user.email "$email"
+    git -C "$1" config user.name "$name" && git -C "$1" config user.email "$email" ||
+      echo "cloud-setup: WARN could not set the git identity in $2"
   fi
 }
 if [ -n "$name" ] && [ -n "$email" ]; then
-  git config --global user.name "$name"
-  git config --global user.email "$email"
+  if git config --global user.name "$name" && git config --global user.email "$email"; then
+    echo "cloud-setup: git identity = $name <$email>"
+  else
+    echo "cloud-setup: WARN could not set the global git identity"
+  fi
   # Repo-local too: a container's global ~/.gitconfig has been seen reset mid-session.
-  local_identity "$hub_dir"
-  echo "cloud-setup: git identity = $name <$email>"
+  local_identity "$hub_dir" "the hub"
 fi
 
+# Added beside any helper already there (gh auth setup-git writes two values), once. It answers
+# only while GH_TOKEN is set, so a later shell without it falls through to the next helper.
+# shellcheck disable=SC2016  # expanded by git at credential time, not here
+token_helper='!f() { test -n "${GH_TOKEN:-}" && test "$1" = get && echo username=x-access-token && echo "password=${GH_TOKEN}"; }; f'
 if [ -n "${GH_TOKEN:-}" ]; then
-  # shellcheck disable=SC2016  # expanded by git at credential time, not here
-  git config --global credential.https://github.com.helper \
-    '!f() { test "$1" = get && echo username=x-access-token && echo "password=${GH_TOKEN}"; }; f'
+  helpers=$(git config --global --get-all credential.https://github.com.helper || true)
+  newline='
+'
+  case "$newline$helpers$newline" in
+    *"$newline$token_helper$newline"*) ;;
+    *)
+      git config --global --add credential.https://github.com.helper "$token_helper" ||
+        echo "cloud-setup: WARN could not add the GH_TOKEN credential helper to ~/.gitconfig"
+      ;;
+  esac
 fi
 
 command -v uvx >/dev/null 2>&1 || {
@@ -119,14 +133,14 @@ while [ -n "$dirs" ]; do
   githubs="${githubs#*, }"
   dest="$workspace/$dir"
   if [ -d "$dest/.git" ]; then
-    local_identity "$dest"
+    local_identity "$dest" "../$dir"
     if git -C "$dest" fetch --quiet origin; then
       echo "cloud-setup: $dir present, fetched"
     else
       echo "cloud-setup: WARN fetch failed for $dir"
     fi
   elif git clone --quiet "https://github.com/$github.git" "$dest"; then
-    local_identity "$dest"
+    local_identity "$dest" "../$dir"
     echo "cloud-setup: cloned $github into ../$dir"
   else
     echo "cloud-setup: WARN could not clone $github: attach it to the session (or set GH_TOKEN)"

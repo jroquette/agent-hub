@@ -38,6 +38,9 @@ PRESENT = "demo-api"
 MISSING = "demo-web"
 # A synthetic token, built from fragments so no token-shaped literal sits in the source.
 TOKEN = "gh" + "p_" + "x" * 36
+HELPER_KEY = "credential.https://github.com.helper"
+# What `gh auth setup-git` writes for github.com: a reset, then gh's own helper.
+GH_HELPERS = ("", "!/usr/local/bin/gh auth git-credential")
 # The test's git: one log line per call, then the real git. With FAKE_GIT_PRIVATE_TAG=1 an
 # ls-remote also needs the credential helper to answer with $GH_TOKEN (a private release).
 FAKE_GIT = """\
@@ -277,9 +280,39 @@ class TestParity:
 
         assert completed.returncode == 0, completed.stderr
         assert warning in completed.stdout.splitlines()
+        assert f"cloud-setup: {removed} present, fetched" not in completed.stdout.splitlines()
         # The other repo is still set up.
         other = MISSING if removed == PRESENT else PRESENT
         assert (cloud_ws.workspace / other / ".git").is_dir()
+
+    def test_warns_and_continues_when_identity_cannot_be_set(
+        self, cloud_ws: CloudWorkspace
+    ) -> None:
+        # The global file sits in a missing folder (git reads nothing there and cannot write it);
+        # the insteadOf rules come from the environment instead; ../demo-api's config is locked.
+        rules = (cloud_ws.home / ".gitconfig").read_text(encoding="utf-8")
+        pairs = [line.split('"')[1] for line in rules.splitlines() if line.startswith("[url")]
+        prefixes = [line.split(" = ")[1] for line in rules.splitlines() if "insteadOf" in line]
+        env = {
+            "GIT_CONFIG_GLOBAL": str(cloud_ws.root / "no-such-dir" / "gitconfig"),
+            "GIT_CONFIG_COUNT": str(len(pairs)),
+        }
+        for index, (url, prefix) in enumerate(zip(pairs, prefixes, strict=True)):
+            env[f"GIT_CONFIG_KEY_{index}"] = f"url.{url}.insteadOf"
+            env[f"GIT_CONFIG_VALUE_{index}"] = prefix
+        (cloud_ws.workspace / PRESENT / ".git" / "config.lock").write_text("", encoding="utf-8")
+
+        completed = cloud_ws.run(env=env)
+
+        assert completed.returncode == 0, completed.stderr
+        lines = completed.stdout.splitlines()
+        assert "cloud-setup: WARN could not set the global git identity" in lines
+        assert f"cloud-setup: WARN could not set the git identity in ../{PRESENT}" in lines
+        assert f"cloud-setup: {PRESENT} present, fetched" in lines
+        assert f"cloud-setup: cloned acme/{MISSING} into ../{MISSING}" in lines
+        assert identity_line() not in lines
+        clone = cloud_ws.workspace / MISSING
+        assert cloud_ws.config("--local", "user.email", cwd=clone) == [AUTHOR_EMAIL]
 
     @pytest.mark.parametrize("key", ["author_name", "author_email"])
     def test_sets_no_identity_when_author_missing(self, key: str, cloud_ws: CloudWorkspace) -> None:
@@ -307,11 +340,47 @@ class TestSecrecy:
         assert TOKEN not in completed.stdout
         assert TOKEN not in completed.stderr
         assert cloud_ws.calls(), "the call log records every git and uv argv"
-        # Every file of the run: the call log (argv), ~/.gitconfig, each repo's config (remote
-        # URLs), hub.json, the rendered hub; hub.lock would be one of them.
-        for path in cloud_ws.root.rglob("*"):
-            if path.is_file() and not path.is_symlink():
-                assert TOKEN.encode() not in path.read_bytes(), path
+        assert_no_token_in_files(cloud_ws)
+
+    def test_keeps_gh_helpers_and_adds_one_when_run_twice(self, cloud_ws: CloudWorkspace) -> None:
+        for value in GH_HELPERS:
+            cloud_ws.config("--global", "--add", HELPER_KEY, value)
+
+        first = cloud_ws.run(env={"GH_TOKEN": TOKEN})
+        second = cloud_ws.run(env={"GH_TOKEN": TOKEN})
+
+        assert (first.returncode, second.returncode) == (0, 0), first.stderr + second.stderr
+        *kept, ours = cloud_ws.config("--global", "--get-all", HELPER_KEY)
+        assert tuple(kept) == GH_HELPERS
+        assert "${GH_TOKEN}" in ours
+
+    def test_answers_nothing_when_token_unset_later(self, cloud_ws: CloudWorkspace) -> None:
+        assert cloud_ws.run(env={"GH_TOKEN": TOKEN}).returncode == 0
+        [helper] = cloud_ws.config("--global", "--get-all", HELPER_KEY)
+        shell = shutil.which("sh")
+        assert shell is not None
+
+        # A later shell without GH_TOKEN: git runs the `!` helper as `sh -c '<body> "$@"' get`;
+        # it answers nothing, so git falls through to the next helper (gh's, a keychain).
+        completed = subprocess.run(  # noqa: S603 - absolute sh, the helper the script wrote
+            [shell, "-c", helper.removeprefix("!") + ' "$@"', helper, "get"],
+            input="protocol=https\nhost=github.com\n\n",
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=TIMEOUT,
+            env={"PATH": os.environ.get("PATH", os.defpath)},
+        )
+
+        assert completed.stdout == ""
+
+
+def assert_no_token_in_files(ws: CloudWorkspace) -> None:
+    """Every file of the run: the call log (argv), ``~/.gitconfig``, each repo's config (remote
+    URLs), ``hub.json``, the rendered hub; ``hub.lock`` would be one of them."""
+    for path in ws.root.rglob("*"):
+        if path.is_file() and not path.is_symlink():
+            assert TOKEN.encode() not in path.read_bytes(), path
 
 
 SOURCE = f"git+{RELEASE_URL}@v{VERSION}#subdirectory=packages/agent-hub"
@@ -388,7 +457,8 @@ class TestAccess:
         assert with_token.returncode == 0, with_token.stderr
         assert [call for call in cloud_ws.calls() if call.startswith("uvx ")] == [warm_up_call()]
         assert TOKEN not in with_token.stdout + with_token.stderr
-        assert TOKEN not in "\n".join(cloud_ws.calls())
+        # The helper has run: no file of the run holds the token, the call log included.
+        assert_no_token_in_files(cloud_ws)
 
     @pytest.mark.parametrize(
         ("removed", "message"),
