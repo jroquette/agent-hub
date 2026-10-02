@@ -315,6 +315,7 @@ class TestCreate:
         assert result.exit_code == 1
         assert result.stdout == ""
         assert result.stderr.startswith("hub worktree: demo-api: could not add the worktree: ")
+        assert "origin/master" in result.stderr
         assert len(result.stderr.splitlines()) == 1
         assert not demo_workspace.worktree("demo-api", NAME).exists()
         assert not (demo_workspace.ws / "demo-web" / ".claude").exists()
