@@ -70,11 +70,17 @@ def run_claude(
             raise TimeoutError(f"{argv[0]} timed out after {timeout_s:g} s") from None
         except OSError as error:
             _kill(child)
-            raise ClaudeRunError(error.errno, error.strerror) from error
+            # Its own args: a one-argument OSError has no errno or strerror, only its text.
+            raise ClaudeRunError(*error.args) from error
         except BaseException:
             _kill(child)
             raise
     return ClaudeOutput(returncode=child.returncode, stdout=stdout, stderr=stderr)
+
+
+def os_error_text(error: OSError) -> str:
+    """What went wrong: its ``strerror``, else its text (a one-argument OSError has none)."""
+    return error.strerror or str(error)
 
 
 def _kill(child: subprocess.Popen[bytes]) -> None:

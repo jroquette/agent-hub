@@ -559,9 +559,20 @@ _FAILURES: dict[str, tuple[Any, str, str]] = {
         "could not start claude: 'Permission denied'",
         _TRANSPORT_FIX,
     ),
+    "cannot-start-no-strerror": (
+        OSError("synthetic start failure"),
+        "could not start claude: 'synthetic start failure'",
+        _TRANSPORT_FIX,
+    ),
     "failed-while-running": (
         ClaudeRunError(5, "Input/output error"),
         "claude failed while running: 'Input/output error'",
+        _TRANSPORT_FIX,
+    ),
+    # One-argument OS errors: no strerror, so the message is the error's own text.
+    "failed-while-running-no-strerror": (
+        ClaudeRunError("synthetic read failure"),
+        "claude failed while running: 'synthetic read failure'",
         _TRANSPORT_FIX,
     ),
     "non-zero-exit": (
@@ -609,7 +620,15 @@ _FAILURES: dict[str, tuple[Any, str, str]] = {
 
 _WRITE_OPERATIONS = frozenset({"move_state", "add_label", "remove_label", "comment"})
 # Failures before claude ran: nothing was written, so the fix may say retry or install.
-_START_FAILURES = frozenset({"claude-missing", "cwd-missing", "other-file-missing", "cannot-start"})
+_START_FAILURES = frozenset(
+    {
+        "claude-missing",
+        "cwd-missing",
+        "other-file-missing",
+        "cannot-start",
+        "cannot-start-no-strerror",
+    }
+)
 
 
 class TestFailures:

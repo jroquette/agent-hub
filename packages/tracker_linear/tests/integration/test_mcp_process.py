@@ -315,6 +315,22 @@ def test_raises_run_error_and_reaps_when_reading_fails_after_start(
     assert child.returncode == -signal.SIGKILL
 
 
+def test_names_error_text_when_failing_error_has_no_strerror(
+    tmp_path: Path, fake_bin: Path, hub_root: Path, *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failing(child: subprocess.Popen[bytes], timeout: float | None = None) -> None:
+        _wait_for(tmp_path / "record.json")
+        raise OSError("synthetic read failure")
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", failing)
+    env = _env(tmp_path, fake_bin, mode="sleep")
+
+    with pytest.raises(ClaudeRunError) as raised:
+        run_claude([CLAUDE_PROGRAM, "-p", "x"], cwd=hub_root, env=env, timeout_s=30.0)
+
+    assert str(raised.value) == "synthetic read failure"
+
+
 def test_raises_plain_error_when_claude_cannot_start(
     tmp_path: Path, fake_bin: Path, hub_root: Path
 ) -> None:
