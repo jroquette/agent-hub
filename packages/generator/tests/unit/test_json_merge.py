@@ -195,6 +195,8 @@ MANAGED_MARKETPLACE: JsonValue = {
     ],
 }
 OWNED = "refused: the managed marketplace.json owns this"
+TWICE = "refused: the sibling lists this plugin name more than once"
+UNNAMED = "refused: a plugin entry is an object with a string name"
 
 
 def a_pin(name: str) -> JsonValue:
@@ -254,6 +256,42 @@ def test_refuses_owned_key_when_sibling_sets_it(project: dict[str, JsonValue]) -
         merge_json(MANAGED_MARKETPLACE, json.dumps(project).encode("utf-8"), path=MARKETPLACE)
 
     assert str(caught.value) == f"{MARKETPLACE}: {key}: {OWNED} key"
+
+
+@pytest.mark.parametrize(
+    ("plugins", "line"),
+    [
+        (
+            [{"name": "x", "source": "./a"}, {"name": "x", "source": "./b"}],
+            f"plugins[1].name: {TWICE}",
+        ),
+        ([a_pin("aaa"), a_pin("x"), a_pin("x")], f"plugins[2].name: {TWICE}"),
+        (["superpowers"], f"plugins[0]: {UNNAMED}"),
+        ([a_pin("aaa"), [a_pin("x")]], f"plugins[1]: {UNNAMED}"),
+        ([{"source": "./a"}], f"plugins[0]: {UNNAMED}"),
+        ([{"name": 1, "source": "./a"}], f"plugins[0]: {UNNAMED}"),
+        ([{"name": {"x": "y"}, "source": "./a"}], f"plugins[0]: {UNNAMED}"),
+    ],
+    ids=[
+        "same-name-other-content",
+        "same-entry-repeated",
+        "string-entry",
+        "array-entry",
+        "missing-name",
+        "number-name",
+        "object-name",
+    ],
+)
+def test_refuses_sibling_entry_when_repeated_or_unnamed(
+    plugins: list[JsonValue], line: str
+) -> None:
+    # `claude plugin validate` refuses a repeated or missing plugin name: sync refuses it first.
+    content = json.dumps({"plugins": plugins}).encode("utf-8")
+
+    with pytest.raises(MergeError) as caught:
+        merge_json(MANAGED_MARKETPLACE, content, path=MARKETPLACE)
+
+    assert str(caught.value) == f"{MARKETPLACE}: {line}"
 
 
 def test_allows_description_and_metadata_when_sibling_sets_them() -> None:

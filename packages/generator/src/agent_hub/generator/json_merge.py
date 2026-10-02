@@ -4,9 +4,10 @@ ADR 0009 and spec Q-18: objects merge by key and the project wins on scalars; ar
 template's items then the project's, de-duplicated keeping the first, where two items are equal
 when their JSON byte form is (so ``true`` and ``1``, ``1`` and ``1.0`` stay distinct, unlike Python
 ``==``). The merge only adds: a ``null``, an object or array where the template has another type,
-bad JSON, a key that weakens the harness and a key or named entry the managed file owns
-(``OWNED_KEYS``, ``NAMED_ARRAYS``) are refused, each as one line
-``<sibling path>: <key path>: <message>`` (key paths as ``problems.json_path``, ``$`` for the root).
+bad JSON, a key that weakens the harness, a key or named entry the managed file owns
+(``OWNED_KEYS``, ``NAMED_ARRAYS``) and an entry of a named array without a string ``name`` of its
+own are refused, each as one line ``<sibling path>: <key path>: <message>`` (key paths as
+``problems.json_path``, ``$`` for the root).
 Pure: the sibling's bytes come in, the merged file's bytes go out.
 """
 
@@ -31,6 +32,9 @@ OWNED_KEYS: Final[Mapping[str, tuple[str, ...]]] = {_MARKETPLACE_SIBLING: ("name
 NAMED_ARRAYS: Final[Mapping[str, tuple[str, ...]]] = {_MARKETPLACE_SIBLING: ("plugins",)}
 _OWNED_KEY: Final = "refused: the managed marketplace.json owns this key"
 _OWNED_ENTRY: Final = "refused: the managed marketplace.json owns this entry"
+# `claude plugin validate` needs each plugin entry named, once.
+_TWICE: Final = "refused: the sibling lists this plugin name more than once"
+_UNNAMED: Final = "refused: a plugin entry is an object with a string name"
 # The parser's own words for a value nested too deeply (``agent_hub.core.json_form``).
 _TOO_DEEP: Final = "not valid JSON here: it is nested too deeply"
 
@@ -79,15 +83,24 @@ def _refuse_owned(template: JsonValue, project: dict[str, JsonValue], *, path: s
 def _refuse_managed_names(
     template: JsonValue, project: dict[str, JsonValue], *, key: str, path: str
 ) -> None:
-    """``MergeError`` at the first ``project[key]`` entry named like an entry of ``template``."""
+    """``MergeError`` at the first ``project[key]`` entry that is not an object with a string
+    ``name``, is named like an entry of ``template``, or repeats a name an earlier entry has.
+    """
     managed = template.get(key) if isinstance(template, dict) else None
     added = project.get(key)
     if not isinstance(managed, list) or not isinstance(added, list):
         return
-    names = {_name_of(entry) for entry in managed} - {None}
+    owned = {name for name in map(_name_of, managed) if name is not None}
+    seen: set[str] = set()
     for index, entry in enumerate(added):
-        if _name_of(entry) in names:
+        name = _name_of(entry)
+        if name is None:
+            raise MergeError(path=path, key_path=(key, index), message=_UNNAMED)
+        if name in owned:
             raise MergeError(path=path, key_path=(key, index, "name"), message=_OWNED_ENTRY)
+        if name in seen:
+            raise MergeError(path=path, key_path=(key, index, "name"), message=_TWICE)
+        seen.add(name)
 
 
 def _name_of(entry: JsonValue) -> str | None:
