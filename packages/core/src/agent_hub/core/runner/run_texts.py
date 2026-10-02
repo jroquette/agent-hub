@@ -24,10 +24,12 @@ ROBOT: Final = "\N{ROBOT FACE}"
 _PATH_CHARACTER = r"[\w./-]"
 _LONE_SURROGATE = re.compile("[\ud800-\udfff]")
 # A whole 7-bit terminal escape sequence (CSI and OSC; ESC alone would leave "[2J" behind), then
-# any control left: C0 but tab and line feed, DEL, C1, and the bidi embeddings, overrides,
-# isolates and marks.
+# any control left: C0 but tab and line feed, DEL, C1, the bidi embeddings, overrides, isolates
+# and marks, and the zero-width characters (which could split an attribution line in two).
 _ESCAPE_SEQUENCE = re.compile("\x1b\\[[0-?]*[ -/]*[@-~]|\x1b\\][^\x07\x1b]*(?:\x07|\x1b\\\\)?")
-_UNSAFE = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+_UNSAFE = re.compile(
+    "[\x00-\x08\x0b-\x1f\x7f-\x9f\u061c\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]"
+)
 
 
 def well_formed(text: str) -> str:

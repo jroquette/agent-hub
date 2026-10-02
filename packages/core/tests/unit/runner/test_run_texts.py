@@ -143,6 +143,11 @@ UNSAFE_CHARACTERS = {
     "left-to-right-mark": "\u200e",
     "right-to-left-mark": "\u200f",
     "arabic-letter-mark": "\u061c",
+    "zero-width-space": "\u200b",
+    "zero-width-non-joiner": "\u200c",
+    "zero-width-joiner": "\u200d",
+    "word-joiner": "\u2060",
+    "byte-order-mark": "\ufeff",
 }
 
 
@@ -230,3 +235,9 @@ def test_falls_back_when_subject_has_no_text(subject: str) -> None:
 
 def test_takes_first_line_when_subject_has_several() -> None:
     assert pr_title("\nfeat: x\nmore", workspace=WORKSPACE, fallback="DEM-1") == "feat: x"
+
+
+def test_drops_attribution_line_when_zero_width_splits_it() -> None:
+    line = "Co-\u200b" + "Authored-By: " + "Claude <noreply@example.com>"
+
+    assert sanitized_summary(f"Adds x.\n{line}", workspace=WORKSPACE) == "Adds x."

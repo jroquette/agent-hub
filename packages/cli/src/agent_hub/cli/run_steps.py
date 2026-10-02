@@ -24,7 +24,7 @@ import typer
 
 from agent_hub.cli.child_process import ChildResult, run_child
 from agent_hub.cli.command_exits import FAILURE
-from agent_hub.cli.errors import ChildTimedOutError, WorktreeError
+from agent_hub.cli.errors import ChildTimedOutError, RunLogError, WorktreeError
 from agent_hub.cli.init_report import shown_text
 from agent_hub.cli.run_children import (
     RunChildren,
@@ -53,7 +53,12 @@ from agent_hub.core.runner.run_texts import (
     pr_title,
     success_comment,
 )
-from agent_hub.core.runner.verdict import OutcomeKind, parse_session_output, session_outcome
+from agent_hub.core.runner.verdict import (
+    OutcomeKind,
+    last_json_line,
+    parse_session_output,
+    session_outcome,
+)
 from agent_hub.core.tracker.tracker_client import Issue, TrackerClient
 
 WORKTREE_GIT_TIMEOUT: Final = 1_800.0
@@ -63,9 +68,13 @@ PUSH_TIMEOUT: Final = 300.0
 GH_TIMEOUT: Final = 120.0
 GIT_TIMEOUT: Final = 120.0
 MAX_LOGGED_REASON_CHARS: Final = 1_500
-MAX_OUTPUT_TAIL_CHARS: Final = 1_500
+MAX_GATE_SHOWN_CHARS: Final = 200
 MAX_ERROR_TAIL_CHARS: Final = 500
 MAX_PR_URL_CHARS: Final = 2_048
+# The most of a child's output kept (its last bytes): the gate's and git's, and the session's,
+# whose whole JSON result must fit.
+CHILD_OUTPUT_LIMIT: Final = 64 * 1024
+SESSION_OUTPUT_LIMIT: Final = 1 << 20
 _URL_SCHEME = "https://"
 _PREFIX = "hub run"
 
@@ -93,12 +102,23 @@ class LiveRun:
     summary: str = ""
     pr_url: str = ""
     worktree: Path = field(init=False)
+    # The report's writes not made yet; None until the report starts.
+    pending: tuple[TrackerWrite, ...] | None = None
 
     def __post_init__(self) -> None:
         self.worktree = self.children.worktree
 
     def run(self) -> int:
-        """Run every stage, then report; 0 when the PR opened and the report was made."""
+        """Run every stage, then report; 0 when the PR opened and the report was made.
+
+        A record that cannot be written stops the run: what is left undone is named.
+        """
+        try:
+            return self._run_stages()
+        except RunLogError as error:
+            return self._stop_on_log_error(error)
+
+    def _run_stages(self) -> int:
         try:
             self._make_worktree()
             self._implement()
@@ -125,7 +145,7 @@ class LiveRun:
                 git=git,
                 env=child_env(self.environ),
                 git_timeout=WORKTREE_GIT_TIMEOUT,
-                runner=run_child,
+                runner=_bounded_child,
             )
             self.worktree = create_worktree(task, self.children.repo, echo=typer.echo)
         except (WorktreeError, ChildTimedOutError) as error:
@@ -159,13 +179,22 @@ class LiveRun:
             run_id=self.log.run_id,
         )
         argv = self.children.session_argv(self.issue, self.options)
-        result = self._child(argv, env=env, timeout=SESSION_TIMEOUT)
+        result = self._child(
+            argv, env=env, timeout=SESSION_TIMEOUT, output_limit=SESSION_OUTPUT_LIMIT
+        )
         reply = parse_session_output(result.stdout.decode(errors="replace"))
         self.cost_usd += reply.cost_usd
         outcome = session_outcome(reply)
+        # The old runner's event and fields (the retro contract, AC-27.21 "as today").
+        verdict: JsonValue = json.loads(json.dumps(last_json_line(reply.result)))
         self.log.record(
-            "session_finished",
-            {"cost_usd": round(self.cost_usd, 4), "turns": reply.turns, "subtype": reply.subtype},
+            "agent_finished",
+            {
+                "cost_usd": round(self.cost_usd, 4),
+                "turns": reply.turns,
+                "subtype": reply.subtype,
+                "verdict": verdict,
+            },
         )
         if outcome.kind is not OutcomeKind.DONE:
             raise StageFailure(Stage.IMPLEMENTING, outcome.text)
@@ -182,7 +211,9 @@ class LiveRun:
         )
         if result.returncode != 0:
             output = (result.stdout + result.stderr).decode(errors="replace")
-            reason = f"gate failed: {gate}\n{output[-MAX_OUTPUT_TAIL_CHARS:]}"
+            # The output's end says why; with the header the reason fits the logged length.
+            header = f"gate failed: {gate[:MAX_GATE_SHOWN_CHARS]}\n"
+            reason = header + output[-(MAX_LOGGED_REASON_CHARS - len(header)) :]
             raise StageFailure(Stage.VERIFYING, reason)
         self.log.record("gate_ok", {"gate": gate[:80]})
 
@@ -241,20 +272,22 @@ class LiveRun:
 
     # report
 
-    def _report_success(self) -> int:
+    def _success_writes(self) -> tuple[TrackerWrite, ...]:
         comment = success_comment(
             run_id=self.log.run_id,
             pr_url=self.pr_url,
             summary=self.summary,
             workspace=self._workspace,
         )
-        writes = success_writes(
+        return success_writes(
             self.issue,
             review_state=REVIEW_STATE,
             failed_label=self.children.config.tracker.failed_label,
             comment=comment,
         )
-        made = self._report(writes, failed_stage=None)
+
+    def _report_success(self) -> int:
+        made = self._report(self._success_writes(), failed_stage=None)
         outcome = f"PR {self.pr_url}" if made else f"PR {self.pr_url}; report failed"
         self._inbox(outcome)
         return 0 if made else FAILURE
@@ -284,7 +317,9 @@ class LiveRun:
 
     def _report(self, writes: Sequence[TrackerWrite], *, failed_stage: Stage | None) -> bool:
         """Make the writes; on a tracker failure name the PR and the writes not made."""
+        self.pending = tuple(writes)
         outcome = apply_writes(self.client, writes)
+        self.pending = tuple(writes[outcome.done :])
         if outcome.error is not None:
             typer.echo(f"{_PREFIX}: {shown_text(str(outcome.error))}", err=True)
             if self.pr_url:
@@ -325,9 +360,31 @@ class LiveRun:
         result = self._child(
             ["git", *arguments], env=untrusted_env(self.environ), timeout=GIT_TIMEOUT
         )
+        if result.returncode != 0:
+            reason = f"git {arguments[0]} failed: {_tail(result.stderr).strip()}"
+            raise StageFailure(self.log.state, reason)
         return result.stdout.decode(errors="replace")
 
-    def _child(self, argv: Sequence[str], *, env: dict[str, str], timeout: float) -> ChildResult:
+    def _stop_on_log_error(self, error: RunLogError) -> int:
+        """Name the open PR and the report's writes not made; the tracker is left as it is."""
+        typer.echo(f"{_PREFIX}: {error}", err=True)
+        pending = self.pending
+        if self.pr_url:
+            typer.echo(f"{_PREFIX}: the PR is open: {self.pr_url}", err=True)
+            if pending is None:
+                pending = self._success_writes()
+        for write in pending or ():
+            typer.echo(f"not done: {shown_text(call_line(write))}", err=True)
+        return FAILURE
+
+    def _child(
+        self,
+        argv: Sequence[str],
+        *,
+        env: dict[str, str],
+        timeout: float,
+        output_limit: int = CHILD_OUTPUT_LIMIT,
+    ) -> ChildResult:
         """Run ``argv`` in the worktree, in the caller's group; a problem fails the stage.
 
         In the caller's group (E6), a timeout kills the direct child only: a process it started
@@ -346,11 +403,31 @@ class LiveRun:
                 env=env,
                 timeout=timeout,
                 own_session=False,
+                output_limit=output_limit,
             )
         except ChildTimedOutError:
             raise StageFailure(stage, f"{name} timed out after {timeout:g} s") from None
         except OSError as error:
             raise StageFailure(stage, f"{name} could not run: {error.strerror or error}") from None
+
+
+def _bounded_child(
+    argv: Sequence[str],
+    *,
+    cwd: Path | str,
+    env: Mapping[str, str],
+    timeout: float | None,
+    own_session: bool | None = None,
+) -> ChildResult:
+    """``run_child`` keeping the last ``CHILD_OUTPUT_LIMIT`` bytes of each stream."""
+    return run_child(
+        argv,
+        cwd=cwd,
+        env=env,
+        timeout=timeout,
+        own_session=own_session,
+        output_limit=CHILD_OUTPUT_LIMIT,
+    )
 
 
 def _tail(data: bytes) -> str:
