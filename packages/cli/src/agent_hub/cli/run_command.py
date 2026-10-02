@@ -16,16 +16,18 @@ from typing import Annotated, Final
 
 import typer
 
-from agent_hub.cli.command_exits import fail, not_implemented
+from agent_hub.cli.command_exits import fail
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
 from agent_hub.cli.hub_root import hub_root_or_exit, main_checkout
 from agent_hub.cli.init_report import shown_path, shown_text
 from agent_hub.cli.run_children import RunChildren, RunOptions, would_run_line
-from agent_hub.cli.run_log import new_run_id
+from agent_hub.cli.run_log import RunLog, new_run_id
+from agent_hub.cli.run_steps import LiveRun
 from agent_hub.cli.tracker_client import missing_key_line, resolve_tracker_client, transport_line
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.runner.report_writes import REVIEW_STATE, call_line, success_writes
+from agent_hub.core.runner.run_record import picked_data
 from agent_hub.core.runner.run_texts import pr_body, success_comment
 from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, Issue, TrackerClient
 
@@ -117,7 +119,22 @@ def run(
     if not options.live:
         _print_dry_run(children, picked, options=options, run_id=new_run_id())
         return
-    not_implemented()
+    log = RunLog(hub=hub, run_id=new_run_id(), issue_id=picked.id, repo=repo)
+    log.record(
+        "picked",
+        picked_data(
+            budget=budget, max_turns=max_turns, model=model, transport=config.tracker.transport
+        ),
+    )
+    live_run = LiveRun(
+        children=children,
+        options=options,
+        issue=picked,
+        client=client,
+        log=log,
+        environ=os.environ,
+    )
+    raise typer.Exit(live_run.run())
 
 
 def _read_issue_or_exit(client: TrackerClient, issue_id: str) -> Issue:

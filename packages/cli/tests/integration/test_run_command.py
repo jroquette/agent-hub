@@ -22,8 +22,10 @@ import pytest
 from click import unstyle
 from typer.testing import Result
 
-from agent_hub.cli import run_command
+from agent_hub.cli import run_command, run_steps
+from agent_hub.cli.errors import ChildTimedOutError
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.runner.session_prompt import IMPLEMENTING_TOOLS
 from agent_hub.core.tracker.tracker_client import TrackerClient
 
 pytestmark = pytest.mark.disable_socket
@@ -545,3 +547,195 @@ class TestTransport:
             "would call: move_state",
             "would call: comment",
         ]
+
+
+SUMMARY = "Adds the synthetic change."
+OTEL = re.compile(r"repo=demo-api,issue=DEM-1,agent_run=([0-9a-f]{8})")
+GH_TOKEN_VALUE = "gh" + "o_" + "y" * 36
+SETUP_LOG = "setup-env.txt"
+
+
+def live(run_command: CommandRunner, workspace: Any) -> Result:
+    return run_command(workspace.hub, "run", "DEM-1", "--repo", "demo-api", "--live")
+
+
+def worktree_of(workspace: Any) -> Any:
+    return workspace.ws / "demo-api" / ".claude" / "worktrees" / "dem-1"
+
+
+def run_id_of(run_workspace: Any) -> str:
+    (call,) = run_workspace.calls("claude")
+    found = OTEL.fullmatch(call["values"]["OTEL_RESOURCE_ATTRIBUTES"])
+    assert found is not None, call["values"]
+    return found.group(1)
+
+
+@pytest.mark.usefixtures("with_key")
+class TestLiveSuccess:
+    def test_creates_worktree_as_hub_worktree_does_when_live(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        base = workspace.origin_head("demo-api")
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        worktree = worktree_of(workspace)
+        assert f"created  {worktree} (jdoe/dem-1 from origin/trunk)" in result.stdout.splitlines()
+        assert workspace.git(worktree, "branch", "--show-current") == "jdoe/dem-1"
+        assert workspace.git(worktree, "rev-parse", "HEAD~1") == base
+
+    def test_runs_session_with_issue_text_and_no_tracker_tool_when_live(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("GH_TOKEN", GH_TOKEN_VALUE)
+        script = b'#!/bin/sh\nexport -p > "$1/' + SETUP_LOG.encode() + b'"\n'
+        workspace.advance("demo-api", {"scripts/worktree-setup.sh": (script, 0o755)})
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        (call,) = run_workspace.calls("claude")
+        argv = call["argv"]
+        tools = argv[argv.index("--allowedTools") + 1 :]
+        assert tuple(tools) == IMPLEMENTING_TOOLS
+        assert tools.count("Bash(make:*)") == 1
+        prompt = argv[argv.index("-p") + 1]
+        for text in ("DEM-1", "Synthetic run issue", RUN_DESCRIPTION, "untrusted"):
+            assert text in prompt
+        assert "mcp__" not in prompt
+        assert call["cwd"] == str(worktree_of(workspace))
+        assert call["pgid"] == os.getpgid(0)
+        assert OTEL.fullmatch(call["values"]["OTEL_RESOURCE_ATTRIBUTES"])
+        for hidden in (KEY_VARIABLE, "GH_TOKEN", "GITHUB_TOKEN"):
+            assert hidden not in call["env"]
+        setup = (worktree_of(workspace) / SETUP_LOG).read_text()
+        assert KEY_VARIABLE not in setup
+        assert synthetic_key() not in setup
+        (gh,) = run_workspace.calls("gh")
+        assert "GH_TOKEN" in gh["env"]
+        assert KEY_VARIABLE not in gh["env"]
+
+    def test_opens_pr_and_reports_when_session_done(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        worktree = str(worktree_of(workspace))
+        assert [(call["argv"], call["cwd"]) for call in run_workspace.calls("make")] == [
+            (["check"], worktree)
+        ]
+        assert workspace.git(
+            workspace.origin("demo-api"), "log", "-1", "--format=%s", "jdoe/dem-1"
+        ) == (COMMIT_SUBJECT)
+        (gh,) = run_workspace.calls("gh")
+        assert gh["cwd"] == worktree
+        assert gh["argv"] == [
+            *("pr", "create", "--base", "trunk", "--head", "jdoe/dem-1"),
+            *("--title", COMMIT_SUBJECT, "--body"),
+            f"DEM-1\n\n{SUMMARY}\n\n## Verification\nGates green: `make check`.",
+        ]
+        run_id = run_id_of(run_workspace)
+        backend = run_tracker.backend
+        assert backend.issues["DEM-1"].state == "In Review"
+        assert "agent-failed" not in backend.issues["DEM-1"].labels
+        assert backend.comments == [("DEM-1", f"Run {run_id} opened {PR_URL}. {SUMMARY}")]
+        assert [call[0] for call in run_tracker.calls] == [
+            "get_issue",
+            "move_state",
+            "remove_label",
+            "comment",
+        ]
+
+
+@pytest.mark.usefixtures("with_key")
+class TestWorktreeStage:
+    def test_fails_worktree_stage_when_repo_not_cloned(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        shutil.rmtree(workspace.ws / "demo-api" / ".git")
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 1
+        (comment,) = run_tracker.backend.comments
+        assert re.fullmatch(
+            r"Run [0-9a-f]{8} failed at WORKTREE\. Diagnosis: demo-api is not a git checkout;"
+            r" clone it next to the hub",
+            comment[1],
+        ), comment
+        assert "agent-failed" in run_tracker.backend.issues["DEM-1"].labels
+        assert [call[0] for call in run_tracker.calls] == ["get_issue", "add_label", "comment"]
+        for tool in ("claude", "gh", "make"):
+            assert run_workspace.calls(tool) == []
+
+    @pytest.mark.parametrize(
+        ("git_step", "error", "reason"),
+        [
+            ("check-ref-format", PermissionError(13, "Permission denied"), "git could not run"),
+            (
+                "fetch",
+                ChildTimedOutError(program="git", timeout=1800),
+                "git timed out after 1800 s",
+            ),
+        ],
+        ids=["oserror", "timeout"],
+    )
+    def test_fails_worktree_stage_when_git_call_raises(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        git_step: str,
+        error: Exception,
+        reason: str,
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+        real = run_steps.run_child
+
+        def failing(argv: list[str], **options: Any) -> Any:
+            if argv[1:2] == [git_step]:
+                raise error
+            return real(argv, **options)
+
+        monkeypatch.setattr(run_steps, "run_child", failing)
+
+        result = live(run_command, run_workspace.workspace)
+
+        assert result.exit_code == 1
+        (comment,) = run_tracker.backend.comments
+        assert " failed at WORKTREE. Diagnosis: " in comment[1]
+        assert reason in comment[1]
+        assert run_workspace.calls("claude") == []
