@@ -145,7 +145,11 @@ class LiveRun:
                 only=self.children.repo,
                 hub=self.children.hub,
                 git=git,
-                env=child_env(self.environ),
+                # Only the fetch may need the GitHub tokens; worktree add and the repo's setup
+                # script run without them, every hook off for the add.
+                env=untrusted_env(self.environ),
+                fetch_env=child_env(self.environ),
+                add_options=("-c", f"core.hooksPath={os.devnull}"),
                 git_timeout=WORKTREE_GIT_TIMEOUT,
                 runner=_bounded_child,
             )

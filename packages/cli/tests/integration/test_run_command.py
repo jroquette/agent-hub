@@ -1690,7 +1690,7 @@ class TestProcesses:
         assert calls.timeout_of("git", "-c", "core.hooksPath=/dev/null", "push") == [300]
         assert calls.timeout_of("gh") == [120]
         assert set(calls.timeout_of("git", "fetch")) == {1_800}
-        assert set(calls.timeout_of("git", "worktree")) == {1_800}
+        assert set(calls.timeout_of("git", "-c", "core.hooksPath=/dev/null", "worktree")) == {1_800}
 
     def test_fails_stage_when_gate_times_out(
         self,
@@ -1951,3 +1951,37 @@ class TestPushOverrides:
         assert gh["values"] | PUSH_OVERRIDES == gh["values"]
         (gate,) = logged_git.calls("make")
         assert "GIT_CONFIG_COUNT" not in gate["env"]
+
+
+@pytest.mark.usefixtures("with_key")
+class TestWorktreeEnvironments:
+    def test_keeps_tokens_for_fetch_only_when_worktree_made(
+        self,
+        logged_git: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = logged_git.workspace
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("GH_TOKEN", GH_TOKEN_VALUE)
+        script = b'#!/bin/sh\nexport -p > "$FAKE_RUN_LOGS/' + SETUP_LOG.encode() + b'"\n'
+        workspace.advance("demo-api", {"scripts/worktree-setup.sh": (script, 0o755)})
+        marker = logged_git.logs / "hook-ran"
+        hook = workspace.ws / "demo-api" / ".git" / "hooks" / "post-checkout"
+        hook.write_text(f'#!/bin/sh\necho "$0" >> "{marker}"\n')
+        hook.chmod(0o755)
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        (fetch,) = git_calls(logged_git, "fetch")
+        assert "GH_TOKEN" in fetch["env"]
+        (add,) = git_calls(logged_git, "worktree")
+        assert add["argv"][:2] == ["-c", "core.hooksPath=/dev/null"]
+        assert not [name for name in TOKENS if name in add["env"]]
+        setup = (logged_git.logs / SETUP_LOG).read_text()
+        assert "GH_TOKEN" not in setup
+        assert GH_TOKEN_VALUE not in setup
+        assert not marker.exists()
