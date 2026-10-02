@@ -1,17 +1,17 @@
 """``hub sync``: bring a hub back to its render without overwriting what the project owns.
 
-The pipeline of the AGH-14 spec, in the current folder (its real path, taken once). Each load
-step that fails exits 1 before anything is read after it: ``hub.json`` (pin, schema, model), the
-module refusal, then ``hub.lock``, read once without following a link (absent: the ``--adopt``
-pointer; not a regular file or malformed: one line per problem, then the way out). Then the
-render, a read of only the planned paths (plus a listing of the project's agent and skill folders
-and a look at the link path of each name found there), the project's extension inputs from that
-one read (a bad ``*.project.json`` sibling or an entry name the lock cannot hold exits 1), the
-render with them, and core's planner. A conflict exits 3 with its report
-on stderr and nothing written. With nothing pending, ``up to date`` and no write at all (the
-adapter is not called). ``--check`` prints the ``would`` lines and exits 4. Otherwise the plan is
-applied with one open of the root (leftovers, deletes, folders, files, links, ``hub.lock`` last)
-and its lines are printed; an I/O error exits 1 naming the path. Every error goes to stderr.
+The pipeline of the AGH-14 spec, in the current folder (its real path, taken once). Each load step
+that fails exits 1 before anything is read after it: ``hub.json`` (pin, schema, model; any module
+set is accepted), then ``hub.lock``, read once without following a link (absent: the ``--adopt``
+pointer; not a regular file or malformed: one line per problem, then the way out). Then the render,
+a read of only the planned paths (plus a listing of the project's agent and skill folders and a
+look at the link path of each name found there), the project's extension inputs from that one read
+(a bad ``*.project.json`` sibling or an entry name the lock cannot hold exits 1), the render with
+them, and core's planner. A conflict exits 3 with its report on stderr and nothing written. With
+nothing pending, ``up to date`` and no write at all (the adapter is not called). ``--check`` prints
+the ``would`` lines and exits 4. Otherwise the plan is applied with one open of the root
+(leftovers, deletes, folders, files, links, ``hub.lock`` last) and its lines are printed; an I/O
+error exits 1 naming the path. Every error goes to stderr.
 """
 
 from pathlib import Path
@@ -24,7 +24,6 @@ from agent_hub.cli.command_exits import (
     fail,
     fail_generator,
     not_implemented,
-    refuse_modules_or_exit,
     root_or_exit,
 )
 from agent_hub.cli.hub_config_reader import load_hub_json_or_exit
@@ -75,7 +74,6 @@ def sync(
         not_implemented()
     root = Path(root_or_exit(None))
     config = load_hub_json_or_exit(root / HUB_JSON_PATH, missing_hint=MISSING_HUB_JSON_HINT).config
-    refuse_modules_or_exit(config)
     lock, lock_content = _lock_or_exit(root)
     planned = _plan_or_exit(root, config=config, lock=lock, lock_content=lock_content)
     if isinstance(planned, SyncConflicts):
