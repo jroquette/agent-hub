@@ -95,7 +95,9 @@ def test_sorts_modules_when_config_order_differs(
     a_rendered_hub: Callable[..., RenderedHub],
 ) -> None:
     document = a_hub_document()
-    document["modules"] = {"marketplace": {}, "contract-sync": {}, "bench": {}}
+    document["repos"].append(document["repos"][0] | {"dir": "demo-web", "github": "acme/demo-web"})
+    contract_sync = {"source": "demo-api", "target": "demo-web"}
+    document["modules"] = {"marketplace": {}, "contract-sync": contract_sync, "bench": {}}
     config = HubConfig.model_validate(document)
 
     lock = build_hub_lock(rendered=a_rendered_hub(), config=config)
