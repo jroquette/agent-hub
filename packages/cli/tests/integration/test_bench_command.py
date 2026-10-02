@@ -17,6 +17,7 @@ import os
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -988,8 +989,9 @@ class TestRun:
         self, bench_workspace: Workspace, run_command: CommandRunner
     ) -> None:
         # The golden run_claude_error: agent_error keeps the last 300 of 301 characters,
-        # hidden_tail the first 200 of a 201-character last line. Money as floats: after 0.165
-        # is spent, 0.165 + 0.135 > 0.3 stops the third job; 0.165 prints as 0.17.
+        # hidden_tail the first 200 of a 201-character last line. Port difference: the failed
+        # session left no cost, so it counts at its --per-run 0.135 (the script counted 0.0).
+        # Money as floats: 0.135 + 0.165 = 0.30, and 0.30 + 0.135 > 0.3 stops the third job.
         workspace = bench_workspace
         tail = "T" + "-" * 198 + "|X"
         workspace.write_cases([workspace.case(env={"CHECK_MODE": 1, "CHECK_TAIL": tail})])
@@ -1028,7 +1030,7 @@ class TestRun:
                 "T1",
                 "with",
                 1,
-                agent=agent_part(0.0, None, None, rc=1, error=stderr[-300:]),
+                agent=agent_part(0.135, None, None, rc=1, error=stderr[-300:]),
                 grade=grade,
                 label=DEFAULT_LABEL,
             ),
@@ -1044,12 +1046,12 @@ class TestRun:
         records = "".join(f"{text}\n" for text in lines)
         assert (result.exit_code, result.stderr) == (0, ""), result.output
         assert result.stdout == (
-            f"{records}STOP: budget cap (spent $0.17, next wave up to $0.14)\n"
-            f"\nruns: 2, spent $0.17\n\n{TABLE_HEADER}"
-            "| T1 | with | 0/1 | no | $0.00 | 0 |\n"
+            f"{records}STOP: budget cap (spent $0.30, next wave up to $0.14)\n"
+            f"\nruns: 2, spent $0.30\n\n{TABLE_HEADER}"
+            "| T1 | with | 0/1 | no | $0.14 | 0 |\n"
             "| T1 | without | 0/1 | no | $0.17 | 0 |\n"
             "\n"
-            "- **with**: pass@1 0%, pass^k 0/1, cost $0.00\n"
+            "- **with**: pass@1 0%, pass^k 0/1, cost $0.14\n"
             "- **without**: pass@1 0%, pass^k 0/1, cost $0.17\n"
         )
         assert (results(workspace) / f"{DEFAULT_LABEL}.jsonl").read_text() == records
@@ -1308,6 +1310,187 @@ class TestRun:
         assert all(line.split(": ", 2)[2].startswith(reason) for line in lines), lines
         assert not (results(workspace) / "L1.jsonl").exists()
         assert workspace.claude_calls() == []
+        assert_checkout_untouched(workspace)
+
+    @pytest.mark.parametrize("step", ["checkout", "reset"])
+    def test_reports_run_failure_when_overlay_fails(
+        self,
+        bench_workspace: Workspace,
+        run_command: CommandRunner,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        step: str,
+    ) -> None:
+        from agent_hub.cli import bench_steps  # noqa: PLC0415 - the module this test patches
+
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+        real = bench_steps.run_child
+
+        def failing_overlay(argv: list[str], **kwargs: Any) -> Any:
+            if step in argv and (step == "reset" or "origin/main" in argv):
+                return bench_steps.ChildResult(128, b"", b"fatal: overlay broke\n")
+            return real(argv, **kwargs)
+
+        monkeypatch.setattr(bench_steps, "run_child", failing_overlay)
+
+        result = bench_run(workspace, run_command, "--runs", "1", "--label", "L1")
+
+        # Never a session on the old config: each job fails alone, with no record.
+        assert result.exit_code == 1, result.output
+        assert result.stdout == f"\nruns: 0, spent $0.00\n\n{TABLE_HEADER}\n"
+        assert result.stderr.splitlines() == [
+            f"hub bench: L1-T1-{arm}-r1: overlay {step} failed: fatal: overlay broke"
+            for arm in ("with", "without")
+        ]
+        assert workspace.claude_calls() == []
+        assert not (results(workspace) / "L1.jsonl").exists()
+        assert_checkout_untouched(workspace)
+
+    def test_refuses_trace_when_path_is_symlink(
+        self, bench_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+        workspace.answer([{"stdout": "secret stream\n"}])
+        target = workspace.base / "elsewhere.txt"
+        target.write_text("untouched\n")
+        traces = results(workspace) / "traces"
+        traces.mkdir(parents=True)
+        (traces / "L1-T1-with-r1.jsonl").symlink_to(target)
+
+        result = bench_run(
+            workspace, run_command, *("--runs", "1", "--arms", "with", "--label", "L1", "--trace")
+        )
+
+        assert result.exit_code == 1, result.output
+        assert result.stderr == (
+            f"hub bench: L1-T1-with-r1: {traces / 'L1-T1-with-r1.jsonl'}:"
+            " not opened: links are never followed\n"
+        )
+        assert target.read_text() == "untouched\n"
+        assert workspace.claude_calls() == []
+        assert_checkout_untouched(workspace)
+
+    @pytest.mark.parametrize("trace", [True, False], ids=["trace", "no-trace"])
+    def test_writes_private_files_when_run(
+        self, bench_workspace: Workspace, run_command: CommandRunner, *, trace: bool
+    ) -> None:
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+        workspace.answer([{"stdout": workspace.result(0.1, 1, "success")}])
+        arguments = ("--runs", "1", "--arms", "with", "--label", "L1")
+
+        result = bench_run(workspace, run_command, *arguments, *(["--trace"] if trace else []))
+
+        assert result.exit_code == 0, result.output
+        written = [
+            results(workspace) / "L1.jsonl",
+            results(workspace) / ".settings-L1-T1-with-r1.json",
+        ]
+        if trace:
+            written.append(results(workspace) / "traces" / "L1-T1-with-r1.jsonl")
+        assert {path.name: stat.S_IMODE(path.stat().st_mode) for path in written} == {
+            path.name: 0o600 for path in written
+        }
+
+    @pytest.mark.parametrize("name", ["L1.jsonl", ".settings-L1-T1-with-r1.json"])
+    def test_refuses_result_file_when_path_is_symlink(
+        self, bench_workspace: Workspace, run_command: CommandRunner, *, name: str
+    ) -> None:
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+        workspace.answer([{"stdout": workspace.result(0.1, 1, "success")}])
+        target = workspace.base / "elsewhere.txt"
+        target.write_text("untouched\n")
+        results(workspace).mkdir(parents=True)
+        (results(workspace) / name).symlink_to(target)
+
+        result = bench_run(workspace, run_command, "--runs", "1", "--arms", "with", "--label", "L1")
+
+        assert result.exit_code == 1, result.output
+        assert result.stderr.splitlines()[-1].endswith(
+            f"{results(workspace) / name}: not opened: links are never followed"
+        )
+        assert target.read_text() == "untouched\n"
+        assert_checkout_untouched(workspace)
+
+    def test_counts_failed_session_at_cap_when_no_result(
+        self, bench_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        # A session that fails with no result event spent an unknown amount: up to its cap.
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+        workspace.answer([{"stdout": "not json\n", "stderr": "crashed\n", "rc": 1}])
+
+        result = bench_run(
+            workspace,
+            run_command,
+            *("--runs", "3", "--arms", "with", "--parallel", "1"),
+            *("--per-run", "1", "--budget", "2", "--label", "L1"),
+        )
+
+        assert result.exit_code == 0, result.output
+        written = (results(workspace) / "L1.jsonl").read_text().splitlines()
+        assert [json.loads(text)["cost"] for text in written] == [1.0, 1.0]
+        assert "STOP: budget cap (spent $2.00, next wave up to $1.00)\n" in result.stdout
+        assert "\nruns: 2, spent $2.00\n" in result.stdout
+        assert len(workspace.claude_calls()) == 2
+
+    def test_counts_session_at_cap_when_timed_out(
+        self,
+        bench_workspace: Workspace,
+        run_command: CommandRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from agent_hub.cli import bench_steps  # noqa: PLC0415 - the module this test patches
+
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+        (workspace.bin / "claude").write_text(
+            "#!/bin/sh\nexec python3 -c 'import time; time.sleep(60)'\n"
+        )
+        monkeypatch.setattr(bench_steps, "AGENT_TIMEOUT", 0.5)
+
+        result = bench_run(
+            workspace,
+            run_command,
+            *("--runs", "2", "--arms", "with", "--parallel", "1"),
+            *("--per-run", "1", "--budget", "1.5", "--label", "L1"),
+        )
+
+        assert (result.exit_code, result.stderr) == (0, ""), result.output
+        timed_out = {"agent_rc": "timeout", "cost": 1.0, "secs": 0}
+        record = json.dumps(
+            {"label": "L1", "case": "T1", "arm": "with", "run": 1, "model": "claude-sonnet-5"}
+            | timed_out
+            | grade_part(fixed=False)
+            | {"ts": TS}
+        )
+        assert (results(workspace) / "L1.jsonl").read_text() == f"{record}\n"
+        assert result.stdout.startswith(
+            f"{record}\nSTOP: budget cap (spent $1.00, next wave up to $1.00)\n"
+        )
+        assert_checkout_untouched(workspace)
+
+    def test_keeps_record_with_grade_error_when_grader_cannot_start(
+        self, bench_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case(test_cmd=["no-such-grader"])])
+        workspace.answer([{"stdout": workspace.result(0.25, 3, "success")}])
+
+        result = bench_run(workspace, run_command, "--runs", "1", "--arms", "with", "--label", "L1")
+
+        assert result.exit_code == 1, result.output
+        assert result.stderr == "hub bench: L1-T1-with-r1: no-such-grader is not on PATH\n"
+        record = json.dumps(
+            {"label": "L1", "case": "T1", "arm": "with", "run": 1, "model": "claude-sonnet-5"}
+            | agent_part(0.25, 3, "success")
+            | {"pass": False, "error": "grade: no-such-grader is not on PATH", "ts": TS}
+        )
+        assert (results(workspace) / "L1.jsonl").read_text() == f"{record}\n"
+        assert "\nruns: 1, spent $0.25\n" in result.stdout
         assert_checkout_untouched(workspace)
 
 

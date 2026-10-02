@@ -26,8 +26,11 @@ A run is the script's: each job's worktree at the merge's parent, today's agent 
 ``origin/main`` laid over it, one ``claude -p`` session sandboxed by its settings file, then the
 grade. Waves of ``--parallel`` jobs start only while the budget holds (else the script's ``STOP:``
 line); each record is printed and appended to ``<ws>/_bench/results/<label>.jsonl`` in job order,
-then the summary is printed. A job whose worktree, setup or session cannot start has no record:
-its line goes to stderr and the run exits 1 after the summary. The session gets the sandbox's
+then the summary is printed. A job whose worktree, setup, overlay or session cannot start (or
+whose overlay checkout or reset fails) has no record: its line goes to stderr and the run exits 1
+after the summary. A session that fails without a cost counts at ``--per-run``, as a timeout
+does. The settings, trace and results files are created owner-only (0600) and never opened
+through a link at their path. The session gets the sandbox's
 ``effortLevel`` from ``BENCH_EFFORT`` (E10) and its telemetry tags, never the case's ``env``; with
 ``--trace`` its stdout is kept whole in ``<results>/traces/<worktree>.jsonl`` and the result is
 read from its last ``OUTPUT_LIMIT`` bytes (E15), else stdout is captured with that cap.
@@ -35,6 +38,7 @@ read from its last ``OUTPUT_LIMIT`` bytes (E15), else stdout is captured with th
 
 import contextlib
 import datetime
+import errno
 import os
 import shutil
 import signal
@@ -49,7 +53,7 @@ from typing import Final
 
 import typer
 
-from agent_hub.cli.child_process import ChildResult, run_child
+from agent_hub.cli.child_process import PRIVATE_FILE_MODE, ChildResult, run_child
 from agent_hub.cli.command_exits import fail
 from agent_hub.cli.errors import ChildTimedOutError, CliError
 from agent_hub.cli.init_report import shown_text
@@ -347,14 +351,23 @@ class BenchSteps:
         return RunEnd(record=record, error=error)
 
     def _overlay(self, path: Path) -> None:
-        """Today's agent config over the old code, so both arms read the same; then unstaged."""
+        """Today's agent config over the old code, so both arms read the same; then unstaged.
+
+        A config file absent from ``origin/main`` is skipped; a checkout or the reset that fails
+        is a ``StepError``."""
         worktree = str(path)
         for config in AGENT_CONFIG:
             found = git_argv(worktree, "cat-file", "-e", f"{CONFIG_SOURCE}:{config}")
             if self._run(found, cwd=path, env=self._env, timeout=GIT_TIMEOUT).returncode == 0:
                 checkout = git_argv(worktree, "checkout", CONFIG_SOURCE, "--", config)
-                self._run(checkout, cwd=path, env=self._env, timeout=GIT_TIMEOUT)
-        self._run(git_argv(worktree, "reset", "-q"), cwd=path, env=self._env, timeout=GIT_TIMEOUT)
+                self._overlay_step("checkout", checkout, path)
+        self._overlay_step("reset", git_argv(worktree, "reset", "-q"), path)
+
+    def _overlay_step(self, step: str, argv: Sequence[str], path: Path) -> None:
+        # A session on the old config would be graded as if it read today's: never run it.
+        done = self._run(argv, cwd=path, env=self._env, timeout=GIT_TIMEOUT)
+        if done.returncode:
+            raise StepError(f"overlay {step} failed: {_tail(done.stderr)}")
 
     def _session(self, job: Job, path: Path, session: SessionPlan) -> dict[str, JsonValue]:
         """One ``claude -p`` session in ``path``; a session past its timeout costs its cap."""
@@ -363,9 +376,9 @@ class BenchSteps:
             worktree=str(path), arm=job.arm, plugin=session.plugin, effort=session.effort
         )
         try:
-            settings.write_text(settings_text(sandbox), encoding="utf-8")
+            _write_private(settings, settings_text(sandbox), flags=os.O_TRUNC)
         except OSError as error:
-            raise StepError(f"{settings}: {error.strerror or error}") from None
+            raise StepError(_open_problem(settings, error)) from None
         argv = agent_argv(
             prompt=job.case.prompt,
             settings_path=str(settings),
@@ -386,12 +399,17 @@ class BenchSteps:
             )
         except ChildTimedOutError:
             return timeout_outcome(per_run=session.per_run, secs=int(AGENT_TIMEOUT))
-        return agent_outcome(
+        result = result_of(_text(ended.stdout), trace=session.trace)
+        agent = agent_outcome(
             rc=ended.returncode,
-            result=result_of(_text(ended.stdout), trace=session.trace),
+            result=result,
             secs=round(monotonic() - started),
             stderr=_text(ended.stderr),
         )
+        if ended.returncode and "total_cost_usd" not in result:
+            # A failed session that left no cost may have spent up to its cap, as a timeout.
+            agent["cost"] = session.per_run
+        return agent
 
     def validate(self, cases: Sequence[BenchCase]) -> bool:
         """Grade each case at its merge's parent and at its merge; whether each grade is right.
@@ -493,7 +511,13 @@ class BenchSteps:
             traces.mkdir(exist_ok=True)
         except OSError as error:
             raise StepError(f"{traces}: {error.strerror or error}") from None
-        return traces / f"{worktree}.jsonl"
+        trace = traces / f"{worktree}.jsonl"
+        try:
+            # Created owner-only here, so a link at its path is refused before claude starts.
+            _write_private(trace, "", flags=os.O_TRUNC)
+        except OSError as error:
+            raise StepError(_open_problem(trace, error)) from None
+        return trace
 
     def _run(
         self,
@@ -578,10 +602,25 @@ def _make_folder(folder: Path) -> None:
 def _append_record(out: Path, record: Mapping[str, JsonValue]) -> None:
     typer.echo(record_line(record))
     try:
-        with out.open("a", encoding="utf-8") as file:
-            file.write(record_line(record) + "\n")
+        _write_private(out, record_line(record) + "\n", flags=os.O_APPEND)
     except OSError as error:
-        fail(f"{_PREFIX}: {out}: {error.strerror or error}")
+        fail(f"{_PREFIX}: {_open_problem(out, error)}")
+
+
+def _write_private(path: Path, text: str, *, flags: int) -> None:
+    """Write ``text`` to ``path`` (``O_TRUNC`` or ``O_APPEND``), created owner-only, never
+    through a link at ``path``."""
+    descriptor = os.open(
+        path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC | flags, PRIVATE_FILE_MODE
+    )
+    with os.fdopen(descriptor, "w", encoding="utf-8") as file:
+        file.write(text)
+
+
+def _open_problem(path: Path, error: OSError) -> str:
+    if error.errno == errno.ELOOP:
+        return f"{path}: not opened: links are never followed"
+    return f"{path}: {error.strerror or error}"
 
 
 def _spent(record: Mapping[str, JsonValue]) -> float:
