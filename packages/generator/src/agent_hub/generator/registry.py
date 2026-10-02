@@ -13,7 +13,13 @@ from typing import Final, NamedTuple
 
 from agent_hub.core.hub_config.schema import SCHEMA_FILE, SCHEMA_PACKAGE
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership
-from agent_hub.generator.built_json import managed_settings, project_manifest, project_settings
+from agent_hub.generator.built_json import (
+    managed_settings,
+    marketplace,
+    marketplace_project,
+    project_manifest,
+    project_settings,
+)
 from agent_hub.generator.json_form import JsonBuilder
 
 _PACKAGE: Final = "agent_hub.generator"
@@ -87,6 +93,43 @@ def _project_built(path: str, build: JsonBuilder) -> TemplateEntry:
     )
 
 
+def _module_managed(path: str, template: str, module: str) -> TemplateEntry:
+    """A file of ``module`` (its closed JSON id): rendered only while ``hub.json`` selects it."""
+    return TemplateEntry(
+        path=path,
+        source=_template(template),
+        kind=Kind.MODULE,
+        ownership=Ownership.MANAGED,
+        module=module,
+    )
+
+
+def _module_entry_point(path: str, module: str) -> TemplateEntry:
+    """A module script with a `#!` line: managed, executable, from `<path>.tmpl`."""
+    return TemplateEntry(
+        path=path,
+        source=_template(f"{path}.tmpl"),
+        kind=Kind.MODULE,
+        ownership=Ownership.MANAGED,
+        module=module,
+        executable=True,
+    )
+
+
+def _module_built(
+    path: str, build: JsonBuilder, module: str, *, ownership: Ownership
+) -> TemplateEntry:
+    """A JSON file of ``module`` built from the config: rendered only while it is selected."""
+    return TemplateEntry(
+        path=path, build=build, kind=Kind.MODULE, ownership=ownership, module=module
+    )
+
+
+def _module_makefile(module: str) -> TemplateEntry:
+    """``mk/<id>.mk``: the module's make targets, which the base ``Makefile`` includes (D5)."""
+    return _module_managed(f"mk/{module}.mk", f"mk/{module}.mk.tmpl", module)
+
+
 # The project plugin's folder; `render_entries` puts the project name in its placeholder.
 _PROJECT_PLUGIN: Final = "plugin/@@{project_name}"
 # The base plugin's folder, the same in every hub, and its agents (sorted).
@@ -131,6 +174,17 @@ def _hook_entry_point(name: str) -> TemplateEntry:
 
 
 REGISTRY: Final[tuple[TemplateEntry, ...]] = (
+    # Module marketplace (AGH-17 D4): the managed part from `project.*`; the project's pins go in
+    # the seeded sibling, merged after it.
+    _module_built(
+        ".claude-plugin/marketplace.json", marketplace, "marketplace", ownership=Ownership.MANAGED
+    ),
+    _module_built(
+        ".claude-plugin/marketplace.project.json",
+        marketplace_project,
+        "marketplace",
+        ownership=Ownership.SEEDED,
+    ),
     # The rules base (spec D5); the project's own settings go in the seeded sibling.
     TemplateEntry(
         path=".claude/settings.json",
@@ -169,6 +223,11 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
         ownership=Ownership.MANAGED,
         verbatim=True,
     ),
+    # Each selected module's make targets (AGH-17 D5); `Makefile` includes them in id order.
+    _module_makefile("bench"),
+    _module_makefile("cloud"),
+    _module_makefile("contract-sync"),
+    _module_makefile("marketplace"),
     _project_built(f"{_PROJECT_PLUGIN}/.claude-plugin/plugin.json", project_manifest),
     _project_seeded(f"{_PROJECT_PLUGIN}/agents/.gitkeep", "plugin/project/agents/gitkeep.tmpl"),
     _project_seeded(
@@ -219,6 +278,10 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
         )
         for name in _BASE_SKILLS
     ),
+    # Module cloud: git identity, fetch or clone the repos in a cloud session (spec D3).
+    _module_entry_point("scripts/cloud-setup.sh", "cloud"),
+    # Module contract-sync: export in the source repo, then import in the target (spec D1).
+    _module_entry_point("scripts/contract-sync.sh", "contract-sync"),
     # The generic scripts the base `mine`/`retro` targets and the `recall` skill run, copied from
     # the hub; they read `hub.json` through the hooks' reader, loaded by path (spec Q-2).
     _entry_point("scripts/mine_transcripts.py"),

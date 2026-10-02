@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from agent_hub.core.doctor.snapshot import module_makefiles
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
 from agent_hub.core.hub_files.extension_inputs import NO_EXTENSIONS, ExtensionInputs
@@ -27,9 +28,13 @@ from agent_hub.generator.errors import GeneratorError, TemplateError
 from agent_hub.generator.hub_template import render_template
 from agent_hub.generator.json_form import JsonValue
 from agent_hub.generator.json_merge import MergeError, merge_json
-from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_mapping
+from agent_hub.generator.placeholders import (
+    MODULE_MAKEFILE_PATTERN,
+    PLATFORM_REPOSITORY,
+    substitution_mapping,
+)
 from agent_hub.generator.registry import REGISTRY, TemplateEntry, TemplateSource
-from agent_hub.generator.render_hub import render_entries, render_hub
+from agent_hub.generator.render_hub import project_json_siblings, render_entries, render_hub
 
 # AC-3.13: the D5 path set of docs/design/hub-generator.md, in code-point order; AC-4.1 adds
 # AGH-19's rendered set (spec "The rendered set", for project `demo`).
@@ -58,6 +63,9 @@ DESIGN_PATHS = (
     "brain/playbooks/.gitkeep",
     "hub",
     "hub.schema.json",
+    # AGH-17 D5: the demo selects `bench` and `cloud`.
+    "mk/bench.mk",
+    "mk/cloud.mk",
     "plugin/demo/.claude-plugin/plugin.json",
     "plugin/demo/agents/.gitkeep",
     "plugin/demo/hooks/project_guard.py",
@@ -90,6 +98,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/skills/learn/SKILL.md",
     "plugin/hub-workflow/skills/recall/SKILL.md",
     "plugin/hub-workflow/skills/research/SKILL.md",
+    "scripts/cloud-setup.sh",
     "scripts/mine_transcripts.py",
     "scripts/recall_transcripts.py",
     "scripts/retro_metrics.py",
@@ -769,6 +778,25 @@ def test_raises_merge_error_when_sibling_refused(demo_config: HubConfig) -> None
 
 
 @pytest.mark.parametrize(
+    ("config_name", "expected"),
+    [
+        ("demo_config", (".claude/settings.project.json",)),
+        ("variant_config", (".claude/settings.project.json",)),
+        (
+            "all_modules_config",
+            (".claude-plugin/marketplace.project.json", ".claude/settings.project.json"),
+        ),
+    ],
+    ids=["demo", "no-module", "all-modules"],
+)
+def test_lists_marketplace_sibling_only_when_marketplace_selected(
+    config_name: str, expected: tuple[str, ...], request: pytest.FixtureRequest
+) -> None:
+    # AGH-17 D4: the marketplace pair renders, and merges, only with the module selected.
+    assert project_json_siblings(request.getfixturevalue(config_name)) == expected
+
+
+@pytest.mark.parametrize(
     "path", ["AGENTS.project.json", ".claude/other.project.json", "plugin/demo/x.project.json"]
 )
 def test_raises_value_error_when_sibling_not_rendered_pair(
@@ -895,6 +923,104 @@ def test_renders_same_bytes_when_module_order_differs() -> None:
 
     assert render_hub(bench_first) == render_hub(cloud_first)
     assert render_digest(render_hub(bench_first)) == render_digest(render_hub(cloud_first))
+
+
+def test_renders_same_bytes_when_module_keys_reordered(all_modules_config: HubConfig) -> None:
+    document = all_modules_config.model_dump(mode="json", by_alias=True, exclude_none=True)
+    document["modules"] = dict(reversed(document["modules"].items()))
+    reordered = HubConfig.model_validate(document)
+
+    renders = [render_hub(config) for config in (all_modules_config, reordered) for _ in range(2)]
+
+    assert all(render == renders[0] for render in renders)
+    assert {render_digest(render) for render in renders} == {render_digest(renders[0])}
+
+
+# AGH-17 AC-17.13 (Q-10): constructs of bash 4 or later, which macOS's /bin/bash (3.2) rejects or
+# runs differently, and tracing (``set -x`` would print a token a command line holds). The list is
+# partial: a pattern scan of the commonest forms, not a parser; `bash -n` on bash 5 cannot catch
+# them, and AC-17.24 runs the scripts on a real 3.2.
+BASH_FOUR = {
+    "declare -A": re.compile(r"\b(?:declare|typeset|local)\s+-[a-zA-Z]*A"),
+    "declare -n": re.compile(r"\b(?:declare|typeset|local)\s+-[a-zA-Z]*n"),
+    "declare -g": re.compile(r"\b(?:declare|typeset)\s+-[a-zA-Z]*g"),
+    "mapfile": re.compile(r"\bmapfile\b"),
+    "readarray": re.compile(r"\breadarray\b"),
+    "coproc": re.compile(r"\bcoproc\b"),
+    "case modification": re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?(?:,|\^)"),
+    "[[ -v": re.compile(r"\[\[\s+-v\b"),
+    "&>>": re.compile(r"&>>"),
+    "|&": re.compile(r"\|&"),
+    ";& or ;;&": re.compile(r";;?&"),
+    "negative index": re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\[\s*-[0-9]"),
+    "negative length": re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?:[^}:]*:\s*-[0-9]"),
+    "${var@op}": re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?@[A-Za-z]\}"),
+    "shopt -s globstar": re.compile(r"\bshopt\s+-s\b[^\n;]*\bglobstar\b"),
+    "wait -n": re.compile(r"\bwait\s+-n\b"),
+    "EPOCHSECONDS": re.compile(r"\bEPOCH(?:SECONDS|REALTIME)\b"),
+    "printf %(...)T": re.compile(r"%\([^)]*\)T"),
+    "read -i or -N": re.compile(r"\bread\b[^\n;|&]*\s-[a-zA-Z]*[iN]\b"),
+    "set -x": re.compile(r"\bset\s+(?:-[a-wyzA-Z]*x|-o\s+xtrace)"),
+}
+
+
+def test_finds_each_construct_when_bash_four_list_read() -> None:
+    samples = {
+        "declare -A": "declare -A seen=()",
+        "declare -n": "local -n ref=name",
+        "declare -g": "declare -g name=x",
+        "mapfile": "mapfile -t lines < f",
+        "readarray": "readarray -t lines < f",
+        "coproc": "coproc cat",
+        "case modification": 'echo "${name,,}" "${name^^}"',
+        "[[ -v": "[[ -v name ]]",
+        "&>>": "cmd &>> log",
+        "|&": "cmd |& tee log",
+        ";& or ;;&": "case $x in a) echo a ;& b) echo b ;;& esac",
+        "negative index": 'echo "${items[-1]}"',
+        "negative length": 'echo "${name:0:-1}"',
+        "${var@op}": 'echo "${name@Q}"',
+        "shopt -s globstar": "shopt -s nullglob globstar",
+        "wait -n": "wait -n",
+        "EPOCHSECONDS": 'echo "$EPOCHSECONDS" "$EPOCHREALTIME"',
+        "printf %(...)T": "printf '%(%Y-%m-%d)T' -1",
+        "read -i or -N": "read -e -i default name; read -N 1 key",
+        "set -x": "set -eux",
+    }
+
+    assert {
+        name: bool(BASH_FOUR[name].search(text)) for name, text in samples.items()
+    } == dict.fromkeys(BASH_FOUR, True)
+    # Bash 3.2 forms that look alike stay allowed.
+    for text in (
+        'echo "${name:-a,b}" "${#items[@]}" "${name%,*}" "${name: -1}" "${name:1:2}"',
+        "set -euo pipefail",
+        "a || b && c 2>&1",
+        "case $x in a) echo a ;; esac",
+        'read -r -n 1 key; wait "$pid"; declare -r name=x; shopt -s nullglob',
+        "printf '%s\\n' x",
+    ):
+        assert not [name for name, pattern in BASH_FOUR.items() if pattern.search(text)], text
+
+
+def test_uses_no_bash_four_construct_when_module_scripts_rendered(
+    all_modules_config: HubConfig,
+    shell_scripts: Callable[[Iterable[RenderedFile]], list[str]],
+) -> None:
+    rendered = render_hub(all_modules_config).files
+    # Scripts only: make runs the recipes of `Makefile` and `mk/*.mk` on /bin/sh, not bash.
+    paths = shell_scripts(rendered)
+    assert {"scripts/cloud-setup.sh", "scripts/contract-sync.sh", "hub", "agent"} <= set(paths)
+
+    found = [
+        (file.path, name)
+        for file in rendered
+        if file.path in paths
+        for name, pattern in BASH_FOUR.items()
+        if pattern.search(file.content.decode("utf-8"))
+    ]
+
+    assert found == []
 
 
 def test_changes_digest_when_link_target_or_ownership_differs() -> None:
@@ -1358,6 +1484,70 @@ def test_lists_each_base_target_once_when_help_run(
     for target in BASE_TARGETS:
         assert names.count(target) == 1, f"{target} in {names}"
     assert logged_calls(fake_uv_bin) == []
+
+
+# AGH-17 D5 (AC-17.7): each module's make targets, in its `mk/<id>.mk`.
+MODULE_TARGETS = {
+    "mk/bench.mk": ("bench", "bench-validate"),
+    "mk/cloud.mk": ("cloud-setup",),
+    "mk/contract-sync.mk": ("contract-sync",),
+    "mk/marketplace.mk": ("marketplace-validate",),
+}
+PHONY_LINE = re.compile(r"^\.PHONY:(.*)$", re.MULTILINE)
+
+
+def help_names(stdout: str) -> list[str]:
+    return [line.split()[0] for line in stdout.splitlines() if line.strip()]
+
+
+def test_lists_module_targets_when_help_run_with_all_modules(
+    all_modules_config: HubConfig,
+    rendered_tree: Callable[[RenderedHub], Path],
+    fake_uv_bin: Path,
+) -> None:
+    root = a_hub_tree(all_modules_config, rendered_tree)
+
+    completed = run_make(root, fake_uv_bin, "help")
+
+    assert completed.returncode == 0, completed.stderr
+    module_targets = [name for names in MODULE_TARGETS.values() for name in names]
+    assert sorted(help_names(completed.stdout)) == sorted([*BASE_TARGETS, *module_targets])
+    # One column: every description starts at the same offset, past the longest name.
+    rows = [line for line in completed.stdout.splitlines() if line.strip()]
+    offsets = {len(row) - len(row.split(maxsplit=1)[1]) for row in rows}
+    assert len(offsets) == 1, rows
+    assert offsets.pop() > 2 + max(len(name) for name in help_names(completed.stdout))
+    assert logged_calls(fake_uv_bin) == []
+
+
+def test_lists_only_base_targets_when_no_module_selected(
+    variant_config: HubConfig,
+    rendered_tree: Callable[[RenderedHub], Path],
+    fake_uv_bin: Path,
+) -> None:
+    root = a_hub_tree(variant_config, rendered_tree)
+
+    completed = run_make(root, fake_uv_bin, "help")
+
+    assert completed.returncode == 0, completed.stderr
+    assert sorted(help_names(completed.stdout)) == sorted(BASE_TARGETS)
+    assert not (root / "mk").exists()
+
+
+def test_declares_phony_when_module_makefile_rendered(all_modules_config: HubConfig) -> None:
+    rendered = {file.path: file for file in render_hub(all_modules_config).files}
+    makefiles = {path: file for path, file in rendered.items() if path.startswith("mk/")}
+
+    assert sorted(makefiles) == sorted(MODULE_TARGETS)
+    for path, targets in MODULE_TARGETS.items():
+        text = makefiles[path].content.decode("utf-8")
+        assert MAKE_TARGET.findall(text) == list(targets), path
+        phony = PHONY_LINE.findall(text)
+        assert len(phony) == 1, path
+        assert phony[0].split() == list(targets), path
+        for target in targets:
+            # Each target has a help text, so `make help` lists it.
+            assert re.search(rf"^{re.escape(target)}:.*## \S", text, re.MULTILINE), target
 
 
 def test_passes_check_when_hub_has_no_tests(
@@ -1981,6 +2171,11 @@ BUILT_JSON_PATHS = (
     ".claude/settings.project.json",
     "plugin/{project}/.claude-plugin/plugin.json",
 )
+# Built too, rendered only when module `marketplace` is selected (AGH-17 D4).
+MODULE_BUILT_JSON_PATHS = (
+    ".claude-plugin/marketplace.json",
+    ".claude-plugin/marketplace.project.json",
+)
 # Static JSON with no placeholder: rendered byte for byte from its template.
 TEMPLATED_JSON_SOURCES = {
     "plugin/hub-workflow/.claude-plugin/plugin.json": (
@@ -2000,7 +2195,8 @@ def test_writes_json_form_when_generator_json_rendered(
         entry.path.replace("@@{project_name}", "{project}") for entry in REGISTRY if entry.build
     }
 
-    assert built == set(BUILT_JSON_PATHS)
+    assert built == {*BUILT_JSON_PATHS, *MODULE_BUILT_JSON_PATHS}
+    assert not set(MODULE_BUILT_JSON_PATHS) & set(rendered)
     for pattern in BUILT_JSON_PATHS:
         content = rendered[pattern.format(project=config.project.name)].content
         value = strict_json(content)
@@ -2010,6 +2206,16 @@ def test_writes_json_form_when_generator_json_rendered(
     for path, source in TEMPLATED_JSON_SOURCES.items():
         template = files(GENERATOR_PACKAGE).joinpath(*source.split("/")).read_bytes()
         assert rendered[path].content == template, path
+
+
+def test_writes_json_form_when_marketplace_rendered(all_modules_config: HubConfig) -> None:
+    rendered = {file.path: file for file in render_hub(all_modules_config).files}
+
+    for path in MODULE_BUILT_JSON_PATHS:
+        content = rendered[path].content
+        form = json.dumps(strict_json(content), indent=2, sort_keys=True, ensure_ascii=False)
+        assert content == (form + "\n").encode("utf-8"), path
+    assert rendered[".claude-plugin/marketplace.project.json"].content == b"{}\n"
 
 
 @pytest.mark.parametrize("config_name", CONFIG_NAMES)
@@ -2114,7 +2320,12 @@ def test_holds_no_project_identifier_when_demo_rendered(demo_config: HubConfig) 
     for path, text in texts.items():
         assert rendered_identifiers(text) == [], path
     carriers = {path for path, text in texts.items() if PLATFORM_CARRIER.search(text)}
-    assert carriers == {"hub", "plugin/hub-workflow/hooks/session_start.py"}
+    # The demo selects `cloud`: its setup script warms the pinned release.
+    assert carriers == {
+        "hub",
+        "plugin/hub-workflow/hooks/session_start.py",
+        "scripts/cloud-setup.sh",
+    }
 
 
 def test_holds_no_project_identifier_when_demo_paths_and_links_listed(
@@ -2227,20 +2438,46 @@ MANAGED_FILES_STATEMENT = re.compile(r"rewrites these managed files: (.*?)\.(?:\
 BACKTICKED = re.compile(r"`([^`]+)`")
 
 
-def test_names_every_managed_path_when_agents_rendered(demo_config: HubConfig) -> None:
-    agents = text_of(demo_config, "AGENTS.md")
+# AGH-17 D5: the statement names the selected modules' makefiles by one pattern.
+MODULE_FILES_CLAUSE = re.compile(r"each selected module's files \((.*?)\)", re.DOTALL)
+SEEDED_SIBLINGS_CLAUSE = re.compile(r"their seeded sibling \((.*?)\), which", re.DOTALL)
+
+
+def selected_entries(config: HubConfig) -> list[TemplateEntry]:
+    """The registry entries ``config`` renders: the base ones and its modules'."""
+    selected = config.modules.model_dump(exclude_none=True).keys()
+    return [entry for entry in REGISTRY if entry.module is None or entry.module in selected]
+
+
+def expanded_paths(named: Iterable[str], config: HubConfig) -> list[str]:
+    """``named`` with ``mk/<id>.mk`` read as the makefile of each module ``config`` selects."""
+    return [
+        path
+        for item in named
+        for path in (list(module_makefiles(config)) if item == MODULE_MAKEFILE_PATTERN else [item])
+    ]
+
+
+@pytest.mark.parametrize("config_name", ["variant_config", "demo_config", "all_modules_config"])
+def test_names_every_managed_path_when_agents_rendered(
+    request: pytest.FixtureRequest, config_name: str
+) -> None:
+    config: HubConfig = request.getfixturevalue(config_name)
+    agents = text_of(config, "AGENTS.md")
     statements = MANAGED_FILES_STATEMENT.findall(agents)
 
     assert len(statements) == 1
-    named = BACKTICKED.findall(statements[0])
-    managed = [entry.path for entry in REGISTRY if entry.ownership is Ownership.MANAGED]
+    named = expanded_paths(BACKTICKED.findall(statements[0]), config)
+    # The selected modules' files are named too (AGH-17 D5), and only theirs.
+    entries = selected_entries(config)
+    managed = [entry.path for entry in entries if entry.ownership is Ownership.MANAGED]
     assert managed
     assert len(named) == len(set(named))
     # E4.10: an item is a managed file, or a folder (`plugin/hub-workflow/`) that holds at least
     # one registry entry and only managed ones.
     for item in named:
         if item.endswith("/"):
-            under = [entry for entry in REGISTRY if entry.path.startswith(item)]
+            under = [entry for entry in entries if entry.path.startswith(item)]
             assert under, item
             assert all(entry.ownership is Ownership.MANAGED for entry in under), item
         else:
@@ -2251,6 +2488,51 @@ def test_names_every_managed_path_when_agents_rendered(demo_config: HubConfig) -
             item for item in named if item == path or (item.endswith("/") and path.startswith(item))
         ]
         assert len(covering) == 1, (path, covering)
+
+
+@pytest.mark.parametrize(
+    "modules",
+    [
+        {"bench": {}, "cloud": {}, "contract-sync": {}, "marketplace": {}},
+        {"cloud": {}},
+        {"marketplace": {}},
+        {},
+    ],
+    ids=["all", "cloud", "marketplace", "none"],
+)
+def test_names_module_files_when_agents_rendered(modules: dict[str, dict[str, str]]) -> None:
+    # A copy: the parametrize values are shared between runs.
+    settings = {"contract-sync": {"source": "demo-api", "target": "demo-web"}}
+    selected = {module: settings.get(module, value) for module, value in modules.items()}
+    document = a_hub_document()
+    document["repos"].append(a_second_repo())
+    document["modules"] = selected
+    config = HubConfig.model_validate(document)
+    agents = text_of(config, "AGENTS.md")
+    clauses = MODULE_FILES_CLAUSE.findall(agents)
+    seeded_clauses = SEEDED_SIBLINGS_CLAUSE.findall(agents)
+
+    module_entries = [entry for entry in REGISTRY if entry.module in modules]
+    module_managed = [e.path for e in module_entries if e.ownership is Ownership.MANAGED]
+    module_seeded = [e.path for e in module_entries if e.ownership is Ownership.SEEDED]
+    assert len(seeded_clauses) == 1
+    seeded_named = BACKTICKED.findall(seeded_clauses[0])
+    if not modules:
+        # A hub names only the files it holds: no module clause, no module sibling.
+        assert clauses == []
+        assert not [name for name in seeded_named if name.startswith(".claude-plugin/")]
+        return
+    assert len(clauses) == 1
+    named = BACKTICKED.findall(clauses[0])
+    # The makefiles by their pattern, first; then each other managed module file once.
+    assert named[0] == MODULE_MAKEFILE_PATTERN
+    assert sorted(expanded_paths(named, config)) == sorted(module_managed)
+    assert [path for path in module_seeded if path not in seeded_named] == []
+    assert [name for name in seeded_named if name.startswith(".claude-plugin/")] == module_seeded
+    # The clauses keep the list's Markdown form: indented lines, none wider than the template's.
+    statement = agents[agents.index("- `hub sync` rewrites") : agents.index("never touches.")]
+    assert all(line.startswith("  ") for line in statement.splitlines()[1:]), statement
+    assert max(len(line) for line in statement.splitlines()) <= 120, statement
 
 
 # Owner decision on slice 16: `.claude/settings.json` wires the base plugin's hooks, so enabling

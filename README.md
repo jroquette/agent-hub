@@ -545,7 +545,7 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `guard.ask_before_edit` | no | `[]` | Paths where the guard asks before an edit |
 | `guard.deny_paths` | no | `[]` | Paths the guard never lets the agent read or edit |
 | `guard.deny_hosts` | no | `[]` | Hosts the guard blocks network calls to |
-| `modules` | no | `{}` | Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`); not implemented in 0.4.0: `hub init` and `hub sync` refuse a non-empty value |
+| `modules` | no | `{}` | Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`), from 0.6.0: each selected one renders its files and `mk/<id>.mk`; `contract-sync` takes `{"source": <repo dir>, "target": <repo dir>}`, the others `{}` |
 | `doctor.rules` | no | `{}` | Per-rule `hub doctor` settings |
 
 Example (synthetic project):
@@ -745,7 +745,7 @@ From the phases in [docs/SPEC.md](docs/SPEC.md#mvp-and-phases). Each phase start
 - [ ] Dogfooding: `hub init` generating the platform's own hub
 - [ ] `hub next` and `hub run`: take an `agent-ready` issue to a PR through the tracker port (not implemented in 0.4.0)
 - [ ] `hub sync --adopt`: join a hand-made hub (not implemented in 0.4.0)
-- [ ] Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`) (not implemented in 0.4.0)
+- [ ] Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`) (their files from 0.6.0; `hub bench` to come)
 - [ ] Gate: an existing project's hand-made hub recreated with the same `make check` and bench
 
 **Next**
