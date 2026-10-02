@@ -1773,3 +1773,86 @@ class TestProcesses:
 
         assert result.exit_code == 0, result.output
         assert (NESTED_NOTE in result.stderr.splitlines()) is live_run
+
+
+@pytest.mark.usefixtures("with_key")
+class TestPushGuard:
+    @pytest.mark.parametrize(
+        ("mode", "key"),
+        [("config-helper", "credential.helper"), ("config-remote", "remote.origin.url")],
+        ids=["helper", "remote"],
+    )
+    def test_refuses_push_when_session_changes_git_config(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        mode: str,
+        key: str,
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("FAKE_CLAUDE_MODE", mode)
+
+        result = live(run_command, run_workspace.workspace)
+
+        diagnosis = assert_failed_at(result, run_tracker, "PR_OPEN")
+        assert diagnosis == (
+            f"git config changed during the run ({key}); the branch was not pushed"
+        )
+        assert "synthetic" not in diagnosis
+        assert "elsewhere" not in diagnosis
+        assert_never_pushed(run_workspace)
+        assert run_workspace.calls("gh") == []
+
+    def test_refuses_push_when_from_verify_finds_helper(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        verify_ready_worktree(workspace)
+        workspace.git(workspace.ws / "demo-api", "config", "credential.helper", "!echo planted")
+
+        result = run_command(
+            workspace.hub, "run", "DEM-1", "--repo", "demo-api", "--live", "--from", "verify"
+        )
+
+        diagnosis = assert_failed_at(result, run_tracker, "PR_OPEN")
+        assert diagnosis == (
+            "git config holds keys a push would use (credential.helper); the branch was not pushed"
+        )
+        assert_never_pushed(run_workspace)
+        assert run_workspace.calls("gh") == []
+
+    def test_refuses_push_when_from_verify_finds_worktree_remote(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        clone = workspace.ws / "demo-api"
+        inject(monkeypatch, run_tracker)
+        verify_ready_worktree(workspace)
+        workspace.git(clone, "config", "core.repositoryformatversion", "1")
+        workspace.git(clone, "config", "extensions.worktreeConfig", "true")
+        worktree = worktree_of(workspace)
+        workspace.git(worktree, "config", "--worktree", "remote.origin.url", "/elsewhere/x.git")
+
+        result = run_command(
+            workspace.hub, "run", "DEM-1", "--repo", "demo-api", "--live", "--from", "verify"
+        )
+
+        diagnosis = assert_failed_at(result, run_tracker, "PR_OPEN")
+        assert diagnosis == (
+            "git config holds keys a push would use (remote.origin.url); the branch was not pushed"
+        )
+        assert run_workspace.calls("gh") == []
