@@ -95,7 +95,9 @@ The folder decides the level; nobody writes level markers by hand.
   `$R pytest -m live packages/tracker_linear/tests/integration`) reaches Linear only when `LINEAR_API_KEY`,
   `AGENT_HUB_LIVE_ISSUE` and `AGENT_HUB_LIVE_LABEL` are set and `AGENT_HUB_LIVE=1`; otherwise the same plugin skips each
   case, naming the first missing variable. A test marked `live("mcp")` reaches Linear through its MCP server instead
-  of the key, so it needs the same variables except `LINEAR_API_KEY`.
+  of the key, so it needs the same variables except `LINEAR_API_KEY`, plus `AGENT_HUB_LIVE_HUB`, the hub root `claude`
+  runs from (the cwd production uses). Both smoke tests flip `AGENT_HUB_LIVE_LABEL` on the issue, so it is never the
+  ready label; the MCP one fails at setup when it is `agent-ready` or the hub's `tracker.ready_label`.
 
 Select a level with `-m`: `$R pytest -m unit`, `$R pytest -m "unit or contract"`, `$R pytest -m integration`,
 `$R pytest -m e2e`. A single file: `$R pytest packages/core/tests/unit/test_errors.py`.

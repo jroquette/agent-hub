@@ -8,7 +8,8 @@ Tests marked ``live`` call a real external API. This plugin is their only gate: 
 skipped, naming the first missing variable (never a value), unless ``LINEAR_API_KEY``,
 ``AGENT_HUB_LIVE_ISSUE`` and ``AGENT_HUB_LIVE_LABEL`` are set and ``AGENT_HUB_LIVE`` is ``1``.
 A test marked ``live("mcp")`` reaches Linear through its MCP server, not the key, so it needs
-the same variables but ``LINEAR_API_KEY``.
+the same variables but ``LINEAR_API_KEY``, and ``AGENT_HUB_LIVE_HUB``: the hub root ``claude``
+runs from.
 """
 
 import os
@@ -24,7 +25,9 @@ LIVE_SWITCH = "AGENT_HUB_LIVE"
 # Checked in this order; the skip reason names the first one missing.
 LIVE_VARIABLES = ("LINEAR_API_KEY", LIVE_SWITCH, "AGENT_HUB_LIVE_ISSUE", "AGENT_HUB_LIVE_LABEL")
 MCP_TRANSPORT = "mcp"
-MCP_LIVE_VARIABLES = tuple(name for name in LIVE_VARIABLES if name != "LINEAR_API_KEY")
+# The hub root claude runs from, as in production: only a live("mcp") test needs it.
+LIVE_HUB = "AGENT_HUB_LIVE_HUB"
+MCP_LIVE_VARIABLES = (*(name for name in LIVE_VARIABLES if name != "LINEAR_API_KEY"), LIVE_HUB)
 
 
 def level_of(path: str) -> str | None:
