@@ -6,6 +6,10 @@ goes to the grader's test command only, never to git or ``claude`` (E17); and ev
 reads pathspecs literally (``--literal-pathspecs``, E16), so a hidden test path is one file,
 never a glob or pathspec magic. The CLI adds its own base environment (no tokens, E9) and runs
 the children.
+
+``--setting-sources user`` loads the user's own settings, so their hooks and plugins run in both
+arms alike (parity with the script): only the plugin under test differs, and only the
+account-synced ``engineering@synced`` is turned off.
 """
 
 import json
@@ -141,10 +145,12 @@ def result_of(stdout: str, *, trace: bool) -> dict[str, JsonValue]:
     """The session's result object: the JSON reply, or a trace's last ``result`` event; else {}.
 
     A trace line that is not a JSON object (a line cut by reading the trace's tail) is skipped.
+    Lines end at ``"\n"`` only: ``splitlines`` would also cut at U+2028 or U+0085, which JSON
+    keeps raw inside a string, and lose that event's cost.
     """
     if not trace:
         return _object(stdout)
-    for line in reversed(stdout.splitlines()):
+    for line in reversed(stdout.split("\n")):
         if line.startswith("{"):
             event = _object(line)
             if event.get("type") == "result":
@@ -230,5 +236,6 @@ def _cost(value: JsonValue | None) -> int | float:
 
 
 def _tail(text: str) -> str:
-    lines = text.strip().splitlines()
-    return lines[-1][:TAIL_CHARS] if lines else ""
+    # Lines end at "\n" only: ``splitlines`` also cuts at U+2028, U+0085 and the like.
+    stripped = text.strip()
+    return stripped.split("\n")[-1].removesuffix("\r")[:TAIL_CHARS] if stripped else ""

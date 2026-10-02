@@ -187,6 +187,10 @@ def test_reads_result_when_stdout_json() -> None:
         "num_turns": 3,
     }
     assert result_of('{"type": "assistant"}', trace=True) == {}
+    # Lines end at "\n" only: U+2028 and the like inside a JSON string keep the event whole.
+    separated = '{"type": "result", "result": "a\u2028b\u0085c", "total_cost_usd": 1.5}'
+    for text, trace in ((separated, False), ("{}\n" + separated + "\n", True)):
+        assert result_of(text, trace=trace)["total_cost_usd"] == 1.5
 
 
 def test_builds_record_when_run_ends() -> None:
@@ -248,6 +252,10 @@ def test_keeps_tails_when_agent_fails() -> None:
         outcome = agent_outcome(rc=0, result={"total_cost_usd": cost}, secs=0, stderr="")
         assert outcome["cost"] == 0.0
     assert grade["hidden_tail"] == "x" * 200
+    split = grade_outcome(
+        hidden_rc=0, hidden_stdout="a\nb\u2028c\n", related_rc=0, related_stdout=""
+    )
+    assert split["hidden_tail"] == "b\u2028c"
     assert timeout_outcome(per_run=2.0, secs=1800) == {
         "agent_rc": "timeout",
         "cost": 2.0,
