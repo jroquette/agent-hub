@@ -210,3 +210,23 @@ def test_returns_when_limited_child_times_out_leaving_grandchild(tmp_path: Path)
         )
 
     assert (tmp_path / "group").read_text() == str(os.getpgrp())
+
+
+@pytest.mark.parametrize("limit", [None, OUTPUT_LIMIT], ids=["pipes", "files"])
+def test_reports_pid_when_child_starts(tmp_path: Path, *, limit: int | None) -> None:
+    started: list[int] = []
+
+    result = run_child(
+        [*PYTHON, "-c", "import os; print(os.getpid(), os.getpgrp())"],
+        cwd=tmp_path,
+        env={},
+        timeout=CHILD_TIMEOUT,
+        own_session=True,
+        output_limit=limit,
+        on_start=started.append,
+    )
+
+    pid, group = (int(word) for word in result.stdout.split())
+    # Its own session: the pid names the group a caller can kill.
+    assert started == [pid]
+    assert group == pid

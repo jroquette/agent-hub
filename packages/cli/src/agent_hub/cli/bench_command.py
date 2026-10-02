@@ -27,7 +27,12 @@ from typing import Annotated, Final
 import typer
 from typer._click.core import ParameterSource
 
-from agent_hub.cli.bench_steps import BenchSteps, SessionPlan, cases_or_exit
+from agent_hub.cli.bench_steps import (
+    BenchSteps,
+    SessionPlan,
+    cases_or_exit,
+    workspace_lock_or_exit,
+)
 from agent_hub.cli.command_exits import FAILURE, fail
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
 from agent_hub.cli.hub_root import hub_root_or_exit, main_checkout
@@ -217,7 +222,9 @@ def _validate(root: Path, config: HubConfig) -> None:
         typer.echo(NOTHING_TO_VALIDATE)
         return
     steps = BenchSteps(workspace=_hub_checkout(root).parent, environ=os.environ)
-    if not steps.validate(cases):
+    with workspace_lock_or_exit(steps.workspace):
+        right = steps.validate(cases)
+    if not right:
         raise typer.Exit(FAILURE)
 
 
@@ -242,9 +249,11 @@ def _run(root: Path, config: HubConfig, options: BenchOptions) -> None:
     )
     steps = BenchSteps(workspace=_hub_checkout(root).parent, environ=os.environ)
     planned = jobs(cases, arms=options.arms, runs=options.runs)
-    if not steps.run(
-        planned, session=session, parallel=options.parallel, budget=options.budget, clock=now
-    ):
+    with workspace_lock_or_exit(steps.workspace):
+        right = steps.run(
+            planned, session=session, parallel=options.parallel, budget=options.budget, clock=now
+        )
+    if not right:
         raise typer.Exit(FAILURE)
 
 

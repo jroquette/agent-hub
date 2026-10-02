@@ -8,10 +8,19 @@ Excluded cases are never run.
 Each worktree is a detached checkout of the case's repo under ``<ws>/_bench/wt``, where ``<ws>``
 is the folder of the hub's main checkout; a leftover folder there is removed first, and the
 worktree is removed when its step ends, whatever ends it (a failure, Ctrl-C). The user's own
-checkout is only the repo git adds the worktree to. Every child runs in the caller's process
-group without the tracker key or a GitHub token (``untrusted_env``, plan E9); the case's ``env``
-reaches the test command only (E17). A step that fails (git, ``setup_cmd``, a test command that
-cannot start or runs past its timeout) is that case's failure (``StepError``), never a crash.
+checkout is only the repo git adds the worktree to. No child gets the tracker key or a GitHub
+token (``untrusted_env``, plan E9); the case's ``env`` reaches the test command only (E17). Git
+runs in the caller's process group; ``setup_cmd``, the test command and the session run the
+case's code (servers, test workers), so each runs in its own session: its timeout, Ctrl-C or an
+interrupted run kills its whole group. A step that fails (git, ``setup_cmd``, a test command
+that cannot start or runs past its timeout) is that case's failure (``StepError``), never a
+crash.
+
+One bench at a time per workspace: ``workspace_lock_or_exit`` creates ``<ws>/_bench/bench.lock``
+(``O_EXCL``, holding the pid) before any worktree and removes it at the end. A lock already
+there exits 1 naming it: held by a running process, or left behind by one that ended (or with
+no pid). A left-behind lock is never removed by the command, since two benches could each take
+the other's lock for stale; the line tells the user to delete it.
 
 A run is the script's: each job's worktree at the merge's parent, today's agent config from
 ``origin/main`` laid over it, one ``claude -p`` session sandboxed by its settings file, then the
@@ -28,10 +37,12 @@ import contextlib
 import datetime
 import os
 import shutil
+import signal
 import stat
+import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from time import monotonic
 from typing import Final
@@ -98,13 +109,112 @@ TS_FORMAT: Final = "%Y-%m-%dT%H:%M:%S"
 CONFIG_SOURCE: Final = "origin/main"
 # The bytes kept of each stream of a child: a grade reads the last line only.
 OUTPUT_LIMIT: Final = 1 << 20
+LOCK_NAME: Final = "bench.lock"
 _PREFIX: Final = "hub bench"
+# A pid's text is short: more is no pid.
+_LOCK_READ_BYTES: Final = 64
+_LEFT_BEHIND_FIX: Final = "delete it if no hub bench is running in this workspace"
 # Opened without following a link, and without waiting on a FIFO's writer.
 _OPEN_FLAGS: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 
 
 class StepError(CliError):
     """A step of one case failed; the text says which step and why."""
+
+
+class ChildGroups:
+    """The process groups of the children running in their own session; ``stop`` kills them
+    all and refuses any later one (a run's threads, interrupted)."""
+
+    def __init__(self) -> None:
+        self._guard = threading.Lock()
+        self._live: set[int] = set()
+        self._stopped = False
+
+    @property
+    def stopped(self) -> bool:
+        return self._stopped
+
+    def add(self, group: int) -> None:
+        with self._guard:
+            self._live.add(group)
+            if self._stopped:
+                _kill_group(group)
+
+    def discard(self, group: int) -> None:
+        with self._guard:
+            self._live.discard(group)
+
+    def stop(self) -> None:
+        with self._guard:
+            self._stopped = True
+            for group in self._live:
+                _kill_group(group)
+
+
+def _kill_group(group: int) -> None:
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(group, signal.SIGKILL)
+
+
+@contextlib.contextmanager
+def workspace_lock_or_exit(workspace: Path) -> Iterator[None]:
+    """Hold ``<ws>/_bench/bench.lock`` for the block; exit 1 naming it when it is there."""
+    folder = workspace / BENCH_FOLDER
+    _make_folder(folder)
+    lock = folder / LOCK_NAME
+    try:
+        descriptor = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o644)
+    except FileExistsError:
+        fail(_held_line(lock))
+    except OSError as error:
+        fail(f"{_PREFIX}: {lock}: {error.strerror or error}")
+    try:
+        with os.fdopen(descriptor, "w", encoding="ascii") as file:
+            file.write(f"{os.getpid()}\n")
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            lock.unlink()
+
+
+def _held_line(lock: Path) -> str:
+    pid = _lock_pid(lock)
+    if pid is None:
+        return f"{_PREFIX}: the lock {lock} was left behind (no pid in it): {_LEFT_BEHIND_FIX}"
+    if _is_running(pid):
+        return (
+            f"{_PREFIX}: another hub bench (pid {pid}) is running in this workspace;"
+            f" wait for it to end (lock {lock})"
+        )
+    return (
+        f"{_PREFIX}: the lock {lock} was left behind (pid {pid}, which is not running):"
+        f" {_LEFT_BEHIND_FIX}"
+    )
+
+
+def _lock_pid(lock: Path) -> int | None:
+    try:
+        with lock.open("rb") as file:
+            text = file.read(_LOCK_READ_BYTES).strip()
+    except OSError:
+        return None
+    # ASCII digits only, above 0: ``kill(0)`` would name the caller's own group.
+    if not (text.isdigit() and text.isascii()) or int(text) <= 0:
+        return None
+    return int(text)
+
+
+def _is_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OverflowError:
+        return False
+    return True
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -166,6 +276,7 @@ class BenchSteps:
 
     workspace: Path
     environ: Mapping[str, str]
+    children: ChildGroups = field(default_factory=ChildGroups, repr=False)
 
     @property
     def worktrees(self) -> Path:
@@ -195,15 +306,22 @@ class BenchSteps:
                 typer.echo(line)
                 break
             with ThreadPoolExecutor(len(wave)) as pool:
-                for end in pool.map(lambda job: self._one_run(job, session, clock), wave):
-                    if end.error is not None:
-                        right = False
-                        typer.echo(shown_text(f"{_PREFIX}: {end.error}"), err=True)
-                    if end.record is None:
-                        continue
-                    records.append(end.record)
-                    spent += _spent(end.record)
-                    _append_record(out, end.record)
+                ends = pool.map(lambda job: self._one_run(job, session, clock), wave)
+                try:
+                    for end in ends:
+                        if end.error is not None:
+                            right = False
+                            typer.echo(shown_text(f"{_PREFIX}: {end.error}"), err=True)
+                        if end.record is None:
+                            continue
+                        records.append(end.record)
+                        spent += _spent(end.record)
+                        _append_record(out, end.record)
+                except BaseException:
+                    # Ctrl-C reaches this thread only: the other jobs' children run in their
+                    # own sessions, so kill them before the pool waits for its threads.
+                    self.children.stop()
+                    raise
         typer.echo("\n" + summary(records, spent=spent))
         return right
 
@@ -258,7 +376,14 @@ class BenchSteps:
         trace = self._trace_path(path.name) if session.trace else None
         started = monotonic()
         try:
-            ended = self._start(argv, cwd=path, env=env, timeout=AGENT_TIMEOUT, stdout_path=trace)
+            ended = self._start(
+                argv,
+                cwd=path,
+                env=env,
+                timeout=AGENT_TIMEOUT,
+                own_session=True,
+                stdout_path=trace,
+            )
         except ChildTimedOutError:
             return timeout_outcome(per_run=session.per_run, secs=int(AGENT_TIMEOUT))
         return agent_outcome(
@@ -308,7 +433,13 @@ class BenchSteps:
             if added.returncode:
                 raise StepError(f"git worktree add failed: {_tail(added.stderr)}")
             if case.setup_cmd:
-                setup = self._run(setup_argv(case), cwd=path, env=self._env, timeout=SETUP_TIMEOUT)
+                setup = self._run(
+                    setup_argv(case),
+                    cwd=path,
+                    env=self._env,
+                    timeout=SETUP_TIMEOUT,
+                    own_session=True,
+                )
                 if setup.returncode:
                     raise StepError(f"setup_cmd: {_tail(setup.stderr)}")
             yield path
@@ -327,8 +458,10 @@ class BenchSteps:
             return apply_failed_outcome(_text(applied.stderr))
         env = grader_env(self._env, case=case)
         hidden_argv, related_argv = grader_argvs(case)
-        hidden = self._run(hidden_argv, cwd=path, env=env, timeout=GRADER_TIMEOUT)
-        related = self._run(related_argv, cwd=path, env=env, timeout=GRADER_TIMEOUT)
+        hidden = self._run(hidden_argv, cwd=path, env=env, timeout=GRADER_TIMEOUT, own_session=True)
+        related = self._run(
+            related_argv, cwd=path, env=env, timeout=GRADER_TIMEOUT, own_session=True
+        )
         return grade_outcome(
             hidden_rc=hidden.returncode,
             hidden_stdout=_text(hidden.stdout),
@@ -363,12 +496,17 @@ class BenchSteps:
         return traces / f"{worktree}.jsonl"
 
     def _run(
-        self, argv: Sequence[str], *, cwd: Path, env: Mapping[str, str], timeout: float
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: Path,
+        env: Mapping[str, str],
+        timeout: float,
+        own_session: bool = False,
     ) -> ChildResult:
-        """Run ``argv`` in the caller's group; a program that cannot start or runs past
-        ``timeout`` is a ``StepError``."""
+        """Run ``argv`` as ``_start`` does; past ``timeout`` it is a ``StepError`` too."""
         try:
-            return self._start(argv, cwd=cwd, env=env, timeout=timeout)
+            return self._start(argv, cwd=cwd, env=env, timeout=timeout, own_session=own_session)
         except ChildTimedOutError:
             raise StepError(f"{argv[0]} timed out after {timeout:g} s") from None
 
@@ -379,32 +517,47 @@ class BenchSteps:
         cwd: Path,
         env: Mapping[str, str],
         timeout: float,
+        own_session: bool,
         stdout_path: Path | None = None,
     ) -> ChildResult:
-        """Run ``argv`` in the caller's group; a program that cannot start is a ``StepError``.
+        """Run ``argv``; a program that cannot start is a ``StepError``.
 
-        A bare name is looked up on ``env``'s ``PATH``; a name with a ``/`` is run as written,
-        from ``cwd``. With ``stdout_path``, stdout is kept there whole. Raises
+        In the caller's group, or with ``own_session`` in its own, registered in ``children``
+        while it runs (refused once they are stopped), so a timeout or a stop kills the whole
+        group. A bare name is looked up on ``env``'s ``PATH``; a name with a ``/`` is run as
+        written, from ``cwd``. With ``stdout_path``, stdout is kept there whole. Raises
         ``ChildTimedOutError`` past ``timeout``.
         """
+        if own_session and self.children.stopped:
+            raise StepError("interrupted")
         name = argv[0]
         program = name if "/" in name else shutil.which(name, path=env.get("PATH", ""))
         if program is None:
             raise StepError(f"{name} is not on PATH")
         if "/" not in name:
             program = os.path.abspath(program)
+        groups: list[int] = []
+
+        def started(group: int) -> None:
+            groups.append(group)
+            self.children.add(group)
+
         try:
             return run_child(
                 [program, *argv[1:]],
                 cwd=cwd,
                 env=env,
                 timeout=timeout,
-                own_session=False,
+                own_session=own_session,
                 output_limit=OUTPUT_LIMIT,
                 stdout_path=stdout_path,
+                on_start=started if own_session else None,
             )
         except OSError as error:
             raise StepError(f"{name} could not run: {error.strerror or error}") from None
+        finally:
+            for group in groups:
+                self.children.discard(group)
 
 
 def _text(output: bytes) -> str:
