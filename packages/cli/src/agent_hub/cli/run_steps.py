@@ -37,7 +37,6 @@ from agent_hub.cli.push_guard import REMOTE_URL, names_github_repo, parse_scoped
 from agent_hub.cli.run_children import (
     RunChildren,
     RunOptions,
-    child_env,
     push_env,
     session_env,
     untrusted_env,
@@ -86,6 +85,8 @@ CHILD_OUTPUT_LIMIT: Final = 64 * 1024
 SESSION_OUTPUT_LIMIT: Final = 1 << 20
 _URL_SCHEME = "https://"
 _PREFIX = "hub run"
+# Given to the token-bearing fetch as its own -c, like the push's.
+_HOOKS_OFF = ("-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false")
 
 
 class StageFailure(Exception):  # noqa: N818 - a stage's outcome, read as "the stage failed"
@@ -161,10 +162,12 @@ class LiveRun:
                 only=self.children.repo,
                 hub=self.children.hub,
                 git=git,
-                # Only the fetch may need the GitHub tokens; worktree add and the repo's setup
-                # script run without them, every hook off for the add.
+                # Only the fetch may need the GitHub tokens, and it runs as the push does: hooks
+                # and fsmonitor off (a hook planted in the clone would see the tokens). The add
+                # and the repo's setup script run without them, every hook off for the add.
                 env=untrusted_env(self.environ),
-                fetch_env=child_env(self.environ),
+                fetch_env=push_env(self.environ),
+                fetch_options=_HOOKS_OFF,
                 add_options=("-c", f"core.hooksPath={os.devnull}"),
                 git_timeout=WORKTREE_GIT_TIMEOUT,
                 runner=_bounded_child,

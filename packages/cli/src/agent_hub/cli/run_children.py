@@ -2,10 +2,11 @@
 
 Every child gets the caller's environment minus ``LINEAR_API_KEY`` (D10) and git's location
 variables, so the worktree's own repo is the one git reads. What runs code the implementing
-session may have written (the session itself, the gate, and git's reads of its worktree) also
-loses ``GH_TOKEN`` and ``GITHUB_TOKEN``; only the push and ``gh`` keep them, and the push runs
-with every git hook off, so a hook the session planted cannot run with them. The session also
-gets ``OTEL_RESOURCE_ATTRIBUTES``.
+session may have written (the session itself, the gate, git's reads of its worktree, the
+worktree add and the repo's setup script) also loses ``GH_TOKEN`` and ``GITHUB_TOKEN``. Only the
+fetch, the push and ``gh`` keep them (``push_env``), git's hooks and fsmonitor off for each (as
+config, and as ``-c`` on the fetch and the push), so a hook planted in the repo cannot run with
+them. The session also gets ``OTEL_RESOURCE_ATTRIBUTES``.
 A dry run prints each child as ``would run: <argv>   (cwd <folder>)``, each argument shell-quoted,
 or JSON-escaped when it holds a line break or another unprintable character, so tracker text
 cannot write to the terminal.

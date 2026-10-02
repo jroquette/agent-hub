@@ -750,7 +750,11 @@ class TestWorktreeStage:
         real = run_steps.run_child
 
         def failing(argv: list[str], **options: Any) -> Any:
-            if argv[1:2] == [git_step]:
+            # The step's git command, after any -c options (the fetch has its own).
+            command = argv[1:]
+            while command[:1] == ["-c"]:
+                command = command[2:]
+            if command[:1] == [git_step]:
                 raise error
             return real(argv, **options)
 
@@ -1714,7 +1718,8 @@ class TestProcesses:
         assert calls.timeout_of("bash") == [1_800]
         assert calls.timeout_of("git", *PUSH_OPTIONS, "push") == [300]
         assert calls.timeout_of("gh") == [120]
-        assert set(calls.timeout_of("git", "fetch")) == {1_800}
+        fetch_options = ("-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false")
+        assert set(calls.timeout_of("git", *fetch_options, "fetch")) == {1_800}
         assert set(calls.timeout_of("git", "-c", "core.hooksPath=/dev/null", "worktree")) == {1_800}
 
     def test_fails_stage_when_gate_times_out(
@@ -2086,3 +2091,37 @@ class TestFetchGuard:
         self, run_workspace: Workspace
     ) -> None:
         assert os.environ["GIT_ALLOW_PROTOCOL"] == "file"
+
+
+@pytest.mark.usefixtures("with_key")
+class TestFetchHooks:
+    def test_runs_no_hook_when_fetch_holds_tokens(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("GH_TOKEN", GH_TOKEN_VALUE)
+        monkeypatch.setenv("GITHUB_TOKEN", GITHUB_TOKEN_VALUE)
+        leaked = run_workspace.logs / "hook-env.txt"
+        hooks = workspace.ws / "demo-api" / ".git" / "hooks"
+        # Planted by an earlier run's session or gate: each logs the token names it can see.
+        for hook in ("reference-transaction", "post-checkout"):
+            (hooks / hook).write_text(
+                "#!/bin/sh\n"
+                f'for name in GH_TOKEN GITHUB_TOKEN LINEAR_API_KEY; do eval "v=\\${{$name-}}";'
+                f' [ -n "$v" ] && echo "$0 $name" >> "{leaked}"; done\n'
+                f'echo "$0 ran" >> "{leaked}"\n'
+            )
+            (hooks / hook).chmod(0o755)
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        # The session's own commit runs hooks with no token; no hook may see one.
+        seen = leaked.read_text().splitlines() if leaked.exists() else []
+        assert not [line for line in seen if "TOKEN" in line or "LINEAR" in line], seen

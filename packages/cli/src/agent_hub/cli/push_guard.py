@@ -1,14 +1,15 @@
-"""The push's guard: no repo-side git config key a push would act on, and origin is the repo.
+"""The fetch's and the push's guard: no repo-side git config key they would act on, and origin is
+the repo.
 
-The implementing session can edit the repo's git config, and the push runs with the GitHub
-tokens: a credential helper, an ``sshCommand``, a filter or a rewritten remote set by the
+The implementing session can edit the repo's git config, and the fetch and the push run with the
+GitHub tokens: a credential helper, an ``sshCommand``, a filter or a rewritten remote set by the
 session, or by an earlier run's session, would run with them or send the branch elsewhere.
-Right before every push (owner decision, 2026-10-02: risky keys only, so husky's
-``core.hooksPath`` or a submodule's url never stop a run) ``hub run`` lists the config at local
-and worktree scope, includes followed, and refuses the push when a ``RISKY`` key is set there,
-or when the effective ``remote.origin.url`` is not the GitHub url of the repo's
-``github`` (``owner/name``) in ``hub.json``, a source the session cannot change. Only key names
-are ever shown, never values.
+Right before each token-bearing call, the fetch and the push (owner decision, 2026-10-02: risky
+keys only, so husky's ``core.hooksPath`` or a submodule's url never stop a run), ``hub run``
+lists the config at local and worktree scope, includes followed, and refuses the call when a
+``RISKY`` key is set there, or when the effective ``remote.origin.url`` is not the GitHub url
+of the repo's ``github`` (``owner/name``) in ``hub.json``, a source the session cannot change.
+Only key names are ever shown, never values.
 """
 
 import re
