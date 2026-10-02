@@ -1,3 +1,4 @@
+import itertools
 import json
 import posixpath
 import re
@@ -5,9 +6,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
-from agent_hub.core.hub_config.model import MODULE_IDS, HubConfig
+from agent_hub.core.hub_config.model import (
+    MODULE_IDS,
+    BranchName,
+    BranchPrefix,
+    GitHubRepo,
+    HubConfig,
+    RepoDir,
+)
 from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 
 REQUIRED_KEYS: list[tuple[str | int, ...]] = [
@@ -168,6 +176,53 @@ def test_accepts_values_when_existing_hubs_use_them(
     path: tuple[str | int, ...], value: object
 ) -> None:
     HubConfig.model_validate(with_value(path, value))
+
+
+# ``_`` left the segment separator class: it was also in the segment class, so
+# Python's ``re`` (the hooks' reader) backtracked exponentially on a long run of ``_``.
+OLD_SEGMENT = r"[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*"
+OLD_SEGMENT_PATTERNS: list[tuple[object, str]] = [
+    (RepoDir, rf"{OLD_SEGMENT}"),
+    (GitHubRepo, rf"{OLD_SEGMENT}/{OLD_SEGMENT}"),
+    (BranchPrefix, rf"{OLD_SEGMENT}/"),
+    (BranchName, rf"{OLD_SEGMENT}(?:/{OLD_SEGMENT})*"),
+]
+
+
+def strings_up_to(length: int, alphabet: str) -> list[str]:
+    return [
+        "".join(characters)
+        for size in range(length + 1)
+        for characters in itertools.product(alphabet, repeat=size)
+    ]
+
+
+def is_valid(adapter: TypeAdapter[str], value: str) -> bool:
+    try:
+        adapter.validate_python(value)
+    except ValidationError:
+        return False
+    return True
+
+
+@pytest.mark.parametrize(
+    ("value_type", "old_pattern"),
+    OLD_SEGMENT_PATTERNS,
+    ids=["repo-dir", "github-repo", "branch-prefix", "branch-name"],
+)
+def test_accepts_same_values_when_segment_separator_drops_underscore(
+    value_type: object, old_pattern: str
+) -> None:
+    adapter: TypeAdapter[str] = TypeAdapter(value_type)
+    old = re.compile(old_pattern)
+
+    differing = [
+        value
+        for value in strings_up_to(6, "a_.-/ ")
+        if is_valid(adapter, value) != bool(old.fullmatch(value))
+    ]
+
+    assert differing == []
 
 
 @pytest.mark.parametrize(

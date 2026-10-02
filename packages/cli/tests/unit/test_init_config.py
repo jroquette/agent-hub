@@ -22,7 +22,7 @@ DEMO_FLAGS: dict[str, Any] = {
     "hub_repo": "acme/demo-hub",
 }
 # The pattern messages quote the model's patterns, so they are built from the same text.
-SAFE_SEGMENT = r"[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*"
+SAFE_SEGMENT = r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*"
 GITHUB_PATTERN = f"String should match pattern '^{SAFE_SEGMENT}/{SAFE_SEGMENT}$'"
 DIR_PATTERN = f"String should match pattern '^{SAFE_SEGMENT}$'"
 TEAM_PATTERN = "String should match pattern '^[A-Za-z0-9]+$'"

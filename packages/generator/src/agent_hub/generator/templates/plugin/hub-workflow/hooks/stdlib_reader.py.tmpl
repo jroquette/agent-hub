@@ -38,9 +38,10 @@ COMMENT_KEY_PREFIX = "_"
 FALLBACK_PROJECT_NAME = "hub"
 # ``[0-9]`` and ``fullmatch``: ``\d`` takes any Unicode digit and ``$`` a final newline.
 RELEASE_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
-# The model's ``BranchName`` pattern without ``^`` and ``$``, for ``fullmatch``.
+# The model's ``BranchName`` pattern without ``^`` and ``$``, for ``fullmatch``. No separator
+# character is also a segment character, so ``re`` matches in linear time.
 BRANCH_NAME = re.compile(
-    r"[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*(?:/[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*)*"
+    r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*(?:/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*)*"
 )
 
 

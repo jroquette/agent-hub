@@ -338,7 +338,7 @@ def test_reports_repo_branch_problem_when_value_invalid(
     assert lines == [
         schema_line(
             "repos[0].default_branch: String should match pattern"
-            " '^[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*(?:/[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*)*$'"
+            " '^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*(?:/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*)*$'"
         ),
         ONE_ERROR,
     ]
