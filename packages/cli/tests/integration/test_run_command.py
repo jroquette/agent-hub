@@ -1797,6 +1797,7 @@ class TestProcesses:
 
 
 RISKY = "git config holds keys a push would use ({}); the branch was not pushed"
+FETCH_RISKY = "git config holds keys a fetch would use ({}); nothing was fetched"
 NOT_GITHUB = "remote.origin.url is not the GitHub url of acme/demo-api; the branch was not pushed"
 
 
@@ -1835,7 +1836,7 @@ class TestPushGuard:
         ],
         ids=["helper", "pushurl", "fsmonitor", "filter", "receivepack"],
     )
-    def test_refuses_push_when_plant_survives_refused_run(
+    def test_refuses_fetch_when_plant_survives_refused_run(
         self,
         run_workspace: Workspace,
         run_command: CommandRunner,
@@ -1852,9 +1853,11 @@ class TestPushGuard:
 
         result = live(run_command, workspace)
 
-        diagnosis = assert_failed_at(result, run_tracker, "PR_OPEN")
-        assert diagnosis == RISKY.format(key)
+        # Owner decision: every token-bearing call is guarded; the fetch is the first one.
+        diagnosis = assert_failed_at(result, run_tracker, "WORKTREE")
+        assert diagnosis == FETCH_RISKY.format(key)
         assert "planted" not in diagnosis
+        assert not worktree_of(workspace).exists()
         assert_never_pushed(run_workspace)
         assert run_workspace.calls("gh") == []
 
@@ -1891,7 +1894,7 @@ class TestPushGuard:
         assert result.exit_code == 0, result.output
         assert "agent-failed" not in run_tracker.backend.issues["DEM-1"].labels
 
-    def test_refuses_push_when_from_verify_finds_helper(
+    def test_refuses_fetch_when_from_verify_finds_helper(
         self,
         run_workspace: Workspace,
         run_command: CommandRunner,
@@ -1908,9 +1911,12 @@ class TestPushGuard:
             workspace.hub, "run", "DEM-1", "--repo", "demo-api", "--live", "--from", "verify"
         )
 
-        assert assert_failed_at(result, run_tracker, "PR_OPEN") == RISKY.format("credential.helper")
+        assert assert_failed_at(result, run_tracker, "WORKTREE") == FETCH_RISKY.format(
+            "credential.helper"
+        )
         assert_never_pushed(run_workspace)
         assert run_workspace.calls("gh") == []
+        assert run_workspace.calls("make") == []
 
     def test_refuses_push_when_worktree_scope_names_another_remote(
         self,
@@ -2004,3 +2010,71 @@ class TestWorktreeEnvironments:
         assert "GH_TOKEN" not in setup
         assert GH_TOKEN_VALUE not in setup
         assert not marker.exists()
+
+
+@pytest.mark.usefixtures("with_key")
+class TestFetchGuard:
+    def test_fetches_nothing_when_clone_holds_helper(
+        self,
+        logged_git: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = logged_git.workspace
+        inject(monkeypatch, run_tracker)
+        workspace.git(workspace.ws / "demo-api", "config", "credential.helper", "!echo planted")
+
+        result = live(run_command, workspace)
+
+        assert assert_failed_at(result, run_tracker, "WORKTREE") == FETCH_RISKY.format(
+            "credential.helper"
+        )
+        assert git_calls(logged_git, "fetch") == []
+        (listed,) = git_calls(logged_git, "config")
+        assert listed["cwd"] == str(workspace.ws / "demo-api")
+        assert not [name for name in TOKENS if name in listed["env"]]
+
+    def test_names_included_keys_when_include_path_set(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        included = workspace.base / "included.gitconfig"
+        included.write_text("[credential]\n\thelper = !echo planted\n")
+        workspace.git(workspace.ws / "demo-api", "config", "include.path", str(included))
+
+        result = live(run_command, workspace)
+
+        diagnosis = assert_failed_at(result, run_tracker, "WORKTREE")
+        assert diagnosis == FETCH_RISKY.format("credential.helper, include.path")
+
+    def test_refuses_fetch_when_clone_origin_names_another_repo(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        clone = workspace.ws / "demo-api"
+        workspace.git(clone, "remote", "set-url", "origin", "https://github.com/acme/other.git")
+
+        result = live(run_command, workspace)
+
+        assert assert_failed_at(result, run_tracker, "WORKTREE") == (
+            "remote.origin.url is not the GitHub url of acme/demo-api; nothing was fetched"
+        )
+
+    def test_blocks_other_protocols_when_run_workspace_built(
+        self, run_workspace: Workspace
+    ) -> None:
+        assert os.environ["GIT_ALLOW_PROTOCOL"] == "file"

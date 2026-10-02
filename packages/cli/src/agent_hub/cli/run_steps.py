@@ -14,8 +14,9 @@ the branch and the command's own gate decide (the old runner's rule).
 Residual risk: the implementing session and the gate run code as the user. Without the tokens
 in their environment they can still read what the user's account can, such as gh's stored
 token or the user's global git config, and change it. Only a sandbox closes that (the sandbox
-follow-up, AGH-42); until then the push guard checks the repo-side config right before each
-push.
+follow-up, AGH-42); until then the guard checks the repo-side config right before each
+token-bearing call (the fetch, the push). A process the session or the gate left running could
+still change the config between that check and the call (a time-of-check gap, also AGH-42).
 """
 
 import json
@@ -144,6 +145,15 @@ class LiveRun:
         if git is None:
             raise StageFailure(Stage.WORKTREE, "git is not on PATH; install git")
         git = os.path.abspath(git)
+        if os.path.lexists(self.children.repo_path / ".git"):
+            # The fetch is the run's first call with the GitHub tokens: the clone's config is
+            # checked first (a missing clone is the worktree step's own error).
+            self._refuse_risky_config(
+                stage=Stage.WORKTREE,
+                cwd=self.children.repo_path,
+                use="a fetch would use",
+                outcome="nothing was fetched",
+            )
         try:
             task = worktree_task(
                 self.children.config,
@@ -232,7 +242,12 @@ class LiveRun:
 
     def _open_pr(self) -> None:
         self._enter(Stage.PR_OPEN)
-        self._refuse_risky_config()
+        self._refuse_risky_config(
+            stage=Stage.PR_OPEN,
+            cwd=self.worktree,
+            use="a push would use",
+            outcome="the branch was not pushed",
+        )
         env = push_env(self.environ)
         pushed = self._child(self.children.push_argv(), env=env, timeout=PUSH_TIMEOUT)
         if pushed.returncode != 0:
@@ -266,19 +281,20 @@ class LiveRun:
         self.pr_url = url
         self.log.record("pr_open", {"url": url})
 
-    def _refuse_risky_config(self) -> None:
-        """No push when the repo's config holds a key a push would act on, or origin is not
-        the repo's GitHub url (push_guard; checked right before every push)."""
-        listed = self._git_output("config", "--list", "--show-scope", "--includes", "-z")
+    def _refuse_risky_config(self, *, stage: Stage, cwd: Path, use: str, outcome: str) -> None:
+        """No token-bearing call (the fetch, the push) when the repo's config in ``cwd`` holds
+        a key it would act on, or origin is not the repo's GitHub url (push_guard)."""
+        listed = self._git_output("config", "--list", "--show-scope", "--includes", "-z", cwd=cwd)
         held = risky_keys(parse_scoped_list(listed))
         if held:
-            reason = f"git config holds keys a push would use ({', '.join(held)})"
-            raise StageFailure(Stage.PR_OPEN, f"{reason}; the branch was not pushed")
-        urls = self._git_output("config", "--get-all", REMOTE_URL, accept=(0, 1)).splitlines()
+            reason = f"git config holds keys {use} ({', '.join(held)})"
+            raise StageFailure(stage, f"{reason}; {outcome}")
+        urls = self._git_output(
+            "config", "--get-all", REMOTE_URL, accept=(0, 1), cwd=cwd
+        ).splitlines()
         github = self.children.github
         if not names_github_repo(urls, github=github):
-            reason = f"{REMOTE_URL} is not the GitHub url of {github}"
-            raise StageFailure(Stage.PR_OPEN, f"{reason}; the branch was not pushed")
+            raise StageFailure(stage, f"{REMOTE_URL} is not the GitHub url of {github}; {outcome}")
 
     def _open_pr_url(self, env: dict[str, str]) -> str | None:
         """The url of the branch's open PR, from ``gh pr view``; None when there is none."""
@@ -381,11 +397,13 @@ class LiveRun:
     def _workspace(self) -> str:
         return str(self.children.workspace)
 
-    def _git_output(self, *arguments: str, accept: tuple[int, ...] = (0,)) -> str:
-        """git's stdout in the worktree, with the untrusted environment; an exit code outside
-        ``accept`` fails the stage."""
+    def _git_output(
+        self, *arguments: str, accept: tuple[int, ...] = (0,), cwd: Path | None = None
+    ) -> str:
+        """git's stdout in the worktree (or ``cwd``), with the untrusted environment; an exit
+        code outside ``accept`` fails the stage."""
         result = self._child(
-            ["git", *arguments], env=untrusted_env(self.environ), timeout=GIT_TIMEOUT
+            ["git", *arguments], env=untrusted_env(self.environ), timeout=GIT_TIMEOUT, cwd=cwd
         )
         if result.returncode not in accept:
             reason = f"git {arguments[0]} failed: {_tail(result.stderr).strip()}"
@@ -411,6 +429,7 @@ class LiveRun:
         env: dict[str, str],
         timeout: float,
         output_limit: int = CHILD_OUTPUT_LIMIT,
+        cwd: Path | None = None,
     ) -> ChildResult:
         """Run ``argv`` in the worktree, in the caller's group; a problem fails the stage.
 
@@ -426,7 +445,7 @@ class LiveRun:
         try:
             return run_child(
                 [os.path.abspath(program), *argv[1:]],
-                cwd=self.worktree,
+                cwd=self.worktree if cwd is None else cwd,
                 env=env,
                 timeout=timeout,
                 own_session=False,
