@@ -9,6 +9,7 @@ from agent_hub.core.bench.bench_session import (
     EFFORTS,
     MAX_TURNS,
     MODEL,
+    add_worktree_argv,
     agent_argv,
     agent_outcome,
     apply_failed_outcome,
@@ -19,13 +20,16 @@ from agent_hub.core.bench.bench_session import (
     grader_env,
     plugin_id,
     record_line,
+    remove_worktree_argvs,
     result_of,
     run_record,
     sandbox_settings,
     session_env,
     settings_name,
     settings_text,
+    setup_argv,
     timeout_outcome,
+    validate_commits,
     validate_worktree_name,
     worktree_name,
 )
@@ -149,6 +153,21 @@ def test_reads_pathspecs_literally_when_git_argv_built() -> None:
         "git", "--literal-pathspecs", "-C", "/wt", "checkout", SHA, "--",
         "t/__main__.py", "a/__main__.py", "t/__main__.py", "top.py",
     ]  # fmt: skip
+
+
+def test_builds_worktree_and_setup_argv_when_case_given() -> None:
+    case = a_case(setup_cmd="echo ready > setup.txt")
+
+    assert validate_commits(case) == (("parent", f"{SHA}^"), ("merge", SHA))
+    assert add_worktree_argv(repo="/ws/api", worktree="/wt", commit=f"{SHA}^") == [
+        "git", "--literal-pathspecs", "-C", "/ws/api", "worktree", "add", "--detach", "/wt",
+        f"{SHA}^",
+    ]  # fmt: skip
+    assert remove_worktree_argvs(repo="/ws/api", worktree="/wt") == (
+        ["git", "--literal-pathspecs", "-C", "/ws/api", "worktree", "remove", "--force", "/wt"],
+        ["git", "--literal-pathspecs", "-C", "/ws/api", "worktree", "prune"],
+    )
+    assert setup_argv(case) == ["bash", "-c", "echo ready > setup.txt"]
 
 
 def test_runs_tests_then_their_dirs_when_grader_argvs_built() -> None:

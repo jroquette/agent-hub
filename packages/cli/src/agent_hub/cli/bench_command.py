@@ -5,24 +5,34 @@ exit 2 before any read of the cases or any child process: an option out of its b
 ``--validate`` with a run option, ``BENCH_EFFORT`` (the sessions' ``effortLevel``; unset or
 empty is ``medium``) other than ``low``, ``medium`` or ``high``, a folder that is not a hub, a
 hub without ``bench``. An invalid ``hub.json`` exits 1 with the reader's lines.
+
+``--validate`` checks the graders and never runs ``claude``: each case not excluded is graded at
+its merge's parent (it must fail) and at its merge (it must pass), one line each; a wrong grade
+or a failed step exits 1. The steps are ``bench_steps``.
 """
 
 import math
 import os
 import re
+import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Annotated, Final
 
 import typer
 from typer._click.core import ParameterSource
 
-from agent_hub.cli.command_exits import not_implemented
+from agent_hub.cli.bench_steps import BenchSteps, cases_or_exit
+from agent_hub.cli.command_exits import FAILURE, fail, not_implemented
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
-from agent_hub.cli.hub_root import hub_root_or_exit
+from agent_hub.cli.hub_root import hub_root_or_exit, main_checkout
+from agent_hub.cli.run_children import SESSION_HIDDEN, without
 from agent_hub.core.bench.bench_cases import CASE_ID_PATTERN, MAX_CASES
 from agent_hub.core.bench.bench_plan import ARMS
 from agent_hub.core.bench.bench_session import EFFORTS
+from agent_hub.core.bench.bench_summary import NOTHING_TO_VALIDATE
+from agent_hub.core.hub_config.model import HubConfig
 
 COMMAND: Final = "bench"
 DEFAULT_RUNS: Final = 3
@@ -190,13 +200,41 @@ def bench(  # noqa: PLR0913 - one parameter per option of spec D2
         trace=trace,
         effort=effort,
     )
-    _start(options, validate=validate)
+    if validate:
+        _validate(root, config)
+    else:
+        _run(options)
 
 
-def _start(options: BenchOptions, *, validate: bool) -> None:
-    # The grader check and the runs come with the next tasks of AGH-17.
-    del options, validate
+def _validate(root: Path, config: HubConfig) -> None:
+    """Grade each case at its merge's parent and at its merge; exit 1 on any wrong grade."""
+    cases = cases_or_exit(root, repos=[repo.dir for repo in config.repos])
+    if not cases:
+        typer.echo(NOTHING_TO_VALIDATE)
+        return
+    steps = BenchSteps(workspace=_hub_checkout(root).parent, environ=os.environ)
+    if not steps.validate(cases):
+        raise typer.Exit(FAILURE)
+
+
+def _run(options: BenchOptions) -> None:
+    # The runs come with the next task of AGH-17.
+    del options
     not_implemented()
+
+
+def _hub_checkout(root: Path) -> Path:
+    """The hub's main checkout; git runs only when ``root`` is a worktree (its ``.git`` a file)."""
+    if not os.path.isfile(root / ".git"):
+        return root
+    git = shutil.which("git")
+    if git is None:
+        fail(f"hub {COMMAND}: git is not on PATH; install git")
+    try:
+        environ = without(os.environ, SESSION_HIDDEN)
+        return main_checkout(root, git=os.path.abspath(git), environ=environ)
+    except OSError as error:
+        fail(f"hub {COMMAND}: git could not run: {error.strerror or error}")
 
 
 def _refuse_run_options(context: typer.Context, *, validate: bool) -> None:
