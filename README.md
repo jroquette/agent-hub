@@ -52,6 +52,7 @@ Next steps:
 - [Why use it?](#-why-use-it)
 - [How it works](#-how-it-works)
 - [Quick Start](#-quick-start)
+- [Daily workflow](#-daily-workflow)
 - [Usage guide](#-usage-guide)
 - [Configuration](#-configuration)
 - [Technical reference](#-technical-reference)
@@ -88,7 +89,7 @@ each session did, decided and learned.
 - 📌 **Same behavior on every machine.** Each hub pins one release of the tool, so your laptop, CI and cloud sessions
   run exactly the same version, with no global install.
 - 🛡️ **Guardrails built in.** The generated hooks block secrets, pushes to `main`, force-pushes and AI attribution, and
-  stop a session while the repo's fast checks fail on the code it changed.
+  keep a session from finishing while the repo's fast checks fail on the code it changed.
 - 🩺 **Catch problems early.** `hub doctor` finds broken links, missing files, oversized instruction files and drift
   from the template, each with a one-line fix.
 - 🧠 **Memory you control.** Agents propose what they learned into an inbox; only a human promotes it into the brain.
@@ -198,6 +199,202 @@ git add -A && git commit -m "Create the hub"
 > `./agent` (and `hub agent`) attaches the repos listed in `hub.json` that are cloned next to the hub (`../backend`,
 > `../frontend` in this example), prints a `not attached` warning for each one it cannot find, and passes every
 > other argument to `claude`.
+
+## 🔄 Daily workflow
+
+Once the hub exists, you work inside Claude Code. The hub gives it a set of slash commands (*skills*) and helper agents
+(*subagents*), shipped in the generated `plugin/hub-workflow/` plugin. You type the commands, for example `/kickoff`, in
+a session started with `./agent` from the hub. The commands hand parts of the work to the agents.
+
+You stay in charge of the decisions: you approve the spec and the plan, and you merge the pull request. The agents do
+the rest, and the hooks keep them inside the project's rules.
+
+### Your session routine
+
+1. **Start with `/kickoff`** (or after `/clear`). It shows the session brief (`./hub brief`), reads `brain/now.md` and
+   the newest journal day, runs `check_fast` in each repo that has local changes, and proposes the next item. It asks
+   before starting and never edits anything.
+2. **Do the work.** Use `/feature` for a change, `/research` or `/recall` for questions (see
+   [Skills and agents](#skills-and-agents)).
+3. **End with `/handoff`.** It rewrites `brain/now.md` (focus, work in flight, the exact next step, risks to watch)
+   and appends what was done, verified and learned to the day's journal, `brain/journal/YYYY/MM/DD.md`. The next
+   session picks up from there without you explaining it again.
+
+### From idea to merged change: `/feature`
+
+`/feature <idea or issue id>` is the golden path. It sizes the work first, then chains the agents below. The hexagons
+are where it stops and waits for you.
+
+```mermaid
+flowchart TD
+  size["/feature: size the work"] --> spec["Spec<br/>requirements-analyst"]
+  spec --> gate1{{"You approve the spec"}}
+  gate1 --> plan["Research and plan<br/>researcher, architect"]
+  plan --> gate2{{"You approve the plan"}}
+  gate2 --> tickets["Tickets<br/>planner"]
+  tickets --> wt["Isolated worktrees<br/>./hub worktree"]
+  wt --> impl["Implement, test first<br/>one fresh subagent per task"]
+  impl --> review["Review each task<br/>spec-reviewer, then quality-reviewer"]
+  review -->|fixes| impl
+  review --> eval["Final check<br/>evaluator, SHIP required"]
+  eval --> pr["Pull request, authored by you"]
+  pr --> merge{{"You merge"}}
+  classDef you stroke-width:3px
+  class gate1,gate2,merge you
+```
+
+The size decides the ceremony:
+
+- **Spike**: throwaway learning. No spec, no tickets and no plan gate; it is timeboxed, the findings go to
+  `research.md`, and nothing is merged.
+- **Bounded**: a few pull requests at most, with a known design. You may approve the spec and the plan together.
+- **Architectural**: new contracts, paths under `guard.ask_before_edit`, or a design across repos. Both gates apply.
+
+<details>
+<summary><strong>What happens at each step</strong></summary>
+
+1. **Size it.** The session asks if the size is unclear.
+2. **Spec.** The `brainstorming` skill asks you questions one at a time in the main session, then
+   `requirements-analyst` writes `brain/features/<slug>/spec.md` with acceptance criteria (Given/When/Then).
+3. **Research and plan.** `researcher` writes `research.md` (or `/research` runs inline for small questions);
+   `architect` writes `plan.md`, small tasks each with a verification command.
+4. **Tickets.** `planner` writes `features.json` (checked by `./hub doctor --only features.tracker`) and `issues.md`;
+   the session then creates the issues in the tracker team from `hub.json`.
+5. **Workspace.** `./hub worktree <team>-<n>-<slug>` creates the worktrees, named after the issue.
+6. **Implement.** One fresh subagent per task, failing test first, the repo's `check_fast` green after each task.
+   Existing assertions are never weakened.
+7. **Review.** `spec-reviewer` checks the diff matches the spec and plan, nothing missing and nothing extra; then
+   `quality-reviewer` checks domain rules, security and idempotency. Fixes go back to the implementer.
+8. **Verify and finish.** `evaluator` re-runs every check and writes `eval.md`; it must say `SHIP`. The pull request is
+   opened on a `project.branch_prefix` branch, authored by you.
+9. **Compound.** You go through the agents' learning proposals in `brain/_inbox/` and decide where each lands;
+   `/handoff` if the work spans sessions.
+
+</details>
+
+> [!IMPORTANT]
+> `/feature` expects two things the hub does not install:
+>
+> - the [superpowers](https://github.com/obra/superpowers) plugin, for its `brainstorming`,
+>   `subagent-driven-development`, `test-driven-development` and `finishing-a-development-branch` skills;
+> - a tracker connector in Claude Code (for example Linear), so the session can create the issues. The `hub` CLI has
+>   no tracker command in 0.4.0.
+>
+> Set both up in Claude Code yourself before your first `/feature`.
+
+### Skills and agents
+
+| Command | What it does | When to use it |
+| --- | --- | --- |
+| `/kickoff` | Shows the brief, runs the fast checks in repos with changes, proposes the next item | At the start of a session, or after `/clear` |
+| `/feature <idea or issue>` | Takes an idea to a merged, verified change (above) | For any change to the repos |
+| `/handoff [title]` | Updates `brain/now.md` and the day's journal | At the end of a session |
+| `/research <question or issue>` | Documents how the code works today, with `path:line` references and no critique; writes `research.md` | Before planning, or for a question that spans many files |
+| `/create-plan <issue or slug>` | Turns a spec and its research into `plan.md`: small tasks, contracts first, each with a verification command; waits for your approval before any code | When a spec is ready and needs a plan |
+| `/recall <topic>` | Answers "what do we know about X, why was Y decided" from the brain, ADRs and past session transcripts, with sources | Before deciding something again |
+| `/learn <one sentence>` | Proposes one verified, non-obvious learning to `brain/_inbox/`; you decide whether and where it lands | When the next session should know something |
+
+Claude runs `/kickoff`, `/feature`, `/handoff` and `/learn` only when you type them; it may use the other three on its
+own when they fit.
+
+<details>
+<summary><strong>The agents behind the commands</strong></summary>
+
+`/feature` starts these agents, each in a fresh context. Each one reads the brain first and ends with a compound step:
+at most one learning proposal for `brain/_inbox/` (the `spec-reviewer` reports plan ambiguities instead).
+
+| Agent | Role | Writes | Read-only? |
+| --- | --- | --- | --- |
+| `requirements-analyst` | Drafts the spec: acceptance criteria in Given/When/Then, non-functional requirements, invariants, open questions | `spec.md` | Writes only the spec |
+| `researcher` | Documents how the code works today across the repos, with `path:line` evidence | `research.md` | Yes, apart from `research.md` |
+| `architect` | Turns the approved spec and research into a plan, with ADR drafts for architectural decisions | `plan.md`, `adr-draft-<topic>.md` | No code or tests |
+| `planner` | Turns the approved plan into one entry per acceptance criterion and tracker issue drafts; does not call the tracker | `features.json`, `issues.md` | Writes only those two files |
+| `spec-reviewer` | After each task: does the diff match the spec and plan, nothing missing and nothing extra | PASS or FAIL | Yes (no write tool) |
+| `quality-reviewer` | After `spec-reviewer` passes: domain invariants, security and secrets, idempotency | APPROVE or CHANGES | Yes (no write tool) |
+| `evaluator` | Final verdict: re-runs every verification, `check_fast`, `check` and `hub doctor` | `eval.md` (SHIP or NO-SHIP), `features.json` | Writes only those two files |
+
+</details>
+
+**Add your own.** Put a skill in `plugin/<project>/skills/<name>/SKILL.md` or an agent in
+`plugin/<project>/agents/<name>.md`, then run `./hub sync`: it links them into `.claude/`, where every session in the
+hub finds them. Pick a name `hub-workflow` does not use: on a clash `hub sync` stops with a conflict (exit 3) and writes
+nothing until you rename yours.
+
+### What the hooks do for you
+
+Hooks are small scripts Claude Code runs on its own at fixed moments; you never call them. The hub has six:
+
+- **When a session starts** (`SessionStart`), the brief from `./hub brief` is put in the agent's context. If the pinned
+  release cannot run, a shorter brief with `brain/now.md` and the names of the newest journal files takes its place,
+  and its header says why.
+- **Before the agent runs a command or opens or changes a file** (`PreToolUse`), the *guard* blocks dangerous actions
+  (force-pushes, pushes to the default branch, reading secret files, AI attribution) and asks you before risky ones
+  (removing test assertions, editing the hooks or `hub.json`, paths in `guard.ask_before_edit`).
+- **After each edit** (`PostToolUse`) of a file in a repo, the repo's own formatter and linter run on it (they tidy the
+  code and point out mistakes: ruff for Python, prettier and eslint for JavaScript and TypeScript, when the repo has
+  them installed), and any problem left over goes back to the agent.
+- **When the agent wants to finish** (`Stop`), the *stop gate* runs `check_fast` in each repo whose code changed during
+  the session. While a check fails, it blocks the finish and sends the failures back to the agent. After 3 blocks in a
+  row it lets go with a warning, so a session never loops forever. When the checks pass, it reminds the agent to run
+  `/handoff`.
+- **Before Claude Code shortens a long conversation to free memory** (`PreCompact`), a snapshot (your last request, and
+  the branch and changed files of each checkout) is saved to `brain/auto/workspace/session-snapshot.md` and put back
+  in the context afterwards.
+- **When the session ends** (`SessionEnd`), a short log entry is appended to `brain/_inbox/sessions/YYYY-MM-DD.md` for
+  you to review.
+
+<details>
+<summary><strong>What the guard blocks and asks, and how to configure it</strong></summary>
+
+**Blocked, always:**
+
+- force-pushes and pushes to `main`, `master` or `project.default_branch`;
+- `curl … | sh`, and network calls to the hosts in `guard.deny_hosts`;
+- deleting Docker volumes (`docker volume rm|prune`, `compose down -v`) and infrastructure commands (`terraform
+  apply|destroy|import`, any `aws` command, `pulumi up|destroy`, `kubectl apply|delete`);
+- reading secret files (`.env*` other than `.env.example`, `.env.sample`, `.env.template`, `.env.test`,
+  `.env.development` and `.env.staging`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, SSH private keys), from any tool or
+  command;
+- AI attribution in commits, tags and pull requests, and `claude/…` branches;
+- touching the `.git` internals, and reading or changing any path in `guard.deny_paths`.
+
+**Asked first:**
+
+- editing the guard's own files (`plugin/hub-workflow/hooks/`, `plugin/<project>/hooks/`, `.claude/settings*.json`,
+  `hub.json`, `hub.lock`), or removing or moving their folders;
+- removing assertions from a test, or adding skip, xfail, quarantine or fixme markers;
+- deleting or `sed`-editing test files from the shell;
+- writing in `brain/` outside `now.md`, `journal/`, `_inbox/`, `auto/` and `features/`;
+- editing a path in `guard.ask_before_edit`.
+
+Everything else goes through Claude Code's normal permission rules.
+
+**Configuration.** The lists come from `hub.json`: `guard.ask_before_edit`, `guard.deny_paths` and `guard.deny_hosts`,
+plus `project.default_branch` and `project.branch_prefix`. An entry `@hub/<path>` means `<path>` inside the hub. A
+`hub.json` named by `$HUB_CONFIG` can only add entries to these lists, never remove them.
+
+**Your own rules.** The seeded `plugin/<project>/hooks/project_guard.py` defines `check(event, cfg)`, which returns
+`None`, or `("ask", reason)` or `("deny", reason)`; by default it does nothing. It runs in a separate process with a
+3-second timeout, only when the base guard did not already deny, and it can only make the verdict stricter. A crash, a
+timeout or an unexpected answer becomes an ask that names the cause. `hub doctor` (rule `hooks.guard-extension`)
+checks that the file parses and defines `check`.
+
+**When something goes wrong.** If the guard itself fails, it asks you; it never lets a call through unchecked. The
+other hooks fail open: on an error they print one line and let the session continue. All hooks are Python 3.9
+standard-library scripts run by the system `python3`.
+
+**Where they are wired.** The hub's `.claude/settings.json` runs the hooks from `plugin/hub-workflow/hooks/`, so they
+also work in cloud sessions, which do not install plugins. Do not also enable `hub-workflow` from a plugin
+marketplace: the hooks would run twice.
+
+</details>
+
+> [!TIP]
+> **This README was built this way.** Issue AGH-33 went through `/feature`: sized *bounded*, spec and plan approved,
+> tickets, a worktree, the implementation, then a real run of the Quick Start and the spec and quality reviews, which
+> caught real gaps (a wrong expected output, missing credential and install caveats) before the evaluator and
+> [pull request #24](https://github.com/jroquette/agent-hub/pull/24). The workflow docs it lacked became AGH-40, this
+> section.
 
 ## 📖 Usage guide
 
@@ -493,7 +690,8 @@ enforces this in `make check`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE
 | Tracker behind a core port; Linear over GraphQL | Swappable tracker; no SDK dependency | [ADR 0014](docs/adr/0014-tracker-port-linear-graphql.md) |
 
 Generated hooks are the exception to "logic lives in the CLI": they stay Python 3.9 standard-library scripts that never
-need the CLI and fail open, so a session never breaks because of the platform.
+need the CLI. All but the guard fail open (the guard asks instead), so a session never breaks because of the
+platform. Details: [What the hooks do for you](#what-the-hooks-do-for-you).
 
 </details>
 
