@@ -1127,7 +1127,8 @@ def commit():
     subprocess.run(["git", "add", "synthetic_change.txt"], check=True)
     subprocess.run(["git", *identity, "commit", "-q", "-m", "feat(api): synthetic change (DEM-1)"],
                    check=True)
-verdict = {"status": "done", "summary": RUN_SUMMARY, "tests": "make check-fast"}
+summary = os.environ.get("FAKE_CLAUDE_SUMMARY", RUN_SUMMARY)
+verdict = {"status": "done", "summary": summary, "tests": "make check-fast"}
 if mode == "hang":
     time.sleep(600)
 if mode in ("done", "prose", "done-dirty"):

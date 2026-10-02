@@ -1522,3 +1522,75 @@ class TestRecords:
         assert len(inbox_lines(workspace)) == 1
         assert not (hub_worktree / ".agent-runs").exists()
         assert not (hub_worktree / "brain" / "_inbox" / "runs").exists()
+
+
+def every_text(run_workspace: Any, result: Result) -> str:
+    """Everything a run showed or left: stdout, stderr, each fake's log, records and inbox."""
+    workspace = run_workspace.workspace
+    texts = [result.stdout, result.stderr]
+    texts += [path.read_text() for path in sorted(run_workspace.logs.glob("*.jsonl"))]
+    for folder in (workspace.hub / ".agent-runs", workspace.hub / "brain" / "_inbox" / "runs"):
+        texts += [path.read_text() for path in sorted(folder.glob("*"))]
+    return "\n".join(texts)
+
+
+@pytest.mark.usefixtures("with_key")
+class TestSecrecy:
+    def test_strips_paths_and_attribution_when_pr_body_built(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        ws = os.path.realpath(workspace.ws)
+        trailer = "Co-" + "Authored-By: " + "Claude <noreply@example.com>"
+        summary = f"Edits {ws}/demo-api/src/x.py and {ws}/hub/brain/now.md.\n{trailer}"
+        monkeypatch.setenv("FAKE_CLAUDE_SUMMARY", summary)
+        inject(monkeypatch, run_tracker)
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        (create,) = [
+            call for call in run_workspace.calls("gh") if call["argv"][:2] == ["pr", "create"]
+        ]
+        body = create["argv"][-1]
+        assert body == (
+            "DEM-1\n\nEdits demo-api/src/x.py and hub/brain/now.md.\n\n"
+            "## Verification\nGates green: `make check`."
+        )
+        (comment,) = [text for _, text in run_tracker.backend.comments]
+        assert comment.endswith(f"opened {PR_URL}. Edits demo-api/src/x.py and hub/brain/now.md.")
+        for text in (body, comment):
+            assert ws not in text
+            assert "Authored-By" not in text
+
+    def test_never_shows_key_when_run_live(
+        self,
+        logged_git: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = logged_git.workspace
+        monkeypatch.setenv("GH_TOKEN", GH_TOKEN_VALUE)
+        monkeypatch.setenv("GITHUB_TOKEN", GITHUB_TOKEN_VALUE)
+        inject(monkeypatch, run_tracker)
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        shown = every_text(logged_git, result)
+        shown += "\n".join(text for _, text in run_tracker.backend.comments)
+        for secret in (synthetic_key(), GH_TOKEN_VALUE, GITHUB_TOKEN_VALUE):
+            assert secret not in shown
+        (session,) = logged_git.calls("claude")
+        (gate,) = logged_git.calls("make")
+        for call in (session, gate):
+            assert not [name for name in TOKENS if name in call["env"]]
+        for call in [*logged_git.calls("git"), *logged_git.calls("gh")]:
+            assert KEY_VARIABLE not in call["env"], call["argv"]
