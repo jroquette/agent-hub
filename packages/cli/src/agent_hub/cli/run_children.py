@@ -24,11 +24,13 @@ from agent_hub.cli.init_report import shown_path
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.runner.session_prompt import (
     IMPLEMENTING_TOOLS,
+    TRACKER_MCP_SERVERS,
     gate_tools,
     implementing_argv,
     implementing_prompt,
 )
 from agent_hub.core.tracker.tracker_client import Issue
+from agent_hub.tracker_linear.mcp_protocol import LINEAR_TOOL_PREFIX, LINEAR_TOOLS
 
 WORKTREES: Final = Path(".claude", "worktrees")
 KEY_VARIABLE: Final = "LINEAR_API_KEY"
@@ -36,6 +38,16 @@ KEY_VARIABLE: Final = "LINEAR_API_KEY"
 CHILD_HIDDEN: Final = (KEY_VARIABLE,)
 SESSION_HIDDEN: Final = (KEY_VARIABLE, "GH_TOKEN", "GITHUB_TOKEN")
 OTEL_VARIABLE: Final = "OTEL_RESOURCE_ATTRIBUTES"
+# Denied to the implementing session: both Linear servers as a whole, and, should a client
+# read only tool names, each tool of the snapshot under both server prefixes.
+SESSION_DENIED_TOOLS: Final = (
+    *TRACKER_MCP_SERVERS,
+    *(
+        f"{server}__{tool.removeprefix(LINEAR_TOOL_PREFIX)}"
+        for server in TRACKER_MCP_SERVERS
+        for tool in LINEAR_TOOLS
+    ),
+)
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -111,6 +123,7 @@ class RunChildren:
             effort=options.effort,
             add_dirs=(str(self.hub), *(path for path in others if path != str(self.repo_path))),
             tools=(*IMPLEMENTING_TOOLS, *gate_tools((repo.check_fast, repo.check))),
+            denied_tools=SESSION_DENIED_TOOLS,
         )
 
     @property

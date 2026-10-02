@@ -49,6 +49,10 @@ IMPLEMENTING_TOOLS: Final = (
     "Bash(rg:*)",
     "Bash(grep:*)",
 )
+# The Linear MCP servers, as permission rules naming a whole server: the implementing session
+# is denied every tool of both (D-desc). Server names are product facts, not tracker_linear's.
+TRACKER_MCP_SERVERS: Final = ("mcp__Linear", "mcp__claude_ai_Linear")
+PERMISSION_MODE: Final = "dontAsk"
 _MIN_FENCE = 3
 _BACKTICKS = re.compile("`+")
 
@@ -137,9 +141,16 @@ def implementing_argv(
     effort: str,
     add_dirs: Sequence[str],
     tools: Sequence[str],
+    denied_tools: Sequence[str],
 ) -> list[str]:
-    """The ``claude -p`` argv of the implementing session (the repo's hooks stay on)."""
+    """The ``claude -p`` argv of the implementing session (the repo's hooks stay on).
+
+    ``--allowedTools`` only adds to the user's and the project's allow rules, so the session
+    also runs in permission mode ``dontAsk`` (anything not allowed is refused, never asked) and
+    is denied ``denied_tools`` (the tracker's MCP tools). Its built-in tools stay.
+    """
     folders = ["--add-dir", *add_dirs] if add_dirs else []
+    denied = ["--disallowedTools", *denied_tools] if denied_tools else []
     return [
         CLAUDE_PROGRAM,
         "-p",
@@ -155,8 +166,11 @@ def implementing_argv(
         "--settings",
         json.dumps({"effortLevel": effort}),
         *folders,
+        "--permission-mode",
+        PERMISSION_MODE,
         "--allowedTools",
         *tools,
+        *denied,
     ]
 
 
