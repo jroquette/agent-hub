@@ -96,7 +96,13 @@ class RunChildren:
 
     @property
     def base(self) -> str:
-        return f"origin/{self.config.project.default_branch}"
+        """The repo's base, ``origin/<its default branch>``."""
+        return f"origin/{self.default_branch}"
+
+    @property
+    def default_branch(self) -> str:
+        """The repo's default branch from ``hub.json``: its own, else the project's."""
+        return self.config.default_branch_for(self.repo)
 
     @property
     def worktree(self) -> Path:
@@ -156,9 +162,8 @@ class RunChildren:
         return ["git", *overrides, "push", "--no-verify", "-u", "origin", self.branch]
 
     def pr_argv(self, *, title: str, body: str) -> list[str]:
-        base = self.config.project.default_branch
         return [
-            *("gh", "pr", "create", "--repo", self.github, "--base", base),
+            *("gh", "pr", "create", "--repo", self.github, "--base", self.default_branch),
             *("--head", self.branch, "--title", title, "--body", body),
         ]
 

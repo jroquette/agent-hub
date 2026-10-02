@@ -488,6 +488,28 @@ class TestDryRun:
         assert lines[1].startswith("get_issue DEM-1: ")
         assert run_tracker.calls == [("get_issue", "DEM-1")]
 
+    @pytest.mark.parametrize(("repo", "branch"), [("demo-api", "master"), ("demo-web", "trunk")])
+    def test_opens_pr_against_repo_branch_when_dry_run(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        repo: str,
+        branch: str,
+    ) -> None:
+        workspace = run_workspace.workspace
+        workspace.use_repo_branch("demo-api", "master")
+        inject(monkeypatch, run_tracker)
+
+        result = run_command(workspace.hub, "run", "DEM-1", "--repo", repo)
+
+        (pr,) = [line for line in dry_lines(result) if line.startswith("would run: gh ")]
+        assert pr.startswith(
+            f"would run: gh pr create --repo acme/{repo} --base {branch} --head jdoe/dem-1 "
+        )
+
 
 class TestTransport:
     @pytest.mark.parametrize("live", [False, True], ids=["dry", "live"])
@@ -692,6 +714,31 @@ class TestLiveSuccess:
             "move_state",
             "remove_label",
             "comment",
+        ]
+
+    def test_reads_commits_and_opens_pr_on_repo_branch_when_live(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        workspace.use_repo_branch("demo-api", "master")
+        inject(monkeypatch, run_tracker)
+        base = workspace.origin_head("demo-api", "master")
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        worktree = worktree_of(workspace)
+        assert f"created  {worktree} (jdoe/dem-1 from origin/master)" in result.stdout.splitlines()
+        assert workspace.git(worktree, "rev-parse", "HEAD~1") == base
+        (gh,) = run_workspace.calls("gh")
+        assert gh["argv"][:10] == [
+            *("pr", "create", "--repo", "acme/demo-api", "--base", "master"),
+            *("--head", "jdoe/dem-1", "--title", COMMIT_SUBJECT),
         ]
 
 
