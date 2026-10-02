@@ -9,10 +9,12 @@ runner script's tests, against the command; the full matrix of cases lives here.
 team's prefix): each refusal is a usage error, exit 2, before any tracker call or child process.
 """
 
+import contextlib
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 from collections.abc import Callable, Iterator
@@ -1594,3 +1596,180 @@ class TestSecrecy:
             assert not [name for name in TOKENS if name in call["env"]]
         for call in [*logged_git.calls("git"), *logged_git.calls("gh")]:
             assert KEY_VARIABLE not in call["env"], call["argv"]
+
+
+NESTED_NOTE = "note: launching a nested headless claude from inside a Claude session"
+
+
+class CallSpy:
+    """Every ``run_child`` and ``stream_child`` call of any ``agent_hub.cli`` module, with its
+    keyword options."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.calls: list[tuple[str, list[str], dict[str, Any]]] = []
+        for module_name, module in list(sys.modules.items()):
+            if not module_name.startswith("agent_hub.cli"):
+                continue
+            for name in ("run_child", "stream_child"):
+                real = getattr(module, name, None)
+                if callable(real):
+                    monkeypatch.setattr(module, name, self._wrap(name, real))
+
+    def _wrap(self, name: str, real: Callable[..., Any]) -> Callable[..., Any]:
+        def spy(argv: list[str], **options: Any) -> Any:
+            self.calls.append((name, [os.path.basename(argv[0]), *argv[1:]], options))
+            return real(argv, **options)
+
+        return spy
+
+    def timeout_of(self, program: str, *first: str) -> list[object]:
+        return [
+            options.get("timeout")
+            for name, argv, options in self.calls
+            if name == "run_child"
+            and argv[0] == program
+            and argv[1 : 1 + len(first)] == list(first)
+        ]
+
+
+@pytest.mark.usefixtures("with_key")
+class TestProcesses:
+    def test_keeps_children_in_caller_group_when_run_live(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        script = b'#!/bin/sh\necho "set up $1"\n'
+        workspace.advance("demo-api", {"scripts/worktree-setup.sh": (script, 0o755)})
+        calls = CallSpy(monkeypatch)
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        children = [options for name, _, options in calls.calls if name == "run_child"]
+        assert children
+        assert all(options.get("own_session", "unset") is False for options in children)
+        streamed = [argv for name, argv, _ in calls.calls if name == "stream_child"]
+        assert [argv[0] for argv in streamed] == ["worktree-setup.sh"]
+        programs = {argv[0] for name, argv, _ in calls.calls if name == "run_child"}
+        assert programs == {"git", "claude", "bash", "gh"}
+
+    def test_uses_step_timeouts_when_children_run(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from agent_hub.tracker_linear import mcp  # noqa: PLC0415 - the MCP adapter's own cap
+
+        assert (
+            run_steps.SESSION_TIMEOUT,
+            run_steps.GATE_TIMEOUT,
+            run_steps.PUSH_TIMEOUT,
+            run_steps.GH_TIMEOUT,
+            run_steps.WORKTREE_GIT_TIMEOUT,
+            mcp.DEFAULT_TIMEOUT_S,
+        ) == (3_600, 1_800, 300, 120, 1_800, 120)
+        inject(monkeypatch, run_tracker)
+        calls = CallSpy(monkeypatch)
+
+        result = live(run_command, run_workspace.workspace)
+
+        assert result.exit_code == 0, result.output
+        assert calls.timeout_of("claude") == [3_600]
+        assert calls.timeout_of("bash") == [1_800]
+        assert calls.timeout_of("git", "-c", "core.hooksPath=/dev/null", "push") == [300]
+        assert calls.timeout_of("gh") == [120]
+        assert set(calls.timeout_of("git", "fetch")) == {1_800}
+        assert set(calls.timeout_of("git", "worktree")) == {1_800}
+
+    def test_fails_stage_when_gate_times_out(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setattr(run_steps, "GATE_TIMEOUT", 1.0)
+        monkeypatch.setenv("FAKE_MAKE_SLEEP", "30")
+
+        result = live(run_command, run_workspace.workspace)
+
+        assert assert_failed_at(result, run_tracker, "VERIFYING") == "bash timed out after 1 s"
+        reported = [r for r in records(run_workspace.workspace) if r["event"] == "reported"]
+        assert [r["failed_stage"] for r in reported] == ["VERIFYING"]
+        assert_never_pushed(run_workspace)
+
+    def test_leaves_gate_grandchild_in_caller_group_when_gate_times_out(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # E6's residual, as documented in run_steps: the timeout kills the gate's direct child
+        # only; a process it started stays in the caller's group, for the caller's group kill.
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setattr(run_steps, "GATE_TIMEOUT", 1.0)
+        monkeypatch.setenv("FAKE_MAKE_SLEEP", "30")
+        monkeypatch.setenv("FAKE_MAKE_GRANDCHILD", "1")
+        pid_file = run_workspace.logs / "grandchild.pid"
+        try:
+            result = live(run_command, run_workspace.workspace)
+
+            assert result.exit_code == 1
+            pid = int(pid_file.read_text())
+            assert os.getpgid(pid) == os.getpgrp()
+        finally:
+            with contextlib.suppress(FileNotFoundError, ProcessLookupError, ValueError):
+                os.kill(int(pid_file.read_text()), signal.SIGKILL)
+
+    def test_fails_stage_when_tool_missing(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+        (run_workspace.bin / "gh").unlink()
+
+        result = live(run_command, run_workspace.workspace)
+
+        assert assert_failed_at(result, run_tracker, "PR_OPEN") == "gh is not on PATH"
+
+    @pytest.mark.parametrize("live_run", [True, False], ids=["live", "dry"])
+    def test_notes_nested_session_when_claudecode_set(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        live_run: bool,
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("CLAUDECODE", "1")
+
+        result = run_command(
+            run_workspace.workspace.hub,
+            "run",
+            "DEM-1",
+            "--repo",
+            "demo-api",
+            *(["--live"] * live_run),
+        )
+
+        assert result.exit_code == 0, result.output
+        assert (NESTED_NOTE in result.stderr.splitlines()) is live_run
