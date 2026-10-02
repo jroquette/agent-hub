@@ -9,6 +9,10 @@ runner script's tests, against the command; the full matrix of cases lives here.
 team's prefix): each refusal is a usage error, exit 2, before any tracker call or child process.
 """
 
+import json
+import os
+import shutil
+import subprocess
 import sys
 from collections.abc import Callable, Iterator
 from typing import Any
@@ -23,6 +27,8 @@ pytestmark = pytest.mark.disable_socket
 type CommandRunner = Callable[..., Result]
 type Workspace = Any
 
+PR_URL = "https://github.com/acme/demo-api/pull/99"
+COMMIT_SUBJECT = "feat(api): synthetic change (DEM-1)"
 # The characters of the box Rich may draw around a usage error.
 BOX_CHARACTERS = "│╭╮╰╯─"
 # What a refused run must never reach: the tracker, or any child process.
@@ -218,3 +224,35 @@ class TestUsage:
             " (hub run runs in the hub folder or through ./hub)\n"
         )
         assert spy.calls == []
+
+
+def run_tool(name: str, *args: str, cwd: Any) -> subprocess.CompletedProcess[str]:
+    """Run ``name`` as a child of the test would, found on the run workspace's ``PATH``."""
+    found = shutil.which(name, path=os.environ["PATH"])
+    assert found is not None, f"{name} is not on the run workspace's PATH"
+    return subprocess.run(  # noqa: S603 - a fake or linked tool of the workspace's bin, absolute
+        [found, *args], cwd=cwd, env=dict(os.environ), capture_output=True, text=True, check=False
+    )
+
+
+class TestRunWorkspace:
+    def test_runs_fakes_from_path_when_workspace_built(self, run_workspace: Workspace) -> None:
+        workspace = run_workspace.workspace
+        clone = workspace.ws / "demo-api"
+
+        claude = run_tool("claude", "-p", "x", "--allowedTools", "Read", cwd=clone)
+        gh = run_tool("gh", "pr", "create", cwd=clone)
+        gate = run_tool("bash", "-c", "make check", cwd=clone)
+
+        assert claude.returncode == 0, claude.stderr
+        reply = json.loads(claude.stdout)
+        assert json.loads(reply["result"].splitlines()[-1])["status"] == "done"
+        assert workspace.git(clone, "log", "-1", "--format=%s") == COMMIT_SUBJECT
+        assert gh.stdout == f"{PR_URL}\n"
+        assert gate.returncode == 0
+        assert [call["argv"] for call in run_workspace.calls("make")] == [["check"]]
+        logged = run_workspace.calls("claude")
+        assert [call["cwd"] for call in logged] == [str(clone)]
+        assert logged[0]["pgid"] == os.getpgid(0)
+        assert "PATH" in logged[0]["env"]
+        assert str(run_workspace.bin) not in json.dumps(logged[0]["env"])
