@@ -109,6 +109,8 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
 # AGH-17 D5 (AC-17.6): each module's files, kind `module`, with the module that selects them. Exact:
 # the registry holds no other module entry.
 MODULE_FILES: dict[str, tuple[Kind, Ownership, str | None]] = {
+    ".claude-plugin/marketplace.json": (Kind.MODULE, Ownership.MANAGED, "marketplace"),
+    ".claude-plugin/marketplace.project.json": (Kind.MODULE, Ownership.SEEDED, "marketplace"),
     "mk/bench.mk": (Kind.MODULE, Ownership.MANAGED, "bench"),
     "mk/cloud.mk": (Kind.MODULE, Ownership.MANAGED, "cloud"),
     "mk/contract-sync.mk": (Kind.MODULE, Ownership.MANAGED, "contract-sync"),
