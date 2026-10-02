@@ -7,7 +7,8 @@ second repo (``demo_two_repo_hub_template``, ``demo_two_repo_hub``) and a synthe
 next to it (``demo_checkout``), an in-process sync
 in a folder (``run_sync``) and the writer calls a test makes (``adapter_calls``); for ``hub doctor``
 an in-process run in a folder (``run_doctor``), the paths a run reads (``path_reads``) and their
-filters (``reads_in``, ``ancestors``, ``under``).
+filters (``reads_in``, ``ancestors``, ``under``); for ``hub bench`` the hub suite's bench
+workspace with a fake ``claude`` (``bench_workspace``).
 """
 
 import builtins
@@ -1362,3 +1363,289 @@ def logged_git(run_workspace: RunWorkspace) -> RunWorkspace:
     (run_workspace.bin / "git").unlink()
     _write_fake(run_workspace.bin, "git", _FAKE_GIT.replace("REAL_GIT", repr(real)))
     return run_workspace
+
+
+# hub bench's workspace (AGH-17 PR 3): hub ``tests/characterization/test_bench.py`` at hub commit
+# 5b56604 rebuilt, with a model-valid hub.json selecting bench (E3). ``ws/hub`` is a git repo;
+# ``ws/api`` has the hub suite's commits on ``trunk`` and an origin whose ``main`` holds other
+# agent config: bench overlays it from ``origin/main`` whatever the default branch is.
+BENCH_AGENT_FILES = ("AGENTS.md", "CLAUDE.md", ".claude/rules/x.md", ".claude/settings.json")
+# The hidden check (the hub's CHECK): one copy per directory, named after it. It prints its dir,
+# whether ``fix.txt`` is in cwd, the case env, a mark for the setup_cmd file, the first letter of
+# each agent config file (``t`` trunk, ``M`` origin/main, ``-`` absent), how many paths are
+# staged, and its arguments; then CHECK_TAIL as a last line. It fails without the fix, or when
+# CHECK_FAIL_DIR names its dir.
+BENCH_CHECK = """import os
+import subprocess
+import sys
+
+here = os.path.basename(os.path.dirname(os.path.abspath(__file__)))
+ok = os.path.isfile("fix.txt")
+words = [here, "fix present" if ok else "fix missing", "mode=" + os.environ.get("CHECK_MODE", "-")]
+if os.environ.get("CHECK_FAIL_DIR"):
+    words.append("fail=" + os.environ["CHECK_FAIL_DIR"])
+if os.path.isfile("setup.txt"):
+    words.append("setup")
+cfg = ""
+for p in AGENT_FILES:
+    cfg += open(p).read().strip() if os.path.isfile(p) else "-"
+staged = subprocess.run(
+    ["git", "diff", "--cached", "--name-only"], capture_output=True, text=True
+).stdout.split()
+print(" ".join(words + ["cfg=" + cfg, "staged=%d" % len(staged), "args:"] + sys.argv[1:]))
+if os.environ.get("CHECK_TAIL"):
+    print(os.environ["CHECK_TAIL"])
+sys.exit(0 if ok and os.environ.get("CHECK_FAIL_DIR") != here else 1)
+""".replace("AGENT_FILES", repr(BENCH_AGENT_FILES))
+# The parent's own copy: the grader must replace it with the merge's.
+BENCH_STALE = 'print("stale check")\n'
+# T-8 "add the fix" (real checks and fix.txt); its parent T-9 has stale checks and no fix.
+BENCH_MERGE = "trunk~2"
+# T-6; its parent T-7 already has the fix.
+BENCH_MERGE_FIX_IN_PARENT = "trunk"
+BENCH_TASKS = "brain/workflow/bench/tasks.json"
+_BENCH_INSTANT = datetime.datetime(2026, 1, 15, 10, 30, tzinfo=datetime.UTC)
+_BENCH_IGNORES = (".claude/worktrees/", ".venv/", "node_modules/", "__pycache__/")
+# Newer git runs auto-maintenance in the background after commits; its lock files would come
+# and go while a template is copied.
+_BENCH_GITCONFIG = (
+    "[maintenance]\n\tauto = false\n\tautoDetach = false\n[gc]\n\tauto = 0\n\tautoDetach = false\n"
+)
+# (days before the instant, message, files) of ``api`` after its ``init`` commit at T-30.
+_BENCH_COMMITS: tuple[tuple[int, str, dict[str, str]], ...] = (
+    (10, "base", {**dict.fromkeys(BENCH_AGENT_FILES, "t\n"), "app.py": "x = 1\n"}),
+    (9, "stale checks", {"t/__main__.py": BENCH_STALE, "a/__main__.py": BENCH_STALE}),
+    (
+        8,
+        "add the fix",
+        {"t/__main__.py": BENCH_CHECK, "a/__main__.py": BENCH_CHECK, "fix.txt": "fixed\n"},
+    ),
+    (7, "docs", {"docs.md": "one\n"}),
+    (6, "more docs", {"docs.md": "two\n"}),
+)
+# The fake claude (the hub's fake_tool.py for claude): it logs the call, then answers with the
+# first rule whose ``argv_has`` items are all arguments and whose ``env_has`` values are
+# substrings of those variables: it writes the rule's ``write`` files in its cwd, prints its
+# ``stdout`` and ``stderr`` and exits ``rc`` (0). No rule matches: nothing printed, exit 1.
+_FAKE_BENCH_CLAUDE = """import json, os, sys
+LOG, ANSWERS, LOGGED = sys.argv[1], sys.argv[2], ("OTEL_RESOURCE_ATTRIBUTES",)
+args = sys.argv[3:]
+record = {
+    "argv": args,
+    "cwd": os.getcwd(),
+    "env": sorted(os.environ),
+    "values": {name: os.environ[name] for name in LOGGED if name in os.environ},
+}
+with open(LOG, "a", encoding="utf-8") as file:
+    file.write(json.dumps(record) + "\\n")
+try:
+    with open(ANSWERS, encoding="utf-8") as file:
+        rules = json.load(file)
+except FileNotFoundError:
+    rules = []
+def matches(rule):
+    env_has = rule.get("env_has", {}).items()
+    return (all(item in args for item in rule.get("argv_has", []))
+            and all(sub in os.environ.get(name, "") for name, sub in env_has))
+rule = next((rule for rule in rules if matches(rule)), None)
+if rule is None:
+    sys.exit(1)
+for path, text in rule.get("write", {}).items():
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="") as file:
+        file.write(text)
+sys.stdout.buffer.write(rule.get("stdout", "").encode())
+sys.stderr.buffer.write(rule.get("stderr", "").encode())
+sys.exit(rule.get("rc", 0))
+"""
+
+
+def bench_document() -> dict[str, Any]:
+    """``DEMO`` with one repo ``api`` on ``trunk`` and ``bench`` selected: model-valid (E3)."""
+    document = demo_document_value()
+    document["project"]["default_branch"] = WORKSPACE_BRANCH
+    document["repos"] = [
+        {"dir": "api", "github": "acme/api", "check_fast": "true", "check": "true"}
+    ]
+    document["guard"] = {"ask_before_edit": []}
+    document["modules"] = {"bench": {}}
+    return document
+
+
+def _bench_git_env(home: Path, *, days_before: int = 0, hhmm: str = "10:30") -> dict[str, str]:
+    """Git with this home's config only, and both commit dates fixed."""
+    hour, minute = (int(part) for part in hhmm.split(":"))
+    instant = _BENCH_INSTANT.replace(hour=hour, minute=minute) - datetime.timedelta(
+        days=days_before
+    )
+    date = instant.isoformat()
+    return {
+        "PATH": os.environ["PATH"],
+        "HOME": str(home),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": str(home / ".gitconfig"),
+        "GIT_AUTHOR_DATE": date,
+        "GIT_COMMITTER_DATE": date,
+    }
+
+
+class BenchWorkspace:
+    """``ws/hub`` and ``ws/api``, api's bare origin, the fakes' ``bin`` and the claude call log."""
+
+    def __init__(self, base: Path) -> None:
+        self.base = base
+        self.ws = base / "ws"
+        self.hub = self.ws / "hub"
+        self.api = self.ws / "api"
+        self.origin = base / "origins" / "api.git"
+        self.home = base / "home"
+        self.bin = base / "bin"
+        self.claude_log = base / "logs" / "claude.jsonl"
+        self.answers = base / "logs" / "answers.json"
+
+    def git(self, folder: Path, *args: str, days_before: int = 0, hhmm: str = "10:30") -> str:
+        """Run git in ``folder`` and return its stripped stdout; a failure fails the test."""
+        env = _bench_git_env(self.home, days_before=days_before, hhmm=hhmm)
+        return _run_git(folder, env, *args)
+
+    def sha(self, rev: str) -> str:
+        """The full sha of ``rev`` in ``api``."""
+        return self.git(self.api, "rev-parse", rev)
+
+    def case(self, rev: str = BENCH_MERGE, **fields: Any) -> dict[str, Any]:
+        """The hub suite's case ``T1`` at merge ``rev``; ``fields`` replace or add keys."""
+        # Hidden tests unordered and repeated: the grader's second run gets their dirs sorted.
+        case: dict[str, Any] = {
+            "id": "T1",
+            "repo": "api",
+            "merge": self.sha(rev),
+            "prompt": "Add the fix",
+            "hidden_tests": ["t/__main__.py", "a/__main__.py", "t/__main__.py"],
+            "test_cmd": ["python3"],
+            "setup_cmd": "echo ready > setup.txt",
+            "env": {"CHECK_MODE": 1},
+        }
+        return case | fields
+
+    def write_cases(self, cases: Any) -> None:
+        """Write ``cases`` as the hub's ``tasks.json`` (indented, as the hub suite) and commit."""
+        path = self.hub / BENCH_TASKS
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(cases, indent=2) + "\n")
+        self.git(self.hub, "add", "-A")
+        self.git(self.hub, "commit", "-q", "-m", "bench cases")
+
+    def answer(self, rules: list[dict[str, Any]]) -> None:
+        """The fake claude's rules, in order: the first that matches answers."""
+        self.answers.write_text(json.dumps(rules, indent=2) + "\n")
+
+    def claude_calls(self) -> list[dict[str, Any]]:
+        """Each call of the fake claude: argv, cwd, environment names, logged values."""
+        if not self.claude_log.exists():
+            return []
+        return [json.loads(line) for line in self.claude_log.read_text().splitlines()]
+
+    @staticmethod
+    def otel(case_id: str, arm: str) -> dict[str, str]:
+        """An ``env_has`` matching the session of ``case_id`` in ``arm``."""
+        return {"OTEL_RESOURCE_ATTRIBUTES": f"repo=api,bench_case={case_id},bench_arm={arm}"}
+
+    @staticmethod
+    def result(cost: float, turns: int, subtype: str) -> str:
+        """A session's ``--output-format json`` reply."""
+        return json.dumps({"total_cost_usd": cost, "num_turns": turns, "subtype": subtype})
+
+
+def _write_files(folder: Path, files: Mapping[str, str]) -> None:
+    for path, text in files.items():
+        target = folder / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
+
+
+def _build_bench_workspace(base: Path) -> None:
+    workspace = BenchWorkspace(base)
+    workspace.home.mkdir(parents=True)
+    (workspace.home / ".gitconfig").write_text(_BENCH_GITCONFIG)
+    workspace.ws.mkdir()
+    hub = init_template(workspace.ws, bench_document())
+    (workspace.ws / "hub.json").unlink()
+    ignores = "".join(f"{entry}\n" for entry in _BENCH_IGNORES)
+    workspace.api.mkdir()
+    for folder in (hub, workspace.api):
+        workspace.git(folder, "init", "-q", "-b", WORKSPACE_BRANCH)
+    _write_files(workspace.api, {".gitignore": ignores, "README.md": "api\n"})
+    workspace.git(hub, "add", "-A")
+    workspace.git(hub, "commit", "-q", "-m", "hub", days_before=30, hhmm="09:00")
+    commits = ((30, "init", {}), *_BENCH_COMMITS)
+    for index, (days_before, message, files) in enumerate(commits):
+        _write_files(workspace.api, files)
+        workspace.git(workspace.api, "add", "-A")
+        workspace.git(
+            workspace.api,
+            "commit",
+            "-q",
+            "-m",
+            message,
+            days_before=days_before,
+            hhmm=f"09:{index:02d}",
+        )
+    workspace.origin.parent.mkdir()
+    workspace.git(base, "clone", "-q", "--bare", str(workspace.api), str(workspace.origin))
+    workspace.git(workspace.api, "remote", "add", "origin", str(workspace.origin))
+    workspace.git(workspace.api, "checkout", "-q", "-b", "main")
+    _write_files(workspace.api, dict.fromkeys(BENCH_AGENT_FILES, "M\n"))
+    workspace.git(
+        workspace.api, "commit", "-q", "-am", "agent config on main", days_before=4, hhmm="09:00"
+    )
+    workspace.git(workspace.api, "push", "-q", "origin", "main")
+    workspace.git(workspace.api, "fetch", "-q", "origin")
+    workspace.git(workspace.api, "checkout", "-q", WORKSPACE_BRANCH)
+    workspace.git(workspace.api, "branch", "-q", "-D", "main")
+
+
+@pytest.fixture(scope="session")
+def bench_workspace_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The bench workspace built once per session: never change it."""
+    base = tmp_path_factory.mktemp("bench-workspace-template")
+    _build_bench_workspace(base)
+    return base
+
+
+@pytest.fixture
+def bench_workspace(
+    tmp_path: Path, bench_workspace_template: Path, monkeypatch: pytest.MonkeyPatch
+) -> BenchWorkspace:
+    """A copy of the bench workspace in ``tmp_path`` with ``PATH`` = only its ``bin``.
+
+    ``bin`` holds the fake ``claude`` and the real ``git``, ``bash`` and ``python3`` (linked).
+    The command's git reads only the copy's home config and finds no repo above ``tmp_path``;
+    it may reach local repos only. ``HOME`` is the copy's home; ``CLAUDECODE`` is unset.
+    """
+    base = tmp_path / "bench"
+    shutil.copytree(bench_workspace_template, base, symlinks=True)
+    workspace = BenchWorkspace(base)
+    workspace.git(workspace.api, "remote", "set-url", "origin", str(workspace.origin))
+    workspace.bin.mkdir()
+    workspace.claude_log.parent.mkdir()
+    source = base / "fakes" / "claude.py"
+    source.parent.mkdir()
+    source.write_text(_FAKE_BENCH_CLAUDE)
+    wrapper = workspace.bin / "claude"
+    wrapper.write_text(
+        f"#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(source))}"
+        f' {shlex.quote(str(workspace.claude_log))} {shlex.quote(str(workspace.answers))} "$@"\n'
+    )
+    wrapper.chmod(0o755)
+    _link_tool(workspace.bin, "git", shutil.which("git"))
+    _link_tool(workspace.bin, "bash", shutil.which("bash"))
+    _link_tool(workspace.bin, "python3", sys.executable)
+    for name, value in _bench_git_env(workspace.home).items():
+        if not name.startswith("GIT_AUTHOR") and not name.startswith("GIT_COMMITTER"):
+            monkeypatch.setenv(name, value)
+    monkeypatch.setenv("PATH", str(workspace.bin))
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    monkeypatch.setenv("GIT_ALLOW_PROTOCOL", "file")
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("CLAUDECODE", raising=False)
+    return workspace

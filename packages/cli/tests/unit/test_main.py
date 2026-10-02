@@ -29,6 +29,7 @@ def test_lists_commands_when_help_requested() -> None:
         "agent",
         "next",
         "run",
+        "bench",
     ):
         assert command in unstyle(result.stdout)
 

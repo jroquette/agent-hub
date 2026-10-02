@@ -158,6 +158,7 @@ PATH_BOUND = (
 TEST_CMD_BOUND = "must be 1 to 32 non-empty strings of at most 1024 characters"
 SETUP_BOUND = "must be at most 4096 characters"
 NUL = "must not hold a NUL character"
+PROMPT_OPTION = "must not start with `-`"
 ENV_COUNT = "must have at most 32 keys"
 ENV_VALUE = "must be a string, a number, true or false"
 
@@ -178,6 +179,9 @@ ENV_VALUE = "must be a string, a number, true or false"
         ({"prompt": ""}, f"[0].prompt: {PROMPT_BOUND}"),
         ({"prompt": "x" * 20_001}, f"[0].prompt: {PROMPT_BOUND}"),
         ({"prompt": "a\x00b"}, f"[0].prompt: {NUL}"),
+        # `claude -p <prompt>`: a leading `-` would be read as an option.
+        ({"prompt": "-x"}, f"[0].prompt: {PROMPT_OPTION}"),
+        ({"prompt": "--settings=/x"}, f"[0].prompt: {PROMPT_OPTION}"),
         ({"hidden_tests": []}, f"[0].hidden_tests: {HIDDEN_COUNT}"),
         ({"hidden_tests": ["t.py"] * 101}, f"[0].hidden_tests: {HIDDEN_COUNT}"),
         ({"hidden_tests": ["t/../x.py"]}, f'[0].hidden_tests: "t/../x.py" {PATH_BOUND}'),
@@ -257,6 +261,8 @@ def test_reports_problem_when_field_out_of_bounds(changes: dict[str, Any], expec
         {"test_cmd": ["python3", "x" * 1024]},
         {"env": {f"_K{n}": n for n in range(32)}},
         {"setup_cmd": "", "excluded": False},
+        {"prompt": " -x"},
+        {"prompt": "a-b"},
     ],
 )
 def test_accepts_case_when_field_at_bound(changes: dict[str, Any]) -> None:
