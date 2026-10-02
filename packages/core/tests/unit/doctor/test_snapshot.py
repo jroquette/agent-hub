@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from typing import Any
 
 import pytest
 
@@ -19,7 +20,7 @@ from agent_hub.core.hub_files.tree_snapshot import (
     OtherEntry,
     TreeEntry,
 )
-from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 
 type SnapshotFactory = Callable[..., DoctorSnapshot]
 
@@ -55,7 +56,9 @@ def test_raises_when_rule_reads_config_of_failed_snapshot(
 
 
 def test_lists_fixed_paths_when_project_named() -> None:
-    config = HubConfig.model_validate(a_hub_document())
+    document = a_hub_document()
+    del document["modules"]
+    config = HubConfig.model_validate(document)
 
     assert config.project.name == "demo"
     assert hub_paths(config) == (
@@ -65,6 +68,38 @@ def test_lists_fixed_paths_when_project_named() -> None:
         ".mcp.json",
         "Makefile",
         "Makefile.project",
+        "package.json",
+        "plugin/demo/hooks/project_guard.py",
+    )
+
+
+@pytest.mark.parametrize(
+    ("modules", "makefiles"),
+    [
+        ({"cloud": {}, "bench": {}}, ("mk/bench.mk", "mk/cloud.mk")),
+        ({"marketplace": {}, "bench": {}}, ("mk/bench.mk", "mk/marketplace.mk")),
+        (
+            {"contract-sync": {"source": "demo-api", "target": "demo-web"}},
+            ("mk/contract-sync.mk",),
+        ),
+    ],
+    ids=["cloud-bench", "marketplace-bench", "contract-sync"],
+)
+def test_lists_module_makefiles_when_modules_selected(
+    modules: dict[str, Any], makefiles: tuple[str, ...]
+) -> None:
+    document = a_hub_document()
+    document["repos"].append(a_second_repo())
+    document["modules"] = modules
+
+    assert hub_paths(HubConfig.model_validate(document)) == (
+        "hub.lock",
+        ".claude/settings.json",
+        ".claude/settings.project.json",
+        ".mcp.json",
+        "Makefile",
+        "Makefile.project",
+        *makefiles,
         "package.json",
         "plugin/demo/hooks/project_guard.py",
     )

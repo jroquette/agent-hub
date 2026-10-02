@@ -775,6 +775,27 @@ class TestRefs:
             ("AGENTS.md", 1, "`make sure` is not a Makefile target", MAKE_FIX)
         ]
 
+    def test_accepts_make_target_when_module_makefile_defines_it(
+        self, snapshot_of: SnapshotFactory
+    ) -> None:
+        # E13: the builder's config selects bench and cloud; marketplace is not selected, so
+        # its mk/ file is not included by the Makefile and defines nothing.
+        snapshot = snapshot_of(
+            files={
+                "AGENTS.md": (
+                    b"make check, make bench, make cloud-setup, make marketplace-validate\n"
+                ),
+                "Makefile": b"check:\n",
+                "mk/bench.mk": b"bench:\n\tx\n",
+                "mk/cloud.mk": b"cloud-setup:\n\tx\n",
+                "mk/marketplace.mk": b"marketplace-validate:\n\tx\n",
+            }
+        )
+
+        assert refs(snapshot) == [
+            ("AGENTS.md", 1, "`make marketplace-validate` is not a Makefile target", MAKE_FIX)
+        ]
+
     @pytest.mark.parametrize(
         ("files", "flagged"),
         [

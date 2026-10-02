@@ -1,15 +1,18 @@
-"""``makefile.override``: ``Makefile.project`` redefines no target of the managed ``Makefile``.
+"""``makefile.override``: ``Makefile.project`` redefines no target of the managed makefiles.
 
-``hub sync`` owns ``Makefile``, which includes the project's ``Makefile.project`` last; a rule
-there for a target the managed file defines replaces its recipe (docs/design/hub-generator.md).
-The managed targets are read from ``Makefile``'s own text, never a fixed list. A rule line is a
+``hub sync`` owns ``Makefile`` and the ``mk/<id>.mk`` of each selected module, which it includes;
+it includes the project's ``Makefile.project`` last, so a rule there for a target a managed file
+defines replaces its recipe (docs/design/hub-generator.md). The managed targets are read from
+those files' own text, never a fixed list; the ``mk/`` file of an unselected module is not
+included, so it is not read (plan E13). A rule line is a
 logical line (``\\``-continued physical lines joined) outside a ``define`` block that does not
 start with a tab (a recipe line) and names its targets before ``:`` or ``::``; an assignment
 (``:=``, ``::=``, ``:::=``, ``=``, ``?=``, ``+=``) or a comment is none. Special targets such as
 ``.PHONY`` are not managed targets. A grouped rule (GNU make 4.3+, ``&:`` or ``&::``) names its
 targets the same way, and a target named twice on one line is reported once. Targets written
-through variables (``$(T):``) are not expanded, and files pulled in by ``-include`` are not
-followed. Either file absent or not text: nothing to check.
+through variables (``$(T):``) are not expanded, and no other file pulled in by ``include`` or
+``-include`` is followed. ``Makefile.project`` absent or not text: nothing to check; a managed
+file absent or not text defines no target.
 """
 
 import re
@@ -17,7 +20,7 @@ from collections.abc import Iterable, Iterator
 from typing import Final
 
 from agent_hub.core.doctor.finding import Finding, Rule
-from agent_hub.core.doctor.snapshot import DoctorSnapshot, lines_of, text_of
+from agent_hub.core.doctor.snapshot import DoctorSnapshot, lines_of, module_makefiles, text_of
 from agent_hub.core.hub_config.doctor_rules import MAKEFILE_OVERRIDE_RULE, RULE_MODULES, Severity
 
 MANAGED_MAKEFILE: Final = "Makefile"
@@ -37,10 +40,15 @@ _SPECIAL_TARGET: Final = re.compile(r"\.[A-Z_]+")
 def _makefile_override(snapshot: DoctorSnapshot) -> Iterable[Finding]:
     entries = snapshot.hub.entries
     project = text_of(entries.get(PROJECT_MAKEFILE))
-    managed = text_of(entries.get(MANAGED_MAKEFILE))
-    if project is None or managed is None:
+    if project is None:
         return ()
-    targets = _managed_targets(managed)
+    managed = (MANAGED_MAKEFILE, *module_makefiles(snapshot.hub_config))
+    targets = frozenset(
+        target
+        for path in managed
+        if (text := text_of(entries.get(path))) is not None
+        for target in _managed_targets(text)
+    )
     return tuple(
         MAKEFILE_OVERRIDE.finding(
             path=PROJECT_MAKEFILE, line=number, message=f"redefines target '{name}'", fix=FIX
