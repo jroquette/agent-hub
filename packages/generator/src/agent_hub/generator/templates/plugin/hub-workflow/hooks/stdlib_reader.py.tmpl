@@ -13,6 +13,8 @@ this reader falls back instead.
   to ``""``, ``project.name`` to the name of the directory holding the file (then ``hub``), and a
   repo without a non-empty string ``dir`` is dropped.
 - ``platform.version`` counts only as three ASCII numbers (``0.2.0``); anything else is ``None``.
+- A repo's ``default_branch`` is its effective value: its own when it is a string matching the
+  model's branch pattern, else the ``project`` section's ``default_branch`` (it inherits).
 - Unknown keys and comment keys (``_`` first) are ignored. ``modules`` and ``doctor.rules`` keep
   each entry's settings, minus comment keys, without checking them.
 
@@ -36,6 +38,10 @@ COMMENT_KEY_PREFIX = "_"
 FALLBACK_PROJECT_NAME = "hub"
 # ``[0-9]`` and ``fullmatch``: ``\d`` takes any Unicode digit and ``$`` a final newline.
 RELEASE_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+# The model's ``BranchName`` pattern without ``^`` and ``$``, for ``fullmatch``.
+BRANCH_NAME = re.compile(
+    r"[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*(?:/[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*)*"
+)
 
 
 @dataclass(frozen=True)
@@ -70,13 +76,17 @@ class TrackerSection:
 
 @dataclass(frozen=True)
 class RepoEntry:
-    """One ``repos[]`` item; items without a ``dir`` are dropped."""
+    """One ``repos[]`` item; items without a ``dir`` are dropped.
+
+    ``default_branch`` is the effective value: the repo's own, else the project's.
+    """
 
     dir: str
     github: str = ""
     role: str = "app"
     check_fast: str = ""
     check: str = ""
+    default_branch: str = "main"
 
 
 @dataclass(frozen=True)
@@ -116,6 +126,7 @@ def load_hub_file(path: str | os.PathLike[str]) -> HubFile:
     tracker = _object(document.get("tracker"))
     guard = _object(document.get("guard"))
     schema_version = document.get("schema_version")
+    project_branch = _text(project, "default_branch", ProjectSection.default_branch)
     return HubFile(
         # ``bool`` is an ``int``; only a JSON integer is a schema version.
         schema_version=schema_version if type(schema_version) is int else None,
@@ -124,7 +135,7 @@ def load_hub_file(path: str | os.PathLike[str]) -> HubFile:
             name=_text(project, "name", _directory_name(path)),
             hub_repo=_text(project, "hub_repo", ""),
             branch_prefix=_text(project, "branch_prefix", ""),
-            default_branch=_text(project, "default_branch", ProjectSection.default_branch),
+            default_branch=project_branch,
             author_name=_text(project, "author_name", ""),
             author_email=_text(project, "author_email", ""),
         ),
@@ -135,7 +146,7 @@ def load_hub_file(path: str | os.PathLike[str]) -> HubFile:
             failed_label=_text(tracker, "failed_label", TrackerSection.failed_label),
             transport=_text(tracker, "transport", TrackerSection.transport),
         ),
-        repos=_repos(document.get("repos")),
+        repos=_repos(document.get("repos"), project_branch),
         guard=GuardSection(
             ask_before_edit=_texts(guard, "ask_before_edit"),
             deny_hosts=_texts(guard, "deny_hosts"),
@@ -197,7 +208,15 @@ def _version(platform: dict[str, object]) -> str | None:
     return None
 
 
-def _repos(value: object) -> tuple[RepoEntry, ...]:
+def _branch(repo: dict[str, object], project_branch: str) -> str:
+    """The repo's ``default_branch`` when it matches ``BRANCH_NAME``, else ``project_branch``."""
+    value = repo.get("default_branch")
+    if isinstance(value, str) and BRANCH_NAME.fullmatch(value):
+        return value
+    return project_branch
+
+
+def _repos(value: object, project_branch: str) -> tuple[RepoEntry, ...]:
     items = value if isinstance(value, list) else []
     repos = [_object(item) for item in items]
     return tuple(
@@ -207,6 +226,7 @@ def _repos(value: object) -> tuple[RepoEntry, ...]:
             role=_text(repo, "role", RepoEntry.role),
             check_fast=_text(repo, "check_fast", ""),
             check=_text(repo, "check", ""),
+            default_branch=_branch(repo, project_branch),
         )
         for repo in repos
         if _text(repo, "dir", "")
