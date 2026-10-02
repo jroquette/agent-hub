@@ -11,6 +11,7 @@ team's prefix): each refusal is a usage error, exit 2, before any tracker call o
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -20,6 +21,10 @@ from typing import Any
 import pytest
 from click import unstyle
 from typer.testing import Result
+
+from agent_hub.cli import run_command
+from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.tracker.tracker_client import TrackerClient
 
 pytestmark = pytest.mark.disable_socket
 
@@ -256,3 +261,287 @@ class TestRunWorkspace:
         assert logged[0]["pgid"] == os.getpgid(0)
         assert "PATH" in logged[0]["env"]
         assert str(run_workspace.bin) not in json.dumps(logged[0]["env"])
+
+
+KEY_VARIABLE = "LINEAR_API_KEY"
+API_LINE = 'tracker: Linear API (tracker.transport "api")'
+MCP_LINE = 'tracker: Linear MCP via claude -p (tracker.transport "mcp")'
+MISSING_KEY = (
+    'hub run: LINEAR_API_KEY is not set; export it, or set tracker.transport: "mcp"'
+    " in hub.json to reach Linear through its MCP server with claude -p"
+)
+RUN_DESCRIPTION = "Add a synthetic change.\n\n- touch one file\n- keep the gate green\n"
+RUN_ID = re.compile(r"[0-9a-f]{8}")
+
+
+def synthetic_key() -> str:
+    return "lin" + "_api_" + "x" * 40
+
+
+class Resolve:
+    """Replaces ``run_command.resolve_tracker_client``: records the hub root, returns ``client``."""
+
+    def __init__(self, client: object) -> None:
+        self.client = client
+        self.roots: list[object] = []
+
+    def __call__(self, config: HubConfig, environ: object, *, hub_root: object) -> TrackerClient:
+        self.roots.append(hub_root)
+        return self.client  # type: ignore[return-value]
+
+
+def inject(monkeypatch: pytest.MonkeyPatch, client: object) -> Resolve:
+    resolve = Resolve(client)
+    monkeypatch.setattr(run_command, "resolve_tracker_client", resolve)
+    return resolve
+
+
+def set_transport(hub: Any, transport: str) -> None:
+    document = json.loads((hub / "hub.json").read_text())
+    document["tracker"]["transport"] = transport
+    (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+
+
+@pytest.fixture
+def with_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(KEY_VARIABLE, synthetic_key())
+
+
+def dry_lines(result: Result) -> list[str]:
+    assert result.exit_code == 0, result.output
+    return result.stdout.splitlines()
+
+
+@pytest.mark.usefixtures("with_key")
+class TestDryRun:
+    def test_prints_every_step_when_dry_run(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        resolve = inject(monkeypatch, run_tracker)
+        hub = os.path.realpath(workspace.hub)
+        worktree = os.path.realpath(workspace.ws / "demo-api") + "/.claude/worktrees/dem-1"
+        web = os.path.realpath(workspace.ws / "demo-web")
+
+        result = run_command(workspace.hub, "run", "DEM-1", "--repo", "demo-api")
+
+        lines = dry_lines(result)
+        assert result.stderr == API_LINE + "\n"
+        assert run_tracker.calls == [("get_issue", "DEM-1")]
+        assert [str(root) for root in resolve.roots] == [hub]
+        assert lines[0] == "would run: ./hub worktree dem-1 --only demo-api"
+        claude = lines[1]
+        assert claude.startswith("would run: claude -p ")
+        assert claude.endswith(f"   (cwd {worktree})")
+        for piece in (
+            "DEM-1",
+            "Synthetic run issue",
+            "https://linear.app/demo/issue/DEM-1",
+            json.dumps(RUN_DESCRIPTION)[1:-1],
+            " --output-format json --max-turns 40 --max-budget-usd 3 --model sonnet ",
+            """ --settings '{"effortLevel": "medium"}' """,
+            f" --add-dir {hub} {web} --allowedTools Read Edit ",
+            " 'Bash(make:*)' 'Bash(ls:*)' ",
+        ):
+            assert piece in claude, piece
+        assert "mcp__" not in claude
+        assert lines[2] == f"would run: bash -c 'make check'   (cwd {worktree})"
+        assert lines[3] == f"would run: git push -u origin jdoe/dem-1   (cwd {worktree})"
+        assert lines[4].startswith(
+            "would run: gh pr create --base trunk --head jdoe/dem-1 --title DEM-1 --body "
+        )
+        assert "Gates green: `make check`." in lines[4]
+        assert lines[5:7] == [
+            "would call: move_state(DEM-1, In Review)",
+            "would call: remove_label(DEM-1, agent-failed)",
+        ]
+        comment = re.fullmatch(
+            r"would call: comment\(DEM-1, Run (\w+) opened \(dry run\)\. \(dry run\)\)", lines[7]
+        )
+        assert comment is not None, lines[7]
+        assert RUN_ID.fullmatch(comment.group(1))
+        assert len(lines) == 8
+        assert run_workspace.calls("claude") == []
+
+    def test_writes_nothing_when_dry_run(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        tree_digest: Callable[[Any], dict[str, Any]],
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        before = tree_digest(workspace.ws)
+
+        result = run_command(workspace.hub, "run", "DEM-1", "--repo", "demo-api")
+
+        assert result.exit_code == 0, result.output
+        assert tree_digest(workspace.ws) == before
+        assert not (workspace.hub / ".agent-runs").exists()
+        assert not (workspace.hub / "brain" / "_inbox" / "runs").exists()
+        assert [call[0] for call in run_tracker.calls] == ["get_issue"]
+        for tool in ("claude", "gh", "make"):
+            assert run_workspace.calls(tool) == []
+
+    def test_omits_remove_when_issue_lacks_failed_label(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        issue = run_tracker.backend.issues["DEM-1"]
+        unlabelled = tuple(label for label in issue.labels if label != "agent-failed")
+        run_tracker.backend.issues["DEM-1"] = issue.model_copy(update={"labels": unlabelled})
+        inject(monkeypatch, run_tracker)
+
+        result = run_command(run_workspace.workspace.hub, "run", "DEM-1", "--repo", "demo-api")
+
+        calls = [line for line in dry_lines(result) if line.startswith("would call: ")]
+        assert [line.split("(")[0] for line in calls] == [
+            "would call: move_state",
+            "would call: comment",
+        ]
+
+    def test_prints_no_claude_when_from_verify(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+
+        result = run_command(
+            run_workspace.workspace.hub, "run", "DEM-1", "--repo", "demo-api", "--from", "verify"
+        )
+
+        lines = dry_lines(result)
+        assert not [line for line in lines if line.startswith("would run: claude")]
+        assert lines[0] == "would run: ./hub worktree dem-1 --only demo-api"
+        assert lines[1].startswith("would run: bash -c 'make check'")
+
+    def test_escapes_issue_text_when_it_holds_control_characters(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        issue = run_tracker.backend.issues["DEM-1"]
+        title = "Synthetic \x1b[2J\u202e title"
+        run_tracker.backend.issues["DEM-1"] = issue.model_copy(update={"title": title})
+        inject(monkeypatch, run_tracker)
+
+        result = run_command(run_workspace.workspace.hub, "run", "DEM-1", "--repo", "demo-api")
+
+        assert "\x1b" not in result.stdout
+        assert "\u202e" not in result.stdout
+        assert all(line.isprintable() for line in dry_lines(result))
+
+    def test_exits_one_when_read_fails(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        del run_tracker.backend.issues["DEM-1"]
+        inject(monkeypatch, run_tracker)
+
+        result = run_command(run_workspace.workspace.hub, "run", "DEM-1", "--repo", "demo-api")
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        lines = result.stderr.splitlines()
+        assert lines[0] == API_LINE
+        assert len(lines) == 2
+        assert lines[1].startswith("get_issue DEM-1: ")
+        assert run_tracker.calls == [("get_issue", "DEM-1")]
+
+
+class TestTransport:
+    @pytest.mark.parametrize("live", [False, True], ids=["dry", "live"])
+    @pytest.mark.parametrize("transport", [None, "api"], ids=["absent", "api"])
+    @pytest.mark.parametrize("key", [None, ""], ids=["unset", "empty"])
+    def test_exits_one_when_key_missing(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        spy: Spy,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+        live: bool,
+        transport: str | None,
+        key: str | None,
+    ) -> None:
+        hub = run_workspace.workspace.hub
+        if transport is not None:
+            set_transport(hub, transport)
+        if key is None:
+            monkeypatch.delenv(KEY_VARIABLE, raising=False)
+        else:
+            monkeypatch.setenv(KEY_VARIABLE, key)
+
+        result = run_command(hub, "run", "DEM-1", "--repo", "demo-api", *(["--live"] * live))
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert result.stderr == MISSING_KEY + "\n"
+        assert spy.calls == []
+        for tool in ("claude", "gh", "make"):
+            assert run_workspace.calls(tool) == []
+
+    @pytest.mark.parametrize("key", [None, "set"], ids=["no-key", "key"])
+    def test_uses_mcp_adapter_when_transport_mcp(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        tmp_path: Any,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+        key: str | None,
+    ) -> None:
+        hub = run_workspace.workspace.hub
+        set_transport(hub, "mcp")
+        if key is None:
+            monkeypatch.delenv(KEY_VARIABLE, raising=False)
+        else:
+            monkeypatch.setenv(KEY_VARIABLE, synthetic_key())
+        issue = {
+            "id": "DEM-1",
+            "title": "Synthetic MCP issue",
+            "description": RUN_DESCRIPTION,
+            "url": "https://linear.app/demo/issue/DEM-1",
+            "state": "Todo",
+            "labels": ["agent-ready", "demo-api"],
+        }
+        (tmp_path / "issue.json").write_text(json.dumps(issue))
+        monkeypatch.setenv("FAKE_CLAUDE_ISSUE", str(tmp_path / "issue.json"))
+
+        result = run_command(hub, "run", "DEM-1", "--repo", "demo-api")
+
+        lines = dry_lines(result)
+        assert result.stderr == MCP_LINE + "\n"
+        assert "Synthetic MCP issue" in lines[1]
+        calls = run_workspace.calls("claude")
+        assert len(calls) == 1
+        assert calls[0]["tracker"] is True
+        assert calls[0]["cwd"] == os.path.realpath(hub)
+        assert KEY_VARIABLE not in calls[0]["env"]
+        assert [line.split("(")[0] for line in lines[5:]] == [
+            "would call: move_state",
+            "would call: comment",
+        ]
