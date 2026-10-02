@@ -1,6 +1,6 @@
 [project]
 name = "agent-hub"
-version = "0.4.0"
+version = "0.5.0"
 description = "Installs every agent-hub package and the hub command."
 requires-python = ">=3.14"
 dependencies = ["agent-hub-core", "agent-hub-storage", "agent-hub-collector", "agent-hub-generator",
