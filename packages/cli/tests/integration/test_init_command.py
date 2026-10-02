@@ -369,7 +369,7 @@ def test_writes_module_files_when_config_selects_them(
     assert result.stderr == ""
     rendered = render_hub(written_config(target))
     module_files = {file.path: file for file in rendered.files if file.module is not None}
-    assert set(module_files) == {"mk/bench.mk", "mk/cloud.mk"}
+    assert set(module_files) == {"mk/bench.mk", "mk/cloud.mk", "scripts/cloud-setup.sh"}
     assert {file.module for file in module_files.values()} == {"bench", "cloud"}
     lock = json.loads((target / "hub.lock").read_bytes())
     assert lock["modules"] == ["bench", "cloud"]
