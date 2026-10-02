@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Module contract-sync (hub.json → modules.contract-sync): `make contract-export` in the source
+# repo, then `make contract-import` in the target repo, both beside this hub. Each repo's recipes
+# own the contract; this script knows only the two repo dirs, rendered from the validated hub.json
+# by hub sync (re-run it after changing them). A missing repo or a failed step exits 1 naming the
+# repo and the step; the import never runs after a failed export. Bash 3.2 safe. Managed by hub sync.
+set -euo pipefail
+
+source_dir='@@{contract_sync_source}'
+target_dir='@@{contract_sync_target}'
+
+case $0 in
+  */*) script_dir=${0%/*} ;;
+  *) script_dir=. ;;
+esac
+# The workspace holds the hub and its repos: two levels above scripts/.
+workspace=$(CDPATH= cd -P -- "$script_dir/../.." && pwd -P) || {
+  echo "contract-sync: cannot find the workspace above $script_dir" >&2
+  exit 1
+}
+
+for repo_dir in "$source_dir" "$target_dir"; do
+  if [ ! -d "$workspace/$repo_dir" ]; then
+    echo "contract-sync: ../$repo_dir is missing; clone it beside the hub (hub.json repos)" >&2
+    exit 1
+  fi
+done
+
+echo "contract-sync: make contract-export in ../$source_dir"
+make -C "$workspace/$source_dir" contract-export || {
+  echo "contract-sync: make contract-export failed in ../$source_dir (source); make contract-import in ../$target_dir did not run" >&2
+  exit 1
+}
+echo "contract-sync: make contract-import in ../$target_dir"
+make -C "$workspace/$target_dir" contract-import || {
+  echo "contract-sync: make contract-import failed in ../$target_dir (target)" >&2
+  exit 1
+}

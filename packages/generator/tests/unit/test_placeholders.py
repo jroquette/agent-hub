@@ -7,9 +7,10 @@ from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
 from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_mapping
 
-# AC-3.9: the Rendered values of project-config.md, the platform repository (erratum E3) and the
-# derived module includes (erratum E2). author_name, check_fast, check and platform.version are
-# read at run time or quoted per format, never placeholders.
+# AC-3.9: the Rendered values of project-config.md, the platform repository (erratum E3), the
+# derived module includes (erratum E2) and contract-sync's two repo dirs (AGH-17 G8). author_name,
+# check_fast, check and platform.version are read at run time or quoted per format, never
+# placeholders.
 RENDERED_KEYS = {
     "project_name",
     "project_hub_repo",
@@ -22,6 +23,8 @@ RENDERED_KEYS = {
     "guard_deny_hosts",
     "platform_repository",
     "module_includes",
+    "contract_sync_source",
+    "contract_sync_target",
 }
 
 
@@ -54,6 +57,8 @@ def test_takes_values_from_model_when_demo_mapped(demo_config: HubConfig) -> Non
         "guard_deny_hosts": "",
         "platform_repository": PLATFORM_REPOSITORY,
         "module_includes": "include mk/bench.mk\ninclude mk/cloud.mk\n",
+        "contract_sync_source": "",
+        "contract_sync_target": "",
     }
 
 
@@ -108,6 +113,21 @@ def test_lists_sorted_includes_when_modules_selected(
     config = config_with(modules=modules, repos=[*a_hub_document()["repos"], a_second_repo()])
 
     assert substitution_mapping(config)["module_includes"] == expected
+
+
+def test_names_contract_sync_repos_when_module_selected(all_modules_config: HubConfig) -> None:
+    mapping = substitution_mapping(all_modules_config)
+
+    assert (mapping["contract_sync_source"], mapping["contract_sync_target"]) == (
+        "demo-api",
+        "demo-web",
+    )
+
+
+def test_names_no_contract_sync_repo_when_module_unselected(variant_config: HubConfig) -> None:
+    mapping = substitution_mapping(variant_config)
+
+    assert (mapping["contract_sync_source"], mapping["contract_sync_target"]) == ("", "")
 
 
 def test_matches_core_release_command_when_source_formatted() -> None:
