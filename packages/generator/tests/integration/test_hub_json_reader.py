@@ -171,6 +171,29 @@ def test_ignores_unknown_and_comment_keys_when_present(
     assert reader["doctor"] == {"rules": {"links.dead": {"enabled": False}}}
 
 
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"source": "demo-api", "target": "demo-web"},
+        # What HubConfig rejects (a number, a dir not in repos, an extra key) is still read.
+        {"source": 1, "target": "nope", "branch": "main"},
+    ],
+    ids=["valid", "invalid"],
+)
+def test_reads_contract_sync_settings_as_written_when_present(
+    tmp_path: Path, *, hook_python: str, read: Reader, settings: dict[str, object]
+) -> None:
+    document = a_hub_document()
+    document["repos"].append(document["repos"][0] | {"dir": "demo-web", "github": "acme/demo-web"})
+    document["modules"]["contract-sync"] = {"_note": "api to web", **settings}
+    path = write_hub_file(tmp_path, document)
+
+    reader = read(hook_python, path)["hub_file"]
+
+    assert reader["modules"] == {"cloud": {}, "bench": {}, "contract-sync": settings}
+    assert [repo["dir"] for repo in reader["repos"]] == ["demo-api", "demo-web"]
+
+
 def test_matches_schema_defaults_when_hub_json_minimal(
     tmp_path: Path, hook_python: str, read: Reader
 ) -> None:
