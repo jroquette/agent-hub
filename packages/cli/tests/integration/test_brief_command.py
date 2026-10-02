@@ -1,7 +1,9 @@
 """``hub brief``: the session brief, against the hub's brief characterization (AC-15.5, AC-15.6).
 
 The ten goldens in ``golden/brief/`` are hub ``tests/characterization/golden/brief/*.golden`` at
-hub commit ``8eaebae``, byte for byte; ``brief_workspace`` rebuilds that commit's synthetic
+hub commit ``8eaebae``, byte for byte, but for one divergence (AGH-46): a failing CI line names
+the repo's branch, so six of them read ``failing on trunk`` where the hub's read ``failing on
+main``, their stdout byte count one higher. ``brief_workspace`` rebuilds that commit's synthetic
 workspace (nothing is copied from the hub's brain).
 """
 
@@ -235,14 +237,47 @@ def test_keeps_repo_order_when_gh_answers_out_of_order(brief_workspace: Workspac
     assert repos == [
         "- hub: trunk, 0 changed file(s), 0 behind origin/trunk",
         "  open PRs: #9 Hub change",
-        "  ⚠ failing on main: hub-ci",
+        "  ⚠ failing on trunk: hub-ci",
         "- api: trunk, 2 changed file(s), 1 behind origin/trunk",
         "  open PRs: #41 Add login endpoint | #40 Refactor the session storage layer so that"
         " every adapter shares on | #38 Fix pagination | #37 Bump dependencies",
-        "  ⚠ failing on main: build, lint",
+        "  ⚠ failing on trunk: build, lint",
         "- web: detached@dd68590, 0 changed file(s), ? behind origin/trunk",
         "  open PRs: #7 Web change",
     ]
+
+
+def test_names_each_repo_branch_when_repo_sets_one(brief_workspace: Workspace) -> None:
+    api = brief_workspace.ws / "api"
+    brief_workspace.git(
+        "push", "-q", "origin", "refs/remotes/origin/trunk:refs/heads/master", cwd=api
+    )
+    brief_workspace.git("fetch", "-q", "origin", cwd=api)
+    document = json.loads((brief_workspace.hub / "hub.json").read_text())
+    document["repos"][0]["default_branch"] = "master"
+    brief_workspace.commit_hub({"hub.json": json.dumps(document, indent=2) + "\n"})
+    brief_workspace.answer([{"argv_has": ["run"], "stdout": "ci\n"}])
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    assert lines[lines.index("## Repos") + 1 : lines.index("## Repos") + 8] == [
+        "- hub: trunk, 0 changed file(s), 0 behind origin/trunk",
+        "  ⚠ failing on trunk: ci",
+        "- api: trunk, 2 changed file(s), 1 behind origin/master",
+        "  ⚠ failing on master: ci",
+        "- web: detached@dd68590, 0 changed file(s), ? behind origin/trunk",
+        "  ⚠ failing on trunk: ci",
+        "- ui: not found",
+    ]
+    calls = [json.loads(line)["argv"] for line in brief_workspace.calls().splitlines()]
+    branches = sorted(
+        (argv[argv.index("-R") + 1], argv[argv.index("--branch") + 1])
+        for argv in calls
+        if argv[1] == "run"
+    )
+    assert branches == [("acme/api", "master"), ("acme/demo-hub", "trunk"), ("acme/web", "trunk")]
 
 
 def test_runs_gh_concurrently_when_network_on(

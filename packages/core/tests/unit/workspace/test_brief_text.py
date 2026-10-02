@@ -45,6 +45,7 @@ def a_repo(**changes: object) -> RepoState:
         "dirty": 2,
         "behind": "1",
         "base": "origin/trunk",
+        "default_branch": "trunk",
         "prs": "",
         "ci": "",
     }
@@ -230,10 +231,15 @@ def test_cuts_prs_when_more_than_four() -> None:
 
 
 def test_sorts_failing_names_when_ci_failed() -> None:
-    # Quirk kept (spec Q-5): "main" whatever the default branch is.
     line = repo_line(a_repo(ci="lint\nbuild\nlint\n"), network=True)
 
-    assert line.split("\n")[1] == "  ⚠ failing on main: build, lint"
+    assert line.split("\n")[1] == "  ⚠ failing on trunk: build, lint"
+
+
+def test_names_repo_branch_when_ci_failed() -> None:
+    state = a_repo(base="origin/master", default_branch="master", ci="lint\nbuild\n")
+
+    assert repo_line(state, network=True).split("\n")[1] == "  ⚠ failing on master: build, lint"
 
 
 def test_skips_pr_and_ci_lines_when_network_off() -> None:
