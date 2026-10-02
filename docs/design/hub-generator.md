@@ -23,7 +23,7 @@ Kind: `generic` (same for every project), `module` (only when selected in `modul
 | `plugin/<project>/**` (project agents, skills, guard extension; empty folders hold a `.gitkeep`) | project-owned | seeded |
 | Brain skeleton: `brain/index.md`, `brain/now.md`, `brain/decisions/index.md`, folder `.gitkeep`s, journal template | generic | seeded |
 | `scripts/` transcript mining, recall and retro metrics | generic | managed (until Phase 2) |
-| `scripts/cloud-setup.sh`, `scripts/contract-sync.sh`, `mk/<module>.mk`, `.claude-plugin/marketplace.json` (merged with a seeded `marketplace.project.json`) | module: `cloud`, `contract-sync`, the selecting module, `marketplace` | managed (+ seeded) |
+| `scripts/cloud-setup.sh`, `scripts/contract-sync.sh`, `mk/<module>.mk`, `.claude-plugin/marketplace.json` (merged with a seeded `.claude-plugin/marketplace.project.json`) | module: `cloud`, `contract-sync`, the selecting module, `marketplace` | managed (+ seeded) |
 | Worktree, brief, runner, benchmark, config-lint and feature-check scripts | generic (`bench`: module) | not generated: `hub` commands |
 | Brain content, bench cases, hub `tests/`, `workflows/` (Phase 4), run output (`.agent-runs/`), domain rules (for Loki: red-chain, Decimal, paper/testnet, kept in `AGENTS.project.md`) | project-owned | not generated |
 
@@ -44,13 +44,20 @@ the cwd): `--author-name`/`--author-email` from `git config --get user.name`/`us
 `remote.origin.url`, never printed, read only if the target is its work tree's top and none of `GIT_DIR`,
 `GIT_WORK_TREE`, `GIT_COMMON_DIR` is set. `--branch-prefix` has no default. A missing or rejected value exits 1 naming
 its flag and why (no value, `git not found`, `git timed out`, `git could not run`). `--config PATH` checks the pin (else
-the pinned `uvx` command), schema and model, and copies it byte for byte; selected modules exit 1 until module templates
-ship. `--dir` (default: the cwd) is created after every check. The target may hold only `.git`, seeded files (kept),
+the pinned `uvx` command), schema and model, and copies it byte for byte. `--dir` (default: the cwd) is created after every check. The target may hold only `.git`, seeded files (kept),
 paths equal to their render and leftovers: a `hub.lock` exits 1 pointing to `hub sync`; a differing managed path, an
 unknown entry or a `hub.json` other than this run's to `hub sync --adopt`; any other problem names its cause. It writes
 through the sync writer ([hub-sync.md](hub-sync.md), Apply), `hub.lock` last. Output:
 `created N files (M managed, K seeded) and L links in <root>`; if any, `kept X files already there (Y seeded, Z equal to
 the render)` (`and L links`) and `removed X leftover temporary files`; next steps. Exits: 0 done, 1 error, 2 usage.
+
+### Modules
+
+A selected module renders its files (rows above) and `mk/<id>.mk`, whose `.PHONY` targets `make help` lists: `bench`
+(`$(ARGS)` passed raw), `bench-validate`, `cloud-setup`, `contract-sync`, `marketplace-validate`. `contract-sync.sh` runs
+`make contract-export` in `../<source>`, then `make contract-import` in `../<target>` (no contract format). The managed
+marketplace holds `name`, `owner` and the plugins `hub-workflow` and `<project>`; the sibling's plugins follow in their
+order ([hub-sync.md](hub-sync.md)). `AGENTS.md` names the selected modules' files only, so it changes with `modules`.
 
 ### Hooks and plugin wiring
 
@@ -87,7 +94,7 @@ ask on edits of the hooks folders. Proof: integration tests.
 | `agent`, `make agent` | `./agent`: `exec ./hub agent "$@"` | `--add-dir` per repo dir; the repos' `AGENTS.md` in `brain/auto/agent-context.md` (rewritten per launch, gitignored); then `exec claude` |
 | `bench.py`, `make bench`, `make bench-validate` | `hub bench [--validate]`, module `bench` | cases stay in the brain |
 | `agent_config_lint.py`, `features_check.py`; `hubconfig.py` | doctor rules ([hub-doctor.md](hub-doctor.md)); `hubconfig.py` dropped (the CLI reads `HubConfig`) | skills run `hub doctor --only features.tracker` |
-| `cloud-setup.sh` | stays a hub file, module `cloud` | bootstraps access and the uv cache, so it cannot need the CLI |
+| `cloud-setup.sh` | stays a hub file, module `cloud` | checks access to the pinned tag, warms the uv cache, then fetches the repos; no access: exit 1 naming it; it cannot need the CLI |
 | `mine_transcripts.py`, `recall_transcripts.py`, `retro_metrics.py`, `make mine`, `make retro`; `guard.py`, `hubhooks.py`, `hooks.json`, `post_edit.py`, `stop_gate.py`, `session_start.py`, `session_end.py`, `pre_compact.py` | stay hub files, managed | scripts: AGH-5 R12, Phase 2 redesigns them; hooks: the hooks exception, AGH-5 D9 ([ADR 0012](../adr/0012-cli-subsumes-hub-scripts.md)) |
 | `make usage`, `make check`, `make help` | stay targets; `check` runs `hub doctor` and the hub's own tests | `usage` wraps an external cost tool until the Phase 2 cost view; hook tests move to agent-hub |
 

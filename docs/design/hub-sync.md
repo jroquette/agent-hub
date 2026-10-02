@@ -21,14 +21,13 @@ a function of the render and the config only (`build_hub_lock`), written by `ini
 1. **Root:** the real path of the cwd, taken once; no `--dir`, no walk-up (a worktree syncs itself).
 2. **Load**, each step exiting 1 before anything after it is read: `hub.json` (none: the reader's `cannot read` line,
    then `hub.json: run hub sync in the hub folder`); running CLI = `platform.version` (else only the pinned `uvx`
-   command), `schema_version`, the model (`hub.json: <json path>: <message>`); selected modules, refused with
-   `init`'s line until module templates ship; then `hub.lock`, read once and never through a link. Absent:
-   `hub.lock: not found; run hub sync --adopt to join this hub to the lock`. A link, folder, FIFO or other
-   non-regular file is never opened: `hub.lock: not a regular file`. Malformed: one line per problem,
-   `hub.lock: <json path>: <message>` (JSON errors worded as for `hub.json`; the model's messages without class
-   names; `lock_version` other than 1; a `hub.json` entry that is not seeded: `must be seeded: hub.json is the
-   project's`; a key or string holding a lone surrogate: `not UTF-8 text: holds a lone surrogate`, reported alone).
-   Both end with `hub.lock: restore it from git, or run hub sync --adopt`.
+   command), `schema_version`, the model (`hub.json: <json path>: <message>`); then `hub.lock`, read once and never
+   through a link. Absent: `hub.lock: not found; run hub sync --adopt to join this hub to the lock`. A link, folder,
+   FIFO or other non-regular file is never opened: `hub.lock: not a regular file`. Malformed: one line per problem,
+   `hub.lock: <json path>: <message>` (JSON errors worded as for `hub.json`; the model's messages without class names;
+   `lock_version` other than 1; a `hub.json` entry that is not seeded: `must be seeded: hub.json is the project's`; a
+   key or string holding a lone surrogate: `not UTF-8 text: holds a lone surrogate`, reported alone). Both end with
+   `hub.lock: restore it from git, or run hub sync --adopt`.
 3. **Read** after the render, only what is planned: every rendered path and every lock path but `hub.json` and
    `hub.lock`, each ancestor looked at without following it and the descent stopped at the first that is not a folder;
    content only for the files compared (rendered managed, managed file entries); the listing of each folder holding a
@@ -46,9 +45,8 @@ a function of the render and the config only (`build_hub_lock`), written by `ini
      the file, or its absence, stays; recorded seeded.
    - **In the lock, not rendered.** Seeded → entry dropped. Managed: gone → dropped; equal to the entry → deleted,
      `deleted`; else conflict. A rename is a delete plus a create.
-   - **Type.** A file or folder where a link is rendered, or the reverse, is a conflict even when equal to its
-     entry (never removed: delete it and re-run); so is a rendered path whose ancestor is a file, even one planned for
-     deletion.
+   - **Type.** A file or folder where a link is rendered, or the reverse, is a conflict even when equal to its entry
+     (delete it and re-run); so is a rendered path whose ancestor is a file, even one planned for deletion.
    - **Lock.** The new lock is always `build_hub_lock` of the render, written when its bytes differ from the bytes read:
      a header change, a dropped entry, a missing `hub.json` entry or a reformatted lock rewrite only `hub.lock`.
    - **Leftovers:** a file or link named `.<name>.hub-tmp-<8 hex>` in a listed folder, never a planned path.
@@ -73,23 +71,22 @@ a function of the render and the config only (`build_hub_lock`), written by `ini
   `differs from its hub.lock entry and is no longer rendered` (bytes, bit or target), `symlinked ancestor A`,
   `a file where a folder belongs: A`, `resolves outside the hub`, or `init`'s type wording (`a link where a file
   belongs`, `not a regular file`, …). A name clash: below.
-- **Exits:** 0 done or up to date; 1 error (config, modules, lock, extension inputs, I/O; one escaped line each,
-  stderr); 2 usage (and `--adopt` until AGH-16); 3 conflict; 4 `--check` with changes pending.
+- **Exits:** 0 done or up to date; 1 error (config, lock, extension inputs, I/O; one escaped line each, stderr); 2 usage
+  (and `--adopt` until AGH-16); 3 conflict; 4 `--check` with changes pending.
 
 ### Apply
 
-The writer opens the root once per apply, checked against its real path by device and inode, after checking every
-path it is given (plain, relative) and before touching any. Order: leftovers, deletes, missing folders (parents first),
+The writer opens the root once per apply, checked against its real path by device and inode, after checking every path
+it is given (plain, relative) and before touching any. Order: leftovers, deletes, missing folders (parents first),
 files, links (each in path order), `hub.lock` last. Each path is written through `.<name>.hub-tmp-<8 random hex>` in its
-folder (`O_CREAT|O_EXCL|O_NOFOLLOW`, 0o600; a link: `os.symlink`), given its final mode, then `os.replace`d; on an
-error the adapter removes its own temp entry. A delete unlinks a regular file or a link, never a folder, never
-recursively; another type is an error; a gone entry is fine, a gone parent is an error. Folders emptied by a delete
-stay. `init` uses the same writer (leftovers: the whole tree but `.git`). Reader and writer descend by
-`O_DIRECTORY|O_NOFOLLOW` descriptors, so neither follows a symlinked ancestor of a path it touches, nor opens a
-non-regular file; a link resolving outside the hub is refused (accepted risk: both resolve that by path, so a folder
-swapped meanwhile can escape it; the writer's root check narrows that window). Found only by the writer (a race), a
-symlinked ancestor or an I/O error exits 1 naming the path and cause. An interrupted sync leaves the old `hub.lock`;
-the next run ends where a clean one would.
+folder (`O_CREAT|O_EXCL|O_NOFOLLOW`, 0o600; a link: `os.symlink`), given its final mode, then `os.replace`d; on an error
+the adapter removes its own temp entry. A delete unlinks a regular file or a link, never a folder; another type is an
+error; a gone entry is fine, a gone parent is an error. `init` uses the same writer (leftovers: the whole tree but
+`.git`). Reader and writer descend by `O_DIRECTORY|O_NOFOLLOW` descriptors, so neither follows a symlinked ancestor of a
+path it touches, nor opens a non-regular file; a link resolving outside the hub is refused (accepted risk: both resolve
+that by path, so a folder swapped meanwhile can escape it; the writer's root check narrows that window). Found only by
+the writer (a race), a symlinked ancestor or an I/O error exits 1 naming the path and cause. An interrupted sync leaves
+the old `hub.lock`; the next run ends where a clean one would.
 
 ### --adopt
 
@@ -104,19 +101,22 @@ declared and exits 2 with `not implemented yet (Phase 1)` before anything is rea
 
 ### Project JSON and project entries
 
-A seeded built `X.project.json` pairs with a managed built `X.json` (Phase 1: `.claude/settings.project.json`); `sync`
-and `init` read a present sibling and deep-merge it into `X.json` (absent or deleted: the template's). Objects merge by
-key, the project wins on scalars, arrays are the template's items then the project's, a repeat dropped keeping the first
-(equal: the same `dump_json` bytes, so `true` ≠ `1`, `1` ≠ `1.0`); a rerun gives the same bytes. The merge only adds. A
-bad sibling exits 1, nothing written, with one line `P: <key path>: <message>` (key paths as `problems.json_path`:
-`permissions.allow`, `hooks[0]`, `$` the root): a refused key first, else the first problem in the sibling's key order.
-At `$`: the parser's words (not UTF-8, a BOM, bad JSON, over 4300 digits, nested too deeply) and, strictly, `not valid
-JSON here: ` then `the key "<k>" appears more than once`, `NaN|Infinity|-Infinity is not a JSON number`, `a number is
-too large for this reader` or `a string holds a lone surrogate escape` (a key too). Refused by presence in
-`.claude/settings.project.json`: `disableAllHooks` and `permissions.defaultMode`, `refused: a project cannot set this
-key (it weakens the harness)`. An object or array against another type, the root included: `<an object|an array|a
-string|a boolean|a number|null> where the template has <…>`. A `null` at any depth, in new keys and items too: `null is
-refused: the merge never deletes a key`. A link, folder or other non-regular sibling: `P: not a regular file`.
+A seeded built `X.project.json` pairs with a managed built `X.json` (`.claude/settings.project.json`; module
+`marketplace`: `.claude-plugin/marketplace.project.json`); `sync` and `init` read a present sibling and deep-merge it
+into `X.json` (absent or deleted: the template's). Objects merge by key, the project wins on scalars, arrays are the
+template's items then the project's, a repeat dropped keeping the first (equal: the same `dump_json` bytes, so `true` ≠
+`1`, `1` ≠ `1.0`); a rerun gives the same bytes. The merge only adds. A bad sibling exits 1, nothing written, with one
+line `P: <key path>: <message>` (`permissions.allow`, `hooks[0]`, `$` the root): a refused key first, else the first
+problem in the sibling's key order. At `$`: the parser's words (not UTF-8, a BOM, bad JSON, over 4300 digits, nested too
+deeply) and, strictly, `not valid JSON here: ` then `the key "<k>" appears more than once`, `NaN|Infinity|-Infinity is
+not a JSON number`, `a number is too large for this reader` or `a string holds a lone surrogate escape` (a key too).
+Refused by presence in `.claude/settings.project.json`: `disableAllHooks` and `permissions.defaultMode`, `refused: a
+project cannot set this key (it weakens the harness)`. Refused in the marketplace sibling: `name`, `owner` (`refused:
+the managed marketplace.json owns this key`), a plugin named `hub-workflow` or `<project>` (`… entry`), a repeated
+plugin name, an entry not an object with a string `name`; its other keys are the project's. An object or array against
+another type, the root included: `<an object|an array|a string|a boolean|a number|null> where the template has <…>`. A
+`null` at any depth, in new keys and items too: `null is refused: the merge never deletes a key`. A link, folder or
+other non-regular sibling: `P: not a regular file`.
 
 `sync` links each regular file in `plugin/<project>/agents` and each real folder in `skills`, whatever it holds:
 `.claude/<folder>/<name>` → `../../plugin/<project>/<folder>/<name>`, managed and locked like a base link. Names
