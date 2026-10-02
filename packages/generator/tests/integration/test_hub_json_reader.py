@@ -238,6 +238,126 @@ def test_lists_every_optional_field_when_model_inspected() -> None:
     assert defaulted - containers == set(OPTIONAL_PATHS) | set(INHERITED_PATHS)
 
 
+def repo_branches(hub_file: Mapping[str, Any]) -> dict[str, str]:
+    return {repo["dir"]: repo["default_branch"] for repo in hub_file["repos"]}
+
+
+@pytest.mark.parametrize("branch", ["master", "release/2", "v1.0"])
+def test_reads_repo_branch_when_value_matches_pattern(
+    tmp_path: Path, *, hook_python: str, read: Reader, branch: str
+) -> None:
+    document = a_hub_document()
+    document["project"]["default_branch"] = "trunk"
+    document["repos"][0]["default_branch"] = branch
+    document["repos"].append(a_second_repo())
+    path = write_hub_file(tmp_path, document)
+
+    hub_file = read(hook_python, path)["hub_file"]
+
+    assert repo_branches(hub_file) == {"demo-api": branch, "demo-web": "trunk"}
+    assert hub_file["project"]["default_branch"] == "trunk"
+
+
+@pytest.mark.parametrize(
+    ("project_branch", "branch", "expected"),
+    [
+        ("trunk", 7, "trunk"),
+        ("trunk", "", "trunk"),
+        ("trunk", "-x", "trunk"),
+        ("trunk", "a..b", "trunk"),
+        ("trunk", "main/", "trunk"),
+        ("trunk", "a b", "trunk"),
+        ("trunk", None, "trunk"),
+        (None, "-x", "main"),
+    ],
+    ids=["int", "empty", "dash", "dots", "slash", "space", "null", "no-project-branch"],
+)
+def test_inherits_project_branch_when_repo_value_invalid(
+    tmp_path: Path,
+    *,
+    hook_python: str,
+    read: Reader,
+    project_branch: str | None,
+    branch: object,
+    expected: str,
+) -> None:
+    document = a_hub_document()
+    if project_branch is None:
+        document["project"].pop("default_branch", None)
+    else:
+        document["project"]["default_branch"] = project_branch
+    document["repos"][0]["default_branch"] = branch
+    path = write_hub_file(tmp_path, document)
+
+    # ``read`` fails the test when the child exits non-zero: the read never raises.
+    hub_file = read(hook_python, path)["hub_file"]
+
+    assert repo_branches(hub_file) == {"demo-api": expected}
+    assert hub_file["repos"][0]["github"] == "acme/demo-api"
+    assert hub_file["project"]["default_branch"] == expected
+
+
+def a_project_trunk_document() -> dict[str, Any]:
+    document = a_minimal_document()
+    document["project"]["default_branch"] = "trunk"
+    return document
+
+
+def a_repo_master_document() -> dict[str, Any]:
+    document = a_project_trunk_document()
+    document["repos"][0]["default_branch"] = "master"
+    document["repos"].append(a_second_repo())
+    return document
+
+
+def a_both_repos_set_document() -> dict[str, Any]:
+    document = a_repo_master_document()
+    document["repos"][1]["default_branch"] = "release/2"
+    return document
+
+
+@pytest.mark.parametrize(
+    "make_document",
+    [
+        a_minimal_document,
+        a_project_trunk_document,
+        a_repo_master_document,
+        a_both_repos_set_document,
+    ],
+    ids=["minimal", "project-trunk", "one-repo-set", "both-repos-set"],
+)
+def test_matches_model_branch_when_document_valid(
+    tmp_path: Path,
+    *,
+    hook_python: str,
+    read: Reader,
+    make_document: Callable[[], dict[str, Any]],
+) -> None:
+    document = make_document()
+    path = write_hub_file(tmp_path, document)
+
+    config = HubConfig.model_validate(document)
+    hub_file = read(hook_python, path)["hub_file"]
+
+    assert repo_branches(hub_file) == {
+        repo.dir: config.default_branch_for(repo.dir) for repo in config.repos
+    }
+
+
+def test_uses_model_branch_pattern_when_source_checked(
+    tmp_path: Path, hook_python: str, read: Reader
+) -> None:
+    pattern = Project.model_json_schema()["properties"]["default_branch"]["pattern"]
+    assert pattern.startswith("^")
+    assert pattern.endswith("$")
+    path = write_hub_file(tmp_path, a_hub_document())
+
+    checks = {"pattern": ("BRANCH_NAME.pattern", repr(pattern[1:-1]))}
+    loaded = read(hook_python, path, checks=checks)
+
+    assert loaded["equal"] == {"pattern": True}
+
+
 def write_invalid_utf8(path: Path) -> None:
     path.write_bytes(b'{"project": {"name": "\xff"}}')
 
