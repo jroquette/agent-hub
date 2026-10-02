@@ -250,11 +250,13 @@ GUARD_FILE_REASON = ("{} is the hub's own guard or config ({}): hooks, the proje
 def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
     cfg = cfg or Config()
     c = cmd.replace("\\\n", " ")
-    branches = "|".join(sorted({"main", "master", re.escape(cfg.default_branch)}))
+    # longest first, so release/2 is named before release
+    branches = "|".join(re.escape(b) for b in sorted(cfg.protected_branches, key=lambda b: (-len(b), b)))
     if re.search(GIT + r"push\b[^;&|\n]*(\s--force\b|\s-f\b|\s--force-with-lease\b|\s\+\S)", c):
         return "deny", "force-push is not allowed; push a new commit (or a merge) instead"
-    if re.search(GIT + rf"push\b[^;&|\n]*(\s(origin\s+)?({branches})\b|:(refs/heads/)?({branches})\b)", c):
-        return "deny", f"pushing to {cfg.default_branch} is not allowed; open a PR from a {_branch_hint(cfg)} branch"
+    push = re.search(GIT + rf"push\b[^;&|\n]*(\s(origin\s+)?(?P<plain>{branches})\b|:(refs/heads/)?(?P<ref>{branches})\b)", c)
+    if push:
+        return "deny", f"pushing to {push.group('plain') or push.group('ref')} is not allowed; open a PR from a {_branch_hint(cfg)} branch"
     if re.search(r"\b(curl|wget)\b[^|;&\n]*\|\s*(sudo\s+)?(ba|z|da)?sh\b", c):
         return "deny", "curl|sh is not allowed; download, inspect, then run explicitly"
     host = denied_host(c, cfg)
