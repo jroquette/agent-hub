@@ -161,10 +161,7 @@ class TestContractSync:
         assert make_calls(log) == [f"contract-export {SOURCE}", f"contract-import {TARGET}"]
 
     def test_skips_import_when_export_fails(
-        self,
-        all_modules_config: HubConfig,
-        rendered_hub: Callable[[HubConfig], Path],
-        fake_uv_bin: Path,
+        self, all_modules_config: HubConfig, rendered_hub: Callable[[HubConfig], Path]
     ) -> None:
         root, log = a_contract_workspace(
             rendered_hub, all_modules_config, failing="contract-export"
@@ -180,10 +177,7 @@ class TestContractSync:
         ) in completed.stderr.splitlines()
 
     def test_names_target_when_import_fails(
-        self,
-        all_modules_config: HubConfig,
-        rendered_hub: Callable[[HubConfig], Path],
-        fake_uv_bin: Path,
+        self, all_modules_config: HubConfig, rendered_hub: Callable[[HubConfig], Path]
     ) -> None:
         root, log = a_contract_workspace(
             rendered_hub, all_modules_config, failing="contract-import"
@@ -196,6 +190,54 @@ class TestContractSync:
         assert (
             f"contract-sync: make contract-import failed in ../{TARGET} (target)"
         ) in completed.stderr.splitlines()
+
+    def test_keeps_hub_make_flags_out_of_repos_when_run_from_make(
+        self, all_modules_config: HubConfig, rendered_hub: Callable[[HubConfig], Path]
+    ) -> None:
+        root, log = a_contract_workspace(rendered_hub, all_modules_config)
+        # The source repo logs what its make inherited: flags, level and a variable set on them.
+        (root.parent / SOURCE / "Makefile").write_text(
+            "contract-export:\n"
+            f"\tprintf '%s|%s|%s\\n' \"$$MAKEFLAGS\" \"$$MAKELEVEL\" '$(LEAK)' >> '{log}'\n",
+            encoding="utf-8",
+        )
+        # What an outer `make contract-sync -k LEAK=1` exports to its recipe's shell.
+        outer = {
+            "MAKEFLAGS": "k -- LEAK=1",
+            "MFLAGS": "-k",
+            "GNUMAKEFLAGS": "LEAK=1",
+            "MAKELEVEL": "1",
+        }
+
+        completed = run_bash(root, CONTRACT_SYNC, extra_env=outer)
+
+        assert completed.returncode == 0, completed.stderr
+        [inherited, import_call] = make_calls(log)
+        flags, level, leak = inherited.split("|")
+        # A top-level make (its recipes see level 1): no -k, no variable of the hub's make.
+        assert (level, leak) == ("1", "")
+        assert "k" not in flags.split(" -- ", 1)[0]
+        assert "LEAK" not in flags
+        assert import_call == f"contract-import {TARGET}"
+
+    def test_runs_steps_when_workspace_path_has_space_and_cwd_elsewhere(
+        self,
+        tmp_path: Path,
+        all_modules_config: HubConfig,
+        rendered_tree: Callable[..., Path],
+    ) -> None:
+        workspace = tmp_path / "my work space"
+        root = a_hub_with_pin(
+            rendered_tree(render_hub(all_modules_config), root=workspace / "demo-hub")
+        )
+        log = tmp_path / "make-calls.log"
+        for name in (SOURCE, TARGET):
+            a_fake_repo(workspace, name, log)
+
+        completed = run_bash(root, str(root / CONTRACT_SYNC), cwd=tmp_path)
+
+        assert completed.returncode == 0, completed.stderr
+        assert make_calls(log) == [f"contract-export {SOURCE}", f"contract-import {TARGET}"]
 
     @pytest.mark.parametrize("missing", [SOURCE, TARGET])
     def test_names_repo_when_dir_missing(
@@ -243,16 +285,23 @@ def rendered_text(config: HubConfig, path: str) -> str:
     return rendered[path].content.decode("utf-8")
 
 
-def run_bash(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+def run_bash(
+    root: Path,
+    *arguments: str,
+    cwd: Path | None = None,
+    extra_env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run ``bash *arguments`` in ``cwd`` (default ``root``); env: PATH, HOME and ``extra_env``."""
     bash = shutil.which("bash")
     assert bash is not None, "the module scripts run on bash: install it"
     env = {"PATH": os.environ.get("PATH", os.defpath), "HOME": str(root.parent / "home")}
+    env |= extra_env or {}
     return subprocess.run(  # noqa: S603 - absolute bash, a rendered script, no shell
         [bash, *arguments],
         capture_output=True,
         text=True,
         check=False,
         timeout=TIMEOUT,
-        cwd=root,
+        cwd=root if cwd is None else cwd,
         env=env,
     )

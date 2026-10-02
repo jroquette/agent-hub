@@ -26,6 +26,9 @@ for repo_dir in "$source_dir" "$target_dir"; do
   fi
 done
 
+# Each repo's make starts fresh: the hub make's flags, variables and jobserver stay out of it.
+unset MAKEFLAGS MFLAGS MAKELEVEL GNUMAKEFLAGS
+
 echo "contract-sync: make contract-export in ../$source_dir"
 make -C "$workspace/$source_dir" contract-export || {
   echo "contract-sync: make contract-export failed in ../$source_dir (source); make contract-import in ../$target_dir did not run" >&2
