@@ -369,6 +369,33 @@ def test_reports_contract_sync_problem_when_settings_invalid(
     assert lines == [schema_line(problem), ONE_ERROR]
 
 
+@pytest.mark.parametrize(
+    "modules",
+    [("cloud",), ("marketplace",), ("bench", "cloud", "contract-sync", "marketplace")],
+    ids=["cloud", "marketplace", "all"],
+)
+def test_finds_no_stale_reference_when_fresh_hub_selects_modules(
+    tmp_path: Path,
+    demo_document: dict[str, Any],
+    run_doctor: DoctorRunner,
+    *,
+    modules: tuple[str, ...],
+) -> None:
+    # AGH-17: AGENTS.md names the selected modules' files, which a fresh hub holds, so none is a
+    # stale reference.
+    demo_document["repos"].append(a_second_repo())
+    source, target = (repo["dir"] for repo in demo_document["repos"])
+    settings = {"contract-sync": {"source": source, "target": target}}
+    demo_document["modules"] = {module: settings.get(module, {}) for module in modules}
+    config = tmp_path / "hub.json"
+    config.write_bytes(dump_json(demo_document))
+    root = tmp_path / "hub"
+    created = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
+    assert created.exit_code == 0, created.stderr
+
+    assert lines_of(run_doctor(root, "--only", "instructions.refs"), exit_code=0) == [CLEAN]
+
+
 @pytest.mark.parametrize("schema_version", [1, 2], ids=["schema-ok", "schema-wrong"])
 def test_reports_pin_only_when_pin_differs(
     demo_hub: Path,

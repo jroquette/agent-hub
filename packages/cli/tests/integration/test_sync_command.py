@@ -309,7 +309,9 @@ class TestModules:
         checked = run_sync(demo_hub, "--check")
 
         assert (checked.exit_code, checked.stderr) == (4, ""), checked.output
+        # AGENTS.md names the selected modules' files, so it changes with them.
         assert checked.stdout.splitlines() == [
+            "would update AGENTS.md",
             "would update Makefile",
             "would create mk/bench.mk",
             "would update hub.lock",
@@ -325,6 +327,7 @@ class TestModules:
 
         assert (synced.exit_code, synced.stderr) == (0, ""), synced.output
         assert synced.stdout.splitlines() == [
+            "updated AGENTS.md",
             "updated Makefile",
             "created mk/bench.mk",
             "updated hub.lock",
@@ -352,6 +355,7 @@ class TestModules:
         assert (synced.exit_code, synced.stderr) == (0, ""), synced.output
         assert synced.stdout.splitlines() == [
             f"deleted {MARKETPLACE}",
+            "updated AGENTS.md",
             "updated Makefile",
             "deleted mk/bench.mk",
             "deleted mk/marketplace.mk",

@@ -16,9 +16,9 @@ is a hub bug: log it in `brain/_inbox/`.
   demand, never in bulk.
 - `hub sync` rewrites these managed files: `AGENTS.md`, `CLAUDE.md`, `Makefile`, `hub`, `agent`,
   `hub.schema.json`, `.claude/settings.json`, `.github/workflows/ci.yml`, `.pre-commit-config.yaml`,
-  `plugin/hub-workflow/`, `scripts/mine_transcripts.py`, `scripts/recall_transcripts.py`, `scripts/retro_metrics.py`.
+  `plugin/hub-workflow/`, `scripts/mine_transcripts.py`, `scripts/recall_transcripts.py`, `scripts/retro_metrics.py`@@{module_files}.
   Change them only through `hub.json` or their seeded sibling (`AGENTS.project.md`, `Makefile.project`,
-  `.claude/settings.project.json`, `plugin/@@{project_name}/`), which `hub sync` never touches.
+  `.claude/settings.project.json`, `plugin/@@{project_name}/`@@{module_seeded_files}), which `hub sync` never touches.
 - `.claude/settings.json` already runs the `hub-workflow` hooks, so that plugin must not be enabled from a marketplace
   in this hub: Claude Code drops only identical duplicate hook commands, so every hook would run twice.
 - Repos, checked out next to this hub: @@{repo_dirs}.
