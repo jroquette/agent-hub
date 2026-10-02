@@ -37,6 +37,8 @@ LIVE_VARIABLES = {
     "AGENT_HUB_LIVE_ISSUE": "AGH-1",
     "AGENT_HUB_LIVE_LABEL": "agent-ready",
 }
+# Only a live("mcp") test needs it: claude runs from that hub.
+LIVE_HUB = {"AGENT_HUB_LIVE_HUB": "/synthetic/hub"}
 
 
 class _FakeItem:
@@ -54,7 +56,7 @@ class _FakeItem:
 
 
 def _set_live_variables(monkeypatch: pytest.MonkeyPatch, **overrides: str | None) -> None:
-    for name, value in {**LIVE_VARIABLES, **overrides}.items():
+    for name, value in {**LIVE_VARIABLES, **LIVE_HUB, **overrides}.items():
         if value is None:
             monkeypatch.delenv(name, raising=False)
         else:
@@ -154,14 +156,26 @@ def test_needs_key_when_live_marked_bare(monkeypatch: pytest.MonkeyPatch) -> Non
     assert _names(reason, "LINEAR_API_KEY")
 
 
+def test_needs_no_hub_when_live_marked_bare(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The GraphQL smoke test runs no claude, so it needs no hub to run it from.
+    _set_live_variables(monkeypatch, AGENT_HUB_LIVE_HUB=None)
+    item = _FakeItem("packages/tracker_linear/tests/integration/test_live.py", "live")
+
+    _collect(item)
+
+    assert _skip_reasons(item) == []
+
+
 @pytest.mark.parametrize(
     ("missing", "first"),
     [
         (("AGENT_HUB_LIVE",), "AGENT_HUB_LIVE"),
         (("AGENT_HUB_LIVE_ISSUE", "AGENT_HUB_LIVE_LABEL"), "AGENT_HUB_LIVE_ISSUE"),
         (("AGENT_HUB_LIVE_LABEL",), "AGENT_HUB_LIVE_LABEL"),
+        (("AGENT_HUB_LIVE_HUB",), "AGENT_HUB_LIVE_HUB"),
+        (("AGENT_HUB_LIVE_LABEL", "AGENT_HUB_LIVE_HUB"), "AGENT_HUB_LIVE_LABEL"),
     ],
-    ids=["switch", "issue-and-label", "label"],
+    ids=["switch", "issue-and-label", "label", "hub", "label-and-hub"],
 )
 def test_names_first_missing_variable_when_mcp_live_skipped(
     monkeypatch: pytest.MonkeyPatch, *, missing: tuple[str, ...], first: str
@@ -175,7 +189,8 @@ def test_names_first_missing_variable_when_mcp_live_skipped(
     assert _names(reason, first)
     assert not _names(reason, "LINEAR_API_KEY")
     assert [name for name in missing if name != first and _names(reason, name)] == []
-    assert not any(value in reason for value in LIVE_VARIABLES.values() if len(value) > 1)
+    values = {**LIVE_VARIABLES, **LIVE_HUB}.values()
+    assert not any(value in reason for value in values if len(value) > 1)
 
 
 def test_rejects_live_marker_when_transport_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
