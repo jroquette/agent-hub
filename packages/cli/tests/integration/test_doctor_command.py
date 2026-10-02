@@ -28,6 +28,7 @@ from agent_hub.core.doctor.finding import Read, Rule
 from agent_hub.core.doctor.registry import REGISTRY
 from agent_hub.core.hub_config.doctor_rules import Severity
 from agent_hub.core.json_form import dump_json
+from agent_hub.core.testing.builders import a_second_repo
 from agent_hub.generator import render_hub as render_hub_module
 
 # The conftest's in-process doctor run, its path recorder and the recorder's filters (tests
@@ -315,13 +316,6 @@ def test_stays_clean_when_transport_absent(
     assert lines == [CLEAN]
 
 
-# DEMO's second repo, as the conftest's two-repo DEMO adds it (a conftest is not importable).
-SECOND_REPO = {
-    "dir": "demo-web",
-    "github": "acme/demo-web",
-    "check_fast": "make check-fast",
-    "check": "make check",
-}
 CONTRACT_SYNC = {"source": "demo-api", "target": "demo-web"}
 
 
@@ -366,7 +360,7 @@ def test_reports_contract_sync_problem_when_settings_invalid(
     modules: dict[str, Any],
     problem: str,
 ) -> None:
-    demo_document["repos"].append(SECOND_REPO)
+    demo_document["repos"].append(a_second_repo())
     demo_document["modules"] = modules
     root = config_only_hub(tmp_path, dump_json(demo_document))
 

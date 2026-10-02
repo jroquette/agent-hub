@@ -23,7 +23,7 @@ from agent_hub.core.hub_files.hub_lock import (
 from agent_hub.core.hub_files.rendered_file import Ownership
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.json_form import dump_json
-from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 
 SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 
@@ -95,7 +95,7 @@ def test_sorts_modules_when_config_order_differs(
     a_rendered_hub: Callable[..., RenderedHub],
 ) -> None:
     document = a_hub_document()
-    document["repos"].append(document["repos"][0] | {"dir": "demo-web", "github": "acme/demo-web"})
+    document["repos"].append(a_second_repo())
     contract_sync = {"source": "demo-api", "target": "demo-web"}
     document["modules"] = {"marketplace": {}, "contract-sync": contract_sync, "bench": {}}
     config = HubConfig.model_validate(document)

@@ -21,7 +21,7 @@ from agent_hub.core.hub_files.extension_inputs import NO_EXTENSIONS, ExtensionIn
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.hub_files.rendered_link import RenderedLink
-from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 from agent_hub.generator.built_json import managed_settings
 from agent_hub.generator.errors import GeneratorError, TemplateError
 from agent_hub.generator.hub_template import render_template
@@ -171,15 +171,6 @@ def a_bench_entry() -> TemplateEntry:
     )
 
 
-# A second repo, so ``contract-sync`` has two different repos to name.
-SECOND_REPO = {
-    "dir": "demo-web",
-    "github": "acme/demo-web",
-    "check_fast": "make check-fast",
-    "check": "make check",
-}
-
-
 def a_config_with_modules(modules: dict[str, Any]) -> HubConfig:
     document = a_hub_document()
     document["modules"] = modules
@@ -322,7 +313,7 @@ def test_renders_module_entry_when_aliased_module_selected() -> None:
     )
 
     document = a_hub_document()
-    document["repos"].append(SECOND_REPO)
+    document["repos"].append(a_second_repo())
     document["modules"] = {"contract-sync": {"source": "demo-api", "target": "demo-web"}}
 
     rendered = render_entries(HubConfig.model_validate(document), [entry])
