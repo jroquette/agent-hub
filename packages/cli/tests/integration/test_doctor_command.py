@@ -423,11 +423,8 @@ class TestExitCodes:
 
     @pytest.mark.parametrize(
         ("modules", "message"),
-        [
-            (None, "module bench is not selected"),
-            ({"bench": {}}, "bench.tasks is not in this release"),
-        ],
-        ids=["unselected", "selected"],
+        [(None, "module bench is not selected")],
+        ids=["unselected"],
     )
     def test_exits_two_when_only_names_module_rule(
         self,
@@ -484,6 +481,107 @@ class TestExitCodes:
         assert result.stderr == "lock.drift: disabled in hub.json doctor.rules\n"
         assert result.stdout.splitlines() == [
             OVERRIDE_LINE.replace("warning", "error", 1),
+            ONE_ERROR,
+        ]
+
+
+TASKS = "brain/workflow/bench/tasks.json"
+BENCH_SHA = "0123456789abcdef0123456789abcdef01234567"
+
+
+def a_bench_case(**changes: Any) -> dict[str, Any]:
+    """A bench case valid against ``DEMO`` (its one repo ``demo-api``), with ``changes``."""
+    case: dict[str, Any] = {
+        "id": "T1",
+        "repo": "demo-api",
+        "merge": BENCH_SHA,
+        "prompt": "Add the fix",
+        "hidden_tests": ["tests/test_fix.py"],
+        "test_cmd": ["python3", "-m", "pytest", "-q"],
+    }
+    return case | changes
+
+
+def write_bench(
+    root: Path, document: dict[str, Any], *, modules: dict[str, Any] | None, cases: object
+) -> None:
+    """Give the hub ``modules`` (none when ``None``) and ``cases`` in the bench's tasks.json."""
+    if modules is not None:
+        document["modules"] = modules
+    (root / "hub.json").write_bytes(dump_json(document))
+    tasks = root / TASKS
+    tasks.parent.mkdir(parents=True, exist_ok=True)
+    tasks.write_bytes(dump_json(cases))
+
+
+class TestBenchTasks:
+    """``bench.tasks`` runs only when module ``bench`` is selected (spec AC-17.2, AC-17.3, E6)."""
+
+    @pytest.mark.parametrize("cases", [[], [a_bench_case()]], ids=["empty", "valid"])
+    def test_runs_rule_when_only_names_it_and_bench_selected(
+        self,
+        demo_hub: Path,
+        demo_document: dict[str, Any],
+        run_doctor: DoctorRunner,
+        *,
+        cases: list[dict[str, Any]],
+    ) -> None:
+        write_bench(demo_hub, demo_document, modules={"bench": {}}, cases=cases)
+        # A lock.drift problem that only a run of lock.drift reports.
+        (demo_hub / "hub.lock").unlink()
+
+        lines = lines_of(run_doctor(demo_hub, "--only", "bench.tasks"), exit_code=0)
+
+        assert lines == [CLEAN]
+
+    @pytest.mark.parametrize("only", [(), ("--only", "bench.tasks")], ids=["all", "only"])
+    def test_reports_findings_when_cases_invalid(
+        self,
+        demo_hub: Path,
+        demo_document: dict[str, Any],
+        run_doctor: DoctorRunner,
+        *,
+        only: tuple[str, ...],
+    ) -> None:
+        cases = [a_bench_case(), a_bench_case(repo="zz"), a_bench_case(id="T3", merge="--orphan")]
+        write_bench(demo_hub, demo_document, modules={"bench": {}}, cases=cases)
+
+        lines = lines_of(run_doctor(demo_hub, *only), exit_code=1)
+
+        fix = "Fix: fix the case in tasks.json"
+        assert lines == [
+            f'error bench.tasks {TASKS}: [1].id: duplicate id "T1" {fix}',
+            f'error bench.tasks {TASKS}: [1].repo: "zz" is not in repos (demo-api) {fix}',
+            f"error bench.tasks {TASKS}: [2].merge: must be a commit sha:"
+            f" 7 to 40 characters among 0-9 and a-f {fix}",
+            "3 errors, 0 warnings, 0 infos",
+        ]
+
+    def test_skips_rule_when_bench_unselected(
+        self, demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+    ) -> None:
+        write_bench(demo_hub, demo_document, modules={"cloud": {}}, cases="not a list")
+
+        lines = lines_of(run_doctor(demo_hub, "--json"), exit_code=0)
+
+        assert json.loads("\n".join(lines)) == {
+            "findings": [],
+            "totals": {"errors": 0, "warnings": 0, "infos": 0},
+        }
+
+    def test_rejects_rule_settings_when_bench_unselected(
+        self, demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+    ) -> None:
+        demo_document["doctor"] = {"rules": {"bench.tasks": {"enabled": False}}}
+        write_bench(demo_hub, demo_document, modules=None, cases="not a list")
+
+        lines = lines_of(run_doctor(demo_hub), exit_code=1)
+
+        assert lines == [
+            schema_line(
+                'doctor.rules["bench.tasks"]: rule "bench.tasks" belongs to module "bench",'
+                ' which is not selected; add "bench" to modules or remove the rule'
+            ),
             ONE_ERROR,
         ]
 
