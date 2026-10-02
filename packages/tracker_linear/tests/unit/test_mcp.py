@@ -33,7 +33,7 @@ _DEFAULT_FLAGS = (
     "--model",
     "haiku",
     "--settings",
-    '{"effortLevel": "medium"}',
+    '{"effortLevel": "medium", "disableAllHooks": true}',
 )
 _TIMEOUT_S = 120.0
 
@@ -133,6 +133,7 @@ class TestReads:
             "-p",
             call.prompt,
             *_DEFAULT_FLAGS,
+            "--no-session-persistence",
             "--permission-mode",
             "dontAsk",
             "--tools",
@@ -163,7 +164,7 @@ class TestReads:
             "--model",
             "sonnet",
             "--settings",
-            '{"effortLevel": "low"}',
+            '{"effortLevel": "low", "disableAllHooks": true}',
         )
         runner = make_fake_claude(flags=flags, timeout_s=9.5)
         client = _client(
