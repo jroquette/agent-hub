@@ -69,7 +69,8 @@ switch behaviour silently. API only was rejected because it leaves cloud session
   (no built-in tool), `--disallowedTools` with every Linear tool the call is not allowed (a deny wins over any allow),
   and `--permission-mode dontAsk` (a permissive `defaultMode` in the user's settings cannot widen the call). The Linear
   tools are a snapshot of the working `Linear` server's 68 tools taken 2026-10-01 (`LINEAR_TOOLS`); each call denies
-  that snapshot minus its own tools. The snapshot is refreshed when the server changes.
+  that snapshot minus its own tools. The snapshot is refreshed when the server changes. **Changed from the draft
+  approved at the plan gate, which passed only `--allowedTools`.**
 
   Each call also turns every hook off (`"disableAllHooks": true` in its `--settings` JSON, next to `effortLevel`) and
   saves no session (`--no-session-persistence`); the working directory stays the hub root. Run from the hub root, a
@@ -84,7 +85,8 @@ switch behaviour silently. API only was rejected because it leaves cloud session
   is ever created. A write call that ran and failed (a timeout, an error result, an unusable reply, a wrong echo) says
   to check the issue in Linear, since the write may have been made; it never says to retry. `list_ready` filters the
   reply again in the adapter (team, label, state type), and refuses a reply listing more than 100 issues, one saying
-  more match, or one listing an issue twice, rather than return part of the list.
+  more match, or one listing an issue twice, rather than return part of the list. **Changed from the draft approved
+  at the plan gate, which had neither the write-failure wording nor the "more match" and repeated-issue refusals.**
 - Testing: `TrackerClientContract` runs against the adapter with an injected runner that answers from the seeded
   backend; a process test runs a fake `claude` executable; neither reaches Linear. A live test marked `live("mcp")`
   runs only by hand with `AGENT_HUB_LIVE=1`, `AGENT_HUB_LIVE_ISSUE`, `AGENT_HUB_LIVE_LABEL` and `AGENT_HUB_LIVE_HUB`
