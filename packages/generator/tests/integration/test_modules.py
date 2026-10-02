@@ -14,7 +14,7 @@ import os
 import re
 import shutil
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import pytest
@@ -29,7 +29,7 @@ from agent_hub.core.hub_files.hub_lock import (
     lock_bytes,
 )
 from agent_hub.core.hub_files.plan_sync import SyncPlan, plan_sync
-from agent_hub.core.hub_files.rendered_file import Ownership
+from agent_hub.core.hub_files.rendered_file import Ownership, RenderedFile
 from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 from agent_hub.generator.hub_tree import read_planned_tree
 from agent_hub.generator.render_hub import render_hub
@@ -384,20 +384,13 @@ class TestContractSync:
         }
 
 
-# A rendered shell script: a ``.sh`` path or a sh/bash ``#!`` line (the ``hub`` and ``agent``
-# shims).
-SHELL_SHEBANG = re.compile(rb"^#!\s*/(?:usr/)?bin/(?:env\s+)?(?:ba)?sh\b")
-
-
 def test_parses_with_bash_n_when_scripts_rendered(
-    all_modules_config: HubConfig, rendered_hub: Callable[[HubConfig], Path]
+    all_modules_config: HubConfig,
+    rendered_hub: Callable[[HubConfig], Path],
+    shell_scripts: Callable[[Iterable[RenderedFile]], list[str]],
 ) -> None:
     """AC-17.13: every rendered shell script parses (``bash -n``) with every module selected."""
-    scripts = sorted(
-        file.path
-        for file in render_hub(all_modules_config).files
-        if file.path.endswith(".sh") or SHELL_SHEBANG.match(file.content)
-    )
+    scripts = sorted(shell_scripts(render_hub(all_modules_config).files))
     assert {CONTRACT_SYNC, "scripts/cloud-setup.sh", "hub", "agent"} <= set(scripts)
     root = rendered_hub(all_modules_config)
 
