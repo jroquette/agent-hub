@@ -326,7 +326,6 @@ def test_rejects_reply_when_names_over_bound(call: McpCall[Any], field: str) -> 
         '{"id":\r"DEM-1"}',
         "Done: the comment is added.",
         '{"id": "DEM-1"',
-        "[" * 100_000 + "]" * 100_000,
     ],
     ids=[
         "empty",
@@ -336,12 +335,33 @@ def test_rejects_reply_when_names_over_bound(call: McpCall[Any], field: str) -> 
         "carriage-return",
         "prose",
         "cut",
-        "nested-deep",
     ],
 )
 def test_rejects_reply_when_not_one_line(text: str) -> None:
     with pytest.raises(TrackerError, match="not one line of JSON") as raised:
         parse_reply(comment_read_call("DEM-1"), text)
+
+    assert str(raised.value).startswith("comment DEM-1: ")
+    assert "\n" not in str(raised.value)
+
+
+def test_rejects_reply_when_parser_recurses_too_deeply(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Whether a deep reply overflows the parser depends on the C stack size, so it is forced here.
+    def too_deep(*_: object, **__: object) -> object:
+        raise RecursionError
+
+    monkeypatch.setattr(json, "loads", too_deep)
+
+    with pytest.raises(TrackerError, match="not one line of JSON") as raised:
+        parse_reply(comment_read_call("DEM-1"), '{"id": "DEM-1"}')
+
+    assert "\n" not in str(raised.value)
+
+
+def test_rejects_reply_when_nested_deep() -> None:
+    # Refused either way: too deep where the parser overflows, another shape where it does not.
+    with pytest.raises(TrackerError) as raised:
+        parse_reply(comment_read_call("DEM-1"), "[" * 100_000 + "]" * 100_000)
 
     assert str(raised.value).startswith("comment DEM-1: ")
     assert "\n" not in str(raised.value)
