@@ -1,6 +1,6 @@
 [project]
 name = "agent-hub-cli"
-version = "0.4.0"
+version = "0.5.0"
 description = "The hub command line interface of agent-hub."
 requires-python = ">=3.14"
 dependencies = ["agent-hub-core", "agent-hub-storage", "agent-hub-collector", "agent-hub-generator",
