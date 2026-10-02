@@ -66,8 +66,9 @@ def run_child(
     ``output_limit`` bytes are read back: the memory a chatty child costs is bounded, though
     not the disk (the file holds the whole stream until the call ends), and a process it
     leaves behind holds no pipe the read would wait on. With ``stdout_path`` too, stdout goes
-    to that file (created or emptied) and stays there; its last ``output_limit`` bytes are read
-    back as well. ``stdout_path`` needs ``output_limit``. ``on_start`` gets the child's pid as
+    to that file (created owner-only or emptied, never through a link: ``OSError``) and stays
+    there; its last ``output_limit`` bytes are read back as well. ``stdout_path`` needs
+    ``output_limit``. ``on_start`` gets the child's pid as
     soon as it runs (in its own session, also its group's id), so that another thread can kill it.
 
     Raises ``ChildTimedOutError`` after ``timeout`` seconds, and ``OSError`` (for example
@@ -110,8 +111,15 @@ def run_child(
     return ChildResult(returncode=child.returncode, stdout=stdout, stderr=stderr)
 
 
+# A kept stdout: created owner-only, emptied, never through a link at its path.
+PRIVATE_FILE_MODE = 0o600
+_KEPT_FLAGS = os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC
+
+
 def _stdout_file(path: Path | None) -> IO[bytes]:
-    return tempfile.TemporaryFile() if path is None else path.open("w+b")
+    if path is None:
+        return tempfile.TemporaryFile()
+    return os.fdopen(os.open(path, _KEPT_FLAGS, PRIVATE_FILE_MODE), "w+b")
 
 
 def _run_to_files(
