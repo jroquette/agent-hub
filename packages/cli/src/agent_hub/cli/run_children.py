@@ -148,9 +148,11 @@ class RunChildren:
         return ["bash", "-c", self.gate]
 
     def push_argv(self) -> list[str]:
-        """The push, every hook off: the session could have planted one in the repo."""
-        hooks_off = ("-c", f"core.hooksPath={os.devnull}")
-        return ["git", *hooks_off, "push", "--no-verify", "-u", "origin", self.branch]
+        """The push with ``PUSH_OVERRIDES`` as its own ``-c`` options (hooks, fsmonitor and
+        signing off): a caller's ``GIT_CONFIG_PARAMETERS`` outranks ``push_env``'s
+        ``GIT_CONFIG_COUNT``, and these come after it."""
+        overrides = [part for key, value in PUSH_OVERRIDES for part in ("-c", f"{key}={value}")]
+        return ["git", *overrides, "push", "--no-verify", "-u", "origin", self.branch]
 
     def pr_argv(self, *, title: str, body: str) -> list[str]:
         base = self.config.project.default_branch
@@ -177,12 +179,15 @@ def child_env(environ: Mapping[str, str]) -> dict[str, str]:
 
 def push_env(environ: Mapping[str, str]) -> dict[str, str]:
     """The environment of the push and ``gh``: ``child_env`` (the GitHub tokens kept) and
-    ``PUSH_OVERRIDES`` as git's command-scope config, the highest precedence, after the
-    caller's own ``GIT_CONFIG_*`` entries (dropped when their count is not a number)."""
+    ``PUSH_OVERRIDES`` as command-scope config after the caller's own ``GIT_CONFIG_*`` entries
+    (dropped when their count is not a number). A caller's ``GIT_CONFIG_PARAMETERS`` (``-c``)
+    still outranks these, so the push also passes them as ``-c``; ``gh`` takes no ``-c``."""
     env = child_env(environ)
     given = env.get(_CONFIG_COUNT, "0")
-    start = int(given) if given.isdigit() else 0
-    if not given.isdigit():
+    # git reads ASCII digits only ("²" or "١" would pass str.isdigit or int()).
+    is_count = given.isascii() and given.isdecimal()
+    start = int(given) if is_count else 0
+    if not is_count:
         # git refuses a bad count; its entries go with it (GIT_CONFIG_GLOBAL and the like stay).
         env = {name: value for name, value in env.items() if not _CONFIG_ENTRY.match(name)}
     for index, (key, value) in enumerate(PUSH_OVERRIDES, start=start):

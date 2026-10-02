@@ -268,6 +268,11 @@ class TestRunWorkspace:
 
 
 KEY_VARIABLE = "LINEAR_API_KEY"
+PUSH_OPTIONS = (
+    *("-c", "core.fsmonitor=false"),
+    *("-c", "push.gpgSign=false"),
+    *("-c", "core.hooksPath=/dev/null"),
+)
 API_LINE = 'tracker: Linear API (tracker.transport "api")'
 MCP_LINE = 'tracker: Linear MCP via claude -p (tracker.transport "mcp")'
 MISSING_KEY = (
@@ -359,7 +364,8 @@ class TestDryRun:
         assert "mcp__" not in claude.split(" --disallowedTools ")[0]
         assert lines[2] == f"would run: bash -c 'make check'   (cwd {worktree})"
         assert lines[3] == (
-            "would run: git -c core.hooksPath=/dev/null push --no-verify -u origin jdoe/dem-1"
+            "would run: git -c core.fsmonitor=false -c push.gpgSign=false"
+            " -c core.hooksPath=/dev/null push --no-verify -u origin jdoe/dem-1"
             f"   (cwd {worktree})"
         )
         assert lines[4].startswith(
@@ -832,8 +838,8 @@ class TestEnvironments:
         assert "GH_TOKEN" in push["env"]
         assert KEY_VARIABLE not in push["env"]
         assert push["argv"] == [
-            *("-c", "core.hooksPath=/dev/null", "push", "--no-verify"),
-            *("-u", "origin", "jdoe/dem-1"),
+            *PUSH_OPTIONS,
+            *("push", "--no-verify", "-u", "origin", "jdoe/dem-1"),
         ]
 
     def test_skips_planted_hook_when_pushing(
@@ -1706,7 +1712,7 @@ class TestProcesses:
         assert result.exit_code == 0, result.output
         assert calls.timeout_of("claude") == [3_600]
         assert calls.timeout_of("bash") == [1_800]
-        assert calls.timeout_of("git", "-c", "core.hooksPath=/dev/null", "push") == [300]
+        assert calls.timeout_of("git", *PUSH_OPTIONS, "push") == [300]
         assert calls.timeout_of("gh") == [120]
         assert set(calls.timeout_of("git", "fetch")) == {1_800}
         assert set(calls.timeout_of("git", "-c", "core.hooksPath=/dev/null", "worktree")) == {1_800}
@@ -1971,7 +1977,9 @@ class TestPushOverrides:
         assert result.exit_code == 0, result.output
         (push,) = git_calls(logged_git, "push")
         assert push["values"] | PUSH_OVERRIDES == push["values"]
-        assert push["argv"][:2] == ["-c", "core.hooksPath=/dev/null"]
+        # GIT_CONFIG_PARAMETERS (the caller's -c) outranks GIT_CONFIG_COUNT: the push repeats
+        # the overrides as its own -c, which come last.
+        assert push["argv"][:6] == list(PUSH_OPTIONS)
         (gh,) = logged_git.calls("gh")
         assert gh["values"] | PUSH_OVERRIDES == gh["values"]
         (gate,) = logged_git.calls("make")

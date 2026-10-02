@@ -36,7 +36,9 @@ def test_appends_overrides_when_caller_sets_some() -> None:
     assert pairs(push_env(caller)) == [("user.name", "J"), *OVERRIDES]
 
 
-@pytest.mark.parametrize("count", ["", "x", "-1"])
+@pytest.mark.parametrize(
+    "count", ["", "x", "-1", "\N{SUPERSCRIPT TWO}", "\N{ARABIC-INDIC DIGIT ONE}"]
+)
 def test_replaces_count_when_caller_count_invalid(count: str) -> None:
     env = push_env(
         {"GIT_CONFIG_COUNT": count, "GIT_CONFIG_KEY_0": "user.name", "GIT_CONFIG_GLOBAL": "/g"}
