@@ -8,6 +8,8 @@ from agent_hub.generator.built_json import (
     HOOK_EVENTS,
     base_hooks_block,
     managed_settings,
+    marketplace,
+    marketplace_project,
     project_manifest,
     project_settings,
 )
@@ -33,6 +35,27 @@ def test_names_project_when_project_manifest_built(project_name: str) -> None:
         "version": "0.1.0",
         "description": "Project agents, skills and guard extension of this hub.",
     }
+
+
+@pytest.mark.parametrize("project_name", ["demo", "acme-tools"])
+def test_builds_marketplace_from_project_when_rendered(project_name: str) -> None:
+    # AGH-17 D4: the name and owner from `project.*`; the base plugin, then the project's own.
+    config = a_config_named(project_name)
+
+    assert marketplace(config) == {
+        "name": project_name,
+        "owner": {"name": config.project.author_name, "email": config.project.author_email},
+        "plugins": [
+            {"name": "hub-workflow", "source": "./plugin/hub-workflow"},
+            {"name": project_name, "source": f"./plugin/{project_name}"},
+        ],
+    }
+
+
+@pytest.mark.parametrize("project_name", ["demo", "acme-tools"])
+def test_seeds_empty_marketplace_sibling_when_rendered(project_name: str) -> None:
+    # AGH-17 D4: the project adds its third-party pins to the seeded sibling.
+    assert marketplace_project(a_config_named(project_name)) == {}
 
 
 # Spec AC-4.7 (Q-5 keeps this hub's timeouts): event, matcher (``None``: no matcher key), the hook

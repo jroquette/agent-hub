@@ -13,7 +13,13 @@ from typing import Final, NamedTuple
 
 from agent_hub.core.hub_config.schema import SCHEMA_FILE, SCHEMA_PACKAGE
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership
-from agent_hub.generator.built_json import managed_settings, project_manifest, project_settings
+from agent_hub.generator.built_json import (
+    managed_settings,
+    marketplace,
+    marketplace_project,
+    project_manifest,
+    project_settings,
+)
 from agent_hub.generator.json_form import JsonBuilder
 
 _PACKAGE: Final = "agent_hub.generator"
@@ -110,6 +116,15 @@ def _module_entry_point(path: str, module: str) -> TemplateEntry:
     )
 
 
+def _module_built(
+    path: str, build: JsonBuilder, module: str, *, ownership: Ownership
+) -> TemplateEntry:
+    """A JSON file of ``module`` built from the config: rendered only while it is selected."""
+    return TemplateEntry(
+        path=path, build=build, kind=Kind.MODULE, ownership=ownership, module=module
+    )
+
+
 def _module_makefile(module: str) -> TemplateEntry:
     """``mk/<id>.mk``: the module's make targets, which the base ``Makefile`` includes (D5)."""
     return _module_managed(f"mk/{module}.mk", f"mk/{module}.mk.tmpl", module)
@@ -159,6 +174,17 @@ def _hook_entry_point(name: str) -> TemplateEntry:
 
 
 REGISTRY: Final[tuple[TemplateEntry, ...]] = (
+    # Module marketplace (AGH-17 D4): the managed part from `project.*`; the project's pins go in
+    # the seeded sibling, merged after it.
+    _module_built(
+        ".claude-plugin/marketplace.json", marketplace, "marketplace", ownership=Ownership.MANAGED
+    ),
+    _module_built(
+        ".claude-plugin/marketplace.project.json",
+        marketplace_project,
+        "marketplace",
+        ownership=Ownership.SEEDED,
+    ),
     # The rules base (spec D5); the project's own settings go in the seeded sibling.
     TemplateEntry(
         path=".claude/settings.json",

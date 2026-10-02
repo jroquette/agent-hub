@@ -29,7 +29,7 @@ from agent_hub.generator.json_form import JsonValue
 from agent_hub.generator.json_merge import MergeError, merge_json
 from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_mapping
 from agent_hub.generator.registry import REGISTRY, TemplateEntry, TemplateSource
-from agent_hub.generator.render_hub import render_entries, render_hub
+from agent_hub.generator.render_hub import project_json_siblings, render_entries, render_hub
 
 # AC-3.13: the D5 path set of docs/design/hub-generator.md, in code-point order; AC-4.1 adds
 # AGH-19's rendered set (spec "The rendered set", for project `demo`).
@@ -770,6 +770,25 @@ def test_raises_merge_error_when_sibling_refused(demo_config: HubConfig) -> None
 
     with pytest.raises(MergeError, match=r"^\.claude/settings\.project\.json: disableAllHooks: "):
         render_hub(demo_config, extensions)
+
+
+@pytest.mark.parametrize(
+    ("config_name", "expected"),
+    [
+        ("demo_config", (".claude/settings.project.json",)),
+        ("variant_config", (".claude/settings.project.json",)),
+        (
+            "all_modules_config",
+            (".claude-plugin/marketplace.project.json", ".claude/settings.project.json"),
+        ),
+    ],
+    ids=["demo", "no-module", "all-modules"],
+)
+def test_lists_marketplace_sibling_only_when_marketplace_selected(
+    config_name: str, expected: tuple[str, ...], request: pytest.FixtureRequest
+) -> None:
+    # AGH-17 D4: the marketplace pair renders, and merges, only with the module selected.
+    assert project_json_siblings(request.getfixturevalue(config_name)) == expected
 
 
 @pytest.mark.parametrize(
@@ -2049,6 +2068,11 @@ BUILT_JSON_PATHS = (
     ".claude/settings.project.json",
     "plugin/{project}/.claude-plugin/plugin.json",
 )
+# Built too, rendered only when module `marketplace` is selected (AGH-17 D4).
+MODULE_BUILT_JSON_PATHS = (
+    ".claude-plugin/marketplace.json",
+    ".claude-plugin/marketplace.project.json",
+)
 # Static JSON with no placeholder: rendered byte for byte from its template.
 TEMPLATED_JSON_SOURCES = {
     "plugin/hub-workflow/.claude-plugin/plugin.json": (
@@ -2068,7 +2092,8 @@ def test_writes_json_form_when_generator_json_rendered(
         entry.path.replace("@@{project_name}", "{project}") for entry in REGISTRY if entry.build
     }
 
-    assert built == set(BUILT_JSON_PATHS)
+    assert built == {*BUILT_JSON_PATHS, *MODULE_BUILT_JSON_PATHS}
+    assert not set(MODULE_BUILT_JSON_PATHS) & set(rendered)
     for pattern in BUILT_JSON_PATHS:
         content = rendered[pattern.format(project=config.project.name)].content
         value = strict_json(content)
@@ -2078,6 +2103,16 @@ def test_writes_json_form_when_generator_json_rendered(
     for path, source in TEMPLATED_JSON_SOURCES.items():
         template = files(GENERATOR_PACKAGE).joinpath(*source.split("/")).read_bytes()
         assert rendered[path].content == template, path
+
+
+def test_writes_json_form_when_marketplace_rendered(all_modules_config: HubConfig) -> None:
+    rendered = {file.path: file for file in render_hub(all_modules_config).files}
+
+    for path in MODULE_BUILT_JSON_PATHS:
+        content = rendered[path].content
+        form = json.dumps(strict_json(content), indent=2, sort_keys=True, ensure_ascii=False)
+        assert content == (form + "\n").encode("utf-8"), path
+    assert rendered[".claude-plugin/marketplace.project.json"].content == b"{}\n"
 
 
 @pytest.mark.parametrize("config_name", CONFIG_NAMES)
