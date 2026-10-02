@@ -6,6 +6,7 @@ from typing import Annotated
 import typer
 
 from agent_hub.cli.agent_command import PassThroughCommand, agent
+from agent_hub.cli.bench_command import bench
 from agent_hub.cli.brief_command import brief
 from agent_hub.cli.collect import collect
 from agent_hub.cli.doctor_command import doctor
@@ -49,3 +50,4 @@ app.command("brief")(brief)
 app.command("agent", cls=PassThroughCommand, add_help_option=False)(agent)
 app.command("next")(next_command)
 app.command("run")(run)
+app.command("bench")(bench)

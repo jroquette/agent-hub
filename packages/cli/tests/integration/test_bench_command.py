@@ -1,0 +1,250 @@
+"""``hub bench``: the configuration benchmark, ported from the hub's script (AC-17.14 to AC-17.16).
+
+This module re-expresses hub ``scripts/bench.py`` at hub commit ``5b56604`` and its
+characterization (``tests/characterization/test_bench.py``) against the command; every port
+difference of the plan is asserted here. ``TestUsage`` runs in process in a copy of the ``DEMO``
+hub (``demo_hub``), with ``bench`` selected where a test needs it: each refusal is a usage error,
+exit 2, or a reader failure, exit 1, before any child process.
+"""
+
+import json
+import sys
+from collections.abc import Callable, Iterator
+from pathlib import Path
+from typing import Any
+
+import pytest
+from click import unstyle
+from typer.testing import Result
+
+pytestmark = pytest.mark.disable_socket
+
+# The conftest's in-process run (tests cannot import a conftest in importlib mode).
+type CommandRunner = Callable[..., Result]
+
+# The characters of the box Rich may draw around a usage error.
+BOX_CHARACTERS = "│╭╮╰╯─"
+# What a refused run must never reach: any child process.
+GUARDED = ("run_child", "stream_child")
+EFFORT_VARIABLE = "BENCH_EFFORT"
+
+
+class Spy:
+    """Every guarded call any ``agent_hub.cli`` module makes: ``(name, argv)``."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object]] = []
+
+    def guard(self, name: str, real: Callable[..., Any]) -> Callable[..., Any]:
+        def spy(*args: Any, **kwargs: Any) -> Any:
+            self.calls.append((name, args[0] if args else None))
+            return real(*args, **kwargs)
+
+        return spy
+
+
+@pytest.fixture
+def spy(monkeypatch: pytest.MonkeyPatch) -> Iterator[Spy]:
+    """Wrap every guarded name in every loaded ``agent_hub.cli`` module (each import holds its own
+    reference), so a call from any module is seen."""
+    import agent_hub.cli.main  # noqa: F401 - loads every command module before patching
+
+    seen = Spy()
+    for module_name, module in list(sys.modules.items()):
+        if not module_name.startswith("agent_hub.cli"):
+            continue
+        for name in GUARDED:
+            real = getattr(module, name, None)
+            if callable(real):
+                monkeypatch.setattr(module, name, seen.guard(name, real))
+    yield seen
+
+
+@pytest.fixture(autouse=True)
+def wide_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A usage message stays on one line of Rich's box.
+    monkeypatch.setenv("COLUMNS", "200")
+    monkeypatch.delenv(EFFORT_VARIABLE, raising=False)
+
+
+@pytest.fixture
+def bench_hub(demo_hub: Path) -> Path:
+    """The ``DEMO`` hub with ``modules.bench`` selected."""
+    document = json.loads((demo_hub / "hub.json").read_text())
+    document["modules"] = {"bench": {}}
+    (demo_hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+    return demo_hub
+
+
+def assert_refused(result: Result, message: str) -> None:
+    """Exit 2 with ``message`` as one line of the usage error on stderr, nothing on stdout."""
+    assert result.exit_code == 2, result.output
+    assert result.stdout == ""
+    shown = unstyle(result.stderr)
+    assert "Usage: hub bench" in shown
+    texts = [line.strip(BOX_CHARACTERS + " ") for line in shown.splitlines()]
+    assert [text for text in texts if message in text] == [message], shown
+
+
+BUDGET = "Invalid value for '--budget': use a number of USD above 0, at most 1000"
+PER_RUN = "Invalid value for '--per-run': use a number of USD above 0"
+ARMS = "Invalid value for '--arms': use with, without or both, comma-separated, each once"
+CASES = "Invalid value for '--cases': use case ids (1 to 64 of A-Z a-z 0-9 . _ -), comma-separated"
+LABEL = "Invalid value for '--label': use 1 to 64 of A-Z a-z 0-9 . _ -"
+
+
+class TestUsage:
+    def test_lists_options_with_defaults_when_help_requested(
+        self, tmp_path: Path, run_command: CommandRunner
+    ) -> None:
+        result = run_command(tmp_path, "bench", "--help")
+
+        assert result.exit_code == 0
+        words = " ".join(unstyle(result.stdout).replace(BOX_CHARACTERS[0], " ").split())
+        for text in (
+            "--validate",
+            "--runs",
+            "[default: 3]",
+            "--arms",
+            "[default: with,without]",
+            "--cases",
+            "[default: (all)]",
+            "--budget",
+            "[default: 15.0]",
+            "--per-run",
+            "[default: 2.0]",
+            "--parallel",
+            "[default: 3]",
+            "--label",
+            "[default: (bench-%Y%m%d-%H%M)]",
+            "--trace",
+            "BENCH_EFFORT",
+            "low, medium (default) or high",
+        ):
+            assert text in words, text
+
+    def test_exits_two_when_bench_not_selected(
+        self, demo_hub: Path, run_command: CommandRunner, spy: Spy
+    ) -> None:
+        (demo_hub / "brain" / "workflow" / "bench").mkdir(parents=True)
+        (demo_hub / "brain" / "workflow" / "bench" / "tasks.json").write_text("not json\n")
+
+        result = run_command(demo_hub, "bench", "--validate")
+
+        assert_refused(result, "module bench is not selected")
+        assert spy.calls == []
+
+    @pytest.mark.parametrize(
+        ("arguments", "message"),
+        [
+            (("--validate", "--runs", "2"), "--validate takes no run option: --runs"),
+            (("--validate", "--trace"), "--validate takes no run option: --trace"),
+            (
+                ("--label", "x", "--validate", "--arms", "with"),
+                "--validate takes no run option: --arms, --label",
+            ),
+            (("--runs", "0"), "Invalid value for '--runs': 0 is not in the range 1<=x<=100."),
+            (("--runs", "101"), "Invalid value for '--runs': 101 is not in the range 1<=x<=100."),
+            (
+                ("--parallel", "0"),
+                "Invalid value for '--parallel': 0 is not in the range 1<=x<=16.",
+            ),
+            (
+                ("--parallel", "17"),
+                "Invalid value for '--parallel': 17 is not in the range 1<=x<=16.",
+            ),
+            (("--budget", "0"), BUDGET),
+            (("--budget", "-1"), BUDGET),
+            (("--budget", "inf"), BUDGET),
+            (("--budget", "nan"), BUDGET),
+            (("--budget", "1000.01"), BUDGET),
+            (("--per-run", "0"), PER_RUN),
+            (("--per-run", "inf"), PER_RUN),
+            (("--arms", "with,maybe"), ARMS),
+            (("--arms", "with,with"), ARMS),
+            (("--arms", ""), ARMS),
+            (("--cases", "T1,,T2"), CASES),
+            (("--cases", "T 1"), CASES),
+            (("--cases", ",".join(f"T{n}" for n in range(201))), CASES),
+            (("--label", "../x"), LABEL),
+            (("--label", ""), LABEL),
+            (("--label", "x" * 65), LABEL),
+        ],
+        ids=[
+            "validate-runs",
+            "validate-trace",
+            "validate-two",
+            "runs-zero",
+            "runs-over",
+            "parallel-zero",
+            "parallel-over",
+            "budget-zero",
+            "budget-negative",
+            "budget-inf",
+            "budget-nan",
+            "budget-over",
+            "per-run-zero",
+            "per-run-inf",
+            "arms-unknown",
+            "arms-repeated",
+            "arms-empty",
+            "cases-empty-id",
+            "cases-space",
+            "cases-too-many",
+            "label-path",
+            "label-empty",
+            "label-long",
+        ],
+    )
+    def test_refuses_option_when_value_invalid(
+        self,
+        bench_hub: Path,
+        run_command: CommandRunner,
+        spy: Spy,
+        *,
+        arguments: tuple[str, ...],
+        message: str,
+    ) -> None:
+        result = run_command(bench_hub, "bench", *arguments)
+
+        assert_refused(result, message)
+        assert spy.calls == []
+
+    @pytest.mark.parametrize("effort", ["huge", "HIGH", " low"])
+    def test_refuses_effort_when_variable_unknown(
+        self, bench_hub: Path, run_command: CommandRunner, spy: Spy, *, effort: str
+    ) -> None:
+        result = run_command(bench_hub, "bench", env={EFFORT_VARIABLE: effort})
+
+        assert_refused(result, "BENCH_EFFORT must be low, medium or high")
+        assert spy.calls == []
+
+    def test_exits_two_when_not_a_hub(
+        self, tmp_path: Path, run_command: CommandRunner, spy: Spy
+    ) -> None:
+        folder = tmp_path / "elsewhere"
+        folder.mkdir()
+
+        result = run_command(folder, "bench")
+
+        assert result.exit_code == 2
+        assert result.stdout == ""
+        assert result.stderr == (
+            f"{folder}: not a hub: no hub.json in this folder"
+            " (hub bench runs in the hub folder or through ./hub)\n"
+        )
+        assert spy.calls == []
+
+    def test_prints_reader_lines_when_hub_json_invalid(
+        self, bench_hub: Path, run_command: CommandRunner, spy: Spy
+    ) -> None:
+        (bench_hub / "hub.json").write_bytes(b"{}\n")
+
+        result = run_command(bench_hub, "bench", "--validate")
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        lines = result.stderr.splitlines()
+        assert lines
+        assert all(line.startswith("hub.json: ") for line in lines), lines
+        assert spy.calls == []
