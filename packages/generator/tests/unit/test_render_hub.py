@@ -920,6 +920,88 @@ def test_renders_same_bytes_when_module_order_differs() -> None:
     assert render_digest(render_hub(bench_first)) == render_digest(render_hub(cloud_first))
 
 
+def test_renders_same_bytes_when_module_keys_reordered(all_modules_config: HubConfig) -> None:
+    document = all_modules_config.model_dump(mode="json", by_alias=True, exclude_none=True)
+    document["modules"] = dict(reversed(document["modules"].items()))
+    reordered = HubConfig.model_validate(document)
+
+    renders = [render_hub(config) for config in (all_modules_config, reordered) for _ in range(2)]
+
+    assert all(render == renders[0] for render in renders)
+    assert {render_digest(render) for render in renders} == {render_digest(renders[0])}
+
+
+# AGH-17 AC-17.13 (Q-10): constructs of bash 4 or later, which macOS's /bin/bash (3.2) rejects or
+# runs differently, and tracing (``set -x`` would print a token a command line holds).
+BASH_FOUR = {
+    "declare -A": re.compile(r"\b(?:declare|typeset|local)\s+-[a-zA-Z]*A"),
+    "mapfile": re.compile(r"\bmapfile\b"),
+    "readarray": re.compile(r"\breadarray\b"),
+    "coproc": re.compile(r"\bcoproc\b"),
+    "case modification": re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?(?:,|\^)"),
+    "[[ -v": re.compile(r"\[\[\s+-v\b"),
+    "&>>": re.compile(r"&>>"),
+    "|&": re.compile(r"\|&"),
+    "negative index": re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\[\s*-[0-9]"),
+    "${var@op}": re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?@[A-Za-z]\}"),
+    "set -x": re.compile(r"\bset\s+(?:-[a-wyzA-Z]*x|-o\s+xtrace)"),
+}
+SHELL_SHEBANG = re.compile(rb"^#!\s*/(?:usr/)?bin/(?:env\s+)?(?:ba)?sh\b")
+
+
+def shell_paths(rendered: Iterable[RenderedFile]) -> list[str]:
+    """The rendered files a shell reads: scripts (``.sh`` or a sh/bash ``#!``), make recipes."""
+    return [
+        file.path
+        for file in rendered
+        if file.path.endswith((".sh", ".mk"))
+        or file.path == "Makefile"
+        or SHELL_SHEBANG.match(file.content)
+    ]
+
+
+def test_finds_each_construct_when_bash_four_list_read() -> None:
+    samples = {
+        "declare -A": "declare -A seen=()",
+        "mapfile": "mapfile -t lines < f",
+        "readarray": "readarray -t lines < f",
+        "coproc": "coproc cat",
+        "case modification": 'echo "${name,,}" "${name^^}"',
+        "[[ -v": "[[ -v name ]]",
+        "&>>": "cmd &>> log",
+        "|&": "cmd |& tee log",
+        "negative index": 'echo "${items[-1]}"',
+        "${var@op}": 'echo "${name@Q}"',
+        "set -x": "set -eux",
+    }
+
+    assert {
+        name: bool(BASH_FOUR[name].search(text)) for name, text in samples.items()
+    } == dict.fromkeys(BASH_FOUR, True)
+    # Bash 3.2 forms that look alike stay allowed.
+    for text in ('echo "${name:-a,b}" "${#items[@]}" "${name%,*}"', "set -euo pipefail", "a || b"):
+        assert not [name for name, pattern in BASH_FOUR.items() if pattern.search(text)], text
+
+
+def test_uses_no_bash_four_construct_when_module_scripts_rendered(
+    all_modules_config: HubConfig,
+) -> None:
+    rendered = render_hub(all_modules_config).files
+    paths = shell_paths(rendered)
+    assert {"scripts/cloud-setup.sh", "scripts/contract-sync.sh", "Makefile", "hub"} <= set(paths)
+    assert set(MODULE_TARGETS) <= set(paths)
+
+    found = [
+        (file.path, name)
+        for file in rendered
+        if file.path in paths
+        for name, pattern in BASH_FOUR.items()
+        if pattern.search(file.content.decode("utf-8"))
+    ]
+
+    assert found == []
+
+
 def test_changes_digest_when_link_target_or_ownership_differs() -> None:
     link = RenderedLink(
         path=".claude/agents/a.md",
