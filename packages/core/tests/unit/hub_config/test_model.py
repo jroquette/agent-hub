@@ -260,6 +260,63 @@ def test_rejects_default_branch_when_not_safe_segments(branch: str) -> None:
     assert locs == [("project", "default_branch")]
 
 
+@pytest.mark.parametrize(
+    ("project_branch", "expected"),
+    [(None, "main"), ("trunk", "trunk")],
+    ids=["project-absent", "project-trunk"],
+)
+def test_inherits_project_branch_when_repo_sets_none(
+    project_branch: str | None, expected: str
+) -> None:
+    document = a_hub_document()
+    if project_branch is not None:
+        document["project"]["default_branch"] = project_branch
+
+    config = HubConfig.model_validate(document)
+
+    assert config.repos[0].default_branch is None
+    assert config.default_branch_for("demo-api") == expected
+
+
+@pytest.mark.parametrize("branch", ["master", "release/2"])
+def test_reads_repo_branch_when_repo_sets_one(branch: str) -> None:
+    document = a_hub_document()
+    document["project"]["default_branch"] = "trunk"
+    document["repos"][0]["default_branch"] = branch
+    document["repos"].append(a_second_repo())
+
+    config = HubConfig.model_validate(document)
+
+    assert config.default_branch_for("demo-api") == branch
+    assert config.default_branch_for("demo-web") == "trunk"
+
+
+def branch_errors(path: tuple[str | int, ...], value: object) -> list[tuple[Any, str, str]]:
+    with pytest.raises(ValidationError) as caught:
+        HubConfig.model_validate(with_value(path, value))
+    return [(error["loc"], error["type"], error["msg"]) for error in caught.value.errors()]
+
+
+@pytest.mark.parametrize("branch", ["-x", "a..b", "main/", "", 1, None])
+def test_rejects_repo_branch_as_project_branch_when_value_invalid(branch: object) -> None:
+    repo_path = ("repos", 0, "default_branch")
+    project_path = ("project", "default_branch")
+
+    [(repo_loc, repo_type, repo_msg)] = branch_errors(repo_path, branch)
+    [(project_loc, project_type, project_msg)] = branch_errors(project_path, branch)
+
+    assert repo_loc == repo_path
+    assert project_loc == project_path
+    assert (repo_type, repo_msg) == (project_type, project_msg)
+
+
+def test_raises_key_error_when_repo_dir_unknown() -> None:
+    config = HubConfig.model_validate(a_hub_document())
+
+    with pytest.raises(KeyError, match="demo-web"):
+        config.default_branch_for("demo-web")
+
+
 @pytest.mark.parametrize("host", ["api.example.com", "localhost", "a-b.example.com", "x1"])
 def test_accepts_deny_host_when_dns_name(host: str) -> None:
     document = with_value(("guard", "deny_hosts"), [host])
@@ -625,6 +682,7 @@ OBJECT_PATHS: list[tuple[str | int, ...]] = [
 
 def a_full_document() -> dict[str, Any]:
     document = a_contract_sync_document({"source": "demo-api", "target": "demo-web"})
+    document["repos"][0]["default_branch"] = "release/2"
     document["modules"] |= {"marketplace": {}}
     document["guard"] |= {"deny_hosts": ["api.example.com"], "deny_paths": ["_archive"]}
     document["doctor"] = {

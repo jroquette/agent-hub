@@ -101,6 +101,10 @@ class Repo(ConfigObject):
     role: FreeString = "app"
     check_fast: FreeString
     check: FreeString
+    default_branch: BranchName | None = absent_by_default(
+        description="The repo's default branch: worktree and PR base, push guard."
+        " Absent: project.default_branch."
+    )
 
 
 class Guard(ConfigObject):
@@ -186,6 +190,17 @@ class HubConfig(ConfigObject):
     # A factory, not an instance: the schema would export its unset keys as nulls.
     modules: Modules = Field(default_factory=Modules)
     doctor: Doctor = Field(default_factory=Doctor)
+
+    def default_branch_for(self, repo_dir: str) -> str:
+        """The effective default branch of the repo at ``repo_dir``: its own, else the project's.
+
+        Raises ``KeyError`` when no repo has that dir: every caller holds a ``repos[].dir``.
+        """
+        for repo in self.repos:
+            if repo.dir == repo_dir:
+                # The inherited value: the only per-repo read of the project branch.
+                return repo.default_branch or self.project.default_branch
+        raise KeyError(repo_dir)
 
     def cross_field_problems(self) -> list[InitErrorDetails]:
         """Unique repo dirs, known guard roots and contract-sync repos, rules of chosen modules."""
