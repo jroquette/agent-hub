@@ -12,6 +12,7 @@ to the caller's group kill (the residual of E6). The session's verdict is a hint
 the branch and the command's own gate decide (the old runner's rule).
 """
 
+import json
 import os
 import shutil
 from collections.abc import Mapping, Sequence
@@ -49,6 +50,7 @@ from agent_hub.core.runner.run_texts import (
     failure_comment,
     inbox_line,
     pr_body,
+    pr_title,
     success_comment,
 )
 from agent_hub.core.runner.verdict import OutcomeKind, parse_session_output, session_outcome
@@ -171,6 +173,9 @@ class LiveRun:
 
     def _verify(self) -> None:
         self._enter(Stage.VERIFYING)
+        # The gate checks what the PR will hold: the commits, nothing left beside them.
+        if self._git_output("status", "--porcelain").strip():
+            raise StageFailure(Stage.VERIFYING, "uncommitted changes in the worktree")
         gate = self.children.gate
         result = self._child(
             self.children.gate_argv(), env=untrusted_env(self.environ), timeout=GATE_TIMEOUT
@@ -187,7 +192,11 @@ class LiveRun:
         pushed = self._child(self.children.push_argv(), env=env, timeout=PUSH_TIMEOUT)
         if pushed.returncode != 0:
             raise StageFailure(Stage.PR_OPEN, f"push failed: {_tail(pushed.stderr)}")
-        title = self._git_output("log", "-1", "--format=%s").strip() or self.issue.id
+        title = pr_title(
+            self._git_output("log", "-1", "--format=%s"),
+            workspace=self._workspace,
+            fallback=self.issue.id,
+        )
         body = pr_body(
             issue_id=self.issue.id,
             summary=self.summary,
@@ -198,12 +207,37 @@ class LiveRun:
             self.children.pr_argv(title=title, body=body), env=env, timeout=GH_TIMEOUT
         )
         if created.returncode != 0:
-            raise StageFailure(Stage.PR_OPEN, f"gh pr create failed: {_tail(created.stderr)}")
+            # A rerun: the branch's PR is already open, and the push updated it.
+            existing = self._open_pr_url(env)
+            if existing is None:
+                reason = f"gh pr create failed: {_tail(created.stderr)}"
+                raise StageFailure(Stage.PR_OPEN, reason)
+            self.pr_url = existing
+            self.log.record("pr_exists", {"url": existing})
+            return
         url = _pr_url(created.stdout)
         if url is None:
             raise StageFailure(Stage.PR_OPEN, "gh printed no PR url")
         self.pr_url = url
         self.log.record("pr_open", {"url": url})
+
+    def _open_pr_url(self, env: dict[str, str]) -> str | None:
+        """The url of the branch's open PR, from ``gh pr view``; None when there is none."""
+        viewed = self._child(
+            ["gh", "pr", "view", self.children.branch, "--json", "url,state"],
+            env=env,
+            timeout=GH_TIMEOUT,
+        )
+        if viewed.returncode != 0:
+            return None
+        try:
+            found = json.loads(viewed.stdout)
+        except ValueError:
+            return None
+        if not isinstance(found, dict) or found.get("state") != "OPEN":
+            return None
+        url = found.get("url")
+        return _pr_url(url.encode()) if isinstance(url, str) else None
 
     # report
 

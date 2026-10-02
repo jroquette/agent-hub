@@ -4,12 +4,14 @@ from agent_hub.core.runner.run_texts import (
     MAX_COMMIT_SUMMARY_CHARS,
     MAX_DIAGNOSIS_CHARS,
     MAX_PR_SUMMARY_CHARS,
+    MAX_PR_TITLE_CHARS,
     MAX_SUCCESS_SUMMARY_CHARS,
     WORKSPACE_WORDS,
     commit_summary,
     failure_comment,
     inbox_line,
     pr_body,
+    pr_title,
     sanitized_summary,
     success_comment,
 )
@@ -197,3 +199,34 @@ def test_cleans_texts_when_pr_body_and_comments_built() -> None:
     assert body == "DEM-1\n\nEdits demo-api/x.py.\n\n## Verification\nGates green: `make check`."
     assert opened == f"Run ab12cd34 opened {URL}. Edits demo-api/x.py."
     assert failed == "Run ab12cd34 failed at VERIFYING. Diagnosis: Edits demo-api/x.py."
+
+
+def test_pins_title_cap_when_module_loaded() -> None:
+    assert MAX_PR_TITLE_CHARS == 256
+
+
+def test_cleans_title_when_subject_holds_controls_and_paths() -> None:
+    subject = f"feat(api): touch {WORKSPACE}/demo-api/x.py\x1b[2J\u202e"
+
+    assert pr_title(subject, workspace=WORKSPACE, fallback="DEM-1") == (
+        "feat(api): touch demo-api/x.py"
+    )
+
+
+def test_cuts_title_when_subject_over_cap() -> None:
+    title = pr_title("t" * (MAX_PR_TITLE_CHARS + 1), workspace=WORKSPACE, fallback="DEM-1")
+
+    assert title == "t" * MAX_PR_TITLE_CHARS
+
+
+@pytest.mark.parametrize(
+    "subject",
+    ["", "   \n\n", "\x1b[2J", ATTRIBUTION_LINES["co-author"], "\N{ROBOT FACE}"],
+    ids=["empty", "blank", "control-only", "attribution", "robot"],
+)
+def test_falls_back_when_subject_has_no_text(subject: str) -> None:
+    assert pr_title(subject, workspace=WORKSPACE, fallback="DEM-1") == "DEM-1"
+
+
+def test_takes_first_line_when_subject_has_several() -> None:
+    assert pr_title("\nfeat: x\nmore", workspace=WORKSPACE, fallback="DEM-1") == "feat: x"

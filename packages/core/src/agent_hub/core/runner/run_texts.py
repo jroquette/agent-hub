@@ -17,6 +17,7 @@ MAX_COMMIT_SUMMARY_CHARS: Final = 1_200
 MAX_PR_SUMMARY_CHARS: Final = 20_000
 MAX_SUCCESS_SUMMARY_CHARS: Final = 600
 MAX_DIAGNOSIS_CHARS: Final = 900
+MAX_PR_TITLE_CHARS: Final = 256
 WORKSPACE_WORDS: Final = "the workspace"
 ROBOT: Final = "\N{ROBOT FACE}"
 # A path character: the workspace's path followed or preceded by one is another path.
@@ -57,6 +58,14 @@ def commit_summary(text: str, *, workspace: str) -> str:
     """The commits' messages as a summary, when the session gave none: cleaned, at most 1 200
     characters."""
     return sanitized_summary(text, workspace=workspace).strip()[:MAX_COMMIT_SUMMARY_CHARS]
+
+
+def pr_title(subject: str, *, workspace: str, fallback: str) -> str:
+    """The PR title: the commit subject cleaned, its first line, at most 256 characters;
+    ``fallback`` when nothing is left."""
+    lines = (line.strip() for line in sanitized_summary(subject, workspace=workspace).split("\n"))
+    first = next((line for line in lines if line), "")
+    return first[:MAX_PR_TITLE_CHARS] or fallback
 
 
 def pr_body(*, issue_id: str, summary: str, gate: str, workspace: str) -> str:
