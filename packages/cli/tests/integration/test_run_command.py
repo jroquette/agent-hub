@@ -353,7 +353,10 @@ class TestDryRun:
             assert piece in claude, piece
         assert "mcp__" not in claude
         assert lines[2] == f"would run: bash -c 'make check'   (cwd {worktree})"
-        assert lines[3] == f"would run: git push -u origin jdoe/dem-1   (cwd {worktree})"
+        assert lines[3] == (
+            "would run: git -c core.hooksPath=/dev/null push --no-verify -u origin jdoe/dem-1"
+            f"   (cwd {worktree})"
+        )
         assert lines[4].startswith(
             "would run: gh pr create --base trunk --head jdoe/dem-1 --title DEM-1 --body "
         )
@@ -739,3 +742,103 @@ class TestWorktreeStage:
         assert " failed at WORKTREE. Diagnosis: " in comment[1]
         assert reason in comment[1]
         assert run_workspace.calls("claude") == []
+
+
+TOKENS = (KEY_VARIABLE, "GH_TOKEN", "GITHUB_TOKEN")
+GITHUB_TOKEN_VALUE = "ghp" + "_" + "z" * 36
+
+
+def git_calls(run_workspace: Any, command: str) -> list[dict[str, Any]]:
+    """The logged git calls whose first argument after the ``-c`` options is ``command``."""
+    found = []
+    for call in run_workspace.calls("git"):
+        argv = list(call["argv"])
+        while argv[:1] == ["-c"]:
+            argv = argv[2:]
+        if argv[:1] == [command]:
+            found.append(call)
+    return found
+
+
+@pytest.mark.usefixtures("with_key")
+class TestEnvironments:
+    def test_reads_main_checkout_without_key_when_root_is_hub_worktree(
+        self,
+        logged_git: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = logged_git.workspace
+        hub = workspace.hub
+        workspace.git(hub, "-c", "init.defaultBranch=main", "init", "-q")
+        workspace.git(hub, "add", "-A")
+        workspace.git(hub, "commit", "-q", "-m", "hub")
+        hub_worktree = hub / ".claude" / "worktrees" / "x"
+        workspace.git(hub, "worktree", "add", "-q", "-b", "x", str(hub_worktree))
+        resolve = inject(monkeypatch, run_tracker)
+
+        result = run_command(
+            workspace.base,
+            "run",
+            "DEM-1",
+            "--repo",
+            "demo-api",
+            env={"AGENT_HUB_ROOT": str(hub_worktree)},
+        )
+
+        assert result.exit_code == 0, result.output
+        assert [str(root) for root in resolve.roots] == [os.path.realpath(hub)]
+        (read,) = git_calls(logged_git, "rev-parse")
+        assert KEY_VARIABLE not in read["env"]
+
+    def test_runs_gate_and_reads_without_tokens_when_live(
+        self,
+        logged_git: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("GH_TOKEN", GH_TOKEN_VALUE)
+        monkeypatch.setenv("GITHUB_TOKEN", GITHUB_TOKEN_VALUE)
+
+        result = live(run_command, logged_git.workspace)
+
+        assert result.exit_code == 0, result.output
+        (gate,) = logged_git.calls("make")
+        reads = [*git_calls(logged_git, "log"), *git_calls(logged_git, "status")]
+        assert reads
+        for call in [gate, *reads]:
+            assert not [name for name in TOKENS if name in call["env"]], call["argv"]
+        (push,) = git_calls(logged_git, "push")
+        assert "GH_TOKEN" in push["env"]
+        assert KEY_VARIABLE not in push["env"]
+        assert push["argv"] == [
+            *("-c", "core.hooksPath=/dev/null", "push", "--no-verify"),
+            *("-u", "origin", "jdoe/dem-1"),
+        ]
+
+    def test_skips_planted_hook_when_pushing(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        hooks = workspace.ws / "demo-api" / ".git" / "hooks"
+        marker = run_workspace.logs / "hook-ran"
+        for hook in ("pre-push", "reference-transaction"):
+            (hooks / hook).write_text(f'#!/bin/sh\necho "$0" >> "{marker}"\n')
+            (hooks / hook).chmod(0o755)
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        ran = marker.read_text() if marker.exists() else ""
+        assert "pre-push" not in ran
