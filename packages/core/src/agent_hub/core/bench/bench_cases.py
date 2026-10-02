@@ -229,6 +229,9 @@ def _prompt_problem(value: JsonValue) -> str | None:
         return _STRING
     if not 1 <= len(value) <= MAX_PROMPT_CHARS:
         return f"must be 1 to {MAX_PROMPT_CHARS} characters"
+    if value.startswith("-"):
+        # ``claude -p <prompt>``: ``-p`` is a flag, so ``--settings=/x`` would be an option.
+        return "must not start with `-`"
     return _nul_problem([value])
 
 

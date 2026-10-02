@@ -53,6 +53,8 @@ def run_child(
     timeout: float | None,
     own_session: bool | None = None,
     output_limit: int | None = None,
+    stdout_path: Path | None = None,
+    on_start: Callable[[int], None] | None = None,
 ) -> ChildResult:
     """Run ``argv`` in ``cwd`` with exactly ``env``; stdin is empty, both streams are captured.
 
@@ -63,7 +65,11 @@ def run_child(
     With ``output_limit``, each stream goes to a temporary file and only its last
     ``output_limit`` bytes are read back: the memory a chatty child costs is bounded, though
     not the disk (the file holds the whole stream until the call ends), and a process it
-    leaves behind holds no pipe the read would wait on.
+    leaves behind holds no pipe the read would wait on. With ``stdout_path`` too, stdout goes
+    to that file (created owner-only or emptied, never through a link: ``OSError``) and stays
+    there; its last ``output_limit`` bytes are read back as well. ``stdout_path`` needs
+    ``output_limit``. ``on_start`` gets the child's pid as
+    soon as it runs (in its own session, also its group's id), so that another thread can kill it.
 
     Raises ``ChildTimedOutError`` after ``timeout`` seconds, and ``OSError`` (for example
     ``FileNotFoundError``) when the tool cannot start.
@@ -71,8 +77,18 @@ def run_child(
     new_session = timeout is not None if own_session is None else own_session
     if output_limit is not None:
         return _run_to_files(
-            argv, cwd=cwd, env=env, timeout=timeout, new_session=new_session, limit=output_limit
+            argv,
+            cwd=cwd,
+            env=env,
+            timeout=timeout,
+            new_session=new_session,
+            limit=output_limit,
+            stdout_path=stdout_path,
+            on_start=on_start,
         )
+    if stdout_path is not None:
+        msg = "stdout_path needs output_limit"
+        raise ValueError(msg)
     with subprocess.Popen(  # noqa: S603 - an argv list, never a shell; callers pass the tool
         list(argv),
         cwd=cwd,
@@ -83,6 +99,8 @@ def run_child(
         start_new_session=new_session,
     ) as child:
         try:
+            if on_start is not None:
+                on_start(child.pid)
             stdout, stderr = child.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
             _kill(child, group=new_session)
@@ -93,6 +111,17 @@ def run_child(
     return ChildResult(returncode=child.returncode, stdout=stdout, stderr=stderr)
 
 
+# A kept stdout: created owner-only, emptied, never through a link at its path.
+PRIVATE_FILE_MODE = 0o600
+_KEPT_FLAGS = os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC
+
+
+def _stdout_file(path: Path | None) -> IO[bytes]:
+    if path is None:
+        return tempfile.TemporaryFile()
+    return os.fdopen(os.open(path, _KEPT_FLAGS, PRIVATE_FILE_MODE), "w+b")
+
+
 def _run_to_files(
     argv: Sequence[str],
     *,
@@ -101,8 +130,10 @@ def _run_to_files(
     timeout: float | None,
     new_session: bool,
     limit: int,
+    stdout_path: Path | None,
+    on_start: Callable[[int], None] | None,
 ) -> ChildResult:
-    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+    with _stdout_file(stdout_path) as stdout, tempfile.TemporaryFile() as stderr:
         with subprocess.Popen(  # noqa: S603 - an argv list, never a shell; callers pass the tool
             list(argv),
             cwd=cwd,
@@ -113,6 +144,8 @@ def _run_to_files(
             start_new_session=new_session,
         ) as child:
             try:
+                if on_start is not None:
+                    on_start(child.pid)
                 child.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
                 _kill(child, group=new_session)
