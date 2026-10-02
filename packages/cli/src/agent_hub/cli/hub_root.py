@@ -58,6 +58,7 @@ def main_checkout(root: Path, *, git: str, environ: Mapping[str, str]) -> Path:
         cwd=root,
         env=git_env(environ, optional_locks=False),
         timeout=None,
+        own_session=False,
     )
     lines = result.stdout.rstrip(b"\n").split(b"\n")
     if result.returncode != 0 or len(lines) != len(_ASKED):
