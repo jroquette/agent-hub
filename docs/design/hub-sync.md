@@ -80,13 +80,13 @@ The writer opens the root once per apply, checked against its real path by devic
 it is given (plain, relative) and before touching any. Order: leftovers, deletes, missing folders (parents first),
 files, links (each in path order), `hub.lock` last. Each path is written through `.<name>.hub-tmp-<8 random hex>` in its
 folder (`O_CREAT|O_EXCL|O_NOFOLLOW`, 0o600; a link: `os.symlink`), given its final mode, then `os.replace`d; on an error
-the adapter removes its own temp entry. A delete unlinks a regular file or a link, never a folder; another type is an
-error; a gone entry is fine, a gone parent is an error. `init` uses the same writer (leftovers: the whole tree but
-`.git`). Reader and writer descend by `O_DIRECTORY|O_NOFOLLOW` descriptors, so neither follows a symlinked ancestor of a
-path it touches, nor opens a non-regular file; a link resolving outside the hub is refused (accepted risk: both resolve
-that by path, so a folder swapped meanwhile can escape it; the writer's root check narrows that window). Found only by
-the writer (a race), a symlinked ancestor or an I/O error exits 1 naming the path and cause. An interrupted sync leaves
-the old `hub.lock`; the next run ends where a clean one would.
+the adapter removes its own temp entry. A delete unlinks a regular file or a link, never a folder, never recursively;
+another type is an error; a gone entry is fine, a gone parent is an error. Folders emptied by a delete stay. `init` uses
+the same writer (leftovers: the whole tree but `.git`). Reader and writer descend by `O_DIRECTORY|O_NOFOLLOW`
+descriptors, so neither follows a symlinked ancestor of a path it touches, nor opens a non-regular file; a link
+resolving outside the hub is refused (accepted risk: both resolve it by path, so a folder swapped meanwhile can escape;
+the writer's root check narrows that). Found only by the writer (a race), a symlinked ancestor or an I/O error exits 1
+naming the path and cause. An interrupted sync leaves the old `hub.lock`; the next run ends where a clean one would.
 
 ### --adopt
 
