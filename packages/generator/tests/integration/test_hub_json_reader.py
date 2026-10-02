@@ -7,8 +7,10 @@ dataclass equality holds only between classes of one loaded module, and a tuple 
 """
 
 import ast
+import importlib.util
 import json
 import os
+import re
 import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -269,8 +271,19 @@ def test_reads_repo_branch_when_value_matches_pattern(
         ("trunk", "a b", "trunk"),
         ("trunk", None, "trunk"),
         (None, "-x", "main"),
+        ("trunk", "_" * 64 + "!", "trunk"),
     ],
-    ids=["int", "empty", "dash", "dots", "slash", "space", "null", "no-project-branch"],
+    ids=[
+        "int",
+        "empty",
+        "dash",
+        "dots",
+        "slash",
+        "space",
+        "null",
+        "no-project-branch",
+        "backtracking-bait",
+    ],
 )
 def test_inherits_project_branch_when_repo_value_invalid(
     tmp_path: Path,
@@ -356,6 +369,36 @@ def test_uses_model_branch_pattern_when_source_checked(
     loaded = read(hook_python, path, checks=checks)
 
     assert loaded["equal"] == {"pattern": True}
+
+
+def character_set(character_class: str) -> frozenset[str]:
+    """The ASCII characters a ``[...]`` class matches."""
+    return frozenset(
+        character for character in map(chr, range(128)) if re.fullmatch(character_class, character)
+    )
+
+
+def test_keeps_separator_out_of_segment_when_branch_pattern_parsed(
+    reader_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A separator character that is also a segment one makes ``re`` backtrack exponentially."""
+    spec = importlib.util.spec_from_file_location("hub_stdlib_reader_pattern", reader_file)
+    assert spec is not None
+    assert spec.loader is not None
+    reader = importlib.util.module_from_spec(spec)
+    # The reader's dataclasses look their module up while the class is built.
+    monkeypatch.setitem(sys.modules, spec.name, reader)
+    spec.loader.exec_module(reader)
+    classes = re.findall(r"(\[[^\]]+\])(\+?)", reader.BRANCH_NAME.pattern)
+    segment = {cls for cls, repeated in classes if repeated}
+    separator = {cls for cls, repeated in classes if not repeated}
+    assert segment
+    assert separator
+
+    segment_characters = frozenset().union(*map(character_set, segment))
+    separator_characters = frozenset().union(*map(character_set, separator))
+
+    assert segment_characters & separator_characters == frozenset()
 
 
 def write_invalid_utf8(path: Path) -> None:

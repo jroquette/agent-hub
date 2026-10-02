@@ -55,7 +55,9 @@ checks are model validators JSON Schema cannot express, so there an editor accep
 
 The model restricts rendered values: safe unquoted in shell, Make and Markdown. YAML templates double-quote placeholders
 (`on`, `NO`, `1.0` would retype). Brain frontmatter lists repo dirs unquoted: readers load it without type resolution.
-`S` is a safe segment, `[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*`: no leading `-` or `.`, no `..`, no trailing punctuation.
+`S` is a safe segment, `[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*`: no leading `-` or `.`, no `..`, no trailing punctuation.
+The separator class has no `_` (a segment character already): the hooks' stdlib reader matches `default_branch`
+with Python's `re`, which backtracks exponentially when a separator can also extend a segment.
 
 - `project.name`: kebab-case `^[a-z0-9]+(-[a-z0-9]+)*$`. `repos[].dir`: `^S$`, unique ignoring case (`tradeSentinel`).
   `project.hub_repo`, `repos[].github`: `^S/S$`. `project.branch_prefix`: `^S/$`. `project.default_branch`:

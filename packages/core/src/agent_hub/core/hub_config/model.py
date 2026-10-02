@@ -25,8 +25,9 @@ FreeString = Annotated[str, Field(min_length=1, pattern=r"^[^\x00-\x1f\x7f]+$")]
 # Rendered values (project-config.md): values that land in shell, Make or YAML text. Pydantic's
 # Rust regex has no look-around, and ``[0-9]`` is spelled out because ``\d`` takes any digit.
 # A safe segment: no leading ``-`` or ``.`` (an option or a hidden path), no ``..``, no trailing
-# punctuation.
-_SAFE_SEGMENT = r"[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*"
+# punctuation. The separator class leaves out ``_``, already a segment character: the hooks'
+# reader copies this pattern into Python's ``re``, which backtracks exponentially on an overlap.
+_SAFE_SEGMENT = r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*"
 _HOST_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
 KebabName = Annotated[str, Field(pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$")]
 RepoDir = Annotated[str, Field(pattern=rf"^{_SAFE_SEGMENT}$")]
