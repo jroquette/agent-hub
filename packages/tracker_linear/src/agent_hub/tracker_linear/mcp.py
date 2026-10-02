@@ -15,7 +15,7 @@ filters the reply again by team, label and state type.
 Every failure is a one-line ``TrackerError`` naming the operation, the issue id and the fix.
 Nothing is retried. ``last_cost_usd`` is what the last port operation's calls cost, as each
 result reports it; it is a lower bound when ``claude`` ran but reported no cost (a timeout, an
-output over the cap, output that is not its JSON result).
+output over the cap, output that is not its JSON result, an OS error after it started).
 """
 
 import json
@@ -32,6 +32,7 @@ from agent_hub.tracker_linear.claude_process import (
     CLAUDE_PROGRAM,
     ClaudeOutput,
     ClaudeRunError,
+    os_error_text,
     run_claude,
 )
 from agent_hub.tracker_linear.graphql import DONE_STATE_TYPES, LINEAR_API_KEY_VARIABLE
@@ -270,7 +271,7 @@ class McpTrackerClient:
         except ClaudeRunError as error:
             # claude ran: a write call may have written.
             raise call_error(
-                call, f"claude failed while running: {quoted(error.strerror)}", _RETRY_FIX
+                call, f"claude failed while running: {quoted(os_error_text(error))}", _RETRY_FIX
             ) from None
         except FileNotFoundError as error:
             if str(error.filename) == str(self.cwd):
@@ -371,7 +372,7 @@ def _stopped_cause(envelope: _Envelope) -> str:
 
 def _start_error(call: McpCall[Any], error: OSError) -> TrackerError:
     return call_error(
-        call, f"could not start claude: {quoted(error.strerror)}", _RETRY_FIX, call_ran=False
+        call, f"could not start claude: {quoted(os_error_text(error))}", _RETRY_FIX, call_ran=False
     )
 
 
