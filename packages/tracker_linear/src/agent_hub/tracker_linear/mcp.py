@@ -3,13 +3,14 @@
 Each port operation is one or more short headless ``claude -p`` calls (``mcp_protocol``): a
 read is one call; a write is one read call, then the adapter decides, then at most one write
 call. Every call runs in ``cwd`` (the hub root) with the caller's environment minus
-``LINEAR_API_KEY``, under the caps given to the constructor (D9), in permission mode
-``dontAsk``, with no built-in tool, the Linear tools its kind needs allowed and every other
-Linear tool of the snapshot ``LINEAR_TOOLS`` denied. What the flags cannot remove: the user's
-and the project's allow rules still apply to other MCP servers' tools and to Linear tools added
-after the snapshot (``--setting-sources``/``--restricted`` are AGH-39, which needs a live
-check). The adapter never trusts the model's filtering: ``list_ready`` filters the reply again
-by team, label and state type.
+``LINEAR_API_KEY``, under the caps given to the constructor (D9), with every hook off and no
+session saved, in permission mode ``dontAsk``, with no built-in tool, the Linear tools its kind
+needs allowed and every other Linear tool of the snapshot ``LINEAR_TOOLS`` denied. What the
+flags cannot remove: the cwd's CLAUDE.md and AGENTS.md and the enabled plugins still load, and
+the user's and the project's allow rules still apply to other MCP servers' tools and to Linear
+tools added after the snapshot (``--setting-sources``/``--restricted``/``--bare`` are AGH-39,
+which needs a live check). The adapter never trusts the model's filtering: ``list_ready``
+filters the reply again by team, label and state type.
 
 Every failure is a one-line ``TrackerError`` naming the operation, the issue id and the fix.
 Nothing is retried. ``last_cost_usd`` is what the last port operation's calls cost, as each
@@ -234,8 +235,11 @@ class McpTrackerClient:
             str(self.max_budget_usd),
             "--model",
             self.model,
+            # Hooks off: from the hub root, its SessionStart, Stop and SessionEnd hooks would
+            # inject the brief, run its checks past the timeout and leave a session stub.
             "--settings",
-            json.dumps({"effortLevel": self.effort}),
+            json.dumps({"effortLevel": self.effort, "disableAllHooks": True}),
+            "--no-session-persistence",
             # A permissive defaultMode in the user's settings cannot widen the call.
             "--permission-mode",
             "dontAsk",
