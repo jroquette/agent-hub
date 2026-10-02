@@ -363,7 +363,7 @@ class TestDryRun:
             f"   (cwd {worktree})"
         )
         assert lines[4].startswith(
-            "would run: gh pr create --base trunk --head jdoe/dem-1"
+            "would run: gh pr create --repo acme/demo-api --base trunk --head jdoe/dem-1"
             " --title '(dry run: subject of the last commit)' --body "
         )
         assert "Gates green: `make check`." in lines[4]
@@ -672,8 +672,8 @@ class TestLiveSuccess:
         (gh,) = run_workspace.calls("gh")
         assert gh["cwd"] == worktree
         assert gh["argv"] == [
-            *("pr", "create", "--base", "trunk", "--head", "jdoe/dem-1"),
-            *("--title", COMMIT_SUBJECT, "--body"),
+            *("pr", "create", "--repo", "acme/demo-api", "--base", "trunk"),
+            *("--head", "jdoe/dem-1", "--title", COMMIT_SUBJECT, "--body"),
             f"DEM-1\n\n{SUMMARY}\n\n## Verification\nGates green: `make check`.",
         ]
         run_id = run_id_of(run_workspace)
@@ -891,7 +891,9 @@ class TestRerun:
         views = [
             call["argv"] for call in run_workspace.calls("gh") if call["argv"][:2] == ["pr", "view"]
         ]
-        assert views == [["pr", "view", "jdoe/dem-1", "--json", "url,state"]]
+        assert views == [
+            ["pr", "view", "jdoe/dem-1", "--repo", "acme/demo-api", "--json", "url,state"]
+        ]
 
 
 @pytest.mark.usefixtures("with_key")
@@ -1914,3 +1916,38 @@ class TestPushGuard:
 
         assert assert_failed_at(result, run_tracker, "PR_OPEN") == NOT_GITHUB
         assert run_workspace.calls("gh") == []
+
+
+PUSH_OVERRIDES = {
+    "GIT_CONFIG_COUNT": "3",
+    "GIT_CONFIG_KEY_0": "core.fsmonitor",
+    "GIT_CONFIG_VALUE_0": "false",
+    "GIT_CONFIG_KEY_1": "push.gpgSign",
+    "GIT_CONFIG_VALUE_1": "false",
+    "GIT_CONFIG_KEY_2": "core.hooksPath",
+    "GIT_CONFIG_VALUE_2": "/dev/null",
+}
+
+
+@pytest.mark.usefixtures("with_key")
+class TestPushOverrides:
+    def test_overrides_risky_config_when_pushing_and_calling_gh(
+        self,
+        logged_git: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+
+        result = live(run_command, logged_git.workspace)
+
+        assert result.exit_code == 0, result.output
+        (push,) = git_calls(logged_git, "push")
+        assert push["values"] | PUSH_OVERRIDES == push["values"]
+        assert push["argv"][:2] == ["-c", "core.hooksPath=/dev/null"]
+        (gh,) = logged_git.calls("gh")
+        assert gh["values"] | PUSH_OVERRIDES == gh["values"]
+        (gate,) = logged_git.calls("make")
+        assert "GIT_CONFIG_COUNT" not in gate["env"]

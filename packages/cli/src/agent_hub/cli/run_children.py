@@ -13,6 +13,7 @@ cannot write to the terminal.
 
 import json
 import os
+import re
 import shlex
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -38,6 +39,14 @@ KEY_VARIABLE: Final = "LINEAR_API_KEY"
 CHILD_HIDDEN: Final = (KEY_VARIABLE,)
 SESSION_HIDDEN: Final = (KEY_VARIABLE, "GH_TOKEN", "GITHUB_TOKEN")
 OTEL_VARIABLE: Final = "OTEL_RESOURCE_ATTRIBUTES"
+# Set for the push and gh, above any repo config: no fsmonitor, signing or hook runs there.
+PUSH_OVERRIDES: Final = (
+    ("core.fsmonitor", "false"),
+    ("push.gpgSign", "false"),
+    ("core.hooksPath", os.devnull),
+)
+_CONFIG_COUNT: Final = "GIT_CONFIG_COUNT"
+_CONFIG_ENTRY: Final = re.compile(r"GIT_CONFIG_(?:KEY|VALUE)_[0-9]+")
 # Denied to the implementing session: both Linear servers as a whole, and, should a client
 # read only tool names, each tool of the snapshot under both server prefixes.
 SESSION_DENIED_TOOLS: Final = (
@@ -146,9 +155,13 @@ class RunChildren:
     def pr_argv(self, *, title: str, body: str) -> list[str]:
         base = self.config.project.default_branch
         return [
-            *("gh", "pr", "create", "--base", base, "--head", self.branch),
-            *("--title", title, "--body", body),
+            *("gh", "pr", "create", "--repo", self.github, "--base", base),
+            *("--head", self.branch, "--title", title, "--body", body),
         ]
+
+    def pr_view_argv(self) -> list[str]:
+        """The lookup of the branch's PR, by its repo from ``hub.json``, not the worktree's."""
+        return ["gh", "pr", "view", self.branch, "--repo", self.github, "--json", "url,state"]
 
 
 def without(environ: Mapping[str, str], names: Iterable[str]) -> dict[str, str]:
@@ -160,6 +173,23 @@ def without(environ: Mapping[str, str], names: Iterable[str]) -> dict[str, str]:
 def child_env(environ: Mapping[str, str]) -> dict[str, str]:
     """The environment of the worktree steps, the push and ``gh``: no tracker key."""
     return git_env(without(environ, CHILD_HIDDEN), optional_locks=True)
+
+
+def push_env(environ: Mapping[str, str]) -> dict[str, str]:
+    """The environment of the push and ``gh``: ``child_env`` (the GitHub tokens kept) and
+    ``PUSH_OVERRIDES`` as git's command-scope config, the highest precedence, after the
+    caller's own ``GIT_CONFIG_*`` entries (dropped when their count is not a number)."""
+    env = child_env(environ)
+    given = env.get(_CONFIG_COUNT, "0")
+    start = int(given) if given.isdigit() else 0
+    if not given.isdigit():
+        # git refuses a bad count; its entries go with it (GIT_CONFIG_GLOBAL and the like stay).
+        env = {name: value for name, value in env.items() if not _CONFIG_ENTRY.match(name)}
+    for index, (key, value) in enumerate(PUSH_OVERRIDES, start=start):
+        env[f"GIT_CONFIG_KEY_{index}"] = key
+        env[f"GIT_CONFIG_VALUE_{index}"] = value
+    env[_CONFIG_COUNT] = str(start + len(PUSH_OVERRIDES))
+    return env
 
 
 def untrusted_env(environ: Mapping[str, str]) -> dict[str, str]:
