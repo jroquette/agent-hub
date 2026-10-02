@@ -171,6 +171,15 @@ def a_bench_entry() -> TemplateEntry:
     )
 
 
+# A second repo, so ``contract-sync`` has two different repos to name.
+SECOND_REPO = {
+    "dir": "demo-web",
+    "github": "acme/demo-web",
+    "check_fast": "make check-fast",
+    "check": "make check",
+}
+
+
 def a_config_with_modules(modules: dict[str, Any]) -> HubConfig:
     document = a_hub_document()
     document["modules"] = modules
@@ -312,7 +321,11 @@ def test_renders_module_entry_when_aliased_module_selected() -> None:
         module="contract-sync",
     )
 
-    rendered = render_entries(a_config_with_modules({"contract-sync": {}}), [entry])
+    document = a_hub_document()
+    document["repos"].append(SECOND_REPO)
+    document["modules"] = {"contract-sync": {"source": "demo-api", "target": "demo-web"}}
+
+    rendered = render_entries(HubConfig.model_validate(document), [entry])
 
     assert [file.path for file in rendered.files] == ["mk/contract-sync.mk"]
 

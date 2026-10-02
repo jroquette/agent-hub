@@ -24,6 +24,31 @@
       "title": "BrainLeakSettings",
       "type": "object"
     },
+    "ContractSyncSettings": {
+      "additionalProperties": false,
+      "description": "``contract-sync``: the repo that exports the contract and the repo that imports it.\n\nBoth are ``repos[].dir`` entries, checked by ``HubConfig``, which knows the repos.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "source": {
+          "pattern": "^[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*$",
+          "title": "Source",
+          "type": "string"
+        },
+        "target": {
+          "pattern": "^[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*$",
+          "title": "Target",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "target"
+      ],
+      "title": "ContractSyncSettings",
+      "type": "object"
+    },
     "Doctor": {
       "additionalProperties": false,
       "description": "How ``hub doctor`` is tuned for this project (docs/design/hub-doctor.md).",
@@ -177,7 +202,7 @@
     },
     "ModuleSettings": {
       "additionalProperties": false,
-      "description": "The settings of a selected module; none in Phase 1, so only ``{}`` (and ``_`` keys).",
+      "description": "The settings of a module that takes none: only ``{}`` (and ``_`` keys).",
       "patternProperties": {
         "^_": {}
       },
@@ -199,7 +224,7 @@
           "$ref": "#/$defs/ModuleSettings"
         },
         "contract-sync": {
-          "$ref": "#/$defs/ModuleSettings"
+          "$ref": "#/$defs/ContractSyncSettings"
         },
         "marketplace": {
           "$ref": "#/$defs/ModuleSettings"

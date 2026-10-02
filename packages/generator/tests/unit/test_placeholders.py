@@ -25,6 +25,15 @@ RENDERED_KEYS = {
 }
 
 
+# A second repo, so ``contract-sync`` has two different repos to name.
+SECOND_REPO = {
+    "dir": "demo-web",
+    "github": "acme/demo-web",
+    "check_fast": "make check-fast",
+    "check": "make check",
+}
+
+
 def config_with(**sections: Any) -> HubConfig:
     document = a_hub_document()
     document.update(sections)
@@ -95,14 +104,17 @@ def test_joins_deny_hosts_when_hosts_listed(hosts: list[str], expected: str) -> 
     ("modules", "expected"),
     [
         ({"cloud": {}, "bench": {}}, "include mk/bench.mk\ninclude mk/cloud.mk\n"),
-        ({"contract-sync": {}}, "include mk/contract-sync.mk\n"),
+        (
+            {"contract-sync": {"source": "demo-api", "target": "demo-web"}},
+            "include mk/contract-sync.mk\n",
+        ),
         ({}, ""),
     ],
 )
 def test_lists_sorted_includes_when_modules_selected(
     modules: dict[str, dict[str, object]], expected: str
 ) -> None:
-    config = config_with(modules=modules)
+    config = config_with(modules=modules, repos=[*a_hub_document()["repos"], SECOND_REPO])
 
     assert substitution_mapping(config)["module_includes"] == expected
 

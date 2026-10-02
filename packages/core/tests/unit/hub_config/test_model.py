@@ -531,10 +531,34 @@ def test_accepts_hub_document_when_migrated_with_version_keys() -> None:
     assert config.guard.ask_before_edit[1] == "demo-api/packages/storage/migrations/versions"
 
 
-def test_accepts_every_module_when_all_selected() -> None:
-    modules = {"cloud": {}, "bench": {}, "contract-sync": {}, "marketplace": {}}
+SECOND_REPO = {
+    "dir": "demo-web",
+    "github": "acme/demo-web",
+    "check_fast": "make check-fast",
+    "check": "make check",
+}
+CONTRACT_SYNC = ("modules", "contract-sync")
 
-    config = HubConfig.model_validate(with_value(("modules",), modules))
+
+def a_contract_sync_document(settings: object) -> dict[str, Any]:
+    """The example document with ``demo-web`` added and these contract-sync settings."""
+    document = a_hub_document()
+    document["repos"].append(dict(SECOND_REPO))
+    document["modules"]["contract-sync"] = settings
+    return document
+
+
+def test_accepts_every_module_when_all_selected() -> None:
+    modules = {
+        "cloud": {},
+        "bench": {},
+        "contract-sync": {"source": "demo-api", "target": "demo-web"},
+        "marketplace": {},
+    }
+    document = a_contract_sync_document(modules["contract-sync"])
+    document["modules"] = modules
+
+    config = HubConfig.model_validate(document)
 
     assert config.model_dump(mode="json", exclude_none=True)["modules"] == modules
 
@@ -606,9 +630,8 @@ OBJECT_PATHS: list[tuple[str | int, ...]] = [
 
 
 def a_full_document() -> dict[str, Any]:
-    document = with_value(
-        ("modules",), {"cloud": {}, "bench": {}, "contract-sync": {}, "marketplace": {}}
-    )
+    document = a_contract_sync_document({"source": "demo-api", "target": "demo-web"})
+    document["modules"] |= {"marketplace": {}}
     document["guard"] |= {"deny_hosts": ["api.example.com"], "deny_paths": ["_archive"]}
     document["doctor"] = {
         "rules": {
@@ -642,3 +665,92 @@ def test_rejects_unknown_key_when_at_any_object_level(path: tuple[str | int, ...
     object_at(document, path)["comment"] = "x"
 
     assert error_types(document) == [((*path, "comment"), "extra_forbidden")]
+
+
+class TestContractSync:
+    def test_accepts_settings_when_source_and_target_are_repos(self) -> None:
+        settings = {"_note": "api to web", "source": "demo-api", "target": "demo-web"}
+
+        config = HubConfig.model_validate(a_contract_sync_document(settings))
+
+        assert config.modules.contract_sync is not None
+        assert (config.modules.contract_sync.source, config.modules.contract_sync.target) == (
+            "demo-api",
+            "demo-web",
+        )
+        assert config.model_dump(mode="json", exclude_none=True)["modules"]["contract-sync"] == {
+            "source": "demo-api",
+            "target": "demo-web",
+        }
+
+    @pytest.mark.parametrize(
+        ("settings", "locs"),
+        [
+            ({}, [(*CONTRACT_SYNC, "source"), (*CONTRACT_SYNC, "target")]),
+            ({"source": "demo-api"}, [(*CONTRACT_SYNC, "target")]),
+            ({"target": "demo-web"}, [(*CONTRACT_SYNC, "source")]),
+            (
+                {"source": "demo-api", "target": "demo-web", "branch": "main"},
+                [(*CONTRACT_SYNC, "branch")],
+            ),
+        ],
+        ids=["empty", "no-target", "no-source", "extra"],
+    )
+    def test_rejects_settings_when_key_missing_or_extra(
+        self, settings: dict[str, Any], locs: list[tuple[str | int, ...]]
+    ) -> None:
+        assert error_locs(a_contract_sync_document(settings)) == locs
+
+    @pytest.mark.parametrize("key", ["source", "target"])
+    @pytest.mark.parametrize(
+        ("value", "error_type"),
+        [
+            (1, "string_type"),
+            (True, "string_type"),
+            (["demo-api"], "string_type"),
+            ({"dir": "demo-api"}, "string_type"),
+            (None, "null_not_allowed"),
+        ],
+        ids=["int", "bool", "list", "object", "null"],
+    )
+    def test_rejects_value_when_not_string_or_null(
+        self, key: str, value: object, error_type: str
+    ) -> None:
+        settings: dict[str, object] = {"source": "demo-api", "target": "demo-web"}
+        settings[key] = value
+
+        assert error_types(a_contract_sync_document(settings)) == [
+            ((*CONTRACT_SYNC, key), error_type)
+        ]
+
+    @pytest.mark.parametrize("key", ["source", "target"])
+    def test_rejects_repo_when_not_in_repos(self, key: str) -> None:
+        settings = {"source": "demo-api", "target": "demo-web"} | {key: "nope"}
+
+        with pytest.raises(ValidationError) as caught:
+            HubConfig.model_validate(a_contract_sync_document(settings))
+
+        [error] = caught.value.errors()
+        assert (error["loc"], error["type"]) == ((*CONTRACT_SYNC, key), "unknown_repo_dir")
+        assert error["msg"] == 'repo dir "nope" is not in repos'
+
+    def test_rejects_settings_when_source_equals_target(self) -> None:
+        settings = {"source": "demo-api", "target": "demo-api"}
+
+        with pytest.raises(ValidationError) as caught:
+            HubConfig.model_validate(a_contract_sync_document(settings))
+
+        [error] = caught.value.errors()
+        assert (error["loc"], error["type"]) == ((*CONTRACT_SYNC, "target"), "same_repo_dir")
+        assert error["msg"] == 'target "demo-api" is the source too; give two different repos'
+
+    @pytest.mark.parametrize("module", ["cloud", "bench", "marketplace"])
+    def test_rejects_settings_when_other_module_has_keys(self, module: str) -> None:
+        assert error_types(with_value(("modules", module), {"x": 1})) == [
+            (("modules", module, "x"), "extra_forbidden")
+        ]
+
+    def test_rejects_module_when_id_unknown(self) -> None:
+        assert error_types(with_value(("modules", "deploy"), {})) == [
+            (("modules", "deploy"), "extra_forbidden")
+        ]

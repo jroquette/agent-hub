@@ -315,6 +315,66 @@ def test_stays_clean_when_transport_absent(
     assert lines == [CLEAN]
 
 
+# DEMO's second repo, as the conftest's two-repo DEMO adds it (a conftest is not importable).
+SECOND_REPO = {
+    "dir": "demo-web",
+    "github": "acme/demo-web",
+    "check_fast": "make check-fast",
+    "check": "make check",
+}
+CONTRACT_SYNC = {"source": "demo-api", "target": "demo-web"}
+
+
+@pytest.mark.parametrize(
+    ("modules", "problem"),
+    [
+        (
+            {"contract-sync": {"target": "demo-web"}},
+            "modules.contract-sync.source: Field required",
+        ),
+        (
+            {"contract-sync": CONTRACT_SYNC | {"branch": "main"}},
+            "modules.contract-sync.branch: Extra inputs are not permitted",
+        ),
+        (
+            {"contract-sync": CONTRACT_SYNC | {"source": 1}},
+            "modules.contract-sync.source: Input should be a valid string",
+        ),
+        (
+            {"contract-sync": CONTRACT_SYNC | {"target": None}},
+            "modules.contract-sync.target: null is not a value; give a value or leave the key out",
+        ),
+        (
+            {"contract-sync": CONTRACT_SYNC | {"target": "nope"}},
+            'modules.contract-sync.target: repo dir "nope" is not in repos',
+        ),
+        (
+            {"contract-sync": CONTRACT_SYNC | {"target": "demo-api"}},
+            'modules.contract-sync.target: target "demo-api" is the source too;'
+            " give two different repos",
+        ),
+        ({"cloud": {"x": 1}}, "modules.cloud.x: Extra inputs are not permitted"),
+        ({"deploy": {}}, "modules.deploy: Extra inputs are not permitted"),
+    ],
+    ids=["missing", "extra", "not-string", "null", "unknown-repo", "same-repo", "cloud", "deploy"],
+)
+def test_reports_contract_sync_problem_when_settings_invalid(
+    tmp_path: Path,
+    demo_document: dict[str, Any],
+    run_doctor: DoctorRunner,
+    *,
+    modules: dict[str, Any],
+    problem: str,
+) -> None:
+    demo_document["repos"].append(SECOND_REPO)
+    demo_document["modules"] = modules
+    root = config_only_hub(tmp_path, dump_json(demo_document))
+
+    lines = lines_of(run_doctor(root, "--only", "config.schema"), exit_code=1)
+
+    assert lines == [schema_line(problem), ONE_ERROR]
+
+
 @pytest.mark.parametrize("schema_version", [1, 2], ids=["schema-ok", "schema-wrong"])
 def test_reports_pin_only_when_pin_differs(
     demo_hub: Path,
