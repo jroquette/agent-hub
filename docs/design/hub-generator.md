@@ -83,7 +83,7 @@ ask on edits of the hooks folders. Proof: integration tests.
 |---|---|---|
 | `worktree.sh`, `make worktree`, `make worktree-remove` | `./hub worktree <name> [--only REPO]`, `--remove <name>` | keeps the per-repo setup/teardown scripts |
 | `brief.py`, `make brain-brief` | `./hub brief [--no-network]` | SessionStart calls it (Hooks) |
-| `agent_runner.py`, `make next`, `make run-issue` | `hub next`, `hub run <issue> --repo REPO [--live]` | through `TrackerClient` |
+| `agent_runner.py`, `make next`, `make run-issue` | `hub next`, `hub run <issue> --repo REPO [--live] [--budget USD] [--from implement\|verify]` | through `TrackerClient`; `run-issue` passes `BUDGET` and `FROM`, each checked as a name |
 | `agent`, `make agent` | `./agent`: `exec ./hub agent "$@"` | `--add-dir` per repo dir; the repos' `AGENTS.md` in `brain/auto/agent-context.md` (rewritten per launch, gitignored); then `exec claude` |
 | `bench.py`, `make bench`, `make bench-validate` | `hub bench [--validate]`, module `bench` | cases stay in the brain |
 | `agent_config_lint.py`, `features_check.py`; `hubconfig.py` | doctor rules ([hub-doctor.md](hub-doctor.md)); `hubconfig.py` dropped (the CLI reads `HubConfig`) | skills run `hub doctor --only features.tracker` |
