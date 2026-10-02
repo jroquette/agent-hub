@@ -4,12 +4,13 @@ ADR 0009 and spec Q-18: objects merge by key and the project wins on scalars; ar
 template's items then the project's, de-duplicated keeping the first, where two items are equal
 when their JSON byte form is (so ``true`` and ``1``, ``1`` and ``1.0`` stay distinct, unlike Python
 ``==``). The merge only adds: a ``null``, an object or array where the template has another type,
-bad JSON and a key that weakens the harness are refused, each as one line
+bad JSON, a key that weakens the harness and a key or named entry the managed file owns
+(``OWNED_KEYS``, ``NAMED_ARRAYS``) are refused, each as one line
 ``<sibling path>: <key path>: <message>`` (key paths as ``problems.json_path``, ``$`` for the root).
 Pure: the sibling's bytes come in, the merged file's bytes go out.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Final
 
 from agent_hub.core.hub_config.problems import json_path
@@ -22,6 +23,14 @@ type KeyPath = tuple[str | int, ...]
 
 _REFUSED: Final = "refused: a project cannot set this key (it weakens the harness)"
 _NULL: Final = "null is refused: the merge never deletes a key"
+_MARKETPLACE_SIBLING: Final = ".claude-plugin/marketplace.project.json"
+# AGH-17 D4 (Q-2): the top-level keys of a managed file its sibling cannot set, by sibling path.
+OWNED_KEYS: Final[Mapping[str, tuple[str, ...]]] = {_MARKETPLACE_SIBLING: ("name", "owner")}
+# AGH-17 D4 (Q-1): the arrays whose entries are named by `name`, by sibling path; a sibling entry
+# with the name of a managed entry is refused (ADR 0009's concatenation is otherwise unchanged).
+NAMED_ARRAYS: Final[Mapping[str, tuple[str, ...]]] = {_MARKETPLACE_SIBLING: ("plugins",)}
+_OWNED_KEY: Final = "refused: the managed marketplace.json owns this key"
+_OWNED_ENTRY: Final = "refused: the managed marketplace.json owns this entry"
 # The parser's own words for a value nested too deeply (``agent_hub.core.json_form``).
 _TOO_DEEP: Final = "not valid JSON here: it is nested too deeply"
 
@@ -39,8 +48,8 @@ class MergeError(GeneratorError):
 def merge_json(template: JsonValue, project: bytes, *, path: str) -> bytes:
     """Return ``project`` (the sibling at ``path``) merged over ``template``, in the byte form.
 
-    Raises ``MergeError`` for a refused key first, then the first problem in the sibling's own key
-    order.
+    Raises ``MergeError`` for a refused key first, then an owned key, then a named entry the
+    template holds, then the first problem in the sibling's own key order.
     """
     try:
         value = load_json_bytes(project, strict=True)
@@ -49,11 +58,41 @@ def merge_json(template: JsonValue, project: bytes, *, path: str) -> bytes:
     for key_path in REFUSED_KEYS.get(path, ()):
         if _holds(value, key_path):
             raise MergeError(path=path, key_path=key_path, message=_REFUSED)
+    if isinstance(value, dict):
+        _refuse_owned(template, value, path=path)
     try:
         return dump_json(_merge(template, value, path=path, at=()))
     except RecursionError:
         # The parser reads deeper values than this recursive merge and ``json.dumps`` can walk.
         raise MergeError(path=path, key_path=(), message=_TOO_DEEP) from None
+
+
+def _refuse_owned(template: JsonValue, project: dict[str, JsonValue], *, path: str) -> None:
+    """``MergeError`` at the first key or named entry of ``project`` the managed file owns."""
+    for key in OWNED_KEYS.get(path, ()):
+        if key in project:
+            raise MergeError(path=path, key_path=(key,), message=_OWNED_KEY)
+    for key in NAMED_ARRAYS.get(path, ()):
+        _refuse_managed_names(template, project, key=key, path=path)
+
+
+def _refuse_managed_names(
+    template: JsonValue, project: dict[str, JsonValue], *, key: str, path: str
+) -> None:
+    """``MergeError`` at the first ``project[key]`` entry named like an entry of ``template``."""
+    managed = template.get(key) if isinstance(template, dict) else None
+    added = project.get(key)
+    if not isinstance(managed, list) or not isinstance(added, list):
+        return
+    names = {_name_of(entry) for entry in managed} - {None}
+    for index, entry in enumerate(added):
+        if _name_of(entry) in names:
+            raise MergeError(path=path, key_path=(key, index, "name"), message=_OWNED_ENTRY)
+
+
+def _name_of(entry: JsonValue) -> str | None:
+    name = entry.get("name") if isinstance(entry, dict) else None
+    return name if isinstance(name, str) else None
 
 
 def _holds(value: JsonValue, key_path: tuple[str, ...]) -> bool:

@@ -182,3 +182,97 @@ def test_refuses_sibling_when_nested_too_deeply_to_merge() -> None:
         merge_json(TEMPLATE, content, path=SETTINGS)
 
     assert str(caught.value) == f"{SETTINGS}: $: not valid JSON here: it is nested too deeply"
+
+
+MARKETPLACE = ".claude-plugin/marketplace.project.json"
+# Shaped like the managed marketplace (AGH-17 D4): the project's name and owner, then its plugins.
+MANAGED_MARKETPLACE: JsonValue = {
+    "name": "demo",
+    "owner": {"name": "Demo Author", "email": "author@example.com"},
+    "plugins": [
+        {"name": "hub-workflow", "source": "./plugin/hub-workflow"},
+        {"name": "demo", "source": "./plugin/demo"},
+    ],
+}
+OWNED = "refused: the managed marketplace.json owns this"
+
+
+def a_pin(name: str) -> JsonValue:
+    return {"name": name, "source": {"source": "url", "url": f"https://example.com/{name}.git"}}
+
+
+def test_appends_sibling_plugins_in_order_when_merged() -> None:
+    # Q-1 (ADR 0009, no sort): the managed entries, then the sibling's in its own order.
+    value = merged(
+        MANAGED_MARKETPLACE, {"plugins": [a_pin("superpowers"), a_pin("aaa")]}, path=MARKETPLACE
+    )
+
+    assert isinstance(value, dict)
+    assert value["plugins"] == [
+        {"name": "hub-workflow", "source": "./plugin/hub-workflow"},
+        {"name": "demo", "source": "./plugin/demo"},
+        a_pin("superpowers"),
+        a_pin("aaa"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("plugins", "key_path"),
+    [
+        ([a_pin("hub-workflow")], "plugins[0].name"),
+        ([a_pin("demo")], "plugins[0].name"),
+        ([a_pin("superpowers"), {"name": "demo", "source": "./plugin/demo"}], "plugins[1].name"),
+    ],
+    ids=["base-plugin", "project-plugin", "same-as-managed-second"],
+)
+def test_refuses_sibling_entry_when_name_is_managed(
+    plugins: list[JsonValue], key_path: str
+) -> None:
+    content = json.dumps({"plugins": plugins}).encode("utf-8")
+
+    with pytest.raises(MergeError) as caught:
+        merge_json(MANAGED_MARKETPLACE, content, path=MARKETPLACE)
+
+    assert str(caught.value) == f"{MARKETPLACE}: {key_path}: {OWNED} entry"
+
+
+@pytest.mark.parametrize(
+    "project",
+    [
+        {"name": "other"},
+        {"name": "demo"},
+        {"owner": {"name": "Someone Else"}},
+        {"owner": {}},
+        {"description": "x", "owner": {"email": "x@example.com"}},
+    ],
+    ids=["name", "same-name", "owner", "empty-owner", "owner-after-description"],
+)
+def test_refuses_owned_key_when_sibling_sets_it(project: dict[str, JsonValue]) -> None:
+    key = "name" if "name" in project else "owner"
+
+    with pytest.raises(MergeError) as caught:
+        merge_json(MANAGED_MARKETPLACE, json.dumps(project).encode("utf-8"), path=MARKETPLACE)
+
+    assert str(caught.value) == f"{MARKETPLACE}: {key}: {OWNED} key"
+
+
+def test_allows_description_and_metadata_when_sibling_sets_them() -> None:
+    # Q-2: only `name` and `owner` are the managed part's; other top-level keys merge.
+    project = {"description": "Our plugins.", "metadata": {"version": "1.0.0"}}
+
+    assert merged(MANAGED_MARKETPLACE, project, path=MARKETPLACE) == {
+        **MANAGED_MARKETPLACE,  # type: ignore[dict-item]
+        "description": "Our plugins.",
+        "metadata": {"version": "1.0.0"},
+    }
+
+
+def test_owns_names_only_for_marketplace_sibling_when_other_path_merged() -> None:
+    # Another sibling may set `name`, `owner` and a `plugins` entry with a managed name.
+    project = {"name": "x", "owner": {}, "plugins": [a_pin("demo")]}
+
+    value = merged(MANAGED_MARKETPLACE, project, path="x.project.json")
+
+    assert isinstance(value, dict)
+    assert value["name"] == "x"
+    assert value["plugins"] == [*MANAGED_MARKETPLACE["plugins"], a_pin("demo")]  # type: ignore[misc]
