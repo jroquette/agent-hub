@@ -782,6 +782,22 @@ def wt_path(workspace: Workspace, worktree: str) -> str:
     return str(bench_folder(workspace) / "wt" / worktree)
 
 
+# A child that logs its tool name and its environment's names (and CHECK_MODE), then, given a
+# program, becomes it.
+_LOG_ENV = """import json, os, sys
+with open(os.environ["HOME"] + "/children.jsonl", "a", encoding="utf-8") as file:
+    file.write(json.dumps({"tool": sys.argv[1], "env": sorted(os.environ),
+                           "mode": os.environ.get("CHECK_MODE")}) + "\\n")
+if len(sys.argv) > 2 and sys.argv[1] == "git":
+    os.execv(sys.argv[2], [sys.argv[2], *sys.argv[3:]])
+"""
+
+
+def logged_children(workspace: Workspace) -> list[dict[str, Any]]:
+    path = workspace.home / "children.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
 @pytest.mark.usefixtures("frozen")
 class TestRun:
     def test_records_one_line_per_run_when_run(
@@ -1089,3 +1105,178 @@ class TestRun:
         assert list(results(workspace).iterdir()) == []
         assert not (worktree.parent / "_bench").exists()
         assert workspace.claude_calls() == []
+
+    def test_runs_children_without_tokens_when_run(
+        self,
+        bench_workspace: Workspace,
+        run_command: CommandRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = bench_workspace
+        logger = workspace.base / "fakes" / "log_env.py"
+        logger.write_text(_LOG_ENV)
+        workspace.write_cases(
+            [
+                workspace.case(
+                    setup_cmd=f"python3 {logger} setup",
+                    test_cmd=["python3", str(logger), "grader"],
+                )
+            ]
+        )
+        real_git = os.path.realpath(workspace.bin / "git")
+        (workspace.bin / "git").unlink()
+        (workspace.bin / "git").write_text(
+            f'#!/bin/sh\nexec {sys.executable} {logger} git {real_git} "$@"\n'
+        )
+        (workspace.bin / "git").chmod(0o755)
+        workspace.answer([{"stdout": workspace.result(0.1, 1, "success")}])
+        for name in TOKENS:
+            # Synthetic, built from fragments: never a real token.
+            monkeypatch.setenv(name, "gh" + "p_" + "x" * 36)
+
+        result = bench_run(workspace, run_command, "--runs", "1", "--arms", "with")
+
+        assert (result.exit_code, result.stderr) == (0, ""), result.output
+        children = logged_children(workspace)
+        tools = {child["tool"] for child in children}
+        assert tools == {"git", "setup", "grader"}
+        for child in children:
+            assert set(child["env"]).isdisjoint(TOKENS), child["tool"]
+            # The case env reaches the test command only (E17).
+            assert child["mode"] == ("1" if child["tool"] == "grader" else None), child["tool"]
+        (session,) = workspace.claude_calls()
+        assert set(session["env"]).isdisjoint(TOKENS)
+        assert "CHECK_MODE" not in session["env"]
+        assert session["values"] == workspace.otel("T1", "with")
+
+    @pytest.mark.parametrize("trace", [True, False], ids=["trace", "no-trace"])
+    def test_keeps_trace_only_when_trace_given(
+        self, bench_workspace: Workspace, run_command: CommandRunner, *, trace: bool
+    ) -> None:
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+        # Over 1 MiB: only the trace's tail is read, and its last result event is the record's.
+        padding = json.dumps({"type": "assistant", "text": "a" * (1 << 20)})
+        result_event = {"type": "result", "total_cost_usd": 0.5, "num_turns": 7}
+        stream = "\n".join(
+            [
+                json.dumps({"type": "result", "total_cost_usd": 9.0}),
+                padding,
+                json.dumps(result_event | {"subtype": "success"}),
+                json.dumps({"type": "system"}),
+                "",
+            ]
+        )
+        workspace.answer(
+            [
+                {"argv_has": ["stream-json"], "stdout": stream},
+                {"stdout": workspace.result(0.25, 3, "success")},
+            ]
+        )
+        arguments = ("--runs", "1", "--arms", "with", "--label", "L1")
+
+        result = bench_run(workspace, run_command, *arguments, *(["--trace"] if trace else []))
+
+        assert (result.exit_code, result.stderr) == (0, ""), result.output
+        (call,) = workspace.claude_calls()
+        traces = results(workspace) / "traces"
+        record = json.loads((results(workspace) / "L1.jsonl").read_text())
+        if trace:
+            assert call["argv"][4:7] == ["--output-format", "stream-json", "--verbose"]
+            assert "--no-session-persistence" not in call["argv"]
+            assert [path.name for path in traces.iterdir()] == ["L1-T1-with-r1.jsonl"]
+            assert (traces / "L1-T1-with-r1.jsonl").read_text() == stream
+            assert (record["cost"], record["turns"], record["subtype"]) == (0.5, 7, "success")
+        else:
+            assert call["argv"][4:6] == ["--output-format", "json"]
+            assert call["argv"][-1] == "--no-session-persistence"
+            assert not traces.exists()
+            assert (record["cost"], record["turns"], record["subtype"]) == (0.25, 3, "success")
+
+    @pytest.mark.parametrize("effort", ["low", "high", ""])
+    def test_writes_effort_when_variable_set(
+        self, bench_workspace: Workspace, run_command: CommandRunner, *, effort: str
+    ) -> None:
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+
+        result = bench_run(
+            workspace,
+            run_command,
+            *("--runs", "1", "--arms", "without", "--label", "L1"),
+            env={EFFORT_VARIABLE: effort},
+        )
+
+        assert result.exit_code == 0, result.output
+        written = (results(workspace) / ".settings-L1-T1-without-r1.json").read_text()
+        assert written == sandbox_line(
+            workspace, "L1-T1-without-r1", enabled=False, effort=effort or "medium"
+        )
+
+    def test_uses_step_timeouts_when_children_run(
+        self,
+        bench_workspace: Workspace,
+        run_command: CommandRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from agent_hub.cli import bench_steps  # noqa: PLC0415 - the module this test patches
+
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+        real = bench_steps.run_child
+        seen: set[tuple[str, float | None, bool | None]] = set()
+
+        def spy(argv: list[str], **kwargs: Any) -> Any:
+            seen.add((Path(argv[0]).name, kwargs["timeout"], kwargs["own_session"]))
+            return real(argv, **kwargs)
+
+        monkeypatch.setattr(bench_steps, "run_child", spy)
+
+        result = bench_run(workspace, run_command, "--runs", "1", "--arms", "with")
+
+        assert result.exit_code == 0, result.output
+        # Every child in the caller's process group, so Ctrl-C reaches it.
+        assert seen == {
+            ("git", 1_800, False),
+            ("bash", 600, False),
+            ("claude", 1_800, False),
+            ("python3", 1_800, False),
+        }
+        assert (bench_steps.AGENT_TIMEOUT, bench_steps.GRADER_TIMEOUT) == (1_800, 1_800)
+        assert (bench_steps.GIT_TIMEOUT, bench_steps.SETUP_TIMEOUT) == (1_800, 600)
+
+    @pytest.mark.parametrize(
+        ("broken", "reason"),
+        [("missing", "claude is not on PATH"), ("no-interpreter", "claude could not run: ")],
+    )
+    def test_reports_run_failure_when_session_cannot_start(
+        self,
+        bench_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        broken: str,
+        reason: str,
+    ) -> None:
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+        claude = workspace.bin / "claude"
+        if broken == "missing":
+            claude.unlink()
+        else:
+            # Found on PATH, but the kernel cannot start it: an OSError at launch.
+            claude.write_text("#!/no/such/interpreter\n")
+
+        result = bench_run(workspace, run_command, "--runs", "1", "--label", "L1")
+
+        # Each job fails alone, with no record; the run ends with its summary, exit 1.
+        assert result.exit_code == 1, result.output
+        assert result.stdout == f"\nruns: 0, spent $0.00\n\n{TABLE_HEADER}\n"
+        lines = result.stderr.splitlines()
+        assert [line.split(": ", 2)[:2] for line in lines] == [
+            ["hub bench", "L1-T1-with-r1"],
+            ["hub bench", "L1-T1-without-r1"],
+        ]
+        assert all(line.split(": ", 2)[2].startswith(reason) for line in lines), lines
+        assert not (results(workspace) / "L1.jsonl").exists()
+        assert workspace.claude_calls() == []
+        assert_checkout_untouched(workspace)

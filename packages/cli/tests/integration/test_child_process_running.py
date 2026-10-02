@@ -140,6 +140,7 @@ def grandchild_reaped_by_caller(folder: Path) -> Iterator[None]:
 
 
 OUTPUT_LIMIT = 1024
+LOUD_BYTES = (1 << 20) + 3
 LOUD = textwrap.dedent(
     """
     import sys
@@ -157,6 +158,38 @@ def test_keeps_output_tail_when_limit_set(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert result.stdout == b"a" * (OUTPUT_LIMIT - 3) + b"END"
     assert result.stderr == b"e" * (OUTPUT_LIMIT - 3) + b"ERR"
+
+
+def test_keeps_whole_stdout_in_file_when_path_given(tmp_path: Path) -> None:
+    kept = tmp_path / "out.txt"
+    kept.write_bytes(b"old content, emptied first\n" * 100_000)
+
+    result = run_child(
+        [*PYTHON, "-c", LOUD],
+        cwd=tmp_path,
+        env={},
+        timeout=None,
+        output_limit=OUTPUT_LIMIT,
+        stdout_path=kept,
+    )
+
+    assert result.returncode == 0
+    assert kept.read_bytes() == b"a" * (LOUD_BYTES - 3) + b"END"
+    assert result.stdout == b"a" * (OUTPUT_LIMIT - 3) + b"END"
+    assert result.stderr == b"e" * (OUTPUT_LIMIT - 3) + b"ERR"
+
+
+def test_refuses_stdout_path_when_no_limit(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="stdout_path needs output_limit"):
+        run_child(
+            [*PYTHON, "-c", "pass"],
+            cwd=tmp_path,
+            env={},
+            timeout=None,
+            stdout_path=tmp_path / "out.txt",
+        )
+
+    assert not (tmp_path / "out.txt").exists()
 
 
 # The child starts the grandchild, then outlives the timeout itself.
