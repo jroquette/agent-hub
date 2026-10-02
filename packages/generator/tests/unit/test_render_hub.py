@@ -1720,6 +1720,47 @@ def test_limits_workflow_when_ci_rendered(
     assert re.findall(r"^  ([a-z][a-z0-9-]*):$", jobs, re.MULTILINE) == ["check"]
 
 
+# AGH-46 D-agents: the two branch mentions of AGENTS.md, as rendered before the repo key existed.
+WORKTREE_MENTION = "   fetched {base}.\n"
+PUSH_RULE = (
+    "2. No push to {branches}, no force-push, no production deploys. Everything lands through a PR"
+    " the\n"
+)
+
+
+def ci_trigger_branches(ci: str) -> list[str]:
+    """The ``branches:`` values of the workflow's triggers, in file order."""
+    return re.findall(r'^    branches: \["([^"]+)"\]$', ci, re.MULTILINE)
+
+
+def test_renders_agents_and_ci_as_before_when_no_repo_sets_branch(
+    variant_config: HubConfig,
+) -> None:
+    agents = text_of(variant_config, "AGENTS.md")
+    ci = text_of(variant_config, ".github/workflows/ci.yml")
+
+    assert WORKTREE_MENTION.format(base="`origin/trunk`") in agents
+    assert PUSH_RULE.format(branches="`trunk`") in agents
+    assert "<the repo's default branch>" not in agents
+    assert ci_trigger_branches(ci) == ["trunk", "trunk"]
+
+
+def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubConfig) -> None:
+    document = variant_config.model_dump(mode="json", by_alias=True, exclude_none=True)
+    document["repos"][0]["default_branch"] = "master"
+    config = HubConfig.model_validate(document)
+
+    agents = text_of(config, "AGENTS.md")
+    ci = text_of(config, ".github/workflows/ci.yml")
+
+    base = "`origin/<the repo's default branch>` (demo-api: `master`, demo-web: `trunk`)"
+    assert WORKTREE_MENTION.format(base=base) in agents
+    assert PUSH_RULE.format(branches="`main`, `master` or `trunk`") in agents
+    assert "`origin/trunk`" not in agents
+    # The hub's own CI keeps the project branch.
+    assert ci_trigger_branches(ci) == ["trunk", "trunk"]
+
+
 def test_pins_hygiene_hooks_when_pre_commit_rendered(demo_config: HubConfig) -> None:
     pre_commit = text_of(demo_config, ".pre-commit-config.yaml")
 

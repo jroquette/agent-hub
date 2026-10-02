@@ -6,7 +6,7 @@ value such as ``on``, ``NO`` or ``1.0`` would otherwise parse as another type (b
 lists repo dirs unquoted; its readers load it without type resolution). Plus the platform
 repository, the Makefile's module include lines, the module files ``AGENTS.md`` names and the
 ``contract-sync`` source and target repo dirs (empty while the module is unselected), so its
-script never reads ``hub.json``.
+script never reads ``hub.json``, and ``AGENTS.md``'s worktree base and protected branches.
 ``project.author_name``, ``repos[].check_fast``, ``repos[].check`` and ``platform.version`` are
 never keys: shims read them at run time, and the author name needs format quoting.
 """
@@ -28,6 +28,8 @@ _LIST_SEPARATOR = ", "
 MODULE_MAKEFILE_PATTERN: Final = "mk/<id>.mk"
 _MARKDOWN_WIDTH: Final = 120
 _MARKDOWN_INDENT: Final = "  "
+# ``AGENTS.md``'s worktree base once a repo sets its own branch; each repo's follows (AGH-46).
+_PER_REPO_BASE: Final = "`origin/<the repo's default branch>`"
 
 
 def substitution_mapping(config: HubConfig) -> dict[str, str]:
@@ -47,6 +49,33 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
         "module_includes": _module_includes(config),
         **_module_files(config),
         **_contract_sync_repos(config),
+        **_branch_mentions(config),
+    }
+
+
+def _branch_mentions(config: HubConfig) -> dict[str, str]:
+    """``AGENTS.md``'s worktree base and the branches its push rule names, as code spans.
+
+    With no ``repos[].default_branch`` set, the project branch alone, so the file keeps the bytes
+    it had before the key. Otherwise each repo's effective branch in ``hub.json`` order, and the
+    guard's protected set (``main``, ``master``, the project's and each repo's), sorted, each once.
+    """
+    # The project branch: the whole mention without a repo key, and a protected branch.
+    project_branch = config.project.default_branch
+    if all(repo.default_branch is None for repo in config.repos):
+        return {
+            "worktree_base": f"`origin/{project_branch}`",
+            "protected_branches": f"`{project_branch}`",
+        }
+    repo_branches = {repo.dir: config.default_branch_for(repo.dir) for repo in config.repos}
+    per_repo = _LIST_SEPARATOR.join(f"{name}: `{branch}`" for name, branch in repo_branches.items())
+    spans = [
+        f"`{branch}`"
+        for branch in sorted({"main", "master", project_branch, *repo_branches.values()})
+    ]
+    return {
+        "worktree_base": f"{_PER_REPO_BASE} ({per_repo})",
+        "protected_branches": f"{_LIST_SEPARATOR.join(spans[:-1])} or {spans[-1]}",
     }
 
 
