@@ -302,6 +302,8 @@ class TestModules:
 MARKETPLACE = ".claude-plugin/marketplace.json"
 MARKETPLACE_SIBLING = ".claude-plugin/marketplace.project.json"
 OWNED = "refused: the managed marketplace.json owns this"
+TWICE = "refused: the sibling lists this plugin name more than once"
+UNNAMED = "refused: a plugin entry is an object with a string name"
 
 
 def a_pin(name: str) -> dict[str, Any]:
@@ -349,8 +351,24 @@ class TestMarketplace:
             ({"plugins": [a_pin("aaa"), a_pin("demo")]}, f"plugins[1].name: {OWNED} entry"),
             ({"name": "other"}, f"name: {OWNED} key"),
             ({"owner": {"name": "Someone Else"}}, f"owner: {OWNED} key"),
+            (
+                {"plugins": [{"name": "x", "source": "./a"}, {"name": "x", "source": "./b"}]},
+                f"plugins[1].name: {TWICE}",
+            ),
+            ({"plugins": ["superpowers"]}, f"plugins[0]: {UNNAMED}"),
+            ({"plugins": [{"source": "./a"}]}, f"plugins[0]: {UNNAMED}"),
+            ({"plugins": [{"name": 1, "source": "./a"}]}, f"plugins[0]: {UNNAMED}"),
         ],
-        ids=["base-plugin", "project-plugin", "name", "owner"],
+        ids=[
+            "base-plugin",
+            "project-plugin",
+            "name",
+            "owner",
+            "repeated-name",
+            "not-object",
+            "missing-name",
+            "number-name",
+        ],
     )
     def test_writes_nothing_when_sibling_takes_managed_name(
         self,
