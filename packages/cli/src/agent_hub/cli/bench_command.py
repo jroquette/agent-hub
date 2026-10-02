@@ -8,9 +8,13 @@ hub without ``bench``. An invalid ``hub.json`` exits 1 with the reader's lines.
 
 ``--validate`` checks the graders and never runs ``claude``: each case not excluded is graded at
 its merge's parent (it must fail) and at its merge (it must pass), one line each; a wrong grade
-or a failed step exits 1. The steps are ``bench_steps``.
+or a failed step exits 1. A run takes the cases ``--cases`` names (all when empty), runs each in
+each arm ``--runs`` times within ``--budget`` and prints the records and the summary; a job whose
+step failed exits 1 after the summary. The label's default and each record's ``ts`` read the
+local clock (``now``). The steps are ``bench_steps``.
 """
 
+import datetime
 import math
 import os
 import re
@@ -23,15 +27,15 @@ from typing import Annotated, Final
 import typer
 from typer._click.core import ParameterSource
 
-from agent_hub.cli.bench_steps import BenchSteps, cases_or_exit
-from agent_hub.cli.command_exits import FAILURE, fail, not_implemented
+from agent_hub.cli.bench_steps import BenchSteps, SessionPlan, cases_or_exit
+from agent_hub.cli.command_exits import FAILURE, fail
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
 from agent_hub.cli.hub_root import hub_root_or_exit, main_checkout
 from agent_hub.cli.run_children import SESSION_HIDDEN, without
 from agent_hub.core.bench.bench_cases import CASE_ID_PATTERN, MAX_CASES
-from agent_hub.core.bench.bench_plan import ARMS
-from agent_hub.core.bench.bench_session import EFFORTS
-from agent_hub.core.bench.bench_summary import NOTHING_TO_VALIDATE
+from agent_hub.core.bench.bench_plan import ARMS, jobs, run_cases
+from agent_hub.core.bench.bench_session import EFFORTS, plugin_id
+from agent_hub.core.bench.bench_summary import NO_CASES_TO_RUN, NOTHING_TO_VALIDATE
 from agent_hub.core.hub_config.model import HubConfig
 
 COMMAND: Final = "bench"
@@ -203,7 +207,7 @@ def bench(  # noqa: PLR0913 - one parameter per option of spec D2
     if validate:
         _validate(root, config)
     else:
-        _run(options)
+        _run(root, config, options)
 
 
 def _validate(root: Path, config: HubConfig) -> None:
@@ -217,10 +221,31 @@ def _validate(root: Path, config: HubConfig) -> None:
         raise typer.Exit(FAILURE)
 
 
-def _run(options: BenchOptions) -> None:
-    # The runs come with the next task of AGH-17.
-    del options
-    not_implemented()
+def now() -> datetime.datetime:
+    """The run's clock (tests replace it): the local time, as the script's ``time.strftime``."""
+    return datetime.datetime.now().astimezone()
+
+
+def _run(root: Path, config: HubConfig, options: BenchOptions) -> None:
+    """Run the cases ``options`` names in each arm within the budget; exit 1 if a job failed."""
+    every = cases_or_exit(root, repos=[repo.dir for repo in config.repos])
+    cases = run_cases(every, ids=options.cases)
+    if not cases:
+        typer.echo(NO_CASES_TO_RUN)
+        return
+    session = SessionPlan(
+        label=options.label or now().strftime(LABEL_FORMAT),
+        plugin=plugin_id(config.project.name),
+        effort=options.effort,
+        per_run=options.per_run,
+        trace=options.trace,
+    )
+    steps = BenchSteps(workspace=_hub_checkout(root).parent, environ=os.environ)
+    planned = jobs(cases, arms=options.arms, runs=options.runs)
+    if not steps.run(
+        planned, session=session, parallel=options.parallel, budget=options.budget, clock=now
+    ):
+        raise typer.Exit(FAILURE)
 
 
 def _hub_checkout(root: Path) -> Path:

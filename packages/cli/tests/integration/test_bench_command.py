@@ -9,6 +9,7 @@ suite's bench workspace (``bench_workspace``: ``ws/hub`` selecting ``bench``, re
 with a fake ``claude`` on ``PATH``.
 """
 
+import datetime
 import json
 import os
 import shutil
@@ -23,7 +24,6 @@ from click import unstyle
 from typer.testing import Result
 
 from agent_hub.cli import bench_command
-from agent_hub.cli.command_exits import NOT_IMPLEMENTED, NOT_IMPLEMENTED_EXIT_CODE
 from agent_hub.core.bench.bench_cases import MAX_CASES
 
 pytestmark = pytest.mark.disable_socket
@@ -254,10 +254,9 @@ class TestUsage:
             *("--cases", cases),
         )
 
-        # Past every check: the command reaches the stub the next tasks replace.
-        assert result.exit_code == NOT_IMPLEMENTED_EXIT_CODE, result.output
-        assert result.stdout == ""
-        assert result.stderr == f"{NOT_IMPLEMENTED}\n"
+        # Past every check: the hub has no cases, so the run starts no child.
+        assert (result.exit_code, result.stderr) == (0, ""), result.output
+        assert result.stdout == NO_CASES_TO_RUN
         assert spy.calls == []
         assert (bench_command.MAX_RUNS, bench_command.MAX_PARALLEL) == (100, 16)
         assert (bench_command.MAX_BUDGET_USD, MAX_CASES) == (1000, 200)
@@ -675,3 +674,418 @@ class TestValidate:
         assert result.stdout == ""
         assert (bench_folder(workspace) / "wt").is_dir()
         assert_checkout_untouched(workspace)
+
+
+# A run's clock: the label default and each record's ``ts`` (local time), as the hub goldens'.
+INSTANT = datetime.datetime(2026, 1, 15, 10, 30)  # noqa: DTZ001 - the script's local time
+DEFAULT_LABEL = "bench-20260115-1030"
+TS = "2026-01-15T10:30:00"
+NO_CASES_TO_RUN = (
+    "no bench cases to run (brain/workflow/bench/tasks.json is empty or --cases matched none)\n"
+)
+TABLE_HEADER = "| case | arm | pass | pass^k | cost | avg s |\n|---|---|---|---|---|---|\n"
+# The grader's lines in a run: the overlay put origin/main's agent config (M) over the parent's.
+_RUN_WORDS = "mode=1 setup cfg=MMMM staged=2 args:"
+
+
+@pytest.fixture
+def frozen(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The run's clock at the goldens' instant; every session lasts 0 s."""
+    from agent_hub.cli import bench_steps  # noqa: PLC0415 - the module this fixture patches
+
+    monkeypatch.setattr(bench_command, "now", lambda: INSTANT)
+    monkeypatch.setattr(bench_steps, "monotonic", lambda: 0.0)
+
+
+def bench_run(
+    workspace: Workspace,
+    run_command: CommandRunner,
+    *args: str,
+    root: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> Result:
+    """``hub bench <args>`` in the workspace's hub (or ``root``)."""
+    return run_command(root or workspace.hub, "bench", *args, env=env)
+
+
+def results(workspace: Workspace) -> Path:
+    return bench_folder(workspace) / "results"
+
+
+def settings_path(workspace: Workspace, worktree: str) -> str:
+    return str(results(workspace) / f".settings-{worktree}.json")
+
+
+def agent_part(
+    cost: float, turns: int | None, subtype: str | None, *, rc: int = 0, error: str = ""
+) -> dict[str, Any]:
+    return {
+        "agent_rc": rc,
+        "cost": cost,
+        "turns": turns,
+        "secs": 0,
+        "subtype": subtype,
+        "agent_error": error,
+    }
+
+
+def grade_part(*, fixed: bool) -> dict[str, Any]:
+    state = "fix present" if fixed else "fix missing"
+    return {
+        "pass": fixed,
+        "hidden_rc": 0 if fixed else 1,
+        "related_rc": 0 if fixed else 1,
+        "hidden_tail": f"t {state} {_RUN_WORDS} a/__main__.py t/__main__.py",
+        "related_tail": f"a {state} {_RUN_WORDS} t",
+    }
+
+
+def record_line(
+    case: str, arm: str, run: int, *, agent: dict[str, Any], grade: dict[str, Any], label: str
+) -> str:
+    """A record as the script printed it: its fields in the script's order."""
+    record = {"label": label, "case": case, "arm": arm, "run": run, "model": "claude-sonnet-5"}
+    return json.dumps(record | agent | grade | {"ts": TS})
+
+
+def sandbox_line(workspace: Workspace, worktree: str, *, enabled: bool, effort: str) -> str:
+    """The golden's settings file, with the plugin ``hub-workflow@demo`` (Q-5, E2)."""
+    path = str(bench_folder(workspace) / "wt" / worktree)
+    settings = {
+        "sandbox": {
+            "enabled": True,
+            "allowUnsandboxedCommands": False,
+            "autoAllowBashIfSandboxed": True,
+            "network": {"allowedDomains": ["127.0.0.1", "localhost"], "allowLocalBinding": True},
+            "filesystem": {
+                "allowWrite": [path, "/private/tmp", "/private/var/folders"],
+                "denyWrite": [f"{path}/.git"],
+            },
+        },
+        "enabledPlugins": {"hub-workflow@demo": enabled, "engineering@synced": False},
+        "effortLevel": effort,
+    }
+    return json.dumps(settings)
+
+
+def claude_argv(workspace: Workspace, worktree: str, *, prompt: str, per_run: str) -> list[str]:
+    """The golden's argv of a session, without the program."""
+    return [
+        *("-p", prompt, "--model", "claude-sonnet-5", "--output-format", "json"),
+        *("--permission-mode", "acceptEdits", "--setting-sources", "user"),
+        *("--settings", settings_path(workspace, worktree), "--max-budget-usd", per_run),
+        *("--max-turns", "60", "--strict-mcp-config", "--no-session-persistence"),
+    ]
+
+
+def wt_path(workspace: Workspace, worktree: str) -> str:
+    return str(bench_folder(workspace) / "wt" / worktree)
+
+
+@pytest.mark.usefixtures("frozen")
+class TestRun:
+    def test_records_one_line_per_run_when_run(
+        self, bench_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        # The golden run_two_arms: 12 jobs, T2 before T1 and without before with; the summary
+        # sorts both. T1-with-r2 and -r3 write no fix. Costs 0.25/0.5: the 12th job starts at
+        # spent 4.00 + 1.00 == --budget 5.0.
+        workspace = bench_workspace
+        workspace.write_cases(
+            [
+                workspace.case(id="T2", prompt="Add the fix again"),
+                workspace.case(id="T3"),
+                workspace.case(),
+                workspace.case(id="T0", repo="gone", excluded=True),
+            ]
+        )
+        reply = workspace.result
+        rules: list[dict[str, Any]] = [
+            {"env_has": workspace.otel(case, "without"), "stdout": reply(0.25, 3, "success")}
+            for case in ("T2", "T1")
+        ]
+        rules += [
+            {
+                "argv_has": [settings_path(workspace, f"L1-T1-with-r{run}")],
+                "env_has": workspace.otel("T1", "with"),
+                "stdout": reply(0.5, 60, "error_max_turns"),
+            }
+            for run in (2, 3)
+        ]
+        rules += [
+            {
+                "env_has": workspace.otel(case, "with"),
+                "write": {"fix.txt": "fixed\n"},
+                "stdout": reply(0.5, 7, "success"),
+            }
+            for case in ("T2", "T1")
+        ]
+        workspace.answer(rules)
+
+        result = bench_run(
+            workspace,
+            run_command,
+            *("--runs", "3", "--arms", "without,with", "--cases", "T1,T2", "--parallel", "1"),
+            *("--label", "L1", "--per-run", "1.0", "--budget", "5.0"),
+        )
+
+        jobs = [
+            (case, arm, run)
+            for run in (1, 2, 3)
+            for case in ("T2", "T1")
+            for arm in ("without", "with")
+        ]
+
+        def line(case: str, arm: str, run: int) -> str:
+            if arm == "without":
+                agent, fixed = agent_part(0.25, 3, "success"), False
+            elif case == "T1" and run > 1:
+                agent, fixed = agent_part(0.5, 60, "error_max_turns"), False
+            else:
+                agent, fixed = agent_part(0.5, 7, "success"), True
+            return record_line(
+                case, arm, run, agent=agent, grade=grade_part(fixed=fixed), label="L1"
+            )
+
+        lines = [line(*job) for job in jobs]
+        assert (result.exit_code, result.stderr) == (0, ""), result.output
+        assert result.stdout.startswith("".join(f"{text}\n" for text in lines))
+        assert (results(workspace) / "L1.jsonl").read_text() == "".join(
+            f"{text}\n" for text in lines
+        )
+        calls = workspace.claude_calls()
+        assert [(call["cwd"], call["argv"]) for call in calls] == [
+            (
+                wt_path(workspace, f"L1-{case}-{arm}-r{run}"),
+                claude_argv(
+                    workspace,
+                    f"L1-{case}-{arm}-r{run}",
+                    prompt="Add the fix again" if case == "T2" else "Add the fix",
+                    per_run="1.0",
+                ),
+            )
+            for case, arm, run in jobs
+        ]
+        assert_checkout_untouched(workspace)
+
+    def test_prints_summary_when_runs_end(
+        self, bench_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        # AC-17.16: two runs, two at a time; both arms in each wave, with before without.
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+        reply = workspace.result
+        workspace.answer(
+            [
+                {"env_has": workspace.otel("T1", "without"), "stdout": reply(0.25, 3, "success")},
+                {
+                    "env_has": workspace.otel("T1", "with"),
+                    "write": {"fix.txt": "fixed\n"},
+                    "stdout": reply(0.5, 7, "success"),
+                },
+            ]
+        )
+
+        result = bench_run(
+            workspace, run_command, "--runs", "2", "--parallel", "2", "--per-run", "1"
+        )
+
+        lines = [
+            record_line(
+                "T1",
+                arm,
+                run,
+                agent=agent_part(0.5, 7, "success")
+                if arm == "with"
+                else agent_part(0.25, 3, "success"),
+                grade=grade_part(fixed=arm == "with"),
+                label=DEFAULT_LABEL,
+            )
+            for run in (1, 2)
+            for arm in ("with", "without")
+        ]
+        records = "".join(f"{text}\n" for text in lines)
+        assert (result.exit_code, result.stderr) == (0, ""), result.output
+        assert result.stdout == (
+            f"{records}\nruns: 4, spent $1.50\n\n{TABLE_HEADER}"
+            "| T1 | with | 2/2 | yes | $1.00 | 0 |\n"
+            "| T1 | without | 0/2 | no | $0.50 | 0 |\n"
+            "\n"
+            "- **with**: pass@1 100%, pass^k 1/1, cost $1.00\n"
+            "- **without**: pass@1 0%, pass^k 0/1, cost $0.50\n"
+        )
+        assert (results(workspace) / f"{DEFAULT_LABEL}.jsonl").read_text() == records
+        assert_checkout_untouched(workspace)
+
+    def test_enables_plugin_only_in_with_arm_when_run(
+        self, bench_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+        # The marketplace file the script read is ignored: the plugin is the project's (Q-5).
+        (workspace.hub / ".claude-plugin").mkdir(exist_ok=True)
+        (workspace.hub / ".claude-plugin" / "marketplace.json").write_text('{"name": "market"}\n')
+
+        result = bench_run(workspace, run_command, "--runs", "1", "--label", "L1")
+
+        assert result.exit_code == 0, result.output
+        written = {
+            path.name: path.read_text()
+            for path in results(workspace).iterdir()
+            if path.name.startswith(".settings-")
+        }
+        assert written == {
+            f".settings-L1-T1-{arm}-r1.json": sandbox_line(
+                workspace, f"L1-T1-{arm}-r1", enabled=arm == "with", effort="medium"
+            )
+            for arm in ("with", "without")
+        }
+
+    def test_records_error_tail_when_claude_fails(
+        self, bench_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        # The golden run_claude_error: agent_error keeps the last 300 of 301 characters,
+        # hidden_tail the first 200 of a 201-character last line. Money as floats: after 0.165
+        # is spent, 0.165 + 0.135 > 0.3 stops the third job; 0.165 prints as 0.17.
+        workspace = bench_workspace
+        tail = "T" + "-" * 198 + "|X"
+        workspace.write_cases([workspace.case(env={"CHECK_MODE": 1, "CHECK_TAIL": tail})])
+        stderr = "HEAD" + "." * 292 + "boom\n"
+        workspace.answer(
+            [
+                {
+                    "env_has": workspace.otel("T1", "without"),
+                    "stdout": workspace.result(0.165, 2, "success"),
+                },
+                {
+                    "env_has": workspace.otel("T1", "with"),
+                    "stdout": "not json\n",
+                    "stderr": stderr,
+                    "rc": 1,
+                },
+            ]
+        )
+
+        result = bench_run(
+            workspace,
+            run_command,
+            *("--runs", "2", "--parallel", "1", "--per-run", "0.135", "--budget", "0.3"),
+            env={EFFORT_VARIABLE: "high"},
+        )
+
+        grade = {
+            "pass": False,
+            "hidden_rc": 1,
+            "related_rc": 1,
+            "hidden_tail": tail[:200],
+            "related_tail": tail[:200],
+        }
+        lines = [
+            record_line(
+                "T1",
+                "with",
+                1,
+                agent=agent_part(0.0, None, None, rc=1, error=stderr[-300:]),
+                grade=grade,
+                label=DEFAULT_LABEL,
+            ),
+            record_line(
+                "T1",
+                "without",
+                1,
+                agent=agent_part(0.165, 2, "success"),
+                grade=grade,
+                label=DEFAULT_LABEL,
+            ),
+        ]
+        records = "".join(f"{text}\n" for text in lines)
+        assert (result.exit_code, result.stderr) == (0, ""), result.output
+        assert result.stdout == (
+            f"{records}STOP: budget cap (spent $0.17, next wave up to $0.14)\n"
+            f"\nruns: 2, spent $0.17\n\n{TABLE_HEADER}"
+            "| T1 | with | 0/1 | no | $0.00 | 0 |\n"
+            "| T1 | without | 0/1 | no | $0.17 | 0 |\n"
+            "\n"
+            "- **with**: pass@1 0%, pass^k 0/1, cost $0.00\n"
+            "- **without**: pass@1 0%, pass^k 0/1, cost $0.17\n"
+        )
+        assert (results(workspace) / f"{DEFAULT_LABEL}.jsonl").read_text() == records
+        for arm in ("with", "without"):
+            name = f"{DEFAULT_LABEL}-T1-{arm}-r1"
+            written = (results(workspace) / f".settings-{name}.json").read_text()
+            assert written == sandbox_line(workspace, name, enabled=arm == "with", effort="high")
+        assert [call["argv"] for call in workspace.claude_calls()] == [
+            claude_argv(
+                workspace, f"{DEFAULT_LABEL}-T1-{arm}-r1", prompt="Add the fix", per_run="0.135"
+            )
+            for arm in ("with", "without")
+        ]
+        assert_checkout_untouched(workspace)
+
+    def test_stops_at_budget_cap_when_next_wave_too_costly(
+        self, bench_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        # The first wave fits (0 + 2 x 1.0 <= 3); after 1.50 spent, the next (1.50 + 2.00) does not.
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+        workspace.answer([{"stdout": workspace.result(0.75, 4, "success")}])
+
+        result = bench_run(
+            workspace,
+            run_command,
+            *("--runs", "3", "--parallel", "2", "--per-run", "1", "--budget", "3"),
+        )
+
+        assert result.exit_code == 0, result.output
+        stop = "STOP: budget cap (spent $1.50, next wave up to $2.00)\n"
+        assert stop in result.stdout
+        assert result.stdout.index(stop) > result.stdout.rindex('"ts": ')
+        assert "\nruns: 2, spent $1.50\n" in result.stdout
+        assert len(workspace.claude_calls()) == 2
+        written = (results(workspace) / f"{DEFAULT_LABEL}.jsonl").read_text().splitlines()
+        assert [(json.loads(text)["arm"], json.loads(text)["run"]) for text in written] == [
+            ("with", 1),
+            ("without", 1),
+        ]
+
+    def test_prints_no_cases_line_when_cases_match_none(
+        self, bench_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+
+        # A substring match would pick T1.
+        result = bench_run(workspace, run_command, "--cases", "T10")
+
+        assert (result.exit_code, result.stdout, result.stderr) == (0, NO_CASES_TO_RUN, "")
+        assert not bench_folder(workspace).exists()
+        assert workspace.claude_calls() == []
+
+    def test_writes_results_to_main_checkout_when_run_from_hub_worktree(
+        self, bench_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        # The golden run_budget_stop_from_hub_worktree (E1, with --budget 3: --per-run 2.0 must
+        # fit the budget): the worktree holds the cases and a hub.json with api; the main
+        # checkout, changed after, holds neither. Two jobs at the default --parallel 3.
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+        worktree = workspace.hub / ".claude" / "worktrees" / "x"
+        workspace.git(workspace.hub, "worktree", "add", "-q", "-b", "x", str(worktree))
+        document = json.loads((workspace.hub / "hub.json").read_text())
+        document["repos"] = [
+            {"dir": "web", "github": "acme/web", "check_fast": "true", "check": "true"}
+        ]
+        (workspace.hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+        workspace.write_cases([])
+
+        result = bench_run(workspace, run_command, "--runs", "1", "--budget", "3", root=worktree)
+
+        assert (result.exit_code, result.stderr) == (0, ""), result.output
+        assert result.stdout == (
+            "STOP: budget cap (spent $0.00, next wave up to $4.00)\n"
+            f"\nruns: 0, spent $0.00\n\n{TABLE_HEADER}\n"
+        )
+        assert [path.name for path in bench_folder(workspace).iterdir()] == ["results"]
+        assert list(results(workspace).iterdir()) == []
+        assert not (worktree.parent / "_bench").exists()
+        assert workspace.claude_calls() == []
