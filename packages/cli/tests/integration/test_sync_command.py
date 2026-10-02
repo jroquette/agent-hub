@@ -299,6 +299,107 @@ class TestModules:
             assert f"mk/{module}.mk" in lock["files"], module
 
 
+MARKETPLACE = ".claude-plugin/marketplace.json"
+MARKETPLACE_SIBLING = ".claude-plugin/marketplace.project.json"
+OWNED = "refused: the managed marketplace.json owns this"
+
+
+def a_pin(name: str) -> dict[str, Any]:
+    return {"name": name, "source": {"source": "url", "url": f"https://example.com/{name}.git"}}
+
+
+def a_marketplace_hub(tmp_path: Path, document: dict[str, Any]) -> Path:
+    """A hub ``hub init`` wrote with module ``marketplace`` selected (and a second repo)."""
+    config = tmp_path / "hub.json"
+    config.write_bytes(dump_json(a_moduled_document(document, ["marketplace"])))
+    root = tmp_path / "hub"
+    created = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
+    assert created.exit_code == 0, created.stderr
+    return root
+
+
+def plugin_names(root: Path) -> list[str]:
+    value = json.loads((root / MARKETPLACE).read_bytes())
+    return [plugin["name"] for plugin in value["plugins"]]
+
+
+class TestMarketplace:
+    """AGH-17 D4 (AC-17.11): the seeded sibling merges after the managed marketplace."""
+
+    def test_orders_plugins_managed_first_when_sibling_adds_two(
+        self, tmp_path: Path, demo_document: dict[str, Any], run_sync: SyncRunner
+    ) -> None:
+        root = a_marketplace_hub(tmp_path, demo_document)
+        sibling = dump_json({"plugins": [a_pin("superpowers"), a_pin("aaa")]})
+        (root / MARKETPLACE_SIBLING).write_bytes(sibling)
+
+        synced = run_sync(root)
+
+        assert (synced.exit_code, synced.stderr) == (0, ""), synced.output
+        assert synced.stdout.splitlines() == [f"updated {MARKETPLACE}", "updated hub.lock"]
+        # Q-1: no sort; the managed entries first, then the sibling's in its own order.
+        assert plugin_names(root) == ["hub-workflow", "demo", "superpowers", "aaa"]
+        assert (root / MARKETPLACE_SIBLING).read_bytes() == sibling
+        assert run_sync(root).stdout == "up to date\n"
+
+    @pytest.mark.parametrize(
+        ("sibling", "line"),
+        [
+            ({"plugins": [a_pin("hub-workflow")]}, f"plugins[0].name: {OWNED} entry"),
+            ({"plugins": [a_pin("aaa"), a_pin("demo")]}, f"plugins[1].name: {OWNED} entry"),
+            ({"name": "other"}, f"name: {OWNED} key"),
+            ({"owner": {"name": "Someone Else"}}, f"owner: {OWNED} key"),
+        ],
+        ids=["base-plugin", "project-plugin", "name", "owner"],
+    )
+    def test_writes_nothing_when_sibling_takes_managed_name(
+        self,
+        tmp_path: Path,
+        demo_document: dict[str, Any],
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        sibling: dict[str, Any],
+        line: str,
+    ) -> None:
+        root = a_marketplace_hub(tmp_path, demo_document)
+        (root / MARKETPLACE_SIBLING).write_bytes(dump_json(sibling))
+        before = tree_digest(root)
+
+        synced = run_sync(root)
+
+        assert synced.exit_code == 1, synced.output
+        assert synced.stdout == ""
+        assert synced.stderr.splitlines() == [f"{MARKETPLACE_SIBLING}: {line}"]
+        assert tree_digest(root) == before
+
+    def test_creates_sibling_once_when_synced_twice(
+        self, demo_hub: Path, run_sync: SyncRunner
+    ) -> None:
+        document = json.loads((demo_hub / "hub.json").read_bytes())
+        document["modules"] = {"marketplace": {}}
+        (demo_hub / "hub.json").write_bytes(dump_json(document))
+
+        first = run_sync(demo_hub)
+
+        assert (first.exit_code, first.stderr) == (0, ""), first.output
+        assert f"created {MARKETPLACE_SIBLING}" in first.stdout.splitlines()
+        assert f"created {MARKETPLACE}" in first.stdout.splitlines()
+        assert (demo_hub / MARKETPLACE_SIBLING).read_bytes() == b"{}\n"
+        assert plugin_names(demo_hub) == ["hub-workflow", "demo"]
+        # The project's pins stay: the next sync merges the sibling and never writes it again.
+        sibling = dump_json({"plugins": [a_pin("superpowers")]})
+        (demo_hub / MARKETPLACE_SIBLING).write_bytes(sibling)
+
+        second = run_sync(demo_hub)
+
+        assert (second.exit_code, second.stderr) == (0, ""), second.output
+        assert MARKETPLACE_SIBLING not in second.stdout
+        assert (demo_hub / MARKETPLACE_SIBLING).read_bytes() == sibling
+        assert plugin_names(demo_hub) == ["hub-workflow", "demo", "superpowers"]
+        assert run_sync(demo_hub).stdout == "up to date\n"
+
+
 type LockMaker = Callable[[Path, dict[str, Any]], None]
 
 
