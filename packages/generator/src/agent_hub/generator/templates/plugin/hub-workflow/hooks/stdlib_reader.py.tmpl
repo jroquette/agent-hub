@@ -65,6 +65,7 @@ class TrackerSection:
     team: str = ""
     ready_label: str = "agent-ready"
     failed_label: str = "agent-failed"
+    transport: str = "api"
 
 
 @dataclass(frozen=True)
@@ -132,6 +133,7 @@ def load_hub_file(path: str | os.PathLike[str]) -> HubFile:
             team=_text(tracker, "team", ""),
             ready_label=_text(tracker, "ready_label", TrackerSection.ready_label),
             failed_label=_text(tracker, "failed_label", TrackerSection.failed_label),
+            transport=_text(tracker, "transport", TrackerSection.transport),
         ),
         repos=_repos(document.get("repos")),
         guard=GuardSection(

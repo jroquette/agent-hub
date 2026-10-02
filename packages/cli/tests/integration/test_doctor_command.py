@@ -293,6 +293,28 @@ def test_runs_only_config_schema_when_config_invalid(
     assert lines[1] == ONE_ERROR
 
 
+def test_reports_transport_when_value_unknown(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["tracker"]["transport"] = "connector"
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=1)
+
+    assert lines == [schema_line("tracker.transport: Input should be 'api' or 'mcp'"), ONE_ERROR]
+
+
+def test_stays_clean_when_transport_absent(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    assert "transport" not in demo_document["tracker"]
+    assert b'"transport"' not in (demo_hub / "hub.json").read_bytes()
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=0)
+
+    assert lines == [CLEAN]
+
+
 @pytest.mark.parametrize("schema_version", [1, 2], ids=["schema-ok", "schema-wrong"])
 def test_reports_pin_only_when_pin_differs(
     demo_hub: Path,
