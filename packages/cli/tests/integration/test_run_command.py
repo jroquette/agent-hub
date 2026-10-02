@@ -1405,3 +1405,120 @@ class TestTrackerFailures:
         operations = [call[0] for call in run_tracker.calls]
         assert operations[-1] == failing
         assert all(operations.count(operation) == 1 for operation in operations)
+
+
+RECORD_FIELDS = ["ts", "run", "issue", "repo", "state", "event", "live"]
+TRACKER_COST = 0.01
+
+
+@pytest.mark.usefixtures("with_key")
+class TestRecords:
+    def test_appends_one_line_per_transition_when_live(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        # Each port operation of an MCP adapter reports what it cost (Q-10).
+        run_tracker.last_cost_usd = TRACKER_COST
+        inject(monkeypatch, run_tracker)
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        found = records(workspace)
+        assert [(record["state"], record["event"]) for record in found] == [
+            ("PICKED", "picked"),
+            ("WORKTREE", "worktree_ready"),
+            ("IMPLEMENTING", "agent_finished"),
+            ("IMPLEMENTING", "commits"),
+            ("VERIFYING", "gate_ok"),
+            ("PR_OPEN", "pr_open"),
+            ("REPORTED", "reported"),
+        ]
+        run_id = run_id_of(run_workspace)
+        for record in found:
+            assert list(record)[:7] == RECORD_FIELDS
+            assert (record["run"], record["issue"], record["repo"], record["live"]) == (
+                run_id,
+                "DEM-1",
+                "demo-api",
+                True,
+            )
+        picked, reported = found[0], found[-1]
+        assert {name: picked[name] for name in list(picked)[7:]} == {
+            "budget": 3.0,
+            "max_turns": 40,
+            "model": "sonnet",
+            "transport": "api",
+        }
+        operations = len(run_tracker.calls)
+        assert operations == 4
+        assert {name: reported[name] for name in list(reported)[7:]} == {
+            "ok": True,
+            "total_cost_usd": round(0.42 + operations * TRACKER_COST, 4),
+            "pr": PR_URL,
+            "failed_stage": None,
+        }
+
+    def test_appends_inbox_line_when_run_ends(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        succeeded = live(run_command, workspace)
+        first_id = run_id_of(run_workspace)
+        monkeypatch.setenv("FAKE_MAKE_EXIT", "2")
+        (run_workspace.logs / "claude.jsonl").unlink()
+
+        failed = live(run_command, workspace)
+
+        assert (succeeded.exit_code, failed.exit_code) == (0, 1)
+        second_id = run_id_of(run_workspace)
+        assert inbox_lines(workspace) == [
+            f"- DEM-1 (demo-api) run {first_id}: PR {PR_URL}; $0.42",
+            f"- DEM-1 (demo-api) run {second_id}: FAILED at VERIFYING; $0.42",
+        ]
+        reported = [record for record in records(workspace) if record["event"] == "reported"]
+        assert [record["failed_stage"] for record in reported] == [None, "VERIFYING"]
+
+    def test_writes_to_main_checkout_when_run_from_hub_worktree(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        hub = workspace.hub
+        workspace.git(hub, "-c", "init.defaultBranch=main", "init", "-q")
+        workspace.git(hub, "add", "-A")
+        workspace.git(hub, "commit", "-q", "-m", "hub")
+        hub_worktree = hub / ".claude" / "worktrees" / "x"
+        workspace.git(hub, "worktree", "add", "-q", "-b", "x", str(hub_worktree))
+        inject(monkeypatch, run_tracker)
+
+        result = run_command(
+            workspace.base,
+            "run",
+            "DEM-1",
+            "--repo",
+            "demo-api",
+            "--live",
+            env={"AGENT_HUB_ROOT": str(hub_worktree)},
+        )
+
+        assert result.exit_code == 0, result.output
+        assert [record["event"] for record in records(workspace)][-1] == "reported"
+        assert len(inbox_lines(workspace)) == 1
+        assert not (hub_worktree / ".agent-runs").exists()
+        assert not (hub_worktree / "brain" / "_inbox" / "runs").exists()
