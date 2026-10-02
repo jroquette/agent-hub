@@ -18,7 +18,10 @@ A run is the script's: each job's worktree at the merge's parent, today's agent 
 grade. Waves of ``--parallel`` jobs start only while the budget holds (else the script's ``STOP:``
 line); each record is printed and appended to ``<ws>/_bench/results/<label>.jsonl`` in job order,
 then the summary is printed. A job whose worktree, setup or session cannot start has no record:
-its line goes to stderr and the run exits 1 after the summary.
+its line goes to stderr and the run exits 1 after the summary. The session gets the sandbox's
+``effortLevel`` from ``BENCH_EFFORT`` (E10) and its telemetry tags, never the case's ``env``; with
+``--trace`` its stdout is kept whole in ``<results>/traces/<worktree>.jsonl`` and the result is
+read from its last ``OUTPUT_LIMIT`` bytes (E15), else stdout is captured with that cap.
 """
 
 import contextlib
@@ -83,6 +86,7 @@ from agent_hub.core.json_form import JsonValue
 BENCH_FOLDER: Final = "_bench"
 WORKTREES_FOLDER: Final = "wt"
 RESULTS_FOLDER: Final = "results"
+TRACES_FOLDER: Final = "traces"
 # The script's timeouts, in seconds.
 GIT_TIMEOUT: Final = 1_800.0
 SETUP_TIMEOUT: Final = 600.0
@@ -251,9 +255,10 @@ class BenchSteps:
             trace=session.trace,
         )
         env = session_env(self._env, case=job.case, arm=job.arm)
+        trace = self._trace_path(path.name) if session.trace else None
         started = monotonic()
         try:
-            ended = self._start(argv, cwd=path, env=env, timeout=AGENT_TIMEOUT)
+            ended = self._start(argv, cwd=path, env=env, timeout=AGENT_TIMEOUT, stdout_path=trace)
         except ChildTimedOutError:
             return timeout_outcome(per_run=session.per_run, secs=int(AGENT_TIMEOUT))
         return agent_outcome(
@@ -348,6 +353,15 @@ class BenchSteps:
         with contextlib.suppress(StepError):
             self._run(prune, cwd=self.workspace, env=self._env, timeout=GIT_TIMEOUT)
 
+    def _trace_path(self, worktree: str) -> Path:
+        """The session's whole stream-json, kept: only its last ``OUTPUT_LIMIT`` bytes are read."""
+        traces = self.results / TRACES_FOLDER
+        try:
+            traces.mkdir(exist_ok=True)
+        except OSError as error:
+            raise StepError(f"{traces}: {error.strerror or error}") from None
+        return traces / f"{worktree}.jsonl"
+
     def _run(
         self, argv: Sequence[str], *, cwd: Path, env: Mapping[str, str], timeout: float
     ) -> ChildResult:
@@ -359,12 +373,19 @@ class BenchSteps:
             raise StepError(f"{argv[0]} timed out after {timeout:g} s") from None
 
     def _start(
-        self, argv: Sequence[str], *, cwd: Path, env: Mapping[str, str], timeout: float
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: Path,
+        env: Mapping[str, str],
+        timeout: float,
+        stdout_path: Path | None = None,
     ) -> ChildResult:
         """Run ``argv`` in the caller's group; a program that cannot start is a ``StepError``.
 
         A bare name is looked up on ``env``'s ``PATH``; a name with a ``/`` is run as written,
-        from ``cwd``. Raises ``ChildTimedOutError`` past ``timeout``.
+        from ``cwd``. With ``stdout_path``, stdout is kept there whole. Raises
+        ``ChildTimedOutError`` past ``timeout``.
         """
         name = argv[0]
         program = name if "/" in name else shutil.which(name, path=env.get("PATH", ""))
@@ -380,6 +401,7 @@ class BenchSteps:
                 timeout=timeout,
                 own_session=False,
                 output_limit=OUTPUT_LIMIT,
+                stdout_path=stdout_path,
             )
         except OSError as error:
             raise StepError(f"{name} could not run: {error.strerror or error}") from None

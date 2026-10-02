@@ -53,6 +53,7 @@ def run_child(
     timeout: float | None,
     own_session: bool | None = None,
     output_limit: int | None = None,
+    stdout_path: Path | None = None,
 ) -> ChildResult:
     """Run ``argv`` in ``cwd`` with exactly ``env``; stdin is empty, both streams are captured.
 
@@ -63,7 +64,9 @@ def run_child(
     With ``output_limit``, each stream goes to a temporary file and only its last
     ``output_limit`` bytes are read back: the memory a chatty child costs is bounded, though
     not the disk (the file holds the whole stream until the call ends), and a process it
-    leaves behind holds no pipe the read would wait on.
+    leaves behind holds no pipe the read would wait on. With ``stdout_path`` too, stdout goes
+    to that file (created or emptied) and stays there; its last ``output_limit`` bytes are read
+    back as well. ``stdout_path`` needs ``output_limit``.
 
     Raises ``ChildTimedOutError`` after ``timeout`` seconds, and ``OSError`` (for example
     ``FileNotFoundError``) when the tool cannot start.
@@ -71,8 +74,17 @@ def run_child(
     new_session = timeout is not None if own_session is None else own_session
     if output_limit is not None:
         return _run_to_files(
-            argv, cwd=cwd, env=env, timeout=timeout, new_session=new_session, limit=output_limit
+            argv,
+            cwd=cwd,
+            env=env,
+            timeout=timeout,
+            new_session=new_session,
+            limit=output_limit,
+            stdout_path=stdout_path,
         )
+    if stdout_path is not None:
+        msg = "stdout_path needs output_limit"
+        raise ValueError(msg)
     with subprocess.Popen(  # noqa: S603 - an argv list, never a shell; callers pass the tool
         list(argv),
         cwd=cwd,
@@ -93,6 +105,10 @@ def run_child(
     return ChildResult(returncode=child.returncode, stdout=stdout, stderr=stderr)
 
 
+def _stdout_file(path: Path | None) -> IO[bytes]:
+    return tempfile.TemporaryFile() if path is None else path.open("w+b")
+
+
 def _run_to_files(
     argv: Sequence[str],
     *,
@@ -101,8 +117,9 @@ def _run_to_files(
     timeout: float | None,
     new_session: bool,
     limit: int,
+    stdout_path: Path | None,
 ) -> ChildResult:
-    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+    with _stdout_file(stdout_path) as stdout, tempfile.TemporaryFile() as stderr:
         with subprocess.Popen(  # noqa: S603 - an argv list, never a shell; callers pass the tool
             list(argv),
             cwd=cwd,
