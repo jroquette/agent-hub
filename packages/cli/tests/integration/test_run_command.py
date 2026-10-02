@@ -347,11 +347,14 @@ class TestDryRun:
             json.dumps(RUN_DESCRIPTION)[1:-1],
             " --output-format json --max-turns 40 --max-budget-usd 3 --model sonnet ",
             """ --settings '{"effortLevel": "medium"}' """,
-            f" --add-dir {hub} {web} --allowedTools Read Edit ",
+            f" --add-dir {hub} {web} --permission-mode dontAsk --allowedTools Read Edit ",
+            " --disallowedTools mcp__Linear mcp__claude_ai_Linear mcp__Linear__",
             " 'Bash(make:*)' 'Bash(ls:*)' ",
         ):
             assert piece in claude, piece
-        assert "mcp__" not in claude
+        # Tracker tools appear only after --disallowedTools: neither the prompt nor the allowed
+        # tools name one.
+        assert "mcp__" not in claude.split(" --disallowedTools ")[0]
         assert lines[2] == f"would run: bash -c 'make check'   (cwd {worktree})"
         assert lines[3] == (
             "would run: git -c core.hooksPath=/dev/null push --no-verify -u origin jdoe/dem-1"
@@ -614,8 +617,16 @@ class TestLiveSuccess:
         assert result.exit_code == 0, result.output
         (call,) = run_workspace.calls("claude")
         argv = call["argv"]
-        tools = argv[argv.index("--allowedTools") + 1 :]
+        tools = argv[argv.index("--allowedTools") + 1 : argv.index("--disallowedTools")]
         assert tuple(tools) == IMPLEMENTING_TOOLS
+        assert argv[argv.index("--permission-mode") + 1] == "dontAsk"
+        denied = argv[argv.index("--disallowedTools") + 1 :]
+        for rule in ("mcp__Linear", "mcp__claude_ai_Linear"):
+            assert rule in denied
+        for name in ("save_issue", "save_comment", "get_issue", "list_comments"):
+            assert f"mcp__Linear__{name}" in denied
+            assert f"mcp__claude_ai_Linear__{name}" in denied
+        assert "--tools" not in argv
         assert tools.count("Bash(make:*)") == 1
         prompt = argv[argv.index("-p") + 1]
         for text in ("DEM-1", "Synthetic run issue", RUN_DESCRIPTION, "untrusted"):

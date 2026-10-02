@@ -7,6 +7,7 @@ from agent_hub.core.runner.session_prompt import (
     MAX_DESCRIPTION_CHARS,
     MAX_TITLE_CHARS,
     MAX_URL_CHARS,
+    TRACKER_MCP_SERVERS,
     TRUNCATED,
     gate_tools,
     implementing_argv,
@@ -177,6 +178,7 @@ def test_orders_argv_when_built() -> None:
         effort="medium",
         add_dirs=("/work/ws/hub", "/work/ws/demo-web"),
         tools=("Read", "Bash(make:*)"),
+        denied_tools=("mcp__Linear", "mcp__Linear__save_issue"),
     )
 
     assert argv == [
@@ -196,16 +198,32 @@ def test_orders_argv_when_built() -> None:
         "--add-dir",
         "/work/ws/hub",
         "/work/ws/demo-web",
+        "--permission-mode",
+        "dontAsk",
         "--allowedTools",
         "Read",
         "Bash(make:*)",
+        "--disallowedTools",
+        "mcp__Linear",
+        "mcp__Linear__save_issue",
     ]
     assert json.loads(argv[12]) == {"effortLevel": "medium"}
 
 
+def test_names_both_linear_servers_when_tracker_servers_listed() -> None:
+    assert TRACKER_MCP_SERVERS == ("mcp__Linear", "mcp__claude_ai_Linear")
+
+
 def test_omits_add_dir_when_no_folder_given() -> None:
     argv = implementing_argv(
-        prompt="p", max_turns=1, budget=0.25, model="m", effort="low", add_dirs=(), tools=("Read",)
+        prompt="p",
+        max_turns=1,
+        budget=0.25,
+        model="m",
+        effort="low",
+        add_dirs=(),
+        tools=("Read",),
+        denied_tools=(),
     )
 
     assert "--add-dir" not in argv
@@ -251,7 +269,14 @@ def test_replaces_lone_surrogate_when_issue_holds_one() -> None:
 def test_writes_budget_as_exact_decimal_when_argv_built() -> None:
     def budget_shown(budget: float) -> str:
         argv = implementing_argv(
-            prompt="p", max_turns=1, budget=budget, model="m", effort="low", add_dirs=(), tools=()
+            prompt="p",
+            max_turns=1,
+            budget=budget,
+            model="m",
+            effort="low",
+            add_dirs=(),
+            tools=(),
+            denied_tools=(),
         )
         return argv[argv.index("--max-budget-usd") + 1]
 
