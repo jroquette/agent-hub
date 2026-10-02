@@ -1,9 +1,9 @@
 """The session brief's text: ``now.md``, the last journal days and each repo's state.
 
 Pure: the CLI reads the files, git, ``gh`` and the clock, and hands the results over; this module
-only shapes text. The text is the hub's old brief script byte for byte, its quirks kept (spec
-Q-5): the first line of ``now.md``'s body is dropped as its heading even when it is not one, and
-failing CI runs read "failing on main" whatever the default branch is.
+only shapes text. The text is the hub's old brief script byte for byte, its quirk kept (spec
+Q-5): the first line of ``now.md``'s body is dropped as its heading even when it is not one.
+Failing CI runs name the checkout's own default branch, where the script always said "main".
 """
 
 import calendar
@@ -39,7 +39,10 @@ _FOOTER: Final = (
 
 
 class RepoState(BaseModel):
-    """What the brief shows of one checkout; ``prs`` and ``ci`` are ``gh``'s output, or empty."""
+    """What the brief shows of one checkout; ``prs`` and ``ci`` are ``gh``'s output, or empty.
+
+    ``default_branch`` is the branch ``base`` tracks and ``ci`` was read on.
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -49,6 +52,7 @@ class RepoState(BaseModel):
     dirty: int = 0
     behind: str = ""
     base: str = ""
+    default_branch: str = ""
     prs: str = ""
     ci: str = ""
 
@@ -101,7 +105,8 @@ def repo_line(state: RepoState, *, network: bool) -> str:
         prs = " | ".join(pr[:PR_CAP] for pr in state.prs.splitlines()[:PR_LINES])
         line += f"\n  open PRs: {prs}"
     if state.ci:
-        line += "\n  ⚠ failing on main: " + ", ".join(sorted(set(state.ci.splitlines())))
+        failing = ", ".join(sorted(set(state.ci.splitlines())))
+        line += f"\n  ⚠ failing on {state.default_branch}: {failing}"
     return line
 
 
