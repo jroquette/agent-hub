@@ -58,6 +58,9 @@ DESIGN_PATHS = (
     "brain/playbooks/.gitkeep",
     "hub",
     "hub.schema.json",
+    # AGH-17 D5: the demo selects `bench` and `cloud`.
+    "mk/bench.mk",
+    "mk/cloud.mk",
     "plugin/demo/.claude-plugin/plugin.json",
     "plugin/demo/agents/.gitkeep",
     "plugin/demo/hooks/project_guard.py",
@@ -2233,7 +2236,12 @@ def test_names_every_managed_path_when_agents_rendered(demo_config: HubConfig) -
 
     assert len(statements) == 1
     named = BACKTICKED.findall(statements[0])
-    managed = [entry.path for entry in REGISTRY if entry.ownership is Ownership.MANAGED]
+    # A module's files are not in this list: they render only when selected (AGH-17 D5).
+    managed = [
+        entry.path
+        for entry in REGISTRY
+        if entry.ownership is Ownership.MANAGED and entry.module is None
+    ]
     assert managed
     assert len(named) == len(set(named))
     # E4.10: an item is a managed file, or a folder (`plugin/hub-workflow/`) that holds at least

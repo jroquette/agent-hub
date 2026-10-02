@@ -87,6 +87,22 @@ def _project_built(path: str, build: JsonBuilder) -> TemplateEntry:
     )
 
 
+def _module_managed(path: str, template: str, module: str) -> TemplateEntry:
+    """A file of ``module`` (its closed JSON id): rendered only while ``hub.json`` selects it."""
+    return TemplateEntry(
+        path=path,
+        source=_template(template),
+        kind=Kind.MODULE,
+        ownership=Ownership.MANAGED,
+        module=module,
+    )
+
+
+def _module_makefile(module: str) -> TemplateEntry:
+    """``mk/<id>.mk``: the module's make targets, which the base ``Makefile`` includes (D5)."""
+    return _module_managed(f"mk/{module}.mk", f"mk/{module}.mk.tmpl", module)
+
+
 # The project plugin's folder; `render_entries` puts the project name in its placeholder.
 _PROJECT_PLUGIN: Final = "plugin/@@{project_name}"
 # The base plugin's folder, the same in every hub, and its agents (sorted).
@@ -169,6 +185,11 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
         ownership=Ownership.MANAGED,
         verbatim=True,
     ),
+    # Each selected module's make targets (AGH-17 D5); `Makefile` includes them in id order.
+    _module_makefile("bench"),
+    _module_makefile("cloud"),
+    _module_makefile("contract-sync"),
+    _module_makefile("marketplace"),
     _project_built(f"{_PROJECT_PLUGIN}/.claude-plugin/plugin.json", project_manifest),
     _project_seeded(f"{_PROJECT_PLUGIN}/agents/.gitkeep", "plugin/project/agents/gitkeep.tmpl"),
     _project_seeded(
