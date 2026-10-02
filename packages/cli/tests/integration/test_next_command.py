@@ -145,6 +145,20 @@ def test_escapes_title_when_it_holds_newline(
 
 
 @pytest.mark.usefixtures("with_key")
+def test_escapes_id_when_it_holds_newline(
+    demo_workspace: Workspace, run_command: CommandRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Adapters refuse such an id; the line is still safe if one ever got through.
+    issue = an_issue(id="DEM-5\n", url=url_of("DEM-5"))
+    inject(monkeypatch, InMemoryTrackerClient(seeded_backend(issue)))
+
+    result = run_command(demo_workspace.hub, "next")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == f'"DEM-5\\n"  ?  {issue.title}  {url_of("DEM-5")}\n'
+
+
+@pytest.mark.usefixtures("with_key")
 def test_says_none_ready_when_list_empty(
     demo_workspace: Workspace, run_command: CommandRunner, monkeypatch: pytest.MonkeyPatch
 ) -> None:
