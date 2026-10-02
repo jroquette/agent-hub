@@ -66,6 +66,10 @@ class WorktreeTask:
     env: dict[str, str]
     git_timeout: float | None
     runner: ChildRunner
+    # The fetch's environment (it may need the network's credentials) and options given to
+    # git before "worktree add"; hub worktree uses ``env`` and none.
+    fetch_env: dict[str, str]
+    add_options: tuple[str, ...]
 
 
 def worktree_task(
@@ -78,11 +82,15 @@ def worktree_task(
     env: dict[str, str],
     git_timeout: float | None,
     runner: ChildRunner = run_child,
+    fetch_env: dict[str, str] | None = None,
+    add_options: tuple[str, ...] = (),
 ) -> WorktreeTask:
     """The task named ``name`` in the hub's repos (or ``only``), its inputs checked.
 
-    ``runner`` runs every git call of the task. Raises ``WorktreeUsageError`` for a name not
-    shaped like the issue, a branch git refuses or an unknown ``only``.
+    ``runner`` runs every git call of the task; ``env`` is the environment of every git call
+    and script but the fetch, which gets ``fetch_env`` (by default ``env``); ``add_options``
+    go before ``worktree add``. Raises ``WorktreeUsageError`` for a name not shaped like the
+    issue, a branch git refuses or an unknown ``only``.
     """
     team = config.tracker.team
     problem = worktree_name_problem(name, team=team)
@@ -117,6 +125,8 @@ def worktree_task(
         env=env,
         git_timeout=git_timeout,
         runner=runner,
+        fetch_env=env if fetch_env is None else fetch_env,
+        add_options=add_options,
     )
 
 
@@ -133,16 +143,22 @@ def create_worktree(task: WorktreeTask, repo: str, *, echo: Echo) -> Path:
         echo(f"exists   {shown_path(str(worktree))}")
         return worktree
     _git_or_raise(
-        task, checkout, ("fetch", "-q", "origin"), repo=repo, step="could not fetch origin"
+        task,
+        checkout,
+        ("fetch", "-q", "origin"),
+        repo=repo,
+        step="could not fetch origin",
+        env=task.fetch_env,
     )
     has_branch = _git(
         task, checkout, ("show-ref", "--verify", "-q", f"refs/heads/{task.branch}"), repo=repo
     )
     add: tuple[str, ...]
     if has_branch.returncode == 0:
-        add = ("worktree", "add", "-q", str(worktree), task.branch)
+        add = (*task.add_options, "worktree", "add", "-q", str(worktree), task.branch)
     else:
-        add = ("worktree", "add", "-q", "-b", task.branch, str(worktree), task.base)
+        add = (*task.add_options, "worktree", "add", "-q", "-b", task.branch)
+        add += (str(worktree), task.base)
     _git_or_raise(task, checkout, add, repo=repo, step="could not add the worktree")
     echo(f"created  {shown_path(str(worktree))} ({task.branch} from {task.base})")
     _run_script(task, repo, worktree, script=SETUP_SCRIPT, echo=echo)
@@ -207,12 +223,19 @@ def _is_executable_file(path: Path) -> bool:
     return stat.S_ISREG(mode) and os.access(path, os.X_OK)
 
 
-def _git(task: WorktreeTask, folder: Path, arguments: tuple[str, ...], *, repo: str) -> ChildResult:
+def _git(
+    task: WorktreeTask,
+    folder: Path,
+    arguments: tuple[str, ...],
+    *,
+    repo: str,
+    env: dict[str, str] | None = None,
+) -> ChildResult:
     try:
         return task.runner(
             [task.git, *arguments],
             cwd=folder,
-            env=task.env,
+            env=task.env if env is None else env,
             timeout=task.git_timeout,
             own_session=False,
         )
@@ -221,9 +244,15 @@ def _git(task: WorktreeTask, folder: Path, arguments: tuple[str, ...], *, repo: 
 
 
 def _git_or_raise(
-    task: WorktreeTask, folder: Path, arguments: tuple[str, ...], *, repo: str, step: str
+    task: WorktreeTask,
+    folder: Path,
+    arguments: tuple[str, ...],
+    *,
+    repo: str,
+    step: str,
+    env: dict[str, str] | None = None,
 ) -> None:
-    result = _git(task, folder, arguments, repo=repo)
+    result = _git(task, folder, arguments, repo=repo, env=env)
     if result.returncode != 0:
         hint = _FETCH_HINT if arguments[0] == "fetch" else ""
         raise WorktreeError(f"{repo}: {step}: {_first_line(result)}{hint}")
