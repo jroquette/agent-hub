@@ -644,6 +644,7 @@ def test_keeps_hook_root_guard_lists_when_hub_config_permissive(
 
     lists = run_python(hook_python, LISTS_CODE, path=hub / HOOKS, cwd=elsewhere, env=env)
     verdicts = [verdict_of(run_hook("guard", event, env=env)) for event in guard_calls(hub)]
+    release = verdict_of(run_hook("guard", bash_event("git push origin release", hub), env=env))
 
     # the lists stay the hook root's; the other values are $HUB_CONFIG's (Q-4)
     assert lists == [
@@ -653,8 +654,17 @@ def test_keeps_hook_root_guard_lists_when_hub_config_permissive(
         "release",
         "other",
     ]
-    # plugin/demo/hooks/ is the hook root's project, whatever $HUB_CONFIG names
-    assert [verdict and verdict[0] for verdict in verdicts] == ["deny", "deny", "ask", "ask", None]
+    # plugin/demo/hooks/ is the hook root's project, whatever $HUB_CONFIG names; the root's
+    # branch stays protected beside $HUB_CONFIG's (AGH-46 Q-1: that file only tightens)
+    assert [verdict and verdict[0] for verdict in verdicts] == [
+        "deny",
+        "deny",
+        "ask",
+        "ask",
+        "deny",
+    ]
+    assert release is not None
+    assert release[0] == "deny"
 
 
 def test_adds_hub_config_guard_lists_when_stricter(
@@ -704,3 +714,59 @@ def test_adds_hub_config_guard_lists_when_stricter(
     assert [verdict and verdict[0] for verdict in kept] == ["deny", "deny", "ask", "ask", "deny"]
     assert [verdict and verdict[0] for verdict in tightened] == ["deny", "deny", "ask"]
     assert without == [None, None, None]
+
+
+PROTECTED_CODE = (
+    "import json\nfrom hubhooks import Config, load_config\n"
+    "print(json.dumps([list(load_config(None).protected_branches),"
+    " list(Config().protected_branches)]))\n"
+)
+
+
+def test_lists_protected_branches_when_config_loaded(
+    hub: Path, *, hook_python: str, run_python: Callable[..., Any], elsewhere: Path
+) -> None:
+    repos = [("demo-api", "release/2"), ("demo-web", "trunk"), ("demo-ops", "main"), ("x", None)]
+    write_hub_json(
+        hub,
+        {
+            "project": {"name": "demo", "default_branch": "trunk"},
+            "repos": [
+                {"dir": name} | ({"default_branch": branch} if branch else {})
+                for name, branch in repos
+            ],
+        },
+    )
+
+    configured, bare = run_python(hook_python, PROTECTED_CODE, path=hub / HOOKS, cwd=elsewhere)
+
+    # sorted, each once; main and master always
+    assert configured == ["main", "master", "release/2", "trunk"]
+    assert bare == ["main", "master"]
+
+
+def test_protects_root_and_config_branches_when_hub_config_elsewhere(
+    hub: Path, *, hook_python: str, run_python: Callable[..., Any], elsewhere: Path
+) -> None:
+    write_hub_json(
+        hub,
+        {
+            "project": {"name": "demo", "default_branch": "trunk"},
+            "repos": [
+                {"dir": "demo-api", "default_branch": "master"},
+                {"dir": "demo-web", "default_branch": "release/2"},
+            ],
+        },
+    )
+    config = elsewhere / "release.json"
+    config.write_text(
+        json.dumps({"project": {"name": "other", "default_branch": "release"}}), encoding="utf-8"
+    )
+    env = {"HUB_CONFIG": str(config)}
+
+    configured, _ = run_python(
+        hook_python, PROTECTED_CODE, path=hub / HOOKS, cwd=elsewhere, env=env
+    )
+
+    # demo-web's release/2 shows the root file's repo branches are kept, not only its project's
+    assert configured == ["main", "master", "release", "release/2", "trunk"]

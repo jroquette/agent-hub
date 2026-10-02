@@ -339,10 +339,8 @@ PROJECT_BRANCH_READERS = {
     f"{TEMPLATES}/AGENTS.md.tmpl": 2,
     # CI runs for every repo and the hub log
     f"{TEMPLATES}/scripts/retro_metrics.py.tmpl": 2,
-    # the protected branch and the deny reason
-    f"{TEMPLATES}/plugin/hub-workflow/hooks/guard.py.tmpl": 2,
-    # Config.default_branch
-    f"{TEMPLATES}/plugin/hub-workflow/hooks/hubhooks.py.tmpl": 1,
+    # Config.default_branch, and the project's branch in the protected set (also the root file's)
+    f"{TEMPLATES}/plugin/hub-workflow/hooks/hubhooks.py.tmpl": 2,
 }
 
 
