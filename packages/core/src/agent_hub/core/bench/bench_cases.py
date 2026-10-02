@@ -14,6 +14,7 @@ case then key order; ``unknown_repo_line`` is the script's own repo refusal, byt
 
 import json
 import re
+import unicodedata
 from collections.abc import Callable, Collection, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Final, TypeGuard
@@ -33,6 +34,7 @@ MAX_PROMPT_CHARS: Final = 20_000
 MAX_HIDDEN_TESTS: Final = 100
 MAX_TEST_PATH_CHARS: Final = 1024
 MAX_TEST_CMD_ARGS: Final = 32
+MAX_TEST_CMD_ARG_CHARS: Final = 1024
 MAX_SETUP_CMD_CHARS: Final = 4096
 MAX_ENV_KEYS: Final = 32
 ENV_KEY_PATTERN: Final = "[A-Za-z_][A-Za-z0-9_]*"
@@ -44,9 +46,14 @@ _OBJECT: Final = "must be an object"
 _BOOLEAN: Final = "must be true or false"
 _NUL: Final = "must not hold a NUL character"
 _PATH_BOUND: Final = (
-    "is not a relative path in the repo"
-    f" (no `..` segment, no leading `/` or `-`, 1 to {MAX_TEST_PATH_CHARS} characters)"
+    "is not a literal relative path in the repo (no empty, `.`, `..` or `.git` segment,"
+    " no leading `/`, `-` or `:`, no `*`, `?`, `[` or control character,"
+    f" 1 to {MAX_TEST_PATH_CHARS} characters)"
 )
+# Segments that name no file of the repo's tree: the tree itself, its parent, git's own store.
+_NOT_FILE_SEGMENTS: Final = frozenset({"", ".", "..", ".git"})
+# Git reads ``:`` at the start as pathspec magic and these as globs; a path must name one file.
+_PATHSPEC_CHARACTERS: Final = frozenset("*?[")
 
 # Explicit ASCII classes and ``fullmatch``: no Unicode digit and no trailing newline gets through.
 _CASE_ID: Final = re.compile(CASE_ID_PATTERN)
@@ -157,9 +164,10 @@ def _problems_of(
         yield CaseProblem(index=index, key=key, message=message)
     case_id = case.get("id")
     if isinstance(case_id, str):
-        if case_id in seen:
+        # Compared case-folded: an id is a worktree folder name, and macOS folders ignore case.
+        if case_id.casefold() in seen:
             yield CaseProblem(index=index, key="id", message=f"duplicate id {_echo(case_id)}")
-        seen.add(case_id)
+        seen.add(case_id.casefold())
     repo = case.get("repo")
     if isinstance(repo, str) and case.get("excluded") is not True and repo not in known:
         message = f"{_echo(repo)} is not in repos ({', '.join(known)})"
@@ -231,19 +239,30 @@ def _hidden_tests_problem(value: JsonValue) -> str | None:
 
 
 def _is_test_path(path: str) -> bool:
-    """A relative POSIX path that stays in the repo and is never read as a git option."""
+    """One file's relative POSIX path, read by git literally: no option, magic, glob or escape.
+
+    ``git checkout <merge> -- <path>`` takes a pathspec: ``.`` or ``*`` would copy the whole
+    merge tree, so every run would pass.
+    """
     return (
         1 <= len(path) <= MAX_TEST_PATH_CHARS
-        and not path.startswith(("/", "-"))
-        and ".." not in path.split("/")
+        and not path.startswith(("-", ":"))
+        and _NOT_FILE_SEGMENTS.isdisjoint(path.split("/"))
+        and _PATHSPEC_CHARACTERS.isdisjoint(path)
+        and not any(unicodedata.category(character) == "Cc" for character in path)
     )
 
 
 def _test_cmd_problem(value: JsonValue) -> str | None:
     if not _is_strings(value):
         return _STRINGS
-    if not 1 <= len(value) <= MAX_TEST_CMD_ARGS or not all(value):
-        return f"must be 1 to {MAX_TEST_CMD_ARGS} non-empty strings"
+    if not 1 <= len(value) <= MAX_TEST_CMD_ARGS or not all(
+        1 <= len(argument) <= MAX_TEST_CMD_ARG_CHARS for argument in value
+    ):
+        return (
+            f"must be 1 to {MAX_TEST_CMD_ARGS} non-empty strings"
+            f" of at most {MAX_TEST_CMD_ARG_CHARS} characters"
+        )
     return _nul_problem(value)
 
 

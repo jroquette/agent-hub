@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 import pytest
@@ -11,6 +12,7 @@ from agent_hub.core.bench.bench_cases import (
     MAX_HIDDEN_TESTS,
     MAX_PROMPT_CHARS,
     MAX_SETUP_CMD_CHARS,
+    MAX_TEST_CMD_ARG_CHARS,
     MAX_TEST_CMD_ARGS,
     MAX_TEST_PATH_CHARS,
     MERGE_PATTERN,
@@ -64,6 +66,7 @@ def test_pins_bounds_when_module_loaded() -> None:
     assert MAX_HIDDEN_TESTS == 100
     assert MAX_TEST_PATH_CHARS == 1024
     assert MAX_TEST_CMD_ARGS == 32
+    assert MAX_TEST_CMD_ARG_CHARS == 1024
     assert MAX_SETUP_CMD_CHARS == 4096
     assert MAX_ENV_KEYS == 32
     assert ENV_KEY_PATTERN == "[A-Za-z_][A-Za-z0-9_]*"
@@ -148,10 +151,10 @@ MERGE_BOUND = "must be a commit sha: 7 to 40 characters among 0-9 and a-f"
 PROMPT_BOUND = "must be 1 to 20000 characters"
 HIDDEN_COUNT = "must list 1 to 100 paths"
 PATH_BOUND = (
-    "is not a relative path in the repo"
-    " (no `..` segment, no leading `/` or `-`, 1 to 1024 characters)"
+    "is not a literal relative path in the repo (no empty, `.`, `..` or `.git` segment,"
+    " no leading `/`, `-` or `:`, no `*`, `?`, `[` or control character, 1 to 1024 characters)"
 )
-TEST_CMD_BOUND = "must be 1 to 32 non-empty strings"
+TEST_CMD_BOUND = "must be 1 to 32 non-empty strings of at most 1024 characters"
 SETUP_BOUND = "must be at most 4096 characters"
 NUL = "must not hold a NUL character"
 ENV_COUNT = "must have at most 32 keys"
@@ -183,10 +186,34 @@ ENV_VALUE = "must be a string, a number, true or false"
         ({"hidden_tests": [""]}, f'[0].hidden_tests: "" {PATH_BOUND}'),
         ({"hidden_tests": ["t", "a" * 1025]}, f'[0].hidden_tests: "{"a" * 78}… {PATH_BOUND}'),
         ({"hidden_tests": ["t\x00.py"]}, f"[0].hidden_tests: {NUL}"),
+        ({"hidden_tests": ["."]}, f"[0].hidden_tests: {json.dumps('.')} {PATH_BOUND}"),
+        ({"hidden_tests": ["*"]}, f"[0].hidden_tests: {json.dumps('*')} {PATH_BOUND}"),
+        ({"hidden_tests": ["t/*.py"]}, f"[0].hidden_tests: {json.dumps('t/*.py')} {PATH_BOUND}"),
+        ({"hidden_tests": ["t/?.py"]}, f"[0].hidden_tests: {json.dumps('t/?.py')} {PATH_BOUND}"),
+        (
+            {"hidden_tests": ["t/[ab].py"]},
+            f"[0].hidden_tests: {json.dumps('t/[ab].py')} {PATH_BOUND}",
+        ),
+        ({"hidden_tests": [":(top)"]}, f"[0].hidden_tests: {json.dumps(':(top)')} {PATH_BOUND}"),
+        ({"hidden_tests": [":!x"]}, f"[0].hidden_tests: {json.dumps(':!x')} {PATH_BOUND}"),
+        ({"hidden_tests": ["t/"]}, f"[0].hidden_tests: {json.dumps('t/')} {PATH_BOUND}"),
+        ({"hidden_tests": ["a//b"]}, f"[0].hidden_tests: {json.dumps('a//b')} {PATH_BOUND}"),
+        ({"hidden_tests": ["./t.py"]}, f"[0].hidden_tests: {json.dumps('./t.py')} {PATH_BOUND}"),
+        ({"hidden_tests": ["a/."]}, f"[0].hidden_tests: {json.dumps('a/.')} {PATH_BOUND}"),
+        ({"hidden_tests": ["a/./b"]}, f"[0].hidden_tests: {json.dumps('a/./b')} {PATH_BOUND}"),
+        ({"hidden_tests": ["a\nb"]}, f"[0].hidden_tests: {json.dumps('a\nb')} {PATH_BOUND}"),
+        ({"hidden_tests": ["a\x7fb"]}, f"[0].hidden_tests: {json.dumps('a\x7fb')} {PATH_BOUND}"),
+        ({"hidden_tests": [".git/x"]}, f"[0].hidden_tests: {json.dumps('.git/x')} {PATH_BOUND}"),
+        (
+            {"hidden_tests": ["t/.git/config"]},
+            f"[0].hidden_tests: {json.dumps('t/.git/config')} {PATH_BOUND}",
+        ),
+        ({"hidden_tests": [".git"]}, f"[0].hidden_tests: {json.dumps('.git')} {PATH_BOUND}"),
         ({"test_cmd": []}, f"[0].test_cmd: {TEST_CMD_BOUND}"),
         ({"test_cmd": ["x"] * 33}, f"[0].test_cmd: {TEST_CMD_BOUND}"),
         ({"test_cmd": ["python3", ""]}, f"[0].test_cmd: {TEST_CMD_BOUND}"),
         ({"test_cmd": ["python3\x00"]}, f"[0].test_cmd: {NUL}"),
+        ({"test_cmd": ["python3", "x" * 1025]}, f"[0].test_cmd: {TEST_CMD_BOUND}"),
         ({"setup_cmd": "x" * 4097}, f"[0].setup_cmd: {SETUP_BOUND}"),
         ({"setup_cmd": "echo\x00"}, f"[0].setup_cmd: {NUL}"),
         ({"env": {f"K{n}": "v" for n in range(33)}}, f"[0].env: {ENV_COUNT}"),
@@ -209,7 +236,8 @@ def test_reports_problem_when_field_out_of_bounds(changes: dict[str, Any], expec
         {"id": "a.b_c-D9", "merge": SHA},
         {"prompt": "x" * 20_000, "setup_cmd": "x" * 4096},
         {"hidden_tests": ["t.py"] * 100, "test_cmd": ["x"] * 32},
-        {"hidden_tests": ["a" * 1024, "./t.py", "t..py", "a/.../b", "a/-b"]},
+        {"hidden_tests": ["a" * 1024, "t..py", "a/.../b", "a/-b", ".github/t.py", "a/.gitx"]},
+        {"test_cmd": ["python3", "x" * 1024]},
         {"env": {f"_K{n}": n for n in range(32)}},
         {"setup_cmd": "", "excluded": False},
     ],
@@ -222,6 +250,13 @@ def test_reports_duplicate_when_ids_repeat() -> None:
     cases: list[JsonValue] = [a_case(), a_case(id="T2"), a_case(), a_case(id="T2", excluded=True)]
 
     assert texts(cases) == ['[2].id: duplicate id "T1"', '[3].id: duplicate id "T2"']
+
+
+def test_reports_duplicate_when_ids_differ_only_in_case() -> None:
+    """An id is a worktree path part, and macOS folders ignore case."""
+    cases: list[JsonValue] = [a_case(id="Fix-1"), a_case(id="fix-1"), a_case(id="FIX-1")]
+
+    assert texts(cases) == ['[1].id: duplicate id "fix-1"', '[2].id: duplicate id "FIX-1"']
 
 
 def test_reports_unknown_repo_when_case_not_excluded() -> None:

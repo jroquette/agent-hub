@@ -88,14 +88,19 @@ def test_reports_each_problem_when_cases_invalid(snapshot_of: SnapshotFactory) -
         (TASKS, "[1].prompt: is missing", CASE_FIX),
         (
             TASKS,
-            '[1].hidden_tests: "../x.py" is not a relative path in the repo'
-            " (no `..` segment, no leading `/` or `-`, 1 to 1024 characters)",
+            '[1].hidden_tests: "../x.py" is not a literal relative path in the repo'
+            " (no empty, `.`, `..` or `.git` segment, no leading `/`, `-` or `:`,"
+            " no `*`, `?`, `[` or control character, 1 to 1024 characters)",
             CASE_FIX,
         ),
         (TASKS, '[1].repo: "zz" is not in repos (demo-api)', CASE_FIX),
         (TASKS, '[2].id: duplicate id "T1"', CASE_FIX),
         (TASKS, "[3]: must be an object", CASE_FIX),
-        (TASKS, "[4].test_cmd: must be 1 to 32 non-empty strings", CASE_FIX),
+        (
+            TASKS,
+            "[4].test_cmd: must be 1 to 32 non-empty strings of at most 1024 characters",
+            CASE_FIX,
+        ),
     ]
 
 
