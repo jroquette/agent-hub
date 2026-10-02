@@ -270,14 +270,31 @@ class TestContractSync:
             "../$target_dir",
         }
 
-    def test_parses_with_bash_n_when_rendered(
-        self, all_modules_config: HubConfig, rendered_hub: Callable[[HubConfig], Path]
-    ) -> None:
-        root = rendered_hub(all_modules_config)
 
-        completed = run_bash(root, "-n", CONTRACT_SYNC)
+# A rendered shell script: a ``.sh`` path or a sh/bash ``#!`` line (the ``hub`` and ``agent``
+# shims).
+SHELL_SHEBANG = re.compile(rb"^#!\s*/(?:usr/)?bin/(?:env\s+)?(?:ba)?sh\b")
 
-        assert completed.returncode == 0, completed.stderr
+
+def test_parses_with_bash_n_when_scripts_rendered(
+    all_modules_config: HubConfig, rendered_hub: Callable[[HubConfig], Path]
+) -> None:
+    """AC-17.13: every rendered shell script parses (``bash -n``) with every module selected."""
+    scripts = sorted(
+        file.path
+        for file in render_hub(all_modules_config).files
+        if file.path.endswith(".sh") or SHELL_SHEBANG.match(file.content)
+    )
+    assert {CONTRACT_SYNC, "scripts/cloud-setup.sh", "hub", "agent"} <= set(scripts)
+    root = rendered_hub(all_modules_config)
+
+    failed = {}
+    for script in scripts:
+        completed = run_bash(root, "-n", script)
+        if completed.returncode != 0:
+            failed[script] = completed.stderr
+
+    assert failed == {}
 
 
 def rendered_text(config: HubConfig, path: str) -> str:
