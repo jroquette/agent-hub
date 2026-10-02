@@ -108,7 +108,7 @@ def test_resolves_same_adapter_when_key_present_or_absent(
 
 
 def test_names_only_command_modules_when_sources_scanned() -> None:
-    # The modules that resolve the adapter; next_command.py and run_command.py join them (PR 3).
+    # The modules that resolve the adapter; run_command.py joins them (PR 3).
     sources = Path(__file__).resolve().parents[2] / "src" / "agent_hub" / "cli"
     assert sources.is_dir(), sources  # an empty scan would pass anywhere
     naming = sorted(
@@ -117,7 +117,7 @@ def test_names_only_command_modules_when_sources_scanned() -> None:
         if "resolve_tracker_client" in module.read_text()
     )
 
-    assert naming == ["tracker_client.py"]
+    assert naming == ["next_command.py", "tracker_client.py"]
 
 
 MISSING_KEY = (

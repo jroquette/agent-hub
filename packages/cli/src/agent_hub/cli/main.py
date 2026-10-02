@@ -10,6 +10,7 @@ from agent_hub.cli.brief_command import brief
 from agent_hub.cli.collect import collect
 from agent_hub.cli.doctor_command import doctor
 from agent_hub.cli.generator import init
+from agent_hub.cli.next_command import next_command
 from agent_hub.cli.sync_command import sync
 from agent_hub.cli.worktree_command import worktree
 
@@ -45,3 +46,4 @@ app.command("doctor")(doctor)
 app.command("worktree")(worktree)
 app.command("brief")(brief)
 app.command("agent", cls=PassThroughCommand, add_help_option=False)(agent)
+app.command("next")(next_command)
