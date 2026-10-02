@@ -252,6 +252,8 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
         )
         for name in _BASE_SKILLS
     ),
+    # Module cloud: git identity, fetch or clone the repos in a cloud session (spec D3).
+    _module_entry_point("scripts/cloud-setup.sh", "cloud"),
     # Module contract-sync: export in the source repo, then import in the target (spec D1).
     _module_entry_point("scripts/contract-sync.sh", "contract-sync"),
     # The generic scripts the base `mine`/`retro` targets and the `recall` skill run, copied from

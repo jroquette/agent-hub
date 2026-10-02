@@ -113,10 +113,11 @@ MODULE_FILES: dict[str, tuple[Kind, Ownership, str | None]] = {
     "mk/cloud.mk": (Kind.MODULE, Ownership.MANAGED, "cloud"),
     "mk/contract-sync.mk": (Kind.MODULE, Ownership.MANAGED, "contract-sync"),
     "mk/marketplace.mk": (Kind.MODULE, Ownership.MANAGED, "marketplace"),
+    "scripts/cloud-setup.sh": (Kind.MODULE, Ownership.MANAGED, "cloud"),
     "scripts/contract-sync.sh": (Kind.MODULE, Ownership.MANAGED, "contract-sync"),
 }
 # The module scripts with a `#!` line, executable like the base entry points (D5).
-MODULE_EXECUTABLE_PATHS = frozenset({"scripts/contract-sync.sh"})
+MODULE_EXECUTABLE_PATHS = frozenset({"scripts/cloud-setup.sh", "scripts/contract-sync.sh"})
 
 # AC-4.3 (Q-3): the base entry points with a `#!` line are executable; every other base file is
 # not: the six hooks `hooks.json` runs and the three scripts. Module scripts are listed apart.
@@ -336,7 +337,8 @@ def test_matches_design_classification_when_compared() -> None:
 @pytest.mark.parametrize(
     ("config_name", "expected"),
     [
-        ("demo_config", EXECUTABLE_PATHS),
+        # The demo selects `cloud` and `bench`: only `cloud` has a script.
+        ("demo_config", EXECUTABLE_PATHS | {"scripts/cloud-setup.sh"}),
         ("all_modules_config", EXECUTABLE_PATHS | MODULE_EXECUTABLE_PATHS),
     ],
     ids=["demo", "all-modules"],

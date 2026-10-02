@@ -93,6 +93,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/skills/learn/SKILL.md",
     "plugin/hub-workflow/skills/recall/SKILL.md",
     "plugin/hub-workflow/skills/research/SKILL.md",
+    "scripts/cloud-setup.sh",
     "scripts/mine_transcripts.py",
     "scripts/recall_transcripts.py",
     "scripts/retro_metrics.py",
