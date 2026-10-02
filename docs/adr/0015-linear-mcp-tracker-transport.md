@@ -44,11 +44,12 @@ switch behaviour silently. API only was rejected because it leaves cloud session
   result included; it is a lower bound when a call ran but reported no cost (a timeout, an output over the 1 MiB cap,
   output that is not its JSON result, an OS error after `claude` started).
 - A prompt is fixed text plus one JSON request line built by the adapter: the operation and its arguments (issue id,
-  team, label or state name, comment body). It never holds an issue title, a description or a tool prefix: every `_` of
-  the request line is written `\u005f` (the same JSON value), so an argument holding a tool name cannot put `mcp__`
-  into a prompt. A team, state or label name over 256 characters is refused before any call. A reply is one line of strict JSON (no repeated key, no lone surrogate) of a fixed shape per call, checked field by
-  field: every issue id matches the issue id pattern, every state or label name is at most 256 characters; anything
-  else is a `TrackerError`.
+  team, label or state name, comment body). It never holds an issue title, a description or a tool prefix: every `_`
+  of the request line is written `\u005f` (the same JSON value), so an argument holding a tool name cannot put `mcp__`
+  into a prompt. A team, state or label name over 256 characters is refused before any call. A reply is one line of
+  strict JSON (no repeated key, no lone surrogate) of a fixed shape per call, checked field by field: every issue id
+  matches the issue id pattern, every state or label name is at most 256 characters; anything else is a
+  `TrackerError`.
 - Allowed tools per call (all under the `mcp__Linear__` prefix of the `Linear` server, a constant):
 
   | Call | Allowed tools |
@@ -85,14 +86,14 @@ switch behaviour silently. API only was rejected because it leaves cloud session
   runs only by hand with `AGENT_HUB_LIVE=1`, `AGENT_HUB_LIVE_ISSUE`, `AGENT_HUB_LIVE_LABEL` and `AGENT_HUB_LIVE_HUB`
   (the hub root its calls run from, as in production; a label that is the hub's ready label fails at setup), and does
   not need `LINEAR_API_KEY`. Live evidence, 2026-10-02 (Claude Code 2.1.287, model `haiku`, in a cloud session; the
-  owner waived the run on a Mac against the real Linear server): with a fake stdio MCP server named `Linear` in a trusted
-  project whose allow-list holds `mcp__Linear__*`, `Bash(*)` and `Read(*)` with `defaultMode: bypassPermissions`, the
-  adapter's flags let only `get_issue` reach the server (`save_issue`, `save_comment`, Bash and Read were denied), while
-  a control with only `--allowedTools mcp__Linear__get_issue` let `save_issue` through. From the real hub root, a control
-  call without `disableAllHooks` wrote a session stub in the brain inbox; with the adapter's flags nothing was written
-  and the context was about 1,200 tokens smaller (no SessionStart brief). The six tool names exist on the owner's
-  `Linear` server, used through it on 2026-10-02. The live smoke test `test_mcp_live.py` against the real server stays
-  available for any later check.
+  owner waived the run on a Mac against the real Linear server): with a fake stdio MCP server named `Linear` in a
+  trusted project whose allow-list holds `mcp__Linear__*`, `Bash(*)` and `Read(*)` with `defaultMode:
+  bypassPermissions`, the adapter's flags let only `get_issue` reach the server (`save_issue`, `save_comment`, Bash
+  and Read were denied), while a control with only `--allowedTools mcp__Linear__get_issue` let `save_issue` through.
+  From the real hub root, a control call without `disableAllHooks` wrote a session stub in the brain inbox; with the
+  adapter's flags nothing was written and the context was about 1,200 tokens smaller (no SessionStart brief). The six
+  tool names exist on the owner's `Linear` server, used through it on 2026-10-02. The live smoke test
+  `test_mcp_live.py` against the real server stays available for any later check.
 
 Changes from the draft approved at the plan gate:
 
