@@ -52,6 +52,7 @@ _RUN_OPTIONS: Final = (
 # A case id, and a label: either names a file and a folder.
 _CASE_ID: Final = re.compile(CASE_ID_PATTERN)
 _SEPARATOR: Final = ","
+_PATH_STEPS: Final = frozenset({".", ".."})
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -93,15 +94,22 @@ def _arms(value: str) -> str:
 
 def _cases(value: str) -> str:
     ids = value.split(_SEPARATOR) if value else []
-    if len(ids) > MAX_CASES or not all(_CASE_ID.fullmatch(case_id) for case_id in ids):
-        msg = "use case ids (1 to 64 of A-Z a-z 0-9 . _ -), comma-separated"
+    if (
+        len(ids) > MAX_CASES
+        or not all(_CASE_ID.fullmatch(case_id) for case_id in ids)
+        or len(set(ids)) != len(ids)
+    ):
+        msg = "use case ids (1 to 64 of A-Z a-z 0-9 . _ -), comma-separated, each once"
         raise typer.BadParameter(msg)
     return value
 
 
 def _label(value: str | None) -> str | None:
-    if value is not None and not _CASE_ID.fullmatch(value):
-        msg = "use 1 to 64 of A-Z a-z 0-9 . _ -"
+    # It names a file, folders and maybe a git ref: never a path step or an option.
+    if value is not None and (
+        not _CASE_ID.fullmatch(value) or value in _PATH_STEPS or value.startswith("-")
+    ):
+        msg = "use 1 to 64 of A-Z a-z 0-9 . _ -, not . or .., not starting with -"
         raise typer.BadParameter(msg)
     return value
 
@@ -163,6 +171,9 @@ def bench(  # noqa: PLR0913 - one parameter per option of spec D2
     BENCH_EFFORT sets the sessions' effortLevel: low, medium (default) or high.
     """
     _refuse_run_options(context, validate=validate)
+    if per_run > budget:
+        # Not even a wave of one could start.
+        context.fail(f"--per-run {per_run} is above --budget {budget}")
     effort = _effort_or_fail(context, os.environ)
     root = hub_root_or_exit(os.environ, command=COMMAND)
     config = load_hub_config_or_exit(root / FILE_LABEL)
