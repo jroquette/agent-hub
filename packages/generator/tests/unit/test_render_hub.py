@@ -1389,6 +1389,11 @@ def test_lists_module_targets_when_help_run_with_all_modules(
     assert completed.returncode == 0, completed.stderr
     module_targets = [name for names in MODULE_TARGETS.values() for name in names]
     assert sorted(help_names(completed.stdout)) == sorted([*BASE_TARGETS, *module_targets])
+    # One column: every description starts at the same offset, past the longest name.
+    rows = [line for line in completed.stdout.splitlines() if line.strip()]
+    offsets = {len(row) - len(row.split(maxsplit=1)[1]) for row in rows}
+    assert len(offsets) == 1, rows
+    assert offsets.pop() > 2 + max(len(name) for name in help_names(completed.stdout))
     assert logged_calls(fake_uv_bin) == []
 
 

@@ -2,7 +2,7 @@
 .PHONY: bench bench-validate
 
 bench:  ## Configuration benchmark, with and without the workflow plugin (usage: make bench [ARGS='--runs 3 --budget 15'])
-	@$(HUB) bench $(ARGS)
+	@$(HUB) bench $(value ARGS)
 
 bench-validate:  ## Check each bench case: its hidden tests fail before the merge and pass after
 	@$(HUB) bench --validate

@@ -291,6 +291,7 @@ class TestModules:
 
         assert synced.exit_code == 0, synced.stderr
         assert synced.stderr == ""
+        assert synced.stdout == "up to date\n"
         assert tree_digest(root) == before
         lock = json.loads((root / "hub.lock").read_bytes())
         assert lock["modules"] == sorted(modules)
