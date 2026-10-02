@@ -170,10 +170,12 @@ def _drop_null_branch(schema: dict[str, Any]) -> None:
             schema.update(branch)
 
 
-def absent_by_default(*, alias: str | None = None) -> Any:
+def absent_by_default(*, alias: str | None = None, description: str | None = None) -> Any:
     """A ``Field`` for an optional key typed ``X | None = None``: absent means ``None``.
 
-    Its schema shows only ``X``, with no ``null`` branch, no default and no generated title,
-    because ``null`` is rejected as a value (see ``ConfigObject``).
+    Its schema shows only ``X`` (and ``description``, when given), with no ``null`` branch, no
+    default and no generated title, because ``null`` is rejected as a value (see ``ConfigObject``).
     """
-    return Field(default=None, alias=alias, json_schema_extra=_drop_null_branch)
+    return Field(
+        default=None, alias=alias, description=description, json_schema_extra=_drop_null_branch
+    )

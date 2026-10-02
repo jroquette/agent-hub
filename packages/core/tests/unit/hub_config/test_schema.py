@@ -61,3 +61,19 @@ def test_exports_same_text_when_called_twice() -> None:
     assert export_schema_text() == first
     assert first.endswith("}\n")
     assert json.loads(first) == HubConfig.model_json_schema()
+
+
+def test_describes_repo_branch_as_inherited_when_schema_exported() -> None:
+    definitions = read_shipped_schema()["$defs"]
+    repo = definitions["Repo"]
+    project_branch = definitions["Project"]["properties"]["default_branch"]
+
+    branch = repo["properties"]["default_branch"]
+
+    assert "default_branch" not in repo["required"]
+    assert branch["type"] == "string"
+    assert branch["pattern"] == project_branch["pattern"]
+    assert "default" not in branch
+    assert "title" not in branch
+    assert "anyOf" not in branch
+    assert "project.default_branch" in branch["description"]

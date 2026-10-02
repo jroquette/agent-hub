@@ -316,6 +316,34 @@ def test_stays_clean_when_transport_absent(
     assert lines == [CLEAN]
 
 
+def test_passes_config_schema_when_repo_sets_branch(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["repos"][0]["default_branch"] = "master"
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=0)
+
+    assert lines == [CLEAN]
+
+
+def test_reports_repo_branch_problem_when_value_invalid(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["repos"][0]["default_branch"] = "-x"
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=1)
+
+    assert lines == [
+        schema_line(
+            "repos[0].default_branch: String should match pattern"
+            " '^[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*(?:/[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*)*$'"
+        ),
+        ONE_ERROR,
+    ]
+
+
 CONTRACT_SYNC = {"source": "demo-api", "target": "demo-web"}
 
 

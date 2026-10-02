@@ -337,6 +337,11 @@
           "pattern": "^[^\\x00-\\x1f\\x7f]+$",
           "title": "Check",
           "type": "string"
+        },
+        "default_branch": {
+          "description": "The repo's default branch: worktree and PR base, push guard. Absent: project.default_branch.",
+          "pattern": "^[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*(?:/[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*)*$",
+          "type": "string"
         }
       },
       "required": [
