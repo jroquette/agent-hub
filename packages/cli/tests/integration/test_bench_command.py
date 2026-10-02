@@ -4,10 +4,15 @@ This module re-expresses hub ``scripts/bench.py`` at hub commit ``5b56604`` and 
 characterization (``tests/characterization/test_bench.py``) against the command; every port
 difference of the plan is asserted here. ``TestUsage`` runs in process in a copy of the ``DEMO``
 hub (``demo_hub``), with ``bench`` selected where a test needs it: each refusal is a usage error,
-exit 2, or a reader failure, exit 1, before any child process.
+exit 2, or a reader failure, exit 1, before any child process. The other tests run in the hub
+suite's bench workspace (``bench_workspace``: ``ws/hub`` selecting ``bench``, repo ``ws/api``)
+with a fake ``claude`` on ``PATH``.
 """
 
 import json
+import os
+import shutil
+import subprocess
 import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -21,6 +26,7 @@ pytestmark = pytest.mark.disable_socket
 
 # The conftest's in-process run (tests cannot import a conftest in importlib mode).
 type CommandRunner = Callable[..., Result]
+type Workspace = Any
 
 # The characters of the box Rich may draw around a usage error.
 BOX_CHARACTERS = "│╭╮╰╯─"
@@ -248,3 +254,92 @@ class TestUsage:
         assert lines
         assert all(line.startswith("hub.json: ") for line in lines), lines
         assert spy.calls == []
+
+
+def run_tool(name: str, *args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+    """Run ``name`` as a child of the command would, found on the bench workspace's ``PATH``."""
+    found = shutil.which(name, path=os.environ["PATH"])
+    assert found is not None, f"{name} is not on the bench workspace's PATH"
+    return subprocess.run(  # noqa: S603 - a fake or linked tool of the workspace's bin, absolute
+        [found, *args], cwd=cwd, env=dict(os.environ), capture_output=True, text=True, check=False
+    )
+
+
+class TestBenchWorkspace:
+    def test_runs_fakes_from_path_when_workspace_built(self, bench_workspace: Workspace) -> None:
+        workspace = bench_workspace
+        reply = workspace.result(0.5, 7, "success")
+        workspace.answer(
+            [
+                {"argv_has": ["--never"], "stdout": "first rule\n"},
+                # The without rule first: the with value is a substring of its value.
+                {"env_has": workspace.otel("T1", "without"), "stdout": reply, "rc": 3},
+                {"env_has": workspace.otel("T1", "with"), "write": {"new/fix.txt": "fixed\n"}},
+                {"env_has": workspace.otel("T1", "with"), "stdout": "shadowed\n"},
+            ]
+        )
+        attributes = "repo=api,bench_case=T1,bench_arm=with"
+        os.environ["OTEL_RESOURCE_ATTRIBUTES"] = attributes
+        try:
+            wrote = run_tool("claude", "-p", "Add the fix", cwd=workspace.api)
+            os.environ["OTEL_RESOURCE_ATTRIBUTES"] = attributes + "out"
+            replied = run_tool("claude", "-p", "x", cwd=workspace.hub)
+        finally:
+            del os.environ["OTEL_RESOURCE_ATTRIBUTES"]
+        unmatched = run_tool("claude", "-p", "y", cwd=workspace.hub)
+
+        assert (wrote.returncode, wrote.stdout) == (0, "")
+        assert (workspace.api / "new" / "fix.txt").read_text() == "fixed\n"
+        assert (replied.returncode, json.loads(replied.stdout)) == (
+            3,
+            {"total_cost_usd": 0.5, "num_turns": 7, "subtype": "success"},
+        )
+        assert (unmatched.returncode, unmatched.stdout) == (1, "")
+        calls = workspace.claude_calls()
+        assert [(call["argv"], call["cwd"]) for call in calls] == [
+            (["-p", "Add the fix"], str(workspace.api)),
+            (["-p", "x"], str(workspace.hub)),
+            (["-p", "y"], str(workspace.hub)),
+        ]
+        assert calls[0]["values"] == {"OTEL_RESOURCE_ATTRIBUTES": attributes}
+        assert "PATH" in calls[0]["env"]
+        assert calls[2]["values"] == {}
+        # The repo: the hub suite's commits on trunk, other agent config on origin/main.
+        merge = workspace.sha("trunk~2")
+        assert workspace.case() == {
+            "id": "T1",
+            "repo": "api",
+            "merge": merge,
+            "prompt": "Add the fix",
+            "hidden_tests": ["t/__main__.py", "a/__main__.py", "t/__main__.py"],
+            "test_cmd": ["python3"],
+            "setup_cmd": "echo ready > setup.txt",
+            "env": {"CHECK_MODE": 1},
+        }
+        assert workspace.git(workspace.api, "log", "--format=%s", "trunk") == (
+            "more docs\ndocs\nadd the fix\nstale checks\nbase\ninit"
+        )
+        assert workspace.git(workspace.api, "show", "origin/main:AGENTS.md") == "M"
+        assert workspace.git(workspace.api, "show", "trunk:AGENTS.md") == "t"
+        assert workspace.git(workspace.api, "branch", "--format=%(refname:short)") == "trunk"
+        assert workspace.git(workspace.api, "status", "--porcelain") == "?? new/"
+        stale = workspace.git(workspace.api, "show", f"{merge}^:t/__main__.py")
+        assert stale == 'print("stale check")'
+        checked = run_tool("python3", "a/__main__.py", cwd=workspace.api)
+        assert checked.returncode == 0, checked.stderr
+        assert checked.stdout == "a fix present mode=- cfg=tttt staged=0 args:\n"
+        # The hub: model-valid, bench selected, committed with its cases.
+        workspace.write_cases([workspace.case()])
+        document = json.loads((workspace.hub / "hub.json").read_text())
+        assert document["modules"] == {"bench": {}}
+        assert [repo["dir"] for repo in document["repos"]] == ["api"]
+        assert workspace.git(workspace.hub, "status", "--porcelain") == ""
+        assert json.loads((workspace.hub / "brain/workflow/bench/tasks.json").read_text()) == [
+            workspace.case()
+        ]
+        assert {path.name for path in workspace.bin.iterdir()} == {
+            "claude",
+            "git",
+            "bash",
+            "python3",
+        }
