@@ -1,5 +1,8 @@
-"""The children ``hub run`` starts: their argv, their folders and the dry run's lines.
+"""The children ``hub run`` starts: their argv, folders and environments, and the dry run's lines.
 
+Every child gets the caller's environment minus ``LINEAR_API_KEY`` (D10) and git's location
+variables, so the worktree's own repo is the one git reads; the implementing session also loses
+``GH_TOKEN`` and ``GITHUB_TOKEN`` (it never pushes) and gains ``OTEL_RESOURCE_ATTRIBUTES``.
 A dry run prints each child as ``would run: <argv>   (cwd <folder>)``, each argument shell-quoted,
 or JSON-escaped when it holds a line break or another unprintable character, so tracker text
 cannot write to the terminal.
@@ -7,11 +10,12 @@ cannot write to the terminal.
 
 import json
 import shlex
-from collections.abc import Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from agent_hub.cli.child_process import git_env
 from agent_hub.cli.init_report import shown_path
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.runner.session_prompt import (
@@ -23,6 +27,11 @@ from agent_hub.core.runner.session_prompt import (
 from agent_hub.core.tracker.tracker_client import Issue
 
 WORKTREES: Final = Path(".claude", "worktrees")
+KEY_VARIABLE: Final = "LINEAR_API_KEY"
+# Hidden from every child; the implementing session also loses the GitHub tokens.
+CHILD_HIDDEN: Final = (KEY_VARIABLE,)
+SESSION_HIDDEN: Final = (KEY_VARIABLE, "GH_TOKEN", "GITHUB_TOKEN")
+OTEL_VARIABLE: Final = "OTEL_RESOURCE_ATTRIBUTES"
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -116,6 +125,26 @@ class RunChildren:
             *("gh", "pr", "create", "--base", base, "--head", self.branch),
             *("--title", title, "--body", body),
         ]
+
+
+def without(environ: Mapping[str, str], names: Iterable[str]) -> dict[str, str]:
+    """A copy of ``environ`` without ``names``."""
+    hidden = set(names)
+    return {name: value for name, value in environ.items() if name not in hidden}
+
+
+def child_env(environ: Mapping[str, str]) -> dict[str, str]:
+    """The environment of the worktree steps, git, the gate, the push and ``gh``."""
+    return git_env(without(environ, CHILD_HIDDEN), optional_locks=True)
+
+
+def session_env(
+    environ: Mapping[str, str], *, repo: str, issue_id: str, run_id: str
+) -> dict[str, str]:
+    """The implementing session's environment: no tracker key, no GitHub token."""
+    env = git_env(without(environ, SESSION_HIDDEN), optional_locks=True)
+    env[OTEL_VARIABLE] = f"repo={repo},issue={issue_id},agent_run={run_id}"
+    return env
 
 
 def shown_command(argv: Sequence[str]) -> str:

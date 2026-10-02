@@ -1,0 +1,318 @@
+"""The live stages of ``hub run``: worktree, implementing session, gate, PR, then the report.
+
+    PICKED -> WORKTREE -> IMPLEMENTING -> VERIFYING -> PR_OPEN -> REPORTED
+    any stage can end in FAILED(stage, reason) -> REPORTED (failed label and diagnosis)
+
+Each stage raises ``StageFailure`` naming itself and the reason; the report then runs through
+the tracker port. The worktree is made in process with ``hub worktree``'s steps (D7, E18), each
+git call capped at ``WORKTREE_GIT_TIMEOUT``. Every child runs in the caller's process group
+(``own_session=False``) with the environments of ``run_children``: none holds
+``LINEAR_API_KEY`` (D10). The session's verdict is a hint: the commits on the branch and the
+command's own gate decide (the old runner's rule).
+"""
+
+import os
+import shutil
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Final
+
+import typer
+
+from agent_hub.cli.child_process import ChildResult, run_child
+from agent_hub.cli.command_exits import FAILURE
+from agent_hub.cli.errors import ChildTimedOutError, WorktreeError
+from agent_hub.cli.init_report import shown_text
+from agent_hub.cli.run_children import RunChildren, RunOptions, child_env, session_env
+from agent_hub.cli.run_log import RunLog
+from agent_hub.cli.run_report import apply_writes
+from agent_hub.cli.worktree_steps import create_worktree, worktree_task
+from agent_hub.core.json_form import JsonValue
+from agent_hub.core.runner.report_writes import (
+    REVIEW_STATE,
+    TrackerWrite,
+    call_line,
+    failure_writes,
+    success_writes,
+)
+from agent_hub.core.runner.run_record import Stage, reported_data
+from agent_hub.core.runner.run_texts import (
+    commit_summary,
+    failure_comment,
+    inbox_line,
+    pr_body,
+    success_comment,
+)
+from agent_hub.core.runner.verdict import OutcomeKind, parse_session_output, session_outcome
+from agent_hub.core.tracker.tracker_client import Issue, TrackerClient
+
+WORKTREE_GIT_TIMEOUT: Final = 1_800.0
+SESSION_TIMEOUT: Final = 3_600.0
+GATE_TIMEOUT: Final = 1_800.0
+PUSH_TIMEOUT: Final = 300.0
+GH_TIMEOUT: Final = 120.0
+GIT_TIMEOUT: Final = 120.0
+MAX_LOGGED_REASON_CHARS: Final = 1_500
+MAX_OUTPUT_TAIL_CHARS: Final = 1_500
+MAX_ERROR_TAIL_CHARS: Final = 500
+MAX_PR_URL_CHARS: Final = 2_048
+_URL_SCHEME = "https://"
+_PREFIX = "hub run"
+
+
+class StageFailure(Exception):  # noqa: N818 - a stage's outcome, read as "the stage failed"
+    """A stage ended the run: the stage and why."""
+
+    def __init__(self, stage: Stage, reason: str) -> None:
+        super().__init__(reason)
+        self.stage = stage
+        self.reason = reason
+
+
+@dataclass(kw_only=True, slots=True)
+class LiveRun:
+    """One live run's state: what it was given and what it learned on the way."""
+
+    children: RunChildren
+    options: RunOptions
+    issue: Issue
+    client: TrackerClient
+    log: RunLog
+    environ: Mapping[str, str]
+    cost_usd: float = 0.0
+    summary: str = ""
+    pr_url: str = ""
+    worktree: Path = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.worktree = self.children.worktree
+
+    def run(self) -> int:
+        """Run every stage, then report; 0 when the PR opened and the report was made."""
+        try:
+            self._make_worktree()
+            self._implement()
+            self._verify()
+            self._open_pr()
+        except StageFailure as failure:
+            return self._report_failure(failure)
+        return self._report_success()
+
+    # stages
+
+    def _make_worktree(self) -> None:
+        self._enter(Stage.WORKTREE)
+        git = shutil.which("git", path=self.environ.get("PATH", ""))
+        if git is None:
+            raise StageFailure(Stage.WORKTREE, "git is not on PATH; install git")
+        git = os.path.abspath(git)
+        try:
+            task = worktree_task(
+                self.children.config,
+                name=self.children.slug,
+                only=self.children.repo,
+                hub=self.children.hub,
+                git=git,
+                env=child_env(self.environ),
+                git_timeout=WORKTREE_GIT_TIMEOUT,
+                runner=run_child,
+            )
+            self.worktree = create_worktree(task, self.children.repo, echo=typer.echo)
+        except (WorktreeError, ChildTimedOutError) as error:
+            raise StageFailure(Stage.WORKTREE, str(error).replace(git, "git")) from None
+        except OSError as error:
+            reason = f"git could not run: {error.strerror or error}"
+            raise StageFailure(Stage.WORKTREE, reason) from None
+        self.log.record("worktree_ready", {"path": str(self.worktree)})
+
+    def _implement(self) -> None:
+        self._enter(Stage.IMPLEMENTING)
+        if self.options.start == "verify":
+            self.log.record("skip_implement", {"reason": "--from verify"})
+        else:
+            self._run_session()
+        commits = self._git_output("log", "--format=%s", f"{self.children.base}..HEAD")
+        subjects = [line for line in commits.splitlines() if line]
+        if not subjects:
+            reason = "no commit on the branch (the session reported done or gave no verdict)"
+            raise StageFailure(Stage.IMPLEMENTING, reason)
+        if not self.summary:
+            messages = self._git_output("log", "--format=%B", f"{self.children.base}..HEAD")
+            self.summary = commit_summary(messages, workspace=self._workspace)
+        self.log.record("commits", {"commits": list(subjects)})
+
+    def _run_session(self) -> None:
+        env = session_env(
+            self.environ,
+            repo=self.children.repo,
+            issue_id=self.issue.id,
+            run_id=self.log.run_id,
+        )
+        argv = self.children.session_argv(self.issue, self.options)
+        result = self._child(argv, env=env, timeout=SESSION_TIMEOUT)
+        reply = parse_session_output(result.stdout.decode(errors="replace"))
+        self.cost_usd += reply.cost_usd
+        outcome = session_outcome(reply)
+        self.log.record(
+            "session_finished",
+            {"cost_usd": round(self.cost_usd, 4), "turns": reply.turns, "subtype": reply.subtype},
+        )
+        if outcome.kind is not OutcomeKind.DONE:
+            raise StageFailure(Stage.IMPLEMENTING, outcome.text)
+        self.summary = outcome.text
+
+    def _verify(self) -> None:
+        self._enter(Stage.VERIFYING)
+        gate = self.children.gate
+        result = self._child(
+            self.children.gate_argv(), env=child_env(self.environ), timeout=GATE_TIMEOUT
+        )
+        if result.returncode != 0:
+            output = (result.stdout + result.stderr).decode(errors="replace")
+            reason = f"gate failed: {gate}\n{output[-MAX_OUTPUT_TAIL_CHARS:]}"
+            raise StageFailure(Stage.VERIFYING, reason)
+        self.log.record("gate_ok", {"gate": gate[:80]})
+
+    def _open_pr(self) -> None:
+        self._enter(Stage.PR_OPEN)
+        env = child_env(self.environ)
+        pushed = self._child(self.children.push_argv(), env=env, timeout=PUSH_TIMEOUT)
+        if pushed.returncode != 0:
+            raise StageFailure(Stage.PR_OPEN, f"push failed: {_tail(pushed.stderr)}")
+        title = self._git_output("log", "-1", "--format=%s").strip() or self.issue.id
+        body = pr_body(
+            issue_id=self.issue.id,
+            summary=self.summary,
+            gate=self.children.gate,
+            workspace=self._workspace,
+        )
+        created = self._child(
+            self.children.pr_argv(title=title, body=body), env=env, timeout=GH_TIMEOUT
+        )
+        if created.returncode != 0:
+            raise StageFailure(Stage.PR_OPEN, f"gh pr create failed: {_tail(created.stderr)}")
+        url = _pr_url(created.stdout)
+        if url is None:
+            raise StageFailure(Stage.PR_OPEN, "gh printed no PR url")
+        self.pr_url = url
+        self.log.record("pr_open", {"url": url})
+
+    # report
+
+    def _report_success(self) -> int:
+        comment = success_comment(
+            run_id=self.log.run_id,
+            pr_url=self.pr_url,
+            summary=self.summary,
+            workspace=self._workspace,
+        )
+        writes = success_writes(
+            self.issue,
+            review_state=REVIEW_STATE,
+            failed_label=self.children.config.tracker.failed_label,
+            comment=comment,
+        )
+        made = self._report(writes, failed_stage=None)
+        outcome = f"PR {self.pr_url}" if made else f"PR {self.pr_url}; report failed"
+        self._inbox(outcome)
+        return 0 if made else FAILURE
+
+    def _report_failure(self, failure: StageFailure) -> int:
+        self.log.state = failure.stage
+        self.log.record(
+            "failed",
+            {"stage": failure.stage.value, "reason": failure.reason[:MAX_LOGGED_REASON_CHARS]},
+        )
+        typer.echo(f"FAILED at {failure.stage}: {shown_text(failure.reason)}", err=True)
+        comment = failure_comment(
+            run_id=self.log.run_id,
+            stage=failure.stage.value,
+            reason=failure.reason,
+            workspace=self._workspace,
+        )
+        writes = failure_writes(
+            issue_id=self.issue.id,
+            failed_label=self.children.config.tracker.failed_label,
+            comment=comment,
+        )
+        self.log.state = Stage.FAILED
+        self._report(writes, failed_stage=failure.stage)
+        self._inbox(f"FAILED at {failure.stage}")
+        return FAILURE
+
+    def _report(self, writes: Sequence[TrackerWrite], *, failed_stage: Stage | None) -> bool:
+        """Make the writes; on a tracker failure name the PR and the writes not made."""
+        outcome = apply_writes(self.client, writes)
+        if outcome.error is not None:
+            typer.echo(f"{_PREFIX}: {shown_text(str(outcome.error))}", err=True)
+            if self.pr_url:
+                typer.echo(f"{_PREFIX}: the PR is open: {self.pr_url}", err=True)
+            for write in writes[outcome.done :]:
+                typer.echo(f"not done: {shown_text(call_line(write))}", err=True)
+        self.log.state = Stage.REPORTED
+        data: dict[str, JsonValue] = reported_data(
+            ok=outcome.error is None,
+            failed_stage=failed_stage,
+            total_cost_usd=round(self.cost_usd, 4),
+            pr=self.pr_url,
+        )
+        self.log.record("reported", data)
+        return outcome.error is None
+
+    def _inbox(self, outcome: str) -> None:
+        self.log.inbox(
+            inbox_line(
+                issue_id=self.issue.id,
+                repo=self.children.repo,
+                run_id=self.log.run_id,
+                outcome=outcome,
+                cost_usd=self.cost_usd,
+            )
+        )
+
+    # children
+
+    def _enter(self, stage: Stage) -> None:
+        self.log.state = stage
+
+    @property
+    def _workspace(self) -> str:
+        return str(self.children.workspace)
+
+    def _git_output(self, *arguments: str) -> str:
+        result = self._child(["git", *arguments], env=child_env(self.environ), timeout=GIT_TIMEOUT)
+        return result.stdout.decode(errors="replace")
+
+    def _child(self, argv: Sequence[str], *, env: dict[str, str], timeout: float) -> ChildResult:
+        """Run ``argv`` in the worktree, in the caller's group; a problem fails the stage."""
+        stage = self.log.state
+        name = argv[0]
+        program = shutil.which(name, path=env.get("PATH", ""))
+        if program is None:
+            raise StageFailure(stage, f"{name} is not on PATH")
+        try:
+            return run_child(
+                [os.path.abspath(program), *argv[1:]],
+                cwd=self.worktree,
+                env=env,
+                timeout=timeout,
+                own_session=False,
+            )
+        except ChildTimedOutError:
+            raise StageFailure(stage, f"{name} timed out after {timeout:g} s") from None
+        except OSError as error:
+            raise StageFailure(stage, f"{name} could not run: {error.strerror or error}") from None
+
+
+def _tail(data: bytes) -> str:
+    return data.decode(errors="replace")[-MAX_ERROR_TAIL_CHARS:]
+
+
+def _pr_url(stdout: bytes) -> str | None:
+    """The last line of ``gh``'s output when it is one printable ``https://`` url (E21)."""
+    lines = stdout.decode(errors="replace").strip().splitlines()
+    last = lines[-1].strip() if lines else ""
+    if last.startswith(_URL_SCHEME) and last.isprintable() and " " not in last:
+        return last if len(last) <= MAX_PR_URL_CHARS else None
+    return None
