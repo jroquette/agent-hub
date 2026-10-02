@@ -17,7 +17,7 @@ import json
 import os
 import shutil
 import signal
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
@@ -33,6 +33,7 @@ from agent_hub.cli.sync_report import CONFLICT_WAY_OUT
 from agent_hub.core.hub_files.hub_lock import ADOPT_POINTER
 from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
 from agent_hub.core.json_form import dump_json
+from agent_hub.core.testing.builders import a_second_repo
 
 # The conftest's tree digest and in-process sync (tests cannot import a conftest in importlib
 # mode).
@@ -217,34 +218,309 @@ def test_points_to_adopt_when_lock_absent(
     assert tree_digest(demo_hub) == before
 
 
-@pytest.mark.parametrize("pinned", ["running", "other"])
-def test_refuses_modules_when_config_selects_them(
-    tmp_path: Path,
-    demo_document: dict[str, Any],
-    run_sync: SyncRunner,
-    *,
-    tree_digest: TreeDigest,
-    pinned: str,
-) -> None:
-    demo_document["modules"] = {"cloud": {}, "bench": {}}
-    if pinned == "other":
-        demo_document["platform"]["version"] = "0.0.1"
-    # The modules are refused before the lock is read: an invalid lock prints nothing.
-    root = a_hub(tmp_path, demo_document, lock=b"[")
-    before = tree_digest(root)
+# AGH-17 AC-17.6: the four module ids; each subset is a module set a hub may select.
+MODULE_IDS = ("bench", "cloud", "contract-sync", "marketplace")
+MODULE_SETS = [
+    tuple(module for bit, module in enumerate(MODULE_IDS) if mask >> bit & 1)
+    for mask in range(1 << len(MODULE_IDS))
+]
 
-    lines = assert_load_failed(run_sync(root))
 
-    assert len(lines) == 1
-    if pinned == "running":
-        assert lines == [
-            "hub.json: modules: bench, cloud: not supported yet (module templates ship later)"
+def a_moduled_document(document: dict[str, Any], modules: Iterable[str]) -> dict[str, Any]:
+    """``document`` with a second repo and ``modules`` selected (``contract-sync`` api → web)."""
+    document["repos"].append(a_second_repo())
+    source, target = (repo["dir"] for repo in document["repos"])
+    settings: dict[str, dict[str, str]] = {"contract-sync": {"source": source, "target": target}}
+    document["modules"] = {module: settings.get(module, {}) for module in modules}
+    return document
+
+
+class TestModules:
+    """Spec D5: ``hub sync`` accepts every module set (no module set is refused)."""
+
+    @pytest.mark.parametrize("pinned", ["running", "other"])
+    def test_accepts_modules_when_lock_invalid_or_pin_other(
+        self,
+        tmp_path: Path,
+        demo_document: dict[str, Any],
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        pinned: str,
+    ) -> None:
+        demo_document["modules"] = {"cloud": {}, "bench": {}}
+        if pinned == "other":
+            demo_document["platform"]["version"] = "0.0.1"
+        # Modules pass the load: the lock is read next, and its problem is what fails.
+        root = a_hub(tmp_path, demo_document, lock=b"[")
+        before = tree_digest(root)
+
+        lines = assert_load_failed(run_sync(root))
+
+        if pinned == "running":
+            assert lines[0].startswith("hub.lock: $: not valid JSON"), lines
+            assert lines[-1] == LOCK_WAY_OUT_LINE
+            assert not [line for line in lines if "modules" in line]
+        else:
+            # The pin is checked first: a pin mismatch still reports the pin, alone.
+            assert len(lines) == 1
+            assert PINNED_COMMAND in lines[0]
+            assert "modules" not in lines[0]
+        assert tree_digest(root) == before
+
+    @pytest.mark.parametrize(
+        "modules", MODULE_SETS, ids=["-".join(s) or "none" for s in MODULE_SETS]
+    )
+    def test_accepts_every_module_set_when_synced(
+        self,
+        tmp_path: Path,
+        demo_document: dict[str, Any],
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        modules: tuple[str, ...],
+    ) -> None:
+        config = tmp_path / "hub.json"
+        config.write_bytes(dump_json(a_moduled_document(demo_document, modules)))
+        root = tmp_path / "hub"
+        created = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
+        assert created.exit_code == 0, created.stderr
+        before = tree_digest(root)
+
+        synced = run_sync(root)
+
+        assert synced.exit_code == 0, synced.stderr
+        assert synced.stderr == ""
+        assert synced.stdout == "up to date\n"
+        assert tree_digest(root) == before
+        lock = json.loads((root / "hub.lock").read_bytes())
+        assert lock["modules"] == sorted(modules)
+        for module in modules:
+            assert f"mk/{module}.mk" in lock["files"], module
+
+    # AC-17.12 (ADR 0009): a module added or removed after the first sync.
+
+    def test_reports_pending_when_module_added_and_checked(
+        self, demo_hub: Path, run_sync: SyncRunner, *, tree_digest: TreeDigest
+    ) -> None:
+        select_modules(demo_hub, {"bench": {}})
+        before = tree_digest(demo_hub)
+
+        checked = run_sync(demo_hub, "--check")
+
+        assert (checked.exit_code, checked.stderr) == (4, ""), checked.output
+        # AGENTS.md names the selected modules' files, so it changes with them.
+        assert checked.stdout.splitlines() == [
+            "would update AGENTS.md",
+            "would update Makefile",
+            "would create mk/bench.mk",
+            "would update hub.lock",
         ]
-    else:
-        # The module check runs after the pin: a pin mismatch still reports the pin.
-        assert PINNED_COMMAND in lines[0]
-        assert "modules" not in lines[0]
-    assert tree_digest(root) == before
+        assert tree_digest(demo_hub) == before
+
+    def test_creates_module_files_when_module_added(
+        self, demo_hub: Path, run_sync: SyncRunner
+    ) -> None:
+        select_modules(demo_hub, {"bench": {}})
+
+        synced = run_sync(demo_hub)
+
+        assert (synced.exit_code, synced.stderr) == (0, ""), synced.output
+        assert synced.stdout.splitlines() == [
+            "updated AGENTS.md",
+            "updated Makefile",
+            "created mk/bench.mk",
+            "updated hub.lock",
+        ]
+        assert b"include mk/bench.mk\n" in (demo_hub / "Makefile").read_bytes()
+        lock = json.loads((demo_hub / "hub.lock").read_bytes())
+        assert lock["modules"] == ["bench"]
+        assert lock["files"]["mk/bench.mk"]["ownership"] == "managed"
+        assert run_sync(demo_hub, "--check").stdout == "up to date\n"
+
+    def test_deletes_unmodified_files_when_modules_removed(
+        self,
+        demo_hub: Path,
+        demo_hub_template: Path,
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+    ) -> None:
+        select_modules(demo_hub, {"bench": {}, "marketplace": {}})
+        assert run_sync(demo_hub).exit_code == 0
+        select_modules(demo_hub, {})
+
+        synced = run_sync(demo_hub)
+
+        assert (synced.exit_code, synced.stderr) == (0, ""), synced.output
+        assert synced.stdout.splitlines() == [
+            f"deleted {MARKETPLACE}",
+            "updated AGENTS.md",
+            "updated Makefile",
+            "deleted mk/bench.mk",
+            "deleted mk/marketplace.mk",
+            "updated hub.lock",
+        ]
+        # The seeded sibling is the project's: it stays on disk and leaves the lock.
+        assert (demo_hub / MARKETPLACE_SIBLING).read_bytes() == b"{}\n"
+        lock = json.loads((demo_hub / "hub.lock").read_bytes())
+        assert lock["modules"] == []
+        assert not [path for path in lock["files"] if path.startswith((".claude-plugin/", "mk/"))]
+        assert (demo_hub / "hub.lock").read_bytes() == (demo_hub_template / "hub.lock").read_bytes()
+        # Besides ``modules: {}`` in ``hub.json``, the tree is a fresh one plus the sibling (and
+        # the folders a deleted path leaves, empty).
+        after = tree_digest(demo_hub)
+        fresh = tree_digest(demo_hub_template)
+        assert {
+            path for path in after.keys() | fresh.keys() if after.get(path) != fresh.get(path)
+        } == {
+            ".claude-plugin",
+            MARKETPLACE_SIBLING,
+            "hub.json",
+            "mk",
+        }
+
+    def test_conflicts_when_removed_module_file_edited(
+        self, demo_hub: Path, run_sync: SyncRunner, *, tree_digest: TreeDigest
+    ) -> None:
+        select_modules(demo_hub, {"bench": {}})
+        assert run_sync(demo_hub).exit_code == 0
+        with (demo_hub / "mk" / "bench.mk").open("ab") as makefile:
+            makefile.write(b"local: ; @true\n")
+        select_modules(demo_hub, {})
+        before = tree_digest(demo_hub)
+
+        synced = run_sync(demo_hub)
+
+        assert (synced.exit_code, synced.stdout) == (3, ""), synced.output
+        assert "mk/bench.mk" in synced.stderr
+        assert tree_digest(demo_hub) == before
+
+
+def select_modules(root: Path, modules: dict[str, Any]) -> None:
+    """Rewrite the hub's ``hub.json`` with ``modules`` selected."""
+    document = json.loads((root / "hub.json").read_bytes())
+    document["modules"] = modules
+    (root / "hub.json").write_bytes(dump_json(document))
+
+
+MARKETPLACE = ".claude-plugin/marketplace.json"
+MARKETPLACE_SIBLING = ".claude-plugin/marketplace.project.json"
+OWNED = "refused: the managed marketplace.json owns this"
+TWICE = "refused: the sibling lists this plugin name more than once"
+UNNAMED = "refused: a plugin entry is an object with a string name"
+
+
+def a_pin(name: str) -> dict[str, Any]:
+    return {"name": name, "source": {"source": "url", "url": f"https://example.com/{name}.git"}}
+
+
+def a_marketplace_hub(tmp_path: Path, document: dict[str, Any]) -> Path:
+    """A hub ``hub init`` wrote with module ``marketplace`` selected (and a second repo)."""
+    config = tmp_path / "hub.json"
+    config.write_bytes(dump_json(a_moduled_document(document, ["marketplace"])))
+    root = tmp_path / "hub"
+    created = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
+    assert created.exit_code == 0, created.stderr
+    return root
+
+
+def plugin_names(root: Path) -> list[str]:
+    value = json.loads((root / MARKETPLACE).read_bytes())
+    return [plugin["name"] for plugin in value["plugins"]]
+
+
+class TestMarketplace:
+    """AGH-17 D4 (AC-17.11): the seeded sibling merges after the managed marketplace."""
+
+    def test_orders_plugins_managed_first_when_sibling_adds_two(
+        self, tmp_path: Path, demo_document: dict[str, Any], run_sync: SyncRunner
+    ) -> None:
+        root = a_marketplace_hub(tmp_path, demo_document)
+        sibling = dump_json({"plugins": [a_pin("superpowers"), a_pin("aaa")]})
+        (root / MARKETPLACE_SIBLING).write_bytes(sibling)
+
+        synced = run_sync(root)
+
+        assert (synced.exit_code, synced.stderr) == (0, ""), synced.output
+        assert synced.stdout.splitlines() == [f"updated {MARKETPLACE}", "updated hub.lock"]
+        # Q-1: no sort; the managed entries first, then the sibling's in its own order.
+        assert plugin_names(root) == ["hub-workflow", "demo", "superpowers", "aaa"]
+        assert (root / MARKETPLACE_SIBLING).read_bytes() == sibling
+        assert run_sync(root).stdout == "up to date\n"
+
+    @pytest.mark.parametrize(
+        ("sibling", "line"),
+        [
+            ({"plugins": [a_pin("hub-workflow")]}, f"plugins[0].name: {OWNED} entry"),
+            ({"plugins": [a_pin("aaa"), a_pin("demo")]}, f"plugins[1].name: {OWNED} entry"),
+            ({"name": "other"}, f"name: {OWNED} key"),
+            ({"owner": {"name": "Someone Else"}}, f"owner: {OWNED} key"),
+            (
+                {"plugins": [{"name": "x", "source": "./a"}, {"name": "x", "source": "./b"}]},
+                f"plugins[1].name: {TWICE}",
+            ),
+            ({"plugins": ["superpowers"]}, f"plugins[0]: {UNNAMED}"),
+            ({"plugins": [{"source": "./a"}]}, f"plugins[0]: {UNNAMED}"),
+            ({"plugins": [{"name": 1, "source": "./a"}]}, f"plugins[0]: {UNNAMED}"),
+        ],
+        ids=[
+            "base-plugin",
+            "project-plugin",
+            "name",
+            "owner",
+            "repeated-name",
+            "not-object",
+            "missing-name",
+            "number-name",
+        ],
+    )
+    def test_writes_nothing_when_sibling_takes_managed_name(
+        self,
+        tmp_path: Path,
+        demo_document: dict[str, Any],
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        sibling: dict[str, Any],
+        line: str,
+    ) -> None:
+        root = a_marketplace_hub(tmp_path, demo_document)
+        (root / MARKETPLACE_SIBLING).write_bytes(dump_json(sibling))
+        before = tree_digest(root)
+
+        synced = run_sync(root)
+
+        assert synced.exit_code == 1, synced.output
+        assert synced.stdout == ""
+        assert synced.stderr.splitlines() == [f"{MARKETPLACE_SIBLING}: {line}"]
+        assert tree_digest(root) == before
+
+    def test_creates_sibling_once_when_synced_twice(
+        self, demo_hub: Path, run_sync: SyncRunner
+    ) -> None:
+        document = json.loads((demo_hub / "hub.json").read_bytes())
+        document["modules"] = {"marketplace": {}}
+        (demo_hub / "hub.json").write_bytes(dump_json(document))
+
+        first = run_sync(demo_hub)
+
+        assert (first.exit_code, first.stderr) == (0, ""), first.output
+        assert f"created {MARKETPLACE_SIBLING}" in first.stdout.splitlines()
+        assert f"created {MARKETPLACE}" in first.stdout.splitlines()
+        assert (demo_hub / MARKETPLACE_SIBLING).read_bytes() == b"{}\n"
+        assert plugin_names(demo_hub) == ["hub-workflow", "demo"]
+        # The project's pins stay: the next sync merges the sibling and never writes it again.
+        sibling = dump_json({"plugins": [a_pin("superpowers")]})
+        (demo_hub / MARKETPLACE_SIBLING).write_bytes(sibling)
+
+        second = run_sync(demo_hub)
+
+        assert (second.exit_code, second.stderr) == (0, ""), second.output
+        assert MARKETPLACE_SIBLING not in second.stdout
+        assert (demo_hub / MARKETPLACE_SIBLING).read_bytes() == sibling
+        assert plugin_names(demo_hub) == ["hub-workflow", "demo", "superpowers"]
+        assert run_sync(demo_hub).stdout == "up to date\n"
 
 
 type LockMaker = Callable[[Path, dict[str, Any]], None]

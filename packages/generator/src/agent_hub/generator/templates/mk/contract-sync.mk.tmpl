@@ -1,0 +1,5 @@
+# Module contract-sync (hub.json → modules.contract-sync). Managed by hub sync; the base Makefile includes it.
+.PHONY: contract-sync
+
+contract-sync:  ## Export the contract from the source repo, then import it into the target repo
+	bash scripts/contract-sync.sh

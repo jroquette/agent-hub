@@ -9,6 +9,8 @@ from typing import Final, NamedTuple
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.generator.json_form import JsonValue
 
+# The base plugin's folder, the same in every hub; the project plugin's is `plugin/<project>`.
+_BASE_PLUGIN: Final = "hub-workflow"
 _PROJECT_MANIFEST_VERSION = "0.1.0"
 _PROJECT_MANIFEST_DESCRIPTION = "Project agents, skills and guard extension of this hub."
 
@@ -110,3 +112,25 @@ def project_manifest(config: HubConfig) -> JsonValue:
         "version": _PROJECT_MANIFEST_VERSION,
         "description": _PROJECT_MANIFEST_DESCRIPTION,
     }
+
+
+def marketplace(config: HubConfig) -> JsonValue:
+    """The managed ``.claude-plugin/marketplace.json`` of module ``marketplace`` (AGH-17 D4).
+
+    Named after the project and owned by its author; it lists the base plugin, then the project's
+    own. Third-party pins go in the seeded ``marketplace.project.json``, merged after them.
+    """
+    project = config.project
+    return {
+        "name": project.name,
+        "owner": {"name": project.author_name, "email": project.author_email},
+        "plugins": [
+            {"name": _BASE_PLUGIN, "source": f"./plugin/{_BASE_PLUGIN}"},
+            {"name": project.name, "source": f"./plugin/{project.name}"},
+        ],
+    }
+
+
+def marketplace_project(config: HubConfig) -> JsonValue:
+    """The seeded ``.claude-plugin/marketplace.project.json``: empty; the project adds its pins."""
+    return {}

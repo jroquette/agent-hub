@@ -3,10 +3,10 @@
 ``sync`` is in ``sync_command`` and ``doctor`` in ``doctor_command``.
 
 ``init`` runs the pipeline of the AGH-12 spec, and every step that fails exits 1 before any write:
-the config (from ``--config``, or from the flags plus git-read defaults), the D3 module refusal, the
-target, the tree read and the core planner, then the writes (leftovers removed, folders, files,
-links, ``hub.json``, ``hub.lock`` last) and the report. Output goes to stdout only on success, and
-each error to stderr on its own line. Usage errors are Typer's, exit 2.
+the config (from ``--config``, or from the flags plus git-read defaults; any module set is
+accepted), the target, the tree read and the core planner, then the writes (leftovers removed,
+folders, files, links, ``hub.json``, ``hub.lock`` last) and the report. Output goes to stdout
+only on success, and each error to stderr on its own line. Usage errors are Typer's, exit 2.
 """
 
 import os
@@ -21,7 +21,6 @@ from agent_hub.cli.command_exits import (
     extension_inputs_or_exit,
     fail,
     fail_generator,
-    refuse_modules_or_exit,
     root_or_exit,
 )
 from agent_hub.cli.git_defaults import AUTHOR_EMAIL, AUTHOR_NAME, HUB_REPO, read_git_defaults
@@ -115,7 +114,6 @@ def init(
         hub_config, hub_json = _config_from_flags_or_exit(
             source, optional=optional, root=root, running=running
         )
-    refuse_modules_or_exit(hub_config)
     _check_root_or_exit(root)
     plan, git_present = _plan_or_exit(root, config=hub_config, hub_json=hub_json)
     _apply_or_exit(root, plan)
