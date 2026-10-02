@@ -1280,6 +1280,8 @@ def run_workspace(
     global_config = tmp_path / "run-gitconfig"
     global_config.write_text("".join(rewrites))
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+    # Only local repos may be reached: git refuses https, ssh and every other transport.
+    monkeypatch.setenv("GIT_ALLOW_PROTOCOL", "file")
     monkeypatch.setenv("FAKE_RUN_LOGS", str(logs))
     monkeypatch.delenv("CLAUDECODE", raising=False)
     return RunWorkspace(demo_workspace, bin_dir, logs)
