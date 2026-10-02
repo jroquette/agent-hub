@@ -389,3 +389,289 @@ class TestBenchWorkspace:
             "bash",
             "python3",
         }
+
+
+# The hub goldens' stdout (validate_ok, validate_mismatch): each case at its merge's parent, then
+# at its merge; the check's last line, then the error (none), each after a space.
+_ARGS = "args: a/__main__.py t/__main__.py "
+OK_LINES = (
+    f"T1 parent pass=False OK t fix missing mode=1 setup cfg=tttt staged=2 {_ARGS}\n"
+    f"T1 merge  pass=True OK t fix present mode=1 setup cfg=tttt staged=0 {_ARGS}\n"
+)
+MISMATCH_LINES = (
+    f"T1 parent pass=True MISMATCH t fix present mode=1 setup cfg=tttt staged=0 {_ARGS}\n"
+    f"T1 merge  pass=True OK t fix present mode=1 setup cfg=tttt staged=0 {_ARGS}\n"
+    f"T2 parent pass=False OK t fix missing mode=1 fail=a setup cfg=tttt staged=2 {_ARGS}\n"
+    f"T2 merge  pass=False MISMATCH t fix present mode=1 fail=a setup cfg=tttt staged=0 {_ARGS}\n"
+    f"T3 parent pass=False OK t fix missing mode=1 fail=t setup cfg=tttt staged=2 {_ARGS}\n"
+    f"T3 merge  pass=False MISMATCH t fix present mode=1 fail=t setup cfg=tttt staged=0 {_ARGS}\n"
+)
+NOTHING = "no bench cases in brain/workflow/bench/tasks.json: nothing to validate\n"
+TOKENS = ("GH_TOKEN", "GITHUB_TOKEN", "LINEAR_API_KEY")
+
+
+def validate(workspace: Workspace, run_command: CommandRunner) -> Result:
+    """``hub bench --validate`` in the workspace's hub."""
+    return run_command(workspace.hub, "bench", "--validate")
+
+
+def bench_folder(workspace: Workspace) -> Path:
+    return workspace.ws / "_bench"
+
+
+def assert_checkout_untouched(workspace: Workspace) -> None:
+    """No worktree left under the bench folder or in api's list; api's own checkout as built."""
+    worktrees = bench_folder(workspace) / "wt"
+    assert not worktrees.exists() or list(worktrees.iterdir()) == []
+    listed = workspace.git(workspace.api, "worktree", "list", "--porcelain")
+    assert [line for line in listed.splitlines() if line.startswith("worktree ")] == [
+        f"worktree {workspace.api}"
+    ]
+    assert workspace.git(workspace.api, "status", "--porcelain") == ""
+    assert workspace.git(workspace.api, "rev-parse", "--abbrev-ref", "HEAD") == "trunk"
+
+
+class TestValidate:
+    def test_prints_ok_per_case_and_label_when_graders_match(
+        self,
+        bench_workspace: Workspace,
+        run_command: CommandRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = bench_workspace
+        for name in TOKENS:
+            # Synthetic, built from fragments: never a real token.
+            monkeypatch.setenv(name, "gh" + "p_" + "x" * 36)
+        # The setup command logs its environment's names where the test reads them after the run
+        # (only the workspace's bin is on PATH: no env tool).
+        setup = (
+            "echo ready > setup.txt;"
+            ' python3 -c \'import os; print("\\n".join(os.environ))\' > "$HOME/setup.env"'
+        )
+        excluded = workspace.case(id="T0", repo="gone", excluded=True)
+        workspace.write_cases([workspace.case(setup_cmd=setup), excluded])
+
+        result = validate(workspace, run_command)
+
+        assert (result.exit_code, result.stderr) == (0, ""), result.output
+        # mode=1: the case env reached the grader.
+        assert result.stdout == OK_LINES
+        # --validate costs no model token: claude never runs.
+        assert workspace.claude_calls() == []
+        names = set((workspace.home / "setup.env").read_text().split())
+        assert "PATH" in names
+        assert names.isdisjoint(TOKENS)
+        assert "CHECK_MODE" not in names
+        assert_checkout_untouched(workspace)
+
+    def test_exits_one_when_grade_mismatches(
+        self, bench_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        workspace = bench_workspace
+        # T1: the parent already passes. T2/T3: at the merge, only the hidden run (T2) or only
+        # the related run (T3) passes; both runs must pass.
+        workspace.write_cases(
+            [
+                workspace.case("trunk"),
+                workspace.case(id="T2", env={"CHECK_MODE": 1, "CHECK_FAIL_DIR": "a"}),
+                workspace.case(id="T3", env={"CHECK_MODE": 1, "CHECK_FAIL_DIR": "t"}),
+            ]
+        )
+
+        result = validate(workspace, run_command)
+
+        assert (result.exit_code, result.stderr) == (1, ""), result.output
+        assert result.stdout == MISMATCH_LINES
+        assert workspace.claude_calls() == []
+        assert_checkout_untouched(workspace)
+
+    @pytest.mark.parametrize("cases", [None, [], "excluded"], ids=["absent", "empty", "excluded"])
+    def test_prints_nothing_to_validate_when_no_cases(
+        self, bench_workspace: Workspace, run_command: CommandRunner, *, cases: object
+    ) -> None:
+        workspace = bench_workspace
+        if cases == "excluded":
+            workspace.write_cases([workspace.case(excluded=True)])
+        elif cases is not None:
+            workspace.write_cases(cases)
+
+        result = validate(workspace, run_command)
+
+        assert (result.exit_code, result.stdout, result.stderr) == (0, NOTHING, "")
+        assert not bench_folder(workspace).exists()
+        assert workspace.claude_calls() == []
+
+    def test_prints_script_line_when_case_repo_unknown(
+        self, bench_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        workspace = bench_workspace
+        workspace.write_cases(
+            [
+                {"id": "T1", "repo": "zz"},
+                {"id": "T2", "repo": "nope"},
+                {"id": "T3", "repo": "zz"},
+                {"id": "T4"},
+                {"id": "T5", "repo": "api"},
+                {"id": "T6", "repo": "gone", "excluded": True},
+            ]
+        )
+
+        result = validate(workspace, run_command)
+
+        # The golden's line (validate_unknown_repo), with this hub's one repo; only that line.
+        assert (result.exit_code, result.stdout) == (1, "")
+        assert result.stderr == (
+            "ERROR bench: case repo(s) ['None', 'nope', 'zz'] not in hub.json repos ['api']\n"
+        )
+        assert not bench_folder(workspace).exists()
+
+    def test_refuses_cases_when_shape_invalid(
+        self, bench_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        workspace = bench_workspace
+        workspace.write_cases(
+            [
+                workspace.case(merge="--upload-pack=x"),
+                workspace.case(id="T2"),
+                # Excluded cases are shape-checked too (E16).
+                workspace.case(id="T3", hidden_tests=["."], excluded=True),
+                workspace.case(id="t2"),
+            ]
+        )
+
+        result = validate(workspace, run_command)
+
+        assert (result.exit_code, result.stdout) == (1, "")
+        path = "brain/workflow/bench/tasks.json"
+        assert result.stderr.splitlines() == [
+            f"{path}: [0].merge: must be a commit sha: 7 to 40 characters among 0-9 and a-f",
+            f'{path}: [2].hidden_tests: "." is not a literal relative path in the repo'
+            " (no empty, `.`, `..` or `.git` segment in any case, no leading `/`, `-` or `:`,"
+            " no `*`, `?`, `[`, `\\`, control, format or surrogate character,"
+            " 1 to 1024 characters)",
+            f'{path}: [3].id: duplicate id "t2"',
+        ]
+        assert not bench_folder(workspace).exists()
+
+    @pytest.mark.parametrize(
+        ("content", "message"),
+        [
+            (b'[{"id": "T1", "id": "T2"}]', 'the key "id" appears more than once'),
+            (b"[NaN]", "NaN is not a JSON number"),
+            (b'{"id": "T1"}', "the top level must be a list of cases"),
+            (b"[" + b" " * (1 << 20) + b"]", "larger than 1048576 bytes"),
+        ],
+        ids=["repeated-key", "nan", "not-a-list", "too-large"],
+    )
+    def test_refuses_cases_when_json_not_strict(
+        self,
+        bench_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        content: bytes,
+        message: str,
+    ) -> None:
+        workspace = bench_workspace
+        tasks = workspace.hub / "brain" / "workflow" / "bench" / "tasks.json"
+        tasks.parent.mkdir(parents=True, exist_ok=True)
+        tasks.write_bytes(content)
+
+        result = validate(workspace, run_command)
+
+        assert (result.exit_code, result.stdout) == (1, "")
+        lines = result.stderr.splitlines()
+        assert len(lines) == 1, lines
+        assert lines[0].startswith("brain/workflow/bench/tasks.json: ")
+        assert message in lines[0]
+        assert not bench_folder(workspace).exists()
+
+    def test_refuses_cases_when_tasks_not_regular_file(
+        self, bench_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        workspace = bench_workspace
+        cases = workspace.hub / "cases.json"
+        cases.write_text(json.dumps([workspace.case()]))
+        tasks = workspace.hub / "brain" / "workflow" / "bench" / "tasks.json"
+        tasks.parent.mkdir(parents=True, exist_ok=True)
+        tasks.symlink_to(cases)
+
+        result = validate(workspace, run_command)
+
+        assert (result.exit_code, result.stdout) == (1, "")
+        assert result.stderr == (
+            "brain/workflow/bench/tasks.json:"
+            " not read as a regular file (links are never followed)\n"
+        )
+        assert not bench_folder(workspace).exists()
+
+    def test_removes_leftover_dir_when_worktree_path_taken(
+        self, bench_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        workspace = bench_workspace
+        leftover = bench_folder(workspace) / "wt" / "validate-T1-parent"
+        leftover.mkdir(parents=True)
+        (leftover / "junk.txt").write_text("old\n")
+        workspace.write_cases([workspace.case()])
+
+        result = validate(workspace, run_command)
+
+        assert (result.exit_code, result.stdout, result.stderr) == (0, OK_LINES, "")
+        assert_checkout_untouched(workspace)
+
+    @pytest.mark.parametrize(
+        ("fields", "reason"),
+        [
+            ({"test_cmd": ["./no-such-grader"]}, "./no-such-grader could not run: "),
+            ({"test_cmd": ["no-such-grader"]}, "no-such-grader is not on PATH"),
+            ({"setup_cmd": "echo broken >&2; exit 3"}, "setup_cmd: broken"),
+            ({"merge": "0" * 40}, "git worktree add failed: fatal: "),
+        ],
+        ids=["grader-launch", "grader-missing", "setup", "worktree-add"],
+    )
+    def test_reports_case_failure_when_step_fails(
+        self,
+        bench_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        fields: dict[str, Any],
+        reason: str,
+    ) -> None:
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case(**fields), workspace.case(id="T2")])
+
+        result = validate(workspace, run_command)
+
+        # Each label of the broken case fails on stderr; the next case is still graded.
+        assert result.exit_code == 1, result.output
+        assert result.stdout == OK_LINES.replace("T1 ", "T2 ")
+        lines = result.stderr.splitlines()
+        assert len(lines) == 2, lines
+        assert lines[0].startswith(f"hub bench: T1 parent: {reason}"), lines
+        assert lines[1].startswith(f"hub bench: T1 merge: {reason}"), lines
+        assert_checkout_untouched(workspace)
+
+    def test_removes_worktree_when_interrupted(
+        self,
+        bench_workspace: Workspace,
+        run_command: CommandRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from agent_hub.cli import bench_steps  # noqa: PLC0415 - the module this test patches
+
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+        real = bench_steps.run_child
+
+        def interrupt_grader(argv: list[str], **kwargs: Any) -> Any:
+            if argv[0].endswith("python3"):
+                raise KeyboardInterrupt
+            return real(argv, **kwargs)
+
+        monkeypatch.setattr(bench_steps, "run_child", interrupt_grader)
+
+        result = validate(workspace, run_command)
+
+        assert result.exit_code != 0
+        assert result.stdout == ""
+        assert (bench_folder(workspace) / "wt").is_dir()
+        assert_checkout_untouched(workspace)

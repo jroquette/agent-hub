@@ -130,6 +130,28 @@ def git_argv(worktree: str, *arguments: str) -> list[str]:
     return [*GIT, "-C", worktree, *arguments]
 
 
+def validate_commits(case: BenchCase) -> tuple[tuple[str, str], tuple[str, str]]:
+    """``--validate``'s two checkouts, by label: the merge's parent, then the merge."""
+    return ("parent", f"{case.merge}^"), ("merge", case.merge)
+
+
+def add_worktree_argv(*, repo: str, worktree: str, commit: str) -> list[str]:
+    """A detached worktree of ``repo`` at ``commit``, in folder ``worktree``."""
+    return git_argv(repo, "worktree", "add", "--detach", worktree, commit)
+
+
+def remove_worktree_argvs(*, repo: str, worktree: str) -> tuple[list[str], list[str]]:
+    """The worktree's removal from ``repo``, then the prune of what its folder left listed."""
+    return git_argv(repo, "worktree", "remove", "--force", worktree), git_argv(
+        repo, "worktree", "prune"
+    )
+
+
+def setup_argv(case: BenchCase) -> list[str]:
+    """The case's ``setup_cmd``, run once in each fresh worktree."""
+    return ["bash", "-c", case.setup_cmd]
+
+
 def apply_tests_argv(*, worktree: str, case: BenchCase) -> list[str]:
     """The merge's hidden tests checked out over the worktree's files."""
     return git_argv(worktree, "checkout", case.merge, "--", *case.hidden_tests)
