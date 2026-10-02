@@ -2182,7 +2182,12 @@ def test_holds_no_project_identifier_when_demo_rendered(demo_config: HubConfig) 
     for path, text in texts.items():
         assert rendered_identifiers(text) == [], path
     carriers = {path for path, text in texts.items() if PLATFORM_CARRIER.search(text)}
-    assert carriers == {"hub", "plugin/hub-workflow/hooks/session_start.py"}
+    # The demo selects `cloud`: its setup script warms the pinned release.
+    assert carriers == {
+        "hub",
+        "plugin/hub-workflow/hooks/session_start.py",
+        "scripts/cloud-setup.sh",
+    }
 
 
 def test_holds_no_project_identifier_when_demo_paths_and_links_listed(

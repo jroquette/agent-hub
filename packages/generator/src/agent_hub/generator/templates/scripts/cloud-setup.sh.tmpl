@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Module cloud (hub.json → modules.cloud): set up a cloud session (claude.ai/code) that opens on
-# this hub. Sets the git identity from hub.json's project author (global, and repo-local in the
-# hub and each repo), fetches the repos already beside the hub and clones the missing ones. The
-# repos are rendered from the validated hub.json by hub sync (re-run it after changing them); the
-# author is read from hub.json at every run.
+# this hub. In order: sets the git identity from hub.json's project author (global, and
+# repo-local in the hub and each repo); checks access to the release pinned in hub.json
+# (platform.version) with git ls-remote on its tag; warms the uv cache with that release
+# (uvx … hub --version); then fetches the repos already beside the hub and clones the missing
+# ones. The repos and the release source are rendered by hub sync (re-run it after changing the
+# repos); the pin and the author are read from hub.json at every run, so a new pin needs no sync.
 #
 # Environment setup script (the cloud environment's settings), one line:
 #     bash scripts/cloud-setup.sh
@@ -13,11 +15,17 @@
 #               disk, never printed. Not needed when the repos are attached to the session.
 #
 # Idempotent: a present repo is fetched, not cloned again. A repo that fails to fetch or clone is
-# a WARN, exit 0. Bash 3.2 safe. Managed by hub sync.
+# a WARN, exit 0. Exit 1, one line naming the cause: no python3, no uv, an unreadable pin, no
+# access to the pinned tag (attach the repository or set GH_TOKEN), or a failed warm-up; no repo
+# is touched then. Bash 3.2 safe. Managed by hub sync.
 set -euo pipefail
 
 repo_dirs='@@{repo_dirs}'
 repo_githubs='@@{repo_githubs}'
+# The pinned install source's prefix; the pin itself is read from hub.json below.
+release_prefix='@@{platform_repository}@v'
+release_url=${release_prefix%@v}
+release_url=${release_url#git+}
 
 case $0 in
   */*) script_dir=${0%/*} ;;
@@ -36,8 +44,14 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OB
 GIT_TERMINAL_PROMPT=0
 export GIT_TERMINAL_PROMPT
 
-# A project string of hub.json, empty when absent, not a string or holding a control character.
-project_value() {
+command -v python3 >/dev/null 2>&1 || {
+  echo "cloud-setup: python3 is not installed; it reads hub.json" >&2
+  exit 1
+}
+
+# platform.version of hub.json (X.Y.Z, else exit 1), or a project string: empty when absent, not
+# a string or holding a control character.
+hub_value() {
   python3 -I -S -c '
 import json, re, sys
 try:
@@ -45,15 +59,22 @@ try:
         document = json.load(stream)
 except (OSError, ValueError):
     sys.exit("cloud-setup: cannot read hub.json as JSON: " + sys.argv[1])
-project = document.get("project") if isinstance(document, dict) else None
-value = project.get(sys.argv[2]) if isinstance(project, dict) else None
-ok = isinstance(value, str) and re.fullmatch(r"[^\x00-\x1f\x7f]+", value)
-print(value if ok else "")
+section, key = sys.argv[2].split(".")
+part = document.get(section) if isinstance(document, dict) else None
+value = part.get(key) if isinstance(part, dict) else None
+if sys.argv[2] == "platform.version":
+    if not (isinstance(value, str) and re.fullmatch("[0-9]+[.][0-9]+[.][0-9]+", value)):
+        sys.exit("cloud-setup: platform.version in hub.json must be X.Y.Z")
+elif not (isinstance(value, str) and re.fullmatch(r"[^\x00-\x1f\x7f]+", value)):
+    value = ""
+print(value)
 ' "$hub_dir/hub.json" "$1"
 }
 
-name=$(project_value author_name)
-email=$(project_value author_email)
+version=$(hub_value platform.version) || exit 1
+release_source="$release_prefix$version#subdirectory=packages/agent-hub"
+name=$(hub_value project.author_name)
+email=$(hub_value project.author_email)
 local_identity() {
   if [ -n "$name" ] && [ -n "$email" ] && [ -e "$1/.git" ]; then
     git -C "$1" config user.name "$name"
@@ -73,6 +94,20 @@ if [ -n "${GH_TOKEN:-}" ]; then
   git config --global credential.https://github.com.helper \
     '!f() { test "$1" = get && echo username=x-access-token && echo "password=${GH_TOKEN}"; }; f'
 fi
+
+command -v uvx >/dev/null 2>&1 || {
+  echo "cloud-setup: uv is not installed (no uvx on PATH); see https://docs.astral.sh/uv/getting-started/installation/" >&2
+  exit 1
+}
+# After the helper: with GH_TOKEN, git reaches a private release through it.
+git ls-remote --exit-code "$release_url" "refs/tags/v$version" >/dev/null 2>&1 || {
+  echo "cloud-setup: cannot read agent-hub v$version at $release_url: attach the repository to this session or set GH_TOKEN" >&2
+  exit 1
+}
+uvx --from "$release_source" hub --version </dev/null >/dev/null || {
+  echo "cloud-setup: cannot run agent-hub $version from $release_source: the uv cache warm-up failed" >&2
+  exit 1
+}
 
 # The two lists hold safe names joined by ", " in the same order: walk them in step.
 dirs="$repo_dirs, "
