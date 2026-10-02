@@ -73,10 +73,12 @@ class TestMake:
         ("arguments", "hub_call"),
         [
             (("bench", "ARGS=--runs 1"), "bench --runs 1"),
+            # Taken raw: make never expands a `$` of the value; the shell still splits words.
+            (("bench", "ARGS=--label $HOME x"), "bench --label $HOME x"),
             (("bench",), "bench"),
             (("bench-validate",), "bench --validate"),
         ],
-        ids=["bench-args", "bench", "bench-validate"],
+        ids=["bench-args", "bench-args-dollar", "bench", "bench-validate"],
     )
     def test_runs_hub_bench_when_bench_target_dry_run(
         self,
