@@ -386,12 +386,10 @@ PROJECT_BRANCH_READERS = {
     "core/src/agent_hub/core/hub_config/model.py": 2,
     # the hub checkout's branch in the brief
     "cli/src/agent_hub/cli/brief_command.py": 1,
-    # project_default_branch for ci.yml and AGENTS.md
-    "generator/src/agent_hub/generator/placeholders.py": 1,
+    # project_default_branch for ci.yml, and the project branch in AGENTS.md's mentions
+    "generator/src/agent_hub/generator/placeholders.py": 2,
     # the CI trigger branches
     f"{TEMPLATES}/github/workflows/ci.yml.tmpl": 2,
-    # the worktree base and the push rule
-    f"{TEMPLATES}/AGENTS.md.tmpl": 2,
     # CI runs for every repo and the hub log
     f"{TEMPLATES}/scripts/retro_metrics.py.tmpl": 2,
     # Config.default_branch, and the project's branch in the protected set (also the root file's)
