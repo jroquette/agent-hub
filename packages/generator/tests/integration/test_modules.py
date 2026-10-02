@@ -1,5 +1,8 @@
 """The module files of a rendered hub, run as a hub user runs them (AGH-17, spec D5).
 
+``TestSelection``: each module renders exactly its files; a hub written with ``cloud`` and
+``bench`` holds them and their lock entries, and a sync plan of it has nothing pending (the
+generator and core steps ``hub init`` and ``hub sync`` run; the CLI is not imported here).
 ``TestMake``: the rendered ``Makefile`` with every module selected (the spec's ALL) runs
 ``make check`` and the module targets through the ``./hub`` shim; a fake ``uvx`` first on
 ``PATH`` logs each call, so no release is fetched. ``TestContractSync``: ``make contract-sync``
@@ -17,7 +20,18 @@ from pathlib import Path
 import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
-from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.hub_files.extension_inputs import NO_EXTENSIONS
+from agent_hub.core.hub_files.hub_lock import (
+    HUB_LOCK_PATH,
+    ManagedFileEntry,
+    SeededEntry,
+    build_hub_lock,
+    lock_bytes,
+)
+from agent_hub.core.hub_files.plan_sync import SyncPlan, plan_sync
+from agent_hub.core.hub_files.rendered_file import Ownership
+from agent_hub.core.testing.builders import a_hub_document, a_second_repo
+from agent_hub.generator.hub_tree import read_planned_tree
 from agent_hub.generator.render_hub import render_hub
 
 TIMEOUT = 60
@@ -53,6 +67,105 @@ def run_make(root: Path, fake_uv_bin: Path, *arguments: str) -> subprocess.Compl
 def logged_calls(fake_uv_bin: Path) -> list[str]:
     log = fake_uv_bin / "uvx.log"
     return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+
+
+# AC-17.5, AC-17.6 (D5): the files each module renders, exactly.
+MODULE_FILES = {
+    "bench": {"mk/bench.mk"},
+    "cloud": {"mk/cloud.mk", "scripts/cloud-setup.sh"},
+    "contract-sync": {"mk/contract-sync.mk", "scripts/contract-sync.sh"},
+    "marketplace": {
+        "mk/marketplace.mk",
+        ".claude-plugin/marketplace.json",
+        ".claude-plugin/marketplace.project.json",
+    },
+}
+MODULE_FILES_ALL = set().union(*MODULE_FILES.values())
+SEEDED_MODULE_FILES = {".claude-plugin/marketplace.project.json"}
+EXECUTABLE_MODULE_FILES = {"scripts/cloud-setup.sh", "scripts/contract-sync.sh"}
+
+
+def a_config_selecting(*modules: str) -> HubConfig:
+    """The demo with a second repo and ``modules`` selected (``contract-sync`` api → web)."""
+    document = a_hub_document()
+    document["repos"].append(a_second_repo())
+    source, target = (repo["dir"] for repo in document["repos"])
+    settings = {"contract-sync": {"source": source, "target": target}}
+    document["modules"] = {module: settings.get(module, {}) for module in modules}
+    return HubConfig.model_validate(document)
+
+
+def planned_sync(root: Path, config: HubConfig) -> SyncPlan:
+    """The plan ``hub sync`` makes for the hub at ``root`` (no project extension inputs)."""
+    lock_content = (root / HUB_LOCK_PATH).read_bytes()
+    rendered = render_hub(config)
+    lock = build_hub_lock(rendered=rendered, config=config)
+    paths = sorted({file.path for file in rendered.files} | {link.path for link in rendered.links})
+    wanted = {file.path for file in rendered.files if file.ownership is Ownership.MANAGED}
+    tree = read_planned_tree(root, paths=paths, wanted=wanted)
+    plan = plan_sync(
+        rendered=rendered,
+        config=config,
+        lock=lock,
+        lock_content=lock_content,
+        tree=tree,
+        extensions=NO_EXTENSIONS,
+    )
+    assert isinstance(plan, SyncPlan), plan
+    return plan
+
+
+class TestSelection:
+    def test_writes_module_files_and_lock_when_cloud_and_bench_synced(
+        self, rendered_hub: Callable[[HubConfig], Path]
+    ) -> None:
+        config = a_config_selecting("cloud", "bench")
+        # What ``hub init`` writes: the render, then the lock built from it.
+        root = rendered_hub(config)
+        (root / HUB_LOCK_PATH).write_bytes(
+            lock_bytes(build_hub_lock(rendered=render_hub(config), config=config))
+        )
+
+        plan = planned_sync(root, config)
+
+        # Up to date: nothing to write, delete or remove, and the lock bytes unchanged.
+        assert (plan.pending, plan.lock_written, plan.changes) == (False, False, ())
+        expected = MODULE_FILES["bench"] | MODULE_FILES["cloud"]
+        on_disk = {path for path in MODULE_FILES_ALL if (root / path).exists()}
+        assert on_disk == expected
+        assert os.access(root / "scripts/cloud-setup.sh", os.X_OK)
+        assert not os.access(root / "mk/cloud.mk", os.X_OK)
+        lock = plan.lock
+        assert lock.modules == ("bench", "cloud")
+        for path in expected:
+            entry = lock.files[path]
+            assert isinstance(entry, ManagedFileEntry), path
+            assert entry.executable is (path in EXECUTABLE_MODULE_FILES), path
+        assert not [path for path in lock.files if path in MODULE_FILES_ALL - expected]
+
+    @pytest.mark.parametrize("module", sorted(MODULE_FILES))
+    def test_renders_only_its_files_when_module_selected_alone(self, module: str) -> None:
+        base = {file.path for file in render_hub(a_config_selecting()).files}
+
+        rendered = render_hub(a_config_selecting(module))
+
+        paths = {file.path for file in rendered.files}
+        assert paths - base == MODULE_FILES[module]
+        assert base <= paths
+        assert not paths & (MODULE_FILES_ALL - MODULE_FILES[module])
+        for file in rendered.files:
+            if file.path in MODULE_FILES[module]:
+                assert file.module == module, file.path
+                assert file.executable is (file.path in EXECUTABLE_MODULE_FILES), file.path
+                seeded = file.path in SEEDED_MODULE_FILES
+                assert file.ownership is (Ownership.SEEDED if seeded else Ownership.MANAGED)
+            else:
+                assert file.module is None, file.path
+        lock = build_hub_lock(rendered=rendered, config=a_config_selecting(module))
+        assert lock.modules == (module,)
+        for path in MODULE_FILES[module]:
+            kind = SeededEntry if path in SEEDED_MODULE_FILES else ManagedFileEntry
+            assert isinstance(lock.files[path], kind), path
 
 
 class TestMake:
