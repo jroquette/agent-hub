@@ -47,7 +47,7 @@ class RunLog:
         """Append the transition's record and show ``[STATE] event`` on stdout."""
         moment = now()
         line = run_record(
-            ts=moment.isoformat(timespec="seconds"),
+            ts=moment.astimezone(datetime.UTC).isoformat(timespec="seconds"),
             run_id=self.run_id,
             issue_id=self.issue_id,
             repo=self.repo,

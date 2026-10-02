@@ -319,6 +319,7 @@ class LiveRun:
         """Make the writes; on a tracker failure name the PR and the writes not made."""
         self.pending = tuple(writes)
         outcome = apply_writes(self.client, writes)
+        self.cost_usd += outcome.cost_usd
         self.pending = tuple(writes[outcome.done :])
         if outcome.error is not None:
             typer.echo(f"{_PREFIX}: {shown_text(str(outcome.error))}", err=True)

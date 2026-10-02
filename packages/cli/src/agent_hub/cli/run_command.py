@@ -30,6 +30,7 @@ from agent_hub.cli.run_children import (
     would_run_line,
 )
 from agent_hub.cli.run_log import RunLog, new_run_id
+from agent_hub.cli.run_report import tracker_cost
 from agent_hub.cli.run_steps import LiveRun
 from agent_hub.cli.tracker_client import missing_key_line, resolve_tracker_client, transport_line
 from agent_hub.core.errors import TrackerError
@@ -148,6 +149,7 @@ def run(
         client=client,
         log=log,
         environ=os.environ,
+        cost_usd=tracker_cost(client),
     )
     raise typer.Exit(live_run.run())
 
