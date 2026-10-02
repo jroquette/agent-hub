@@ -49,7 +49,7 @@ generated file and `hub` command takes project values from it and nowhere else. 
 Unknown keys are an error at every object level; keys starting with `_` (such as `_comment`) are accepted and ignored
 at every level, and the exported schema says the same ([ADR 0010](../adr/0010-hub-json-config-contract.md)). Cross-field
 checks are model validators JSON Schema cannot express, so there an editor accepts what the CLI rejects: unique
-`repos[].dir`, guard path roots, settings or `doctor.rules` entries of an unselected module.
+`repos[].dir`, guard path roots, `doctor.rules` entries of an unselected module, `contract-sync` repos.
 
 ### Rendered values
 
@@ -81,10 +81,11 @@ writes nothing and exits 1 ([hub-sync.md](hub-sync.md)) and `config.schema` repo
 
 ### Modules
 
-Each entry's value is that module's settings object (`{}` when it has none); an unknown id is an error. A module adds
-files, commands or doctor rules only when selected ([hub-generator.md](hub-generator.md)). Phase 1 modules: `cloud`
-(cloud-session setup), `bench` (configuration benchmark), `contract-sync` (cross-repo contract recipe; its settings
-name the source and target repos) and `marketplace` (the optional plugin marketplace).
+Each entry's value is that module's settings object; an unknown id is an error. A module adds files, commands or doctor
+rules only when selected ([hub-generator.md](hub-generator.md)). Phase 1 modules: `cloud` (cloud-session setup), `bench`
+(configuration benchmark) and `marketplace` (the optional plugin marketplace) take `{}` only; `contract-sync`
+(cross-repo contract recipe) takes `{"source": "<repo dir>", "target": "<repo dir>"}`: both required, each a
+`repos[].dir`, and different (cross-field checks, at `modules.contract-sync.<key>`). `_` keys are ignored.
 
 ### Readers
 
@@ -147,4 +148,3 @@ repo stay as they are; one rooted at the hub's directory name is rewritten as `@
 ## Open questions
 
 - Schema migration: a `hub config migrate` command or a documented manual edit, decided when version 2 is needed.
-- The exact `contract-sync` settings keys, fixed by the issue that implements the module.
