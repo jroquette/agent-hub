@@ -1289,3 +1289,119 @@ class TestVerdict:
         assert [name for name, _ in spy.calls if name != "resolve_tracker_client"] == []
         for tool in ("claude", "gh", "make"):
             assert run_workspace.calls(tool) == []
+
+
+OUTAGE = "synthetic outage; retry later"
+
+
+def inbox_lines(workspace: Any) -> list[str]:
+    found = []
+    for path in sorted((workspace.hub / "brain" / "_inbox" / "runs").glob("*.md")):
+        found += path.read_text().splitlines()
+    return found
+
+
+@pytest.mark.usefixtures("with_key")
+class TestTrackerFailures:
+    def test_creates_nothing_when_read_fails(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        run_tracker.fail_on = {"get_issue"}
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 1
+        assert result.stderr == f"{API_LINE}\nget_issue DEM-1: {OUTAGE}\n"
+        assert not worktree_of(workspace).exists()
+        assert run_tracker.calls == [("get_issue", "DEM-1")]
+        (failed,) = records(workspace)
+        assert (failed["event"], failed["state"], failed["stage"]) == ("failed", "PICKED", "PICKED")
+        assert failed["reason"] == f"get_issue DEM-1: {OUTAGE}"
+        for tool in ("claude", "gh", "make"):
+            assert run_workspace.calls(tool) == []
+
+    def test_stops_report_when_move_fails(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        run_tracker.fail_on = {"move_state"}
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 1
+        assert [call[0] for call in run_tracker.calls] == ["get_issue", "move_state"]
+        lines = result.stderr.splitlines()
+        assert f"hub run: move_state DEM-1: {OUTAGE}" in lines
+        assert f"hub run: the PR is open: {PR_URL}" in lines
+        assert "not done: remove_label(DEM-1, agent-failed)" in lines
+        assert [line for line in lines if line.startswith("not done: comment(DEM-1, Run ")]
+        reported = [record for record in records(workspace) if record["event"] == "reported"]
+        assert [(record["ok"], record["pr"]) for record in reported] == [(False, PR_URL)]
+        (inbox,) = inbox_lines(workspace)
+        assert inbox.endswith(f": PR {PR_URL}; report failed; $0.42")
+
+    def test_stops_report_when_add_label_fails(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("FAKE_MAKE_EXIT", "2")
+        run_tracker.fail_on = {"add_label"}
+
+        result = live(run_command, run_workspace.workspace)
+
+        assert result.exit_code == 1
+        assert [call[0] for call in run_tracker.calls] == ["get_issue", "add_label"]
+        assert run_tracker.backend.comments == []
+        # The comment holds the gate's output, so its line is shown JSON-escaped.
+        not_done = [line for line in result.stderr.splitlines() if line.startswith("not done: ")]
+        assert [line for line in not_done if "comment(DEM-1, Run " in line]
+
+    @pytest.mark.parametrize(
+        ("failing", "gate_exit"),
+        [
+            ("move_state", "0"),
+            ("remove_label", "0"),
+            ("comment", "0"),
+            ("add_label", "2"),
+            ("comment", "2"),
+        ],
+        ids=["move", "remove", "comment", "add-on-failure", "comment-on-failure"],
+    )
+    def test_calls_each_write_at_most_once_when_any_fails(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        failing: str,
+        gate_exit: str,
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("FAKE_MAKE_EXIT", gate_exit)
+        run_tracker.fail_on = {failing}
+
+        result = live(run_command, run_workspace.workspace)
+
+        assert result.exit_code == 1
+        operations = [call[0] for call in run_tracker.calls]
+        assert operations[-1] == failing
+        assert all(operations.count(operation) == 1 for operation in operations)

@@ -6,6 +6,7 @@ process: an option out of range, an issue not shaped ``<team>-<n>``, a ``--repo`
 repo ``dir`` of ``hub.json``, a folder that is not a hub (D15).
 """
 
+import contextlib
 import math
 import os
 import re
@@ -17,6 +18,7 @@ from typing import Annotated, Final
 import typer
 
 from agent_hub.cli.command_exits import fail
+from agent_hub.cli.errors import RunLogError
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
 from agent_hub.cli.hub_root import hub_root_or_exit, main_checkout
 from agent_hub.cli.init_report import shown_path, shown_text
@@ -33,7 +35,7 @@ from agent_hub.cli.tracker_client import missing_key_line, resolve_tracker_clien
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.runner.report_writes import REVIEW_STATE, call_line, success_writes
-from agent_hub.core.runner.run_record import picked_data
+from agent_hub.core.runner.run_record import Stage, picked_data
 from agent_hub.core.runner.run_texts import pr_body, success_comment
 from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, Issue, TrackerClient
 
@@ -121,18 +123,24 @@ def run(
         live=live, max_turns=max_turns, budget=budget, model=model, start=start, effort=effort
     )
     client = resolve_tracker_client(config, os.environ, hub_root=hub)
-    picked = _read_issue_or_exit(client, issue)
     children = RunChildren(config=config, hub=hub, repo=repo, issue_id=issue)
     if not options.live:
+        picked = _read_issue_or_exit(client, issue, log=None)
         _print_dry_run(children, picked, options=options, run_id=new_run_id())
         return
-    log = RunLog(hub=hub, run_id=new_run_id(), issue_id=picked.id, repo=repo)
-    log.record(
-        "picked",
-        picked_data(
-            budget=budget, max_turns=max_turns, model=model, transport=config.tracker.transport
-        ),
-    )
+    # A live run records from the read on, so a failed read leaves its "failed" record.
+    log = RunLog(hub=hub, run_id=new_run_id(), issue_id=issue, repo=repo)
+    picked = _read_issue_or_exit(client, issue, log=log)
+    try:
+        data = picked_data(
+            budget=options.budget,
+            max_turns=options.max_turns,
+            model=options.model,
+            transport=config.tracker.transport,
+        )
+        log.record("picked", data)
+    except RunLogError as error:
+        fail(f"{_PREFIX}: {error}")
     live_run = LiveRun(
         children=children,
         options=options,
@@ -144,11 +152,14 @@ def run(
     raise typer.Exit(live_run.run())
 
 
-def _read_issue_or_exit(client: TrackerClient, issue_id: str) -> Issue:
+def _read_issue_or_exit(client: TrackerClient, issue_id: str, *, log: RunLog | None) -> Issue:
     # The one read of the run (D6, D8): a failure ends it before anything is created.
     try:
         return client.get_issue(issue_id)
     except TrackerError as error:
+        if log is not None:
+            with contextlib.suppress(RunLogError):
+                log.record("failed", {"stage": Stage.PICKED.value, "reason": str(error)})
         fail(str(error))
 
 

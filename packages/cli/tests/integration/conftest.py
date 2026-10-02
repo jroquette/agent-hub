@@ -32,6 +32,7 @@ from typer.testing import CliRunner, Result
 
 from agent_hub.cli.hub_root import HUB_ROOT_VARIABLE
 from agent_hub.cli.main import app
+from agent_hub.core.errors import TrackerError
 from agent_hub.core.json_form import dump_json
 from agent_hub.core.testing.builders import a_hub_document, an_issue
 from agent_hub.core.testing.fakes import FakeTrackerBackend, InMemoryTrackerClient, TrackerState
@@ -1265,35 +1266,48 @@ def tracker_backend_for_run(*, failed: bool = True) -> FakeTrackerBackend:
 
 
 class RecordingTracker:
-    """An ``InMemoryTrackerClient`` that records every port call: ``(operation, *arguments)``."""
+    """An ``InMemoryTrackerClient`` that records every port call: ``(operation, *arguments)``.
+
+    An operation named in ``fail_on`` is recorded, then raises ``TrackerError`` as an adapter
+    does, changing nothing.
+    """
 
     def __init__(self, backend: FakeTrackerBackend) -> None:
         self.backend = backend
         self._client = InMemoryTrackerClient(backend)
         self.calls: list[tuple[str, ...]] = []
+        self.fail_on: set[str] = set()
+
+    def _call(self, operation: str, *arguments: str) -> None:
+        self.calls.append((operation, *arguments))
+        if operation in self.fail_on:
+            issue_id = arguments[0] if operation != "list_ready" else None
+            raise TrackerError(
+                operation=operation, issue_id=issue_id, cause="synthetic outage", fix="retry later"
+            )
 
     def list_ready(self, team: str, label: str) -> list[Issue]:
-        self.calls.append(("list_ready", team, label))
+        self._call("list_ready", team, label)
         return self._client.list_ready(team, label)
 
     def get_issue(self, issue_id: str) -> Issue:
-        self.calls.append(("get_issue", issue_id))
+        self._call("get_issue", issue_id)
         return self._client.get_issue(issue_id)
 
     def move_state(self, issue_id: str, state_name: str) -> None:
-        self.calls.append(("move_state", issue_id, state_name))
+        self._call("move_state", issue_id, state_name)
         self._client.move_state(issue_id, state_name)
 
     def add_label(self, issue_id: str, name: str) -> None:
-        self.calls.append(("add_label", issue_id, name))
+        self._call("add_label", issue_id, name)
         self._client.add_label(issue_id, name)
 
     def remove_label(self, issue_id: str, name: str) -> None:
-        self.calls.append(("remove_label", issue_id, name))
+        self._call("remove_label", issue_id, name)
         self._client.remove_label(issue_id, name)
 
     def comment(self, issue_id: str, body: str) -> None:
-        self.calls.append(("comment", issue_id, body))
+        self._call("comment", issue_id, body)
         self._client.comment(issue_id, body)
 
 
