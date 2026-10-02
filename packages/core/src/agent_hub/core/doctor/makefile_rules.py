@@ -100,7 +100,7 @@ def _logical_lines(text: str) -> Iterator[tuple[int, str]]:
 MAKEFILE_OVERRIDE: Final = Rule(
     id=MAKEFILE_OVERRIDE_RULE,
     severity=Severity.WARNING,
-    summary="Makefile.project does not redefine a target of the managed Makefile",
+    summary="Makefile.project does not redefine a target of the managed makefiles",
     module=RULE_MODULES.get(MAKEFILE_OVERRIDE_RULE),
     reads=frozenset(),
     check=_makefile_override,
