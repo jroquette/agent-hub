@@ -151,8 +151,9 @@ MERGE_BOUND = "must be a commit sha: 7 to 40 characters among 0-9 and a-f"
 PROMPT_BOUND = "must be 1 to 20000 characters"
 HIDDEN_COUNT = "must list 1 to 100 paths"
 PATH_BOUND = (
-    "is not a literal relative path in the repo (no empty, `.`, `..` or `.git` segment,"
-    " no leading `/`, `-` or `:`, no `*`, `?`, `[` or control character, 1 to 1024 characters)"
+    "is not a literal relative path in the repo (no empty, `.`, `..` or `.git` segment in any"
+    " case, no leading `/`, `-` or `:`, no `*`, `?`, `[`, `\\`, control, format or surrogate"
+    " character, 1 to 1024 characters)"
 )
 TEST_CMD_BOUND = "must be 1 to 32 non-empty strings of at most 1024 characters"
 SETUP_BOUND = "must be at most 4096 characters"
@@ -209,6 +210,22 @@ ENV_VALUE = "must be a string, a number, true or false"
             f"[0].hidden_tests: {json.dumps('t/.git/config')} {PATH_BOUND}",
         ),
         ({"hidden_tests": [".git"]}, f"[0].hidden_tests: {json.dumps('.git')} {PATH_BOUND}"),
+        (
+            {"hidden_tests": ["t\\est.py"]},
+            f"[0].hidden_tests: {json.dumps('t\\est.py')} {PATH_BOUND}",
+        ),
+        (
+            {"hidden_tests": [".GIT/config"]},
+            f"[0].hidden_tests: {json.dumps('.GIT/config')} {PATH_BOUND}",
+        ),
+        (
+            {"hidden_tests": ["a\ud800b"]},
+            f"[0].hidden_tests: {json.dumps('a\ud800b')} {PATH_BOUND}",
+        ),
+        (
+            {"hidden_tests": ["a\u200cb"]},
+            f"[0].hidden_tests: {json.dumps('a\u200cb')} {PATH_BOUND}",
+        ),
         ({"test_cmd": []}, f"[0].test_cmd: {TEST_CMD_BOUND}"),
         ({"test_cmd": ["x"] * 33}, f"[0].test_cmd: {TEST_CMD_BOUND}"),
         ({"test_cmd": ["python3", ""]}, f"[0].test_cmd: {TEST_CMD_BOUND}"),
