@@ -3,7 +3,8 @@
 ``TestParity`` holds the hub's own ``cloud-setup.sh`` behaviour (its characterization cases:
 identity global and per repo, fetch, clone, a failed fetch or clone as a WARN with exit 0, no
 author → no identity). ``TestSecrecy``: a synthetic ``GH_TOKEN`` reaches git only through the
-credential helper and shows nowhere.
+credential helper and shows nowhere. ``TestAccess`` (criterion 10.3, E11, Q-8): ``git ls-remote``
+on the pinned tag, then one ``uvx`` warm-up, before any repo; each failure exits 1 in one line.
 
 The workspace, all under ``tmp_path`` and offline: ``ws/demo-hub`` is the ALL render (a git repo,
 ``hub.json`` pinned to ``VERSION``); ``ws/demo-api`` is a clone one commit behind its origin;
@@ -311,3 +312,118 @@ class TestSecrecy:
         for path in cloud_ws.root.rglob("*"):
             if path.is_file() and not path.is_symlink():
                 assert TOKEN.encode() not in path.read_bytes(), path
+
+
+SOURCE = f"git+{RELEASE_URL}@v{VERSION}#subdirectory=packages/agent-hub"
+INSTALL_URL = "https://docs.astral.sh/uv/getting-started/installation/"
+
+
+def no_access_line(version: str = VERSION) -> str:
+    return (
+        f"cloud-setup: cannot read agent-hub v{version} at {RELEASE_URL}: "
+        "attach the repository to this session or set GH_TOKEN"
+    )
+
+
+def warm_up_call(version: str = VERSION) -> str:
+    return f"uvx --from git+{RELEASE_URL}@v{version}#subdirectory=packages/agent-hub hub --version"
+
+
+class TestAccess:
+    def test_exits_one_naming_access_when_tag_unreachable(self, cloud_ws: CloudWorkspace) -> None:
+        cloud_ws.git("tag", "-d", f"v{VERSION}", cwd=cloud_ws.origins / "agent-hub.git")
+
+        completed = cloud_ws.run()
+
+        assert completed.returncode == 1
+        assert completed.stderr.splitlines() == [no_access_line()]
+        calls = cloud_ws.calls()
+        assert [call for call in calls if call.startswith("git ls-remote")] == [
+            f"git ls-remote --exit-code {RELEASE_URL} refs/tags/v{VERSION}"
+        ]
+        assert not any(call.startswith(("uv ", "uvx ")) for call in calls)
+        # No repo is fetched or cloned (the hub's own identity may be set before).
+        assert not any(" fetch " in f" {call} " or call.startswith("git clone") for call in calls)
+        assert not (cloud_ws.workspace / MISSING).exists()
+
+    def test_warms_cache_once_before_fetch_when_tag_reachable(
+        self, cloud_ws: CloudWorkspace
+    ) -> None:
+        completed = cloud_ws.run()
+
+        assert completed.returncode == 0, completed.stderr
+        calls = cloud_ws.calls()
+        uv_calls = [call for call in calls if call.startswith(("uv ", "uvx "))]
+        assert uv_calls == [warm_up_call()]
+        access = calls.index(f"git ls-remote --exit-code {RELEASE_URL} refs/tags/v{VERSION}")
+        warm_up = calls.index(warm_up_call())
+        fetch = next(i for i, call in enumerate(calls) if call.endswith("fetch --quiet origin"))
+        clone = next(i for i, call in enumerate(calls) if call.startswith("git clone"))
+        assert access < warm_up < fetch < clone
+
+    def test_reads_pin_at_run_time_when_hub_json_changes(self, cloud_ws: CloudWorkspace) -> None:
+        # A new pin in hub.json, no sync: the script reads it, and the origin holds its tag.
+        cloud_ws.write_hub_json(a_pinned_document("7.8.9"))
+        source = cloud_ws.root / "sources" / "agent-hub"
+        cloud_ws.git("tag", "v7.8.9", cwd=source)
+        cloud_ws.git("push", "-q", str(cloud_ws.origins / "agent-hub.git"), "v7.8.9", cwd=source)
+
+        completed = cloud_ws.run()
+
+        assert completed.returncode == 0, completed.stderr
+        calls = cloud_ws.calls()
+        assert f"git ls-remote --exit-code {RELEASE_URL} refs/tags/v7.8.9" in calls
+        assert [call for call in calls if call.startswith("uvx ")] == [warm_up_call("7.8.9")]
+
+    def test_uses_helper_when_token_given_and_tag_private(self, cloud_ws: CloudWorkspace) -> None:
+        private = {"FAKE_GIT_PRIVATE_TAG": "1"}
+
+        without = cloud_ws.run(env=private)
+        with_token = cloud_ws.run(env=private | {"GH_TOKEN": TOKEN})
+
+        # Without the token the private tag is unreachable; with it git asks the helper, which
+        # answers with the variable (the helper is set before the access check).
+        assert without.returncode == 1
+        assert no_access_line() in without.stderr.splitlines()
+        assert with_token.returncode == 0, with_token.stderr
+        assert [call for call in cloud_ws.calls() if call.startswith("uvx ")] == [warm_up_call()]
+        assert TOKEN not in with_token.stdout + with_token.stderr
+        assert TOKEN not in "\n".join(cloud_ws.calls())
+
+    @pytest.mark.parametrize(
+        ("removed", "message"),
+        [
+            (
+                ("uv", "uvx"),
+                f"cloud-setup: uv is not installed (no uvx on PATH); see {INSTALL_URL}",
+            ),
+            (("python3",), "cloud-setup: python3 is not installed; it reads hub.json"),
+        ],
+        ids=["uv", "python3"],
+    )
+    def test_exits_one_naming_tool_when_uv_or_python_missing(
+        self, removed: tuple[str, ...], message: str, cloud_ws: CloudWorkspace
+    ) -> None:
+        for tool in removed:
+            (cloud_ws.bin / tool).unlink()
+
+        completed = cloud_ws.run()
+
+        assert completed.returncode == 1
+        assert completed.stderr.splitlines() == [message]
+        calls = cloud_ws.calls()
+        assert not any(call.startswith(("git ls-remote", "git clone", "uvx ")) for call in calls)
+        assert not any(call.endswith("fetch --quiet origin") for call in calls)
+
+    def test_exits_one_when_warm_up_fails(self, cloud_ws: CloudWorkspace) -> None:
+        completed = cloud_ws.run(env={"FAKE_UVX_RESOLVE_RC": "1"})
+
+        assert completed.returncode == 1
+        assert completed.stderr.splitlines() == [
+            f"cloud-setup: cannot run agent-hub {VERSION} from {SOURCE}: "
+            "the uv cache warm-up failed"
+        ]
+        calls = cloud_ws.calls()
+        assert calls.count(warm_up_call()) == 1
+        assert not any(call.startswith("git clone") for call in calls)
+        assert not any(call.endswith("fetch --quiet origin") for call in calls)
