@@ -1,7 +1,7 @@
 # 0015. Linear MCP transport for the tracker port
 
-- Status: accepted
-- Date: <merge date>
+- Status: proposed
+- Date: 2026-10-02
 - Deciders: José Henrique Roquette
 
 ## Context and Problem Statement
@@ -31,9 +31,9 @@ switch behaviour silently. API only was rejected because it leaves cloud session
 
 - `hub.json` gains the optional key `tracker.transport`, a closed list `"api"` | `"mcp"`, default `"api"`
   ([project-config.md](../design/project-config.md)); `schema_version` stays 1. The CLI uses only what the key says,
-  never the environment. `hub next` and `hub run` refuse `"api"` without `LINEAR_API_KEY` (exit 1) and name the
-  variable and the alternative `tracker.transport: "mcp"`. Resolution itself reads no environment value. Each command
-  prints one stderr line naming the transport.
+  never the environment. Resolution itself reads no environment value. Landing with the commands (PR 3 of AGH-27):
+  `hub next` and `hub run` refuse `"api"` without `LINEAR_API_KEY` (exit 1) and name the variable and the alternative
+  `tracker.transport: "mcp"`, and each command prints one stderr line naming the transport.
 - `McpTrackerClient` lives in `packages/tracker_linear` (`mcp.py`, with `mcp_protocol.py` and `claude_process.py`). It
   imports only core ([ADR 0008](0008-cli-as-composition-root.md)) and starts `claude` with the standard library's
   `subprocess` in the caller's process group; a timeout kills the child. It reads no `hub.json`.
@@ -41,16 +41,18 @@ switch behaviour silently. API only was rejected because it leaves cloud session
   `effortLevel` `medium`, a 120 s timeout per call. The working directory is the hub root. The child environment is the
   caller's minus `LINEAR_API_KEY`. `last_cost_usd` (not a port method) is the sum of the `total_cost_usd` of the last
   port operation's calls (one for a read, two for a write), added whenever a result reports it as a number, an error
-  result included; it is a lower bound when a call ran but reported no cost (a timeout). **Changed from the draft
+  result included; it is a lower bound when a call ran but reported no cost (a timeout, an output over the 1 MiB cap,
+  output that is not its JSON result, an OS error after `claude` started). **Changed from the draft
   approved at the plan gate, which said "the last call's `total_cost_usd`": a write is two calls, and `hub run` adds
   both to its cost.**
 - A prompt is fixed text plus one JSON request line built by the adapter: the operation and its arguments (issue id,
   team, label or state name, comment body). It never holds an issue title, a description or a tool prefix: every `_` of
   the request line is written `\u005f` (the same JSON value), so an argument holding a tool name cannot put `mcp__`
-  into a prompt. A team, state or label name over 256 characters is refused before any call. A reply is one line of
-  strict JSON (no repeated key, no lone surrogate) of a fixed shape per call, checked field by field: every issue id
-  matches the issue id pattern, every state or label name is at most 256 characters; anything else is a
-  `TrackerError`.
+  into a prompt. A team, state or label name over 256 characters is refused before any call. **Changed from the draft
+  approved at the plan gate, which had neither the `_` escaping of the request line nor the 256-character refusal.**
+  A reply is one line of strict JSON (no repeated key, no lone surrogate) of a fixed shape per call, checked field by
+  field: every issue id matches the issue id pattern, every state or label name is at most 256 characters; anything
+  else is a `TrackerError`.
 - Allowed tools per call (all under the `mcp__Linear__` prefix of the `Linear` server, a constant):
 
   | Call | Allowed tools |
@@ -69,6 +71,13 @@ switch behaviour silently. API only was rejected because it leaves cloud session
   tools are a snapshot of the working `Linear` server's 68 tools taken 2026-10-01 (`LINEAR_TOOLS`); each call denies
   that snapshot minus its own tools. The snapshot is refreshed when the server changes.
 
+  Each call also turns every hook off (`"disableAllHooks": true` in its `--settings` JSON, next to `effortLevel`) and
+  saves no session (`--no-session-persistence`); the working directory stays the hub root. Run from the hub root, a
+  call otherwise runs the hub's hooks: SessionStart injects the session brief into a write call's context, the Stop
+  gate runs `check_fast` across worktrees (150 s, over the call's 120 s timeout, and its output can be fed back to
+  the model) and SessionEnd leaves a session stub in the brain inbox per call. **Changed from the draft approved at
+  the plan gate, which let the hub's hooks run.**
+
 - A write is one read call, then the adapter decides: a change that changes nothing makes no write call; an unknown
   state or label name raises naming it, with no write call. Otherwise one write call carries the adapter's full payload
   and holds only its write tool. The write reply must echo the requested change. No write is retried; no label or state
@@ -78,8 +87,9 @@ switch behaviour silently. API only was rejected because it leaves cloud session
   more match, or one listing an issue twice, rather than return part of the list.
 - Testing: `TrackerClientContract` runs against the adapter with an injected runner that answers from the seeded
   backend; a process test runs a fake `claude` executable; neither reaches Linear. A live test marked `live("mcp")`
-  runs only by hand with `AGENT_HUB_LIVE=1`, `AGENT_HUB_LIVE_ISSUE` and `AGENT_HUB_LIVE_LABEL`, and does not need
-  `LINEAR_API_KEY`. The owner runs it on a machine without the key before this ADR is accepted.
+  runs only by hand with `AGENT_HUB_LIVE=1`, `AGENT_HUB_LIVE_ISSUE`, `AGENT_HUB_LIVE_LABEL` and `AGENT_HUB_LIVE_HUB`
+  (the hub root its calls run from, as in production; a label that is the hub's ready label fails at setup), and does
+  not need `LINEAR_API_KEY`. The owner runs it on a machine without the key before this ADR is accepted.
 
 ### Consequences
 
@@ -89,9 +99,10 @@ switch behaviour silently. API only was rejected because it leaves cloud session
 - Bad: `"mcp"` spends tokens on orchestration: a read is one call, a write two. That is an opt-in exception to Defined
   directions 1.
 - Bad: through MCP, text fields are copied by a model into JSON and may be altered or cut; `"api"` is exact.
-- Bad: each call starts Claude Code in the hub root, so the hub's project settings apply: its hooks run (the
-  SessionStart brief adds seconds per call), and the user's and project's allow-lists still apply to tools the call
-  neither allows nor denies, such as other MCP servers' tools.
+- Bad: each call starts Claude Code in the hub root with its hooks off and no session saved, but the rest still
+  loads: the hub's CLAUDE.md and AGENTS.md (tokens in every call), the enabled plugins, and the user's, project's and
+  local allow rules, which still apply to tools the call neither allows nor denies (other MCP servers' tools, Linear
+  tools added after the snapshot). Skipping them is AGH-39.
 
 ### Residual risk (accepted)
 
@@ -102,9 +113,10 @@ switch behaviour silently. API only was rejected because it leaves cloud session
   The reply is validated, but a misuse inside those turns is not seen by the adapter.
 - A comment body (built from the implementing agent's summary) is untrusted text inside a write prompt.
 - A label write sends the full label set read a moment before; a change made in Linear between the two calls is lost.
-- A tool the `Linear` server adds after the snapshot, and any other MCP server's tool, is neither allowed nor denied
-  by a call: only a user-, project- or local-level allow exposes it. Skipping those settings (`--setting-sources`,
-  `--restricted`) is the follow-up AGH-39, which needs a live check first.
+- What the flags do not turn off still loads in every call: the hub's CLAUDE.md and AGENTS.md, the enabled plugins,
+  and the user-, project- and local-level allow rules. A tool the `Linear` server adds after the snapshot, and any
+  other MCP server's tool, is neither allowed nor denied by a call, so only such an allow exposes it. Skipping those
+  settings (`--setting-sources`, `--restricted`, `--bare`) is the follow-up AGH-39, which needs a live check first.
 
 ## More Information
 
