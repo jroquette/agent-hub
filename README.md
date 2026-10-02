@@ -665,6 +665,7 @@ enforces this in `make check`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE
 | `hub worktree NAME [--only REPO] [--remove]` | Create (or remove) one task's worktrees in the hub's repos |
 | `hub brief [--no-network]` | Print the session brief: `now.md`, recent journal, repo/PR/CI state |
 | `hub agent [ARGS…]` | Start `claude` with every repo attached; all arguments go to `claude` |
+| `hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …` | Benchmark the `hub-workflow` plugin on closed issues (module `bench`); `--validate` checks the graders |
 | `hub collect [FILE\|-] [--db PATH]` | Ingest canonical events from JSON Lines, all or nothing |
 | `hub --version` | Print the version |
 
@@ -745,7 +746,7 @@ From the phases in [docs/SPEC.md](docs/SPEC.md#mvp-and-phases). Each phase start
 - [ ] Dogfooding: `hub init` generating the platform's own hub
 - [ ] `hub next` and `hub run`: take an `agent-ready` issue to a PR through the tracker port (not implemented in 0.4.0)
 - [ ] `hub sync --adopt`: join a hand-made hub (not implemented in 0.4.0)
-- [ ] Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`) (their files from 0.6.0; `hub bench` to come)
+- [ ] Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`) (their files and `hub bench` from 0.6.0)
 - [ ] Gate: an existing project's hand-made hub recreated with the same `make check` and bench
 
 **Next**
