@@ -83,6 +83,26 @@ keeps the old `hub.lock` (absent or its prior bytes); a plain `--adopt` then end
   refused `--accept`; 3 anything listed or conflicting (the settled paths applied unless `--check`); 4 `--check`,
   settled, with writes pending.
 
+### In the hub's CI
+
+Once a hub is adopted, the rendered `.github/workflows/ci.yml` keeps it there. Its one job, `check`, runs on pull
+requests to and pushes on the default branch with read-only `contents`; each action is pinned by commit SHA, its
+release in a comment (`# vX.Y.Z`). Steps: checkout (credentials not kept), setup-uv, credential, golden, `make check`.
+
+- **Credential step** (`Platform read credential`): reads the repository secret `AGENT_HUB_READ_TOKEN` through the
+  step's `env`, the only `secrets.` expression in the file. When the secret is empty or unset it does nothing, so a
+  public platform needs no secret. A token holding anything outside `[A-Za-z0-9_]` exits 1 with
+  `AGENT_HUB_READ_TOKEN: unexpected characters`, before anything is written. Otherwise it appends `GIT_CONFIG_COUNT=2`
+  and two `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` pairs to `$GITHUB_ENV`, so every later step of the job has them: an
+  `insteadOf` that rewrites the platform repository's URL to one carrying the token, and the hub's own GitHub URL mapped
+  to itself (`insteadOf` takes the longest matching prefix, so the hub's own fetches never carry the token). The token
+  is never written to a file in the repo: not in a URL, `hub.json` or `hub.lock`.
+- **Golden step** (`Golden (hub sync --check)`): `./hub sync --check` through the pinned shim, before `make check`;
+  it writes nothing. Its exits are `--check`'s: 0 up to date, the job goes on; 3 a conflict (a managed file edited in
+  the change); 4 changes pending (a commit missed `hub sync`, e.g. after a pin bump); 1 a load error (`hub.json`, a
+  missing or malformed `hub.lock`, a pin the shim cannot fetch). Any non-zero exit fails the job before `make check`;
+  the fix is a local `hub sync` (or `--adopt`) and a new commit.
+
 ## Invariants
 
 - Adopt plans every path, and decides every `--accept`, before its first write; it never writes `hub.json`, never
