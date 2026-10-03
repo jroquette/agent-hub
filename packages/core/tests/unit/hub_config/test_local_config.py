@@ -20,6 +20,7 @@ HUB_ONLY_MESSAGE = (
     " author_email and tracker.transport"
 )
 EXTRA_MESSAGE = "Extra inputs are not permitted"
+ROOT_MESSAGE = "Input should be a valid dictionary or instance of LocalConfig"
 # The schema keywords that carry a value's rule; titles and defaults differ by design.
 RULE_KEYWORDS = ("type", "pattern", "enum", "minLength")
 
@@ -93,6 +94,7 @@ def test_overrides_nothing_when_document_empty() -> None:
         ({"repos": []}, ConfigProblem("repos", HUB_ONLY_MESSAGE)),
         ({"tracker": {"team": "X"}}, ConfigProblem("tracker.team", HUB_ONLY_MESSAGE)),
         ({"tracker": {"kind": "linear"}}, ConfigProblem("tracker.kind", HUB_ONLY_MESSAGE)),
+        ({"$schema": "x"}, ConfigProblem("$schema", HUB_ONLY_MESSAGE)),
         ({"colour": 1}, ConfigProblem("colour", EXTRA_MESSAGE)),
     ],
     ids=[
@@ -102,6 +104,7 @@ def test_overrides_nothing_when_document_empty() -> None:
         "repos",
         "tracker-team",
         "tracker-kind",
+        "schema-uri",
         "unknown",
     ],
 )
@@ -129,9 +132,7 @@ def test_rejects_value_when_hub_pattern_fails(path: str, value: object) -> None:
 
 @pytest.mark.parametrize("document", [[], "x", 7], ids=["list", "string", "number"])
 def test_reports_root_problem_when_document_not_object(document: object) -> None:
-    (problem,) = problems_of(document)
-
-    assert problem.path == "$"
+    assert problems_of(document) == (ConfigProblem("$", ROOT_MESSAGE),)
 
 
 @pytest.mark.parametrize(
