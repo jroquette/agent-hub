@@ -2175,16 +2175,61 @@ def test_writes_empty_file_when_gitkeep_or_project_rules_rendered(
         assert demo_render[path].content == b"", path
 
 
-# Spec AC-4.7 (D5, Q-5, Q-11): the managed `.claude/settings.json` is the rules base, nothing more.
-SETTINGS_KEYS = ["$schema", "attribution", "hooks", "includeCoAuthoredBy", "permissions"]
+# Spec AC-4.7 (D5, Q-5, Q-11), AGH-16 D2 (E14): the managed `.claude/settings.json` is the rules
+# base: the base denies and sandbox, nothing more.
+SETTINGS_KEYS = ["$schema", "attribution", "hooks", "includeCoAuthoredBy", "permissions", "sandbox"]
 SETTINGS_SCHEMA = "https://json.schemastore.org/claude-code-settings.json"
 SETTINGS_ALLOW = ["Bash(git status *)", "Bash(git diff *)", "Bash(git log *)", "Bash(git show *)"]
-SETTINGS_DENY = ["Read(**/*.pem)", "Read(**/*.key)"]
+SETTINGS_DENY_READS = ["Read(**/*.pem)", "Read(**/*.key)"]
+# AGH-16 inventory rows S4a-S4j (E14): no force or main push, no infra or keychain tools, no ssh,
+# no piping into a shell.
+SETTINGS_DENY_COMMANDS = [
+    "Bash(git push --force*)",
+    "Bash(git push -f *)",
+    "Bash(git push * main)",
+    "Bash(git push origin HEAD:main*)",
+    "Bash(terraform *)",
+    "Bash(aws *)",
+    "Bash(security *)",
+    "Bash(ssh *)",
+    "Bash(* | sh)",
+    "Bash(* | bash)",
+]
+SETTINGS_DENY = SETTINGS_DENY_READS + SETTINGS_DENY_COMMANDS
+# AGH-16 inventory row S6a (E14): the base sandbox; a project adds its own hosts (row S6b) through
+# `settings.project.json`.
+SETTINGS_SANDBOX = {
+    "enabled": True,
+    "allowUnsandboxedCommands": False,
+    "excludedCommands": [
+        "docker *",
+        "gh *",
+        "git push *",
+        "git fetch *",
+        "git pull *",
+        "git clone *",
+        "git ls-remote *",
+    ],
+    "network": {
+        "allowLocalBinding": True,
+        "allowedDomains": [
+            "localhost",
+            "127.0.0.1",
+            "[::1]",
+            "pypi.org",
+            "files.pythonhosted.org",
+            "registry.npmjs.org",
+            "*.npmjs.org",
+            "github.com",
+            "*.github.com",
+            "*.githubusercontent.com",
+        ],
+    },
+}
 # The project's own keys (D5 "Out"): they come through the seeded `settings.project.json`.
 PROJECT_ONLY_SETTINGS = (
     "extraKnownMarketplaces",
     "enabledPlugins",
-    "sandbox",
     "env",
     "skillOverrides",
 )
@@ -2270,6 +2315,38 @@ def test_holds_rules_base_only_when_settings_rendered(
     assert "matcher" not in settings["hooks"]["Stop"][0]
     for key in PROJECT_ONLY_SETTINGS:
         assert not key_anywhere(settings, key), key
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+def test_denies_push_and_pipe_rules_when_settings_rendered(
+    config_name: str, request: pytest.FixtureRequest
+) -> None:
+    config = request.getfixturevalue(f"{config_name}_config")
+    rendered = {file.path: file for file in render_hub(config).files}
+
+    settings = strict_json(rendered[".claude/settings.json"].content)
+
+    # AGH-16 D2 (E14): the secret reads, then rows S4a-S4j in the inventory's order, exactly.
+    assert settings["permissions"]["deny"] == [
+        "Read(**/*.pem)",
+        "Read(**/*.key)",
+        *SETTINGS_DENY_COMMANDS,
+    ]
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+def test_enables_sandbox_when_settings_rendered(
+    config_name: str, request: pytest.FixtureRequest
+) -> None:
+    config = request.getfixturevalue(f"{config_name}_config")
+    rendered = {file.path: file for file in render_hub(config).files}
+
+    settings = strict_json(rendered[".claude/settings.json"].content)
+
+    # AGH-16 D2 (E14), row S6a: the same base in every hub; no tracker or project host (row S6b).
+    assert settings["sandbox"] == SETTINGS_SANDBOX
+    hosts = set(settings["sandbox"]["network"]["allowedDomains"])
+    assert not hosts & {"linear.app", "*.linear.app", "docs.python.org"}, hosts
 
 
 def test_matches_plugin_hooks_when_settings_compared(demo_render: dict[str, RenderedFile]) -> None:

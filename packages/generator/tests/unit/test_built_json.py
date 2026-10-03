@@ -1,4 +1,5 @@
 import copy
+import json
 
 import pytest
 
@@ -13,6 +14,7 @@ from agent_hub.generator.built_json import (
     project_manifest,
     project_settings,
 )
+from agent_hub.generator.json_merge import MergeError, merge_json
 
 
 def a_config_named(name: str) -> HubConfig:
@@ -148,3 +150,58 @@ def test_equals_managed_hooks_when_base_block_read(demo_config: HubConfig) -> No
     hooks.clear()
     assert base_hooks_block() == expected
     assert base_hooks_block()["Stop"][0] is not base_hooks_block()["Stop"][0]
+
+
+BASE_HOSTS = [
+    "localhost",
+    "127.0.0.1",
+    "[::1]",
+    "pypi.org",
+    "files.pythonhosted.org",
+    "registry.npmjs.org",
+    "*.npmjs.org",
+    "github.com",
+    "*.github.com",
+    "*.githubusercontent.com",
+]
+PROJECT_HOSTS = ["linear.app", "*.linear.app", "docs.python.org"]
+
+
+def test_keeps_project_sandbox_hosts_when_sibling_merged(demo_config: HubConfig) -> None:
+    # AGH-16 D2 (E14): the base sandbox is managed; inventory row S6b's tracker and project hosts
+    # come from the sibling and merge after the base hosts, a repeated base host kept once.
+    template = managed_settings(demo_config)
+    sibling = {"sandbox": {"network": {"allowedDomains": ["github.com", *PROJECT_HOSTS]}}}
+
+    merged = json.loads(
+        merge_json(
+            template, json.dumps(sibling).encode("utf-8"), path=".claude/settings.project.json"
+        )
+    )
+
+    assert merged["sandbox"]["network"]["allowedDomains"] == BASE_HOSTS + PROJECT_HOSTS
+    assert merged["sandbox"]["network"]["allowLocalBinding"] is True
+    assert merged["sandbox"]["enabled"] is True
+    assert merged["sandbox"]["allowUnsandboxedCommands"] is False
+    assert merged["permissions"] == template["permissions"]  # type: ignore[index]
+
+
+@pytest.mark.parametrize(
+    ("sibling", "key_path"),
+    [
+        ({"disableAllHooks": True}, "disableAllHooks"),
+        ({"permissions": {"defaultMode": "bypassPermissions"}}, "permissions.defaultMode"),
+    ],
+)
+def test_refuses_weakening_key_when_sibling_merged_over_base(
+    sibling: dict[str, object], key_path: str, demo_config: HubConfig
+) -> None:
+    # The base denies and sandbox do not change the refusals: the sibling still cannot weaken.
+    with pytest.raises(MergeError) as caught:
+        merge_json(
+            managed_settings(demo_config),
+            json.dumps(sibling).encode("utf-8"),
+            path=".claude/settings.project.json",
+        )
+
+    assert caught.value.key_path == key_path
