@@ -33,10 +33,10 @@ re-run hub sync --adopt`. Nothing is written before the plan (core `plan_adopt`)
 A migration is a directory link on disk with no lock entry whose rendered descendants are all direct-child links (in
 practice `.claude/agents` and `.claude/skills` from an older hand-made layout). It is listed once; the rendered paths
 under it get no verdict and no lock entry, and its target is never opened or listed (only resolved, to tell whether it
-leaves the hub). Resolving outside the hub, it is the conflict `resolves outside the hub`. Any other directory link
-keeps sync's `symlinked ancestor A` per path; a directory link with a lock entry follows sync. A migration with a
-conflict under it (e.g. a name in both plugins) is not listed: it is listed only once that conflict is fixed and
-adopt is re-run.
+leaves the hub). Resolving outside the hub, it is the conflict `resolves outside the hub`. Any other directory link,
+or one under another linked ancestor, keeps sync's `symlinked ancestor A` per path; one with a lock entry follows
+sync. A migration with a conflict under it (e.g. a name in both plugins) is not listed: it is listed only once that
+conflict is fixed and adopt is re-run.
 
 ### --accept
 
@@ -103,4 +103,4 @@ keeps the old `hub.lock` (absent or its prior bytes); a plain `--adopt` then end
 
 ## Open questions
 
-- The CI golden step (`hub sync --check`) and its read credential for the pinned release: AGH-16's template PR.
+- None.

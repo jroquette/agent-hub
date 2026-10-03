@@ -663,7 +663,7 @@ enforces this in `make check`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE
 | `hub init [PROJECT] --repos … --tracker kind:TEAM …` | Create a hub from flags (all flags: Quick Start step 3 and `hub init --help`) |
 | `hub init --config hub.json [--dir …]` | Create a hub from an existing `hub.json` |
 | `hub sync [--check]` | Reapply the templates without overwriting what the project customized |
-| `hub sync --adopt [--accept PATH]… [--check]` | Join a hand-made hub to `hub.lock`: record what matches, create what is missing, list what differs |
+| `hub sync --adopt [--accept PATH]… [--check]` | Join a hand-made hub to `hub.lock` (from 0.7.0): record what matches, create what is missing, list what differs |
 | `hub doctor [--only RULE]… [--json]` | Check rules, links, dead references, instruction size and template drift |
 | `hub worktree NAME [--only REPO] [--remove]` | Create (or remove) one task's worktrees in the hub's repos |
 | `hub brief [--no-network]` | Print the session brief: `now.md`, recent journal, repo/PR/CI state |
@@ -739,7 +739,6 @@ From the phases in [docs/SPEC.md](docs/SPEC.md#mvp-and-phases). Each phase start
 - [x] Phase 0, foundation: uv workspace, ADRs, `check-fast`/`check` gates, CI, the canonical event and `hub collect`
 - [x] `hub init` with managed and seeded files, `hub.lock` and the `hub.json` schema
 - [x] `hub sync` and `hub sync --check`
-- [x] `hub sync --adopt [--accept PATH]…`: join a hand-made hub (release 0.7.0)
 - [x] `hub doctor` with its rule set
 - [x] `hub worktree`, `hub brief`, `hub agent`, and the `./hub` and `./agent` shims pinned per hub (release 0.4.0)
 - [x] Tracker port with a Linear GraphQL adapter
@@ -748,6 +747,7 @@ From the phases in [docs/SPEC.md](docs/SPEC.md#mvp-and-phases). Each phase start
 
 - [ ] Dogfooding: `hub init` generating the platform's own hub
 - [ ] `hub next` and `hub run`: take an `agent-ready` issue to a PR through the tracker port (not implemented in 0.4.0)
+- [ ] `hub sync --adopt [--accept PATH]…`: join a hand-made hub
 - [ ] Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`) (their files and `hub bench` from 0.6.0)
 - [ ] Gate: an existing project's hand-made hub recreated with the same `make check` and bench
 
