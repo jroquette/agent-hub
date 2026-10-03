@@ -388,8 +388,9 @@ def character_set(character_class: str) -> frozenset[str]:
     )
 
 
+@pytest.mark.parametrize("pattern_name", ["BRANCH_NAME", "BRANCH_PREFIX"])
 def test_keeps_separator_out_of_segment_when_branch_pattern_parsed(
-    reader_file: Path, monkeypatch: pytest.MonkeyPatch
+    reader_file: Path, monkeypatch: pytest.MonkeyPatch, *, pattern_name: str
 ) -> None:
     """A separator character that is also a segment one makes ``re`` backtrack exponentially."""
     spec = importlib.util.spec_from_file_location("hub_stdlib_reader_pattern", reader_file)
@@ -399,7 +400,7 @@ def test_keeps_separator_out_of_segment_when_branch_pattern_parsed(
     # The reader's dataclasses look their module up while the class is built.
     monkeypatch.setitem(sys.modules, spec.name, reader)
     spec.loader.exec_module(reader)
-    classes = re.findall(r"(\[[^\]]+\])(\+?)", reader.BRANCH_NAME.pattern)
+    classes = re.findall(r"(\[[^\]]+\])(\+?)", getattr(reader, pattern_name).pattern)
     segment = {cls for cls, repeated in classes if repeated}
     separator = {cls for cls, repeated in classes if not repeated}
     assert segment
@@ -694,9 +695,9 @@ def test_imports_every_rendered_module_when_run_on_python39(
 # argv: hub.json path, hub.local.json path, git's answers (JSON: config key -> output), the values
 # to ask (JSON list of ``ASKED`` names). Loads both files with the reader and resolves the asked
 # values through ``EffectiveValues``, each twice (the second call must not run git again). Prints
-# the local file, each asked value, the git keys asked in order, and the seconds the work took.
+# the local file, each asked value and the git keys asked in order.
 LOCAL_READ = """
-import dataclasses, json, time
+import dataclasses, json
 import stdlib_reader as reader
 hub_json, local_json, answers, ask = sys.argv[1:5]
 answers = json.loads(answers)
@@ -704,7 +705,6 @@ asked = []
 def git_value(key):
     asked.append(key)
     return answers.get(key, "")
-started = time.perf_counter()
 local_file = reader.load_local_file(local_json)
 values = reader.EffectiveValues(reader.load_hub_file(hub_json), local_file, git_value)
 getters = {
@@ -722,7 +722,6 @@ print(json.dumps({
     "local_file": dataclasses.asdict(local_file),
     "effective": effective,
     "git": asked,
-    "seconds": time.perf_counter() - started,
 }))
 """
 
@@ -1195,6 +1194,8 @@ def test_uses_core_local_file_when_source_checked(
 def test_keeps_linear_time_when_prefix_hostile(
     tmp_path: Path, hook_python: str, local_read: LocalReader
 ) -> None:
+    """Backtracking bait gets its exact result; the pattern's shape, not a clock, proves it linear
+    (``test_keeps_separator_out_of_segment_when_branch_pattern_parsed``)."""
     hub_json = write_hub_file(tmp_path, a_team_document())
     local_json = write_local_file(tmp_path, {"project": {"branch_prefix": "_" * 40 + "!/"}})
     git = {"user.email": "_" * 40 + "%@example.com"}
@@ -1203,4 +1204,5 @@ def test_keeps_linear_time_when_prefix_hostile(
 
     assert loaded["local_file"] == NO_LOCAL_FILE
     assert loaded["effective"]["project.branch_prefix"] == ""
-    assert loaded["seconds"] < 0.5
+    assert loaded["effective"]["project.author_email"] == "_" * 40 + "%@example.com"
+    assert loaded["effective"]["prefix_source"] == ""
