@@ -1,11 +1,21 @@
+import itertools
 import json
 import posixpath
+import re
+from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
-from agent_hub.core.hub_config.model import MODULE_IDS, HubConfig
+from agent_hub.core.hub_config.model import (
+    MODULE_IDS,
+    BranchName,
+    BranchPrefix,
+    GitHubRepo,
+    HubConfig,
+    RepoDir,
+)
 from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 
 REQUIRED_KEYS: list[tuple[str | int, ...]] = [
@@ -168,6 +178,53 @@ def test_accepts_values_when_existing_hubs_use_them(
     HubConfig.model_validate(with_value(path, value))
 
 
+# ``_`` left the segment separator class: it was also in the segment class, so
+# Python's ``re`` (the hooks' reader) backtracked exponentially on a long run of ``_``.
+OLD_SEGMENT = r"[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*"
+OLD_SEGMENT_PATTERNS: list[tuple[object, str]] = [
+    (RepoDir, rf"{OLD_SEGMENT}"),
+    (GitHubRepo, rf"{OLD_SEGMENT}/{OLD_SEGMENT}"),
+    (BranchPrefix, rf"{OLD_SEGMENT}/"),
+    (BranchName, rf"{OLD_SEGMENT}(?:/{OLD_SEGMENT})*"),
+]
+
+
+def strings_up_to(length: int, alphabet: str) -> list[str]:
+    return [
+        "".join(characters)
+        for size in range(length + 1)
+        for characters in itertools.product(alphabet, repeat=size)
+    ]
+
+
+def is_valid(adapter: TypeAdapter[str], value: str) -> bool:
+    try:
+        adapter.validate_python(value)
+    except ValidationError:
+        return False
+    return True
+
+
+@pytest.mark.parametrize(
+    ("value_type", "old_pattern"),
+    OLD_SEGMENT_PATTERNS,
+    ids=["repo-dir", "github-repo", "branch-prefix", "branch-name"],
+)
+def test_accepts_same_values_when_segment_separator_drops_underscore(
+    value_type: object, old_pattern: str
+) -> None:
+    adapter: TypeAdapter[str] = TypeAdapter(value_type)
+    old = re.compile(old_pattern)
+
+    differing = [
+        value
+        for value in strings_up_to(6, "a_.-/ ")
+        if is_valid(adapter, value) != bool(old.fullmatch(value))
+    ]
+
+    assert differing == []
+
+
 @pytest.mark.parametrize(
     "name", ["Demo", "demo_hub", "-demo", "demo-", "demo--hub", "demo hub", ""]
 )
@@ -258,6 +315,107 @@ def test_rejects_default_branch_when_not_safe_segments(branch: str) -> None:
     locs = error_locs(with_value(("project", "default_branch"), branch))
 
     assert locs == [("project", "default_branch")]
+
+
+@pytest.mark.parametrize(
+    ("project_branch", "expected"),
+    [(None, "main"), ("trunk", "trunk")],
+    ids=["project-absent", "project-trunk"],
+)
+def test_inherits_project_branch_when_repo_sets_none(
+    project_branch: str | None, expected: str
+) -> None:
+    document = a_hub_document()
+    if project_branch is not None:
+        document["project"]["default_branch"] = project_branch
+
+    config = HubConfig.model_validate(document)
+
+    assert config.repos[0].default_branch is None
+    assert config.default_branch_for("demo-api") == expected
+
+
+@pytest.mark.parametrize("branch", ["master", "release/2"])
+def test_reads_repo_branch_when_repo_sets_one(branch: str) -> None:
+    document = a_hub_document()
+    document["project"]["default_branch"] = "trunk"
+    document["repos"][0]["default_branch"] = branch
+    document["repos"].append(a_second_repo())
+
+    config = HubConfig.model_validate(document)
+
+    assert config.default_branch_for("demo-api") == branch
+    assert config.default_branch_for("demo-web") == "trunk"
+
+
+def branch_errors(path: tuple[str | int, ...], value: object) -> list[tuple[Any, str, str]]:
+    with pytest.raises(ValidationError) as caught:
+        HubConfig.model_validate(with_value(path, value))
+    return [(error["loc"], error["type"], error["msg"]) for error in caught.value.errors()]
+
+
+@pytest.mark.parametrize("branch", ["-x", "a..b", "main/", "", 1, None])
+def test_rejects_repo_branch_as_project_branch_when_value_invalid(branch: object) -> None:
+    repo_path = ("repos", 0, "default_branch")
+    project_path = ("project", "default_branch")
+
+    [(repo_loc, repo_type, repo_msg)] = branch_errors(repo_path, branch)
+    [(project_loc, project_type, project_msg)] = branch_errors(project_path, branch)
+
+    assert repo_loc == repo_path
+    assert project_loc == project_path
+    assert (repo_type, repo_msg) == (project_type, project_msg)
+
+
+def test_raises_key_error_when_repo_dir_unknown() -> None:
+    config = HubConfig.model_validate(a_hub_document())
+
+    with pytest.raises(KeyError, match="demo-web"):
+        config.default_branch_for("demo-web")
+
+
+PROJECT_BRANCH_READ = re.compile(
+    r"\bproject\.default_branch|project_default_branch|\bcfg\.default_branch"
+)
+
+TEMPLATES = "generator/src/agent_hub/generator/templates"
+
+# Lines per file that may read the project branch; a per-repo use calls default_branch_for.
+PROJECT_BRANCH_READERS = {
+    # the helper's fallback and the schema description of repos[].default_branch
+    "core/src/agent_hub/core/hub_config/model.py": 2,
+    # the project branch AGENTS.md names, which the doctor's refs rule skips as not a path
+    "core/src/agent_hub/core/doctor/instruction_rules.py": 1,
+    # the hub checkout's branch in the brief
+    "cli/src/agent_hub/cli/brief_command.py": 1,
+    # project_default_branch for ci.yml, and the project branch in AGENTS.md's mentions
+    "generator/src/agent_hub/generator/placeholders.py": 2,
+    # the CI trigger branches
+    f"{TEMPLATES}/github/workflows/ci.yml.tmpl": 2,
+    # the hub repo's CI pair and the hub log
+    f"{TEMPLATES}/scripts/retro_metrics.py.tmpl": 2,
+    # Config.default_branch, and the project's branch in the protected set (also the root file's)
+    f"{TEMPLATES}/plugin/hub-workflow/hooks/hubhooks.py.tmpl": 2,
+}
+
+
+def test_reads_project_branch_only_in_allowed_files_when_sources_scanned() -> None:
+    packages = Path(__file__).resolve().parents[4]
+    assert packages.is_dir(), packages  # an empty scan would pass anywhere
+    hits = [
+        (source.relative_to(packages).as_posix(), number, line.strip())
+        for source in sorted(packages.glob("*/src/**/*"))
+        if source.is_file() and source.suffix in {".py", ".tmpl"}
+        for number, line in enumerate(source.read_text(encoding="utf-8").splitlines(), 1)
+        if PROJECT_BRANCH_READ.search(line)
+    ]
+    counts: dict[str, int] = {}
+    for name, _number, _line in hits:
+        counts[name] = counts.get(name, 0) + 1
+
+    assert counts == PROJECT_BRANCH_READERS, "\n".join(
+        f"{name}:{number}: {line}" for name, number, line in hits
+    )
 
 
 @pytest.mark.parametrize("host", ["api.example.com", "localhost", "a-b.example.com", "x1"])
@@ -625,6 +783,7 @@ OBJECT_PATHS: list[tuple[str | int, ...]] = [
 
 def a_full_document() -> dict[str, Any]:
     document = a_contract_sync_document({"source": "demo-api", "target": "demo-web"})
+    document["repos"][0]["default_branch"] = "release/2"
     document["modules"] |= {"marketplace": {}}
     document["guard"] |= {"deny_hosts": ["api.example.com"], "deny_paths": ["_archive"]}
     document["doctor"] = {

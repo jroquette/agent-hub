@@ -9,7 +9,7 @@ from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_m
 
 # AC-3.9: the Rendered values of project-config.md, the platform repository (erratum E3), the
 # derived module includes (erratum E2), contract-sync's two repo dirs (AGH-17 G8) and the module
-# files AGENTS.md names (AGH-17 2.11). author_name,
+# files AGENTS.md names (AGH-17 2.11), and AGENTS.md's two branch mentions (AGH-46). author_name,
 # check_fast, check and platform.version are read at run time or quoted per format, never
 # placeholders.
 RENDERED_KEYS = {
@@ -28,6 +28,8 @@ RENDERED_KEYS = {
     "module_seeded_files",
     "contract_sync_source",
     "contract_sync_target",
+    "worktree_base",
+    "protected_branches",
 }
 
 
@@ -66,6 +68,8 @@ def test_takes_values_from_model_when_demo_mapped(demo_config: HubConfig) -> Non
         "module_seeded_files": "",
         "contract_sync_source": "",
         "contract_sync_target": "",
+        "worktree_base": "`origin/main`",
+        "protected_branches": "`main`",
     }
 
 
@@ -75,6 +79,43 @@ def test_joins_repos_in_config_order_when_variant_mapped(variant_config: HubConf
     assert mapping["repo_dirs"] == "demo-api, demo-web"
     assert mapping["repo_githubs"] == "acme/demo-api, acme/demo-web"
     assert mapping["project_default_branch"] == "trunk"
+
+
+def test_mentions_project_branch_when_no_repo_sets_one(variant_config: HubConfig) -> None:
+    mapping = substitution_mapping(variant_config)
+
+    # Today's AGENTS.md bytes: one project branch for every repo.
+    assert (mapping["worktree_base"], mapping["protected_branches"]) == (
+        "`origin/trunk`",
+        "`trunk`",
+    )
+
+
+def test_mentions_each_repo_branch_when_one_sets_it() -> None:
+    document = a_hub_document()
+    document["repos"][0]["default_branch"] = "master"
+    document["repos"].append(a_second_repo())
+
+    mapping = substitution_mapping(HubConfig.model_validate(document))
+
+    assert mapping["worktree_base"] == (
+        "`origin/<the repo's default branch>` (demo-api: `master`, demo-web: `main`)"
+    )
+    assert mapping["protected_branches"] == "`main` or `master`"
+
+
+def test_lists_protected_branches_once_when_branches_repeat() -> None:
+    document = a_hub_document()
+    document["project"]["default_branch"] = "trunk"
+    document["repos"][0]["default_branch"] = "trunk"
+    document["repos"].append({**a_second_repo(), "default_branch": "release/2"})
+
+    mapping = substitution_mapping(HubConfig.model_validate(document))
+
+    assert mapping["protected_branches"] == "`main`, `master`, `release/2` or `trunk`"
+    assert mapping["worktree_base"] == (
+        "`origin/<the repo's default branch>` (demo-api: `trunk`, demo-web: `release/2`)"
+    )
 
 
 def test_joins_repos_in_config_order_when_order_reversed() -> None:

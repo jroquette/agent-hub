@@ -25,8 +25,9 @@ FreeString = Annotated[str, Field(min_length=1, pattern=r"^[^\x00-\x1f\x7f]+$")]
 # Rendered values (project-config.md): values that land in shell, Make or YAML text. Pydantic's
 # Rust regex has no look-around, and ``[0-9]`` is spelled out because ``\d`` takes any digit.
 # A safe segment: no leading ``-`` or ``.`` (an option or a hidden path), no ``..``, no trailing
-# punctuation.
-_SAFE_SEGMENT = r"[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*"
+# punctuation. The separator class leaves out ``_``, already a segment character: the hooks'
+# reader copies this pattern into Python's ``re``, which backtracks exponentially on an overlap.
+_SAFE_SEGMENT = r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*"
 _HOST_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
 KebabName = Annotated[str, Field(pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$")]
 RepoDir = Annotated[str, Field(pattern=rf"^{_SAFE_SEGMENT}$")]
@@ -101,6 +102,10 @@ class Repo(ConfigObject):
     role: FreeString = "app"
     check_fast: FreeString
     check: FreeString
+    default_branch: BranchName | None = absent_by_default(
+        description="The repo's default branch: worktree and PR base, push guard."
+        " Absent: project.default_branch."
+    )
 
 
 class Guard(ConfigObject):
@@ -186,6 +191,17 @@ class HubConfig(ConfigObject):
     # A factory, not an instance: the schema would export its unset keys as nulls.
     modules: Modules = Field(default_factory=Modules)
     doctor: Doctor = Field(default_factory=Doctor)
+
+    def default_branch_for(self, repo_dir: str) -> str:
+        """The effective default branch of the repo at ``repo_dir``: its own, else the project's.
+
+        Raises ``KeyError`` when no repo has that dir: every caller holds a ``repos[].dir``.
+        """
+        for repo in self.repos:
+            if repo.dir == repo_dir:
+                # The inherited value: the only per-repo read of the project branch.
+                return repo.default_branch or self.project.default_branch
+        raise KeyError(repo_dir)
 
     def cross_field_problems(self) -> list[InitErrorDetails]:
         """Unique repo dirs, known guard roots and contract-sync repos, rules of chosen modules."""

@@ -32,12 +32,12 @@
       },
       "properties": {
         "source": {
-          "pattern": "^[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*$",
+          "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
           "title": "Source",
           "type": "string"
         },
         "target": {
-          "pattern": "^[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*$",
+          "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
           "title": "Target",
           "type": "string"
         }
@@ -265,18 +265,18 @@
           "type": "string"
         },
         "hub_repo": {
-          "pattern": "^[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*/[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*$",
+          "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
           "title": "Hub Repo",
           "type": "string"
         },
         "branch_prefix": {
-          "pattern": "^[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*/$",
+          "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*/$",
           "title": "Branch Prefix",
           "type": "string"
         },
         "default_branch": {
           "default": "main",
-          "pattern": "^[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*(?:/[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*)*$",
+          "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*(?:/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*)*$",
           "title": "Default Branch",
           "type": "string"
         },
@@ -310,12 +310,12 @@
       },
       "properties": {
         "dir": {
-          "pattern": "^[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*$",
+          "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
           "title": "Dir",
           "type": "string"
         },
         "github": {
-          "pattern": "^[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*/[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*$",
+          "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
           "title": "Github",
           "type": "string"
         },
@@ -336,6 +336,11 @@
           "minLength": 1,
           "pattern": "^[^\\x00-\\x1f\\x7f]+$",
           "title": "Check",
+          "type": "string"
+        },
+        "default_branch": {
+          "description": "The repo's default branch: worktree and PR base, push guard. Absent: project.default_branch.",
+          "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*(?:/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*)*$",
           "type": "string"
         }
       },

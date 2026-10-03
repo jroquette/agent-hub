@@ -1,7 +1,7 @@
 --- rc (2 bytes) ---
 0
 
---- stdout (1064 bytes) ---
+--- stdout (1065 bytes) ---
 # Brief
 
 ## Now
@@ -17,7 +17,7 @@ Then the CLI.
 - hub: trunk, 0 changed file(s), 0 behind origin/trunk
 - api: trunk, 2 changed file(s), 1 behind origin/trunk
   open PRs: #41 Add login endpoint | #40 Refactor the session storage layer so that every adapter shares on | #38 Fix pagination | #37 Bump dependencies
-  ⚠ failing on main: build, lint
+  ⚠ failing on trunk: build, lint
 - web: detached@dd68590, 0 changed file(s), ? behind origin/trunk
 - ui: not found
 

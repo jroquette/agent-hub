@@ -33,6 +33,8 @@ CFG = reader.load_hub_file(find_hub_json())
 GH_REPOS = [r.github for r in CFG.repos] + [CFG.project.hub_repo]  # owner/name, as gh -R wants
 if not all(GH_REPOS):  # an empty -R makes gh use the cwd repo
     sys.exit("hub.json: project.hub_repo and every repos[].github are required")
+# (owner/name, branch) whose CI is read: each repo on its own default branch, the hub repo on the project's.
+CI_REPOS = [(r.github, r.default_branch) for r in CFG.repos] + [(CFG.project.hub_repo, CFG.project.default_branch)]
 
 
 def gh_json(args: list[str]) -> list[dict[str, object]]:
@@ -81,8 +83,8 @@ def run_metrics(since: dt.date) -> dict[str, object]:
 
 def ci_metrics(since: dt.date) -> dict[str, dict[str, object]]:
     out: dict[str, dict[str, object]] = {}
-    for repo in GH_REPOS:
-        runs = gh_json(["run", "list", "-R", repo, "--branch", CFG.project.default_branch, "--limit", "60",
+    for repo, branch in CI_REPOS:
+        runs = gh_json(["run", "list", "-R", repo, "--branch", branch, "--limit", "60",
                         "--json", "conclusion,createdAt,workflowName"])
         runs = [r for r in runs if ts(r["createdAt"]).date() >= since and r.get("conclusion")]
         failed = [r for r in runs if r["conclusion"] == "failure"]

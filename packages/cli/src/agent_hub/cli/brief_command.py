@@ -55,11 +55,12 @@ _CONTROLS = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
 
 class _Checkout(NamedTuple):
-    """A repo the brief shows: its line name, folder and GitHub ``owner/name``."""
+    """A repo the brief shows: its line name, folder, GitHub ``owner/name`` and default branch."""
 
     name: str
     path: Path
     github: str
+    branch: str
 
 
 def today() -> datetime.date:
@@ -126,31 +127,34 @@ def _text(data: bytes) -> str:
 
 def _repos(root: Path, config: HubConfig, *, network: bool) -> tuple[RepoState, ...]:
     checkouts = [
-        _Checkout(HUB_LINE_NAME, root, config.project.hub_repo),
-        *(_Checkout(repo.dir, root.parent / repo.dir, repo.github) for repo in config.repos),
+        # The hub line is the hub repo's own branch, not a repo's.
+        _Checkout(HUB_LINE_NAME, root, config.project.hub_repo, config.project.default_branch),
+        *(
+            _Checkout(
+                repo.dir, root.parent / repo.dir, repo.github, config.default_branch_for(repo.dir)
+            )
+            for repo in config.repos
+        ),
     ]
-    base = f"origin/{config.project.default_branch}"
     git = shutil.which("git")
     deadline = time.monotonic() + GIT_PHASE_BUDGET
-    states = [_git_state(checkout, git=git, base=base, deadline=deadline) for checkout in checkouts]
+    states = [_git_state(checkout, git=git, deadline=deadline) for checkout in checkouts]
     gh = shutil.which("gh") if network else None
     if gh is None:
         return tuple(states)
     shown = [index for index, state in enumerate(states) if state.checkout]
     outputs = _gh_outputs(
-        gh,
-        root,
-        repos=[checkouts[index].github for index in shown],
-        branch=config.project.default_branch,
+        gh, root, repos=[(checkouts[index].github, checkouts[index].branch) for index in shown]
     )
     for index, (prs, ci) in zip(shown, outputs, strict=True):
         states[index] = states[index].model_copy(update={"prs": prs, "ci": ci})
     return tuple(states)
 
 
-def _git_state(checkout: _Checkout, *, git: str | None, base: str, deadline: float) -> RepoState:
+def _git_state(checkout: _Checkout, *, git: str | None, deadline: float) -> RepoState:
     if not _is_checkout(checkout.path):
         return RepoState(name=checkout.name, checkout=False)
+    base = f"origin/{checkout.branch}"
 
     def output(*arguments: str) -> str:
         return _git_output(git, checkout.path, arguments, deadline=deadline)
@@ -166,6 +170,7 @@ def _git_state(checkout: _Checkout, *, git: str | None, base: str, deadline: flo
         dirty=len([line for line in status.splitlines() if line]),
         behind=output("rev-list", "--count", f"HEAD..{base}"),
         base=base,
+        default_branch=checkout.branch,
     )
 
 
@@ -201,10 +206,11 @@ def _time_left(deadline: float, *, cap: float) -> float | None:
     return min(left, cap) if left > 0 else None
 
 
-def _gh_outputs(gh: str, root: Path, *, repos: Sequence[str], branch: str) -> list[tuple[str, str]]:
-    """Each repo's open PRs and failing run names, the calls made at once, in ``repos`` order."""
+def _gh_outputs(gh: str, root: Path, *, repos: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Each repo's open PRs and failing run names on its branch, the calls made at once, in
+    ``repos`` (``owner/name``, branch) order."""
     calls = []
-    for repo in repos:
+    for repo, branch in repos:
         calls.append(["pr", "list", "-R", repo, "--author", "@me", "--json", "number,title"])
         calls[-1] += ["-q", _PR_QUERY]
         calls.append(["run", "list", "-R", repo, "--branch", branch, "-L", "3"])
