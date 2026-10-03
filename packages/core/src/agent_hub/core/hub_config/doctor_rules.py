@@ -79,6 +79,22 @@ class RuleSettings(ConfigObject):
     severity: Severity | None = absent_by_default()
 
 
+class IdentityRuleSettings(ConfigObject):
+    """``config.identity``: whether it runs. It has no ``severity``: its finding stays an info,
+    so a hub gives every developer the same exit code."""
+
+    rejected_keys = MappingProxyType(
+        {
+            "severity": (
+                f"{CONFIG_IDENTITY_RULE} is always an info, so every developer's run exits"
+                " alike; remove severity"
+            )
+        }
+    )
+
+    enabled: StrictBool = True
+
+
 # A JSON integer above zero: lax mode would take "120", true and 1.0.
 PositiveInt = Annotated[StrictInt, Field(gt=0)]
 
@@ -153,4 +169,4 @@ class DoctorRules(ConfigObject):
     makefile_override: RuleSettings | None = absent_by_default(alias="makefile.override")
     features_tracker: RuleSettings | None = absent_by_default(alias="features.tracker")
     bench_tasks: RuleSettings | None = absent_by_default(alias="bench.tasks")
-    config_identity: RuleSettings | None = absent_by_default(alias="config.identity")
+    config_identity: IdentityRuleSettings | None = absent_by_default(alias="config.identity")

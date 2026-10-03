@@ -1206,6 +1206,27 @@ class TestIdentity:
         # The edited AGENTS.md is also lock.drift's.
         assert shown[-1] == "3 errors, 0 warnings, 0 infos"
 
+    def test_refuses_identity_severity_when_hub_json_retunes_it(
+        self, demo_workspace: Workspace, run_doctor: DoctorRunner
+    ) -> None:
+        # A retuned info would make the exit code depend on the developer's git email.
+        demo_workspace.drop_identity()
+        demo_workspace.git_identity("Jane Roe", "jane@example.com")
+        path = demo_workspace.hub / "hub.json"
+        document = json.loads(path.read_text())
+        document["doctor"] = {"rules": {"config.identity": {"severity": "error"}}}
+        path.write_text(json.dumps(document))
+
+        lines = lines_of(run_doctor(demo_workspace.hub), exit_code=1)
+
+        assert lines == [
+            schema_line(
+                'doctor.rules["config.identity"].severity: config.identity is always an info,'
+                " so every developer's run exits alike; remove severity"
+            ),
+            ONE_ERROR,
+        ]
+
     def test_runs_no_git_config_when_only_config_schema_selected(
         self, demo_workspace: Workspace, run_doctor: DoctorRunner, traced_git: Any
     ) -> None:

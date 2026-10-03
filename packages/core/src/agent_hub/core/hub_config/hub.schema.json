@@ -125,7 +125,7 @@
           "$ref": "#/$defs/RuleSettings"
         },
         "config.identity": {
-          "$ref": "#/$defs/RuleSettings"
+          "$ref": "#/$defs/IdentityRuleSettings"
         }
       },
       "title": "DoctorRules",
@@ -167,6 +167,22 @@
         }
       },
       "title": "Guard",
+      "type": "object"
+    },
+    "IdentityRuleSettings": {
+      "additionalProperties": false,
+      "description": "``config.identity``: whether it runs. It has no ``severity``: its finding stays an info,\nso a hub gives every developer the same exit code.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        }
+      },
+      "title": "IdentityRuleSettings",
       "type": "object"
     },
     "InstructionsSizeSettings": {
