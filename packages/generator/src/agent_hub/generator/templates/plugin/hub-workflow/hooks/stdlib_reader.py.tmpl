@@ -1,4 +1,4 @@
-"""The hooks' ``hub.json`` reader: stdlib only, Python 3.9 syntax, never raises.
+"""The hooks' ``hub.json`` and ``hub.local.json`` reader: stdlib only, Python 3.9, never raises.
 
 Hooks run on the system ``python3`` (3.9 on macOS) with no dependencies, so this module imports
 nothing outside the standard library and nothing else from agent-hub; agent-hub's tests run it on
@@ -17,6 +17,13 @@ this reader falls back instead.
   model's branch pattern, else the ``project`` section's ``default_branch`` (it inherits).
 - Unknown keys and comment keys (``_`` first) are ignored. ``modules`` and ``doctor.rules`` keep
   each entry's settings, minus comment keys, without checking them.
+- ``hub.local.json`` (one developer's ``project.branch_prefix``, ``author_name``,
+  ``author_email`` and ``tracker.transport``) counts only as a regular file of at most
+  ``LOCAL_FILE_MAX_BYTES``; otherwise it sets nothing. A local value counts only when it is a
+  string with the model's shape (pattern, or ``api``/``mcp``), else that key falls through.
+  ``EffectiveValues`` gives each key from ``hub.local.json``, else ``hub.json``, else git config
+  (asked lazily, once per key); with no prefix in a file, the prefix is the effective email's
+  local part plus ``/`` when that is a valid prefix (docs/design/developer-identity.md).
 
 A hook that loads this file by path must register the module before running it, or the frozen
 dataclasses fail to build (``AttributeError`` on ``NoneType.__dict__``)::
@@ -32,10 +39,17 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 COMMENT_KEY_PREFIX = "_"
 FALLBACK_PROJECT_NAME = "hub"
+LOCAL_FILE = "hub.local.json"
+LOCAL_FILE_MAX_BYTES = 65_536
+TRANSPORTS = ("api", "mcp")
+PREFIX_FROM_LOCAL = LOCAL_FILE
+PREFIX_FROM_HUB = "hub.json"
+PREFIX_DERIVED = "derived"
 # ``[0-9]`` and ``fullmatch``: ``\d`` takes any Unicode digit and ``$`` a final newline.
 RELEASE_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 # The model's ``BranchName`` pattern without ``^`` and ``$``, for ``fullmatch``. No separator
@@ -43,6 +57,12 @@ RELEASE_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 BRANCH_NAME = re.compile(
     r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*(?:/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*)*"
 )
+# The model's ``BranchPrefix``, ``EmailAddress`` and ``FreeString`` patterns, likewise.
+BRANCH_PREFIX = re.compile(r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*/")
+EMAIL_ADDRESS = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+")
+FREE_STRING = re.compile(r"[^\x00-\x1f\x7f]+")
+# The git config key each git-read identity key comes from.
+GIT_KEYS = {"author_name": "user.name", "author_email": "user.email"}
 
 
 @dataclass(frozen=True)
@@ -158,13 +178,94 @@ def load_hub_file(path: str | os.PathLike[str]) -> HubFile:
     )
 
 
-def _read_document(path: str | os.PathLike[str]) -> dict[str, object]:
-    """The file's top-level object; ``{}`` when it cannot be read or is not a JSON object."""
+@dataclass(frozen=True)
+class LocalFile:
+    """``hub.local.json`` as read by hooks: each key's checked value, ``""`` when it sets none."""
+
+    branch_prefix: str = ""
+    author_name: str = ""
+    author_email: str = ""
+    transport: str = ""
+
+
+def load_local_file(path: str | os.PathLike[str]) -> LocalFile:
+    """Read ``hub.local.json`` at ``path``; never raises (see the module docstring)."""
+    document = _read_document(path, max_bytes=LOCAL_FILE_MAX_BYTES)
+    project = _object(document.get("project"))
+    transport = _text(_object(document.get("tracker")), "transport", "")
+    return LocalFile(
+        branch_prefix=_matching(project, "branch_prefix", BRANCH_PREFIX),
+        author_name=_matching(project, "author_name", FREE_STRING),
+        author_email=_matching(project, "author_email", EMAIL_ADDRESS),
+        transport=transport if transport in TRANSPORTS else "",
+    )
+
+
+class EffectiveValues:
+    """One developer's identity and transport: ``hub.local.json``, else ``hub.json``, else git.
+
+    ``git_value(key)`` gives git's output for ``git config --get <key>`` (``user.name``,
+    ``user.email``), ``""`` when unset or when git fails. It is called only for a key no file
+    sets, at most once per key, and never while the object is built. Its value loses one
+    trailing newline and then counts only with the model's shape. ``hub.json``'s values are used
+    unchecked, as elsewhere in this reader; a derived prefix counts only when it matches
+    ``BRANCH_PREFIX``. Every method gives ``""`` when no source gives a value.
+    """
+
+    def __init__(self, hub_file: HubFile, local_file: LocalFile, git_value: Callable[[str], str]):
+        self.hub_file = hub_file
+        self.local_file = local_file
+        self.transport = local_file.transport or hub_file.tracker.transport
+        self._git_value = git_value
+        self._git: dict[str, str] = {}
+
+    def author_name(self) -> str:
+        return self._value("author_name", FREE_STRING)
+
+    def author_email(self) -> str:
+        return self._value("author_email", EMAIL_ADDRESS)
+
+    def branch_prefix(self) -> str:
+        """The file's prefix, else the effective email's local part plus ``/`` when valid."""
+        from_file = self.local_file.branch_prefix or self.hub_file.project.branch_prefix
+        if from_file:
+            return from_file
+        derived = self.author_email().rpartition("@")[0] + "/"
+        return derived if BRANCH_PREFIX.fullmatch(derived) else ""
+
+    def prefix_source(self) -> str:
+        """``hub.local.json``, ``hub.json``, ``derived``, or ``""`` when there is no prefix."""
+        if self.local_file.branch_prefix:
+            return PREFIX_FROM_LOCAL
+        if self.hub_file.project.branch_prefix:
+            return PREFIX_FROM_HUB
+        return PREFIX_DERIVED if self.branch_prefix() else ""
+
+    def _value(self, key: str, pattern: re.Pattern[str]) -> str:
+        from_file = getattr(self.local_file, key) or getattr(self.hub_file.project, key)
+        if from_file:
+            return from_file
+        git_key = GIT_KEYS[key]
+        if git_key not in self._git:
+            value = self._git_value(git_key)
+            # As the CLI: one trailing newline is git's own, anything else is the value's.
+            value = value[:-1] if value.endswith("\n") else value
+            self._git[git_key] = value if pattern.fullmatch(value) else ""
+        return self._git[git_key]
+
+
+def _read_document(
+    path: str | os.PathLike[str], max_bytes: int | None = None
+) -> dict[str, object]:
+    """The file's top-level object; ``{}`` when it cannot be read, is larger than ``max_bytes``
+    or is not a JSON object."""
     # Only a regular file (a symlink to one included): opening a FIFO blocks and a device such as
     # /dev/zero never ends, so a hook would hang.
     if not os.path.isfile(path):
         return {}
     try:
+        if max_bytes is not None and os.path.getsize(path) > max_bytes:
+            return {}
         with open(path, encoding="utf-8") as file:
             return _object(json.load(file))
     # OSError: missing, a directory, unreadable. ValueError: bad UTF-8 or JSON (and a NUL in the
@@ -193,6 +294,12 @@ def _object(value: object) -> dict[str, object]:
 def _text(section: dict[str, object], key: str, default: str) -> str:
     value = section.get(key)
     return value if isinstance(value, str) and value else default
+
+
+def _matching(section: dict[str, object], key: str, pattern: re.Pattern[str]) -> str:
+    """The value at ``key`` when it is a string ``pattern`` matches in full, else ``""``."""
+    value = _text(section, key, "")
+    return value if pattern.fullmatch(value) else ""
 
 
 def _texts(section: dict[str, object], key: str) -> tuple[str, ...]:
