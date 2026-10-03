@@ -3,8 +3,8 @@
 ## Purpose
 
 Phase 1 contract for what a hub holds and who owns it, `hub init`, hooks, plugin wiring, the commands that replace
-the hub scripts, and how the CLI ships. `hub.lock`, `hub sync`, `--adopt` and the write path:
-[hub-sync.md](hub-sync.md). Config: [project-config.md](project-config.md); full rules and reasons: the ADRs.
+the hub scripts, and how the CLI ships. `hub.lock`, `hub sync`, the write path: [hub-sync.md](hub-sync.md); `--adopt`:
+[hub-adopt.md](hub-adopt.md). Config: [project-config.md](project-config.md); full rules and reasons: the ADRs.
 
 ## Contract
 
