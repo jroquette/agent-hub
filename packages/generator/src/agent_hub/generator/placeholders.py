@@ -40,6 +40,13 @@ _DEVELOPER_AUTHOR: Final = (
     "the developer running the session (`hub.local.json` → `project.author_name`,\n"
     "   `project.author_email`, else their `git config user.name`, `user.email`)"
 )
+# The address kickoff checks the session's git email against: hub.json's, or the developer's own
+# (AGH-65). The line break keeps the rendered kickoff step within 120 characters.
+_USER_EMAIL: Final = "`hub.json` → `project.author_email`"
+_DEVELOPER_EMAIL: Final = (
+    "your author email (`hub.local.json` →\n"
+    "   `project.author_email`, else your own address, not an agent's or the container's)"
+)
 # Appended to rule 1's branch line when each developer has their own prefix. It starts on its
 # own line, so a long tracker team key cannot push the branch line past 120 characters.
 _PREFIX_NOTE: Final = (
@@ -71,6 +78,7 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
             else _DEVELOPER_AUTHOR
         ),
         "prefix_note": "" if project.branch_prefix is not None else _PREFIX_NOTE,
+        "identity_email": _USER_EMAIL if project.author_email is not None else _DEVELOPER_EMAIL,
     }
 
 

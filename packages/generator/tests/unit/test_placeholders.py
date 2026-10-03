@@ -32,6 +32,7 @@ RENDERED_KEYS = {
     "protected_branches",
     "commit_author",
     "prefix_note",
+    "identity_email",
 }
 
 
@@ -73,6 +74,7 @@ def test_takes_values_from_model_when_demo_mapped(demo_config: HubConfig) -> Non
         "protected_branches": "`main`",
         "commit_author": "the user (`hub.json` → `project.author_name`, `project.author_email`)",
         "prefix_note": "",
+        "identity_email": "`hub.json` → `project.author_email`",
     }
 
 
@@ -229,6 +231,15 @@ def mapping_without(*keys: str) -> dict[str, str]:
 )
 def test_names_developer_when_hub_sets_no_author(absent: tuple[str, ...]) -> None:
     assert mapping_without(*absent)["commit_author"] == DEVELOPER_AUTHOR
+
+
+def test_names_developer_email_when_hub_sets_no_email() -> None:
+    assert mapping_without("author_email")["identity_email"] == (
+        "your author email (`hub.local.json` →\n"
+        "   `project.author_email`, else your own address, not an agent's or the container's)"
+    )
+    # Only the email decides: a hub.json email keeps kickoff's check on hub.json.
+    assert mapping_without("author_name")["identity_email"] == "`hub.json` → `project.author_email`"
 
 
 def test_explains_prefix_when_hub_sets_no_prefix() -> None:

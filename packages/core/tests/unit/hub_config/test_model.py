@@ -419,6 +419,8 @@ PROJECT_BRANCH_READERS = {
     "cli/src/agent_hub/cli/brief_command.py": 1,
     # project_default_branch for ci.yml, and the project branch in AGENTS.md's mentions
     "generator/src/agent_hub/generator/placeholders.py": 2,
+    # the project's branch in the managed settings' push denies (the guard's protected set)
+    "generator/src/agent_hub/generator/built_json.py": 1,
     # the CI trigger branches
     f"{TEMPLATES}/github/workflows/ci.yml.tmpl": 2,
     # the hub repo's CI pair and the hub log
