@@ -79,7 +79,7 @@ def local_home(root: Path, *, environ: Mapping[str, str]) -> Path:
     """
     if not os.path.isfile(os.path.join(root, _GIT_FOLDER)):
         return root
-    found = shutil.which("git", path=environ.get("PATH"))
+    found = shutil.which("git", path=environ.get("PATH", os.defpath))
     if found is None:
         return root
     try:
