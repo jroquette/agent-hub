@@ -922,9 +922,9 @@ def test_ignores_local_file_when_hub_initialized(
     git_on_path: Any, tmp_path: Path, target: Path, *, demo_flags: list[str]
 ) -> None:
     result = run_init([*demo_flags, "--dir", str(target)])
+    assert result.exit_code == 0, result.stderr
     git_init(target, tmp_path)
 
-    assert result.exit_code == 0, result.stderr
     assert REAL_GIT is not None
     # The developer's hub.local.json is ignored in every new hub (AC-65.15).
     ignored = subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
