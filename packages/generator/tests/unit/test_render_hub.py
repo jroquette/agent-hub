@@ -1344,6 +1344,32 @@ def test_names_hub_commands_when_kickoff_or_feature_rendered(
     assert set(named) <= set(targets), named
 
 
+# AGH-16 inventory KO1, KO3: before any commit, kickoff checks the session's git identity against
+# hub.json and names the branch to work on; the cloud-setup sentence (KO2) stays a project rule.
+def test_checks_git_identity_when_kickoff_skill_rendered(
+    demo_config: HubConfig, demo_render: dict[str, RenderedFile]
+) -> None:
+    text = " ".join(skill_text(demo_render, "kickoff").split())
+    prefix = demo_config.project.branch_prefix
+    identity = (
+        "Check that `git config user.email` in the hub and in each repo equals `hub.json` →"
+        " `project.author_email`"
+    )
+    branch = (
+        "If the session was given a `claude/…` branch (cloud sessions), it is not a repo branch:"
+        " work on"
+        f" `{prefix}<team>-<n>-<desc>`."
+    )
+
+    assert text.count(identity) == 1
+    assert text.count(branch) == 1
+    # The check comes before the next item is proposed, and leaves cloud setup to the project.
+    assert (
+        text.index(identity) < text.index(branch) < text.index("Propose the next unfinished item")
+    )
+    assert "cloud-setup" not in text
+
+
 def test_names_transcript_script_when_recall_rendered(
     demo_render: dict[str, RenderedFile],
 ) -> None:
@@ -1660,9 +1686,12 @@ def test_imports_both_rule_files_when_claude_rendered(demo_config: HubConfig) ->
 # AC-3.19 (Q7, O4): the hygiene hooks of the pinned pre-commit-hooks release.
 HYGIENE_HOOKS = ("trailing-whitespace", "end-of-file-fixer", "check-json", "check-yaml")
 PLACEHOLDER = re.compile(r"@@(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)")
+# AGH-16 Q-11: an action is pinned by its 40-hex commit SHA, the release named in a comment.
+ACTION_PIN = r"@[0-9a-f]{40}  # v\d+\.\d+\.\d+"
 PINNED_SETUP_UV = re.compile(
-    r'- uses: astral-sh/setup-uv@v\d+\n\s+with:\n\s+version: "\d+\.\d+\.\d+"\n'
+    rf'- uses: astral-sh/setup-uv{ACTION_PIN}\n\s+with:\n\s+version: "\d+\.\d+\.\d+"\n'
 )
+PINNED_USES = re.compile(rf"^\s+-?\s*uses: [\w.-]+(?:/[\w.-]+)+{ACTION_PIN}$")
 
 
 # The hub-doctor hook's entry: the shim, run from the hub root (pre-commit's cwd).
@@ -1693,31 +1722,112 @@ def run_pre_commit_entry(
     )
 
 
-@pytest.mark.parametrize(("config_name", "branch"), [("demo", "main"), ("variant", "trunk")])
-def test_limits_workflow_when_ci_rendered(
-    config_name: str, branch: str, request: pytest.FixtureRequest
-) -> None:
-    config = request.getfixturevalue(f"{config_name}_config")
+# AGH-16 D3/D4: the workflow's steps, in order; a step is the list item at the job's step indent.
+CI_STEP_START = "      - "
+CREDENTIAL_STEP = "Platform read credential"
+GOLDEN_STEP = "Golden (hub sync --check)"
+MAKE_CHECK_STEP = "make check"
+READ_REFERENCE = "secrets.AGENT_HUB_READ_TOKEN"
 
-    ci = text_of(config, ".github/workflows/ci.yml")
 
-    assert "\npermissions:\n  contents: read\n" in ci
-    triggers = ci[ci.index("\non:\n") : ci.index("\npermissions:")]
-    assert f'  pull_request:\n    branches: ["{branch}"]\n' in triggers
-    assert f'  push:\n    branches: ["{branch}"]\n' in triggers
-    steps = re.findall(r"^\s+- (?:uses|name|run): .*$", ci, re.MULTILINE)
-    assert [step.strip() for step in steps] == [
-        "- uses: actions/checkout@v7",
-        "- uses: astral-sh/setup-uv@v7",
-        "- name: make check",
-    ]
-    assert PINNED_SETUP_UV.search(ci)
-    assert "run: make check" in ci
-    assert not re.search(r"(?:version: \"?|@)latest", ci)
-    assert "@main" not in ci
-    assert "secrets." not in ci
-    jobs = ci[ci.index("\njobs:\n") :]
-    assert re.findall(r"^  ([a-z][a-z0-9-]*):$", jobs, re.MULTILINE) == ["check"]
+def ci_steps(ci: str) -> list[str]:
+    """Each step of the one job as written, from its ``- `` line to the next step's."""
+    body = ci[ci.index("\n    steps:\n") + len("\n    steps:\n") :]
+    steps: list[str] = []
+    for line in body.splitlines(keepends=True):
+        if line.startswith(CI_STEP_START):
+            steps.append("")
+        if steps and line.startswith((CI_STEP_START, "        ")):
+            steps[-1] += line
+    return steps
+
+
+def ci_step(ci: str, name: str) -> str:
+    """The one step whose ``- name:`` is ``name``."""
+    found = [step for step in ci_steps(ci) if step.startswith(f"{CI_STEP_START}name: {name}\n")]
+    assert len(found) == 1, ci
+    return found[0]
+
+
+def run_block(step: str) -> str:
+    """The lines of the step's ``run: |`` block, as written."""
+    head = "        run: |\n"
+    assert head in step, step
+    return step[step.index(head) + len(head) :]
+
+
+class TestCiWorkflow:
+    @pytest.mark.parametrize(("config_name", "branch"), [("demo", "main"), ("variant", "trunk")])
+    def test_limits_workflow_when_ci_rendered(
+        self, config_name: str, branch: str, request: pytest.FixtureRequest
+    ) -> None:
+        config = request.getfixturevalue(f"{config_name}_config")
+
+        ci = text_of(config, ".github/workflows/ci.yml")
+
+        assert "\npermissions:\n  contents: read\n" in ci
+        triggers = ci[ci.index("\non:\n") : ci.index("\npermissions:")]
+        assert f'  pull_request:\n    branches: ["{branch}"]\n' in triggers
+        assert f'  push:\n    branches: ["{branch}"]\n' in triggers
+        steps = re.findall(r"^\s+- (?:uses|name|run): .*$", ci, re.MULTILINE)
+        assert [step.strip() for step in steps] == [
+            "- uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1",
+            "- uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0",
+            f"- name: {CREDENTIAL_STEP}",
+            f"- name: {GOLDEN_STEP}",
+            f"- name: {MAKE_CHECK_STEP}",
+        ]
+        assert PINNED_SETUP_UV.search(ci)
+        assert "run: make check" in ci
+        assert not re.search(r"(?:version: \"?|@)latest", ci)
+        assert "@main" not in ci
+        assert re.findall(r"secrets\.\w*", ci) == [READ_REFERENCE]
+        jobs = ci[ci.index("\njobs:\n") :]
+        assert re.findall(r"^  ([a-z][a-z0-9-]*):$", jobs, re.MULTILINE) == ["check"]
+
+    @pytest.mark.parametrize("config_name", ["demo", "variant"])
+    def test_runs_golden_before_make_check_when_ci_rendered(
+        self, config_name: str, request: pytest.FixtureRequest
+    ) -> None:
+        ci = text_of(request.getfixturevalue(f"{config_name}_config"), ".github/workflows/ci.yml")
+
+        steps = ci_steps(ci)
+        golden = ci_step(ci, GOLDEN_STEP)
+        make_check = ci_step(ci, MAKE_CHECK_STEP)
+
+        assert golden == f"{CI_STEP_START}name: {GOLDEN_STEP}\n        run: ./hub sync --check\n"
+        assert make_check == f"{CI_STEP_START}name: {MAKE_CHECK_STEP}\n        run: make check\n"
+        # Q-10: the same job, the golden step right before make check, after the credential.
+        assert steps[-2:] == [golden, make_check]
+        assert steps.index(ci_step(ci, CREDENTIAL_STEP)) < steps.index(golden)
+
+    @pytest.mark.parametrize("config_name", ["demo", "variant"])
+    def test_names_secret_only_by_expression_when_ci_rendered(
+        self, config_name: str, request: pytest.FixtureRequest
+    ) -> None:
+        ci = text_of(request.getfixturevalue(f"{config_name}_config"), ".github/workflows/ci.yml")
+
+        credential = ci_step(ci, CREDENTIAL_STEP)
+        block = run_block(credential)
+
+        assert ci.count("secrets.") == 1
+        assert f"        env:\n          TOKEN: ${{{{ {READ_REFERENCE} }}}}\n" in credential
+        # The token reaches git only through the job's environment, set by the run block.
+        assert "x-access-token" in block
+        assert "x-access-token" not in ci.replace(block, "")
+        assert '>> "$GITHUB_ENV"' in block
+        assert "--dangerously-skip-permissions" not in ci
+
+    @pytest.mark.parametrize("config_name", ["demo", "variant"])
+    def test_pins_actions_by_sha_when_ci_rendered(
+        self, config_name: str, request: pytest.FixtureRequest
+    ) -> None:
+        ci = text_of(request.getfixturevalue(f"{config_name}_config"), ".github/workflows/ci.yml")
+
+        uses = [line for line in ci.splitlines() if re.match(r"^\s+-?\s*uses:", line)]
+
+        assert uses
+        assert [line for line in uses if not PINNED_USES.match(line)] == []
 
 
 # AGH-46 D-agents: the two branch mentions of AGENTS.md, as rendered before the repo key existed.
@@ -1759,6 +1869,19 @@ def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubCon
     assert "`origin/trunk`" not in agents
     # The hub's own CI keeps the project branch.
     assert ci_trigger_branches(ci) == ["trunk", "trunk"]
+
+
+# AGH-16 inventory A6b: the per-repo setup scripts `hub worktree` runs, named in the workflow step
+# that creates the worktree.
+def test_names_worktree_setup_scripts_when_agents_rendered(demo_config: HubConfig) -> None:
+    agents = text_of(demo_config, "AGENTS.md")
+    workflow = agents.split("## Workflow", 1)[1].split("\n## ", 1)[0]
+    step = " ".join(workflow.split("\n4. ", 1)[1].split("\n5. ", 1)[0].split())
+
+    assert step.count("`<repo>/scripts/worktree-setup.sh`") == 1
+    assert step.count("`<repo>/scripts/worktree-teardown.sh`") == 1
+    assert "`make worktree NAME=<team>-<n>-<desc>`" in step
+    assert "(env files, databases, ports)" in step
 
 
 def test_pins_hygiene_hooks_when_pre_commit_rendered(demo_config: HubConfig) -> None:
@@ -2091,16 +2214,73 @@ def test_writes_empty_file_when_gitkeep_or_project_rules_rendered(
         assert demo_render[path].content == b"", path
 
 
-# Spec AC-4.7 (D5, Q-5, Q-11): the managed `.claude/settings.json` is the rules base, nothing more.
-SETTINGS_KEYS = ["$schema", "attribution", "hooks", "includeCoAuthoredBy", "permissions"]
+# Spec AC-4.7 (D5, Q-5, Q-11), AGH-16 D2 (E14): the managed `.claude/settings.json` is the rules
+# base: the base denies and sandbox, nothing more.
+SETTINGS_KEYS = ["$schema", "attribution", "hooks", "includeCoAuthoredBy", "permissions", "sandbox"]
 SETTINGS_SCHEMA = "https://json.schemastore.org/claude-code-settings.json"
 SETTINGS_ALLOW = ["Bash(git status *)", "Bash(git diff *)", "Bash(git log *)", "Bash(git show *)"]
-SETTINGS_DENY = ["Read(**/*.pem)", "Read(**/*.key)"]
+SETTINGS_DENY_READS = ["Read(**/*.pem)", "Read(**/*.key)"]
+# The branches the guard protects (`main`, `master`, the project's and each repo's), sorted.
+PROTECTED_BRANCHES = {"demo": ["main", "master"], "variant": ["main", "master", "trunk"]}
+
+
+def settings_deny(config_name: str) -> list[str]:
+    """AGH-16 inventory rows S4a-S4j (E14), the push rows per protected branch: no force or
+    protected-branch push, no infra or keychain tools, no ssh, no shell fed by a pipe.
+    """
+    pushes = [
+        rule
+        for branch in PROTECTED_BRANCHES[config_name]
+        for rule in (f"Bash(git push * {branch})", f"Bash(git push origin HEAD:{branch}*)")
+    ]
+    return [
+        *SETTINGS_DENY_READS,
+        "Bash(git push --force*)",
+        "Bash(git push -f *)",
+        *pushes,
+        "Bash(terraform *)",
+        "Bash(aws *)",
+        "Bash(security *)",
+        "Bash(ssh *)",
+        "Bash(sh)",
+        "Bash(bash)",
+    ]
+
+
+# AGH-16 inventory row S6a (E14): the base sandbox; a project adds its own hosts (row S6b) through
+# `settings.project.json`.
+SETTINGS_SANDBOX = {
+    "enabled": True,
+    "allowUnsandboxedCommands": False,
+    "excludedCommands": [
+        "docker *",
+        "gh *",
+        "git push *",
+        "git fetch *",
+        "git pull *",
+        "git clone *",
+        "git ls-remote *",
+    ],
+    "network": {
+        "allowLocalBinding": True,
+        "allowedDomains": [
+            "localhost",
+            "127.0.0.1",
+            "[::1]",
+            "pypi.org",
+            "files.pythonhosted.org",
+            "registry.npmjs.org",
+            "*.npmjs.org",
+            "github.com",
+            "*.github.com",
+            "*.githubusercontent.com",
+        ],
+    },
+}
 # The project's own keys (D5 "Out"): they come through the seeded `settings.project.json`.
 PROJECT_ONLY_SETTINGS = (
     "extraKnownMarketplaces",
     "enabledPlugins",
-    "sandbox",
     "env",
     "skillOverrides",
 )
@@ -2170,7 +2350,7 @@ def test_holds_rules_base_only_when_settings_rendered(
     assert settings["includeCoAuthoredBy"] is False
     assert settings["permissions"] == {
         "allow": SETTINGS_ALLOW,
-        "deny": SETTINGS_DENY,
+        "deny": settings_deny(config_name),
         "additionalDirectories": [f"../{repo_dir}" for repo_dir in REPO_DIRS[config_name]],
     }
     assert set(settings["hooks"]) == set(SETTINGS_HOOKS)
@@ -2186,6 +2366,36 @@ def test_holds_rules_base_only_when_settings_rendered(
     assert "matcher" not in settings["hooks"]["Stop"][0]
     for key in PROJECT_ONLY_SETTINGS:
         assert not key_anywhere(settings, key), key
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+def test_denies_push_and_pipe_rules_when_settings_rendered(
+    config_name: str, request: pytest.FixtureRequest
+) -> None:
+    config = request.getfixturevalue(f"{config_name}_config")
+    rendered = {file.path: file for file in render_hub(config).files}
+
+    settings = strict_json(rendered[".claude/settings.json"].content)
+
+    # AGH-16 D2 (E14): the secret reads, then rows S4a-S4j in the inventory's order, exactly.
+    assert settings["permissions"]["deny"] == settings_deny(config_name)
+    # Claude Code matches each subcommand of a pipe on its own: `Bash(* | sh)` would never match.
+    assert not [rule for rule in settings["permissions"]["deny"] if "|" in rule]
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+def test_enables_sandbox_when_settings_rendered(
+    config_name: str, request: pytest.FixtureRequest
+) -> None:
+    config = request.getfixturevalue(f"{config_name}_config")
+    rendered = {file.path: file for file in render_hub(config).files}
+
+    settings = strict_json(rendered[".claude/settings.json"].content)
+
+    # AGH-16 D2 (E14), row S6a: the same base in every hub; no tracker or project host (row S6b).
+    assert settings["sandbox"] == SETTINGS_SANDBOX
+    hosts = set(settings["sandbox"]["network"]["allowedDomains"])
+    assert not hosts & {"linear.app", "*.linear.app", "docs.python.org"}, hosts
 
 
 def test_matches_plugin_hooks_when_settings_compared(demo_render: dict[str, RenderedFile]) -> None:
@@ -2361,8 +2571,10 @@ def test_holds_no_project_identifier_when_demo_rendered(demo_config: HubConfig) 
     for path, text in texts.items():
         assert rendered_identifiers(text) == [], path
     carriers = {path for path, text in texts.items() if PLATFORM_CARRIER.search(text)}
-    # The demo selects `cloud`: its setup script warms the pinned release.
+    # The demo selects `cloud`: its setup script warms the pinned release. CI gives the pinned
+    # release's repository a read credential (AGH-16 D4).
     assert carriers == {
+        ".github/workflows/ci.yml",
         "hub",
         "plugin/hub-workflow/hooks/session_start.py",
         "scripts/cloud-setup.sh",

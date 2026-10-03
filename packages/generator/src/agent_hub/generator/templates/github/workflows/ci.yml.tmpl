@@ -1,5 +1,6 @@
-# The hub's gate on pull requests and on the default branch: CI runs `make check`, the same
-# command as locally. Managed by hub sync.
+# The hub's gate on pull requests and on the default branch: the golden step (the pinned
+# `hub sync --check`: the managed files are the release's render), then `make check`, the same
+# commands as locally. Managed by hub sync.
 name: CI
 
 on:
@@ -16,12 +17,40 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      # Each action is pinned by its commit SHA; the comment names the release.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       # uv runs the release of agent-hub that hub.json pins (platform.version).
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
         with:
           version: "0.12.19"
+      # Read access to the platform repository, set only when the secret is: a public platform
+      # needs none. Through git config in the job's environment (the golden step and make check
+      # both install the pinned release), never in a URL in a file. insteadOf is a prefix match
+      # and the longest one wins: the second pair maps this hub's own URL to itself, so the token
+      # never goes to the hub. A token outside GitHub's [A-Za-z0-9_] is refused before anything is
+      # written, so it cannot add lines to the job's environment.
+      - name: Platform read credential
+        env:
+          TOKEN: ${{ secrets.AGENT_HUB_READ_TOKEN }}
+        run: |
+          [ -n "$TOKEN" ] || exit 0
+          case $TOKEN in
+            *[!A-Za-z0-9_]*) echo "AGENT_HUB_READ_TOKEN: unexpected characters" >&2; exit 1 ;;
+          esac
+          release="@@{platform_repository}@v"
+          url="${release%@v}"
+          url="${url#git+}"
+          hub="https://github.com/@@{project_hub_repo}"
+          {
+            printf '%s\n' "GIT_CONFIG_COUNT=2"
+            printf '%s\n' "GIT_CONFIG_KEY_0=url.https://x-access-token:${TOKEN}@${url#https://}.insteadOf"
+            printf '%s\n' "GIT_CONFIG_VALUE_0=$url"
+            printf '%s\n' "GIT_CONFIG_KEY_1=url.$hub.insteadOf"
+            printf '%s\n' "GIT_CONFIG_VALUE_1=$hub"
+          } >> "$GITHUB_ENV"
+      - name: Golden (hub sync --check)
+        run: ./hub sync --check
       - name: make check
         run: make check

@@ -10,7 +10,8 @@ error (``fail_once``) and the temp entries it may leave (``temp_entries``), AC-1
 (``ac4``); for ``hub doctor``
 an in-process run in a folder (``run_doctor``), the paths a run reads (``path_reads``) and their
 filters (``reads_in``, ``ancestors``, ``under``); for ``hub bench`` the hub suite's bench
-workspace with a fake ``claude`` (``bench_workspace``).
+workspace with a fake ``claude`` (``bench_workspace``); for a rendered ``./hub`` a ``uvx`` that
+runs this workspace's ``hub`` (``fake_uvx_bin``).
 """
 
 import builtins
@@ -37,6 +38,7 @@ from typer.testing import CliRunner, Result
 from agent_hub.cli.hub_root import HUB_ROOT_VARIABLE
 from agent_hub.cli.main import app
 from agent_hub.core.errors import TrackerError
+from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
 from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
 from agent_hub.core.json_form import dump_json
 from agent_hub.core.testing.builders import a_hub_document, a_second_repo, an_issue
@@ -180,6 +182,36 @@ def demo_hub_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
     isolate them are not needed here.
     """
     return init_template(tmp_path_factory.mktemp("demo-hub-template"), demo_document_value())
+
+
+@pytest.fixture
+def fake_uvx_bin(tmp_path: Path) -> Path:
+    """A folder holding a ``/bin/sh`` ``uvx`` that runs this workspace's ``hub`` (AGH-16 AC-16.11).
+
+    It checks that the call starts ``--from <the pinned source of the running CLI> hub``, as a
+    rendered ``./hub`` of ``DEMO`` makes it, then drops those three words and execs the
+    workspace's ``hub`` with the rest. Any other call exits 90 and names it on stderr.
+    """
+    pinned = PINNED_RELEASE_COMMAND.format(version=version("agent-hub-cli")).split()
+    assert pinned[:2] == ["uvx", "--from"]
+    assert pinned[3:] == ["hub"]
+    hub = Path(sys.prefix) / "bin" / "hub"
+    assert hub.is_file(), hub
+    bin_dir = tmp_path / "fake-uvx-bin"
+    bin_dir.mkdir()
+    uvx = bin_dir / "uvx"
+    uvx.write_text(
+        "#!/bin/sh\n"
+        f'[ "$1" = --from ] && [ "$2" = {shlex.quote(pinned[2])} ] && [ "$3" = hub ] || {{\n'
+        '  echo "fake uvx: unexpected call: $*" >&2\n'
+        "  exit 90\n"
+        "}\n"
+        "shift 3\n"
+        f'exec {shlex.quote(str(hub))} "$@"\n',
+        encoding="utf-8",
+    )
+    uvx.chmod(0o755)
+    return bin_dir
 
 
 @pytest.fixture
