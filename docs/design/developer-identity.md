@@ -23,7 +23,7 @@ cloud setup. The `hub.json` fields themselves are in [project-config.md](project
 ### `hub.local.json`
 
 - **Location: the identity home**, the root of the hub's main checkout. From a hub worktree the main checkout's file
-  is read, never one in the worktree. It is never read beside a `$HUB_CONFIG` file.
+  is read (the CLI falls back to the worktree only when git cannot run). It is never read beside a `$HUB_CONFIG` file.
 - **Format.** `hub.json`'s nesting, plain JSON, a regular file of at most 65,536 bytes. It accepts only
   `project.branch_prefix`, `project.author_name`, `project.author_email` and `tracker.transport` (`api` or `mcp`),
   each with `hub.json`'s rule, plus `_` comment keys at `$`, `project` and `tracker`. `null` is refused.
@@ -31,7 +31,7 @@ cloud setup. The `hub.json` fields themselves are in [project-config.md](project
 - **Problems** (CLI and doctor), one per error, `hub.local.json: <json path>: <message>`. A `hub.json` key that is not
   local: `set only in hub.json; hub.local.json holds project.branch_prefix, author_name, author_email and
   tracker.transport`. Any other key: `Extra inputs are not permitted`. Not an object: `$: must be a JSON object`. Too
-  big: `$: cannot read <path>: larger than 65536 bytes`. An absent file sets nothing.
+  big: `$: cannot read "<path>": larger than 65536 bytes`. An absent file sets nothing.
 - **Ignored by git.** `hub init` seeds `.gitignore` with `hub.local.json`. `.gitignore` is seeded, so `hub sync` never
   adds the line: an existing hub adds it by hand (README, `hub.local.json`).
 - **Nothing in it relaxes a guard**: it cannot add or remove a guard path, host, protected branch or repo.
@@ -63,8 +63,8 @@ cloud setup. The `hub.json` fields themselves are in [project-config.md](project
 - The stdlib reader (`stdlib_reader.py`, `EffectiveValues`) applies the same precedence and never raises. The local
   file counts only as a regular file (opened `O_NONBLOCK`, `S_ISREG` on `fstat`) of at most 65,536 bytes holding a
   JSON object; otherwise it sets nothing. A local value counts only when it is a non-empty string with the model's
-  shape (pattern, or `api`/`mcp`) that encodes as UTF-8; otherwise that key falls through to `hub.json`, then git.
-  `hub.json`'s own non-empty prefix is used unchecked, as before.
+  shape (pattern, or `api`/`mcp`) that encodes as UTF-8; otherwise that key falls through to `hub.json`, then git
+  (`tracker.transport` has no git source). `hub.json`'s own non-empty prefix is used unchecked, as before.
 - **Identity home** (`hubhooks._identity_home`): the hook root's main checkout; with no hook root (plugin cache), the
   walked hub, unless `$HUB_CONFIG` names a file, in which case there is none: no local file and no git.
 - **Git** (`Config._git_value`): `git config --get <key>` in the identity home, 2 s (`IDENTITY_GIT_TIMEOUT`), without
@@ -74,7 +74,8 @@ cloud setup. The `hub.json` fields themselves are in [project-config.md](project
 
 ### Rendering
 
-`hub init`, `hub sync` and `render_hub` read `hub.json` only, never `hub.local.json` or git config, so rendered files
+`hub init`, `hub sync` and `render_hub` render from `hub.json` only, never `hub.local.json` or git config (`hub init`
+reads git config only to fill missing flags into `hub.json`), so rendered files
 and `hub.lock` are the same for every developer. With both author keys and the prefix in `hub.json`, `AGENTS.md` and
 `marketplace.json` are byte-identical to before. Otherwise:
 
@@ -107,7 +108,7 @@ HUB_AUTHOR_NAME/HUB_AUTHOR_EMAIL; commits carry the container's identity`, write
   hooks' `EffectiveValues`. The shared cases in `agent_hub.core.testing.identity_cases` run against both
   (`test_identity_parity.py`, the hooks on the current Python and on 3.9).
 - Committed files never depend on who runs `hub sync`; `hub.local.json` is never rendered, locked or committed.
-- A hub that keeps the identity in `hub.json` runs no extra git call in the CLI and keeps its rendered bytes.
+- A hub that keeps the identity in `hub.json` runs no `git config user.*` call in the CLI and keeps its rendered bytes.
 - A hook never fails because of `hub.local.json` or git.
 
 ## Decisions

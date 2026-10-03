@@ -115,8 +115,9 @@ Design rule: the generated hub is versioned files in a private GitHub repo, acce
 
 ### Team use and per-repo config
 
-One hub repo serves every developer of a project, so the committed `hub.json` holds only project values: a value that
-belongs to one developer never lives in it. Real projects also mix repos that differ in branch, check time and tracker
+One hub repo serves every developer of a project, so a value that belongs to one developer comes first from that
+developer's gitignored `hub.local.json`; the committed `hub.json` keeps it only for a single-developer hub. Real
+projects also mix repos that differ in branch, check time and tracker
 team, so these keys are added. Each is optional and additive under `schema_version: 1` (a hub without it behaves as
 today), and the CLI's model and the hooks' stdlib reader accept it in the same change.
 
