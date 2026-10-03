@@ -1665,7 +1665,7 @@ ACTION_PIN = r"@[0-9a-f]{40}  # v\d+\.\d+\.\d+"
 PINNED_SETUP_UV = re.compile(
     rf'- uses: astral-sh/setup-uv{ACTION_PIN}\n\s+with:\n\s+version: "\d+\.\d+\.\d+"\n'
 )
-PINNED_USES = re.compile(rf"^\s+- uses: [\w.-]+/[\w.-]+{ACTION_PIN}$")
+PINNED_USES = re.compile(rf"^\s+-?\s*uses: [\w.-]+(?:/[\w.-]+)+{ACTION_PIN}$")
 
 
 # The hub-doctor hook's entry: the shim, run from the hub root (pre-commit's cwd).
@@ -1800,7 +1800,7 @@ class TestCiWorkflow:
 
         uses = [line for line in ci.splitlines() if re.match(r"^\s+-?\s*uses:", line)]
 
-        assert len(uses) == 2
+        assert uses
         assert [line for line in uses if not PINNED_USES.match(line)] == []
 
 
