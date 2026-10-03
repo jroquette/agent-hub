@@ -1298,3 +1298,24 @@ class TestIdentity:
 
         assert lines == [CLEAN]
         assert identity_reads(traced_git) == []
+
+    def test_finds_nothing_in_agents_when_team_hub_checked(
+        self, tmp_path: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+    ) -> None:
+        # AC-65.8: the team AGENTS.md names `hub.local.json`, which no developer commits (E12),
+        # and the developer's git identity, which is no AI attribution.
+        for key in ("branch_prefix", "author_name", "author_email"):
+            del demo_document["project"][key]
+        demo_document["modules"] = {"marketplace": {}}
+        config = tmp_path / "hub.json"
+        config.write_bytes(dump_json(demo_document))
+        root = tmp_path / "hub"
+        created = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
+        assert created.exit_code == 0, created.stderr
+        agents = (root / "AGENTS.md").read_text(encoding="utf-8")
+        assert "`hub.local.json`" in agents
+        assert not (root / "hub.local.json").exists()
+
+        lines = lines_of(run_doctor(root), exit_code=0)
+
+        assert lines == [CLEAN]

@@ -1761,6 +1761,81 @@ def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubCon
     assert ci_trigger_branches(ci) == ["trunk", "trunk"]
 
 
+# AGH-65 AC-65.7: sha256 of the files as rendered on e7fde2d, before the identity keys became
+# optional; a hub that sets them in hub.json keeps these bytes.
+DEMO_AGENTS_SHA256 = "8628726867df9da6debdd95c2a98f9ef1d2f33cb3733f3b49badd1e43bfddf0e"
+ALL_MODULES_SHA256 = {
+    "AGENTS.md": "35183b8f336c28d0432bb6bfaac92af3b2e1d4349b344dd7ecc75fbda2200abb",
+    ".claude-plugin/marketplace.json": (
+        "f7324911e70a0f3255274721636821a9b65a5716f04c5f6e3e470e74dc7b8ac7"
+    ),
+}
+USER_RULE = (
+    "1. Commits and PRs are authored by the user (`hub.json` → `project.author_name`,"
+    " `project.author_email`). No AI\n"
+)
+# AGH-65 AC-65.8 (plan E14): rule 1 of a team hub's AGENTS.md, from its first line to rule 2.
+TEAM_RULE = (
+    "1. Commits and PRs are authored by the developer running the session (`hub.local.json` →"
+    " `project.author_name`,\n"
+    "   `project.author_email`, else their `git config user.name`, `user.email`). No AI\n"
+    '   co-author trailer, no "Generated with" line, no emoji or other sign that an agent did the'
+    " work, and no branch named\n"
+    "   after an agent (e.g. `claude/…`). Branch: `<prefix><team>-<n>-<desc>`, where `<team>` is"
+    " the\n"
+    "   tracker team DEM in lowercase. `<prefix>` is `hub.local.json` → `project.branch_prefix`,"
+    " else the local part of\n"
+    "   your author email plus `/`.\n"
+    "2. No push"
+)
+
+
+def a_team_config() -> HubConfig:
+    """The demo with every module and no identity key: each developer brings their own."""
+    document = a_hub_document()
+    document["modules"] = {**document["modules"], "marketplace": {}}
+    for key in ("branch_prefix", "author_name", "author_email"):
+        del document["project"][key]
+    return HubConfig.model_validate(document)
+
+
+def test_renders_team_rules_when_identity_absent(demo_config: HubConfig) -> None:
+    config = a_team_config()
+
+    rendered = render_hub(config)
+    agents = text_of(config, "AGENTS.md")
+
+    assert agents[agents.index("1. Commits") : agents.index("2. No push") + len("2. No push")] == (
+        TEAM_RULE
+    )
+    assert all(len(line) <= 120 for line in agents.splitlines())
+    # No placeholder left, and no absent value spelled out: a file holds `None` or `null` only
+    # where the identity-setting demo's does (Python code, JSON).
+    demo = {file.path: file.content for file in render_hub(demo_config).files}
+    for file in rendered.files:
+        content = file.content or b""
+        assert b"@@" not in content, file.path
+        for word in (b"None", b"null"):
+            assert content.count(word) == (demo.get(file.path) or b"").count(word), file.path
+    assert render_hub(config) == rendered
+
+
+def test_keeps_agents_bytes_when_identity_in_hub_json(
+    demo_config: HubConfig, variant_config: HubConfig, all_modules_config: HubConfig
+) -> None:
+    def digest(config: HubConfig, path: str) -> str:
+        return hashlib.sha256(text_of(config, path).encode("utf-8")).hexdigest()
+
+    assert digest(demo_config, "AGENTS.md") == DEMO_AGENTS_SHA256
+    assert {path: digest(all_modules_config, path) for path in ALL_MODULES_SHA256} == (
+        ALL_MODULES_SHA256
+    )
+    # Another author in hub.json renders the same user wording, never the author's name.
+    variant = text_of(variant_config, "AGENTS.md")
+    assert USER_RULE in variant
+    assert "hub.local.json" not in variant
+
+
 def test_pins_hygiene_hooks_when_pre_commit_rendered(demo_config: HubConfig) -> None:
     pre_commit = text_of(demo_config, ".pre-commit-config.yaml")
 

@@ -38,10 +38,10 @@ is a hub bug: log it in `brain/_inbox/`.
 
 ## Cross-repo rules
 
-1. Commits and PRs are authored by the user (`hub.json` → `project.author_name`, `project.author_email`). No AI
+1. Commits and PRs are authored by @@{commit_author}. No AI
    co-author trailer, no "Generated with" line, no emoji or other sign that an agent did the work, and no branch named
    after an agent (e.g. `claude/…`). Branch: `@@{project_branch_prefix}<team>-<n>-<desc>`, where `<team>` is the
-   tracker team @@{tracker_team} in lowercase.
+   tracker team @@{tracker_team} in lowercase.@@{prefix_note}
 2. No push to @@{protected_branches}, no force-push, no production deploys. Everything lands through a PR the
    user merges.
 3. A change of scope or architecture updates the repo's spec in the same PR.

@@ -9,7 +9,9 @@ repository, the Makefile's module include lines, the module files ``AGENTS.md`` 
 script never reads ``hub.json``, and ``AGENTS.md``'s worktree base and protected branches.
 ``project.author_name``, ``repos[].check_fast``, ``repos[].check`` and ``platform.version`` are
 never keys: shims read them at run time, and the author name needs format quoting. A hub that
-sets no ``project.branch_prefix`` (each developer has their own) renders ``<prefix>``.
+leaves the identity to each developer (no ``project.branch_prefix``, or no author) renders
+``<prefix>`` and ``AGENTS.md``'s rule names the developer's sources instead (AGH-65); a hub that
+sets them keeps the bytes it had.
 """
 
 import textwrap
@@ -31,6 +33,18 @@ _MARKDOWN_WIDTH: Final = 120
 _MARKDOWN_INDENT: Final = "  "
 # ``AGENTS.md``'s worktree base once a repo sets its own branch; each repo's follows (AGH-46).
 _PER_REPO_BASE: Final = "`origin/<the repo's default branch>`"
+# ``AGENTS.md`` rule 1's author: hub.json's, or each developer's (AGH-65). Line breaks keep the
+# rendered lines within 120 characters.
+_USER_AUTHOR: Final = "the user (`hub.json` → `project.author_name`, `project.author_email`)"
+_DEVELOPER_AUTHOR: Final = (
+    "the developer running the session (`hub.local.json` → `project.author_name`,\n"
+    "   `project.author_email`, else their `git config user.name`, `user.email`)"
+)
+# Appended to rule 1's branch line when each developer has their own prefix.
+_PREFIX_NOTE: Final = (
+    f" `{PREFIX_PLACEHOLDER}` is `hub.local.json` → `project.branch_prefix`, else the local part"
+    " of\n   your author email plus `/`."
+)
 
 
 def substitution_mapping(config: HubConfig) -> dict[str, str]:
@@ -50,6 +64,12 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
         **_module_files(config),
         **_contract_sync_repos(config),
         **_branch_mentions(config),
+        "commit_author": (
+            _USER_AUTHOR
+            if project.author_name is not None and project.author_email is not None
+            else _DEVELOPER_AUTHOR
+        ),
+        "prefix_note": "" if project.branch_prefix is not None else _PREFIX_NOTE,
     }
 
 
