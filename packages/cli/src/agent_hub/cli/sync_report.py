@@ -11,12 +11,18 @@ line holding an unprintable character (a tab aside, in diff lines) is shown as a
 import difflib
 import hashlib
 import json
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from typing import Final
 
 from agent_hub.cli.init_report import shown_path, shown_text
 from agent_hub.core.hub_files.hub_lock import HUB_LOCK_PATH
-from agent_hub.core.hub_files.plan_sync import ContentConflict, SyncConflicts, SyncPlan, Verb
+from agent_hub.core.hub_files.plan_sync import (
+    ContentConflict,
+    SyncConflicts,
+    SyncPlan,
+    SyncProblem,
+    Verb,
+)
 
 UP_TO_DATE: Final = "up to date"
 CONFLICT_WAY_OUT: Final = (
@@ -34,6 +40,8 @@ _WOULD: Final = {
     Verb.RESTORED: "would restore",
     Verb.UPDATED: "would update",
     Verb.DELETED: "would delete",
+    Verb.RECORDED: "would record",
+    Verb.MIGRATED: "would migrate",
 }
 
 
@@ -55,17 +63,21 @@ def change_lines(plan: SyncPlan, *, check: bool) -> list[str]:
 
 def conflict_lines(conflicts: SyncConflicts) -> list[str]:
     """Each conflicted path in order, with its diff, binary line or cause; then the way out."""
+    return [*problem_lines(conflicts.problems), CONFLICT_WAY_OUT]
+
+
+def problem_lines(problems: Iterable[SyncProblem]) -> list[str]:
+    """Each of ``problems`` in the given order, with its diff, binary line or cause."""
     lines: list[str] = []
-    for problem in conflicts.problems:
+    for problem in problems:
         if isinstance(problem, ContentConflict):
             lines.extend(_content_lines(problem))
         else:
             lines.append(shown_text(f"{shown_path(problem.path)}: {problem.message}"))
-    lines.append(CONFLICT_WAY_OUT)
     return lines
 
 
-def _text(content: bytes) -> str | None:
+def is_text(content: bytes) -> str | None:
     """``content`` as text, or ``None`` when it is not UTF-8 or holds a NUL (binary)."""
     try:
         text = content.decode("utf-8")
@@ -76,7 +88,7 @@ def _text(content: bytes) -> str | None:
 
 def _content_lines(conflict: ContentConflict) -> list[str]:
     path = shown_path(conflict.path)
-    on_disk, render = _text(conflict.on_disk), _text(conflict.render)
+    on_disk, render = is_text(conflict.on_disk), is_text(conflict.render)
     if on_disk is None or render is None:
         disk_digest = hashlib.sha256(conflict.on_disk).hexdigest()[:DIGEST_SHOWN]
         render_digest = hashlib.sha256(conflict.render).hexdigest()[:DIGEST_SHOWN]
@@ -88,16 +100,17 @@ def _content_lines(conflict: ContentConflict) -> list[str]:
     return [*lines[:MAX_DIFF_LINES], f"… {len(lines) - MAX_DIFF_LINES} more lines"]
 
 
-def _split(text: str) -> list[str]:
-    # On "\n" only, each line with its end: a "\r" stays visible, a missing last newline too.
+def split_lines(text: str) -> list[str]:
+    r"""``text`` split on ``"\n"`` only, each line with its end: a ``"\r"`` stays visible, and so
+    does a missing last newline."""
     parts = text.split("\n")
     return [f"{part}\n" for part in parts[:-1]] + ([parts[-1]] if parts[-1] else [])
 
 
 def _diff(on_disk: str, render: str, *, path: str) -> Iterator[str]:
     diff = difflib.unified_diff(
-        _split(on_disk),
-        _split(render),
+        split_lines(on_disk),
+        split_lines(render),
         fromfile=f"{path} (on disk)",
         tofile=f"{path} (render)",
         n=_CONTEXT_LINES,
