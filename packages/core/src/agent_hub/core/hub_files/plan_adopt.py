@@ -257,7 +257,7 @@ def _refusal_reason(path: str, conflicting: Collection[str], every: Mapping[str,
     if path in conflicting:
         return ACCEPT_CONFLICT
     if isinstance(every.get(path), MigrationListing):
-        # E22: a migration with a conflict under it is not listed; name what blocks it.
+        # E25(a): a migration with a conflict under it is not listed; name what blocks it.
         under = sorted(each for each in conflicting if path in _ancestors(each))
         return f"{ACCEPT_NOT_LISTED}: a conflict under it ({', '.join(under)})"
     return ACCEPT_NOT_LISTED
