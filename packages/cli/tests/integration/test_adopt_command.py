@@ -151,7 +151,8 @@ class TestUsage:
             lines = assert_failed(run_sync(root, *args), code=2)
 
             assert any("Usage:" in line for line in lines), lines
-            assert "--adopt" in "\n".join(lines)
+            # Under CI (GITHUB_ACTIONS) Typer colours the error box, splitting option names.
+            assert "--adopt" in unstyle("\n".join(lines))
         assert tree_digest(root) == before
         assert adapter_calls == []
 
