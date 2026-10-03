@@ -251,3 +251,25 @@ def test_ends_with_way_out_when_conflicts_reported() -> None:
     lines = conflict_lines(conflicts(PathProblem("a.md", "resolves outside the hub")))
 
     assert lines == ["a.md: resolves outside the hub", WAY_OUT]
+
+
+def test_words_recorded_and_migrated_when_check_lines_built() -> None:
+    adopted = {
+        "a.md": Verb.RECORDED,
+        ".claude/skills/s": Verb.CREATED,
+        ".claude/skills": Verb.MIGRATED,
+    }
+    plan = a_plan(adopted, lock_written=True)
+
+    assert change_lines(plan, check=False) == [
+        "migrated .claude/skills",
+        "created .claude/skills/s",
+        "recorded a.md",
+        "updated hub.lock",
+    ]
+    assert change_lines(plan, check=True) == [
+        "would migrate .claude/skills",
+        "would create .claude/skills/s",
+        "would record a.md",
+        "would update hub.lock",
+    ]
