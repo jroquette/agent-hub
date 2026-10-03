@@ -396,8 +396,16 @@ class TestTeamIdentity:
             ("", ENV_EMAIL),
             (ENV_NAME, ""),
             ("Jane\x01", ENV_EMAIL),
+            (os.fsdecode(b"Jos\xe9"), ENV_EMAIL),
         ],
-        ids=["name-unset", "email-unset", "name-empty", "email-empty", "name-control"],
+        ids=[
+            "name-unset",
+            "email-unset",
+            "name-empty",
+            "email-empty",
+            "name-control",
+            "name-not-utf8",
+        ],
     )
     def test_warns_and_writes_nothing_when_env_identity_unusable(
         self, name: str | None, email: str | None, cloud_ws: CloudWorkspace
