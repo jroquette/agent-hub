@@ -3,15 +3,19 @@
 ``plan_adopt`` takes what ``plan_sync`` takes, except that the hub may have no ``hub.lock`` yet.
 A path the lock records follows plain sync's rule. A rendered path with no entry is settled when
 adopt can decide it alone: equal to its render, it is recorded as managed; a managed path that is
-absent, or a seeded one, is created; a seeded file present (whatever its bytes) is recorded. Every
-other path is left as it is and out of the new lock, at its previous entry when it had one (spec
-Q-4), and the settled paths are still applied. The plan names each such path in ``conflicts``
-with sync's cause. It does no I/O; the generator's file adapter applies the plan, ``hub.lock`` last.
+absent, or a seeded one, is created; a seeded file present (whatever its bytes) is recorded. A
+managed path with no entry that has its rendered type and place but other bytes, executable bit
+or link target is listed in ``listed``, with both sides. Every other path (a type misfit, a
+symlinked ancestor, a link resolving outside, a name in both plugins, a conflict of sync's rule)
+is named in ``conflicts`` with sync's cause. Listed and conflicting paths are left as they are and
+out of the new lock, at their previous entry when they had one (spec Q-4), and the settled paths
+are still applied. It does no I/O; the generator's file adapter applies the plan, ``hub.lock`` last.
 """
 
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import ClassVar, TypeIs
 
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.extension_inputs import ExtensionInputs
@@ -27,6 +31,7 @@ from agent_hub.core.hub_files.plan_init import (
     FileWrite,
     LinkWrite,
     _check_render,
+    _content,
     _missing_folders,
 )
 from agent_hub.core.hub_files.plan_sync import (
@@ -34,8 +39,10 @@ from agent_hub.core.hub_files.plan_sync import (
     SyncProblem,
     Verb,
     _changes,
+    _fits,
     _leftovers,
     _name_clashes,
+    _placement_problem,
     _problems,
     _Rendered,
     _rendered_verdict,
@@ -43,8 +50,10 @@ from agent_hub.core.hub_files.plan_sync import (
     _Verdict,
     _write,
 )
+from agent_hub.core.hub_files.rendered_file import Ownership
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
-from agent_hub.core.hub_files.tree_snapshot import TreeEntry, TreeSnapshot
+from agent_hub.core.hub_files.rendered_link import RenderedLink
+from agent_hub.core.hub_files.tree_snapshot import FileEntry, LinkEntry, TreeEntry, TreeSnapshot
 
 # The verbs a path is written with; ``RECORDED`` and ``MIGRATED`` paths are joined as they are.
 _WRITTEN = frozenset({Verb.CREATED, Verb.RESTORED, Verb.UPDATED})
@@ -55,27 +64,34 @@ class ListedKind(StrEnum):
 
     CONTENT = "content"
     LINK = "link"
+    # A directory link holding rendered links (AGH-16 plan task 1.3).
     MIGRATION = "migration"
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
-class Listed:
-    """A path adopt leaves as it is until ``--accept`` names it, with both sides of the difference.
+class ContentDifference:
+    """A managed file with no lock entry whose bytes or executable bit differ from its render."""
 
-    ``CONTENT`` fills the bytes (``None`` on the side not read) and executable bits; ``LINK`` the
-    two targets; ``MIGRATION`` the directory link's target and ``link_count``, the number of links
-    rendered under it.
-    """
-
+    kind: ClassVar[ListedKind] = ListedKind.CONTENT
     path: str
-    kind: ListedKind
-    on_disk: bytes | None = None
-    render: bytes | None = None
-    on_disk_executable: bool = False
-    render_executable: bool = False
-    on_disk_target: str | None = None
-    render_target: str | None = None
-    link_count: int = 0
+    on_disk: bytes
+    render: bytes
+    on_disk_executable: bool
+    render_executable: bool
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LinkDifference:
+    """A managed link with no lock entry whose target differs from its render's."""
+
+    kind: ClassVar[ListedKind] = ListedKind.LINK
+    path: str
+    on_disk_target: str
+    render_target: str
+
+
+# A path adopt leaves as it is until ``--accept`` names it, with both sides of the difference.
+type Listed = ContentDifference | LinkDifference
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -94,7 +110,6 @@ class AdoptPlan:
     changes: tuple[SyncChange, ...]
     lock: HubLock
     lock_written: bool
-    # Filled by the listing rules (AGH-16 plan tasks 1.2 and 1.3); empty until then.
     listed: tuple[Listed, ...]
     conflicts: tuple[SyncProblem, ...]
 
@@ -109,13 +124,54 @@ class AdoptPlan:
         return not (self.listed or self.conflicts)
 
 
+# What adopt does at one path: sync's verdict, or a difference it lists.
+type _AdoptVerdict = _Verdict | Listed
+
+
+def _is_listed(verdict: _AdoptVerdict) -> TypeIs[Listed]:
+    return isinstance(verdict, ContentDifference | LinkDifference)
+
+
+def _difference(rendered: _Rendered, disk: TreeEntry) -> Listed | None:
+    """Both sides of a managed path that has its rendered type, or ``None`` when it has not."""
+    if isinstance(rendered, RenderedLink):
+        if not isinstance(disk, LinkEntry):
+            return None
+        return LinkDifference(
+            path=rendered.path, on_disk_target=disk.target, render_target=rendered.target
+        )
+    if not isinstance(disk, FileEntry):
+        return None
+    return ContentDifference(
+        path=rendered.path,
+        on_disk=_content(disk, rendered.path),
+        render=rendered.content,
+        on_disk_executable=disk.executable,
+        render_executable=rendered.executable,
+    )
+
+
 def _adopt_verdict(
     rendered: _Rendered, entry: LockEntry | None, entries: Mapping[str, TreeEntry]
-) -> _Verdict:
+) -> _AdoptVerdict:
     verdict = _rendered_verdict(rendered, entry, entries)
+    if entry is not None or isinstance(verdict, Verb):
+        return verdict
     # With no entry, sync's "nothing to do" is a managed path equal to its render or a seeded file
     # present: adopt joins it to the lock as it is.
-    return Verb.RECORDED if entry is None and verdict is None else verdict
+    if verdict is None:
+        return Verb.RECORDED
+    # Sync's conflict for a managed path with no entry that differs where it fits: listed. A
+    # misplaced path (symlinked ancestor, link resolving outside) or a type misfit stays a conflict.
+    disk = entries.get(rendered.path)
+    if (
+        rendered.ownership is Ownership.MANAGED
+        and disk is not None
+        and _fits(rendered, disk)
+        and _placement_problem(rendered.path, entries) is None
+    ):
+        return _difference(rendered, disk) or verdict
+    return verdict
 
 
 def _settled_lock(
@@ -153,17 +209,26 @@ def plan_adopt(
     entries = tree.entries
     old = {} if lock is None else lock.files
     items: list[_Rendered] = [*rendered.files, *rendered.links]
-    verdicts: dict[str, _Verdict] = {
+    every: dict[str, _AdoptVerdict] = {
         each.path: _adopt_verdict(each, old.get(each.path), entries) for each in items
     }
+    verdicts = {path: verdict for path, verdict in every.items() if not _is_listed(verdict)}
     gone = {
         path: _unrendered_verdict(path, entry, entries)
         for path, entry in old.items()
-        if path not in verdicts
+        if path not in every
     }
     clashes = _name_clashes(rendered, project=config.project.name, extensions=extensions)
     conflicts = _problems([*verdicts.values(), *gone.values(), *clashes])
-    unsettled = {each.path for each in conflicts}
+    conflicting = {each.path for each in conflicts}
+    # A listed path that also clashes is a conflict: ``--accept`` may not take it.
+    listed = tuple(
+        sorted(
+            (each for each in every.values() if _is_listed(each) and each.path not in conflicting),
+            key=lambda each: each.path,
+        )
+    )
+    unsettled = conflicting | {each.path for each in listed}
     # A name clash leaves a path whose own verdict is a verb: only the settled verdicts count.
     settled = {
         path: verdict for path, verdict in (verdicts | gone).items() if path not in unsettled
@@ -178,7 +243,7 @@ def plan_adopt(
     lock_written = new_bytes != lock_content
     if lock_written:
         writes.append(FileWrite(path=HUB_LOCK_PATH, content=new_bytes, executable=False))
-    planned = {*verdicts, *old, HUB_JSON_PATH, HUB_LOCK_PATH}
+    planned = {*every, *old, HUB_JSON_PATH, HUB_LOCK_PATH}
     return AdoptPlan(
         leftovers=_leftovers(entries, planned),
         deletes=tuple(sorted(path for path, verdict in settled.items() if verdict is Verb.DELETED)),
@@ -187,6 +252,6 @@ def plan_adopt(
         changes=_changes(settled),
         lock=new_lock,
         lock_written=lock_written,
-        listed=(),
+        listed=listed,
         conflicts=conflicts,
     )
