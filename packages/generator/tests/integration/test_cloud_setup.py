@@ -2,9 +2,12 @@
 
 ``TestParity`` holds the hub's own ``cloud-setup.sh`` behaviour (its characterization cases:
 identity global and per repo, fetch, clone, a failed fetch or clone as a WARN with exit 0, no
-author → no identity). ``TestSecrecy``: a synthetic ``GH_TOKEN`` reaches git only through the
-credential helper and shows nowhere. ``TestAccess`` (criterion 10.3, E11, Q-8): ``git ls-remote``
-on the pinned tag, then one ``uvx`` warm-up, before any repo; each failure exits 1 in one line.
+author → no identity; ``hub.json``'s author wins over ``HUB_AUTHOR_*``). ``TestTeamIdentity``
+(AGH-65): with no author in ``hub.json``, ``HUB_AUTHOR_NAME``/``HUB_AUTHOR_EMAIL`` are written
+repo-local only, else one WARN and nothing written. ``TestSecrecy``: a synthetic ``GH_TOKEN``
+reaches git only through the credential helper and shows nowhere. ``TestAccess`` (criterion
+10.3, E11, Q-8): ``git ls-remote`` on the pinned tag, then one ``uvx`` warm-up, before any repo;
+each failure exits 1 in one line.
 
 The workspace, all under ``tmp_path`` and offline: ``ws/demo-hub`` is the ALL render (a git repo,
 ``hub.json`` pinned to ``VERSION``); ``ws/demo-api`` is a clone one commit behind its origin;
@@ -326,6 +329,93 @@ class TestParity:
         assert not any("git identity" in line for line in completed.stdout.splitlines())
         assert cloud_ws.config("--global", "--get-regexp", "^user[.]") == []
         assert cloud_ws.config("--local", "--get-regexp", "^user[.]", cwd=cloud_ws.hub) == []
+        assert (cloud_ws.workspace / MISSING / ".git").is_dir()
+
+    def test_ignores_env_identity_when_hub_json_sets_author(self, cloud_ws: CloudWorkspace) -> None:
+        # AGH-65 AC-65.13: hub.json's author wins; the variables are not even read.
+        completed = cloud_ws.run(env=env_identity(ENV_NAME, ENV_EMAIL))
+
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stdout.splitlines()[0] == identity_line()
+        assert cloud_ws.config("--global", "user.name") == [AUTHOR_NAME]
+        assert cloud_ws.config("--global", "user.email") == [AUTHOR_EMAIL]
+        for repo in (cloud_ws.hub, cloud_ws.workspace / PRESENT, cloud_ws.workspace / MISSING):
+            assert cloud_ws.config("--local", "user.name", cwd=repo) == [AUTHOR_NAME], repo
+            assert cloud_ws.config("--local", "user.email", cwd=repo) == [AUTHOR_EMAIL], repo
+
+
+# AGH-65 AC-65.14: a team hub.json names no author; the session's variables give one, written to
+# each repo's own config only, never to ~/.gitconfig (other developers' sessions may share it).
+ENV_NAME = "Jane Roe"
+ENV_EMAIL = "jane.doe@example.com"
+ENV_IDENTITY_LINE = (
+    f"cloud-setup: git identity (repo-local, from HUB_AUTHOR_NAME/HUB_AUTHOR_EMAIL) = "
+    f"{ENV_NAME} <{ENV_EMAIL}>"
+)
+NO_AUTHOR_WARN = (
+    "cloud-setup: WARN no commit author in hub.json or HUB_AUTHOR_NAME/HUB_AUTHOR_EMAIL; "
+    "commits carry the container's identity"
+)
+
+
+def env_identity(name: str | None, email: str | None) -> dict[str, str]:
+    """``HUB_AUTHOR_NAME``/``HUB_AUTHOR_EMAIL``, each left out when ``None``."""
+    pairs = {"HUB_AUTHOR_NAME": name, "HUB_AUTHOR_EMAIL": email}
+    return {key: value for key, value in pairs.items() if value is not None}
+
+
+def a_team_document() -> dict[str, object]:
+    """ALL's pinned ``hub.json`` without the identity keys: each developer brings their own."""
+    document = a_pinned_document()
+    for key in ("branch_prefix", "author_name", "author_email"):
+        del document["project"][key]  # type: ignore[attr-defined]
+    return document
+
+
+class TestTeamIdentity:
+    def test_sets_env_identity_locally_when_hub_json_has_none(
+        self, cloud_ws: CloudWorkspace
+    ) -> None:
+        cloud_ws.write_hub_json(a_team_document())
+
+        completed = cloud_ws.run(env=env_identity(ENV_NAME, ENV_EMAIL))
+
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stdout.splitlines().count(ENV_IDENTITY_LINE) == 1
+        assert NO_AUTHOR_WARN not in completed.stdout.splitlines()
+        assert cloud_ws.config("--global", "--get-regexp", "^user[.]") == []
+        for repo in (cloud_ws.hub, cloud_ws.workspace / PRESENT, cloud_ws.workspace / MISSING):
+            assert cloud_ws.config("--local", "user.name", cwd=repo) == [ENV_NAME], repo
+            assert cloud_ws.config("--local", "user.email", cwd=repo) == [ENV_EMAIL], repo
+
+    @pytest.mark.parametrize(
+        ("name", "email"),
+        [
+            (None, ENV_EMAIL),
+            (ENV_NAME, None),
+            ("", ENV_EMAIL),
+            (ENV_NAME, ""),
+            ("Jane\x01", ENV_EMAIL),
+        ],
+        ids=["name-unset", "email-unset", "name-empty", "email-empty", "name-control"],
+    )
+    def test_warns_and_writes_nothing_when_env_identity_unusable(
+        self, name: str | None, email: str | None, cloud_ws: CloudWorkspace
+    ) -> None:
+        cloud_ws.write_hub_json(a_team_document())
+
+        completed = cloud_ws.run(env=env_identity(name, email))
+
+        assert completed.returncode == 0, completed.stderr
+        lines = completed.stdout.splitlines()
+        assert [line for line in lines if "WARN" in line and "container's identity" in line] == [
+            NO_AUTHOR_WARN
+        ]
+        assert not any("git identity" in line for line in lines)
+        assert cloud_ws.config("--global", "--get-regexp", "^user[.]") == []
+        for repo in (cloud_ws.hub, cloud_ws.workspace / PRESENT, cloud_ws.workspace / MISSING):
+            assert cloud_ws.config("--local", "--get-regexp", "^user[.]", cwd=repo) == [], repo
+        # The run goes on: the missing repo is still cloned.
         assert (cloud_ws.workspace / MISSING / ".git").is_dir()
 
 
