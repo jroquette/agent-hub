@@ -4,7 +4,8 @@ The hub is ``AGENT_HUB_ROOT`` or the cwd; its ``hub.json`` must select ``bench``
 exit 2 before any read of the cases or any child process: an option out of its bound,
 ``--validate`` with a run option, ``BENCH_EFFORT`` (the sessions' ``effortLevel``; unset or
 empty is ``medium``) other than ``low``, ``medium`` or ``high``, a folder that is not a hub, a
-hub without ``bench``. An invalid ``hub.json`` exits 1 with the reader's lines.
+hub without ``bench``. An invalid ``hub.json`` or ``hub.local.json`` exits 1 with the reader's
+lines.
 
 ``--validate`` checks the graders and never runs ``claude``: each case not excluded is graded at
 its merge's parent (it must fail) and at its merge (it must pass), one line each; a wrong grade
@@ -34,7 +35,7 @@ from agent_hub.cli.bench_steps import (
     workspace_lock_or_exit,
 )
 from agent_hub.cli.command_exits import FAILURE, fail
-from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
+from agent_hub.cli.effective_config import load_effective_config_or_exit
 from agent_hub.cli.hub_root import hub_root_or_exit, main_checkout
 from agent_hub.cli.run_children import SESSION_HIDDEN, without
 from agent_hub.core.bench.bench_cases import CASE_ID_PATTERN, MAX_CASES
@@ -195,7 +196,7 @@ def bench(  # noqa: PLR0913 - one parameter per option of spec D2
         context.fail(f"--per-run {per_run} is above --budget {budget}")
     effort = _effort_or_fail(context, os.environ)
     root = hub_root_or_exit(os.environ, command=COMMAND)
-    config = load_hub_config_or_exit(root / FILE_LABEL)
+    config = load_effective_config_or_exit(root).config
     if config.modules.bench is None:
         context.fail(NOT_SELECTED)
     options = BenchOptions(

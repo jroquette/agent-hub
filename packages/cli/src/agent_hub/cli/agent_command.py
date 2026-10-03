@@ -23,7 +23,7 @@ import typer.core
 from typer._click.core import Context
 
 from agent_hub.cli.command_exits import fail
-from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
+from agent_hub.cli.effective_config import load_effective_config_or_exit
 from agent_hub.cli.hub_root import hub_root_or_exit
 from agent_hub.cli.init_report import shown_path
 from agent_hub.core.workspace.agent_launch import (
@@ -56,7 +56,7 @@ class PassThroughCommand(typer.core.TyperCommand):
 def agent(context: typer.Context) -> None:
     """Start Claude Code with every repo in hub.json attached; every argument goes to claude."""
     root = hub_root_or_exit(os.environ, command=COMMAND)
-    config = load_hub_config_or_exit(root / FILE_LABEL)
+    config = load_effective_config_or_exit(root).config
     if shutil.which(CLAUDE) is None:
         fail(CLAUDE_MISSING)
     attached: list[str] = []

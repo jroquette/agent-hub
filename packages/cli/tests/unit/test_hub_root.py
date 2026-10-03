@@ -13,6 +13,7 @@ from agent_hub.cli.hub_root import (
     HUB_ROOT_VARIABLE,
     NOT_A_HUB_EXIT,
     hub_root_or_exit,
+    local_home,
     main_checkout,
 )
 
@@ -173,3 +174,37 @@ def test_keeps_caller_group_when_main_checkout_read(
     assert main_checkout(hub, git=found_git(), environ=environ) == hub.resolve()
     assert [call.get("own_session", "unset") for call in calls] == [False]
     assert calls[0]["timeout"] is None
+
+
+def refuse_child(argv: list[str], **options: Any) -> ChildResult:
+    raise AssertionError(f"no child expected: {argv}")
+
+
+def test_returns_root_without_git_when_root_has_no_git_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(hub_root, "run_child", refuse_child)
+    plain = a_hub(tmp_path / "plain")
+    checkout = a_hub(tmp_path / "checkout")
+    (checkout / ".git").mkdir()
+
+    assert local_home(plain, environ=git_environ(tmp_path)) == plain
+    assert local_home(checkout, environ=git_environ(tmp_path)) == checkout
+
+
+def test_returns_main_checkout_when_root_is_hub_worktree(tmp_path: Path) -> None:
+    environ = git_environ(tmp_path)
+    hub = a_git_hub(tmp_path / "hub", environ)
+    worktree = hub / ".claude" / "worktrees" / "x"
+    run_git(hub, environ, "worktree", "add", "-q", "-b", "x", str(worktree))
+
+    assert local_home(worktree, environ=environ) == hub.resolve()
+
+
+def test_returns_root_when_git_cannot_run(tmp_path: Path) -> None:
+    environ = git_environ(tmp_path)
+    hub = a_git_hub(tmp_path / "hub", environ)
+    worktree = hub / ".claude" / "worktrees" / "x"
+    run_git(hub, environ, "worktree", "add", "-q", "-b", "x", str(worktree))
+
+    assert local_home(worktree, environ=environ | {"PATH": str(tmp_path / "empty")}) == worktree

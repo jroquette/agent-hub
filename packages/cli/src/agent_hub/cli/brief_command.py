@@ -24,8 +24,8 @@ from typing import Annotated, Final, NamedTuple
 import typer
 
 from agent_hub.cli.child_process import git_env, run_child
+from agent_hub.cli.effective_config import load_effective_config_or_exit
 from agent_hub.cli.errors import ChildTimedOutError
-from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
 from agent_hub.cli.hub_root import hub_root_or_exit
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.workspace.brief_text import (
@@ -76,7 +76,7 @@ def brief(
 ) -> None:
     """Print the session brief: now.md, the last journal days, each repo's git, PR and CI state."""
     root = hub_root_or_exit(os.environ, command=COMMAND)
-    config = load_hub_config_or_exit(root / FILE_LABEL)
+    config = load_effective_config_or_exit(root).config
     day = today()
     now_text = _file_text(root / NOW_PATH)
     inputs = BriefInputs(

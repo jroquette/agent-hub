@@ -171,6 +171,22 @@ def test_prints_reader_lines_when_hub_json_invalid(
     assert brief_workspace.calls() == b""
 
 
+def test_prints_local_lines_when_local_file_invalid(
+    brief_workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(brief_workspace.hub)
+    (brief_workspace.hub / "hub.local.json").write_text('{"repos": []}', encoding="utf-8")
+
+    result = run_brief(brief_workspace)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    lines = result.stderr.splitlines()
+    assert len(lines) == 1, lines
+    assert lines[0].startswith("hub.local.json: repos: set only in hub.json"), lines
+    assert brief_workspace.calls() == b""
+
+
 def test_refuses_when_pin_differs(
     brief_workspace: Workspace, monkeypatch: pytest.MonkeyPatch
 ) -> None:

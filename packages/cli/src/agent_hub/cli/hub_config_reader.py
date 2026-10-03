@@ -4,7 +4,9 @@ This module reads the file; core's ``check_hub_document`` checks it, in the orde
 docs/design/project-config.md § Versioning: the pin, then ``schema_version``, then the model.
 The file is read once, as bytes, so a caller that copies it gets exactly what was checked.
 ``read_hub_bytes`` returns only the bytes read and ``read_hub_json`` the problems;
-``load_hub_json_or_exit`` prints one line per problem and exits 1.
+``load_hub_json_or_exit`` prints one line per problem and exits 1. ``read_local_json`` reads the
+developer's ``hub.local.json`` the same way, capped at ``LOCAL_FILE_MAX_BYTES``; an absent one sets
+nothing, and ``local_lines`` gives its problems' lines.
 """
 
 import json
@@ -17,6 +19,12 @@ from typing import NamedTuple, NoReturn
 import typer
 
 from agent_hub.core.hub_config.document_check import check_hub_document
+from agent_hub.core.hub_config.local_config import (
+    LOCAL_FILE,
+    LOCAL_FILE_MAX_BYTES,
+    LocalConfig,
+    check_local_document,
+)
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ROOT_PATH, ConfigProblem
 from agent_hub.core.json_form import InvalidJsonError, JsonValue, load_json_bytes
@@ -77,6 +85,26 @@ def load_hub_config_or_exit(path: Path) -> HubConfig:
     return load_hub_json_or_exit(path).config
 
 
+def read_local_json(path: Path) -> LocalConfig | tuple[ConfigProblem, ...]:
+    """The developer's local config in ``path``, ``LocalConfig()`` when absent, or its problems.
+
+    Read as ``hub.json`` is (a regular file only, never blocking on a FIFO), up to
+    ``LOCAL_FILE_MAX_BYTES``.
+    """
+    content = _read_bytes(path, max_bytes=LOCAL_FILE_MAX_BYTES)
+    if isinstance(content, _Unread):
+        return LocalConfig() if content.is_missing else (content.problem,)
+    parsed = _parse(content)
+    if isinstance(parsed, ConfigProblem):
+        return (parsed,)
+    return check_local_document(parsed)
+
+
+def local_lines(problems: tuple[ConfigProblem, ...]) -> list[str]:
+    """One ``hub.local.json: <path>: <message>`` line per problem."""
+    return [_line(LOCAL_FILE, problem) for problem in problems]
+
+
 def _load(path: Path) -> LoadedHubJson | _Unread | tuple[ConfigProblem, ...]:
     content = _read_bytes(path)
     if isinstance(content, _Unread):
@@ -90,9 +118,13 @@ def _load(path: Path) -> LoadedHubJson | _Unread | tuple[ConfigProblem, ...]:
     return LoadedHubJson(content=content, config=checked)
 
 
-def _read_bytes(path: Path) -> bytes | _Unread:
+def _read_bytes(path: Path, *, max_bytes: int | None = None) -> bytes | _Unread:
     # The path is quoted and escaped, so it stays on the one line.
     shown_path = json.dumps(str(path))
+    too_large = _Unread(
+        ConfigProblem(ROOT_PATH, f"cannot read {shown_path}: larger than {max_bytes} bytes"),
+        is_missing=False,
+    )
     not_regular = _Unread(
         ConfigProblem(ROOT_PATH, f"cannot read {shown_path}: not a regular file"), is_missing=False
     )
@@ -105,9 +137,16 @@ def _read_bytes(path: Path) -> bytes | _Unread:
         descriptor = os.open(path, _OPEN_FLAGS)
         # What was opened is what gets read: a swap after the check above fails here instead.
         with open(descriptor, "rb") as opened:
-            if not stat.S_ISREG(os.fstat(opened.fileno()).st_mode):
+            found = os.fstat(opened.fileno())
+            if not stat.S_ISREG(found.st_mode):
                 return not_regular
-            return opened.read()
+            if max_bytes is None:
+                return opened.read()
+            if found.st_size > max_bytes:
+                return too_large
+            # One byte more than allowed tells a file that grew after the fstat.
+            content = opened.read(max_bytes + 1)
+            return too_large if len(content) > max_bytes else content
     except OSError as error:
         reason = error.strerror or type(error).__name__
         return _Unread(
@@ -127,7 +166,11 @@ def _parse(content: bytes) -> JsonValue | ConfigProblem:
 def _fail(*problems: ConfigProblem, hint: str | None = None) -> NoReturn:
     # Each problem is built on one line: text from the file is escaped where it is quoted.
     for problem in problems:
-        typer.echo(f"{FILE_LABEL}: {problem.path}: {problem.message}", err=True)
+        typer.echo(_line(FILE_LABEL, problem), err=True)
     if hint is not None:
         typer.echo(f"{FILE_LABEL}: {hint}", err=True)
     raise typer.Exit(FAILURE)
+
+
+def _line(label: str, problem: ConfigProblem) -> str:
+    return f"{label}: {problem.path}: {problem.message}"
