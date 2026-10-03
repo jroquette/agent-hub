@@ -29,12 +29,16 @@ jobs:
       # needs none. Through git config in the job's environment (the golden step and make check
       # both install the pinned release), never in a URL in a file. insteadOf is a prefix match
       # and the longest one wins: the second pair maps this hub's own URL to itself, so the token
-      # never goes to the hub.
+      # never goes to the hub. A token outside GitHub's [A-Za-z0-9_] is refused before anything is
+      # written, so it cannot add lines to the job's environment.
       - name: Platform read credential
         env:
           TOKEN: ${{ secrets.AGENT_HUB_READ_TOKEN }}
         run: |
           [ -n "$TOKEN" ] || exit 0
+          case $TOKEN in
+            *[!A-Za-z0-9_]*) echo "AGENT_HUB_READ_TOKEN: unexpected characters" >&2; exit 1 ;;
+          esac
           release="@@{platform_repository}@v"
           url="${release%@v}"
           url="${url#git+}"
