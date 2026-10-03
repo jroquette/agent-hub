@@ -25,9 +25,8 @@ from agent_hub.cli.command_exits import (
 )
 from agent_hub.cli.git_defaults import AUTHOR_EMAIL, AUTHOR_NAME, HUB_REPO, read_git_defaults
 from agent_hub.cli.hub_config_reader import DISTRIBUTION, load_hub_json_or_exit
-from agent_hub.cli.init_config import document_from_flags, flag_problems
+from agent_hub.cli.init_config import check_flag_document, document_from_flags, flag_problems
 from agent_hub.cli.init_report import created_lines, next_steps, shown_path
-from agent_hub.core.hub_config.document_check import check_hub_document
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.hub_files.extension_inputs import ExtensionInputs
@@ -166,7 +165,7 @@ def _config_from_flags_or_exit(
         hub_repo=values[HUB_REPO],
         version=running,
     )
-    checked = check_hub_document(document, running_version=running)
+    checked = check_flag_document(document, running_version=running)
     if not isinstance(checked, HubConfig):
         fail(*flag_problems(_with_git_reasons(checked, defaults.problems), repos=required["repos"]))
     return checked, dump_json(document)

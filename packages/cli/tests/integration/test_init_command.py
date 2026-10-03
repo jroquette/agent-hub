@@ -262,6 +262,26 @@ def test_copies_config_bytes_when_config_given(
     assert result.stderr == ""
 
 
+def test_copies_config_without_identity_when_config_given(
+    target: Path, tmp_path: Path, demo_document: dict[str, Any]
+) -> None:
+    # A team hub.json: each developer sets the identity in hub.local.json or git config.
+    for key in ("branch_prefix", "author_name", "author_email"):
+        del demo_document["project"][key]
+    content = dump_json(demo_document)
+    config = tmp_path / "team.json"
+    config.write_bytes(content)
+
+    result = run_init(["--config", str(config), "--dir", str(target)])
+
+    assert result.exit_code == 0, result.stderr
+    assert (target / "hub.json").read_bytes() == content
+    project = written_config(target).project
+    assert (project.branch_prefix, project.author_name, project.author_email) == (None, None, None)
+    assert (target / "hub.lock").is_file()
+    assert result.stderr == ""
+
+
 def test_prints_pinned_command_when_config_pin_differs(
     tmp_path: Path, demo_document: dict[str, Any]
 ) -> None:

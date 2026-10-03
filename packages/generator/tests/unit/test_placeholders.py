@@ -11,13 +11,12 @@ from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_m
 # derived module includes (erratum E2), contract-sync's two repo dirs (AGH-17 G8) and the module
 # files AGENTS.md names (AGH-17 2.11), and AGENTS.md's two branch mentions (AGH-46). author_name,
 # check_fast, check and platform.version are read at run time or quoted per format, never
-# placeholders.
+# placeholders; author_email is per developer and no template names it (AGH-65).
 RENDERED_KEYS = {
     "project_name",
     "project_hub_repo",
     "project_branch_prefix",
     "project_default_branch",
-    "project_author_email",
     "tracker_team",
     "repo_dirs",
     "repo_githubs",
@@ -55,7 +54,6 @@ def test_takes_values_from_model_when_demo_mapped(demo_config: HubConfig) -> Non
         "project_hub_repo": "acme/demo-hub",
         "project_branch_prefix": "jdoe/",
         "project_default_branch": "main",
-        "project_author_email": "jane@example.com",
         "tracker_team": "DEM",
         "repo_dirs": "demo-api",
         "repo_githubs": "acme/demo-api",
