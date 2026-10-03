@@ -1,10 +1,10 @@
-# Hub sync: hub.lock, hub sync, --check and --adopt
+# Hub sync: hub.lock, hub sync and --check
 
 ## Purpose
 
-Phase 1 contract for `hub.lock`, `hub sync [--check]`, the one write path `hub init` shares, the `*.project.json`
-merge and the project-entry links; `hub sync --adopt`: [hub-adopt.md](hub-adopt.md). What is rendered and who owns it,
-`hub init`, hooks, commands: [hub-generator.md](hub-generator.md). Config: [project-config.md](project-config.md).
+Phase 1 contract for `hub.lock`, `hub sync [--check]`, the write path `hub init` shares, the `*.project.json` merge
+and the project-entry links; `--adopt`: [hub-adopt.md](hub-adopt.md). Rendering, ownership, `hub init`, hooks, commands:
+[hub-generator.md](hub-generator.md). Config: [project-config.md](project-config.md); reasons: the ADRs.
 
 ## Contract
 

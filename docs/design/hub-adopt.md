@@ -66,7 +66,8 @@ keeps the old `hub.lock` (absent or its prior bytes); a plain `--adopt` then end
   `removed N leftover temporary files`, then `updated hub.lock` last (also when there was no lock). With nothing to
   write, it is `up to date` only when the run is settled (nothing listed, nothing conflicting), and empty otherwise.
 - **stderr**, when not settled: each listed path, sorted, one line with no digests:
-  - text: `P: +a -b lines` (counted as sync's diff counts them);
+  - text: `P: +a -b lines` (counted as sync's diff counts them), then
+    `, executable bit differs (on disk +x, render -x)` when the bit differs too;
   - executable bit only: `P: +0 -0 lines, executable bit differs (on disk +x, render -x)`;
   - binary (not UTF-8, or a NUL): `P: binary content differs`, plus the same bit clause when it differs too;
   - link: `P: link target differs (on disk -> X, render -> Y)`;
@@ -85,7 +86,8 @@ keeps the old `hub.lock` (absent or its prior bytes); a plain `--adopt` then end
 ## Invariants
 
 - Adopt plans every path, and decides every `--accept`, before its first write; it never writes `hub.json`, never
-  runs `git` or commits, and never reads or touches an entry neither rendered nor in the lock (sync's read).
+  runs `git` or commits, and never reads or touches an entry neither rendered nor in the lock (sync's read), bar
+  removing leftover temporary files in listed folders and listing the project's agent and skill entries.
 - A listed or conflicting path is left byte-, mode- and target-identical; only `--accept` replaces it.
 - Same `hub.json`, release, extension inputs and tree, same output, tree and `hub.lock` bytes. After a settled adopt
   the lock is `build_hub_lock` of the render, and the next `hub sync` or `--adopt` prints `up to date`.

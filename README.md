@@ -739,7 +739,7 @@ From the phases in [docs/SPEC.md](docs/SPEC.md#mvp-and-phases). Each phase start
 - [x] Phase 0, foundation: uv workspace, ADRs, `check-fast`/`check` gates, CI, the canonical event and `hub collect`
 - [x] `hub init` with managed and seeded files, `hub.lock` and the `hub.json` schema
 - [x] `hub sync` and `hub sync --check`
-- [x] `hub sync --adopt [--accept PATH]`: join a hand-made hub (release 0.7.0)
+- [x] `hub sync --adopt [--accept PATH]…`: join a hand-made hub (release 0.7.0)
 - [x] `hub doctor` with its rule set
 - [x] `hub worktree`, `hub brief`, `hub agent`, and the `./hub` and `./agent` shims pinned per hub (release 0.4.0)
 - [x] Tracker port with a Linear GraphQL adapter
