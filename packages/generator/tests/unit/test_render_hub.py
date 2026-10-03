@@ -1344,6 +1344,31 @@ def test_names_hub_commands_when_kickoff_or_feature_rendered(
     assert set(named) <= set(targets), named
 
 
+# AGH-16 inventory KO1, KO3: before any commit, kickoff checks the session's git identity against
+# hub.json and names the branch to work on; the cloud-setup sentence (KO2) stays a project rule.
+def test_checks_git_identity_when_kickoff_skill_rendered(
+    demo_config: HubConfig, demo_render: dict[str, RenderedFile]
+) -> None:
+    text = " ".join(skill_text(demo_render, "kickoff").split())
+    prefix = demo_config.project.branch_prefix
+    identity = (
+        "Check that `git config user.email` in the hub and in each repo equals `hub.json` →"
+        " `project.author_email`"
+    )
+    branch = (
+        "A session's designated `claude/…` branch is not a repo branch: work on"
+        f" `{prefix}<team>-<n>-<desc>`."
+    )
+
+    assert text.count(identity) == 1
+    assert text.count(branch) == 1
+    # The check comes before the next item is proposed, and leaves cloud setup to the project.
+    assert (
+        text.index(identity) < text.index(branch) < text.index("Propose the next unfinished item")
+    )
+    assert "cloud-setup" not in text
+
+
 def test_names_transcript_script_when_recall_rendered(
     demo_render: dict[str, RenderedFile],
 ) -> None:
