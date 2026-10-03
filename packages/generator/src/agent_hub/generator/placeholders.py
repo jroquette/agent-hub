@@ -40,10 +40,11 @@ _DEVELOPER_AUTHOR: Final = (
     "the developer running the session (`hub.local.json` → `project.author_name`,\n"
     "   `project.author_email`, else their `git config user.name`, `user.email`)"
 )
-# Appended to rule 1's branch line when each developer has their own prefix.
+# Appended to rule 1's branch line when each developer has their own prefix. It starts on its
+# own line, so a long tracker team key cannot push the branch line past 120 characters.
 _PREFIX_NOTE: Final = (
-    f" `{PREFIX_PLACEHOLDER}` is `hub.local.json` → `project.branch_prefix`, else the local part"
-    " of\n   your author email plus `/`."
+    f"\n   `{PREFIX_PLACEHOLDER}` is `hub.local.json` → `project.branch_prefix`, else the local"
+    " part of your author email plus `/`."
 )
 
 

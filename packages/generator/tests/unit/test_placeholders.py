@@ -210,8 +210,8 @@ DEVELOPER_AUTHOR = (
     "   `project.author_email`, else their `git config user.name`, `user.email`)"
 )
 PREFIX_NOTE = (
-    " `<prefix>` is `hub.local.json` → `project.branch_prefix`, else the local part of\n"
-    "   your author email plus `/`."
+    "\n   `<prefix>` is `hub.local.json` → `project.branch_prefix`, else the local part of your"
+    " author email plus `/`."
 )
 
 

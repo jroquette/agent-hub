@@ -1783,9 +1783,9 @@ TEAM_RULE = (
     " work, and no branch named\n"
     "   after an agent (e.g. `claude/…`). Branch: `<prefix><team>-<n>-<desc>`, where `<team>` is"
     " the\n"
-    "   tracker team DEM in lowercase. `<prefix>` is `hub.local.json` → `project.branch_prefix`,"
-    " else the local part of\n"
-    "   your author email plus `/`.\n"
+    "   tracker team DEM in lowercase.\n"
+    "   `<prefix>` is `hub.local.json` → `project.branch_prefix`, else the local part of your"
+    " author email plus `/`.\n"
     "2. No push"
 )
 
@@ -1818,6 +1818,18 @@ def test_renders_team_rules_when_identity_absent(demo_config: HubConfig) -> None
         for word in (b"None", b"null"):
             assert content.count(word) == (demo.get(file.path) or b"").count(word), file.path
     assert render_hub(config) == rendered
+
+
+def test_keeps_lines_within_width_when_team_key_long() -> None:
+    config = a_team_config()
+    config = config.model_copy(
+        update={"tracker": config.tracker.model_copy(update={"team": "LONGTEAMKEY1"})}
+    )
+
+    agents = text_of(config, "AGENTS.md")
+
+    assert "tracker team LONGTEAMKEY1 in lowercase." in agents
+    assert [line for line in agents.splitlines() if len(line) > 120] == []
 
 
 def test_keeps_agents_bytes_when_identity_in_hub_json(
