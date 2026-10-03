@@ -1214,6 +1214,17 @@ class TestProtectedBranches:
             for _, branch in pushes
         ]
 
+    def test_names_longest_branch_when_protected_branch_prefixes_another(
+        self, workspace: Path, guard: Guard
+    ) -> None:
+        # ``release`` matches the start of ``release/2`` too: the longest is tried first.
+        hub = with_repo_branches(workspace, {"app": "release", "web": "release/2"})
+        commands = ["git push origin release/2", "git push origin HEAD:release/2"]
+
+        verdicts = guard(hub / HOOKS, [bash_run(command, hub) for command in commands])
+
+        assert verdicts == [("deny", PUSH_REASON.format("release/2"))] * 2
+
     def test_allows_push_when_branch_only_shares_prefix(
         self, mixed_workspace: Path, guard: Guard
     ) -> None:
