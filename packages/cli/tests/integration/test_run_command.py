@@ -266,6 +266,19 @@ class TestRunWorkspace:
         assert "PATH" in logged[0]["env"]
         assert str(run_workspace.bin) not in json.dumps(logged[0]["env"])
 
+    def test_keeps_url_rewrite_when_git_identity_set_twice(self, run_workspace: Workspace) -> None:
+        workspace = run_workspace.workspace
+        clone = workspace.ws / "demo-api"
+
+        workspace.git_identity("Jane Roe", "jane@example.com")
+        workspace.git_identity("Jane Doe", "jane.doe@example.com")
+
+        email = run_tool("git", "config", "--get", "user.email", cwd=clone)
+        remote = run_tool("git", "ls-remote", "origin", "refs/heads/trunk", cwd=clone)
+        assert email.stdout == "jane.doe@example.com\n"
+        assert remote.returncode == 0, remote.stderr
+        assert remote.stdout.split() == [workspace.origin_head("demo-api"), "refs/heads/trunk"]
+
 
 KEY_VARIABLE = "LINEAR_API_KEY"
 PUSH_OPTIONS = (
