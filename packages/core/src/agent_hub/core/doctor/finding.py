@@ -45,6 +45,8 @@ class Read(StrEnum):
     # files (``config_lint``). Those sets come from the listing, so it needs no ``HUB_LISTING``.
     INSTRUCTION_FILES = "instruction_files"
     PLUGIN_FILES = "plugin_files"
+    # The developer's effective branch prefix, which may run ``git config`` in the hub.
+    DEVELOPER_IDENTITY = "developer_identity"
 
 
 # The reads the hub listing serves: the listing itself, and the file sets that come from it.

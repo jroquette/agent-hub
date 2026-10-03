@@ -34,6 +34,7 @@ RULE_TABLE_IDS = [
     "makefile.override",
     "features.tracker",
     "bench.tasks",
+    "config.identity",
 ]
 CONFIGURABLE_IDS = [rule_id for rule_id in RULE_TABLE_IDS if rule_id != "config.schema"]
 

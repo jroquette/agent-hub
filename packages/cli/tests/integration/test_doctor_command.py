@@ -1098,3 +1098,121 @@ def test_reports_error_when_checkout_cannot_be_looked_at(
         f" Permission denied {LISTING_FIX}",
         ONE_ERROR,
     ]
+
+
+type Workspace = Any
+
+DERIVED_INFO = (
+    "info config.identity: branch prefix `jane/` is derived from git config user.email"
+    " (hub.local.json and hub.json set none)"
+    " Fix: set project.branch_prefix in hub.local.json to choose another"
+)
+ONE_INFO = "0 errors, 0 warnings, 1 info"
+
+
+def identity_reads(traced_git: Any) -> list[str]:
+    """The ``git config --get user.*`` calls of a run."""
+    return [arguments for _, arguments in traced_git.calls() if "config --get user." in arguments]
+
+
+class TestIdentity:
+    def test_reports_derived_prefix_info_when_only_git_sets_email(
+        self, demo_workspace: Workspace, run_doctor: DoctorRunner, traced_git: Any
+    ) -> None:
+        demo_workspace.drop_identity()
+        demo_workspace.git_identity("Jane Roe", "jane@example.com")
+
+        lines = lines_of(run_doctor(demo_workspace.hub), exit_code=0)
+
+        assert lines == [DERIVED_INFO, ONE_INFO]
+        # Git is asked for the email only: the prefix needs nothing else.
+        assert identity_reads(traced_git) == ["config --get user.email"]
+
+    def test_reports_no_identity_info_when_local_sets_prefix(
+        self, demo_workspace: Workspace, run_doctor: DoctorRunner, traced_git: Any
+    ) -> None:
+        demo_workspace.drop_identity()
+        demo_workspace.git_identity("Jane Roe", "jane@example.com")
+        demo_workspace.write_local(json.dumps({"project": {"branch_prefix": "me/"}}))
+
+        lines = lines_of(run_doctor(demo_workspace.hub), exit_code=0)
+
+        assert lines == [CLEAN]
+        assert identity_reads(traced_git) == []
+
+    def test_reports_local_file_error_when_invalid(
+        self, demo_workspace: Workspace, run_doctor: DoctorRunner
+    ) -> None:
+        demo_workspace.write_local(json.dumps({"project": {"colour": "blue"}}))
+
+        lines = lines_of(run_doctor(demo_workspace.hub), exit_code=1)
+
+        assert lines == [
+            "error config.schema hub.local.json: project.colour: Extra inputs are not permitted"
+            " Fix: fix hub.local.json (docs/design/developer-identity.md)",
+            ONE_ERROR,
+        ]
+
+    def test_reports_local_file_error_when_hub_json_also_invalid(
+        self, demo_workspace: Workspace, run_doctor: DoctorRunner
+    ) -> None:
+        path = demo_workspace.hub / "hub.json"
+        document = json.loads(path.read_text())
+        document["shade"] = 1
+        path.write_text(json.dumps(document))
+        demo_workspace.write_local("[]")
+
+        lines = lines_of(run_doctor(demo_workspace.hub), exit_code=1)
+
+        assert lines == [
+            schema_line("shade: Extra inputs are not permitted"),
+            "error config.schema hub.local.json: $: must be a JSON object"
+            " Fix: fix hub.local.json (docs/design/developer-identity.md)",
+            "2 errors, 0 warnings, 0 infos",
+        ]
+
+    def test_finds_same_findings_when_valid_local_file_added(
+        self, demo_workspace: Workspace, run_doctor: DoctorRunner
+    ) -> None:
+        # The doctor judges the hub, not the developer: the same hub gives every developer the
+        # same findings, whatever their local file sets.
+        # `me/…` is a stale path to the hub, whose prefix is not `me/`, whatever the local one.
+        (demo_workspace.hub / "AGENTS.md").write_bytes(
+            b"# Agents\nRun `scripts/gone.py`.\nNot the branch `me/dem-1-x`.\n"
+        )
+        without = run_doctor(demo_workspace.hub)
+        demo_workspace.write_local(
+            json.dumps(
+                {
+                    "project": {
+                        "branch_prefix": "me/",
+                        "author_name": "Jane Roe",
+                        "author_email": "jane.doe@example.com",
+                    },
+                    "tracker": {"transport": "mcp"},
+                }
+            )
+        )
+
+        with_local = run_doctor(demo_workspace.hub)
+
+        assert lines_of(with_local, exit_code=1) == lines_of(without, exit_code=1)
+        shown = lines_of(without, exit_code=1)
+        refs = [line for line in shown if line.startswith("error instructions.refs AGENTS.md:")]
+        assert [line.split(" (no such path)")[0] for line in refs] == [
+            "error instructions.refs AGENTS.md:2: stale reference `scripts/gone.py`",
+            "error instructions.refs AGENTS.md:3: stale reference `me/dem-1-x`",
+        ]
+        # The edited AGENTS.md is also lock.drift's.
+        assert shown[-1] == "3 errors, 0 warnings, 0 infos"
+
+    def test_runs_no_git_config_when_only_config_schema_selected(
+        self, demo_workspace: Workspace, run_doctor: DoctorRunner, traced_git: Any
+    ) -> None:
+        demo_workspace.drop_identity()
+        demo_workspace.git_identity("Jane Roe", "jane@example.com")
+
+        lines = lines_of(run_doctor(demo_workspace.hub, "--only", "config.schema"), exit_code=0)
+
+        assert lines == [CLEAN]
+        assert identity_reads(traced_git) == []

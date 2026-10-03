@@ -123,6 +123,9 @@
         },
         "bench.tasks": {
           "$ref": "#/$defs/RuleSettings"
+        },
+        "config.identity": {
+          "$ref": "#/$defs/RuleSettings"
         }
       },
       "title": "DoctorRules",

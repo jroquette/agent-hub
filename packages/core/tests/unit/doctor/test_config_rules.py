@@ -3,9 +3,13 @@ from typing import Any
 
 import pytest
 
+from agent_hub.core.doctor import config_rules
 from agent_hub.core.doctor.config_rules import CONFIG_SCHEMA, PLATFORM_VERSION, config_state
+from agent_hub.core.doctor.finding import Read
 from agent_hub.core.doctor.snapshot import ConfigFailure, DoctorSnapshot, PinMismatch
 from agent_hub.core.hub_config.doctor_rules import Severity
+from agent_hub.core.hub_config.effective_identity import IdentityKey, Source, Sourced
+from agent_hub.core.hub_config.local_config import LocalConfig, check_local_document
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.json_form import dump_json
@@ -16,6 +20,8 @@ type Shown = tuple[str, Severity, str | None, int | None, str, str]
 
 RUNNING_VERSION = "0.2.0"
 SCHEMA_FIX = "fix hub.json (docs/design/project-config.md)"
+LOCAL_FIX = "fix hub.local.json (docs/design/developer-identity.md)"
+IDENTITY_FIX = "set project.branch_prefix in hub.local.json to choose another"
 
 
 def document_bytes(edit: Callable[[dict[str, Any]], object]) -> bytes:
@@ -186,3 +192,112 @@ def test_reports_nothing_when_config_valid(snapshot_of: SnapshotFactory) -> None
 
     assert config == HubConfig.model_validate(a_hub_document())
     assert findings_of(snapshot_of(config=config)) == []
+
+
+def local_problems(document: object) -> tuple[ConfigProblem, ...]:
+    checked = check_local_document(document)
+    assert not isinstance(checked, LocalConfig)
+    return checked
+
+
+def local_finding(message: str) -> Shown:
+    return ("config.schema", Severity.ERROR, "hub.local.json", None, message, LOCAL_FIX)
+
+
+BAD_LOCAL = {"project": {"colour": "blue"}, "tracker": {"transport": "ftp"}}
+BAD_LOCAL_MESSAGES = [
+    "project.colour: Extra inputs are not permitted",
+    "tracker.transport: Input should be 'api' or 'mcp'",
+]
+
+
+@pytest.mark.parametrize("hub_json", ["valid", "invalid"])
+def test_reports_local_problem_when_local_file_invalid(
+    snapshot_of: SnapshotFactory, hub_json: str
+) -> None:
+    config = (
+        failure_of(document_bytes(lambda document: document.update(shade=1)))
+        if hub_json == "invalid"
+        else None
+    )
+    snapshot = snapshot_of(config=config, local=local_problems(BAD_LOCAL))
+
+    hub_findings = [schema_finding("shade: Extra inputs are not permitted")]
+    assert findings_of(snapshot) == [
+        *(hub_findings if hub_json == "invalid" else []),
+        *(local_finding(message) for message in BAD_LOCAL_MESSAGES),
+    ]
+
+
+def test_reports_nothing_of_local_file_when_pin_differs(snapshot_of: SnapshotFactory) -> None:
+    # The pinned release judges the rest, the developer's file included.
+    failure = failure_of(
+        document_bytes(lambda document: document.update(platform={"version": "0.0.1"}))
+    )
+
+    snapshot = snapshot_of(config=failure, local=local_problems(BAD_LOCAL))
+
+    assert [shown[0] for shown in findings_of(snapshot)] == ["platform.version"]
+
+
+def identity_findings(snapshot: DoctorSnapshot) -> list[Shown]:
+    # Read through the module, so a missing rule fails each test rather than the collection.
+    rule = config_rules.CONFIG_IDENTITY
+    return [
+        (
+            finding.rule,
+            finding.severity,
+            finding.path,
+            finding.line,
+            finding.message,
+            finding.fix,
+        )
+        for finding in rule.check(snapshot)
+    ]
+
+
+def test_declares_identity_rule_when_rule_read() -> None:
+    rule = config_rules.CONFIG_IDENTITY
+
+    assert rule.id == "config.identity"
+    assert rule.severity is Severity.INFO
+    assert rule.reads == frozenset({Read.DEVELOPER_IDENTITY})
+    assert rule.module is None
+
+
+@pytest.mark.parametrize(
+    ("source", "described"),
+    [
+        pytest.param(Source.GIT, "derived from git config user.email", id="git"),
+        pytest.param(Source.LOCAL, "derived from author_email in hub.local.json", id="local"),
+        pytest.param(Source.HUB, "derived from author_email in hub.json", id="hub"),
+    ],
+)
+def test_reports_derived_prefix_when_snapshot_holds_one(
+    snapshot_of: SnapshotFactory, source: Source, described: str
+) -> None:
+    prefix = Sourced("jane/", source, IdentityKey.BRANCH_PREFIX, derived=True)
+
+    snapshot = snapshot_of(branch_prefix=prefix)
+
+    assert identity_findings(snapshot) == [
+        (
+            "config.identity",
+            Severity.INFO,
+            None,
+            None,
+            f"branch prefix `jane/` is {described} (hub.local.json and hub.json set none)",
+            IDENTITY_FIX,
+        )
+    ]
+
+
+@pytest.mark.parametrize("source", [Source.LOCAL, Source.HUB])
+def test_reports_nothing_when_prefix_from_file(
+    snapshot_of: SnapshotFactory, source: Source
+) -> None:
+    prefix = Sourced("me/", source, IdentityKey.BRANCH_PREFIX)
+
+    assert identity_findings(snapshot_of(branch_prefix=prefix)) == []
+    # No prefix at all (a team hub with no email anywhere) is no finding either.
+    assert identity_findings(snapshot_of()) == []
