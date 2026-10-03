@@ -6,7 +6,8 @@ run on a fresh ``demo`` init, plain or committed, finds and writes nothing (AGH-
 ``hub sync --adopt`` on an unadopted ``demo`` hub with hand edits lists the two changed managed
 files, saves the rest, writes nothing on a rerun, and ends at a fresh init's lock once both are
 restored (AGH-16 AC-16.4); the same hub adopted in process and as a child writes identical trees
-(AC-16.10).
+(AC-16.10). The rendered CI's golden step, run in a fresh ``demo`` init through its ``./hub`` and
+a ``uvx`` that resolves to the running CLI, exits 0 (AC-16.11).
 
 ``DEMO`` is ``demo_config_file`` (the example config without modules, pinned to the running CLI)
 and ``DEMO_FLAGS`` is ``demo_flags``. The golden harness of ``demo.hub.lock`` is the conftest's
@@ -350,6 +351,47 @@ def test_writes_nothing_when_sync_runs_on_fresh_init(
     assert applied == []
     assert tree_digest(root) == before
     assert (root / "hub.lock").stat().st_mtime_ns == lock_mtime
+
+
+GOLDEN_STEP_HEAD = "      - name: Golden (hub sync --check)\n        run: "
+
+
+def golden_step_command(ci: str) -> str:
+    """The one-line ``run:`` of the rendered workflow's golden step."""
+    assert ci.count(GOLDEN_STEP_HEAD) == 1, ci
+    return ci[ci.index(GOLDEN_STEP_HEAD) + len(GOLDEN_STEP_HEAD) :].split("\n", 1)[0]
+
+
+def test_passes_golden_step_when_hub_fresh(
+    tmp_path: Path, demo_hub: Path, *, fake_uvx_bin: Path, tree_digest: TreeDigest
+) -> None:
+    command = golden_step_command((demo_hub / ".github" / "workflows" / "ci.yml").read_text())
+    assert command == "./hub sync --check"
+    before = tree_digest(demo_hub)
+    python_dir = Path(sys.executable).parent
+    env = {
+        "PATH": os.pathsep.join([str(fake_uvx_bin), str(python_dir), os.defpath]),
+        "HOME": str(tmp_path / "home"),
+        "LC_ALL": "C",
+    }
+
+    # As the runner runs a step: the workflow's shell, from the checkout's root.
+    completed = subprocess.run(  # noqa: S603 - absolute sh, the rendered step, a tmp_path folder
+        ["/bin/sh", "-c", command],
+        cwd=demo_hub,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=CHILD_TIMEOUT,
+    )
+
+    assert (completed.returncode, completed.stdout, completed.stderr) == (
+        0,
+        "up to date\n",
+        "",
+    ), completed.stderr
+    assert tree_digest(demo_hub) == before
 
 
 def test_finds_nothing_when_doctor_runs_on_fresh_init(

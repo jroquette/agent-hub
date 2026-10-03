@@ -33,6 +33,8 @@ is a hub bug: log it in `brain/_inbox/`.
    review → a final evaluator check.
 4. Code changes happen only in an isolated worktree (`make worktree NAME=<team>-<n>-<desc>`) created from a freshly
    fetched @@{worktree_base}.
+   A repo can ship executable `<repo>/scripts/worktree-setup.sh` and `<repo>/scripts/worktree-teardown.sh`, which
+   `hub worktree` runs with the worktree's path for the repo's own setup (env files, databases, ports).
 5. The repo's gates (`hub.json` → `repos[].check_fast` while working, `repos[].check` before the PR) pass before any
    PR. Redirect the output to a file and check `$?`.
 
