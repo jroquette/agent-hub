@@ -7,8 +7,8 @@ differs too; a binary file ``P: binary content differs``, with the same bit clau
 ``P: migration: directory link -> T, rendered as N links``. The conflicts follow, as sync prints
 them, then one way out: the listed paths' when nothing conflicts, else one that also names
 fixing the conflicts and re-running, which lists a migration a conflict held back. A refused
-``--accept`` names each refused path with why. Lines go through ``shown_path`` and ``shown_text``
-as sync's do.
+``--accept`` gives one ``--accept <path>: <reason>`` line per refused path. Lines go through
+``shown_path`` and ``shown_text`` as sync's do.
 """
 
 import difflib
@@ -45,8 +45,10 @@ def listing_lines(plan: AdoptPlan) -> list[str]:
 
 
 def refusal_lines(refusal: AdoptRefusal) -> list[str]:
-    """Each refused ``--accept`` path, in order, with why it is refused."""
-    return [shown_text(f"{shown_path(each.path)}: {each.message}") for each in refusal.refused]
+    """``--accept <path>: <reason>`` for each refused path, in order."""
+    return [
+        shown_text(f"--accept {shown_path(each.path)}: {each.message}") for each in refusal.refused
+    ]
 
 
 def _listed_line(listed: Listed) -> str:
