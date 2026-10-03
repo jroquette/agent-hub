@@ -115,17 +115,19 @@ Releases are semver tags `vX.Y.Z` on agent-hub `main`, made by the owner and che
 meta-package version, which `agent-hub-cli` shares in lockstep (`make lockstep`); no PyPI. A shim runs the pinned
 release with no install (uv caches each version):
 `uvx --from git+https://github.com/jroquette/agent-hub@v<platform.version>#subdirectory=packages/agent-hub hub …`.
-`hub init` takes the same source via `uvx` or `uv tool install`. Private access: a read-only secret in hub CI; the repo
-attached or `GH_TOKEN` in other projects' cloud sessions (the `cloud` setup checks access, warms the cache). Credentials
-go through a git credential helper or `GIT_CONFIG_*` `insteadOf`, never the URL, `hub.json` or `hub.lock`. A direct
-`hub` other than `platform.version`: `hub sync` exits 1, `hub doctor` errors. Upgrade: edit `platform.version`, sync.
+`hub init` takes the same source via `uvx` or `uv tool install`. Private access: the read-only secret
+`AGENT_HUB_READ_TOKEN` in hub CI; the repo attached or `GH_TOKEN` in other projects' cloud sessions (the `cloud` setup
+checks access, warms the cache). Credentials go through a git credential helper or `GIT_CONFIG_*` `insteadOf`, never
+the URL, `hub.json` or `hub.lock`. A direct `hub` other than `platform.version`: `hub sync` exits 1, `hub doctor`
+errors. Upgrade: edit `platform.version`, sync.
 
 ### Acceptance
 
-Each hub's `ci.yml` has a golden job: copy `hub.json` and the seeded inputs to `$tmp`, run the pinned `hub init
---config hub.json --dir "$tmp"`, compare managed lock entries and bytes. agent-hub tests a synthetic `demo`: identical
-inits, no-op and rerun syncs, an edit exits 3, adopt lists differences, a `hub.lock` snapshot. Loki: write `hub.json`,
-move guard rules to `guard.*`/`project_guard.py` and domain rules to `AGENTS.project.md`, adopt.
+Each hub's `ci.yml` has a golden step: the pinned `hub sync --check`, before `make check`, must exit 0 (the managed
+files are the release's render; steps, exits and the CI credential: [hub-adopt.md](hub-adopt.md)). agent-hub tests a
+synthetic `demo`: identical inits, no-op and rerun syncs, an edit exits 3, adopt lists differences, a `hub.lock`
+snapshot. Loki: write `hub.json`, move guard rules to `guard.*`/`project_guard.py` and domain rules to
+`AGENTS.project.md`, adopt.
 
 ## Invariants
 
