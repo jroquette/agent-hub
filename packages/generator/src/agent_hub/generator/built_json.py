@@ -117,13 +117,17 @@ def project_manifest(config: HubConfig) -> JsonValue:
 def marketplace(config: HubConfig) -> JsonValue:
     """The managed ``.claude-plugin/marketplace.json`` of module ``marketplace`` (AGH-17 D4).
 
-    Named after the project and owned by its author; it lists the base plugin, then the project's
+    Named after the project and owned by its author, or by the project on a hub that leaves the
+    author to each developer (no email then: AGH-65); it lists the base plugin, then the project's
     own. Third-party pins go in the seeded ``marketplace.project.json``, merged after them.
     """
     project = config.project
+    owner: dict[str, JsonValue] = {"name": project.author_name or project.name}
+    if project.author_email is not None:
+        owner["email"] = project.author_email
     return {
         "name": project.name,
-        "owner": {"name": project.author_name, "email": project.author_email},
+        "owner": owner,
         "plugins": [
             {"name": _BASE_PLUGIN, "source": f"./plugin/{_BASE_PLUGIN}"},
             {"name": project.name, "source": f"./plugin/{project.name}"},

@@ -52,6 +52,35 @@ def test_builds_marketplace_from_project_when_rendered(project_name: str) -> Non
     }
 
 
+def test_owns_marketplace_by_project_when_author_absent() -> None:
+    # AGH-65 AC-65.8: a team hub names no developer; the project owns its marketplace.
+    document = a_hub_document()
+    for key in ("branch_prefix", "author_name", "author_email"):
+        del document["project"][key]
+
+    built = marketplace(HubConfig.model_validate(document))
+
+    assert built == {
+        "name": "demo",
+        "owner": {"name": "demo"},
+        "plugins": [
+            {"name": "hub-workflow", "source": "./plugin/hub-workflow"},
+            {"name": "demo", "source": "./plugin/demo"},
+        ],
+    }
+
+
+def test_omits_owner_email_when_only_name_set() -> None:
+    document = a_hub_document()
+    del document["project"]["author_email"]
+    config = HubConfig.model_validate(document)
+
+    built = marketplace(config)
+
+    assert isinstance(built, dict)
+    assert built["owner"] == {"name": config.project.author_name}
+
+
 @pytest.mark.parametrize("project_name", ["demo", "acme-tools"])
 def test_seeds_empty_marketplace_sibling_when_rendered(project_name: str) -> None:
     # AGH-17 D4: the project adds its third-party pins to the seeded sibling.
