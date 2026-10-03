@@ -728,6 +728,33 @@ def listed_and_conflicting(rendered: RenderedHub) -> dict[str, TreeEntry]:
     }
 
 
+def test_keeps_other_listings_when_difference_accepted(a_rendered_hub: HubFactory) -> None:
+    rendered = with_project_skill(a_rendered_hub)
+
+    plan = adopted(rendered, listed_and_conflicting(rendered), accept=frozenset({FILE}))
+
+    migration = MigrationListing(path=SKILLS, on_disk_target=SKILLS_TARGET, link_count=2)
+    assert plan.listed == (migration,)
+    assert plan.conflicts == (PathProblem(LINK, "a file where a link belongs"),)
+    assert written_paths(plan) == [FILE, HUB_LOCK_PATH]
+    assert (plan.deletes, plan.folders) == ((), ())
+    assert not any(path.startswith(f"{SKILLS}/") for path in plan.lock.files)
+    assert plan.lock == lock_without(rendered, LINK, SEEDED_LINK, PROJECT_SKILL)
+
+
+def test_keeps_other_listings_when_migration_accepted(a_rendered_hub: HubFactory) -> None:
+    rendered = with_project_skill(a_rendered_hub)
+
+    plan = adopted(rendered, listed_and_conflicting(rendered), accept=frozenset({SKILLS}))
+
+    assert [listed.path for listed in plan.listed] == [FILE]
+    assert plan.conflicts == (PathProblem(LINK, "a file where a link belongs"),)
+    assert written_paths(plan) == [PROJECT_SKILL, SEEDED_LINK, HUB_LOCK_PATH]
+    assert (plan.deletes, plan.folders) == ((SKILLS,), (SKILLS,))
+    assert FILE not in changed_paths(plan)
+    assert plan.lock == lock_without(rendered, FILE, LINK)
+
+
 @pytest.mark.parametrize(
     ("path", "message"),
     [
