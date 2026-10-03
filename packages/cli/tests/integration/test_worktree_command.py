@@ -642,6 +642,16 @@ HUB_ONLY = (
 )
 
 
+# The four lines of the no-prefix usage error, as shown once Rich's box is stripped.
+NO_PREFIX_LINES = (
+    "no branch prefix for this developer; set one of:",
+    "hub.local.json → project.branch_prefix",
+    "hub.json → project.branch_prefix",
+    "git config user.email in the hub (its local part plus /)",
+)
+TEAM_BRANCH = f"jane/{NAME}"
+
+
 def local_prefix(prefix: str = LOCAL_PREFIX) -> str:
     return json.dumps({"project": {"branch_prefix": prefix}})
 
@@ -744,3 +754,61 @@ class TestIdentity:
         for repo in REPOS:
             worktree = demo_workspace.worktree(repo, NAME)
             assert demo_workspace.git(worktree, "branch", "--show-current") == LOCAL_BRANCH
+
+    def test_branches_with_git_email_prefix_when_team_hub_has_no_file_prefix(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        demo_workspace.drop_identity()
+        demo_workspace.git_identity("Jane Roe", "jane@example.com")
+
+        result = run_command(demo_workspace.hub, "worktree", NAME)
+
+        assert result.exit_code == 0, result.output
+        assert f"task     : {NAME} (branch {TEAM_BRANCH})" in result.stdout.splitlines()
+        for repo in REPOS:
+            worktree = demo_workspace.worktree(repo, NAME)
+            assert demo_workspace.git(worktree, "branch", "--show-current") == TEAM_BRANCH
+
+    @pytest.mark.parametrize("remove", [False, True], ids=["create", "remove"])
+    def test_refuses_without_writing_when_no_source_sets_prefix(
+        self, demo_workspace: Workspace, run_command: CommandRunner, *, remove: bool
+    ) -> None:
+        demo_workspace.drop_identity()
+
+        result = run_command(demo_workspace.hub, "worktree", NAME, *(["--remove"] * remove))
+
+        for line in NO_PREFIX_LINES:
+            assert_refused(result, line)
+        assert_untouched(demo_workspace)
+        for repo in REPOS:
+            assert (
+                demo_workspace.git(demo_workspace.ws / repo, "branch", "--list", "*dem-7-x") == ""
+            )
+
+    def test_names_invalid_email_when_derived_prefix_invalid(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        demo_workspace.drop_identity()
+        demo_workspace.git_identity("Jane Roe", "j+x@example.com")
+
+        result = run_command(demo_workspace.hub, "worktree", NAME)
+
+        for line in (*NO_PREFIX_LINES, 'git\'s user.email gives "j+x", not a valid prefix'):
+            assert_refused(result, line)
+        assert_untouched(demo_workspace)
+
+    def test_reads_git_email_once_when_team_hub_has_no_file_prefix(
+        self, demo_workspace: Workspace, run_command: CommandRunner, traced_git: Any
+    ) -> None:
+        demo_workspace.drop_identity()
+        demo_workspace.git_identity("Jane Roe", "jane@example.com")
+
+        result = run_command(demo_workspace.hub, "worktree", NAME)
+
+        assert result.exit_code == 0, result.output
+        reads = [
+            (cwd, arguments)
+            for cwd, arguments in traced_git.calls()
+            if "config --get user." in arguments
+        ]
+        assert reads == [(os.path.realpath(demo_workspace.hub), "config --get user.email")]
