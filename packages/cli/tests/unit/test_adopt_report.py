@@ -187,9 +187,9 @@ def test_names_each_refused_path_when_accept_refused() -> None:
     )
 
     assert refusal_lines(refusal) == [
-        ".claude/skills: not listed by this run: a conflict under it"
+        "--accept .claude/skills: not listed by this run: a conflict under it"
         " (.claude/skills/a, .claude/skills/b)",
-        "./Makefile: not listed by this run",
-        "a.py: a conflict; --accept takes only listed differences and migrations",
-        '"q\\nr": not listed by this run',
+        "--accept ./Makefile: not listed by this run",
+        "--accept a.py: a conflict; --accept takes only listed differences and migrations",
+        '--accept "q\\nr": not listed by this run',
     ]

@@ -11,7 +11,8 @@ path, with nothing written.
 
 import json
 import os
-from collections.abc import Callable
+import signal
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,7 @@ type SyncRunner = Callable[..., Result]
 type LockGolden = Callable[..., None]
 ADOPT_LOCK_WAY_OUT_LINE = "hub.lock: restore it from git, or delete it and re-run hub sync --adopt"
 SIBLING = ".claude/settings.project.json"
+FIFO_ALARM_SECONDS = 5
 GUARD = "plugin/hub-workflow/hooks/guard.py"
 # AC-16.4's listing of the two managed files it changes.
 AC4_LISTING = [
@@ -38,6 +40,22 @@ AC4_LISTING = [
 ]
 # A file where a link is rendered: a conflict, which ``--accept`` cannot take.
 CLASHING_LINK = ".claude/agents/architect.md"
+
+
+@pytest.fixture
+def alarm() -> Iterator[None]:
+    """Fail a test that blocks (a FIFO opened by mistake) instead of hanging the run."""
+
+    def timed_out(_signal: int, _frame: object) -> None:
+        pytest.fail("the command blocked")
+
+    previous = signal.signal(signal.SIGALRM, timed_out)
+    signal.alarm(FIFO_ALARM_SECONDS)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
 
 
 def unadopted(hub: Path) -> Path:
@@ -166,8 +184,10 @@ class TestLoad:
             ("unknown-key", "hub.lock: extra: Extra inputs are not permitted"),
             ("symlink-to-valid-lock", "hub.lock: not a regular file"),
             ("folder", "hub.lock: not a regular file"),
+            ("fifo", "hub.lock: not a regular file"),
         ],
     )
+    @pytest.mark.usefixtures("alarm")
     def test_exits_one_naming_way_out_when_lock_malformed_or_not_regular(
         self,
         demo_hub: Path,
@@ -188,8 +208,10 @@ class TestLoad:
         elif case == "symlink-to-valid-lock":
             (demo_hub / "valid.lock").write_bytes(valid)
             lock_path.symlink_to("valid.lock")
-        else:
+        elif case == "folder":
             lock_path.mkdir()
+        else:
+            os.mkfifo(lock_path)
         before = tree_digest(demo_hub)
         adapter_calls.clear()
 
@@ -304,7 +326,7 @@ class TestAccept:
             ("./Makefile", ACCEPT_NOT_LISTED),
             ("Makefile/", ACCEPT_NOT_LISTED),
         ]
-        expected = [f"{path}: {reason}" for path, reason in sorted(refused)]
+        expected = [f"--accept {path}: {reason}" for path, reason in sorted(refused)]
         accepts = [arg for path, _ in refused for arg in ("--accept", path)]
 
         def assert_refused() -> None:
