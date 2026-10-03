@@ -23,7 +23,7 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner, Result
 
-from agent_hub.cli import sync_command
+from agent_hub.cli import sync_steps
 from agent_hub.cli.main import app
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.hub_lock import build_hub_lock, lock_bytes
@@ -332,7 +332,7 @@ def test_writes_nothing_when_sync_runs_on_fresh_init(
     lock_mtime = (root / "hub.lock").stat().st_mtime_ns
     applied: list[object] = []
     # Plan erratum E4: with nothing pending the adapter is not called at all.
-    monkeypatch.setattr(sync_command, "apply_sync", lambda *args, **kwargs: applied.append(args))
+    monkeypatch.setattr(sync_steps, "apply_sync", lambda *args, **kwargs: applied.append(args))
     adapter_calls.clear()
 
     for _ in range(2):

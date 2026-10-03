@@ -27,7 +27,7 @@ import pytest
 from click import unstyle
 from typer.testing import CliRunner, Result
 
-from agent_hub.cli import sync_command
+from agent_hub.cli import sync_steps
 from agent_hub.cli.main import app
 from agent_hub.cli.sync_report import CONFLICT_WAY_OUT
 from agent_hub.core.hub_files.hub_lock import ADOPT_POINTER
@@ -1296,7 +1296,7 @@ def test_exits_one_when_adapter_meets_planted_ancestor(
     make_pending(demo_hub, make)
     lock = (demo_hub / "hub.lock").read_bytes()
     skills = demo_hub / "plugin/hub-workflow/skills"
-    real_apply = sync_command.apply_sync
+    real_apply = sync_steps.apply_sync
     planned: list[list[str]] = []
     outside: list[tuple[Path, dict[str, Any]]] = []
 
@@ -1309,7 +1309,7 @@ def test_exits_one_when_adapter_meets_planted_ancestor(
         outside.append((copy, tree_digest(copy)))
         real_apply(root, **plan)
 
-    monkeypatch.setattr(sync_command, "apply_sync", plant_then_apply)
+    monkeypatch.setattr(sync_steps, "apply_sync", plant_then_apply)
 
     result = run_sync(demo_hub)
 
