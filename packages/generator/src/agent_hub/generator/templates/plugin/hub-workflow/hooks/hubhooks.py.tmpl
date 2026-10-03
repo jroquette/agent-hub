@@ -46,6 +46,8 @@ from stdlib_reader import (  # noqa: E402
 HUB_FILE = "hub.json"
 # A git config read for the identity: well inside the guard's own 10 s timeout (hooks.json).
 IDENTITY_GIT_TIMEOUT = 2
+# Variables that point git at another repo than its cwd: the identity read drops them, as the CLI.
+GIT_LOCATION_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
 
 
 def read_input() -> dict:
@@ -223,15 +225,18 @@ class Config:
         """git config --get <key> in the identity home, as raw text; "" when unset or unreadable.
 
         Not git(): the reader drops git's one newline and checks the shape itself, so nothing is
-        stripped, and bytes that are not UTF-8 are no value rather than an error."""
+        stripped, and bytes that are not UTF-8 are no value rather than an error. GIT_DIR and the
+        like are dropped, so an exported one cannot answer with another repo's identity."""
         if self.identity_home is None:
             return ""
+        env = {name: value for name, value in os.environ.items() if name not in GIT_LOCATION_VARIABLES}
         try:
             completed = subprocess.run(
                 ["git", "config", "--get", key],
                 cwd=self.identity_home,
                 capture_output=True,
                 timeout=IDENTITY_GIT_TIMEOUT,
+                env=env,
             )
             if completed.returncode != 0:
                 return ""
