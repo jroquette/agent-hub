@@ -4,10 +4,13 @@
 ``hub.lock`` may be absent; a broken one exits 1 with adopt's way out. On a ``DEMO`` hub that is
 already adopted, adopt is ``up to date``; with its ``hub.lock`` deleted (an unadopted ``DEMO`` hub),
 adopt records every path and writes the lock ``hub init`` writes, after which plain sync is
-``up to date``.
+``up to date``. AC-16.4's hub (two managed files differ) exits 3 and keeps both out of the lock;
+``--check`` writes nothing (exit 3 listed, 4 pending); a refused ``--accept`` exits 2 naming each
+path, with nothing written.
 """
 
 import json
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -16,7 +19,9 @@ import pytest
 from click import unstyle
 from typer.testing import CliRunner, Result
 
+from agent_hub.cli.adopt_report import ADOPT_CONFLICT_WAY_OUT, ADOPT_LISTED_WAY_OUT
 from agent_hub.cli.main import app
+from agent_hub.core.hub_files.plan_adopt import ACCEPT_CONFLICT, ACCEPT_NOT_LISTED
 from agent_hub.core.json_form import dump_json
 
 # The conftest's fixtures' types (tests cannot import a conftest in importlib mode).
@@ -25,6 +30,14 @@ type SyncRunner = Callable[..., Result]
 type LockGolden = Callable[..., None]
 ADOPT_LOCK_WAY_OUT_LINE = "hub.lock: restore it from git, or delete it and re-run hub sync --adopt"
 SIBLING = ".claude/settings.project.json"
+GUARD = "plugin/hub-workflow/hooks/guard.py"
+# AC-16.4's listing of the two managed files it changes.
+AC4_LISTING = [
+    "Makefile: +0 -1 lines",
+    f"{GUARD}: +0 -0 lines, executable bit differs (on disk -x, render +x)",
+]
+# A file where a link is rendered: a conflict, which ``--accept`` cannot take.
+CLASHING_LINK = ".claude/agents/architect.md"
 
 
 def unadopted(hub: Path) -> Path:
@@ -40,6 +53,18 @@ def assert_failed(result: Result, *, code: int = 1) -> list[str]:
     assert result.exception is None or isinstance(result.exception, SystemExit)
     assert result.stdout == ""
     return result.stderr.splitlines()
+
+
+def ac4_hub(hub: Path) -> Path:
+    """AC-16.4's hub: unadopted, ``Makefile`` gained a line, ``guard.py`` lost ``u+x``,
+    ``brain/now.md`` edited (seeded: recorded as is) and ``hub.schema.json`` deleted."""
+    unadopted(hub)
+    with (hub / "Makefile").open("ab") as makefile:
+        makefile.write(b"local:\n")
+    os.chmod(hub / GUARD, 0o644)
+    (hub / "brain/now.md").write_bytes(b"# Now\nShip the adopt.\n")
+    (hub / "hub.schema.json").unlink()
+    return hub
 
 
 def lock_files(root: Path) -> dict[str, Any]:
@@ -255,3 +280,108 @@ class TestNoOp:
             assert (result.exit_code, result.stdout, result.stderr) == (0, "up to date\n", ""), args
         assert tree_digest(demo_hub) == before
         assert adapter_calls == []
+
+
+class TestAccept:
+    """AC-16.6, Q-3: ``--accept`` takes only a path this run lists; any other refuses the run."""
+
+    def test_refuses_each_path_when_accept_not_listed_or_conflict(
+        self,
+        demo_hub: Path,
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        adapter_calls: list[tuple[str, str]],
+    ) -> None:
+        (ac4_hub(demo_hub) / CLASHING_LINK).unlink()
+        (demo_hub / CLASHING_LINK).write_bytes(b"# my architect\n")
+        refused = [
+            # A path not listed (equal to its render), a conflict, one outside the render, and
+            # forms of a listed path that are not as listed.
+            ("AGENTS.md", ACCEPT_NOT_LISTED),
+            (CLASHING_LINK, ACCEPT_CONFLICT),
+            ("nowhere.md", ACCEPT_NOT_LISTED),
+            ("./Makefile", ACCEPT_NOT_LISTED),
+            ("Makefile/", ACCEPT_NOT_LISTED),
+        ]
+        expected = [f"{path}: {reason}" for path, reason in sorted(refused)]
+        accepts = [arg for path, _ in refused for arg in ("--accept", path)]
+
+        def assert_refused() -> None:
+            before = tree_digest(demo_hub)
+            adapter_calls.clear()
+            for check in ((), ("--check",)):
+                lines = assert_failed(
+                    run_sync(demo_hub, "--adopt", *check, *accepts, "--accept", "Makefile"), code=2
+                )
+
+                assert lines == expected
+            assert tree_digest(demo_hub) == before
+            assert adapter_calls == []
+
+        # With no lock and writes pending (hub.schema.json, hub.lock): none is made.
+        assert_refused()
+        first = run_sync(demo_hub, "--adopt")
+        # Q-4: the settled paths and the partial lock are saved; the listed and the conflict wait.
+        assert first.exit_code == 3, first.output
+        assert first.stderr.splitlines()[-1] == ADOPT_CONFLICT_WAY_OUT
+        assert {"Makefile", GUARD, CLASHING_LINK}.isdisjoint(lock_files(demo_hub))
+        adapter_calls.clear()
+        # A rerun has nothing to write: no ``up to date`` over the same listing, still exit 3.
+        again = run_sync(demo_hub, "--adopt")
+        assert (again.exit_code, again.stdout, again.stderr) == (3, "", first.stderr)
+        assert adapter_calls == []
+        # With the partial lock: its bytes stay.
+        assert_refused()
+
+
+class TestCheck:
+    """AC-16.9, Q-6: ``--adopt --check`` writes nothing; exit 3 listed, 4 pending, else 0."""
+
+    def test_writes_nothing_and_exits_three_when_differences_listed(
+        self,
+        demo_hub: Path,
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        adapter_calls: list[tuple[str, str]],
+    ) -> None:
+        before = tree_digest(ac4_hub(demo_hub))
+        adapter_calls.clear()
+
+        result = run_sync(demo_hub, "--adopt", "--check")
+
+        assert result.exit_code == 3, result.output
+        lines = result.stdout.splitlines()
+        assert "would create hub.schema.json" in lines
+        assert "would record brain/now.md" in lines
+        assert lines[-1] == "would update hub.lock"
+        assert all(line.startswith("would ") for line in lines)
+        assert result.stderr.splitlines() == [*AC4_LISTING, ADOPT_LISTED_WAY_OUT]
+        assert tree_digest(demo_hub) == before
+        assert adapter_calls == []
+
+    def test_exits_four_when_unadopted_demo_clean(
+        self,
+        demo_hub: Path,
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        adapter_calls: list[tuple[str, str]],
+    ) -> None:
+        before = tree_digest(unadopted(demo_hub))
+        adapter_calls.clear()
+
+        result = run_sync(demo_hub, "--adopt", "--check")
+
+        assert (result.exit_code, result.stderr) == (4, ""), result.output
+        assert tree_digest(demo_hub) == before
+        assert adapter_calls == []
+        # The lines of the real run, each with ``would``.
+        adopted = run_sync(demo_hub, "--adopt")
+        assert adopted.exit_code == 0, adopted.output
+        expected = [
+            line.replace("recorded ", "would record ", 1).replace("updated ", "would update ", 1)
+            for line in adopted.stdout.splitlines()
+        ]
+        assert result.stdout.splitlines() == expected
