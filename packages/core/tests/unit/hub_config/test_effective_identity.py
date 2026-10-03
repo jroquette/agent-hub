@@ -55,7 +55,7 @@ def test_takes_local_value_when_local_sets_key(key: IdentityKey) -> None:
 
     resolved = resolve_identity(local=only(key, LOCAL), hub=HUB, keys={key}, read_git=git)
 
-    assert resolved == {key: Sourced(getattr(LOCAL, key.value), Source.LOCAL, key)}
+    assert resolved.values == {key: Sourced(getattr(LOCAL, key.value), Source.LOCAL, key)}
     assert git.asked == []
 
 
@@ -65,7 +65,7 @@ def test_takes_hub_value_when_only_hub_sets_key(key: IdentityKey) -> None:
 
     resolved = resolve_identity(local=NONE, hub=only(key, HUB), keys={key}, read_git=git)
 
-    assert resolved == {key: Sourced(getattr(HUB, key.value), Source.HUB, key)}
+    assert resolved.values == {key: Sourced(getattr(HUB, key.value), Source.HUB, key)}
     assert git.asked == []
 
 
@@ -75,10 +75,10 @@ def test_reads_git_once_when_no_file_sets_name_or_email() -> None:
     resolved = resolve_identity(local=NONE, hub=NONE, keys=ALL_KEYS, read_git=git)
 
     assert git.asked == [frozenset({"author_name", "author_email"})]
-    assert resolved[IdentityKey.AUTHOR_NAME] == Sourced(
+    assert resolved.values[IdentityKey.AUTHOR_NAME] == Sourced(
         "Jane Doe", Source.GIT, IdentityKey.AUTHOR_NAME
     )
-    assert resolved[IdentityKey.AUTHOR_EMAIL] == Sourced(
+    assert resolved.values[IdentityKey.AUTHOR_EMAIL] == Sourced(
         "jane.doe@example.com", Source.GIT, IdentityKey.AUTHOR_EMAIL
     )
 
@@ -122,13 +122,24 @@ def test_derives_prefix_from_effective_email_when_no_file_sets_prefix(
 
 
 @pytest.mark.parametrize(
-    "email",
-    ["j+x@example.com", ".a@example.com", "jé@example.com"],
+    ("email", "is_email_address"),
+    [("j+x@example.com", True), (".a@example.com", True), ("jé@example.com", False)],
     ids=["plus", "leading-dot", "non-ascii"],
 )
-def test_gives_no_prefix_when_derived_prefix_invalid(email: str) -> None:
+def test_gives_no_prefix_when_derived_prefix_invalid(*, email: str, is_email_address: bool) -> None:
     git = RecordingGit(author_email=email)
 
+    resolved = resolve_identity(
+        local=NONE, hub=NONE, keys={IdentityKey.BRANCH_PREFIX}, read_git=git
+    )
+
+    assert resolved.values == {IdentityKey.BRANCH_PREFIX: None}
+    if is_email_address:
+        assert resolved.email == Sourced(email, Source.GIT, IdentityKey.AUTHOR_EMAIL)
+        assert resolved.rejected == frozenset()
+    else:
+        assert resolved.email is None
+        assert resolved.rejected == {IdentityKey.AUTHOR_EMAIL}
     assert resolve_branch_prefix(local=NONE, hub=NONE, read_git=git) is None
     assert derived_prefix(email) is None
 
@@ -156,7 +167,7 @@ def test_reads_no_git_when_files_set_requested_keys(
     resolved = resolve_identity(local=local, hub=hub, keys=keys, read_git=git)
 
     assert git.asked == []
-    assert all(resolved[key] is not None for key in keys)
+    assert all(resolved.values[key] is not None for key in keys)
 
 
 def test_asks_git_only_for_missing_keys_when_some_set() -> None:
@@ -166,7 +177,7 @@ def test_asks_git_only_for_missing_keys_when_some_set() -> None:
     resolved = resolve_identity(local=NONE, hub=hub, keys=ALL_KEYS, read_git=git)
 
     assert git.asked == [frozenset({"author_email"})]
-    assert resolved == {
+    assert resolved.values == {
         IdentityKey.BRANCH_PREFIX: Sourced(
             "jane/", Source.GIT, IdentityKey.BRANCH_PREFIX, derived=True
         ),
@@ -175,12 +186,29 @@ def test_asks_git_only_for_missing_keys_when_some_set() -> None:
     }
 
 
-def test_ignores_git_value_when_shape_invalid() -> None:
-    git = RecordingGit(author_name="a\u0007", author_email="not-an-email")
+@pytest.mark.parametrize(
+    "email",
+    ["not-an-email", "jane@exa_mple.com", "Jane <jane@example.com>", "jane@example.com "],
+    ids=["no-at", "underscore-domain", "display-name", "trailing-space"],
+)
+def test_ignores_git_value_when_shape_invalid(email: str) -> None:
+    git = RecordingGit(author_name="a\u0007", author_email=email)
 
     resolved = resolve_identity(local=NONE, hub=NONE, keys=ALL_KEYS, read_git=git)
 
-    assert resolved == {key: None for key in IdentityKey}
+    assert resolved.values == {key: None for key in IdentityKey}
+    assert resolved.email is None
+    assert resolved.rejected == {IdentityKey.AUTHOR_NAME, IdentityKey.AUTHOR_EMAIL}
+
+
+def test_keeps_hub_prefix_when_local_sets_only_email() -> None:
+    git = RecordingGit(author_email="git@example.com")
+    local = NONE._replace(author_email="me@example.com")
+
+    prefix = resolve_branch_prefix(local=local, hub=HUB, read_git=git)
+
+    assert prefix == Sourced("jdoe/", Source.HUB, IdentityKey.BRANCH_PREFIX)
+    assert git.asked == []
 
 
 @pytest.mark.parametrize(
@@ -240,24 +268,41 @@ def test_takes_file_values_when_identity_values_built() -> None:
 
 
 @pytest.mark.parametrize(
-    ("email", "git_problem", "extra"),
+    ("email", "is_email_rejected", "git_problem", "extra"),
     [
-        (None, None, []),
+        (None, False, None, []),
         (
             Sourced("j+x@example.com", Source.GIT, IdentityKey.AUTHOR_EMAIL),
+            False,
             None,
             ['  git\'s user.email gives "j+x", not a valid prefix'],
         ),
         (
             Sourced("j+x@example.com", Source.LOCAL, IdentityKey.AUTHOR_EMAIL),
+            False,
             None,
             ['  hub.local.json\'s project.author_email gives "j+x", not a valid prefix'],
         ),
-        (None, "git timed out", ["  git: git timed out"]),
+        (None, True, None, ["  git's user.email is not an email address"]),
+        (None, False, "git timed out", ["  git: git timed out"]),
     ],
-    ids=["no-email", "git-email-invalid", "local-email-invalid", "git-problem"],
+    ids=[
+        "no-email",
+        "git-email-invalid",
+        "local-email-invalid",
+        "git-email-rejected",
+        "git-problem",
+    ],
 )
 def test_names_three_sources_when_no_prefix(
-    email: Sourced | None, git_problem: str | None, extra: list[str]
+    *,
+    email: Sourced | None,
+    is_email_rejected: bool,
+    git_problem: str | None,
+    extra: list[str],
 ) -> None:
-    assert no_prefix_lines(email=email, git_problem=git_problem) == [*NO_PREFIX_LINES, *extra]
+    lines = no_prefix_lines(
+        email=email, is_email_rejected=is_email_rejected, git_problem=git_problem
+    )
+
+    assert lines == [*NO_PREFIX_LINES, *extra]

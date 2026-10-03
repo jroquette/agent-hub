@@ -104,13 +104,26 @@ class IdentityValues(NamedTuple):
         return value
 
 
+class ResolvedIdentity(NamedTuple):
+    """The requested keys' effective values, and what git gave that had the wrong shape.
+
+    ``email`` is the effective ``author_email`` whenever it was resolved, requested or needed
+    for the prefix, so a caller can say why no prefix was derived. ``rejected`` holds the git
+    keys whose value is not a valid ``author_name`` or ``author_email`` (never quoted).
+    """
+
+    values: Mapping[IdentityKey, Sourced | None]
+    email: Sourced | None
+    rejected: frozenset[IdentityKey]
+
+
 def resolve_identity(
     *,
     local: IdentityValues,
     hub: IdentityValues,
     keys: Iterable[IdentityKey],
     read_git: GitReader,
-) -> dict[IdentityKey, Sourced | None]:
+) -> ResolvedIdentity:
     """Each requested key's effective value, or ``None`` when no source gives a valid one.
 
     ``read_git`` is called at most once, with exactly the git keys that the requested keys need
@@ -121,13 +134,19 @@ def resolve_identity(
     needed = set(wanted - {IdentityKey.BRANCH_PREFIX})
     if IdentityKey.BRANCH_PREFIX in wanted and from_files[IdentityKey.BRANCH_PREFIX] is None:
         needed.add(IdentityKey.AUTHOR_EMAIL)
-    from_git = _read_git(
+    from_git, rejected = _read_git(
         frozenset(key for key in needed if from_files[key] is None), read_git=read_git
     )
     effective = {key: from_files[key] or from_git.get(key) for key in IdentityKey}
     if effective[IdentityKey.BRANCH_PREFIX] is None:
         effective[IdentityKey.BRANCH_PREFIX] = _derived(effective[IdentityKey.AUTHOR_EMAIL])
-    return {key: effective[key] for key in IdentityKey if key in wanted}
+    return ResolvedIdentity(
+        values={key: effective[key] for key in IdentityKey if key in wanted},
+        email=effective[IdentityKey.AUTHOR_EMAIL]
+        if IdentityKey.AUTHOR_EMAIL in needed | wanted
+        else None,
+        rejected=rejected,
+    )
 
 
 def resolve_branch_prefix(
@@ -137,7 +156,7 @@ def resolve_branch_prefix(
     resolved = resolve_identity(
         local=local, hub=hub, keys=(IdentityKey.BRANCH_PREFIX,), read_git=read_git
     )
-    return resolved[IdentityKey.BRANCH_PREFIX]
+    return resolved.values[IdentityKey.BRANCH_PREFIX]
 
 
 def derived_prefix(email: str) -> str | None:
@@ -165,8 +184,14 @@ def effective_config(config: HubConfig, local: LocalConfig) -> HubConfig:
     )
 
 
-def no_prefix_lines(*, email: Sourced | None, git_problem: str | None) -> list[str]:
-    """Why there is no branch prefix: the three sources, then what the email or git gave."""
+def no_prefix_lines(
+    *, email: Sourced | None, git_problem: str | None, is_email_rejected: bool = False
+) -> list[str]:
+    """Why there is no branch prefix: the three sources, then what the email or git gave.
+
+    ``is_email_rejected``: git holds a ``user.email`` that is not an email address; its value is
+    not repeated.
+    """
     lines = list(_NO_PREFIX_LINES)
     if email is not None:
         giver = (
@@ -175,6 +200,8 @@ def no_prefix_lines(*, email: Sourced | None, git_problem: str | None) -> list[s
             else f"{email.source.value}'s project.author_email"
         )
         lines.append(f'  {giver} gives "{_local_part(email.value)}", not a valid prefix')
+    if is_email_rejected:
+        lines.append("  git's user.email is not an email address")
     if git_problem is not None:
         lines.append(f"  git: {git_problem}")
     return lines
@@ -188,12 +215,18 @@ def _from_files(key: IdentityKey, *, local: IdentityValues, hub: IdentityValues)
     return None
 
 
-def _read_git(keys: frozenset[IdentityKey], *, read_git: GitReader) -> dict[IdentityKey, Sourced]:
-    """The git values of ``keys`` that have their key's shape; git is not run for no keys."""
+def _read_git(
+    keys: frozenset[IdentityKey], *, read_git: GitReader
+) -> tuple[dict[IdentityKey, Sourced], frozenset[IdentityKey]]:
+    """The git values of ``keys`` that have their key's shape, and the keys whose value has not.
+
+    Git is not run for no keys.
+    """
     if not keys:
-        return {}
+        return {}, frozenset()
     raw = read_git(frozenset(key.value for key in keys))
     values: dict[IdentityKey, Sourced] = {}
+    rejected: set[IdentityKey] = set()
     for key in keys:
         value = raw.get(key.value)
         if value is None:
@@ -201,9 +234,9 @@ def _read_git(keys: frozenset[IdentityKey], *, read_git: GitReader) -> dict[Iden
         try:
             values[key] = Sourced(_GIT_SHAPES[key].validate_python(value), Source.GIT, key)
         except ValidationError:
-            # The error would quote git's value; a bad value is simply absent.
-            continue
-    return values
+            # The error would quote git's value: only the key is kept.
+            rejected.add(key)
+    return values, frozenset(rejected)
 
 
 def _derived(email: Sourced | None) -> Sourced | None:
