@@ -384,6 +384,8 @@ TEMPLATES = "generator/src/agent_hub/generator/templates"
 PROJECT_BRANCH_READERS = {
     # the helper's fallback and the schema description of repos[].default_branch
     "core/src/agent_hub/core/hub_config/model.py": 2,
+    # the project branch AGENTS.md names, which the doctor's refs rule skips as not a path
+    "core/src/agent_hub/core/doctor/instruction_rules.py": 1,
     # the hub checkout's branch in the brief
     "cli/src/agent_hub/cli/brief_command.py": 1,
     # project_default_branch for ci.yml, and the project branch in AGENTS.md's mentions
