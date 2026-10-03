@@ -1,0 +1,257 @@
+"""``hub sync --adopt``: its options, its load order and a run with nothing to list (AGH-16).
+
+``--accept`` needs ``--adopt`` (exit 2, nothing read). The load steps are plain sync's, except that
+``hub.lock`` may be absent; a broken one exits 1 with adopt's way out. On a ``DEMO`` hub that is
+already adopted, adopt is ``up to date``; with its ``hub.lock`` deleted (an unadopted ``DEMO`` hub),
+adopt records every path and writes the lock ``hub init`` writes, after which plain sync is
+``up to date``.
+"""
+
+import json
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+import pytest
+from click import unstyle
+from typer.testing import CliRunner, Result
+
+from agent_hub.cli.main import app
+from agent_hub.core.json_form import dump_json
+
+# The conftest's fixtures' types (tests cannot import a conftest in importlib mode).
+type TreeDigest = Callable[[Path], dict[str, Any]]
+type SyncRunner = Callable[..., Result]
+type LockGolden = Callable[..., None]
+ADOPT_LOCK_WAY_OUT_LINE = "hub.lock: restore it from git, or delete it and re-run hub sync --adopt"
+SIBLING = ".claude/settings.project.json"
+
+
+def unadopted(hub: Path) -> Path:
+    """``hub`` with its ``hub.lock`` deleted."""
+    (hub / "hub.lock").unlink()
+    return hub
+
+
+def assert_failed(result: Result, *, code: int = 1) -> list[str]:
+    """Exit ``code`` with nothing on stdout; the stderr lines."""
+    assert result.exit_code == code, result.output
+    # An exit, not an exception the runner caught.
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert result.stdout == ""
+    return result.stderr.splitlines()
+
+
+def lock_files(root: Path) -> dict[str, Any]:
+    files: dict[str, Any] = json.loads((root / "hub.lock").read_bytes())["files"]
+    return files
+
+
+class TestUsage:
+    """AC-16.1, Q-3: ``--accept PATH`` is listed, repeatable, and only taken with ``--adopt``."""
+
+    def test_lists_accept_when_help_requested(self) -> None:
+        shown = CliRunner().invoke(app, ["sync", "--help"], env={"COLUMNS": "120"})
+
+        assert shown.exit_code == 0, shown.output
+        help_text = " ".join(unstyle(shown.stdout).split())
+        assert "--adopt" in help_text
+        assert "--accept PATH" in help_text
+        assert "repeatable" in help_text
+        assert "not implemented yet" not in shown.output
+
+    @pytest.mark.parametrize("folder", ["demo-hub", "empty-folder"])
+    def test_exits_two_when_accept_without_adopt(
+        self,
+        tmp_path: Path,
+        demo_hub: Path,
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        adapter_calls: list[tuple[str, str]],
+        folder: str,
+    ) -> None:
+        # An empty folder has no hub.json: a run that read anything would exit 1 instead.
+        root = demo_hub if folder == "demo-hub" else tmp_path / "empty"
+        root.mkdir(exist_ok=True)
+        before = tree_digest(root)
+        adapter_calls.clear()
+
+        for args in (["--accept", "Makefile"], ["--check", "--accept", "a", "--accept", "b"]):
+            lines = assert_failed(run_sync(root, *args), code=2)
+
+            assert any("Usage:" in line for line in lines), lines
+            assert "--adopt" in "\n".join(lines)
+        assert tree_digest(root) == before
+        assert adapter_calls == []
+
+
+class TestLoad:
+    """AC-16.2, Q-5: adopt loads as plain sync does, but without needing ``hub.lock``."""
+
+    def test_runs_without_lock_when_adopt_given(
+        self, demo_hub: Path, run_sync: SyncRunner, tree_digest: TreeDigest
+    ) -> None:
+        before = tree_digest(unadopted(demo_hub))
+
+        result = run_sync(demo_hub, "--adopt")
+
+        assert result.exit_code == 0, result.output
+        assert result.stderr == ""
+        after = tree_digest(demo_hub)
+        # Only the lock is new: every other path was already its render.
+        assert after.pop("hub.lock")[0] == "file"
+        assert after == before
+
+    @pytest.mark.parametrize("case", ["pin", "schema", "model"])
+    def test_exits_one_when_pin_schema_or_model_wrong(
+        self,
+        demo_hub: Path,
+        demo_document: dict[str, Any],
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        adapter_calls: list[tuple[str, str]],
+        case: str,
+    ) -> None:
+        if case == "pin":
+            demo_document["platform"]["version"] = "0.0.1"
+        elif case == "schema":
+            demo_document["schema_version"] = 2
+        else:
+            demo_document["project"]["name"] = "Demo"
+        (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+        # An invalid lock: had it been read, its lines would show.
+        (demo_hub / "hub.lock").write_bytes(b"[")
+        before = tree_digest(demo_hub)
+        adapter_calls.clear()
+
+        adopted = assert_failed(run_sync(demo_hub, "--adopt"))
+        synced = assert_failed(run_sync(demo_hub))
+
+        assert adopted == synced
+        assert all(line.startswith("hub.json: ") for line in adopted), adopted
+        assert tree_digest(demo_hub) == before
+        assert adapter_calls == []
+
+    @pytest.mark.parametrize(
+        ("case", "expected"),
+        [
+            ("invalid-json", "hub.lock: $: not valid JSON: Expecting value at line 1 column 11"),
+            ("unknown-key", "hub.lock: extra: Extra inputs are not permitted"),
+            ("symlink-to-valid-lock", "hub.lock: not a regular file"),
+            ("folder", "hub.lock: not a regular file"),
+        ],
+    )
+    def test_exits_one_naming_way_out_when_lock_malformed_or_not_regular(
+        self,
+        demo_hub: Path,
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        adapter_calls: list[tuple[str, str]],
+        case: str,
+        expected: str,
+    ) -> None:
+        lock_path = demo_hub / "hub.lock"
+        valid = lock_path.read_bytes()
+        lock_path.unlink()
+        if case == "invalid-json":
+            lock_path.write_bytes(b'{"files": }')
+        elif case == "unknown-key":
+            lock_path.write_bytes(dump_json({**json.loads(valid), "extra": 1}))
+        elif case == "symlink-to-valid-lock":
+            (demo_hub / "valid.lock").write_bytes(valid)
+            lock_path.symlink_to("valid.lock")
+        else:
+            lock_path.mkdir()
+        before = tree_digest(demo_hub)
+        adapter_calls.clear()
+
+        lines = assert_failed(run_sync(demo_hub, "--adopt"))
+
+        assert lines == [expected, ADOPT_LOCK_WAY_OUT_LINE]
+        assert tree_digest(demo_hub) == before
+        assert adapter_calls == []
+
+    def test_writes_nothing_when_sibling_refused(
+        self,
+        demo_hub: Path,
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        adapter_calls: list[tuple[str, str]],
+    ) -> None:
+        (unadopted(demo_hub) / SIBLING).write_bytes(b"{")
+        before = tree_digest(demo_hub)
+        adapter_calls.clear()
+
+        lines = assert_failed(run_sync(demo_hub, "--adopt"))
+
+        assert lines == [
+            f"{SIBLING}: $: not valid JSON: Expecting property name enclosed in double quotes"
+            " at line 1 column 2"
+        ]
+        assert tree_digest(demo_hub) == before
+        assert adapter_calls == []
+
+
+class TestNoOp:
+    """AC-16.5: adopting an adopted ``DEMO`` hub does nothing; an unadopted one gets its lock."""
+
+    def test_prints_up_to_date_when_hub_adopted(
+        self,
+        demo_hub: Path,
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        adapter_calls: list[tuple[str, str]],
+    ) -> None:
+        before = tree_digest(demo_hub)
+        adapter_calls.clear()
+
+        result = run_sync(demo_hub, "--adopt")
+
+        assert (result.exit_code, result.stdout, result.stderr) == (0, "up to date\n", "")
+        assert tree_digest(demo_hub) == before
+        assert adapter_calls == []
+
+    def test_writes_init_lock_when_unadopted_demo_adopted(
+        self,
+        demo_hub: Path,
+        demo_hub_template: Path,
+        run_sync: SyncRunner,
+        *,
+        lock_golden: LockGolden,
+    ) -> None:
+        result = run_sync(unadopted(demo_hub), "--adopt")
+
+        assert result.exit_code == 0, result.output
+        assert result.stderr == ""
+        lock = (demo_hub / "hub.lock").read_bytes()
+        lock_golden(lock)
+        assert lock == (demo_hub_template / "hub.lock").read_bytes()
+        # Q-7: every path joined to the lock is named (hub.json is the project's), the lock last.
+        recorded = [
+            f"recorded {path}" for path in sorted(lock_files(demo_hub)) if path != "hub.json"
+        ]
+        assert result.stdout.splitlines() == [*recorded, "updated hub.lock"]
+
+    def test_syncs_up_to_date_when_adopted(
+        self,
+        demo_hub: Path,
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        adapter_calls: list[tuple[str, str]],
+    ) -> None:
+        assert run_sync(unadopted(demo_hub), "--adopt").exit_code == 0
+        before = tree_digest(demo_hub)
+        adapter_calls.clear()
+
+        for args in ((), ("--adopt",), ("--check",), ("--adopt", "--check")):
+            result = run_sync(demo_hub, *args)
+
+            assert (result.exit_code, result.stdout, result.stderr) == (0, "up to date\n", ""), args
+        assert tree_digest(demo_hub) == before
+        assert adapter_calls == []

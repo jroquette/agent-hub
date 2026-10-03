@@ -1,14 +1,15 @@
 """``hub sync``: bring a hub back to its render without overwriting what the project owns.
 
-The pipeline of the AGH-14 spec, in the current folder (its real path, taken once). Each load step
-that fails exits 1 before anything is read after it: ``hub.json`` (pin, schema, model; any module
-set is accepted), then ``hub.lock``, read once without following a link (absent: the ``--adopt``
-pointer; not a regular file or malformed: one line per problem, then the way out). Then the steps
-of ``sync_steps``: the tree read, the extension inputs and the render with them, and core's
-planner. A conflict exits 3 with its report on stderr and nothing written. With nothing pending,
-``up to date`` and no write at all (the adapter is not called). ``--check`` prints the ``would``
-lines and exits 4. Otherwise the plan is applied and its lines are printed. Every error goes to
-stderr.
+The pipeline of the AGH-14 spec, in the current folder (its real path, taken once). ``--accept``
+without ``--adopt`` is a usage error (exit 2) before anything is read; ``--adopt`` runs
+``adopt_command`` instead (AGH-16). Each load step that fails exits 1 before anything is read
+after it: ``hub.json`` (pin, schema, model; any module set is accepted), then ``hub.lock``, read
+once without following a link (absent: the ``--adopt`` pointer; not a regular file or malformed:
+one line per problem, then the way out). Then the steps of ``sync_steps``: the tree read, the
+extension inputs and the render with them, and core's planner. A conflict exits 3 with its report
+on stderr and nothing written. With nothing pending, ``up to date`` and no write at all (the
+adapter is not called). ``--check`` prints the ``would`` lines and exits 4. Otherwise the plan is
+applied and its lines are printed. Every error goes to stderr.
 """
 
 from pathlib import Path
@@ -16,7 +17,8 @@ from typing import Annotated
 
 import typer
 
-from agent_hub.cli.command_exits import fail, not_implemented, root_or_exit
+from agent_hub.cli.adopt_command import run_adopt
+from agent_hub.cli.command_exits import fail, root_or_exit
 from agent_hub.cli.hub_config_reader import load_hub_json_or_exit
 from agent_hub.cli.sync_report import change_lines, conflict_lines
 from agent_hub.cli.sync_steps import (
@@ -41,13 +43,29 @@ def sync(
         ),
     ] = False,
     adopt: Annotated[
-        bool, typer.Option("--adopt", help="Join a hand-made hub (not implemented yet).")
+        bool,
+        typer.Option(
+            "--adopt",
+            help="Join a hand-made hub: record what matches the render, create what is missing,"
+            " list what differs (exit 3).",
+        ),
     ] = False,
+    accept: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--accept",
+            metavar="PATH",
+            help="With --adopt: take the template of this listed path (repeatable).",
+        ),
+    ] = None,
 ) -> None:
     """Reapply the hub templates without overwriting what the project customized."""
+    if accept and not adopt:
+        raise typer.BadParameter("needs --adopt", param_hint="'--accept'")
     if adopt:
-        not_implemented()
-    _sync(check=check)
+        run_adopt(check=check, accept=tuple(accept or ()))
+    else:
+        _sync(check=check)
 
 
 def _sync(*, check: bool) -> None:
