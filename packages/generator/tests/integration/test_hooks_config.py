@@ -971,3 +971,30 @@ def test_drops_git_value_when_shape_or_encoding_invalid(
     assert found == identity
     assert verdict_of(push) == ("deny", PUSH_MAIN_REASON.format(prefix))
     assert push.stderr == b""
+
+
+def run_git(*args: str) -> None:
+    real = shutil.which("git")
+    assert real is not None
+    subprocess.run([real, *args], check=True, capture_output=True)  # noqa: S603 - fixed arguments
+
+
+@pytest.mark.parametrize("variable", ["GIT_DIR", "GIT_COMMON_DIR"])
+def test_reads_git_email_of_identity_home_when_git_location_exported(
+    variable: str,
+    run_hook: Callable[..., subprocess.CompletedProcess[bytes]],
+    *,
+    hub: Path,
+    tmp_path: Path,
+) -> None:
+    write_hub_json(hub, TEAM_HUB_JSON)
+    other = tmp_path / "other-repo"
+    # GIT_COMMON_DIR moves only a repo's shared state, so the hub is a repo in that row.
+    for repo in [other, hub] if variable == "GIT_COMMON_DIR" else [other]:
+        run_git("init", "-q", str(repo))
+    run_git("-C", str(other), "config", "user.email", "evil@example.com")
+    env = git_identity(tmp_path, b"\temail = jane@example.com\n") | {variable: str(other / ".git")}
+
+    verdict = verdict_of(run_hook("guard", bash_event("git push origin main", hub), env=env))
+
+    assert verdict == ("deny", PUSH_MAIN_REASON.format("jane/"))
