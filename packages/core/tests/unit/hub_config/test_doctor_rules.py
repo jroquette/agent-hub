@@ -34,8 +34,14 @@ RULE_TABLE_IDS = [
     "makefile.override",
     "features.tracker",
     "bench.tasks",
+    "config.identity",
 ]
 CONFIGURABLE_IDS = [rule_id for rule_id in RULE_TABLE_IDS if rule_id != "config.schema"]
+# config.identity's info must read the same for every developer: it can be disabled, not retuned.
+RETUNABLE_IDS = [rule_id for rule_id in CONFIGURABLE_IDS if rule_id != "config.identity"]
+IDENTITY_SEVERITY_MESSAGE = (
+    "config.identity is always an info, so every developer's run exits alike; remove severity"
+)
 
 
 def error_types(rules: dict[str, Any]) -> list[tuple[tuple[str | int, ...], str]]:
@@ -62,7 +68,7 @@ def test_accepts_rule_when_disabled(rule_id: str) -> None:
     assert rules.model_dump(mode="json", exclude_none=True) == {rule_id: {"enabled": False}}
 
 
-@pytest.mark.parametrize("rule_id", CONFIGURABLE_IDS)
+@pytest.mark.parametrize("rule_id", RETUNABLE_IDS)
 def test_accepts_rule_when_severity_overridden(rule_id: str) -> None:
     rules = DoctorRules.model_validate({rule_id: {"severity": "warning"}})
 
@@ -82,6 +88,18 @@ def test_rejects_config_schema_when_any_entry_given(entry: dict[str, Any]) -> No
     assert (error["loc"], error["msg"]) == (
         ("config.schema",),
         "config.schema always runs as an error; remove it",
+    )
+
+
+@pytest.mark.parametrize("severity", ["error", "warning", "info"])
+def test_rejects_severity_when_rule_is_config_identity(severity: str) -> None:
+    with pytest.raises(ValidationError) as caught:
+        DoctorRules.model_validate({"config.identity": {"enabled": True, "severity": severity}})
+
+    [error] = caught.value.errors()
+    assert (error["loc"], error["msg"]) == (
+        ("config.identity", "severity"),
+        IDENTITY_SEVERITY_MESSAGE,
     )
 
 

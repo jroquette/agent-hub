@@ -10,7 +10,12 @@ import re
 from itertools import accumulate
 from typing import Final
 
-from agent_hub.core.hub_config.problems import ROOT_PATH, ConfigProblem, one_line
+from agent_hub.core.hub_config.problems import (
+    NOT_AN_OBJECT_MESSAGE,
+    ROOT_PATH,
+    ConfigProblem,
+    one_line,
+)
 
 SUPPORTED_SCHEMA_VERSION: Final = 1
 # How a hub runs the release it is pinned to (ADR 0013); format it with ``version=``.
@@ -48,7 +53,7 @@ def pinned_release_command(pinned: str) -> str | None:
 def find_version_problem(document: object, *, running_version: str) -> ConfigProblem | None:
     """The first version problem of a parsed ``hub.json``, or None when both are supported."""
     if not isinstance(document, dict):
-        return ConfigProblem(ROOT_PATH, "must be a JSON object")
+        return ConfigProblem(ROOT_PATH, NOT_AN_OBJECT_MESSAGE)
     pinned = document.get("platform")
     if not isinstance(pinned, dict):
         return _platform_problem(pinned, is_present="platform" in document)

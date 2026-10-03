@@ -61,7 +61,9 @@ def run_children(repo: str, *, api_branch: str | None) -> RunChildren:
     if api_branch is not None:
         document["repos"][0]["default_branch"] = api_branch
     config = HubConfig.model_validate(document)
-    return RunChildren(config=config, hub=Path("/ws/hub"), repo=repo, issue_id="DEM-1")
+    return RunChildren(
+        config=config, hub=Path("/ws/hub"), repo=repo, issue_id="DEM-1", branch_prefix="jdoe/"
+    )
 
 
 def base_argument(argv: list[str]) -> str:

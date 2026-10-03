@@ -3,7 +3,9 @@
 The hub is ``AGENT_HUB_ROOT`` or the cwd; run from a worktree of the hub repo, its main checkout
 is the hub (its ``hub.json``, Q-23). Usage problems exit 2 before any tracker call or child
 process: an option out of range, an issue not shaped ``<team>-<n>``, a ``--repo`` that is not a
-repo ``dir`` of ``hub.json``, a folder that is not a hub (D15).
+repo ``dir`` of ``hub.json``, a folder that is not a hub (D15), a malformed ``hub.local.json``
+in the main checkout, or no branch prefix for the developer. The local file's
+``tracker.transport`` replaces ``hub.json``'s.
 """
 
 import contextlib
@@ -18,6 +20,7 @@ from typing import Annotated, Final
 import typer
 
 from agent_hub.cli.command_exits import fail
+from agent_hub.cli.effective_config import effective_with_prefix_or_fail
 from agent_hub.cli.errors import RunLogError
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
 from agent_hub.cli.hub_root import hub_root_or_exit, main_checkout
@@ -117,8 +120,11 @@ def run(
     """Take one tracker issue to a PR: worktree, implementing session, gate, PR, report."""
     root = hub_root_or_exit(os.environ, command=COMMAND)
     hub = _hub_checkout(root)
-    config = load_hub_config_or_exit(hub / FILE_LABEL)
-    _refuse_usage(context, config, issue=issue, repo=repo)
+    hub_config = load_hub_config_or_exit(hub / FILE_LABEL)
+    _refuse_usage(context, hub_config, issue=issue, repo=repo)
+    effective, prefix = effective_with_prefix_or_fail(context, hub_config, home=hub)
+    # hub.json with the developer's local values over it: the transport may be theirs.
+    config = effective.config
     missing = missing_key_line(config, os.environ, command=COMMAND)
     if missing is not None:
         fail(missing)
@@ -127,7 +133,7 @@ def run(
         live=live, max_turns=max_turns, budget=budget, model=model, start=start, effort=effort
     )
     client = resolve_tracker_client(config, os.environ, hub_root=hub)
-    children = RunChildren(config=config, hub=hub, repo=repo, issue_id=issue)
+    children = RunChildren(config=config, hub=hub, repo=repo, issue_id=issue, branch_prefix=prefix)
     if not options.live:
         picked = _read_issue_or_exit(client, issue, log=None)
         _print_dry_run(children, picked, options=options, run_id=new_run_id())

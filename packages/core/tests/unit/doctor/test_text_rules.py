@@ -363,6 +363,19 @@ class TestAttribution:
         default = snapshot_of(files={AGENTS: f"{BRANCH}\n".encode()})
         assert found(ATTRIBUTION_AI, default) == [attribution(AGENTS, 1, "`claude/` branch prefix")]
 
+    def test_names_prefix_placeholder_when_hub_sets_no_prefix(
+        self, snapshot_of: SnapshotFactory
+    ) -> None:
+        document = a_hub_document()
+        del document["project"]["branch_prefix"]
+        snapshot = snapshot_of(
+            files={AGENTS: f"{BRANCH}\n".encode()}, config=HubConfig.model_validate(document)
+        )
+
+        assert [finding.fix for finding in ATTRIBUTION_AI.check(snapshot)] == [
+            "branches are `<prefix>dem-<N>-<desc>`; commits/PRs carry no AI trailer"
+        ]
+
     @pytest.mark.parametrize(
         "line",
         [

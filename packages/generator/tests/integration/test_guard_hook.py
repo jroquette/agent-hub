@@ -1254,3 +1254,71 @@ class TestProtectedBranches:
         verdicts = guard(hub / HOOKS, [bash_run("git push -f origin master", hub)])
 
         assert verdicts == [("deny", FORCE_PUSH_REASON)]
+
+
+# AGH-65 (AC-65.11): on a team hub (no identity in hub.json) the hint takes the developer's
+# prefix: hub.local.json's, else the local part of git's user.email plus ``/``, else none.
+HINT_COMMANDS = ("git push origin main", "git checkout -b claude/x")
+
+
+def hint_reasons(prefix: str) -> list[tuple[str, str]]:
+    branch = f"{prefix}dem-<N>-<desc>"
+    return [
+        ("deny", f"[hub guard] pushing to main is not allowed; open a PR from a {branch} branch"),
+        ("deny", f"[hub guard] branches are {branch}, never claude/..."),
+    ]
+
+
+def team_hub(workspace: Path) -> Path:
+    """``HUB_JSON`` without the identity keys, and without the seeded project guard stub."""
+    hub = with_repo_branches(workspace, {})
+    document = json.loads(json.dumps(HUB_JSON))
+    for key in ("branch_prefix", "author_name", "author_email"):
+        del document["project"][key]
+    (hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+    return hub
+
+
+def git_email(tmp_path: Path, email: str) -> dict[str, str]:
+    config = tmp_path / "gitconfig"
+    config.write_text(f"[user]\n\temail = {email}\n", encoding="utf-8")
+    return {"GIT_CONFIG_GLOBAL": str(config)}
+
+
+class TestBranchHint:
+    def test_hints_local_prefix_when_local_file_sets_one(
+        self, workspace: Path, guard: Guard, tmp_path: Path
+    ) -> None:
+        hub = team_hub(workspace)
+        (hub / "hub.local.json").write_text(
+            json.dumps({"project": {"branch_prefix": "me/"}}), encoding="utf-8"
+        )
+        runs = [bash_run(command, hub) for command in HINT_COMMANDS]
+
+        verdicts = guard(hub / HOOKS, runs, env=git_email(tmp_path, "jane@example.com"))
+
+        assert verdicts == hint_reasons("me/")
+
+    def test_hints_git_email_prefix_when_only_git_sets_email(
+        self, workspace: Path, guard: Guard, tmp_path: Path
+    ) -> None:
+        hub = team_hub(workspace)
+        runs = [bash_run(command, hub) for command in HINT_COMMANDS]
+
+        verdicts = guard(hub / HOOKS, runs, env=git_email(tmp_path, "jane@example.com"))
+
+        assert verdicts == hint_reasons("jane/")
+
+    def test_hints_bare_branch_when_no_source_sets_prefix(
+        self, workspace: Path, guard: Guard
+    ) -> None:
+        hub = team_hub(workspace)
+        runs = [bash_run(command, hub) for command in HINT_COMMANDS]
+
+        push, claude = guard(hub / HOOKS, runs)
+
+        assert (push, claude) == tuple(hint_reasons(""))
+        assert push is not None
+        assert claude is not None
+        assert "a dem-<N>-<desc> branch" in push[1]
+        assert "branches are dem-<N>-<desc>," in claude[1]

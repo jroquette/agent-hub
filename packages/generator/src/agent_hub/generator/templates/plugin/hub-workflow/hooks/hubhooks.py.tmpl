@@ -12,6 +12,12 @@ holding hub.json, or to a workspace directory whose child holds hub.json + brain
 start: the start is inside that hub, or inside a repo its hub.json lists (or one of that repo's
 worktrees). Another project's hub beside the start is never taken.
 hub.json is read only by stdlib_reader.py, which never raises and gives every key a default.
+One developer's identity (branch prefix, author) and tracker transport come from hub.local.json,
+else hub.json, else git config (docs/design/developer-identity.md), all in the identity home:
+the main checkout of the hub that holds these files, or the walked hub in plugin-cache mode.
+With $HUB_CONFIG and no such hub there is none, so neither hub.local.json nor git is read: a
+local file beside a $HUB_CONFIG file never counts. Git runs only when a value is asked for (the
+guard's deny hint), once per key, with a short timeout.
 A hook never errors the session: run_hook turns any exception into exit 0 and one stderr line
 (the guard: one ask).
 """
@@ -26,9 +32,22 @@ from pathlib import Path
 from collections.abc import Callable
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from stdlib_reader import GuardSection, HubFile, RepoEntry, load_hub_file  # noqa: E402
+from stdlib_reader import (  # noqa: E402
+    LOCAL_FILE,
+    EffectiveValues,
+    GuardSection,
+    HubFile,
+    LocalFile,
+    RepoEntry,
+    load_hub_file,
+    load_local_file,
+)
 
 HUB_FILE = "hub.json"
+# A git config read for the identity: well inside the guard's own 10 s timeout (hooks.json).
+IDENTITY_GIT_TIMEOUT = 2
+# Variables that point git at another repo than its cwd: the identity read drops them, as the CLI.
+GIT_LOCATION_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
 
 
 def read_input() -> dict:
@@ -152,7 +171,9 @@ class Config:
     root_project its own project name. root_file is the root's hub.json when the config is another
     file ($HUB_CONFIG): the guard's lists are then the union of both, so that file only tightens.
     protected_branches (sorted, each once) is main, master and every default branch of the config,
-    plus the root file's when there is one.
+    plus the root file's when there is one. identity gives the developer's values from local_file
+    (hub.local.json), else the config, else git config run in identity_home (none without it);
+    branch_prefix, author_name and author_email read it lazily, so building a Config runs no git.
     """
 
     def __init__(
@@ -161,6 +182,9 @@ class Config:
         hub_file: HubFile | None = None,
         root: Path | None = None,
         root_file: HubFile | None = None,
+        *,
+        identity_home: Path | None = None,
+        local_file: LocalFile | None = None,
     ):
         hub_file = hub_file if hub_file is not None else HubFile()
         root_guard = root_file.guard if root_file is not None else GuardSection()
@@ -171,7 +195,11 @@ class Config:
         self.root_project = (root_file if root_file is not None else hub_file).project.name
         self.hub_file = hub_file
         self.project_name = hub_file.project.name
-        self.branch_prefix = hub_file.project.branch_prefix
+        self.identity_home = identity_home
+        self.identity = EffectiveValues(
+            hub_file, local_file if local_file is not None else LocalFile(), self._git_value
+        )
+        self.transport = self.identity.transport
         self.default_branch = hub_file.project.default_branch
         self.tracker_team = hub_file.tracker.team
         self.repos = hub_file.repos
@@ -180,6 +208,41 @@ class Config:
         self.deny_paths = _union(root_guard.deny_paths, hub_file.guard.deny_paths)
         root_branches = _branches(root_file) if root_file is not None else ()
         self.protected_branches = tuple(sorted({"main", "master", *_branches(hub_file), *root_branches}))
+
+    @property
+    def branch_prefix(self) -> str:
+        return self.identity.branch_prefix()
+
+    @property
+    def author_name(self) -> str:
+        return self.identity.author_name()
+
+    @property
+    def author_email(self) -> str:
+        return self.identity.author_email()
+
+    def _git_value(self, key: str) -> str:
+        """git config --get <key> in the identity home, as raw text; "" when unset or unreadable.
+
+        Not git(): the reader drops git's one newline and checks the shape itself, so nothing is
+        stripped, and bytes that are not UTF-8 are no value rather than an error. GIT_DIR and the
+        like are dropped, so an exported one cannot answer with another repo's identity."""
+        if self.identity_home is None:
+            return ""
+        env = {name: value for name, value in os.environ.items() if name not in GIT_LOCATION_VARIABLES}
+        try:
+            completed = subprocess.run(
+                ["git", "config", "--get", key],
+                cwd=self.identity_home,
+                capture_output=True,
+                timeout=IDENTITY_GIT_TIMEOUT,
+                env=env,
+            )
+            if completed.returncode != 0:
+                return ""
+            return completed.stdout.decode("utf-8", "strict")
+        except (OSError, subprocess.TimeoutExpired, UnicodeDecodeError):
+            return ""
 
     @property
     def repo_dirs(self) -> tuple[str, ...]:
@@ -192,6 +255,17 @@ class Config:
         return None
 
 
+def _identity_home(root: Path | None, hub: Path | None) -> Path | None:
+    """Where hub.local.json and git config are read: the hook root's main checkout, else (plugin
+    cache) the walked hub; None when $HUB_CONFIG named the file, so nothing beside it counts."""
+    if root:
+        return _main_checkout(root)
+    env = os.environ.get("HUB_CONFIG")
+    if env and os.path.isfile(env):
+        return None
+    return hub
+
+
 def load_config(start: object = None) -> Config:
     located = _locate(start)
     if not located:
@@ -200,7 +274,11 @@ def load_config(start: object = None) -> Config:
     root = hook_root()
     own = root / HUB_FILE if root else None
     root_file = load_hub_file(own) if own and found.resolve() != own.resolve() else None
-    return Config(hub, load_hub_file(found), root, root_file)
+    home = _identity_home(root, hub)
+    local_file = load_local_file(home / LOCAL_FILE) if home else LocalFile()
+    return Config(
+        hub, load_hub_file(found), root, root_file, identity_home=home, local_file=local_file
+    )
 
 
 def checkouts(cfg: Config, names: list[str] | None = None) -> list[tuple[str, Path]]:

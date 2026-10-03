@@ -8,8 +8,9 @@ ask   = needs the user's confirmation (removing test assertions or adding skip/x
         deleting or sed-editing tests from Bash, editing the hub's guard files: plugin/hub-workflow/hooks/,
         plugin/<project>/hooks/, .claude/settings*.json, hub.lock and hub.json, in the hub or a hub worktree;
         editing paths in guard.ask_before_edit, writing brain/ outside now.md, journal/, _inbox/, auto/, features/)
-Project values (branch prefix, default branch, tracker team, guard lists) come from hub.json. A list entry
-`@hub/<path>` is <path> in the hub that holds this file; with no such hub (plugin cache) it is skipped.
+Project values (default branch, tracker team, guard lists) come from hub.json. The branch prefix of a deny's
+hint is the developer's: hub.local.json, else hub.json, else the local part of git config user.email plus `/`
+(git runs only on that deny); with none, the hint has no prefix. A list entry `@hub/<path>` is <path> in the hub that holds this file; with no such hub (plugin cache) it is skipped.
 Then, unless the verdict is deny (final), the project's extension plugin/<project>/hooks/project_guard.py
 of the hub that holds this file (never one found from $CLAUDE_PROJECT_DIR, the cwd or the tool input;
 none in the plugin cache) runs in a child, project_guard_runner.py, with a 3 s timeout that kills its
