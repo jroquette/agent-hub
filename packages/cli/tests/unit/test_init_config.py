@@ -190,6 +190,18 @@ def test_keeps_model_order_when_missing_flags_and_rejected_values_mix() -> None:
     ]
 
 
+def test_names_cross_field_problem_when_identity_flag_missing() -> None:
+    document = demo_document(repos="acme/x,other/x", author_name=None)
+
+    printed = flag_problems(problems_of(document), repos="acme/x,other/x")
+
+    # The missing flag and the duplicate dir, in the model's order: project before repos.
+    assert printed == [
+        "--author-name: Field required",
+        '--repos item 2 ("other/x"): repo dir "x" is already used by item 1, ignoring case',
+    ]
+
+
 def test_names_each_project_flag_when_its_value_rejected() -> None:
     document = demo_document(hub_repo="demo-hub", author_name="Jane\nDoe", author_email="jane")
 
