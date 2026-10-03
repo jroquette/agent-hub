@@ -9,9 +9,13 @@ adopt records every path and writes the lock ``hub init`` writes, after which pl
 ``--check`` writes nothing (exit 3 listed, 4 pending); a refused ``--accept`` exits 2 naming each
 path, with nothing written. Directory links at ``.claude/skills`` and ``.claude/agents`` are listed
 as migrations, their targets never read; accepted, each becomes a folder of the rendered links. A
-link resolving outside the hub is a conflict, which ``--accept`` refuses.
+link resolving outside the hub is a conflict, which ``--accept`` refuses. Adopt leaves unknown
+entries alone, never opens ``hub.json`` for writing, runs no ``git`` and writes ``hub.lock`` last;
+stopped by an I/O error, it leaves the old lock and no temp entry, and the next adopt ends where an
+uninterrupted run does. ``--check`` with ``--accept`` previews the accepted writes.
 """
 
+import errno
 import json
 import os
 import shutil
@@ -27,6 +31,7 @@ from typer.testing import CliRunner, Result
 from agent_hub.cli.adopt_report import ADOPT_CONFLICT_WAY_OUT, ADOPT_LISTED_WAY_OUT
 from agent_hub.cli.main import app
 from agent_hub.core.hub_files.plan_adopt import ACCEPT_CONFLICT, ACCEPT_NOT_LISTED
+from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
 from agent_hub.core.json_form import dump_json
 
 # The conftest's fixtures' types (tests cannot import a conftest in importlib mode).
@@ -35,6 +40,8 @@ type SyncRunner = Callable[..., Result]
 type LockGolden = Callable[..., None]
 # The conftest's ``Ac4Hub``: ``make``, ``guard``, ``now``, ``schema`` and ``listing``.
 type Ac4Hub = Any
+# The conftest's ``fake_git`` factory: a ``FakeGit`` with ``bin_dir`` and ``calls()``.
+type FakeGitFactory = Callable[..., Any]
 ADOPT_LOCK_WAY_OUT_LINE = "hub.lock: restore it from git, or delete it and re-run hub sync --adopt"
 SIBLING = ".claude/settings.project.json"
 FIFO_ALARM_SECONDS = 5
@@ -50,6 +57,27 @@ REVIEW_LINK = ".claude/skills/review"
 RENDERED_LINKS = {".claude/agents": 7, ".claude/skills": 8}
 # The calls that look at a path without opening or listing it.
 LOOKS = frozenset({"lstat", "stat"})
+# The conftest's ``ac4.guard`` and ``ac4.schema``, for parameters (fixtures are not set yet).
+AC4_GUARD = "plugin/hub-workflow/hooks/guard.py"
+AC4_SCHEMA = "hub.schema.json"
+# AC-14.13's entries no planned path names, each as a path under the hub.
+UNKNOWN_ENTRIES = (
+    "notes.txt",
+    "brain/pipe",
+    "scratch",
+    ".claude/skills/mine",
+    "scratch2/.x.hub-tmp-0123abcd",
+)
+# The ``os.open`` flags and builtin ``open`` mode letters that can change a file.
+WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
+WRITE_MODES = frozenset("wax+")
+# The verb each change line has with ``--check`` (Q-6).
+WOULD = {
+    "created": "would create",
+    "updated": "would update",
+    "recorded": "would record",
+    "migrated": "would migrate",
+}
 
 
 @pytest.fixture
@@ -599,6 +627,228 @@ class TestMigration:
         assert [path for path in lock_files(demo_hub) if path.startswith(f"{LINKED[1]}/")] == []
 
 
+def temp_entries(root: Path) -> list[str]:
+    """The paths under ``root`` whose name has the temp shape."""
+    return [
+        (Path(folder) / name).relative_to(root).as_posix()
+        for folder, folders, files in os.walk(root)
+        for name in [*folders, *files]
+        if is_leftover_name(name)
+    ]
+
+
+def fail_first_replace(patch: pytest.MonkeyPatch, *, name: str | None = None) -> None:
+    """Make the first ``os.replace`` (of ``name`` when given) raise ``EIO``; the rest go through."""
+    real = os.replace
+    failed: list[str] = []
+
+    def failing(*args: Any, **kwargs: Any) -> Any:
+        destination = os.fsdecode(args[1])
+        if not failed and name in {None, destination}:
+            failed.append(destination)
+            raise OSError(errno.EIO, os.strerror(errno.EIO))
+        return real(*args, **kwargs)
+
+    patch.setattr(os, "replace", failing)
+
+
+def would(line: str) -> str:
+    """A change line as ``--check`` prints it."""
+    verb, _, path = line.partition(" ")
+    return f"{WOULD[verb]} {path}"
+
+
+def basename(read_path: str) -> str:
+    return read_path.rpartition("/")[2]
+
+
+def opens_for_writing(flags: int | str | None) -> bool:
+    """Whether an open with ``flags`` (``os.open``'s flags or ``open``'s mode) can change a file."""
+    if isinstance(flags, int):
+        return bool(flags & WRITE_FLAGS)
+    return flags is not None and bool(WRITE_MODES & set(flags))
+
+
+# Where an interrupted adopt stops (AC-16.8): the hub, the run's ``--accept`` paths, the
+# ``os.replace`` that fails (``None``: the first one) and the path its error line names.
+INTERRUPTIONS = {
+    # No lock yet: the first write is the deleted hub.schema.json.
+    "first-write": ("ac4", (), None, AC4_SCHEMA),
+    # Both links deleted and their folders made: the first link written under them fails.
+    "migration": ("linked", LINKED, None, ".claude/agents/architect.md"),
+    # A partial lock from an earlier run; Makefile is written, then the lock's rename fails.
+    "hub-lock": ("ac4-partial", ("Makefile",), "hub.lock", "hub.lock"),
+}
+
+
+class TestSafety:
+    """AC-16.8: hub-sync's invariants hold for adopt."""
+
+    @pytest.mark.usefixtures("alarm")
+    def test_leaves_unknown_entries_when_adopt_runs(
+        self,
+        demo_hub: Path,
+        demo_hub_template: Path,
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        path_reads: list[Any],
+        adapter_calls: list[tuple[str, str]],
+        ac4: Ac4Hub,
+    ) -> None:
+        (unadopted(demo_hub) / ac4.schema).unlink()
+        (demo_hub / "notes.txt").write_bytes(b"our notes\n")
+        os.mkfifo(demo_hub / "brain/pipe")
+        (demo_hub / "scratch").mkdir()
+        (demo_hub / "scratch/secret.md").write_bytes(b"secret\n")
+        (demo_hub / ".claude/skills/mine").symlink_to("../../scratch")
+        (demo_hub / "scratch2").mkdir()
+        (demo_hub / "scratch2/.x.hub-tmp-0123abcd").write_bytes(b"temp-shaped\n")
+        folders = {
+            (info.st_dev, info.st_ino)
+            for info in map(os.stat, [demo_hub / "scratch", demo_hub / "scratch2"])
+        }
+        (demo_hub / "scratch").chmod(0)
+        try:
+            # ``scratch/secret.md`` is in the digest only when the tests run as root: otherwise
+            # ``os.walk`` cannot list the mode-0 folder, and ``scratch`` is compared alone.
+            before = {path: tree_digest(demo_hub / path) for path in UNKNOWN_ENTRIES}
+            path_reads.clear()
+            adapter_calls.clear()
+
+            result = run_sync(demo_hub, "--adopt")
+
+            reads = list(path_reads)
+            after = {path: tree_digest(demo_hub / path) for path in UNKNOWN_ENTRIES}
+        finally:
+            (demo_hub / "scratch").chmod(0o755)
+
+        assert (result.exit_code, result.stderr) == (0, ""), result.output
+        lines = result.stdout.splitlines()
+        assert f"created {ac4.schema}" in lines
+        assert not any(basename(line) in {"notes.txt", "pipe", "mine"} for line in lines)
+        assert after == before
+        # Never opened, looked at or listed, by name or through a descriptor.
+        assert reads, "the recorder saw nothing"
+        names = {basename(read.path) for read in reads}
+        assert not names & {"notes.txt", "pipe", "scratch", "secret.md", "mine", "scratch2"}
+        assert ".x.hub-tmp-0123abcd" not in names
+        assert not {read.identity for read in reads} & folders
+        # The lock is written last, once, and records none of them.
+        assert adapter_calls[-1] == ("replace", "hub.lock")
+        assert [call for call in adapter_calls if call[1] == "hub.lock"] == [adapter_calls[-1]]
+        assert (demo_hub / "hub.lock").read_bytes() == (demo_hub_template / "hub.lock").read_bytes()
+        unknown = {*UNKNOWN_ENTRIES, "scratch/secret.md", "scratch2"}
+        fresh = {
+            path: entry for path, entry in tree_digest(demo_hub).items() if path not in unknown
+        }
+        assert fresh == tree_digest(demo_hub_template)
+
+    def test_never_writes_hub_json_when_adopt_runs(
+        self,
+        demo_hub: Path,
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        path_reads: list[Any],
+        adapter_calls: list[tuple[str, str]],
+        ac4: Ac4Hub,
+    ) -> None:
+        hub_json = demo_hub / "hub.json"
+        before = (tree_digest(hub_json), hub_json.stat().st_ino)
+        ac4.make(demo_hub)
+        path_reads.clear()
+        adapter_calls.clear()
+
+        # A listing, then a run that writes (an accepted file, a created one, the lock).
+        checked = run_sync(demo_hub, "--adopt", "--check")
+        written = run_sync(demo_hub, "--adopt", "--accept", "Makefile")
+
+        assert (checked.exit_code, written.exit_code) == (3, 3), written.output
+        assert ("replace", "Makefile") in adapter_calls
+        opened = [read for read in path_reads if basename(read.path) == "hub.json"]
+        # Each run reads it: the recorder saw it.
+        assert opened, "hub.json was never read"
+        assert [read for read in opened if opens_for_writing(read.flags)] == []
+        assert [call for call in adapter_calls if basename(call[1]) == "hub.json"] == []
+        assert (tree_digest(hub_json), hub_json.stat().st_ino) == before
+
+    def test_runs_no_git_when_adopt_runs(
+        self,
+        demo_hub: Path,
+        run_sync: SyncRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_git: FakeGitFactory,
+        ac4: Ac4Hub,
+    ) -> None:
+        git = fake_git({}, toplevel=demo_hub)
+        monkeypatch.setenv("PATH", os.pathsep.join([str(git.bin_dir), os.environ["PATH"]]))
+        assert shutil.which("git") == str(git.bin_dir / "git")
+        ac4.make(demo_hub)
+
+        runs = [
+            run_sync(demo_hub, "--adopt", "--check"),
+            run_sync(demo_hub, "--adopt", "--accept", "Makefile"),
+            run_sync(demo_hub, "--adopt", "--check", "--accept", ac4.guard),
+            run_sync(demo_hub, "--adopt", "--accept", ac4.guard),
+        ]
+
+        assert [run.exit_code for run in runs] == [3, 3, 4, 0], [run.output for run in runs]
+        assert git.calls() == []
+
+    @pytest.mark.parametrize(
+        ("hub", "accepts", "failing", "path"), INTERRUPTIONS.values(), ids=INTERRUPTIONS.keys()
+    )
+    def test_keeps_old_lock_when_first_write_fails(
+        self,
+        tmp_path: Path,
+        demo_hub: Path,
+        run_sync: SyncRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+        tree_digest: TreeDigest,
+        ac4: Ac4Hub,
+        hub: str,
+        accepts: tuple[str, ...],
+        failing: str | None,
+        path: str,
+    ) -> None:
+        if hub == "linked":
+            linked_plugin_folders(demo_hub)
+        else:
+            ac4.make(demo_hub)
+        if hub == "ac4-partial":
+            assert run_sync(demo_hub, "--adopt").exit_code == 3
+        lock_path = demo_hub / "hub.lock"
+        old_lock = lock_path.read_bytes() if lock_path.exists() else None
+        args = ["--adopt", *(arg for each in accepts for arg in ("--accept", each))]
+        # The same run, never stopped, on a copy: where the resumed hub must end.
+        clean = tmp_path / "clean"
+        shutil.copytree(demo_hub, clean, symlinks=True)
+        uninterrupted = run_sync(clean, *args)
+        assert uninterrupted.exit_code in {0, 3}, uninterrupted.output
+
+        with monkeypatch.context() as patch:
+            fail_first_replace(patch, name=failing)
+
+            stopped = run_sync(demo_hub, *args)
+
+        assert (stopped.exit_code, stopped.stdout) == (1, ""), stopped.output
+        assert stopped.stderr.splitlines() == [f"{path}: Input/output error"]
+        # The lock's old state: absent, or its prior bytes even when its own rename failed.
+        assert (lock_path.read_bytes() if lock_path.exists() else None) == old_lock
+        assert temp_entries(demo_hub) == []
+
+        # Plain adopt: a file written before the error equals its render and is recorded.
+        resumed = run_sync(demo_hub, "--adopt")
+
+        assert resumed.exit_code == uninterrupted.exit_code, resumed.output
+        assert resumed.stderr == uninterrupted.stderr
+        assert tree_digest(demo_hub) == tree_digest(clean)
+        assert lock_path.read_bytes() == (clean / "hub.lock").read_bytes()
+
+
 class TestCheck:
     """AC-16.9, Q-6: ``--adopt --check`` writes nothing; exit 3 listed, 4 pending, else 0."""
 
@@ -650,3 +900,76 @@ class TestCheck:
             for line in adopted.stdout.splitlines()
         ]
         assert result.stdout.splitlines() == expected
+
+    def test_prints_up_to_date_when_adopted(
+        self,
+        demo_hub: Path,
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        adapter_calls: list[tuple[str, str]],
+        ac4: Ac4Hub,
+    ) -> None:
+        # AC-16.4's hub adopted by taking both templates; the edited seeded file stays as edited.
+        accepts = ("--accept", "Makefile", "--accept", ac4.guard)
+        assert run_sync(ac4.make(demo_hub), "--adopt", *accepts).exit_code == 0
+        before = tree_digest(demo_hub)
+        adapter_calls.clear()
+
+        result = run_sync(demo_hub, "--adopt", "--check")
+
+        assert (result.exit_code, result.stdout, result.stderr) == (0, "up to date\n", "")
+        assert tree_digest(demo_hub) == before
+        assert adapter_calls == []
+
+    @pytest.mark.parametrize(
+        ("hub", "accepts", "code"),
+        [
+            # guard.py stays listed: exit 3 over the accepted writes.
+            ("ac4", ("Makefile",), 3),
+            # Nothing left listed: only writes pending, exit 4.
+            ("ac4", ("Makefile", AC4_GUARD), 4),
+            ("linked", LINKED, 4),
+        ],
+        ids=["one-of-two-listed", "both-listed", "migrations"],
+    )
+    def test_previews_accepted_writes_when_accept_given_with_check(
+        self,
+        demo_hub: Path,
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        adapter_calls: list[tuple[str, str]],
+        ac4: Ac4Hub,
+        hub: str,
+        accepts: tuple[str, ...],
+        code: int,
+    ) -> None:
+        assert (ac4.guard, ac4.schema) == (AC4_GUARD, AC4_SCHEMA)
+        if hub == "linked":
+            linked_plugin_folders(demo_hub)
+        else:
+            ac4.make(demo_hub)
+        args = ["--adopt", *(arg for each in accepts for arg in ("--accept", each))]
+        before = tree_digest(demo_hub)
+        adapter_calls.clear()
+
+        preview = run_sync(demo_hub, *args, "--check")
+
+        assert preview.exit_code == code, preview.output
+        lines = preview.stdout.splitlines()
+        assert all(line.startswith("would ") for line in lines), lines
+        # Each accepted path is previewed as written (Q-6): its file updated or its link migrated.
+        previewed = {line.split(" ", 2)[2]: line.split(" ", 2)[1] for line in lines}
+        assert {path: previewed.get(path) for path in accepts} == {
+            path: "migrate" if hub == "linked" else "update" for path in accepts
+        }
+        assert lines[-1] == "would update hub.lock"
+        assert tree_digest(demo_hub) == before
+        assert adapter_calls == []
+        # The run itself prints the same lines without ``would``, and the same listing.
+        applied = run_sync(demo_hub, *args)
+
+        assert applied.exit_code == (3 if code == 3 else 0), applied.output
+        assert applied.stderr == preview.stderr
+        assert lines == [would(line) for line in applied.stdout.splitlines()]

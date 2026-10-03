@@ -5,7 +5,8 @@ pending ``demo`` hub synced in process and as a child writes identical trees (AC
 run on a fresh ``demo`` init, plain or committed, finds and writes nothing (AGH-11 AC-11.16).
 ``hub sync --adopt`` on an unadopted ``demo`` hub with hand edits lists the two changed managed
 files, saves the rest, writes nothing on a rerun, and ends at a fresh init's lock once both are
-restored (AGH-16 AC-16.4).
+restored (AGH-16 AC-16.4); the same hub adopted in process and as a child writes identical trees
+(AC-16.10).
 
 ``DEMO`` is ``demo_config_file`` (the example config without modules, pinned to the running CLI)
 and ``DEMO_FLAGS`` is ``demo_flags``. The golden harness of ``demo.hub.lock`` is the conftest's
@@ -664,3 +665,57 @@ def test_lists_differences_when_adopt_runs(
     template = tree_digest(demo_hub_template)
     assert adopted.pop(now) != template.pop(now)
     assert adopted == template
+
+
+def test_writes_identical_trees_when_adopt_runs_twice(
+    tmp_path: Path,
+    demo_hub: Path,
+    *,
+    run_sync: SyncRunner,
+    tree_digest: TreeDigest,
+    child_env: ChildEnv,
+    set_umask: Callable[[int], None],
+    no_git_path: Path,
+    ac4: Ac4Hub,
+) -> None:
+    # AC-16.4's hub, one listed file accepted: a created file, an updated one, a listing, the lock.
+    ac4.make(demo_hub)
+    child_root = tmp_path / "child"
+    shutil.copytree(demo_hub, child_root, symlinks=True)
+    args = ["sync", "--adopt", "--accept", "Makefile"]
+    # A umask other than the child's, whatever the developer's shell uses.
+    set_umask(0o022)
+    env = child_env(
+        {
+            **os.environ,
+            "PATH": str(no_git_path),
+            "HOME": str(tmp_path / "child-home"),
+            "PYTHONHASHSEED": CHILD_HASH_SEED,
+            "TZ": CHILD_TZ,
+            "LC_ALL": "C",
+        }
+    )
+
+    in_process = run_sync(demo_hub, *args[1:])
+    child = subprocess.run(  # noqa: S603 - this interpreter, fixed code, a tmp_path folder
+        [sys.executable, "-c", "from agent_hub.cli.main import app; app(prog_name='hub')", *args],
+        cwd=child_root,
+        env=env,
+        umask=CHILD_UMASK,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=CHILD_TIMEOUT,
+    )
+
+    assert in_process.exit_code == 3, in_process.output
+    assert child.returncode == 3, child.stderr
+    assert f"created {ac4.schema}" in in_process.stdout.splitlines()
+    assert "updated Makefile" in in_process.stdout.splitlines()
+    assert in_process.stdout.splitlines()[-1] == "updated hub.lock"
+    assert (child.stdout, child.stderr) == (in_process.stdout, in_process.stderr)
+    # The child's umask really differed: some permission bits of the written files differ.
+    assert tree_digest(child_root) != tree_digest(demo_hub)
+    # Nothing but those bits differs.
+    assert shape(tree_digest(child_root)) == shape(tree_digest(demo_hub))
+    assert (child_root / "hub.lock").read_bytes() == (demo_hub / "hub.lock").read_bytes()

@@ -284,12 +284,15 @@ class PathRead(NamedTuple):
     The path is absolute when the call names it from the current folder, and reads
     ``<fd N>/<name>`` when it is relative to an open folder (or ``<fd N>`` for the folder itself).
     ``identity`` is that open folder's (or descriptor's) identity, taken at the call, and
-    ``None`` for a path named from the current folder.
+    ``None`` for a path named from the current folder. ``flags`` is how an open asks for the path:
+    ``os.open``'s flags, or the builtin ``open``'s mode (``"r"`` when not given); ``None`` for a
+    call that does not open.
     """
 
     call: str
     path: str
     identity: Identity | None = None
+    flags: int | str | None = None
 
 
 # The calls through which a run looks at a path, each recorded before it goes through.
@@ -330,7 +333,8 @@ def _recorded_listing(
 @pytest.fixture
 def path_reads(monkeypatch: pytest.MonkeyPatch) -> list[PathRead]:
     """Every path given to ``os.open``, ``os.stat``, ``os.lstat``, ``os.scandir`` and
-    ``os.listdir``, in order, each with the identity of the descriptor it is given or relative to.
+    ``os.listdir``, in order, each with the identity of the descriptor it is given or relative to,
+    and an open's flags or mode.
 
     The builtin ``open`` (also ``io.open``, which ``Path.read_bytes`` uses) is recorded as
     ``builtin-open`` when given a path, not a descriptor. A ``subprocess.Popen`` is recorded as
@@ -340,7 +344,9 @@ def path_reads(monkeypatch: pytest.MonkeyPatch) -> list[PathRead]:
 
     def wrap(call: str, real: Callable[..., Any]) -> Callable[..., Any]:
         def recorded(path: Any, *args: Any, dir_fd: int | None = None, **kwargs: Any) -> Any:
-            reads.append(PathRead(call, _read_path(path, dir_fd), _read_identity(path, dir_fd)))
+            flags = (args[0] if args else kwargs.get("flags")) if call == "open" else None
+            identity = _read_identity(path, dir_fd)
+            reads.append(PathRead(call, _read_path(path, dir_fd), identity, flags))
             return real(path, *args, dir_fd=dir_fd, **kwargs)
 
         return recorded
@@ -353,7 +359,8 @@ def path_reads(monkeypatch: pytest.MonkeyPatch) -> list[PathRead]:
 
     def recorded_open(file: Any, *args: Any, **kwargs: Any) -> Any:
         if not isinstance(file, int):
-            reads.append(PathRead("builtin-open", _read_path(file, None)))
+            mode = args[0] if args else kwargs.get("mode", "r")
+            reads.append(PathRead("builtin-open", _read_path(file, None), None, mode))
         return real_open(file, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "open", recorded_open)
