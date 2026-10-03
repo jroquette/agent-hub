@@ -424,6 +424,33 @@ def test_finds_no_stale_reference_when_fresh_hub_selects_modules(
     assert lines_of(run_doctor(root, "--only", "instructions.refs"), exit_code=0) == [CLEAN]
 
 
+@pytest.mark.parametrize(
+    ("project_branch", "repo_branch"),
+    [("main", "release/2"), ("stable/1", None)],
+    ids=["repo-branch", "project-branch"],
+)
+def test_finds_no_stale_reference_when_fresh_hub_names_branch_with_slash(
+    tmp_path: Path,
+    demo_document: dict[str, Any],
+    run_doctor: DoctorRunner,
+    *,
+    project_branch: str,
+    repo_branch: str | None,
+) -> None:
+    # AGENTS.md names the configured branches as code spans; one with a ``/`` looks like a path
+    # but is not a stale reference.
+    demo_document["project"]["default_branch"] = project_branch
+    if repo_branch is not None:
+        demo_document["repos"][0]["default_branch"] = repo_branch
+    config = tmp_path / "hub.json"
+    config.write_bytes(dump_json(demo_document))
+    root = tmp_path / "hub"
+    created = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
+    assert created.exit_code == 0, created.stderr
+
+    assert lines_of(run_doctor(root, "--only", "instructions.refs"), exit_code=0) == [CLEAN]
+
+
 @pytest.mark.parametrize("schema_version", [1, 2], ids=["schema-ok", "schema-wrong"])
 def test_reports_pin_only_when_pin_differs(
     demo_hub: Path,

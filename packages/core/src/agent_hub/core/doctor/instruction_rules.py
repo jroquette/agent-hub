@@ -15,8 +15,9 @@ files (``config_lint``; spec AC-11.19, AC-11.20, Q-6). Lines are ``config_lint.t
   frontmatter; an unterminated one hides the whole file) that does not exist is flagged at its
   line. A path is a link target (``[..](path#part)``) or a code span shaped like a path; it is
   skipped when it is a URL, ``mailto:``, ``~``, absolute or ``../`` path, a placeholder (``<x>``,
-  ``path/to/``, ``...``, ``…``, ``$VAR``), ``origin/…``/``upstream/…``, a MIME type or a branch
-  under ``project.branch_prefix``. It resolves, after cutting a ``::`` test id and a glob's tail
+  ``path/to/``, ``...``, ``…``, ``$VAR``), ``origin/…``/``upstream/…``, a MIME type, a branch
+  under ``project.branch_prefix`` or a configured default branch (the project's or a repo's).
+  It resolves, after cutting a ``::`` test id and a glob's tail
   (``@/`` read as ``src/``), against the listed paths, the fixed paths present and their
   folders (E31), from the file's folder or the root; then by name (``.claude/worktrees``,
   ``node_modules``… are there by design; ``hub.lock`` is the lock rules', E35); then as the end
@@ -219,6 +220,8 @@ class _RefContext:
     make_targets: frozenset[str]
     pnpm_scripts: frozenset[str]
     branch_prefix: str
+    # The project's and each repo's default branch: AGENTS.md names them, ``/`` and all.
+    branches: frozenset[str]
 
 
 def _instructions_refs(snapshot: DoctorSnapshot) -> Iterator[Finding]:
@@ -232,6 +235,7 @@ def _instructions_refs(snapshot: DoctorSnapshot) -> Iterator[Finding]:
         make_targets=_make_targets(hub, config=snapshot.hub_config),
         pnpm_scripts=_pnpm_scripts(hub),
         branch_prefix=snapshot.hub_config.project.branch_prefix,
+        branches=_configured_branches(snapshot.hub_config),
     )
     found: list[Finding | _Pending] = []
     for path in files:
@@ -258,7 +262,7 @@ def _file_refs(path: str, *, text: str, context: _RefContext) -> Iterator[Findin
     folder = posixpath.dirname(path)
     for number, line in enumerate(lines[start:], start=start + 1):
         for ref in _references(line):
-            if not _is_checked(ref, branch_prefix=context.branch_prefix):
+            if ref in context.branches or not _is_checked(ref, branch_prefix=context.branch_prefix):
                 continue
             ends = _unresolved_ends(ref, folder=folder, context=context)
             if ends is not None:
@@ -382,6 +386,13 @@ def _is_checked(ref: str, *, branch_prefix: str) -> bool:
         or _is_placeholder(ref)
         or _NOT_A_PATH.search(ref) is not None
         or ref.startswith(branch_prefix)
+    )
+
+
+def _configured_branches(config: HubConfig) -> frozenset[str]:
+    """The project's default branch and each repo's effective one, which are not paths."""
+    return frozenset(
+        {config.project.default_branch, *(config.default_branch_for(r.dir) for r in config.repos)}
     )
 
 
