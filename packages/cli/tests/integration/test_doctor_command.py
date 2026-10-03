@@ -41,8 +41,12 @@ type Under = Callable[[list["PathRead"], Path], set[str]]
 
 
 class PathRead(NamedTuple):
+    """The conftest's ``PathRead``: the call, the path, its descriptor's identity, open flags."""
+
     call: str
     path: str
+    identity: tuple[int, int] | None = None
+    flags: int | str | None = None
 
 
 VERSION = version("agent-hub-cli")
