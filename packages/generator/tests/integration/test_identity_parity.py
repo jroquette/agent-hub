@@ -2,11 +2,12 @@
 
 Each shared case (``agent_hub.core.testing.identity_cases``) becomes a rendered demo hub: its
 ``hub.json`` holds the case's identity keys and transport, its ``hub.local.json`` the case's text,
-and the hub repo's git config the case's ``user.name``/``user.email``, written by git itself to a
-``GIT_CONFIG_GLOBAL`` file under ``tmp_path`` (no system or user config is read). The CLI resolves
-through its own reader and git; the hooks through ``load_config`` in a child on ``hook_python``.
-Both must give the case's values. This is the one generator test that imports the CLI (E19):
-tests sit outside import-linter's ``agent_hub`` root.
+and the hub repo's own ``.git/config`` the case's ``user.name``/``user.email``, written by git
+itself. ``GIT_CONFIG_GLOBAL`` is an empty file and the system config is off, so a value is found
+only by running git in the hub. The CLI reads both files from disk and resolves as its commands
+do (the merged config, then ``branch_prefix_or_lines`` for the prefix); the hooks through
+``load_config`` in a child on ``hook_python``. Both must give the case's values. This is the one
+generator test that imports the CLI (E19): tests sit outside import-linter's ``agent_hub`` root.
 """
 
 import ast
@@ -14,7 +15,8 @@ import json
 import os
 import shutil
 import subprocess
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
@@ -22,9 +24,12 @@ import pytest
 
 from agent_hub.cli.effective_config import (
     EffectiveConfig,
+    branch_prefix_or_lines,
     effective_or_problems,
     git_identity_reader,
 )
+from agent_hub.cli.hub_config_reader import DISTRIBUTION, FILE_LABEL, load_hub_config_or_exit
+from agent_hub.cli.hub_root import local_home
 from agent_hub.core.hub_config.effective_identity import (
     IdentityKey,
     IdentityValues,
@@ -48,8 +53,12 @@ READER_TESTS = Path(__file__).with_name("test_hub_json_reader.py")
 
 
 def hub_document(case: IdentityCase) -> dict[str, Any]:
-    """The builders' ``hub.json`` with the case's identity keys and transport in place."""
+    """The builders' ``hub.json`` with the case's identity keys and transport in place.
+
+    Pinned to the running release, so the CLI's reader takes it.
+    """
     document = a_hub_document()
+    document["platform"]["version"] = version(DISTRIBUTION)
     for key in IdentityKey:
         document["project"].pop(key.value, None)
     document["project"].update(case.hub_project)
@@ -58,16 +67,16 @@ def hub_document(case: IdentityCase) -> dict[str, Any]:
     return document
 
 
-def write_git_identity(case: IdentityCase, tmp_path: Path) -> dict[str, str]:
-    """The case's git values in a fresh config file, written and read back by git itself.
+def write_git_identity(case: IdentityCase, hub: Path, tmp_path: Path) -> dict[str, str]:
+    """The case's git values in the hub repo's config, written and read back by git itself.
 
     Git quotes and escapes what it must (a trailing space, a control character); reading each
-    value back shows the file holds exactly the case's value, plus the newline git prints.
+    value back shows the file holds exactly the case's value, plus the newline git prints. The
+    returned environment gives git an empty global config and no system config.
     """
     git = shutil.which("git")
     assert git is not None
-    config = tmp_path / "gitconfig"
-    config.write_bytes(b"")
+    config = hub / ".git" / "config"
     for git_key, field in GIT_KEYS.items():
         value: str | None = getattr(case, field)
         if value is None:
@@ -79,9 +88,11 @@ def write_git_identity(case: IdentityCase, tmp_path: Path) -> dict[str, str]:
             check=True,
         )
         assert read.stdout == value.encode() + b"\n"
+    empty_global = tmp_path / "empty-gitconfig"
+    empty_global.write_bytes(b"")
     home = tmp_path / "home"
     home.mkdir()
-    return {"GIT_CONFIG_GLOBAL": str(config), "GIT_CONFIG_NOSYSTEM": "1", "HOME": str(home)}
+    return {"GIT_CONFIG_GLOBAL": str(empty_global), "GIT_CONFIG_NOSYSTEM": "1", "HOME": str(home)}
 
 
 @pytest.fixture
@@ -91,23 +102,29 @@ def case_hub(rendered_hub: Callable[[HubConfig], Path], demo_config: HubConfig) 
     subprocess.run(  # noqa: S603 - fixed argv
         ["git", "init", "-q", str(hub)],  # noqa: S607 - git from PATH
         check=True,
-        env={"PATH": os.environ.get("PATH", os.defpath), "GIT_CONFIG_NOSYSTEM": "1"},
+        env={
+            "PATH": os.environ.get("PATH", os.defpath),
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+        },
     )
     return hub
 
 
 def cli_values(
-    hub: Path, document: Mapping[str, Any]
-) -> tuple[dict[str, str | None], str | None] | list[str | None]:
-    """The CLI's effective values and prefix source, or the paths of its local file problems."""
-    config = HubConfig.model_validate(document)
-    loaded = effective_or_problems(config, home=hub)
+    hub: Path,
+) -> tuple[dict[str, str | None], str | None, str | list[str]] | list[str | None]:
+    """The CLI's effective values, prefix source and ``branch_prefix_or_lines``, or the paths of
+    its local file problems; both files read from ``hub`` as its commands read them."""
+    config = load_hub_config_or_exit(hub / FILE_LABEL)
+    loaded = effective_or_problems(config, home=local_home(hub, environ=os.environ))
     if not isinstance(loaded, EffectiveConfig):
         return [problem.path for problem in loaded]
-    read_git, _ = git_identity_reader(hub)
+    read_git, _ = git_identity_reader(loaded.home)
     resolved = resolve_identity(
         local=IdentityValues.of(loaded.local.project),
-        hub=IdentityValues.of(config.project),
+        # Merged, as branch_prefix_or_lines passes it.
+        hub=IdentityValues.of(loaded.config.project),
         keys=tuple(IdentityKey),
         read_git=read_git,
     )
@@ -117,7 +134,8 @@ def cli_values(
     }
     values["tracker.transport"] = loaded.config.tracker.transport
     prefix = resolved.values[IdentityKey.BRANCH_PREFIX]
-    return values, None if prefix is None else prefix.prefix_source
+    source = None if prefix is None else prefix.prefix_source
+    return values, source, branch_prefix_or_lines(loaded)
 
 
 @pytest.mark.parametrize("case", IDENTITY_CASES, ids=[case.name for case in IDENTITY_CASES])
@@ -130,11 +148,10 @@ def test_agrees_with_case_when_cli_and_hooks_resolve(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    document = hub_document(case)
-    (case_hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+    (case_hub / FILE_LABEL).write_text(json.dumps(hub_document(case)), encoding="utf-8")
     if case.local_text is not None:
         (case_hub / LOCAL_FILE).write_text(case.local_text, encoding="utf-8")
-    git_env = write_git_identity(case, tmp_path)
+    git_env = write_git_identity(case, case_hub, tmp_path)
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     for name, value in git_env.items():
@@ -143,14 +160,21 @@ def test_agrees_with_case_when_cli_and_hooks_resolve(
     hooks = run_python(
         hook_python, HOOK_IDENTITY_CODE, path=case_hub / HOOKS, cwd=elsewhere, env=git_env
     )
-    cli = cli_values(case_hub, document)
+    cli = cli_values(case_hub)
 
     # The hooks give "" for no value.
     *hook_values, hook_source = [value or None for value in hooks]
     assert dict(zip(LOCAL_KEYS, hook_values, strict=True)) == case.expected
     assert hook_source == case.prefix_source
     if case.local_is_valid:
-        assert cli == (case.expected, case.prefix_source)
+        prefix = case.expected["project.branch_prefix"]
+        assert isinstance(cli, tuple)
+        values, source, prefix_or_lines = cli
+        assert (values, source) == (case.expected, case.prefix_source)
+        if prefix is None:
+            assert isinstance(prefix_or_lines, list)
+        else:
+            assert prefix_or_lines == prefix
     else:
         assert cli == [case.problem_path]
 
