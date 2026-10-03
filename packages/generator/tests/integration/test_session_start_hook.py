@@ -467,6 +467,20 @@ def test_keeps_brief_when_snapshot_is_folder(
     assert context_of(completed) == expected_mini_brief("no uv")
 
 
+def test_keeps_brief_when_snapshot_is_fifo(
+    hub: Path, *, hook_python: str, run_hook_file: RunHook, bin_dir: Path
+) -> None:
+    # A FIFO with no writer would block the read for good: it is never opened.
+    (hub / SNAPSHOT).parent.mkdir(parents=True, exist_ok=True)
+    os.mkfifo(hub / SNAPSHOT)
+
+    completed, _ = start(
+        hub, python=hook_python, run_hook_file=run_hook_file, bin_dir=bin_dir, source="compact"
+    )
+
+    assert context_of(completed) == expected_mini_brief("no uv")
+
+
 def test_calls_uvx_only_from_shim_session_start_and_cloud_setup_when_templates_read(
     demo_config: HubConfig,
 ) -> None:

@@ -130,7 +130,8 @@ def main() -> None:
     snap = hub / "brain" / "auto" / "workspace" / "session-snapshot.md"
     if data.get("source") == "compact" and snap.exists():
         try:
-            ctx += "\n\n## Snapshot before compaction\n" + snap.read_text(encoding="utf-8", errors="replace")[:SNAPSHOT_CAP]
+            if stat.S_ISREG(os.stat(snap).st_mode):  # a FIFO would block the read
+                ctx += "\n\n## Snapshot before compaction\n" + snap.read_text(encoding="utf-8", errors="replace")[:SNAPSHOT_CAP]
         except OSError:  # an unreadable snapshot (a folder, no permission): the brief alone
             pass
     emit({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": ctx}})
