@@ -251,7 +251,7 @@ class EffectiveValues:
             value = self._git_value(git_key)
             # As the CLI: one trailing newline is git's own, anything else is the value's.
             value = value[:-1] if value.endswith("\n") else value
-            self._git[git_key] = value if pattern.fullmatch(value) else ""
+            self._git[git_key] = value if _is_shaped(value, pattern) else ""
         return self._git[git_key]
 
 
@@ -307,9 +307,23 @@ def _text(section: dict[str, object], key: str, default: str) -> str:
 
 
 def _matching(section: dict[str, object], key: str, pattern: re.Pattern[str]) -> str:
-    """The value at ``key`` when it is a string ``pattern`` matches in full, else ``""``."""
+    """The value at ``key`` when it is a string with ``pattern``'s shape, else ``""``."""
     value = _text(section, key, "")
-    return value if pattern.fullmatch(value) else ""
+    return value if _is_shaped(value, pattern) else ""
+
+
+def _is_shaped(value: str, pattern: re.Pattern[str]) -> bool:
+    """Whether ``pattern`` matches all of ``value`` and ``value`` is UTF-8 text, as the model asks.
+
+    A lone surrogate (JSON ``"\\ud800"``) passes a negated character class but not the model.
+    """
+    if not pattern.fullmatch(value):
+        return False
+    try:
+        value.encode("utf-8", "strict")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def _texts(section: dict[str, object], key: str) -> tuple[str, ...]:

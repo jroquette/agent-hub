@@ -949,6 +949,7 @@ def test_ignores_local_file_when_changed_after_check(
         ("project", "author_name", "", "author_name"),
         ("project", "author_name", "a\u0007", "author_name"),
         ("project", "author_name", ["Jane"], "author_name"),
+        ("project", "author_name", "\ud800x", "author_name"),
     ],
     ids=[
         "prefix-int",
@@ -963,6 +964,7 @@ def test_ignores_local_file_when_changed_after_check(
         "name-empty",
         "name-control",
         "name-list",
+        "name-lone-surrogate",
     ],
 )
 def test_skips_local_key_when_wrong_type_empty_or_off_pattern(
@@ -1114,6 +1116,13 @@ def effective(prefix: str, name: str, email: str, *, source: str) -> dict[str, s
         (
             {},
             None,
+            {"user.name": "Jane \ud800", "user.email": "jane.doe@example.com"},
+            effective("jane.doe/", "", "jane.doe@example.com", source="derived"),
+            ["user.email", "user.name"],
+        ),
+        (
+            {},
+            None,
             {"user.name": "Jane Roe\n", "user.email": "jane.doe@example.com\n"},
             effective("jane.doe/", "Jane Roe", "jane.doe@example.com", source="derived"),
             ["user.email", "user.name"],
@@ -1146,6 +1155,7 @@ def effective(prefix: str, name: str, email: str, *, source: str) -> dict[str, s
         "git-email-non-ascii",
         "git-bad-shape",
         "git-spaced",
+        "git-name-lone-surrogate",
         "git-one-newline",
         "git-two-newlines",
         "team-no-source",

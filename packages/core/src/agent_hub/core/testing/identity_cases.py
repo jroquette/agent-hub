@@ -309,6 +309,18 @@ IDENTITY_CASES: Final[tuple[IdentityCase, ...]] = (
         problem_path="project.author_email",
     ),
     IdentityCase(
+        name="local-surrogate-name",
+        hub_project=_HUB_PROJECT,
+        hub_transport=None,
+        # A lone surrogate matches FreeString's pattern but is not UTF-8: both readers refuse it.
+        local_text='{"project": {"author_name": "\\ud800x"}}',
+        git_name=None,
+        git_email=None,
+        expected=_HUB_VALUES,
+        prefix_source="hub.json",
+        problem_path="project.author_name",
+    ),
+    IdentityCase(
         name="local-oversize",
         hub_project=_HUB_PROJECT,
         hub_transport=None,
