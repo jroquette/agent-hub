@@ -15,16 +15,52 @@ _PROJECT_MANIFEST_VERSION = "0.1.0"
 _PROJECT_MANIFEST_DESCRIPTION = "Project agents, skills and guard extension of this hub."
 
 _SETTINGS_SCHEMA: Final = "https://json.schemastore.org/claude-code-settings.json"
-# Spec Q-11: read-only git commands run without a prompt; secret files are never read. Nothing
-# else: the guard enforces the push and infra rules, and a project adds its own lists through
-# `settings.project.json`.
+# Spec Q-11: read-only git commands run without a prompt; secret files are never read. AGH-16 D2
+# (E14, inventory rows S4a-S4j and S6a) adds the base denies and sandbox, so a hub keeps them even
+# with the guard off; a project adds its own lists and hosts through `settings.project.json`.
 _ALLOWED_COMMANDS: Final = (
     "Bash(git status *)",
     "Bash(git diff *)",
     "Bash(git log *)",
     "Bash(git show *)",
 )
-_DENIED_READS: Final = ("Read(**/*.pem)", "Read(**/*.key)")
+_DENIED: Final = (
+    "Read(**/*.pem)",
+    "Read(**/*.key)",
+    "Bash(git push --force*)",
+    "Bash(git push -f *)",
+    "Bash(git push * main)",
+    "Bash(git push origin HEAD:main*)",
+    "Bash(terraform *)",
+    "Bash(aws *)",
+    "Bash(security *)",
+    "Bash(ssh *)",
+    "Bash(* | sh)",
+    "Bash(* | bash)",
+)
+# Commands that reach the network or the host's credentials run outside the sandbox; the hosts are
+# the package registries and GitHub, the same in every hub.
+_SANDBOX_EXCLUDED: Final = (
+    "docker *",
+    "gh *",
+    "git push *",
+    "git fetch *",
+    "git pull *",
+    "git clone *",
+    "git ls-remote *",
+)
+_SANDBOX_HOSTS: Final = (
+    "localhost",
+    "127.0.0.1",
+    "[::1]",
+    "pypi.org",
+    "files.pythonhosted.org",
+    "registry.npmjs.org",
+    "*.npmjs.org",
+    "github.com",
+    "*.github.com",
+    "*.githubusercontent.com",
+)
 # The base plugin's hooks, from the hub root: cloud sessions do not install repo plugins, so the
 # managed settings wire the hooks themselves (docs/design/hub-generator.md § Hooks and plugin
 # wiring).
@@ -63,9 +99,11 @@ def managed_settings(config: HubConfig) -> JsonValue:
     """The managed ``.claude/settings.json``: the rules base every hub shares (spec D5).
 
     The schema, the authorship rule (empty attribution, no co-author line), the hooks block, the
-    read-only git allows, the secret-read denies and the repos as additional directories
-    (``../<dir>``, in ``hub.json`` order). Project settings (marketplace, plugins, sandbox,
-    ``env``, skill overrides) come from the seeded ``settings.project.json``.
+    read-only git allows, the base denies (secret reads, force and ``main`` pushes, infra tools,
+    ``ssh``, piping into a shell), the repos as additional directories (``../<dir>``, in
+    ``hub.json`` order) and the base sandbox (AGH-16 D2, E14). Project settings (marketplace,
+    plugins, extra sandbox hosts, ``env``, skill overrides) come from the seeded
+    ``settings.project.json``.
     """
     return {
         "$schema": _SETTINGS_SCHEMA,
@@ -74,8 +112,14 @@ def managed_settings(config: HubConfig) -> JsonValue:
         "hooks": base_hooks_block(),
         "permissions": {
             "allow": list(_ALLOWED_COMMANDS),
-            "deny": list(_DENIED_READS),
+            "deny": list(_DENIED),
             "additionalDirectories": [f"../{repo.dir}" for repo in config.repos],
+        },
+        "sandbox": {
+            "enabled": True,
+            "allowUnsandboxedCommands": False,
+            "excludedCommands": list(_SANDBOX_EXCLUDED),
+            "network": {"allowLocalBinding": True, "allowedDomains": list(_SANDBOX_HOSTS)},
         },
     }
 
