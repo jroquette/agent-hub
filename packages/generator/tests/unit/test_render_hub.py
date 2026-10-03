@@ -1356,7 +1356,8 @@ def test_checks_git_identity_when_kickoff_skill_rendered(
         " `project.author_email`"
     )
     branch = (
-        "A session's designated `claude/…` branch is not a repo branch: work on"
+        "If the session was given a `claude/…` branch (cloud sessions), it is not a repo branch:"
+        " work on"
         f" `{prefix}<team>-<n>-<desc>`."
     )
 
