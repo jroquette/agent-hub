@@ -11,7 +11,9 @@ under it get no verdict. Every other path (a type misfit, a symlinked ancestor t
 link, a link resolving outside, a name in both plugins, a conflict of sync's rule) is named in
 ``conflicts`` with sync's cause. Listed and conflicting paths are left as they are and
 out of the new lock, at their previous entry when they had one (spec Q-4), and the settled paths
-are still applied. It does no I/O; the generator's file adapter applies the plan, ``hub.lock`` last.
+are still applied. ``--accept P`` takes the render at a listed path: a difference is updated, and a
+migration's link is deleted and remade as a folder of its links. Any other accepted path refuses the
+whole run. It does no I/O; the generator's file adapter applies the plan, ``hub.lock`` last.
 """
 
 from collections.abc import Collection, Mapping
@@ -117,7 +119,8 @@ class AdoptPlan:
 
     The first seven fields mean what they mean in ``SyncPlan``; ``changes`` also holds the paths
     recorded as they are. ``lock`` records every settled path; a listed or conflicting path keeps
-    its previous entry, or none. ``listed`` and ``conflicts`` are sorted by path.
+    its previous entry, or none. ``listed`` holds the listings not accepted; it and ``conflicts``
+    are sorted by path.
     """
 
     leftovers: tuple[str, ...]
@@ -139,6 +142,18 @@ class AdoptPlan:
     def settled(self) -> bool:
         """Whether every path is joined to the lock: nothing listed, nothing conflicting."""
         return not (self.listed or self.conflicts)
+
+
+# Why ``--accept`` refuses a path. Paths are taken as written: ``./x`` and ``x/`` name no path.
+ACCEPT_NOT_LISTED = "not listed by this run"
+ACCEPT_CONFLICT = "a conflict; --accept takes only listed differences and migrations"
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class AdoptRefusal:
+    """Every ``--accept`` path not listed by this run, sorted by path: nothing is done."""
+
+    refused: tuple[PathProblem, ...]
 
 
 # What adopt does at one path: sync's verdict, or a difference it lists.
@@ -238,6 +253,52 @@ def _settled_lock(
     return built.model_copy(update={"files": dict(sorted(files.items()))})
 
 
+def _refusal_reason(path: str, conflicting: Collection[str], every: Mapping[str, object]) -> str:
+    if path in conflicting:
+        return ACCEPT_CONFLICT
+    if isinstance(every.get(path), MigrationListing):
+        # E22: a migration with a conflict under it is not listed; name what blocks it.
+        under = sorted(each for each in conflicting if path in _ancestors(each))
+        return f"{ACCEPT_NOT_LISTED}: a conflict under it ({', '.join(under)})"
+    return ACCEPT_NOT_LISTED
+
+
+def _refusal(
+    accept: Collection[str],
+    *,
+    listed: Collection[Listed],
+    conflicting: Collection[str],
+    every: Mapping[str, _AdoptVerdict],
+) -> AdoptRefusal | None:
+    """The accepted paths that are not listed this run, each with why, or ``None``."""
+    takeable = {each.path for each in listed}
+    refused = tuple(
+        PathProblem(path, _refusal_reason(path, conflicting, every))
+        for path in sorted(accept)
+        if path not in takeable
+    )
+    return AdoptRefusal(refused=refused) if refused else None
+
+
+def _accepted(
+    listed: Collection[Listed], accept: Collection[str], items: Collection[_Rendered]
+) -> dict[str, Verb]:
+    """The verbs of the accepted listings: a difference is updated; a migration's link is migrated
+    and every rendered path under it created."""
+    verbs: dict[str, Verb] = {}
+    for each in listed:
+        if each.path not in accept:
+            continue
+        if isinstance(each, MigrationListing):
+            verbs[each.path] = Verb.MIGRATED
+            verbs.update(
+                (item.path, Verb.CREATED) for item in items if each.path in _ancestors(item.path)
+            )
+        else:
+            verbs[each.path] = Verb.UPDATED
+    return verbs
+
+
 def plan_adopt(
     *,
     rendered: RenderedHub,
@@ -246,12 +307,15 @@ def plan_adopt(
     lock_content: bytes | None,
     tree: TreeSnapshot,
     extensions: ExtensionInputs,
-) -> AdoptPlan:
+    accept: frozenset[str] = frozenset(),
+) -> AdoptPlan | AdoptRefusal:
     """Plan an adopt of the hub ``tree`` describes to ``rendered`` for ``config``.
 
     ``lock`` is the lock read back and ``lock_content`` its exact bytes, both ``None`` when the
     hub has no ``hub.lock``: the new lock is written when there was none or its bytes differ.
-    ``tree`` and ``extensions`` are what ``plan_sync`` needs. Raises ``ValueError`` when the render
+    ``tree`` and ``extensions`` are what ``plan_sync`` needs. ``accept`` holds the listed paths
+    whose render is taken, exactly as listed; any other path returns an ``AdoptRefusal`` naming
+    every refused path, decided before anything is planned. Raises ``ValueError`` when the render
     holds ``hub.json`` or ``hub.lock``, or when a file it compares was read without its content.
     """
     _check_render(rendered)
@@ -283,36 +347,52 @@ def plan_adopt(
     # E22, a conflict wins: a listed path that also clashes, or a migration with a conflict under
     # it, is not listed, so ``--accept`` may not take it.
     blocked = conflicting | {ancestor for path in conflicting for ancestor in _ancestors(path)}
-    listed = tuple(
-        sorted(
-            (each for each in every.values() if _is_listed(each) and each.path not in blocked),
-            key=lambda each: each.path,
-        )
-    )
-    unsettled = conflicting | {each.path for each in listed} | under
+    listed_all = (each for each in every.values() if _is_listed(each) and each.path not in blocked)
+    listed = sorted(listed_all, key=lambda each: each.path)
+    refusal = _refusal(accept, listed=listed, conflicting=conflicting, every=every)
+    if refusal is not None:
+        return refusal
+    taken = _accepted(listed, accept, items)
+    kept = tuple(each for each in listed if each.path not in accept)
+    unsettled = (conflicting | {each.path for each in kept} | under) - taken.keys()
     # A name clash leaves a path whose own verdict is a verb: only the settled verdicts count.
     settled = {
         path: verdict for path, verdict in (verdicts | gone).items() if path not in unsettled
-    }
+    } | taken
     new_lock = _settled_lock(rendered, config, previous=lock, unsettled=unsettled)
     new_bytes = lock_bytes(new_lock)
     # Files come before links in ``items``, each in path order: the write order of sync.
     writes: list[FileWrite | LinkWrite] = [
         _write(each) for each in items if settled.get(each.path) in _WRITTEN
     ]
-    written = [write.path for write in writes]
     lock_written = new_bytes != lock_content
     if lock_written:
         writes.append(FileWrite(path=HUB_LOCK_PATH, content=new_bytes, executable=False))
     planned = {*every, *under, *old, HUB_JSON_PATH, HUB_LOCK_PATH}
     return AdoptPlan(
         leftovers=_leftovers(entries, planned),
-        deletes=tuple(sorted(path for path, verdict in settled.items() if verdict is Verb.DELETED)),
-        folders=_missing_folders(written, entries),
+        deletes=_paths_with(settled, Verb.DELETED, Verb.MIGRATED),
+        folders=_folders(writes, entries, migrated=_paths_with(settled, Verb.MIGRATED)),
         writes=tuple(writes),
         changes=_changes(settled),
         lock=new_lock,
         lock_written=lock_written,
-        listed=listed,
+        listed=kept,
         conflicts=conflicts,
     )
+
+
+def _paths_with(verdicts: Mapping[str, _Verdict], *verbs: Verb) -> tuple[str, ...]:
+    return tuple(sorted(path for path, verdict in verdicts.items() if verdict in verbs))
+
+
+def _folders(
+    writes: Collection[FileWrite | LinkWrite],
+    entries: Mapping[str, TreeEntry],
+    *,
+    migrated: Collection[str],
+) -> tuple[str, ...]:
+    """The folders to make, parents first: a migrated link's path is one, though it is in the
+    snapshot (E7), as the adapter deletes the link before it makes folders."""
+    missing = _missing_folders((write.path for write in writes), entries)
+    return tuple(sorted({*missing, *migrated}))

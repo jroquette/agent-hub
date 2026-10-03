@@ -16,7 +16,10 @@ from agent_hub.core.hub_files.hub_lock import (
     lock_bytes,
 )
 from agent_hub.core.hub_files.plan_adopt import (
+    ACCEPT_CONFLICT,
+    ACCEPT_NOT_LISTED,
     AdoptPlan,
+    AdoptRefusal,
     ContentDifference,
     LinkDifference,
     ListedKind,
@@ -78,23 +81,48 @@ def without(entries: Mapping[str, TreeEntry], *paths: str) -> dict[str, TreeEntr
     return {path: entry for path, entry in entries.items() if path not in paths}
 
 
-def adopted(
+def planned(
     rendered: RenderedHub,
     tree: Mapping[str, TreeEntry],
     *,
     lock: HubLock | None = None,
     extensions: ExtensionInputs = NO_EXTENSIONS,
-) -> AdoptPlan:
-    plan = plan_adopt(
+    accept: frozenset[str] = frozenset(),
+) -> AdoptPlan | AdoptRefusal:
+    return plan_adopt(
         rendered=rendered,
         config=CONFIG,
         lock=lock,
         lock_content=None if lock is None else lock_bytes(lock),
         tree=TreeSnapshot(entries=dict(tree), git_present=False),
         extensions=extensions,
+        accept=accept,
     )
+
+
+def adopted(
+    rendered: RenderedHub,
+    tree: Mapping[str, TreeEntry],
+    *,
+    lock: HubLock | None = None,
+    extensions: ExtensionInputs = NO_EXTENSIONS,
+    accept: frozenset[str] = frozenset(),
+) -> AdoptPlan:
+    plan = planned(rendered, tree, lock=lock, extensions=extensions, accept=accept)
     assert isinstance(plan, AdoptPlan)
     return plan
+
+
+def refused(
+    rendered: RenderedHub,
+    tree: Mapping[str, TreeEntry],
+    *,
+    extensions: ExtensionInputs = NO_EXTENSIONS,
+    accept: frozenset[str],
+) -> AdoptRefusal:
+    refusal = planned(rendered, tree, extensions=extensions, accept=accept)
+    assert isinstance(refusal, AdoptRefusal)
+    return refusal
 
 
 def written_paths(plan: AdoptPlan) -> list[str]:
@@ -614,6 +642,137 @@ def test_lists_conflicts_when_directory_link_not_link_folder(
     assert plan.conflicts == tuple(PathProblem(path, cause) for path in held)
     assert plan.listed == ()
     assert plan.lock == lock_without(rendered, *held)
+
+
+# What ``test_lists_difference_when_managed_file_differs`` lists, each with the write ``--accept``
+# plans for it.
+DIFFERENCES = [
+    pytest.param(FILE, FileEntry(executable=False, content=MINE), id="bytes"),
+    pytest.param(SCRIPT, FileEntry(executable=False, content=b"#!/bin/sh\n"), id="executable-bit"),
+    pytest.param(LINK, LinkEntry(target=MY_TARGET, outside=False), id="link-target"),
+]
+
+
+@pytest.mark.parametrize(("path", "on_disk"), DIFFERENCES)
+def test_writes_render_when_difference_accepted(
+    a_rendered_hub: HubFactory, path: str, on_disk: TreeEntry
+) -> None:
+    rendered = a_rendered_hub()
+
+    plan = adopted(rendered, hand_made_tree(rendered) | {path: on_disk}, accept=frozenset({path}))
+
+    assert (plan.listed, plan.conflicts) == ((), ())
+    assert plan.settled
+    assert [change for change in plan.changes if change.verb is not Verb.RECORDED] == [
+        SyncChange(path=path, verb=Verb.UPDATED)
+    ]
+    write = link_write(rendered, path) if path == LINK else file_write(rendered, path)
+    assert plan.writes == (write, lock_write(plan.lock))
+    assert (plan.deletes, plan.folders) == ((), ())
+    assert plan.lock == build_hub_lock(rendered=rendered, config=CONFIG)
+    assert plan.lock.files[path].ownership == "managed"
+
+
+SKILLS = ".claude/skills"
+PROJECT_SKILL = ".claude/skills/p"
+SKILLS_TARGET = "../plugin/skills"
+
+
+def with_project_skill(a_rendered_hub: HubFactory) -> RenderedHub:
+    """The default render plus a project skill link beside the seeded one in ``.claude/skills``."""
+    project = RenderedLink(
+        path=PROJECT_SKILL,
+        target="../../plugin/demo/skills/p",
+        kind=Kind.GENERIC,
+        ownership=Ownership.MANAGED,
+        module=None,
+    )
+    return a_rendered_hub(links=[*a_rendered_hub().links, project])
+
+
+def linked_skills(rendered: RenderedHub) -> dict[str, TreeEntry]:
+    """The hand-made hub with ``.claude/skills`` a directory link: nothing under it is read."""
+    link = LinkEntry(target=SKILLS_TARGET, outside=False)
+    return without(hand_made_tree(rendered), SKILLS, SEEDED_LINK, PROJECT_SKILL) | {SKILLS: link}
+
+
+def test_replaces_link_with_folder_when_migration_accepted(a_rendered_hub: HubFactory) -> None:
+    rendered = with_project_skill(a_rendered_hub)
+
+    plan = adopted(rendered, linked_skills(rendered), accept=frozenset({SKILLS}))
+
+    assert (plan.listed, plan.conflicts) == ((), ())
+    assert plan.settled
+    # E7: the link is in the snapshot, so only the planner can name the folder that replaces it.
+    assert plan.deletes == (SKILLS,)
+    assert plan.folders == (SKILLS,)
+    assert plan.writes == (
+        link_write(rendered, PROJECT_SKILL),
+        link_write(rendered, SEEDED_LINK),
+        lock_write(plan.lock),
+    )
+    assert [change for change in plan.changes if change.verb is not Verb.RECORDED] == [
+        SyncChange(path=SKILLS, verb=Verb.MIGRATED),
+        SyncChange(path=PROJECT_SKILL, verb=Verb.CREATED),
+        SyncChange(path=SEEDED_LINK, verb=Verb.CREATED),
+    ]
+    assert plan.lock == build_hub_lock(rendered=rendered, config=CONFIG)
+    assert {PROJECT_SKILL, SEEDED_LINK} <= set(plan.lock.files)
+
+
+def listed_and_conflicting(rendered: RenderedHub) -> dict[str, TreeEntry]:
+    """``FILE`` and the ``.claude/skills`` migration listed; ``LINK`` a conflict."""
+    return linked_skills(rendered) | {
+        FILE: FileEntry(executable=False, content=MINE),
+        LINK: FileEntry(executable=False, content=b"agent x\n"),
+    }
+
+
+@pytest.mark.parametrize(
+    ("path", "message"),
+    [
+        pytest.param(SCRIPT, ACCEPT_NOT_LISTED, id="not-listed"),
+        pytest.param(LINK, ACCEPT_CONFLICT, id="conflict"),
+        pytest.param("docs/nothing.md", ACCEPT_NOT_LISTED, id="outside-render"),
+        pytest.param(f"./{FILE}", ACCEPT_NOT_LISTED, id="dot-slash"),
+        pytest.param("./Makefile", ACCEPT_NOT_LISTED, id="dot-slash-unrendered"),
+        pytest.param(f"{SKILLS}/", ACCEPT_NOT_LISTED, id="trailing-slash"),
+        pytest.param(PROJECT_SKILL, ACCEPT_NOT_LISTED, id="under-migration"),
+    ],
+)
+def test_refuses_accept_when_path_not_listed(
+    a_rendered_hub: HubFactory, path: str, message: str
+) -> None:
+    rendered = with_project_skill(a_rendered_hub)
+
+    refusal = refused(rendered, listed_and_conflicting(rendered), accept=frozenset({path, FILE}))
+
+    assert refusal == AdoptRefusal(refused=(PathProblem(path, message),))
+
+
+def test_names_every_refused_path_when_several_refused(a_rendered_hub: HubFactory) -> None:
+    rendered = with_project_skill(a_rendered_hub)
+    accept = frozenset({"./Makefile", SKILLS, LINK, f"{SKILLS}/", FILE})
+
+    refusal = refused(rendered, listed_and_conflicting(rendered), accept=accept)
+
+    assert refusal.refused == (
+        PathProblem("./Makefile", ACCEPT_NOT_LISTED),
+        PathProblem(LINK, ACCEPT_CONFLICT),
+        PathProblem(f"{SKILLS}/", ACCEPT_NOT_LISTED),
+    )
+
+
+def test_refuses_accept_when_migration_has_conflict_under_it(a_rendered_hub: HubFactory) -> None:
+    """E22: a migration blocked by a clash under it is not listed; the refusal names the clash."""
+    rendered = with_project_link(a_rendered_hub)
+    tree = linked_agents(rendered, LinkEntry(target=AGENTS_TARGET, outside=False))
+    extensions = ExtensionInputs(project_json={}, agents=("x.md",), skills=())
+
+    refusal = refused(rendered, tree, extensions=extensions, accept=frozenset({AGENTS}))
+
+    message = f"{ACCEPT_NOT_LISTED}: a conflict under it ({LINK})"
+    assert refusal == AdoptRefusal(refused=(PathProblem(AGENTS, message),))
 
 
 def gone_entry() -> ManagedFileEntry:
