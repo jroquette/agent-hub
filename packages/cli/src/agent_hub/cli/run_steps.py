@@ -159,6 +159,7 @@ class LiveRun:
             task = worktree_task(
                 self.children.config,
                 name=self.children.slug,
+                branch_prefix=self.children.branch_prefix,
                 only=self.children.repo,
                 hub=self.children.hub,
                 git=git,

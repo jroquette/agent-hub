@@ -586,6 +586,94 @@ class TestTransport:
         ]
 
 
+HUB_ONLY = (
+    "hub.local.json: guard: set only in hub.json; hub.local.json holds project.branch_prefix,"
+    " author_name, author_email and tracker.transport"
+)
+
+
+@pytest.mark.usefixtures("with_key")
+class TestIdentity:
+    def test_pushes_local_prefix_branch_when_dry_run(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        workspace.write_local(json.dumps({"project": {"branch_prefix": "me/"}}))
+        inject(monkeypatch, run_tracker)
+        worktree = os.path.realpath(workspace.ws / "demo-api") + "/.claude/worktrees/dem-1"
+
+        result = run_command(workspace.hub, "run", "DEM-1", "--repo", "demo-api")
+
+        lines = dry_lines(result)
+        assert lines[3] == (
+            "would run: git -c core.fsmonitor=false -c push.gpgSign=false"
+            f" -c core.hooksPath=/dev/null push --no-verify -u origin me/dem-1   (cwd {worktree})"
+        )
+        assert lines[4].startswith(
+            "would run: gh pr create --repo acme/demo-api --base trunk --head me/dem-1 "
+        )
+
+    @pytest.mark.parametrize(
+        ("document", "line"),
+        [("[]", "hub.local.json: $: must be a JSON object"), ('{"guard": {}}', HUB_ONLY)],
+        ids=["array", "hub-only-key"],
+    )
+    def test_refuses_with_local_lines_when_local_file_invalid(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        spy: Spy,
+        *,
+        document: str,
+        line: str,
+    ) -> None:
+        run_workspace.workspace.write_local(document)
+
+        result = run_command(run_workspace.workspace.hub, "run", "DEM-1", "--repo", "demo-api")
+
+        assert_refused(result, line)
+        assert spy.calls == []
+        for tool in ("claude", "gh", "make"):
+            assert run_workspace.calls(tool) == []
+
+    def test_uses_local_transport_when_local_file_sets_mcp(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        tmp_path: Any,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        hub = run_workspace.workspace.hub
+        set_transport(hub, "api")
+        run_workspace.workspace.write_local(json.dumps({"tracker": {"transport": "mcp"}}))
+        monkeypatch.delenv(KEY_VARIABLE, raising=False)
+        issue = {
+            "id": "DEM-1",
+            "title": "Synthetic MCP issue",
+            "description": RUN_DESCRIPTION,
+            "url": "https://linear.app/demo/issue/DEM-1",
+            "state": "Todo",
+            "labels": ["agent-ready", "demo-api"],
+        }
+        (tmp_path / "issue.json").write_text(json.dumps(issue))
+        monkeypatch.setenv("FAKE_CLAUDE_ISSUE", str(tmp_path / "issue.json"))
+
+        result = run_command(hub, "run", "DEM-1", "--repo", "demo-api")
+
+        lines = dry_lines(result)
+        assert result.stderr == MCP_LINE + "\n"
+        assert "Synthetic MCP issue" in lines[1]
+        (call,) = run_workspace.calls("claude")
+        assert call["tracker"] is True
+        assert KEY_VARIABLE not in call["env"]
+
+
 SUMMARY = "Adds the synthetic change."
 OTEL = re.compile(r"repo=demo-api,issue=DEM-1,agent_run=([0-9a-f]{8})")
 GH_TOKEN_VALUE = "gh" + "o_" + "y" * 36

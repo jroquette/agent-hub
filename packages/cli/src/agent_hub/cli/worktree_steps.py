@@ -80,6 +80,7 @@ def worktree_task(
     config: HubConfig,
     *,
     name: str,
+    branch_prefix: str,
     only: str | None,
     hub: Path,
     git: str,
@@ -90,7 +91,8 @@ def worktree_task(
     add_options: tuple[str, ...] = (),
     fetch_options: tuple[str, ...] = (),
 ) -> WorktreeTask:
-    """The task named ``name`` in the hub's repos (or ``only``), its inputs checked.
+    """The task named ``name`` in the hub's repos (or ``only``) on ``<branch_prefix><name>``,
+    its inputs checked.
 
     ``runner`` runs every git call of the task; ``env`` is the environment of every git call
     and script but the fetch, which gets ``fetch_env`` (by default ``env``); ``add_options``
@@ -102,7 +104,7 @@ def worktree_task(
     problem = worktree_name_problem(name, team=team)
     if problem is not None:
         raise WorktreeUsageError(problem)
-    branch = worktree_branch(name, prefix=config.project.branch_prefix)
+    branch = worktree_branch(name, prefix=branch_prefix)
     checked = runner(
         [git, "check-ref-format", "--branch", branch],
         cwd=hub,
