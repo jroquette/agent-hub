@@ -1660,9 +1660,12 @@ def test_imports_both_rule_files_when_claude_rendered(demo_config: HubConfig) ->
 # AC-3.19 (Q7, O4): the hygiene hooks of the pinned pre-commit-hooks release.
 HYGIENE_HOOKS = ("trailing-whitespace", "end-of-file-fixer", "check-json", "check-yaml")
 PLACEHOLDER = re.compile(r"@@(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)")
+# AGH-16 Q-11: an action is pinned by its 40-hex commit SHA, the release named in a comment.
+ACTION_PIN = r"@[0-9a-f]{40}  # v\d+\.\d+\.\d+"
 PINNED_SETUP_UV = re.compile(
-    r'- uses: astral-sh/setup-uv@v\d+\n\s+with:\n\s+version: "\d+\.\d+\.\d+"\n'
+    rf'- uses: astral-sh/setup-uv{ACTION_PIN}\n\s+with:\n\s+version: "\d+\.\d+\.\d+"\n'
 )
+PINNED_USES = re.compile(rf"^\s+- uses: [\w.-]+/[\w.-]+{ACTION_PIN}$")
 
 
 # The hub-doctor hook's entry: the shim, run from the hub root (pre-commit's cwd).
@@ -1742,8 +1745,8 @@ class TestCiWorkflow:
         assert f'  push:\n    branches: ["{branch}"]\n' in triggers
         steps = re.findall(r"^\s+- (?:uses|name|run): .*$", ci, re.MULTILINE)
         assert [step.strip() for step in steps] == [
-            "- uses: actions/checkout@v7",
-            "- uses: astral-sh/setup-uv@v7",
+            "- uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1",
+            "- uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0",
             f"- name: {CREDENTIAL_STEP}",
             f"- name: {GOLDEN_STEP}",
             f"- name: {MAKE_CHECK_STEP}",
@@ -1788,6 +1791,17 @@ class TestCiWorkflow:
         assert "x-access-token" not in ci.replace(block, "")
         assert '>> "$GITHUB_ENV"' in block
         assert "--dangerously-skip-permissions" not in ci
+
+    @pytest.mark.parametrize("config_name", ["demo", "variant"])
+    def test_pins_actions_by_sha_when_ci_rendered(
+        self, config_name: str, request: pytest.FixtureRequest
+    ) -> None:
+        ci = text_of(request.getfixturevalue(f"{config_name}_config"), ".github/workflows/ci.yml")
+
+        uses = [line for line in ci.splitlines() if re.match(r"^\s+-?\s*uses:", line)]
+
+        assert len(uses) == 2
+        assert [line for line in uses if not PINNED_USES.match(line)] == []
 
 
 # AGH-46 D-agents: the two branch mentions of AGENTS.md, as rendered before the repo key existed.
