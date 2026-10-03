@@ -29,6 +29,8 @@ _GIT_FOLDER = ".git"
 
 # What ``hub sync`` prints after the problems of a lock it cannot read (spec Q-6, Q-12).
 LOCK_WAY_OUT: Final = "restore it from git, or run hub sync --adopt"
+# The same for ``hub sync --adopt``, which needs no lock but refuses a broken one (AGH-16 Q-5).
+ADOPT_LOCK_WAY_OUT: Final = "restore it from git, or delete it and re-run hub sync --adopt"
 LOCK_NOT_REGULAR: Final = "not a regular file"
 ADOPT_POINTER: Final = "hub.lock: not found; run hub sync --adopt to join this hub to the lock"
 HUB_JSON_NOT_SEEDED: Final = f"must be seeded: {HUB_JSON_PATH} is the project's"

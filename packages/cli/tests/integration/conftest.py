@@ -5,7 +5,9 @@ Also the ``hub.lock`` golden harness (``lock_golden``), a from-scratch child env
 once per session (``demo_hub_template``) and copied per test (``demo_hub``), the same with a
 second repo (``demo_two_repo_hub_template``, ``demo_two_repo_hub``) and a synthetic git checkout
 next to it (``demo_checkout``), an in-process sync
-in a folder (``run_sync``) and the writer calls a test makes (``adapter_calls``); for ``hub doctor``
+in a folder (``run_sync``), the writer calls a test makes (``adapter_calls``), an injected I/O
+error (``fail_once``) and the temp entries it may leave (``temp_entries``), AC-16.4's hub
+(``ac4``); for ``hub doctor``
 an in-process run in a folder (``run_doctor``), the paths a run reads (``path_reads``) and their
 filters (``reads_in``, ``ancestors``, ``under``); for ``hub bench`` the hub suite's bench
 workspace with a fake ``claude`` (``bench_workspace``).
@@ -14,6 +16,7 @@ workspace with a fake ``claude`` (``bench_workspace``).
 import builtins
 import datetime
 import difflib
+import errno
 import io
 import json
 import os
@@ -34,6 +37,7 @@ from typer.testing import CliRunner, Result
 from agent_hub.cli.hub_root import HUB_ROOT_VARIABLE
 from agent_hub.cli.main import app
 from agent_hub.core.errors import TrackerError
+from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
 from agent_hub.core.json_form import dump_json
 from agent_hub.core.testing.builders import a_hub_document, a_second_repo, an_issue
 from agent_hub.core.testing.fakes import FakeTrackerBackend, InMemoryTrackerClient, TrackerState
@@ -273,19 +277,37 @@ def run_doctor(monkeypatch: pytest.MonkeyPatch) -> DoctorRunner:
     return run
 
 
+# A folder or file by ``(st_dev, st_ino)``: the same whatever name or descriptor reaches it.
+type Identity = tuple[int, int]
+
+
 class PathRead(NamedTuple):
-    """One call that reads a path: its name and the path.
+    """One call that reads a path: its name, the path, and the identity of its descriptor.
 
     The path is absolute when the call names it from the current folder, and reads
     ``<fd N>/<name>`` when it is relative to an open folder (or ``<fd N>`` for the folder itself).
+    ``identity`` is that open folder's (or descriptor's) identity, taken at the call, and
+    ``None`` for a path named from the current folder. ``flags`` is how an open asks for the path:
+    ``os.open``'s flags, or the builtin ``open``'s mode (``"r"`` when not given); ``None`` for a
+    call that does not open.
     """
 
     call: str
     path: str
+    identity: Identity | None = None
+    flags: int | str | None = None
 
 
 # The calls through which a run looks at a path, each recorded before it goes through.
 PATH_READ_CALLS = ("open", "stat", "lstat")
+
+
+def _read_identity(path: Any, dir_fd: int | None) -> Identity | None:
+    descriptor = path if isinstance(path, int) else dir_fd
+    if descriptor is None:
+        return None
+    held = os.fstat(descriptor)
+    return (held.st_dev, held.st_ino)
 
 
 def _read_path(path: Any, dir_fd: int | None) -> str:
@@ -297,9 +319,25 @@ def _read_path(path: Any, dir_fd: int | None) -> str:
     return os.path.join(os.getcwd(), name)
 
 
+def _recorded_listing(
+    reads: list[PathRead], call: str, real: Callable[..., Any]
+) -> Callable[..., Any]:
+    """``real`` (``os.scandir`` or ``os.listdir``), each call recorded in ``reads``."""
+
+    def recorded(path: Any = os.curdir) -> Any:
+        # ``os.listdir(None)`` lists the current folder.
+        named = os.curdir if path is None else path
+        reads.append(PathRead(call, _read_path(named, None), _read_identity(named, None)))
+        return real(path)
+
+    return recorded
+
+
 @pytest.fixture
 def path_reads(monkeypatch: pytest.MonkeyPatch) -> list[PathRead]:
-    """Every path given to ``os.open``, ``os.stat``, ``os.lstat`` and ``os.scandir``, in order.
+    """Every path given to ``os.open``, ``os.stat``, ``os.lstat``, ``os.scandir`` and
+    ``os.listdir``, in order, each with the identity of the descriptor it is given or relative to,
+    and an open's flags or mode.
 
     The builtin ``open`` (also ``io.open``, which ``Path.read_bytes`` uses) is recorded as
     ``builtin-open`` when given a path, not a descriptor. A ``subprocess.Popen`` is recorded as
@@ -309,25 +347,23 @@ def path_reads(monkeypatch: pytest.MonkeyPatch) -> list[PathRead]:
 
     def wrap(call: str, real: Callable[..., Any]) -> Callable[..., Any]:
         def recorded(path: Any, *args: Any, dir_fd: int | None = None, **kwargs: Any) -> Any:
-            reads.append(PathRead(call, _read_path(path, dir_fd)))
+            flags = (args[0] if args else kwargs.get("flags")) if call == "open" else None
+            identity = _read_identity(path, dir_fd)
+            reads.append(PathRead(call, _read_path(path, dir_fd), identity, flags))
             return real(path, *args, dir_fd=dir_fd, **kwargs)
 
         return recorded
 
     for call in PATH_READ_CALLS:
         monkeypatch.setattr(os, call, wrap(call, getattr(os, call)))
-    real_scandir = os.scandir
-
-    def recorded_scandir(path: Any = os.curdir) -> Any:
-        reads.append(PathRead("scandir", _read_path(path, None)))
-        return real_scandir(path)
-
-    monkeypatch.setattr(os, "scandir", recorded_scandir)
+    for call in ("scandir", "listdir"):
+        monkeypatch.setattr(os, call, _recorded_listing(reads, call, getattr(os, call)))
     real_open = builtins.open
 
     def recorded_open(file: Any, *args: Any, **kwargs: Any) -> Any:
         if not isinstance(file, int):
-            reads.append(PathRead("builtin-open", _read_path(file, None)))
+            mode = args[0] if args else kwargs.get("mode", "r")
+            reads.append(PathRead("builtin-open", _read_path(file, None), None, mode))
         return real_open(file, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "open", recorded_open)
@@ -420,6 +456,89 @@ def adapter_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
     for call in ADAPTER_CALLS:
         monkeypatch.setattr(os, call, wrap(call, getattr(os, call)))
     return calls
+
+
+def leftover_entries(root: Path) -> list[str]:
+    """The paths under ``root`` whose name has the temp shape."""
+    return [
+        (Path(folder) / name).relative_to(root).as_posix()
+        for folder, folders, files in os.walk(root)
+        for name in [*folders, *files]
+        if is_leftover_name(name)
+    ]
+
+
+@pytest.fixture
+def temp_entries() -> Callable[[Path], list[str]]:
+    """``temp_entries(root)``: the paths under ``root`` whose name has the temp shape."""
+    return leftover_entries
+
+
+def fail_call_once(patch: pytest.MonkeyPatch, *, call: str, name: str | None) -> None:
+    """Make the first ``os.<call>`` (``replace`` or ``unlink``) of ``name`` raise ``EIO``.
+
+    ``name`` is the destination as given (relative to its ``dir_fd``); ``None`` fails the first
+    call whatever it names. Every later call goes through.
+    """
+    real = getattr(os, call)
+    failed: list[str] = []
+
+    def failing(*args: Any, **kwargs: Any) -> Any:
+        destination = os.fsdecode(args[1] if call == "replace" else args[0])
+        if not failed and name in {None, destination}:
+            failed.append(destination)
+            raise OSError(errno.EIO, os.strerror(errno.EIO))
+        return real(*args, **kwargs)
+
+    patch.setattr(os, call, failing)
+
+
+@pytest.fixture
+def fail_once() -> Callable[..., None]:
+    """``fail_once(patch, call=..., name=...)``: the first matching ``os.<call>`` raises ``EIO``."""
+    return fail_call_once
+
+
+class Ac4Hub(NamedTuple):
+    """AC-16.4's hub (AGH-16): ``make(hub)`` deletes ``hub.lock``, appends a line to ``Makefile``,
+    takes ``u+x`` from ``guard``, edits the seeded ``now`` and deletes ``schema``; ``listing`` is
+    the line adopt prints for each of the two managed files that then differ, in path order."""
+
+    make: Callable[[Path], Path]
+    guard: str
+    now: str
+    schema: str
+    listing: tuple[str, ...]
+
+
+AC4_GUARD = "plugin/hub-workflow/hooks/guard.py"
+AC4_NOW = "brain/now.md"
+AC4_SCHEMA = "hub.schema.json"
+
+
+def _make_ac4_hub(hub: Path) -> Path:
+    (hub / "hub.lock").unlink()
+    with (hub / "Makefile").open("ab") as makefile:
+        makefile.write(b"local:\n")
+    os.chmod(hub / AC4_GUARD, 0o644)
+    (hub / AC4_NOW).write_bytes(b"# Now\nShip the adopt.\n")
+    (hub / AC4_SCHEMA).unlink()
+    return hub
+
+
+@pytest.fixture
+def ac4() -> Ac4Hub:
+    """AC-16.4's hub edits, its paths and its listing (``Ac4Hub``)."""
+    return Ac4Hub(
+        make=_make_ac4_hub,
+        guard=AC4_GUARD,
+        now=AC4_NOW,
+        schema=AC4_SCHEMA,
+        listing=(
+            "Makefile: +0 -1 lines",
+            f"{AC4_GUARD}: +0 -0 lines, executable bit differs (on disk -x, render +x)",
+        ),
+    )
 
 
 @pytest.fixture
