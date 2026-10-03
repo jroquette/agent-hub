@@ -68,7 +68,7 @@ from core's `RULE_MODULES`; a module's rules are core functions registered when 
 | `makefile.override` | warning | `Makefile.project` does not redefine a target parsed from the managed `Makefile` (and the targets of `mk/<id>.mk` of selected modules; grouped `&:` rules read; `$(T):` targets not expanded; no other included file is followed) | [hub-generator.md](hub-generator.md) |
 | `features.tracker` | error | each listed `brain/features/*/features.json`: shape, AC ids, evidence, and the cross-check with a listed sibling `spec.md`; links are not followed | feature check |
 | `bench.tasks` | error | module `bench`, snapshot only (no git, no process): listed `brain/workflow/bench/tasks.json` is a strict JSON list (at most 1 MiB, 200 cases; absent or `[]` is clean); each case an object with `id` (`[A-Za-z0-9._-]{1,64}`, unique ignoring case), `repo` (a `repos[].dir` unless `excluded`), `merge` (a 7–40 hex sha), `prompt` (1–20 000 characters, not starting with `-`), `hidden_tests` (1–100 literal relative paths of at most 1 024 characters: no glob or `\`, no leading `/`, `-` or `:` (pathspec magic), no empty, `.`, `..` or `.git` segment in any case, no control, format or surrogate character), `test_cmd` (1–32 non-empty strings of at most 1 024 characters); optional `setup_cmd` (at most 4 096 characters), `env` (at most 32 keys `[A-Za-z_][A-Za-z0-9_]*`, values string, number or boolean), `excluded` (boolean); no NUL in a string a process gets; one finding per problem | module `bench` |
-| `config.identity` | info | the branch prefix this developer gets when no file sets one: derived from the effective email (named with its source) | AGH-65 |
+| `config.identity` | info | the branch prefix this developer gets when no file sets one: derived from the effective email (named with its source); can be disabled, cannot be retuned (a `severity` is a `config.schema` error), so every developer's run exits alike | AGH-65 |
 
 "config lint" and "feature check" are the hub scripts these rules replace ([hub-generator.md](hub-generator.md),
 Commands). Each ported rule keeps the old check's behavior, pinned first by characterization tests, but for what its
@@ -112,12 +112,12 @@ A project tunes rules in `hub.json` → `doctor.rules.<id>` ([project-config.md]
                       "instructions.size": {"max_lines": {"AGENTS.md": 120}}}}}
 ```
 
-`enabled` (default `true`), `severity` (overrides the default; not for `config.schema`) and rule options, validated per
-rule. An unknown rule id or option is a `config.schema` error. Options in Phase 1: `instructions.size.max_lines` (file
-or glob to limit, merged over the defaults; keys of 1 to 1024 characters, at most 256 of them, `_` comment keys aside)
-and `brain.leak.min_line_length` (1 to 10000). A rule declares its `module`; the rules of a module that is not
-selected in `modules` never run and cannot be configured (a cross-field check of the model, not of the JSON Schema:
-[project-config.md](project-config.md)).
+`enabled` (default `true`), `severity` (overrides the default; not for `config.schema` or `config.identity`) and rule
+options, validated per rule. An unknown rule id or option is a `config.schema` error. Options in Phase 1:
+`instructions.size.max_lines` (file or glob to limit, merged over the defaults; keys of 1 to 1024 characters, at most
+256 of them, `_` comment keys aside) and `brain.leak.min_line_length` (1 to 10000). A rule declares its `module`; the
+rules of a module that is not selected in `modules` never run and cannot be configured (a cross-field check of the
+model, not of the JSON Schema: [project-config.md](project-config.md)).
 
 ## Invariants
 
