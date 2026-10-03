@@ -28,18 +28,18 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `project.name` | kebab-case (Rendered values) | req. | templates (plugin, marketplace names), `hub brief` |
 | `project.hub_repo` | `owner/name` | req. | `hub run` (PR links), marketplace |
 | `project.branch_prefix` | e.g. `jdoe/` (Rendered values) | req. | `hub worktree`, `hub run`, guard branch hint |
-| `project.default_branch` | string | `main` | `hub worktree`, guard (no push to it) |
+| `project.default_branch` | `^S(?:/S)*$` (Rendered values) | `main` | the hub's own branch (CI, brief hub line, retro), default of `repos[].default_branch`, guard |
 | `project.author_name`, `project.author_email` | strings | req. | cloud setup (git identity), `attribution.ai` rule |
 | `tracker.kind` | closed list: `linear` | req. | selects the tracker adapter (Tracker, below) |
 | `tracker.team` | string, the tracker's team key | req. | `hub next`, `hub run`, worktree names |
-| `tracker.ready_label` | string | `agent-ready` | `hub next` |
-| `tracker.failed_label` | string | `agent-failed` | `hub run` on failure |
+| `tracker.ready_label`, `tracker.failed_label` | strings | `agent-ready`, `agent-failed` | `hub next` (ready), `hub run` on failure (failed) |
 | `tracker.transport` | closed list: `api`, `mcp` | `api` | `hub next`, `hub run` (adapter; Tracker, below) |
 | `repos[]` | list, at least one item | req. | launcher, worktrees, hooks, cloud setup |
 | `repos[].dir` | one path segment (Rendered values), unique across `repos` ignoring case | req. | the sibling directory next to the hub |
 | `repos[].github` | `owner/name` | req. | cloud setup, `hub run` |
 | `repos[].role` | free string; `app` is the only known value | `app` | templates may branch on known roles |
 | `repos[].check_fast`, `repos[].check` | shell commands | req. | stop gate (`check_fast`), `hub run` (`check`) |
+| `repos[].default_branch` | like `project.default_branch` | `project.default_branch` | `hub worktree`, `hub run` (base, `--base`), `hub brief`, retro CI, guard (union of `main`, `master` and every configured default branch, plus the root `hub.json`'s when `$HUB_CONFIG` points elsewhere, from any cwd); `AGENTS.md` names it only when set |
 | `guard.ask_before_edit` | list of paths | `[]` | guard: ask before an edit under them |
 | `guard.deny_hosts` | list of host names | `[]` | guard: deny network calls to them |
 | `guard.deny_paths` | list of paths | `[]` | guard: deny any read or edit under them |
@@ -55,12 +55,13 @@ checks are model validators JSON Schema cannot express, so there an editor accep
 
 The model restricts rendered values: safe unquoted in shell, Make and Markdown. YAML templates double-quote placeholders
 (`on`, `NO`, `1.0` would retype). Brain frontmatter lists repo dirs unquoted: readers load it without type resolution.
-`S` is a safe segment, `[A-Za-z0-9_]+(?:[._-][A-Za-z0-9_]+)*`: no leading `-` or `.`, no `..`, no trailing punctuation.
+`S` is a safe segment, `[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*`: no leading `-` or `.`, no `..`, no trailing punctuation,
+no `_` separator (hooks match branches with Python's `re`: exponential backtracking if a separator extends a segment).
 
 - `project.name`: kebab-case `^[a-z0-9]+(-[a-z0-9]+)*$`. `repos[].dir`: `^S$`, unique ignoring case (`tradeSentinel`).
-  `project.hub_repo`, `repos[].github`: `^S/S$`. `project.branch_prefix`: `^S/$`. `project.default_branch`:
-  `^S(?:/S)*$`. `tracker.team`: `^[A-Za-z0-9]+$`. `project.author_email`: `^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$`.
-  `guard.deny_hosts`: `.`-joined DNS labels `[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?`. Other free text has no
+  `project.hub_repo`, `repos[].github`: `^S/S$`. `project.branch_prefix`: `^S/$`. `guard.deny_hosts`: `.`-joined DNS
+  labels `[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?`. `project.default_branch`, `repos[].default_branch`: `^S(?:/S)*$`.
+  `tracker.team`: `^[A-Za-z0-9]+$`. `project.author_email`: `^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$`. Other free text has no
   control character (`\x00-\x1f`, `\x7f`); `author_name` is rendered only with format quoting (`shlex.quote`, JSON
   encoder, escaped YAML scalar), never into a Makefile; `check_fast` and `check` are read at run time, never rendered.
 - `platform.version` matches `^[0-9]+\.[0-9]+\.[0-9]+$` in the CLI and in the hooks' stdlib reader (a bad value counts
@@ -90,10 +91,9 @@ rules only when selected ([hub-generator.md](hub-generator.md)). Phase 1 modules
 ### Readers
 
 - **CLI**: validates with `HubConfig` and fails fast: exit 1 and one line per error, `hub.json: <json path>: <message>`.
-- **Hooks**: a defensive stdlib reader that never raises: a missing file, bad JSON or a wrong type falls back to the
-  defaults above and the hook fails open. It ignores unknown and `_` keys.
-- **Consistency**: `packages/generator/tests/integration/test_hub_json_reader.py` compares the reader's defaults on a
-  minimal `hub.json` with `HubConfig`'s. The reader is a hook template: `plugin/hub-workflow/hooks/stdlib_reader.py`.
+- **Hooks**: a defensive stdlib reader that never raises (`plugin/hub-workflow/hooks/stdlib_reader.py`; its defaults on
+  a minimal `hub.json` match `HubConfig`'s in `test_hub_json_reader.py`): a missing file, bad JSON or a wrong type gives
+  the defaults; the hook fails open. It ignores unknown and `_` keys; a bad `repos[].default_branch` inherits.
 
 ### Tracker
 

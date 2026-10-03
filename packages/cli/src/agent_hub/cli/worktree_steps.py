@@ -54,11 +54,14 @@ class ChildRunner(Protocol):
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class WorktreeTask:
-    """One task's checked inputs: the name, the branch, the base and the repos to touch."""
+    """One task's checked inputs: the name, the branch, each repo's base and the repos to touch.
+
+    ``bases`` maps each of ``repos`` to ``origin/<its default branch>``.
+    """
 
     name: str
     branch: str
-    base: str
+    bases: dict[str, str]
     workspace: Path
     repos: tuple[str, ...]
     only: str | None
@@ -117,12 +120,13 @@ def worktree_task(
         raise WorktreeUsageError(
             f"unknown repo in --only: {shown_path(only)}; use one of: {' '.join(dirs)}"
         )
+    repos = dirs if only is None else (only,)
     return WorktreeTask(
         name=name,
         branch=branch,
-        base=f"origin/{config.project.default_branch}",
+        bases={repo: f"origin/{config.default_branch_for(repo)}" for repo in repos},
         workspace=hub.parent,
-        repos=dirs if only is None else (only,),
+        repos=repos,
         only=only,
         git=git,
         env=env,
@@ -162,9 +166,9 @@ def create_worktree(task: WorktreeTask, repo: str, *, echo: Echo) -> Path:
         add = (*task.add_options, "worktree", "add", "-q", str(worktree), task.branch)
     else:
         add = (*task.add_options, "worktree", "add", "-q", "-b", task.branch)
-        add += (str(worktree), task.base)
+        add += (str(worktree), task.bases[repo])
     _git_or_raise(task, checkout, add, repo=repo, step="could not add the worktree")
-    echo(f"created  {shown_path(str(worktree))} ({task.branch} from {task.base})")
+    echo(f"created  {shown_path(str(worktree))} ({task.branch} from {task.bases[repo]})")
     _run_script(task, repo, worktree, script=SETUP_SCRIPT, echo=echo)
     return worktree
 

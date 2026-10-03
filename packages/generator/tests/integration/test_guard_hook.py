@@ -1154,3 +1154,103 @@ def test_matches_case_insensitively_when_path_case_differs(guarded_hub: Path, gu
     verdicts = guard(guarded_hub / HOOKS, runs)
 
     assert [verdict and verdict[0] for verdict in verdicts] == ["ask", "ask", "ask", "deny", "ask"]
+
+
+# D-guard (AGH-46): a push to any configured default branch is denied, wherever it runs, and the
+# reason names the branch matched (E7). The hub test's workspace, with per-repo branches.
+PUSH_REASON = "[hub guard] pushing to {} is not allowed; open a PR from a me/dem-<N>-<desc> branch"
+FORCE_PUSH_REASON = "[hub guard] force-push is not allowed; push a new commit (or a merge) instead"
+
+
+def with_repo_branches(workspace: Path, branches: Mapping[str, str]) -> Path:
+    """Write ``HUB_JSON`` with ``branches`` as its repos' ``default_branch``; returns the hub.
+
+    The hub is without the seeded ``plugin/demo/hooks/project_guard.py``, as ``guarded_hub``: these
+    calls test the base rules, and the stub would start one child per call.
+    """
+    hub = workspace / "demo-hub"
+    document = json.loads(json.dumps(HUB_JSON))
+    for repo in document["repos"]:
+        if repo["dir"] in branches:
+            repo["default_branch"] = branches[repo["dir"]]
+    (hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+    (hub / "plugin" / "demo" / "hooks" / "project_guard.py").unlink(missing_ok=True)
+    return hub
+
+
+def cwds_of(workspace: Path) -> tuple[Path, ...]:
+    """The hub, an app repo and a folder outside the workspace."""
+    elsewhere = workspace.parent / "elsewhere"
+    elsewhere.mkdir(exist_ok=True)
+    return workspace / "demo-hub", workspace / "app", elsewhere
+
+
+@pytest.fixture
+def mixed_workspace(workspace: Path) -> Path:
+    """Project ``trunk``, ``app`` on ``master``, ``web`` on ``release/2``; returns ``ws``."""
+    with_repo_branches(workspace, {"app": "master", "web": "release/2"})
+    return workspace
+
+
+class TestProtectedBranches:
+    def test_denies_push_naming_branch_when_run_from_any_cwd(
+        self, mixed_workspace: Path, guard: Guard
+    ) -> None:
+        pushes = [
+            ("git push origin main", "main"),
+            ("git push origin master", "master"),
+            ("git push origin trunk", "trunk"),
+            ("git push origin release/2", "release/2"),
+            ("git push origin HEAD:release/2", "release/2"),
+            ("git -C ../web push origin release/2", "release/2"),
+        ]
+        runs = [bash_run(command, cwd) for cwd in cwds_of(mixed_workspace) for command, _ in pushes]
+
+        verdicts = guard(mixed_workspace / "demo-hub" / HOOKS, runs)
+
+        assert verdicts == [
+            ("deny", PUSH_REASON.format(branch))
+            for _ in cwds_of(mixed_workspace)
+            for _, branch in pushes
+        ]
+
+    def test_names_longest_branch_when_protected_branch_prefixes_another(
+        self, workspace: Path, guard: Guard
+    ) -> None:
+        # ``release`` matches the start of ``release/2`` too: the longest is tried first.
+        hub = with_repo_branches(workspace, {"app": "release", "web": "release/2"})
+        commands = ["git push origin release/2", "git push origin HEAD:release/2"]
+
+        verdicts = guard(hub / HOOKS, [bash_run(command, hub) for command in commands])
+
+        assert verdicts == [("deny", PUSH_REASON.format("release/2"))] * 2
+
+    def test_allows_push_when_branch_only_shares_prefix(
+        self, mixed_workspace: Path, guard: Guard
+    ) -> None:
+        commands = ["git push origin me/dem-1-x", "git push origin release/20"]
+        hub, *_ = cwds_of(mixed_workspace)
+
+        verdicts = guard(hub / HOOKS, [bash_run(command, hub) for command in commands])
+
+        assert verdicts == [None, None]
+
+    def test_escapes_branch_when_value_has_regex_characters(
+        self, workspace: Path, guard: Guard
+    ) -> None:
+        hub = with_repo_branches(workspace, {"web": "v1.0"})
+        commands = ["git push origin v1x0", "git push origin v1.0"]
+
+        lookalike, branch = guard(hub / HOOKS, [bash_run(command, hub) for command in commands])
+
+        assert lookalike is None
+        assert branch == ("deny", PUSH_REASON.format("v1.0"))
+
+    def test_keeps_force_push_reason_when_branch_protected(
+        self, mixed_workspace: Path, guard: Guard
+    ) -> None:
+        hub, *_ = cwds_of(mixed_workspace)
+
+        verdicts = guard(hub / HOOKS, [bash_run("git push -f origin master", hub)])
+
+        assert verdicts == [("deny", FORCE_PUSH_REASON)]

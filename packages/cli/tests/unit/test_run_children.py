@@ -1,6 +1,10 @@
+from pathlib import Path
+
 import pytest
 
-from agent_hub.cli.run_children import push_env
+from agent_hub.cli.run_children import RunChildren, push_env
+from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 
 OVERRIDES = [
     ("core.fsmonitor", "false"),
@@ -46,3 +50,35 @@ def test_replaces_count_when_caller_count_invalid(count: str) -> None:
 
     assert pairs(env) == OVERRIDES
     assert env["GIT_CONFIG_GLOBAL"] == "/g"
+
+
+def run_children(repo: str, *, api_branch: str | None) -> RunChildren:
+    """The children of a run on ``repo`` in a hub on ``trunk`` whose ``demo-api`` may set its
+    own branch."""
+    document = a_hub_document()
+    document["project"]["default_branch"] = "trunk"
+    document["repos"].append(a_second_repo())
+    if api_branch is not None:
+        document["repos"][0]["default_branch"] = api_branch
+    config = HubConfig.model_validate(document)
+    return RunChildren(config=config, hub=Path("/ws/hub"), repo=repo, issue_id="DEM-1")
+
+
+def base_argument(argv: list[str]) -> str:
+    return argv[argv.index("--base") + 1]
+
+
+@pytest.mark.parametrize(("repo", "branch"), [("demo-api", "master"), ("demo-web", "trunk")])
+def test_bases_run_on_repo_branch_when_repo_sets_one(repo: str, branch: str) -> None:
+    children = run_children(repo, api_branch="master")
+
+    assert children.base == f"origin/{branch}"
+    assert base_argument(children.pr_argv(title="t", body="b")) == branch
+
+
+@pytest.mark.parametrize("repo", ["demo-api", "demo-web"])
+def test_bases_run_on_project_branch_when_repo_sets_none(repo: str) -> None:
+    children = run_children(repo, api_branch=None)
+
+    assert children.base == "origin/trunk"
+    assert base_argument(children.pr_argv(title="t", body="b")) == "trunk"

@@ -140,12 +140,19 @@ def _union(first: tuple[str, ...], then: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(dict.fromkeys((*first, *then)))
 
 
+def _branches(hub_file: HubFile) -> tuple[str, ...]:
+    """The project's default branch, then each repo's effective one."""
+    return (hub_file.project.default_branch, *(r.default_branch for r in hub_file.repos))
+
+
 class Config:
     """hub.json as the reader loads it, with the hub's folders; every field has a default.
 
     root is the hub (or hub worktree) holding the hook files, root_hub its main checkout, and
     root_project its own project name. root_file is the root's hub.json when the config is another
     file ($HUB_CONFIG): the guard's lists are then the union of both, so that file only tightens.
+    protected_branches (sorted, each once) is main, master and every default branch of the config,
+    plus the root file's when there is one.
     """
 
     def __init__(
@@ -171,6 +178,8 @@ class Config:
         self.ask_before_edit = _union(root_guard.ask_before_edit, hub_file.guard.ask_before_edit)
         self.deny_hosts = _union(root_guard.deny_hosts, hub_file.guard.deny_hosts)
         self.deny_paths = _union(root_guard.deny_paths, hub_file.guard.deny_paths)
+        root_branches = _branches(root_file) if root_file is not None else ()
+        self.protected_branches = tuple(sorted({"main", "master", *_branches(hub_file), *root_branches}))
 
     @property
     def repo_dirs(self) -> tuple[str, ...]:

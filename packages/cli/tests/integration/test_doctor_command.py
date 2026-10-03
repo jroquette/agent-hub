@@ -316,6 +316,34 @@ def test_stays_clean_when_transport_absent(
     assert lines == [CLEAN]
 
 
+def test_passes_config_schema_when_repo_sets_branch(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["repos"][0]["default_branch"] = "master"
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=0)
+
+    assert lines == [CLEAN]
+
+
+def test_reports_repo_branch_problem_when_value_invalid(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["repos"][0]["default_branch"] = "-x"
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=1)
+
+    assert lines == [
+        schema_line(
+            "repos[0].default_branch: String should match pattern"
+            " '^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*(?:/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*)*$'"
+        ),
+        ONE_ERROR,
+    ]
+
+
 CONTRACT_SYNC = {"source": "demo-api", "target": "demo-web"}
 
 
@@ -387,6 +415,33 @@ def test_finds_no_stale_reference_when_fresh_hub_selects_modules(
     source, target = (repo["dir"] for repo in demo_document["repos"])
     settings = {"contract-sync": {"source": source, "target": target}}
     demo_document["modules"] = {module: settings.get(module, {}) for module in modules}
+    config = tmp_path / "hub.json"
+    config.write_bytes(dump_json(demo_document))
+    root = tmp_path / "hub"
+    created = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
+    assert created.exit_code == 0, created.stderr
+
+    assert lines_of(run_doctor(root, "--only", "instructions.refs"), exit_code=0) == [CLEAN]
+
+
+@pytest.mark.parametrize(
+    ("project_branch", "repo_branch"),
+    [("main", "release/2"), ("stable/1", None)],
+    ids=["repo-branch", "project-branch"],
+)
+def test_finds_no_stale_reference_when_fresh_hub_names_branch_with_slash(
+    tmp_path: Path,
+    demo_document: dict[str, Any],
+    run_doctor: DoctorRunner,
+    *,
+    project_branch: str,
+    repo_branch: str | None,
+) -> None:
+    # AGENTS.md names the configured branches as code spans; one with a ``/`` looks like a path
+    # but is not a stale reference.
+    demo_document["project"]["default_branch"] = project_branch
+    if repo_branch is not None:
+        demo_document["repos"][0]["default_branch"] = repo_branch
     config = tmp_path / "hub.json"
     config.write_bytes(dump_json(demo_document))
     root = tmp_path / "hub"
