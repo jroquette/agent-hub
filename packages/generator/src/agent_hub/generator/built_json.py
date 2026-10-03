@@ -16,28 +16,29 @@ _PROJECT_MANIFEST_DESCRIPTION = "Project agents, skills and guard extension of t
 
 _SETTINGS_SCHEMA: Final = "https://json.schemastore.org/claude-code-settings.json"
 # Spec Q-11: read-only git commands run without a prompt; secret files are never read. AGH-16 D2
-# (E14, inventory rows S4a-S4j and S6a) adds the base denies and sandbox, so a hub keeps them even
-# with the guard off; a project adds its own lists and hosts through `settings.project.json`.
+# (E14, inventory rows S4a-S4j and S6a) adds the base denies and sandbox. The guard hook is the
+# primary check; these rules are defense in depth. A project adds its own lists and hosts through
+# `settings.project.json`.
 _ALLOWED_COMMANDS: Final = (
     "Bash(git status *)",
     "Bash(git diff *)",
     "Bash(git log *)",
     "Bash(git show *)",
 )
-_DENIED: Final = (
-    "Read(**/*.pem)",
-    "Read(**/*.key)",
-    "Bash(git push --force*)",
-    "Bash(git push -f *)",
-    "Bash(git push * main)",
-    "Bash(git push origin HEAD:main*)",
+_DENIED_READS: Final = ("Read(**/*.pem)", "Read(**/*.key)")
+_DENIED_FORCE_PUSHES: Final = ("Bash(git push --force*)", "Bash(git push -f *)")
+# Claude Code matches each subcommand of `|`, `&&`, `;` on its own, so a shell fed by a pipe is
+# denied as the bare `sh` or `bash` subcommand (`Bash(* | sh)` would never match).
+_DENIED_COMMANDS: Final = (
     "Bash(terraform *)",
     "Bash(aws *)",
     "Bash(security *)",
     "Bash(ssh *)",
-    "Bash(* | sh)",
-    "Bash(* | bash)",
+    "Bash(sh)",
+    "Bash(bash)",
 )
+# The guard's own protected branches besides the config's default branches (`hubhooks.py`).
+_ALWAYS_PROTECTED: Final = ("main", "master")
 # Commands that reach the network or the host's credentials run outside the sandbox; the hosts are
 # the package registries and GitHub, the same in every hub.
 _SANDBOX_EXCLUDED: Final = (
@@ -99,11 +100,11 @@ def managed_settings(config: HubConfig) -> JsonValue:
     """The managed ``.claude/settings.json``: the rules base every hub shares (spec D5).
 
     The schema, the authorship rule (empty attribution, no co-author line), the hooks block, the
-    read-only git allows, the base denies (secret reads, force and ``main`` pushes, infra tools,
-    ``ssh``, piping into a shell), the repos as additional directories (``../<dir>``, in
-    ``hub.json`` order) and the base sandbox (AGH-16 D2, E14). Project settings (marketplace,
-    plugins, extra sandbox hosts, ``env``, skill overrides) come from the seeded
-    ``settings.project.json``.
+    read-only git allows, the base denies (secret reads, force pushes and pushes to a protected
+    branch, infra tools, ``ssh``, a bare ``sh`` or ``bash``), the repos as additional directories
+    (``../<dir>``, in ``hub.json`` order) and the base sandbox (AGH-16 D2, E14). Project settings
+    (marketplace, plugins, extra sandbox hosts, ``env``, skill overrides) come from the seeded
+    ``settings.project.json``, which may also override the sandbox's scalars.
     """
     return {
         "$schema": _SETTINGS_SCHEMA,
@@ -112,7 +113,12 @@ def managed_settings(config: HubConfig) -> JsonValue:
         "hooks": base_hooks_block(),
         "permissions": {
             "allow": list(_ALLOWED_COMMANDS),
-            "deny": list(_DENIED),
+            "deny": [
+                *_DENIED_READS,
+                *_DENIED_FORCE_PUSHES,
+                *_denied_pushes(config),
+                *_DENIED_COMMANDS,
+            ],
             "additionalDirectories": [f"../{repo.dir}" for repo in config.repos],
         },
         "sandbox": {
@@ -122,6 +128,23 @@ def managed_settings(config: HubConfig) -> JsonValue:
             "network": {"allowLocalBinding": True, "allowedDomains": list(_SANDBOX_HOSTS)},
         },
     }
+
+
+def _denied_pushes(config: HubConfig) -> list[str]:
+    """Two push denies per branch the guard protects (``main``, ``master``, the project's and each
+    repo's default branch), sorted, each once."""
+    branches = sorted(
+        {
+            *_ALWAYS_PROTECTED,
+            config.project.default_branch,
+            *(config.default_branch_for(repo.dir) for repo in config.repos),
+        }
+    )
+    return [
+        rule
+        for branch in branches
+        for rule in (f"Bash(git push * {branch})", f"Bash(git push origin HEAD:{branch}*)")
+    ]
 
 
 def base_hooks_block() -> dict[str, JsonValue]:

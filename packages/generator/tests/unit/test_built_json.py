@@ -205,3 +205,67 @@ def test_refuses_weakening_key_when_sibling_merged_over_base(
         )
 
     assert caught.value.key_path == key_path
+
+
+def test_denies_push_to_each_protected_branch_when_default_branch_not_main(
+    variant_config: HubConfig,
+) -> None:
+    # The guard's protected set (`main`, `master`, the project's `trunk`), sorted; piped shells
+    # are denied as the subcommand Claude Code matches on its own.
+    settings = managed_settings(variant_config)
+    assert isinstance(settings, dict)
+    assert isinstance(settings["permissions"], dict)
+
+    assert settings["permissions"]["deny"] == [
+        "Read(**/*.pem)",
+        "Read(**/*.key)",
+        "Bash(git push --force*)",
+        "Bash(git push -f *)",
+        "Bash(git push * main)",
+        "Bash(git push origin HEAD:main*)",
+        "Bash(git push * master)",
+        "Bash(git push origin HEAD:master*)",
+        "Bash(git push * trunk)",
+        "Bash(git push origin HEAD:trunk*)",
+        "Bash(terraform *)",
+        "Bash(aws *)",
+        "Bash(security *)",
+        "Bash(ssh *)",
+        "Bash(sh)",
+        "Bash(bash)",
+    ]
+
+
+def test_denies_push_to_repo_branch_when_repo_sets_default_branch() -> None:
+    document = a_hub_document()
+    document["repos"][0]["default_branch"] = "develop"
+    settings = managed_settings(HubConfig.model_validate(document))
+    assert isinstance(settings, dict)
+    assert isinstance(settings["permissions"], dict)
+
+    pushes = [rule for rule in settings["permissions"]["deny"] if " * " in str(rule)]
+    assert pushes == [
+        "Bash(git push * develop)",
+        "Bash(git push * main)",
+        "Bash(git push * master)",
+    ]
+
+
+def test_keeps_sibling_sandbox_scalar_when_sibling_disables_sandbox(
+    demo_config: HubConfig,
+) -> None:
+    # Owner decision (AGH-16 task 2.5 review): on scalars the project wins, so a sibling may turn
+    # the base sandbox off; only managed or CLI settings could enforce it.
+    sibling = {"sandbox": {"enabled": False}}
+
+    merged = json.loads(
+        merge_json(
+            managed_settings(demo_config),
+            json.dumps(sibling).encode("utf-8"),
+            path=".claude/settings.project.json",
+        )
+    )
+
+    assert merged["sandbox"]["enabled"] is False
+    assert merged["sandbox"]["allowUnsandboxedCommands"] is False
+    assert merged["sandbox"]["network"]["allowedDomains"] == BASE_HOSTS
