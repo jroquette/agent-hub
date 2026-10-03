@@ -1870,6 +1870,19 @@ def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubCon
     assert ci_trigger_branches(ci) == ["trunk", "trunk"]
 
 
+# AGH-16 inventory A6b: the per-repo setup scripts `hub worktree` runs, named in the workflow step
+# that creates the worktree.
+def test_names_worktree_setup_scripts_when_agents_rendered(demo_config: HubConfig) -> None:
+    agents = text_of(demo_config, "AGENTS.md")
+    workflow = agents.split("## Workflow", 1)[1].split("\n## ", 1)[0]
+    step = " ".join(workflow.split("\n4. ", 1)[1].split("\n5. ", 1)[0].split())
+
+    assert step.count("`<repo>/scripts/worktree-setup.sh`") == 1
+    assert step.count("`<repo>/scripts/worktree-teardown.sh`") == 1
+    assert "`make worktree NAME=<team>-<n>-<desc>`" in step
+    assert "(env files, databases, ports)" in step
+
+
 def test_pins_hygiene_hooks_when_pre_commit_rendered(demo_config: HubConfig) -> None:
     pre_commit = text_of(demo_config, ".pre-commit-config.yaml")
 
