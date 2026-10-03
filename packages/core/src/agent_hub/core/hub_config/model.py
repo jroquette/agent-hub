@@ -71,15 +71,25 @@ class Platform(ConfigObject):
     version: ReleaseVersion
 
 
+# The identity keys are per developer: absent here, each comes from hub.local.json or git config.
+_DESIGN = "(docs/design/developer-identity.md)"
+_PER_DEVELOPER = f"Per developer: hub.local.json, else this, else git config {_DESIGN}."
+# How doctor fixes and rendered text name the branch prefix of a hub that leaves it to each one.
+PREFIX_PLACEHOLDER: Final = "<prefix>"
+
+
 class Project(ConfigObject):
     """Project identity, authorship and branch rules."""
 
     name: KebabName
     hub_repo: GitHubRepo
-    branch_prefix: BranchPrefix
+    branch_prefix: BranchPrefix | None = absent_by_default(
+        description="Per developer: hub.local.json, else this, else the effective author email's"
+        f" local part plus / {_DESIGN}."
+    )
     default_branch: BranchName = "main"
-    author_name: FreeString
-    author_email: EmailAddress
+    author_name: FreeString | None = absent_by_default(description=_PER_DEVELOPER)
+    author_email: EmailAddress | None = absent_by_default(description=_PER_DEVELOPER)
 
 
 class Tracker(ConfigObject):

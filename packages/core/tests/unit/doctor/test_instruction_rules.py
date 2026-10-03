@@ -409,6 +409,22 @@ class TestRefs:
             stale("AGENTS.md", 2, "release/2/notes.md"),
         ]
 
+    def test_reports_stale_reference_when_hub_sets_no_prefix(
+        self, snapshot_of: SnapshotFactory
+    ) -> None:
+        # A team hub: each developer's prefix is theirs, so no reference is skipped as a branch.
+        document = a_hub_document()
+        del document["project"]["branch_prefix"]
+        text = "Run `scripts/gone.py`.\nNot the branch `jdoe/dem-1-x`.\n"
+        snapshot = snapshot_of(
+            config=HubConfig.model_validate(document), files={"AGENTS.md": text.encode()}
+        )
+
+        assert refs(snapshot) == [
+            stale("AGENTS.md", 1, "scripts/gone.py"),
+            stale("AGENTS.md", 2, "jdoe/dem-1-x"),
+        ]
+
     def test_reports_files_in_sorted_order_when_listed_in_reverse(
         self, snapshot_of: SnapshotFactory
     ) -> None:

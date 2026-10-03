@@ -50,6 +50,14 @@ OPTIONAL_PATHS: tuple[tuple[str | int, ...], ...] = (
 # effective value is compared with ``HubConfig.default_branch_for``, not with the model dump.
 INHERITED_PATHS: tuple[tuple[str | int, ...], ...] = (("repos", 0, "default_branch"),)
 
+# Optional keys resolved per developer (hub.local.json, else hub.json, else git config): the
+# CLI and the hooks resolve them alike, which the shared identity cases check.
+LOCAL_PATHS: tuple[tuple[str | int, ...], ...] = (
+    ("project", "branch_prefix"),
+    ("project", "author_name"),
+    ("project", "author_email"),
+)
+
 # argv: mode, reader file, hub.json path, checks (JSON: name -> [actual, expected] expressions,
 # evaluated with the reader's names and ``hub_file``). Modes: ``import`` (a sibling import, as the
 # hooks do), ``by_path`` (the registration the reader's docstring asks for, as the scripts do),
@@ -218,7 +226,8 @@ def test_matches_schema_defaults_when_hub_json_minimal(
 
 
 def test_lists_every_optional_field_when_model_inspected() -> None:
-    """``OPTIONAL_PATHS`` and ``INHERITED_PATHS`` list every optional key: a new one fails here."""
+    """``OPTIONAL_PATHS``, ``INHERITED_PATHS`` and ``LOCAL_PATHS`` list every optional key: a new
+    one fails here."""
     owners: tuple[tuple[tuple[str | int, ...], type[Any]], ...] = (
         ((), HubConfig),
         (("platform",), Platform),
@@ -237,7 +246,7 @@ def test_lists_every_optional_field_when_model_inspected() -> None:
     # ``$schema`` is an editor hint, not a default; ``guard`` and ``doctor`` are listed per field.
     containers = {("$schema",), ("guard",), ("doctor",)}
 
-    assert defaulted - containers == set(OPTIONAL_PATHS) | set(INHERITED_PATHS)
+    assert defaulted - containers == set(OPTIONAL_PATHS) | set(INHERITED_PATHS) | set(LOCAL_PATHS)
 
 
 def repo_branches(hub_file: Mapping[str, Any]) -> dict[str, str]:

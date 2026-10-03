@@ -58,8 +58,8 @@ def failure_of(read: bytes | tuple[ConfigProblem, ...]) -> ConfigFailure:
             b'{"project": ', ["$: not valid JSON: Expecting value at line 1 column 13"], id="json"
         ),
         pytest.param(
-            document_bytes(lambda document: document["project"].pop("author_email")),
-            ["project.author_email: Field required"],
+            document_bytes(lambda document: document["project"].pop("hub_repo")),
+            ["project.hub_repo: Field required"],
             id="missing-key",
         ),
         pytest.param(

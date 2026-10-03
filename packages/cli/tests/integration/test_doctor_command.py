@@ -316,6 +316,19 @@ def test_stays_clean_when_transport_absent(
     assert lines == [CLEAN]
 
 
+def test_passes_config_schema_when_identity_absent(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    # A team hub: each developer's identity comes from hub.local.json or git config.
+    for key in ("branch_prefix", "author_name", "author_email"):
+        del demo_document["project"][key]
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=0)
+
+    assert lines == [CLEAN]
+
+
 def test_passes_config_schema_when_repo_sets_branch(
     demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
 ) -> None:

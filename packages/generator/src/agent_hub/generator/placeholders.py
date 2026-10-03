@@ -8,14 +8,15 @@ repository, the Makefile's module include lines, the module files ``AGENTS.md`` 
 ``contract-sync`` source and target repo dirs (empty while the module is unselected), so its
 script never reads ``hub.json``, and ``AGENTS.md``'s worktree base and protected branches.
 ``project.author_name``, ``repos[].check_fast``, ``repos[].check`` and ``platform.version`` are
-never keys: shims read them at run time, and the author name needs format quoting.
+never keys: shims read them at run time, and the author name needs format quoting. A hub that
+sets no ``project.branch_prefix`` (each developer has their own) renders ``<prefix>``.
 """
 
 import textwrap
 from typing import Final
 
 from agent_hub.core.doctor.snapshot import module_makefiles
-from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.model import PREFIX_PLACEHOLDER, HubConfig
 from agent_hub.core.hub_files.rendered_file import Ownership
 from agent_hub.generator.registry import REGISTRY
 
@@ -38,9 +39,8 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
     return {
         "project_name": project.name,
         "project_hub_repo": project.hub_repo,
-        "project_branch_prefix": project.branch_prefix,
+        "project_branch_prefix": project.branch_prefix or PREFIX_PLACEHOLDER,
         "project_default_branch": project.default_branch,
-        "project_author_email": project.author_email,
         "tracker_team": config.tracker.team,
         "repo_dirs": _LIST_SEPARATOR.join(repo.dir for repo in config.repos),
         "repo_githubs": _LIST_SEPARATOR.join(repo.github for repo in config.repos),
