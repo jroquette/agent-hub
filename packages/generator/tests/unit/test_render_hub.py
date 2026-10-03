@@ -1693,31 +1693,101 @@ def run_pre_commit_entry(
     )
 
 
-@pytest.mark.parametrize(("config_name", "branch"), [("demo", "main"), ("variant", "trunk")])
-def test_limits_workflow_when_ci_rendered(
-    config_name: str, branch: str, request: pytest.FixtureRequest
-) -> None:
-    config = request.getfixturevalue(f"{config_name}_config")
+# AGH-16 D3/D4: the workflow's steps, in order; a step is the list item at the job's step indent.
+CI_STEP_START = "      - "
+CREDENTIAL_STEP = "Platform read credential"
+GOLDEN_STEP = "Golden (hub sync --check)"
+MAKE_CHECK_STEP = "make check"
+READ_REFERENCE = "secrets.AGENT_HUB_READ_TOKEN"
 
-    ci = text_of(config, ".github/workflows/ci.yml")
 
-    assert "\npermissions:\n  contents: read\n" in ci
-    triggers = ci[ci.index("\non:\n") : ci.index("\npermissions:")]
-    assert f'  pull_request:\n    branches: ["{branch}"]\n' in triggers
-    assert f'  push:\n    branches: ["{branch}"]\n' in triggers
-    steps = re.findall(r"^\s+- (?:uses|name|run): .*$", ci, re.MULTILINE)
-    assert [step.strip() for step in steps] == [
-        "- uses: actions/checkout@v7",
-        "- uses: astral-sh/setup-uv@v7",
-        "- name: make check",
-    ]
-    assert PINNED_SETUP_UV.search(ci)
-    assert "run: make check" in ci
-    assert not re.search(r"(?:version: \"?|@)latest", ci)
-    assert "@main" not in ci
-    assert "secrets." not in ci
-    jobs = ci[ci.index("\njobs:\n") :]
-    assert re.findall(r"^  ([a-z][a-z0-9-]*):$", jobs, re.MULTILINE) == ["check"]
+def ci_steps(ci: str) -> list[str]:
+    """Each step of the one job as written, from its ``- `` line to the next step's."""
+    body = ci[ci.index("\n    steps:\n") + len("\n    steps:\n") :]
+    steps: list[str] = []
+    for line in body.splitlines(keepends=True):
+        if line.startswith(CI_STEP_START):
+            steps.append("")
+        if steps and line.startswith((CI_STEP_START, "        ")):
+            steps[-1] += line
+    return steps
+
+
+def ci_step(ci: str, name: str) -> str:
+    """The one step whose ``- name:`` is ``name``."""
+    found = [step for step in ci_steps(ci) if step.startswith(f"{CI_STEP_START}name: {name}\n")]
+    assert len(found) == 1, ci
+    return found[0]
+
+
+def run_block(step: str) -> str:
+    """The lines of the step's ``run: |`` block, as written."""
+    head = "        run: |\n"
+    assert head in step, step
+    return step[step.index(head) + len(head) :]
+
+
+class TestCiWorkflow:
+    @pytest.mark.parametrize(("config_name", "branch"), [("demo", "main"), ("variant", "trunk")])
+    def test_limits_workflow_when_ci_rendered(
+        self, config_name: str, branch: str, request: pytest.FixtureRequest
+    ) -> None:
+        config = request.getfixturevalue(f"{config_name}_config")
+
+        ci = text_of(config, ".github/workflows/ci.yml")
+
+        assert "\npermissions:\n  contents: read\n" in ci
+        triggers = ci[ci.index("\non:\n") : ci.index("\npermissions:")]
+        assert f'  pull_request:\n    branches: ["{branch}"]\n' in triggers
+        assert f'  push:\n    branches: ["{branch}"]\n' in triggers
+        steps = re.findall(r"^\s+- (?:uses|name|run): .*$", ci, re.MULTILINE)
+        assert [step.strip() for step in steps] == [
+            "- uses: actions/checkout@v7",
+            "- uses: astral-sh/setup-uv@v7",
+            f"- name: {CREDENTIAL_STEP}",
+            f"- name: {GOLDEN_STEP}",
+            f"- name: {MAKE_CHECK_STEP}",
+        ]
+        assert PINNED_SETUP_UV.search(ci)
+        assert "run: make check" in ci
+        assert not re.search(r"(?:version: \"?|@)latest", ci)
+        assert "@main" not in ci
+        assert re.findall(r"secrets\.\w*", ci) == [READ_REFERENCE]
+        jobs = ci[ci.index("\njobs:\n") :]
+        assert re.findall(r"^  ([a-z][a-z0-9-]*):$", jobs, re.MULTILINE) == ["check"]
+
+    @pytest.mark.parametrize("config_name", ["demo", "variant"])
+    def test_runs_golden_before_make_check_when_ci_rendered(
+        self, config_name: str, request: pytest.FixtureRequest
+    ) -> None:
+        ci = text_of(request.getfixturevalue(f"{config_name}_config"), ".github/workflows/ci.yml")
+
+        steps = ci_steps(ci)
+        golden = ci_step(ci, GOLDEN_STEP)
+        make_check = ci_step(ci, MAKE_CHECK_STEP)
+
+        assert golden == f"{CI_STEP_START}name: {GOLDEN_STEP}\n        run: ./hub sync --check\n"
+        assert make_check == f"{CI_STEP_START}name: {MAKE_CHECK_STEP}\n        run: make check\n"
+        # Q-10: the same job, the golden step right before make check, after the credential.
+        assert steps[-2:] == [golden, make_check]
+        assert steps.index(ci_step(ci, CREDENTIAL_STEP)) < steps.index(golden)
+
+    @pytest.mark.parametrize("config_name", ["demo", "variant"])
+    def test_names_secret_only_by_expression_when_ci_rendered(
+        self, config_name: str, request: pytest.FixtureRequest
+    ) -> None:
+        ci = text_of(request.getfixturevalue(f"{config_name}_config"), ".github/workflows/ci.yml")
+
+        credential = ci_step(ci, CREDENTIAL_STEP)
+        block = run_block(credential)
+
+        assert ci.count("secrets.") == 1
+        assert f"        env:\n          TOKEN: ${{{{ {READ_REFERENCE} }}}}\n" in credential
+        # The token reaches git only through the job's environment, set by the run block.
+        assert "x-access-token" in block
+        assert "x-access-token" not in ci.replace(block, "")
+        assert '>> "$GITHUB_ENV"' in block
+        assert "--dangerously-skip-permissions" not in ci
 
 
 # AGH-46 D-agents: the two branch mentions of AGENTS.md, as rendered before the repo key existed.
@@ -2361,8 +2431,10 @@ def test_holds_no_project_identifier_when_demo_rendered(demo_config: HubConfig) 
     for path, text in texts.items():
         assert rendered_identifiers(text) == [], path
     carriers = {path for path, text in texts.items() if PLATFORM_CARRIER.search(text)}
-    # The demo selects `cloud`: its setup script warms the pinned release.
+    # The demo selects `cloud`: its setup script warms the pinned release. CI gives the pinned
+    # release's repository a read credential (AGH-16 D4).
     assert carriers == {
+        ".github/workflows/ci.yml",
         "hub",
         "plugin/hub-workflow/hooks/session_start.py",
         "scripts/cloud-setup.sh",
