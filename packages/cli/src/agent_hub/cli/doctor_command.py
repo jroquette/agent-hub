@@ -5,7 +5,7 @@ an ``--only`` id that is no rule at all is a usage error (exit 2) before anythin
 ``hub.json`` entry in the folder (a dangling link counts as one) exits 2 saying it is not a hub.
 Then ``hub.json`` is read once into its config, or why it cannot be used, and the developer's
 ``hub.local.json`` from the hub's main checkout (``local_home``): on a failed config only
-``config.schema`` and ``platform.version`` run, and no other file is read. Otherwise the
+``config.schema`` and ``platform.version`` run, and no other hub file is read. Otherwise the
 selection (``doctor.rules``, ``modules`` and ``--only``; a refusal exits 2, a note goes to
 stderr), then ``hub.lock`` when a selected rule reads it, and the hub's files the selected
 rules need (the lock's managed paths among them), read without following links (git runs only
