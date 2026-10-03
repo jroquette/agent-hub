@@ -693,19 +693,29 @@ def test_imports_every_rendered_module_when_run_on_python39(
 
 
 # argv: hub.json path, hub.local.json path, git's answers (JSON: config key -> output), the values
-# to ask (JSON list of ``ASKED`` names). Loads both files with the reader and resolves the asked
-# values through ``EffectiveValues``, each twice (the second call must not run git again). Prints
-# the local file, each asked value and the git keys asked in order.
+# to ask (JSON list of ``ASKED`` names), and a race while the local file loads (``grown``,
+# ``swapped`` or ``""``). Loads both files with the reader and resolves the asked values through
+# ``EffectiveValues``, each twice (the second call must not run git again). Prints the local file,
+# each asked value and the git keys asked in order.
 LOCAL_READ = """
-import dataclasses, json
+import dataclasses, json, os
 import stdlib_reader as reader
-hub_json, local_json, answers, ask = sys.argv[1:5]
+hub_json, local_json, answers, ask, race = sys.argv[1:6]
 answers = json.loads(answers)
+real = (os.fstat, os.path.getsize, os.path.isfile)
+if race == "grown":
+    # Every size check sees one byte: the file grew after it was checked.
+    os.fstat = lambda fd: os.stat_result(real[0](fd)[:6] + (1,) + real[0](fd)[7:10])
+    os.path.getsize = lambda path: 1
+elif race == "swapped":
+    # Every regular-file check by path passes: a FIFO took the file's place after it.
+    os.path.isfile = lambda path: True
 asked = []
 def git_value(key):
     asked.append(key)
     return answers.get(key, "")
 local_file = reader.load_local_file(local_json)
+os.fstat, os.path.getsize, os.path.isfile = real
 values = reader.EffectiveValues(reader.load_hub_file(hub_json), local_file, git_value)
 getters = {
     "project.branch_prefix": values.branch_prefix,
@@ -758,9 +768,16 @@ def local_read(reader_file: Path, run_python: Callable[..., Any]) -> LocalReader
         *,
         git: Mapping[str, str] | None = None,
         ask: tuple[str, ...] = ASKED,
+        race: str = "",
         timeout: float | None = None,
     ) -> Any:
-        args = [str(hub_json), str(local_json), json.dumps(dict(git or {})), json.dumps(ask)]
+        args = [
+            str(hub_json),
+            str(local_json),
+            json.dumps(dict(git or {})),
+            json.dumps(ask),
+            race,
+        ]
         limit = {} if timeout is None else {"timeout": timeout}
         return run_python(python, LOCAL_READ, path=reader_file.parent, args=args, **limit)
 
@@ -893,6 +910,28 @@ def test_ignores_local_file_when_unreadable(
     assert loaded["local_file"] == NO_LOCAL_FILE
     assert loaded["effective"] == HUB_VALUES
     assert loaded["git"] == []
+
+
+@pytest.mark.parametrize(
+    ("race", "make_local_file"), [("grown", write_oversize), ("swapped", make_fifo)]
+)
+def test_ignores_local_file_when_changed_after_check(
+    tmp_path: Path,
+    *,
+    hook_python: str,
+    local_read: LocalReader,
+    race: str,
+    make_local_file: Callable[[Path], None],
+) -> None:
+    hub_json = write_hub_file(tmp_path, a_hub_document())
+    local_json = tmp_path / LOCAL_FILE
+    make_local_file(local_json)
+
+    # What was opened is what counts: a FIFO read would block until the timeout.
+    loaded = local_read(hook_python, hub_json, local_json, race=race, timeout=10)
+
+    assert loaded["local_file"] == NO_LOCAL_FILE
+    assert loaded["effective"] == HUB_VALUES
 
 
 @pytest.mark.parametrize(

@@ -39,6 +39,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -260,14 +261,23 @@ def _read_document(
     """The file's top-level object; ``{}`` when it cannot be read, is larger than ``max_bytes``
     or is not a JSON object."""
     # Only a regular file (a symlink to one included): opening a FIFO blocks and a device such as
-    # /dev/zero never ends, so a hook would hang.
+    # /dev/zero never ends, so a hook would hang. The check by path skips the open; what was
+    # opened (without blocking) is checked again, so a FIFO swapped in after it is not read.
     if not os.path.isfile(path):
         return {}
     try:
-        if max_bytes is not None and os.path.getsize(path) > max_bytes:
-            return {}
-        with open(path, encoding="utf-8") as file:
-            return _object(json.load(file))
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        with open(descriptor, "rb") as file:
+            if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
+                return {}
+            if max_bytes is None:
+                content = file.read()
+            else:
+                # One byte more than allowed tells a file that grew after any size check.
+                content = file.read(max_bytes + 1)
+                if len(content) > max_bytes:
+                    return {}
+        return _object(json.loads(content.decode("utf-8")))
     # OSError: missing, a directory, unreadable. ValueError: bad UTF-8 or JSON (and a NUL in the
     # path). RecursionError: nesting deeper than the parser's stack.
     except (OSError, ValueError, RecursionError):
