@@ -187,3 +187,12 @@ def test_renders_no_run_time_value_when_variant_mapped(variant_config: HubConfig
 
     for never_rendered in ("sentinel-fast-q7", "sentinel-full-q7", "9.8.7", "Sentinel Author Q7"):
         assert not any(never_rendered in value for value in values)
+
+
+def test_renders_prefix_placeholder_when_hub_sets_no_prefix() -> None:
+    document = a_hub_document()
+    del document["project"]["branch_prefix"]
+
+    mapping = substitution_mapping(HubConfig.model_validate(document))
+
+    assert mapping["project_branch_prefix"] == "<prefix>"
