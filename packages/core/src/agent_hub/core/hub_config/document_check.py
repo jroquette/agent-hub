@@ -26,10 +26,11 @@ def check_hub_document(
     try:
         return HubConfig.model_validate(document)
     except ValidationError as error:
-        return _problems_from(error, document)
+        return validation_problems(error, document)
 
 
-def _problems_from(error: ValidationError, document: object) -> tuple[ConfigProblem, ...]:
+def validation_problems(error: ValidationError, document: object) -> tuple[ConfigProblem, ...]:
+    """One problem per error of a config object's validation, at the bad key's JSON path."""
     return tuple(
         ConfigProblem(json_path(_path_to_key(detail["loc"], document)), one_line(detail["msg"]))
         for detail in error.errors()
