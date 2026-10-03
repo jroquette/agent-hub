@@ -306,6 +306,20 @@ class TestUsage:
         assert all(line.startswith("hub.json: ") for line in lines), lines
         assert spy.calls == []
 
+    def test_prints_local_lines_when_local_file_invalid(
+        self, bench_hub: Path, run_command: CommandRunner, spy: Spy
+    ) -> None:
+        (bench_hub / "hub.local.json").write_bytes(b"not json")
+
+        result = run_command(bench_hub, "bench", "--validate")
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        lines = result.stderr.splitlines()
+        assert len(lines) == 1, lines
+        assert lines[0].startswith("hub.local.json: $: not valid JSON: "), lines
+        assert spy.calls == []
+
 
 def run_tool(name: str, *args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
     """Run ``name`` as a child of the command would, found on the bench workspace's ``PATH``."""

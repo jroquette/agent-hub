@@ -2,9 +2,11 @@
 
 The ``./hub`` shim keeps the caller's cwd and exports ``AGENT_HUB_ROOT`` (spec Q-2): set and not
 empty, it names the hub; otherwise the cwd does. Either way the root must hold ``hub.json``.
+The developer's ``hub.local.json`` and git identity live in the main checkout (``local_home``).
 """
 
 import os
+import shutil
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
@@ -67,6 +69,23 @@ def main_checkout(root: Path, *, git: str, environ: Mapping[str, str]) -> Path:
     if common.name != _GIT_FOLDER or not _is_same_folder(top, root):
         return root
     return Path(os.path.realpath(common.parent))
+
+
+def local_home(root: Path, *, environ: Mapping[str, str]) -> Path:
+    """Where the developer's ``hub.local.json`` and git identity are read: the main checkout.
+
+    Git runs only when ``root`` is a worktree (its ``.git`` a file); without git, or when git
+    cannot start, ``root`` is used.
+    """
+    if not os.path.isfile(os.path.join(root, _GIT_FOLDER)):
+        return root
+    found = shutil.which("git", path=environ.get("PATH"))
+    if found is None:
+        return root
+    try:
+        return main_checkout(root, git=os.path.abspath(found), environ=environ)
+    except OSError:
+        return root
 
 
 def _is_same_folder(top: Path, root: Path) -> bool:
