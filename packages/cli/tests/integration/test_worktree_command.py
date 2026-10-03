@@ -656,6 +656,13 @@ def local_prefix(prefix: str = LOCAL_PREFIX) -> str:
     return json.dumps({"project": {"branch_prefix": prefix}})
 
 
+def task_branches(workspace: Workspace, repo: str) -> str:
+    """The names of ``repo``'s branches that end with the task's name, one per line."""
+    return workspace.git(
+        workspace.ws / repo, "branch", "--list", "--format=%(refname:short)", f"*{NAME}"
+    )
+
+
 def git_identity_reads(traced_git: Any) -> list[str]:
     """The ``git config --get user.*`` calls of a run."""
     return [arguments for _, arguments in traced_git.calls() if "config --get user." in arguments]
@@ -769,21 +776,38 @@ class TestIdentity:
             worktree = demo_workspace.worktree(repo, NAME)
             assert demo_workspace.git(worktree, "branch", "--show-current") == TEAM_BRANCH
 
-    @pytest.mark.parametrize("remove", [False, True], ids=["create", "remove"])
     def test_refuses_without_writing_when_no_source_sets_prefix(
-        self, demo_workspace: Workspace, run_command: CommandRunner, *, remove: bool
+        self, demo_workspace: Workspace, run_command: CommandRunner
     ) -> None:
         demo_workspace.drop_identity()
 
-        result = run_command(demo_workspace.hub, "worktree", NAME, *(["--remove"] * remove))
+        result = run_command(demo_workspace.hub, "worktree", NAME)
 
         for line in NO_PREFIX_LINES:
             assert_refused(result, line)
         assert_untouched(demo_workspace)
         for repo in REPOS:
-            assert (
-                demo_workspace.git(demo_workspace.ws / repo, "branch", "--list", "*dem-7-x") == ""
-            )
+            assert task_branches(demo_workspace, repo) == ""
+
+    def test_refuses_remove_without_deleting_when_no_source_sets_prefix(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        demo_workspace.write_local(local_prefix())
+        created = run_command(demo_workspace.hub, "worktree", NAME)
+        assert created.exit_code == 0, created.output
+        (demo_workspace.hub / "hub.local.json").unlink()
+        demo_workspace.drop_identity()
+
+        result = run_command(demo_workspace.hub, "worktree", NAME, "--remove")
+
+        for line in NO_PREFIX_LINES:
+            assert_refused(result, line)
+        for repo in REPOS:
+            worktree = demo_workspace.worktree(repo, NAME)
+            assert worktree.is_dir()
+            listed = demo_workspace.git(demo_workspace.ws / repo, "worktree", "list", "--porcelain")
+            assert f"worktree {os.path.realpath(worktree)}" in listed.splitlines()
+            assert task_branches(demo_workspace, repo) == LOCAL_BRANCH
 
     def test_names_invalid_email_when_derived_prefix_invalid(
         self, demo_workspace: Workspace, run_command: CommandRunner
