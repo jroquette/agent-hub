@@ -599,6 +599,13 @@ class TestTransport:
         ]
 
 
+# The four lines of the no-prefix usage error, as shown once Rich's box is stripped.
+NO_PREFIX_LINES = (
+    "no branch prefix for this developer; set one of:",
+    "hub.local.json → project.branch_prefix",
+    "hub.json → project.branch_prefix",
+    "git config user.email in the hub (its local part plus /)",
+)
 HUB_ONLY = (
     "hub.local.json: guard: set only in hub.json; hub.local.json holds project.branch_prefix,"
     " author_name, author_email and tracker.transport"
@@ -685,6 +692,45 @@ class TestIdentity:
         (call,) = run_workspace.calls("claude")
         assert call["tracker"] is True
         assert KEY_VARIABLE not in call["env"]
+
+    def test_pushes_git_email_prefix_branch_when_team_hub_dry_run(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        workspace.drop_identity()
+        # After run_workspace: the url rewrites of its global config stay included.
+        workspace.git_identity("Jane Roe", "jane@example.com")
+        inject(monkeypatch, run_tracker)
+        worktree = os.path.realpath(workspace.ws / "demo-api") + "/.claude/worktrees/dem-1"
+
+        result = run_command(workspace.hub, "run", "DEM-1", "--repo", "demo-api")
+
+        lines = dry_lines(result)
+        assert lines[3] == (
+            "would run: git -c core.fsmonitor=false -c push.gpgSign=false"
+            f" -c core.hooksPath=/dev/null push --no-verify -u origin jane/dem-1   (cwd {worktree})"
+        )
+        assert lines[4].startswith(
+            "would run: gh pr create --repo acme/demo-api --base trunk --head jane/dem-1 "
+        )
+
+    def test_refuses_when_no_source_sets_prefix(
+        self, run_workspace: Workspace, run_command: CommandRunner, spy: Spy
+    ) -> None:
+        run_workspace.workspace.drop_identity()
+
+        result = run_command(run_workspace.workspace.hub, "run", "DEM-1", "--repo", "demo-api")
+
+        for line in NO_PREFIX_LINES:
+            assert_refused(result, line)
+        assert spy.calls == []
+        for tool in ("claude", "gh", "make"):
+            assert run_workspace.calls(tool) == []
 
 
 SUMMARY = "Adds the synthetic change."
