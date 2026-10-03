@@ -1,3 +1,4 @@
+import json
 from collections.abc import Mapping
 
 import pytest
@@ -13,9 +14,15 @@ from agent_hub.core.hub_config.effective_identity import (
     resolve_branch_prefix,
     resolve_identity,
 )
-from agent_hub.core.hub_config.local_config import LocalConfig, LocalProject, LocalTracker
+from agent_hub.core.hub_config.local_config import (
+    LocalConfig,
+    LocalProject,
+    LocalTracker,
+    check_local_document,
+)
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.identity_cases import IDENTITY_CASES, LOCAL_KEYS, IdentityCase
 
 ALL_KEYS = frozenset(IdentityKey)
 NONE = IdentityValues(branch_prefix=None, author_name=None, author_email=None)
@@ -306,3 +313,114 @@ def test_names_three_sources_when_no_prefix(
     )
 
     assert lines == [*NO_PREFIX_LINES, *extra]
+
+
+def hub_identity(case: IdentityCase) -> IdentityValues:
+    return IdentityValues(**{key.value: case.hub_project.get(key.value) for key in IdentityKey})
+
+
+def local_document(case: IdentityCase) -> object:
+    """The case's ``hub.local.json`` as JSON data; ``{}`` when absent, ``None`` when not JSON."""
+    if case.local_text is None:
+        return {}
+    try:
+        return json.loads(case.local_text)
+    except json.JSONDecodeError:
+        return None
+
+
+def case_git(case: IdentityCase) -> RecordingGit:
+    values = {"author_name": case.git_name, "author_email": case.git_email}
+    return RecordingGit(**{key: value for key, value in values.items() if value is not None})
+
+
+@pytest.mark.parametrize("case", IDENTITY_CASES, ids=[case.name for case in IDENTITY_CASES])
+def test_matches_case_when_shared_case_resolved(case: IdentityCase) -> None:
+    local = check_local_document(local_document(case))
+
+    if not case.local_is_valid:
+        assert isinstance(local, tuple)
+        assert local
+        return
+    assert isinstance(local, LocalConfig)
+    resolved = resolve_identity(
+        local=IdentityValues.of(local.project),
+        hub=hub_identity(case),
+        keys=ALL_KEYS,
+        read_git=case_git(case),
+    )
+    document = a_hub_document()
+    if case.hub_transport is not None:
+        document["tracker"]["transport"] = case.hub_transport
+    merged = effective_config(HubConfig.model_validate(document), local)
+
+    values = {
+        f"project.{key.value}": None if sourced is None else sourced.value
+        for key, sourced in resolved.values.items()
+    }
+    assert {**values, "tracker.transport": merged.tracker.transport} == case.expected
+    prefix = resolved.values[IdentityKey.BRANCH_PREFIX]
+    assert (None if prefix is None else prefix.prefix_source) == case.prefix_source
+
+
+def sets(case: IdentityCase, path: str) -> object:
+    """The value the case's local file sets at ``path``, or ``None``."""
+    document = local_document(case)
+    for key in path.split("."):
+        if not isinstance(document, dict):
+            return None
+        document = document.get(key)
+    return document
+
+
+def is_team(case: IdentityCase) -> bool:
+    return not any(key.value in case.hub_project for key in IdentityKey)
+
+
+def test_covers_required_kinds_when_cases_listed() -> None:
+    """Each kind AC-65.10 asks for has a case, read from the case's data, not its name."""
+    valid = [case for case in IDENTITY_CASES if case.local_is_valid]
+    hub_only = [
+        case
+        for case in valid
+        if case.local_text is None and case.prefix_source == "hub.json" and not is_team(case)
+    ]
+    overridden = {
+        path
+        for case in valid
+        for path in LOCAL_KEYS
+        if sets(case, path) is not None and case.expected[path] == sets(case, path)
+    }
+    git_fallback = [
+        case
+        for case in valid
+        if is_team(case)
+        and case.local_text is None
+        and case.prefix_source == "derived"
+        and case.expected["project.author_name"] == case.git_name is not None
+        and case.expected["project.author_email"] == case.git_email is not None
+    ]
+    derived_invalid = [
+        case
+        for case in valid
+        if is_team(case)
+        and case.git_email is not None
+        and case.expected["project.branch_prefix"] is None
+    ]
+    no_source = [
+        case
+        for case in valid
+        if is_team(case)
+        and case.local_text is None
+        and case.git_name is None
+        and case.git_email is None
+    ]
+
+    assert hub_only
+    assert overridden == set(LOCAL_KEYS)
+    assert git_fallback
+    assert derived_invalid
+    assert no_source
+    assert [case for case in IDENTITY_CASES if not case.local_is_valid]
+    assert all(set(case.expected) == set(LOCAL_KEYS) for case in IDENTITY_CASES)
+    assert len({case.name for case in IDENTITY_CASES}) == len(IDENTITY_CASES)
