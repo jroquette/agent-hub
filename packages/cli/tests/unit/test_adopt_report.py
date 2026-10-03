@@ -18,10 +18,10 @@ from agent_hub.core.hub_files.plan_sync import ContentConflict, SyncProblem
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.testing.builders import a_hub_document
 
-LISTED_WAY_OUT = (
+ADOPT_LISTED_WAY_OUT = (
     "take the template with --accept <path>, or move the change to an extension file, then re-run"
 )
-CONFLICT_WAY_OUT = (
+ADOPT_CONFLICT_WAY_OUT = (
     "move the change to an extension file (hub.json, a *.project.* file, Makefile.project),"
     " restore or delete the conflicting file, or take the template of a listed path with"
     " --accept <path>, then re-run hub sync --adopt"
@@ -65,7 +65,7 @@ def content(
     )
 
 
-def body(lines: list[str], way_out: str = LISTED_WAY_OUT) -> list[str]:
+def body(lines: list[str], way_out: str = ADOPT_LISTED_WAY_OUT) -> list[str]:
     """The listing without the way-out line, which it must end with."""
     assert lines[-1] == way_out
     return lines[:-1]
@@ -156,7 +156,7 @@ def test_ends_with_way_out_when_listing_printed() -> None:
     listed = content(b"x\n", b"y\n")
 
     assert listing_lines(a_plan()) == []
-    assert listing_lines(a_plan(listed)) == ["Makefile: +1 -1 lines", LISTED_WAY_OUT]
+    assert listing_lines(a_plan(listed)) == ["Makefile: +1 -1 lines", ADOPT_LISTED_WAY_OUT]
     # Listings first, then the conflicts as sync prints them, then one way out for both.
     assert listing_lines(a_plan(listed, conflicts=(clash, diff))) == [
         "Makefile: +1 -1 lines",
@@ -166,12 +166,12 @@ def test_ends_with_way_out_when_listing_printed() -> None:
         "@@ -1 +1 @@",
         "-x",
         "+y",
-        CONFLICT_WAY_OUT,
+        ADOPT_CONFLICT_WAY_OUT,
     ]
     # A migration held back by a conflict under it is not listed: fixing it lists it on re-run.
     assert listing_lines(a_plan(conflicts=(clash,))) == [
         "a.py: resolves outside the hub",
-        CONFLICT_WAY_OUT,
+        ADOPT_CONFLICT_WAY_OUT,
     ]
 
 
