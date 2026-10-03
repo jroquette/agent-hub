@@ -52,12 +52,18 @@ from agent_hub.core.hub_files.tree_snapshot import FileEntry, LinkEntry, TreeEnt
 
 
 class Verb(StrEnum):
-    """What a sync does at a path, as its report line says it."""
+    """What a sync does at a path, as its report line says it.
+
+    ``RECORDED`` (a path joined to the lock as it is) and ``MIGRATED`` (a directory link made a
+    folder of links) are ``hub sync --adopt``'s only (plan E15): plain sync never emits them.
+    """
 
     CREATED = "created"
     RESTORED = "restored"
     UPDATED = "updated"
     DELETED = "deleted"
+    RECORDED = "recorded"
+    MIGRATED = "migrated"
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
