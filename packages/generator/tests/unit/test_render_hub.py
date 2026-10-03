@@ -2181,21 +2181,33 @@ SETTINGS_KEYS = ["$schema", "attribution", "hooks", "includeCoAuthoredBy", "perm
 SETTINGS_SCHEMA = "https://json.schemastore.org/claude-code-settings.json"
 SETTINGS_ALLOW = ["Bash(git status *)", "Bash(git diff *)", "Bash(git log *)", "Bash(git show *)"]
 SETTINGS_DENY_READS = ["Read(**/*.pem)", "Read(**/*.key)"]
-# AGH-16 inventory rows S4a-S4j (E14): no force or main push, no infra or keychain tools, no ssh,
-# no piping into a shell.
-SETTINGS_DENY_COMMANDS = [
-    "Bash(git push --force*)",
-    "Bash(git push -f *)",
-    "Bash(git push * main)",
-    "Bash(git push origin HEAD:main*)",
-    "Bash(terraform *)",
-    "Bash(aws *)",
-    "Bash(security *)",
-    "Bash(ssh *)",
-    "Bash(* | sh)",
-    "Bash(* | bash)",
-]
-SETTINGS_DENY = SETTINGS_DENY_READS + SETTINGS_DENY_COMMANDS
+# The branches the guard protects (`main`, `master`, the project's and each repo's), sorted.
+PROTECTED_BRANCHES = {"demo": ["main", "master"], "variant": ["main", "master", "trunk"]}
+
+
+def settings_deny(config_name: str) -> list[str]:
+    """AGH-16 inventory rows S4a-S4j (E14), the push rows per protected branch: no force or
+    protected-branch push, no infra or keychain tools, no ssh, no shell fed by a pipe.
+    """
+    pushes = [
+        rule
+        for branch in PROTECTED_BRANCHES[config_name]
+        for rule in (f"Bash(git push * {branch})", f"Bash(git push origin HEAD:{branch}*)")
+    ]
+    return [
+        *SETTINGS_DENY_READS,
+        "Bash(git push --force*)",
+        "Bash(git push -f *)",
+        *pushes,
+        "Bash(terraform *)",
+        "Bash(aws *)",
+        "Bash(security *)",
+        "Bash(ssh *)",
+        "Bash(sh)",
+        "Bash(bash)",
+    ]
+
+
 # AGH-16 inventory row S6a (E14): the base sandbox; a project adds its own hosts (row S6b) through
 # `settings.project.json`.
 SETTINGS_SANDBOX = {
@@ -2299,7 +2311,7 @@ def test_holds_rules_base_only_when_settings_rendered(
     assert settings["includeCoAuthoredBy"] is False
     assert settings["permissions"] == {
         "allow": SETTINGS_ALLOW,
-        "deny": SETTINGS_DENY,
+        "deny": settings_deny(config_name),
         "additionalDirectories": [f"../{repo_dir}" for repo_dir in REPO_DIRS[config_name]],
     }
     assert set(settings["hooks"]) == set(SETTINGS_HOOKS)
@@ -2327,11 +2339,9 @@ def test_denies_push_and_pipe_rules_when_settings_rendered(
     settings = strict_json(rendered[".claude/settings.json"].content)
 
     # AGH-16 D2 (E14): the secret reads, then rows S4a-S4j in the inventory's order, exactly.
-    assert settings["permissions"]["deny"] == [
-        "Read(**/*.pem)",
-        "Read(**/*.key)",
-        *SETTINGS_DENY_COMMANDS,
-    ]
+    assert settings["permissions"]["deny"] == settings_deny(config_name)
+    # Claude Code matches each subcommand of a pipe on its own: `Bash(* | sh)` would never match.
+    assert not [rule for rule in settings["permissions"]["deny"] if "|" in rule]
 
 
 @pytest.mark.parametrize("config_name", CONFIG_NAMES)
