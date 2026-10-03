@@ -275,15 +275,17 @@ def plan_adopt(
     gone = {
         path: _unrendered_verdict(path, entry, entries)
         for path, entry in old.items()
-        if path not in every
+        if path not in every and path not in under
     }
     clashes = _name_clashes(rendered, project=config.project.name, extensions=extensions)
     conflicts = _problems([*verdicts.values(), *gone.values(), *clashes])
     conflicting = {each.path for each in conflicts}
-    # A listed path that also clashes is a conflict: ``--accept`` may not take it.
+    # E22, a conflict wins: a listed path that also clashes, or a migration with a conflict under
+    # it, is not listed, so ``--accept`` may not take it.
+    blocked = conflicting | {ancestor for path in conflicting for ancestor in _ancestors(path)}
     listed = tuple(
         sorted(
-            (each for each in every.values() if _is_listed(each) and each.path not in conflicting),
+            (each for each in every.values() if _is_listed(each) and each.path not in blocked),
             key=lambda each: each.path,
         )
     )
