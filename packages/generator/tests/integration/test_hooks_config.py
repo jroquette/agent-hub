@@ -998,3 +998,48 @@ def test_reads_git_email_of_identity_home_when_git_location_exported(
     verdict = verdict_of(run_hook("guard", bash_event("git push origin main", hub), env=env))
 
     assert verdict == ("deny", PUSH_MAIN_REASON.format("jane/"))
+
+
+def test_denies_with_bare_hint_when_git_missing(
+    run_hook: Callable[..., subprocess.CompletedProcess[bytes]], hub: Path, tmp_path: Path
+) -> None:
+    write_hub_json(hub, TEAM_HUB_JSON)
+    no_tools = tmp_path / "no-tools"
+    no_tools.mkdir()
+    env = git_identity(tmp_path, b"\temail = jane@example.com\n") | {"PATH": str(no_tools)}
+
+    push = run_hook("guard", bash_event("git push origin main", hub), env=env)
+
+    assert verdict_of(push) == ("deny", PUSH_MAIN_REASON.format(""))
+    assert push.stderr == b""
+
+
+# The identity read's subprocess.run records its keyword arguments, then times out.
+TIMEOUT_CODE = """\
+import json, subprocess
+import hubhooks
+calls = []
+def timing_out(args, **kwargs):
+    calls.append([args, kwargs.get("timeout")])
+    raise subprocess.TimeoutExpired("git", 2)
+hubhooks.subprocess.run = timing_out
+cfg = hubhooks.load_config(None)
+print(json.dumps([cfg.branch_prefix, calls]))
+"""
+
+
+def test_gives_no_prefix_when_identity_git_read_times_out(
+    hub: Path,
+    *,
+    hook_python: str,
+    run_python: Callable[..., Any],
+    elsewhere: Path,
+    tmp_path: Path,
+) -> None:
+    write_hub_json(hub, TEAM_HUB_JSON)
+    env = git_identity(tmp_path, b"\temail = jane@example.com\n")
+
+    prefix, calls = run_python(hook_python, TIMEOUT_CODE, path=hub / HOOKS, cwd=elsewhere, env=env)
+
+    assert prefix == ""
+    assert calls == [[["git", "config", "--get", "user.email"], 2]]
