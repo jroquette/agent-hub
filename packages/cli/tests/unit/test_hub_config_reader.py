@@ -676,3 +676,15 @@ def test_prefixes_each_line_with_local_file_when_lines_built() -> None:
         "hub.local.json: guard: set only in hub.json",
         "hub.local.json: $: must be a JSON object",
     ]
+
+
+def test_returns_local_config_when_file_exactly_at_cap(tmp_path: Path) -> None:
+    path = tmp_path / "hub.local.json"
+    head, tail = b'{"project": {"branch_prefix": "me/"}, "_note": "', b'"}'
+    path.write_bytes(head + b"x" * (LOCAL_FILE_MAX_BYTES - len(head) - len(tail)) + tail)
+    assert path.stat().st_size == LOCAL_FILE_MAX_BYTES
+
+    read = read_local_json(path)
+
+    assert isinstance(read, LocalConfig)
+    assert read.project.branch_prefix == "me/"
