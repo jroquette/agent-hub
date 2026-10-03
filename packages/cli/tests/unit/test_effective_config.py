@@ -209,6 +209,18 @@ def test_uses_given_reader_when_one_passed(tmp_path: Path, monkeypatch: pytest.M
     assert spy.calls == []
 
 
+def test_returns_only_source_lines_when_given_reader_finds_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spy = spy_git(monkeypatch, GitSpy())
+    loaded = effective_or_problems(a_config(branch_prefix=None, author_email=None), home=tmp_path)
+    assert isinstance(loaded, EffectiveConfig)
+
+    # A reader the caller gives says nothing of why git gave no value: no "  git: " line.
+    assert branch_prefix_or_lines(loaded, read_git=lambda keys: {}) == NO_PREFIX
+    assert spy.calls == []
+
+
 def a_repo_with_email(folder: Path, email: str) -> Path:
     git = shutil.which("git")
     assert git is not None, "git is needed for a real repo"
