@@ -85,23 +85,31 @@ keeps the old `hub.lock` (absent or its prior bytes); a plain `--adopt` then end
 
 ### In the hub's CI
 
-Once a hub is adopted, the rendered `.github/workflows/ci.yml` keeps it there. Its one job, `check`, runs on pull
-requests to and pushes on the default branch with read-only `contents`; each action is pinned by commit SHA, its
+Every hub's rendered `.github/workflows/ci.yml` (`init` and sync render the same file) has one job, `check`, run on
+pull requests to and pushes on the default branch with read-only `contents`; each action is pinned by commit SHA, its
 release in a comment (`# vX.Y.Z`). Steps: checkout (credentials not kept), setup-uv, credential, golden, `make check`.
 
-- **Credential step** (`Platform read credential`): reads the repository secret `AGENT_HUB_READ_TOKEN` through the
-  step's `env`, the only `secrets.` expression in the file. When the secret is empty or unset it does nothing, so a
-  public platform needs no secret. A token holding anything outside `[A-Za-z0-9_]` exits 1 with
-  `AGENT_HUB_READ_TOKEN: unexpected characters`, before anything is written. Otherwise it appends `GIT_CONFIG_COUNT=2`
-  and two `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` pairs to `$GITHUB_ENV`, so every later step of the job has them: an
-  `insteadOf` that rewrites the platform repository's URL to one carrying the token, and the hub's own GitHub URL mapped
-  to itself (`insteadOf` takes the longest matching prefix, so the hub's own fetches never carry the token). The token
-  is never written to a file in the repo: not in a URL, `hub.json` or `hub.lock`.
+- **Credential step** (`Platform read credential`): reads `AGENT_HUB_READ_TOKEN`, a secret of the hub repository
+  (Settings → Secrets and variables → Actions): a fine-grained personal access token or a GitHub App token with
+  read-only Contents on the platform repository only. It reaches the step through `env`, the only `secrets.`
+  expression in the file. Empty or unset, the step does nothing: a public platform needs no secret. On a private
+  platform the shim then cannot fetch the pin, the golden step exits 1 and the job fails; so do fork pull requests and
+  Dependabot pull requests, which get no Actions secrets (Dependabot needs the same name under Dependabot secrets).
+  A token holding anything outside `[A-Za-z0-9_]` exits 1 with `AGENT_HUB_READ_TOKEN: unexpected characters`, before
+  anything is written. Otherwise it appends `GIT_CONFIG_COUNT=2` and two `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` pairs
+  to `$GITHUB_ENV`, so every later step of the job has them: an `insteadOf` that rewrites the platform repository's URL
+  to one carrying the token, and the hub's own GitHub URL mapped to itself (`insteadOf` takes the longest matching
+  prefix, so the hub's own fetches never carry the token). The token is never written to a file in the repo: not in a
+  URL, `hub.json` or `hub.lock`.
 - **Golden step** (`Golden (hub sync --check)`): `./hub sync --check` through the pinned shim, before `make check`;
-  it writes nothing. Its exits are `--check`'s: 0 up to date, the job goes on; 3 a conflict (a managed file edited in
-  the change); 4 changes pending (a commit missed `hub sync`, e.g. after a pin bump); 1 a load error (`hub.json`, a
-  missing or malformed `hub.lock`, a pin the shim cannot fetch). Any non-zero exit fails the job before `make check`;
-  the fix is a local `hub sync` (or `--adopt`) and a new commit.
+  it writes nothing, and any non-zero exit fails the job before `make check`. Exits (`--check`'s) and their fixes:
+  - 0 up to date: the job goes on.
+  - 4 changes pending (e.g. a commit missed `hub sync`, as after a pin bump): run `hub sync` locally and commit.
+  - 3 a conflict (e.g. a managed file edited in the change, or a name in both plugins): take sync's way out
+    ([hub-sync.md](hub-sync.md#output-and-exit-codes)): move the change to an extension file, or restore or delete
+    the file, then re-run.
+  - 1 a load error (e.g. `hub.json`, a missing or malformed `hub.lock`, extension inputs, I/O, or a pin the shim
+    cannot fetch): fix the named input; for an unfetchable pin, check `AGENT_HUB_READ_TOKEN`.
 
 ## Invariants
 
