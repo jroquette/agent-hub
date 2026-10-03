@@ -47,6 +47,7 @@ CORE_MODULES = (
     "hub_files/tree_snapshot.py",
     "hub_files/plan_init.py",
     "hub_files/plan_sync.py",
+    "hub_files/plan_adopt.py",
     "hub_files/extension_inputs.py",
     "doctor/__init__.py",
     "doctor/finding.py",
