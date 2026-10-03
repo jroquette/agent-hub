@@ -425,6 +425,17 @@ class TestRefs:
             stale("AGENTS.md", 2, "jdoe/dem-1-x"),
         ]
 
+    def test_skips_local_file_reference_when_named(self, snapshot_of: SnapshotFactory) -> None:
+        # hub.local.json is gitignored and each developer's own: never listed, never stale. Only
+        # the exact name is skipped, so a path that merely ends in it is still checked.
+        text = (
+            "Set it in `hub.local.json` or [the local file](hub.local.json).\n"
+            "Not `docs/hub.local.json`.\n"
+        )
+        snapshot = snapshot_of(files={"AGENTS.md": text.encode()})
+
+        assert refs(snapshot) == [stale("AGENTS.md", 2, "docs/hub.local.json")]
+
     def test_reports_files_in_sorted_order_when_listed_in_reverse(
         self, snapshot_of: SnapshotFactory
     ) -> None:
