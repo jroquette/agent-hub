@@ -97,19 +97,21 @@ def test_lists_check_option_when_help_requested(
     before = tree_digest(tmp_path)
 
     shown = CliRunner().invoke(app, ["sync", "--help"], env={"COLUMNS": "120"})
-    adopt = run_sync(tmp_path, "--adopt")
+    # Plan G1: --accept without --adopt is a usage error, decided before anything is read.
+    accept = run_sync(tmp_path, "--accept", "x")
     unknown = run_sync(tmp_path, "--nope")
 
     assert shown.exit_code == 0
     help_text = unstyle(shown.stdout)
     assert "--check" in help_text
     assert "--adopt" in help_text
+    assert "--accept" in help_text
     assert "Plan only: write nothing; exit 4 when changes are pending, 3 on a conflict." in (
         " ".join(help_text.split())
     )
-    assert adopt.exit_code == 2
-    assert adopt.stderr == "not implemented yet (Phase 1)\n"
-    assert adopt.stdout == ""
+    assert accept.exit_code == 2
+    assert "Usage:" in accept.stderr
+    assert accept.stdout == ""
     assert unknown.exit_code == 2
     assert "Usage:" in unknown.stderr
     assert "not implemented yet" not in unknown.stderr

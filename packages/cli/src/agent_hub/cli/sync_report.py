@@ -16,6 +16,7 @@ from typing import Final
 
 from agent_hub.cli.init_report import shown_path, shown_text
 from agent_hub.core.hub_files.hub_lock import HUB_LOCK_PATH
+from agent_hub.core.hub_files.plan_adopt import AdoptPlan
 from agent_hub.core.hub_files.plan_sync import (
     ContentConflict,
     SyncConflicts,
@@ -45,7 +46,7 @@ _WOULD: Final = {
 }
 
 
-def change_lines(plan: SyncPlan, *, check: bool) -> list[str]:
+def change_lines(plan: SyncPlan | AdoptPlan, *, check: bool) -> list[str]:
     """What a sync that applies ``plan`` prints, or would print with ``check``."""
     if not plan.pending:
         return [UP_TO_DATE]
