@@ -434,7 +434,8 @@ This is the most common path: a project with two repos tracked in Linear.
    `origin/main`. Remove them with `./hub worktree --remove demo-7-login` (branches are kept).
 
 6. **Keep the hub healthy.** Run `./hub doctor` in CI or before a release of your hub, and upgrade with the recipe
-   below. In your hub's CI, `./hub` needs a read-only credential for this repository.
+   below. In your hub's CI, `./hub` needs the Actions secret `AGENT_HUB_READ_TOKEN`: a token with read-only Contents
+   on this repository only ([the hub's CI](docs/design/hub-adopt.md#in-the-hubs-ci)).
 
 ### Recipes
 
