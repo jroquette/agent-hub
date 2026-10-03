@@ -2812,3 +2812,10 @@ def test_ignores_run_outputs_when_gitignore_rendered(demo_config: HubConfig) -> 
 
     assert set(RUN_OUTPUTS) <= set(lines)
     assert len(lines) == len(set(lines))
+
+
+def test_ignores_local_file_when_gitignore_rendered(demo_config: HubConfig) -> None:
+    # Each developer's hub.local.json stays out of the hub's commits (AC-65.15).
+    gitignore = next(file for file in render_hub(demo_config).files if file.path == ".gitignore")
+
+    assert "hub.local.json" in gitignore.content.decode("utf-8").splitlines()

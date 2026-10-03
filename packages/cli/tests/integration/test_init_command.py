@@ -918,6 +918,25 @@ def test_leaves_git_untouched_when_target_holds_git(
     assert "git init" not in result.stdout
 
 
+def test_ignores_local_file_when_hub_initialized(
+    git_on_path: Any, tmp_path: Path, target: Path, *, demo_flags: list[str]
+) -> None:
+    result = run_init([*demo_flags, "--dir", str(target)])
+    git_init(target, tmp_path)
+
+    assert result.exit_code == 0, result.stderr
+    assert REAL_GIT is not None
+    # The developer's hub.local.json is ignored in every new hub (AC-65.15).
+    ignored = subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
+        [REAL_GIT, "check-ignore", "-q", "hub.local.json"],
+        cwd=target,
+        env={"HOME": str(tmp_path), "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull},
+        check=False,
+        timeout=30,
+    )
+    assert ignored.returncode == 0
+
+
 SEEDED_PLANTED = {
     "README.md": (b"# my readme\n", 0o755),
     "brain/now.md": (b"my focus\n", 0o644),
