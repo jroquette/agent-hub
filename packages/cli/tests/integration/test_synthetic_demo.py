@@ -48,6 +48,8 @@ type DoctorRunner = Callable[..., Result]
 type PathFilter = Callable[[list[Any], Path], set[str]]
 type Ancestors = Callable[..., set[str]]
 type CheckoutFactory = Callable[[str], Path]
+# The conftest's ``Ac4Hub``: ``make``, ``guard``, ``now``, ``schema`` and ``listing``.
+type Ac4Hub = Any
 # A subprocess init differs from the in-process one in all of these but its inputs.
 CHILD_HASH_SEED = "123"
 CHILD_TZ = "Pacific/Kiritimati"
@@ -588,11 +590,6 @@ def test_writes_identical_trees_when_sync_runs_twice(
     lock_golden(lock, update=False)
 
 
-GUARD = "plugin/hub-workflow/hooks/guard.py"
-NOW = "brain/now.md"
-SCHEMA = "hub.schema.json"
-
-
 def test_lists_differences_when_adopt_runs(
     monkeypatch: pytest.MonkeyPatch,
     demo_hub: Path,
@@ -601,18 +598,14 @@ def test_lists_differences_when_adopt_runs(
     run_sync: SyncRunner,
     tree_digest: TreeDigest,
     adapter_calls: list[tuple[str, str]],
+    ac4: Ac4Hub,
 ) -> None:
     # AC-16.4's hub: unadopted, two managed files changed, a seeded one edited, one deleted.
-    (demo_hub / "hub.lock").unlink()
-    with (demo_hub / "Makefile").open("ab") as makefile:
-        makefile.write(b"local:\n")
-    os.chmod(demo_hub / GUARD, 0o644)
-    (demo_hub / NOW).write_bytes(b"# Now\nShip the adopt.\n")
-    (demo_hub / SCHEMA).unlink()
-    before = tree_digest(demo_hub)
+    before = tree_digest(ac4.make(demo_hub))
+    guard, now, schema = ac4.guard, ac4.now, ac4.schema
     fresh_lock = (demo_hub_template / "hub.lock").read_bytes()
     fresh_files: dict[str, Any] = json.loads(fresh_lock)["files"]
-    listed = {"Makefile", GUARD}
+    listed = {"Makefile", guard}
     applied: list[object] = []
     real_apply = adopt_command.apply_or_exit
 
@@ -628,18 +621,14 @@ def test_lists_differences_when_adopt_runs(
     # Q-7, in path order: the deleted file is created, every other settled path recorded as it
     # is (hub.json is the project's), the two listed paths left out, the lock last.
     joined = sorted(set(fresh_files) - listed - {"hub.json"})
-    expected = [f"{'created' if path == SCHEMA else 'recorded'} {path}" for path in joined]
+    expected = [f"{'created' if path == schema else 'recorded'} {path}" for path in joined]
     assert first.stdout.splitlines() == [*expected, "updated hub.lock"]
     # Q-2: one line per listed path, then the way out.
-    assert first.stderr.splitlines() == [
-        "Makefile: +0 -1 lines",
-        f"{GUARD}: +0 -0 lines, executable bit differs (on disk -x, render +x)",
-        ADOPT_LISTED_WAY_OUT,
-    ]
+    assert first.stderr.splitlines() == [*ac4.listing, ADOPT_LISTED_WAY_OUT]
     after = tree_digest(demo_hub)
-    for path in (*listed, NOW):
+    for path in (*listed, now):
         assert after[path] == before[path], path
-    assert after[SCHEMA] == tree_digest(demo_hub_template)[SCHEMA]
+    assert after[schema] == tree_digest(demo_hub_template)[schema]
     lock = json.loads((demo_hub / "hub.lock").read_bytes())
     # Q-4: every settled path is in the lock, as a fresh init records it; the listed ones are not.
     assert lock["files"] == {
@@ -660,18 +649,18 @@ def test_lists_differences_when_adopt_runs(
 
     # Both restored: adopted, with the lock a fresh init writes.
     shutil.copy2(demo_hub_template / "Makefile", demo_hub / "Makefile")
-    os.chmod(demo_hub / GUARD, stat.S_IMODE((demo_hub_template / GUARD).stat().st_mode))
+    os.chmod(demo_hub / guard, stat.S_IMODE((demo_hub_template / guard).stat().st_mode))
     third = run_sync(demo_hub, "--adopt")
 
     assert (third.exit_code, third.stderr) == (0, ""), third.output
     assert third.stdout.splitlines() == [
         "recorded Makefile",
-        f"recorded {GUARD}",
+        f"recorded {guard}",
         "updated hub.lock",
     ]
     assert (demo_hub / "hub.lock").read_bytes() == fresh_lock
     # The whole tree is a fresh init's, but for the seeded file the project edited.
     adopted = tree_digest(demo_hub)
     template = tree_digest(demo_hub_template)
-    assert adopted.pop(NOW) != template.pop(NOW)
+    assert adopted.pop(now) != template.pop(now)
     assert adopted == template
