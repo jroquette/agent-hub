@@ -1,9 +1,9 @@
-# Hub sync: hub.lock, hub sync, --check and --adopt
+# Hub sync: hub.lock, hub sync and --check
 
 ## Purpose
 
-Phase 1 contract for `hub.lock`, `hub sync [--check]`, `hub sync --adopt`, the one write path `hub init` shares, the
-`*.project.json` merge and the project-entry links. What is rendered and who owns it, `hub init`, hooks and commands:
+Phase 1 contract for `hub.lock`, `hub sync [--check]`, the write path `hub init` shares, the `*.project.json` merge
+and the project-entry links; `--adopt`: [hub-adopt.md](hub-adopt.md). Rendering, ownership, `hub init`, hooks, commands:
 [hub-generator.md](hub-generator.md). Config: [project-config.md](project-config.md); reasons: the ADRs.
 
 ## Contract
@@ -71,8 +71,8 @@ a function of the render and the config only (`build_hub_lock`), written by `ini
   `differs from its hub.lock entry and is no longer rendered` (bytes, bit or target), `symlinked ancestor A`,
   `a file where a folder belongs: A`, `resolves outside the hub`, or `init`'s type wording (`a link where a file
   belongs`, `not a regular file`, …). A name clash: below.
-- **Exits:** 0 done or up to date; 1 error (config, lock, extension inputs, I/O; one escaped line each, stderr); 2 usage
-  (and `--adopt` until AGH-16); 3 conflict; 4 `--check` with changes pending.
+- **Exits:** 0 done or up to date; 1 error (config, lock, extension inputs, I/O; one escaped line each, stderr); 2
+  usage; 3 conflict; 4 `--check` with changes pending.
 
 ### Apply
 
@@ -90,14 +90,7 @@ naming the path and cause. An interrupted sync leaves the old `hub.lock`; the ne
 
 ### --adopt
 
-`--adopt` joins a hand-made hub; re-runnable, needs no `hub.lock`, never commits. Lock paths follow sync; others, in the
-same run: equal → recorded managed; missing managed → written; seeded → recorded, created when absent (an empty
-`plugin/<project>/` too); a differing file → listed (`<path>: +a -b lines`), untouched, out of the lock; a directory
-link where a directory of per-entry links is rendered (e.g. `.claude/skills`) → listed as a migration. The partial
-`hub.lock` is saved, then exit 3 if anything is listed, else 0. `--accept PATH` (repeatable) takes the template version
-of a listed difference or migration (the directory link becomes a real directory of links), overwriting the working
-file; other conflicts are listed and refused, like a path not listed this run (exit 2). Until AGH-16, `--adopt` is
-declared and exits 2 with `not implemented yet (Phase 1)` before anything is read.
+`hub sync --adopt [--accept PATH]…` joins a hand-made hub to the lock: [hub-adopt.md](hub-adopt.md).
 
 ### Project JSON and project entries
 
@@ -146,5 +139,4 @@ sibling but links no entry: an unlinkable name exits 1, others are unknown (`hub
 
 ## Open questions
 
-- `--adopt`, `--accept` and the directory-link migration: AGH-16.
 - Harness-weakening keys beyond ADR 0009's two (`disableAllHooks`, `permissions.defaultMode`): a new ADR if wanted.

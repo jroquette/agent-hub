@@ -3,6 +3,10 @@
 A sync of a fresh ``demo`` init prints ``up to date`` and writes nothing (AGH-14 AC-14.7), and a
 pending ``demo`` hub synced in process and as a child writes identical trees (AC-14.16). A doctor
 run on a fresh ``demo`` init, plain or committed, finds and writes nothing (AGH-11 AC-11.16).
+``hub sync --adopt`` on an unadopted ``demo`` hub with hand edits lists the two changed managed
+files, saves the rest, writes nothing on a rerun, and ends at a fresh init's lock once both are
+restored (AGH-16 AC-16.4); the same hub adopted in process and as a child writes identical trees
+(AC-16.10).
 
 ``DEMO`` is ``demo_config_file`` (the example config without modules, pinned to the running CLI)
 and ``DEMO_FLAGS`` is ``demo_flags``. The golden harness of ``demo.hub.lock`` is the conftest's
@@ -23,7 +27,8 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner, Result
 
-from agent_hub.cli import sync_command
+from agent_hub.cli import adopt_command, sync_steps
+from agent_hub.cli.adopt_report import ADOPT_LISTED_WAY_OUT
 from agent_hub.cli.main import app
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.hub_lock import build_hub_lock, lock_bytes
@@ -44,6 +49,8 @@ type DoctorRunner = Callable[..., Result]
 type PathFilter = Callable[[list[Any], Path], set[str]]
 type Ancestors = Callable[..., set[str]]
 type CheckoutFactory = Callable[[str], Path]
+# The conftest's ``Ac4Hub``: ``make``, ``guard``, ``now``, ``schema`` and ``listing``.
+type Ac4Hub = Any
 # A subprocess init differs from the in-process one in all of these but its inputs.
 CHILD_HASH_SEED = "123"
 CHILD_TZ = "Pacific/Kiritimati"
@@ -332,7 +339,7 @@ def test_writes_nothing_when_sync_runs_on_fresh_init(
     lock_mtime = (root / "hub.lock").stat().st_mtime_ns
     applied: list[object] = []
     # Plan erratum E4: with nothing pending the adapter is not called at all.
-    monkeypatch.setattr(sync_command, "apply_sync", lambda *args, **kwargs: applied.append(args))
+    monkeypatch.setattr(sync_steps, "apply_sync", lambda *args, **kwargs: applied.append(args))
     adapter_calls.clear()
 
     for _ in range(2):
@@ -582,3 +589,133 @@ def test_writes_identical_trees_when_sync_runs_twice(
     assert (child_root / "hub.lock").read_bytes() == lock
     # Compare only: a lock written by sync never rewrites the init golden, even in update mode.
     lock_golden(lock, update=False)
+
+
+def test_lists_differences_when_adopt_runs(
+    monkeypatch: pytest.MonkeyPatch,
+    demo_hub: Path,
+    demo_hub_template: Path,
+    *,
+    run_sync: SyncRunner,
+    tree_digest: TreeDigest,
+    adapter_calls: list[tuple[str, str]],
+    ac4: Ac4Hub,
+) -> None:
+    # AC-16.4's hub: unadopted, two managed files changed, a seeded one edited, one deleted.
+    before = tree_digest(ac4.make(demo_hub))
+    guard, now, schema = ac4.guard, ac4.now, ac4.schema
+    fresh_lock = (demo_hub_template / "hub.lock").read_bytes()
+    fresh_files: dict[str, Any] = json.loads(fresh_lock)["files"]
+    listed = {"Makefile", guard}
+    applied: list[object] = []
+    real_apply = adopt_command.apply_or_exit
+
+    def spy(*args: Any, **kwargs: Any) -> None:
+        applied.append(args)
+        real_apply(*args, **kwargs)
+
+    monkeypatch.setattr(adopt_command, "apply_or_exit", spy)
+
+    first = run_sync(demo_hub, "--adopt")
+
+    assert first.exit_code == 3, first.output
+    # Q-7, in path order: the deleted file is created, every other settled path recorded as it
+    # is (hub.json is the project's), the two listed paths left out, the lock last.
+    joined = sorted(set(fresh_files) - listed - {"hub.json"})
+    expected = [f"{'created' if path == schema else 'recorded'} {path}" for path in joined]
+    assert first.stdout.splitlines() == [*expected, "updated hub.lock"]
+    # Q-2: one line per listed path, then the way out.
+    assert first.stderr.splitlines() == [*ac4.listing, ADOPT_LISTED_WAY_OUT]
+    after = tree_digest(demo_hub)
+    for path in (*listed, now):
+        assert after[path] == before[path], path
+    assert after[schema] == tree_digest(demo_hub_template)[schema]
+    lock = json.loads((demo_hub / "hub.lock").read_bytes())
+    # Q-4: every settled path is in the lock, as a fresh init records it; the listed ones are not.
+    assert lock["files"] == {
+        path: entry for path, entry in fresh_files.items() if path not in listed
+    }
+    assert len(applied) == 1
+
+    # A second run lists the same and writes nothing: no ``up to date`` over a listing (E29).
+    applied.clear()
+    adapter_calls.clear()
+    settled = tree_digest(demo_hub)
+    second = run_sync(demo_hub, "--adopt")
+
+    assert (second.exit_code, second.stdout, second.stderr) == (3, "", first.stderr)
+    assert adapter_calls == []
+    assert applied == []
+    assert tree_digest(demo_hub) == settled
+
+    # Both restored: adopted, with the lock a fresh init writes.
+    shutil.copy2(demo_hub_template / "Makefile", demo_hub / "Makefile")
+    os.chmod(demo_hub / guard, stat.S_IMODE((demo_hub_template / guard).stat().st_mode))
+    third = run_sync(demo_hub, "--adopt")
+
+    assert (third.exit_code, third.stderr) == (0, ""), third.output
+    assert third.stdout.splitlines() == [
+        "recorded Makefile",
+        f"recorded {guard}",
+        "updated hub.lock",
+    ]
+    assert (demo_hub / "hub.lock").read_bytes() == fresh_lock
+    # The whole tree is a fresh init's, but for the seeded file the project edited.
+    adopted = tree_digest(demo_hub)
+    template = tree_digest(demo_hub_template)
+    assert adopted.pop(now) != template.pop(now)
+    assert adopted == template
+
+
+def test_writes_identical_trees_when_adopt_runs_twice(
+    tmp_path: Path,
+    demo_hub: Path,
+    *,
+    run_sync: SyncRunner,
+    tree_digest: TreeDigest,
+    child_env: ChildEnv,
+    set_umask: Callable[[int], None],
+    no_git_path: Path,
+    ac4: Ac4Hub,
+) -> None:
+    # AC-16.4's hub, one listed file accepted: a created file, an updated one, a listing, the lock.
+    ac4.make(demo_hub)
+    child_root = tmp_path / "child"
+    shutil.copytree(demo_hub, child_root, symlinks=True)
+    args = ["sync", "--adopt", "--accept", "Makefile"]
+    # A umask other than the child's, whatever the developer's shell uses.
+    set_umask(0o022)
+    env = child_env(
+        {
+            **os.environ,
+            "PATH": str(no_git_path),
+            "HOME": str(tmp_path / "child-home"),
+            "PYTHONHASHSEED": CHILD_HASH_SEED,
+            "TZ": CHILD_TZ,
+            "LC_ALL": "C",
+        }
+    )
+
+    in_process = run_sync(demo_hub, *args[1:])
+    child = subprocess.run(  # noqa: S603 - this interpreter, fixed code, a tmp_path folder
+        [sys.executable, "-c", "from agent_hub.cli.main import app; app(prog_name='hub')", *args],
+        cwd=child_root,
+        env=env,
+        umask=CHILD_UMASK,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=CHILD_TIMEOUT,
+    )
+
+    assert in_process.exit_code == 3, in_process.output
+    assert child.returncode == 3, child.stderr
+    assert f"created {ac4.schema}" in in_process.stdout.splitlines()
+    assert "updated Makefile" in in_process.stdout.splitlines()
+    assert in_process.stdout.splitlines()[-1] == "updated hub.lock"
+    assert (child.stdout, child.stderr) == (in_process.stdout, in_process.stderr)
+    # The child's umask really differed: some permission bits of the written files differ.
+    assert tree_digest(child_root) != tree_digest(demo_hub)
+    # Nothing but those bits differs.
+    assert shape(tree_digest(child_root)) == shape(tree_digest(demo_hub))
+    assert (child_root / "hub.lock").read_bytes() == (demo_hub / "hub.lock").read_bytes()

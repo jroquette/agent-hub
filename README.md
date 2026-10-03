@@ -164,7 +164,7 @@ You should see `created 60 files (40 managed, 20 seeded) and 14 links` followed 
 > [!NOTE]
 > `hub init` writes only into an empty folder (a `.git` is fine). Run it again in the same folder and it refuses with
 > `already a hub; run hub sync`, writing nothing. In a folder holding other files it refuses and suggests
-> `hub sync --adopt`, which is not implemented in 0.4.0: use a new empty folder instead.
+> `hub sync --adopt`, which joins a hand-made hub from 0.7.0 on; with an older release, use a new empty folder instead.
 
 **4. Check the new hub.** From now on, use the hub's own `./hub` shim.
 
@@ -663,6 +663,7 @@ enforces this in `make check`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE
 | `hub init [PROJECT] --repos … --tracker kind:TEAM …` | Create a hub from flags (all flags: Quick Start step 3 and `hub init --help`) |
 | `hub init --config hub.json [--dir …]` | Create a hub from an existing `hub.json` |
 | `hub sync [--check]` | Reapply the templates without overwriting what the project customized |
+| `hub sync --adopt [--accept PATH]… [--check]` | Join a hand-made hub to `hub.lock` (from 0.7.0): record what matches, create what is missing, list what differs |
 | `hub doctor [--only RULE]… [--json]` | Check rules, links, dead references, instruction size and template drift |
 | `hub worktree NAME [--only REPO] [--remove]` | Create (or remove) one task's worktrees in the hub's repos |
 | `hub brief [--no-network]` | Print the session brief: `now.md`, recent journal, repo/PR/CI state |
@@ -671,9 +672,8 @@ enforces this in `make check`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE
 | `hub collect [FILE\|-] [--db PATH]` | Ingest canonical events from JSON Lines, all or nothing |
 | `hub --version` | Print the version |
 
-`hub sync --adopt` (join a hand-made hub) is declared but not implemented in 0.4.0: it exits 2. Command contracts:
-[docs/design/hub-generator.md](docs/design/hub-generator.md), [hub-sync.md](docs/design/hub-sync.md),
-[hub-doctor.md](docs/design/hub-doctor.md).
+Command contracts: [docs/design/hub-generator.md](docs/design/hub-generator.md), [hub-sync.md](docs/design/hub-sync.md),
+[hub-adopt.md](docs/design/hub-adopt.md), [hub-doctor.md](docs/design/hub-doctor.md).
 
 </details>
 
@@ -747,7 +747,7 @@ From the phases in [docs/SPEC.md](docs/SPEC.md#mvp-and-phases). Each phase start
 
 - [ ] Dogfooding: `hub init` generating the platform's own hub
 - [ ] `hub next` and `hub run`: take an `agent-ready` issue to a PR through the tracker port (not implemented in 0.4.0)
-- [ ] `hub sync --adopt`: join a hand-made hub (not implemented in 0.4.0)
+- [ ] `hub sync --adopt [--accept PATH]…`: join a hand-made hub
 - [ ] Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`) (their files and `hub bench` from 0.6.0)
 - [ ] Gate: an existing project's hand-made hub recreated with the same `make check` and bench
 

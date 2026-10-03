@@ -11,7 +11,6 @@ apply stopped by an injected I/O error and resumed, its call order (``hub.lock``
 link planted between the plan and the apply.
 """
 
-import errno
 import hashlib
 import json
 import os
@@ -27,11 +26,10 @@ import pytest
 from click import unstyle
 from typer.testing import CliRunner, Result
 
-from agent_hub.cli import sync_command
+from agent_hub.cli import sync_steps
 from agent_hub.cli.main import app
 from agent_hub.cli.sync_report import CONFLICT_WAY_OUT
 from agent_hub.core.hub_files.hub_lock import ADOPT_POINTER
-from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
 from agent_hub.core.json_form import dump_json
 from agent_hub.core.testing.builders import a_second_repo
 
@@ -39,6 +37,9 @@ from agent_hub.core.testing.builders import a_second_repo
 # mode).
 type TreeDigest = Callable[[Path], dict[str, Any]]
 type SyncRunner = Callable[..., Result]
+# The conftest's injected I/O error and temp-entry finder.
+type FailOnce = Callable[..., None]
+type TempEntries = Callable[[Path], list[str]]
 VERSION = version("agent-hub-cli")
 PINNED_COMMAND = (
     "uvx --from git+https://github.com/jroquette/agent-hub@v0.0.1"
@@ -97,19 +98,21 @@ def test_lists_check_option_when_help_requested(
     before = tree_digest(tmp_path)
 
     shown = CliRunner().invoke(app, ["sync", "--help"], env={"COLUMNS": "120"})
-    adopt = run_sync(tmp_path, "--adopt")
+    # Plan G1: --accept without --adopt is a usage error, decided before anything is read.
+    accept = run_sync(tmp_path, "--accept", "x")
     unknown = run_sync(tmp_path, "--nope")
 
     assert shown.exit_code == 0
     help_text = unstyle(shown.stdout)
     assert "--check" in help_text
     assert "--adopt" in help_text
+    assert "--accept" in help_text
     assert "Plan only: write nothing; exit 4 when changes are pending, 3 on a conflict." in (
         " ".join(help_text.split())
     )
-    assert adopt.exit_code == 2
-    assert adopt.stderr == "not implemented yet (Phase 1)\n"
-    assert adopt.stdout == ""
+    assert accept.exit_code == 2
+    assert "Usage:" in accept.stderr
+    assert accept.stdout == ""
     assert unknown.exit_code == 2
     assert "Usage:" in unknown.stderr
     assert "not implemented yet" not in unknown.stderr
@@ -1094,31 +1097,6 @@ def _created_link(root: Path, lock: dict[str, Any]) -> list[str]:
     return ["created .claude/skills/feature"]
 
 
-def temp_entries(root: Path) -> list[str]:
-    """The paths under ``root`` whose name has the temp shape."""
-    return [
-        (Path(folder) / name).relative_to(root).as_posix()
-        for folder, folders, files in os.walk(root)
-        for name in [*folders, *files]
-        if is_leftover_name(name)
-    ]
-
-
-def fail_once(patch: pytest.MonkeyPatch, *, call: str, name: str) -> None:
-    """Make the first ``os.<call>`` (``replace`` or ``unlink``) of ``name`` raise ``EIO``."""
-    real = getattr(os, call)
-    failed: list[str] = []
-
-    def failing(*args: Any, **kwargs: Any) -> Any:
-        destination = os.fsdecode(args[1] if call == "replace" else args[0])
-        if destination == name and not failed:
-            failed.append(destination)
-            raise OSError(errno.EIO, os.strerror(errno.EIO))
-        return real(*args, **kwargs)
-
-    patch.setattr(os, call, failing)
-
-
 # Each failure point (spec AC-14.14): the call that fails, the name it is given, the path shown.
 FAILURE_POINTS = {
     "first-delete": ("unlink", "file.md", "old/file.md"),
@@ -1142,6 +1120,8 @@ class TestInterruptedSync:
         *,
         monkeypatch: pytest.MonkeyPatch,
         tree_digest: TreeDigest,
+        fail_once: FailOnce,
+        temp_entries: TempEntries,
         call: str,
         name: str,
         path: str,
@@ -1296,7 +1276,7 @@ def test_exits_one_when_adapter_meets_planted_ancestor(
     make_pending(demo_hub, make)
     lock = (demo_hub / "hub.lock").read_bytes()
     skills = demo_hub / "plugin/hub-workflow/skills"
-    real_apply = sync_command.apply_sync
+    real_apply = sync_steps.apply_sync
     planned: list[list[str]] = []
     outside: list[tuple[Path, dict[str, Any]]] = []
 
@@ -1309,7 +1289,7 @@ def test_exits_one_when_adapter_meets_planted_ancestor(
         outside.append((copy, tree_digest(copy)))
         real_apply(root, **plan)
 
-    monkeypatch.setattr(sync_command, "apply_sync", plant_then_apply)
+    monkeypatch.setattr(sync_steps, "apply_sync", plant_then_apply)
 
     result = run_sync(demo_hub)
 
