@@ -124,12 +124,16 @@ def git_rewrites(env_lines: list[str], urls: list[str], tmp_path: Path) -> list[
     "token", [CLASSIC_TOKEN, FINE_GRAINED_TOKEN], ids=["classic", "fine-grained"]
 )
 def test_sets_platform_pair_and_self_map_when_token_given(token: str, tmp_path: Path) -> None:
+    # Actions' GITHUB_ENV may already hold earlier steps' lines: the step appends to them.
+    (tmp_path / "github-env").write_text(PRIOR_ENV, encoding="utf-8")
+
     completed, env_file = run_step(HubConfig.model_validate(a_hub_document()), tmp_path, token)
 
     assert completed.returncode == 0, completed.stderr
-    assert env_file.read_text(encoding="utf-8").splitlines() == expected_lines(
-        token, "https://github.com/acme/demo-hub"
-    )
+    assert env_file.read_text(encoding="utf-8").splitlines() == [
+        PRIOR_ENV.rstrip("\n"),
+        *expected_lines(token, "https://github.com/acme/demo-hub"),
+    ]
     assert "git+" not in env_file.read_text(encoding="utf-8")
 
 
@@ -191,8 +195,9 @@ def test_maps_hub_to_itself_when_hub_url_shares_prefix(tmp_path: Path) -> None:
         CLASSIC_TOKEN + " x",
         CLASSIC_TOKEN + "@evil.example/",
         CLASSIC_TOKEN + "-x",
+        CLASSIC_TOKEN + "\u00e9",
     ],
-    ids=["newline", "carriage-return", "space", "url-characters", "dash"],
+    ids=["newline", "carriage-return", "space", "url-characters", "dash", "non-ascii"],
 )
 def test_refuses_token_when_characters_unexpected(token: str, tmp_path: Path) -> None:
     (tmp_path / "github-env").write_text(PRIOR_ENV, encoding="utf-8")
@@ -202,5 +207,4 @@ def test_refuses_token_when_characters_unexpected(token: str, tmp_path: Path) ->
     assert completed.returncode == 1
     assert completed.stderr == f"{REFUSAL}\n"
     assert completed.stdout == ""
-    assert CLASSIC_TOKEN not in completed.stderr
     assert env_file.read_text(encoding="utf-8") == PRIOR_ENV
