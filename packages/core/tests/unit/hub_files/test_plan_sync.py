@@ -452,6 +452,29 @@ def test_never_deletes_hub_json_when_lock_records_it_managed(
     assert plan.lock.files[HUB_JSON_PATH] == seeded_entry()
 
 
+def test_emits_no_adopt_verb_when_sync_planned(
+    a_rendered_hub: HubFactory, config: HubConfig
+) -> None:
+    """Plan E15: ``recorded`` and ``migrated`` are adopt's. Sync joins a path equal to its render
+    or a seeded file present without a verb, and creates, restores and deletes as before."""
+    rendered = a_rendered_hub()
+    lock = a_lock(
+        rendered, config, files={FILE: None, SEEDED: None, LINK: None, "old.md": old_file_entry()}
+    )
+    tree = without(synced_tree(rendered), LINK, "scripts/run.sh") | {
+        "old.md": FileEntry(executable=False, content=OLD)
+    }
+
+    plan = planned(rendered, lock, tree)
+
+    assert plan.changes == (
+        SyncChange(path=LINK, verb=Verb.CREATED),
+        SyncChange(path="old.md", verb=Verb.DELETED),
+        SyncChange(path="scripts/run.sh", verb=Verb.RESTORED),
+    )
+    assert {Verb.RECORDED, Verb.MIGRATED}.isdisjoint(change.verb for change in plan.changes)
+
+
 def test_returns_empty_plan_when_nothing_differs(
     a_rendered_hub: HubFactory, config: HubConfig
 ) -> None:
