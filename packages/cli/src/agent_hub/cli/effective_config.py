@@ -117,6 +117,23 @@ def branch_prefix_or_lines(
     )
 
 
+def effective_with_prefix_or_fail(
+    context: typer.Context, config: HubConfig, *, home: Path
+) -> tuple[EffectiveConfig, str]:
+    """``config`` merged with ``home``'s ``hub.local.json``, and the developer's branch prefix.
+
+    ``hub worktree`` and ``hub run`` need both: a malformed local file, or no prefix from any
+    source, is a usage error (exit 2) before git writes anything, one line per text line.
+    """
+    effective = effective_or_problems(config, home=home)
+    if not isinstance(effective, EffectiveConfig):
+        context.fail("\n".join(local_lines(effective)))
+    prefix = branch_prefix_or_lines(effective)
+    if isinstance(prefix, list):
+        context.fail("\n".join(prefix))
+    return effective, prefix
+
+
 def _no_git_problem() -> str | None:
     # A reader the caller gives says nothing of why git gave no value.
     return None

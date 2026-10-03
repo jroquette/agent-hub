@@ -14,7 +14,9 @@ arguments), now exit 2 (spec § Port differences); ``test_rejects_name_without_i
 """
 
 import json
+import os
 import shutil
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -339,6 +341,22 @@ class TestDemoWorkspace:
         repos = json.loads((demo_workspace.hub / "hub.json").read_text())["repos"]
         assert [repo.get("default_branch") for repo in repos] == ["master", None]
 
+    def test_logs_and_runs_git_when_traced_git_used(
+        self, demo_workspace: Workspace, traced_git: Any
+    ) -> None:
+        clone = demo_workspace.ws / "demo-api"
+
+        completed = subprocess.run(
+            ["git", "rev-parse", "--git-dir"],  # noqa: S607 - the traced git found on PATH
+            cwd=clone,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        assert completed.stdout == ".git\n"
+        assert traced_git.calls() == [(os.path.realpath(clone), "rev-parse --git-dir")]
+
 
 class TestScripts:
     def test_runs_setup_once_when_executable(
@@ -614,3 +632,115 @@ class TestRepoProblems:
             assert demo_workspace.git(worktree, "branch", "--show-current") == BRANCH
         assert not (decoy / ".git" / "worktrees").exists()
         assert demo_workspace.git(decoy, "branch", "--list") == ""
+
+
+LOCAL_PREFIX = "me/"
+LOCAL_BRANCH = f"me/{NAME}"
+HUB_ONLY = (
+    "hub.local.json: guard: set only in hub.json; hub.local.json holds project.branch_prefix,"
+    " author_name, author_email and tracker.transport"
+)
+
+
+def local_prefix(prefix: str = LOCAL_PREFIX) -> str:
+    return json.dumps({"project": {"branch_prefix": prefix}})
+
+
+def git_identity_reads(traced_git: Any) -> list[str]:
+    """The ``git config --get user.*`` calls of a run."""
+    return [arguments for _, arguments in traced_git.calls() if "config --get user." in arguments]
+
+
+class TestIdentity:
+    @pytest.fixture(autouse=True)
+    def wide_terminal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Each line of a usage message stays on one line of Rich's box.
+        monkeypatch.setenv("COLUMNS", "200")
+
+    def test_branches_with_local_prefix_when_local_file_sets_one(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        demo_workspace.write_local(local_prefix())
+
+        result = run_command(demo_workspace.hub, "worktree", NAME)
+
+        assert result.exit_code == 0, result.output
+        assert result.stdout.splitlines() == [
+            *(
+                f"created  {demo_workspace.worktree(repo, NAME)} ({LOCAL_BRANCH} from origin/trunk)"
+                for repo in REPOS
+            ),
+            "",
+            f"task     : {NAME} (branch {LOCAL_BRANCH})",
+            "repos    : demo-api demo-web",
+            f"remove   : ./hub worktree --remove {NAME}",
+        ]
+        for repo in REPOS:
+            worktree = demo_workspace.worktree(repo, NAME)
+            assert demo_workspace.git(worktree, "branch", "--show-current") == LOCAL_BRANCH
+
+    @pytest.mark.parametrize(
+        ("local", "branch"), [(None, BRANCH), (local_prefix(), LOCAL_BRANCH)], ids=["hub", "local"]
+    )
+    def test_reads_no_git_config_when_files_set_prefix(
+        self,
+        demo_workspace: Workspace,
+        run_command: CommandRunner,
+        traced_git: Any,
+        *,
+        local: str | None,
+        branch: str,
+    ) -> None:
+        if local is not None:
+            demo_workspace.write_local(local)
+
+        result = run_command(demo_workspace.hub, "worktree", NAME)
+
+        assert result.exit_code == 0, result.output
+        assert f"task     : {NAME} (branch {branch})" in result.stdout.splitlines()
+        assert traced_git.calls(), "the traced git ran no call"
+        assert git_identity_reads(traced_git) == []
+
+    @pytest.mark.parametrize(
+        ("document", "line"),
+        [("[]", "hub.local.json: $: must be a JSON object"), ('{"guard": {}}', HUB_ONLY)],
+        ids=["array", "hub-only-key"],
+    )
+    @pytest.mark.parametrize("remove", [False, True], ids=["create", "remove"])
+    def test_refuses_with_local_lines_when_local_file_invalid(
+        self,
+        demo_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        document: str,
+        line: str,
+        remove: bool,
+    ) -> None:
+        demo_workspace.write_local(document)
+
+        result = run_command(demo_workspace.hub, "worktree", NAME, *(["--remove"] * remove))
+
+        assert_refused(result, line)
+        assert_untouched(demo_workspace)
+
+    def test_reads_main_checkout_local_file_when_run_from_hub_worktree(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        hub = demo_workspace.hub
+        demo_workspace.git(hub, "-c", "init.defaultBranch=main", "init", "-q")
+        demo_workspace.git(hub, "add", "-A")
+        demo_workspace.git(hub, "commit", "-q", "-m", "hub")
+        hub_worktree = hub / ".claude" / "worktrees" / "x"
+        demo_workspace.git(hub, "worktree", "add", "-q", "-b", "x", str(hub_worktree))
+        demo_workspace.write_local(local_prefix())
+        # Read from the worktree, this file would refuse the run: only the main checkout's is read.
+        (hub_worktree / "hub.local.json").write_text("[]", encoding="utf-8")
+
+        result = run_command(
+            demo_workspace.base, "worktree", NAME, env={"AGENT_HUB_ROOT": str(hub_worktree)}
+        )
+
+        assert result.exit_code == 0, result.output
+        for repo in REPOS:
+            worktree = demo_workspace.worktree(repo, NAME)
+            assert demo_workspace.git(worktree, "branch", "--show-current") == LOCAL_BRANCH

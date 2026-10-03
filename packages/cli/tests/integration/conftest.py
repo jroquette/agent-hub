@@ -8,7 +8,8 @@ next to it (``demo_checkout``), an in-process sync
 in a folder (``run_sync``) and the writer calls a test makes (``adapter_calls``); for ``hub doctor``
 an in-process run in a folder (``run_doctor``), the paths a run reads (``path_reads``) and their
 filters (``reads_in``, ``ancestors``, ``under``); for ``hub bench`` the hub suite's bench
-workspace with a fake ``claude`` (``bench_workspace``).
+workspace with a fake ``claude`` (``bench_workspace``). In the ``DEMO`` workspace, ``traced_git``
+logs each git call and runs the real git.
 """
 
 import builtins
@@ -599,15 +600,54 @@ def _run_git(folder: Path, env: Mapping[str, str], *args: str) -> str:
     return completed.stdout.decode().strip()
 
 
-class DemoWorkspace:
-    """A ``DEMO`` workspace: ``ws/hub``, one clone per repo, their bare origins in ``origins``."""
+# The project keys a developer may set in hub.local.json instead of hub.json.
+_IDENTITY_KEYS = ("branch_prefix", "author_name", "author_email")
 
-    def __init__(self, base: Path, env: Mapping[str, str]) -> None:
+
+class DemoWorkspace:
+    """A ``DEMO`` workspace: ``ws/hub``, one clone per repo, their bare origins in ``origins``.
+
+    ``setenv`` (a test's ``monkeypatch.setenv``) changes the command's environment; only a
+    test's copy has one.
+    """
+
+    def __init__(
+        self,
+        base: Path,
+        env: Mapping[str, str],
+        *,
+        setenv: Callable[[str, str], None] | None = None,
+    ) -> None:
         self.base = base
         self.ws = base / "ws"
         self.hub = self.ws / "hub"
         self.origins = base / "origins"
         self.env = dict(env)
+        self._setenv = setenv
+
+    def write_local(self, text: str) -> None:
+        """Write the developer's ``hub.local.json`` in the hub."""
+        (self.hub / "hub.local.json").write_text(text, encoding="utf-8")
+
+    def drop_identity(self) -> None:
+        """Remove ``branch_prefix``, ``author_name`` and ``author_email`` from ``hub.json``."""
+        path = self.hub / "hub.json"
+        document = json.loads(path.read_text())
+        for key in _IDENTITY_KEYS:
+            document["project"].pop(key, None)
+        path.write_text(json.dumps(document, indent=2) + "\n")
+
+    def git_identity(self, name: str, email: str) -> None:
+        """Give the command's git this ``user.name`` and ``user.email``: ``base/gitconfig``
+        becomes its global config, including the one it replaces (a run's url rewrites)."""
+        assert self._setenv is not None, "only a test's copy of the workspace has an environment"
+        config = self.base / "gitconfig"
+        replaced = os.environ.get("GIT_CONFIG_GLOBAL", os.devnull)
+        included = (
+            "" if replaced in (os.devnull, str(config)) else f"[include]\n\tpath = {replaced}\n"
+        )
+        config.write_text(f"{included}[user]\n\tname = {name}\n\temail = {email}\n")
+        self._setenv("GIT_CONFIG_GLOBAL", str(config))
 
     def git(self, folder: Path, *args: str) -> str:
         """Run git in ``folder`` and return its stripped stdout; a failure fails the test."""
@@ -697,7 +737,7 @@ def demo_workspace(
     """
     base = tmp_path / "workspace"
     shutil.copytree(demo_workspace_template, base, symlinks=True)
-    workspace = DemoWorkspace(base, _workspace_git_env(base / "home"))
+    workspace = DemoWorkspace(base, _workspace_git_env(base / "home"), setenv=monkeypatch.setenv)
     for repo in WORKSPACE_REPOS:
         workspace.git(
             workspace.ws / repo, "remote", "set-url", "origin", str(workspace.origin(repo))
@@ -708,6 +748,29 @@ def demo_workspace(
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     return workspace
+
+
+@pytest.fixture
+def traced_git(
+    demo_workspace: DemoWorkspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> FakeGit:
+    """``demo_workspace`` with a ``/bin/sh`` ``git`` first on ``PATH`` that logs each call as
+    ``fake_git``'s does, then runs the real git."""
+    real = shutil.which("git")
+    assert real is not None, "git is needed for a DEMO workspace"
+    bin_dir = tmp_path / "traced-git-bin"
+    bin_dir.mkdir()
+    log_path = tmp_path / "traced-git.log"
+    script = bin_dir / "git"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'printf \'%s\\t%s\\n\' "$(pwd -P)" "$*" >> {shlex.quote(str(log_path))}\n'
+        f'exec {shlex.quote(os.path.abspath(real))} "$@"\n',
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    return FakeGit(bin_dir=bin_dir, log_path=log_path)
 
 
 type CommandRunner = Callable[..., Result]
