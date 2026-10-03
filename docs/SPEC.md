@@ -126,11 +126,11 @@ today), and the CLI's model and the hooks' stdlib reader accept it in the same c
 | `repos[].check_fast_timeout` | Seconds the Stop gate gives the repo's `check_fast`, within the gate's total budget; `check_fast` itself becomes optional | The gate's default | AGH-52 |
 | `tracker.teams` | Several tracker team keys, the first being the default; never set together with `tracker.team` | `[tracker.team]` | AGH-56 |
 | `guard.infra.allow`, `guard.infra.prod_markers` | Regexes over infra commands (`aws`, `cdk`, `terraform`, `pulumi`, `kubectl`, `helm`, `sam`, `serverless`): a prod marker denies, an allowed environment passes (deploy, destroy and delete verbs ask), anything else is denied | Today's infra rule, plus `cdk deploy`/`destroy` denied | AGH-45 |
-| Developer identity: `project.author_name`, `author_email`, `branch_prefix` | Become optional. Effective value: the gitignored `hub.local.json`, else the hub repo's `git config user.name`/`user.email` (prefix: the email's local part plus `/`), else `hub.json` | `hub.json`, so single-developer hubs keep working | AGH-65 |
+| Developer identity: `project.author_name`, `author_email`, `branch_prefix` | Become optional. Effective value: the gitignored `hub.local.json`, else `hub.json`, else the hub repo's `git config user.name`/`user.email`; the prefix, when no file sets it, is the effective email's local part plus `/` (ADR 0016) | Set per developer; `hub worktree`/`hub run` refuse without a prefix | AGH-65 |
 
 `hub.local.json` may hold only those identity keys and `tracker.transport`; any other key is an error, and nothing in it
-can relax a guard. Commits are authored by the developer running the session, and cloud setup never writes a shared
-identity into a teammate's global git config.
+can relax a guard. Commits are authored by the developer running the session, and cloud setup writes `HUB_AUTHOR_NAME`/`HUB_AUTHOR_EMAIL`
+repo-local, never global, only when `hub.json` holds no author.
 
 ## Layer 2: control plane and observability
 
