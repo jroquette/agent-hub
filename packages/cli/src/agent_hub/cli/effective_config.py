@@ -13,6 +13,7 @@ from typing import NamedTuple
 
 import typer
 
+from agent_hub.cli.child_process import git_env
 from agent_hub.cli.git_defaults import read_git_defaults
 from agent_hub.cli.hub_config_reader import (
     FAILURE,
@@ -22,6 +23,7 @@ from agent_hub.cli.hub_config_reader import (
     read_local_json,
 )
 from agent_hub.cli.hub_root import local_home
+from agent_hub.cli.run_children import SESSION_HIDDEN, without
 from agent_hub.core.hub_config.effective_identity import (
     GitReader,
     IdentityKey,
@@ -58,7 +60,9 @@ def load_effective_config_or_exit(
 ) -> EffectiveConfig:
     """The effective config of the hub at ``root``; exit 1 with each file's lines when invalid."""
     config = load_hub_config_or_exit(root / FILE_LABEL)
-    loaded = effective_or_problems(config, home=local_home(root, environ=environ))
+    # No token reaches git, which only looks for the main checkout.
+    home = local_home(root, environ=without(environ, SESSION_HIDDEN))
+    loaded = effective_or_problems(config, home=home)
     if not isinstance(loaded, EffectiveConfig):
         for line in local_lines(loaded):
             typer.echo(line, err=True)
@@ -67,11 +71,15 @@ def load_effective_config_or_exit(
 
 
 def git_identity_reader(home: Path) -> tuple[GitReader, Callable[[], str | None]]:
-    """A ``GitReader`` that reads git config in ``home``, and the last reason git gave none."""
+    """A ``GitReader`` that reads git config in ``home``, and the last reason git gave none.
+
+    Git's location variables are dropped, so ``home``'s repo is read, never one they name.
+    """
     problems: list[str] = []
 
     def read(keys: frozenset[str]) -> Mapping[str, str]:
-        defaults = read_git_defaults(missing=keys, target=home)
+        env = git_env(without(os.environ, SESSION_HIDDEN), optional_locks=False)
+        defaults = read_git_defaults(missing=keys, target=home, env=env)
         problems.extend(defaults.problems.values())
         return defaults.values
 

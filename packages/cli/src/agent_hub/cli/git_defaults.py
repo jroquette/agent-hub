@@ -81,13 +81,19 @@ class GitDefaults(NamedTuple):
 
 
 def read_git_defaults(
-    *, missing: frozenset[str], target: Path, timeout: float = GIT_TIMEOUT_SECONDS
+    *,
+    missing: frozenset[str],
+    target: Path,
+    timeout: float = GIT_TIMEOUT_SECONDS,
+    env: Mapping[str, str] | None = None,
 ) -> GitDefaults:
     """Read from git only the keys in ``missing``, in ``target`` if it is a folder, else the cwd.
 
     The remote is read only when ``target`` is the top of a git work tree, so a parent repo's
     remote is never taken. Git missing, failing to start or running past ``timeout`` seconds
-    stops the reading: every key not yet read gets that reason.
+    stops the reading: every key not yet read gets that reason. Git runs with ``env`` when given
+    (a caller drops git's location variables so ``target`` names the repo), else this process's
+    environment.
     """
     unknown = missing - set(_READ_ORDER)
     if unknown:
@@ -95,7 +101,7 @@ def read_git_defaults(
     keys = [key for key in _READ_ORDER if key in missing]
     if not keys:
         return GitDefaults(values={}, problems={})
-    git = _Git.find(target=target, timeout=timeout)
+    git = _Git.find(target=target, timeout=timeout, env=env)
     values: dict[str, str] = {}
     for key in keys:
         value = git.hub_repo(target) if key == HUB_REPO else git.config(_CONFIG_KEYS[key])
@@ -113,11 +119,15 @@ class _Git:
     executable: str | None
     cwd: Path | None
     timeout: float
+    env: Mapping[str, str] | None = None
     failure: str | None = None
 
     @classmethod
-    def find(cls, *, target: Path, timeout: float) -> _Git:
-        found = shutil.which("git")
+    def find(cls, *, target: Path, timeout: float, env: Mapping[str, str] | None) -> _Git:
+        if env is None:
+            found = shutil.which("git")
+        else:
+            found = shutil.which("git", path=env.get("PATH", os.defpath))
         # PATH may hold a relative folder, found from the process cwd; git runs elsewhere.
         executable = None if found is None else os.path.abspath(found)
         cwd = target if target.is_dir() else None
@@ -125,6 +135,7 @@ class _Git:
             executable=executable,
             cwd=cwd,
             timeout=timeout,
+            env=env,
             failure=GIT_NOT_FOUND if executable is None else None,
         )
 
@@ -135,7 +146,8 @@ class _Git:
         if self.cwd is None:
             # An absent target (or a file) is no work tree top: the cwd's repo is not the hub.
             return None
-        if any(variable in os.environ for variable in _GIT_LOCATION_VARIABLES):
+        environ = os.environ if self.env is None else self.env
+        if any(variable in environ for variable in _GIT_LOCATION_VARIABLES):
             # The environment is left as it is: the remote is simply not taken.
             return None
         top = self._run("rev-parse", "--show-toplevel")
@@ -166,6 +178,7 @@ class _Git:
         with subprocess.Popen(  # noqa: S603 - fixed argv, no shell
             argv,
             cwd=self.cwd,
+            env=None if self.env is None else dict(self.env),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,

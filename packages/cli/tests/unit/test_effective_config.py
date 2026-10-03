@@ -1,4 +1,8 @@
 import json
+import os
+import shutil
+import subprocess
+from collections.abc import Mapping
 from importlib.metadata import version
 from pathlib import Path
 
@@ -53,9 +57,13 @@ class GitSpy:
         self.values = values or {}
         self.problems = problems or {}
         self.calls: list[tuple[frozenset[str], Path]] = []
+        self.envs: list[dict[str, str]] = []
 
-    def __call__(self, *, missing: frozenset[str], target: Path) -> GitDefaults:
+    def __call__(
+        self, *, missing: frozenset[str], target: Path, env: Mapping[str, str]
+    ) -> GitDefaults:
         self.calls.append((missing, target))
+        self.envs.append(dict(env))
         return GitDefaults(
             values={key: value for key, value in self.values.items() if key in missing},
             problems={key: value for key, value in self.problems.items() if key in missing},
@@ -199,3 +207,48 @@ def test_uses_given_reader_when_one_passed(tmp_path: Path, monkeypatch: pytest.M
     assert branch_prefix_or_lines(loaded, read_git=read_git) == "jane/"
     assert asked == [frozenset({"author_email"})]
     assert spy.calls == []
+
+
+def a_repo_with_email(folder: Path, email: str) -> Path:
+    git = shutil.which("git")
+    assert git is not None, "git is needed for a real repo"
+    folder.mkdir(parents=True)
+    for args in (["init", "-q"], ["config", "user.email", email]):
+        subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
+            [os.path.abspath(git), *args], cwd=folder, env=dict(os.environ), check=True
+        )
+    return folder
+
+
+@pytest.mark.parametrize("variable", ["GIT_DIR", "GIT_COMMON_DIR"])
+def test_reads_home_email_when_git_location_variable_names_other_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, variable: str
+) -> None:
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"):
+        monkeypatch.delenv(name, raising=False)
+    home = a_repo_with_email(tmp_path / "home", "jane@example.com")
+    other = a_repo_with_email(tmp_path / "other", "jane.doe@example.com")
+    monkeypatch.setenv(variable, str(other / ".git"))
+    read_git, git_problem = git_identity_reader(home)
+
+    assert read_git(frozenset({"author_email"})) == {"author_email": "jane@example.com"}
+    assert git_problem() is None
+
+
+def test_hides_tokens_and_git_location_when_git_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in ("LINEAR_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "GIT_DIR", "GIT_WORK_TREE"):
+        monkeypatch.setenv(name, "x")
+    spy = spy_git(monkeypatch, GitSpy())
+    read_git, _ = git_identity_reader(tmp_path)
+
+    read_git(frozenset({"author_email"}))
+
+    assert len(spy.envs) == 1
+    hidden = {"LINEAR_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "GIT_DIR", "GIT_WORK_TREE"}
+    assert hidden.isdisjoint(spy.envs[0])
+    assert spy.envs[0]["GIT_OPTIONAL_LOCKS"] == "0"
