@@ -395,13 +395,19 @@ class TestRefs:
         document = a_hub_document()
         document["project"]["default_branch"] = "stable/1"
         document["repos"][0]["default_branch"] = "release/2"
-        text = "Never push `stable/1` or `release/2`.\nNot the branch `release/3`.\n"
+        text = (
+            "Never push `stable/1` or `release/2`.\n"
+            "Not the branch `release/3` nor `release/2/notes.md`.\n"
+        )
         snapshot = snapshot_of(
             config=HubConfig.model_validate(document), files={"AGENTS.md": text.encode()}
         )
 
         # Only the configured branches: a path that merely looks like one is still stale.
-        assert refs(snapshot) == [stale("AGENTS.md", 2, "release/3")]
+        assert refs(snapshot) == [
+            stale("AGENTS.md", 2, "release/3"),
+            stale("AGENTS.md", 2, "release/2/notes.md"),
+        ]
 
     def test_reports_files_in_sorted_order_when_listed_in_reverse(
         self, snapshot_of: SnapshotFactory
