@@ -10,6 +10,7 @@ from agent_hub.core.hub_files.hub_lock import (
     HUB_LOCK_PATH,
     HubLock,
     ManagedFileEntry,
+    ManagedLinkEntry,
     SeededEntry,
     build_hub_lock,
     lock_bytes,
@@ -19,12 +20,14 @@ from agent_hub.core.hub_files.plan_adopt import (
     ContentDifference,
     LinkDifference,
     ListedKind,
+    MigrationListing,
     plan_adopt,
 )
 from agent_hub.core.hub_files.plan_init import FileWrite, LinkWrite, PathProblem
 from agent_hub.core.hub_files.plan_sync import ContentConflict, SyncChange, SyncProblem, Verb
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
+from agent_hub.core.hub_files.rendered_link import RenderedLink
 from agent_hub.core.hub_files.tree_snapshot import (
     FileEntry,
     FolderEntry,
@@ -50,6 +53,10 @@ SEEDED = "README.md"
 SEEDED_LINK = ".claude/skills/y"
 PROJECT_AGENTS_KEEP = "plugin/demo/agents/.gitkeep"
 PROJECT_SKILLS_KEEP = "plugin/demo/skills/.gitkeep"
+# A directory link where ``a_rendered_hub`` renders a folder of per-entry links (E7).
+AGENTS = ".claude/agents"
+PROJECT_LINK = ".claude/agents/p.md"
+AGENTS_TARGET = "../plugin/agents"
 
 CONFIG = HubConfig.model_validate(a_hub_document())
 
@@ -258,7 +265,7 @@ def lock_without(rendered: RenderedHub, *paths: str) -> HubLock:
 
 
 @pytest.mark.parametrize(
-    ("path", "on_disk", "difference"),
+    ("path", "on_disk", "difference", "kind"),
     [
         pytest.param(
             FILE,
@@ -270,6 +277,7 @@ def lock_without(rendered: RenderedHub, *paths: str) -> HubLock:
                 on_disk_executable=False,
                 render_executable=False,
             ),
+            ListedKind.CONTENT,
             id="bytes",
         ),
         pytest.param(
@@ -282,12 +290,14 @@ def lock_without(rendered: RenderedHub, *paths: str) -> HubLock:
                 on_disk_executable=False,
                 render_executable=True,
             ),
+            ListedKind.CONTENT,
             id="executable-bit-only",
         ),
         pytest.param(
             LINK,
             LinkEntry(target=MY_TARGET, outside=False),
             LinkDifference(path=LINK, on_disk_target=MY_TARGET, render_target=LINK_TARGET),
+            ListedKind.LINK,
             id="link-target",
         ),
     ],
@@ -298,29 +308,18 @@ def test_lists_difference_when_managed_file_differs(
     *,
     on_disk: TreeEntry,
     difference: ContentDifference | LinkDifference,
+    kind: ListedKind,
 ) -> None:
     rendered = a_rendered_hub()
 
     plan = adopted(rendered, hand_made_tree(rendered) | {path: on_disk})
 
     assert plan.listed == (difference,)
+    assert [listed.kind for listed in plan.listed] == [kind]
     assert plan.conflicts == ()
     assert not plan.settled
     assert path not in changed_paths(plan)
     assert written_paths(plan) == [HUB_LOCK_PATH]
-
-
-@pytest.mark.parametrize(
-    ("listed", "kind"),
-    [
-        pytest.param(ContentDifference, ListedKind.CONTENT, id="content"),
-        pytest.param(LinkDifference, ListedKind.LINK, id="link"),
-    ],
-)
-def test_names_kind_when_difference_listed(
-    listed: type[ContentDifference | LinkDifference], kind: ListedKind
-) -> None:
-    assert listed.kind is kind
 
 
 def test_keeps_listed_path_out_of_lock_when_differs(a_rendered_hub: HubFactory) -> None:
@@ -452,6 +451,124 @@ def test_saves_settled_lock_when_something_listed(a_rendered_hub: HubFactory) ->
     assert plan.writes == (file_write(rendered, SCRIPT), lock_write(plan.lock))
     assert plan.lock_written
     assert SyncChange(path=SCRIPT, verb=Verb.CREATED) in plan.changes
+
+
+def with_project_link(a_rendered_hub: HubFactory) -> RenderedHub:
+    """The default render plus a project agent's link, beside the base one in ``.claude/agents``."""
+    project = RenderedLink(
+        path=PROJECT_LINK,
+        target="../../plugin/demo/agents/p.md",
+        kind=Kind.GENERIC,
+        ownership=Ownership.MANAGED,
+        module=None,
+    )
+    return a_rendered_hub(links=[*a_rendered_hub().links, project])
+
+
+def linked_agents(rendered: RenderedHub, link: LinkEntry) -> dict[str, TreeEntry]:
+    """The hand-made hub with ``.claude/agents`` a directory link: nothing under it is read."""
+    return without(hand_made_tree(rendered), AGENTS, LINK, PROJECT_LINK) | {AGENTS: link}
+
+
+def test_lists_migration_when_directory_link_holds_rendered_links(
+    a_rendered_hub: HubFactory,
+) -> None:
+    rendered = with_project_link(a_rendered_hub)
+    tree = linked_agents(rendered, LinkEntry(target=AGENTS_TARGET, outside=False))
+
+    plan = adopted(rendered, tree)
+
+    migration = MigrationListing(path=AGENTS, on_disk_target=AGENTS_TARGET, link_count=2)
+    assert plan.listed == (migration,)
+    assert [listed.kind for listed in plan.listed] == [ListedKind.MIGRATION]
+    assert plan.conflicts == ()
+    assert not plan.settled
+
+
+def test_skips_paths_under_migration_when_not_accepted(a_rendered_hub: HubFactory) -> None:
+    rendered = with_project_link(a_rendered_hub)
+    tree = linked_agents(rendered, LinkEntry(target=AGENTS_TARGET, outside=False)) | {
+        FILE: FileEntry(executable=False, content=MINE)
+    }
+
+    plan = adopted(rendered, tree)
+
+    assert [listed.path for listed in plan.listed] == [AGENTS, FILE]
+    assert written_paths(plan) == [HUB_LOCK_PATH]
+    assert not any(path.startswith(f"{AGENTS}/") for path in changed_paths(plan))
+    assert not any(path.startswith(f"{AGENTS}/") for path in plan.lock.files)
+    assert plan.lock == lock_without(rendered, FILE, LINK, PROJECT_LINK)
+    assert (plan.leftovers, plan.deletes, plan.folders) == ((), (), ())
+
+
+def test_lists_conflict_when_migration_link_resolves_outside(a_rendered_hub: HubFactory) -> None:
+    rendered = with_project_link(a_rendered_hub)
+    tree = linked_agents(rendered, LinkEntry(target="../../elsewhere/agents", outside=True))
+
+    plan = adopted(rendered, tree)
+
+    assert plan.conflicts == (PathProblem(AGENTS, "resolves outside the hub"),)
+    assert plan.listed == ()
+    assert written_paths(plan) == [HUB_LOCK_PATH]
+    assert not any(path.startswith(f"{AGENTS}/") for path in changed_paths(plan))
+    assert plan.lock == lock_without(rendered, LINK, PROJECT_LINK)
+
+
+def test_follows_sync_rule_when_directory_link_has_lock_entry(a_rendered_hub: HubFactory) -> None:
+    """A link the lock records is sync's: deleted when equal to its entry, not a migration."""
+    rendered = with_project_link(a_rendered_hub)
+    built = build_hub_lock(rendered=rendered, config=CONFIG)
+    entry = ManagedLinkEntry(ownership="managed", symlink=AGENTS_TARGET)
+    lock = built.model_copy(update={"files": {**built.files, AGENTS: entry}})
+    tree = linked_agents(rendered, LinkEntry(target=AGENTS_TARGET, outside=False))
+
+    plan = adopted(rendered, tree, lock=lock)
+
+    assert plan.listed == ()
+    assert plan.deletes == (AGENTS,)
+    cause = f"symlinked ancestor {AGENTS}"
+    assert plan.conflicts == (PathProblem(PROJECT_LINK, cause), PathProblem(LINK, cause))
+
+
+# A directory link is a migration only where a folder of per-entry links is rendered: one
+# holding a rendered file (``symlinked-ancestor-not-link-folder`` above) or nested links is not.
+@pytest.mark.parametrize(
+    ("link", "removed", "files"),
+    [
+        pytest.param(
+            ".claude", (AGENTS, ".claude/skills", LINK, SEEDED_LINK), (), id="nested-links"
+        ),
+        pytest.param(
+            AGENTS, (LINK, f"{AGENTS}/README.md"), (f"{AGENTS}/README.md",), id="link-and-file"
+        ),
+    ],
+)
+def test_lists_conflicts_when_directory_link_not_link_folder(
+    a_rendered_hub: HubFactory, link: str, *, removed: tuple[str, ...], files: tuple[str, ...]
+) -> None:
+    extra = [
+        RenderedFile(
+            path=path,
+            content=b"# Agents\n",
+            executable=False,
+            kind=Kind.GENERIC,
+            ownership=Ownership.MANAGED,
+            module=None,
+        )
+        for path in files
+    ]
+    rendered = a_rendered_hub(files=[*a_rendered_hub().files, *extra])
+    tree = without(hand_made_tree(rendered), *removed) | {
+        link: LinkEntry(target="../elsewhere", outside=False)
+    }
+
+    plan = adopted(rendered, tree)
+
+    held = sorted(path for path in removed if path.startswith(f"{link}/") and path not in FOLDERS)
+    cause = f"symlinked ancestor {link}"
+    assert plan.conflicts == tuple(PathProblem(path, cause) for path in held)
+    assert plan.listed == ()
+    assert plan.lock == lock_without(rendered, *held)
 
 
 def gone_entry() -> ManagedFileEntry:
