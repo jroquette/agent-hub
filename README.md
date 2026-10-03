@@ -371,7 +371,9 @@ Hooks are small scripts Claude Code runs on its own at fixed moments; you never 
 Everything else goes through Claude Code's normal permission rules.
 
 **Configuration.** The lists come from `hub.json`: `guard.ask_before_edit`, `guard.deny_paths` and `guard.deny_hosts`,
-plus `project.default_branch`, each `repos[].default_branch` and `project.branch_prefix`. An entry `@hub/<path>` means
+plus `project.default_branch` and each `repos[].default_branch`. The branch hint's prefix is the developer's
+(`hub.local.json`, else `hub.json`, else git config; see [developer-identity](docs/design/developer-identity.md)).
+An entry `@hub/<path>` means
 `<path>` inside the hub. A `hub.json` named by `$HUB_CONFIG` can only add entries to these lists, never remove them.
 
 **Your own rules.** The seeded `plugin/<project>/hooks/project_guard.py` defines `check(event, cfg)`, which returns
