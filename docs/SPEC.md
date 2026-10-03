@@ -62,7 +62,7 @@ The generator renders a hub in memory as a `RenderedHub`: its files (`RenderedFi
 hub init <project> --repos org/backend,org/frontend --tracker linear:LOK --branch-prefix jdoe/
 hub init --config hub.json   # generates from an existing project config
 hub sync        # reapplies templates without overwriting what the project customized
-hub sync --adopt   # joins a hand-made hub: identical files become managed, differences are listed
+hub sync --adopt [--accept PATH]…   # joins a hand-made hub: identical files become managed, differences are listed
 hub doctor      # checks rules, links, dead references and instruction size
 hub worktree NAME [--only REPO]   # isolated worktrees for one task (--remove NAME removes them)
 hub brief [--no-network]   # session brief: now, journal, repo/PR/CI state
