@@ -208,3 +208,48 @@ def test_returns_root_when_git_cannot_run(tmp_path: Path) -> None:
     run_git(hub, environ, "worktree", "add", "-q", "-b", "x", str(worktree))
 
     assert local_home(worktree, environ=environ | {"PATH": str(tmp_path / "empty")}) == worktree
+
+
+def test_returns_root_when_git_found_cannot_start(tmp_path: Path) -> None:
+    environ = git_environ(tmp_path)
+    hub = a_git_hub(tmp_path / "hub", environ)
+    worktree = hub / ".claude" / "worktrees" / "x"
+    run_git(hub, environ, "worktree", "add", "-q", "-b", "x", str(worktree))
+    broken = tmp_path / "broken-bin"
+    broken.mkdir()
+    # Executable, but no program the system can start: starting it raises OSError.
+    (broken / "git").write_bytes(b"\x00\x01\x02 not a program\n")
+    (broken / "git").chmod(0o755)
+
+    assert local_home(worktree, environ=environ | {"PATH": str(broken)}) == worktree
+
+
+def test_returns_root_when_hub_json_cannot_be_looked_at(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = a_hub(tmp_path / "hub")
+    lstat = os.lstat
+
+    def refuse_hub_json(path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+        if os.fspath(path).endswith("hub.json"):
+            raise PermissionError(13, "Permission denied", os.fspath(path))
+        return lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(hub_root.os, "lstat", refuse_hub_json)
+
+    # Not "not a hub": the hub.json reader names the problem later.
+    assert hub_root_or_exit({HUB_ROOT_VARIABLE: str(hub)}, command="worktree") == hub.resolve()
+
+
+def test_keeps_root_when_git_names_top_that_does_not_exist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = a_hub(tmp_path / "hub")
+    gone = tmp_path / "gone"
+
+    def answer(argv: list[str], **options: Any) -> ChildResult:
+        return ChildResult(0, f"{gone}\n{gone / '.git'}\n".encode(), b"")
+
+    monkeypatch.setattr(hub_root, "run_child", answer)
+
+    assert main_checkout(hub, git=found_git(), environ=git_environ(tmp_path)) == hub

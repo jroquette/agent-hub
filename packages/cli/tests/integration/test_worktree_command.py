@@ -663,9 +663,13 @@ def task_branches(workspace: Workspace, repo: str) -> str:
     )
 
 
-def git_identity_reads(traced_git: Any) -> list[str]:
-    """The ``git config --get user.*`` calls of a run."""
-    return [arguments for _, arguments in traced_git.calls() if "config --get user." in arguments]
+def git_identity_reads(traced_git: Any) -> list[tuple[str, str]]:
+    """``(cwd, arguments)`` of each git call of a run that reads a ``user.*`` config key."""
+    return [
+        (cwd, arguments)
+        for cwd, arguments in traced_git.calls()
+        if "config" in arguments and "user." in arguments
+    ]
 
 
 class TestIdentity:
@@ -830,9 +834,6 @@ class TestIdentity:
         result = run_command(demo_workspace.hub, "worktree", NAME)
 
         assert result.exit_code == 0, result.output
-        reads = [
-            (cwd, arguments)
-            for cwd, arguments in traced_git.calls()
-            if "config --get user." in arguments
+        assert git_identity_reads(traced_git) == [
+            (os.path.realpath(demo_workspace.hub), "config --get user.email")
         ]
-        assert reads == [(os.path.realpath(demo_workspace.hub), "config --get user.email")]
