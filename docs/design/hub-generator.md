@@ -18,7 +18,7 @@ Kind: `generic` (same for every project), `module` (only when selected in `modul
 | `hub.json` (`hub.lock` is tool state: written by init and sync, not listed in itself) | project-owned | seeded |
 | `hub.schema.json`, `AGENTS.md` and `CLAUDE.md` (base rules), `Makefile`, `hub` shim, `agent` launcher, `.pre-commit-config.yaml`, `.github/workflows/ci.yml` | generic | managed |
 | `AGENTS.project.md` (project rules, created empty); `Makefile.project`; `README.md`; `.gitignore` (base entries) | project-owned (`README.md`, `.gitignore` generic) | seeded |
-| `.claude/settings.json` (merged with a seeded `.claude/settings.project.json`; it runs the base hooks, so a hub never enables `hub-workflow`: Claude Code drops only identical duplicate hook commands), `.claude/agents/` and `.claude/skills/` (one link per entry of both plugins, since cloud sessions do not install repo-declared plugins; not dotfiles such as `.gitkeep`; a new project entry is linked at the next sync) | generic (+ project-owned) | managed (+ seeded) |
+| `.claude/settings.json` (merged with a seeded `.claude/settings.project.json`, which can add sandbox hosts and override the sandbox's scalars, `enabled` included: only managed or CLI settings can enforce the sandbox; it holds the base denies (push denies per protected branch) and sandbox and runs the base hooks, so a hub never enables `hub-workflow`: Claude Code drops only identical duplicate hook commands), `.claude/agents/` and `.claude/skills/` (one link per entry of both plugins, since cloud sessions do not install repo-declared plugins; not dotfiles such as `.gitkeep`; a new project entry is linked at the next sync) | generic (+ project-owned) | managed (+ seeded) |
 | `plugin/hub-workflow/**` (base agents, skills, hooks; same name in every hub; on adoption, Loki's `loki-workflow` becomes it plus `plugin/loki/`) | generic | managed |
 | `plugin/<project>/**` (project agents, skills, guard extension; empty folders hold a `.gitkeep`) | project-owned | seeded |
 | Brain skeleton: `brain/index.md`, `brain/now.md`, `brain/decisions/index.md`, folder `.gitkeep`s, journal template | generic | seeded |
@@ -82,7 +82,9 @@ resolving outside the hub) gives `ask` with the cause; no file: skipped. The bas
 `plugin/hub-workflow/hooks/`, `plugin/<project>/hooks/`, `.claude/settings*.json`, `hub.lock` and `hub.json`. It is a
 guardrail against mistakes, not a sandbox: it matches tool input and Bash text by pattern, so a determined agent can get
 round it. The real limits are OS permissions and Claude Code's permission rules; the extension's trust boundary is the
-ask on edits of the hooks folders. Proof: integration tests.
+ask on edits of the hooks folders. The settings' denies and sandbox are defense in depth: sandboxed Bash runs without a
+prompt (`autoAllowBashIfSandboxed` defaults to true), and the sandbox's excluded commands run unsandboxed through the
+normal permission flow. Proof: integration tests.
 
 ### Commands
 
@@ -113,17 +115,19 @@ Releases are semver tags `vX.Y.Z` on agent-hub `main`, made by the owner and che
 meta-package version, which `agent-hub-cli` shares in lockstep (`make lockstep`); no PyPI. A shim runs the pinned
 release with no install (uv caches each version):
 `uvx --from git+https://github.com/jroquette/agent-hub@v<platform.version>#subdirectory=packages/agent-hub hub …`.
-`hub init` takes the same source via `uvx` or `uv tool install`. Private access: a read-only secret in hub CI; the repo
-attached or `GH_TOKEN` in other projects' cloud sessions (the `cloud` setup checks access, warms the cache). Credentials
-go through a git credential helper or `GIT_CONFIG_*` `insteadOf`, never the URL, `hub.json` or `hub.lock`. A direct
-`hub` other than `platform.version`: `hub sync` exits 1, `hub doctor` errors. Upgrade: edit `platform.version`, sync.
+`hub init` takes the same source via `uvx` or `uv tool install`. Private access: the read-only secret
+`AGENT_HUB_READ_TOKEN` in hub CI; the repo attached or `GH_TOKEN` in other projects' cloud sessions (the `cloud` setup
+checks access, warms the cache). Credentials go through a git credential helper or `GIT_CONFIG_*` `insteadOf`, never
+the URL, `hub.json` or `hub.lock`. A direct `hub` other than `platform.version`: `hub sync` exits 1, `hub doctor`
+errors. Upgrade: edit `platform.version`, sync.
 
 ### Acceptance
 
-Each hub's `ci.yml` has a golden job: copy `hub.json` and the seeded inputs to `$tmp`, run the pinned `hub init
---config hub.json --dir "$tmp"`, compare managed lock entries and bytes. agent-hub tests a synthetic `demo`: identical
-inits, no-op and rerun syncs, an edit exits 3, adopt lists differences, a `hub.lock` snapshot. Loki: write `hub.json`,
-move guard rules to `guard.*`/`project_guard.py` and domain rules to `AGENTS.project.md`, adopt.
+Each hub's `ci.yml` has a golden step: the pinned `hub sync --check`, before `make check`, must exit 0 (the managed
+files are the release's render; steps, exits and the CI credential: [hub-adopt.md](hub-adopt.md)). agent-hub tests a
+synthetic `demo`: identical inits, no-op and rerun syncs, an edit exits 3, adopt lists differences, a `hub.lock`
+snapshot. Loki: write `hub.json`, move guard rules to `guard.*`/`project_guard.py` and domain rules to
+`AGENTS.project.md`, adopt.
 
 ## Invariants
 

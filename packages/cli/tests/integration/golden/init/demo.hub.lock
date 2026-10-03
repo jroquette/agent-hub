@@ -31,7 +31,7 @@
     ".claude/settings.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "164e0aebffe1770efee9c5689df364f1c22d60a6ebb8941946f2d25c7db994ff"
+      "sha256": "de3f8bee5f9146fced2db6d701be060d7d14f81c07a92cdcd40a572e6cbd0839"
     },
     ".claude/settings.project.json": {
       "ownership": "seeded"
@@ -67,7 +67,7 @@
     ".github/workflows/ci.yml": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "d91340a12c31c0f73fa3d1dcc21a9cda1b48d2fef4286733e1e10e33b0f39dad"
+      "sha256": "f5e00a8aa3f7794440615a5985bc155ee4eb0b6401374b95810de4c713777278"
     },
     ".gitignore": {
       "ownership": "seeded"
@@ -80,7 +80,7 @@
     "AGENTS.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "9e8f61190df6f31bca8946aad94036ca3e925e1c8f1a9ca1191f5a930f8d58c5"
+      "sha256": "dced97e546d41a96416f86b079c4c57638400bbfe6b89e4fa1feb1e3801301fa"
     },
     "AGENTS.project.md": {
       "ownership": "seeded"
@@ -254,7 +254,7 @@
     "plugin/hub-workflow/hooks/session_start.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "b2beacfa0dacbf1d96d77c55637d8268120c8dcee40013c764b1fa2bfa0d0e6b"
+      "sha256": "bd8098a7aa4c8dba6f68e8df3d23889de0a875797ee04e7a55982ae17d441b2b"
     },
     "plugin/hub-workflow/hooks/stdlib_reader.py": {
       "executable": false,
@@ -284,7 +284,7 @@
     "plugin/hub-workflow/skills/kickoff/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "ceac3e166f79cf3162164efa0dd86e8ecce3b05d7e357442a8b40a69d4189c26"
+      "sha256": "20b3555ff9d4226d008cc8dd7dc5faf08e91314baba9525bfacf8673dc011b03"
     },
     "plugin/hub-workflow/skills/learn/SKILL.md": {
       "executable": false,
