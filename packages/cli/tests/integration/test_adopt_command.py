@@ -15,7 +15,6 @@ stopped by an I/O error, it leaves the old lock and no temp entry, and the next 
 uninterrupted run does. ``--check`` with ``--accept`` previews the accepted writes.
 """
 
-import errno
 import json
 import os
 import shutil
@@ -31,7 +30,6 @@ from typer.testing import CliRunner, Result
 from agent_hub.cli.adopt_report import ADOPT_CONFLICT_WAY_OUT, ADOPT_LISTED_WAY_OUT
 from agent_hub.cli.main import app
 from agent_hub.core.hub_files.plan_adopt import ACCEPT_CONFLICT, ACCEPT_NOT_LISTED
-from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
 from agent_hub.core.json_form import dump_json
 
 # The conftest's fixtures' types (tests cannot import a conftest in importlib mode).
@@ -42,6 +40,9 @@ type LockGolden = Callable[..., None]
 type Ac4Hub = Any
 # The conftest's ``fake_git`` factory: a ``FakeGit`` with ``bin_dir`` and ``calls()``.
 type FakeGitFactory = Callable[..., Any]
+# The conftest's injected I/O error and temp-entry finder.
+type FailOnce = Callable[..., None]
+type TempEntries = Callable[[Path], list[str]]
 ADOPT_LOCK_WAY_OUT_LINE = "hub.lock: restore it from git, or delete it and re-run hub sync --adopt"
 SIBLING = ".claude/settings.project.json"
 FIFO_ALARM_SECONDS = 5
@@ -627,31 +628,6 @@ class TestMigration:
         assert [path for path in lock_files(demo_hub) if path.startswith(f"{LINKED[1]}/")] == []
 
 
-def temp_entries(root: Path) -> list[str]:
-    """The paths under ``root`` whose name has the temp shape."""
-    return [
-        (Path(folder) / name).relative_to(root).as_posix()
-        for folder, folders, files in os.walk(root)
-        for name in [*folders, *files]
-        if is_leftover_name(name)
-    ]
-
-
-def fail_first_replace(patch: pytest.MonkeyPatch, *, name: str | None = None) -> None:
-    """Make the first ``os.replace`` (of ``name`` when given) raise ``EIO``; the rest go through."""
-    real = os.replace
-    failed: list[str] = []
-
-    def failing(*args: Any, **kwargs: Any) -> Any:
-        destination = os.fsdecode(args[1])
-        if not failed and name in {None, destination}:
-            failed.append(destination)
-            raise OSError(errno.EIO, os.strerror(errno.EIO))
-        return real(*args, **kwargs)
-
-    patch.setattr(os, "replace", failing)
-
-
 def would(line: str) -> str:
     """A change line as ``--check`` prints it."""
     verb, _, path = line.partition(" ")
@@ -780,6 +756,7 @@ class TestSafety:
         *,
         monkeypatch: pytest.MonkeyPatch,
         fake_git: FakeGitFactory,
+        path_reads: list[Any],
         ac4: Ac4Hub,
     ) -> None:
         git = fake_git({}, toplevel=demo_hub)
@@ -796,6 +773,8 @@ class TestSafety:
 
         assert [run.exit_code for run in runs] == [3, 3, 4, 0], [run.output for run in runs]
         assert git.calls() == []
+        # Nor any process at all: a git named by its absolute path would bypass the fake.
+        assert [read for read in path_reads if read.call == "Popen"] == []
 
     @pytest.mark.parametrize(
         ("hub", "accepts", "failing", "path"), INTERRUPTIONS.values(), ids=INTERRUPTIONS.keys()
@@ -809,6 +788,8 @@ class TestSafety:
         monkeypatch: pytest.MonkeyPatch,
         tree_digest: TreeDigest,
         ac4: Ac4Hub,
+        fail_once: FailOnce,
+        temp_entries: TempEntries,
         hub: str,
         accepts: tuple[str, ...],
         failing: str | None,
@@ -830,7 +811,7 @@ class TestSafety:
         assert uninterrupted.exit_code in {0, 3}, uninterrupted.output
 
         with monkeypatch.context() as patch:
-            fail_first_replace(patch, name=failing)
+            fail_once(patch, call="replace", name=failing)
 
             stopped = run_sync(demo_hub, *args)
 

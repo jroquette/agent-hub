@@ -5,7 +5,8 @@ Also the ``hub.lock`` golden harness (``lock_golden``), a from-scratch child env
 once per session (``demo_hub_template``) and copied per test (``demo_hub``), the same with a
 second repo (``demo_two_repo_hub_template``, ``demo_two_repo_hub``) and a synthetic git checkout
 next to it (``demo_checkout``), an in-process sync
-in a folder (``run_sync``), the writer calls a test makes (``adapter_calls``) and AC-16.4's hub
+in a folder (``run_sync``), the writer calls a test makes (``adapter_calls``), an injected I/O
+error (``fail_once``) and the temp entries it may leave (``temp_entries``), AC-16.4's hub
 (``ac4``); for ``hub doctor``
 an in-process run in a folder (``run_doctor``), the paths a run reads (``path_reads``) and their
 filters (``reads_in``, ``ancestors``, ``under``); for ``hub bench`` the hub suite's bench
@@ -15,6 +16,7 @@ workspace with a fake ``claude`` (``bench_workspace``).
 import builtins
 import datetime
 import difflib
+import errno
 import io
 import json
 import os
@@ -35,6 +37,7 @@ from typer.testing import CliRunner, Result
 from agent_hub.cli.hub_root import HUB_ROOT_VARIABLE
 from agent_hub.cli.main import app
 from agent_hub.core.errors import TrackerError
+from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
 from agent_hub.core.json_form import dump_json
 from agent_hub.core.testing.builders import a_hub_document, a_second_repo, an_issue
 from agent_hub.core.testing.fakes import FakeTrackerBackend, InMemoryTrackerClient, TrackerState
@@ -453,6 +456,47 @@ def adapter_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
     for call in ADAPTER_CALLS:
         monkeypatch.setattr(os, call, wrap(call, getattr(os, call)))
     return calls
+
+
+def leftover_entries(root: Path) -> list[str]:
+    """The paths under ``root`` whose name has the temp shape."""
+    return [
+        (Path(folder) / name).relative_to(root).as_posix()
+        for folder, folders, files in os.walk(root)
+        for name in [*folders, *files]
+        if is_leftover_name(name)
+    ]
+
+
+@pytest.fixture
+def temp_entries() -> Callable[[Path], list[str]]:
+    """``temp_entries(root)``: the paths under ``root`` whose name has the temp shape."""
+    return leftover_entries
+
+
+def fail_call_once(patch: pytest.MonkeyPatch, *, call: str, name: str | None) -> None:
+    """Make the first ``os.<call>`` (``replace`` or ``unlink``) of ``name`` raise ``EIO``.
+
+    ``name`` is the destination as given (relative to its ``dir_fd``); ``None`` fails the first
+    call whatever it names. Every later call goes through.
+    """
+    real = getattr(os, call)
+    failed: list[str] = []
+
+    def failing(*args: Any, **kwargs: Any) -> Any:
+        destination = os.fsdecode(args[1] if call == "replace" else args[0])
+        if not failed and name in {None, destination}:
+            failed.append(destination)
+            raise OSError(errno.EIO, os.strerror(errno.EIO))
+        return real(*args, **kwargs)
+
+    patch.setattr(os, call, failing)
+
+
+@pytest.fixture
+def fail_once() -> Callable[..., None]:
+    """``fail_once(patch, call=..., name=...)``: the first matching ``os.<call>`` raises ``EIO``."""
+    return fail_call_once
 
 
 class Ac4Hub(NamedTuple):
