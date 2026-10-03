@@ -1043,3 +1043,48 @@ def test_gives_no_prefix_when_identity_git_read_times_out(
 
     assert prefix == ""
     assert calls == [[["git", "config", "--get", "user.email"], 2]]
+
+
+# Plugin-cache mode (no hook root): the identity home is the walked hub; with $HUB_CONFIG there is
+# none, so neither the local file beside that file nor git is read (E1).
+@pytest.mark.parametrize(("hub_prefix", "expected"), [("cfg/", "cfg/"), (None, "")])
+def test_reads_no_identity_when_cached_hooks_use_hub_config(
+    hub_prefix: str | None,
+    expected: str,
+    cached_hooks: Path,
+    *,
+    hook_python: str,
+    run_python: Callable[..., Any],
+    tmp_path: Path,
+) -> None:
+    folder = tmp_path / "conf"
+    folder.mkdir()
+    project = {"name": "demo"} | ({"branch_prefix": hub_prefix} if hub_prefix else {})
+    write_hub_json(folder, {"project": project})
+    write_local_json(folder, {"project": {"branch_prefix": "evil/"}})
+    traced, log = traced_git(tmp_path)
+    env = (
+        traced
+        | git_identity(tmp_path, b"\temail = jane@example.com\n")
+        | {"HUB_CONFIG": str(folder / HUB_JSON_NAME)}
+    )
+
+    found = run_python(hook_python, PREFIX_CODE, path=cached_hooks, cwd=folder, env=env)
+
+    assert found == expected
+    assert git_calls(log) == []
+
+
+def test_reads_walked_hub_local_file_when_cached_hooks_find_hub(
+    cached_hooks: Path,
+    sibling_workspace: Path,
+    *,
+    hook_python: str,
+    run_python: Callable[..., Any],
+) -> None:
+    hub = sibling_workspace / "other-hub"
+    write_local_json(hub, {"project": {"branch_prefix": "me/"}})
+
+    found = run_python(hook_python, PREFIX_CODE, path=cached_hooks, cwd=hub / "brain")
+
+    assert found == "me/"
