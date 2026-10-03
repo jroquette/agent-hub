@@ -454,6 +454,19 @@ def test_keeps_brief_when_snapshot_not_utf8(
     assert context_of(completed) == expected
 
 
+def test_keeps_brief_when_snapshot_is_folder(
+    hub: Path, *, hook_python: str, run_hook_file: RunHook, bin_dir: Path
+) -> None:
+    # The read raises IsADirectoryError: the brief stays and the snapshot section is skipped.
+    (hub / SNAPSHOT).mkdir(parents=True)
+
+    completed, _ = start(
+        hub, python=hook_python, run_hook_file=run_hook_file, bin_dir=bin_dir, source="compact"
+    )
+
+    assert context_of(completed) == expected_mini_brief("no uv")
+
+
 def test_calls_uvx_only_from_shim_session_start_and_cloud_setup_when_templates_read(
     demo_config: HubConfig,
 ) -> None:
