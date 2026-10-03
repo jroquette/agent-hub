@@ -348,7 +348,8 @@ Hooks are small scripts Claude Code runs on its own at fixed moments; you never 
 
 **Blocked, always:**
 
-- force-pushes and pushes to `main`, `master` or `project.default_branch`;
+- force-pushes and pushes to `main`, `master`, `project.default_branch` or any `repos[].default_branch`, from any
+  directory;
 - `curl … | sh`, and network calls to the hosts in `guard.deny_hosts`;
 - deleting Docker volumes (`docker volume rm|prune`, `compose down -v`) and infrastructure commands (`terraform
   apply|destroy|import`, any `aws` command, `pulumi up|destroy`, `kubectl apply|delete`);
@@ -370,8 +371,8 @@ Hooks are small scripts Claude Code runs on its own at fixed moments; you never 
 Everything else goes through Claude Code's normal permission rules.
 
 **Configuration.** The lists come from `hub.json`: `guard.ask_before_edit`, `guard.deny_paths` and `guard.deny_hosts`,
-plus `project.default_branch` and `project.branch_prefix`. An entry `@hub/<path>` means `<path>` inside the hub. A
-`hub.json` named by `$HUB_CONFIG` can only add entries to these lists, never remove them.
+plus `project.default_branch`, each `repos[].default_branch` and `project.branch_prefix`. An entry `@hub/<path>` means
+`<path>` inside the hub. A `hub.json` named by `$HUB_CONFIG` can only add entries to these lists, never remove them.
 
 **Your own rules.** The seeded `plugin/<project>/hooks/project_guard.py` defines `check(event, cfg)`, which returns
 `None`, or `("ask", reason)` or `("deny", reason)`; by default it does nothing. It runs in a separate process with a
@@ -532,7 +533,7 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `project.name` | yes | | Kebab-case project name |
 | `project.hub_repo` | yes | | GitHub `owner/name` of the hub |
 | `project.branch_prefix` | yes | | Prefix of every branch, e.g. `jdoe/` |
-| `project.default_branch` | no | `main` | Base of worktrees; the guard blocks pushes to it |
+| `project.default_branch` | no | `main` | Base of worktrees unless a repo sets its own; the guard blocks pushes to it |
 | `project.author_name`, `project.author_email` | yes | | Author of commits and PRs |
 | `tracker.kind` | yes | | Task tracker; only `linear` today |
 | `tracker.team` | yes | | Tracker team key, e.g. `DEMO` |
@@ -542,6 +543,7 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `repos[].github` | yes | | GitHub `owner/name` |
 | `repos[].role` | no | `app` | Free string; `app` is the only known value |
 | `repos[].check_fast`, `repos[].check` | yes | | The repo's fast and full gate commands |
+| `repos[].default_branch` | no | `project.default_branch` | Base of the repo's worktrees and PRs; the guard blocks pushes to it |
 | `guard.ask_before_edit` | no | `[]` | Paths where the guard asks before an edit |
 | `guard.deny_paths` | no | `[]` | Paths the guard never lets the agent read or edit |
 | `guard.deny_hosts` | no | `[]` | Hosts the guard blocks network calls to |
