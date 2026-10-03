@@ -624,6 +624,8 @@ class DemoWorkspace:
         self.origins = base / "origins"
         self.env = dict(env)
         self._setenv = setenv
+        # The global git config the first ``git_identity`` call replaced; every call includes it.
+        self._replaced_global: str | None = None
 
     def write_local(self, text: str) -> None:
         """Write the developer's ``hub.local.json`` in the hub."""
@@ -639,10 +641,13 @@ class DemoWorkspace:
 
     def git_identity(self, name: str, email: str) -> None:
         """Give the command's git this ``user.name`` and ``user.email``: ``base/gitconfig``
-        becomes its global config, including the one it replaces (a run's url rewrites)."""
+        becomes its global config, including the one the first call replaced (a run's url
+        rewrites), however often it is called."""
         assert self._setenv is not None, "only a test's copy of the workspace has an environment"
         config = self.base / "gitconfig"
-        replaced = os.environ.get("GIT_CONFIG_GLOBAL", os.devnull)
+        if self._replaced_global is None:
+            self._replaced_global = os.environ.get("GIT_CONFIG_GLOBAL", os.devnull)
+        replaced = self._replaced_global
         included = (
             "" if replaced in (os.devnull, str(config)) else f"[include]\n\tpath = {replaced}\n"
         )
