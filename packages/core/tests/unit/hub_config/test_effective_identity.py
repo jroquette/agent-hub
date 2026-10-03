@@ -15,6 +15,7 @@ from agent_hub.core.hub_config.effective_identity import (
     resolve_identity,
 )
 from agent_hub.core.hub_config.local_config import (
+    LOCAL_FILE_MAX_BYTES,
     LocalConfig,
     LocalProject,
     LocalTracker,
@@ -320,9 +321,16 @@ def hub_identity(case: IdentityCase) -> IdentityValues:
 
 
 def local_document(case: IdentityCase) -> object:
-    """The case's ``hub.local.json`` as JSON data; ``{}`` when absent, ``None`` when not JSON."""
+    """The case's ``hub.local.json`` as JSON data; ``{}`` when absent.
+
+    ``None`` when the text is not JSON or is over ``LOCAL_FILE_MAX_BYTES``: both readers refuse
+    such a file before any key is read (the size cap is theirs, not the model's), and
+    ``check_local_document(None)`` gives the same one problem at ``$``.
+    """
     if case.local_text is None:
         return {}
+    if len(case.local_text.encode()) > LOCAL_FILE_MAX_BYTES:
+        return None
     try:
         return json.loads(case.local_text)
     except json.JSONDecodeError:
@@ -340,15 +348,13 @@ def test_matches_case_when_shared_case_resolved(case: IdentityCase) -> None:
 
     if not case.local_is_valid:
         assert isinstance(local, tuple)
-        assert local
+        assert [problem.path for problem in local] == [case.problem_path]
         return
     assert isinstance(local, LocalConfig)
-    resolved = resolve_identity(
-        local=IdentityValues.of(local.project),
-        hub=hub_identity(case),
-        keys=ALL_KEYS,
-        read_git=case_git(case),
-    )
+    git = case_git(case)
+    local_values = IdentityValues.of(local.project)
+    hub_values = hub_identity(case)
+    resolved = resolve_identity(local=local_values, hub=hub_values, keys=ALL_KEYS, read_git=git)
     document = a_hub_document()
     if case.hub_transport is not None:
         document["tracker"]["transport"] = case.hub_transport
@@ -361,6 +367,12 @@ def test_matches_case_when_shared_case_resolved(case: IdentityCase) -> None:
     assert {**values, "tracker.transport": merged.tracker.transport} == case.expected
     prefix = resolved.values[IdentityKey.BRANCH_PREFIX]
     assert (None if prefix is None else prefix.prefix_source) == case.prefix_source
+    set_by_files = {
+        key.value
+        for key in IdentityKey
+        if local_values.get(key) is not None or hub_values.get(key) is not None
+    }
+    assert all(not asked & set_by_files for asked in git.asked)
 
 
 def sets(case: IdentityCase, path: str) -> object:
@@ -416,7 +428,29 @@ def test_covers_required_kinds_when_cases_listed() -> None:
         and case.git_email is None
     ]
 
+    git_shape_rejected = {
+        path
+        for case in valid
+        for path, git_value in (
+            ("project.author_name", case.git_name),
+            ("project.author_email", case.git_email),
+        )
+        if is_team(case) and git_value is not None and case.expected[path] is None
+    }
+    hub_email_derives = [
+        case
+        for case in valid
+        if case.prefix_source == "derived"
+        and "author_email" in case.hub_project
+        and case.local_text is None
+        and case.expected["project.author_email"] == case.hub_project["author_email"]
+    ]
+    problem_paths = {case.problem_path for case in IDENTITY_CASES if not case.local_is_valid}
+
     assert hub_only
+    assert git_shape_rejected == {"project.author_name", "project.author_email"}
+    assert hub_email_derives
+    assert problem_paths >= {"$", *LOCAL_KEYS}
     assert overridden == set(LOCAL_KEYS)
     assert git_fallback
     assert derived_invalid
