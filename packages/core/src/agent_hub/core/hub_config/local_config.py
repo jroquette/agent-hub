@@ -22,7 +22,7 @@ from agent_hub.core.hub_config.model import (
     Project,
     Tracker,
 )
-from agent_hub.core.hub_config.problems import ConfigProblem
+from agent_hub.core.hub_config.problems import NOT_AN_OBJECT_MESSAGE, ROOT_PATH, ConfigProblem
 
 LOCAL_FILE: Final = "hub.local.json"
 # Four short keys: the cap keeps a stray big file from being read on every call.
@@ -77,6 +77,8 @@ class LocalConfig(ConfigObject):
 
 def check_local_document(document: object) -> LocalConfig | tuple[ConfigProblem, ...]:
     """The local config, or its problems, one per error, on the same paths as ``hub.json``'s."""
+    if not isinstance(document, dict):
+        return (ConfigProblem(ROOT_PATH, NOT_AN_OBJECT_MESSAGE),)
     try:
         return LocalConfig.model_validate(document)
     except ValidationError as error:

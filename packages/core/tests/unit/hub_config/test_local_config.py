@@ -20,7 +20,7 @@ HUB_ONLY_MESSAGE = (
     " author_email and tracker.transport"
 )
 EXTRA_MESSAGE = "Extra inputs are not permitted"
-ROOT_MESSAGE = "Input should be a valid dictionary or instance of LocalConfig"
+ROOT_MESSAGE = "must be a JSON object"
 # The schema keywords that carry a value's rule; titles and defaults differ by design.
 RULE_KEYWORDS = ("type", "pattern", "enum", "minLength")
 
