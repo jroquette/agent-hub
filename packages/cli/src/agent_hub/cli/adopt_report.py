@@ -24,10 +24,10 @@ from agent_hub.core.hub_files.plan_adopt import (
     Listed,
 )
 
-LISTED_WAY_OUT: Final = (
+ADOPT_LISTED_WAY_OUT: Final = (
     "take the template with --accept <path>, or move the change to an extension file, then re-run"
 )
-CONFLICT_WAY_OUT: Final = (
+ADOPT_CONFLICT_WAY_OUT: Final = (
     "move the change to an extension file (hub.json, a *.project.* file, Makefile.project),"
     " restore or delete the conflicting file, or take the template of a listed path with"
     " --accept <path>, then re-run hub sync --adopt"
@@ -40,7 +40,7 @@ def listing_lines(plan: AdoptPlan) -> list[str]:
         return []
     lines = [_listed_line(each) for each in plan.listed]
     lines.extend(problem_lines(plan.conflicts))
-    lines.append(CONFLICT_WAY_OUT if plan.conflicts else LISTED_WAY_OUT)
+    lines.append(ADOPT_CONFLICT_WAY_OUT if plan.conflicts else ADOPT_LISTED_WAY_OUT)
     return lines
 
 
