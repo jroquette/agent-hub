@@ -530,6 +530,51 @@ def test_follows_sync_rule_when_directory_link_has_lock_entry(a_rendered_hub: Hu
     assert plan.conflicts == (PathProblem(PROJECT_LINK, cause), PathProblem(LINK, cause))
 
 
+def test_keeps_child_entries_when_migration_listed(a_rendered_hub: HubFactory) -> None:
+    """Q-4: the links under a listed migration keep the entries a previous lock gave them."""
+    rendered = with_project_link(a_rendered_hub)
+    lock = build_hub_lock(rendered=rendered, config=CONFIG)
+    tree = linked_agents(rendered, LinkEntry(target=AGENTS_TARGET, outside=False))
+
+    plan = adopted(rendered, tree, lock=lock)
+
+    migration = MigrationListing(path=AGENTS, on_disk_target=AGENTS_TARGET, link_count=2)
+    assert plan.listed == (migration,)
+    assert plan.conflicts == ()
+    assert plan.lock == lock
+    assert written_paths(plan) == []
+
+
+def test_lists_no_migration_when_path_under_link_conflicts(a_rendered_hub: HubFactory) -> None:
+    """E22: a conflict wins, so ``--accept`` cannot take a link with a clash under it."""
+    rendered = with_project_link(a_rendered_hub)
+    tree = linked_agents(rendered, LinkEntry(target=AGENTS_TARGET, outside=False))
+    extensions = ExtensionInputs(project_json={}, agents=("x.md",), skills=())
+
+    plan = adopted(rendered, tree, extensions=extensions)
+
+    assert plan.listed == ()
+    clash = "in both plugins (plugin/agents/x.md and plugin/demo/agents/x.md)"
+    assert plan.conflicts == (PathProblem(LINK, clash),)
+    assert written_paths(plan) == [HUB_LOCK_PATH]
+    assert not any(path.startswith(f"{AGENTS}/") for path in changed_paths(plan))
+    assert plan.lock == lock_without(rendered, LINK, PROJECT_LINK)
+
+
+def test_lists_no_migration_when_link_under_symlinked_ancestor(a_rendered_hub: HubFactory) -> None:
+    rendered = a_rendered_hub()
+    tree = without(hand_made_tree(rendered), ".claude/skills", LINK, SEEDED_LINK) | {
+        ".claude": LinkEntry(target="elsewhere", outside=False),
+        AGENTS: LinkEntry(target=AGENTS_TARGET, outside=False),
+    }
+
+    plan = adopted(rendered, tree)
+
+    assert plan.listed == ()
+    cause = "symlinked ancestor .claude"
+    assert plan.conflicts == (PathProblem(LINK, cause), PathProblem(SEEDED_LINK, cause))
+
+
 # A directory link is a migration only where a folder of per-entry links is rendered: one
 # holding a rendered file (``symlinked-ancestor-not-link-folder`` above) or nested links is not.
 @pytest.mark.parametrize(
