@@ -5,14 +5,18 @@
 already adopted, adopt is ``up to date``; with its ``hub.lock`` deleted (an unadopted ``DEMO`` hub),
 adopt records every path and writes the lock ``hub init`` writes, after which plain sync is
 ``up to date``. AC-16.4's hub (two managed files differ) exits 3 and keeps both out of the lock;
+``--accept`` takes a listed file's template, and with both taken the lock is ``hub init``'s;
 ``--check`` writes nothing (exit 3 listed, 4 pending); a refused ``--accept`` exits 2 naming each
-path, with nothing written.
+path, with nothing written. Directory links at ``.claude/skills`` and ``.claude/agents`` are listed
+as migrations, their targets never read; accepted, each becomes a folder of the rendered links. A
+link resolving outside the hub is a conflict, which ``--accept`` refuses.
 """
 
 import json
 import os
+import shutil
 import signal
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +35,7 @@ type SyncRunner = Callable[..., Result]
 type LockGolden = Callable[..., None]
 ADOPT_LOCK_WAY_OUT_LINE = "hub.lock: restore it from git, or delete it and re-run hub sync --adopt"
 SIBLING = ".claude/settings.project.json"
+SCHEMA = "hub.schema.json"
 FIFO_ALARM_SECONDS = 5
 GUARD = "plugin/hub-workflow/hooks/guard.py"
 # AC-16.4's listing of the two managed files it changes.
@@ -40,6 +45,13 @@ AC4_LISTING = [
 ]
 # A file where a link is rendered: a conflict, which ``--accept`` cannot take.
 CLASHING_LINK = ".claude/agents/architect.md"
+# AC-16.7: the two link folders, made directory links into their plugin folders, and a project
+# skill, which the render links from ``.claude/skills``.
+LINKED = (".claude/agents", ".claude/skills")
+TARGETS = ("plugin/hub-workflow/agents", "plugin/hub-workflow/skills")
+REVIEW = "plugin/demo/skills/review"
+REVIEW_LINK = ".claude/skills/review"
+NOW = "brain/now.md"
 
 
 @pytest.fixture
@@ -80,8 +92,8 @@ def ac4_hub(hub: Path) -> Path:
     with (hub / "Makefile").open("ab") as makefile:
         makefile.write(b"local:\n")
     os.chmod(hub / GUARD, 0o644)
-    (hub / "brain/now.md").write_bytes(b"# Now\nShip the adopt.\n")
-    (hub / "hub.schema.json").unlink()
+    (hub / NOW).write_bytes(b"# Now\nShip the adopt.\n")
+    (hub / SCHEMA).unlink()
     return hub
 
 
@@ -307,9 +319,57 @@ class TestNoOp:
 class TestAccept:
     """AC-16.6, Q-3: ``--accept`` takes only a path this run lists; any other refuses the run."""
 
+    def test_takes_template_when_listed_path_accepted(
+        self,
+        tmp_path: Path,
+        demo_hub: Path,
+        *,
+        demo_hub_template: Path,
+        run_sync: SyncRunner,
+        tree_digest: TreeDigest,
+    ) -> None:
+        template = tree_digest(demo_hub_template)
+        fresh_lock = (demo_hub_template / "hub.lock").read_bytes()
+        before = tree_digest(ac4_hub(demo_hub))
+
+        makefile = run_sync(demo_hub, "--adopt", "--accept", "Makefile")
+
+        # The accepted file is rewritten with its render and recorded managed; guard.py waits.
+        assert makefile.exit_code == 3, makefile.output
+        assert "updated Makefile" in makefile.stdout.splitlines()
+        assert makefile.stdout.splitlines()[-1] == "updated hub.lock"
+        assert makefile.stderr.splitlines() == [AC4_LISTING[1], ADOPT_LISTED_WAY_OUT]
+        after = tree_digest(demo_hub)
+        assert after["Makefile"] == template["Makefile"]
+        assert after[GUARD] == before[GUARD]
+        files = lock_files(demo_hub)
+        assert files["Makefile"] == lock_files(demo_hub_template)["Makefile"]
+        assert files["Makefile"]["ownership"] == "managed"
+        assert GUARD not in files
+
+        guard = run_sync(demo_hub, "--adopt", "--accept", GUARD)
+
+        assert (guard.exit_code, guard.stderr) == (0, ""), guard.output
+        assert guard.stdout.splitlines() == [f"updated {GUARD}", "updated hub.lock"]
+        assert tree_digest(demo_hub)[GUARD] == template[GUARD]
+        assert (demo_hub / "hub.lock").read_bytes() == fresh_lock
+        # Both accepted in one run end the same way.
+        both = tmp_path / "both"
+        shutil.copytree(demo_hub_template, both, symlinks=True)
+        accepts = ("--accept", "Makefile", "--accept", GUARD)
+
+        result = run_sync(ac4_hub(both), "--adopt", *accepts)
+
+        assert (result.exit_code, result.stderr) == (0, ""), result.output
+        assert (both / "hub.lock").read_bytes() == fresh_lock
+        adopted = tree_digest(both)
+        assert adopted.pop(NOW) != template[NOW]
+        assert adopted == {path: entry for path, entry in template.items() if path != NOW}
+
     def test_refuses_each_path_when_accept_not_listed_or_conflict(
         self,
         demo_hub: Path,
+        demo_hub_template: Path,
         run_sync: SyncRunner,
         *,
         tree_digest: TreeDigest,
@@ -343,11 +403,16 @@ class TestAccept:
 
         # With no lock and writes pending (hub.schema.json, hub.lock): none is made.
         assert_refused()
+        before = tree_digest(demo_hub)
         first = run_sync(demo_hub, "--adopt")
         # Q-4: the settled paths and the partial lock are saved; the listed and the conflict wait.
         assert first.exit_code == 3, first.output
         assert first.stderr.splitlines()[-1] == ADOPT_CONFLICT_WAY_OUT
         assert {"Makefile", GUARD, CLASHING_LINK}.isdisjoint(lock_files(demo_hub))
+        after = tree_digest(demo_hub)
+        for path in ("Makefile", GUARD, CLASHING_LINK):
+            assert after[path] == before[path], path
+        assert after[SCHEMA] == tree_digest(demo_hub_template)[SCHEMA]
         adapter_calls.clear()
         # A rerun has nothing to write: no ``up to date`` over the same listing, still exit 3.
         again = run_sync(demo_hub, "--adopt")
@@ -355,6 +420,225 @@ class TestAccept:
         assert adapter_calls == []
         # With the partial lock: its bytes stay.
         assert_refused()
+
+
+def linked_plugin_folders(hub: Path, *, target: str = "plugin/hub-workflow") -> Path:
+    """AC-16.7's hub: unadopted, ``.claude/skills`` and ``.claude/agents`` directory links into
+    ``target``, and a project skill ``review`` in ``plugin/demo/skills/``."""
+    unadopted(hub)
+    for folder in LINKED:
+        shutil.rmtree(hub / folder)
+        (hub / folder).symlink_to(f"../{target}/{folder.rpartition('/')[2]}")
+    (hub / REVIEW).mkdir()
+    (hub / REVIEW / "SKILL.md").write_bytes(b"---\nname: review\n---\n")
+    return hub
+
+
+def migration_lines(hub: Path, *, target: str = "plugin/hub-workflow") -> list[str]:
+    """The listing of both links of ``linked_plugin_folders``, ``review`` among the skills."""
+    lines = []
+    for folder in LINKED:
+        name = folder.rpartition("/")[2]
+        count = len(os.listdir(hub / folder)) + (name == "skills")
+        lines.append(
+            f"{folder}: migration: directory link -> ../{target}/{name}, rendered as {count} links"
+        )
+    return lines
+
+
+def under_links(paths: Iterable[str]) -> list[str]:
+    return [path for path in paths if path.startswith(tuple(f"{each}/" for each in LINKED))]
+
+
+type Identity = tuple[int, int]
+
+
+@pytest.fixture
+def looked_at(monkeypatch: pytest.MonkeyPatch) -> tuple[set[Identity], list[str]]:
+    """The folders a run looks into, by identity (each descriptor it opens, lists or looks at an
+    entry relative to), and the paths it names without a descriptor, normalized. Recorded from
+    the test's setup on: clear both before the run."""
+    identities: set[Identity] = set()
+    paths: list[str] = []
+
+    def note(path: Any, dir_fd: int | None) -> None:
+        if isinstance(path, int) or dir_fd is not None:
+            held = os.fstat(path if isinstance(path, int) else dir_fd)
+            identities.add((held.st_dev, held.st_ino))
+        if not isinstance(path, int) and dir_fd is None:
+            paths.append(os.path.normpath(os.path.join(os.getcwd(), os.fsdecode(path))))
+
+    def wrap(real: Callable[..., Any]) -> Callable[..., Any]:
+        def recorded(path: Any, *args: Any, dir_fd: int | None = None, **kwargs: Any) -> Any:
+            note(path, dir_fd)
+            return real(path, *args, dir_fd=dir_fd, **kwargs)
+
+        return recorded
+
+    for call in ("open", "stat", "lstat"):
+        monkeypatch.setattr(os, call, wrap(getattr(os, call)))
+    real_scandir = os.scandir
+
+    def recorded_scandir(path: Any = os.curdir) -> Any:
+        note(path, None)
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", recorded_scandir)
+    return identities, paths
+
+
+class TestMigration:
+    """AC-16.7, E7: a directory link where per-entry links are rendered is listed as a migration;
+    accepted, the link (never its target) becomes a folder of the rendered links."""
+
+    def test_lists_both_links_when_directory_links_found(
+        self,
+        demo_hub: Path,
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+    ) -> None:
+        counts = migration_lines(demo_hub)
+        targets = {each: tree_digest(demo_hub / each) for each in TARGETS}
+        before = tree_digest(linked_plugin_folders(demo_hub))
+
+        result = run_sync(demo_hub, "--adopt")
+
+        assert result.exit_code == 3, result.output
+        assert result.stderr.splitlines() == [*counts, ADOPT_LISTED_WAY_OUT]
+        # Nothing under either link is named, written or recorded; the lock is saved last.
+        assert result.stdout.splitlines()[-1] == "updated hub.lock"
+        assert under_links(line.partition(" ")[2] for line in result.stdout.splitlines()) == []
+        assert under_links(lock_files(demo_hub)) == []
+        assert not set(LINKED) & set(lock_files(demo_hub))
+        after = tree_digest(demo_hub)
+        for path in (*LINKED, REVIEW, f"{REVIEW}/SKILL.md"):
+            assert after[path] == before[path], path
+        assert {each: tree_digest(demo_hub / each) for each in TARGETS} == targets
+
+    def test_keeps_link_target_unread_when_migration_listed(
+        self,
+        demo_hub: Path,
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        looked_at: tuple[set[Identity], list[str]],
+    ) -> None:
+        # Targets of their own, which nothing else in the hub reaches: a look into either one
+        # can only have gone through a link.
+        for each in TARGETS:
+            shutil.copytree(demo_hub / each, demo_hub / "legacy" / each.rpartition("/")[2])
+        counts = migration_lines(demo_hub, target="legacy")
+        linked_plugin_folders(demo_hub, target="legacy")
+        legacy = demo_hub / "legacy"
+        before = tree_digest(legacy)
+        inside = {
+            (found.st_dev, found.st_ino)
+            for folder, _, _ in os.walk(legacy)
+            for found in [os.stat(folder)]
+        }
+        real = os.path.realpath(demo_hub)
+        # Each link's target is resolved, to tell whether it leaves the hub; nothing below it.
+        targets = (f"legacy/{each.rpartition('/')[2]}" for each in LINKED)
+        unread = tuple(f"{os.path.join(real, each)}/" for each in (*LINKED, *targets))
+        identities, paths = looked_at
+        identities.clear()
+        paths.clear()
+
+        result = run_sync(demo_hub, "--adopt")
+
+        assert result.exit_code == 3, result.output
+        assert result.stderr.splitlines() == [*counts, ADOPT_LISTED_WAY_OUT]
+        assert identities, "the recorder saw no folder"
+        assert identities.isdisjoint(inside)
+        assert [path for path in paths if path.startswith(unread)] == []
+        assert tree_digest(legacy) == before
+
+    def test_replaces_links_with_folders_when_migrations_accepted(
+        self,
+        demo_hub: Path,
+        demo_hub_template: Path,
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        adapter_calls: list[tuple[str, str]],
+    ) -> None:
+        template = tree_digest(demo_hub_template)
+        fresh = lock_files(demo_hub_template)
+        targets = {each: tree_digest(demo_hub / each) for each in TARGETS}
+        before = tree_digest(linked_plugin_folders(demo_hub))
+        accepts = [arg for each in LINKED for arg in ("--accept", each)]
+
+        result = run_sync(demo_hub, "--adopt", *accepts)
+
+        assert (result.exit_code, result.stderr) == (0, ""), result.output
+        # E15: each link migrated, then every link under it created, in path order.
+        created = [*under_links(fresh), REVIEW_LINK]
+        recorded = sorted(set(fresh) - set(created) - {"hub.json"})
+        expected = sorted(
+            [
+                *(f"migrated {each}" for each in LINKED),
+                *(f"created {path}" for path in created),
+                *(f"recorded {path}" for path in recorded),
+            ],
+            key=lambda line: line.partition(" ")[2],
+        )
+        assert result.stdout.splitlines() == [*expected, "updated hub.lock"]
+        # The links are real folders of managed links, ``review`` included, all recorded; the
+        # targets are untouched.
+        after = tree_digest(demo_hub)
+        assert after.pop(REVIEW_LINK)[::2] == ("link", f"../../{REVIEW}")
+        for path in (REVIEW, f"{REVIEW}/SKILL.md"):
+            assert after.pop(path) == before[path], path
+        # The lock is compared entry by entry below: it holds one more link.
+        assert after.pop("hub.lock")[:2] == template.pop("hub.lock")[:2]
+        assert after == template
+        files = lock_files(demo_hub)
+        assert files.pop(REVIEW_LINK) == {"ownership": "managed", "symlink": f"../../{REVIEW}"}
+        assert files == fresh
+        assert {each: tree_digest(demo_hub / each) for each in TARGETS} == targets
+        # Adopted: a rerun has nothing to do (an ``--accept`` now names no listed path).
+        adapter_calls.clear()
+        rerun = run_sync(demo_hub, "--adopt")
+        assert (rerun.exit_code, rerun.stdout, rerun.stderr) == (0, "up to date\n", "")
+        assert adapter_calls == []
+        again = assert_failed(run_sync(demo_hub, "--adopt", *accepts), code=2)
+        assert again == [f"--accept {each}: {ACCEPT_NOT_LISTED}" for each in LINKED]
+        assert adapter_calls == []
+
+    def test_refuses_accept_when_link_resolves_outside(
+        self,
+        tmp_path: Path,
+        demo_hub: Path,
+        run_sync: SyncRunner,
+        *,
+        tree_digest: TreeDigest,
+        adapter_calls: list[tuple[str, str]],
+    ) -> None:
+        outside = tmp_path / "outside"
+        shutil.copytree(demo_hub / TARGETS[1], outside)
+        shutil.rmtree(unadopted(demo_hub) / LINKED[1])
+        (demo_hub / LINKED[1]).symlink_to(os.path.relpath(outside, demo_hub / ".claude"))
+        before = (tree_digest(demo_hub), tree_digest(outside))
+        adapter_calls.clear()
+
+        for check in ((), ("--check",)):
+            lines = assert_failed(
+                run_sync(demo_hub, "--adopt", *check, "--accept", LINKED[1]), code=2
+            )
+
+            assert lines == [f"--accept {LINKED[1]}: {ACCEPT_CONFLICT}"]
+        assert (tree_digest(demo_hub), tree_digest(outside)) == before
+        assert adapter_calls == []
+        # Without ``--accept``: a conflict, never a migration; nothing reaches outside.
+        listed = run_sync(demo_hub, "--adopt")
+        assert listed.exit_code == 3, listed.output
+        assert listed.stderr.splitlines() == [
+            f"{LINKED[1]}: resolves outside the hub",
+            ADOPT_CONFLICT_WAY_OUT,
+        ]
+        assert tree_digest(outside) == before[1]
+        assert [path for path in lock_files(demo_hub) if path.startswith(f"{LINKED[1]}/")] == []
 
 
 class TestCheck:

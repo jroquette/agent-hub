@@ -3,6 +3,9 @@
 A sync of a fresh ``demo`` init prints ``up to date`` and writes nothing (AGH-14 AC-14.7), and a
 pending ``demo`` hub synced in process and as a child writes identical trees (AC-14.16). A doctor
 run on a fresh ``demo`` init, plain or committed, finds and writes nothing (AGH-11 AC-11.16).
+``hub sync --adopt`` on an unadopted ``demo`` hub with hand edits lists the two changed managed
+files, saves the rest, writes nothing on a rerun, and ends at a fresh init's lock once both are
+restored (AGH-16 AC-16.4).
 
 ``DEMO`` is ``demo_config_file`` (the example config without modules, pinned to the running CLI)
 and ``DEMO_FLAGS`` is ``demo_flags``. The golden harness of ``demo.hub.lock`` is the conftest's
@@ -23,7 +26,8 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner, Result
 
-from agent_hub.cli import sync_steps
+from agent_hub.cli import adopt_command, sync_steps
+from agent_hub.cli.adopt_report import ADOPT_LISTED_WAY_OUT
 from agent_hub.cli.main import app
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.hub_lock import build_hub_lock, lock_bytes
@@ -582,3 +586,92 @@ def test_writes_identical_trees_when_sync_runs_twice(
     assert (child_root / "hub.lock").read_bytes() == lock
     # Compare only: a lock written by sync never rewrites the init golden, even in update mode.
     lock_golden(lock, update=False)
+
+
+GUARD = "plugin/hub-workflow/hooks/guard.py"
+NOW = "brain/now.md"
+SCHEMA = "hub.schema.json"
+
+
+def test_lists_differences_when_adopt_runs(
+    monkeypatch: pytest.MonkeyPatch,
+    demo_hub: Path,
+    demo_hub_template: Path,
+    *,
+    run_sync: SyncRunner,
+    tree_digest: TreeDigest,
+    adapter_calls: list[tuple[str, str]],
+) -> None:
+    # AC-16.4's hub: unadopted, two managed files changed, a seeded one edited, one deleted.
+    (demo_hub / "hub.lock").unlink()
+    with (demo_hub / "Makefile").open("ab") as makefile:
+        makefile.write(b"local:\n")
+    os.chmod(demo_hub / GUARD, 0o644)
+    (demo_hub / NOW).write_bytes(b"# Now\nShip the adopt.\n")
+    (demo_hub / SCHEMA).unlink()
+    before = tree_digest(demo_hub)
+    fresh_lock = (demo_hub_template / "hub.lock").read_bytes()
+    fresh_files: dict[str, Any] = json.loads(fresh_lock)["files"]
+    listed = {"Makefile", GUARD}
+    applied: list[object] = []
+    real_apply = adopt_command.apply_or_exit
+
+    def spy(*args: Any, **kwargs: Any) -> None:
+        applied.append(args)
+        real_apply(*args, **kwargs)
+
+    monkeypatch.setattr(adopt_command, "apply_or_exit", spy)
+
+    first = run_sync(demo_hub, "--adopt")
+
+    assert first.exit_code == 3, first.output
+    # Q-7, in path order: the deleted file is created, every other settled path recorded as it
+    # is (hub.json is the project's), the two listed paths left out, the lock last.
+    joined = sorted(set(fresh_files) - listed - {"hub.json"})
+    expected = [f"{'created' if path == SCHEMA else 'recorded'} {path}" for path in joined]
+    assert first.stdout.splitlines() == [*expected, "updated hub.lock"]
+    # Q-2: one line per listed path, then the way out.
+    assert first.stderr.splitlines() == [
+        "Makefile: +0 -1 lines",
+        f"{GUARD}: +0 -0 lines, executable bit differs (on disk -x, render +x)",
+        ADOPT_LISTED_WAY_OUT,
+    ]
+    after = tree_digest(demo_hub)
+    for path in (*listed, NOW):
+        assert after[path] == before[path], path
+    assert after[SCHEMA] == tree_digest(demo_hub_template)[SCHEMA]
+    lock = json.loads((demo_hub / "hub.lock").read_bytes())
+    # Q-4: every settled path is in the lock, as a fresh init records it; the listed ones are not.
+    assert lock["files"] == {
+        path: entry for path, entry in fresh_files.items() if path not in listed
+    }
+    assert len(applied) == 1
+
+    # A second run lists the same and writes nothing: no ``up to date`` over a listing (E29).
+    applied.clear()
+    adapter_calls.clear()
+    settled = tree_digest(demo_hub)
+    second = run_sync(demo_hub, "--adopt")
+
+    assert (second.exit_code, second.stdout, second.stderr) == (3, "", first.stderr)
+    assert adapter_calls == []
+    assert applied == []
+    assert tree_digest(demo_hub) == settled
+
+    # Both restored: adopted, with the lock a fresh init writes.
+    shutil.copy2(demo_hub_template / "Makefile", demo_hub / "Makefile")
+    os.chmod(demo_hub / GUARD, stat.S_IMODE((demo_hub_template / GUARD).stat().st_mode))
+    third = run_sync(demo_hub, "--adopt")
+
+    assert (third.exit_code, third.stderr) == (0, ""), third.output
+    assert third.stdout.splitlines() == [
+        "recorded Makefile",
+        f"recorded {GUARD}",
+        "updated hub.lock",
+    ]
+    assert (demo_hub / "hub.lock").read_bytes() == fresh_lock
+    # The whole tree is a fresh init's, but for the seeded file the project edited.
+    adopted = tree_digest(demo_hub)
+    template = tree_digest(demo_hub_template)
+    assert adopted.pop(NOW) != template.pop(NOW)
+    assert adopted == template
