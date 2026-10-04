@@ -77,3 +77,23 @@ def test_describes_repo_branch_as_inherited_when_schema_exported() -> None:
     assert "title" not in branch
     assert "anyOf" not in branch
     assert "project.default_branch" in branch["description"]
+
+
+def test_leaves_identity_keys_optional_when_schema_exported() -> None:
+    project = read_shipped_schema()["$defs"]["Project"]
+    patterns = {
+        "branch_prefix": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*/$",
+        "author_name": "^[^\\x00-\\x1f\\x7f]+$",
+        "author_email": "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$",
+    }
+
+    assert project["required"] == ["name", "hub_repo"]
+    for key, pattern in patterns.items():
+        node = project["properties"][key]
+        assert node["type"] == "string", key
+        assert node["pattern"] == pattern, key
+        assert "default" not in node, key
+        assert "title" not in node, key
+        assert "anyOf" not in node, key
+        assert "hub.local.json" in node["description"], key
+    assert project["properties"]["author_name"]["minLength"] == 1

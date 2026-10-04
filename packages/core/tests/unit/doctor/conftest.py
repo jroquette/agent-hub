@@ -11,7 +11,10 @@ from agent_hub.core.doctor.snapshot import (
     LockState,
     RepoFiles,
 )
+from agent_hub.core.hub_config.effective_identity import Sourced
+from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, LinkEntry, TreeEntry
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.testing.builders import a_hub_document
@@ -34,7 +37,8 @@ def snapshot_of() -> SnapshotFactory:
     dir to its checkout's regular files by bytes, ``None`` when it has no checkout; keyed by repo
     dir, ``repo_links`` adds links by target, ``repo_listed`` replaces the checkout's listing
     (every file and link given, sorted, by default) and ``repo_problems`` says why it could not
-    all be listed or read.
+    all be listed or read. ``local`` is the developer's ``hub.local.json`` or its problems,
+    ``branch_prefix`` the effective prefix the run resolved (``None`` when it resolved none).
     """
 
     def build(
@@ -52,6 +56,8 @@ def snapshot_of() -> SnapshotFactory:
         repo_links: Mapping[str, Mapping[str, str]] | None = None,
         repo_listed: Mapping[str, tuple[str, ...]] | None = None,
         repo_problems: Mapping[str, str] | None = None,
+        local: LocalConfig | tuple[ConfigProblem, ...] | None = None,
+        branch_prefix: Sourced | None = None,
     ) -> DoctorSnapshot:
         found: dict[str, TreeEntry] = {
             path: FileEntry(executable=False, content=content)
@@ -86,6 +92,8 @@ def snapshot_of() -> SnapshotFactory:
                 )
                 for repo, files in (repos or {}).items()
             ),
+            local=LocalConfig() if local is None else local,
+            branch_prefix=branch_prefix,
         )
 
     return build

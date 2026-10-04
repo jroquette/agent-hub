@@ -18,6 +18,7 @@ from typing import Any
 
 import pytest
 
+from agent_hub.core.hub_config.local_config import LOCAL_FILE, LOCAL_FILE_MAX_BYTES
 from agent_hub.core.hub_config.model import (
     Doctor,
     Guard,
@@ -49,6 +50,14 @@ OPTIONAL_PATHS: tuple[tuple[str | int, ...], ...] = (
 # Optional keys with no model default: absent means the value is inherited, so the reader's
 # effective value is compared with ``HubConfig.default_branch_for``, not with the model dump.
 INHERITED_PATHS: tuple[tuple[str | int, ...], ...] = (("repos", 0, "default_branch"),)
+
+# Optional keys resolved per developer (hub.local.json, else hub.json, else git config): the
+# CLI and the hooks resolve them alike, which the shared identity cases check.
+LOCAL_PATHS: tuple[tuple[str | int, ...], ...] = (
+    ("project", "branch_prefix"),
+    ("project", "author_name"),
+    ("project", "author_email"),
+)
 
 # argv: mode, reader file, hub.json path, checks (JSON: name -> [actual, expected] expressions,
 # evaluated with the reader's names and ``hub_file``). Modes: ``import`` (a sibling import, as the
@@ -218,7 +227,8 @@ def test_matches_schema_defaults_when_hub_json_minimal(
 
 
 def test_lists_every_optional_field_when_model_inspected() -> None:
-    """``OPTIONAL_PATHS`` and ``INHERITED_PATHS`` list every optional key: a new one fails here."""
+    """``OPTIONAL_PATHS``, ``INHERITED_PATHS`` and ``LOCAL_PATHS`` list every optional key: a new
+    one fails here."""
     owners: tuple[tuple[tuple[str | int, ...], type[Any]], ...] = (
         ((), HubConfig),
         (("platform",), Platform),
@@ -237,7 +247,7 @@ def test_lists_every_optional_field_when_model_inspected() -> None:
     # ``$schema`` is an editor hint, not a default; ``guard`` and ``doctor`` are listed per field.
     containers = {("$schema",), ("guard",), ("doctor",)}
 
-    assert defaulted - containers == set(OPTIONAL_PATHS) | set(INHERITED_PATHS)
+    assert defaulted - containers == set(OPTIONAL_PATHS) | set(INHERITED_PATHS) | set(LOCAL_PATHS)
 
 
 def repo_branches(hub_file: Mapping[str, Any]) -> dict[str, str]:
@@ -378,8 +388,9 @@ def character_set(character_class: str) -> frozenset[str]:
     )
 
 
+@pytest.mark.parametrize("pattern_name", ["BRANCH_NAME", "BRANCH_PREFIX"])
 def test_keeps_separator_out_of_segment_when_branch_pattern_parsed(
-    reader_file: Path, monkeypatch: pytest.MonkeyPatch
+    reader_file: Path, monkeypatch: pytest.MonkeyPatch, *, pattern_name: str
 ) -> None:
     """A separator character that is also a segment one makes ``re`` backtrack exponentially."""
     spec = importlib.util.spec_from_file_location("hub_stdlib_reader_pattern", reader_file)
@@ -389,7 +400,7 @@ def test_keeps_separator_out_of_segment_when_branch_pattern_parsed(
     # The reader's dataclasses look their module up while the class is built.
     monkeypatch.setitem(sys.modules, spec.name, reader)
     spec.loader.exec_module(reader)
-    classes = re.findall(r"(\[[^\]]+\])(\+?)", reader.BRANCH_NAME.pattern)
+    classes = re.findall(r"(\[[^\]]+\])(\+?)", getattr(reader, pattern_name).pattern)
     segment = {cls for cls, repeated in classes if repeated}
     separator = {cls for cls, repeated in classes if not repeated}
     assert segment
@@ -679,3 +690,568 @@ def test_imports_every_rendered_module_when_run_on_python39(
 
         assert imported == names, folder
     assert set(folders) == {"plugin/demo/hooks", "plugin/hub-workflow/hooks", "scripts"}
+
+
+# argv: hub.json path, hub.local.json path, git's answers (JSON: config key -> output), the values
+# to ask (JSON list of ``ASKED`` names), and a race while the local file loads (``grown``,
+# ``swapped`` or ``""``). Loads both files with the reader and resolves the asked values through
+# ``EffectiveValues``, each twice (the second call must not run git again). Prints the local file,
+# each asked value and the git keys asked in order.
+LOCAL_READ = """
+import dataclasses, json, os
+import stdlib_reader as reader
+hub_json, local_json, answers, ask, race = sys.argv[1:6]
+answers = json.loads(answers)
+real = (os.fstat, os.path.getsize, os.path.isfile)
+if race == "grown":
+    # Every size check sees one byte: the file grew after it was checked.
+    os.fstat = lambda fd: os.stat_result(real[0](fd)[:6] + (1,) + real[0](fd)[7:10])
+    os.path.getsize = lambda path: 1
+elif race == "swapped":
+    # Every regular-file check by path passes: a FIFO took the file's place after it.
+    os.path.isfile = lambda path: True
+asked = []
+def git_value(key):
+    asked.append(key)
+    return answers.get(key, "")
+local_file = reader.load_local_file(local_json)
+os.fstat, os.path.getsize, os.path.isfile = real
+values = reader.EffectiveValues(reader.load_hub_file(hub_json), local_file, git_value)
+getters = {
+    "project.branch_prefix": values.branch_prefix,
+    "project.author_name": values.author_name,
+    "project.author_email": values.author_email,
+    "tracker.transport": lambda: values.transport,
+    "prefix_source": values.prefix_source,
+}
+effective = {}
+for name in json.loads(ask):
+    effective[name] = getters[name]()
+    assert getters[name]() == effective[name], name
+print(json.dumps({
+    "local_file": dataclasses.asdict(local_file),
+    "effective": effective,
+    "git": asked,
+}))
+"""
+
+ASKED = (
+    "project.branch_prefix",
+    "project.author_name",
+    "project.author_email",
+    "tracker.transport",
+    "prefix_source",
+)
+NO_LOCAL_FILE = {"branch_prefix": "", "author_name": "", "author_email": "", "transport": ""}
+HUB_VALUES = {
+    "project.branch_prefix": "jdoe/",
+    "project.author_name": "Jane Doe",
+    "project.author_email": "jane@example.com",
+    "tracker.transport": "api",
+    "prefix_source": "hub.json",
+}
+GIT_ANSWERS = {"user.name": "Jane Roe", "user.email": "jane.doe@example.com"}
+IDENTITY_KEYS = ("branch_prefix", "author_name", "author_email")
+
+
+type LocalReader = Callable[..., Any]
+
+
+@pytest.fixture
+def local_read(reader_file: Path, run_python: Callable[..., Any]) -> LocalReader:
+    """Run ``LOCAL_READ`` on an interpreter: the local file and the effective values it gives."""
+
+    def run(
+        python: str,
+        hub_json: Path,
+        local_json: Path,
+        *,
+        git: Mapping[str, str] | None = None,
+        ask: tuple[str, ...] = ASKED,
+        race: str = "",
+        timeout: float | None = None,
+    ) -> Any:
+        args = [
+            str(hub_json),
+            str(local_json),
+            json.dumps(dict(git or {})),
+            json.dumps(ask),
+            race,
+        ]
+        limit = {} if timeout is None else {"timeout": timeout}
+        return run_python(python, LOCAL_READ, path=reader_file.parent, args=args, **limit)
+
+    return run
+
+
+def a_team_document(**identity: str) -> dict[str, Any]:
+    """``a_hub_document`` whose ``project`` sets only the identity keys given."""
+    document = a_hub_document()
+    for key in IDENTITY_KEYS:
+        document["project"].pop(key)
+    document["project"].update(identity)
+    return document
+
+
+def write_local_file(directory: Path, document: object) -> Path:
+    path = directory / LOCAL_FILE
+    path.write_text(json.dumps(document), encoding="utf-8")
+    return path
+
+
+def a_full_local_document() -> dict[str, Any]:
+    return {
+        "_note": "mine",
+        "project": {
+            "_note": "mine",
+            "branch_prefix": "me/",
+            "author_name": "Jane Roe",
+            "author_email": "me@example.com",
+        },
+        "tracker": {"_note": "mine", "transport": "mcp"},
+    }
+
+
+FULL_LOCAL_FILE = {
+    "branch_prefix": "me/",
+    "author_name": "Jane Roe",
+    "author_email": "me@example.com",
+    "transport": "mcp",
+}
+
+
+def padded_local_text(size: int) -> str:
+    """A valid local file setting ``branch_prefix`` to ``me/``, exactly ``size`` bytes long."""
+    head, tail = '{"project": {"branch_prefix": "me/"}, "_note": "', '"}'
+    return head + "x" * (size - len(head) - len(tail)) + tail
+
+
+def test_reads_local_values_when_local_file_valid(
+    tmp_path: Path, hook_python: str, local_read: LocalReader
+) -> None:
+    hub_json = write_hub_file(tmp_path, a_hub_document())
+    local_json = write_local_file(tmp_path, a_full_local_document())
+
+    loaded = local_read(hook_python, hub_json, local_json, git=GIT_ANSWERS)
+
+    assert loaded["local_file"] == FULL_LOCAL_FILE
+    assert loaded["effective"] == {
+        "project.branch_prefix": "me/",
+        "project.author_name": "Jane Roe",
+        "project.author_email": "me@example.com",
+        "tracker.transport": "mcp",
+        "prefix_source": "hub.local.json",
+    }
+    assert loaded["git"] == []
+
+
+def test_reads_local_file_when_size_at_cap(
+    tmp_path: Path, hook_python: str, local_read: LocalReader
+) -> None:
+    hub_json = write_hub_file(tmp_path, a_hub_document())
+    local_json = tmp_path / LOCAL_FILE
+    local_json.write_text(padded_local_text(LOCAL_FILE_MAX_BYTES), encoding="utf-8")
+    assert local_json.stat().st_size == LOCAL_FILE_MAX_BYTES
+
+    loaded = local_read(hook_python, hub_json, local_json)
+
+    assert loaded["local_file"] == NO_LOCAL_FILE | {"branch_prefix": "me/"}
+
+
+def write_oversize(path: Path) -> None:
+    path.write_text(padded_local_text(LOCAL_FILE_MAX_BYTES + 1), encoding="utf-8")
+
+
+def write_local_invalid_utf8(path: Path) -> None:
+    path.write_bytes(b'{"project": {"branch_prefix": "me/", "author_name": "\xff"}}')
+
+
+def write_local_not_json(path: Path) -> None:
+    path.write_text('{"project": {"branch_prefix": "me/"', encoding="utf-8")
+
+
+def write_local_array(path: Path) -> None:
+    path.write_text(json.dumps([a_full_local_document()]), encoding="utf-8")
+
+
+def write_local_deep_nesting(path: Path) -> None:
+    path.write_text('{"project": ' + "[" * 10_000, encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "make_local_file",
+    [
+        leave_missing,
+        write_local_not_json,
+        write_local_array,
+        make_fifo,
+        make_directory,
+        write_oversize,
+        write_local_invalid_utf8,
+        write_local_deep_nesting,
+    ],
+    ids=["missing", "not-json", "array", "fifo", "directory", "oversize", "bad-utf8", "deep"],
+)
+def test_ignores_local_file_when_unreadable(
+    tmp_path: Path,
+    *,
+    hook_python: str,
+    local_read: LocalReader,
+    make_local_file: Callable[[Path], None],
+) -> None:
+    hub_json = write_hub_file(tmp_path, a_hub_document())
+    local_json = tmp_path / LOCAL_FILE
+    make_local_file(local_json)
+
+    # ``local_read`` fails the test when the child exits non-zero, and a FIFO read would block
+    # until the timeout: the read returned and never raised.
+    loaded = local_read(hook_python, hub_json, local_json, git=GIT_ANSWERS, timeout=10)
+
+    assert loaded["local_file"] == NO_LOCAL_FILE
+    assert loaded["effective"] == HUB_VALUES
+    assert loaded["git"] == []
+
+
+@pytest.mark.parametrize(
+    ("race", "make_local_file"), [("grown", write_oversize), ("swapped", make_fifo)]
+)
+def test_ignores_local_file_when_changed_after_check(
+    tmp_path: Path,
+    *,
+    hook_python: str,
+    local_read: LocalReader,
+    race: str,
+    make_local_file: Callable[[Path], None],
+) -> None:
+    hub_json = write_hub_file(tmp_path, a_hub_document())
+    local_json = tmp_path / LOCAL_FILE
+    make_local_file(local_json)
+
+    # What was opened is what counts: a FIFO read would block until the timeout.
+    loaded = local_read(hook_python, hub_json, local_json, race=race, timeout=10)
+
+    assert loaded["local_file"] == NO_LOCAL_FILE
+    assert loaded["effective"] == HUB_VALUES
+
+
+@pytest.mark.parametrize(
+    ("section", "key", "value", "local_field"),
+    [
+        ("project", "branch_prefix", 7, "branch_prefix"),
+        ("project", "branch_prefix", "", "branch_prefix"),
+        ("project", "branch_prefix", "-x/", "branch_prefix"),
+        ("project", "branch_prefix", "me/\n", "branch_prefix"),
+        ("project", "branch_prefix", None, "branch_prefix"),
+        ("tracker", "transport", "ftp", "transport"),
+        ("tracker", "transport", "MCP", "transport"),
+        ("project", "author_email", "x", "author_email"),
+        ("project", "author_email", "Jane <j@example.com>", "author_email"),
+        ("project", "author_name", "", "author_name"),
+        ("project", "author_name", "a\u0007", "author_name"),
+        ("project", "author_name", ["Jane"], "author_name"),
+        ("project", "author_name", "\ud800x", "author_name"),
+    ],
+    ids=[
+        "prefix-int",
+        "prefix-empty",
+        "prefix-dash",
+        "prefix-newline",
+        "prefix-null",
+        "transport-unknown",
+        "transport-case",
+        "email-no-at",
+        "email-named",
+        "name-empty",
+        "name-control",
+        "name-list",
+        "name-lone-surrogate",
+    ],
+)
+def test_skips_local_key_when_wrong_type_empty_or_off_pattern(
+    tmp_path: Path,
+    *,
+    hook_python: str,
+    local_read: LocalReader,
+    section: str,
+    key: str,
+    value: object,
+    local_field: str,
+) -> None:
+    document = a_full_local_document()
+    document[section][key] = value
+    hub_json = write_hub_file(tmp_path, a_hub_document())
+    local_json = write_local_file(tmp_path, document)
+
+    loaded = local_read(hook_python, hub_json, local_json, git=GIT_ANSWERS)
+
+    assert loaded["local_file"] == FULL_LOCAL_FILE | {local_field: ""}
+    path = f"{section}.{key}"
+    expected = {
+        "project.branch_prefix": "me/",
+        "project.author_name": "Jane Roe",
+        "project.author_email": "me@example.com",
+        "tracker.transport": "mcp",
+        "prefix_source": "hub.local.json",
+    } | {path: HUB_VALUES[path]}
+    if path == "project.branch_prefix":
+        expected["prefix_source"] = "hub.json"
+    assert loaded["effective"] == expected
+    assert loaded["git"] == []
+
+
+def test_ignores_unknown_local_keys_when_present(
+    tmp_path: Path, hook_python: str, local_read: LocalReader
+) -> None:
+    document = {
+        "_note": "mine",
+        "guard": {"deny_paths": ["x"]},
+        "repos": [{"dir": "x"}],
+        "project": {"default_branch": "x", "name": "x", "branch_prefix": "me/"},
+        "tracker": {"team": "X"},
+    }
+    hub_json = write_hub_file(tmp_path, a_hub_document())
+    local_json = write_local_file(tmp_path, document)
+
+    loaded = local_read(hook_python, hub_json, local_json)
+
+    assert loaded["local_file"] == NO_LOCAL_FILE | {"branch_prefix": "me/"}
+    assert loaded["effective"] == HUB_VALUES | {
+        "project.branch_prefix": "me/",
+        "prefix_source": "hub.local.json",
+    }
+
+
+def effective(prefix: str, name: str, email: str, *, source: str) -> dict[str, str]:
+    """The asked values of a hub whose transport is the default."""
+    return dict(zip(ASKED, (prefix, name, email, "api", source), strict=True))
+
+
+@pytest.mark.parametrize(
+    ("hub_identity", "local_project", "git", "expected", "git_asked"),
+    [
+        (
+            dict(zip(IDENTITY_KEYS, ("jdoe/", "Jane Doe", "jane@example.com"), strict=True)),
+            None,
+            GIT_ANSWERS,
+            effective("jdoe/", "Jane Doe", "jane@example.com", source="hub.json"),
+            [],
+        ),
+        (
+            dict(zip(IDENTITY_KEYS, ("jdoe/", "Jane Doe", "jane@example.com"), strict=True)),
+            {"author_email": "me@example.com"},
+            GIT_ANSWERS,
+            effective("jdoe/", "Jane Doe", "me@example.com", source="hub.json"),
+            [],
+        ),
+        (
+            {},
+            None,
+            GIT_ANSWERS,
+            effective("jane.doe/", "Jane Roe", "jane.doe@example.com", source="derived"),
+            ["user.email", "user.name"],
+        ),
+        (
+            {},
+            {"author_email": "me@example.com"},
+            GIT_ANSWERS,
+            effective("me/", "Jane Roe", "me@example.com", source="derived"),
+            ["user.name"],
+        ),
+        (
+            {"author_email": "jane@example.com"},
+            None,
+            GIT_ANSWERS,
+            effective("jane/", "Jane Roe", "jane@example.com", source="derived"),
+            ["user.name"],
+        ),
+        (
+            {"author_name": "Jane Doe"},
+            None,
+            GIT_ANSWERS,
+            effective("jane.doe/", "Jane Doe", "jane.doe@example.com", source="derived"),
+            ["user.email"],
+        ),
+        (
+            {},
+            {"branch_prefix": "me/"},
+            GIT_ANSWERS,
+            effective("me/", "Jane Roe", "jane.doe@example.com", source="hub.local.json"),
+            ["user.name", "user.email"],
+        ),
+        (
+            {},
+            None,
+            {"user.name": "Jane Roe", "user.email": "j+x@example.com"},
+            effective("", "Jane Roe", "j+x@example.com", source=""),
+            ["user.email", "user.name"],
+        ),
+        (
+            {},
+            None,
+            {"user.email": ".a@example.com"},
+            effective("", "", ".a@example.com", source=""),
+            ["user.email", "user.name"],
+        ),
+        (
+            {},
+            None,
+            {"user.email": "jé@example.com"},
+            effective("", "", "", source=""),
+            ["user.email", "user.name"],
+        ),
+        (
+            {},
+            None,
+            {"user.name": "Jane\u0007", "user.email": "Jane <jane@example.com>"},
+            effective("", "", "", source=""),
+            ["user.email", "user.name"],
+        ),
+        (
+            {},
+            None,
+            {"user.name": "Jane Roe ", "user.email": "jane.doe@example.com "},
+            effective("", "Jane Roe ", "", source=""),
+            ["user.email", "user.name"],
+        ),
+        (
+            {},
+            None,
+            {"user.name": "Jane \ud800", "user.email": "jane.doe@example.com"},
+            effective("jane.doe/", "", "jane.doe@example.com", source="derived"),
+            ["user.email", "user.name"],
+        ),
+        (
+            {},
+            None,
+            {"user.name": "Jane Roe\n", "user.email": "jane.doe@example.com\n"},
+            effective("jane.doe/", "Jane Roe", "jane.doe@example.com", source="derived"),
+            ["user.email", "user.name"],
+        ),
+        (
+            {},
+            None,
+            {"user.name": "Jane Roe\n\n", "user.email": "jane.doe@example.com\n\n"},
+            effective("", "", "", source=""),
+            ["user.email", "user.name"],
+        ),
+        (
+            {},
+            None,
+            {},
+            effective("", "", "", source=""),
+            ["user.email", "user.name"],
+        ),
+    ],
+    ids=[
+        "hub-sets-all",
+        "local-email-keeps-hub-prefix",
+        "team-git",
+        "team-local-email-derives",
+        "team-hub-email-derives",
+        "team-mixed",
+        "team-local-prefix",
+        "derived-plus",
+        "derived-leading-dot",
+        "git-email-non-ascii",
+        "git-bad-shape",
+        "git-spaced",
+        "git-name-lone-surrogate",
+        "git-one-newline",
+        "git-two-newlines",
+        "team-no-source",
+    ],
+)
+def test_resolves_effective_values_when_git_answers(
+    tmp_path: Path,
+    *,
+    hook_python: str,
+    local_read: LocalReader,
+    hub_identity: dict[str, str],
+    local_project: dict[str, str] | None,
+    git: dict[str, str],
+    expected: dict[str, str],
+    git_asked: list[str],
+) -> None:
+    hub_json = write_hub_file(tmp_path, a_team_document(**hub_identity))
+    local_json = tmp_path / LOCAL_FILE
+    if local_project is not None:
+        write_local_file(tmp_path, {"project": local_project})
+
+    loaded = local_read(hook_python, hub_json, local_json, git=git)
+
+    assert loaded["effective"] == expected
+    assert loaded["git"] == git_asked
+
+
+@pytest.mark.parametrize(
+    ("hub_identity", "git_asked"),
+    [
+        ({"branch_prefix": "jdoe/"}, []),
+        ({"author_email": "jane@example.com"}, []),
+        ({"author_name": "Jane Doe"}, ["user.email"]),
+    ],
+    ids=["hub-prefix", "hub-email", "team"],
+)
+def test_asks_git_email_only_when_prefix_needs_it(
+    tmp_path: Path,
+    *,
+    hook_python: str,
+    local_read: LocalReader,
+    hub_identity: dict[str, str],
+    git_asked: list[str],
+) -> None:
+    hub_json = write_hub_file(tmp_path, a_team_document(**hub_identity))
+
+    ask = ("project.branch_prefix", "prefix_source")
+    loaded = local_read(hook_python, hub_json, tmp_path / LOCAL_FILE, git=GIT_ANSWERS, ask=ask)
+
+    assert loaded["git"] == git_asked
+
+
+def test_uses_model_patterns_when_source_checked(
+    tmp_path: Path, hook_python: str, read: Reader
+) -> None:
+    properties = Project.model_json_schema()["properties"]
+    patterns = {
+        "BRANCH_PREFIX": properties["branch_prefix"]["pattern"],
+        "EMAIL_ADDRESS": properties["author_email"]["pattern"],
+        "FREE_STRING": properties["author_name"]["pattern"],
+    }
+    assert all(p.startswith("^") and p.endswith("$") for p in patterns.values())
+    path = write_hub_file(tmp_path, a_hub_document())
+
+    checks = {name: (f"{name}.pattern", repr(p[1:-1])) for name, p in patterns.items()}
+    loaded = read(hook_python, path, checks=checks)
+
+    assert loaded["equal"] == dict.fromkeys(patterns, True)
+
+
+def test_uses_core_local_file_when_source_checked(
+    tmp_path: Path, hook_python: str, read: Reader
+) -> None:
+    path = write_hub_file(tmp_path, a_hub_document())
+
+    checks = {
+        "name": ("LOCAL_FILE", repr(LOCAL_FILE)),
+        "cap": ("LOCAL_FILE_MAX_BYTES", repr(LOCAL_FILE_MAX_BYTES)),
+    }
+    loaded = read(hook_python, path, checks=checks)
+
+    assert loaded["equal"] == {"name": True, "cap": True}
+
+
+def test_keeps_linear_time_when_prefix_hostile(
+    tmp_path: Path, hook_python: str, local_read: LocalReader
+) -> None:
+    """Backtracking bait gets its exact result; the pattern's shape, not a clock, proves it linear
+    (``test_keeps_separator_out_of_segment_when_branch_pattern_parsed``)."""
+    hub_json = write_hub_file(tmp_path, a_team_document())
+    local_json = write_local_file(tmp_path, {"project": {"branch_prefix": "_" * 40 + "!/"}})
+    git = {"user.email": "_" * 40 + "%@example.com"}
+
+    loaded = local_read(hook_python, hub_json, local_json, git=git)
+
+    assert loaded["local_file"] == NO_LOCAL_FILE
+    assert loaded["effective"]["project.branch_prefix"] == ""
+    assert loaded["effective"]["project.author_email"] == "_" * 40 + "%@example.com"
+    assert loaded["effective"]["prefix_source"] == ""

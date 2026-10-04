@@ -371,7 +371,9 @@ Hooks are small scripts Claude Code runs on its own at fixed moments; you never 
 Everything else goes through Claude Code's normal permission rules.
 
 **Configuration.** The lists come from `hub.json`: `guard.ask_before_edit`, `guard.deny_paths` and `guard.deny_hosts`,
-plus `project.default_branch`, each `repos[].default_branch` and `project.branch_prefix`. An entry `@hub/<path>` means
+plus `project.default_branch` and each `repos[].default_branch`. The branch hint's prefix is the developer's
+(`hub.local.json`, else `hub.json`, else git config; see [developer-identity](docs/design/developer-identity.md)).
+An entry `@hub/<path>` means
 `<path>` inside the hub. A `hub.json` named by `$HUB_CONFIG` can only add entries to these lists, never remove them.
 
 **Your own rules.** The seeded `plugin/<project>/hooks/project_guard.py` defines `check(event, cfg)`, which returns
@@ -533,9 +535,9 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `platform.version` | yes | | The agent-hub release the hub runs (`X.Y.Z`) |
 | `project.name` | yes | | Kebab-case project name |
 | `project.hub_repo` | yes | | GitHub `owner/name` of the hub |
-| `project.branch_prefix` | yes | | Prefix of every branch, e.g. `jdoe/` |
+| `project.branch_prefix` | no | per developer | Prefix of every branch, e.g. `jdoe/`; leave it out on a team hub (see `hub.local.json` below) |
 | `project.default_branch` | no | `main` | Base of worktrees unless a repo sets its own; the guard blocks pushes to it |
-| `project.author_name`, `project.author_email` | yes | | Author of commits and PRs |
+| `project.author_name`, `project.author_email` | no | per developer | Author of commits and PRs; leave them out on a team hub (see `hub.local.json` below) |
 | `tracker.kind` | yes | | Task tracker; only `linear` today |
 | `tracker.team` | yes | | Tracker team key, e.g. `DEMO` |
 | `tracker.ready_label` | no | `agent-ready` | Label of issues an agent may pick up |
@@ -581,6 +583,27 @@ Example (synthetic project):
 > [!NOTE]
 > The comments above are for reading only: `hub.json` is plain JSON and must not contain comments.
 
+### `hub.local.json`
+
+On a hub shared by a team, leave the identity out of `hub.json`: each developer sets their own in a `hub.local.json`
+at the root of the hub's main checkout. It is never committed, and only the CLI and the hooks read it, never `hub sync`.
+
+```json
+{"project": {"branch_prefix": "jane/", "author_name": "Jane Roe", "author_email": "jane@example.com"},
+ "tracker": {"transport": "mcp"}}
+```
+
+- **Keys:** only `project.branch_prefix`, `project.author_name`, `project.author_email` and `tracker.transport`, with
+  `hub.json`'s rules, plus `_` comment keys; at most 64 KiB. Any other key is an error (`hub doctor` reports it).
+- **Precedence, per key:** `hub.local.json`, else `hub.json`, else the hub repo's `git config user.name`/`user.email`.
+  With no prefix in either file, the prefix is your email's local part plus `/` (`jane@example.com` gives `jane/`).
+  With none at all, `hub worktree` and `hub run` refuse and name the three sources.
+- **Existing hubs:** `hub init` writes `hub.local.json` into `.gitignore`, but `.gitignore` is seeded, so `hub sync`
+  never adds it. Add the line by hand: `echo hub.local.json >> .gitignore`.
+- Nothing in it relaxes the guard: it cannot add or remove a guarded path, host, protected branch or repo.
+
+Contract: [docs/design/developer-identity.md](docs/design/developer-identity.md).
+
 ### Environment variables
 
 | Name | Required | Default | Description |
@@ -588,6 +611,7 @@ Example (synthetic project):
 | `LINEAR_API_KEY` | for tracker calls (none in 0.4.0) | | Linear API key, read at call time; never stored in `hub.json` |
 | `AGENT_HUB_DB` | no | `$XDG_DATA_HOME/agent-hub/agent-hub.db`, else `~/.local/share/agent-hub/agent-hub.db` | Event database of `hub collect`; `--db` overrides it |
 | `XDG_DATA_HOME` | no | | Used for the default database path when it is absolute |
+| `HUB_AUTHOR_NAME`, `HUB_AUTHOR_EMAIL` | no | | Module `cloud`: your commit author in a cloud session, read by `scripts/cloud-setup.sh` only when `hub.json` names no author; written to the repo-local git config of the hub and each repo, never the global one (unset: a `WARN`, and commits carry the container's identity) |
 | `AGENT_HUB_ROOT` | no | the current folder | The hub folder for `hub worktree`, `hub brief` and `hub agent` (`hub sync` and `hub doctor` use the current folder); the `./hub` shim sets it for you |
 
 ## 🧱 Technical reference

@@ -266,6 +266,19 @@ class TestRunWorkspace:
         assert "PATH" in logged[0]["env"]
         assert str(run_workspace.bin) not in json.dumps(logged[0]["env"])
 
+    def test_keeps_url_rewrite_when_git_identity_set_twice(self, run_workspace: Workspace) -> None:
+        workspace = run_workspace.workspace
+        clone = workspace.ws / "demo-api"
+
+        workspace.git_identity("Jane Roe", "jane@example.com")
+        workspace.git_identity("Jane Doe", "jane.doe@example.com")
+
+        email = run_tool("git", "config", "--get", "user.email", cwd=clone)
+        remote = run_tool("git", "ls-remote", "origin", "refs/heads/trunk", cwd=clone)
+        assert email.stdout == "jane.doe@example.com\n"
+        assert remote.returncode == 0, remote.stderr
+        assert remote.stdout.split() == [workspace.origin_head("demo-api"), "refs/heads/trunk"]
+
 
 KEY_VARIABLE = "LINEAR_API_KEY"
 PUSH_OPTIONS = (
@@ -584,6 +597,140 @@ class TestTransport:
             "would call: move_state",
             "would call: comment",
         ]
+
+
+# The four lines of the no-prefix usage error, as shown once Rich's box is stripped.
+NO_PREFIX_LINES = (
+    "no branch prefix for this developer; set one of:",
+    "hub.local.json → project.branch_prefix",
+    "hub.json → project.branch_prefix",
+    "git config user.email in the hub (its local part plus /)",
+)
+HUB_ONLY = (
+    "hub.local.json: guard: set only in hub.json; hub.local.json holds project.branch_prefix,"
+    " author_name, author_email and tracker.transport"
+)
+
+
+@pytest.mark.usefixtures("with_key")
+class TestIdentity:
+    def test_pushes_local_prefix_branch_when_dry_run(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        workspace.write_local(json.dumps({"project": {"branch_prefix": "me/"}}))
+        inject(monkeypatch, run_tracker)
+        worktree = os.path.realpath(workspace.ws / "demo-api") + "/.claude/worktrees/dem-1"
+
+        result = run_command(workspace.hub, "run", "DEM-1", "--repo", "demo-api")
+
+        lines = dry_lines(result)
+        assert lines[3] == (
+            "would run: git -c core.fsmonitor=false -c push.gpgSign=false"
+            f" -c core.hooksPath=/dev/null push --no-verify -u origin me/dem-1   (cwd {worktree})"
+        )
+        assert lines[4].startswith(
+            "would run: gh pr create --repo acme/demo-api --base trunk --head me/dem-1 "
+        )
+
+    @pytest.mark.parametrize(
+        ("document", "line"),
+        [("[]", "hub.local.json: $: must be a JSON object"), ('{"guard": {}}', HUB_ONLY)],
+        ids=["array", "hub-only-key"],
+    )
+    def test_refuses_with_local_lines_when_local_file_invalid(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        spy: Spy,
+        *,
+        document: str,
+        line: str,
+    ) -> None:
+        run_workspace.workspace.write_local(document)
+
+        result = run_command(run_workspace.workspace.hub, "run", "DEM-1", "--repo", "demo-api")
+
+        assert_refused(result, line)
+        assert spy.calls == []
+        for tool in ("claude", "gh", "make"):
+            assert run_workspace.calls(tool) == []
+
+    def test_uses_local_transport_when_local_file_sets_mcp(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        tmp_path: Any,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        hub = run_workspace.workspace.hub
+        set_transport(hub, "api")
+        run_workspace.workspace.write_local(json.dumps({"tracker": {"transport": "mcp"}}))
+        monkeypatch.delenv(KEY_VARIABLE, raising=False)
+        issue = {
+            "id": "DEM-1",
+            "title": "Synthetic MCP issue",
+            "description": RUN_DESCRIPTION,
+            "url": "https://linear.app/demo/issue/DEM-1",
+            "state": "Todo",
+            "labels": ["agent-ready", "demo-api"],
+        }
+        (tmp_path / "issue.json").write_text(json.dumps(issue))
+        monkeypatch.setenv("FAKE_CLAUDE_ISSUE", str(tmp_path / "issue.json"))
+
+        result = run_command(hub, "run", "DEM-1", "--repo", "demo-api")
+
+        lines = dry_lines(result)
+        assert result.stderr == MCP_LINE + "\n"
+        assert "Synthetic MCP issue" in lines[1]
+        (call,) = run_workspace.calls("claude")
+        assert call["tracker"] is True
+        assert KEY_VARIABLE not in call["env"]
+
+    def test_pushes_git_email_prefix_branch_when_team_hub_dry_run(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        workspace.drop_identity()
+        # After run_workspace: the url rewrites of its global config stay included.
+        workspace.git_identity("Jane Roe", "jane@example.com")
+        inject(monkeypatch, run_tracker)
+        worktree = os.path.realpath(workspace.ws / "demo-api") + "/.claude/worktrees/dem-1"
+
+        result = run_command(workspace.hub, "run", "DEM-1", "--repo", "demo-api")
+
+        lines = dry_lines(result)
+        assert lines[3] == (
+            "would run: git -c core.fsmonitor=false -c push.gpgSign=false"
+            f" -c core.hooksPath=/dev/null push --no-verify -u origin jane/dem-1   (cwd {worktree})"
+        )
+        assert lines[4].startswith(
+            "would run: gh pr create --repo acme/demo-api --base trunk --head jane/dem-1 "
+        )
+
+    def test_refuses_when_no_source_sets_prefix(
+        self, run_workspace: Workspace, run_command: CommandRunner, spy: Spy
+    ) -> None:
+        run_workspace.workspace.drop_identity()
+
+        result = run_command(run_workspace.workspace.hub, "run", "DEM-1", "--repo", "demo-api")
+
+        for line in NO_PREFIX_LINES:
+            assert_refused(result, line)
+        assert spy.calls == []
+        for tool in ("claude", "gh", "make"):
+            assert run_workspace.calls(tool) == []
 
 
 SUMMARY = "Adds the synthetic change."

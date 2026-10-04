@@ -74,12 +74,16 @@ class RunOptions:
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class RunChildren:
-    """Where and how one run's children run: the hub, the repo's worktree and its branch."""
+    """Where and how one run's children run: the hub, the repo's worktree and its branch.
+
+    ``branch_prefix`` is the developer's, resolved by the command (``effective_config``).
+    """
 
     config: HubConfig
     hub: Path
     repo: str
     issue_id: str
+    branch_prefix: str
 
     @property
     def workspace(self) -> Path:
@@ -92,7 +96,7 @@ class RunChildren:
 
     @property
     def branch(self) -> str:
-        return f"{self.config.project.branch_prefix}{self.slug}"
+        return f"{self.branch_prefix}{self.slug}"
 
     @property
     def base(self) -> str:

@@ -3,9 +3,9 @@
 The document holds exactly the keys of spec Q-7: ``$schema``, ``schema_version``, the running
 release as the pin, the five ``project`` values, ``tracker`` and ``repos``. Defaults
 (``default_branch``, labels, ``guard``, ``modules``, ``doctor``) are left out, so the file says
-only what the user chose. A value that is still missing is left out too: the model then reports
-it as required, and every missing flag is named in the same run (Q-10). The document is checked
-with ``check_hub_document``, and ``flag_problems`` prints each problem as ``<flag>: <message>``.
+only what the user chose. A value that is still missing is left out too: it is then reported as
+required, and every missing flag is named in the same run (Q-10). The document is checked with
+``check_flag_document``, and ``flag_problems`` prints each problem as ``<flag>: <message>``.
 """
 
 import json
@@ -13,7 +13,10 @@ import re
 from collections.abc import Collection, Sequence
 from typing import Final
 
+from agent_hub.core.hub_config.document_check import check_hub_document
+from agent_hub.core.hub_config.model import HubConfig, Project
 from agent_hub.core.hub_config.problems import ConfigProblem
+from agent_hub.core.hub_config.versions import find_version_problem
 from agent_hub.core.json_form import JsonValue
 
 SCHEMA_URI: Final = "./hub.schema.json"
@@ -28,6 +31,14 @@ REPOS_FLAG: Final = "--repos"
 _REPO_ITEM: Final = re.compile(r"repos\[(?P<index>\d+)\](?:\.(?P<field>.+))?")
 # A ``repos[<i>]`` cited inside a message, such as the item a dir clashes with.
 _CITED_ITEM: Final = re.compile(r"repos\[(?P<index>\d+)\]")
+# Optional in hub.json (a team hub sets none: each developer's come from hub.local.json or git
+# config), but a hub made from flags is one developer's, so ``hub init`` still asks for each.
+IDENTITY_KEYS: Final = ("branch_prefix", "author_name", "author_email")
+_REQUIRED: Final = "Field required"
+# The first key of a JSON path (``repos`` of ``repos[0].dir``, ``$schema``).
+_FIRST_KEY: Final = re.compile(r"[^.\[]+")
+_TOP_KEYS: Final = tuple(field.alias or name for name, field in HubConfig.model_fields.items())
+_PROJECT_KEYS: Final = tuple(Project.model_fields)
 
 
 def document_from_flags(
@@ -63,6 +74,43 @@ def document_from_flags(
         "tracker": _tracker(tracker),
         "repos": [_repo(github) for github in _repo_items(repos)],
     }
+
+
+def check_flag_document(
+    document: dict[str, JsonValue], *, running_version: str
+) -> HubConfig | tuple[ConfigProblem, ...]:
+    """``check_hub_document``, plus ``Field required`` for each identity key the flags left out.
+
+    A version problem stays the only one, as there. The problems keep the model's order: by
+    top-level key, then by ``Project`` field, so the identity lines sit where the model put them
+    when it required the keys.
+    """
+    version_problem = find_version_problem(document, running_version=running_version)
+    if version_problem is not None:
+        return (version_problem,)
+    checked = check_hub_document(document, running_version=running_version)
+    project = document.get("project")
+    missing = [
+        ConfigProblem(f"project.{key}", _REQUIRED)
+        for key in IDENTITY_KEYS
+        if isinstance(project, dict) and key not in project
+    ]
+    if not missing:
+        return checked
+    problems = () if isinstance(checked, HubConfig) else checked
+    return tuple(sorted([*problems, *missing], key=_model_order))
+
+
+def _model_order(problem: ConfigProblem) -> tuple[int, int]:
+    """Where the model validates the problem's key: its top-level key, then its project field."""
+    top = _FIRST_KEY.match(problem.path)
+    if top is None or top[0] not in _TOP_KEYS:
+        return (len(_TOP_KEYS), 0)
+    rest = problem.path[top.end() :]
+    field = _FIRST_KEY.match(rest[1:]) if top[0] == "project" and rest.startswith(".") else None
+    if field is None or field[0] not in _PROJECT_KEYS:
+        return (_TOP_KEYS.index(top[0]), -1)
+    return (_TOP_KEYS.index(top[0]), _PROJECT_KEYS.index(field[0]))
 
 
 def flag_problems(problems: Sequence[ConfigProblem], *, repos: str) -> list[str]:

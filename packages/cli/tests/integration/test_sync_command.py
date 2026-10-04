@@ -20,7 +20,7 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
 from click import unstyle
@@ -40,6 +40,15 @@ type SyncRunner = Callable[..., Result]
 # The conftest's injected I/O error and temp-entry finder.
 type FailOnce = Callable[..., None]
 type TempEntries = Callable[[Path], list[str]]
+
+
+class PathRead(NamedTuple):
+    """The conftest's record of one path a run looked at (``path_reads``)."""
+
+    call: str
+    path: str
+
+
 VERSION = version("agent-hub-cli")
 PINNED_COMMAND = (
     "uvx --from git+https://github.com/jroquette/agent-hub@v0.0.1"
@@ -792,6 +801,61 @@ def test_applies_pending_changes_when_not_checking(
     assert (result.exit_code, result.stderr) == (0, ""), result.output
     assert result.stdout == "restored AGENTS.md\nremoved 1 leftover temporary files\n"
     assert tree_digest(demo_hub) == tree_digest(demo_hub_template)
+
+
+LOCAL_IDENTITY = (
+    '{"project": {"branch_prefix": "me/", "author_name": "Jane Roe",'
+    ' "author_email": "jane.doe@example.com"}, "tracker": {"transport": "mcp"}}\n'
+)
+# A developer's hub.local.json as the test plants it: valid, malformed or a FIFO.
+LOCAL_FILES: dict[str, Callable[[Path], None]] = {
+    "valid": lambda path: path.write_text(LOCAL_IDENTITY, encoding="utf-8"),
+    "malformed": lambda path: path.write_text("[", encoding="utf-8"),
+    "fifo": os.mkfifo,
+}
+
+
+@pytest.mark.usefixtures("alarm")
+@pytest.mark.parametrize("local", list(LOCAL_FILES))
+def test_renders_same_bytes_when_local_file_and_git_identity_present(
+    tmp_path: Path,
+    demo_hub_template: Path,
+    run_sync: SyncRunner,
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    tree_digest: TreeDigest,
+    path_reads: list[PathRead],
+    local: str,
+) -> None:
+    # The render reads hub.json only: never hub.local.json or git (AC-65.6).
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    plain = tmp_path / "plain"
+    shutil.copytree(demo_hub_template, plain, symlinks=True)
+    make_pending(plain, _restored)
+    assert run_sync(plain).exit_code == 0
+    expected = tree_digest(plain)
+    hub = tmp_path / "hub"
+    shutil.copytree(demo_hub_template, hub, symlinks=True)
+    make_pending(hub, _restored)
+    LOCAL_FILES[local](hub / "hub.local.json")
+    gitconfig = tmp_path / "gitconfig"
+    gitconfig.write_text("[user]\n\tname = Jane Roe\n\temail = jane.doe@example.com\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(gitconfig))
+    planted = tree_digest(hub / "hub.local.json")
+    path_reads.clear()
+
+    result = run_sync(hub)
+
+    reads = list(path_reads)
+    assert (result.exit_code, result.stderr) == (0, ""), result.output
+    assert result.stdout == "restored AGENTS.md\n"
+    assert tree_digest(hub / "hub.local.json") == planted
+    after = tree_digest(hub)
+    del after["hub.local.json"]
+    assert after == expected
+    assert [read for read in reads if read.path.endswith("hub.local.json")] == []
+    assert [read for read in reads if read.call == "Popen"] == []
 
 
 @pytest.mark.parametrize("case", ["bit", "link"])

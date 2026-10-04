@@ -3,14 +3,17 @@
 The pipeline of the AGH-11 spec, in the current folder (its real path, taken once, no walk-up):
 an ``--only`` id that is no rule at all is a usage error (exit 2) before anything is read; no
 ``hub.json`` entry in the folder (a dangling link counts as one) exits 2 saying it is not a hub.
-Then ``hub.json`` is read once into its config, or why it cannot be used: on a failed config
-only ``config.schema`` and ``platform.version`` run, and no other file is read. Otherwise the
+Then ``hub.json`` is read once into its config, or why it cannot be used, and the developer's
+``hub.local.json`` from the hub's main checkout (``local_home``): on a failed config only
+``config.schema`` and ``platform.version`` run, and no other hub file is read. Otherwise the
 selection (``doctor.rules``, ``modules`` and ``--only``; a refusal exits 2, a note goes to
 stderr), then ``hub.lock`` when a selected rule reads it, and the hub's files the selected
 rules need (the lock's managed paths among them), read without following links (git runs only
 when a rule reads the listing), the release's base hooks block when a rule reads it (built
-from the installed generator, never by a render), and each repo checkout at ``../<dir>`` when a
-rule reads the repos (its real path, taken once; inside it nothing is followed). The findings
+from the installed generator, never by a render), each repo checkout at ``../<dir>`` when a
+rule reads the repos (its real path, taken once; inside it nothing is followed), and the
+developer's branch prefix when a rule reads it and the local file is valid (``git config`` runs
+in the main checkout only when no file sets the prefix). The findings
 go to stdout as lines and totals, or as one JSON object with ``--json``; the exit is 1 when one
 is an error, else 0.
 """
@@ -25,8 +28,16 @@ import typer
 
 from agent_hub.cli.command_exits import root_or_exit
 from agent_hub.cli.doctor_report import report_json, report_lines
-from agent_hub.cli.hub_config_reader import DISTRIBUTION, FILE_LABEL, read_hub_bytes
+from agent_hub.cli.effective_config import git_identity_reader
+from agent_hub.cli.hub_config_reader import (
+    DISTRIBUTION,
+    FILE_LABEL,
+    read_hub_bytes,
+    read_local_json,
+)
+from agent_hub.cli.hub_root import local_home
 from agent_hub.cli.init_report import shown_path
+from agent_hub.cli.run_children import SESSION_HIDDEN, without
 from agent_hub.core.doctor.config_rules import config_state
 from agent_hub.core.doctor.finding import LISTING_READS, Read
 from agent_hub.core.doctor.lock_rules import lock_paths, lock_state
@@ -47,7 +58,14 @@ from agent_hub.core.doctor.snapshot import (
     hub_paths,
 )
 from agent_hub.core.hub_config.doctor_rules import RULE_IDS
+from agent_hub.core.hub_config.effective_identity import (
+    IdentityValues,
+    Sourced,
+    resolve_branch_prefix,
+)
+from agent_hub.core.hub_config.local_config import LOCAL_FILE, LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.hub_files.hub_lock import HUB_LOCK_PATH
 from agent_hub.generator.built_json import base_hooks_block
 from agent_hub.generator.doctor_tree import read_checkout, read_doctor_tree
@@ -87,6 +105,9 @@ def doctor(
     _hub_or_exit(root)
     running = version(DISTRIBUTION)
     config = config_state(read_hub_bytes(Path(root, FILE_LABEL)), running_version=running)
+    # No token reaches git, which only looks for the main checkout.
+    home = local_home(Path(root), environ=without(os.environ, SESSION_HIDDEN))
+    local = read_local_json(home / LOCAL_FILE)
     selection = select_rules(REGISTRY, config=config, only=wanted)
     if isinstance(selection, UsageProblem):
         context.fail(selection.message)
@@ -99,9 +120,12 @@ def doctor(
         lock=None,
         base_hooks=None,
         repos=(),
+        local=local,
     )
     if not isinstance(config, ConfigFailure):
-        snapshot = _hub_snapshot(root, config=config, running=running, selection=selection)
+        snapshot = _hub_snapshot(
+            root, config=config, running=running, selection=selection, local=local, home=home
+        )
     findings = run_rules(selection, snapshot)
     if as_json:
         typer.echo(report_json(findings), nl=False)
@@ -128,9 +152,16 @@ def _hub_or_exit(root: str) -> None:
 
 
 def _hub_snapshot(
-    root: str, *, config: HubConfig, running: str, selection: Selection
+    root: str,
+    *,
+    config: HubConfig,
+    running: str,
+    selection: Selection,
+    local: LocalConfig | tuple[ConfigProblem, ...],
+    home: Path,
 ) -> DoctorSnapshot:
-    """The lock, the files, the base hooks block and the repo checkouts the selected rules read.
+    """The lock, the files, the base hooks block, the repo checkouts and the developer's branch
+    prefix the selected rules read.
 
     The files are the fixed paths, the lock's managed paths when a rule reads them, and the
     listing when one needs it or a file set that comes from it.
@@ -141,6 +172,9 @@ def _hub_snapshot(
     hub = read_doctor_tree(Path(root), by_path=by_path, listing=not LISTING_READS.isdisjoint(reads))
     base_hooks = base_hooks_block() if Read.BASE_HOOKS in reads else None
     repos = _repo_checkouts(root, config) if Read.REPOS in reads else ()
+    prefix = None
+    if Read.DEVELOPER_IDENTITY in reads and isinstance(local, LocalConfig):
+        prefix = _branch_prefix(config, local=local, home=home)
     return DoctorSnapshot(
         config=config,
         running_version=running,
@@ -148,6 +182,21 @@ def _hub_snapshot(
         lock=lock,
         base_hooks=base_hooks,
         repos=repos,
+        local=local,
+        branch_prefix=prefix,
+    )
+
+
+def _branch_prefix(config: HubConfig, *, local: LocalConfig, home: Path) -> Sourced | None:
+    """The developer's effective branch prefix; git runs in ``home`` only when no file sets it.
+
+    ``hub.json``'s own values, never the merged ones, so each value keeps its file as source.
+    """
+    read_git, _ = git_identity_reader(home)
+    return resolve_branch_prefix(
+        local=IdentityValues.of(local.project),
+        hub=IdentityValues.of(config.project),
+        read_git=read_git,
     )
 
 

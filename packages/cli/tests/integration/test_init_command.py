@@ -262,6 +262,26 @@ def test_copies_config_bytes_when_config_given(
     assert result.stderr == ""
 
 
+def test_copies_config_without_identity_when_config_given(
+    target: Path, tmp_path: Path, demo_document: dict[str, Any]
+) -> None:
+    # A team hub.json: each developer sets the identity in hub.local.json or git config.
+    for key in ("branch_prefix", "author_name", "author_email"):
+        del demo_document["project"][key]
+    content = dump_json(demo_document)
+    config = tmp_path / "team.json"
+    config.write_bytes(content)
+
+    result = run_init(["--config", str(config), "--dir", str(target)])
+
+    assert result.exit_code == 0, result.stderr
+    assert (target / "hub.json").read_bytes() == content
+    project = written_config(target).project
+    assert (project.branch_prefix, project.author_name, project.author_email) == (None, None, None)
+    assert (target / "hub.lock").is_file()
+    assert result.stderr == ""
+
+
 def test_prints_pinned_command_when_config_pin_differs(
     tmp_path: Path, demo_document: dict[str, Any]
 ) -> None:
@@ -896,6 +916,25 @@ def test_leaves_git_untouched_when_target_holds_git(
     # `.gitignore` and `.github/` are rendered paths; nothing is `.git` or under it.
     assert not [path for path in lock_files(target) if path == ".git" or path.startswith(".git/")]
     assert "git init" not in result.stdout
+
+
+def test_ignores_local_file_when_hub_initialized(
+    git_on_path: Any, tmp_path: Path, target: Path, *, demo_flags: list[str]
+) -> None:
+    result = run_init([*demo_flags, "--dir", str(target)])
+    assert result.exit_code == 0, result.stderr
+    git_init(target, tmp_path)
+
+    assert REAL_GIT is not None
+    # The developer's hub.local.json is ignored in every new hub (AC-65.15).
+    ignored = subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
+        [REAL_GIT, "check-ignore", "-q", "hub.local.json"],
+        cwd=target,
+        env={"HOME": str(tmp_path), "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull},
+        check=False,
+        timeout=30,
+    )
+    assert ignored.returncode == 0
 
 
 SEEDED_PLANTED = {

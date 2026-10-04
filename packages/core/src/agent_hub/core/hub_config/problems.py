@@ -6,6 +6,8 @@ from collections.abc import Sequence
 from typing import NamedTuple
 
 ROOT_PATH = "$"
+# A config file whose top level is not an object: hub.json and hub.local.json say it alike.
+NOT_AN_OBJECT_MESSAGE = "must be a JSON object"
 # A key written as is after a dot; any other key is quoted, so the path cannot be misread.
 _PLAIN_KEY = re.compile(r"[A-Za-z_$][A-Za-z0-9_$-]*")
 

@@ -6,6 +6,7 @@ The product and its phases are in [SPEC.md](../SPEC.md). Phase 1 is designed as 
 | File | Subject | Load it when |
 |---|---|---|
 | [project-config.md](project-config.md) | the `hub.json` contract: fields, validation, versioning, readers, tracker | a change reads or adds a config key |
+| [developer-identity.md](developer-identity.md) | each developer's branch prefix, author and transport: `hub.local.json`, then `hub.json`, then git config, in the CLI, hooks, rendering, doctor and cloud setup | a change reads the identity keys or `hub.local.json` |
 | [hub-generator.md](hub-generator.md) | what a hub holds and who owns it, `hub init`, plugin and hooks, commands, releases | generating hub files, a hook, a `hub` command that replaces a script |
 | [hub-sync.md](hub-sync.md) | `hub.lock`, `hub sync`, `--check`, the write path, the `*.project.json` merge, the project-entry links | syncing a hub, reading the lock |
 | [hub-adopt.md](hub-adopt.md) | `hub sync --adopt`: per-path rules, `--accept`, the directory-link migration, listing lines, exit codes | adopting a hand-made hub (with [hub-sync.md](hub-sync.md)) |
@@ -29,3 +30,4 @@ The product and its phases are in [SPEC.md](../SPEC.md). Phase 1 is designed as 
 - [ADR 0012](../adr/0012-cli-subsumes-hub-scripts.md): hub logic moves into the CLI, except the hooks.
 - [ADR 0013](../adr/0013-release-by-git-tags.md): the CLI is released by semver git tags and pinned per hub.
 - [ADR 0014](../adr/0014-tracker-port-linear-graphql.md): the tracker is a core port; Linear is reached over GraphQL.
+- [ADR 0016](../adr/0016-per-developer-identity.md): identity per developer: `hub.local.json`, `hub.json`, git config.

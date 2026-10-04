@@ -25,9 +25,6 @@ REQUIRED_KEYS: list[tuple[str | int, ...]] = [
     ("project",),
     ("project", "name"),
     ("project", "hub_repo"),
-    ("project", "branch_prefix"),
-    ("project", "author_name"),
-    ("project", "author_email"),
     ("tracker",),
     ("tracker", "kind"),
     ("tracker", "team"),
@@ -37,6 +34,9 @@ REQUIRED_KEYS: list[tuple[str | int, ...]] = [
     ("repos", 0, "check_fast"),
     ("repos", 0, "check"),
 ]
+
+# Set per developer (hub.local.json, else hub.json, else git config): optional in hub.json.
+IDENTITY_KEYS = ["branch_prefix", "author_name", "author_email"]
 
 GUARD_PATH_LISTS = ["ask_before_edit", "deny_paths"]
 
@@ -263,6 +263,35 @@ def test_rejects_transport_when_value_unknown(transport: object) -> None:
     assert error_locs(document) == [("tracker", "transport")]
     # A known key with a bad value, not an unknown key.
     assert error_types(document) == [(("tracker", "transport"), "literal_error")]
+
+
+@pytest.mark.parametrize("key", IDENTITY_KEYS)
+def test_accepts_document_when_identity_key_absent(key: str) -> None:
+    document = a_hub_document()
+    del document["project"][key]
+
+    config = HubConfig.model_validate(document)
+
+    assert getattr(config.project, key) is None
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("branch_prefix", "jdoe"),
+        ("branch_prefix", "-x/"),
+        ("branch_prefix", ""),
+        ("branch_prefix", None),
+        ("author_name", ""),
+        ("author_name", "Jane\nDoe"),
+        ("author_name", None),
+        ("author_email", "jane"),
+        ("author_email", ""),
+        ("author_email", None),
+    ],
+)
+def test_keeps_identity_patterns_when_key_present(key: str, value: object) -> None:
+    assert error_locs(with_value(("project", key), value)) == [("project", key)]
 
 
 @pytest.mark.parametrize("prefix", ["jdoe", "jdoe/x", "/", "jdoe//", "../", ".git/", "-x/"])

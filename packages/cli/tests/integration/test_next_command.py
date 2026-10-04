@@ -392,3 +392,111 @@ class TestTransport:
                 "has_key": False,
             }
         ]
+
+
+def write_local(hub: Path, document: object) -> None:
+    (hub / "hub.local.json").write_text(json.dumps(document), encoding="utf-8")
+
+
+class TestLocalFile:
+    def test_uses_mcp_adapter_when_local_file_sets_mcp(
+        self,
+        demo_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_claude: Path,
+    ) -> None:
+        set_transport(demo_workspace.hub, "api")
+        write_local(demo_workspace.hub, {"tracker": {"transport": "mcp"}})
+        monkeypatch.delenv(KEY_VARIABLE, raising=False)
+
+        result = run_command(demo_workspace.hub, "next")
+
+        assert result.exit_code == 0, result.output
+        assert result.stdout == (
+            f"DEM-3  demo-web  Synthetic issue DEM-3  {url_of('DEM-3')}\n"
+            f"DEM-12  demo-api  Synthetic issue DEM-12  {url_of('DEM-12')}\n"
+        )
+        assert result.stderr == MCP_LINE
+        calls = [json.loads(line) for line in fake_claude.read_text().splitlines()]
+        assert [call["request"]["operation"] for call in calls] == ["list_ready"]
+
+    @pytest.mark.parametrize("key", [None, "set"], ids=["no-key", "key"])
+    def test_uses_api_adapter_when_local_file_absent(
+        self,
+        demo_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+        key: str | None,
+    ) -> None:
+        set_transport(demo_workspace.hub, "api")
+        if key is None:
+            monkeypatch.delenv(KEY_VARIABLE, raising=False)
+        else:
+            monkeypatch.setenv(KEY_VARIABLE, synthetic_key())
+        spy = inject(monkeypatch, InMemoryTrackerClient(demo_backend()))
+
+        result = run_command(demo_workspace.hub, "next")
+
+        if key is None:
+            assert result.exit_code == 1
+            assert result.stderr == MISSING_KEY
+            assert spy.calls == []
+        else:
+            assert result.exit_code == 0, result.output
+            assert result.stderr == API_LINE
+            assert len(spy.calls) == 1
+
+    @pytest.mark.usefixtures("with_key")
+    @pytest.mark.parametrize(
+        ("document", "expected_path"),
+        [
+            ([], "$"),
+            ({"guard": {}}, "guard"),
+            ({"tracker": {"transport": "ftp"}}, "tracker.transport"),
+        ],
+        ids=["array", "guard", "bad-transport"],
+    )
+    def test_prints_local_lines_when_local_file_invalid(
+        self,
+        demo_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+        document: object,
+        expected_path: str,
+    ) -> None:
+        spy = inject(monkeypatch, InMemoryTrackerClient(demo_backend()))
+        write_local(demo_workspace.hub, document)
+
+        result = run_command(demo_workspace.hub, "next")
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        lines = result.stderr.splitlines()
+        assert len(lines) == 1, lines
+        assert lines[0].startswith(f"hub.local.json: {expected_path}: "), lines
+        assert spy.calls == []
+
+    def test_reads_local_file_from_main_checkout_when_run_from_hub_worktree(
+        self, demo_workspace: Workspace, run_command: CommandRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        hub = demo_workspace.hub
+        demo_workspace.git(hub, "-c", "init.defaultBranch=trunk", "init", "-q")
+        demo_workspace.git(hub, "add", "-A")
+        demo_workspace.git(hub, "commit", "-q", "-m", "hub")
+        worktree = hub / ".claude" / "worktrees" / "dem-1-x"
+        demo_workspace.git(hub, "worktree", "add", "-q", "-b", "dem-1-x", str(worktree))
+        # Only the main checkout holds the developer's file; the worktree's hub.json says api.
+        write_local(hub, {"tracker": {"transport": "mcp"}})
+        assert not (worktree / "hub.local.json").exists()
+        monkeypatch.delenv(KEY_VARIABLE, raising=False)
+        spy = inject(monkeypatch, InMemoryTrackerClient(demo_backend()))
+
+        result = run_command(worktree, "next")
+
+        assert result.exit_code == 0, result.output
+        assert result.stderr == MCP_LINE
+        assert spy.calls == [("DEM", Path(os.path.realpath(worktree)))]

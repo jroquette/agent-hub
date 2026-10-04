@@ -11,10 +11,10 @@ and the project-entry links; `--adopt`: [hub-adopt.md](hub-adopt.md). Rendering,
 ### hub.lock
 
 `hub.lock` (JSON, in the one JSON form): `lock_version` (1), `platform_version`, `schema_version`, `modules` (sorted)
-and `files` by path: a managed file (SHA-256 of the LF bytes written, executable bit), a managed link (relative
-target) or seeded (no hash). "Equal": same bytes and executable bit, or same link target. It never lists itself or
-`.git`, and `hub.json` is always recorded seeded: it is the project's, never compared, written or deleted. The lock is
-a function of the render and the config only (`build_hub_lock`), written by `init` and `sync`, last.
+and `files` by path: a managed file (SHA-256 of the LF bytes written, executable bit), a managed link (relative target)
+or seeded (no hash). "Equal": same bytes and executable bit, or same link target. It never lists itself or `.git`, and
+`hub.json` is always recorded seeded: it is the project's, never compared, written or deleted. The lock is a function of
+the render and `hub.json` only, never `hub.local.json` (`build_hub_lock`), written by `init` and `sync`, last.
 
 ### hub sync
 

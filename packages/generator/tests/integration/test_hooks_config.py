@@ -770,3 +770,321 @@ def test_protects_root_and_config_branches_when_hub_config_elsewhere(
 
     # demo-web's release/2 shows the root file's repo branches are kept, not only its project's
     assert configured == ["main", "master", "release", "release/2", "trunk"]
+
+
+# AGH-65: one developer's identity. The prefix (and author, transport) comes from
+# ``hub.local.json`` in the hub's main checkout, else ``hub.json``, else that checkout's git
+# config; never from a ``hub.local.json`` beside a ``$HUB_CONFIG`` file (E1). Git runs only to
+# build the guard's deny hint (E16), once, with a 2 s timeout. ``child_env`` hides the system and
+# user git config, so a test's git identity is the ``GIT_CONFIG_GLOBAL`` file it writes.
+TEAM_HUB_JSON: dict[str, Any] = {
+    "project": {"name": "demo", "default_branch": "trunk"},
+    "tracker": {"kind": "linear", "team": "DEM"},
+}
+LOCAL_FILE_NAME = "hub.local.json"
+PREFIX_CODE = (
+    "import json\nfrom hubhooks import load_config\ncfg = load_config(None)\n"
+    "print(json.dumps(cfg.branch_prefix))\n"
+)
+IDENTITY_CODE = (
+    "import json\nfrom hubhooks import load_config\ncfg = load_config(None)\n"
+    "print(json.dumps([cfg.author_name, cfg.author_email, cfg.branch_prefix]))\n"
+)
+PUSH_MAIN_REASON = (
+    "[hub guard] pushing to main is not allowed; open a PR from a {}dem-<N>-<desc> branch"
+)
+
+
+def write_local_json(folder: Path, document: Mapping[str, Any]) -> None:
+    (folder / LOCAL_FILE_NAME).write_text(json.dumps(document), encoding="utf-8")
+
+
+def git_identity(tmp_path: Path, body: bytes) -> dict[str, str]:
+    """A git config whose ``[user]`` section holds ``body``, as ``GIT_CONFIG_GLOBAL``."""
+    config = tmp_path / "gitconfig"
+    config.write_bytes(b"[user]\n" + body)
+    return {"GIT_CONFIG_GLOBAL": str(config)}
+
+
+def traced_git(tmp_path: Path) -> tuple[dict[str, str], Path]:
+    """A ``git`` first on ``PATH``: logs ``<cwd>|<args>`` to the returned file, then runs git."""
+    real = shutil.which("git")
+    assert real is not None
+    folder, log = tmp_path / "traced-bin", tmp_path / "git.log"
+    folder.mkdir()
+    shim = folder / "git"
+    shim.write_text(
+        f'#!/bin/sh\nprintf \'%s|%s\\n\' "$(pwd -P)" "$*" >> "{log}"\nexec "{real}" "$@"\n',
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    return {"PATH": f"{folder}{os.pathsep}{os.environ.get('PATH', os.defpath)}"}, log
+
+
+def git_calls(log: Path) -> list[str]:
+    return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+
+
+def test_reads_local_file_from_main_checkout_when_hooks_in_hub_worktree(
+    hub: Path,
+    *,
+    hook_python: str,
+    run_python: Callable[..., Any],
+    rendered_tree: Callable[..., Path],
+    demo_config: HubConfig,
+    elsewhere: Path,
+) -> None:
+    worktree = rendered_tree(render_hub(demo_config), root=hub / ".claude" / "worktrees" / "t")
+    for checkout in (hub, worktree):
+        write_hub_json(checkout, TEAM_HUB_JSON)
+    write_local_json(hub, {"project": {"branch_prefix": "me/"}})
+
+    found = run_python(hook_python, PREFIX_CODE, path=worktree / HOOKS, cwd=elsewhere)
+
+    assert found == "me/"
+
+
+def test_never_reads_local_file_beside_hub_config_when_hub_config_set(
+    hub: Path, *, hook_python: str, run_python: Callable[..., Any], tmp_path: Path
+) -> None:
+    write_hub_json(hub, {"project": {"name": "demo", "branch_prefix": "root/"}})
+    folder = tmp_path / "conf"
+    folder.mkdir()
+    write_hub_json(folder, {"project": {"name": "demo", "branch_prefix": "cfg/"}})
+    write_local_json(folder, {"project": {"branch_prefix": "evil/"}})
+    env = {"HUB_CONFIG": str(folder / HUB_JSON_NAME)}
+
+    without_root_local = run_python(hook_python, PREFIX_CODE, path=hub / HOOKS, cwd=folder, env=env)
+    write_local_json(hub, {"project": {"branch_prefix": "me/"}})
+    with_root_local = run_python(hook_python, PREFIX_CODE, path=hub / HOOKS, cwd=folder, env=env)
+
+    # the loaded file's value (Q-4), then the hook root's local file; never the one beside it
+    assert without_root_local == "cfg/"
+    assert with_root_local == "me/"
+
+
+GUARD_LISTS_CODE = (
+    "import json\nfrom hubhooks import load_config\ncfg = load_config(None)\n"
+    "print(json.dumps([list(cfg.ask_before_edit), list(cfg.deny_hosts), list(cfg.deny_paths),"
+    " list(cfg.protected_branches), list(cfg.repo_dirs)]))\n"
+)
+
+
+def test_keeps_guard_lists_when_local_file_holds_guard_keys(
+    hub: Path, *, hook_python: str, run_python: Callable[..., Any], elsewhere: Path
+) -> None:
+    write_hub_json(hub, ROOT_GUARD | {"repos": [{"dir": "demo-api"}]})
+    without = run_python(hook_python, GUARD_LISTS_CODE, path=hub / HOOKS, cwd=elsewhere)
+    write_local_json(
+        hub,
+        {
+            "guard": {"ask_before_edit": [], "deny_hosts": [], "deny_paths": []},
+            "repos": [{"dir": "other", "default_branch": "y"}],
+            "project": {"default_branch": "x"},
+        },
+    )
+
+    with_file = run_python(hook_python, GUARD_LISTS_CODE, path=hub / HOOKS, cwd=elsewhere)
+
+    assert without == [
+        ["demo-api/docs/adr"],
+        ["prod.example.com"],
+        ["@hub/private"],
+        ["main", "master", "trunk"],
+        ["demo-api"],
+    ]
+    assert with_file == without
+
+
+def test_runs_no_git_when_guard_allows_on_team_hub(
+    run_hook: Callable[..., subprocess.CompletedProcess[bytes]], hub: Path, tmp_path: Path
+) -> None:
+    write_hub_json(hub, TEAM_HUB_JSON)
+    traced, log = traced_git(tmp_path)
+    env = traced | git_identity(tmp_path, b"\temail = jane@example.com\n")
+
+    verdicts = [
+        verdict_of(run_hook("guard", bash_event(command, hub), env=env))
+        for command in ("echo hi", "git push origin me/dem-1-x")
+    ]
+
+    assert verdicts == [None, None]
+    assert git_calls(log) == []
+
+
+def test_reads_git_email_in_hub_when_team_hub_denies(
+    run_hook: Callable[..., subprocess.CompletedProcess[bytes]], hub: Path, tmp_path: Path
+) -> None:
+    write_hub_json(hub, TEAM_HUB_JSON)
+    traced, log = traced_git(tmp_path)
+    env = traced | git_identity(tmp_path, b"\tname = Jane Roe\n\temail = jane@example.com\n")
+
+    verdict = verdict_of(run_hook("guard", bash_event("git push origin main", hub), env=env))
+
+    assert verdict == ("deny", PUSH_MAIN_REASON.format("jane/"))
+    assert git_calls(log) == [f"{hub}|config --get user.email"]
+
+
+# Git's raw output counts as the CLI counts it: one trailing newline dropped, then the model's
+# shape, else no value. Bytes that are not UTF-8 are no value either; the guard still answers.
+GIT_SHAPES = [
+    pytest.param(
+        b'\tname = Jane Roe\n\temail = "jane@example.com "\n',
+        ["Jane Roe", "", ""],
+        "",
+        id="email-trailing-space",
+    ),
+    pytest.param(
+        b"\tname = Jane \xff Roe\n\temail = jane@example.com\n",
+        ["", "jane@example.com", "jane/"],
+        "jane/",
+        id="name-not-utf8",
+    ),
+    pytest.param(
+        b"\tname = Jane Roe\n\temail = jan\xffe@example.com\n",
+        ["Jane Roe", "", ""],
+        "",
+        id="email-not-utf8",
+    ),
+]
+
+
+@pytest.mark.parametrize(("body", "identity", "prefix"), GIT_SHAPES)
+def test_drops_git_value_when_shape_or_encoding_invalid(
+    body: bytes,
+    identity: list[str],
+    prefix: str,
+    *,
+    run_hook: Callable[..., subprocess.CompletedProcess[bytes]],
+    hub: Path,
+    hook_python: str,
+    run_python: Callable[..., Any],
+    elsewhere: Path,
+    tmp_path: Path,
+) -> None:
+    write_hub_json(hub, TEAM_HUB_JSON)
+    env = git_identity(tmp_path, body)
+
+    found = run_python(hook_python, IDENTITY_CODE, path=hub / HOOKS, cwd=elsewhere, env=env)
+    push = run_hook("guard", bash_event("git push origin main", hub), env=env)
+
+    assert found == identity
+    assert verdict_of(push) == ("deny", PUSH_MAIN_REASON.format(prefix))
+    assert push.stderr == b""
+
+
+def run_git(*args: str) -> None:
+    real = shutil.which("git")
+    assert real is not None
+    subprocess.run([real, *args], check=True, capture_output=True)  # noqa: S603 - fixed arguments
+
+
+@pytest.mark.parametrize("variable", ["GIT_DIR", "GIT_COMMON_DIR"])
+def test_reads_git_email_of_identity_home_when_git_location_exported(
+    variable: str,
+    run_hook: Callable[..., subprocess.CompletedProcess[bytes]],
+    *,
+    hub: Path,
+    tmp_path: Path,
+) -> None:
+    write_hub_json(hub, TEAM_HUB_JSON)
+    other = tmp_path / "other-repo"
+    # GIT_COMMON_DIR moves only a repo's shared state, so the hub is a repo in that row.
+    for repo in [other, hub] if variable == "GIT_COMMON_DIR" else [other]:
+        run_git("init", "-q", str(repo))
+    run_git("-C", str(other), "config", "user.email", "evil@example.com")
+    env = git_identity(tmp_path, b"\temail = jane@example.com\n") | {variable: str(other / ".git")}
+
+    verdict = verdict_of(run_hook("guard", bash_event("git push origin main", hub), env=env))
+
+    assert verdict == ("deny", PUSH_MAIN_REASON.format("jane/"))
+
+
+def test_denies_with_bare_hint_when_git_missing(
+    run_hook: Callable[..., subprocess.CompletedProcess[bytes]], hub: Path, tmp_path: Path
+) -> None:
+    write_hub_json(hub, TEAM_HUB_JSON)
+    no_tools = tmp_path / "no-tools"
+    no_tools.mkdir()
+    env = git_identity(tmp_path, b"\temail = jane@example.com\n") | {"PATH": str(no_tools)}
+
+    push = run_hook("guard", bash_event("git push origin main", hub), env=env)
+
+    assert verdict_of(push) == ("deny", PUSH_MAIN_REASON.format(""))
+    assert push.stderr == b""
+
+
+# The identity read's subprocess.run records its keyword arguments, then times out.
+TIMEOUT_CODE = """\
+import json, subprocess
+import hubhooks
+calls = []
+def timing_out(args, **kwargs):
+    calls.append([args, kwargs.get("timeout")])
+    raise subprocess.TimeoutExpired("git", 2)
+hubhooks.subprocess.run = timing_out
+cfg = hubhooks.load_config(None)
+print(json.dumps([cfg.branch_prefix, calls]))
+"""
+
+
+def test_gives_no_prefix_when_identity_git_read_times_out(
+    hub: Path,
+    *,
+    hook_python: str,
+    run_python: Callable[..., Any],
+    elsewhere: Path,
+    tmp_path: Path,
+) -> None:
+    write_hub_json(hub, TEAM_HUB_JSON)
+    env = git_identity(tmp_path, b"\temail = jane@example.com\n")
+
+    prefix, calls = run_python(hook_python, TIMEOUT_CODE, path=hub / HOOKS, cwd=elsewhere, env=env)
+
+    assert prefix == ""
+    assert calls == [[["git", "config", "--get", "user.email"], 2]]
+
+
+# Plugin-cache mode (no hook root): the identity home is the walked hub; with $HUB_CONFIG there is
+# none, so neither the local file beside that file nor git is read (E1).
+@pytest.mark.parametrize(("hub_prefix", "expected"), [("cfg/", "cfg/"), (None, "")])
+def test_reads_no_identity_when_cached_hooks_use_hub_config(
+    hub_prefix: str | None,
+    expected: str,
+    cached_hooks: Path,
+    *,
+    hook_python: str,
+    run_python: Callable[..., Any],
+    tmp_path: Path,
+) -> None:
+    folder = tmp_path / "conf"
+    folder.mkdir()
+    project = {"name": "demo"} | ({"branch_prefix": hub_prefix} if hub_prefix else {})
+    write_hub_json(folder, {"project": project})
+    write_local_json(folder, {"project": {"branch_prefix": "evil/"}})
+    traced, log = traced_git(tmp_path)
+    env = (
+        traced
+        | git_identity(tmp_path, b"\temail = jane@example.com\n")
+        | {"HUB_CONFIG": str(folder / HUB_JSON_NAME)}
+    )
+
+    found = run_python(hook_python, PREFIX_CODE, path=cached_hooks, cwd=folder, env=env)
+
+    assert found == expected
+    assert git_calls(log) == []
+
+
+def test_reads_walked_hub_local_file_when_cached_hooks_find_hub(
+    cached_hooks: Path,
+    sibling_workspace: Path,
+    *,
+    hook_python: str,
+    run_python: Callable[..., Any],
+) -> None:
+    hub = sibling_workspace / "other-hub"
+    write_local_json(hub, {"project": {"branch_prefix": "me/"}})
+
+    found = run_python(hook_python, PREFIX_CODE, path=cached_hooks, cwd=hub / "brain")
+
+    assert found == "me/"

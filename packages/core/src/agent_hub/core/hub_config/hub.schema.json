@@ -123,6 +123,9 @@
         },
         "bench.tasks": {
           "$ref": "#/$defs/RuleSettings"
+        },
+        "config.identity": {
+          "$ref": "#/$defs/IdentityRuleSettings"
         }
       },
       "title": "DoctorRules",
@@ -164,6 +167,22 @@
         }
       },
       "title": "Guard",
+      "type": "object"
+    },
+    "IdentityRuleSettings": {
+      "additionalProperties": false,
+      "description": "``config.identity``: whether it runs. It has no ``severity``: its finding stays an info,\nso a hub gives every developer the same exit code.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        }
+      },
+      "title": "IdentityRuleSettings",
       "type": "object"
     },
     "InstructionsSizeSettings": {
@@ -270,8 +289,8 @@
           "type": "string"
         },
         "branch_prefix": {
+          "description": "Per developer: hub.local.json, else this, else the effective author email's local part plus / (docs/design/developer-identity.md).",
           "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*/$",
-          "title": "Branch Prefix",
           "type": "string"
         },
         "default_branch": {
@@ -281,23 +300,20 @@
           "type": "string"
         },
         "author_name": {
+          "description": "Per developer: hub.local.json, else this, else git config (docs/design/developer-identity.md).",
           "minLength": 1,
           "pattern": "^[^\\x00-\\x1f\\x7f]+$",
-          "title": "Author Name",
           "type": "string"
         },
         "author_email": {
+          "description": "Per developer: hub.local.json, else this, else git config (docs/design/developer-identity.md).",
           "pattern": "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$",
-          "title": "Author Email",
           "type": "string"
         }
       },
       "required": [
         "name",
-        "hub_repo",
-        "branch_prefix",
-        "author_name",
-        "author_email"
+        "hub_repo"
       ],
       "title": "Project",
       "type": "object"

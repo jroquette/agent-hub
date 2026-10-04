@@ -9,15 +9,15 @@ from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_m
 
 # AC-3.9: the Rendered values of project-config.md, the platform repository (erratum E3), the
 # derived module includes (erratum E2), contract-sync's two repo dirs (AGH-17 G8) and the module
-# files AGENTS.md names (AGH-17 2.11), and AGENTS.md's two branch mentions (AGH-46). author_name,
-# check_fast, check and platform.version are read at run time or quoted per format, never
-# placeholders.
+# files AGENTS.md names (AGH-17 2.11), AGENTS.md's two branch mentions (AGH-46), and its commit
+# author and prefix note (AGH-65). author_name, check_fast, check and platform.version are read at
+# run time or quoted per format, never placeholders; author_email is per developer and no template
+# names it (AGH-65).
 RENDERED_KEYS = {
     "project_name",
     "project_hub_repo",
     "project_branch_prefix",
     "project_default_branch",
-    "project_author_email",
     "tracker_team",
     "repo_dirs",
     "repo_githubs",
@@ -30,6 +30,9 @@ RENDERED_KEYS = {
     "contract_sync_target",
     "worktree_base",
     "protected_branches",
+    "commit_author",
+    "prefix_note",
+    "identity_email",
 }
 
 
@@ -55,7 +58,6 @@ def test_takes_values_from_model_when_demo_mapped(demo_config: HubConfig) -> Non
         "project_hub_repo": "acme/demo-hub",
         "project_branch_prefix": "jdoe/",
         "project_default_branch": "main",
-        "project_author_email": "jane@example.com",
         "tracker_team": "DEM",
         "repo_dirs": "demo-api",
         "repo_githubs": "acme/demo-api",
@@ -70,6 +72,9 @@ def test_takes_values_from_model_when_demo_mapped(demo_config: HubConfig) -> Non
         "contract_sync_target": "",
         "worktree_base": "`origin/main`",
         "protected_branches": "`main`",
+        "commit_author": "the user (`hub.json` → `project.author_name`, `project.author_email`)",
+        "prefix_note": "",
+        "identity_email": "`hub.json` → `project.author_email`",
     }
 
 
@@ -189,3 +194,63 @@ def test_renders_no_run_time_value_when_variant_mapped(variant_config: HubConfig
 
     for never_rendered in ("sentinel-fast-q7", "sentinel-full-q7", "9.8.7", "Sentinel Author Q7"):
         assert not any(never_rendered in value for value in values)
+
+
+def test_renders_prefix_placeholder_when_hub_sets_no_prefix() -> None:
+    document = a_hub_document()
+    del document["project"]["branch_prefix"]
+
+    mapping = substitution_mapping(HubConfig.model_validate(document))
+
+    assert mapping["project_branch_prefix"] == "<prefix>"
+
+
+# AGH-65 (plan E14): a team hub's AGENTS.md names the developer, not hub.json.
+USER_AUTHOR = "the user (`hub.json` → `project.author_name`, `project.author_email`)"
+DEVELOPER_AUTHOR = (
+    "the developer running the session (`hub.local.json` → `project.author_name`,\n"
+    "   `project.author_email`, else their `git config user.name`, `user.email`)"
+)
+PREFIX_NOTE = (
+    "\n   `<prefix>` is `hub.local.json` → `project.branch_prefix`, else the local part of your"
+    " author email plus `/`."
+)
+
+
+def mapping_without(*keys: str) -> dict[str, str]:
+    document = a_hub_document()
+    for key in keys:
+        del document["project"][key]
+    return substitution_mapping(HubConfig.model_validate(document))
+
+
+@pytest.mark.parametrize(
+    "absent",
+    [("author_name", "author_email"), ("author_email",), ("author_name",)],
+    ids=["both", "email", "name"],
+)
+def test_names_developer_when_hub_sets_no_author(absent: tuple[str, ...]) -> None:
+    assert mapping_without(*absent)["commit_author"] == DEVELOPER_AUTHOR
+
+
+def test_names_developer_email_when_hub_sets_no_email() -> None:
+    assert mapping_without("author_email")["identity_email"] == (
+        "your author email (`hub.local.json` →\n"
+        "   `project.author_email`, else your own address, not an agent's or the container's)"
+    )
+    # Only the email decides: a hub.json email keeps kickoff's check on hub.json.
+    assert mapping_without("author_name")["identity_email"] == "`hub.json` → `project.author_email`"
+
+
+def test_explains_prefix_when_hub_sets_no_prefix() -> None:
+    mapping = mapping_without("branch_prefix")
+
+    assert (mapping["project_branch_prefix"], mapping["prefix_note"]) == ("<prefix>", PREFIX_NOTE)
+    # The author still comes from hub.json: the two keys are independent.
+    assert mapping["commit_author"] == USER_AUTHOR
+
+
+def test_keeps_user_wording_when_hub_sets_author(variant_config: HubConfig) -> None:
+    mapping = substitution_mapping(variant_config)
+
+    assert (mapping["commit_author"], mapping["prefix_note"]) == (USER_AUTHOR, "")

@@ -16,7 +16,8 @@ files (``config_lint``; spec AC-11.19, AC-11.20, Q-6). Lines are ``config_lint.t
   line. A path is a link target (``[..](path#part)``) or a code span shaped like a path; it is
   skipped when it is a URL, ``mailto:``, ``~``, absolute or ``../`` path, a placeholder (``<x>``,
   ``path/to/``, ``...``, ``…``, ``$VAR``), ``origin/…``/``upstream/…``, a MIME type, a branch
-  under ``project.branch_prefix`` or a configured default branch (the project's or a repo's).
+  under ``project.branch_prefix`` (when ``hub.json`` sets one), a configured default branch
+  (the project's or a repo's) or exactly ``hub.local.json`` (each developer's, gitignored).
   It resolves, after cutting a ``::`` test id and a glob's tail
   (``@/`` read as ``src/``), against the listed paths, the fixed paths present and their
   folders (E31), from the file's folder or the root; then by name (``.claude/worktrees``,
@@ -66,6 +67,7 @@ from agent_hub.core.hub_config.doctor_rules import (
     RULE_MODULES,
     Severity,
 )
+from agent_hub.core.hub_config.local_config import LOCAL_FILE
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.versions import cut_echo
 from agent_hub.core.hub_files.hub_lock import HUB_LOCK_PATH
@@ -219,7 +221,8 @@ class _RefContext:
     searched: PathTrie
     make_targets: frozenset[str]
     pnpm_scripts: frozenset[str]
-    branch_prefix: str
+    # None when hub.json sets no prefix: each developer's is their own, so none is skipped.
+    branch_prefix: str | None
     # The project's and each repo's default branch: AGENTS.md names them, ``/`` and all.
     branches: frozenset[str]
 
@@ -379,13 +382,17 @@ def _link_targets(line: str) -> Iterator[str]:
             opener = line.find("](", opener + 1)
 
 
-def _is_checked(ref: str, *, branch_prefix: str) -> bool:
-    """Whether a reference is a path the rule checks: URLs, placeholders… are not."""
+def _is_checked(ref: str, *, branch_prefix: str | None) -> bool:
+    """Whether a reference is a path the rule checks: URLs, placeholders… are not.
+
+    Nor is ``hub.local.json``: each developer's own, gitignored file, never listed (plan E12).
+    """
     return not (
-        ref.startswith(_NOT_CHECKED)
+        ref == LOCAL_FILE
+        or ref.startswith(_NOT_CHECKED)
         or _is_placeholder(ref)
         or _NOT_A_PATH.search(ref) is not None
-        or ref.startswith(branch_prefix)
+        or (branch_prefix is not None and ref.startswith(branch_prefix))
     )
 
 
