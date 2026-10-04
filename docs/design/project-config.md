@@ -12,8 +12,7 @@ generated file and `hub` command takes project values from it and nowhere else. 
 - Location: the hub root. Format: plain JSON (no comments, no trailing commas), UTF-8, readable by `json` on the Python
   3.9 standard library, so hooks and shell tools keep reading it with no dependency.
 - Ownership: `seeded` ([hub-generator.md](hub-generator.md)). `hub init` writes it once; `hub sync` never writes it.
-- Source of truth: the frozen Pydantic model `HubConfig` in core (area `agent_hub.core.hub_config`), proved by unit
-  tests (valid and invalid documents, defaults, error paths).
+- Source of truth: the frozen Pydantic model `HubConfig` (core, `agent_hub.core.hub_config`), proved by unit tests.
 - JSON Schema: `HubConfig.model_json_schema()`, a managed `hub.schema.json` that the generator writes to the hub. It
   stays core package data (`agent_hub/core/hub_config/hub.schema.json`); the generator copies those bytes verbatim. A
   unit test fails on drift from a fresh export. Consumers: editors (`$schema`), [`config.schema`](hub-doctor.md), hooks.
@@ -27,13 +26,13 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `platform.version` | `^[0-9]+\.[0-9]+\.[0-9]+$` | req. | shims (the release they run), `hub sync`, `hub doctor`, cloud setup |
 | `project.name` | kebab-case (Rendered values) | req. | templates (plugin, marketplace names), `hub brief` |
 | `project.hub_repo` | `owner/name` | req. | `hub run` (PR links), marketplace |
-| `project.branch_prefix` | e.g. `jdoe/` (Rendered values) | req. | `hub worktree`, `hub run`, guard branch hint |
+| `project.branch_prefix` | e.g. `jdoe/` (Rendered values) | optional, per developer ([developer-identity.md](developer-identity.md)) | `hub worktree`, `hub run`, guard branch hint, `AGENTS.md` |
 | `project.default_branch` | `^S(?:/S)*$` (Rendered values) | `main` | the hub's own branch (CI, brief hub line, retro), default of `repos[].default_branch`, guard |
-| `project.author_name`, `project.author_email` | strings | req. | cloud setup (git identity), `attribution.ai` rule |
+| `project.author_name`, `project.author_email` | strings | optional, per developer ([developer-identity.md](developer-identity.md)) | cloud setup (git identity), `attribution.ai` rule, marketplace owner, `AGENTS.md` |
 | `tracker.kind` | closed list: `linear` | req. | selects the tracker adapter (Tracker, below) |
 | `tracker.team` | string, the tracker's team key | req. | `hub next`, `hub run`, worktree names |
 | `tracker.ready_label`, `tracker.failed_label` | strings | `agent-ready`, `agent-failed` | `hub next` (ready), `hub run` on failure (failed) |
-| `tracker.transport` | closed list: `api`, `mcp` | `api` | `hub next`, `hub run` (adapter; Tracker, below) |
+| `tracker.transport` | closed list: `api`, `mcp`; `hub.local.json` may override it | `api` | `hub next`, `hub run` (adapter; Tracker, below) |
 | `repos[]` | list, at least one item | req. | launcher, worktrees, hooks, cloud setup |
 | `repos[].dir` | one path segment (Rendered values), unique across `repos` ignoring case | req. | the sibling directory next to the hub |
 | `repos[].github` | `owner/name` | req. | cloud setup, `hub run` |
@@ -90,7 +89,8 @@ rules only when selected ([hub-generator.md](hub-generator.md)). Phase 1 modules
 
 ### Readers
 
-- **CLI**: validates with `HubConfig` and fails fast: exit 1 and one line per error, `hub.json: <json path>: <message>`.
+- **CLI**: validates with `HubConfig` and fails fast: exit 1 and one line per error, `hub.json: <json path>: <message>`;
+  `hub.local.json: <json path>: <message>` for the developer's file ([developer-identity.md](developer-identity.md)).
 - **Hooks**: a defensive stdlib reader that never raises (`plugin/hub-workflow/hooks/stdlib_reader.py`; its defaults on
   a minimal `hub.json` match `HubConfig`'s in `test_hub_json_reader.py`): a missing file, bad JSON or a wrong type gives
   the defaults; the hook fails open. It ignores unknown and `_` keys; a bad `repos[].default_branch` inherits.
@@ -131,7 +131,7 @@ repo stay as they are; one rooted at the hub's directory name is rewritten as `@
 
 ## Invariants
 
-- `hub.json` is the only file with project values; templates and commands never hard-code them. No secret is a field.
+- `hub.json` is the only committed file of project values; no template or command hard-codes one. No field is a secret.
 - It stays readable by the Python 3.9 standard library `json` module, and nothing writes it after `hub init`.
 - The CLI and `hub doctor` validate with the same model; the exported schema never drifts from it.
 - A hook never fails because of `hub.json`.

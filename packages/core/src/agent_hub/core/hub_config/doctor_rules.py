@@ -35,6 +35,7 @@ GUARD_EXTENSION_RULE: Final = "hooks.guard-extension"
 MAKEFILE_OVERRIDE_RULE: Final = "makefile.override"
 FEATURES_TRACKER_RULE: Final = "features.tracker"
 BENCH_TASKS_RULE: Final = "bench.tasks"
+CONFIG_IDENTITY_RULE: Final = "config.identity"
 
 RULE_IDS: Final = (
     CONFIG_SCHEMA_RULE,
@@ -56,6 +57,7 @@ RULE_IDS: Final = (
     MAKEFILE_OVERRIDE_RULE,
     FEATURES_TRACKER_RULE,
     BENCH_TASKS_RULE,
+    CONFIG_IDENTITY_RULE,
 )
 
 # The rules a module owns: they run and may be configured only when the module is selected.
@@ -75,6 +77,22 @@ class RuleSettings(ConfigObject):
 
     enabled: StrictBool = True
     severity: Severity | None = absent_by_default()
+
+
+class IdentityRuleSettings(ConfigObject):
+    """``config.identity``: whether it runs. It has no ``severity``: its finding stays an info,
+    so a hub gives every developer the same exit code."""
+
+    rejected_keys = MappingProxyType(
+        {
+            "severity": (
+                f"{CONFIG_IDENTITY_RULE} is always an info, so every developer's run exits"
+                " alike; remove severity"
+            )
+        }
+    )
+
+    enabled: StrictBool = True
 
 
 # A JSON integer above zero: lax mode would take "120", true and 1.0.
@@ -151,3 +169,4 @@ class DoctorRules(ConfigObject):
     makefile_override: RuleSettings | None = absent_by_default(alias="makefile.override")
     features_tracker: RuleSettings | None = absent_by_default(alias="features.tracker")
     bench_tasks: RuleSettings | None = absent_by_default(alias="bench.tasks")
+    config_identity: IdentityRuleSettings | None = absent_by_default(alias="config.identity")

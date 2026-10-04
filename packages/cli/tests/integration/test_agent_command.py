@@ -295,3 +295,24 @@ def test_exits_one_when_exec_fails(
     assert result.exit_code == 1, result.output
     assert result.stderr == "hub agent: cannot start claude: Permission denied\n"
     assert result.stdout == ""
+
+
+def test_prints_local_lines_when_local_file_invalid(
+    agent_workspace: Path,
+    *,
+    execs: list[Exec],
+    claude_bin: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hub = agent_workspace / "hub"
+    (hub / "hub.local.json").write_text('{"project": {"name": "x"}}', encoding="utf-8")
+
+    result = run_agent(hub, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 1, result.output
+    assert result.stdout == ""
+    lines = result.stderr.splitlines()
+    assert len(lines) == 1, lines
+    assert lines[0].startswith("hub.local.json: project.name: set only in hub.json"), lines
+    assert execs == []
+    assert not (hub / CONTEXT).exists()

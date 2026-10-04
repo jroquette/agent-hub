@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from agent_hub.cli.init_config import document_from_flags, flag_problems
+from agent_hub.cli.init_config import check_flag_document, document_from_flags, flag_problems
 from agent_hub.core.hub_config.document_check import check_hub_document
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
@@ -33,7 +33,7 @@ def demo_document(**flags: Any) -> dict[str, Any]:
 
 
 def problems_of(document: dict[str, Any]) -> tuple[ConfigProblem, ...]:
-    checked = check_hub_document(document, running_version=VERSION)
+    checked = check_flag_document(document, running_version=VERSION)
     assert not isinstance(checked, HubConfig)
     return checked
 
@@ -176,6 +176,30 @@ def test_names_every_missing_flag_when_values_absent() -> None:
         not {"hub_repo", "branch_prefix", "author_name", "author_email"}
         & document["project"].keys()
     )
+
+
+def test_keeps_model_order_when_missing_flags_and_rejected_values_mix() -> None:
+    document = demo_document(branch_prefix=None, author_email="jane", tracker="linear:")
+
+    printed = flag_problems(problems_of(document), repos=DEMO_FLAGS["repos"])
+
+    assert printed == [
+        "--branch-prefix: Field required",
+        "--author-email: String should match pattern '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$'",
+        f"--tracker: {TEAM_PATTERN}",
+    ]
+
+
+def test_names_cross_field_problem_when_identity_flag_missing() -> None:
+    document = demo_document(repos="acme/x,other/x", author_name=None)
+
+    printed = flag_problems(problems_of(document), repos="acme/x,other/x")
+
+    # The missing flag and the duplicate dir, in the model's order: project before repos.
+    assert printed == [
+        "--author-name: Field required",
+        '--repos item 2 ("other/x"): repo dir "x" is already used by item 1, ignoring case',
+    ]
 
 
 def test_names_each_project_flag_when_its_value_rejected() -> None:

@@ -17,9 +17,12 @@ from agent_hub.cli.hub_config_reader import (
     LoadedHubJson,
     load_hub_config_or_exit,
     load_hub_json_or_exit,
+    local_lines,
     read_hub_bytes,
     read_hub_json,
+    read_local_json,
 )
+from agent_hub.core.hub_config.local_config import LOCAL_FILE_MAX_BYTES, LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.testing.builders import a_hub_document
@@ -520,3 +523,168 @@ def test_returns_read_problem_when_hub_json_unreadable(
     ]
     assert len(problems) == 1
     assert capsys.readouterr() == ("", "")
+
+
+def test_returns_empty_local_config_when_file_absent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert read_local_json(tmp_path / "hub.local.json") == LocalConfig()
+    assert capsys.readouterr() == ("", "")
+
+
+def test_returns_local_config_when_file_valid(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    document = {
+        "_note": "mine",
+        "project": {
+            "branch_prefix": "me/",
+            "author_name": "Jane Roe",
+            "author_email": "jane.doe@example.com",
+        },
+        "tracker": {"transport": "mcp"},
+    }
+    path = tmp_path / "hub.local.json"
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+    assert read_local_json(path) == LocalConfig.model_validate(document)
+    assert capsys.readouterr() == ("", "")
+
+
+# Reads hub.local.json in a fresh interpreter: its lines on stderr and exit 1, as a command does.
+LOAD_LOCAL_SCRIPT = """
+import sys
+from pathlib import Path
+
+from agent_hub.cli.hub_config_reader import local_lines, read_local_json
+from agent_hub.core.hub_config.local_config import LocalConfig
+
+read = read_local_json(Path(sys.argv[1]))
+if not isinstance(read, LocalConfig):
+    for line in local_lines(read):
+        print(line, file=sys.stderr)
+    sys.exit(1)
+"""
+
+
+def write_local(content: bytes) -> Callable[[Path], None]:
+    def write(path: Path) -> None:
+        path.write_bytes(content)
+
+    return write
+
+
+def write_oversize(path: Path) -> None:
+    # Valid JSON that sets only a valid key: the size alone stops it.
+    head, tail = b'{"project": {"branch_prefix": "me/"}, "_note": "', b'"}'
+    path.write_bytes(head + b"x" * (LOCAL_FILE_MAX_BYTES + 1 - len(head) - len(tail)) + tail)
+    assert path.stat().st_size == LOCAL_FILE_MAX_BYTES + 1
+
+
+@pytest.mark.parametrize(
+    ("make_local_file", "expected_path", "message"),
+    [
+        (write_local(b'{"project": {"name": "x"}}'), "project.name", "set only in hub.json"),
+        (
+            write_local(b'{"project": {"default_branch": "x"}}'),
+            "project.default_branch",
+            "set only in hub.json",
+        ),
+        (write_local(b'{"guard": {}}'), "guard", "set only in hub.json"),
+        (write_local(b'{"repos": []}'), "repos", "set only in hub.json"),
+        (write_local(b'{"tracker": {"team": "X"}}'), "tracker.team", "set only in hub.json"),
+        (write_local(b'{"project": {"branch_prefix": "-x/"}}'), "project.branch_prefix", ""),
+        (write_local(b'{"tracker": {"transport": "ftp"}}'), "tracker.transport", ""),
+        (write_local(b"[]"), "$", "must be a JSON object"),
+        (write_local(b"not json"), "$", "not valid JSON: "),
+        (make_fifo, "$", "cannot read {path}: not a regular file"),
+        (write_oversize, "$", "cannot read {path}: larger than 65536 bytes"),
+        (write_local(b'{"project": {"author_name": null}}'), "project.author_name", ""),
+    ],
+    ids=[
+        "project-name",
+        "default-branch",
+        "guard",
+        "repos",
+        "tracker-team",
+        "bad-prefix",
+        "bad-transport",
+        "array",
+        "not-json",
+        "fifo",
+        "oversize",
+        "null",
+    ],
+)
+def test_prints_local_lines_when_local_file_invalid(
+    tmp_path: Path,
+    *,
+    make_local_file: Callable[[Path], None],
+    expected_path: str,
+    message: str,
+) -> None:
+    path = tmp_path / "hub.local.json"
+    make_local_file(path)
+
+    # A FIFO with no writer would block an open: the timeout shows the read never waits on it.
+    completed = subprocess.run(  # noqa: S603 - this interpreter, a fixed script, a tmp_path path
+        [sys.executable, "-c", LOAD_LOCAL_SCRIPT, str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+
+    assert completed.returncode == 1
+    assert completed.stdout == ""
+    lines = completed.stderr.splitlines()
+    assert lines
+    assert all(line.startswith("hub.local.json: ") for line in lines), lines
+    prefix = f"hub.local.json: {expected_path}: {message.format(path=json.dumps(str(path)))}"
+    assert len(lines) == 1, lines
+    assert lines[0].startswith(prefix), lines
+
+
+def test_refuses_local_file_when_it_grows_past_cap_after_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "hub.local.json"
+    write_oversize(path)
+    real_fstat = os.fstat
+
+    def small_at_check(descriptor: int) -> os.stat_result:
+        # The size seen at the check is within the cap; the bytes read are not.
+        found = real_fstat(descriptor)
+        return os.stat_result((*found[:6], 2, *found[7:]))
+
+    monkeypatch.setattr(os, "fstat", small_at_check)
+
+    problems = read_local_json(path)
+
+    assert problems == (
+        ConfigProblem("$", f"cannot read {json.dumps(str(path))}: larger than 65536 bytes"),
+    )
+
+
+def test_prefixes_each_line_with_local_file_when_lines_built() -> None:
+    problems = (
+        ConfigProblem("guard", "set only in hub.json"),
+        ConfigProblem("$", "must be a JSON object"),
+    )
+
+    assert local_lines(problems) == [
+        "hub.local.json: guard: set only in hub.json",
+        "hub.local.json: $: must be a JSON object",
+    ]
+
+
+def test_returns_local_config_when_file_exactly_at_cap(tmp_path: Path) -> None:
+    path = tmp_path / "hub.local.json"
+    head, tail = b'{"project": {"branch_prefix": "me/"}, "_note": "', b'"}'
+    path.write_bytes(head + b"x" * (LOCAL_FILE_MAX_BYTES - len(head) - len(tail)) + tail)
+    assert path.stat().st_size == LOCAL_FILE_MAX_BYTES
+
+    read = read_local_json(path)
+
+    assert isinstance(read, LocalConfig)
+    assert read.project.branch_prefix == "me/"

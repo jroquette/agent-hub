@@ -1871,6 +1871,112 @@ def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubCon
     assert ci_trigger_branches(ci) == ["trunk", "trunk"]
 
 
+# AGH-65 AC-65.7: sha256 of the files as rendered on main (4346e52) before the identity keys became
+# optional; a hub that sets them in hub.json keeps these bytes.
+DEMO_AGENTS_SHA256 = "4fa425f1b14b4be79bb4fcc6e8e38045371f6e754b4229aa3a57858e17d29c7c"
+ALL_MODULES_SHA256 = {
+    "AGENTS.md": "8c6b23e99897429c8eb9b73f248140e89bb142ece79f36f29793cf0ad355f3e1",
+    ".claude-plugin/marketplace.json": (
+        "f7324911e70a0f3255274721636821a9b65a5716f04c5f6e3e470e74dc7b8ac7"
+    ),
+}
+USER_RULE = (
+    "1. Commits and PRs are authored by the user (`hub.json` → `project.author_name`,"
+    " `project.author_email`). No AI\n"
+)
+# AGH-65 AC-65.8 (plan E14): rule 1 of a team hub's AGENTS.md, from its first line to rule 2.
+TEAM_RULE = (
+    "1. Commits and PRs are authored by the developer running the session (`hub.local.json` →"
+    " `project.author_name`,\n"
+    "   `project.author_email`, else their `git config user.name`, `user.email`). No AI\n"
+    '   co-author trailer, no "Generated with" line, no emoji or other sign that an agent did the'
+    " work, and no branch named\n"
+    "   after an agent (e.g. `claude/…`). Branch: `<prefix><team>-<n>-<desc>`, where `<team>` is"
+    " the\n"
+    "   tracker team DEM in lowercase.\n"
+    "   `<prefix>` is `hub.local.json` → `project.branch_prefix`, else the local part of your"
+    " author email plus `/`.\n"
+    "2. No push"
+)
+
+
+def a_team_config() -> HubConfig:
+    """The demo with every module and no identity key: each developer brings their own."""
+    document = a_hub_document()
+    document["modules"] = {**document["modules"], "marketplace": {}}
+    for key in ("branch_prefix", "author_name", "author_email"):
+        del document["project"][key]
+    return HubConfig.model_validate(document)
+
+
+# AGH-65 with AGH-16 KO1: on a team hub kickoff checks the session's git email against the
+# developer's own address, never a hub.json key the hub does not hold.
+def test_checks_developer_email_when_team_kickoff_rendered() -> None:
+    render = {file.path: file for file in render_hub(a_team_config()).files}
+    raw = skill_text(render, "kickoff")
+    text = " ".join(raw.split())
+
+    check = (
+        "Check that `git config user.email` in the hub and in each repo equals your author"
+        " email (`hub.local.json` → `project.author_email`, else your own address, not an"
+        " agent's or the container's); if it differs, say so before any commit."
+    )
+    assert text.count(check) == 1
+    assert "`hub.json` → `project.author_email`" not in text
+    assert "work on `<prefix><team>-<n>-<desc>`." in text
+    step = raw.split("\n4. ", 1)[1].split("\n5. ", 1)[0]
+    assert all(len(line) <= 120 for line in f"4. {step}".splitlines())
+
+
+def test_renders_team_rules_when_identity_absent(demo_config: HubConfig) -> None:
+    config = a_team_config()
+
+    rendered = render_hub(config)
+    agents = text_of(config, "AGENTS.md")
+
+    assert agents[agents.index("1. Commits") : agents.index("2. No push") + len("2. No push")] == (
+        TEAM_RULE
+    )
+    assert all(len(line) <= 120 for line in agents.splitlines())
+    # No placeholder left, and no absent value spelled out: a file holds `None` or `null` only
+    # where the identity-setting demo's does (Python code, JSON).
+    demo = {file.path: file.content for file in render_hub(demo_config).files}
+    for file in rendered.files:
+        content = file.content or b""
+        assert b"@@" not in content, file.path
+        for word in (b"None", b"null"):
+            assert content.count(word) == (demo.get(file.path) or b"").count(word), file.path
+    assert render_hub(config) == rendered
+
+
+def test_keeps_lines_within_width_when_team_key_long() -> None:
+    config = a_team_config()
+    config = config.model_copy(
+        update={"tracker": config.tracker.model_copy(update={"team": "LONGTEAMKEY1"})}
+    )
+
+    agents = text_of(config, "AGENTS.md")
+
+    assert "tracker team LONGTEAMKEY1 in lowercase." in agents
+    assert [line for line in agents.splitlines() if len(line) > 120] == []
+
+
+def test_keeps_agents_bytes_when_identity_in_hub_json(
+    demo_config: HubConfig, variant_config: HubConfig, all_modules_config: HubConfig
+) -> None:
+    def digest(config: HubConfig, path: str) -> str:
+        return hashlib.sha256(text_of(config, path).encode("utf-8")).hexdigest()
+
+    assert digest(demo_config, "AGENTS.md") == DEMO_AGENTS_SHA256
+    assert {path: digest(all_modules_config, path) for path in ALL_MODULES_SHA256} == (
+        ALL_MODULES_SHA256
+    )
+    # Another author in hub.json renders the same user wording, never the author's name.
+    variant = text_of(variant_config, "AGENTS.md")
+    assert USER_RULE in variant
+    assert "hub.local.json" not in variant
+
+
 # AGH-16 inventory A6b: the per-repo setup scripts `hub worktree` runs, named in the workflow step
 # that creates the worktree.
 def test_names_worktree_setup_scripts_when_agents_rendered(demo_config: HubConfig) -> None:
@@ -2949,3 +3055,10 @@ def test_ignores_run_outputs_when_gitignore_rendered(demo_config: HubConfig) -> 
 
     assert set(RUN_OUTPUTS) <= set(lines)
     assert len(lines) == len(set(lines))
+
+
+def test_ignores_local_file_when_gitignore_rendered(demo_config: HubConfig) -> None:
+    # Each developer's hub.local.json stays out of the hub's commits (AC-65.15).
+    gitignore = next(file for file in render_hub(demo_config).files if file.path == ".gitignore")
+
+    assert "hub.local.json" in gitignore.content.decode("utf-8").splitlines()

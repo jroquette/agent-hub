@@ -23,6 +23,7 @@ RELEASED_IDS = (
     "makefile.override",
     "features.tracker",
     "bench.tasks",
+    "config.identity",
 )
 
 # The "Default" column of docs/design/hub-doctor.md § Rules.
@@ -46,6 +47,7 @@ DESIGN_SEVERITIES = {
     "makefile.override": Severity.WARNING,
     "features.tracker": Severity.ERROR,
     "bench.tasks": Severity.ERROR,
+    "config.identity": Severity.INFO,
 }
 
 

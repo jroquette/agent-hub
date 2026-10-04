@@ -1,12 +1,15 @@
-"""What ``hub doctor`` knows of a hub: its config (or why), lock, files, base hooks, repos.
+"""What ``hub doctor`` knows of a hub: its config (or why), lock, files, base hooks, repos,
+and the developer's ``hub.local.json`` and branch prefix.
 
 The cli fills a ``DoctorSnapshot``; rules read it and never touch the disk. Paths are relative
 POSIX paths from the hub root.
 """
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from agent_hub.core.hub_config.effective_identity import Sourced
+from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.hub_files.hub_lock import HUB_LOCK_PATH, HubLock
@@ -87,6 +90,10 @@ class DoctorSnapshot:
     ``base_hooks`` is the ``hooks`` block of the running release's managed settings, ``None``
     when no selected rule reads it or the config failed. ``repos`` holds one entry per
     ``repos[].dir``, in ``hub.json`` order, when a selected rule reads them; else it is empty.
+    ``local`` is the developer's ``hub.local.json`` (``LocalConfig()`` when absent) or its
+    problems, read on every run. ``branch_prefix`` is the developer's effective prefix and its
+    source when a selected rule reads the developer identity on a valid config and local file;
+    else ``None``, as when no source gives one.
     """
 
     config: HubConfig | ConfigFailure
@@ -95,6 +102,8 @@ class DoctorSnapshot:
     lock: LockState | None
     base_hooks: Mapping[str, JsonValue] | None
     repos: tuple[RepoFiles, ...]
+    local: LocalConfig | tuple[ConfigProblem, ...] = field(default_factory=LocalConfig)
+    branch_prefix: Sourced | None = None
 
     @property
     def hub_config(self) -> HubConfig:
