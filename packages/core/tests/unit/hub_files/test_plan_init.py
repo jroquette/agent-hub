@@ -73,6 +73,7 @@ CORE_MODULES = (
     "tracker/tracker_client.py",
     "workspace/__init__.py",
     "workspace/branch_pattern.py",
+    "workspace/shown_conventions.py",
     "workspace/worktree_name.py",
     "workspace/brief_text.py",
     "workspace/agent_launch.py",

@@ -548,13 +548,17 @@ def test_finds_same_findings_when_fresh_hub_lists_teams(
 
 def with_work_branches(document: dict[str, Any]) -> dict[str, Any]:
     """``document`` as the mixed hub: ``demo-web`` added, the conventions' titles set, the
-    project branch ``work/…`` and ``demo-api``'s own ``release/{ISSUE}``.
+    project branch ``work/…``, its commit title ``wip/{summary}`` and ``demo-api``'s own
+    ``release/{ISSUE}``.
 
     Neither first segment is the prefix nor a path a fresh hub holds, so nothing resolves by luck.
     """
     mixed = a_conventions_document()
     project = {**document["project"], "conventions": mixed["project"]["conventions"]}
     project["conventions"]["branch"] = "work/{issue_lower}/{slug}"
+    # E32: a title shape holding `/` is path-shaped too.
+    project["conventions"]["commit_title"] = "wip/{summary}"
+    project["conventions"]["pr_title"] = "{ISSUE}: {summary}"
     api = {**document["repos"][0], "conventions": {"branch": "release/{ISSUE}"}}
     return {**document, "project": project, "repos": [api, *document["repos"][1:], a_second_repo()]}
 

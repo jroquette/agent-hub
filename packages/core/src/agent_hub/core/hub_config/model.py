@@ -358,8 +358,9 @@ class HubConfig(ConfigObject):
     def conventions_for(self, repo_dir: str) -> EffectiveConventions:
         """The effective conventions of the repo at ``repo_dir``: its keys over the project's.
 
-        The only reader of ``project.conventions`` and ``repos[].conventions`` (with the
-        generator's rendered text). Raises ``KeyError`` when no repo has that dir.
+        The only reader of ``project.conventions`` and ``repos[].conventions`` (with
+        ``workspace.shown_conventions``, the rendered texts' source). Raises ``KeyError`` when
+        no repo has that dir.
         """
         for repo in self.repos:
             if repo.dir == repo_dir:
