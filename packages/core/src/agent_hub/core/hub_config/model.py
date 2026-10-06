@@ -366,6 +366,18 @@ class HubConfig(ConfigObject):
                 return effective_conventions(self.project.conventions, repo.conventions)
         raise KeyError(repo_dir)
 
+    @property
+    def project_conventions(self) -> EffectiveConventions:
+        """The project's effective conventions: its keys over the defaults, no repo's."""
+        return effective_conventions(self.project.conventions, None)
+
+    @property
+    def sets_conventions(self) -> bool:
+        """Whether ``project.conventions`` or a ``repos[].conventions`` is set, even ``{}``."""
+        return self.project.conventions is not None or any(
+            repo.conventions is not None for repo in self.repos
+        )
+
     def cross_field_problems(self) -> list[InitErrorDetails]:
         """Unique repo dirs, known guard roots and contract-sync repos, rules of chosen modules,
         and an explicit ``pr_title`` that its repo's ``commit_title`` cannot fill."""

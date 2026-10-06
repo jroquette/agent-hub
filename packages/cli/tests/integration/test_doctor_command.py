@@ -546,6 +546,60 @@ def test_finds_same_findings_when_fresh_hub_lists_teams(
     assert results[1] == results[0]
 
 
+def with_work_branches(document: dict[str, Any]) -> dict[str, Any]:
+    """``document`` as the mixed hub: ``demo-web`` added, the conventions' titles set, the
+    project branch ``work/…`` and ``demo-api``'s own ``release/{ISSUE}``.
+
+    Neither first segment is the prefix nor a path a fresh hub holds, so nothing resolves by luck.
+    """
+    mixed = a_conventions_document()
+    project = {**document["project"], "conventions": mixed["project"]["conventions"]}
+    project["conventions"]["branch"] = "work/{issue_lower}/{slug}"
+    api = {**document["repos"][0], "conventions": {"branch": "release/{ISSUE}"}}
+    return {**document, "project": project, "repos": [api, *document["repos"][1:], a_second_repo()]}
+
+
+def test_finds_no_stale_reference_when_fresh_hub_sets_conventions(
+    tmp_path: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    # AGH-57 (plan O1 a): AGENTS.md names the branch shapes and the example as code spans.
+    config = tmp_path / "hub.json"
+    config.write_bytes(dump_json(with_work_branches(demo_document)))
+    root = tmp_path / "hub"
+    created = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
+    assert created.exit_code == 0, created.stderr
+    agents = (root / "AGENTS.md").read_text(encoding="utf-8")
+    assert all(
+        f"`{span}`" in agents
+        for span in ("work/{issue_lower}/{slug}", "work/dem-7/collector", "release/{ISSUE}")
+    )
+
+    assert lines_of(run_doctor(root, "--only", "instructions.refs"), exit_code=0) == [CLEAN]
+
+
+def test_finds_same_findings_when_fresh_hub_sets_conventions(
+    tmp_path: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    # AGH-57: every check finds in a fresh configured hub what it finds in a fresh unconfigured
+    # one with the same repos, and nothing more.
+    configured = with_work_branches(demo_document)
+    unconfigured = {**demo_document, "repos": [*demo_document["repos"], a_second_repo()]}
+    results = []
+    for name, document in (("unconfigured", unconfigured), ("configured", configured)):
+        base = tmp_path / name
+        base.mkdir()
+        config = base / "hub.json"
+        config.write_bytes(dump_json(document))
+        root = base / "hub"
+        created = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
+        assert created.exit_code == 0, created.stderr
+        result = run_doctor(root)
+        results.append((result.exit_code, result.stdout.splitlines(), result.stderr))
+
+    assert results[0][0] == 0, results[0]
+    assert results[1] == results[0]
+
+
 @pytest.mark.parametrize("schema_version", [1, 2], ids=["schema-ok", "schema-wrong"])
 def test_reports_pin_only_when_pin_differs(
     demo_hub: Path,

@@ -17,7 +17,8 @@ files (``config_lint``; spec AC-11.19, AC-11.20, Q-6). Lines are ``config_lint.t
   skipped when it is a URL, ``mailto:``, ``~``, absolute or ``../`` path, a placeholder (``<x>``,
   ``path/to/``, ``...``, ``…``, ``$VAR``), ``origin/…``/``upstream/…``, a MIME type, a branch
   under ``project.branch_prefix`` (when ``hub.json`` sets one), a configured default branch
-  (the project's or a repo's) or exactly ``hub.local.json`` (each developer's, gitignored).
+  (the project's or a repo's), exactly a branch shape or example a hub that sets conventions
+  renders (``shown_branches``, AGH-57) or exactly ``hub.local.json`` (each developer's, gitignored).
   It resolves, after cutting a ``::`` test id and a glob's tail
   (``@/`` read as ``src/``), against the listed paths, the fixed paths present and their
   folders (E31), from the file's folder or the root; then by name (``.claude/worktrees``,
@@ -73,6 +74,7 @@ from agent_hub.core.hub_config.versions import cut_echo
 from agent_hub.core.hub_files.hub_lock import HUB_LOCK_PATH
 from agent_hub.core.hub_files.tree_snapshot import FileEntry
 from agent_hub.core.json_form import InvalidJsonError, load_json_bytes
+from agent_hub.core.workspace.branch_pattern import shown_branches
 
 DEFAULT_MAX_LINES: Final = MappingProxyType(
     {"AGENTS.md": 100, "CLAUDE.md": 150, "CLAUDE.local.md": 50, "*/*": 80}
@@ -223,7 +225,8 @@ class _RefContext:
     pnpm_scripts: frozenset[str]
     # None when hub.json sets no prefix: each developer's is their own, so none is skipped.
     branch_prefix: str | None
-    # The project's and each repo's default branch: AGENTS.md names them, ``/`` and all.
+    # The project's and each repo's default branch, and the conventions' branch shapes and
+    # examples: AGENTS.md names them, ``/`` and all.
     branches: frozenset[str]
 
 
@@ -397,10 +400,15 @@ def _is_checked(ref: str, *, branch_prefix: str | None) -> bool:
 
 
 def _configured_branches(config: HubConfig) -> frozenset[str]:
-    """The project's default branch and each repo's effective one, which are not paths."""
+    """The project's default branch and each repo's effective one, which are not paths.
+
+    With conventions, also every branch shape and example the hub's texts show, from the same
+    function the generator renders them with; each is skipped only on exact equality.
+    """
+    shown = shown_branches(config)
     return frozenset(
         {config.project.default_branch, *(config.default_branch_for(r.dir) for r in config.repos)}
-    )
+    ) | (frozenset() if shown is None else shown.texts())
 
 
 def _is_placeholder(ref: str) -> bool:
