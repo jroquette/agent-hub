@@ -30,7 +30,7 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `project.default_branch` | `^S(?:/S)*$` (Rendered values) | `main` | the hub's own branch (CI, brief hub line, retro), default of `repos[].default_branch`, guard |
 | `project.author_name`, `project.author_email` | strings | optional, per developer ([developer-identity.md](developer-identity.md)) | cloud setup (git identity), `attribution.ai` rule, marketplace owner, `AGENTS.md` |
 | `tracker.kind` | closed list: `linear` | req. | selects the tracker adapter (Tracker, below) |
-| `tracker.team`, `tracker.teams` | a team key; or a list of them (≥ 1, unique ignoring case), the first the default | exactly one of the two | `hub next` (each team, in order), `hub run`, worktree names, `features.tracker`, branch hints, `AGENTS.md` |
+| `tracker.team`, `tracker.teams` | a team key; or a list of them (≥ 1, unique ignoring case), the first the default; `hub run`/`hub worktree` match keys ignoring case, `features.tracker` exactly | exactly one of the two | `hub next` (each team, in order), `hub run`, worktree names, `features.tracker`, branch hints, `AGENTS.md` |
 | `tracker.ready_label`, `tracker.failed_label` | strings | `agent-ready`, `agent-failed` | `hub next` (ready), `hub run` on failure (failed) |
 | `tracker.transport` | closed list: `api`, `mcp`; `hub.local.json` may override it | `api` | `hub next`, `hub run` (adapter; Tracker, below) |
 | `repos[]` | list, at least one item | req. | launcher, worktrees, hooks, cloud setup |
