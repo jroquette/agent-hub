@@ -113,7 +113,8 @@ def test_writes_teams_when_tracker_lists_several() -> None:
     assert document["tracker"] == {"kind": "linear", "teams": ["APP", "OPS"]}
 
 
-# The seven values of AC-12.8, each with the lines it must print.
+# The seven values of AC-12.8 and the two of AC-56.9 (tracker-empty-team, tracker-duplicate-team),
+# each with the lines it must print.
 REJECTED = [
     pytest.param(
         {"tracker": "jira:DEM"}, ["--tracker: Input should be 'linear'"], id="tracker-kind"

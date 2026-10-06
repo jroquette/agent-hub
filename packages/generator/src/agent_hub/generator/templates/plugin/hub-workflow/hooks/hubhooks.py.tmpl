@@ -201,7 +201,8 @@ class Config:
         )
         self.transport = self.identity.transport
         self.default_branch = hub_file.project.default_branch
-        self.tracker_team = hub_file.tracker.team
+        self.tracker_teams = hub_file.tracker.team_keys
+        self.tracker_team = self.tracker_teams[0] if self.tracker_teams else ""
         self.repos = hub_file.repos
         self.ask_before_edit = _union(root_guard.ask_before_edit, hub_file.guard.ask_before_edit)
         self.deny_hosts = _union(root_guard.deny_hosts, hub_file.guard.deny_hosts)
