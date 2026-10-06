@@ -583,6 +583,21 @@ class ScanCounter:
         return found
 
 
+def test_names_every_team_in_branch_shape_when_hub_lists_teams(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    document = a_hub_document()
+    document["project"]["branch_prefix"] = "me/"
+    document["tracker"] = {"kind": "linear", "teams": ["APP", "OPS"]}
+    config = HubConfig.model_validate(document)
+    snapshot = snapshot_of(files={AGENTS: f"{BRANCH}\n".encode()}, config=config)
+
+    assert text_rules.branch_shape(config) == "me/<app|ops>-<N>-<desc>"
+    assert [finding.fix for finding in ATTRIBUTION_AI.check(snapshot)] == [
+        "branches are `me/<app|ops>-<N>-<desc>`; commits/PRs carry no AI trailer"
+    ]
+
+
 def anchors_of(source: str) -> list[str]:
     """The ``^``, ``$``, ``\\A``, ``\\Z`` and ``\\z`` of a pattern outside character classes."""
     anchors: list[str] = []
