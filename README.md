@@ -151,7 +151,8 @@ mkdir -p demo-hub && cd demo-hub && git init
 ```
 
 **3. Generate the hub.** Replace the project name, repos, tracker team, branch prefix and hub repo with yours
-(`--hub-repo` is needed until the folder has a GitHub `origin`). The author comes
+(`--hub-repo` is needed until the folder has a GitHub `origin`; for several tracker teams, list them, e.g.
+`--tracker linear:APP,OPS`, the first the default). The author comes
 from your git `user.name` and `user.email` unless you pass `--author-name` and `--author-email`.
 
 ```bash
@@ -539,7 +540,8 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `project.default_branch` | no | `main` | Base of worktrees unless a repo sets its own; the guard blocks pushes to it |
 | `project.author_name`, `project.author_email` | no | per developer | Author of commits and PRs; leave them out on a team hub (see `hub.local.json` below) |
 | `tracker.kind` | yes | | Task tracker; only `linear` today |
-| `tracker.team` | yes | | Tracker team key, e.g. `DEMO` |
+| `tracker.team` | one of the two | | Tracker team key, e.g. `DEMO` |
+| `tracker.teams` | one of the two | | Several team keys, the first the default, e.g. `["APP", "OPS"]` |
 | `tracker.ready_label` | no | `agent-ready` | Label of issues an agent may pick up |
 | `tracker.failed_label` | no | `agent-failed` | Label set when an agent run fails |
 | `repos[].dir` | yes | | Folder name of the repo, next to the hub |
@@ -685,7 +687,7 @@ enforces this in `make check`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE
 
 | Command | What it does |
 | --- | --- |
-| `hub init [PROJECT] --repos … --tracker kind:TEAM …` | Create a hub from flags (all flags: Quick Start step 3 and `hub init --help`) |
+| `hub init [PROJECT] --repos … --tracker kind:TEAM[,TEAM…] …` | Create a hub from flags (all flags: Quick Start step 3 and `hub init --help`) |
 | `hub init --config hub.json [--dir …]` | Create a hub from an existing `hub.json` |
 | `hub sync [--check]` | Reapply the templates without overwriting what the project customized |
 | `hub sync --adopt [--accept PATH]… [--check]` | Join a hand-made hub to `hub.lock` (from 0.7.0): record what matches, create what is missing, list what differs |
