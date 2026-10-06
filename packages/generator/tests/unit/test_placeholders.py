@@ -22,6 +22,8 @@ RENDERED_KEYS = {
     "tracker_team_mention",
     "tracker_team_rule",
     "tracker_team_key",
+    "tracker_team_key_named",
+    "tracker_team_key_assigned",
     "repo_dirs",
     "repo_githubs",
     "guard_deny_hosts",
@@ -64,7 +66,9 @@ def test_takes_values_from_model_when_demo_mapped(demo_config: HubConfig) -> Non
         "tracker_team": "DEM",
         "tracker_team_mention": " team DEM",
         "tracker_team_rule": " the\n   tracker team DEM",
-        "tracker_team_key": "`tracker.team`",
+        "tracker_team_key": "`tracker.team` in `hub.json`",
+        "tracker_team_key_named": "team `tracker.team` in `hub.json`",
+        "tracker_team_key_assigned": "team = `tracker.team` in `hub.json`",
         "repo_dirs": "demo-api",
         "repo_githubs": "acme/demo-api",
         "guard_deny_hosts": "",
@@ -266,6 +270,10 @@ def test_keeps_user_wording_when_hub_sets_author(variant_config: HubConfig) -> N
 # Each AGENTS.md value starts on its own line, so the template text before it only gets shorter.
 MENTION_SUFFIX = "). Update it when starting, finishing"
 RULE_SUFFIX = " in lowercase."
+# The plugin texts' parenthetical, the same at every site once a hub lists several teams.
+SEVERAL_TEAMS_KEY = (
+    "the issue's team: a key of `tracker.teams` in `hub.json`, the first being the default"
+)
 
 
 def test_names_every_team_when_tracker_lists_teams() -> None:
@@ -276,16 +284,21 @@ def test_names_every_team_when_tracker_lists_teams() -> None:
         mapping["tracker_team_mention"],
         mapping["tracker_team_rule"],
         mapping["tracker_team_key"],
+        mapping["tracker_team_key_named"],
+        mapping["tracker_team_key_assigned"],
     ) == (
         "APP",
         "\n   team APP, OPS (default APP)",
         "\n   one of the tracker teams APP, OPS",
-        "one of `tracker.teams`, default first,",
+        SEVERAL_TEAMS_KEY,
+        SEVERAL_TEAMS_KEY,
+        SEVERAL_TEAMS_KEY,
     )
 
 
 def test_wraps_team_list_when_keys_long() -> None:
-    keys = [f"TEAMKEY{chr(65 + n // 26)}{chr(65 + n % 26)}" for n in range(20)]
+    # 8 keys: with the suffix ignored, the last line of both values would pass 120 characters.
+    keys = [f"TEAMKEY{chr(65 + n // 26)}{chr(65 + n % 26)}" for n in range(8)]
     document = a_hub_document()
     document["tracker"] = {"kind": "linear", "teams": keys}
 

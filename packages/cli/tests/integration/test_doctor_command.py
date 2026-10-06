@@ -511,6 +511,7 @@ def test_finds_same_findings_when_fresh_hub_lists_teams(
         result = run_doctor(root)
         results.append((result.exit_code, result.stdout.splitlines(), result.stderr))
 
+    assert results[0][0] == 0, results[0]
     assert results[1] == results[0]
 
 
