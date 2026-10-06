@@ -23,11 +23,11 @@ import textwrap
 from typing import Final
 
 from agent_hub.core.doctor.snapshot import module_makefiles
-from agent_hub.core.hub_config.conventions import EffectiveConventions, effective_conventions
+from agent_hub.core.hub_config.conventions import EffectiveConventions
 from agent_hub.core.hub_config.model import PREFIX_PLACEHOLDER, Conventions, HubConfig
 from agent_hub.core.hub_files.rendered_file import Ownership
 from agent_hub.core.runner.title_pattern import TitleParts, render_title
-from agent_hub.core.workspace.branch_pattern import branch_example, branch_shape_text
+from agent_hub.core.workspace.branch_pattern import ShownBranches, shown_branches
 from agent_hub.generator.registry import REGISTRY
 
 # The platform's git source, unpinned: shims append ``@v<platform.version>`` read from hub.json
@@ -190,10 +190,9 @@ def _conventions_texts(config: HubConfig) -> dict[str, str]:
     ``{prefix}`` shown as the rendered prefix and the other placeholders as written, and a block
     with each project shape and one example, then one line per repo naming the keys it overrides.
     """
-    project = config.project
-    shown_prefix = project.branch_prefix or PREFIX_PLACEHOLDER
-    overrides = [(repo.dir, repo.conventions) for repo in config.repos if repo.conventions]
-    if project.conventions is None and not overrides:
+    shown = shown_branches(config)
+    if shown is None:
+        shown_prefix = config.project.branch_prefix or PREFIX_PLACEHOLDER
         default_shape = f"`{shown_prefix}<team>-<n>-<desc>`"
         team_rule = _team_mentions(config)["tracker_team_rule"]
         return {
@@ -201,8 +200,8 @@ def _conventions_texts(config: HubConfig) -> dict[str, str]:
             "kickoff_branch": default_shape,
             "conventions_section": "",
         }
-    conventions = effective_conventions(project.conventions, None)
-    shape = f"`{branch_shape_text(conventions.branch, shown_prefix=shown_prefix)}`"
+    overrides = [(repo.dir, repo.conventions) for repo in config.repos if repo.conventions]
+    shape = f"`{shown.project.shape}`"
     own_branch = any(repo.branch is not None for _, repo in overrides)
     return {
         "branch_rule": _filled_after(
@@ -213,7 +212,7 @@ def _conventions_texts(config: HubConfig) -> dict[str, str]:
         "kickoff_branch": shape
         + (" (or the repo's own, `AGENTS.md` → Conventions)" if own_branch else ""),
         "conventions_section": _conventions_section(
-            config, conventions, shown_prefix=shown_prefix, overrides=overrides
+            config, config.project_conventions, shown=shown, overrides=overrides
         ),
     }
 
@@ -222,18 +221,14 @@ def _conventions_section(
     config: HubConfig,
     conventions: EffectiveConventions,
     *,
-    shown_prefix: str,
+    shown: ShownBranches,
     overrides: list[tuple[str, Conventions]],
 ) -> str:
     """The Conventions block, from the blank lines before its heading to its last line."""
     team = config.tracker.default_team
     example = TitleParts(issue=f"{team}-{_EXAMPLE_NUMBER}", **_EXAMPLE_TITLE)
     shapes = (
-        (
-            "Branch",
-            branch_shape_text(conventions.branch, shown_prefix=shown_prefix),
-            branch_example(conventions.branch, shown_prefix=shown_prefix, team=team),
-        ),
+        ("Branch", shown.project.shape, shown.project.example),
         (
             "Commit title",
             conventions.commit_title,
@@ -241,10 +236,10 @@ def _conventions_section(
         ),
         ("PR title", conventions.pr_title, render_title(conventions.pr_title, example)),
     )
-    items = [f"{label}: `{pattern}`, e.g. `{shown}`." for label, pattern, shown in shapes]
+    items = [f"{label}: `{pattern}`, e.g. `{text}`." for label, pattern, text in shapes]
     for repo_dir, repo in overrides:
         keys = [
-            f"{label} `{_shown_pattern(key, value, shown_prefix=shown_prefix)}`"
+            f"{label} `{shown.repos[repo_dir].shape if key == 'branch' else value}`"
             for key, label in _OVERRIDE_LABELS.items()
             if (value := getattr(repo, key)) is not None
         ]
@@ -258,13 +253,6 @@ def _conventions_section(
         items.append(f"`{repo_dir}` overrides {_LIST_SEPARATOR.join(keys)}{note}.")
     bullets = "\n".join(_filled_after(f"- {item}", lead="") for item in items)
     return f"\n\n## Conventions\n\n{_CONVENTIONS_LEAD}\n\n{bullets}"
-
-
-def _shown_pattern(key: str, pattern: str, *, shown_prefix: str) -> str:
-    """A repo's pattern as the block shows it: a branch with its prefix rendered."""
-    if key == "branch":
-        return branch_shape_text(pattern, shown_prefix=shown_prefix)
-    return pattern
 
 
 def _filled_after(text: str, *, lead: str) -> str:

@@ -2,10 +2,17 @@
 
 ``{prefix}`` is the developer's branch prefix, ``{ISSUE}`` the issue id uppercased,
 ``{issue_lower}`` the same lowercased and ``{slug}`` the worktree's description. Pure: the
-generator and the doctor show the same shapes the CLI renders.
+generator and the doctor show the same shapes the CLI renders. ``shown_branches`` is the one
+source of the shapes and examples a configured hub's texts show: the generator renders them and
+doctor ``instructions.refs`` skips them as code spans (AGH-57, plan O1 a), so the two cannot drift.
 """
 
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import NamedTuple
+
 from agent_hub.core.hub_config.conventions import fill_pattern, pattern_parts
+from agent_hub.core.hub_config.model import PREFIX_PLACEHOLDER, HubConfig
 
 # The issue number and description of the example branch shown in rendered texts.
 _EXAMPLE_NUMBER = 7
@@ -41,4 +48,49 @@ def branch_example(pattern: str, *, shown_prefix: str, team: str) -> str:
         prefix=shown_prefix,
         issue_id=f"{team}-{_EXAMPLE_NUMBER}",
         slug=_EXAMPLE_SLUG,
+    )
+
+
+class ShownBranch(NamedTuple):
+    """A branch pattern as rendered texts show it: its shape and its example."""
+
+    shape: str
+    example: str
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ShownBranches:
+    """The branch shapes and examples of a hub that sets conventions."""
+
+    # The rendered prefix: ``project.branch_prefix``, else ``<prefix>``.
+    shown_prefix: str
+    project: ShownBranch
+    # Each repo's effective branch, by dir in ``hub.json`` order.
+    repos: Mapping[str, ShownBranch]
+
+    def texts(self) -> frozenset[str]:
+        """Every shape and example, the project's and each repo's."""
+        return frozenset(text for shown in (self.project, *self.repos.values()) for text in shown)
+
+
+def shown_branches(config: HubConfig) -> ShownBranches | None:
+    """The shapes and examples ``config``'s texts show; ``None`` when it sets no conventions.
+
+    Examples use the default tracker team, issue 7 and the description ``collector``.
+    """
+    if not config.sets_conventions:
+        return None
+    shown_prefix = config.project.branch_prefix or PREFIX_PLACEHOLDER
+    team = config.tracker.default_team
+
+    def shown(pattern: str) -> ShownBranch:
+        return ShownBranch(
+            shape=branch_shape_text(pattern, shown_prefix=shown_prefix),
+            example=branch_example(pattern, shown_prefix=shown_prefix, team=team),
+        )
+
+    return ShownBranches(
+        shown_prefix=shown_prefix,
+        project=shown(config.project_conventions.branch),
+        repos={repo.dir: shown(config.conventions_for(repo.dir).branch) for repo in config.repos},
     )
