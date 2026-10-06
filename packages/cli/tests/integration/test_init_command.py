@@ -241,6 +241,32 @@ def test_writes_flag_document_when_flags_given(
     assert [repo.github for repo in written_config(target).repos] == expected_repos
 
 
+def test_writes_teams_when_tracker_flag_lists_several(
+    git_on_path: Any, target: Path, demo_flags: list[str]
+) -> None:
+    flags = ["linear:APP,OPS" if value == "linear:DEM" else value for value in demo_flags]
+
+    result = run_init([*flags, "--dir", str(target)])
+
+    assert result.exit_code == 0, result.stderr
+    tracker = json.loads((target / "hub.json").read_bytes())["tracker"]
+    assert tracker == {"kind": "linear", "teams": ["APP", "OPS"]}
+    assert written_config(target).tracker.team_keys == ("APP", "OPS")
+
+
+def test_writes_nothing_when_team_list_invalid(
+    git_on_path: Any, target: Path, demo_flags: list[str]
+) -> None:
+    flags = ["linear:APP," if value == "linear:DEM" else value for value in demo_flags]
+
+    result = run_init([*flags, "--dir", str(target)])
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr.splitlines() == ["--tracker: String should match pattern '^[A-Za-z0-9]+$'"]
+    assert listing(target) == []
+
+
 @pytest.mark.parametrize("form", ["one-json-form", "crlf-indent-four"])
 def test_copies_config_bytes_when_config_given(
     target: Path, tmp_path: Path, demo_document: dict[str, Any], *, form: str

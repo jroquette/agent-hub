@@ -54,8 +54,8 @@ def url_of(issue_id: str) -> str:
 def seeded_backend(*issues: Issue) -> FakeTrackerBackend:
     open_states = (TrackerState(name="Todo", closed=False), TrackerState(name="Done", closed=True))
     return FakeTrackerBackend(
-        states={"DEM": open_states, "OPS": open_states},
-        team_labels={"DEM": ("demo-api", "demo-web"), "OPS": ()},
+        states={"DEM": open_states, "APP": open_states, "OPS": open_states},
+        team_labels={"DEM": ("demo-api", "demo-web"), "APP": (), "OPS": ()},
         workspace_labels=("agent-ready", "agent-failed"),
         issues={issue.id: issue for issue in issues},
     )
@@ -93,6 +93,22 @@ class FailingTracker:
 
     def list_ready(self, team: str, label: str) -> list[Issue]:
         raise TrackerError(operation="list_ready", cause="synthetic outage", fix="retry later")
+
+
+class RecordingTracker:
+    """Wraps ``client``: records the ``(team, label)`` of each ``list_ready``; a team in
+    ``failing`` raises the ``TrackerError`` an adapter would."""
+
+    def __init__(self, client: TrackerClient, failing: frozenset[str] = frozenset()) -> None:
+        self.client = client
+        self.failing = failing
+        self.calls: list[tuple[str, str]] = []
+
+    def list_ready(self, team: str, label: str) -> list[Issue]:
+        self.calls.append((team, label))
+        if team in self.failing:
+            raise TrackerError(operation="list_ready", cause="synthetic outage", fix="retry later")
+        return self.client.list_ready(team, label)
 
 
 @pytest.fixture
@@ -221,6 +237,119 @@ def test_exits_one_when_tracker_fails(
     assert result.exit_code == 1
     assert result.stdout == ""
     assert result.stderr == API_LINE + "list_ready: synthetic outage; retry later\n"
+
+
+def teams_backend() -> FakeTrackerBackend:
+    """Ready issues of ``APP`` and ``OPS``, seeded out of order, plus one of ``DEM``."""
+    ready = "agent-ready"
+    return seeded_backend(
+        an_issue(id="OPS-3", title="Synthetic ops work", labels=(ready, "demo-api")),
+        an_issue(id="APP-9", title="Synthetic app later", labels=(ready, "demo-web")),
+        an_issue(id="APP-2", title="Synthetic app first", labels=(ready,)),
+        an_issue(id="DEM-1", title="Synthetic demo work", labels=(ready, "demo-api")),
+    )
+
+
+APP_LINES = (
+    f"APP-2  ?  Synthetic app first  {url_of('APP-2')}\n"
+    f"APP-9  demo-web  Synthetic app later  {url_of('APP-9')}\n"
+)
+OPS_LINES = f"OPS-3  demo-api  Synthetic ops work  {url_of('OPS-3')}\n"
+OUTAGE = "list_ready: synthetic outage; retry later"
+
+
+@pytest.mark.usefixtures("with_key")
+def test_lists_each_team_in_config_order_when_hub_lists_teams(
+    demo_workspace: Workspace, run_command: CommandRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    demo_workspace.use_teams("APP", "OPS")
+    tracker = RecordingTracker(InMemoryTrackerClient(teams_backend()))
+    inject(monkeypatch, tracker)
+
+    result = run_command(demo_workspace.hub, "next")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == APP_LINES + OPS_LINES
+    assert result.stderr == API_LINE
+    assert tracker.calls == [("APP", "agent-ready"), ("OPS", "agent-ready")]
+
+
+@pytest.mark.usefixtures("with_key")
+def test_lists_other_teams_when_one_team_fails(
+    demo_workspace: Workspace, run_command: CommandRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    demo_workspace.use_teams("APP", "OPS")
+    tracker = RecordingTracker(InMemoryTrackerClient(teams_backend()), failing=frozenset({"OPS"}))
+    inject(monkeypatch, tracker)
+
+    result = run_command(demo_workspace.hub, "next")
+
+    assert result.exit_code == 1
+    assert result.stdout == APP_LINES
+    assert result.stderr == API_LINE + f"team OPS: {OUTAGE}\n"
+    assert tracker.calls == [("APP", "agent-ready"), ("OPS", "agent-ready")]
+
+
+@pytest.mark.usefixtures("with_key")
+def test_names_succeeding_teams_when_none_ready(
+    demo_workspace: Workspace, run_command: CommandRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    demo_workspace.use_teams("APP", "OPS")
+    closed = an_issue(id="APP-4", state="Done")
+    inject(monkeypatch, RecordingTracker(InMemoryTrackerClient(seeded_backend(closed))))
+
+    result = run_command(demo_workspace.hub, "next")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "no ready issues (teams APP, OPS, label agent-ready)\n"
+    assert result.stderr == API_LINE
+
+
+@pytest.mark.usefixtures("with_key")
+def test_names_only_succeeding_team_when_other_team_fails_and_none_ready(
+    demo_workspace: Workspace, run_command: CommandRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    demo_workspace.use_teams("APP", "OPS")
+    closed = an_issue(id="APP-4", state="Done")
+    backend = seeded_backend(closed)
+    inject(
+        monkeypatch, RecordingTracker(InMemoryTrackerClient(backend), failing=frozenset({"OPS"}))
+    )
+
+    result = run_command(demo_workspace.hub, "next")
+
+    assert result.exit_code == 1
+    assert result.stdout == "no ready issues (team APP, label agent-ready)\n"
+    assert result.stderr == API_LINE + f"team OPS: {OUTAGE}\n"
+
+
+@pytest.mark.usefixtures("with_key")
+def test_names_failure_per_team_when_every_team_fails(
+    demo_workspace: Workspace, run_command: CommandRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    demo_workspace.use_teams("APP", "OPS")
+    failing = frozenset({"APP", "OPS"})
+    inject(monkeypatch, RecordingTracker(InMemoryTrackerClient(teams_backend()), failing=failing))
+
+    result = run_command(demo_workspace.hub, "next")
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == API_LINE + f"team APP: {OUTAGE}\nteam OPS: {OUTAGE}\n"
+
+
+@pytest.mark.usefixtures("with_key")
+def test_calls_tracker_once_when_hub_has_one_team(
+    demo_workspace: Workspace, run_command: CommandRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tracker = RecordingTracker(InMemoryTrackerClient(teams_backend()))
+    inject(monkeypatch, tracker)
+
+    result = run_command(demo_workspace.hub, "next")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == f"DEM-1  demo-api  Synthetic demo work  {url_of('DEM-1')}\n"
+    assert tracker.calls == [("DEM", "agent-ready")]
 
 
 @pytest.mark.usefixtures("with_key")

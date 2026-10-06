@@ -8,6 +8,9 @@ this reader falls back instead.
 
 - A key that is absent, of the wrong type, or an empty string takes its default, and only that
   key: the rest of the file is kept. A list with any item that is not a string is ``()``.
+- ``tracker.team_keys`` is ``tracker.teams`` when it is a non-empty list of non-empty strings,
+  else ``(team,)`` when ``tracker.team`` is a non-empty string, else ``()``; ``team`` keeps its
+  own value (``""`` when ``teams`` is set).
 - The defaults of optional keys equal ``HubConfig``'s (the consistency test is
   ``packages/generator/tests/integration/test_hub_json_reader.py``). Required strings default
   to ``""``, ``project.name`` to the name of the directory holding the file (then ``hub``), and a
@@ -87,10 +90,11 @@ class ProjectSection:
 
 @dataclass(frozen=True)
 class TrackerSection:
-    """``tracker``."""
+    """``tracker``: ``team_keys`` are the configured team keys in order, the first the default."""
 
     kind: str = ""
     team: str = ""
+    team_keys: tuple[str, ...] = ()
     ready_label: str = "agent-ready"
     failed_label: str = "agent-failed"
     transport: str = "api"
@@ -164,6 +168,7 @@ def load_hub_file(path: str | os.PathLike[str]) -> HubFile:
         tracker=TrackerSection(
             kind=_text(tracker, "kind", ""),
             team=_text(tracker, "team", ""),
+            team_keys=_team_keys(tracker),
             ready_label=_text(tracker, "ready_label", TrackerSection.ready_label),
             failed_label=_text(tracker, "failed_label", TrackerSection.failed_label),
             transport=_text(tracker, "transport", TrackerSection.transport),
@@ -331,6 +336,15 @@ def _texts(section: dict[str, object], key: str) -> tuple[str, ...]:
     if isinstance(value, list) and all(isinstance(item, str) for item in value):
         return tuple(value)
     return ()
+
+
+def _team_keys(tracker: dict[str, object]) -> tuple[str, ...]:
+    """``teams`` when every item is a non-empty string, else ``(team,)``, else ``()``."""
+    teams = _texts(tracker, "teams")
+    if teams and all(teams):
+        return teams
+    team = _text(tracker, "team", "")
+    return (team,) if team else ()
 
 
 def _version(platform: dict[str, object]) -> str | None:

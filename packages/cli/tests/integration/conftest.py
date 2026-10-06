@@ -830,6 +830,14 @@ class DemoWorkspace:
         entry["default_branch"] = branch
         path.write_text(json.dumps(document, indent=2) + "\n")
 
+    def use_teams(self, *keys: str) -> None:
+        """Replace ``tracker.team`` with ``tracker.teams`` (``keys``) in the hub's ``hub.json``."""
+        path = self.hub / "hub.json"
+        document = json.loads(path.read_text())
+        del document["tracker"]["team"]
+        document["tracker"]["teams"] = list(keys)
+        path.write_text(json.dumps(document, indent=2) + "\n")
+
     def worktree(self, repo: str, name: str) -> Path:
         return self.ws / repo / ".claude" / "worktrees" / name
 

@@ -246,6 +246,39 @@ def test_requires_team_prefix_when_linear_ids_given(
     assert checked(snapshot_of, record) == on_record(*expected)
 
 
+def a_teams_config(*teams: str) -> HubConfig:
+    """``a_config()``'s project with ``tracker.teams`` set to ``teams`` instead of ``team``."""
+    document = a_config().model_dump(mode="json", exclude_none=True)
+    document["tracker"] = {"kind": "linear", "teams": list(teams)}
+    return HubConfig.model_validate(document)
+
+
+def linear_checked(snapshot_of: SnapshotFactory, linear: object, *teams: str) -> list[Shown]:
+    """The findings on a record whose ``linear`` is ``linear``, on a hub listing ``teams``."""
+    files = {RECORD: json.dumps(a_record(an_ac(1), linear=linear)).encode()}
+    return findings_of(snapshot_of(config=a_teams_config(*teams), files=files))
+
+
+def test_accepts_ids_of_every_team_when_hub_lists_teams(snapshot_of: SnapshotFactory) -> None:
+    assert linear_checked(snapshot_of, ["APP-1", "OPS-2"], "APP", "OPS") == []
+
+
+@pytest.mark.parametrize("linear", [["XYZ-1"], ["app-1"]])
+def test_names_every_team_when_id_matches_none(
+    snapshot_of: SnapshotFactory, linear: list[str]
+) -> None:
+    assert linear_checked(snapshot_of, linear, "APP", "OPS") == on_record(
+        "`linear` must be a list of <TEAM>-<n> ids, <TEAM> one of APP, OPS"
+    )
+
+
+def test_accepts_ids_when_keys_share_prefix(snapshot_of: SnapshotFactory) -> None:
+    assert linear_checked(snapshot_of, ["AP-1", "APP-2"], "AP", "APP") == []
+    assert linear_checked(snapshot_of, ["APX-1"], "AP", "APP") == on_record(
+        "`linear` must be a list of <TEAM>-<n> ids, <TEAM> one of AP, APP"
+    )
+
+
 def test_accepts_record_when_linear_absent(snapshot_of: SnapshotFactory) -> None:
     record = a_record(an_ac(1))
     del record["linear"]

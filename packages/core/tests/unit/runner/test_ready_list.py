@@ -6,6 +6,7 @@ from agent_hub.core.runner.ready_list import (
     no_ready_line,
     ready_rows,
     repo_of,
+    team_failure_line,
 )
 from agent_hub.core.testing.builders import an_issue
 
@@ -42,6 +43,24 @@ def test_prints_question_mark_when_none_or_several_match(labels: tuple[str, ...]
 
 
 def test_names_team_and_label_when_none_ready() -> None:
-    assert no_ready_line(team="DEM", label="agent-ready") == (
+    assert no_ready_line(teams=("DEM",), label="agent-ready") == (
         "no ready issues (team DEM, label agent-ready)"
     )
+
+
+def test_names_every_team_when_none_ready() -> None:
+    assert no_ready_line(teams=("APP", "OPS"), label="agent-ready") == (
+        "no ready issues (teams APP, OPS, label agent-ready)"
+    )
+
+
+def test_prefixes_team_when_several_teams_listed() -> None:
+    line = team_failure_line(team="OPS", reason="list_ready: outage", team_count=2)
+
+    assert line == "team OPS: list_ready: outage"
+
+
+def test_keeps_reason_when_one_team_listed() -> None:
+    line = team_failure_line(team="DEM", reason="list_ready: outage", team_count=1)
+
+    assert line == "list_ready: outage"

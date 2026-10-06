@@ -1961,6 +1961,58 @@ def test_keeps_lines_within_width_when_team_key_long() -> None:
     assert [line for line in agents.splitlines() if len(line) > 120] == []
 
 
+# AGH-56 (plan § Design 7): the plugin files that name the tracker team, and the hub with two.
+TEAM_KEY_PLUGIN_FILES = (
+    "plugin/hub-workflow/skills/feature/SKILL.md",
+    "plugin/hub-workflow/agents/planner.md",
+    "plugin/hub-workflow/agents/requirements-analyst.md",
+)
+
+
+def a_config_with_teams(keys: list[str]) -> HubConfig:
+    document = a_hub_document()
+    document["tracker"] = {"kind": "linear", "teams": keys}
+    return HubConfig.model_validate(document)
+
+
+def test_names_every_team_in_agents_when_tracker_lists_teams() -> None:
+    config = a_config_with_teams(["APP", "OPS"])
+
+    rendered = render_hub(config)
+    texts = rendered_texts(config)
+    agents = texts["AGENTS.md"]
+
+    assert "team APP, OPS (default APP)" in agents
+    assert "where `<team>` is one of the tracker teams APP, OPS in lowercase" in " ".join(
+        agents.split()
+    )
+    assert [line for line in agents.splitlines() if len(line) > 120] == []
+    for file in rendered.files:
+        assert b"@@" not in (file.content or b""), file.path
+    assert render_hub(config) == rendered
+    for path in TEAM_KEY_PLUGIN_FILES:
+        assert "`tracker.teams`" in texts[path], path
+        assert "`tracker.team`" not in texts[path], path
+
+
+def test_keeps_lines_within_width_when_many_teams_listed() -> None:
+    # 8 keys: with the suffix ignored, the last line of both team values would pass 120 characters.
+    keys = [f"TEAMKEY{chr(65 + n // 26)}{chr(65 + n % 26)}" for n in range(8)]
+
+    agents = text_of(a_config_with_teams(keys), "AGENTS.md")
+
+    assert ", ".join(keys) in " ".join(agents.split())
+    assert [line for line in agents.splitlines() if len(line) > 120] == []
+
+
+def test_names_tracker_team_key_when_one_team_rendered(demo_config: HubConfig) -> None:
+    texts = rendered_texts(demo_config)
+
+    for path in TEAM_KEY_PLUGIN_FILES:
+        assert "`tracker.team`" in texts[path], path
+        assert "teams" not in texts[path], path
+
+
 def test_keeps_agents_bytes_when_identity_in_hub_json(
     demo_config: HubConfig, variant_config: HubConfig, all_modules_config: HubConfig
 ) -> None:

@@ -11,7 +11,8 @@ script never reads ``hub.json``, and ``AGENTS.md``'s worktree base and protected
 never keys: shims read them at run time, and the author name needs format quoting. A hub that
 leaves the identity to each developer (no ``project.branch_prefix``, or no author) renders
 ``<prefix>`` and ``AGENTS.md``'s rule names the developer's sources instead (AGH-65); a hub that
-sets them keeps the bytes it had.
+sets them keeps the bytes it had. A hub with several tracker teams names them all where
+``AGENTS.md`` and the plugin name the team; a one-team hub keeps its bytes (AGH-56).
 """
 
 import textwrap
@@ -54,6 +55,16 @@ _PREFIX_NOTE: Final = (
     " part of your author email plus `/`."
 )
 
+# The template text right after each ``AGENTS.md`` team mention, so a wrapped list of several
+# teams keeps its last line within 120 characters (AGH-56).
+_MENTION_SUFFIX: Final = "). Update it when starting, finishing"
+_RULE_SUFFIX: Final = " in lowercase."
+_RULE_INDENT: Final = "   "
+# The plugin texts' team parenthetical when a hub lists several tracker teams (AGH-56).
+_SEVERAL_TEAMS_KEY: Final = (
+    "the issue's team: a key of `tracker.teams` in `hub.json`, the first being the default"
+)
+
 
 def substitution_mapping(config: HubConfig) -> dict[str, str]:
     """Map each placeholder name to its text; lists keep ``hub.json`` order, joined by ``, ``."""
@@ -63,7 +74,7 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
         "project_hub_repo": project.hub_repo,
         "project_branch_prefix": project.branch_prefix or PREFIX_PLACEHOLDER,
         "project_default_branch": project.default_branch,
-        "tracker_team": config.tracker.team,
+        "tracker_team": config.tracker.default_team,
         "repo_dirs": _LIST_SEPARATOR.join(repo.dir for repo in config.repos),
         "repo_githubs": _LIST_SEPARATOR.join(repo.github for repo in config.repos),
         "guard_deny_hosts": _LIST_SEPARATOR.join(config.guard.deny_hosts),
@@ -72,6 +83,7 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
         **_module_files(config),
         **_contract_sync_repos(config),
         **_branch_mentions(config),
+        **_team_mentions(config),
         "commit_author": (
             _USER_AUTHOR
             if project.author_name is not None and project.author_email is not None
@@ -106,6 +118,50 @@ def _branch_mentions(config: HubConfig) -> dict[str, str]:
         "worktree_base": f"{_PER_REPO_BASE} ({per_repo})",
         "protected_branches": f"{_LIST_SEPARATOR.join(spans[:-1])} or {spans[-1]}",
     }
+
+
+def _team_mentions(config: HubConfig) -> dict[str, str]:
+    """The tracker team as ``AGENTS.md`` and the plugin texts name it.
+
+    One team: the template text it replaced, so the file keeps its bytes. Several: every key in
+    ``hub.json`` order with the default first named; each ``AGENTS.md`` value starts on its own
+    line and wraps, so the line before it only gets shorter and, for keys short enough to fit on a
+    line, none passes 120 characters. The plugin texts' parenthetical has one value per site, as
+    each site words the one key; several keys read the same everywhere.
+    """
+    keys = config.tracker.team_keys
+    if len(keys) == 1:
+        return {
+            "tracker_team_mention": f" team {keys[0]}",
+            "tracker_team_rule": f" the\n{_RULE_INDENT}tracker team {keys[0]}",
+            "tracker_team_key": "`tracker.team` in `hub.json`",
+            "tracker_team_key_named": "team `tracker.team` in `hub.json`",
+            "tracker_team_key_assigned": "team = `tracker.team` in `hub.json`",
+        }
+    listed = _LIST_SEPARATOR.join(keys)
+    return {
+        "tracker_team_mention": _wrapped_line(
+            f"team {listed} (default {keys[0]})", suffix=_MENTION_SUFFIX
+        ),
+        "tracker_team_rule": _wrapped_line(
+            f"one of the tracker teams {listed}", suffix=_RULE_SUFFIX
+        ),
+        "tracker_team_key": _SEVERAL_TEAMS_KEY,
+        "tracker_team_key_named": _SEVERAL_TEAMS_KEY,
+        "tracker_team_key_assigned": _SEVERAL_TEAMS_KEY,
+    }
+
+
+def _wrapped_line(text: str, *, suffix: str) -> str:
+    """``text`` on new lines indented under a rule item, leaving room for ``suffix`` after it."""
+    return "\n" + textwrap.fill(
+        text,
+        width=_MARKDOWN_WIDTH - len(suffix),
+        initial_indent=_RULE_INDENT,
+        subsequent_indent=_RULE_INDENT,
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
 
 
 def _contract_sync_repos(config: HubConfig) -> dict[str, str]:

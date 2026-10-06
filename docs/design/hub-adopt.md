@@ -38,6 +38,20 @@ or one under another linked ancestor, keeps sync's `symlinked ancestor A` per pa
 sync. A migration with a conflict under it (e.g. a name in both plugins) is not listed: it is listed only once that
 conflict is fixed and adopt is re-run.
 
+### Project guards
+
+Where each project guard of the Loki hub goes on adoption. "Extension file" is the seeded
+`plugin/<project>/hooks/project_guard.py` ([hub-generator.md](hub-generator.md), Hooks).
+
+| Guard today | Covered by |
+|---|---|
+| Exchange-host denylist | `guard.deny_hosts` |
+| `app_db` destructive-SQL check | extension file (needs command parsing specific to the project) |
+| Docker / service check | extension file; the base guard keeps its generic docker-volume rule |
+| `_archive/` denial | `guard.deny_paths` |
+| `tests/invariants/` ask-before-edit | `guard.ask_before_edit` |
+| Brain write roles (curator vs implementer) | extension file (role logic is project policy) |
+
 ### --accept
 
 `--accept PATH` (repeatable) takes the render at a path this run lists, written exactly as listed (relative POSIX, no

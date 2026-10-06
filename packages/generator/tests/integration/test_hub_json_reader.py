@@ -59,6 +59,10 @@ LOCAL_PATHS: tuple[tuple[str | int, ...], ...] = (
     ("project", "author_email"),
 )
 
+# Either-or keys: compared through ``Tracker.team_keys``, not one by one
+# (``test_matches_model_teams_when_document_valid``).
+TEAM_PATHS: tuple[tuple[str | int, ...], ...] = (("tracker", "team"), ("tracker", "teams"))
+
 # argv: mode, reader file, hub.json path, checks (JSON: name -> [actual, expected] expressions,
 # evaluated with the reader's names and ``hub_file``). Modes: ``import`` (a sibling import, as the
 # hooks do), ``by_path`` (the registration the reader's docstring asks for, as the scripts do),
@@ -227,8 +231,8 @@ def test_matches_schema_defaults_when_hub_json_minimal(
 
 
 def test_lists_every_optional_field_when_model_inspected() -> None:
-    """``OPTIONAL_PATHS``, ``INHERITED_PATHS`` and ``LOCAL_PATHS`` list every optional key: a new
-    one fails here."""
+    """``OPTIONAL_PATHS``, ``INHERITED_PATHS``, ``LOCAL_PATHS`` and ``TEAM_PATHS`` list every
+    optional key: a new one fails here."""
     owners: tuple[tuple[tuple[str | int, ...], type[Any]], ...] = (
         ((), HubConfig),
         (("platform",), Platform),
@@ -247,7 +251,9 @@ def test_lists_every_optional_field_when_model_inspected() -> None:
     # ``$schema`` is an editor hint, not a default; ``guard`` and ``doctor`` are listed per field.
     containers = {("$schema",), ("guard",), ("doctor",)}
 
-    assert defaulted - containers == set(OPTIONAL_PATHS) | set(INHERITED_PATHS) | set(LOCAL_PATHS)
+    assert defaulted - containers == (
+        set(OPTIONAL_PATHS) | set(INHERITED_PATHS) | set(LOCAL_PATHS) | set(TEAM_PATHS)
+    )
 
 
 def repo_branches(hub_file: Mapping[str, Any]) -> dict[str, str]:
@@ -556,6 +562,88 @@ def test_falls_back_when_required_keys_missing(
     assert hub_file["tracker"]["team"] == ""
     assert loaded["equal"]["repos"] is True
     assert hub_file["schema_version"] is None
+
+
+def a_tracker_document(tracker: Mapping[str, object]) -> dict[str, Any]:
+    """``a_hub_document()`` with ``tracker`` in place of its team keys (``kind`` kept)."""
+    document = a_hub_document()
+    document["tracker"] = {"kind": "linear", **tracker}
+    return document
+
+
+@pytest.mark.parametrize(
+    ("tracker", "team_keys", "team"),
+    [
+        ({"team": "AGH"}, ["AGH"], "AGH"),
+        ({"teams": ["APP", "OPS"]}, ["APP", "OPS"], ""),
+    ],
+    ids=["team", "teams"],
+)
+def test_reads_team_keys_when_tracker_sets_either_key(
+    tmp_path: Path,
+    *,
+    hook_python: str,
+    read: Reader,
+    tracker: dict[str, object],
+    team_keys: list[str],
+    team: str,
+) -> None:
+    path = write_hub_file(tmp_path, a_tracker_document(tracker))
+
+    hub_file = read(hook_python, path)["hub_file"]
+
+    assert hub_file["tracker"]["team_keys"] == team_keys
+    assert hub_file["tracker"]["team"] == team
+
+
+# E4 (owner O2): ``teams`` counts only as a non-empty list of non-empty strings; anything else is
+# absent, so the reader falls back to ``team``, else to no team.
+INVALID_TEAMS: tuple[object, ...] = ("APP", [], ["APP", 7], ["APP", ""], {}, None)
+
+
+@pytest.mark.parametrize(
+    "teams", INVALID_TEAMS, ids=["string", "empty", "non-string", "empty-key", "object", "null"]
+)
+@pytest.mark.parametrize(
+    ("team", "team_keys"), [("AGH", ["AGH"]), (None, [])], ids=["team", "none"]
+)
+def test_falls_back_to_team_when_teams_value_invalid(
+    tmp_path: Path,
+    *,
+    hook_python: str,
+    read: Reader,
+    teams: object,
+    team: str | None,
+    team_keys: list[str],
+) -> None:
+    tracker: dict[str, object] = {"teams": teams}
+    if team is not None:
+        tracker["team"] = team
+    path = write_hub_file(tmp_path, a_tracker_document(tracker))
+
+    # ``read`` fails the test when the child exits non-zero: the read never raises.
+    hub_file = read(hook_python, path)["hub_file"]
+
+    assert hub_file["tracker"]["team_keys"] == team_keys
+    assert hub_file["project"]["name"] == "demo"
+
+
+@pytest.mark.parametrize(
+    "tracker",
+    [{"team": "AGH"}, {"teams": ["APP", "OPS"]}, {"teams": ["AP", "APP", "app9"]}],
+    ids=["team", "teams", "prefix-keys"],
+)
+def test_matches_model_teams_when_document_valid(
+    tmp_path: Path, *, hook_python: str, read: Reader, tracker: dict[str, object]
+) -> None:
+    """The ``TEAM_PATHS`` pair: the reader's ``team_keys`` are the model's ``Tracker.team_keys``."""
+    document = a_tracker_document(tracker)
+    path = write_hub_file(tmp_path, document)
+
+    config = HubConfig.model_validate(document)
+    hub_file = read(hook_python, path)["hub_file"]
+
+    assert hub_file["tracker"]["team_keys"] == list(config.tracker.team_keys)
 
 
 def test_names_project_hub_when_directory_has_no_name(hook_python: str, read: Reader) -> None:

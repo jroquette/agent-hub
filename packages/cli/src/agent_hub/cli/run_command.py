@@ -2,9 +2,9 @@
 
 The hub is ``AGENT_HUB_ROOT`` or the cwd; run from a worktree of the hub repo, its main checkout
 is the hub (its ``hub.json``, Q-23). Usage problems exit 2 before any tracker call or child
-process: an option out of range, an issue not shaped ``<team>-<n>``, a ``--repo`` that is not a
-repo ``dir`` of ``hub.json``, a folder that is not a hub (D15), a malformed ``hub.local.json``
-in the main checkout, or no branch prefix for the developer. The local file's
+process: an option out of range, an issue not shaped ``<team>-<n>`` for a team of ``hub.json``, a
+``--repo`` that is not a repo ``dir`` of ``hub.json``, a folder that is not a hub (D15), a malformed
+``hub.local.json`` in the main checkout, or no branch prefix for the developer. The local file's
 ``tracker.transport`` replaces ``hub.json``'s.
 """
 
@@ -38,6 +38,7 @@ from agent_hub.cli.run_steps import LiveRun
 from agent_hub.cli.tracker_client import missing_key_line, resolve_tracker_client, transport_line
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.team_keys import team_of, teams_text
 from agent_hub.core.runner.report_writes import REVIEW_STATE, call_line, success_writes
 from agent_hub.core.runner.run_record import Stage, picked_data
 from agent_hub.core.runner.run_texts import pr_body, success_comment
@@ -221,9 +222,14 @@ def _hub_checkout(root: Path) -> Path:
 
 
 def _refuse_usage(context: typer.Context, config: HubConfig, *, issue: str, repo: str) -> None:
-    team = config.tracker.team
-    if not (ISSUE_ID_PATTERN.fullmatch(issue) and issue.startswith(f"{team}-")):
-        context.fail(f"issue must look like {team}-<n> (e.g. {team}-1)")
+    teams = config.tracker.team_keys
+    if not (ISSUE_ID_PATTERN.fullmatch(issue) and team_of(issue, teams)):
+        team = config.tracker.default_team
+        if len(teams) == 1:
+            context.fail(f"issue must look like {team}-<n> (e.g. {team}-1)")
+        context.fail(
+            f"issue must look like <TEAM>-<n> (e.g. {team}-1); use one of: {teams_text(teams)}"
+        )
     dirs = [entry.dir for entry in config.repos]
     if repo not in dirs:
         context.fail(f"unknown repo in --repo: {shown_path(repo)}; use one of: {' '.join(dirs)}")

@@ -2,9 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from agent_hub.cli.run_children import RunChildren, push_env
+from agent_hub.cli.run_children import RunChildren, RunOptions, push_env
 from agent_hub.core.hub_config.model import HubConfig
-from agent_hub.core.testing.builders import a_hub_document, a_second_repo
+from agent_hub.core.testing.builders import a_hub_document, a_second_repo, an_issue
 
 OVERRIDES = [
     ("core.fsmonitor", "false"),
@@ -84,3 +84,51 @@ def test_bases_run_on_project_branch_when_repo_sets_none(repo: str) -> None:
 
     assert children.base == "origin/trunk"
     assert base_argument(children.pr_argv(title="t", body="b")) == "trunk"
+
+
+OPTIONS = RunOptions(
+    live=False, max_turns=40, budget=3.0, model="sonnet", start="implement", effort="medium"
+)
+
+
+def session_prompt(tracker: dict[str, object], issue_id: str) -> str:
+    """The implementing session's prompt for ``issue_id`` in a hub whose tracker is ``tracker``."""
+    document = a_hub_document()
+    document["tracker"] = {"kind": "linear", **tracker}
+    children = RunChildren(
+        config=HubConfig.model_validate(document),
+        hub=Path("/ws/hub"),
+        repo="demo-api",
+        issue_id=issue_id,
+        branch_prefix="jdoe/",
+    )
+    argv = children.session_argv(an_issue(id=issue_id), OPTIONS)
+    return argv[argv.index("-p") + 1]
+
+
+def test_prefixes_prompt_with_issue_team_when_hub_lists_teams() -> None:
+    prompt = session_prompt({"teams": ["APP", "OPS"]}, "OPS-12")
+
+    assert "(OPS-N)" in prompt
+    assert "(APP-N)" not in prompt
+
+
+def test_prefixes_prompt_with_configured_spelling_when_key_lowercase() -> None:
+    prompt = session_prompt({"team": "app"}, "APP-1")
+
+    assert "(app-N)" in prompt
+    assert "(APP-N)" not in prompt
+
+
+def test_refuses_team_when_issue_matches_no_team() -> None:
+    document = a_hub_document()
+    children = RunChildren(
+        config=HubConfig.model_validate(document),
+        hub=Path("/ws/hub"),
+        repo="demo-api",
+        issue_id="OPS-1",
+        branch_prefix="jdoe/",
+    )
+
+    with pytest.raises(ValueError, match=r"^OPS-1 matches no team of hub\.json$"):
+        _ = children.team
