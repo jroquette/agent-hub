@@ -306,6 +306,24 @@ def test_names_succeeding_teams_when_none_ready(
 
 
 @pytest.mark.usefixtures("with_key")
+def test_names_only_succeeding_team_when_other_team_fails_and_none_ready(
+    demo_workspace: Workspace, run_command: CommandRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    demo_workspace.use_teams("APP", "OPS")
+    closed = an_issue(id="APP-4", state="Done")
+    backend = seeded_backend(closed)
+    inject(
+        monkeypatch, RecordingTracker(InMemoryTrackerClient(backend), failing=frozenset({"OPS"}))
+    )
+
+    result = run_command(demo_workspace.hub, "next")
+
+    assert result.exit_code == 1
+    assert result.stdout == "no ready issues (team APP, label agent-ready)\n"
+    assert result.stderr == API_LINE + f"team OPS: {OUTAGE}\n"
+
+
+@pytest.mark.usefixtures("with_key")
 def test_names_failure_per_team_when_every_team_fails(
     demo_workspace: Workspace, run_command: CommandRunner, monkeypatch: pytest.MonkeyPatch
 ) -> None:
