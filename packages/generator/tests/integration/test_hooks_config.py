@@ -209,6 +209,20 @@ def test_reads_deny_paths_when_config_loaded(
     ]
 
 
+def test_reads_every_team_when_config_loaded(
+    hub: Path, *, hook_python: str, run_python: Callable[..., Any], elsewhere: Path
+) -> None:
+    write_hub_json(hub, MISTYPED | {"tracker": {"kind": "linear", "teams": ["APP", "OPS"]}})
+    code = (
+        "import json\nfrom hubhooks import load_config\ncfg = load_config(None)\n"
+        "print(json.dumps([list(cfg.tracker_teams), cfg.tracker_team]))\n"
+    )
+
+    found = run_python(hook_python, code, path=hub / HOOKS, cwd=elsewhere)
+
+    assert found == [["APP", "OPS"], "APP"]
+
+
 def test_reads_hook_root_config_when_cwd_in_other_hub(
     run_hook: Callable[..., subprocess.CompletedProcess[bytes]],
     hub: Path,
