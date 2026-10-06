@@ -6,12 +6,18 @@ paths under the workspace become workspace-relative, control and bidi characters
 line ``hub doctor``'s ``attribution.ai`` rule would flag, or that holds the robot emoji, is
 dropped; no text names an agent. Each text is cut at its cap, so a PR body fits one argument and
 a comment stays short (E21).
+
+When a repo's titles are configured (``hub_config.conventions``), the PR title is rendered from
+the parts of the newest commit subject, read with the repo's ``commit_title``; otherwise it is
+the cleaned subject, as before.
 """
 
 import re
-from typing import Final
+from typing import Final, NamedTuple
 
 from agent_hub.core.doctor.text_rules import ATTRIBUTIONS
+from agent_hub.core.hub_config.conventions import EffectiveConventions
+from agent_hub.core.runner.title_pattern import parse_title, render_title
 
 MAX_COMMIT_SUMMARY_CHARS: Final = 1_200
 MAX_PR_SUMMARY_CHARS: Final = 20_000
@@ -65,9 +71,41 @@ def commit_summary(text: str, *, workspace: str) -> str:
 def pr_title(subject: str, *, workspace: str, fallback: str) -> str:
     """The PR title: the commit subject cleaned, its first line, at most 256 characters;
     ``fallback`` when nothing is left."""
+    return _cleaned_first_line(subject, workspace=workspace)[:MAX_PR_TITLE_CHARS] or fallback
+
+
+class PrTitle(NamedTuple):
+    """A PR title, and whether a configured ``commit_title`` failed to read its subject."""
+
+    title: str
+    unmatched: bool
+
+
+def conventional_pr_title(
+    subject: str, *, conventions: EffectiveConventions, issue_id: str, workspace: str
+) -> PrTitle:
+    """The PR title of a run on ``issue_id``, following the repo's ``conventions``.
+
+    Titles not configured: ``pr_title(subject)``, as before (no parse). Configured: the cleaned
+    first line is parsed with ``commit_title`` and ``pr_title`` is rendered from its parts, with
+    ``{ISSUE}`` the run's issue, then cleaned and cut like any title; when it does not match,
+    the title is ``pr_title(subject)`` and ``unmatched`` is True.
+    """
+    plain = pr_title(subject, workspace=workspace, fallback=issue_id)
+    if not conventions.titles_configured:
+        return PrTitle(title=plain, unmatched=False)
+    parts = parse_title(conventions.commit_title, _cleaned_first_line(subject, workspace=workspace))
+    if parts is None:
+        return PrTitle(title=plain, unmatched=True)
+    rendered = render_title(conventions.pr_title, parts._replace(issue=issue_id))
+    return PrTitle(
+        title=pr_title(rendered, workspace=workspace, fallback=issue_id), unmatched=False
+    )
+
+
+def _cleaned_first_line(subject: str, *, workspace: str) -> str:
     lines = (line.strip() for line in sanitized_summary(subject, workspace=workspace).split("\n"))
-    first = next((line for line in lines if line), "")
-    return first[:MAX_PR_TITLE_CHARS] or fallback
+    return next((line for line in lines if line), "")
 
 
 def pr_body(*, issue_id: str, summary: str, gate: str, workspace: str) -> str:

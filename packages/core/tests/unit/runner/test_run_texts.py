@@ -1,5 +1,9 @@
+from typing import Any
+
 import pytest
 
+from agent_hub.core.hub_config.conventions import EffectiveConventions
+from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.runner.run_texts import (
     MAX_COMMIT_SUMMARY_CHARS,
     MAX_DIAGNOSIS_CHARS,
@@ -7,7 +11,9 @@ from agent_hub.core.runner.run_texts import (
     MAX_PR_TITLE_CHARS,
     MAX_SUCCESS_SUMMARY_CHARS,
     WORKSPACE_WORDS,
+    PrTitle,
     commit_summary,
+    conventional_pr_title,
     failure_comment,
     inbox_line,
     pr_body,
@@ -15,6 +21,7 @@ from agent_hub.core.runner.run_texts import (
     sanitized_summary,
     success_comment,
 )
+from agent_hub.core.testing.builders import a_conventions_document, a_hub_document
 
 WORKSPACE = "/work/ws"
 # Assembled, so the repo holds no attribution line (as test_text_rules.py does).
@@ -241,3 +248,83 @@ def test_drops_attribution_line_when_zero_width_splits_it() -> None:
     line = "Co-\u200b" + "Authored-By: " + "Claude <noreply@example.com>"
 
     assert sanitized_summary(f"Adds x.\n{line}", workspace=WORKSPACE) == "Adds x."
+
+
+def conventions_of(document: dict[str, Any], repo: str = "demo-api") -> EffectiveConventions:
+    return HubConfig.model_validate(document).conventions_for(repo)
+
+
+def with_repo_conventions(**keys: str) -> dict[str, Any]:
+    document = a_hub_document()
+    document["repos"][0]["conventions"] = keys
+    return document
+
+
+def titled(subject: str, conventions: EffectiveConventions) -> PrTitle:
+    return conventional_pr_title(
+        subject, conventions=conventions, issue_id="DEM-1", workspace=WORKSPACE
+    )
+
+
+UNCONFIGURED_SUBJECTS = ("feat(core): add x (DEM-1)", "feat: add x (DEM-2)", "add x")
+UNCONFIGURED_HUBS = {
+    "unconfigured": a_hub_document,
+    "branch-only": lambda: with_repo_conventions(branch="{prefix}{ISSUE}-{slug}"),
+}
+
+
+@pytest.mark.parametrize("subject", UNCONFIGURED_SUBJECTS)
+@pytest.mark.parametrize("hub", list(UNCONFIGURED_HUBS))
+def test_keeps_cleaned_subject_when_titles_not_configured(hub: str, subject: str) -> None:
+    conventions = conventions_of(UNCONFIGURED_HUBS[hub]())
+
+    assert titled(subject, conventions) == PrTitle(
+        title=pr_title(subject, workspace=WORKSPACE, fallback="DEM-1"), unmatched=False
+    )
+    assert titled(subject, conventions).title == subject
+
+
+def test_renders_pr_title_from_parts_when_subject_matches() -> None:
+    conventions = conventions_of(a_conventions_document(), "demo-web")
+
+    assert titled("DEM-9: feat(cli): add x", conventions) == PrTitle(
+        title="DEM-1: feat(cli): add x", unmatched=False
+    )
+
+
+def test_falls_back_to_subject_when_subject_does_not_match() -> None:
+    conventions = conventions_of(a_conventions_document(), "demo-web")
+
+    assert titled("add x", conventions) == PrTitle(title="add x", unmatched=True)
+
+
+def test_parses_with_default_commit_title_when_only_pr_title_set() -> None:
+    conventions = conventions_of(with_repo_conventions(pr_title="{ISSUE}: {summary}"))
+
+    assert titled("feat(core): add x (DEM-1)", conventions) == PrTitle(
+        title="DEM-1: add x", unmatched=False
+    )
+
+
+def test_renders_commit_shape_when_only_commit_title_set() -> None:
+    document = a_hub_document()
+    document["project"]["conventions"] = {"commit_title": "{ISSUE}: {summary}"}
+    conventions = conventions_of(document)
+
+    assert titled("DEM-9: add x", conventions) == PrTitle(title="DEM-1: add x", unmatched=False)
+    assert titled("add x", conventions) == PrTitle(title="add x", unmatched=True)
+
+
+def test_cleans_and_cuts_final_title_when_rendered() -> None:
+    conventions = conventions_of(a_conventions_document(), "demo-web")
+    robot = "\N{ROBOT FACE} Generated"
+
+    with_path = titled(f"DEM-9: feat(cli): touch {WORKSPACE}/demo-web/x.py", conventions)
+    with_robot = titled(f"{robot}\nDEM-9: feat(cli): add x", conventions)
+    long = titled("DEM-9: feat(cli): " + "s" * 300, conventions)
+
+    assert with_path == PrTitle(title="DEM-1: feat(cli): touch demo-web/x.py", unmatched=False)
+    assert with_robot == PrTitle(title="DEM-1: feat(cli): add x", unmatched=False)
+    assert long.title == "DEM-1: feat(cli): " + "s" * (256 - len("DEM-1: feat(cli): "))
+    assert len(long.title) == 256
+    assert long.unmatched is False
