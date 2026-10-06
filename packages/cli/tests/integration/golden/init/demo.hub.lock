@@ -147,7 +147,7 @@
     "hub.schema.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "de219191a5cb4f4885f1387f8bc02df9ab8458746fd45d68ca9db59c0f358d85"
+      "sha256": "9dbcd86db2bafaee7f82674698fc927f72dad36e63c3ecc5cb3e397debc563d4"
     },
     "plugin/demo/.claude-plugin/plugin.json": {
       "ownership": "seeded"

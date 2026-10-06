@@ -17,7 +17,12 @@ from agent_hub.core.hub_config.model import (
     RepoDir,
     Tracker,
 )
-from agent_hub.core.testing.builders import a_hub_document, a_second_repo, a_two_team_document
+from agent_hub.core.testing.builders import (
+    a_conventions_document,
+    a_hub_document,
+    a_second_repo,
+    a_two_team_document,
+)
 
 REQUIRED_KEYS: list[tuple[str | int, ...]] = [
     ("schema_version",),
@@ -588,6 +593,277 @@ def test_reads_project_branch_only_in_allowed_files_when_sources_scanned() -> No
     )
 
 
+DEFAULT_CONVENTIONS = ("{prefix}{issue_lower}-{slug}", "{type}({scope}): {summary} ({ISSUE})")
+MIXED_BRANCH = "{prefix}{ISSUE}-{slug}"
+MIXED_TITLE = "{ISSUE}: {type}({scope}): {summary}"
+REPO_BRANCH = "feature/{issue_lower}/{slug}"
+PROJECT_CONVENTIONS = ("project", "conventions")
+REPO_CONVENTIONS = ("repos", 0, "conventions")
+
+
+def effective(config: HubConfig, repo_dir: str) -> tuple[str, str, str, bool]:
+    conventions = config.conventions_for(repo_dir)
+    return (
+        conventions.branch,
+        conventions.commit_title,
+        conventions.pr_title,
+        conventions.titles_configured,
+    )
+
+
+def a_layered_document(layers: str) -> dict[str, Any]:
+    """The two-repo demo with the mixed hub's conventions at the named layers only."""
+    document = a_conventions_document()
+    if "project" not in layers:
+        del document["project"]["conventions"]
+    if "repo" not in layers:
+        del document["repos"][0]["conventions"]
+    return document
+
+
+@pytest.mark.parametrize("layers", ["", "project", "repo", "project+repo"])
+def test_accepts_document_when_conventions_layered(layers: str) -> None:
+    document = a_layered_document(layers)
+
+    config = HubConfig.model_validate(document)
+
+    assert config.model_dump(mode="json", exclude_none=True, exclude_defaults=True) == document
+
+
+def test_reads_effective_conventions_when_repo_overrides_branch() -> None:
+    config = HubConfig.model_validate(a_conventions_document())
+
+    assert effective(config, "demo-web") == (MIXED_BRANCH, MIXED_TITLE, MIXED_TITLE, True)
+    assert effective(config, "demo-api") == (REPO_BRANCH, MIXED_TITLE, MIXED_TITLE, True)
+
+
+def test_reads_default_conventions_when_hub_unconfigured() -> None:
+    branch, title = DEFAULT_CONVENTIONS
+    unconfigured = HubConfig.model_validate(a_hub_document())
+    branch_only_document = a_hub_document()
+    branch_only_document["repos"][0]["conventions"] = {"branch": MIXED_BRANCH}
+    branch_only = HubConfig.model_validate(branch_only_document)
+
+    assert effective(unconfigured, "demo-api") == (branch, title, title, False)
+    assert effective(branch_only, "demo-api") == (MIXED_BRANCH, title, title, False)
+
+
+def test_raises_key_error_when_conventions_dir_unknown() -> None:
+    config = HubConfig.model_validate(a_hub_document())
+
+    with pytest.raises(KeyError, match="demo-web"):
+        config.conventions_for("demo-web")
+
+
+@pytest.mark.parametrize("path", [PROJECT_CONVENTIONS, REPO_CONVENTIONS], ids=["project", "repo"])
+def test_rejects_conventions_when_key_unknown(path: tuple[str | int, ...]) -> None:
+    document = with_value(path, {"tag": "x"})
+
+    assert error_types(document) == [((*path, "tag"), "extra_forbidden")]
+
+
+BAD_BRANCHES = [
+    "{prefix}{slug}",
+    "{prefix}{type}-{ISSUE}",
+    "{prefix}{ISSUE}{foo}",
+    "{ISSUE}-{ISSUE}",
+    "{prefix}{ISSUE} x",
+    "{prefix}~{ISSUE}",
+    "{prefix}{ISSUE}..{slug}",
+    "{prefix}@{ISSUE}",
+    "{prefix}{issue_lower}-{slug}-",
+    "a" * 121 + "{ISSUE}",
+]
+BAD_TITLES = [
+    "{slug} {summary}",
+    "{prefix}{summary}",
+    "{foo}{summary}",
+    "{summary} {summary}",
+    "{type}: x",
+    "{summary} `x`",
+    "{summary} {",
+    "{summary}\x07",
+    "a" * 112 + "{summary}",
+]
+BAD_PATTERNS = [("branch", value) for value in BAD_BRANCHES] + [
+    (key, value) for key in ("commit_title", "pr_title") for value in BAD_TITLES
+]
+
+
+@pytest.mark.parametrize("layer", [PROJECT_CONVENTIONS, REPO_CONVENTIONS], ids=["project", "repo"])
+@pytest.mark.parametrize(("key", "value"), BAD_PATTERNS, ids=[repr(row) for row in BAD_PATTERNS])
+def test_rejects_pattern_at_its_key_when_conventions_invalid(
+    layer: tuple[str | int, ...], key: str, value: str
+) -> None:
+    document = with_value(layer, {key: value})
+
+    assert error_types(document) == [((*layer, key), "convention_pattern")]
+
+
+def test_names_problem_when_conventions_pattern_invalid() -> None:
+    with pytest.raises(ValidationError) as caught:
+        HubConfig.model_validate(with_value(REPO_CONVENTIONS, {"branch": "{prefix}{slug}"}))
+
+    [error] = caught.value.errors()
+    assert error["msg"] == "a branch needs {ISSUE} or {issue_lower}"
+
+
+def pairing_errors(document: dict[str, Any]) -> list[tuple[Any, str, str]]:
+    with pytest.raises(ValidationError) as caught:
+        HubConfig.model_validate(document)
+    return [(error["loc"], error["type"], error["msg"]) for error in caught.value.errors()]
+
+
+TYPE_TITLE = "{type}: {summary}"
+ISSUE_TITLE = "{ISSUE}: {summary}"
+PAIRING_MESSAGE = "pr_title needs {type}, which commit_title `{ISSUE}: {summary}` lacks"
+
+
+@pytest.mark.parametrize(
+    ("project", "repo", "loc"),
+    [
+        (
+            {"pr_title": TYPE_TITLE, "commit_title": ISSUE_TITLE},
+            None,
+            (*PROJECT_CONVENTIONS, "pr_title"),
+        ),
+        ({"commit_title": ISSUE_TITLE}, {"pr_title": TYPE_TITLE}, (*REPO_CONVENTIONS, "pr_title")),
+        (
+            None,
+            {"pr_title": TYPE_TITLE, "commit_title": ISSUE_TITLE},
+            (*REPO_CONVENTIONS, "pr_title"),
+        ),
+    ],
+    ids=["project-pair", "repo-pr-project-commit", "repo-pair"],
+)
+def test_rejects_pr_title_when_commit_title_lacks_its_parts(
+    project: dict[str, str] | None, repo: dict[str, str] | None, loc: tuple[str | int, ...]
+) -> None:
+    document = a_hub_document()
+    if project is not None:
+        document["project"]["conventions"] = project
+    if repo is not None:
+        document["repos"][0]["conventions"] = repo
+
+    assert pairing_errors(document) == [(loc, "unfillable_pr_title", PAIRING_MESSAGE)]
+
+
+def test_names_repo_commit_title_when_project_pr_title_clashes_with_override() -> None:
+    document = a_hub_document()
+    document["project"]["conventions"] = {"pr_title": TYPE_TITLE}
+    document["repos"][0]["conventions"] = {"commit_title": ISSUE_TITLE}
+
+    assert pairing_errors(document) == [
+        (
+            (*PROJECT_CONVENTIONS, "pr_title"),
+            "unfillable_pr_title",
+            "pr_title needs {type}, which repos[0].conventions.commit_title"
+            " `{ISSUE}: {summary}` lacks",
+        )
+    ]
+
+
+def test_lists_every_clashing_repo_when_project_pr_title_unfillable() -> None:
+    document = a_hub_document()
+    document["repos"].append(a_second_repo())
+    document["project"]["conventions"] = {"pr_title": "{type}({scope}): {summary}"}
+    document["repos"][0]["conventions"] = {"commit_title": ISSUE_TITLE}
+    document["repos"][1]["conventions"] = {"commit_title": TYPE_TITLE}
+
+    assert pairing_errors(document) == [
+        (
+            (*PROJECT_CONVENTIONS, "pr_title"),
+            "unfillable_pr_title",
+            "pr_title needs {type}, {scope}, which repos[0].conventions.commit_title"
+            " `{ISSUE}: {summary}` lacks; pr_title needs {scope}, which"
+            " repos[1].conventions.commit_title `{type}: {summary}` lacks",
+        )
+    ]
+
+
+def test_joins_inherited_and_override_clashes_when_project_pr_title_unfillable() -> None:
+    document = a_hub_document()
+    document["repos"].append(a_second_repo())
+    document["project"]["conventions"] = {"pr_title": TYPE_TITLE, "commit_title": ISSUE_TITLE}
+    document["repos"][1]["conventions"] = {"commit_title": "{ISSUE} {summary}"}
+
+    assert pairing_errors(document) == [
+        (
+            (*PROJECT_CONVENTIONS, "pr_title"),
+            "unfillable_pr_title",
+            f"{PAIRING_MESSAGE}; pr_title needs {{type}}, which"
+            " repos[1].conventions.commit_title `{ISSUE} {summary}` lacks",
+        )
+    ]
+
+
+def test_reports_pr_title_once_when_two_repos_inherit_it() -> None:
+    document = a_hub_document()
+    document["repos"].append(a_second_repo())
+    document["project"]["conventions"] = {"pr_title": TYPE_TITLE, "commit_title": ISSUE_TITLE}
+
+    assert pairing_errors(document) == [
+        ((*PROJECT_CONVENTIONS, "pr_title"), "unfillable_pr_title", PAIRING_MESSAGE)
+    ]
+
+
+def test_accepts_project_pr_title_when_every_repo_overrides_it() -> None:
+    """The pairing is checked on each repo's effective patterns, not on each layer alone."""
+    document = a_hub_document()
+    document["repos"].append(a_second_repo())
+    document["project"]["conventions"] = {"pr_title": TYPE_TITLE, "commit_title": ISSUE_TITLE}
+    for repo in document["repos"]:
+        repo["conventions"] = {"pr_title": ISSUE_TITLE}
+
+    config = HubConfig.model_validate(document)
+
+    for repo_dir in ("demo-api", "demo-web"):
+        assert config.conventions_for(repo_dir).pr_title == ISSUE_TITLE
+
+
+def test_names_every_missing_part_when_pr_title_unfillable() -> None:
+    document = with_value(
+        PROJECT_CONVENTIONS,
+        {"pr_title": "{type}({scope}): {summary}", "commit_title": ISSUE_TITLE},
+    )
+
+    assert pairing_errors(document) == [
+        (
+            (*PROJECT_CONVENTIONS, "pr_title"),
+            "unfillable_pr_title",
+            "pr_title needs {type}, {scope}, which commit_title `{ISSUE}: {summary}` lacks",
+        )
+    ]
+
+
+@pytest.mark.parametrize("layer", [PROJECT_CONVENTIONS, REPO_CONVENTIONS], ids=["project", "repo"])
+def test_accepts_commit_title_alone_when_pr_title_follows_it(layer: tuple[str | int, ...]) -> None:
+    config = HubConfig.model_validate(with_value(layer, {"commit_title": ISSUE_TITLE}))
+
+    conventions = config.conventions_for("demo-api")
+    assert (conventions.commit_title, conventions.pr_title) == (ISSUE_TITLE, ISSUE_TITLE)
+    assert conventions.pr_title_explicit is False
+
+
+@pytest.mark.parametrize("layer", [PROJECT_CONVENTIONS, REPO_CONVENTIONS], ids=["project", "repo"])
+@pytest.mark.parametrize("title", ["{type}({scope}): {summary}", ISSUE_TITLE])
+@pytest.mark.parametrize("keys", [("commit_title",), ("pr_title",), ("commit_title", "pr_title")])
+def test_accepts_titles_when_issue_omitted(
+    layer: tuple[str | int, ...], title: str, keys: tuple[str, ...]
+) -> None:
+    config = HubConfig.model_validate(with_value(layer, dict.fromkeys(keys, title)))
+
+    conventions = config.conventions_for("demo-api")
+    assert [getattr(conventions, key) for key in keys] == [title] * len(keys)
+
+
+@pytest.mark.parametrize("layer", [PROJECT_CONVENTIONS, REPO_CONVENTIONS], ids=["project", "repo"])
+def test_accepts_branch_when_named_after_agent(layer: tuple[str | int, ...]) -> None:
+    config = HubConfig.model_validate(with_value(layer, {"branch": "claude/{issue_lower}"}))
+
+    assert config.conventions_for("demo-api").branch == "claude/{issue_lower}"
+
+
 @pytest.mark.parametrize("host", ["api.example.com", "localhost", "a-b.example.com", "x1"])
 def test_accepts_deny_host_when_dns_name(host: str) -> None:
     document = with_value(("guard", "deny_hosts"), [host])
@@ -935,8 +1211,10 @@ OBJECT_PATHS: list[tuple[str | int, ...]] = [
     (),
     ("platform",),
     ("project",),
+    ("project", "conventions"),
     ("tracker",),
     ("repos", 0),
+    ("repos", 0, "conventions"),
     ("guard",),
     ("modules",),
     ("modules", "cloud"),
@@ -954,6 +1232,8 @@ OBJECT_PATHS: list[tuple[str | int, ...]] = [
 def a_full_document() -> dict[str, Any]:
     document = a_contract_sync_document({"source": "demo-api", "target": "demo-web"})
     document["repos"][0]["default_branch"] = "release/2"
+    document["project"]["conventions"] = {"commit_title": "{ISSUE}: {summary}"}
+    document["repos"][0]["conventions"] = {"branch": "feature/{issue_lower}/{slug}"}
     document["modules"] |= {"marketplace": {}}
     document["guard"] |= {"deny_hosts": ["api.example.com"], "deny_paths": ["_archive"]}
     document["doctor"] = {
