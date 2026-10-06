@@ -493,6 +493,27 @@ def test_finds_no_stale_reference_when_fresh_hub_names_branch_with_slash(
     assert lines_of(run_doctor(root, "--only", "instructions.refs"), exit_code=0) == [CLEAN]
 
 
+def test_finds_same_findings_when_fresh_hub_lists_teams(
+    tmp_path: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    # AGH-56: a fresh hub with two tracker teams renders their names into AGENTS.md and the
+    # plugin; every check finds what it finds in a fresh one-team hub, and nothing more.
+    two_team_document = {**demo_document, "tracker": a_two_team_document()["tracker"]}
+    results = []
+    for name, document in (("one", demo_document), ("two", two_team_document)):
+        base = tmp_path / name
+        base.mkdir()
+        config = base / "hub.json"
+        config.write_bytes(dump_json(document))
+        root = base / "hub"
+        created = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
+        assert created.exit_code == 0, created.stderr
+        result = run_doctor(root)
+        results.append((result.exit_code, result.stdout.splitlines(), result.stderr))
+
+    assert results[1] == results[0]
+
+
 @pytest.mark.parametrize("schema_version", [1, 2], ids=["schema-ok", "schema-wrong"])
 def test_reports_pin_only_when_pin_differs(
     demo_hub: Path,

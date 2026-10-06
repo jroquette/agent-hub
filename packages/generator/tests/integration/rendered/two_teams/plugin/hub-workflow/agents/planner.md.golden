@@ -23,6 +23,6 @@ Paths: `brain/` and `scripts/` live in the hub (the directory with `hub.json`). 
 3. Write `brain/features/<slug>/issues.md`: one issue per PR slice, in contract order, each with
    **Goal / Context / Constraints / Done when** + its AC ids, the repo, and a label: `tracker.ready_label` from `hub.json`
    (full test coverage, no path under `guard.ask_before_edit`, no open question) or `needs-human`.
-   The main session creates them in the tracker (team @@{tracker_team_key} in `hub.json`); you do not call the tracker.
+   The main session creates them in the tracker (team one of `tracker.teams`, default first, in `hub.json`); you do not call the tracker.
 
 **End:** return both paths and the issue list. **Compound step:** one `/learn`-grade proposal to `brain/_inbox/`, or "no learning".
