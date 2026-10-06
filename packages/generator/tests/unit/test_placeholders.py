@@ -1,7 +1,9 @@
+import re
 from typing import Any
 
 import pytest
 
+from agent_hub.core.hub_config.conventions import MAX_PATTERN_CHARS
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
 from agent_hub.core.testing.builders import (
@@ -378,3 +380,93 @@ def test_keeps_branch_text_when_hub_unconfigured(
     assert mapping["branch_rule"] == branch_rule
     assert mapping["kickoff_branch"] == "`jdoe/<team>-<n>-<desc>`"
     assert mapping["conventions_section"] == ""
+
+
+def section_with(project: dict[str, str] | None, repo: dict[str, str]) -> str:
+    """The Conventions block of the demo with ``project`` and ``repos[0]`` conventions."""
+    document = a_hub_document()
+    if project is not None:
+        document["project"]["conventions"] = project
+    document["repos"][0]["conventions"] = repo
+    return substitution_mapping(HubConfig.model_validate(document))["conventions_section"]
+
+
+# E14: a repo's own commit_title also titles its PRs when no layer sets pr_title.
+@pytest.mark.parametrize(
+    ("project", "pr_line"),
+    [
+        (
+            {"commit_title": "{ISSUE}: {summary}"},
+            "- PR title: `{ISSUE}: {summary}`, e.g. `DEM-7: add the collector`.",
+        ),
+        (
+            None,
+            "- PR title: `{type}({scope}): {summary} ({ISSUE})`,"
+            " e.g. `feat(core): add the collector (DEM-7)`.",
+        ),
+        (
+            {"branch": "{prefix}{ISSUE}-{slug}"},
+            "- PR title: `{type}({scope}): {summary} ({ISSUE})`,"
+            " e.g. `feat(core): add the collector (DEM-7)`.",
+        ),
+    ],
+    ids=["project-commit-title", "project-unset", "project-branch-only"],
+)
+def test_says_pr_title_follows_repo_commit_title_when_no_layer_sets_pr_title(
+    project: dict[str, str] | None, pr_line: str
+) -> None:
+    section = section_with(project, {"commit_title": "[{ISSUE}] {type}: {summary}"})
+
+    lines = section.splitlines()
+    assert pr_line in lines
+    assert lines[-1] == (
+        "- `demo-api` overrides commit title `[{ISSUE}] {type}: {summary}`"
+        " (the PR title follows it)."
+    )
+
+
+def test_omits_follow_note_when_pr_title_explicit() -> None:
+    section = section_with(
+        {"pr_title": "{ISSUE}: {summary}"}, {"commit_title": "[{ISSUE}] {type}: {summary}"}
+    )
+
+    assert section.splitlines()[-1] == (
+        "- `demo-api` overrides commit title `[{ISSUE}] {type}: {summary}`."
+    )
+
+
+def test_lists_no_override_line_when_repo_conventions_empty() -> None:
+    section = section_with({"branch": "{prefix}{ISSUE}-{slug}"}, {})
+
+    assert "overrides" not in section
+    assert section.splitlines()[-1] == "- PR title: `{type}({scope}): {summary} ({ISSUE})`," + (
+        " e.g. `feat(core): add the collector (DEM-7)`."
+    )
+
+
+MARKDOWN_MARKER = re.compile(r"^\s*(?:#{1,6}|[-*+>]|\d+[.)])(?: |$)")
+
+
+def test_starts_no_continuation_line_with_markdown_marker_when_wrapped() -> None:
+    title = "{ISSUE} " + "w" * 93 + " # {summary}"
+
+    section = section_with({"commit_title": title, "pr_title": title}, {"branch": "x/{ISSUE}"})
+
+    bullets = section.split("\n\n")[-1].splitlines()
+    continuations = [line for line in bullets if not line.startswith("- ")]
+    assert continuations, bullets
+    assert [line for line in continuations if MARKDOWN_MARKER.match(line)] == []
+    assert title in " ".join(section.split("\n  "))
+    assert [line for line in bullets if len(line) > 120] == []
+
+
+def test_keeps_code_span_on_its_own_line_when_longer_than_width() -> None:
+    branch = "{prefix}" + "x" * (MAX_PATTERN_CHARS - len("{prefix}/{ISSUE}")) + "/{ISSUE}"
+    assert len(branch) == MAX_PATTERN_CHARS
+
+    section = section_with({"branch": branch}, {"commit_title": "{summary}"})
+
+    shape = branch.replace("{prefix}", "jdoe/")
+    lines = section.splitlines()
+    assert f"  `{shape}`," in lines
+    assert [line for line in lines if line != line.rstrip()] == []

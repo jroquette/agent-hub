@@ -2087,15 +2087,15 @@ def test_keeps_lines_within_width_when_conventions_long() -> None:
     document = a_conventions_document()
     document["project"]["conventions"] = long_conventions
     document["repos"][0]["conventions"] = long_conventions
-    for teamless in (False, True):
-        if teamless:
+    for no_prefix in (False, True):
+        if no_prefix:
             del document["project"]["branch_prefix"]
 
         agents = text_of(HubConfig.model_validate(document), "AGENTS.md")
 
         # The rule, the three shapes and their examples, and the three repo overrides.
-        assert agents.count("x" * 40) == 10, teamless
-        assert [line for line in agents.splitlines() if len(line) > 120] == [], teamless
+        assert agents.count("x" * 40) == 10, no_prefix
+        assert [line for line in agents.splitlines() if len(line) > 120] == [], no_prefix
 
 
 def test_shows_prefix_placeholder_when_hub_leaves_prefix_to_developers() -> None:

@@ -18,6 +18,7 @@ kickoff and gets a Conventions block in ``AGENTS.md``; an unconfigured hub keeps
 (AGH-57).
 """
 
+import re
 import textwrap
 from typing import Final
 
@@ -84,6 +85,10 @@ _OVERRIDE_LABELS: Final = {
 }
 _EXAMPLE_TITLE: Final = {"type": "feat", "scope": "core", "summary": "add the collector"}
 _EXAMPLE_NUMBER: Final = 7
+# The space before a word that would open a Markdown block at a line start, and the character
+# that stands for it while wrapping (no pattern may hold a control character).
+_BLOCK_MARKER: Final = re.compile(r" (?=(?:#{1,6}|[-*+>]|[0-9]+[.)])(?: |$))")
+_GLUE: Final = "\x00"
 # The plugin texts' team parenthetical when a hub lists several tracker teams (AGH-56).
 _SEVERAL_TEAMS_KEY: Final = (
     "the issue's team: a key of `tracker.teams` in `hub.json`, the first being the default"
@@ -243,7 +248,14 @@ def _conventions_section(
             for key, label in _OVERRIDE_LABELS.items()
             if (value := getattr(repo, key)) is not None
         ]
-        items.append(f"`{repo_dir}` overrides {_LIST_SEPARATOR.join(keys)}.")
+        if not keys:
+            continue
+        # E14: with no pr_title at any layer, the repo's own commit_title titles its PRs.
+        follows = repo.commit_title is not None and not (
+            config.conventions_for(repo_dir).pr_title_explicit
+        )
+        note = " (the PR title follows it)" if follows else ""
+        items.append(f"`{repo_dir}` overrides {_LIST_SEPARATOR.join(keys)}{note}.")
     bullets = "\n".join(_filled_after(f"- {item}", lead="") for item in items)
     return f"\n\n## Conventions\n\n{_CONVENTIONS_LEAD}\n\n{bullets}"
 
@@ -259,18 +271,21 @@ def _filled_after(text: str, *, lead: str) -> str:
     """``text`` wrapped at 120 characters when it follows ``lead`` on its first line.
 
     Later lines are indented to sit under the list item; a break between words inside a code
-    span renders as the same space.
+    span renders as the same space. A word that would open a Markdown block at the start of a
+    line (``#``, ``-``, ``*``, ``+``, ``>``, ``1.``, ``1)``) stays glued to the word before it.
+    A single code span longer than the width keeps its own line, past 120 characters.
     """
     indent = _RULE_INDENT if lead else _MARKDOWN_INDENT
+    glued = _BLOCK_MARKER.sub(_GLUE, text)
     lines = textwrap.wrap(
-        text,
+        glued,
         width=_MARKDOWN_WIDTH,
         initial_indent=lead,
         subsequent_indent=indent,
         break_long_words=False,
         break_on_hyphens=False,
     )
-    return "\n".join([lines[0][len(lead) :], *lines[1:]])
+    return "\n".join([lines[0][len(lead) :], *lines[1:]]).replace(_GLUE, " ")
 
 
 def _wrapped_line(text: str, *, suffix: str) -> str:
