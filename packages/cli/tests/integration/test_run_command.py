@@ -524,6 +524,108 @@ class TestDryRun:
         )
 
 
+def seed_issues(run_tracker: Any, *issue_ids: str) -> None:
+    """Copy the backend's ``DEM-1`` under each of ``issue_ids``."""
+    issue = run_tracker.backend.issues["DEM-1"]
+    for issue_id in issue_ids:
+        run_tracker.backend.issues[issue_id] = issue.model_copy(update={"id": issue_id})
+
+
+def set_team(hub: Any, team: str) -> None:
+    document = json.loads((hub / "hub.json").read_text())
+    document["tracker"]["team"] = team
+    (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+
+
+def claude_line(result: Result) -> str:
+    (line,) = [line for line in dry_lines(result) if line.startswith("would run: claude ")]
+    return line
+
+
+@pytest.mark.usefixtures("with_key")
+class TestTeams:
+    """A hub with several tracker teams (``tracker.teams``) runs an issue of any of them."""
+
+    def test_accepts_issue_of_any_team_when_hub_lists_teams(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        workspace.use_teams("APP", "OPS")
+        seed_issues(run_tracker, "OPS-12", "APP-1", "AP-1")
+        inject(monkeypatch, run_tracker)
+
+        result = run_command(workspace.hub, "run", "OPS-12", "--repo", "demo-api")
+
+        assert "(OPS-N)" in claude_line(result)
+        assert "(APP-N)" not in claude_line(result)
+        assert run_tracker.calls == [("get_issue", "OPS-12")]
+        (push,) = [line for line in dry_lines(result) if " push " in line]
+        assert " push --no-verify -u origin jdoe/ops-12   (cwd " in push
+
+    def test_refuses_issue_when_team_not_listed(
+        self, demo_workspace: Workspace, run_command: CommandRunner, spy: Spy
+    ) -> None:
+        demo_workspace.use_teams("APP", "OPS")
+
+        result = run_command(demo_workspace.hub, "run", "XYZ-1", "--repo", "demo-api")
+
+        assert_refused(result, "issue must look like <TEAM>-<n> (e.g. APP-1); use one of: APP, OPS")
+        assert spy.calls == []
+
+    @pytest.mark.parametrize("issue", ["APP-1", "AP-1"])
+    def test_accepts_issue_when_keys_share_prefix(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        issue: str,
+    ) -> None:
+        workspace = run_workspace.workspace
+        workspace.use_teams("AP", "APP")
+        seed_issues(run_tracker, "OPS-12", "APP-1", "AP-1")
+        inject(monkeypatch, run_tracker)
+
+        result = run_command(workspace.hub, "run", issue, "--repo", "demo-api")
+
+        assert f"({issue.partition('-')[0]}-N)" in claude_line(result)
+        assert run_tracker.calls == [("get_issue", issue)]
+
+    def test_refuses_issue_when_keys_share_prefix_and_none_matches(
+        self, demo_workspace: Workspace, run_command: CommandRunner, spy: Spy
+    ) -> None:
+        demo_workspace.use_teams("AP", "APP")
+
+        result = run_command(demo_workspace.hub, "run", "APX-1", "--repo", "demo-api")
+
+        assert_refused(result, "issue must look like <TEAM>-<n> (e.g. AP-1); use one of: AP, APP")
+        assert spy.calls == []
+
+    def test_accepts_issue_when_key_lowercase(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        set_team(workspace.hub, "app")
+        seed_issues(run_tracker, "APP-1")
+        inject(monkeypatch, run_tracker)
+
+        result = run_command(workspace.hub, "run", "APP-1", "--repo", "demo-api")
+
+        assert "(app-N)" in claude_line(result)
+        assert run_tracker.calls == [("get_issue", "APP-1")]
+
+
 class TestTransport:
     @pytest.mark.parametrize("live", [False, True], ids=["dry", "live"])
     @pytest.mark.parametrize("transport", [None, "api"], ids=["absent", "api"])

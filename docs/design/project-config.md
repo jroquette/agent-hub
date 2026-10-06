@@ -30,7 +30,7 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `project.default_branch` | `^S(?:/S)*$` (Rendered values) | `main` | the hub's own branch (CI, brief hub line, retro), default of `repos[].default_branch`, guard |
 | `project.author_name`, `project.author_email` | strings | optional, per developer ([developer-identity.md](developer-identity.md)) | cloud setup (git identity), `attribution.ai` rule, marketplace owner, `AGENTS.md` |
 | `tracker.kind` | closed list: `linear` | req. | selects the tracker adapter (Tracker, below) |
-| `tracker.team` | string, the tracker's team key | req. | `hub next`, `hub run`, worktree names |
+| `tracker.team`, `tracker.teams` | a team key; or a list of them (≥ 1, unique ignoring case), the first the default; `hub run`/`hub worktree` match keys ignoring case, `features.tracker` exactly | exactly one of the two | `hub next` (each team, in order), `hub run`, worktree names, `features.tracker`, branch hints, `AGENTS.md` |
 | `tracker.ready_label`, `tracker.failed_label` | strings | `agent-ready`, `agent-failed` | `hub next` (ready), `hub run` on failure (failed) |
 | `tracker.transport` | closed list: `api`, `mcp`; `hub.local.json` may override it | `api` | `hub next`, `hub run` (adapter; Tracker, below) |
 | `repos[]` | list, at least one item | req. | launcher, worktrees, hooks, cloud setup |
@@ -48,7 +48,8 @@ generated file and `hub` command takes project values from it and nowhere else. 
 Unknown keys are an error at every object level; keys starting with `_` (such as `_comment`) are accepted and ignored
 at every level, and the exported schema says the same ([ADR 0010](../adr/0010-hub-json-config-contract.md)). Cross-field
 checks are model validators JSON Schema cannot express, so there an editor accepts what the CLI rejects: unique
-`repos[].dir`, guard path roots, `doctor.rules` entries of an unselected module, `contract-sync` repos.
+`repos[].dir`, team keys unique ignoring case, guard path roots, `doctor.rules` entries of an unselected module,
+`contract-sync` repos.
 
 ### Rendered values
 
@@ -60,9 +61,10 @@ no `_` separator (hooks match branches with Python's `re`: exponential backtrack
 - `project.name`: kebab-case `^[a-z0-9]+(-[a-z0-9]+)*$`. `repos[].dir`: `^S$`, unique ignoring case (`tradeSentinel`).
   `project.hub_repo`, `repos[].github`: `^S/S$`. `project.branch_prefix`: `^S/$`. `guard.deny_hosts`: `.`-joined DNS
   labels `[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?`. `project.default_branch`, `repos[].default_branch`: `^S(?:/S)*$`.
-  `tracker.team`: `^[A-Za-z0-9]+$`. `project.author_email`: `^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$`. Other free text has no
-  control character (`\x00-\x1f`, `\x7f`); `author_name` is rendered only with format quoting (`shlex.quote`, JSON
-  encoder, escaped YAML scalar), never into a Makefile; `check_fast` and `check` are read at run time, never rendered.
+  `tracker.team` and each `tracker.teams` item: `^[A-Za-z0-9]+$`. `project.author_email`:
+  `^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$`. Other free text has no control character (`\x00-\x1f`, `\x7f`); `author_name`
+  is rendered only with format quoting (`shlex.quote`, JSON encoder, escaped YAML scalar), never into a Makefile;
+  `check_fast` and `check` are read at run time, never rendered.
 - `platform.version` matches `^[0-9]+\.[0-9]+\.[0-9]+$` in the CLI and in the hooks' stdlib reader (a bad value counts
   as absent). Shims read it at run time (a stdlib `python3` one-liner, same pattern), never baked in at render time.
 - Guard paths: relative to the workspace (the directory holding the hub and its repos), normalized, `/`-separated, not
@@ -93,27 +95,17 @@ rules only when selected ([hub-generator.md](hub-generator.md)). Phase 1 modules
   `hub.local.json: <json path>: <message>` for the developer's file ([developer-identity.md](developer-identity.md)).
 - **Hooks**: a defensive stdlib reader that never raises (`plugin/hub-workflow/hooks/stdlib_reader.py`; its defaults on
   a minimal `hub.json` match `HubConfig`'s in `test_hub_json_reader.py`): a missing file, bad JSON or a wrong type gives
-  the defaults; the hook fails open. It ignores unknown and `_` keys; a bad `repos[].default_branch` inherits.
+  the defaults; the hook fails open. It ignores unknown and `_` keys; a bad `repos[].default_branch` inherits; a
+  `tracker.teams` that is not a non-empty list of non-empty strings counts as absent.
 
 ### Tracker
 
 `tracker.kind` and `tracker.transport` pick the `TrackerClient` adapter: `api` is `LinearGraphqlTrackerClient` (key only
 from `LINEAR_API_KEY`, at call time, never `hub.json`); `mcp` is `McpTrackerClient`, short `claude -p` calls to the user's
 Linear MCP server ([ADR 0015](../adr/0015-linear-mcp-tracker-transport.md)). Both pass `TrackerClientContract`.
+With several teams, `hub next` calls `list_ready` once per team, in order.
 
-### Project guards
-
-Where each project guard of the Loki hub goes on adoption. "Extension file" is the seeded
-`plugin/<project>/hooks/project_guard.py` ([hub-generator.md](hub-generator.md), Hooks).
-
-| Guard today | Covered by |
-|---|---|
-| Exchange-host denylist | `guard.deny_hosts` |
-| `app_db` destructive-SQL check | extension file (needs command parsing specific to the project) |
-| Docker / service check | extension file; the base guard keeps its generic docker-volume rule |
-| `_archive/` denial | `guard.deny_paths` |
-| `tests/invariants/` ask-before-edit | `guard.ask_before_edit` |
-| Brain write roles (curator vs implementer) | extension file (role logic is project policy) |
+Where each project guard of the Loki hub goes on adoption: [hub-adopt.md](hub-adopt.md#project-guards).
 
 ### Example (synthetic project)
 

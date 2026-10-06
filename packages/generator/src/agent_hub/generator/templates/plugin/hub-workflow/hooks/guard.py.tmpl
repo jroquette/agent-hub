@@ -93,7 +93,10 @@ def _secret_path(path: str) -> bool:
 
 
 def _branch_hint(cfg: Config) -> str:
-    team = f"{cfg.tracker_team.lower()}-<N>-" if cfg.tracker_team else ""
+    """``<prefix>dem-<N>-<desc>`` for one team, ``<prefix><app|ops>-<N>-<desc>`` for several."""
+    keys = [key.lower() for key in cfg.tracker_teams]
+    segment = keys[0] if len(keys) == 1 else "<" + "|".join(keys) + ">"
+    team = f"{segment}-<N>-" if keys else ""
     return f"{cfg.branch_prefix}{team}<desc>"
 
 

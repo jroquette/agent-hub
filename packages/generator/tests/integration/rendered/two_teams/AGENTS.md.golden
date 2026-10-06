@@ -1,6 +1,6 @@
-# AGENTS.md — @@{project_name} hub
+# AGENTS.md — demo hub
 
-Hub for the @@{project_name} workspace. Project values (repos, tracker team, branch prefix, checks, guard paths) live
+Hub for the demo workspace. Project values (repos, tracker team, branch prefix, checks, guard paths) live
 only in `hub.json`; read it instead of assuming names. Each repo has its own `AGENTS.md`; read the one for the repo you
 change. This project's own rules are in `AGENTS.project.md`.
 
@@ -16,23 +16,25 @@ is a hub bug: log it in `brain/_inbox/`.
   demand, never in bulk.
 - `hub sync` rewrites these managed files: `AGENTS.md`, `CLAUDE.md`, `Makefile`, `hub`, `agent`,
   `hub.schema.json`, `.claude/settings.json`, `.github/workflows/ci.yml`, `.pre-commit-config.yaml`,
-  `plugin/hub-workflow/`, `scripts/mine_transcripts.py`, `scripts/recall_transcripts.py`, `scripts/retro_metrics.py`@@{module_files}.
+  `plugin/hub-workflow/`, `scripts/mine_transcripts.py`, `scripts/recall_transcripts.py`, `scripts/retro_metrics.py`,
+  and each selected module's files (`mk/<id>.mk`, `scripts/cloud-setup.sh`).
   Change them only through `hub.json` or their seeded sibling (`AGENTS.project.md`, `Makefile.project`,
-  `.claude/settings.project.json`, `plugin/@@{project_name}/`@@{module_seeded_files}), which `hub sync` never touches.
+  `.claude/settings.project.json`, `plugin/demo/`), which `hub sync` never touches.
 - `.claude/settings.json` already runs the `hub-workflow` hooks, so that plugin must not be enabled from a marketplace
   in this hub: Claude Code drops only identical duplicate hook commands, so every hook would run twice.
-- Repos, checked out next to this hub: @@{repo_dirs}.
+- Repos, checked out next to this hub: demo-api.
 
 ## Workflow (every task)
 
-1. The task exists in the tracker (`hub.json` → `tracker`,@@{tracker_team_mention}). Update it when starting, finishing
+1. The task exists in the tracker (`hub.json` → `tracker`,
+   team APP, OPS (default APP)). Update it when starting, finishing
    or creating work.
 2. `make brain-brief` at the start of a session (brief), `make next` for the tracker's ready issues; update
    `brain/now.md` and the journal at the end.
 3. Features go through requirements → research → plan (approved by the owner) → implementation → spec and quality
    review → a final evaluator check.
 4. Code changes happen only in an isolated worktree (`make worktree NAME=<team>-<n>-<desc>`) created from a freshly
-   fetched @@{worktree_base}.
+   fetched `origin/main`.
    A repo can ship executable `<repo>/scripts/worktree-setup.sh` and `<repo>/scripts/worktree-teardown.sh`, which
    `hub worktree` runs with the worktree's path for the repo's own setup (env files, databases, ports).
 5. The repo's gates (`hub.json` → `repos[].check_fast` while working, `repos[].check` before the PR) pass before any
@@ -40,10 +42,11 @@ is a hub bug: log it in `brain/_inbox/`.
 
 ## Cross-repo rules
 
-1. Commits and PRs are authored by @@{commit_author}. No AI
+1. Commits and PRs are authored by the user (`hub.json` → `project.author_name`, `project.author_email`). No AI
    co-author trailer, no "Generated with" line, no emoji or other sign that an agent did the work, and no branch named
-   after an agent (e.g. `claude/…`). Branch: `@@{project_branch_prefix}<team>-<n>-<desc>`, where `<team>` is@@{tracker_team_rule} in lowercase.@@{prefix_note}
-2. No push to @@{protected_branches}, no force-push, no production deploys. Everything lands through a PR the
+   after an agent (e.g. `claude/…`). Branch: `jdoe/<team>-<n>-<desc>`, where `<team>` is
+   one of the tracker teams APP, OPS in lowercase.
+2. No push to `main`, no force-push, no production deploys. Everything lands through a PR the
    user merges.
 3. A change of scope or architecture updates the repo's spec in the same PR.
 4. No secrets or real transcripts in any repo, test or fixture.

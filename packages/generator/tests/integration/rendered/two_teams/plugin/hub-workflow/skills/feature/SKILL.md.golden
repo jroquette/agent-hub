@@ -14,7 +14,7 @@ Agents are the hub's project subagents (`subagent_type: <name>`, from `.claude/a
 2. **Spec** (bounded/architectural): run superpowers `brainstorming` **here in the main session** (one question at a time, 2–3 approaches; subagents can't ask the user), then the **`requirements-analyst`** agent writes
    `brain/features/<slug>/spec.md` (AC ids, Given/When/Then, invariants, repos). **Gate: user approves the spec** (architectural; bounded may merge spec+plan approval).
 3. **Research**: **`researcher`** agent (or `/research` inline for small questions). **Plan**: **`architect`** agent → `plan.md` → **gate: user approves the plan**.
-4. **Tickets**: **`planner`** agent → `features.json` (validated by `./hub doctor --only features.tracker`) + `issues.md`; create the issues in the tracker (@@{tracker_team_key}) from here.
+4. **Tickets**: **`planner`** agent → `features.json` (validated by `./hub doctor --only features.tracker`) + `issues.md`; create the issues in the tracker (the issue's team: a key of `tracker.teams` in `hub.json`, the first being the default) from here.
 5. **Workspace**: `./hub worktree <team>-<n>-<slug> [--only <repo>]` (`make worktree NAME=…`) (named by the tracker issue) (isolated worktrees from a freshly fetched default branch).
 6. **Implement** with superpowers `subagent-driven-development` + `test-driven-development`: one task per fresh subagent,
    failing test first, the repo's `check_fast` (from `hub.json`) green after each task. Never weaken existing assertions.

@@ -36,6 +36,7 @@ from agent_hub.core.hub_config.doctor_rules import (
     Severity,
 )
 from agent_hub.core.hub_config.model import PREFIX_PLACEHOLDER, HubConfig
+from agent_hub.core.hub_config.team_keys import team_segment
 from agent_hub.core.hub_config.versions import cut_echo
 
 # The files read beyond the instruction and plugin files, when among the hub's files.
@@ -151,10 +152,11 @@ def _attribution_ai(snapshot: DoctorSnapshot) -> Iterator[Finding]:
 def branch_shape(config: HubConfig) -> str:
     """``<branch_prefix><team lowercase>-<N>-<desc>``, the branch names ``hub.json`` sets.
 
-    A hub that sets no prefix (each developer has their own) shows ``<prefix>`` in its place.
+    Several teams show as ``<app|ops>``. A hub that sets no prefix (each developer has their
+    own) shows ``<prefix>`` in its place.
     """
     prefix = config.project.branch_prefix or PREFIX_PLACEHOLDER
-    return f"{prefix}{config.tracker.team.lower()}-<N>-<desc>"
+    return f"{prefix}{team_segment(config.tracker.team_keys)}-<N>-<desc>"
 
 
 def _flagged(

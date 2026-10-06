@@ -59,7 +59,7 @@ The generator renders a hub in memory as a `RenderedHub`: its files (`RenderedFi
 `hub init` writes the rendered hub, a seeded `hub.json` and, last, `hub.lock` (v1), which records each managed file's SHA-256 and executable bit, each managed link's target and each seeded path. The init planner and the lock model are pure core code; the file adapter in `agent_hub.generator` reads the target tree and writes through temporary files in the same folder, never through a symlinked folder. `hub sync` reads the lock back, plans every path in core and applies the plan through the same adapter, `hub.lock` last ([design/hub-sync.md](design/hub-sync.md)).
 
 ```
-hub init <project> --repos org/backend,org/frontend --tracker linear:LOK --branch-prefix jdoe/
+hub init <project> --repos org/backend,org/frontend --tracker linear:LOK --branch-prefix jdoe/   # several teams: linear:APP,OPS
 hub init --config hub.json   # generates from an existing project config
 hub sync        # reapplies templates without overwriting what the project customized
 hub sync --adopt [--accept PATH]…   # joins a hand-made hub: identical files become managed, differences are listed
@@ -81,7 +81,9 @@ schema before writing. A batch is all or nothing: an invalid line, a conflict, a
 home directory writes nothing and exits 1, with one line per error (naming the input line when there is one); usage
 errors exit 2. On success it prints `appended N, duplicates M`.
 
-`hub next` reads `list_ready` once and prints `<id>  <repo>  <title>  <url>` per issue, oldest first. `hub run` reads
+`hub next` reads `list_ready` once per team, in `hub.json` order, and prints `<id>  <repo>  <title>  <url>` per issue,
+oldest first within each team. With several teams a failing team gets one `team <KEY>: <reason>` line on stderr while
+the others are still listed, and the command exits 1. `hub run` reads
 the issue once (dry run by default: it prints every command and tracker write), then makes the worktree, runs the
 implementing `claude -p` session (no tracker tool: the issue's text is in its prompt), its own gate, the push and
 `gh pr create`, and reports through the port; records go to the hub's `.agent-runs/` and `brain/_inbox/runs/`. Secret

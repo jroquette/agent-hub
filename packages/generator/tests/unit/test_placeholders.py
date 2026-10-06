@@ -4,7 +4,7 @@ import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
-from agent_hub.core.testing.builders import a_hub_document, a_second_repo
+from agent_hub.core.testing.builders import a_hub_document, a_second_repo, a_two_team_document
 from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_mapping
 
 # AC-3.9: the Rendered values of project-config.md, the platform repository (erratum E3), the
@@ -12,13 +12,18 @@ from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_m
 # files AGENTS.md names (AGH-17 2.11), AGENTS.md's two branch mentions (AGH-46), and its commit
 # author and prefix note (AGH-65). author_name, check_fast, check and platform.version are read at
 # run time or quoted per format, never placeholders; author_email is per developer and no template
-# names it (AGH-65).
+# names it (AGH-65). The team mentions of AGENTS.md and the plugin name every tracker team (AGH-56).
 RENDERED_KEYS = {
     "project_name",
     "project_hub_repo",
     "project_branch_prefix",
     "project_default_branch",
     "tracker_team",
+    "tracker_team_mention",
+    "tracker_team_rule",
+    "tracker_team_key",
+    "tracker_team_key_named",
+    "tracker_team_key_assigned",
     "repo_dirs",
     "repo_githubs",
     "guard_deny_hosts",
@@ -59,6 +64,11 @@ def test_takes_values_from_model_when_demo_mapped(demo_config: HubConfig) -> Non
         "project_branch_prefix": "jdoe/",
         "project_default_branch": "main",
         "tracker_team": "DEM",
+        "tracker_team_mention": " team DEM",
+        "tracker_team_rule": " the\n   tracker team DEM",
+        "tracker_team_key": "`tracker.team` in `hub.json`",
+        "tracker_team_key_named": "team `tracker.team` in `hub.json`",
+        "tracker_team_key_assigned": "team = `tracker.team` in `hub.json`",
         "repo_dirs": "demo-api",
         "repo_githubs": "acme/demo-api",
         "guard_deny_hosts": "",
@@ -254,3 +264,51 @@ def test_keeps_user_wording_when_hub_sets_author(variant_config: HubConfig) -> N
     mapping = substitution_mapping(variant_config)
 
     assert (mapping["commit_author"], mapping["prefix_note"]) == (USER_AUTHOR, "")
+
+
+# AGH-56 (plan § Design 7): a hub with several tracker teams names them all, the default first.
+# Each AGENTS.md value starts on its own line, so the template text before it only gets shorter.
+MENTION_SUFFIX = "). Update it when starting, finishing"
+RULE_SUFFIX = " in lowercase."
+# The plugin texts' parenthetical, the same at every site once a hub lists several teams.
+SEVERAL_TEAMS_KEY = (
+    "the issue's team: a key of `tracker.teams` in `hub.json`, the first being the default"
+)
+
+
+def test_names_every_team_when_tracker_lists_teams() -> None:
+    mapping = substitution_mapping(HubConfig.model_validate(a_two_team_document()))
+
+    assert (
+        mapping["tracker_team"],
+        mapping["tracker_team_mention"],
+        mapping["tracker_team_rule"],
+        mapping["tracker_team_key"],
+        mapping["tracker_team_key_named"],
+        mapping["tracker_team_key_assigned"],
+    ) == (
+        "APP",
+        "\n   team APP, OPS (default APP)",
+        "\n   one of the tracker teams APP, OPS",
+        SEVERAL_TEAMS_KEY,
+        SEVERAL_TEAMS_KEY,
+        SEVERAL_TEAMS_KEY,
+    )
+
+
+def test_wraps_team_list_when_keys_long() -> None:
+    # 8 keys: with the suffix ignored, the last line of both values would pass 120 characters.
+    keys = [f"TEAMKEY{chr(65 + n // 26)}{chr(65 + n % 26)}" for n in range(8)]
+    document = a_hub_document()
+    document["tracker"] = {"kind": "linear", "teams": keys}
+
+    mapping = substitution_mapping(HubConfig.model_validate(document))
+
+    for key, suffix in (
+        ("tracker_team_mention", MENTION_SUFFIX),
+        ("tracker_team_rule", RULE_SUFFIX),
+    ):
+        text = mapping[key] + suffix
+        assert text.startswith("\n   "), key
+        assert [line for line in text.splitlines() if len(line) > 120] == [], key
+        assert ", ".join(keys) in " ".join(text.split()), key

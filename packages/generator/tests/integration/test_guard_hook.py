@@ -1261,8 +1261,8 @@ class TestProtectedBranches:
 HINT_COMMANDS = ("git push origin main", "git checkout -b claude/x")
 
 
-def hint_reasons(prefix: str) -> list[tuple[str, str]]:
-    branch = f"{prefix}dem-<N>-<desc>"
+def hint_reasons(prefix: str, team: str = "dem") -> list[tuple[str, str]]:
+    branch = f"{prefix}{team}-<N>-<desc>"
     return [
         ("deny", f"[hub guard] pushing to main is not allowed; open a PR from a {branch} branch"),
         ("deny", f"[hub guard] branches are {branch}, never claude/..."),
@@ -1275,6 +1275,15 @@ def team_hub(workspace: Path) -> Path:
     document = json.loads(json.dumps(HUB_JSON))
     for key in ("branch_prefix", "author_name", "author_email"):
         del document["project"][key]
+    (hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+    return hub
+
+
+def with_tracker(workspace: Path, tracker: Mapping[str, object]) -> Path:
+    """``HUB_JSON`` with ``tracker`` as its tracker section (see ``with_repo_branches``)."""
+    hub = with_repo_branches(workspace, {})
+    document = json.loads(json.dumps(HUB_JSON))
+    document["tracker"] = dict(tracker)
     (hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
     return hub
 
@@ -1322,3 +1331,34 @@ class TestBranchHint:
         assert claude is not None
         assert "a dem-<N>-<desc> branch" in push[1]
         assert "branches are dem-<N>-<desc>," in claude[1]
+
+    def test_hints_every_team_when_hub_lists_teams(self, workspace: Path, guard: Guard) -> None:
+        hub = with_tracker(workspace, {"kind": "linear", "teams": ["APP", "OPS"]})
+        runs = [bash_run(command, hub) for command in HINT_COMMANDS]
+
+        verdicts = guard(hub / HOOKS, runs)
+
+        assert verdicts == hint_reasons("me/", team="<app|ops>")
+
+    def test_hints_team_when_teams_value_invalid(self, workspace: Path, guard: Guard) -> None:
+        hub = with_tracker(workspace, {"kind": "linear", "teams": [7], "team": "DEM"})
+        runs = [bash_run(command, hub) for command in HINT_COMMANDS]
+
+        verdicts = guard(hub / HOOKS, runs)
+
+        assert verdicts == hint_reasons("me/")
+
+    def test_hints_bare_desc_when_hub_names_no_team(self, workspace: Path, guard: Guard) -> None:
+        # A hand-edited hub.json with no team key: the hint names no team segment at all.
+        hub = with_tracker(workspace, {"kind": "linear"})
+        runs = [bash_run(command, hub) for command in HINT_COMMANDS]
+
+        verdicts = guard(hub / HOOKS, runs)
+
+        assert verdicts == [
+            (
+                "deny",
+                "[hub guard] pushing to main is not allowed; open a PR from a me/<desc> branch",
+            ),
+            ("deny", "[hub guard] branches are me/<desc>, never claude/..."),
+        ]

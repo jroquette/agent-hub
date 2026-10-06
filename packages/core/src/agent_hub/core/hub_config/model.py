@@ -92,16 +92,91 @@ class Project(ConfigObject):
     author_email: EmailAddress | None = absent_by_default(description=_PER_DEVELOPER)
 
 
+# Several team keys: at least one, unique ignoring case (``Tracker``), the first the default.
+TeamKeys = Annotated[
+    tuple[TeamKey, ...],
+    BeforeValidator(at_least_one_item),
+    Field(json_schema_extra={"minItems": 1}),
+]
+
+
 class Tracker(ConfigObject):
     """The task tracker, how the CLI reaches it and the labels the runner uses."""
 
+    model_config = ConfigDict(
+        # A subclass's json_schema_extra replaces the base's, so the comment keys are repeated.
+        json_schema_extra={
+            **COMMENT_KEYS_SCHEMA,
+            "oneOf": [{"required": ["team"]}, {"required": ["teams"]}],
+        }
+    )
+    required_one_of = ("team", "teams")
+
     kind: Literal["linear"]
-    team: TeamKey
+    team: TeamKey | None = absent_by_default(
+        description="The tracker's team key. Never with tracker.teams."
+    )
+    teams: TeamKeys | None = absent_by_default(
+        description="Several team keys, the first being the default. Never with tracker.team."
+    )
     # The adapter: "api" is Linear's GraphQL API with LINEAR_API_KEY, "mcp" the Linear MCP
     # server through claude -p (ADR 0015).
     transport: Literal["api", "mcp"] = "api"
     ready_label: FreeString = "agent-ready"
     failed_label: FreeString = "agent-failed"
+
+    @property
+    def team_keys(self) -> tuple[str, ...]:
+        """The configured team keys in order, derived from the fields when read.
+
+        ``teams``, else ``(team,)``, else none (validation requires one of the two keys).
+        """
+        if self.teams is not None:
+            return self.teams
+        if self.team is not None:
+            return (self.team,)
+        return ()
+
+    @property
+    def default_team(self) -> str:
+        """The first team key: the default team.
+
+        Raises ``ValueError`` on a tracker with no team key, which validation never builds.
+        """
+        keys = self.team_keys
+        if not keys:
+            raise ValueError("tracker has no team key")
+        return keys[0]
+
+    def cross_field_problems(self) -> list[InitErrorDetails]:
+        """Not both team keys, and no team key repeated ignoring case."""
+        if self.team is not None and self.teams is not None:
+            return [
+                InitErrorDetails(
+                    type=PydanticCustomError(
+                        "team_and_teams", "set tracker.team or tracker.teams, not both"
+                    ),
+                    loc=("teams",),
+                    input=self.teams,
+                )
+            ]
+        return list(self._duplicate_team_keys())
+
+    def _duplicate_team_keys(self) -> Iterator[InitErrorDetails]:
+        first_index: dict[str, int] = {}
+        for index, key in enumerate(self.teams or ()):
+            folded = key.lower()
+            if folded in first_index:
+                yield InitErrorDetails(
+                    type=PydanticCustomError(
+                        "duplicate_team_key",
+                        "team key {key} is already used by teams[{first}], ignoring case",
+                        {"key": json.dumps(key), "first": first_index[folded]},
+                    ),
+                    loc=("teams", index),
+                    input=key,
+                )
+            first_index.setdefault(folded, index)
 
 
 class Repo(ConfigObject):

@@ -28,7 +28,7 @@ from agent_hub.core.doctor.finding import Read, Rule
 from agent_hub.core.doctor.registry import REGISTRY
 from agent_hub.core.hub_config.doctor_rules import Severity
 from agent_hub.core.json_form import dump_json
-from agent_hub.core.testing.builders import a_second_repo
+from agent_hub.core.testing.builders import a_second_repo, a_two_team_document
 from agent_hub.generator import render_hub as render_hub_module
 
 # The conftest's in-process doctor run, its path recorder and the recorder's filters (tests
@@ -344,6 +344,31 @@ def test_passes_config_schema_when_repo_sets_branch(
     assert lines == [CLEAN]
 
 
+def test_passes_config_schema_when_tracker_lists_teams(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["tracker"] = a_two_team_document()["tracker"]
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=0)
+
+    assert lines == [CLEAN]
+
+
+def test_reports_team_keys_problem_when_both_set(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["tracker"]["teams"] = ["APP", "OPS"]
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=1)
+
+    assert lines == [
+        schema_line("tracker.teams: set tracker.team or tracker.teams, not both"),
+        ONE_ERROR,
+    ]
+
+
 def test_reports_repo_branch_problem_when_value_invalid(
     demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
 ) -> None:
@@ -466,6 +491,28 @@ def test_finds_no_stale_reference_when_fresh_hub_names_branch_with_slash(
     assert created.exit_code == 0, created.stderr
 
     assert lines_of(run_doctor(root, "--only", "instructions.refs"), exit_code=0) == [CLEAN]
+
+
+def test_finds_same_findings_when_fresh_hub_lists_teams(
+    tmp_path: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    # AGH-56: a fresh hub with two tracker teams renders their names into AGENTS.md and the
+    # plugin; every check finds what it finds in a fresh one-team hub, and nothing more.
+    two_team_document = {**demo_document, "tracker": a_two_team_document()["tracker"]}
+    results = []
+    for name, document in (("one", demo_document), ("two", two_team_document)):
+        base = tmp_path / name
+        base.mkdir()
+        config = base / "hub.json"
+        config.write_bytes(dump_json(document))
+        root = base / "hub"
+        created = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
+        assert created.exit_code == 0, created.stderr
+        result = run_doctor(root)
+        results.append((result.exit_code, result.stdout.splitlines(), result.stderr))
+
+    assert results[0][0] == 0, results[0]
+    assert results[1] == results[0]
 
 
 @pytest.mark.parametrize("schema_version", [1, 2], ids=["schema-ok", "schema-wrong"])

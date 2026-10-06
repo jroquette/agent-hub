@@ -1,4 +1,5 @@
 packages/core/src/agent_hub/core/hub_config/hub.schema.json text eol=lf
 packages/generator/src/agent_hub/generator/templates/** text eol=lf
 packages/generator/tests/integration/golden/** -text
+packages/generator/tests/integration/rendered/** -text
 packages/cli/tests/integration/golden/** -text

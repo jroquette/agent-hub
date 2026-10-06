@@ -24,6 +24,7 @@ from typing import Final
 from agent_hub.cli.child_process import git_env
 from agent_hub.cli.init_report import shown_path
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.team_keys import team_of
 from agent_hub.core.runner.session_prompt import (
     IMPLEMENTING_TOOLS,
     TRACKER_MCP_SERVERS,
@@ -122,6 +123,17 @@ class RunChildren:
         """The repo's full gate, ``check`` (never empty: the model refuses one, E1)."""
         return next(entry.check for entry in self.config.repos if entry.dir == self.repo)
 
+    @property
+    def team(self) -> str:
+        """The issue's team in the configured spelling (``hub run`` accepted the id against it).
+
+        Raises ValueError when the id matches no configured team.
+        """
+        team = team_of(self.issue_id, self.config.tracker.team_keys)
+        if team is None:
+            raise ValueError(f"{self.issue_id} matches no team of hub.json")
+        return team
+
     def worktree_line(self) -> str:
         """The dry run's line for the worktree step, which runs in process when live (D7)."""
         return f"would run: ./hub worktree {self.slug} --only {self.repo}"
@@ -137,7 +149,7 @@ class RunChildren:
             hub_name=self.hub.name,
             sensitive=self.config.guard.ask_before_edit,
             fast_gate=repo.check_fast,
-            prefix=f"{self.config.tracker.team}-",
+            prefix=f"{self.team}-",
         )
         others = (str(self.workspace / entry.dir) for entry in self.config.repos)
         return implementing_argv(

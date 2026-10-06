@@ -97,3 +97,22 @@ def test_leaves_identity_keys_optional_when_schema_exported() -> None:
         assert "anyOf" not in node, key
         assert "hub.local.json" in node["description"], key
     assert project["properties"]["author_name"]["minLength"] == 1
+
+
+def test_requires_one_team_key_when_schema_exported() -> None:
+    tracker = read_shipped_schema()["$defs"]["Tracker"]
+    team = tracker["properties"]["team"]
+
+    teams = tracker["properties"]["teams"]
+
+    assert tracker["required"] == ["kind"]
+    assert tracker["oneOf"] == [{"required": ["team"]}, {"required": ["teams"]}]
+    assert teams["type"] == "array"
+    assert teams["minItems"] == 1
+    assert teams["items"]["pattern"] == team["pattern"]
+    for node in (team, teams):
+        assert "default" not in node
+        assert "title" not in node
+        assert "anyOf" not in node
+    assert "tracker.teams" in team["description"]
+    assert "tracker.team." in teams["description"]
