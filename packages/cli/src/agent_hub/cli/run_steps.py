@@ -43,7 +43,7 @@ from agent_hub.cli.run_children import (
 )
 from agent_hub.cli.run_log import RunLog
 from agent_hub.cli.run_report import apply_writes
-from agent_hub.cli.worktree_steps import create_worktree, worktree_task
+from agent_hub.cli.worktree_steps import check_branches, create_worktree, worktree_task
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.runner.report_writes import (
     REVIEW_STATE,
@@ -173,6 +173,7 @@ class LiveRun:
                 git_timeout=WORKTREE_GIT_TIMEOUT,
                 runner=_bounded_child,
             )
+            check_branches(task)
             self.worktree = create_worktree(task, self.children.repo, echo=typer.echo)
         except (WorktreeError, ChildTimedOutError) as error:
             raise StageFailure(Stage.WORKTREE, str(error).replace(git, "git")) from None

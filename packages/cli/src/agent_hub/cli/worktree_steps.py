@@ -1,11 +1,13 @@
 """The steps of ``hub worktree``, shared with ``hub run``: they raise instead of exiting (E18).
 
-``worktree_task`` checks a task's inputs; ``create_worktree`` and ``remove_worktree`` act on one
-repo. A usage problem raises ``WorktreeUsageError``, any other problem ``WorktreeError``, whose
-text is what ``hub worktree`` prints after its ``hub worktree:`` prefix. Every git call runs in
-the caller's process group, with ``git_timeout`` seconds each (``None``: no limit, as
-``hub worktree`` runs); past it ``ChildTimedOutError`` is raised. The repo's setup and teardown
-scripts run untimed through ``stream_child``, also in the caller's group.
+``worktree_task`` checks a task's inputs; ``check_branches`` checks, before anything is
+created, that no touched repo's branch clashes with a worktree; ``create_worktree`` and
+``remove_worktree`` act on one repo. A usage problem raises ``WorktreeUsageError``, any other
+problem ``WorktreeError``, whose text is what ``hub worktree`` prints after its ``hub worktree:``
+prefix. Every git call runs in the caller's process group, with ``git_timeout`` seconds each
+(``None``: no limit, as ``hub worktree`` runs); past it ``ChildTimedOutError`` is raised. The
+repo's setup and teardown scripts run untimed through ``stream_child``, also in the caller's
+group.
 """
 
 import os
@@ -32,6 +34,9 @@ TEARDOWN_SCRIPT: Final = "scripts/worktree-teardown.sh"
 _FETCH_HINT: Final = "; check the network and the remote"
 _CLONE_HINT: Final = "clone it next to the hub"
 _DIRTY: Final = "it has modified or untracked files"
+# Each branch with the worktree it is checked out in (empty when none), as git worktree list
+# shows them; a "worktree" call of its own would be one more git call before the add.
+_WORKTREE_PATHS: Final = "--format=%(refname) %(worktreepath)"
 
 type Echo = Callable[[str], None]
 
@@ -148,6 +153,54 @@ def worktree_task(
         add_options=add_options,
         fetch_options=fetch_options,
     )
+
+
+def check_branches(task: WorktreeTask) -> None:
+    """Refuse, before anything is created, a touched repo whose task branch clashes (E22).
+
+    Its task worktree exists on another branch, or (with no task worktree yet) the branch is
+    checked out in another worktree, where ``git worktree add`` would fail after earlier repos'
+    worktrees were made. A repo that is not cloned is left to ``create_worktree``.
+    """
+    for repo in task.repos:
+        checkout = task.workspace / repo
+        if not os.path.lexists(checkout / ".git"):
+            continue
+        branch = task.branches[repo]
+        worktree = checkout / WORKTREES_FOLDER / task.name
+        if worktree.is_dir():
+            current = _git(task, worktree, ("branch", "--show-current"), repo=repo)
+            if current.returncode != 0:
+                raise WorktreeError(
+                    f"{repo}: could not read the branch of {shown_path(str(worktree))}:"
+                    f" {_first_line(current)}"
+                )
+            actual = current.stdout.decode(errors="replace").strip() or "a detached HEAD"
+            if actual != branch:
+                raise WorktreeError(
+                    f"{repo}: {shown_path(str(worktree))} is on {shown_path(actual)},"
+                    f" not {shown_path(branch)}"
+                )
+            continue
+        listed = _git(
+            task, checkout, ("for-each-ref", _WORKTREE_PATHS, f"refs/heads/{branch}"), repo=repo
+        )
+        if listed.returncode != 0:
+            raise WorktreeError(f"{repo}: could not list the branches: {_first_line(listed)}")
+        holder = _checked_out_in(listed.stdout, branch)
+        if holder is not None:
+            raise WorktreeError(
+                f"{repo}: {shown_path(branch)} is already checked out in {shown_path(holder)}"
+            )
+
+
+def _checked_out_in(listed: bytes, branch: str) -> str | None:
+    """The worktree ``branch`` is checked out in, from ``for-each-ref`` with ``_WORKTREE_PATHS``."""
+    for line in listed.decode(errors="replace").splitlines():
+        ref, _, path = line.partition(" ")
+        if ref == f"refs/heads/{branch}" and path:
+            return path
+    return None
 
 
 def create_worktree(task: WorktreeTask, repo: str, *, echo: Echo) -> Path:

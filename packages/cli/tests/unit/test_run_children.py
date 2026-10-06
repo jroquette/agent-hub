@@ -218,3 +218,58 @@ def test_matches_worktree_branch_when_run_and_worktree_build_it(
 
     assert task.branches == {repo: branch}
     assert children.branch == task.branches[repo]
+
+
+class RecordingRunner:
+    """A git that accepts every call and records each one's argv."""
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    def __call__(
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: Path | str,
+        env: Mapping[str, str],
+        timeout: float | None,
+        own_session: bool | None = None,
+    ) -> ChildResult:
+        del cwd, env, timeout, own_session
+        self.calls.append(list(argv))
+        return ChildResult(returncode=0, stdout=b"", stderr=b"")
+
+
+def same_branch_document() -> dict[str, Any]:
+    """The mixed hub with ``demo-api``'s own ``branch`` rendering the project's."""
+    document = a_conventions_document()
+    document["repos"][0]["conventions"] = {"branch": "{prefix}{ISSUE}-{slug}"}
+    return document
+
+
+REF_CHECKS = {
+    "unconfigured": (unconfigured_two_repo_document, ["jdoe/dem-1-x"]),
+    "mixed": (a_conventions_document, ["feature/dem-1/x", "jdoe/DEM-1-x"]),
+    "same-branch": (same_branch_document, ["jdoe/DEM-1-x"]),
+}
+
+
+@pytest.mark.parametrize(("document", "branches"), list(REF_CHECKS.values()), ids=list(REF_CHECKS))
+def test_checks_each_distinct_branch_once_when_task_built(
+    document: Any, branches: list[str]
+) -> None:
+    runner = RecordingRunner()
+
+    _ = worktree_task(
+        HubConfig.model_validate(document()),
+        name="dem-1-x",
+        branch_prefix="jdoe/",
+        only=None,
+        hub=Path("/ws/hub"),
+        git="git",
+        env={},
+        git_timeout=None,
+        runner=runner,
+    )
+
+    assert runner.calls == [["git", "check-ref-format", "--branch", b] for b in branches]

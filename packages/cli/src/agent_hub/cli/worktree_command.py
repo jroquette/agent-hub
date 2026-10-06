@@ -7,8 +7,9 @@ is the hub (its ``hub.json``, its workspace). Each repo ``<ws>/<dir>`` gets
 ``origin/<default_branch>`` (an existing branch is checked out as it is), then runs the repo's
 executable ``scripts/worktree-setup.sh <worktree>``; ``--remove`` runs ``worktree-teardown.sh``
 the same way, then ``git worktree remove`` (never forced; branches are kept). Usage problems (the
-name, ``--only``) exit 2 before git runs in any repo; a repo problem, or a script that fails,
-exits 1 when it is reached, and later repos are left alone. A worktree with modified or
+name, ``--only``) exit 2 before git runs in any repo; a task branch that clashes with a worktree
+(``check_branches``) exits 1 before any repo is touched; another repo problem, or a script that
+fails, exits 1 when it is reached, and later repos are left alone. A worktree with modified or
 untracked files is never torn down. Git and the scripts run with no timeout in the caller's
 process group, so Ctrl-C reaches them. The scripts run with the worktree as their cwd and git's
 location variables dropped. The steps themselves are ``worktree_steps``, shared with ``hub run``.
@@ -32,6 +33,7 @@ from agent_hub.cli.hub_root import hub_root_or_exit, main_checkout
 from agent_hub.cli.worktree_steps import (
     COMMAND,
     WorktreeTask,
+    check_branches,
     create_worktree,
     remove_worktree,
     worktree_task,
@@ -79,6 +81,8 @@ def worktree(
     except WorktreeUsageError as error:
         context.fail(str(error))
     try:
+        if not remove:
+            check_branches(task)
         for repo in task.repos:
             if remove:
                 remove_worktree(task, repo, echo=typer.echo)

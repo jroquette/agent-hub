@@ -28,6 +28,7 @@ from agent_hub.cli import run_command, run_log, run_steps
 from agent_hub.cli.errors import ChildTimedOutError
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.runner.session_prompt import IMPLEMENTING_TOOLS
+from agent_hub.core.testing.builders import a_conventions_document
 from agent_hub.core.tracker.tracker_client import TrackerClient
 
 pytestmark = pytest.mark.disable_socket
@@ -1203,12 +1204,11 @@ class TestRerun:
 
 
 # The mixed hub (plan E1): the project's three patterns, demo-api's own branch, demo-web none.
-PROJECT_CONVENTIONS = {
-    "branch": "{prefix}{ISSUE}-{slug}",
-    "commit_title": "{ISSUE}: {type}({scope}): {summary}",
-    "pr_title": "{ISSUE}: {type}({scope}): {summary}",
-}
-API_CONVENTIONS = {"branch": "feature/{issue_lower}/{slug}"}
+MIXED_HUB = a_conventions_document()
+PROJECT_CONVENTIONS = MIXED_HUB["project"]["conventions"]
+API_CONVENTIONS = next(
+    repo["conventions"] for repo in MIXED_HUB["repos"] if repo["dir"] == "demo-api"
+)
 
 
 def use_mixed_hub(workspace: Any) -> None:
