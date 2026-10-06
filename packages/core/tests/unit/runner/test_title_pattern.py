@@ -101,7 +101,8 @@ def test_caps_parsed_subject_at_literal_length_when_long() -> None:
         pytest.param("{summary} {scope} {type}: {ISSUE}", "a " * 500, id="spaced-groups"),
     ],
 )
-def test_parses_within_bound_when_subject_pathological(pattern: str, subject: str) -> None:
+def test_finds_no_match_when_subject_pathological(pattern: str, subject: str) -> None:
+    # The scale guard is test_uses_one_free_group_when_regex_built (possessive groups).
     assert len(subject) <= 1_000
 
     assert parse_title(pattern, subject) is None
@@ -121,3 +122,10 @@ def test_uses_one_free_group_when_regex_built() -> None:
         if re.search(rf"\(\?P<{name}>(?:(?!\(\?P<).)*?\+\+\)", regex.pattern)
     }
     assert possessive == {"ISSUE", "type", "scope"}
+
+
+def test_keeps_group_possessive_when_class_holds_next_literal() -> None:
+    # The scope class holds "-", so its group is wrapped in a stop lookahead: still possessive.
+    regex = title_regex("{type}/{scope}-{summary}")
+
+    assert re.search(r"\(\?P<scope>\(\?:\(\?!.*?\+\+\)", regex.pattern)
