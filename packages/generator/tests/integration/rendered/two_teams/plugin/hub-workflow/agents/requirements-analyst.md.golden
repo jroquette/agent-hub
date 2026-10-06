@@ -11,7 +11,7 @@ Paths: `brain/` lives in the hub (the directory with `hub.json`); the repos are 
 **Start:** read `brain/index.md` and `brain/now.md`, the `AGENTS.md` of each repo the feature touches, and any ADR in its area.
 
 **Write** `brain/features/<slug>/spec.md`:
-- frontmatter: `type: spec`, `status: draft`, `repos: [...]`, `process_size: spike | bounded | architectural`, `linear: [<TEAM>-N]` if known (team = one of `tracker.teams`, default first, in `hub.json`);
+- frontmatter: `type: spec`, `status: draft`, `repos: [...]`, `process_size: spike | bounded | architectural`, `linear: [<TEAM>-N]` if known (the issue's team: a key of `tracker.teams` in `hub.json`, the first being the default);
 - Problem · Goals · **Non-goals**;
 - Acceptance criteria, one per line, ids `AC-1`, `AC-2`, … in **Given/When/Then** (or EARS). Each must be testable by a command;
 - NFRs (latency, precision, idempotency, auditability — whatever applies);

@@ -1996,7 +1996,8 @@ def test_names_every_team_in_agents_when_tracker_lists_teams() -> None:
 
 
 def test_keeps_lines_within_width_when_many_teams_listed() -> None:
-    keys = [f"TEAMKEY{chr(65 + n // 26)}{chr(65 + n % 26)}" for n in range(20)]
+    # 8 keys: with the suffix ignored, the last line of both team values would pass 120 characters.
+    keys = [f"TEAMKEY{chr(65 + n // 26)}{chr(65 + n % 26)}" for n in range(8)]
 
     agents = text_of(a_config_with_teams(keys), "AGENTS.md")
 

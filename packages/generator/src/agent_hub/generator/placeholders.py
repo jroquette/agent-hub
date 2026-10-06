@@ -60,6 +60,10 @@ _PREFIX_NOTE: Final = (
 _MENTION_SUFFIX: Final = "). Update it when starting, finishing"
 _RULE_SUFFIX: Final = " in lowercase."
 _RULE_INDENT: Final = "   "
+# The plugin texts' team parenthetical when a hub lists several tracker teams (AGH-56).
+_SEVERAL_TEAMS_KEY: Final = (
+    "the issue's team: a key of `tracker.teams` in `hub.json`, the first being the default"
+)
 
 
 def substitution_mapping(config: HubConfig) -> dict[str, str]:
@@ -121,14 +125,18 @@ def _team_mentions(config: HubConfig) -> dict[str, str]:
 
     One team: the template text it replaced, so the file keeps its bytes. Several: every key in
     ``hub.json`` order with the default first named; each ``AGENTS.md`` value starts on its own
-    line and wraps, so the line before it only gets shorter and none passes 120 characters.
+    line and wraps, so the line before it only gets shorter and, for keys short enough to fit on a
+    line, none passes 120 characters. The plugin texts' parenthetical has one value per site, as
+    each site words the one key; several keys read the same everywhere.
     """
     keys = config.tracker.team_keys
     if len(keys) == 1:
         return {
             "tracker_team_mention": f" team {keys[0]}",
             "tracker_team_rule": f" the\n{_RULE_INDENT}tracker team {keys[0]}",
-            "tracker_team_key": "`tracker.team`",
+            "tracker_team_key": "`tracker.team` in `hub.json`",
+            "tracker_team_key_named": "team `tracker.team` in `hub.json`",
+            "tracker_team_key_assigned": "team = `tracker.team` in `hub.json`",
         }
     listed = _LIST_SEPARATOR.join(keys)
     return {
@@ -138,7 +146,9 @@ def _team_mentions(config: HubConfig) -> dict[str, str]:
         "tracker_team_rule": _wrapped_line(
             f"one of the tracker teams {listed}", suffix=_RULE_SUFFIX
         ),
-        "tracker_team_key": "one of `tracker.teams`, default first,",
+        "tracker_team_key": _SEVERAL_TEAMS_KEY,
+        "tracker_team_key_named": _SEVERAL_TEAMS_KEY,
+        "tracker_team_key_assigned": _SEVERAL_TEAMS_KEY,
     }
 
 
