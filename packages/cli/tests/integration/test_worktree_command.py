@@ -26,6 +26,7 @@ from click import unstyle
 from typer.testing import Result
 
 from agent_hub.cli import worktree_command
+from agent_hub.core.testing.builders import a_conventions_document
 
 # The conftest's in-process run (tests cannot import a conftest in importlib mode).
 type CommandRunner = Callable[..., Result]
@@ -876,12 +877,11 @@ class TestIdentity:
 
 
 # The mixed hub (plan E1): the project's three patterns, demo-api's own branch, demo-web none.
-PROJECT_CONVENTIONS = {
-    "branch": "{prefix}{ISSUE}-{slug}",
-    "commit_title": "{ISSUE}: {type}({scope}): {summary}",
-    "pr_title": "{ISSUE}: {type}({scope}): {summary}",
-}
-API_CONVENTIONS = {"branch": "feature/{issue_lower}/{slug}"}
+MIXED_HUB = a_conventions_document()
+PROJECT_CONVENTIONS = MIXED_HUB["project"]["conventions"]
+API_CONVENTIONS = next(
+    repo["conventions"] for repo in MIXED_HUB["repos"] if repo["dir"] == "demo-api"
+)
 
 
 def use_mixed_hub(workspace: Workspace) -> None:
@@ -1009,3 +1009,67 @@ class TestConventions:
 
         assert_refused(result, "unknown repo in --only: nope; use one of: demo-api demo-web")
         assert_untouched(demo_workspace)
+
+    def test_refuses_second_worktree_when_issue_branch_checked_out(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        # E22: a branch without {slug} names one branch per issue, whatever the <desc>.
+        demo_workspace.use_conventions(project={"branch": "{prefix}{issue_lower}"})
+        assert run_command(demo_workspace.hub, "worktree", "dem-7-a").exit_code == 0
+        first = os.path.realpath(demo_workspace.worktree("demo-api", "dem-7-a"))
+
+        result = run_command(demo_workspace.hub, "worktree", "dem-7-b", env={"COLUMNS": "200"})
+
+        assert result.exit_code == 1, result.output
+        assert result.stdout == ""
+        assert result.stderr == (
+            f"hub worktree: demo-api: jdoe/dem-7 is already checked out in {first}\n"
+        )
+        for repo in REPOS:
+            assert not demo_workspace.worktree(repo, "dem-7-b").exists()
+            worktree = demo_workspace.worktree(repo, "dem-7-a")
+            assert demo_workspace.git(worktree, "branch", "--show-current") == "jdoe/dem-7"
+
+    def test_refuses_rerun_when_conventions_changed_worktree_branch(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        assert run_command(demo_workspace.hub, "worktree", NAME).exit_code == 0
+        heads = {
+            repo: demo_workspace.git(demo_workspace.worktree(repo, NAME), "rev-parse", "HEAD")
+            for repo in REPOS
+        }
+        use_mixed_hub(demo_workspace)
+
+        result = run_command(demo_workspace.hub, "worktree", NAME, env={"COLUMNS": "200"})
+
+        assert result.exit_code == 1, result.output
+        assert result.stdout == ""
+        assert result.stderr == (
+            f"hub worktree: demo-api: {demo_workspace.worktree('demo-api', NAME)}"
+            f" is on {BRANCH}, not feature/dem-7/x\n"
+        )
+        for repo in REPOS:
+            worktree = demo_workspace.worktree(repo, NAME)
+            assert demo_workspace.git(worktree, "branch", "--show-current") == BRANCH
+            assert demo_workspace.git(worktree, "rev-parse", "HEAD") == heads[repo]
+            checkout = demo_workspace.ws / repo
+            assert demo_workspace.git(checkout, "branch", "--list", "feature/*", "jdoe/DEM-*") == ""
+
+    def test_creates_nothing_when_later_repo_branch_checked_out(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        demo_workspace.use_conventions(project={"branch": "{prefix}{issue_lower}"})
+        created = run_command(demo_workspace.hub, "worktree", "dem-7-a", "--only", "demo-web")
+        assert created.exit_code == 0, created.output
+        first = os.path.realpath(demo_workspace.worktree("demo-web", "dem-7-a"))
+
+        result = run_command(demo_workspace.hub, "worktree", "dem-7-b", env={"COLUMNS": "200"})
+
+        assert result.exit_code == 1, result.output
+        assert result.stdout == ""
+        assert result.stderr == (
+            f"hub worktree: demo-web: jdoe/dem-7 is already checked out in {first}\n"
+        )
+        assert not (demo_workspace.ws / "demo-api" / ".claude").exists()
+        assert not (demo_workspace.ws / "demo-api" / ".git" / "FETCH_HEAD").exists()
+        assert not demo_workspace.worktree("demo-web", "dem-7-b").exists()
