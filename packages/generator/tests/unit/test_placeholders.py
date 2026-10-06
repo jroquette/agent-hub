@@ -6,6 +6,7 @@ import pytest
 from agent_hub.core.hub_config.conventions import MAX_PATTERN_CHARS
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
+from agent_hub.core.runner.title_pattern import TitleParts, render_title
 from agent_hub.core.testing.builders import (
     a_conventions_document,
     a_hub_document,
@@ -444,19 +445,33 @@ def test_lists_no_override_line_when_repo_conventions_empty() -> None:
     )
 
 
+EXAMPLE_TITLE = {"type": "feat", "scope": "core", "summary": "add the collector"}
 MARKDOWN_MARKER = re.compile(r"^\s*(?:#{1,6}|[-*+>]|\d+[.)])(?: |$)")
 
 
-def test_starts_no_continuation_line_with_markdown_marker_when_wrapped() -> None:
-    title = "{ISSUE} " + "w" * 93 + " # {summary}"
-
+@pytest.mark.parametrize(
+    "title",
+    [
+        pytest.param("{ISSUE} " + "w" * 82 + " # {summary}", id="heading"),
+        pytest.param("{ISSUE} " + "w" * 33 + "  * {summary}", id="double-space-star"),
+        pytest.param("{ISSUE} " + "w" * 32 + "  1. {summary}", id="double-space-dot"),
+        pytest.param("{ISSUE} " + "w" * 32 + "  2) {summary}", id="double-space-paren"),
+        pytest.param("{ISSUE} " + "w" * 31 + " <!-- {summary}", id="html-comment"),
+        pytest.param("{ISSUE} " + "w" * 80 + "     {summary}", id="space-run"),
+    ],
+)
+def test_starts_no_continuation_line_with_markdown_marker_when_wrapped(title: str) -> None:
     section = section_with({"commit_title": title, "pr_title": title}, {"branch": "x/{ISSUE}"})
 
     bullets = section.split("\n\n")[-1].splitlines()
     continuations = [line for line in bullets if not line.startswith("- ")]
     assert continuations, bullets
     assert [line for line in continuations if MARKDOWN_MARKER.match(line)] == []
-    assert title in " ".join(section.split("\n  "))
+    assert [line for line in continuations if line.lstrip().startswith("<")] == []
+    example = render_title(title, TitleParts(issue="DEM-7", **EXAMPLE_TITLE))
+    assert section.count(f"`{title}`") == 2
+    assert section.count(f"`{example}`") == 2
+    assert [span for span in re.findall("`[^`]*`", section) if "\n" in span] == []
     assert [line for line in bullets if len(line) > 120] == []
 
 

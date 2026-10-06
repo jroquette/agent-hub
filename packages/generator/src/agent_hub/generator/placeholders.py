@@ -85,9 +85,9 @@ _OVERRIDE_LABELS: Final = {
 }
 _EXAMPLE_TITLE: Final = {"type": "feat", "scope": "core", "summary": "add the collector"}
 _EXAMPLE_NUMBER: Final = 7
-# The space before a word that would open a Markdown block at a line start, and the character
-# that stands for it while wrapping (no pattern may hold a control character).
-_BLOCK_MARKER: Final = re.compile(r" (?=(?:#{1,6}|[-*+>]|[0-9]+[.)])(?: |$))")
+# A code span, and the character that stands for each space inside one while wrapping (no
+# pattern may hold a backtick or a control character, so spans pair up and the glue is free).
+_CODE_SPAN: Final = re.compile(r"`[^`]*`")
 _GLUE: Final = "\x00"
 # The plugin texts' team parenthetical when a hub lists several tracker teams (AGH-56).
 _SEVERAL_TEAMS_KEY: Final = (
@@ -270,13 +270,14 @@ def _shown_pattern(key: str, pattern: str, *, shown_prefix: str) -> str:
 def _filled_after(text: str, *, lead: str) -> str:
     """``text`` wrapped at 120 characters when it follows ``lead`` on its first line.
 
-    Later lines are indented to sit under the list item; a break between words inside a code
-    span renders as the same space. A word that would open a Markdown block at the start of a
-    line (``#``, ``-``, ``*``, ``+``, ``>``, ``1.``, ``1)``) stays glued to the word before it.
-    A single code span longer than the width keeps its own line, past 120 characters.
+    Later lines are indented to sit under the list item. A code span is never broken: lines break
+    only at spaces outside code spans, so each span keeps its text byte for byte (a run of spaces
+    included), and a later line starts with a code span or with the fixed prose around them, none
+    of whose words opens a Markdown block. A line whose code span is longer than the width goes
+    past 120 characters (plan P-1).
     """
     indent = _RULE_INDENT if lead else _MARKDOWN_INDENT
-    glued = _BLOCK_MARKER.sub(_GLUE, text)
+    glued = _CODE_SPAN.sub(lambda span: span.group().replace(" ", _GLUE), text)
     lines = textwrap.wrap(
         glued,
         width=_MARKDOWN_WIDTH,
