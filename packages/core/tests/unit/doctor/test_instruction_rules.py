@@ -18,7 +18,7 @@ from agent_hub.core.doctor.snapshot import DoctorSnapshot
 from agent_hub.core.hub_config.doctor_rules import Severity
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.tree_snapshot import FileEntry
-from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.builders import a_conventions_document, a_hub_document
 
 type SnapshotFactory = Callable[..., DoctorSnapshot]
 type Shown = tuple[str | None, int | None, str]
@@ -39,6 +39,23 @@ def a_config(max_lines: Mapping[str, int] | None = None) -> HubConfig:
     document = a_hub_document()
     if max_lines is not None:
         document["doctor"] = {"rules": {"instructions.size": {"max_lines": dict(max_lines)}}}
+    return HubConfig.model_validate(document)
+
+
+# The project's commit title shape and its example, then a repo's own PR title shape (E32).
+WIP_TITLE_SPANS = (
+    "Commit title: `wip/{summary}`, e.g. `wip/add the collector`.\n"
+    "`demo-api` overrides PR title `x/{ISSUE}-{summary}`.\n"
+)
+
+
+def a_wip_title_config() -> HubConfig:
+    """The mixed hub, its project commit title ``wip/{summary}`` and ``demo-api``'s PR title."""
+    document = a_conventions_document()
+    # A PR title filled from that commit title: it holds no {type} nor {scope}.
+    document["project"]["conventions"]["commit_title"] = "wip/{summary}"
+    document["project"]["conventions"]["pr_title"] = "{ISSUE}: {summary}"
+    document["repos"][0]["conventions"] = {"pr_title": "x/{ISSUE}-{summary}"}
     return HubConfig.model_validate(document)
 
 
@@ -328,6 +345,21 @@ def stale(path: str, line: int, ref: str) -> tuple[str, int, str, str]:
     return (path, line, f"stale reference `{ref}` (no such path)", STALE_FIX)
 
 
+# A project branch shape and its example, then a repo's own shape and its example.
+WORK_BRANCH_SPANS = (
+    "Branch: `work/{issue_lower}/{slug}`, e.g. `work/dem-7/collector`.\n"
+    "`demo-api` overrides branch `release/{ISSUE}`, e.g. `release/DEM-7`.\n"
+)
+
+
+def a_work_branch_config() -> HubConfig:
+    """The mixed hub, its project branch ``work/…`` and ``demo-api``'s own ``release/{ISSUE}``."""
+    document = a_conventions_document()
+    document["project"]["conventions"]["branch"] = "work/{issue_lower}/{slug}"
+    document["repos"][0]["conventions"] = {"branch": "release/{ISSUE}"}
+    return HubConfig.model_validate(document)
+
+
 class TestRefs:
     def test_declares_design_id_when_rule_read(self) -> None:
         rule: Rule = instruction_rules.INSTRUCTIONS_REFS
@@ -407,6 +439,67 @@ class TestRefs:
         assert refs(snapshot) == [
             stale("AGENTS.md", 2, "release/3"),
             stale("AGENTS.md", 2, "release/2/notes.md"),
+        ]
+
+    def test_skips_convention_branches_when_agents_names_them(
+        self, snapshot_of: SnapshotFactory
+    ) -> None:
+        # AGH-57 (plan O1 a): the branch shapes and examples AGENTS.md renders are not paths.
+        # Their first segments are neither the prefix nor a path the hub holds.
+        snapshot = snapshot_of(
+            config=a_work_branch_config(),
+            files={"AGENTS.md": WORK_BRANCH_SPANS.encode()},
+        )
+
+        assert refs(snapshot) == []
+
+    def test_reports_stale_reference_when_span_only_resembles_convention(
+        self, snapshot_of: SnapshotFactory
+    ) -> None:
+        # Only an exact shape or example is skipped: a path-shaped span near one is still checked.
+        text = "Not `work/dem-8/other`, `release/DEM-8` nor `release/{ISSUE}/notes.md`.\n"
+        snapshot = snapshot_of(config=a_work_branch_config(), files={"AGENTS.md": text.encode()})
+
+        assert refs(snapshot) == [
+            stale("AGENTS.md", 1, "work/dem-8/other"),
+            stale("AGENTS.md", 1, "release/DEM-8"),
+            stale("AGENTS.md", 1, "release/{ISSUE}/notes.md"),
+        ]
+
+    def test_skips_convention_titles_when_agents_names_them(
+        self, snapshot_of: SnapshotFactory
+    ) -> None:
+        # AGH-57 (E32): a title shape holding `/` is path-shaped, yet the hub renders it.
+        snapshot = snapshot_of(
+            config=a_wip_title_config(),
+            files={"AGENTS.md": WIP_TITLE_SPANS.encode()},
+        )
+
+        assert refs(snapshot) == []
+
+    def test_reports_stale_reference_when_span_only_resembles_title(
+        self, snapshot_of: SnapshotFactory
+    ) -> None:
+        # Only an exact title shape or example is skipped: a path beside one is still checked.
+        text = "Not `wip/{summary}/notes.md` nor `x/{ISSUE}-{summary}.md`.\n"
+        snapshot = snapshot_of(config=a_wip_title_config(), files={"AGENTS.md": text.encode()})
+
+        assert refs(snapshot) == [
+            stale("AGENTS.md", 1, "wip/{summary}/notes.md"),
+            stale("AGENTS.md", 1, "x/{ISSUE}-{summary}.md"),
+        ]
+
+    def test_skips_no_convention_branch_when_hub_unconfigured(
+        self, snapshot_of: SnapshotFactory
+    ) -> None:
+        # An unconfigured hub renders no shape, so the same spans stay stale references.
+        snapshot = snapshot_of(files={"AGENTS.md": WORK_BRANCH_SPANS.encode()})
+
+        assert [message for _, _, message, _ in refs(snapshot)] == [
+            "stale reference `work/{issue_lower}/{slug}` (no such path)",
+            "stale reference `work/dem-7/collector` (no such path)",
+            "stale reference `release/{ISSUE}` (no such path)",
+            "stale reference `release/DEM-7` (no such path)",
         ]
 
     def test_reports_stale_reference_when_hub_sets_no_prefix(

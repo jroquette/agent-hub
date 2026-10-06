@@ -12,15 +12,24 @@ never keys: shims read them at run time, and the author name needs format quotin
 leaves the identity to each developer (no ``project.branch_prefix``, or no author) renders
 ``<prefix>`` and ``AGENTS.md``'s rule names the developer's sources instead (AGH-65); a hub that
 sets them keeps the bytes it had. A hub with several tracker teams names them all where
-``AGENTS.md`` and the plugin name the team; a one-team hub keeps its bytes (AGH-56).
+``AGENTS.md`` and the plugin name the team; a one-team hub keeps its bytes (AGH-56). A hub that
+sets ``project.conventions`` or a ``repos[].conventions`` shows its branch shape in rule 1 and
+kickoff and gets a Conventions block in ``AGENTS.md``; an unconfigured hub keeps its bytes
+(AGH-57).
 """
 
+import re
 import textwrap
 from typing import Final
 
 from agent_hub.core.doctor.snapshot import module_makefiles
 from agent_hub.core.hub_config.model import PREFIX_PLACEHOLDER, HubConfig
 from agent_hub.core.hub_files.rendered_file import Ownership
+from agent_hub.core.workspace.shown_conventions import (
+    ShownConventions,
+    shown_conventions,
+    shown_prefix,
+)
 from agent_hub.generator.registry import REGISTRY
 
 # The platform's git source, unpinned: shims append ``@v<platform.version>`` read from hub.json
@@ -60,6 +69,26 @@ _PREFIX_NOTE: Final = (
 _MENTION_SUFFIX: Final = "). Update it when starting, finishing"
 _RULE_SUFFIX: Final = " in lowercase."
 _RULE_INDENT: Final = "   "
+# The template text of rule 1's line before its branch rule, so a long configured branch shape
+# wraps within 120 characters (AGH-57).
+_BRANCH_RULE_LEAD: Final = "   after an agent (e.g. `claude/…`). "
+# The conventions' block in ``AGENTS.md``: its lead paragraph and each key as a repo line names
+# it; the shapes and examples come from ``shown_conventions`` (AGH-57, plan § Design 7, E32).
+_CONVENTIONS_LEAD: Final = (
+    "`hub.json` → `project.conventions`, overridden per repo by `repos[].conventions`;"
+    " `hub worktree`, `hub run` and its\n"
+    "session follow them. `{ISSUE}` is the issue id, `{issue_lower}` the same in lowercase,"
+    " `{slug}` the worktree's `<desc>`."
+)
+_OVERRIDE_LABELS: Final = {
+    "branch": "branch",
+    "commit_title": "commit title",
+    "pr_title": "PR title",
+}
+# A code span, and the character that stands for each space inside one while wrapping (no
+# pattern may hold a backtick or a control character, so spans pair up and the glue is free).
+_CODE_SPAN: Final = re.compile(r"`[^`]*`")
+_GLUE: Final = "\x00"
 # The plugin texts' team parenthetical when a hub lists several tracker teams (AGH-56).
 _SEVERAL_TEAMS_KEY: Final = (
     "the issue's team: a key of `tracker.teams` in `hub.json`, the first being the default"
@@ -72,7 +101,7 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
     return {
         "project_name": project.name,
         "project_hub_repo": project.hub_repo,
-        "project_branch_prefix": project.branch_prefix or PREFIX_PLACEHOLDER,
+        "project_branch_prefix": shown_prefix(config),
         "project_default_branch": project.default_branch,
         "tracker_team": config.tracker.default_team,
         "repo_dirs": _LIST_SEPARATOR.join(repo.dir for repo in config.repos),
@@ -84,6 +113,7 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
         **_contract_sync_repos(config),
         **_branch_mentions(config),
         **_team_mentions(config),
+        **_conventions_texts(config),
         "commit_author": (
             _USER_AUTHOR
             if project.author_name is not None and project.author_email is not None
@@ -150,6 +180,81 @@ def _team_mentions(config: HubConfig) -> dict[str, str]:
         "tracker_team_key_named": _SEVERAL_TEAMS_KEY,
         "tracker_team_key_assigned": _SEVERAL_TEAMS_KEY,
     }
+
+
+def _conventions_texts(config: HubConfig) -> dict[str, str]:
+    """Rule 1's branch, kickoff's branch and ``AGENTS.md``'s Conventions block.
+
+    Unconfigured (no ``conventions`` key at any level): the template text they replaced and no
+    block, so the files keep their bytes. Configured: the project's effective branch shape, with
+    ``{prefix}`` shown as the rendered prefix and the other placeholders as written, and a block
+    with each project shape and one example, then one line per repo naming the keys it overrides.
+    """
+    shown = shown_conventions(config)
+    if shown is None:
+        default_shape = f"`{shown_prefix(config)}<team>-<n>-<desc>`"
+        team_rule = _team_mentions(config)["tracker_team_rule"]
+        return {
+            "branch_rule": (f"Branch: {default_shape}, where `<team>` is{team_rule}{_RULE_SUFFIX}"),
+            "kickoff_branch": default_shape,
+            "conventions_section": "",
+        }
+    shape = f"`{shown.branch.shape}`"
+    own_branch = any("branch" in repo.overrides for repo in shown.repos.values())
+    return {
+        "branch_rule": _filled_after(
+            f"Branch: {shape}"
+            + (", or the repo's own (see Conventions above)." if own_branch else "."),
+            lead=_BRANCH_RULE_LEAD,
+        ),
+        "kickoff_branch": shape
+        + (" (or the repo's own, `AGENTS.md` → Conventions)" if own_branch else ""),
+        "conventions_section": _conventions_section(config, shown=shown),
+    }
+
+
+def _conventions_section(config: HubConfig, *, shown: ShownConventions) -> str:
+    """The Conventions block, from the blank lines before its heading to its last line."""
+    shapes = (
+        ("Branch", shown.branch),
+        ("Commit title", shown.commit_title),
+        ("PR title", shown.pr_title),
+    )
+    items = [f"{label}: `{pattern.shape}`, e.g. `{pattern.example}`." for label, pattern in shapes]
+    for repo_dir, repo in shown.repos.items():
+        if not repo.overrides:
+            continue
+        keys = [f"{_OVERRIDE_LABELS[key]} `{value}`" for key, value in repo.overrides.items()]
+        # E14: with no pr_title at any layer, the repo's own commit_title titles its PRs.
+        follows = "commit_title" in repo.overrides and not (
+            config.conventions_for(repo_dir).pr_title_explicit
+        )
+        note = " (the PR title follows it)" if follows else ""
+        items.append(f"`{repo_dir}` overrides {_LIST_SEPARATOR.join(keys)}{note}.")
+    bullets = "\n".join(_filled_after(f"- {item}", lead="") for item in items)
+    return f"\n\n## Conventions\n\n{_CONVENTIONS_LEAD}\n\n{bullets}"
+
+
+def _filled_after(text: str, *, lead: str) -> str:
+    """``text`` wrapped at 120 characters when it follows ``lead`` on its first line.
+
+    Later lines are indented to sit under the list item. A code span is never broken: lines break
+    only at spaces outside code spans, so each span keeps its text byte for byte (a run of spaces
+    included), and a later line starts with a code span or with the fixed prose around them, none
+    of whose words opens a Markdown block. A line whose code span is longer than the width goes
+    past 120 characters (plan P-1).
+    """
+    indent = _RULE_INDENT if lead else _MARKDOWN_INDENT
+    glued = _CODE_SPAN.sub(lambda span: span.group().replace(" ", _GLUE), text)
+    lines = textwrap.wrap(
+        glued,
+        width=_MARKDOWN_WIDTH,
+        initial_indent=lead,
+        subsequent_indent=indent,
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
+    return "\n".join([lines[0][len(lead) :], *lines[1:]]).replace(_GLUE, " ")
 
 
 def _wrapped_line(text: str, *, suffix: str) -> str:

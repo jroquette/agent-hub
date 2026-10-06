@@ -28,7 +28,11 @@ from agent_hub.core.doctor.finding import Read, Rule
 from agent_hub.core.doctor.registry import REGISTRY
 from agent_hub.core.hub_config.doctor_rules import Severity
 from agent_hub.core.json_form import dump_json
-from agent_hub.core.testing.builders import a_second_repo, a_two_team_document
+from agent_hub.core.testing.builders import (
+    a_conventions_document,
+    a_second_repo,
+    a_two_team_document,
+)
 from agent_hub.generator import render_hub as render_hub_module
 
 # The conftest's in-process doctor run, its path recorder and the recorder's filters (tests
@@ -386,6 +390,33 @@ def test_reports_repo_branch_problem_when_value_invalid(
     ]
 
 
+def test_passes_config_schema_when_hub_sets_conventions(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    mixed = a_conventions_document()
+    demo_document["project"]["conventions"] = mixed["project"]["conventions"]
+    demo_document["repos"] = mixed["repos"]
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=0)
+
+    assert lines == [CLEAN]
+
+
+def test_reports_branch_pattern_problem_when_issue_placeholder_missing(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["repos"][0]["conventions"] = {"branch": "{prefix}{slug}"}
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=1)
+
+    assert lines == [
+        schema_line("repos[0].conventions.branch: a branch needs {ISSUE} or {issue_lower}"),
+        ONE_ERROR,
+    ]
+
+
 CONTRACT_SYNC = {"source": "demo-api", "target": "demo-web"}
 
 
@@ -501,6 +532,67 @@ def test_finds_same_findings_when_fresh_hub_lists_teams(
     two_team_document = {**demo_document, "tracker": a_two_team_document()["tracker"]}
     results = []
     for name, document in (("one", demo_document), ("two", two_team_document)):
+        base = tmp_path / name
+        base.mkdir()
+        config = base / "hub.json"
+        config.write_bytes(dump_json(document))
+        root = base / "hub"
+        created = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
+        assert created.exit_code == 0, created.stderr
+        result = run_doctor(root)
+        results.append((result.exit_code, result.stdout.splitlines(), result.stderr))
+
+    assert results[0][0] == 0, results[0]
+    assert results[1] == results[0]
+
+
+def with_work_branches(document: dict[str, Any]) -> dict[str, Any]:
+    """``document`` as the mixed hub: ``demo-web`` added, the project branch ``work/…``, its
+    commit title ``wip/{summary}`` (no ``pr_title``, so the PR title follows it) and
+    ``demo-api``'s own ``release/{ISSUE}``.
+
+    Neither first segment is the prefix nor a path a fresh hub holds, so nothing resolves by luck.
+    """
+    mixed = a_conventions_document()
+    project = {**document["project"], "conventions": mixed["project"]["conventions"]}
+    project["conventions"]["branch"] = "work/{issue_lower}/{slug}"
+    # E32: a title shape holding `/` is path-shaped too; with no pr_title (E14) the PR title
+    # renders the same path-shaped shape and example.
+    project["conventions"]["commit_title"] = "wip/{summary}"
+    del project["conventions"]["pr_title"]
+    api = {**document["repos"][0], "conventions": {"branch": "release/{ISSUE}"}}
+    return {**document, "project": project, "repos": [api, *document["repos"][1:], a_second_repo()]}
+
+
+def test_finds_no_stale_reference_when_fresh_hub_sets_conventions(
+    tmp_path: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    # AGH-57 (plan O1 a): AGENTS.md names the branch shapes and the example as code spans.
+    config = tmp_path / "hub.json"
+    config.write_bytes(dump_json(with_work_branches(demo_document)))
+    root = tmp_path / "hub"
+    created = CliRunner().invoke(app, ["init", "--config", str(config), "--dir", str(root)])
+    assert created.exit_code == 0, created.stderr
+    agents = (root / "AGENTS.md").read_text(encoding="utf-8")
+    assert all(
+        f"`{span}`" in agents
+        for span in ("work/{issue_lower}/{slug}", "work/dem-7/collector", "release/{ISSUE}")
+    )
+    assert "- Commit title: `wip/{summary}`, e.g. `wip/add the collector`." in agents
+    assert "- PR title: `wip/{summary}`, e.g. `wip/add the collector`." in agents
+
+    assert lines_of(run_doctor(root, "--only", "instructions.refs"), exit_code=0) == [CLEAN]
+
+
+def test_finds_same_findings_when_fresh_hub_sets_conventions(
+    tmp_path: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    # AGH-57: every check finds in a fresh configured hub what it finds in a fresh unconfigured
+    # one with the same repos, and nothing more.
+    configured = with_work_branches(demo_document)
+    unconfigured = {**demo_document, "repos": [*demo_document["repos"], a_second_repo()]}
+    results = []
+    for name, document in (("unconfigured", unconfigured), ("configured", configured)):
         base = tmp_path / name
         base.mkdir()
         config = base / "hub.json"

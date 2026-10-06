@@ -116,3 +116,47 @@ def test_requires_one_team_key_when_schema_exported() -> None:
         assert "anyOf" not in node
     assert "tracker.teams" in team["description"]
     assert "tracker.team." in teams["description"]
+
+
+CONVENTION_DESCRIPTIONS = {
+    "branch": (
+        "{prefix}, {ISSUE}, {issue_lower}, {slug}",
+        "needs {ISSUE} or {issue_lower}",
+        "Default {prefix}{issue_lower}-{slug}.",
+    ),
+    "commit_title": (
+        "{ISSUE}, {type}, {scope}, {summary}",
+        "needs {summary}",
+        "Default {type}({scope}): {summary} ({ISSUE}).",
+    ),
+    "pr_title": (
+        "{ISSUE}, {type}, {scope}, {summary}",
+        "needs {summary}",
+        "Default: the effective commit_title.",
+    ),
+}
+
+
+def test_exports_optional_conventions_when_schema_exported() -> None:
+    definitions = read_shipped_schema()["$defs"]
+    conventions = definitions["Conventions"]
+
+    for owner in ("Project", "Repo"):
+        node = definitions[owner]["properties"]["conventions"]
+        assert node["$ref"] == "#/$defs/Conventions", owner
+        assert "conventions" not in definitions[owner]["required"], owner
+        assert "anyOf" not in node, owner
+        assert "default" not in node, owner
+        assert "title" not in node, owner
+    assert "repo" in definitions["Project"]["properties"]["conventions"]["description"]
+    assert "project.conventions" in definitions["Repo"]["properties"]["conventions"]["description"]
+    assert "required" not in conventions
+    assert conventions["additionalProperties"] is False
+    assert conventions["patternProperties"] == COMMENT_KEYS
+    assert conventions["properties"].keys() == CONVENTION_DESCRIPTIONS.keys()
+    for key, parts in CONVENTION_DESCRIPTIONS.items():
+        node = conventions["properties"][key]
+        assert node.keys() == {"type", "description"}, key
+        assert node["type"] == "string", key
+        for part in parts:
+            assert part in node["description"], (key, part)

@@ -1,16 +1,28 @@
 """``HubConfig``: the frozen model of ``hub.json`` (docs/design/project-config.md § Fields)."""
 
 import json
+import re
 from collections.abc import Iterator
 from typing import Annotated, Final, Literal
 
-from pydantic import BeforeValidator, ConfigDict, Field
+from pydantic import AfterValidator, BeforeValidator, ConfigDict, Field
 from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from agent_hub.core.hub_config.config_object import (
     COMMENT_KEYS_SCHEMA,
     ConfigObject,
     absent_by_default,
+)
+from agent_hub.core.hub_config.conventions import (
+    BRANCH_PLACEHOLDERS,
+    DEFAULT_BRANCH,
+    DEFAULT_COMMIT_TITLE,
+    TITLE_PLACEHOLDERS,
+    EffectiveConventions,
+    branch_pattern_problem,
+    effective_conventions,
+    pattern_parts,
+    title_pattern_problem,
 )
 from agent_hub.core.hub_config.doctor_rules import RULE_MODULES, DoctorRules
 
@@ -33,7 +45,8 @@ KebabName = Annotated[str, Field(pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$")]
 RepoDir = Annotated[str, Field(pattern=rf"^{_SAFE_SEGMENT}$")]
 GitHubRepo = Annotated[str, Field(pattern=rf"^{_SAFE_SEGMENT}/{_SAFE_SEGMENT}$")]
 BranchPrefix = Annotated[str, Field(pattern=rf"^{_SAFE_SEGMENT}/$")]
-BranchName = Annotated[str, Field(pattern=rf"^{_SAFE_SEGMENT}(?:/{_SAFE_SEGMENT})*$")]
+_BRANCH_NAME = rf"^{_SAFE_SEGMENT}(?:/{_SAFE_SEGMENT})*$"
+BranchName = Annotated[str, Field(pattern=_BRANCH_NAME)]
 EmailAddress = Annotated[str, Field(pattern=r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$")]
 HostName = Annotated[str, Field(pattern=rf"^{_HOST_LABEL}(?:\.{_HOST_LABEL})*$")]
 TeamKey = Annotated[str, Field(pattern=r"^[A-Za-z0-9]+$")]
@@ -71,6 +84,54 @@ class Platform(ConfigObject):
     version: ReleaseVersion
 
 
+# A branch pattern's sample renders must be valid branch names: the same rule, in Python's re.
+_BRANCH_NAME_RE = re.compile(_BRANCH_NAME)
+
+
+def _branch_pattern(value: str) -> str:
+    problem = branch_pattern_problem(value, branch_name=_BRANCH_NAME_RE)
+    if problem is not None:
+        raise PydanticCustomError("convention_pattern", problem)
+    return value
+
+
+def _title_pattern(value: str) -> str:
+    problem = title_pattern_problem(value)
+    if problem is not None:
+        raise PydanticCustomError("convention_pattern", problem)
+    return value
+
+
+# One problem per pattern, at the pattern's own key (conventions.py names it).
+BranchPattern = Annotated[str, AfterValidator(_branch_pattern)]
+TitlePattern = Annotated[str, AfterValidator(_title_pattern)]
+
+
+def _placeholder_list(names: tuple[str, ...]) -> str:
+    return ", ".join(f"{{{name}}}" for name in names)
+
+
+def _placeholders(pattern: str) -> list[str]:
+    return [part.placeholder for part in pattern_parts(pattern) if part.placeholder is not None]
+
+
+class Conventions(ConfigObject):
+    """Branch and title patterns; each absent key keeps today's shape."""
+
+    branch: BranchPattern | None = absent_by_default(
+        description=f"Branch pattern: {_placeholder_list(BRANCH_PLACEHOLDERS)}; needs {{ISSUE}}"
+        f" or {{issue_lower}}. Default {DEFAULT_BRANCH}."
+    )
+    commit_title: TitlePattern | None = absent_by_default(
+        description=f"Commit title pattern: {_placeholder_list(TITLE_PLACEHOLDERS)}; needs"
+        f" {{summary}}. Default {DEFAULT_COMMIT_TITLE}."
+    )
+    pr_title: TitlePattern | None = absent_by_default(
+        description=f"PR title pattern: {_placeholder_list(TITLE_PLACEHOLDERS)}; needs"
+        " {summary}. Default: the effective commit_title."
+    )
+
+
 # The identity keys are per developer: absent here, each comes from hub.local.json or git config.
 _DESIGN = "(docs/design/developer-identity.md)"
 _PER_DEVELOPER = f"Per developer: hub.local.json, else this, else git config {_DESIGN}."
@@ -90,6 +151,9 @@ class Project(ConfigObject):
     default_branch: BranchName = "main"
     author_name: FreeString | None = absent_by_default(description=_PER_DEVELOPER)
     author_email: EmailAddress | None = absent_by_default(description=_PER_DEVELOPER)
+    conventions: Conventions | None = absent_by_default(
+        description="Branch and title patterns for every repo; absent keys keep today's shapes."
+    )
 
 
 # Several team keys: at least one, unique ignoring case (``Tracker``), the first the default.
@@ -191,6 +255,9 @@ class Repo(ConfigObject):
         description="The repo's default branch: worktree and PR base, push guard."
         " Absent: project.default_branch."
     )
+    conventions: Conventions | None = absent_by_default(
+        description="Overrides project.conventions key by key."
+    )
 
 
 class Guard(ConfigObject):
@@ -288,14 +355,85 @@ class HubConfig(ConfigObject):
                 return repo.default_branch or self.project.default_branch
         raise KeyError(repo_dir)
 
+    def conventions_for(self, repo_dir: str) -> EffectiveConventions:
+        """The effective conventions of the repo at ``repo_dir``: its keys over the project's.
+
+        The only reader of ``project.conventions`` and ``repos[].conventions`` (with
+        ``workspace.shown_conventions``, the rendered texts' source). Raises ``KeyError`` when
+        no repo has that dir.
+        """
+        for repo in self.repos:
+            if repo.dir == repo_dir:
+                return effective_conventions(self.project.conventions, repo.conventions)
+        raise KeyError(repo_dir)
+
+    @property
+    def project_conventions(self) -> EffectiveConventions:
+        """The project's effective conventions: its keys over the defaults, no repo's."""
+        return effective_conventions(self.project.conventions, None)
+
+    @property
+    def sets_conventions(self) -> bool:
+        """Whether ``project.conventions`` or a ``repos[].conventions`` is set, even ``{}``."""
+        return self.project.conventions is not None or any(
+            repo.conventions is not None for repo in self.repos
+        )
+
     def cross_field_problems(self) -> list[InitErrorDetails]:
-        """Unique repo dirs, known guard roots and contract-sync repos, rules of chosen modules."""
+        """Unique repo dirs, known guard roots and contract-sync repos, rules of chosen modules,
+        and an explicit ``pr_title`` that its repo's ``commit_title`` cannot fill."""
         return [
             *self._duplicate_repo_dirs(),
             *self._unknown_guard_roots(),
             *self._contract_sync_repos(),
             *self._rules_of_unselected_modules(),
+            *self._unfillable_pr_titles(),
         ]
+
+    def _unfillable_pr_titles(self) -> Iterator[InitErrorDetails]:
+        # Per repo, on the effective patterns; an unset pr_title is the commit_title, so only an
+        # explicit one can need a part ({ISSUE} aside: the run's id) that the commit lacks. One
+        # error per pr_title key, with one clause per distinct clash.
+        clashes: dict[tuple[str | int, ...], tuple[str, list[str]]] = {}
+        for index, repo in enumerate(self.repos):
+            conventions = self.conventions_for(repo.dir)
+            if not conventions.pr_title_explicit:
+                continue
+            commit_parts = _placeholders(conventions.commit_title)
+            missing = [
+                name
+                for name in _placeholders(conventions.pr_title)
+                if name != "ISSUE" and name not in commit_parts
+            ]
+            if not missing:
+                continue
+            own = repo.conventions or Conventions()
+            loc: tuple[str | int, ...] = (
+                ("repos", index, "conventions", "pr_title")
+                if own.pr_title is not None
+                else ("project", "conventions", "pr_title")
+            )
+            # A project pr_title clashing with a repo's own commit_title names that repo (E15).
+            source = (
+                f"repos[{index}].conventions."
+                if own.pr_title is None and own.commit_title is not None
+                else ""
+            )
+            clause = (
+                f"pr_title needs {_placeholder_list(tuple(missing))}, which"
+                f" {source}commit_title `{conventions.commit_title}` lacks"
+            )
+            _, clauses = clashes.setdefault(loc, (conventions.pr_title, []))
+            if clause not in clauses:
+                clauses.append(clause)
+        for loc, (pr_title, clauses) in clashes.items():
+            yield InitErrorDetails(
+                type=PydanticCustomError(
+                    "unfillable_pr_title", "{clashes}", {"clashes": "; ".join(clauses)}
+                ),
+                loc=loc,
+                input=pr_title,
+            )
 
     def _duplicate_repo_dirs(self) -> Iterator[InitErrorDetails]:
         # Case-insensitive: on macOS's default file system, ``demo-api`` and ``Demo-api`` are

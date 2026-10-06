@@ -22,7 +22,7 @@ from agent_hub.core.hub_files.extension_inputs import NO_EXTENSIONS, ExtensionIn
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.hub_files.rendered_link import RenderedLink
-from agent_hub.core.testing.builders import a_hub_document, a_second_repo
+from agent_hub.core.testing.builders import a_conventions_document, a_hub_document, a_second_repo
 from agent_hub.generator.built_json import managed_settings
 from agent_hub.generator.errors import GeneratorError, TemplateError
 from agent_hub.generator.hub_template import render_template
@@ -2027,6 +2027,89 @@ def test_keeps_agents_bytes_when_identity_in_hub_json(
     variant = text_of(variant_config, "AGENTS.md")
     assert USER_RULE in variant
     assert "hub.local.json" not in variant
+
+
+# AGH-57 (plan § Design 7, E11): the mixed hub's AGENTS.md and kickoff show its conventions.
+KICKOFF_PATH = "plugin/hub-workflow/skills/kickoff/SKILL.md"
+FEATURE_PATH = "plugin/hub-workflow/skills/feature/SKILL.md"
+
+
+def without_conventions(document: dict[str, Any]) -> dict[str, Any]:
+    """``document`` with neither ``project.conventions`` nor any ``repos[].conventions``."""
+    document["project"].pop("conventions", None)
+    for repo in document["repos"]:
+        repo.pop("conventions", None)
+    return document
+
+
+def rule_one(agents: str) -> str:
+    return agents[agents.index("1. Commits") : agents.index("2. No push")]
+
+
+def test_shows_conventions_in_agents_when_hub_sets_them() -> None:
+    config = HubConfig.model_validate(a_conventions_document())
+    plain = rendered_texts(HubConfig.model_validate(without_conventions(a_conventions_document())))
+
+    rendered = render_hub(config)
+    texts = rendered_texts(config)
+    agents = texts["AGENTS.md"]
+
+    assert agents.count("## Conventions") == 1
+    block = agents.split("## Conventions\n", 1)[1].split("\n## ", 1)[0]
+    for label in ("- Branch: ", "- Commit title: ", "- PR title: "):
+        (line,) = [line for line in block.splitlines() if line.startswith(label)]
+        assert line.count("e.g.") == 1, label
+    assert [line for line in block.splitlines() if "`demo-api`" in line] == [
+        "- `demo-api` overrides branch `feature/{issue_lower}/{slug}`."
+    ]
+    assert "`jdoe/{ISSUE}-{slug}`" in rule_one(agents)
+    assert "<team>-<n>-<desc>" not in rule_one(agents)
+    assert "work on `jdoe/{ISSUE}-{slug}`" in texts[KICKOFF_PATH]
+    assert "<team>-<n>-<desc>" not in texts[KICKOFF_PATH]
+    assert "`make worktree NAME=<team>-<n>-<desc>`" in agents
+    assert texts[FEATURE_PATH] == plain[FEATURE_PATH]
+    assert [line for line in agents.splitlines() if len(line) > 120] == []
+    for file in rendered.files:
+        assert b"@@" not in (file.content or b""), file.path
+    assert render_hub(config) == rendered
+
+
+def an_80_character_pattern(head: str, tail: str) -> str:
+    pattern = head + "x" * (80 - len(head) - len(tail)) + tail
+    assert len(pattern) == 80
+    return pattern
+
+
+def test_keeps_lines_within_width_when_conventions_long() -> None:
+    branch = an_80_character_pattern("{prefix}", "/{ISSUE}-{slug}")
+    title = an_80_character_pattern("{ISSUE}: {type}({scope}): {summary} -- ", "")
+    long_conventions = {"branch": branch, "commit_title": title, "pr_title": title}
+    document = a_conventions_document()
+    document["project"]["conventions"] = long_conventions
+    document["repos"][0]["conventions"] = long_conventions
+    for no_prefix in (False, True):
+        if no_prefix:
+            del document["project"]["branch_prefix"]
+
+        agents = text_of(HubConfig.model_validate(document), "AGENTS.md")
+
+        # The rule, the three shapes and their examples, and the three repo overrides.
+        assert agents.count("x" * 40) == 10, no_prefix
+        assert [line for line in agents.splitlines() if len(line) > 120] == [], no_prefix
+
+
+def test_shows_prefix_placeholder_when_hub_leaves_prefix_to_developers() -> None:
+    document = a_conventions_document()
+    del document["project"]["branch_prefix"]
+    config = HubConfig.model_validate(document)
+
+    texts = rendered_texts(config)
+
+    assert "Branch: `<prefix>{ISSUE}-{slug}`, or the repo's own" in rule_one(texts["AGENTS.md"])
+    assert (
+        "- Branch: `<prefix>{ISSUE}-{slug}`, e.g. `<prefix>DEM-7-collector`." in texts["AGENTS.md"]
+    )
+    assert "work on `<prefix>{ISSUE}-{slug}`" in texts[KICKOFF_PATH]
 
 
 # AGH-16 inventory A6b: the per-repo setup scripts `hub worktree` runs, named in the workflow step
