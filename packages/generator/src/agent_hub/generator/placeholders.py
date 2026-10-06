@@ -204,7 +204,7 @@ def _conventions_texts(config: HubConfig) -> dict[str, str]:
     return {
         "branch_rule": _filled_after(
             f"Branch: {shape}"
-            + (", or the repo's own (see Conventions below)." if own_branch else "."),
+            + (", or the repo's own (see Conventions above)." if own_branch else "."),
             lead=_BRANCH_RULE_LEAD,
         ),
         "kickoff_branch": shape
