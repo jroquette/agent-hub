@@ -15,8 +15,9 @@ from agent_hub.core.hub_config.model import (
     GitHubRepo,
     HubConfig,
     RepoDir,
+    Tracker,
 )
-from agent_hub.core.testing.builders import a_hub_document, a_second_repo
+from agent_hub.core.testing.builders import a_hub_document, a_second_repo, a_two_team_document
 
 REQUIRED_KEYS: list[tuple[str | int, ...]] = [
     ("schema_version",),
@@ -27,6 +28,7 @@ REQUIRED_KEYS: list[tuple[str | int, ...]] = [
     ("project", "hub_repo"),
     ("tracker",),
     ("tracker", "kind"),
+    # ``tracker.team`` is required while ``tracker.teams`` is absent.
     ("tracker", "team"),
     ("repos",),
     ("repos", 0, "dir"),
@@ -281,6 +283,90 @@ def test_reads_team_keys_from_fields_when_tracker_copied() -> None:
     assert copied.default_team == "LONGTEAMKEY1"
 
 
+def test_reads_team_keys_when_tracker_sets_teams() -> None:
+    tracker = HubConfig.model_validate(a_two_team_document()).tracker
+
+    assert tracker.team_keys == ("APP", "OPS")
+    assert tracker.default_team == "APP"
+    assert tracker.team is None
+
+
+def test_refuses_default_team_when_tracker_built_without_team_key() -> None:
+    # Validation never builds it; the accessor still never returns a wrong team.
+    tracker = Tracker.model_construct(kind="linear")
+
+    assert tracker.team_keys == ()
+    with pytest.raises(ValueError, match="no team key"):
+        _ = tracker.default_team
+
+
+def without_team(document: dict[str, Any]) -> dict[str, Any]:
+    del document["tracker"]["team"]
+    return document
+
+
+@pytest.mark.parametrize(
+    ("document", "expected"),
+    [
+        pytest.param(
+            with_value(("tracker", "teams"), ["APP"]),
+            (("tracker", "teams"), "team_and_teams"),
+            id="both",
+        ),
+        pytest.param(
+            without_team(a_hub_document()), (("tracker", "team"), "missing"), id="neither"
+        ),
+        pytest.param(
+            with_path_value(without_team(a_hub_document()), ("tracker", "teams"), []),
+            (("tracker", "teams"), "empty_list"),
+            id="empty",
+        ),
+        pytest.param(
+            with_path_value(without_team(a_hub_document()), ("tracker", "teams"), ["APP", "app"]),
+            (("tracker", "teams", 1), "duplicate_team_key"),
+            id="duplicate",
+        ),
+        pytest.param(
+            with_path_value(without_team(a_hub_document()), ("tracker", "teams"), ["A-1"]),
+            (("tracker", "teams", 0), "string_pattern_mismatch"),
+            id="pattern",
+        ),
+        pytest.param(
+            with_path_value(without_team(a_hub_document()), ("tracker", "teams"), "APP"),
+            (("tracker", "teams"), "tuple_type"),
+            id="string",
+        ),
+    ],
+)
+def test_rejects_tracker_when_team_keys_invalid(
+    document: dict[str, Any], expected: tuple[tuple[str | int, ...], str]
+) -> None:
+    with pytest.raises(ValidationError) as caught:
+        HubConfig.model_validate(document)
+
+    [error] = caught.value.errors()
+    assert (error["loc"], error["type"]) == expected
+    if error["type"] == "duplicate_team_key":
+        assert '"app"' in error["msg"]
+        assert "teams[0]" in error["msg"]
+
+
+def test_reports_missing_team_alongside_kind_error_when_no_team_key_given() -> None:
+    document = with_value(("tracker", "kind"), "jira")
+    del document["tracker"]["team"]
+
+    assert sorted(error_types(document)) == [
+        (("tracker", "kind"), "literal_error"),
+        (("tracker", "team"), "missing"),
+    ]
+
+
+def test_accepts_teams_when_keys_share_prefix() -> None:
+    document = with_path_value(without_team(a_hub_document()), ("tracker", "teams"), ["AP", "APP"])
+
+    assert HubConfig.model_validate(document).tracker.team_keys == ("AP", "APP")
+
+
 TRACKER_TEAM_READ = re.compile(r"\.tracker\.teams?\b")
 
 
@@ -288,9 +374,13 @@ def test_reads_team_field_only_in_model_when_sources_scanned() -> None:
     """Readers go through Tracker.team_keys and Tracker.default_team (AGH-56)."""
     packages = Path(__file__).resolve().parents[4]
     assert packages.is_dir(), packages  # an empty scan would pass anywhere
+    sources = sorted(packages.glob("*/src/**/*.py"))
+    assert "core/src/agent_hub/core/hub_config/model.py" in {
+        source.relative_to(packages).as_posix() for source in sources
+    }
     hits = {
         f"{source.relative_to(packages).as_posix()}:{number}": line.strip()
-        for source in sorted(packages.glob("*/src/**/*.py"))
+        for source in sources
         for number, line in enumerate(source.read_text(encoding="utf-8").splitlines(), 1)
         if TRACKER_TEAM_READ.search(line)
     }
