@@ -132,6 +132,21 @@ class TestUsage:
         assert_refused(result, SHAPE)
         assert_untouched(demo_workspace)
 
+    def test_refuses_name_when_team_not_listed(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        demo_workspace.use_teams("APP", "OPS")
+
+        # A usage message stays on one line of Rich's box.
+        result = run_command(demo_workspace.hub, "worktree", "xyz-1-x", env={"COLUMNS": "200"})
+
+        assert_refused(
+            result,
+            "name must be the issue, <team>-<n>[-<desc>] in lowercase (e.g. app-7-collector);"
+            " use one of: APP, OPS",
+        )
+        assert_untouched(demo_workspace)
+
     def test_refuses_name_when_ref_format_refused(
         self, demo_workspace: Workspace, run_command: CommandRunner
     ) -> None:
@@ -243,6 +258,27 @@ class TestCreate:
         assert demo_workspace.git(worktree, "branch", "--show-current") == BRANCH
         assert demo_workspace.git(worktree, "rev-parse", "HEAD") == kept
         assert kept != demo_workspace.origin_head("demo-api")
+
+    def test_creates_worktrees_when_name_has_other_team(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        demo_workspace.use_teams("APP", "OPS")
+        name = "ops-12-x"
+
+        result = run_command(demo_workspace.hub, "worktree", name)
+
+        assert result.exit_code == 0, result.output
+        assert result.stderr == ""
+        assert result.stdout.splitlines() == [
+            *(
+                f"created  {demo_workspace.worktree(repo, name)} (jdoe/{name} from origin/trunk)"
+                for repo in REPOS
+            ),
+            *summary(name, "demo-api demo-web", f"remove   : ./hub worktree --remove {name}"),
+        ]
+        for repo in REPOS:
+            worktree = demo_workspace.worktree(repo, name)
+            assert demo_workspace.git(worktree, "branch", "--show-current") == f"jdoe/{name}"
 
     def test_touches_one_repo_when_only_given(
         self, demo_workspace: Workspace, run_command: CommandRunner
