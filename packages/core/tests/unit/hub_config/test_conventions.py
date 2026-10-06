@@ -1,5 +1,6 @@
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 from pydantic import TypeAdapter
@@ -328,3 +329,79 @@ def test_builds_frozen_value_when_effective_conventions_built() -> None:
     )
     with pytest.raises(AttributeError):
         effective.branch = "x"  # type: ignore[misc]
+
+
+# AC-57.14 (plan § Design 6, E2, E10): each repo's conventions have one source, the model's
+# conventions_for (and project_conventions, sets_conventions); its branch has one builder,
+# worktree_branch over render_branch. A module path ``hub_config.conventions`` is no read.
+CONVENTIONS_READ = re.compile(r"(?<!hub_config)\.conventions\b")
+BRANCH_BUILD = re.compile(r"\{(?:self\.|cfg\.)?(?:branch_)?prefix\}\{|@@\{project_branch_prefix\}<")
+
+CORE = "core/src/agent_hub/core"
+TEMPLATES = "generator/src/agent_hub/generator/templates"
+
+# Lines per file that may name ``.conventions``; every other consumer calls the model's helpers.
+CONVENTIONS_READERS = {
+    # conventions_for, project_conventions, sets_conventions and the pairing check read the two
+    # keys; the repo key's schema description, two docstrings and the pairing message name them
+    f"{CORE}/hub_config/model.py": 9,
+    # the module docstring names the two keys
+    f"{CORE}/hub_config/conventions.py": 2,
+    # each repo's own keys, which its Conventions line lists (the one raw read outside the model)
+    f"{CORE}/workspace/shown_conventions.py": 1,
+    # the module docstring and the Conventions block's lead text name the keys; the values come
+    # from shown_conventions only
+    "generator/src/agent_hub/generator/placeholders.py": 2,
+    # RunChildren.conventions, the repo's effective conventions (conventions_for): its branch
+    # and the prompt's commit title
+    "cli/src/agent_hub/cli/run_children.py": 2,
+    # the PR title step reads RunChildren.conventions
+    "cli/src/agent_hub/cli/run_steps.py": 1,
+}
+
+# Lines per file that build a branch as the prefix followed by a name.
+BRANCH_BUILDERS = {
+    # the default branch pattern itself, which render_branch fills
+    f"{CORE}/hub_config/conventions.py": 1,
+    # the mixed hub's project branch pattern, a test builder's data
+    f"{CORE}/testing/builders.py": 1,
+    # hint text, unchanged (R-7, AGH-68): doctor branch_shape
+    f"{CORE}/doctor/text_rules.py": 1,
+    # hint text, unchanged (R-7, AGH-68): the guard's _branch_hint
+    f"{TEMPLATES}/plugin/hub-workflow/hooks/guard.py.tmpl": 1,
+}
+
+
+def scan_sources(pattern: re.Pattern[str]) -> tuple[dict[str, int], str]:
+    """Hits of ``pattern`` in ``packages/*/src`` (``.py``, ``.tmpl``): counts per file, and
+    every hit as ``file:line: text``."""
+    packages = Path(__file__).resolve().parents[4]
+    sources = [
+        source
+        for source in sorted(packages.glob("*/src/**/*"))
+        if source.is_file() and source.suffix in {".py", ".tmpl"}
+    ]
+    # an empty scan would pass anywhere
+    assert f"{CORE}/hub_config/model.py" in {s.relative_to(packages).as_posix() for s in sources}
+    hits = [
+        (source.relative_to(packages).as_posix(), number, line.strip())
+        for source in sources
+        for number, line in enumerate(source.read_text(encoding="utf-8").splitlines(), 1)
+        if pattern.search(line)
+    ]
+    counts: dict[str, int] = {}
+    for name, _number, _line in hits:
+        counts[name] = counts.get(name, 0) + 1
+    return counts, "\n".join(f"{name}:{number}: {line}" for name, number, line in hits)
+
+
+def test_reads_conventions_only_in_allowed_files_when_sources_scanned() -> None:
+    counts, hits = scan_sources(CONVENTIONS_READ)
+
+    assert counts == CONVENTIONS_READERS, hits
+
+
+def test_builds_branch_only_in_allowed_files_when_sources_scanned() -> None:
+    counts, hits = scan_sources(BRANCH_BUILD)
+
+    assert counts == BRANCH_BUILDERS, hits
