@@ -351,6 +351,22 @@ def test_rejects_tracker_when_team_keys_invalid(
         assert "teams[0]" in error["msg"]
 
 
+def test_names_first_use_for_each_repeat_when_team_key_repeated_twice() -> None:
+    document = with_path_value(
+        without_team(a_hub_document()), ("tracker", "teams"), ["A", "a", "A"]
+    )
+
+    with pytest.raises(ValidationError) as caught:
+        HubConfig.model_validate(document)
+
+    errors = caught.value.errors()
+    assert [(error["loc"], error["type"]) for error in errors] == [
+        (("tracker", "teams", 1), "duplicate_team_key"),
+        (("tracker", "teams", 2), "duplicate_team_key"),
+    ]
+    assert all("teams[0]" in error["msg"] for error in errors)
+
+
 def test_reports_missing_team_alongside_kind_error_when_no_team_key_given() -> None:
     document = with_value(("tracker", "kind"), "jira")
     del document["tracker"]["team"]

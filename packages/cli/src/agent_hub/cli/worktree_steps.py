@@ -100,8 +100,7 @@ def worktree_task(
     ``WorktreeUsageError`` for a name not shaped like the issue, a branch git refuses or an
     unknown ``only``.
     """
-    team = config.tracker.default_team
-    problem = worktree_name_problem(name, team=team)
+    problem = worktree_name_problem(name, teams=config.tracker.team_keys)
     if problem is not None:
         raise WorktreeUsageError(problem)
     branch = worktree_branch(name, prefix=branch_prefix)
@@ -115,7 +114,7 @@ def worktree_task(
     if checked.returncode != 0:
         raise WorktreeUsageError(
             f"git refuses the branch name {shown_path(branch)};"
-            f" use a name like {worktree_name_example(team)}"
+            f" use a name like {worktree_name_example(config.tracker.default_team)}"
         )
     dirs = tuple(repo.dir for repo in config.repos)
     if only is not None and only not in dirs:
