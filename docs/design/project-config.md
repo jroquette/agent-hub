@@ -29,7 +29,7 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `project.branch_prefix` | e.g. `jdoe/` (Rendered values) | optional, per developer ([developer-identity.md](developer-identity.md)) | `hub worktree`, `hub run`, guard branch hint, `AGENTS.md` |
 | `project.default_branch` | `^S(?:/S)*$` (Rendered values) | `main` | the hub's own branch (CI, brief hub line, retro), default of `repos[].default_branch`, guard |
 | `project.author_name`, `project.author_email` | strings | optional, per developer ([developer-identity.md](developer-identity.md)) | cloud setup (git identity), `attribution.ai` rule, marketplace owner, `AGENTS.md` |
-| `project.conventions` | object of optional patterns `branch`, `commit_title`, `pr_title` (Rendered values); not in `hub.local.json` | `branch` `{prefix}{issue_lower}-{slug}`, `commit_title` `{type}({scope}): {summary} ({ISSUE})`; `pr_title` the effective `commit_title` | `hub worktree` and `hub run` (branch per repo; refused, before anything is created, when checked out in another worktree, when the existing task worktree is on another branch, or when the task folder is not a worktree), the run prompt, the PR title, `AGENTS.md` and kickoff (shapes and examples), doctor `instructions.refs` (skips exactly those) |
+| `project.conventions` | object of optional patterns `branch`, `commit_title`, `pr_title` (Rendered values); not in `hub.local.json` | `branch` `{prefix}{issue_lower}-{slug}`, `commit_title` `{type}({scope}): {summary} ({ISSUE})`; `pr_title` the effective `commit_title` | `hub worktree` and `hub run` (branch per repo; refused, before anything is created, when its branch is checked out in another worktree, when the existing task worktree is on another branch, or when the task folder is not a worktree); the run prompt; the PR title: a repo whose titles are configured (either layer sets `commit_title` or `pr_title`) parses its newest commit subject with `commit_title` and renders `pr_title`, and no match keeps today's title, records `title_unmatched` and warns; `AGENTS.md`: shapes and examples, and it notes when a repo's own `commit_title` also titles its PRs (no layer sets `pr_title`); kickoff: the branch shape only; doctor `instructions.refs`: skips the shapes and examples the Conventions block renders, plus each repo's effective branch example |
 | `tracker.kind` | closed list: `linear` | req. | selects the tracker adapter (Tracker, below) |
 | `tracker.team`, `tracker.teams` | a team key; or a list of them (≥ 1, unique ignoring case), the first the default; `hub run`/`hub worktree` match keys ignoring case, `features.tracker` exactly | exactly one of the two | `hub next` (each team, in order), `hub run`, worktree names, `features.tracker`, branch hints, `AGENTS.md` |
 | `tracker.ready_label`, `tracker.failed_label` | strings | `agent-ready`, `agent-failed` | `hub next` (ready), `hub run` on failure (failed) |
@@ -73,12 +73,12 @@ no `_` separator (hooks match branches with Python's `re`: exponential backtrack
   absolute; segments are printable ASCII without space or `\`, never `.` or `..`. The first is a `repos[].dir` or `@hub`
   (the hub, whatever its checkout is called; `@` cannot start a `dir`); `guard.deny_paths` may also start with another
   workspace directory (Loki's `_archive`). Hooks resolve `@hub` to the hub root holding the hook file.
-- Conventions: each pattern ≤ 120 characters, each placeholder at most once. `branch`: `{prefix}`, `{ISSUE}` or
-  `{issue_lower}` (one needed), `{slug}` (the `<desc>`; empty, it drops one `-`, `_`, `.` or `/` before it), literals
-  `[A-Za-z0-9._/-]`; it must render to a valid branch. Titles: `{ISSUE}`, `{type}`, `{scope}`, `{summary}` (needed), a
-  literal between placeholders, no control character, backtick or brace. A repo with a title key set parses its newest
-  commit subject with `commit_title` and renders `pr_title`; no match keeps today's title, records `title_unmatched` and
-  warns. `AGENTS.md` says when a repo's `commit_title`, which no `pr_title` overrides, titles its PRs.
+- Conventions: each pattern ≤ 120 characters, each placeholder at most once. `branch`: `{prefix}` (the developer's
+  effective branch prefix: `project.branch_prefix`, or `hub.local.json`), `{ISSUE}` (the issue id, e.g. `DEM-7`) or
+  `{issue_lower}` (the same lowercased; one of the two needed), `{slug}` (the worktree name's description; empty, it
+  drops one `-`, `_`, `.` or `/` before it), literals `[A-Za-z0-9._/-]`; it must render to a valid branch. Titles:
+  `{ISSUE}`, the commit's parts `{type}`, `{scope}`, `{summary}` (needed), placeholders separated by a literal; a
+  literal holds no control, format or line-separator character (Unicode Cc, Cf, Zl, Zp), backtick or brace.
 
 ### Versioning
 
