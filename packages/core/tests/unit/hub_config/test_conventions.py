@@ -29,6 +29,7 @@ LONG = "pattern is longer than 120 characters"
 BRANCH_LITERAL = "only letters, digits and . _ / - may appear outside a placeholder"
 TITLE_LITERAL = "a backtick or a control character may not appear outside a placeholder"
 BRACES = "a { or } may appear only as part of a placeholder"
+TOUCHING = "placeholders need a literal between them"
 
 
 @dataclass(frozen=True)
@@ -147,6 +148,9 @@ def test_names_empty_slug_render_when_only_it_is_invalid(pattern: str, expected:
         ("{summary2}", f"unknown placeholder {{summary2}}; {TITLE_UNKNOWN}"),
         ("{summary} {foo bar}", f"unknown placeholder {{foo bar}}; {TITLE_UNKNOWN}"),
         ("{summary}" + "a" * 112, LONG),
+        ("{type}{scope}: {summary}", TOUCHING),
+        ("{type}{summary}", TOUCHING),
+        ("{summary}{ISSUE}", TOUCHING),
     ],
 )
 def test_names_problem_when_title_pattern_invalid(pattern: str, expected: str) -> None:
@@ -179,10 +183,13 @@ def test_names_first_problem_when_branch_pattern_has_several(pattern: str, expec
         ("{type}{", BRACES),
         ("{foo}{foo}", f"unknown placeholder {{foo}}; {TITLE_UNKNOWN}"),
         ("{type}{type}", "placeholder {type} appears twice"),
+        ("{type}{foo}: {summary}", f"unknown placeholder {{foo}}; {TITLE_UNKNOWN}"),
+        ("{type}{summary} {type}", "placeholder {type} appears twice"),
+        ("{type}{scope}: x", TOUCHING),
     ],
 )
 def test_names_first_problem_when_title_pattern_has_several(pattern: str, expected: str) -> None:
-    """Length, characters, braces, unknown, repeated, then required."""
+    """Length, characters, braces, unknown, repeated, touching, then required."""
     assert title_pattern_problem(pattern) == expected
 
 

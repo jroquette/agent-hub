@@ -10,6 +10,7 @@ import re
 import unicodedata
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from itertools import pairwise
 from typing import NamedTuple, Protocol
 
 DEFAULT_BRANCH = "{prefix}{issue_lower}-{slug}"
@@ -40,6 +41,7 @@ TITLE_LITERAL_MESSAGE = "a backtick or a control character may not appear outsid
 BRACE_MESSAGE = "a { or } may appear only as part of a placeholder"
 BRANCH_REQUIRED_MESSAGE = "a branch needs {ISSUE} or {issue_lower}"
 TITLE_REQUIRED_MESSAGE = "a title needs {summary}"
+TOUCHING_MESSAGE = "placeholders need a literal between them"
 
 
 class PatternError(ValueError):
@@ -161,8 +163,9 @@ def branch_pattern_problem(pattern: str, *, branch_name: re.Pattern[str]) -> str
 def title_pattern_problem(pattern: str) -> str | None:
     """The first problem of a commit or PR title pattern, or None.
 
-    Checks, in order: length, literal characters, braces, unknown, repeated and required
-    placeholders (``{summary}``; ``{ISSUE}`` may be left out).
+    Checks, in order: length, literal characters, braces, unknown and repeated placeholders,
+    two placeholders with no literal between them (a subject could not be split back into
+    them), then the required one (``{summary}``; ``{ISSUE}`` may be left out).
     """
     problem = _shape_problem(
         pattern,
@@ -171,7 +174,13 @@ def title_pattern_problem(pattern: str) -> str | None:
     )
     if problem is not None:
         return problem
-    if all(part.placeholder != "summary" for part in pattern_parts(pattern)):
+    parts = pattern_parts(pattern)
+    if any(
+        first.placeholder is not None and second.placeholder is not None
+        for first, second in pairwise(parts)
+    ):
+        return TOUCHING_MESSAGE
+    if all(part.placeholder != "summary" for part in parts):
         return TITLE_REQUIRED_MESSAGE
     return None
 
