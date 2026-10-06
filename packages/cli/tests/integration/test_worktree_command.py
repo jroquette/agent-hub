@@ -625,6 +625,24 @@ class TestRepoProblems:
         assert result.stderr == "hub worktree: demo-api: git could not run: Permission denied\n"
         assert not (demo_workspace.ws / "demo-api" / ".claude").exists()
 
+    def test_refuses_task_folder_when_it_is_not_a_worktree(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        folder = demo_workspace.worktree("demo-api", NAME)
+        folder.mkdir(parents=True)
+
+        result = run_command(demo_workspace.hub, "worktree", NAME, env={"COLUMNS": "200"})
+
+        assert result.exit_code == 1, result.output
+        assert result.stdout == ""
+        assert result.stderr == f"hub worktree: demo-api: {folder} is not a worktree; remove it\n"
+        assert list(folder.iterdir()) == []
+        for repo in REPOS:
+            checkout = demo_workspace.ws / repo
+            assert not (checkout / ".git" / "FETCH_HEAD").exists()
+            assert demo_workspace.git(checkout, "branch", "--list", BRANCH) == ""
+        assert not (demo_workspace.ws / "demo-web" / ".claude").exists()
+
     def test_uses_main_checkout_when_run_from_hub_worktree(
         self, demo_workspace: Workspace, run_command: CommandRunner
     ) -> None:
