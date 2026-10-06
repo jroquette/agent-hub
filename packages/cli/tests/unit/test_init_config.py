@@ -107,6 +107,12 @@ def test_splits_tracker_on_first_colon_when_tracker_given(
     assert document["tracker"] == {"kind": kind, "team": team}
 
 
+def test_writes_teams_when_tracker_lists_several() -> None:
+    document = demo_document(tracker="linear:APP,OPS")
+
+    assert document["tracker"] == {"kind": "linear", "teams": ["APP", "OPS"]}
+
+
 # The seven values of AC-12.8, each with the lines it must print.
 REJECTED = [
     pytest.param(
@@ -118,6 +124,14 @@ REJECTED = [
         id="tracker-no-kind",
     ),
     pytest.param({"tracker": "linear"}, [f"--tracker: {TEAM_PATTERN}"], id="tracker-no-team"),
+    pytest.param(
+        {"tracker": "linear:APP,"}, [f"--tracker: {TEAM_PATTERN}"], id="tracker-empty-team"
+    ),
+    pytest.param(
+        {"tracker": "linear:APP,app"},
+        ['--tracker: team key "app" is already used by teams[0], ignoring case'],
+        id="tracker-duplicate-team",
+    ),
     pytest.param(
         {"repos": "acme"}, [f'--repos item 1 ("acme"): {GITHUB_PATTERN}'], id="repo-no-owner"
     ),
