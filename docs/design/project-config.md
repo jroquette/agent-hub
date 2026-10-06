@@ -29,6 +29,7 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `project.branch_prefix` | e.g. `jdoe/` (Rendered values) | optional, per developer ([developer-identity.md](developer-identity.md)) | `hub worktree`, `hub run`, guard branch hint, `AGENTS.md` |
 | `project.default_branch` | `^S(?:/S)*$` (Rendered values) | `main` | the hub's own branch (CI, brief hub line, retro), default of `repos[].default_branch`, guard |
 | `project.author_name`, `project.author_email` | strings | optional, per developer ([developer-identity.md](developer-identity.md)) | cloud setup (git identity), `attribution.ai` rule, marketplace owner, `AGENTS.md` |
+| `project.conventions` | object of optional patterns `branch`, `commit_title`, `pr_title` (Rendered values); not in `hub.local.json` | `branch` `{prefix}{issue_lower}-{slug}`, `commit_title` `{type}({scope}): {summary} ({ISSUE})`; `pr_title` the effective `commit_title` | `hub worktree` and `hub run` (branch per repo; refused, before anything is created, when checked out in another worktree, when the existing task worktree is on another branch, or when the task folder is not a worktree), the run prompt, the PR title, `AGENTS.md` and kickoff (shapes and examples), doctor `instructions.refs` (skips exactly those) |
 | `tracker.kind` | closed list: `linear` | req. | selects the tracker adapter (Tracker, below) |
 | `tracker.team`, `tracker.teams` | a team key; or a list of them (≥ 1, unique ignoring case), the first the default; `hub run`/`hub worktree` match keys ignoring case, `features.tracker` exactly | exactly one of the two | `hub next` (each team, in order), `hub run`, worktree names, `features.tracker`, branch hints, `AGENTS.md` |
 | `tracker.ready_label`, `tracker.failed_label` | strings | `agent-ready`, `agent-failed` | `hub next` (ready), `hub run` on failure (failed) |
@@ -38,6 +39,7 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `repos[].github` | `owner/name` | req. | cloud setup, `hub run` |
 | `repos[].role` | free string; `app` is the only known value | `app` | templates may branch on known roles |
 | `repos[].check_fast`, `repos[].check` | shell commands | req. | stop gate (`check_fast`), `hub run` (`check`) |
+| `repos[].conventions` | like `project.conventions`; a project `pr_title` its `commit_title` cannot fill is reported at `project.conventions.pr_title`, naming each such `repos[<i>].conventions.commit_title` | per key the project's, else today's shape; `pr_title`, else the repo's effective `commit_title` | as `project.conventions`, for the repo |
 | `repos[].default_branch` | like `project.default_branch` | `project.default_branch` | `hub worktree`, `hub run` (base, `--base`), `hub brief`, retro CI, guard (union of `main`, `master` and every configured default branch, plus the root `hub.json`'s when `$HUB_CONFIG` points elsewhere, from any cwd); `AGENTS.md` names it only when set |
 | `guard.ask_before_edit` | list of paths | `[]` | guard: ask before an edit under them |
 | `guard.deny_hosts` | list of host names | `[]` | guard: deny network calls to them |
@@ -45,11 +47,11 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `modules` | object keyed by module id | `{}` | generator, commands, doctor (Modules) |
 | `doctor.rules` | object keyed by rule id | `{}` | `hub doctor`; contract in [hub-doctor.md](hub-doctor.md) |
 
-Unknown keys are an error at every object level; keys starting with `_` (such as `_comment`) are accepted and ignored
-at every level, and the exported schema says the same ([ADR 0010](../adr/0010-hub-json-config-contract.md)). Cross-field
+Unknown keys are an error at every object level; keys starting with `_` (such as `_comment`) are accepted and ignored at
+every level, and the exported schema says the same ([ADR 0010](../adr/0010-hub-json-config-contract.md)). Cross-field
 checks are model validators JSON Schema cannot express, so there an editor accepts what the CLI rejects: unique
 `repos[].dir`, team keys unique ignoring case, guard path roots, `doctor.rules` entries of an unselected module,
-`contract-sync` repos.
+`contract-sync` repos, an explicit `pr_title` part (not `{ISSUE}`) the repo's effective `commit_title` lacks.
 
 ### Rendered values
 
@@ -71,6 +73,12 @@ no `_` separator (hooks match branches with Python's `re`: exponential backtrack
   absolute; segments are printable ASCII without space or `\`, never `.` or `..`. The first is a `repos[].dir` or `@hub`
   (the hub, whatever its checkout is called; `@` cannot start a `dir`); `guard.deny_paths` may also start with another
   workspace directory (Loki's `_archive`). Hooks resolve `@hub` to the hub root holding the hook file.
+- Conventions: each pattern ≤ 120 characters, each placeholder at most once. `branch`: `{prefix}`, `{ISSUE}` or
+  `{issue_lower}` (one needed), `{slug}` (the `<desc>`; empty, it drops one `-`, `_`, `.` or `/` before it), literals
+  `[A-Za-z0-9._/-]`; it must render to a valid branch. Titles: `{ISSUE}`, `{type}`, `{scope}`, `{summary}` (needed), a
+  literal between placeholders, no control character, backtick or brace. A repo with a title key set parses its newest
+  commit subject with `commit_title` and renders `pr_title`; no match keeps today's title, records `title_unmatched` and
+  warns. `AGENTS.md` says when a repo's `commit_title`, which no `pr_title` overrides, titles its PRs.
 
 ### Versioning
 
@@ -96,7 +104,7 @@ rules only when selected ([hub-generator.md](hub-generator.md)). Phase 1 modules
 - **Hooks**: a defensive stdlib reader that never raises (`plugin/hub-workflow/hooks/stdlib_reader.py`; its defaults on
   a minimal `hub.json` match `HubConfig`'s in `test_hub_json_reader.py`): a missing file, bad JSON or a wrong type gives
   the defaults; the hook fails open. It ignores unknown and `_` keys; a bad `repos[].default_branch` inherits; a
-  `tracker.teams` that is not a non-empty list of non-empty strings counts as absent.
+  `tracker.teams` that is not a non-empty list of non-empty strings counts as absent. No hook reads `conventions`.
 
 ### Tracker
 
