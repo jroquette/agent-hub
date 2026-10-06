@@ -23,6 +23,7 @@ from typing import Final
 
 from agent_hub.cli.child_process import git_env
 from agent_hub.cli.init_report import shown_path
+from agent_hub.core.hub_config.conventions import EffectiveConventions
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.team_keys import team_of
 from agent_hub.core.runner.session_prompt import (
@@ -33,6 +34,7 @@ from agent_hub.core.runner.session_prompt import (
     implementing_prompt,
 )
 from agent_hub.core.tracker.tracker_client import Issue
+from agent_hub.core.workspace.worktree_name import worktree_branch
 from agent_hub.tracker_linear.mcp_protocol import LINEAR_TOOL_PREFIX, LINEAR_TOOLS
 
 WORKTREES: Final = Path(".claude", "worktrees")
@@ -96,8 +98,16 @@ class RunChildren:
         return self.issue_id.lower()
 
     @property
+    def conventions(self) -> EffectiveConventions:
+        """The repo's effective conventions: the one source of its branch and titles."""
+        return self.config.conventions_for(self.repo)
+
+    @property
     def branch(self) -> str:
-        return f"{self.branch_prefix}{self.slug}"
+        """The task branch, as ``hub worktree`` builds it: the slug rendered with the repo's
+        effective ``conventions.branch``."""
+        pattern = self.conventions.branch
+        return worktree_branch(self.slug, prefix=self.branch_prefix, pattern=pattern)
 
     @property
     def base(self) -> str:
@@ -150,6 +160,7 @@ class RunChildren:
             sensitive=self.config.guard.ask_before_edit,
             fast_gate=repo.check_fast,
             prefix=f"{self.team}-",
+            commit_title=self.conventions.commit_title,
         )
         others = (str(self.workspace / entry.dir) for entry in self.config.repos)
         return implementing_argv(

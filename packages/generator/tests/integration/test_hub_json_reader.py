@@ -28,7 +28,7 @@ from agent_hub.core.hub_config.model import (
     Repo,
     Tracker,
 )
-from agent_hub.core.testing.builders import a_hub_document, a_second_repo
+from agent_hub.core.testing.builders import a_conventions_document, a_hub_document, a_second_repo
 from agent_hub.generator.render_hub import render_hub
 
 READER = "plugin/hub-workflow/hooks/stdlib_reader.py"
@@ -62,6 +62,13 @@ LOCAL_PATHS: tuple[tuple[str | int, ...], ...] = (
 # Either-or keys: compared through ``Tracker.team_keys``, not one by one
 # (``test_matches_model_teams_when_document_valid``).
 TEAM_PATHS: tuple[tuple[str | int, ...], ...] = (("tracker", "team"), ("tracker", "teams"))
+
+# Keys no hook reads: the reader leaves them out, which ``test_reads_same_values_when_hub_sets_
+# conventions`` checks.
+IGNORED_PATHS: tuple[tuple[str | int, ...], ...] = (
+    ("project", "conventions"),
+    ("repos", 0, "conventions"),
+)
 
 # argv: mode, reader file, hub.json path, checks (JSON: name -> [actual, expected] expressions,
 # evaluated with the reader's names and ``hub_file``). Modes: ``import`` (a sibling import, as the
@@ -231,8 +238,8 @@ def test_matches_schema_defaults_when_hub_json_minimal(
 
 
 def test_lists_every_optional_field_when_model_inspected() -> None:
-    """``OPTIONAL_PATHS``, ``INHERITED_PATHS``, ``LOCAL_PATHS`` and ``TEAM_PATHS`` list every
-    optional key: a new one fails here."""
+    """``OPTIONAL_PATHS``, ``INHERITED_PATHS``, ``LOCAL_PATHS``, ``TEAM_PATHS`` and
+    ``IGNORED_PATHS`` list every optional key: a new one fails here."""
     owners: tuple[tuple[tuple[str | int, ...], type[Any]], ...] = (
         ((), HubConfig),
         (("platform",), Platform),
@@ -252,8 +259,28 @@ def test_lists_every_optional_field_when_model_inspected() -> None:
     containers = {("$schema",), ("guard",), ("doctor",)}
 
     assert defaulted - containers == (
-        set(OPTIONAL_PATHS) | set(INHERITED_PATHS) | set(LOCAL_PATHS) | set(TEAM_PATHS)
+        set(OPTIONAL_PATHS)
+        | set(INHERITED_PATHS)
+        | set(LOCAL_PATHS)
+        | set(TEAM_PATHS)
+        | set(IGNORED_PATHS)
     )
+
+
+def test_reads_same_values_when_hub_sets_conventions(
+    tmp_path: Path, hook_python: str, read: Reader
+) -> None:
+    document = a_conventions_document()
+    plain = a_conventions_document()
+    del plain["project"]["conventions"]
+    del plain["repos"][0]["conventions"]
+    for name in ("mixed", "plain"):
+        (tmp_path / name).mkdir()
+
+    with_conventions = read(hook_python, write_hub_file(tmp_path / "mixed", document))
+    without = read(hook_python, write_hub_file(tmp_path / "plain", plain))
+
+    assert with_conventions["hub_file"] == without["hub_file"]
 
 
 def repo_branches(hub_file: Mapping[str, Any]) -> dict[str, str]:

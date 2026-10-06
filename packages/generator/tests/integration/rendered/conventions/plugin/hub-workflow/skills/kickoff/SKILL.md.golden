@@ -10,9 +10,9 @@ disable-model-invocation: true
 2. Read `brain/now.md` and the newest `brain/journal/YYYY/MM/DD.md`. If a handoff note is referenced there, read it fully.
 3. For each repo in `hub.json` → `repos` with local changes, run its `check_fast` command inside the worktree that has the changes
    (never on a stale main checkout). A repo with an empty `check_fast` has no fast gate yet: say so.
-4. Check that `git config user.email` in the hub and in each repo equals @@{identity_email}; if it
+4. Check that `git config user.email` in the hub and in each repo equals `hub.json` → `project.author_email`; if it
    differs, say so before any commit. If the session was given a `claude/…` branch (cloud sessions), it is not a repo
-   branch: work on @@{kickoff_branch}.
+   branch: work on `jdoe/{ISSUE}-{slug}` (or the repo's own, `AGENTS.md` → Conventions).
 5. Propose the next unfinished item (from `now.md` → "Next", the handoff, or open PRs in the brief) and ask before starting.
 
 Never start editing during /kickoff. If `now.md` and the repos disagree (e.g. a PR listed as open is merged), say so.

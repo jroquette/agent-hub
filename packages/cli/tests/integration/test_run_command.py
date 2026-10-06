@@ -28,6 +28,7 @@ from agent_hub.cli import run_command, run_log, run_steps
 from agent_hub.cli.errors import ChildTimedOutError
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.runner.session_prompt import IMPLEMENTING_TOOLS
+from agent_hub.core.testing.builders import a_conventions_document
 from agent_hub.core.tracker.tracker_client import TrackerClient
 
 pytestmark = pytest.mark.disable_socket
@@ -1200,6 +1201,335 @@ class TestRerun:
         assert views == [
             ["pr", "view", "jdoe/dem-1", "--repo", "acme/demo-api", "--json", "url,state"]
         ]
+
+
+# The mixed hub (plan E1): the project's three patterns, demo-api's own branch, demo-web none.
+MIXED_HUB = a_conventions_document()
+PROJECT_CONVENTIONS = MIXED_HUB["project"]["conventions"]
+API_CONVENTIONS = next(
+    repo["conventions"] for repo in MIXED_HUB["repos"] if repo["dir"] == "demo-api"
+)
+
+
+def use_mixed_hub(workspace: Any) -> None:
+    workspace.use_conventions(project=PROJECT_CONVENTIONS, repos={"demo-api": API_CONVENTIONS})
+
+
+@pytest.mark.usefixtures("with_key")
+class TestConventions:
+    @pytest.mark.parametrize(
+        ("repo", "branch"), [("demo-api", "feature/dem-1"), ("demo-web", "jdoe/DEM-1")]
+    )
+    def test_prints_configured_branches_when_dry_run_on_conventions_hub(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        repo: str,
+        branch: str,
+    ) -> None:
+        workspace = run_workspace.workspace
+        use_mixed_hub(workspace)
+        inject(monkeypatch, run_tracker)
+        worktree = os.path.realpath(workspace.ws / repo) + "/.claude/worktrees/dem-1"
+
+        result = run_command(workspace.hub, "run", "DEM-1", "--repo", repo)
+
+        lines = dry_lines(result)
+        assert lines[0] == f"would run: ./hub worktree dem-1 --only {repo}"
+        assert lines[3] == (
+            "would run: git -c core.fsmonitor=false -c push.gpgSign=false"
+            f" -c core.hooksPath=/dev/null push --no-verify -u origin {branch}"
+            f"   (cwd {worktree})"
+        )
+        assert lines[4].startswith(
+            f"would run: gh pr create --repo acme/{repo} --base trunk --head {branch}"
+            " --title '(dry run: subject of the last commit)' --body "
+        )
+
+    def test_pushes_configured_branch_when_live_run_on_conventions_hub(
+        self,
+        logged_git: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = logged_git.workspace
+        use_mixed_hub(workspace)
+        inject(monkeypatch, run_tracker)
+        # The PR exists already, so the run also looks it up by its branch.
+        monkeypatch.setenv("FAKE_GH_MODE", "exists")
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        worktree = worktree_of(workspace)
+        assert workspace.git(worktree, "branch", "--show-current") == "feature/dem-1"
+        (push,) = git_calls(logged_git, "push")
+        assert push["argv"][-1] == "feature/dem-1"
+        assert workspace.git(
+            workspace.origin("demo-api"), "log", "-1", "--format=%s", "feature/dem-1"
+        ) == (COMMIT_SUBJECT)
+        create, view = (call["argv"] for call in logged_git.calls("gh"))
+        assert create[:8] == [
+            *("pr", "create", "--repo", "acme/demo-api", "--base", "trunk"),
+            *("--head", "feature/dem-1"),
+        ]
+        assert view == [
+            "pr",
+            "view",
+            "feature/dem-1",
+            "--repo",
+            "acme/demo-api",
+            "--json",
+            "url,state",
+        ]
+
+    def test_fails_worktree_stage_when_worktree_on_other_branch_than_convention(
+        self,
+        logged_git: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # E22: the worktree a session left on today's branch, then the hub sets conventions.
+        workspace = logged_git.workspace
+        verify_ready_worktree(workspace)
+        use_mixed_hub(workspace)
+        inject(monkeypatch, run_tracker)
+
+        result = run_command(
+            workspace.hub, "run", "DEM-1", "--repo", "demo-api", "--live", "--from", "verify"
+        )
+
+        diagnosis = assert_failed_at(result, run_tracker, "WORKTREE")
+        # The diagnosis names paths relative to the workspace, as every diagnosis does.
+        assert diagnosis == (
+            "demo-api: demo-api/.claude/worktrees/dem-1 is on jdoe/dem-1, not feature/dem-1"
+        )
+        assert git_calls(logged_git, "push") == []
+        assert_never_pushed(logged_git)
+        origin = workspace.origin("demo-api")
+        assert workspace.git(origin, "branch", "--list", "feature/dem-1") == ""
+        assert logged_git.calls("make") == []
+        assert workspace.git(worktree_of(workspace), "branch", "--show-current") == "jdoe/dem-1"
+
+
+# A subject that cleans to nothing: its one line is dropped as a robot line (E20).
+ROBOT_SUBJECT = "\N{ROBOT FACE} synthetic change"
+TITLE_SUBJECTS = ("feat(core): add x (DEM-1)", "feat: add x (DEM-2)", "add x")
+
+
+def live_on(run_command: CommandRunner, workspace: Any, repo: str) -> Result:
+    return run_command(workspace.hub, "run", "DEM-1", "--repo", repo, "--live")
+
+
+def pr_create_title(run_workspace: Any) -> str:
+    """The ``--title`` of the run's one ``gh pr create``."""
+    (create,) = [
+        call["argv"] for call in run_workspace.calls("gh") if call["argv"][:2] == ["pr", "create"]
+    ]
+    return create[create.index("--title") + 1]
+
+
+def unmatched_records(workspace: Any) -> list[dict[str, Any]]:
+    """The ``title_unmatched`` records, each without the fields every record has."""
+    return [
+        {name: record[name] for name in list(record)[7:]}
+        for record in records(workspace)
+        if record["event"] == "title_unmatched"
+    ]
+
+
+def warning_lines(result: Result) -> list[str]:
+    return [line for line in result.output.splitlines() if "warning:" in line]
+
+
+def unmatched_warning(subject: str, *, title: str) -> str:
+    return (
+        f"hub run: warning: the commit subject `{subject}` does not match commit_title"
+        f" `{PROJECT_CONVENTIONS['commit_title']}`; the PR title is {title}"
+    )
+
+
+def branch_only_hub(workspace: Any) -> None:
+    workspace.use_conventions(repos={"demo-api": {"branch": "{prefix}{ISSUE}-{slug}"}})
+
+
+def unconfigured_hub(workspace: Any) -> None:
+    del workspace
+
+
+@pytest.mark.usefixtures("with_key")
+class TestConventionTitles:
+    """AC-57.9: the PR title from the newest commit subject, read with the repo's conventions."""
+
+    def test_titles_pr_from_parts_when_subject_matches_convention(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        use_mixed_hub(workspace)
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("FAKE_CLAUDE_SUBJECTS", "WIP\nDEM-9: feat(cli): add x")
+
+        result = live_on(run_command, workspace, "demo-web")
+
+        assert result.exit_code == 0, result.output
+        worktree = workspace.worktree("demo-web", "dem-1")
+        assert workspace.git(worktree, "log", "-2", "--format=%s").splitlines() == [
+            "DEM-9: feat(cli): add x",
+            "WIP",
+        ]
+        assert pr_create_title(run_workspace) == "DEM-1: feat(cli): add x"
+        assert unmatched_records(workspace) == []
+        assert warning_lines(result) == []
+
+    @pytest.mark.parametrize(
+        ("subjects", "subject", "title"),
+        [
+            ("DEM-9: feat(cli): add y\nadd x", "add x", "add x"),
+            (f"WIP\n{ROBOT_SUBJECT}", "", "DEM-1"),
+            ("edit {ws}/demo-web/x.py", "edit demo-web/x.py", "edit demo-web/x.py"),
+        ],
+        ids=["plain", "cleans-to-nothing", "workspace-path"],
+    )
+    def test_warns_once_when_subject_does_not_match_convention(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        subjects: str,
+        subject: str,
+        title: str,
+    ) -> None:
+        workspace = run_workspace.workspace
+        use_mixed_hub(workspace)
+        inject(monkeypatch, run_tracker)
+        ws = os.path.realpath(workspace.ws)
+        monkeypatch.setenv("FAKE_CLAUDE_SUBJECTS", subjects.replace("{ws}", ws))
+
+        result = live_on(run_command, workspace, "demo-web")
+
+        assert result.exit_code == 0, result.output
+        assert pr_create_title(run_workspace) == title
+        assert unmatched_records(workspace) == [
+            {"subject": subject, "pattern": "{ISSUE}: {type}({scope}): {summary}"}
+        ]
+        shown = "the subject" if subject else "the issue id"
+        assert warning_lines(result) == [unmatched_warning(subject, title=shown)]
+        assert result.stderr.splitlines().count(unmatched_warning(subject, title=shown)) == 1
+        assert "[PR_OPEN] title_unmatched" in result.stdout.splitlines()
+        events = [record["event"] for record in records(workspace)]
+        assert events.index("title_unmatched") < events.index("pr_open")
+
+    def test_parses_with_default_commit_title_when_only_pr_title_set(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        workspace.use_conventions(repos={"demo-api": {"pr_title": "{ISSUE}: {summary}"}})
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("FAKE_CLAUDE_SUBJECTS", "feat(core): add x (DEM-1)")
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        assert pr_create_title(run_workspace) == "DEM-1: add x"
+        assert unmatched_records(workspace) == []
+        assert warning_lines(result) == []
+
+    def test_titles_pr_like_commit_when_only_commit_title_set(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        workspace.use_conventions(project={"commit_title": "{ISSUE}: {summary}"})
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("FAKE_CLAUDE_SUBJECTS", "DEM-9: add x")
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        assert pr_create_title(run_workspace) == "DEM-1: add x"
+        assert unmatched_records(workspace) == []
+        assert warning_lines(result) == []
+
+    @pytest.mark.parametrize("subject", TITLE_SUBJECTS)
+    @pytest.mark.parametrize(
+        "hub", [unconfigured_hub, branch_only_hub], ids=["unconfigured", "branch-only"]
+    )
+    def test_keeps_subject_as_title_when_titles_not_configured(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        hub: Callable[[Any], None],
+        subject: str,
+    ) -> None:
+        workspace = run_workspace.workspace
+        hub(workspace)
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("FAKE_CLAUDE_SUBJECTS", f"WIP\n{subject}")
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        assert pr_create_title(run_workspace) == subject
+        assert unmatched_records(workspace) == []
+        assert warning_lines(result) == []
+
+    @pytest.mark.parametrize(
+        ("summary", "title"),
+        [
+            ("edit {ws}/demo-web/src/x.py", "DEM-1: feat(cli): edit demo-web/src/x.py"),
+            ("x" * 300, "DEM-1: feat(cli): " + "x" * 238),
+        ],
+        ids=["path", "long"],
+    )
+    def test_cleans_title_when_convention_renders_it(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        summary: str,
+        title: str,
+    ) -> None:
+        workspace = run_workspace.workspace
+        use_mixed_hub(workspace)
+        inject(monkeypatch, run_tracker)
+        ws = os.path.realpath(workspace.ws)
+        subject = f"DEM-9: feat(cli): {summary.format(ws=ws)}"
+        monkeypatch.setenv("FAKE_CLAUDE_SUBJECTS", subject)
+
+        result = live_on(run_command, workspace, "demo-web")
+
+        assert result.exit_code == 0, result.output
+        assert pr_create_title(run_workspace) == title
+        assert len(title) <= 256
+        assert unmatched_records(workspace) == []
 
 
 @pytest.mark.usefixtures("with_key")

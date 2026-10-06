@@ -1,5 +1,6 @@
 import pytest
 
+from agent_hub.core.hub_config.conventions import DEFAULT_BRANCH
 from agent_hub.core.workspace.worktree_name import (
     worktree_branch,
     worktree_name_example,
@@ -29,8 +30,28 @@ def test_refuses_trailing_newline_when_name_ends_with_one() -> None:
 
 
 def test_joins_prefix_when_branch_built() -> None:
-    assert worktree_branch("dem-7-x", prefix="jdoe/") == "jdoe/dem-7-x"
-    assert worktree_branch("dem-7-x", prefix="") == "dem-7-x"
+    assert worktree_branch("dem-7-x", prefix="jdoe/", pattern=DEFAULT_BRANCH) == "jdoe/dem-7-x"
+    assert worktree_branch("dem-7-x", prefix="", pattern=DEFAULT_BRANCH) == "dem-7-x"
+
+
+@pytest.mark.parametrize(
+    ("name", "pattern", "branch"),
+    [
+        ("dem-7-x", "{prefix}{ISSUE}-{slug}", "me/DEM-7-x"),
+        ("dem-7", "{prefix}{ISSUE}-{slug}", "me/DEM-7"),
+        ("dem2-7-a-b", "{slug}/{issue_lower}", "a-b/dem2-7"),
+    ],
+)
+def test_splits_name_into_issue_and_slug_when_branch_built(
+    name: str, pattern: str, branch: str
+) -> None:
+    assert worktree_branch(name, prefix="me/", pattern=pattern) == branch
+
+
+@pytest.mark.parametrize("name", ["DEM-7", "dem", "dem-x"])
+def test_refuses_branch_when_name_not_issue_shaped(name: str) -> None:
+    with pytest.raises(ValueError, match="not a worktree name"):
+        worktree_branch(name, prefix="me/", pattern=DEFAULT_BRANCH)
 
 
 def test_lowercases_team_when_example_built() -> None:

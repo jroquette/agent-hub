@@ -43,6 +43,7 @@ PURITY = re.compile(
 )
 CORE_MODULES = (
     "json_form.py",
+    "hub_config/conventions.py",
     "hub_files/hub_lock.py",
     "hub_files/tree_snapshot.py",
     "hub_files/plan_init.py",
@@ -71,12 +72,15 @@ CORE_MODULES = (
     "tracker/__init__.py",
     "tracker/tracker_client.py",
     "workspace/__init__.py",
+    "workspace/branch_pattern.py",
+    "workspace/shown_conventions.py",
     "workspace/worktree_name.py",
     "workspace/brief_text.py",
     "workspace/agent_launch.py",
     "runner/__init__.py",
     "runner/ready_list.py",
     "runner/session_prompt.py",
+    "runner/title_pattern.py",
     "runner/verdict.py",
     "runner/run_texts.py",
     "runner/run_record.py",
