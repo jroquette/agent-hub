@@ -118,3 +118,17 @@ def test_prefixes_prompt_with_configured_spelling_when_key_lowercase() -> None:
 
     assert "(app-N)" in prompt
     assert "(APP-N)" not in prompt
+
+
+def test_refuses_team_when_issue_matches_no_team() -> None:
+    document = a_hub_document()
+    children = RunChildren(
+        config=HubConfig.model_validate(document),
+        hub=Path("/ws/hub"),
+        repo="demo-api",
+        issue_id="OPS-1",
+        branch_prefix="jdoe/",
+    )
+
+    with pytest.raises(ValueError, match=r"^OPS-1 matches no team of hub\.json$"):
+        _ = children.team

@@ -125,9 +125,14 @@ class RunChildren:
 
     @property
     def team(self) -> str:
-        """The issue's team in the configured spelling (``hub run`` accepted the id against it)."""
-        keys = self.config.tracker.team_keys
-        return team_of(self.issue_id, keys) or self.config.tracker.default_team
+        """The issue's team in the configured spelling (``hub run`` accepted the id against it).
+
+        Raises ValueError when the id matches no configured team.
+        """
+        team = team_of(self.issue_id, self.config.tracker.team_keys)
+        if team is None:
+            raise ValueError(f"{self.issue_id} matches no team of hub.json")
+        return team
 
     def worktree_line(self) -> str:
         """The dry run's line for the worktree step, which runs in process when live (D7)."""

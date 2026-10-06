@@ -60,7 +60,10 @@ def init(
         ),
     ] = None,
     tracker: Annotated[
-        str | None, typer.Option("--tracker", help="Task tracker and team key, e.g. linear:LOK.")
+        str | None,
+        typer.Option(
+            "--tracker", help="Task tracker and team key(s), e.g. linear:LOK or linear:APP,OPS."
+        ),
     ] = None,
     branch_prefix: Annotated[
         str | None, typer.Option("--branch-prefix", help="Prefix of every branch, e.g. jdoe/.")

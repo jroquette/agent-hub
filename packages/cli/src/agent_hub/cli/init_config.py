@@ -56,7 +56,8 @@ def document_from_flags(
 
     ``repos`` is ``owner/name`` items split on ``,`` in order, each one's ``dir`` the part after
     its last ``/``. ``tracker`` is ``kind:team`` split on the first ``:``; with no ``:`` the
-    value is the kind, so ``--tracker linear`` reports only the missing team.
+    value is the kind, so ``--tracker linear`` reports only the missing team. A ``,`` after the
+    ``:`` lists several keys, written as ``tracker.teams`` in order; one key stays ``team``.
     """
     optional = {
         "hub_repo": hub_repo,
@@ -145,9 +146,13 @@ def _is_dir_of_failed_github(path: str, *, paths: Collection[str]) -> bool:
 
 
 def _tracker(value: str) -> dict[str, JsonValue]:
-    kind, _, team = value.partition(":")
+    kind, _, keys = value.partition(":")
+    if "," in keys:
+        # The model refuses an empty or repeated key at ``tracker.teams[<i>]`` (AGH-56).
+        teams: list[JsonValue] = list(keys.split(","))
+        return {"kind": kind, "teams": teams}
     # No colon: the value is the kind, and the model names the missing team (owner, E16).
-    return {"kind": kind, "team": team}
+    return {"kind": kind, "team": keys}
 
 
 def _repo(github: str) -> dict[str, JsonValue]:
