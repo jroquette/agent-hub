@@ -1,9 +1,10 @@
 """The lines of ``hub next``: the tracker's ready issues, oldest first, each with its repo."""
 
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Sequence
 
 from pydantic import BaseModel, ConfigDict
 
+from agent_hub.core.hub_config.team_keys import teams_text
 from agent_hub.core.tracker.tracker_client import Issue
 
 # Shown when no label, or more than one, names a repo of the hub.
@@ -48,6 +49,14 @@ def ready_rows(issues: Iterable[Issue], *, repos: Collection[str]) -> list[Ready
     ]
 
 
-def no_ready_line(*, team: str, label: str) -> str:
-    """The line ``hub next`` prints when nothing is ready."""
-    return f"no ready issues (team {team}, label {label})"
+def no_ready_line(*, teams: Sequence[str], label: str) -> str:
+    """The line ``hub next`` prints when nothing is ready in ``teams`` (``team`` for one)."""
+    noun = "team" if len(teams) == 1 else "teams"
+    return f"no ready issues ({noun} {teams_text(teams)}, label {label})"
+
+
+def team_failure_line(*, team: str, reason: str, team_count: int) -> str:
+    """The line for a team whose ``list_ready`` failed: the reason alone on a one-team hub."""
+    if team_count == 1:
+        return reason
+    return f"team {team}: {reason}"

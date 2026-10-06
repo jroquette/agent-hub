@@ -43,7 +43,7 @@ def next_command() -> None:
     rows = ready_rows(issues, repos=[repo.dir for repo in config.repos])
     if not rows:
         typer.echo(
-            no_ready_line(team=config.tracker.default_team, label=config.tracker.ready_label)
+            no_ready_line(teams=(config.tracker.default_team,), label=config.tracker.ready_label)
         )
         return
     for row in rows:
