@@ -547,18 +547,19 @@ def test_finds_same_findings_when_fresh_hub_lists_teams(
 
 
 def with_work_branches(document: dict[str, Any]) -> dict[str, Any]:
-    """``document`` as the mixed hub: ``demo-web`` added, the conventions' titles set, the
-    project branch ``work/…``, its commit title ``wip/{summary}`` and ``demo-api``'s own
-    ``release/{ISSUE}``.
+    """``document`` as the mixed hub: ``demo-web`` added, the project branch ``work/…``, its
+    commit title ``wip/{summary}`` (no ``pr_title``, so the PR title follows it) and
+    ``demo-api``'s own ``release/{ISSUE}``.
 
     Neither first segment is the prefix nor a path a fresh hub holds, so nothing resolves by luck.
     """
     mixed = a_conventions_document()
     project = {**document["project"], "conventions": mixed["project"]["conventions"]}
     project["conventions"]["branch"] = "work/{issue_lower}/{slug}"
-    # E32: a title shape holding `/` is path-shaped too.
+    # E32: a title shape holding `/` is path-shaped too; with no pr_title (E14) the PR title
+    # renders the same path-shaped shape and example.
     project["conventions"]["commit_title"] = "wip/{summary}"
-    project["conventions"]["pr_title"] = "{ISSUE}: {summary}"
+    del project["conventions"]["pr_title"]
     api = {**document["repos"][0], "conventions": {"branch": "release/{ISSUE}"}}
     return {**document, "project": project, "repos": [api, *document["repos"][1:], a_second_repo()]}
 
@@ -577,6 +578,8 @@ def test_finds_no_stale_reference_when_fresh_hub_sets_conventions(
         f"`{span}`" in agents
         for span in ("work/{issue_lower}/{slug}", "work/dem-7/collector", "release/{ISSUE}")
     )
+    assert "- Commit title: `wip/{summary}`, e.g. `wip/add the collector`." in agents
+    assert "- PR title: `wip/{summary}`, e.g. `wip/add the collector`." in agents
 
     assert lines_of(run_doctor(root, "--only", "instructions.refs"), exit_code=0) == [CLEAN]
 
