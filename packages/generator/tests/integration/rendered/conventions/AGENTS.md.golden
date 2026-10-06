@@ -53,7 +53,7 @@ session follow them. `{ISSUE}` is the issue id, `{issue_lower}` the same in lowe
 
 1. Commits and PRs are authored by the user (`hub.json` → `project.author_name`, `project.author_email`). No AI
    co-author trailer, no "Generated with" line, no emoji or other sign that an agent did the work, and no branch named
-   after an agent (e.g. `claude/…`). Branch: `jdoe/{ISSUE}-{slug}`, or the repo's own (see Conventions below).
+   after an agent (e.g. `claude/…`). Branch: `jdoe/{ISSUE}-{slug}`, or the repo's own (see Conventions above).
 2. No push to `main`, no force-push, no production deploys. Everything lands through a PR the
    user merges.
 3. A change of scope or architecture updates the repo's spec in the same PR.

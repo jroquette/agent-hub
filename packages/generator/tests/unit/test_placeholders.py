@@ -354,7 +354,7 @@ def test_shows_conventions_when_hub_sets_them() -> None:
     mapping = substitution_mapping(HubConfig.model_validate(a_conventions_document()))
 
     assert (mapping["branch_rule"], mapping["kickoff_branch"], mapping["conventions_section"]) == (
-        "Branch: `jdoe/{ISSUE}-{slug}`, or the repo's own (see Conventions below).",
+        "Branch: `jdoe/{ISSUE}-{slug}`, or the repo's own (see Conventions above).",
         "`jdoe/{ISSUE}-{slug}` (or the repo's own, `AGENTS.md` → Conventions)",
         MIXED_CONVENTIONS_SECTION,
     )
