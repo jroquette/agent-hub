@@ -137,3 +137,33 @@ def test_omits_null_branch_when_field_absent_by_default() -> None:
         assert "default" not in properties[key]
         assert "title" not in properties[key]
     assert Sample.model_validate({"name": "demo"}).note is None
+
+
+class EitherKey(ConfigObject):
+    required_one_of = ("first", "second")
+
+    first: str | None = absent_by_default()
+    second: str | None = absent_by_default()
+    code: Annotated[str, Field(pattern=r"^[a-z]+$")] = "a"
+
+
+def either_errors_of(data: object) -> list[tuple[tuple[str | int, ...], str, str]]:
+    with pytest.raises(ValidationError) as caught:
+        EitherKey.model_validate(data)
+    return [(error["loc"], error["type"], error["msg"]) for error in caught.value.errors()]
+
+
+def test_reports_missing_first_key_when_no_key_of_group_given() -> None:
+    assert either_errors_of({}) == [(("first",), "missing", "Field required")]
+    assert EitherKey.model_validate({"second": "x"}).second == "x"
+
+
+def test_reports_null_alone_when_group_key_is_null() -> None:
+    assert either_errors_of({"second": None}) == [(("second",), "null_not_allowed", NULL_MESSAGE)]
+
+
+def test_reports_missing_alongside_field_errors_when_group_absent() -> None:
+    assert sorted(either_errors_of({"code": "BAD"})) == [
+        (("code",), "string_pattern_mismatch", "String should match pattern '^[a-z]+$'"),
+        (("first",), "missing", "Field required"),
+    ]

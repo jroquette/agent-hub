@@ -60,6 +60,13 @@ def a_hub_document() -> dict[str, Any]:
     return copy.deepcopy(_HUB_DOCUMENT)
 
 
+def a_two_team_document() -> dict[str, Any]:
+    """Build ``a_hub_document`` with the tracker teams ``APP`` and ``OPS``; a fresh copy."""
+    document = a_hub_document()
+    document["tracker"] = {"kind": "linear", "teams": ["APP", "OPS"]}
+    return document
+
+
 def a_second_repo() -> dict[str, Any]:
     """Build the ``repos`` entry ``demo-web``, a repo next to ``a_hub_document``'s ``demo-api``.
 

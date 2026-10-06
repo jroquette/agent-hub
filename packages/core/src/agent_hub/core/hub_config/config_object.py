@@ -54,6 +54,9 @@ class ConfigObject(BaseModel):
     # Keys that are never valid here, each with the message that says why; a subclass sets them.
     # They are reported like nulls, so they do not hide the object's other errors.
     rejected_keys: ClassVar[Mapping[str, str]] = MappingProxyType({})
+    # Keys of which at least one is given (a null counts as given); a subclass sets them. With
+    # none, the first is reported ``missing``, as a required key is.
+    required_one_of: ClassVar[tuple[str, ...]] = ()
 
     @model_validator(mode="wrap")
     @classmethod
@@ -70,6 +73,10 @@ class ConfigObject(BaseModel):
         rest = {key: value for key, value in kept.items() if key not in [*null_keys, *rejected]}
         problems = [*map(_null_error, null_keys)]
         problems.extend(_rejected_error(key, kept[key], cls.rejected_keys[key]) for key in rejected)
+        if cls.required_one_of and not any(key in kept for key in cls.required_one_of):
+            problems.append(
+                InitErrorDetails(type="missing", loc=(cls.required_one_of[0],), input=data)
+            )
         try:
             instance = handler(rest)
         except ValidationError as error:

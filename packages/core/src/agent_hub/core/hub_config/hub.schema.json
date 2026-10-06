@@ -401,6 +401,18 @@
     "Tracker": {
       "additionalProperties": false,
       "description": "The task tracker, how the CLI reaches it and the labels the runner uses.",
+      "oneOf": [
+        {
+          "required": [
+            "team"
+          ]
+        },
+        {
+          "required": [
+            "teams"
+          ]
+        }
+      ],
       "patternProperties": {
         "^_": {}
       },
@@ -411,9 +423,18 @@
           "type": "string"
         },
         "team": {
+          "description": "The tracker's team key. Never with tracker.teams.",
           "pattern": "^[A-Za-z0-9]+$",
-          "title": "Team",
           "type": "string"
+        },
+        "teams": {
+          "description": "Several team keys, the first being the default. Never with tracker.team.",
+          "items": {
+            "pattern": "^[A-Za-z0-9]+$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
         },
         "transport": {
           "default": "api",
@@ -440,8 +461,7 @@
         }
       },
       "required": [
-        "kind",
-        "team"
+        "kind"
       ],
       "title": "Tracker",
       "type": "object"
