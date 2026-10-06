@@ -158,9 +158,10 @@ def worktree_task(
 def check_branches(task: WorktreeTask) -> None:
     """Refuse, before anything is created, a touched repo whose task branch clashes (E22).
 
-    Its task worktree exists on another branch, or (with no task worktree yet) the branch is
-    checked out in another worktree, where ``git worktree add`` would fail after earlier repos'
-    worktrees were made. A repo that is not cloned is left to ``create_worktree``.
+    Its task folder is not a worktree (no ``.git`` entry), its task worktree is on another
+    branch, or (with no task worktree yet) the branch is checked out in another worktree, where
+    ``git worktree add`` would fail after earlier repos' worktrees were made. A repo that is not
+    cloned is left to ``create_worktree``.
     """
     for repo in task.repos:
         checkout = task.workspace / repo
@@ -169,18 +170,7 @@ def check_branches(task: WorktreeTask) -> None:
         branch = task.branches[repo]
         worktree = checkout / WORKTREES_FOLDER / task.name
         if worktree.is_dir():
-            current = _git(task, worktree, ("branch", "--show-current"), repo=repo)
-            if current.returncode != 0:
-                raise WorktreeError(
-                    f"{repo}: could not read the branch of {shown_path(str(worktree))}:"
-                    f" {_first_line(current)}"
-                )
-            actual = current.stdout.decode(errors="replace").strip() or "a detached HEAD"
-            if actual != branch:
-                raise WorktreeError(
-                    f"{repo}: {shown_path(str(worktree))} is on {shown_path(actual)},"
-                    f" not {shown_path(branch)}"
-                )
+            _check_worktree_branch(task, repo, worktree, branch=branch)
             continue
         listed = _git(
             task, checkout, ("for-each-ref", _WORKTREE_PATHS, f"refs/heads/{branch}"), repo=repo
@@ -192,6 +182,25 @@ def check_branches(task: WorktreeTask) -> None:
             raise WorktreeError(
                 f"{repo}: {shown_path(branch)} is already checked out in {shown_path(holder)}"
             )
+
+
+def _check_worktree_branch(task: WorktreeTask, repo: str, worktree: Path, *, branch: str) -> None:
+    """Refuse ``repo``'s existing task folder unless it is a worktree on ``branch``."""
+    # Without its .git entry, git would read the checkout's own branch from inside it.
+    if not os.path.lexists(worktree / ".git"):
+        raise WorktreeError(f"{repo}: {shown_path(str(worktree))} is not a worktree; remove it")
+    current = _git(task, worktree, ("branch", "--show-current"), repo=repo)
+    if current.returncode != 0:
+        raise WorktreeError(
+            f"{repo}: could not read the branch of {shown_path(str(worktree))}:"
+            f" {_first_line(current)}"
+        )
+    actual = current.stdout.decode(errors="replace").strip() or "a detached HEAD"
+    if actual != branch:
+        raise WorktreeError(
+            f"{repo}: {shown_path(str(worktree))} is on {shown_path(actual)},"
+            f" not {shown_path(branch)}"
+        )
 
 
 def _checked_out_in(listed: bytes, branch: str) -> str | None:

@@ -1288,6 +1288,36 @@ class TestConventions:
             "url,state",
         ]
 
+    def test_fails_worktree_stage_when_worktree_on_other_branch_than_convention(
+        self,
+        logged_git: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # E22: the worktree a session left on today's branch, then the hub sets conventions.
+        workspace = logged_git.workspace
+        verify_ready_worktree(workspace)
+        use_mixed_hub(workspace)
+        inject(monkeypatch, run_tracker)
+
+        result = run_command(
+            workspace.hub, "run", "DEM-1", "--repo", "demo-api", "--live", "--from", "verify"
+        )
+
+        diagnosis = assert_failed_at(result, run_tracker, "WORKTREE")
+        # The diagnosis names paths relative to the workspace, as every diagnosis does.
+        assert diagnosis == (
+            "demo-api: demo-api/.claude/worktrees/dem-1 is on jdoe/dem-1, not feature/dem-1"
+        )
+        assert git_calls(logged_git, "push") == []
+        assert_never_pushed(logged_git)
+        origin = workspace.origin("demo-api")
+        assert workspace.git(origin, "branch", "--list", "feature/dem-1") == ""
+        assert logged_git.calls("make") == []
+        assert workspace.git(worktree_of(workspace), "branch", "--show-current") == "jdoe/dem-1"
+
 
 @pytest.mark.usefixtures("with_key")
 class TestCleanTree:
