@@ -18,6 +18,7 @@ from typing import Final, Protocol
 from agent_hub.cli.child_process import ChildResult, run_child, stream_child
 from agent_hub.cli.errors import WorktreeError, WorktreeUsageError
 from agent_hub.cli.init_report import shown_path
+from agent_hub.core.hub_config.conventions import DEFAULT_BRANCH
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.workspace.worktree_name import (
     worktree_branch,
@@ -103,7 +104,7 @@ def worktree_task(
     problem = worktree_name_problem(name, teams=config.tracker.team_keys)
     if problem is not None:
         raise WorktreeUsageError(problem)
-    branch = worktree_branch(name, prefix=branch_prefix)
+    branch = worktree_branch(name, prefix=branch_prefix, pattern=DEFAULT_BRANCH)
     checked = runner(
         [git, "check-ref-format", "--branch", branch],
         cwd=hub,
