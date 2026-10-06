@@ -55,6 +55,7 @@ from agent_hub.core.runner.report_writes import (
 from agent_hub.core.runner.run_record import Stage, reported_data
 from agent_hub.core.runner.run_texts import (
     commit_summary,
+    conventional_pr_title,
     failure_comment,
     inbox_line,
     pr_body,
@@ -257,11 +258,7 @@ class LiveRun:
         pushed = self._child(self.children.push_argv(), env=env, timeout=PUSH_TIMEOUT)
         if pushed.returncode != 0:
             raise StageFailure(Stage.PR_OPEN, f"push failed: {_tail(pushed.stderr)}")
-        title = pr_title(
-            self._git_output("log", "-1", "--format=%s"),
-            workspace=self._workspace,
-            fallback=self.issue.id,
-        )
+        title = self._pr_title(self._git_output("log", "-1", "--format=%s"))
         body = pr_body(
             issue_id=self.issue.id,
             summary=self.summary,
@@ -285,6 +282,30 @@ class LiveRun:
             raise StageFailure(Stage.PR_OPEN, "gh printed no PR url")
         self.pr_url = url
         self.log.record("pr_open", {"url": url})
+
+    def _pr_title(self, subject: str) -> str:
+        """The PR title of the newest commit ``subject``, following the repo's conventions.
+
+        When titles are configured and the subject does not match ``commit_title``, the run
+        records ``title_unmatched`` with the subject's cleaned first line (cut as a title,
+        empty when nothing is left, E20) and warns once on stderr (E12).
+        """
+        conventions = self.children.conventions
+        titled = conventional_pr_title(
+            subject, conventions=conventions, issue_id=self.issue.id, workspace=self._workspace
+        )
+        if titled.unmatched:
+            line = pr_title(subject, workspace=self._workspace, fallback="")
+            self.log.record(
+                "title_unmatched", {"subject": line, "pattern": conventions.commit_title}
+            )
+            shown = "the subject" if line else "the issue id"
+            typer.echo(
+                f"{_PREFIX}: warning: the commit subject `{shown_text(line)}` does not match"
+                f" commit_title `{conventions.commit_title}`; the PR title is {shown}",
+                err=True,
+            )
+        return titled.title
 
     def _refuse_risky_config(self, *, stage: Stage, cwd: Path, use: str, outcome: str) -> None:
         """No token-bearing call (the fetch, the push) when the repo's config in ``cwd`` holds

@@ -23,6 +23,7 @@ from typing import Final
 
 from agent_hub.cli.child_process import git_env
 from agent_hub.cli.init_report import shown_path
+from agent_hub.core.hub_config.conventions import EffectiveConventions
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.team_keys import team_of
 from agent_hub.core.runner.session_prompt import (
@@ -97,10 +98,15 @@ class RunChildren:
         return self.issue_id.lower()
 
     @property
+    def conventions(self) -> EffectiveConventions:
+        """The repo's effective conventions: the one source of its branch and titles."""
+        return self.config.conventions_for(self.repo)
+
+    @property
     def branch(self) -> str:
         """The task branch, as ``hub worktree`` builds it: the slug rendered with the repo's
         effective ``conventions.branch``."""
-        pattern = self.config.conventions_for(self.repo).branch
+        pattern = self.conventions.branch
         return worktree_branch(self.slug, prefix=self.branch_prefix, pattern=pattern)
 
     @property
@@ -154,6 +160,7 @@ class RunChildren:
             sensitive=self.config.guard.ask_before_edit,
             fast_gate=repo.check_fast,
             prefix=f"{self.team}-",
+            commit_title=self.conventions.commit_title,
         )
         others = (str(self.workspace / entry.dir) for entry in self.config.repos)
         return implementing_argv(

@@ -273,3 +273,30 @@ def test_checks_each_distinct_branch_once_when_task_built(
     )
 
     assert runner.calls == [["git", "check-ref-format", "--branch", b] for b in branches]
+
+
+def step_four(prompt: str) -> str:
+    """The prompt's commit step, from ``4.`` to the next step."""
+    return prompt[prompt.index("\n4. ") : prompt.index("\n5. ")]
+
+
+def test_passes_commit_title_to_prompt_when_repo_sets_one() -> None:
+    children = children_of(a_conventions_document(), "demo-web")
+    argv = children.session_argv(an_issue(id="DEM-1"), OPTIONS)
+
+    step = step_four(argv[argv.index("-p") + 1])
+
+    assert children.conventions == children.config.conventions_for("demo-web")
+    assert "`{ISSUE}: {type}({scope}): {summary}`" in step
+    assert "`DEM-1: " in step
+    assert "(DEM-N)" not in step
+
+
+def test_keeps_default_commit_step_when_repo_sets_no_commit_title() -> None:
+    children = children_of(unconfigured_two_repo_document(), "demo-web")
+    argv = children.session_argv(an_issue(id="DEM-1"), OPTIONS)
+
+    step = step_four(argv[argv.index("-p") + 1])
+
+    assert "(DEM-N)" in step
+    assert "{ISSUE}" not in step
