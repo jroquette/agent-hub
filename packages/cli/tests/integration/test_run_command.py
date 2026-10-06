@@ -1202,6 +1202,93 @@ class TestRerun:
         ]
 
 
+# The mixed hub (plan E1): the project's three patterns, demo-api's own branch, demo-web none.
+PROJECT_CONVENTIONS = {
+    "branch": "{prefix}{ISSUE}-{slug}",
+    "commit_title": "{ISSUE}: {type}({scope}): {summary}",
+    "pr_title": "{ISSUE}: {type}({scope}): {summary}",
+}
+API_CONVENTIONS = {"branch": "feature/{issue_lower}/{slug}"}
+
+
+def use_mixed_hub(workspace: Any) -> None:
+    workspace.use_conventions(project=PROJECT_CONVENTIONS, repos={"demo-api": API_CONVENTIONS})
+
+
+@pytest.mark.usefixtures("with_key")
+class TestConventions:
+    @pytest.mark.parametrize(
+        ("repo", "branch"), [("demo-api", "feature/dem-1"), ("demo-web", "jdoe/DEM-1")]
+    )
+    def test_prints_configured_branches_when_dry_run_on_conventions_hub(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        repo: str,
+        branch: str,
+    ) -> None:
+        workspace = run_workspace.workspace
+        use_mixed_hub(workspace)
+        inject(monkeypatch, run_tracker)
+        worktree = os.path.realpath(workspace.ws / repo) + "/.claude/worktrees/dem-1"
+
+        result = run_command(workspace.hub, "run", "DEM-1", "--repo", repo)
+
+        lines = dry_lines(result)
+        assert lines[0] == f"would run: ./hub worktree dem-1 --only {repo}"
+        assert lines[3] == (
+            "would run: git -c core.fsmonitor=false -c push.gpgSign=false"
+            f" -c core.hooksPath=/dev/null push --no-verify -u origin {branch}"
+            f"   (cwd {worktree})"
+        )
+        assert lines[4].startswith(
+            f"would run: gh pr create --repo acme/{repo} --base trunk --head {branch}"
+            " --title '(dry run: subject of the last commit)' --body "
+        )
+
+    def test_pushes_configured_branch_when_live_run_on_conventions_hub(
+        self,
+        logged_git: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = logged_git.workspace
+        use_mixed_hub(workspace)
+        inject(monkeypatch, run_tracker)
+        # The PR exists already, so the run also looks it up by its branch.
+        monkeypatch.setenv("FAKE_GH_MODE", "exists")
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        worktree = worktree_of(workspace)
+        assert workspace.git(worktree, "branch", "--show-current") == "feature/dem-1"
+        (push,) = git_calls(logged_git, "push")
+        assert push["argv"][-1] == "feature/dem-1"
+        assert workspace.git(
+            workspace.origin("demo-api"), "log", "-1", "--format=%s", "feature/dem-1"
+        ) == (COMMIT_SUBJECT)
+        create, view = (call["argv"] for call in logged_git.calls("gh"))
+        assert create[:8] == [
+            *("pr", "create", "--repo", "acme/demo-api", "--base", "trunk"),
+            *("--head", "feature/dem-1"),
+        ]
+        assert view == [
+            "pr",
+            "view",
+            "feature/dem-1",
+            "--repo",
+            "acme/demo-api",
+            "--json",
+            "url,state",
+        ]
+
+
 @pytest.mark.usefixtures("with_key")
 class TestCleanTree:
     def test_fails_verifying_when_session_leaves_changes(

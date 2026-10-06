@@ -23,7 +23,6 @@ from typing import Final
 
 from agent_hub.cli.child_process import git_env
 from agent_hub.cli.init_report import shown_path
-from agent_hub.core.hub_config.conventions import DEFAULT_BRANCH
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.team_keys import team_of
 from agent_hub.core.runner.session_prompt import (
@@ -99,7 +98,10 @@ class RunChildren:
 
     @property
     def branch(self) -> str:
-        return worktree_branch(self.slug, prefix=self.branch_prefix, pattern=DEFAULT_BRANCH)
+        """The task branch, as ``hub worktree`` builds it: the slug rendered with the repo's
+        effective ``conventions.branch``."""
+        pattern = self.config.conventions_for(self.repo).branch
+        return worktree_branch(self.slug, prefix=self.branch_prefix, pattern=pattern)
 
     @property
     def base(self) -> str:
