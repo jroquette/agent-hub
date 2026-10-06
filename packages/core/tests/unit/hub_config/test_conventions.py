@@ -333,9 +333,10 @@ def test_builds_frozen_value_when_effective_conventions_built() -> None:
 
 # AC-57.14 (plan § Design 6, E2, E10): each repo's conventions have one source, the model's
 # conventions_for (and project_conventions, sets_conventions); its branch has one builder,
-# worktree_branch over render_branch. A module path ``hub_config.conventions`` is no read.
-CONVENTIONS_READ = re.compile(r"(?<!hub_config)\.conventions\b")
-BRANCH_BUILD = re.compile(r"\{(?:self\.|cfg\.)?(?:branch_)?prefix\}\{|@@\{project_branch_prefix\}<")
+# worktree_branch over render_branch. A module path ``hub_config.conventions`` is no read; a
+# string key ``"conventions"`` (a raw document read) is. Any ``{...prefix}{`` builds a branch.
+CONVENTIONS_READ = re.compile(r"(?<!hub_config)\.conventions\b|[\"']conventions[\"']")
+BRANCH_BUILD = re.compile(r"\{[\w.]*prefix\}\{|@@\{project_branch_prefix\}<")
 
 CORE = "core/src/agent_hub/core"
 TEMPLATES = "generator/src/agent_hub/generator/templates"
@@ -344,7 +345,8 @@ TEMPLATES = "generator/src/agent_hub/generator/templates"
 CONVENTIONS_READERS = {
     # conventions_for, project_conventions, sets_conventions and the pairing check read the two
     # keys; the repo key's schema description, two docstrings and the pairing message name them
-    f"{CORE}/hub_config/model.py": 9,
+    # (9); the pairing error's two loc tuples name the key as a string, not a read (2)
+    f"{CORE}/hub_config/model.py": 11,
     # the module docstring names the two keys
     f"{CORE}/hub_config/conventions.py": 2,
     # each repo's own keys, which its Conventions line lists (the one raw read outside the model)
@@ -357,6 +359,9 @@ CONVENTIONS_READERS = {
     "cli/src/agent_hub/cli/run_children.py": 2,
     # the PR title step reads RunChildren.conventions
     "cli/src/agent_hub/cli/run_steps.py": 1,
+    # the mixed hub's document data: the project's and demo-api's conventions keys, written,
+    # not read
+    f"{CORE}/testing/builders.py": 2,
 }
 
 # Lines per file that build a branch as the prefix followed by a name.
