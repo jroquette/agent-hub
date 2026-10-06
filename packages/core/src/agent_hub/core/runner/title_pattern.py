@@ -3,8 +3,8 @@
 A title pattern holds ``{ISSUE}``, ``{type}``, ``{scope}`` and ``{summary}`` (see
 ``hub_config.conventions``). Parsing turns the pattern into an anchored regex: each literal
 escaped, ``{summary}`` the only free group, and every other placeholder a fixed character class
-that never gives characters back, so a hostile subject costs at most quadratic time. Pure: the
-CLI, ``hub start`` and ``hub ship`` render and parse the same way.
+that never gives characters back, so a hostile subject costs at most quadratic time. Pure, so
+the CLI and the later ``hub start`` and ``hub ship`` can render and parse the same way.
 """
 
 import re
@@ -48,6 +48,8 @@ def parse_title(pattern: str, subject: str) -> TitleParts | None:
     """Return the parts of ``subject`` read with ``pattern``, or None when it does not match.
 
     The whole subject must match. A subject longer than 1 000 characters counts as no match.
+    ``pattern`` must already pass ``title_pattern_problem``; an invalid one may raise
+    ``KeyError`` or ``re.error``.
     """
     if len(subject) > MAX_PARSED_SUBJECT_CHARS:
         return None
@@ -65,7 +67,11 @@ def parse_title(pattern: str, subject: str) -> TitleParts | None:
 
 @lru_cache(maxsize=32)
 def title_regex(pattern: str) -> re.Pattern[str]:
-    """The regex that parses subjects with a valid title ``pattern``."""
+    """The regex that parses subjects with a title ``pattern``.
+
+    ``pattern`` must already pass ``title_pattern_problem``; an invalid one may raise
+    ``KeyError`` or ``re.error``.
+    """
     parts = pattern_parts(pattern)
     pieces = [
         _part_regex(part, following=parts[index + 1] if index + 1 < len(parts) else None)

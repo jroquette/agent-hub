@@ -684,6 +684,7 @@ BAD_TITLES = [
     "{summary} {",
     "{summary}\x07",
     "a" * 112 + "{summary}",
+    "{type}{scope}: {summary}",
 ]
 BAD_PATTERNS = [("branch", value) for value in BAD_BRANCHES] + [
     (key, value) for key in ("commit_title", "pr_title") for value in BAD_TITLES
@@ -706,6 +707,18 @@ def test_names_problem_when_conventions_pattern_invalid() -> None:
 
     [error] = caught.value.errors()
     assert error["msg"] == "a branch needs {ISSUE} or {issue_lower}"
+
+
+def test_names_touching_placeholders_at_key_when_title_pattern_invalid() -> None:
+    document = with_value(PROJECT_CONVENTIONS, {"commit_title": "{type}{summary}"})
+
+    assert pairing_errors(document) == [
+        (
+            (*PROJECT_CONVENTIONS, "commit_title"),
+            "convention_pattern",
+            "placeholders need a literal between them",
+        )
+    ]
 
 
 def pairing_errors(document: dict[str, Any]) -> list[tuple[Any, str, str]]:
