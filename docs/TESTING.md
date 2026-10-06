@@ -53,9 +53,10 @@ case's temporary root and prints its path. The `hub init` golden,
 `packages/cli/tests/integration/golden/init/demo.hub.lock`, is the synthetic `demo` init's `hub.lock` with
 `platform_version` as `<VERSION>` and every hash kept, so a template change shows as a reviewed hash diff; it is `-text`
 too, and `GOLDEN_UPDATE=1` rewrites it the same way (the cli conftest's own harness, refused under `CI`).
-The text a two-team hub renders where it names the tracker teams is checked in byte-exact under
-`packages/generator/tests/integration/rendered/two_teams/<path>.golden` (`-text`) by `test_rendered_text.py`;
-`GOLDEN_UPDATE=1` rewrites it (refused under `CI`).
+The text a two-team hub renders where it names the tracker teams, and the text a hub with conventions renders where
+it shows them, are checked in byte-exact under `packages/generator/tests/integration/rendered/two_teams/<path>.golden`
+and `rendered/conventions/<path>.golden` (`-text`) by `test_rendered_text.py`; `GOLDEN_UPDATE=1` rewrites them (refused
+under `CI`).
 
 ## Layout
 

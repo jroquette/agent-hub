@@ -4,7 +4,12 @@ import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
-from agent_hub.core.testing.builders import a_hub_document, a_second_repo, a_two_team_document
+from agent_hub.core.testing.builders import (
+    a_conventions_document,
+    a_hub_document,
+    a_second_repo,
+    a_two_team_document,
+)
 from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_mapping
 
 # AC-3.9: the Rendered values of project-config.md, the platform repository (erratum E3), the
@@ -13,6 +18,7 @@ from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_m
 # author and prefix note (AGH-65). author_name, check_fast, check and platform.version are read at
 # run time or quoted per format, never placeholders; author_email is per developer and no template
 # names it (AGH-65). The team mentions of AGENTS.md and the plugin name every tracker team (AGH-56).
+# The branch rule, kickoff's branch and the Conventions block show the conventions (AGH-57).
 RENDERED_KEYS = {
     "project_name",
     "project_hub_repo",
@@ -38,7 +44,15 @@ RENDERED_KEYS = {
     "commit_author",
     "prefix_note",
     "identity_email",
+    "branch_rule",
+    "kickoff_branch",
+    "conventions_section",
 }
+
+# Rule 1's branch as the template held it before AGH-57, with the demo's one team.
+DEMO_BRANCH_RULE = (
+    "Branch: `jdoe/<team>-<n>-<desc>`, where `<team>` is the\n   tracker team DEM in lowercase."
+)
 
 
 def config_with(**sections: Any) -> HubConfig:
@@ -85,6 +99,9 @@ def test_takes_values_from_model_when_demo_mapped(demo_config: HubConfig) -> Non
         "commit_author": "the user (`hub.json` → `project.author_name`, `project.author_email`)",
         "prefix_note": "",
         "identity_email": "`hub.json` → `project.author_email`",
+        "branch_rule": DEMO_BRANCH_RULE,
+        "kickoff_branch": "`jdoe/<team>-<n>-<desc>`",
+        "conventions_section": "",
     }
 
 
@@ -312,3 +329,52 @@ def test_wraps_team_list_when_keys_long() -> None:
         assert text.startswith("\n   "), key
         assert [line for line in text.splitlines() if len(line) > 120] == [], key
         assert ", ".join(keys) in " ".join(text.split()), key
+
+
+# AGH-57 (plan § Design 7, E11): the mixed hub's branch rule, kickoff branch and Conventions block.
+MIXED_CONVENTIONS_SECTION = (
+    "\n\n## Conventions\n\n"
+    "`hub.json` → `project.conventions`, overridden per repo by `repos[].conventions`;"
+    " `hub worktree`, `hub run` and its\n"
+    "session follow them. `{ISSUE}` is the issue id, `{issue_lower}` the same in lowercase,"
+    " `{slug}` the worktree's `<desc>`.\n\n"
+    "- Branch: `jdoe/{ISSUE}-{slug}`, e.g. `jdoe/DEM-7-collector`.\n"
+    "- Commit title: `{ISSUE}: {type}({scope}): {summary}`,"
+    " e.g. `DEM-7: feat(core): add the collector`.\n"
+    "- PR title: `{ISSUE}: {type}({scope}): {summary}`,"
+    " e.g. `DEM-7: feat(core): add the collector`.\n"
+    "- `demo-api` overrides branch `feature/{issue_lower}/{slug}`."
+)
+
+
+def test_shows_conventions_when_hub_sets_them() -> None:
+    mapping = substitution_mapping(HubConfig.model_validate(a_conventions_document()))
+
+    assert (mapping["branch_rule"], mapping["kickoff_branch"], mapping["conventions_section"]) == (
+        "Branch: `jdoe/{ISSUE}-{slug}`, or the repo's own (see Conventions below).",
+        "`jdoe/{ISSUE}-{slug}` (or the repo's own, `AGENTS.md` → Conventions)",
+        MIXED_CONVENTIONS_SECTION,
+    )
+
+
+@pytest.mark.parametrize(
+    ("document", "branch_rule"),
+    [
+        (a_hub_document(), DEMO_BRANCH_RULE),
+        (
+            a_two_team_document(),
+            "Branch: `jdoe/<team>-<n>-<desc>`, where `<team>` is\n"
+            "   one of the tracker teams APP, OPS in lowercase.",
+        ),
+    ],
+    ids=["one-team", "two-teams"],
+)
+def test_keeps_branch_text_when_hub_unconfigured(
+    document: dict[str, Any], branch_rule: str
+) -> None:
+    mapping = substitution_mapping(HubConfig.model_validate(document))
+
+    # The template text these values replaced, with the team rule it held.
+    assert mapping["branch_rule"] == branch_rule
+    assert mapping["kickoff_branch"] == "`jdoe/<team>-<n>-<desc>`"
+    assert mapping["conventions_section"] == ""
