@@ -1376,11 +1376,11 @@ if any(tool.startswith("mcp__") for tool in allowed):
 mode = os.environ.get("FAKE_CLAUDE_MODE", "done")
 log("claude", tracker=False, mode=mode)
 def commit():
-    # One commit per line of FAKE_CLAUDE_SUBJECTS (oldest first, so the last is the newest);
-    # unset, the one synthetic commit.
+    # One commit per non-empty line of FAKE_CLAUDE_SUBJECTS (oldest first, so the last is the
+    # newest; empty lines are skipped); unset, the one synthetic commit.
     subjects = os.environ.get("FAKE_CLAUDE_SUBJECTS", "feat(api): synthetic change (DEM-1)")
     identity = ["-c", "user.name=Jane Doe", "-c", "user.email=jane@example.com"]
-    for subject in subjects.split("\\n"):
+    for subject in filter(None, subjects.split("\\n")):
         with open("synthetic_change.txt", "a") as file:
             file.write("change\\n")
         subprocess.run(["git", "add", "synthetic_change.txt"], check=True)

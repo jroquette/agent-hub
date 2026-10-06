@@ -1398,8 +1398,9 @@ class TestConventionTitles:
         [
             ("DEM-9: feat(cli): add y\nadd x", "add x", "add x"),
             (f"WIP\n{ROBOT_SUBJECT}", "", "DEM-1"),
+            ("edit {ws}/demo-web/x.py", "edit demo-web/x.py", "edit demo-web/x.py"),
         ],
-        ids=["plain", "cleans-to-nothing"],
+        ids=["plain", "cleans-to-nothing", "workspace-path"],
     )
     def test_warns_once_when_subject_does_not_match_convention(
         self,
@@ -1415,7 +1416,8 @@ class TestConventionTitles:
         workspace = run_workspace.workspace
         use_mixed_hub(workspace)
         inject(monkeypatch, run_tracker)
-        monkeypatch.setenv("FAKE_CLAUDE_SUBJECTS", subjects)
+        ws = os.path.realpath(workspace.ws)
+        monkeypatch.setenv("FAKE_CLAUDE_SUBJECTS", subjects.replace("{ws}", ws))
 
         result = live_on(run_command, workspace, "demo-web")
 
