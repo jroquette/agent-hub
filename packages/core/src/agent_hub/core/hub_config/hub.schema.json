@@ -49,6 +49,29 @@
       "title": "ContractSyncSettings",
       "type": "object"
     },
+    "Conventions": {
+      "additionalProperties": false,
+      "description": "Branch and title patterns; each absent key keeps today's shape.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "branch": {
+          "description": "Branch pattern: {prefix}, {ISSUE}, {issue_lower}, {slug}; needs {ISSUE} or {issue_lower}. Default {prefix}{issue_lower}-{slug}.",
+          "type": "string"
+        },
+        "commit_title": {
+          "description": "Commit title pattern: {ISSUE}, {type}, {scope}, {summary}; needs {summary}. Default {type}({scope}): {summary} ({ISSUE}).",
+          "type": "string"
+        },
+        "pr_title": {
+          "description": "PR title pattern: {ISSUE}, {type}, {scope}, {summary}; needs {summary}. Default: the effective commit_title.",
+          "type": "string"
+        }
+      },
+      "title": "Conventions",
+      "type": "object"
+    },
     "Doctor": {
       "additionalProperties": false,
       "description": "How ``hub doctor`` is tuned for this project (docs/design/hub-doctor.md).",
@@ -309,6 +332,10 @@
           "description": "Per developer: hub.local.json, else this, else git config (docs/design/developer-identity.md).",
           "pattern": "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$",
           "type": "string"
+        },
+        "conventions": {
+          "$ref": "#/$defs/Conventions",
+          "description": "Branch and title patterns for every repo; absent keys keep today's shapes."
         }
       },
       "required": [
@@ -358,6 +385,10 @@
           "description": "The repo's default branch: worktree and PR base, push guard. Absent: project.default_branch.",
           "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*(?:/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*)*$",
           "type": "string"
+        },
+        "conventions": {
+          "$ref": "#/$defs/Conventions",
+          "description": "Overrides project.conventions key by key."
         }
       },
       "required": [

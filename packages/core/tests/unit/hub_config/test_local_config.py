@@ -90,6 +90,10 @@ def test_overrides_nothing_when_document_empty() -> None:
             {"project": {"default_branch": "x"}},
             ConfigProblem("project.default_branch", HUB_ONLY_MESSAGE),
         ),
+        (
+            {"project": {"conventions": {}}},
+            ConfigProblem("project.conventions", HUB_ONLY_MESSAGE),
+        ),
         ({"guard": {}}, ConfigProblem("guard", HUB_ONLY_MESSAGE)),
         ({"repos": []}, ConfigProblem("repos", HUB_ONLY_MESSAGE)),
         ({"tracker": {"team": "X"}}, ConfigProblem("tracker.team", HUB_ONLY_MESSAGE)),
@@ -101,6 +105,7 @@ def test_overrides_nothing_when_document_empty() -> None:
     ids=[
         "project-name",
         "project-default-branch",
+        "project-conventions",
         "guard",
         "repos",
         "tracker-team",

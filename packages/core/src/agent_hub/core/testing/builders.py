@@ -80,6 +80,23 @@ def a_second_repo() -> dict[str, Any]:
     }
 
 
+def a_conventions_document() -> dict[str, Any]:
+    """Build the mixed hub: ``a_hub_document`` plus ``demo-web``, with conventions; a fresh copy.
+
+    The project sets all three patterns; ``demo-api`` overrides only ``branch`` and
+    ``demo-web`` sets none.
+    """
+    document = a_hub_document()
+    document["project"]["conventions"] = {
+        "branch": "{prefix}{ISSUE}-{slug}",
+        "commit_title": "{ISSUE}: {type}({scope}): {summary}",
+        "pr_title": "{ISSUE}: {type}({scope}): {summary}",
+    }
+    document["repos"][0]["conventions"] = {"branch": "feature/{issue_lower}/{slug}"}
+    document["repos"].append(a_second_repo())
+    return document
+
+
 def an_issue(**overrides: object) -> Issue:
     """Build a synthetic open ``DEM`` issue; ``url`` follows ``id`` unless overridden."""
     fields: dict[str, object] = {
