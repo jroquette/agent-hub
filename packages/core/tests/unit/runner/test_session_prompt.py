@@ -1,5 +1,6 @@
 import json
 
+from agent_hub.core.hub_config.conventions import DEFAULT_COMMIT_TITLE, title_pattern_problem
 from agent_hub.core.runner.session_prompt import (
     IMPLEMENTING_TOOLS,
     ISSUE_END,
@@ -285,3 +286,60 @@ def test_writes_budget_as_exact_decimal_when_argv_built() -> None:
     assert budget_shown(0.5) == "0.5"
     assert budget_shown(1234567) == "1234567"
     assert budget_shown(1e-7) == "0.0000001"
+
+
+def configured_prompt(issue: Issue, *, commit_title: str, sensitive: tuple[str, ...] = ()) -> str:
+    return implementing_prompt(
+        issue,
+        repo="demo-api",
+        branch="jdoe/dem-1",
+        hub=HUB,
+        hub_name="hub",
+        sensitive=sensitive,
+        fast_gate="make check-fast",
+        prefix="DEM-",
+        commit_title=commit_title,
+    )
+
+
+def step_four(prompt: str) -> str:
+    return " ".join(prompt.split("\n4. ", 1)[1].split("\n5. ", 1)[0].split())
+
+
+def test_states_commit_title_when_convention_configured() -> None:
+    prompt = configured_prompt(
+        an_issue(id="DEM-1"), commit_title="{ISSUE}: {type}({scope}): {summary}"
+    )
+
+    step = step_four(prompt)
+    assert step.startswith(
+        "Commit with the title `{ISSUE}: {type}({scope}): {summary}`"
+        " (e.g. `DEM-1: feat(core): add the change`), authored by the configured git user."
+    )
+    assert 'No AI co-author trailer, no "Generated with", no \N{ROBOT FACE}. Do NOT push.' in step
+    assert "type(scope): … (DEM-N)" not in prompt
+
+
+def test_keeps_prompt_bytes_when_commit_title_default() -> None:
+    issue = an_issue()
+
+    assert configured_prompt(issue, commit_title=DEFAULT_COMMIT_TITLE) == prompt_for(issue)
+
+
+def test_fits_argument_limit_when_commit_title_at_cap() -> None:
+    pattern = "{ISSUE}: {type}({scope}): {summary} " + "x" * 84
+    assert len(pattern) == 120
+    assert title_pattern_problem(pattern) is None
+    issue = an_issue(
+        id="ABCDEFGHIJ-123456789",
+        title="`" * MAX_ARGUMENT_BYTES,
+        description="`" * MAX_ARGUMENT_BYTES,
+        url="https://linear.app/" + "`" * MAX_ARGUMENT_BYTES,
+    )
+
+    prompt = configured_prompt(
+        issue, commit_title=pattern, sensitive=("agent-hub/docs/adr", "hub.json")
+    )
+
+    assert f"`{pattern}`" in prompt
+    assert len(prompt.encode()) < MAX_ARGUMENT_BYTES

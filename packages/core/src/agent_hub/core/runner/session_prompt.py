@@ -8,6 +8,9 @@ argument can hold. The title, url and description are cut at their caps and the 
 by ``ISSUE_ID_PATTERN`` (both adapters refuse any other), so the issue's share of the prompt is
 bounded whatever the tracker holds; with the hub's own paths and commands, the prompt stays
 under Linux's limit for one argument (``MAX_ARGUMENT_BYTES``) (E21).
+
+Step 4 states the repo's effective ``commit_title`` with one example; with the default pattern
+it keeps the Conventional Commits wording it has always had.
 """
 
 import json
@@ -16,7 +19,9 @@ from collections.abc import Iterable, Sequence
 from decimal import Decimal
 from typing import Final
 
+from agent_hub.core.hub_config.conventions import DEFAULT_COMMIT_TITLE
 from agent_hub.core.runner.run_texts import well_formed
+from agent_hub.core.runner.title_pattern import TitleParts, render_title
 from agent_hub.core.tracker.tracker_client import Issue
 
 MAX_TITLE_CHARS: Final = 1_000
@@ -54,6 +59,7 @@ IMPLEMENTING_TOOLS: Final = (
 TRACKER_MCP_SERVERS: Final = ("mcp__Linear", "mcp__claude_ai_Linear")
 PERMISSION_MODE: Final = "dontAsk"
 _MIN_FENCE = 3
+_EXAMPLE_PARTS: Final = TitleParts(type="feat", scope="core", summary="add the change")
 _BACKTICKS = re.compile("`+")
 
 # The final line the session is asked for; verdict.py reads it.
@@ -72,7 +78,7 @@ _STEPS = """You are implementing issue {issue} in this worktree ({repo}, branch 
    pass. Never weaken or delete an existing assertion.
 3. Run the fast gate (`{fast_gate}`) and the tests you touched until green. Run every command in
    the foreground (never in the background) and don't search outside this worktree.
-4. Commit with Conventional Commits (`type(scope): … ({prefix}N)`), authored by the configured git
+4. Commit with {commit_shape}, authored by the configured git
    user. No AI co-author trailer, no "Generated with", no 🤖. Do NOT push.
 5. Reply with exactly one final line of JSON:
    {verdict}
@@ -92,12 +98,13 @@ def implementing_prompt(
     sensitive: Sequence[str],
     fast_gate: str,
     prefix: str,
+    commit_title: str = DEFAULT_COMMIT_TITLE,
 ) -> str:
     """The implementing session's prompt: the steps, then the issue in a fenced block.
 
     ``hub`` is the hub's path and ``hub_name`` its folder name; ``sensitive`` lists the guard's
     ``ask_before_edit`` paths; ``fast_gate`` is the repo's ``check_fast``; ``prefix`` the issue
-    prefix (``DEM-``).
+    prefix (``DEM-``); ``commit_title`` the repo's effective commit title pattern.
     """
     guarded = (
         f"touches a file matching {', '.join(sensitive)} (needs an approved plan) or "
@@ -112,7 +119,7 @@ def implementing_prompt(
         hub_name=hub_name,
         sensitive=guarded,
         fast_gate=fast_gate,
-        prefix=prefix,
+        commit_shape=_commit_shape(commit_title, issue_id=issue.id, prefix=prefix),
         verdict=_VERDICT_SHAPE,
     )
     body = well_formed(
@@ -123,6 +130,14 @@ def implementing_prompt(
     )
     fence = "`" * _fence_length(body)
     return f"{steps}\n{fence}text\n{body}\n{fence}\n\n{ISSUE_END}\n"
+
+
+def _commit_shape(commit_title: str, *, issue_id: str, prefix: str) -> str:
+    # A format value, never a format string: braces in the pattern stay as written.
+    if commit_title == DEFAULT_COMMIT_TITLE:
+        return f"Conventional Commits (`type(scope): … ({prefix}N)`)"
+    example = render_title(commit_title, _EXAMPLE_PARTS._replace(issue=issue_id))
+    return f"the title `{commit_title}` (e.g. `{example}`)"
 
 
 def gate_tools(commands: Iterable[str]) -> tuple[str, ...]:
