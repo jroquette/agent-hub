@@ -23,11 +23,13 @@ import textwrap
 from typing import Final
 
 from agent_hub.core.doctor.snapshot import module_makefiles
-from agent_hub.core.hub_config.conventions import EffectiveConventions
-from agent_hub.core.hub_config.model import PREFIX_PLACEHOLDER, Conventions, HubConfig
+from agent_hub.core.hub_config.model import PREFIX_PLACEHOLDER, HubConfig
 from agent_hub.core.hub_files.rendered_file import Ownership
-from agent_hub.core.runner.title_pattern import TitleParts, render_title
-from agent_hub.core.workspace.branch_pattern import ShownBranches, shown_branches
+from agent_hub.core.workspace.shown_conventions import (
+    ShownConventions,
+    shown_conventions,
+    shown_prefix,
+)
 from agent_hub.generator.registry import REGISTRY
 
 # The platform's git source, unpinned: shims append ``@v<platform.version>`` read from hub.json
@@ -70,8 +72,8 @@ _RULE_INDENT: Final = "   "
 # The template text of rule 1's line before its branch rule, so a long configured branch shape
 # wraps within 120 characters (AGH-57).
 _BRANCH_RULE_LEAD: Final = "   after an agent (e.g. `claude/…`). "
-# The conventions' block in ``AGENTS.md``: its lead paragraph, each key as a repo line names it
-# (in the order shown), and the example title's parts (AGH-57, plan § Design 7).
+# The conventions' block in ``AGENTS.md``: its lead paragraph and each key as a repo line names
+# it; the shapes and examples come from ``shown_conventions`` (AGH-57, plan § Design 7, E32).
 _CONVENTIONS_LEAD: Final = (
     "`hub.json` → `project.conventions`, overridden per repo by `repos[].conventions`;"
     " `hub worktree`, `hub run` and its\n"
@@ -83,8 +85,6 @@ _OVERRIDE_LABELS: Final = {
     "commit_title": "commit title",
     "pr_title": "PR title",
 }
-_EXAMPLE_TITLE: Final = {"type": "feat", "scope": "core", "summary": "add the collector"}
-_EXAMPLE_NUMBER: Final = 7
 # A code span, and the character that stands for each space inside one while wrapping (no
 # pattern may hold a backtick or a control character, so spans pair up and the glue is free).
 _CODE_SPAN: Final = re.compile(r"`[^`]*`")
@@ -101,7 +101,7 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
     return {
         "project_name": project.name,
         "project_hub_repo": project.hub_repo,
-        "project_branch_prefix": project.branch_prefix or PREFIX_PLACEHOLDER,
+        "project_branch_prefix": shown_prefix(config),
         "project_default_branch": project.default_branch,
         "tracker_team": config.tracker.default_team,
         "repo_dirs": _LIST_SEPARATOR.join(repo.dir for repo in config.repos),
@@ -190,19 +190,17 @@ def _conventions_texts(config: HubConfig) -> dict[str, str]:
     ``{prefix}`` shown as the rendered prefix and the other placeholders as written, and a block
     with each project shape and one example, then one line per repo naming the keys it overrides.
     """
-    shown = shown_branches(config)
+    shown = shown_conventions(config)
     if shown is None:
-        shown_prefix = config.project.branch_prefix or PREFIX_PLACEHOLDER
-        default_shape = f"`{shown_prefix}<team>-<n>-<desc>`"
+        default_shape = f"`{shown_prefix(config)}<team>-<n>-<desc>`"
         team_rule = _team_mentions(config)["tracker_team_rule"]
         return {
             "branch_rule": (f"Branch: {default_shape}, where `<team>` is{team_rule}{_RULE_SUFFIX}"),
             "kickoff_branch": default_shape,
             "conventions_section": "",
         }
-    overrides = [(repo.dir, repo.conventions) for repo in config.repos if repo.conventions]
-    shape = f"`{shown.project.shape}`"
-    own_branch = any(repo.branch is not None for _, repo in overrides)
+    shape = f"`{shown.branch.shape}`"
+    own_branch = any("branch" in repo.overrides for repo in shown.repos.values())
     return {
         "branch_rule": _filled_after(
             f"Branch: {shape}"
@@ -211,42 +209,24 @@ def _conventions_texts(config: HubConfig) -> dict[str, str]:
         ),
         "kickoff_branch": shape
         + (" (or the repo's own, `AGENTS.md` → Conventions)" if own_branch else ""),
-        "conventions_section": _conventions_section(
-            config, config.project_conventions, shown=shown, overrides=overrides
-        ),
+        "conventions_section": _conventions_section(config, shown=shown),
     }
 
 
-def _conventions_section(
-    config: HubConfig,
-    conventions: EffectiveConventions,
-    *,
-    shown: ShownBranches,
-    overrides: list[tuple[str, Conventions]],
-) -> str:
+def _conventions_section(config: HubConfig, *, shown: ShownConventions) -> str:
     """The Conventions block, from the blank lines before its heading to its last line."""
-    team = config.tracker.default_team
-    example = TitleParts(issue=f"{team}-{_EXAMPLE_NUMBER}", **_EXAMPLE_TITLE)
     shapes = (
-        ("Branch", shown.project.shape, shown.project.example),
-        (
-            "Commit title",
-            conventions.commit_title,
-            render_title(conventions.commit_title, example),
-        ),
-        ("PR title", conventions.pr_title, render_title(conventions.pr_title, example)),
+        ("Branch", shown.branch),
+        ("Commit title", shown.commit_title),
+        ("PR title", shown.pr_title),
     )
-    items = [f"{label}: `{pattern}`, e.g. `{text}`." for label, pattern, text in shapes]
-    for repo_dir, repo in overrides:
-        keys = [
-            f"{label} `{shown.repos[repo_dir].shape if key == 'branch' else value}`"
-            for key, label in _OVERRIDE_LABELS.items()
-            if (value := getattr(repo, key)) is not None
-        ]
-        if not keys:
+    items = [f"{label}: `{pattern.shape}`, e.g. `{pattern.example}`." for label, pattern in shapes]
+    for repo_dir, repo in shown.repos.items():
+        if not repo.overrides:
             continue
+        keys = [f"{_OVERRIDE_LABELS[key]} `{value}`" for key, value in repo.overrides.items()]
         # E14: with no pr_title at any layer, the repo's own commit_title titles its PRs.
-        follows = repo.commit_title is not None and not (
+        follows = "commit_title" in repo.overrides and not (
             config.conventions_for(repo_dir).pr_title_explicit
         )
         note = " (the PR title follows it)" if follows else ""

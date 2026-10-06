@@ -42,6 +42,23 @@ def a_config(max_lines: Mapping[str, int] | None = None) -> HubConfig:
     return HubConfig.model_validate(document)
 
 
+# The project's commit title shape and its example, then a repo's own PR title shape (E32).
+WIP_TITLE_SPANS = (
+    "Commit title: `wip/{summary}`, e.g. `wip/add the collector`.\n"
+    "`demo-api` overrides PR title `x/{ISSUE}-{summary}`.\n"
+)
+
+
+def a_wip_title_config() -> HubConfig:
+    """The mixed hub, its project commit title ``wip/{summary}`` and ``demo-api``'s PR title."""
+    document = a_conventions_document()
+    # A PR title filled from that commit title: it holds no {type} nor {scope}.
+    document["project"]["conventions"]["commit_title"] = "wip/{summary}"
+    document["project"]["conventions"]["pr_title"] = "{ISSUE}: {summary}"
+    document["repos"][0]["conventions"] = {"pr_title": "x/{ISSUE}-{summary}"}
+    return HubConfig.model_validate(document)
+
+
 def shown(rule: Rule, snapshot: DoctorSnapshot, *, fix: str) -> list[Shown]:
     found = list(rule.check(snapshot))
     assert all(finding.rule == rule.id for finding in found)
@@ -447,6 +464,29 @@ class TestRefs:
             stale("AGENTS.md", 1, "work/dem-8/other"),
             stale("AGENTS.md", 1, "release/DEM-8"),
             stale("AGENTS.md", 1, "release/{ISSUE}/notes.md"),
+        ]
+
+    def test_skips_convention_titles_when_agents_names_them(
+        self, snapshot_of: SnapshotFactory
+    ) -> None:
+        # AGH-57 (E32): a title shape holding `/` is path-shaped, yet the hub renders it.
+        snapshot = snapshot_of(
+            config=a_wip_title_config(),
+            files={"AGENTS.md": WIP_TITLE_SPANS.encode()},
+        )
+
+        assert refs(snapshot) == []
+
+    def test_reports_stale_reference_when_span_only_resembles_title(
+        self, snapshot_of: SnapshotFactory
+    ) -> None:
+        # Only an exact title shape or example is skipped: a path beside one is still checked.
+        text = "Not `wip/{summary}/notes.md` nor `x/{ISSUE}-{summary}.md`.\n"
+        snapshot = snapshot_of(config=a_wip_title_config(), files={"AGENTS.md": text.encode()})
+
+        assert refs(snapshot) == [
+            stale("AGENTS.md", 1, "wip/{summary}/notes.md"),
+            stale("AGENTS.md", 1, "x/{ISSUE}-{summary}.md"),
         ]
 
     def test_skips_no_convention_branch_when_hub_unconfigured(

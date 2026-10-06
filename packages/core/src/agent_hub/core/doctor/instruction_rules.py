@@ -17,8 +17,10 @@ files (``config_lint``; spec AC-11.19, AC-11.20, Q-6). Lines are ``config_lint.t
   skipped when it is a URL, ``mailto:``, ``~``, absolute or ``../`` path, a placeholder (``<x>``,
   ``path/to/``, ``...``, ``…``, ``$VAR``), ``origin/…``/``upstream/…``, a MIME type, a branch
   under ``project.branch_prefix`` (when ``hub.json`` sets one), a configured default branch
-  (the project's or a repo's), exactly a branch shape or example a hub that sets conventions
-  renders (``shown_branches``, AGH-57) or exactly ``hub.local.json`` (each developer's, gitignored).
+  (the project's or a repo's), exactly a branch or title shape or example a hub that sets
+  conventions renders (``shown_conventions``, AGH-57, E32) or exactly ``hub.local.json`` (each
+  developer's, gitignored). Like the default branches, the shapes are skipped in every listed
+  instruction file, not only in the ``AGENTS.md`` that renders them.
   It resolves, after cutting a ``::`` test id and a glob's tail
   (``@/`` read as ``src/``), against the listed paths, the fixed paths present and their
   folders (E31), from the file's folder or the root; then by name (``.claude/worktrees``,
@@ -74,7 +76,7 @@ from agent_hub.core.hub_config.versions import cut_echo
 from agent_hub.core.hub_files.hub_lock import HUB_LOCK_PATH
 from agent_hub.core.hub_files.tree_snapshot import FileEntry
 from agent_hub.core.json_form import InvalidJsonError, load_json_bytes
-from agent_hub.core.workspace.branch_pattern import shown_branches
+from agent_hub.core.workspace.shown_conventions import shown_conventions
 
 DEFAULT_MAX_LINES: Final = MappingProxyType(
     {"AGENTS.md": 100, "CLAUDE.md": 150, "CLAUDE.local.md": 50, "*/*": 80}
@@ -402,10 +404,10 @@ def _is_checked(ref: str, *, branch_prefix: str | None) -> bool:
 def _configured_branches(config: HubConfig) -> frozenset[str]:
     """The project's default branch and each repo's effective one, which are not paths.
 
-    With conventions, also every branch shape and example the hub's texts show, from the same
-    function the generator renders them with; each is skipped only on exact equality.
+    With conventions, also every branch and title shape and example the hub's texts show, from
+    the same function the generator renders them with; each is skipped only on exact equality.
     """
-    shown = shown_branches(config)
+    shown = shown_conventions(config)
     return frozenset(
         {config.project.default_branch, *(config.default_branch_for(r.dir) for r in config.repos)}
     ) | (frozenset() if shown is None else shown.texts())
