@@ -265,6 +265,39 @@ def test_rejects_transport_when_value_unknown(transport: object) -> None:
     assert error_types(document) == [(("tracker", "transport"), "literal_error")]
 
 
+def test_reads_team_keys_when_tracker_sets_team() -> None:
+    tracker = HubConfig.model_validate(a_hub_document()).tracker
+
+    assert tracker.team_keys == ("DEM",)
+    assert tracker.default_team == "DEM"
+
+
+def test_reads_team_keys_from_fields_when_tracker_copied() -> None:
+    tracker = HubConfig.model_validate(a_hub_document()).tracker
+
+    copied = tracker.model_copy(update={"team": "LONGTEAMKEY1"})
+
+    assert copied.team_keys == ("LONGTEAMKEY1",)
+    assert copied.default_team == "LONGTEAMKEY1"
+
+
+TRACKER_TEAM_READ = re.compile(r"\.tracker\.teams?\b")
+
+
+def test_reads_team_field_only_in_model_when_sources_scanned() -> None:
+    """Readers go through Tracker.team_keys and Tracker.default_team (AGH-56)."""
+    packages = Path(__file__).resolve().parents[4]
+    assert packages.is_dir(), packages  # an empty scan would pass anywhere
+    hits = {
+        f"{source.relative_to(packages).as_posix()}:{number}": line.strip()
+        for source in sorted(packages.glob("*/src/**/*.py"))
+        for number, line in enumerate(source.read_text(encoding="utf-8").splitlines(), 1)
+        if TRACKER_TEAM_READ.search(line)
+    }
+
+    assert hits == {}, "\n".join(f"{where}: {line}" for where, line in hits.items())
+
+
 @pytest.mark.parametrize("key", IDENTITY_KEYS)
 def test_accepts_document_when_identity_key_absent(key: str) -> None:
     document = a_hub_document()

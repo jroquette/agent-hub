@@ -100,7 +100,7 @@ def worktree_task(
     ``WorktreeUsageError`` for a name not shaped like the issue, a branch git refuses or an
     unknown ``only``.
     """
-    team = config.tracker.team
+    team = config.tracker.default_team
     problem = worktree_name_problem(name, team=team)
     if problem is not None:
         raise WorktreeUsageError(problem)

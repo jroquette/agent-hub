@@ -221,7 +221,7 @@ def _hub_checkout(root: Path) -> Path:
 
 
 def _refuse_usage(context: typer.Context, config: HubConfig, *, issue: str, repo: str) -> None:
-    team = config.tracker.team
+    team = config.tracker.default_team
     if not (ISSUE_ID_PATTERN.fullmatch(issue) and issue.startswith(f"{team}-")):
         context.fail(f"issue must look like {team}-<n> (e.g. {team}-1)")
     dirs = [entry.dir for entry in config.repos]

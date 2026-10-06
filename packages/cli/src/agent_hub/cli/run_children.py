@@ -137,7 +137,7 @@ class RunChildren:
             hub_name=self.hub.name,
             sensitive=self.config.guard.ask_before_edit,
             fast_gate=repo.check_fast,
-            prefix=f"{self.config.tracker.team}-",
+            prefix=f"{self.config.tracker.default_team}-",
         )
         others = (str(self.workspace / entry.dir) for entry in self.config.repos)
         return implementing_argv(
