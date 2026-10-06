@@ -1376,12 +1376,15 @@ if any(tool.startswith("mcp__") for tool in allowed):
 mode = os.environ.get("FAKE_CLAUDE_MODE", "done")
 log("claude", tracker=False, mode=mode)
 def commit():
-    with open("synthetic_change.txt", "a") as file:
-        file.write("change\\n")
+    # One commit per line of FAKE_CLAUDE_SUBJECTS (oldest first, so the last is the newest);
+    # unset, the one synthetic commit.
+    subjects = os.environ.get("FAKE_CLAUDE_SUBJECTS", "feat(api): synthetic change (DEM-1)")
     identity = ["-c", "user.name=Jane Doe", "-c", "user.email=jane@example.com"]
-    subprocess.run(["git", "add", "synthetic_change.txt"], check=True)
-    subprocess.run(["git", *identity, "commit", "-q", "-m", "feat(api): synthetic change (DEM-1)"],
-                   check=True)
+    for subject in subjects.split("\\n"):
+        with open("synthetic_change.txt", "a") as file:
+            file.write("change\\n")
+        subprocess.run(["git", "add", "synthetic_change.txt"], check=True)
+        subprocess.run(["git", *identity, "commit", "-q", "-m", subject], check=True)
 summary = os.environ.get("FAKE_CLAUDE_SUMMARY", RUN_SUMMARY)
 verdict = {"status": "done", "summary": summary, "tests": "make check-fast"}
 if mode == "hang":
