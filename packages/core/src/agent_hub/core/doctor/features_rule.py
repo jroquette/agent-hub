@@ -90,7 +90,7 @@ def _features_tracker(snapshot: DoctorSnapshot) -> Iterable[Finding]:
 def _project_of(config: HubConfig) -> _Project:
     hub_name = config.project.hub_repo.rsplit("/", 1)[-1]
     names = sorted({*(repo.dir for repo in config.repos), hub_name})
-    return _Project(names=tuple(names), prefix=f"{config.tracker.team}-")
+    return _Project(names=tuple(names), prefix=f"{config.tracker.default_team}-")
 
 
 def _is_record(path: str) -> bool:

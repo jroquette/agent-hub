@@ -154,7 +154,7 @@ def branch_shape(config: HubConfig) -> str:
     A hub that sets no prefix (each developer has their own) shows ``<prefix>`` in its place.
     """
     prefix = config.project.branch_prefix or PREFIX_PLACEHOLDER
-    return f"{prefix}{config.tracker.team.lower()}-<N>-<desc>"
+    return f"{prefix}{config.tracker.default_team.lower()}-<N>-<desc>"
 
 
 def _flagged(

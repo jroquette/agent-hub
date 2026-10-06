@@ -37,12 +37,14 @@ def next_command() -> None:
     typer.echo(transport_line(config), err=True)
     client = resolve_tracker_client(config, os.environ, hub_root=root)
     try:
-        issues = client.list_ready(config.tracker.team, config.tracker.ready_label)
+        issues = client.list_ready(config.tracker.default_team, config.tracker.ready_label)
     except TrackerError as error:
         fail(str(error))
     rows = ready_rows(issues, repos=[repo.dir for repo in config.repos])
     if not rows:
-        typer.echo(no_ready_line(team=config.tracker.team, label=config.tracker.ready_label))
+        typer.echo(
+            no_ready_line(team=config.tracker.default_team, label=config.tracker.ready_label)
+        )
         return
     for row in rows:
         typer.echo(_line(row))

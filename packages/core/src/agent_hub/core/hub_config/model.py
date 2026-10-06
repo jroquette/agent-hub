@@ -103,6 +103,16 @@ class Tracker(ConfigObject):
     ready_label: FreeString = "agent-ready"
     failed_label: FreeString = "agent-failed"
 
+    @property
+    def team_keys(self) -> tuple[str, ...]:
+        """The configured team keys in order, derived from the fields when read."""
+        return (self.team,)
+
+    @property
+    def default_team(self) -> str:
+        """The first team key: the default team."""
+        return self.team_keys[0]
+
 
 class Repo(ConfigObject):
     """A repo managed by the hub, checked out next to it."""
