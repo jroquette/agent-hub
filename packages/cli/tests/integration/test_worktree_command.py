@@ -873,3 +873,139 @@ class TestIdentity:
         assert git_identity_reads(traced_git) == [
             (os.path.realpath(demo_workspace.hub), "config --get user.email")
         ]
+
+
+# The mixed hub (plan E1): the project's three patterns, demo-api's own branch, demo-web none.
+PROJECT_CONVENTIONS = {
+    "branch": "{prefix}{ISSUE}-{slug}",
+    "commit_title": "{ISSUE}: {type}({scope}): {summary}",
+    "pr_title": "{ISSUE}: {type}({scope}): {summary}",
+}
+API_CONVENTIONS = {"branch": "feature/{issue_lower}/{slug}"}
+
+
+def use_mixed_hub(workspace: Workspace) -> None:
+    workspace.use_conventions(project=PROJECT_CONVENTIONS, repos={"demo-api": API_CONVENTIONS})
+
+
+class TestConventions:
+    def test_creates_branch_per_repo_when_hub_sets_conventions(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        use_mixed_hub(demo_workspace)
+        branches = {"demo-api": "feature/dem-7/x", "demo-web": "jdoe/DEM-7-x"}
+
+        result = run_command(demo_workspace.hub, "worktree", NAME)
+
+        assert result.exit_code == 0, result.output
+        assert result.stderr == ""
+        assert result.stdout.splitlines()[:2] == [
+            f"created  {demo_workspace.worktree(repo, NAME)} ({branch} from origin/trunk)"
+            for repo, branch in branches.items()
+        ]
+        for repo, branch in branches.items():
+            worktree = demo_workspace.worktree(repo, NAME)
+            assert worktree == demo_workspace.ws / repo / ".claude" / "worktrees" / NAME
+            assert demo_workspace.git(worktree, "branch", "--show-current") == branch
+
+    def test_drops_separator_when_name_has_no_desc(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        use_mixed_hub(demo_workspace)
+        branches = {"demo-api": "feature/dem-7", "demo-web": "jdoe/DEM-7"}
+
+        result = run_command(demo_workspace.hub, "worktree", "dem-7")
+
+        assert result.exit_code == 0, result.output
+        for repo, branch in branches.items():
+            worktree = demo_workspace.worktree(repo, "dem-7")
+            assert demo_workspace.git(worktree, "branch", "--show-current") == branch
+
+    def test_keeps_branches_when_conventions_worktrees_removed(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        use_mixed_hub(demo_workspace)
+        branches = {"demo-api": "feature/dem-7/x", "demo-web": "jdoe/DEM-7-x"}
+        assert run_command(demo_workspace.hub, "worktree", NAME).exit_code == 0
+
+        result = run_command(demo_workspace.hub, "worktree", "--remove", NAME)
+
+        assert result.exit_code == 0, result.output
+        assert result.stdout.splitlines() == [
+            f"removed  {demo_workspace.worktree(repo, NAME)}" for repo in REPOS
+        ]
+        for repo, branch in branches.items():
+            assert not demo_workspace.worktree(repo, NAME).exists()
+            checkout = demo_workspace.ws / repo
+            demo_workspace.git(checkout, "show-ref", "--verify", "-q", f"refs/heads/{branch}")
+
+    def test_lists_each_branch_in_summary_when_branches_differ(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        use_mixed_hub(demo_workspace)
+
+        result = run_command(demo_workspace.hub, "worktree", NAME)
+
+        assert result.exit_code == 0, result.output
+        assert result.stdout.splitlines()[2:] == [
+            "",
+            f"task     : {NAME}",
+            "branch   : demo-api feature/dem-7/x",
+            "branch   : demo-web jdoe/DEM-7-x",
+            "repos    : demo-api demo-web",
+            f"remove   : ./hub worktree --remove {NAME}",
+        ]
+
+    def test_keeps_one_task_line_when_touched_branches_agree(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        use_mixed_hub(demo_workspace)
+
+        result = run_command(demo_workspace.hub, "worktree", NAME, "--only", "demo-web")
+
+        assert result.exit_code == 0, result.output
+        assert result.stdout.splitlines() == [
+            f"created  {demo_workspace.worktree('demo-web', NAME)}"
+            " (jdoe/DEM-7-x from origin/trunk)",
+            "",
+            f"task     : {NAME} (branch jdoe/DEM-7-x)",
+            "repos    : demo-web",
+            f"remove   : ./hub worktree --remove {NAME} --only demo-web",
+        ]
+
+    def test_refuses_name_when_git_rejects_configured_branch(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        use_mixed_hub(demo_workspace)
+
+        # A usage message stays on one line of Rich's box.
+        result = run_command(demo_workspace.hub, "worktree", "dem-7-a..b", env={"COLUMNS": "200"})
+
+        assert_refused(
+            result,
+            "git refuses the branch name feature/dem-7/a..b; use a name like dem-7-collector",
+        )
+        assert_untouched(demo_workspace)
+
+    def test_checks_only_touched_branches_when_only_given(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        demo_workspace.use_conventions(
+            project={"branch": "{prefix}{issue_lower}"}, repos={"demo-api": API_CONVENTIONS}
+        )
+
+        result = run_command(demo_workspace.hub, "worktree", "dem-7-a..b", "--only", "demo-web")
+
+        assert result.exit_code == 0, result.output
+        worktree = demo_workspace.worktree("demo-web", "dem-7-a..b")
+        assert demo_workspace.git(worktree, "branch", "--show-current") == "jdoe/dem-7"
+
+    def test_names_unknown_repo_first_when_name_and_only_both_wrong(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        use_mixed_hub(demo_workspace)
+
+        result = run_command(demo_workspace.hub, "worktree", "dem-7-a..b", "--only", "nope")
+
+        assert_refused(result, "unknown repo in --only: nope; use one of: demo-api demo-web")
+        assert_untouched(demo_workspace)

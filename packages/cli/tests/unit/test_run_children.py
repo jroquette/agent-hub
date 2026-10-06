@@ -1,10 +1,19 @@
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from agent_hub.cli.child_process import ChildResult
 from agent_hub.cli.run_children import RunChildren, RunOptions, push_env
+from agent_hub.cli.worktree_steps import worktree_task
 from agent_hub.core.hub_config.model import HubConfig
-from agent_hub.core.testing.builders import a_hub_document, a_second_repo, an_issue
+from agent_hub.core.testing.builders import (
+    a_conventions_document,
+    a_hub_document,
+    a_second_repo,
+    an_issue,
+)
 
 OVERRIDES = [
     ("core.fsmonitor", "false"),
@@ -132,3 +141,80 @@ def test_refuses_team_when_issue_matches_no_team() -> None:
 
     with pytest.raises(ValueError, match=r"^OPS-1 matches no team of hub\.json$"):
         _ = children.team
+
+
+def children_of(document: dict[str, Any], repo: str) -> RunChildren:
+    return RunChildren(
+        config=HubConfig.model_validate(document),
+        hub=Path("/ws/hub"),
+        repo=repo,
+        issue_id="DEM-1",
+        branch_prefix="jdoe/",
+    )
+
+
+def unconfigured_two_repo_document() -> dict[str, Any]:
+    document = a_hub_document()
+    document["repos"].append(a_second_repo())
+    return document
+
+
+HUB_BRANCHES = {
+    "mixed-api": (a_conventions_document, "demo-api", "feature/dem-1"),
+    "mixed-web": (a_conventions_document, "demo-web", "jdoe/DEM-1"),
+    "unconfigured-api": (unconfigured_two_repo_document, "demo-api", "jdoe/dem-1"),
+    "unconfigured-web": (unconfigured_two_repo_document, "demo-web", "jdoe/dem-1"),
+}
+
+
+@pytest.mark.parametrize(
+    ("document", "repo", "branch"), list(HUB_BRANCHES.values()), ids=list(HUB_BRANCHES)
+)
+def test_takes_branch_from_repo_convention_when_hub_sets_conventions(
+    document: Any, repo: str, branch: str
+) -> None:
+    children = children_of(document(), repo)
+    pr_argv = children.pr_argv(title="t", body="b")
+
+    assert children.branch == branch
+    assert children.push_argv()[-1] == branch
+    assert pr_argv[pr_argv.index("--head") + 1] == branch
+    assert children.pr_view_argv()[3] == branch
+
+
+def accepting_runner(
+    argv: Sequence[str],
+    *,
+    cwd: Path | str,
+    env: Mapping[str, str],
+    timeout: float | None,
+    own_session: bool | None = None,
+) -> ChildResult:
+    """A git that accepts every call (``check-ref-format`` is the only one ``worktree_task``
+    makes)."""
+    del argv, cwd, env, timeout, own_session
+    return ChildResult(returncode=0, stdout=b"", stderr=b"")
+
+
+@pytest.mark.parametrize(
+    ("document", "repo", "branch"), list(HUB_BRANCHES.values()), ids=list(HUB_BRANCHES)
+)
+def test_matches_worktree_branch_when_run_and_worktree_build_it(
+    document: Any, repo: str, branch: str
+) -> None:
+    children = children_of(document(), repo)
+
+    task = worktree_task(
+        children.config,
+        name=children.slug,
+        branch_prefix=children.branch_prefix,
+        only=repo,
+        hub=children.hub,
+        git="git",
+        env={},
+        git_timeout=None,
+        runner=accepting_runner,
+    )
+
+    assert task.branches == {repo: branch}
+    assert children.branch == task.branches[repo]

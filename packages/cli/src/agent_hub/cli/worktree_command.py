@@ -2,7 +2,8 @@
 
 The hub is ``AGENT_HUB_ROOT`` or the cwd; run from a worktree of the hub repo, the main checkout
 is the hub (its ``hub.json``, its workspace). Each repo ``<ws>/<dir>`` gets
-``<dir>/.claude/worktrees/<name>`` on the branch ``<prefix><name>``, from a freshly fetched
+``<dir>/.claude/worktrees/<name>`` on its task branch (``<prefix><name>``, unless
+``hub.json``'s ``conventions`` set another ``branch`` pattern for it), from a freshly fetched
 ``origin/<default_branch>`` (an existing branch is checked out as it is), then runs the repo's
 executable ``scripts/worktree-setup.sh <worktree>``; ``--remove`` runs ``worktree-teardown.sh``
 the same way, then ``git worktree remove`` (never forced; branches are kept). Usage problems (the
@@ -109,9 +110,11 @@ def _summary(task: WorktreeTask) -> list[str]:
     remove = f"./hub {COMMAND} --remove {task.name}"
     if task.only is not None:
         remove += f" --only {task.only}"
-    return [
-        "",
-        f"task     : {task.name} (branch {task.branch})",
-        f"repos    : {' '.join(task.repos)}",
-        f"remove   : {remove}",
-    ]
+    branches = set(task.branches.values())
+    if len(branches) == 1:
+        (branch,) = branches
+        named = [f"task     : {task.name} (branch {branch})"]
+    else:
+        named = [f"task     : {task.name}"]
+        named += [f"branch   : {repo} {task.branches[repo]}" for repo in task.repos]
+    return ["", *named, f"repos    : {' '.join(task.repos)}", f"remove   : {remove}"]

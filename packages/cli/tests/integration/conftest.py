@@ -838,6 +838,23 @@ class DemoWorkspace:
         document["tracker"]["teams"] = list(keys)
         path.write_text(json.dumps(document, indent=2) + "\n")
 
+    def use_conventions(
+        self,
+        *,
+        project: Mapping[str, str] | None = None,
+        repos: Mapping[str, Mapping[str, str]] | None = None,
+    ) -> None:
+        """Set ``project.conventions`` (``project``) and each named repo's ``conventions``
+        (``repos``: dir → keys) in the hub's ``hub.json``."""
+        path = self.hub / "hub.json"
+        document = json.loads(path.read_text())
+        if project is not None:
+            document["project"]["conventions"] = dict(project)
+        for entry in document["repos"]:
+            if repos is not None and entry["dir"] in repos:
+                entry["conventions"] = dict(repos[entry["dir"]])
+        path.write_text(json.dumps(document, indent=2) + "\n")
+
     def worktree(self, repo: str, name: str) -> Path:
         return self.ws / repo / ".claude" / "worktrees" / name
 

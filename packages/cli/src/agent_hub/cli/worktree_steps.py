@@ -18,7 +18,6 @@ from typing import Final, Protocol
 from agent_hub.cli.child_process import ChildResult, run_child, stream_child
 from agent_hub.cli.errors import WorktreeError, WorktreeUsageError
 from agent_hub.cli.init_report import shown_path
-from agent_hub.core.hub_config.conventions import DEFAULT_BRANCH
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.workspace.worktree_name import (
     worktree_branch,
@@ -55,13 +54,14 @@ class ChildRunner(Protocol):
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class WorktreeTask:
-    """One task's checked inputs: the name, the branch, each repo's base and the repos to touch.
+    """One task's checked inputs: the name, each repo's branch and base, and the repos to touch.
 
-    ``bases`` maps each of ``repos`` to ``origin/<its default branch>``.
+    ``branches`` maps each of ``repos`` to its task branch, ``bases`` to
+    ``origin/<its default branch>``.
     """
 
     name: str
-    branch: str
+    branches: dict[str, str]
     bases: dict[str, str]
     workspace: Path
     repos: tuple[str, ...]
@@ -92,40 +92,50 @@ def worktree_task(
     add_options: tuple[str, ...] = (),
     fetch_options: tuple[str, ...] = (),
 ) -> WorktreeTask:
-    """The task named ``name`` in the hub's repos (or ``only``) on ``<branch_prefix><name>``,
-    its inputs checked.
+    """The task named ``name`` in the hub's repos (or ``only``), its inputs checked.
+
+    Each repo's branch is ``name`` rendered with the repo's effective ``conventions.branch``
+    (``conventions_for``) and ``branch_prefix``; today's ``<branch_prefix><name>`` when nothing
+    sets one. The name is checked first, then ``only``, then each distinct branch of the
+    touched repos with ``git check-ref-format``, in repo order.
 
     ``runner`` runs every git call of the task; ``env`` is the environment of every git call
     and script but the fetch, which gets ``fetch_env`` (by default ``env``); ``add_options``
     go before ``worktree add`` and ``fetch_options`` before ``fetch``. Raises
-    ``WorktreeUsageError`` for a name not shaped like the issue, a branch git refuses or an
-    unknown ``only``.
+    ``WorktreeUsageError`` for a name not shaped like the issue, an unknown ``only`` or a
+    branch git refuses.
     """
     problem = worktree_name_problem(name, teams=config.tracker.team_keys)
     if problem is not None:
         raise WorktreeUsageError(problem)
-    branch = worktree_branch(name, prefix=branch_prefix, pattern=DEFAULT_BRANCH)
-    checked = runner(
-        [git, "check-ref-format", "--branch", branch],
-        cwd=hub,
-        env=env,
-        timeout=git_timeout,
-        own_session=False,
-    )
-    if checked.returncode != 0:
-        raise WorktreeUsageError(
-            f"git refuses the branch name {shown_path(branch)};"
-            f" use a name like {worktree_name_example(config.tracker.default_team)}"
-        )
     dirs = tuple(repo.dir for repo in config.repos)
     if only is not None and only not in dirs:
         raise WorktreeUsageError(
             f"unknown repo in --only: {shown_path(only)}; use one of: {' '.join(dirs)}"
         )
     repos = dirs if only is None else (only,)
+    branches = {
+        repo: worktree_branch(
+            name, prefix=branch_prefix, pattern=config.conventions_for(repo).branch
+        )
+        for repo in repos
+    }
+    for branch in dict.fromkeys(branches.values()):
+        checked = runner(
+            [git, "check-ref-format", "--branch", branch],
+            cwd=hub,
+            env=env,
+            timeout=git_timeout,
+            own_session=False,
+        )
+        if checked.returncode != 0:
+            raise WorktreeUsageError(
+                f"git refuses the branch name {shown_path(branch)};"
+                f" use a name like {worktree_name_example(config.tracker.default_team)}"
+            )
     return WorktreeTask(
         name=name,
-        branch=branch,
+        branches=branches,
         bases={repo: f"origin/{config.default_branch_for(repo)}" for repo in repos},
         workspace=hub.parent,
         repos=repos,
@@ -160,17 +170,18 @@ def create_worktree(task: WorktreeTask, repo: str, *, echo: Echo) -> Path:
         step="could not fetch origin",
         env=task.fetch_env,
     )
+    branch = task.branches[repo]
     has_branch = _git(
-        task, checkout, ("show-ref", "--verify", "-q", f"refs/heads/{task.branch}"), repo=repo
+        task, checkout, ("show-ref", "--verify", "-q", f"refs/heads/{branch}"), repo=repo
     )
     add: tuple[str, ...]
     if has_branch.returncode == 0:
-        add = (*task.add_options, "worktree", "add", "-q", str(worktree), task.branch)
+        add = (*task.add_options, "worktree", "add", "-q", str(worktree), branch)
     else:
-        add = (*task.add_options, "worktree", "add", "-q", "-b", task.branch)
+        add = (*task.add_options, "worktree", "add", "-q", "-b", branch)
         add += (str(worktree), task.bases[repo])
     _git_or_raise(task, checkout, add, repo=repo, step="could not add the worktree")
-    echo(f"created  {shown_path(str(worktree))} ({task.branch} from {task.bases[repo]})")
+    echo(f"created  {shown_path(str(worktree))} ({branch} from {task.bases[repo]})")
     _run_script(task, repo, worktree, script=SETUP_SCRIPT, echo=echo)
     return worktree
 
