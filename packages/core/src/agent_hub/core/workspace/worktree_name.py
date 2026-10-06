@@ -4,6 +4,11 @@ import re
 from collections.abc import Sequence
 
 from agent_hub.core.hub_config.team_keys import teams_text
+from agent_hub.core.workspace.branch_pattern import render_branch
+
+# A validated name: the issue (``<team>-<n>``, lowercase) and, after a dash, the description.
+# Team keys are ``[A-Za-z0-9]+`` (``TeamKey`` in ``model.py``), so the first dash ends the team.
+_NAME_PARTS = re.compile(r"([a-z0-9]+-[0-9]+)(?:-(.*))?")
 
 
 def worktree_name_problem(name: str, *, teams: Sequence[str]) -> str | None:
@@ -28,6 +33,15 @@ def worktree_name_example(team: str) -> str:
     return f"{team.lower()}-7-collector"
 
 
-def worktree_branch(name: str, *, prefix: str) -> str:
-    """Return the task branch: the project's branch prefix followed by the worktree name."""
-    return f"{prefix}{name}"
+def worktree_branch(name: str, *, prefix: str, pattern: str) -> str:
+    """Return the task branch ``pattern`` gives for a validated worktree name.
+
+    The name's issue fills ``{ISSUE}``/``{issue_lower}`` and its description ``{slug}``
+    (empty without one). The default pattern gives ``prefix`` followed by the name.
+    """
+    parts = _NAME_PARTS.fullmatch(name)
+    if parts is None:
+        msg = f"not a worktree name: {name!r}"
+        raise ValueError(msg)
+    issue_id, slug = parts.group(1), parts.group(2) or ""
+    return render_branch(pattern, prefix=prefix, issue_id=issue_id, slug=slug)
