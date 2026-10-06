@@ -328,3 +328,25 @@ def test_cleans_and_cuts_final_title_when_rendered() -> None:
     assert long.title == "DEM-1: feat(cli): " + "s" * (256 - len("DEM-1: feat(cli): "))
     assert len(long.title) == 256
     assert long.unmatched is False
+
+
+# Each pr_title literal, joined with the parsed summary, forms what the cleaning removes, while
+# the subject alone holds nothing it would touch. Assembled, so the repo holds no attribution.
+JOINED_TITLES = {
+    "attribution": ("Generated " + "with {summary}", "DEM-9: Claude" + " Code", "DEM-1"),
+    "workspace-path": ("/work/{summary}", "DEM-9: ws/demo-api/x.py", "demo-api/x.py"),
+}
+
+
+@pytest.mark.parametrize(
+    ("pattern", "subject", "title"), list(JOINED_TITLES.values()), ids=list(JOINED_TITLES)
+)
+def test_cleans_title_again_when_only_rendered_title_needs_it(
+    pattern: str, subject: str, title: str
+) -> None:
+    conventions = conventions_of(
+        with_repo_conventions(commit_title="{ISSUE}: {summary}", pr_title=pattern)
+    )
+
+    assert sanitized_summary(subject, workspace=WORKSPACE) == subject
+    assert titled(subject, conventions) == PrTitle(title=title, unmatched=False)
