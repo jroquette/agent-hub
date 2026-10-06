@@ -50,7 +50,10 @@ def ready_rows(issues: Iterable[Issue], *, repos: Collection[str]) -> list[Ready
 
 
 def no_ready_line(*, teams: Sequence[str], label: str) -> str:
-    """The line ``hub next`` prints when nothing is ready in ``teams`` (``team`` for one)."""
+    """The line ``hub next`` prints when nothing is ready in ``teams`` (``team`` for one).
+
+    ``teams`` must be non-empty.
+    """
     noun = "team" if len(teams) == 1 else "teams"
     return f"no ready issues ({noun} {teams_text(teams)}, label {label})"
 

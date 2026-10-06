@@ -7,7 +7,10 @@ from agent_hub.core.hub_config.team_keys import teams_text
 
 
 def worktree_name_problem(name: str, *, teams: Sequence[str]) -> str | None:
-    """Why ``name`` is not ``<team>-<n>[-<desc>]`` for a key of ``teams`` (lowercased), or None."""
+    """Why ``name`` is not ``<team>-<n>[-<desc>]`` for a key of ``teams`` (lowercased), or None.
+
+    ``teams`` must be non-empty (a validated config's ``Tracker.team_keys`` always is).
+    """
     keys = "|".join(re.escape(team.lower()) for team in teams)
     if re.fullmatch(rf"(?:{keys})-[0-9]+(-[a-z0-9._-]+)?", name):
         return None

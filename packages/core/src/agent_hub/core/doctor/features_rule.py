@@ -1,19 +1,19 @@
 """``features.tracker``: every feature record is well formed and agrees with its spec (spec Q-16).
 
-The port of the hub's feature check (``features_check.py`` and its ``Makefile`` loop): each
-listed ``brain/features/<name>/features.json`` (a ``<name>`` starting with ``.`` is skipped, as a
-shell glob does) is read as ``json.load`` read it (a repeated key: the last wins), and must hold
+The port of the hub's feature check (``features_check.py`` and its ``Makefile`` loop): each listed
+``brain/features/<name>/features.json`` (a ``<name>`` starting with ``.`` is skipped, as a shell
+glob does) is read as ``json.load`` read it (a repeated key: the last wins), and must hold
 ``{"feature", "linear", "acs": [{id, description, repo, verification, passes, evidence}]}``:
-``linear`` ids carry the tracker team's prefix; ``repo`` is a ``repos[].dir`` or the hub's repo
-name (the last segment of ``project.hub_repo``, whatever folder the hub sits in); ids look like
-``AC-<n>`` or ``AC-<n>.<m>`` (``\\d`` takes any script's digits, as before) and are unique; a
-pending AC's verification keeps its exit code; ``passes: true`` needs evidence. When a sibling
-``spec.md`` is listed, the ``AC-…`` ids it names anywhere (a range's ends and a placeholder
+``linear`` ids carry a configured tracker team's prefix (exact case); ``repo`` is a ``repos[].dir``
+or the hub's repo name (the last segment of ``project.hub_repo``, whatever folder the hub sits in);
+ids look like ``AC-<n>`` or ``AC-<n>.<m>`` (``\\d`` takes any script's digits, as before) and are
+unique; a pending AC's verification keeps its exit code; ``passes: true`` needs evidence. When a
+sibling ``spec.md`` is listed, the ``AC-…`` ids it names anywhere (a range's ends and a placeholder
 included, which the hub's spec rule relies on) and the record's ids are the same set, each side
 reported in numeric order (compared as digit strings, so an id of any length orders). An id is
-echoed cut to 80 characters. Every finding names the record, except a spec that cannot be read
-(not UTF-8, a link: links are never followed, or a failed read), which names the spec; the
-record is then checked without the cross-check.
+echoed cut to 80 characters. Every finding names the record, except a spec that cannot be read (not
+UTF-8, a link: links are never followed, or a failed read), which names the spec; the record is then
+checked without the cross-check.
 """
 
 import re
@@ -27,6 +27,7 @@ from agent_hub.core.doctor.snapshot import DoctorSnapshot
 from agent_hub.core.hub_config.doctor_rules import FEATURES_TRACKER_RULE, RULE_MODULES, Severity
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ROOT_PATH
+from agent_hub.core.hub_config.team_keys import teams_text
 from agent_hub.core.hub_config.versions import cut_echo
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, TreeEntry
 from agent_hub.core.json_form import InvalidJsonError, JsonValue, load_json_bytes
@@ -69,10 +70,10 @@ class _Problem(NamedTuple):
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class _Project:
-    """What the records are checked against: the repo names and the tracker's id prefix."""
+    """What the records are checked against: the repo names and the tracker's team keys."""
 
     names: tuple[str, ...]
-    prefix: str
+    teams: tuple[str, ...]
 
 
 def _features_tracker(snapshot: DoctorSnapshot) -> Iterable[Finding]:
@@ -90,7 +91,7 @@ def _features_tracker(snapshot: DoctorSnapshot) -> Iterable[Finding]:
 def _project_of(config: HubConfig) -> _Project:
     hub_name = config.project.hub_repo.rsplit("/", 1)[-1]
     names = sorted({*(repo.dir for repo in config.repos), hub_name})
-    return _Project(names=tuple(names), prefix=f"{config.tracker.default_team}-")
+    return _Project(names=tuple(names), teams=config.tracker.team_keys)
 
 
 def _is_record(path: str) -> bool:
@@ -179,11 +180,19 @@ def _header_problems(data: Mapping[str, JsonValue], *, project: _Project) -> Ite
     if not isinstance(feature, str) or not feature:
         yield _Problem("`feature` must be a non-empty string", RECORD_FIX)
     linear = data.get("linear", [])
-    team_id = re.compile(re.escape(project.prefix) + r"\d+")
+    keys = "|".join(re.escape(team) for team in project.teams)
+    team_id = re.compile(rf"(?:{keys})-\d+")
     if not isinstance(linear, list) or not all(
         isinstance(item, str) and team_id.fullmatch(item) for item in linear
     ):
-        yield _Problem(f"`linear` must be a list of {project.prefix}<n> ids", RECORD_FIX)
+        yield _Problem(_linear_message(project.teams), RECORD_FIX)
+
+
+def _linear_message(teams: tuple[str, ...]) -> str:
+    """One team: ``TST-<n> ids``, as before; several: ``<TEAM>-<n>`` and the keys."""
+    if len(teams) == 1:
+        return f"`linear` must be a list of {teams[0]}-<n> ids"
+    return f"`linear` must be a list of <TEAM>-<n> ids, <TEAM> one of {teams_text(teams)}"
 
 
 def _ac_problems(

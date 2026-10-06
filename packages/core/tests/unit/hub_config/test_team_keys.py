@@ -35,3 +35,9 @@ def test_joins_keys_in_order_when_teams_listed() -> None:
 def test_writes_segment_when_one_or_several_teams() -> None:
     assert team_segment(("DEM",)) == "dem"
     assert team_segment(("APP", "OPS")) == "<app|ops>"
+
+
+@pytest.mark.parametrize("identifier", ["KEY-1", "Key-1-x"])
+def test_finds_nothing_when_segment_not_ascii(identifier: str) -> None:
+    # The Kelvin sign lowercases to ASCII ``k``; a non-ASCII segment still matches no key.
+    assert team_of(identifier, ("KEY",)) is None
