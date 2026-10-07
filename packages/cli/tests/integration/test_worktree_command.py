@@ -15,6 +15,7 @@ arguments), now exit 2 (spec § Port differences); ``test_rejects_name_without_i
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -1151,6 +1152,15 @@ CALLER_VARIABLES = {
     "HUB_WORKTREE_BRANCH": "x",
     "HUB_OTHER": "1",
 }
+# The design doc whose two ``sh`` examples (setup, then teardown) are run as the demo's scripts.
+DESIGN_DOC = Path(__file__).resolve().parents[4] / "docs" / "design" / "worktree-environment.md"
+
+
+def documented_scripts() -> list[str]:
+    """The ```` ```sh ```` blocks of ``DESIGN_DOC``, in order (the doc must exist)."""
+    assert DESIGN_DOC.is_file(), f"{DESIGN_DOC} is missing"
+    text = DESIGN_DOC.read_text(encoding="utf-8")
+    return re.findall(r"^```sh\n(.*?)^```$", text, flags=re.MULTILINE | re.DOTALL)
 
 
 class TestScriptEnvironment:
@@ -1309,3 +1319,45 @@ class TestScriptEnvironment:
         )
         assert setup_env.read_text() == expected
         assert teardown_env.read_text() == expected
+
+    def test_shifts_ports_when_documented_scripts_run(
+        self, demo_workspace: Workspace, run_command: CommandRunner, tmp_path: Path
+    ) -> None:
+        """The design doc's examples, run under ``/bin/sh`` with a fake ``docker`` first on
+        ``PATH``: setup copies the main checkout's ``.env`` with shifted ports, teardown stops the
+        same compose project, and the gitignored ``.env`` leaves the worktree clean to remove."""
+        scripts = documented_scripts()
+        assert len(scripts) == 2, scripts
+        setup, teardown = (script.encode() for script in scripts)
+        demo_workspace.advance(
+            "demo-api",
+            {
+                SETUP: (setup, EXECUTABLE),
+                TEARDOWN: (teardown, EXECUTABLE),
+                ".gitignore": (b".env\n", PLAIN),
+            },
+        )
+        (demo_workspace.ws / "demo-api" / ".env").write_bytes(
+            b"API_PORT=8000\nWEB_PORT=5173\nNAME=demo\n"
+        )
+        bin_dir, docker_log = tmp_path / "docker-bin", tmp_path / "docker.log"
+        bin_dir.mkdir()
+        docker = bin_dir / "docker"
+        docker.write_text(f'#!/bin/sh\nprintf \'%s\\n\' "$*" >> "{docker_log}"\n')
+        docker.chmod(EXECUTABLE)
+        env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+        worktree = demo_workspace.worktree("demo-api", NAME)
+
+        created = run_command(demo_workspace.hub, "worktree", NAME, "--only", "demo-api", env=env)
+        assert created.exit_code == 0, created.output
+        copied = (worktree / ".env").read_text()
+        removed = run_command(
+            demo_workspace.hub, "worktree", "--remove", NAME, "--only", "demo-api", env=env
+        )
+
+        assert copied == (
+            "API_PORT=11400\nWEB_PORT=8573\nNAME=demo\nCOMPOSE_PROJECT_NAME=demo-api-dem-7-x\n"
+        )
+        assert removed.exit_code == 0, removed.output
+        assert docker_log.read_text() == "compose -p demo-api-dem-7-x down\n"
+        assert not worktree.exists()
