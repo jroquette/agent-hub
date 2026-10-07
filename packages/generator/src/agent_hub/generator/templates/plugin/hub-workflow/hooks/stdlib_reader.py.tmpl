@@ -16,6 +16,9 @@ this reader falls back instead.
   to ``""``, ``project.name`` to the name of the directory holding the file (then ``hub``), and a
   repo without a non-empty string ``dir`` is dropped.
 - ``platform.version`` counts only as three ASCII numbers (``0.2.0``); anything else is ``None``.
+- ``platform.repository`` is the value as written when it is a string of at most 200 characters
+  with the model's pattern; else ``None``. Present but not that (``null`` and ``""`` included),
+  it also sets ``has_bad_repository``, which the hook reports instead of using the default.
 - A repo's ``default_branch`` is its effective value: its own when it is a string matching the
   model's branch pattern, else the ``project`` section's ``default_branch`` (it inherits).
 - Unknown keys and comment keys (``_`` first) are ignored. ``modules`` and ``doctor.rules`` keep
@@ -56,6 +59,9 @@ PREFIX_FROM_HUB = "hub.json"
 PREFIX_DERIVED = "derived"
 # ``[0-9]`` and ``fullmatch``: ``\d`` takes any Unicode digit and ``$`` a final newline.
 RELEASE_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+# The model's ``PlatformRepository`` pattern, for ``fullmatch``, rendered from agent-hub's core.
+PLATFORM_REPOSITORY = re.compile(r"@@{platform_repository_pattern}")
+PLATFORM_REPOSITORY_MAX_CHARS = 200
 # The model's ``BranchName`` pattern without ``^`` and ``$``, for ``fullmatch``. No separator
 # character is also a segment character, so ``re`` matches in linear time.
 BRANCH_NAME = re.compile(
@@ -71,9 +77,15 @@ GIT_KEYS = {"author_name": "user.name", "author_email": "user.email"}
 
 @dataclass(frozen=True)
 class PlatformSection:
-    """``platform``: the release the hub is pinned to, ``None`` when absent or malformed."""
+    """``platform``: the release the hub is pinned to, ``None`` when absent or malformed.
+
+    ``repository`` is the source as written, ``None`` when absent or bad; ``has_bad_repository``
+    tells a bad one from an absent one.
+    """
 
     version: str | None = None
+    repository: str | None = None
+    has_bad_repository: bool = False
 
 
 @dataclass(frozen=True)
@@ -156,7 +168,7 @@ def load_hub_file(path: str | os.PathLike[str]) -> HubFile:
     return HubFile(
         # ``bool`` is an ``int``; only a JSON integer is a schema version.
         schema_version=schema_version if type(schema_version) is int else None,
-        platform=PlatformSection(version=_version(_object(document.get("platform")))),
+        platform=_platform(_object(document.get("platform"))),
         project=ProjectSection(
             name=_text(project, "name", _directory_name(path)),
             hub_repo=_text(project, "hub_repo", ""),
@@ -345,6 +357,20 @@ def _team_keys(tracker: dict[str, object]) -> tuple[str, ...]:
         return teams
     team = _text(tracker, "team", "")
     return (team,) if team else ()
+
+
+def _platform(platform: dict[str, object]) -> PlatformSection:
+    version = _version(platform)
+    if "repository" not in platform:
+        return PlatformSection(version=version)
+    value = platform["repository"]
+    if (
+        isinstance(value, str)
+        and len(value) <= PLATFORM_REPOSITORY_MAX_CHARS
+        and _is_shaped(value, PLATFORM_REPOSITORY)
+    ):
+        return PlatformSection(version=version, repository=value)
+    return PlatformSection(version=version, has_bad_repository=True)
 
 
 def _version(platform: dict[str, object]) -> str | None:
