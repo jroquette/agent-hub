@@ -10,6 +10,10 @@ import re
 from itertools import accumulate
 from typing import Final
 
+from agent_hub.core.hub_config.platform_repository import (
+    DEFAULT_PLATFORM_REPOSITORY,
+    is_platform_repository,
+)
 from agent_hub.core.hub_config.problems import (
     NOT_AN_OBJECT_MESSAGE,
     ROOT_PATH,
@@ -18,10 +22,11 @@ from agent_hub.core.hub_config.problems import (
 )
 
 SUPPORTED_SCHEMA_VERSION: Final = 1
-# How a hub runs the release it is pinned to (ADR 0013); format it with ``version=``.
+# How a hub runs the release it is pinned to (ADR 0013); format it with ``repository=`` and
+# ``version=``. ``PINNED_RELEASE_COMMAND`` is the command of a hub that sets no repository.
+_RELEASE_COMMAND = "uvx --from {repository}@v{version}#subdirectory=packages/agent-hub hub"
 PINNED_RELEASE_COMMAND: Final = (
-    "uvx --from git+https://github.com/jroquette/agent-hub@v{version}"
-    "#subdirectory=packages/agent-hub hub"
+    f"uvx --from {DEFAULT_PLATFORM_REPOSITORY}@v{{version}}#subdirectory=packages/agent-hub hub"
 )
 # ASCII digits only; ``fullmatch``, because ``$`` also matches before a final newline.
 _RELEASE_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
@@ -43,11 +48,31 @@ def pinned_release(document: object) -> str | None:
     return _well_formed_release(platform.get("version"))
 
 
-def pinned_release_command(pinned: str) -> str | None:
-    """The command that runs the pinned release, or None when the pin is too long to echo."""
-    if len(pinned) > ECHO_LIMIT:
+def pinned_repository(document: object) -> str | None:
+    """The repository a parsed ``hub.json`` installs its release from, or None when it is bad.
+
+    Lenient, like ``pinned_release``: a document, ``platform`` or key that is absent or not an
+    object gives the default. A key present with a value outside the accepted form gives None,
+    so that value is never echoed; the model reports it once the pin matches.
+    """
+    if not isinstance(document, dict):
+        return DEFAULT_PLATFORM_REPOSITORY
+    platform = document.get("platform")
+    if not isinstance(platform, dict):
+        return DEFAULT_PLATFORM_REPOSITORY
+    return _platform_repository(platform)
+
+
+def pinned_release_command(
+    pinned: str, *, repository: str | None = DEFAULT_PLATFORM_REPOSITORY
+) -> str | None:
+    """The command that runs the pinned release from ``repository``.
+
+    None when the repository is bad (None) or the pin is too long to echo.
+    """
+    if repository is None or len(pinned) > ECHO_LIMIT:
         return None
-    return PINNED_RELEASE_COMMAND.format(version=pinned)
+    return _RELEASE_COMMAND.format(repository=repository, version=pinned)
 
 
 def find_version_problem(document: object, *, running_version: str) -> ConfigProblem | None:
@@ -83,7 +108,8 @@ def _pin_problem(platform: dict[str, object], *, running_version: str) -> Config
         return ConfigProblem(
             _VERSION_PATH,
             f"this hub is pinned to {cut_echo(pinned)} but this hub command is {running_version};"
-            f" run the pinned release{_pinned_command(pinned)}",
+            f" run the pinned release"
+            f"{_pinned_command(pinned, repository=_platform_repository(platform))}",
         )
     return None
 
@@ -116,9 +142,17 @@ def _well_formed_release(value: object) -> str | None:
     return None
 
 
-def _pinned_command(pinned: str) -> str:
-    """``: <the uvx command>`` for a pinned version short enough to print, else nothing."""
-    command = pinned_release_command(pinned)
+def _platform_repository(platform: dict[str, object]) -> str | None:
+    if "repository" not in platform:
+        return DEFAULT_PLATFORM_REPOSITORY
+    value = platform["repository"]
+    # A valid value holds no user, port, query or ``@ref``, so it may be echoed (the form).
+    return value if isinstance(value, str) and is_platform_repository(value) else None
+
+
+def _pinned_command(pinned: str, *, repository: str | None) -> str:
+    """``: <the uvx command>`` for a pin short enough to print from a good repository, else ""."""
+    command = pinned_release_command(pinned, repository=repository)
     return "" if command is None else f": {command}"
 
 
