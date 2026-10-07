@@ -14,6 +14,7 @@ The product and its phases are in [SPEC.md](../SPEC.md). Phase 1 is designed as 
 | [domain-model.md](domain-model.md) | the nine entities: identity, attributes, relations, phase (sketch) | modeling an entity in core; for Session, WorkflowRun or Learning read [event-derivations.md](event-derivations.md) too |
 | [event-derivations.md](event-derivations.md) | how Session, WorkflowRun and Learning are folded from events, and what events may hold (sketch) | a derived entity (with [domain-model.md](domain-model.md)), a projection or a view over events; a source adapter: its "Sources and privacy" part (redaction before append) and the SPEC's [canonical event](../SPEC.md#data-sources-and-event-model) |
 | [workflow-schema.md](workflow-schema.md) | the declarative workflow document (sketch, Phase 4) | workflow steps, gates or the executor |
+| [worktree-environment.md](worktree-environment.md) | what the repo's worktree setup and teardown scripts get: argv, cwd, the six `HUB_*` variables, the port slot, examples | writing or running a repo's worktree script, changing what `hub worktree` or `hub run` passes it |
 
 ## Rules for these files
 

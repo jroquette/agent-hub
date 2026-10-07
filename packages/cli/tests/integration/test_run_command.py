@@ -2617,6 +2617,19 @@ class TestPushOverrides:
         assert "GIT_CONFIG_COUNT" not in gate["env"]
 
 
+# The setup script's six task variables, listed literally (not the module's constant).
+SCRIPT_NAMES = (
+    "HUB_WORKTREE_NAME",
+    "HUB_WORKTREE_BRANCH",
+    "HUB_REPO_DIR",
+    "HUB_HUB_DIR",
+    "HUB_WORKTREE_SLOT",
+    "HUB_PORT_OFFSET",
+)
+SCRIPT_VARS_LOG = "setup-variables.txt"
+SCRIPT_ENV_LOG = "setup-env-dump.txt"
+
+
 @pytest.mark.usefixtures("with_key")
 class TestWorktreeEnvironments:
     def test_keeps_tokens_for_fetch_only_when_worktree_made(
@@ -2649,6 +2662,53 @@ class TestWorktreeEnvironments:
         assert "GH_TOKEN" not in setup
         assert GH_TOKEN_VALUE not in setup
         assert not marker.exists()
+
+    def test_passes_task_variables_without_tokens_when_setup_runs(
+        self,
+        logged_git: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """AGH-59: the setup script gets the task's six variables and no token."""
+        workspace = logged_git.workspace
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("GH_TOKEN", GH_TOKEN_VALUE)
+        monkeypatch.setenv("GITHUB_TOKEN", GITHUB_TOKEN_VALUE)
+        sentinels = (GH_TOKEN_VALUE, GITHUB_TOKEN_VALUE, synthetic_key())
+        names = (*SCRIPT_NAMES, "GH_TOKEN", "GITHUB_TOKEN", KEY_VARIABLE)
+        log = f'"$FAKE_RUN_LOGS/{SCRIPT_VARS_LOG}"'
+        lines = "".join(
+            f"printf '%s=%s\\n' {name} \"${{{name}-unset}}\" >> {log}\n" for name in names
+        )
+        script = f'#!/bin/sh\n{lines}export -p > "$FAKE_RUN_LOGS/{SCRIPT_ENV_LOG}"\n'.encode()
+        workspace.advance("demo-api", {"scripts/worktree-setup.sh": (script, 0o755)})
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        created = [call for call in logged_git.calls("gh") if call["argv"][:2] == ["pr", "create"]]
+        assert len(created) == 1
+        logged = (logged_git.logs / SCRIPT_VARS_LOG).read_text().splitlines()
+        assert logged == [
+            "HUB_WORKTREE_NAME=dem-1",
+            "HUB_WORKTREE_BRANCH=jdoe/dem-1",
+            f"HUB_REPO_DIR={os.path.realpath(workspace.ws / 'demo-api')}",
+            f"HUB_HUB_DIR={os.path.realpath(workspace.hub)}",
+            "HUB_WORKTREE_SLOT=44",
+            "HUB_PORT_OFFSET=4400",
+            "GH_TOKEN=unset",
+            "GITHUB_TOKEN=unset",
+            "LINEAR_API_KEY=unset",
+        ]
+        dumped = (logged_git.logs / SCRIPT_ENV_LOG).read_text()
+        assert [value for value in sentinels if value in dumped] == []
+        assert "HUB_PORT_OFFSET" in dumped
+        (fetch,) = git_calls(logged_git, "fetch")
+        assert "GH_TOKEN" in fetch["env"]
+        (add,) = git_calls(logged_git, "worktree")
+        assert not [name for name in TOKENS if name in add["env"]]
 
 
 @pytest.mark.usefixtures("with_key")

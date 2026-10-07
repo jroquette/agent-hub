@@ -35,7 +35,10 @@ is a hub bug: log it in `brain/_inbox/`.
 4. Code changes happen only in an isolated worktree (`make worktree NAME=<team>-<n>-<desc>`) created from a freshly
    fetched `origin/main`.
    A repo can ship executable `<repo>/scripts/worktree-setup.sh` and `<repo>/scripts/worktree-teardown.sh`, which
-   `hub worktree` runs with the worktree's path for the repo's own setup (env files, databases, ports).
+   `hub worktree` runs with the worktree's path for the repo's own setup (env files, databases, ports); they get
+   `HUB_WORKTREE_NAME`, `HUB_WORKTREE_BRANCH`, `HUB_REPO_DIR` and `HUB_HUB_DIR` (the repo's and the hub's main
+   checkouts), `HUB_WORKTREE_SLOT` and `HUB_PORT_OFFSET` (slot × 100, to add to the repo's ports; two tasks
+   can share a slot).
 5. The repo's gates (`hub.json` → `repos[].check_fast` while working, `repos[].check` before the PR) pass before any
    PR. Redirect the output to a file and check `$?`.
 
