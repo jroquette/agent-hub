@@ -4,10 +4,11 @@
 # repo-local in the hub and each repo), or, when hub.json names no author (each developer brings
 # their own), from HUB_AUTHOR_NAME/HUB_AUTHOR_EMAIL, repo-local only (never ~/.gitconfig), else a
 # WARN and no identity; checks access to the release pinned in hub.json
-# (platform.version) with git ls-remote on its tag; warms the uv cache with that release
-# (uvx … hub --version); then fetches the repos already beside the hub and clones the missing
-# ones. The repos and the release source are rendered by hub sync (re-run it after changing the
-# repos); the pin and the author are read from hub.json at every run, so a new pin needs no sync.
+# (platform.version, from platform.repository: absent, the platform's own) with git ls-remote on
+# its tag; warms the uv cache with that release (uvx … hub --version); then fetches the repos
+# already beside the hub and clones the missing ones. The repos and the default release source
+# are rendered by hub sync (re-run it after changing the repos); the pin, the repository and the
+# author are read from hub.json at every run, so a new pin or repository needs no sync.
 #
 # Environment setup script (the cloud environment's settings), one line:
 #     bash scripts/cloud-setup.sh
@@ -19,17 +20,17 @@
 #               disk, never printed. Not needed when the repos are attached to the session.
 #
 # Idempotent: a present repo is fetched, not cloned again. A repo that fails to fetch or clone is
-# a WARN, exit 0. Exit 1, one line naming the cause: no python3, no uv, an unreadable pin, no
-# access to the pinned tag (attach the repository or set GH_TOKEN), or a failed warm-up; no repo
-# is touched then. Bash 3.2 safe. Managed by hub sync.
+# a WARN, exit 0. Exit 1, one line naming the cause: no python3, no uv, an unreadable pin or
+# repository (never echoed; read before anything is written), no access to the pinned tag
+# (attach the repository, or set GH_TOKEN for github.com), or a failed warm-up; no repo is
+# touched then. Bash 3.2 safe. Managed by hub sync.
 set -euo pipefail
 
 repo_dirs='@@{repo_dirs}'
 repo_githubs='@@{repo_githubs}'
-# The pinned install source's prefix; the pin itself is read from hub.json below.
+# The default install source's prefix; the pin and platform.repository are read from hub.json
+# below.
 release_prefix='@@{platform_repository}@v'
-release_url=${release_prefix%@v}
-release_url=${release_url#git+}
 
 case $0 in
   */*) script_dir=${0%/*} ;;
@@ -53,8 +54,10 @@ command -v python3 >/dev/null 2>&1 || {
   exit 1
 }
 
-# platform.version of hub.json (X.Y.Z, else exit 1), or a project string: empty when absent, not
-# a string or holding a control character.
+# For platform.version, the release: <repository>@v<X.Y.Z>, with platform.repository when
+# present (else the default prefix); a bad pin or repository is exit 1 and one line that never
+# repeats the value. Else a project string: empty when absent, not a string or holding a
+# control character.
 hub_value() {
   python3 -I -S -c '
 import json, re, sys
@@ -69,14 +72,34 @@ value = part.get(key) if isinstance(part, dict) else None
 if sys.argv[2] == "platform.version":
     if not (isinstance(value, str) and re.fullmatch("[0-9]+[.][0-9]+[.][0-9]+", value)):
         sys.exit("cloud-setup: platform.version in hub.json must be X.Y.Z")
+    prefix = sys.argv[3]
+    if "repository" in part:
+        repository = part["repository"]
+        if not (
+            isinstance(repository, str)
+            and len(repository) <= 200
+            and re.fullmatch(r"@@{platform_repository_pattern}", repository)
+        ):
+            sys.exit("cloud-setup: platform.repository in hub.json must be @@{platform_repository_form}")
+        prefix = repository + "@v"
+    value = prefix + value
 elif not (isinstance(value, str) and re.fullmatch(r"[^\x00-\x1f\x7f]+", value)):
     value = ""
 print(value)
-' "$hub_dir/hub.json" "$1"
+' "$hub_dir/hub.json" "$1" "$release_prefix"
 }
 
-version=$(hub_value platform.version) || exit 1
-release_source="$release_prefix$version#subdirectory=packages/agent-hub"
+release=$(hub_value platform.version) || exit 1
+# A valid repository holds no "@", so the last "@v" starts the version.
+version=${release##*@v}
+release_source="$release#subdirectory=packages/agent-hub"
+release_url=${release%@v*}
+release_url=${release_url#git+}
+# The GH_TOKEN helper answers for github.com only: elsewhere, the hint would not help.
+access_hint="attach the repository to this session"
+case $release_url in
+  https://github.com/*) access_hint="$access_hint or set GH_TOKEN" ;;
+esac
 name=$(hub_value project.author_name)
 email=$(hub_value project.author_email)
 # An environment variable, by the same rule as a project string: empty when unset, empty, not
@@ -144,7 +167,7 @@ command -v uvx >/dev/null 2>&1 || {
 }
 # After the helper: with GH_TOKEN, git reaches a private release through it.
 git ls-remote --exit-code "$release_url" "refs/tags/v$version" >/dev/null 2>&1 || {
-  echo "cloud-setup: cannot read agent-hub v$version at $release_url: attach the repository to this session or set GH_TOKEN" >&2
+  echo "cloud-setup: cannot read agent-hub v$version at $release_url: $access_hint" >&2
   exit 1
 }
 uvx --from "$release_source" hub --version </dev/null >/dev/null || {

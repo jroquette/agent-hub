@@ -7,15 +7,18 @@ author → no identity; ``hub.json``'s author wins over ``HUB_AUTHOR_*``). ``Tes
 repo-local only, else one WARN and nothing written. ``TestSecrecy``: a synthetic ``GH_TOKEN``
 reaches git only through the credential helper and shows nowhere. ``TestAccess`` (criterion
 10.3, E11, Q-8): ``git ls-remote`` on the pinned tag, then one ``uvx`` warm-up, before any repo;
-each failure exits 1 in one line.
+each failure exits 1 in one line. ``TestPlatformRepository`` (AGH-49 AC-49.6): ``hub.json``'s
+``platform.repository`` is read with the pin, before any side effect; its URL is the one checked
+and warmed, a host other than github.com gets no GH_TOKEN hint, and a bad value exits 1 in one
+fixed line that never repeats it.
 
 The workspace, all under ``tmp_path`` and offline: ``ws/demo-hub`` is the ALL render (a git repo,
 ``hub.json`` pinned to ``VERSION``); ``ws/demo-api`` is a clone one commit behind its origin;
 ``demo-web`` exists only as ``origins/demo-web.git``; ``origins/agent-hub.git`` holds the tag
-``v<VERSION>``. ``HOME/.gitconfig`` maps ``https://github.com/acme/`` and the platform repository
-to those origins with ``insteadOf``. ``PATH`` holds only a test folder: the fake ``uv``/``uvx``,
-a ``git`` that logs its argv to the same log before running the real git, and a ``python3`` link
-to ``hook_python``.
+``v<VERSION>``. ``HOME/.gitconfig`` maps ``https://github.com/acme/``, the platform repository and
+the custom hub's repository to those origins with ``insteadOf``. ``PATH`` holds only a test
+folder: the fake ``uv``/``uvx``, a ``git`` that logs its argv to the same log before running the
+real git, and a ``python3`` link to ``hook_python``.
 """
 
 import json
@@ -29,12 +32,22 @@ from pathlib import Path
 import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.platform_repository import PLATFORM_REPOSITORY_FORM
 from agent_hub.core.testing.builders import a_hub_document, a_second_repo
+from agent_hub.core.testing.platform_repository_cases import (
+    CUSTOM_REPOSITORY,
+    REPOSITORY_CASES,
+    SECRET_PARTS,
+    RepositoryCase,
+)
 
 TIMEOUT = 60
 SCRIPT = "scripts/cloud-setup.sh"
 VERSION = "4.5.6"
 RELEASE_URL = "https://github.com/jroquette/agent-hub"
+# The custom hub's repository as git reads it, written out so a change to how the script builds
+# it fails here.
+CUSTOM_URL = "https://git.acme.test/tools/agent-hub"
 AUTHOR_NAME = "Jane Doe"
 AUTHOR_EMAIL = "jane@example.com"
 PRESENT = "demo-api"
@@ -143,10 +156,17 @@ class CloudWorkspace:
         )
 
 
-def a_pinned_document(version: str = VERSION) -> dict[str, object]:
-    """ALL's ``hub.json`` (the demo, ``demo-web``, the four modules), pinned to ``version``."""
+# ``a_pinned_document`` leaves ``platform.repository`` out unless a case passes one.
+ABSENT = object()
+
+
+def a_pinned_document(version: str = VERSION, *, repository: object = ABSENT) -> dict[str, object]:
+    """ALL's ``hub.json`` (the demo, ``demo-web``, the four modules), pinned to ``version`` (and
+    to ``repository``)."""
     document = a_hub_document()
     document["platform"]["version"] = version
+    if repository is not ABSENT:
+        document["platform"]["repository"] = repository
     document["repos"].append(a_second_repo())
     document["modules"] = {
         "bench": {},
@@ -209,7 +229,8 @@ def cloud_ws(
     ws.git("clone", "-q", str(ws.origins / f"{PRESENT}.git"), str(ws.workspace / PRESENT))
     (ws.home / ".gitconfig").write_text(
         f'[url "{ws.origins.as_uri()}/"]\n\tinsteadOf = https://github.com/acme/\n'
-        f'[url "{(ws.origins / "agent-hub.git").as_uri()}"]\n\tinsteadOf = {RELEASE_URL}\n',
+        f'[url "{(ws.origins / "agent-hub.git").as_uri()}"]\n\tinsteadOf = {RELEASE_URL}\n'
+        f'[url "{(ws.origins / "agent-hub.git").as_uri()}"]\n\tinsteadOf = {CUSTOM_URL}\n',
         encoding="utf-8",
     )
     git = ws.bin / "git"
@@ -595,3 +616,88 @@ class TestAccess:
         assert calls.count(warm_up_call()) == 1
         assert not any(call.startswith("git clone") for call in calls)
         assert not any(call.endswith("fetch --quiet origin") for call in calls)
+
+
+CUSTOM_SOURCE = f"{CUSTOM_REPOSITORY}@v{VERSION}#subdirectory=packages/agent-hub"
+BAD_REPOSITORY_LINE = (
+    f"cloud-setup: platform.repository in hub.json must be {PLATFORM_REPOSITORY_FORM}"
+)
+# Parts of the bad values that a message echoing them would show (E10): the credential's user,
+# password and token, a port, a query and a scheme.
+VALUE_PARTS = (*SECRET_PARTS, "8443", "ref=x", "git+ssh")
+BAD_CASES = [case for case in REPOSITORY_CASES if not case.is_valid]
+
+
+def case_name(case: RepositoryCase) -> str:
+    return case.name
+
+
+class TestPlatformRepository:
+    def test_checks_and_warms_custom_source_when_hub_sets_repository(
+        self, cloud_ws: CloudWorkspace
+    ) -> None:
+        cloud_ws.write_hub_json(a_pinned_document(repository=CUSTOM_REPOSITORY))
+
+        completed = cloud_ws.run()
+
+        assert completed.returncode == 0, completed.stderr
+        calls = cloud_ws.calls()
+        check = f"git ls-remote --exit-code {CUSTOM_URL} refs/tags/v{VERSION}"
+        warm_up = f"uvx --from {CUSTOM_SOURCE} hub --version"
+        assert [call for call in calls if call.startswith("git ls-remote")] == [check]
+        assert [call for call in calls if call.startswith(("uv ", "uvx "))] == [warm_up]
+        fetch = next(i for i, call in enumerate(calls) if call.endswith("fetch --quiet origin"))
+        assert calls.index(check) < calls.index(warm_up) < fetch
+        assert not any(RELEASE_URL in call for call in calls)
+
+    def test_omits_gh_token_hint_when_custom_host_unreachable(
+        self, cloud_ws: CloudWorkspace
+    ) -> None:
+        cloud_ws.write_hub_json(a_pinned_document(repository=CUSTOM_REPOSITORY))
+        cloud_ws.git("tag", "-d", f"v{VERSION}", cwd=cloud_ws.origins / "agent-hub.git")
+
+        completed = cloud_ws.run()
+
+        # The GH_TOKEN helper answers for github.com only: the hint would not help (D-cloud).
+        assert completed.returncode == 1
+        assert completed.stderr.splitlines() == [
+            f"cloud-setup: cannot read agent-hub v{VERSION} at {CUSTOM_URL}: "
+            "attach the repository to this session"
+        ]
+        assert not any(call.startswith(("uv ", "uvx ")) for call in cloud_ws.calls())
+
+    def test_keeps_gh_token_hint_when_custom_github_repository_unreachable(
+        self, cloud_ws: CloudWorkspace
+    ) -> None:
+        # Another org on github.com: the origins folder answers for it, without the tag.
+        cloud_ws.write_hub_json(
+            a_pinned_document(repository="git+https://github.com/acme/agent-hub")
+        )
+        cloud_ws.git("tag", "-d", f"v{VERSION}", cwd=cloud_ws.origins / "agent-hub.git")
+
+        completed = cloud_ws.run()
+
+        assert completed.returncode == 1
+        assert completed.stderr.splitlines() == [
+            f"cloud-setup: cannot read agent-hub v{VERSION} at https://github.com/acme/agent-hub: "
+            "attach the repository to this session or set GH_TOKEN"
+        ]
+
+    @pytest.mark.parametrize("case", BAD_CASES, ids=case_name)
+    def test_exits_one_before_git_when_repository_bad(
+        self, case: RepositoryCase, cloud_ws: CloudWorkspace
+    ) -> None:
+        cloud_ws.write_hub_json(a_pinned_document(repository=case.value))
+
+        completed = cloud_ws.run(env={"GH_TOKEN": TOKEN})
+
+        assert completed.returncode == 1
+        # One fixed line: the key and the accepted form, never the value (D-bad, E10).
+        assert completed.stderr == f"{BAD_REPOSITORY_LINE}\n"
+        assert completed.stdout == ""
+        # Before any side effect: no identity, no helper, no ls-remote, no warm-up.
+        assert cloud_ws.calls() == []
+        assert cloud_ws.config("--global", "--get-regexp", "^user[.]") == []
+        assert cloud_ws.config("--global", "--get-all", HELPER_KEY) == []
+        for part in VALUE_PARTS:
+            assert part not in completed.stderr + completed.stdout, part
