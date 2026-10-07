@@ -286,6 +286,12 @@
           "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
           "title": "Version",
           "type": "string"
+        },
+        "repository": {
+          "description": "The platform's git source: the repository root as git+https://<host>/<path>, at most 200 characters. The hub runs <repository>@v<platform.version>#subdirectory=packages/agent-hub. Absent: the agent-hub release repository (docs/design/project-config.md).",
+          "maxLength": 200,
+          "pattern": "^git\\+https://[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*(?:/[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*)+$",
+          "type": "string"
         }
       },
       "required": [
