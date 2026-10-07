@@ -1368,6 +1368,124 @@ def test_names_hub_commands_when_kickoff_or_feature_rendered(
     assert set(named) <= set(targets), named
 
 
+# AGH-23 (AC-23.1-23.3): superpowers is optional, so every rendered base plugin line that names
+# it also carries its fallback, marked by the word `otherwise` on the same physical line.
+SUPERPOWERS_CONDITION = "if superpowers is enabled"
+SUPERPOWERS_SKILL_FILES = {
+    "plugin/hub-workflow/skills/create-plan/SKILL.md",
+    "plugin/hub-workflow/skills/feature/SKILL.md",
+}
+FEATURE_SUPERPOWERS_SKILLS = (
+    "brainstorming",
+    "subagent-driven-development",
+    "test-driven-development",
+    "finishing-a-development-branch",
+)
+CREATE_PLAN_SUPERPOWERS_LINE = (
+    "Adapted from humanlayer `create_plan` (Apache-2.0, humanlayer Authors, commit 99abe67349)."
+    " If superpowers is enabled, its `writing-plans` complements this skill;"
+    " otherwise this skill stands alone."
+)
+
+
+def is_workflow_markdown(path: str) -> bool:
+    return path.startswith("plugin/hub-workflow/") and path.endswith(".md")
+
+
+def superpowers_lines(text: str) -> list[str]:
+    """The lines of ``text`` that name superpowers, in any case."""
+    return [line for line in text.splitlines() if "superpowers" in line.lower()]
+
+
+def missing_fallbacks(files: Mapping[str, bytes]) -> list[str]:
+    """Each base plugin markdown line that names superpowers without `otherwise`, in path order."""
+    return [
+        line
+        for path, content in sorted(files.items())
+        if is_workflow_markdown(path)
+        for line in superpowers_lines(content.decode("utf-8"))
+        if "otherwise" not in line.lower()
+    ]
+
+
+def test_flags_superpowers_line_without_fallback_when_fixture_rendered(
+    demo_config: HubConfig, fixture_templates: Path
+) -> None:
+    text = (
+        "Use superpowers `x`.\n"
+        "If Superpowers is enabled, use `y`;\n"
+        "otherwise do z.\n"
+        "If superpowers is enabled, use `w`; otherwise do v.\n"
+    )
+    probe = a_fixture_entry(
+        fixture_templates,
+        "plugin/hub-workflow/skills/probe/SKILL.md",
+        text,
+        source_name="probe.tmpl",
+    )
+
+    rendered = render_entries(demo_config, [probe])
+
+    files = {file.path: file.content for file in rendered.files}
+    assert set(files) == {"plugin/hub-workflow/skills/probe/SKILL.md"}
+    # No marker; the marker on the next line only; a capital S.
+    assert missing_fallbacks(files) == [
+        "Use superpowers `x`.",
+        "If Superpowers is enabled, use `y`;",
+    ]
+
+
+def test_gives_superpowers_fallback_when_plugin_files_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    files = {path: file.content for path, file in demo_render.items()}
+    scanned = {path for path in files if is_workflow_markdown(path)}
+    naming = {path for path in scanned if superpowers_lines(files[path].decode("utf-8"))}
+
+    # The scan reads every base agent and skill, so a renamed file cannot drop out of it.
+    assert {f"plugin/hub-workflow/agents/{name}.md" for name in BASE_AGENTS} <= scanned
+    assert {f"plugin/hub-workflow/skills/{name}/SKILL.md" for name in BASE_SKILLS} <= scanned
+    assert naming == SUPERPOWERS_SKILL_FILES
+    assert missing_fallbacks(files) == []
+
+
+def test_names_superpowers_steps_when_feature_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    text = skill_text(demo_render, "feature")
+    lines = superpowers_lines(text)
+    [spec] = [line for line in lines if line.startswith("2. ")]
+    [implement] = [line for line in lines if line.startswith("6. ")]
+    [finish] = [line for line in lines if "**Finish**" in line]
+
+    assert len(lines) == 3
+    for line in lines:
+        assert SUPERPOWERS_CONDITION in line, line
+        assert line.index(SUPERPOWERS_CONDITION) < line.index("otherwise"), line
+    for name in FEATURE_SUPERPOWERS_SKILLS:
+        assert text.count(f"`{name}`") == 1, name
+    assert "`brainstorming`" in spec
+    assert "`subagent-driven-development`" in implement
+    assert "`test-driven-development`" in implement
+    assert "`finishing-a-development-branch`" in finish
+    # The rules shared with a hub that has superpowers stay outside the condition (plan E5).
+    for shared in ("one question at a time", "2–3 approaches"):
+        assert spec.index(shared) < spec.index(SUPERPOWERS_CONDITION), shared
+    for shared in ("fresh subagent", "failing test first"):
+        assert implement.index(shared) < implement.index(SUPERPOWERS_CONDITION), shared
+    for shared in ("branch_prefix", "no AI co-author trailer", 'no "Generated with"'):
+        assert finish.index("Either way") < finish.index(shared), shared
+    assert finish.index("otherwise") < finish.index("Either way")
+
+
+def test_names_superpowers_line_when_create_plan_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    text = skill_text(demo_render, "create-plan")
+
+    assert superpowers_lines(text) == [CREATE_PLAN_SUPERPOWERS_LINE]
+
+
 # AGH-16 inventory KO1, KO3: before any commit, kickoff checks the session's git identity against
 # hub.json and names the branch to work on; the cloud-setup sentence (KO2) stays a project rule.
 def test_checks_git_identity_when_kickoff_skill_rendered(
