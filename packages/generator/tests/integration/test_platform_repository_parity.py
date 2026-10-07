@@ -7,7 +7,8 @@ Five readers give one verdict per case, accepted or rejected, and each must equa
 from one demo render, on ``hook_python`` (this interpreter and a real 3.9): the hooks' stdlib
 reader in one child over every case; the ``hub`` shim, cloud setup and the CI step each with a
 ``python3`` link to it first on ``PATH``, since their one-liners are Python that no linter sees.
-The shim: accepted when it calls the fake ``uvx`` and exits 0, rejected on its fixed line. Cloud
+The shim: accepted when it exits 0 and the fake ``uvx`` log holds exactly its two calls from
+``<value>@v<version>#subdirectory=packages/agent-hub``, rejected on its fixed line. Cloud
 setup, with no ``GH_TOKEN``, no author and no ``uvx``: accepted when it gets as far as "uv is not
 installed", rejected on its fixed line, so no git is needed. The CI step, with a token: accepted
 on exit 0 (the five lines for a ``github.com`` URL, else the notice and nothing written; E19),
@@ -158,12 +159,16 @@ def reader_verdicts(
     return verdicts
 
 
-def shim_verdict(hub: Path, *, cwd: Path, bin_dir: Path, log: Path) -> str:
+def shim_verdict(hub: Path, value: object, *, cwd: Path, bin_dir: Path, log: Path) -> str:
+    """Accepted only when both ``uvx`` calls install from the case's own repository."""
     log.unlink(missing_ok=True)
     argv = [which("sh"), str(hub / "hub"), "brief"]
     completed = run_tool(argv, cwd=cwd, env={"PATH": str(bin_dir)})
-    called = log.exists() and log.read_text(encoding="utf-8") != ""
-    if completed.returncode == 0 and called:
+    logged = log.read_text(encoding="utf-8") if log.exists() else ""
+    called = logged != ""
+    source = f"{value}@v{VERSION}#subdirectory=packages/agent-hub"
+    installs = f"uvx --from {source} hub --version\nuvx --from {source} hub brief\n"
+    if completed.returncode == 0 and logged == installs:
         return ACCEPTED
     if not called and (completed.returncode, completed.stdout, completed.stderr) == (
         1,
@@ -171,7 +176,7 @@ def shim_verdict(hub: Path, *, cwd: Path, bin_dir: Path, log: Path) -> str:
         SHIM_LINE,
     ):
         return REJECTED
-    return outcome(completed)
+    return f"{outcome(completed)} {logged!r}"
 
 
 def cloud_verdict(hub: Path, *, cwd: Path, bin_dir: Path, home: Path) -> str:
@@ -252,7 +257,7 @@ def test_accepts_same_values_when_readers_check_cases(
         (case_hub / "hub.json").write_text(text, encoding="utf-8")
         verdicts["model"][case.name] = model_verdict(document)
         verdicts["shim"][case.name] = shim_verdict(
-            case_hub, cwd=elsewhere, bin_dir=fake_uv_bin, log=fake_uv_bin / "uvx.log"
+            case_hub, case.value, cwd=elsewhere, bin_dir=fake_uv_bin, log=fake_uv_bin / "uvx.log"
         )
         verdicts["cloud setup"][case.name] = cloud_verdict(
             case_hub, cwd=elsewhere, bin_dir=python_only, home=home
