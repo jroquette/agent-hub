@@ -30,7 +30,8 @@ PINNED_RELEASE_COMMAND: Final = (
 )
 # ASCII digits only; ``fullmatch``, because ``$`` also matches before a final newline.
 _RELEASE_VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
-# The most characters of a value from the file that a message repeats.
+# The most characters of a value from the file that a message repeats. A valid
+# ``platform.repository`` is exempt: its form caps it at ``MAX_PLATFORM_REPOSITORY_CHARS``.
 ECHO_LIMIT: Final = 80
 # One character of escaped text, an escape sequence (``\n``, ``é``) counting as one.
 _ESCAPED_CHARACTER = re.compile(r"\\(?:u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|U[0-9a-fA-F]{8}|.)|.", re.S)
@@ -51,9 +52,10 @@ def pinned_release(document: object) -> str | None:
 def pinned_repository(document: object) -> str | None:
     """The repository a parsed ``hub.json`` installs its release from, or None when it is bad.
 
-    Lenient, like ``pinned_release``: a document, ``platform`` or key that is absent or not an
-    object gives the default. A key present with a value outside the accepted form gives None,
-    so that value is never echoed; the model reports it once the pin matches.
+    Lenient, like ``pinned_release``: the document or ``platform`` absent or not an object, or
+    the key absent, gives the default; the key present and invalid (any type, ``null``
+    included) gives None, so that value is never echoed (the model reports it once the pin
+    matches); else the value as written.
     """
     if not isinstance(document, dict):
         return DEFAULT_PLATFORM_REPOSITORY
