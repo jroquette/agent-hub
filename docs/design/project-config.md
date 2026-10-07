@@ -70,8 +70,8 @@ no `_` separator (hooks match branches with Python's `re`: exponential backtrack
   `check_fast` and `check` are read at run time, never rendered.
 - `platform.version` matches `^[0-9]+\.[0-9]+\.[0-9]+$` in the CLI and the hooks' stdlib reader (a bad value counts as
   absent). `platform.repository` matches `^git\+https://H(?:/S)+$` (`H` as `guard.deny_hosts`), ≤ 200 characters, as
-  written: no credential, port, query, fragment, `@ref` or trailing `/`. Shims, SessionStart, cloud setup and CI read
-  both at run time, never baked in; a bad repository stops each reader (SessionStart: the mini brief), never echoed.
+  written: no credential, port, query, fragment, `@ref` or trailing `/`. Shims, SessionStart, cloud setup and the CI
+  credential step read it at run time, never baked in; a bad one stops each (SessionStart: mini brief), never echoed.
 - Guard paths: relative to the workspace (the directory holding the hub and its repos), normalized, `/`-separated, not
   absolute; segments are printable ASCII without space or `\`, never `.` or `..`. The first is a `repos[].dir` or `@hub`
   (the hub, whatever its checkout is called; `@` cannot start a `dir`); `guard.deny_paths` may also start with another
