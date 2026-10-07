@@ -2016,9 +2016,10 @@ def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubCon
 # AGH-65 AC-65.7: sha256 of the files as rendered on main (4346e52) before the identity keys became
 # optional; a hub that sets them in hub.json keeps these bytes.
 # AGH-59: re-pinned when rule 4 named the script variables.
-DEMO_AGENTS_SHA256 = "fd0949e3a6f09c58089cbb5f4fcfcb86d9859128b6c5ea4c9827cec65f9ce655"
+# AGH-23: re-pinned when "What lives here" gained the superpowers bullet.
+DEMO_AGENTS_SHA256 = "613e9de14aa448d6807f30eda2cd219a87110cb58f52df4a93e38eae87df505d"
 ALL_MODULES_SHA256 = {
-    "AGENTS.md": "e641cdafe7fe9fc7f098c119eea03b34d48a2fd2fdc65239ed92fa25df5fd8ea",
+    "AGENTS.md": "6634be8f3496922df2676c518374f69140d3053a2b905cc25a4cffe3a7813c60",
     ".claude-plugin/marketplace.json": (
         "f7324911e70a0f3255274721636821a9b65a5716f04c5f6e3e470e74dc7b8ac7"
     ),
@@ -3229,6 +3230,73 @@ def test_forbids_marketplace_plugin_when_agents_rendered(demo_config: HubConfig)
     assert "`.claude/settings.json`" in bullets[0]
     assert "`hub-workflow`" in bullets[0]
     assert "twice" in bullets[0]
+
+
+# AGH-23 (D-enable): superpowers is optional; one "What lives here" bullet, right after the
+# double-wiring note, says how a project enables it.
+SUPERPOWERS_ENABLE_PHRASES = (
+    "`/feature`",
+    "`/create-plan`",
+    "otherwise",
+    '`"enabledPlugins": {"superpowers@claude-plugins-official": true}`',
+    "`.claude/settings.project.json`",
+    "`hub sync`",
+    "`claude plugin install superpowers@claude-plugins-official --scope project`",
+    "Cloud sessions do not install repo-declared plugins",
+    "claude.ai account",
+)
+ENABLE_LINE_JSON = re.compile(r'`("enabledPlugins": \{[^`]+\})`')
+
+
+def what_lives_here_bullets(agents: str) -> list[str]:
+    """The "What lives here" bullets of a rendered ``AGENTS.md``, whitespace-normalized."""
+    section = agents.split("\n## What lives here\n", 1)[1].split("\n## ", 1)[0]
+    return [" ".join(part.split()) for part in re.split(r"\n(?=- )", section) if part.strip()]
+
+
+@pytest.mark.parametrize(
+    "document",
+    [builders.a_hub_document, builders.a_two_team_document, builders.a_conventions_document],
+    ids=["demo", "two_teams", "conventions"],
+)
+def test_names_superpowers_enable_line_when_agents_rendered(
+    document: Callable[[], dict[str, Any]],
+) -> None:
+    config = HubConfig.model_validate(document())
+    first = {file.path: file.content for file in render_hub(config).files}["AGENTS.md"]
+    second = {file.path: file.content for file in render_hub(config).files}["AGENTS.md"]
+    agents = first.decode("utf-8")
+    bullets = what_lives_here_bullets(agents)
+    wiring = [index for index, bullet in enumerate(bullets) if DOUBLE_WIRING_RULE in bullet]
+    named = [index for index, bullet in enumerate(bullets) if "superpowers" in bullet.lower()]
+
+    assert first == second
+    assert [line for line in agents.splitlines() if len(line) > 120] == []
+    assert len(wiring) == 1, bullets
+    assert named == [wiring[0] + 1], bullets
+    assert bullets[named[0] + 1].startswith("- Repos, checked out next to this hub:"), bullets
+    bullet = bullets[named[0]]
+    for phrase in SUPERPOWERS_ENABLE_PHRASES:
+        assert phrase in bullet, phrase
+    assert "make sync" not in bullet
+    assert "extraKnownMarketplaces" not in bullet
+
+
+def test_merges_superpowers_enable_line_when_project_settings_set(demo_config: HubConfig) -> None:
+    bullets = what_lives_here_bullets(text_of(demo_config, "AGENTS.md"))
+    spans = [match.group(1) for bullet in bullets for match in ENABLE_LINE_JSON.finditer(bullet)]
+    assert len(spans) == 1, bullets
+    sibling = ("{" + spans[0] + "}").encode()
+    extensions = ExtensionInputs(
+        project_json={".claude/settings.project.json": sibling}, agents=(), skills=()
+    )
+    plain = json.loads(text_of(demo_config, ".claude/settings.json"))
+
+    rendered = {file.path: file for file in render_hub(demo_config, extensions).files}
+
+    value = json.loads(rendered[".claude/settings.json"].content)
+    assert value.pop("enabledPlugins") == {"superpowers@claude-plugins-official": True}
+    assert value == plain
 
 
 def test_points_to_agents_for_managed_files_when_readme_rendered(demo_config: HubConfig) -> None:
