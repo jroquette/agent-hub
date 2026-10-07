@@ -27,11 +27,17 @@ from agent_hub.cli.main import app
 from agent_hub.core.doctor.finding import Read, Rule
 from agent_hub.core.doctor.registry import REGISTRY
 from agent_hub.core.hub_config.doctor_rules import Severity
+from agent_hub.core.hub_config.platform_repository import PLATFORM_REPOSITORY_MESSAGE
 from agent_hub.core.json_form import dump_json
 from agent_hub.core.testing.builders import (
     a_conventions_document,
     a_second_repo,
     a_two_team_document,
+)
+from agent_hub.core.testing.platform_repository_cases import (
+    CREDENTIAL_VALUE,
+    CUSTOM_REPOSITORY,
+    SECRET_PARTS,
 )
 from agent_hub.generator import render_hub as render_hub_module
 
@@ -415,6 +421,32 @@ def test_reports_branch_pattern_problem_when_issue_placeholder_missing(
         schema_line("repos[0].conventions.branch: a branch needs {ISSUE} or {issue_lower}"),
         ONE_ERROR,
     ]
+
+
+def test_passes_config_schema_when_hub_sets_platform_repository(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["platform"]["repository"] = CUSTOM_REPOSITORY
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=0)
+
+    assert lines == [CLEAN]
+
+
+def test_reports_platform_repository_without_value_when_credential_given(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["platform"]["repository"] = CREDENTIAL_VALUE
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    result = run_doctor(demo_hub, "--only", "config.schema")
+
+    assert lines_of(result, exit_code=1) == [
+        schema_line(f"platform.repository: {PLATFORM_REPOSITORY_MESSAGE}"),
+        ONE_ERROR,
+    ]
+    assert [part for part in SECRET_PARTS if part in result.output] == []
 
 
 CONTRACT_SYNC = {"source": "demo-api", "target": "demo-web"}

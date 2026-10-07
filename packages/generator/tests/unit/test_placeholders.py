@@ -5,6 +5,11 @@ import pytest
 
 from agent_hub.core.hub_config.conventions import MAX_PATTERN_CHARS
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.platform_repository import (
+    DEFAULT_PLATFORM_REPOSITORY,
+    PLATFORM_REPOSITORY_FORM,
+    PLATFORM_REPOSITORY_PATTERN,
+)
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
 from agent_hub.core.runner.title_pattern import TitleParts, render_title
 from agent_hub.core.testing.builders import (
@@ -13,6 +18,7 @@ from agent_hub.core.testing.builders import (
     a_second_repo,
     a_two_team_document,
 )
+from agent_hub.core.testing.platform_repository_cases import CUSTOM_REPOSITORY
 from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_mapping
 
 # AC-3.9: the Rendered values of project-config.md, the platform repository (erratum E3), the
@@ -22,6 +28,7 @@ from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_m
 # run time or quoted per format, never placeholders; author_email is per developer and no template
 # names it (AGH-65). The team mentions of AGENTS.md and the plugin name every tracker team (AGH-56).
 # The branch rule, kickoff's branch and the Conventions block show the conventions (AGH-57).
+# The runtime readers check platform.repository against core's pattern and name its form (AGH-49).
 RENDERED_KEYS = {
     "project_name",
     "project_hub_repo",
@@ -37,6 +44,8 @@ RENDERED_KEYS = {
     "repo_githubs",
     "guard_deny_hosts",
     "platform_repository",
+    "platform_repository_pattern",
+    "platform_repository_form",
     "module_includes",
     "module_files",
     "module_seeded_files",
@@ -90,6 +99,8 @@ def test_takes_values_from_model_when_demo_mapped(demo_config: HubConfig) -> Non
         "repo_githubs": "acme/demo-api",
         "guard_deny_hosts": "",
         "platform_repository": PLATFORM_REPOSITORY,
+        "platform_repository_pattern": PLATFORM_REPOSITORY_PATTERN,
+        "platform_repository_form": PLATFORM_REPOSITORY_FORM,
         "module_includes": "include mk/bench.mk\ninclude mk/cloud.mk\n",
         "module_files": (
             ",\n  and each selected module's files (`mk/<id>.mk`, `scripts/cloud-setup.sh`)"
@@ -219,11 +230,32 @@ def test_matches_core_release_command_when_source_formatted() -> None:
     assert PINNED_RELEASE_COMMAND.format(version="1.2.3") == expected
 
 
-def test_renders_no_run_time_value_when_variant_mapped(variant_config: HubConfig) -> None:
-    values = substitution_mapping(variant_config).values()
+def test_takes_platform_values_from_core_when_mapped(demo_config: HubConfig) -> None:
+    mapping = substitution_mapping(demo_config)
 
-    for never_rendered in ("sentinel-fast-q7", "sentinel-full-q7", "9.8.7", "Sentinel Author Q7"):
-        assert not any(never_rendered in value for value in values)
+    # The same objects, not equal copies: core holds the one default, pattern and form (AGH-49).
+    assert PLATFORM_REPOSITORY is DEFAULT_PLATFORM_REPOSITORY
+    assert mapping["platform_repository_pattern"] is PLATFORM_REPOSITORY_PATTERN
+    assert mapping["platform_repository_form"] is PLATFORM_REPOSITORY_FORM
+
+
+def test_renders_no_run_time_value_when_variant_mapped(variant_config: HubConfig) -> None:
+    document = variant_config.model_dump(mode="json", by_alias=True, exclude_none=True)
+    document["platform"]["repository"] = CUSTOM_REPOSITORY
+    custom = HubConfig.model_validate(document)
+
+    # platform.repository is read at run time by the hub's readers, never rendered (AGH-49).
+    for config in (variant_config, custom):
+        values = substitution_mapping(config).values()
+        for never_rendered in (
+            "sentinel-fast-q7",
+            "sentinel-full-q7",
+            "9.8.7",
+            "Sentinel Author Q7",
+            CUSTOM_REPOSITORY,
+            "git.acme.test",
+        ):
+            assert not any(never_rendered in value for value in values)
 
 
 def test_renders_prefix_placeholder_when_hub_sets_no_prefix() -> None:

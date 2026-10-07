@@ -32,6 +32,7 @@ from agent_hub.cli.sync_report import CONFLICT_WAY_OUT
 from agent_hub.core.hub_files.hub_lock import ADOPT_POINTER
 from agent_hub.core.json_form import dump_json
 from agent_hub.core.testing.builders import a_second_repo
+from agent_hub.core.testing.platform_repository_cases import CUSTOM_REPOSITORY
 
 # The conftest's tree digest and in-process sync (tests cannot import a conftest in importlib
 # mode).
@@ -165,6 +166,21 @@ def test_reports_pin_only_when_pin_and_schema_differ(
     assert lines == [
         f"hub.json: platform.version: this hub is pinned to 0.0.1 but this hub command is"
         f" {VERSION}; run the pinned release: {PINNED_COMMAND}"
+    ]
+
+
+def test_names_custom_source_when_pin_differs_and_hub_sets_repository(
+    tmp_path: Path, demo_document: dict[str, Any], run_sync: SyncRunner
+) -> None:
+    demo_document["platform"] = {"version": "0.0.1", "repository": CUSTOM_REPOSITORY}
+    root = a_hub(tmp_path, demo_document, lock=None)
+
+    lines = assert_load_failed(run_sync(root))
+
+    assert lines == [
+        f"hub.json: platform.version: this hub is pinned to 0.0.1 but this hub command is"
+        f" {VERSION}; run the pinned release: uvx --from"
+        " git+https://git.acme.test/tools/agent-hub@v0.0.1#subdirectory=packages/agent-hub hub"
     ]
 
 

@@ -30,7 +30,10 @@ jobs:
       # both install the pinned release), never in a URL in a file. insteadOf is a prefix match
       # and the longest one wins: the second pair maps this hub's own URL to itself, so the token
       # never goes to the hub. A token outside GitHub's [A-Za-z0-9_] is refused before anything is
-      # written, so it cannot add lines to the job's environment.
+      # written, so it cannot add lines to the job's environment. The platform repository is read
+      # from hub.json (platform.repository, absent: the default); the token goes to github.com
+      # only, so a repository on another host gets no mapping, and a bad value (never echoed)
+      # stops the step.
       - name: Platform read credential
         env:
           TOKEN: ${{ secrets.AGENT_HUB_READ_TOKEN }}
@@ -40,7 +43,32 @@ jobs:
             *[!A-Za-z0-9_]*) echo "AGENT_HUB_READ_TOKEN: unexpected characters" >&2; exit 1 ;;
           esac
           release="@@{platform_repository}@v"
+          release=$(python3 -I -S -c '
+          import json, re, sys
+          try:
+              with open("hub.json", encoding="utf-8") as stream:
+                  document = json.load(stream)
+          except (OSError, ValueError, RecursionError):  # RecursionError: nesting too deep
+              sys.exit("Platform read credential: cannot read hub.json as JSON")
+          platform = document.get("platform") if isinstance(document, dict) else None
+          prefix = sys.argv[1]
+          if isinstance(platform, dict) and "repository" in platform:
+              repository = platform["repository"]
+              if not (
+                  isinstance(repository, str)
+                  and len(repository) <= 200
+                  and re.fullmatch(r"@@{platform_repository_pattern}", repository)
+              ):
+                  sys.exit("Platform read credential: platform.repository in hub.json must be @@{platform_repository_form}")
+              prefix = repository + "@v"
+          print(prefix)
+          ' "$release") || exit 1
+          case $release in
+            git+https://github.com/*) ;;
+            *) echo "Platform read credential: platform.repository is not on https://github.com/ (exact, lowercase); AGENT_HUB_READ_TOKEN is not used"; exit 0 ;;
+          esac
           url="${release%@v}"
+          # insteadOf is a prefix match: the token reaches every github.com URL that starts with this one.
           url="${url#git+}"
           hub="https://github.com/@@{project_hub_repo}"
           {

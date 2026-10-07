@@ -24,7 +24,12 @@ from agent_hub.core.hub_config.document_check import check_hub_document
 from agent_hub.core.hub_config.local_config import LOCAL_FILE, LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ROOT_PATH, ConfigProblem
-from agent_hub.core.hub_config.versions import cut_echo, pinned_release, pinned_release_command
+from agent_hub.core.hub_config.versions import (
+    cut_echo,
+    pinned_release,
+    pinned_release_command,
+    pinned_repository,
+)
 from agent_hub.core.json_form import InvalidJsonError, load_json_bytes
 
 CONFIG_PATH: Final = "hub.json"
@@ -46,9 +51,8 @@ def config_state(
         return ConfigFailure(problems=(ConfigProblem(ROOT_PATH, error.message),), pin=None)
     pinned = pinned_release(document)
     if pinned is not None and pinned != running_version:
-        mismatch = PinMismatch(
-            pinned=pinned, running=running_version, command=pinned_release_command(pinned)
-        )
+        command = pinned_release_command(pinned, repository=pinned_repository(document))
+        mismatch = PinMismatch(pinned=pinned, running=running_version, command=command)
         return ConfigFailure(problems=(), pin=mismatch)
     checked = check_hub_document(document, running_version=running_version)
     if isinstance(checked, HubConfig):
