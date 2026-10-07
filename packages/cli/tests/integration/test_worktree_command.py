@@ -1338,7 +1338,7 @@ class TestScriptEnvironment:
             },
         )
         (demo_workspace.ws / "demo-api" / ".env").write_bytes(
-            b"API_PORT=8000\nWEB_PORT=5173\nNAME=demo\n"
+            b"API_PORT=8000\nCOMPOSE_PROJECT_NAME=old\nWEB_PORT=5173\nNAME=demo\n"
         )
         bin_dir, docker_log = tmp_path / "docker-bin", tmp_path / "docker.log"
         bin_dir.mkdir()
@@ -1360,4 +1360,43 @@ class TestScriptEnvironment:
         )
         assert removed.exit_code == 0, removed.output
         assert docker_log.read_text() == "compose -p demo-api-dem-7-x down\n"
+        assert not worktree.exists()
+        assert [line for line in copied.splitlines() if "COMPOSE_PROJECT_NAME" in line] == [
+            "COMPOSE_PROJECT_NAME=demo-api-dem-7-x"
+        ]
+
+    def test_skips_env_and_docker_when_documented_scripts_run_without_them(
+        self, demo_workspace: Workspace, run_command: CommandRunner, tmp_path: Path
+    ) -> None:
+        """The design doc's examples with no ``.env`` in the main checkout and no ``docker`` on
+        ``PATH``: setup writes only the compose project name, and teardown exits 0 so the worktree
+        is removed."""
+        setup, teardown = (script.encode() for script in documented_scripts())
+        demo_workspace.advance(
+            "demo-api",
+            {
+                SETUP: (setup, EXECUTABLE),
+                TEARDOWN: (teardown, EXECUTABLE),
+                ".gitignore": (b".env\n", PLAIN),
+            },
+        )
+        bin_dir = tmp_path / "no-docker-bin"
+        bin_dir.mkdir()
+        for tool in ("git", "basename"):
+            found = shutil.which(tool)
+            assert found is not None, tool
+            (bin_dir / tool).symlink_to(found)
+        env = {"PATH": str(bin_dir)}
+        worktree = demo_workspace.worktree("demo-api", NAME)
+
+        created = run_command(demo_workspace.hub, "worktree", NAME, "--only", "demo-api", env=env)
+        assert created.exit_code == 0, created.output
+        copied = (worktree / ".env").read_text()
+        removed = run_command(
+            demo_workspace.hub, "worktree", "--remove", NAME, "--only", "demo-api", env=env
+        )
+
+        assert not (demo_workspace.ws / "demo-api" / ".env").exists()
+        assert copied == "COMPOSE_PROJECT_NAME=demo-api-dem-7-x\n"
+        assert removed.exit_code == 0, removed.output
         assert not worktree.exists()

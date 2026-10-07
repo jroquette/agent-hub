@@ -20,7 +20,8 @@ it serves, where the main checkout and the hub are, and which ports to use. The 
   one with modified or untracked files is refused before the teardown runs. `hub run` never removes a worktree.
 - A script runs only when it is an executable regular file in the new worktree (the repo's committed copy); otherwise
   it is skipped without a word. Its argv is `[<worktree>]` (`$1`), its cwd is the worktree, it has no timeout and runs
-  in the caller's process group (Ctrl-C reaches it), and each line it prints is shown as `  <repo>: <line>`.
+  in the caller's process group (Ctrl-C reaches it). Each line it prints on stdout is shown as `  <repo>: <line>`;
+  its stderr passes through unprefixed.
 - A setup that fails (non-zero exit, a signal, or it cannot start) stops the command with exit 1 and keeps the
   worktree, with a hint to run the script again or remove the worktree. A failed teardown removes nothing.
 
@@ -58,7 +59,9 @@ are POSIX `sh` and name the compose project `<repo>-<name>`. **The repo's `.giti
 would otherwise be an untracked file, and `--remove` refuses a dirty worktree before the teardown runs.
 
 `scripts/worktree-setup.sh` copies `$HUB_REPO_DIR/.env` into the worktree, every `<NAME>_PORT=<number>` line shifted
-by `$HUB_PORT_OFFSET`, and sets `COMPOSE_PROJECT_NAME`:
+by `$HUB_PORT_OFFSET`, and sets `COMPOSE_PROJECT_NAME` (dropping any copied one, so the result has exactly one). Only a
+line of the exact form `<NAME>_PORT=<digits>` is shifted: a quoted value, spaces around `=`, an inline comment,
+`export`, a CRLF ending or a bare `PORT` is copied unshifted, so write the ports in that form:
 
 ```sh
 #!/bin/sh
@@ -67,6 +70,7 @@ set -eu
 project="$(basename "$HUB_REPO_DIR")-$HUB_WORKTREE_NAME"
 if [ -f "$HUB_REPO_DIR/.env" ]; then
   awk -v offset="$HUB_PORT_OFFSET" '
+    /^COMPOSE_PROJECT_NAME=/ { next }
     /^[A-Z0-9_]*_PORT=[0-9]+$/ { i = index($0, "="); print substr($0, 1, i) (substr($0, i + 1) + offset); next }
     { print }
   ' "$HUB_REPO_DIR/.env" > .env
@@ -77,11 +81,14 @@ printf 'COMPOSE_PROJECT_NAME=%s\n' "$project" >> .env
 ```
 
 `scripts/worktree-teardown.sh` runs `docker compose down` under the same project name, and does nothing without
-`docker`:
+`docker`. It fails closed: if `docker` is installed but `docker compose down` fails (daemon stopped, no compose
+plugin), it exits non-zero and `--remove` removes nothing; fix docker and rerun, or remove the worktree by hand with
+`git worktree remove`:
 
 ```sh
 #!/bin/sh
 # worktree-teardown.sh <worktree>: hub worktree --remove runs it before git worktree remove.
+# Runs docker compose down for the worktree's compose project; without docker it does nothing.
 set -eu
 command -v docker >/dev/null 2>&1 || exit 0
 docker compose -p "$(basename "$HUB_REPO_DIR")-$HUB_WORKTREE_NAME" down
@@ -89,8 +96,8 @@ docker compose -p "$(basename "$HUB_REPO_DIR")-$HUB_WORKTREE_NAME" down
 
 With `API_PORT=8000` and `WEB_PORT=5173` in the main checkout's `.env`, task `dem-7-x` of `demo-api` gets
 `API_PORT=11400`, `WEB_PORT=8573` and `COMPOSE_PROJECT_NAME=demo-api-dem-7-x`.
-`test_worktree_command.py::TestScriptEnvironment::test_shifts_ports_when_documented_scripts_run` runs these two
-blocks as written.
+`test_worktree_command.py::TestScriptEnvironment` runs these two blocks as written, with and without a main
+checkout `.env` and `docker`.
 
 ## Invariants
 
@@ -109,7 +116,8 @@ blocks as written.
   promises no uniqueness.
 - **`HUB_REPO_DIR` is the main checkout** (D-repodir): the worktree is already `$1` and the cwd, and the main checkout
   is where the gitignored `.env` to copy lives.
-- **Set last** (D-override): a caller's `HUB_PORT_OFFSET` never wins; a script overrides by editing its own `.env`.
+- **Set last** (D-override): a caller's `HUB_PORT_OFFSET` never wins. After a collision a person edits the worktree's
+  `.env` (setup never reruns on an existing worktree); no script does.
 - **No new secret scope** (D-secrets): `hub run` keeps its untrusted environment; `hub worktree` keeps the developer's.
 - No ADR: no architecture change. The scope was already in [SPEC.md](../SPEC.md) (isolated worktrees with their own
   ports and `.env`; the secret scope of `hub run`).
