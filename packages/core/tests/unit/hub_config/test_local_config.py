@@ -13,6 +13,7 @@ from agent_hub.core.hub_config.local_config import (
 from agent_hub.core.hub_config.model import Project, Tracker
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.platform_repository_cases import CUSTOM_REPOSITORY
 
 RUNNING = "0.3.1"
 HUB_ONLY_MESSAGE = (
@@ -100,6 +101,10 @@ def test_overrides_nothing_when_document_empty() -> None:
         ({"tracker": {"teams": ["X"]}}, ConfigProblem("tracker.teams", HUB_ONLY_MESSAGE)),
         ({"tracker": {"kind": "linear"}}, ConfigProblem("tracker.kind", HUB_ONLY_MESSAGE)),
         ({"$schema": "x"}, ConfigProblem("$schema", HUB_ONLY_MESSAGE)),
+        (
+            {"platform": {"repository": CUSTOM_REPOSITORY}},
+            ConfigProblem("platform", HUB_ONLY_MESSAGE),
+        ),
         ({"colour": 1}, ConfigProblem("colour", EXTRA_MESSAGE)),
     ],
     ids=[
@@ -112,6 +117,7 @@ def test_overrides_nothing_when_document_empty() -> None:
         "tracker-teams",
         "tracker-kind",
         "schema-uri",
+        "platform-repository",
         "unknown",
     ],
 )

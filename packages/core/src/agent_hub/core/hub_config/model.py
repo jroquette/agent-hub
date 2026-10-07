@@ -25,6 +25,13 @@ from agent_hub.core.hub_config.conventions import (
     title_pattern_problem,
 )
 from agent_hub.core.hub_config.doctor_rules import RULE_MODULES, DoctorRules
+from agent_hub.core.hub_config.platform_repository import (
+    DEFAULT_PLATFORM_REPOSITORY,
+    MAX_PLATFORM_REPOSITORY_CHARS,
+    PLATFORM_REPOSITORY_MESSAGE,
+    PLATFORM_REPOSITORY_PATTERN,
+    is_platform_repository,
+)
 
 HUB_ROOT = "@hub"
 JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
@@ -78,10 +85,38 @@ def at_least_one_item(value: object) -> object:
     return value
 
 
+def _platform_repository(value: object) -> object:
+    """One value-free problem for any bad value, whatever its type: the value may hold a secret."""
+    if not is_platform_repository(value):
+        raise PydanticCustomError("platform_repository", PLATFORM_REPOSITORY_MESSAGE)
+    return value
+
+
+# The before-validator checks every value first; the ``Field``, listed before it so pydantic
+# keeps its constraints on the string schema, puts the same rule in the exported schema.
+PlatformRepository = Annotated[
+    str,
+    Field(pattern=rf"^{PLATFORM_REPOSITORY_PATTERN}$", max_length=MAX_PLATFORM_REPOSITORY_CHARS),
+    BeforeValidator(_platform_repository),
+]
+
+
 class Platform(ConfigObject):
     """The platform release this hub is pinned to."""
 
     version: ReleaseVersion
+    # The schema names the default by role: hub.schema.json is rendered into every hub (ADR 0009).
+    repository: PlatformRepository | None = absent_by_default(
+        description="The platform's git source: the repository root as git+https://<host>/<path>,"
+        f" at most {MAX_PLATFORM_REPOSITORY_CHARS} characters. The hub runs"
+        " <repository>@v<platform.version>#subdirectory=packages/agent-hub. Absent: the"
+        " agent-hub release repository (docs/design/project-config.md)."
+    )
+
+    @property
+    def effective_repository(self) -> str:
+        """The repository as written, else the default."""
+        return self.repository if self.repository is not None else DEFAULT_PLATFORM_REPOSITORY
 
 
 # A branch pattern's sample renders must be valid branch names: the same rule, in Python's re.

@@ -70,6 +70,10 @@ IGNORED_PATHS: tuple[tuple[str | int, ...], ...] = (
     ("repos", 0, "conventions"),
 )
 
+# Read leniently by the hooks; absent is ``None`` in both; agreement is the shared cases'
+# (``test_platform_repository_parity.py``).
+PLATFORM_SOURCE_PATHS: tuple[tuple[str | int, ...], ...] = (("platform", "repository"),)
+
 # argv: mode, reader file, hub.json path, checks (JSON: name -> [actual, expected] expressions,
 # evaluated with the reader's names and ``hub_file``). Modes: ``import`` (a sibling import, as the
 # hooks do), ``by_path`` (the registration the reader's docstring asks for, as the scripts do),
@@ -238,8 +242,9 @@ def test_matches_schema_defaults_when_hub_json_minimal(
 
 
 def test_lists_every_optional_field_when_model_inspected() -> None:
-    """``OPTIONAL_PATHS``, ``INHERITED_PATHS``, ``LOCAL_PATHS``, ``TEAM_PATHS`` and
-    ``IGNORED_PATHS`` list every optional key: a new one fails here."""
+    """``OPTIONAL_PATHS``, ``INHERITED_PATHS``, ``LOCAL_PATHS``, ``TEAM_PATHS``,
+    ``IGNORED_PATHS`` and ``PLATFORM_SOURCE_PATHS`` list every optional key: a new one fails
+    here."""
     owners: tuple[tuple[tuple[str | int, ...], type[Any]], ...] = (
         ((), HubConfig),
         (("platform",), Platform),
@@ -264,6 +269,7 @@ def test_lists_every_optional_field_when_model_inspected() -> None:
         | set(LOCAL_PATHS)
         | set(TEAM_PATHS)
         | set(IGNORED_PATHS)
+        | set(PLATFORM_SOURCE_PATHS)
     )
 
 
