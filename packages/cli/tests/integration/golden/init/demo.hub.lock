@@ -269,12 +269,12 @@
     "plugin/hub-workflow/skills/create-plan/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "70d982b78f5fd21b5c47d02b0bfd2fded847419ce903cbd9045f1d53747d0a59"
+      "sha256": "ebf37bf3e98a742c2ac027e463c6c68c108ce16421582ba106e8f8d8c503e01c"
     },
     "plugin/hub-workflow/skills/feature/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "2bfaf4ac497b5340af51dcb12e4affd76b93a0d0ba2c4ab3ad56e152e03fbd4f"
+      "sha256": "7c91bad507a52927c3f3ba2d3bedb77677b9b7fe3618f4632b614f92f88dd426"
     },
     "plugin/hub-workflow/skills/handoff/SKILL.md": {
       "executable": false,
