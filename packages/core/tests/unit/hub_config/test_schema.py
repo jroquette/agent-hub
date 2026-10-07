@@ -4,6 +4,7 @@ from typing import Any
 
 from agent_hub.core.hub_config.doctor_rules import MAX_LINES_KEY_LENGTH, MAX_LINES_KEYS
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.platform_repository import PLATFORM_REPOSITORY_PATTERN
 from agent_hub.core.hub_config.schema import export_schema_text, read_shipped_schema
 
 COMMENT_KEYS = {"^_": {}}
@@ -160,3 +161,18 @@ def test_exports_optional_conventions_when_schema_exported() -> None:
         assert node["type"] == "string", key
         for part in parts:
             assert part in node["description"], (key, part)
+
+
+def test_exports_optional_platform_repository_when_schema_exported() -> None:
+    platform = read_shipped_schema()["$defs"]["Platform"]
+
+    assert platform["required"] == ["version"]
+    assert platform["properties"]["repository"] == {
+        "type": "string",
+        "pattern": f"^{PLATFORM_REPOSITORY_PATTERN}$",
+        "maxLength": 200,
+        "description": "The platform's git source: the repository root as"
+        " git+https://<host>/<path>, at most 200 characters. The hub runs"
+        " <repository>@v<platform.version>#subdirectory=packages/agent-hub. Absent: the"
+        " agent-hub release repository (docs/design/project-config.md).",
+    }

@@ -24,6 +24,7 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `schema_version` | integer, `1` | req. | every reader; see Versioning |
 | `$schema` | string, e.g. `./hub.schema.json`; a declared root key | optional | editors only |
 | `platform.version` | `^[0-9]+\.[0-9]+\.[0-9]+$` | req. | shims (the release they run), `hub sync`, `hub doctor`, cloud setup |
+| `platform.repository` | `git+https://` repository root (Rendered values) | `git+https://github.com/jroquette/agent-hub` | shims, SessionStart, cloud setup, CI credential step (at run time); pin-mismatch command. Tokens only on exactly `https://github.com/`: CI maps `AGENT_HUB_READ_TOKEN` there alone, and cloud setup's `GH_TOKEN` helper answers for `github.com` alone; another host needs the repository attached or its own credential (follow-up) |
 | `project.name` | kebab-case (Rendered values) | req. | templates (plugin, marketplace names), `hub brief` |
 | `project.hub_repo` | `owner/name` | req. | `hub run` (PR links), marketplace |
 | `project.branch_prefix` | e.g. `jdoe/` (Rendered values) | optional, per developer ([developer-identity.md](developer-identity.md)) | `hub worktree`, `hub run`, guard branch hint, `AGENTS.md` |
@@ -67,12 +68,15 @@ no `_` separator (hooks match branches with Python's `re`: exponential backtrack
   `^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$`. Other free text has no control character (`\x00-\x1f`, `\x7f`); `author_name`
   is rendered only with format quoting (`shlex.quote`, JSON encoder, escaped YAML scalar), never into a Makefile;
   `check_fast` and `check` are read at run time, never rendered.
-- `platform.version` matches `^[0-9]+\.[0-9]+\.[0-9]+$` in the CLI and in the hooks' stdlib reader (a bad value counts
-  as absent). Shims read it at run time (a stdlib `python3` one-liner, same pattern), never baked in at render time.
+- `platform.version` matches `^[0-9]+\.[0-9]+\.[0-9]+$` in the CLI and the hooks' stdlib reader (a bad value counts as
+  absent). `platform.repository` matches `^git\+https://H(?:/S)+$` (`H` as `guard.deny_hosts`), ≤ 200 characters, as
+  written: no credential, port, query, fragment, `@ref` or trailing `/`. Shims, SessionStart, cloud setup and the CI
+  credential step read it at run time, never baked in; a bad one stops each (SessionStart: mini brief), never echoed.
 - Guard paths: relative to the workspace (the directory holding the hub and its repos), normalized, `/`-separated, not
   absolute; segments are printable ASCII without space or `\`, never `.` or `..`. The first is a `repos[].dir` or `@hub`
   (the hub, whatever its checkout is called; `@` cannot start a `dir`); `guard.deny_paths` may also start with another
   workspace directory (Loki's `_archive`). Hooks resolve `@hub` to the hub root holding the hook file.
+  Where each Loki guard goes on adoption: [hub-adopt.md](hub-adopt.md#project-guards).
 - Conventions: each pattern ≤ 120 characters, each placeholder at most once. `branch`: `{prefix}` (the developer's
   effective branch prefix: `project.branch_prefix`, or `hub.local.json`), `{ISSUE}` (the issue id, e.g. `DEM-7`) or
   `{issue_lower}` (the same lowercased; one of the two needed), `{slug}` (the worktree name's description; empty, it
@@ -87,7 +91,7 @@ required); adding an optional key keeps it. The CLI reads `platform.version` and
 no model) and checks them in that order before validating the whole file, so an older CLI facing a newer file reports
 the pin mismatch (whose fix settles both), not an unknown key. It supports one schema version: on any other, `hub sync`
 writes nothing and exits 1 ([hub-sync.md](hub-sync.md)) and `config.schema` reports an error, both naming the fix
-(update the file, or run the pinned release through the shim). Phase 1 ships version 1, so there is no migration command yet.
+(update the file, or run the pinned release through the shim).
 
 ### Modules
 
@@ -113,8 +117,6 @@ from `LINEAR_API_KEY`, at call time, never `hub.json`); `mcp` is `McpTrackerClie
 Linear MCP server ([ADR 0015](../adr/0015-linear-mcp-tracker-transport.md)). Both pass `TrackerClientContract`.
 With several teams, `hub next` calls `list_ready` once per team, in order.
 
-Where each project guard of the Loki hub goes on adoption: [hub-adopt.md](hub-adopt.md#project-guards).
-
 ### Example (synthetic project)
 
 ```json
@@ -125,9 +127,6 @@ Where each project guard of the Loki hub goes on adoption: [hub-adopt.md](hub-ad
  "repos": [{"dir": "demo-api", "github": "acme/demo-api", "check_fast": "make check-fast", "check": "make check"}],
  "guard": {"ask_before_edit": ["demo-api/docs/adr"]}, "modules": {"cloud": {}, "bench": {}}}
 ```
-
-An existing hub migrates by adding `schema_version`, `platform` and, if it uses any, `modules`. Guard paths rooted at a
-repo stay as they are; one rooted at the hub's directory name is rewritten as `@hub/…`.
 
 ## Invariants
 

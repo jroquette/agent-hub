@@ -17,11 +17,18 @@ from agent_hub.core.hub_config.model import (
     RepoDir,
     Tracker,
 )
+from agent_hub.core.hub_config.platform_repository import PLATFORM_REPOSITORY_MESSAGE
 from agent_hub.core.testing.builders import (
     a_conventions_document,
     a_hub_document,
     a_second_repo,
     a_two_team_document,
+)
+from agent_hub.core.testing.platform_repository_cases import (
+    CUSTOM_REPOSITORY,
+    REPOSITORY_CASES,
+    SECRET_PARTS,
+    RepositoryCase,
 )
 
 REQUIRED_KEYS: list[tuple[str | int, ...]] = [
@@ -1244,6 +1251,7 @@ OBJECT_PATHS: list[tuple[str | int, ...]] = [
 
 def a_full_document() -> dict[str, Any]:
     document = a_contract_sync_document({"source": "demo-api", "target": "demo-web"})
+    document["platform"]["repository"] = CUSTOM_REPOSITORY
     document["repos"][0]["default_branch"] = "release/2"
     document["project"]["conventions"] = {"commit_title": "{ISSUE}: {summary}"}
     document["repos"][0]["conventions"] = {"branch": "feature/{issue_lower}/{slug}"}
@@ -1381,3 +1389,53 @@ class TestContractSync:
         assert error_types(with_value(("modules", "deploy"), {})) == [
             (("modules", "deploy"), "extra_forbidden")
         ]
+
+
+GOOD_REPOSITORIES = [case for case in REPOSITORY_CASES if case.is_valid]
+# ``null`` is never a value, for any key: it keeps the null message (ConfigObject).
+BAD_REPOSITORIES = [
+    case for case in REPOSITORY_CASES if not case.is_valid and case.value is not None
+]
+
+
+def case_name(case: RepositoryCase) -> str:
+    return case.name
+
+
+class TestPlatformRepository:
+    @pytest.mark.parametrize("case", GOOD_REPOSITORIES, ids=case_name)
+    def test_accepts_platform_repository_when_value_good(self, case: RepositoryCase) -> None:
+        config = HubConfig.model_validate(with_value(("platform", "repository"), case.value))
+
+        assert config.platform.repository == case.value
+        assert config.platform.effective_repository == case.value
+
+    def test_reads_default_repository_when_key_absent(self) -> None:
+        config = HubConfig.model_validate(a_hub_document())
+
+        assert config.platform.repository is None
+        assert config.platform.effective_repository == "git+https://github.com/jroquette/agent-hub"
+
+    @pytest.mark.parametrize("case", BAD_REPOSITORIES, ids=case_name)
+    def test_rejects_platform_repository_at_its_key_when_value_bad(
+        self, case: RepositoryCase
+    ) -> None:
+        document = with_value(("platform", "repository"), case.value)
+        with pytest.raises(ValidationError) as caught:
+            HubConfig.model_validate(document)
+
+        [error] = caught.value.errors()
+        assert (error["loc"], error["type"]) == (("platform", "repository"), "platform_repository")
+        assert error["msg"] == PLATFORM_REPOSITORY_MESSAGE
+        assert [part for part in SECRET_PARTS if part in error["msg"]] == []
+        if isinstance(case.value, str) and case.value:
+            assert case.value not in error["msg"]
+
+    def test_rejects_null_repository_with_null_message_when_null(self) -> None:
+        document = with_value(("platform", "repository"), None)
+        with pytest.raises(ValidationError) as caught:
+            HubConfig.model_validate(document)
+
+        [error] = caught.value.errors()
+        assert (error["loc"], error["type"]) == (("platform", "repository"), "null_not_allowed")
+        assert error["msg"] == "null is not a value; give a value or leave the key out"
