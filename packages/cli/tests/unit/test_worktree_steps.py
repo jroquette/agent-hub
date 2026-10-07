@@ -5,7 +5,14 @@ import pytest
 
 from agent_hub.cli.child_process import ChildResult
 from agent_hub.cli.errors import WorktreeError
-from agent_hub.cli.worktree_steps import WORKTREES_FOLDER, check_branches, worktree_task
+from agent_hub.cli.worktree_steps import (
+    SCRIPT_VARIABLES,
+    WORKTREES_FOLDER,
+    WorktreeTask,
+    check_branches,
+    script_env,
+    worktree_task,
+)
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing.builders import a_hub_document
 
@@ -37,20 +44,26 @@ class ScriptedRunner:
         return self.answer if argv[1] == self.command else ACCEPTED
 
 
-def check(workspace: Path, runner: ScriptedRunner) -> None:
-    """``check_branches`` on task ``dem-1-x`` of the one-repo demo hub at ``workspace/hub``."""
-    task = worktree_task(
+def demo_task(
+    workspace: Path, runner: ScriptedRunner, *, env: dict[str, str] | None = None
+) -> WorktreeTask:
+    """Task ``dem-1-x`` of the one-repo demo hub at ``workspace/hub``; ``env`` defaults to none."""
+    return worktree_task(
         HubConfig.model_validate(a_hub_document()),
         name=NAME,
         branch_prefix="jdoe/",
         only=None,
         hub=workspace / "hub",
         git="git",
-        env={},
+        env={} if env is None else env,
         git_timeout=None,
         runner=runner,
     )
-    check_branches(task)
+
+
+def check(workspace: Path, runner: ScriptedRunner) -> None:
+    """``check_branches`` on task ``dem-1-x`` of the one-repo demo hub at ``workspace/hub``."""
+    check_branches(demo_task(workspace, runner))
 
 
 def cloned(workspace: Path) -> Path:
@@ -121,3 +134,37 @@ def test_refuses_folder_before_branch_call_when_task_folder_not_worktree(tmp_pat
 
     assert str(raised.value) == f"demo-api: {folder} is not a worktree; remove it"
     assert runner.calls == [["git", "check-ref-format", "--branch", BRANCH]]
+
+
+def test_sets_task_variables_when_script_env_built(tmp_path: Path) -> None:
+    task = demo_task(tmp_path, ScriptedRunner("none", ACCEPTED), env={"MARKER": "kept"})
+
+    result = script_env(task, "demo-api")
+
+    # dem-1-x: sha256 mod 50 is 28, computed independently of the module.
+    assert result == {
+        "MARKER": "kept",
+        "HUB_WORKTREE_NAME": "dem-1-x",
+        "HUB_WORKTREE_BRANCH": "jdoe/dem-1-x",
+        "HUB_REPO_DIR": str(tmp_path / "demo-api"),
+        "HUB_HUB_DIR": str(tmp_path / "hub"),
+        "HUB_WORKTREE_SLOT": "28",
+        "HUB_PORT_OFFSET": "2800",
+    }
+    assert tuple(name for name in result if name.startswith("HUB_")) == SCRIPT_VARIABLES
+
+
+def test_overrides_caller_values_when_script_env_built(tmp_path: Path) -> None:
+    caller = {name: "caller" for name in SCRIPT_VARIABLES} | {"HUB_OTHER": "1"}
+    task = demo_task(tmp_path, ScriptedRunner("none", ACCEPTED), env=dict(caller))
+
+    result = script_env(task, "demo-api")
+
+    assert result["HUB_WORKTREE_NAME"] == "dem-1-x"
+    assert result["HUB_WORKTREE_BRANCH"] == "jdoe/dem-1-x"
+    assert result["HUB_REPO_DIR"] == str(tmp_path / "demo-api")
+    assert result["HUB_HUB_DIR"] == str(tmp_path / "hub")
+    assert result["HUB_WORKTREE_SLOT"] == "28"
+    assert result["HUB_PORT_OFFSET"] == "2800"
+    assert result["HUB_OTHER"] == "1"
+    assert task.env == caller

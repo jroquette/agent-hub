@@ -7,7 +7,9 @@ problem ``WorktreeError``, whose text is what ``hub worktree`` prints after its 
 prefix. Every git call runs in the caller's process group, with ``git_timeout`` seconds each
 (``None``: no limit, as ``hub worktree`` runs); past it ``ChildTimedOutError`` is raised. The
 repo's setup and teardown scripts run untimed through ``stream_child``, also in the caller's
-group.
+group, with the task's environment plus the six ``SCRIPT_VARIABLES`` (``script_env``): the
+task's name and the repo's branch, the repo's main checkout, the hub's, and the task's port slot
+and offset (``worktree_slot``).
 """
 
 import os
@@ -26,11 +28,21 @@ from agent_hub.core.workspace.worktree_name import (
     worktree_name_example,
     worktree_name_problem,
 )
+from agent_hub.core.workspace.worktree_slot import port_offset, worktree_slot
 
 COMMAND: Final = "worktree"
 WORKTREES_FOLDER: Final = Path(".claude", "worktrees")
 SETUP_SCRIPT: Final = "scripts/worktree-setup.sh"
 TEARDOWN_SCRIPT: Final = "scripts/worktree-teardown.sh"
+# What ``script_env`` sets for the scripts, in this order, over the caller's values.
+SCRIPT_VARIABLES: Final = (
+    "HUB_WORKTREE_NAME",
+    "HUB_WORKTREE_BRANCH",
+    "HUB_REPO_DIR",
+    "HUB_HUB_DIR",
+    "HUB_WORKTREE_SLOT",
+    "HUB_PORT_OFFSET",
+)
 _FETCH_HINT: Final = "; check the network and the remote"
 _CLONE_HINT: Final = "clone it next to the hub"
 _DIRTY: Final = "it has modified or untracked files"
@@ -69,6 +81,8 @@ class WorktreeTask:
     branches: dict[str, str]
     bases: dict[str, str]
     workspace: Path
+    # The hub's main checkout; its scripts get it as HUB_HUB_DIR.
+    hub: Path
     repos: tuple[str, ...]
     only: str | None
     git: str
@@ -105,7 +119,8 @@ def worktree_task(
     touched repos with ``git check-ref-format``, in repo order.
 
     ``runner`` runs every git call of the task; ``env`` is the environment of every git call
-    and script but the fetch, which gets ``fetch_env`` (by default ``env``); ``add_options``
+    but the fetch, which gets ``fetch_env`` (by default ``env``), and, with the six
+    ``SCRIPT_VARIABLES``, of the scripts (``script_env``); ``add_options``
     go before ``worktree add`` and ``fetch_options`` before ``fetch``. Raises
     ``WorktreeUsageError`` for a name not shaped like the issue, an unknown ``only`` or a
     branch git refuses.
@@ -143,6 +158,7 @@ def worktree_task(
         branches=branches,
         bases={repo: f"origin/{config.default_branch_for(repo)}" for repo in repos},
         workspace=hub.parent,
+        hub=hub,
         repos=repos,
         only=only,
         git=git,
@@ -270,8 +286,24 @@ def remove_worktree(task: WorktreeTask, repo: str, *, echo: Echo) -> None:
     echo(f"removed  {shown_path(str(worktree))}")
 
 
+def script_env(task: WorktreeTask, repo: str) -> dict[str, str]:
+    """The environment of ``repo``'s setup and teardown scripts: ``task.env``, then the six
+    ``SCRIPT_VARIABLES``, which override a caller's values of the same names."""
+    slot = worktree_slot(task.name)
+    return {
+        **task.env,
+        "HUB_WORKTREE_NAME": task.name,
+        "HUB_WORKTREE_BRANCH": task.branches[repo],
+        "HUB_REPO_DIR": str(task.workspace / repo),
+        "HUB_HUB_DIR": str(task.hub),
+        "HUB_WORKTREE_SLOT": str(slot),
+        "HUB_PORT_OFFSET": str(port_offset(slot)),
+    }
+
+
 def _run_script(task: WorktreeTask, repo: str, worktree: Path, *, script: str, echo: Echo) -> None:
-    """Run the repo's ``script`` with argv ``[<worktree>]`` when it is an executable file."""
+    """Run the repo's ``script`` with argv ``[<worktree>]`` and ``script_env`` when it is an
+    executable file."""
     path = worktree / script
     if not _is_executable_file(path):
         return
@@ -281,7 +313,9 @@ def _run_script(task: WorktreeTask, repo: str, worktree: Path, *, script: str, e
         echo(f"  {repo}: {text}")
 
     try:
-        code = stream_child([str(path), str(worktree)], cwd=worktree, env=task.env, on_line=show)
+        code = stream_child(
+            [str(path), str(worktree)], cwd=worktree, env=script_env(task, repo), on_line=show
+        )
     except OSError as error:
         raise WorktreeError(f"{repo}: {script} could not run: {error.strerror or error}") from None
     if code == 0:

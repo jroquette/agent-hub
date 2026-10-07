@@ -12,7 +12,10 @@ name, ``--only``) exit 2 before git runs in any repo; a task branch that clashes
 fails, exits 1 when it is reached, and later repos are left alone. A worktree with modified or
 untracked files is never torn down. Git and the scripts run with no timeout in the caller's
 process group, so Ctrl-C reaches them. The scripts run with the worktree as their cwd and git's
-location variables dropped. The steps themselves are ``worktree_steps``, shared with ``hub run``.
+location variables dropped; they also get ``HUB_WORKTREE_NAME``, ``HUB_WORKTREE_BRANCH``,
+``HUB_REPO_DIR``, ``HUB_HUB_DIR``, ``HUB_WORKTREE_SLOT`` and ``HUB_PORT_OFFSET`` (see
+``docs/design/worktree-environment.md``). The steps themselves are ``worktree_steps``, shared
+with ``hub run``.
 The prefix is the developer's: the main checkout's ``hub.local.json``, else ``hub.json``, else
 derived from git's ``user.email`` there; with none, or a malformed local file, it exits 2.
 """
