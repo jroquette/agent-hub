@@ -280,10 +280,10 @@ The size decides the ceremony:
 >   `subagent-driven-development`, `test-driven-development` and `finishing-a-development-branch` skills are used
 >   when it is enabled, and each step has a one-line fallback otherwise. To enable it, add
 >   `"enabledPlugins": {"superpowers@claude-plugins-official": true}` to `.claude/settings.project.json`, run
->   `hub sync`, and run `claude plugin install superpowers@claude-plugins-official --scope local` once (cloud
->   sessions do not install repo-declared plugins);
+>   `hub sync`; each developer also runs `claude plugin install superpowers@claude-plugins-official --scope local`
+>   once. Cloud sessions do not install repo-declared plugins: there, enable it on the claude.ai account;
 > - a tracker connector in Claude Code (for example Linear), so the session can create the issues. The `hub` CLI's
->   tracker commands, `hub next` and `hub run`, list and work on ready issues but create none.
+>   tracker commands, `hub next` and `hub run`, list ready issues and take one to a PR but create none.
 >
 > Set up the connector, and superpowers if you want it, in Claude Code before your first `/feature`.
 
