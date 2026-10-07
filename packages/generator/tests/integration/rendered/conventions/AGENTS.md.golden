@@ -25,7 +25,7 @@ is a hub bug: log it in `brain/_inbox/`.
 - `/feature` and `/create-plan` use superpowers skills when that plugin is enabled, and a one-line fallback otherwise.
   To enable it, add `"enabledPlugins": {"superpowers@claude-plugins-official": true}` to
   `.claude/settings.project.json` and run `hub sync`; each developer also runs, once,
-  `claude plugin install superpowers@claude-plugins-official --scope project`. Cloud sessions do not install
+  `claude plugin install superpowers@claude-plugins-official --scope local`. Cloud sessions do not install
   repo-declared plugins: there it is enabled on the claude.ai account.
 - Repos, checked out next to this hub: demo-api, demo-web.
 
