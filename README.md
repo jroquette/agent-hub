@@ -274,14 +274,18 @@ The size decides the ceremony:
 </details>
 
 > [!IMPORTANT]
-> `/feature` expects two things the hub does not install:
+> `/feature` uses two things the hub does not install:
 >
-> - the [superpowers](https://github.com/obra/superpowers) plugin, for its `brainstorming`,
->   `subagent-driven-development`, `test-driven-development` and `finishing-a-development-branch` skills;
-> - a tracker connector in Claude Code (for example Linear), so the session can create the issues. The `hub` CLI has
->   no tracker command in 0.4.0.
+> - the [superpowers](https://github.com/obra/superpowers) plugin, optional: its `brainstorming`,
+>   `subagent-driven-development`, `test-driven-development` and `finishing-a-development-branch` skills are used
+>   when it is enabled, and each step has a one-line fallback otherwise. To enable it, add
+>   `"enabledPlugins": {"superpowers@claude-plugins-official": true}` to `.claude/settings.project.json`, run
+>   `hub sync`, and run `claude plugin install superpowers@claude-plugins-official --scope local` once (cloud
+>   sessions do not install repo-declared plugins);
+> - a tracker connector in Claude Code (for example Linear), so the session can create the issues. The `hub` CLI's
+>   tracker commands, `hub next` and `hub run`, list and work on ready issues but create none.
 >
-> Set both up in Claude Code yourself before your first `/feature`.
+> Set up the connector, and superpowers if you want it, in Claude Code before your first `/feature`.
 
 ### Skills and agents
 
@@ -419,7 +423,7 @@ This is the most common path: a project with two repos tracked in Linear.
 2. **Generate the hub** with `hub init` (Quick Start, step 3). It writes three kinds of things:
    - **managed** files, owned by the platform and rewritten by `hub sync` (base rules in `AGENTS.md`, the
      `plugin/hub-workflow/` plugin, `.claude/settings.json`, the `./hub` and `./agent` shims, the `Makefile`, whose `next` and `run-issue` targets call `hub next` and
-     `hub run`, not implemented in 0.4.0);
+     `hub run`);
    - **seeded** files, written once and then yours (`hub.json`, `AGENTS.project.md`, `Makefile.project`, the `brain/`
      skeleton, the project plugin `plugin/<project>/`);
    - **links** from `.claude/agents/` and `.claude/skills/` into the plugins.
@@ -613,7 +617,7 @@ Contract: [docs/design/developer-identity.md](docs/design/developer-identity.md)
 
 | Name | Required | Default | Description |
 | --- | --- | --- | --- |
-| `LINEAR_API_KEY` | for tracker calls (none in 0.4.0) | | Linear API key, read at call time; never stored in `hub.json` |
+| `LINEAR_API_KEY` | for `hub next` and `hub run` with `tracker.transport` `"api"` (the default) | | Linear API key, read at call time; never stored in `hub.json` |
 | `AGENT_HUB_DB` | no | `$XDG_DATA_HOME/agent-hub/agent-hub.db`, else `~/.local/share/agent-hub/agent-hub.db` | Event database of `hub collect`; `--db` overrides it |
 | `XDG_DATA_HOME` | no | | Used for the default database path when it is absolute |
 | `HUB_AUTHOR_NAME`, `HUB_AUTHOR_EMAIL` | no | | Module `cloud`: your commit author in a cloud session, read by `scripts/cloud-setup.sh` only when `hub.json` names no author; written to the repo-local git config of the hub and each repo, never the global one (unset: a `WARN`, and commits carry the container's identity) |
@@ -772,11 +776,11 @@ From the phases in [docs/SPEC.md](docs/SPEC.md#mvp-and-phases). Each phase start
 - [x] `hub doctor` with its rule set
 - [x] `hub worktree`, `hub brief`, `hub agent`, and the `./hub` and `./agent` shims pinned per hub (release 0.4.0)
 - [x] Tracker port with a Linear GraphQL adapter
+- [x] `hub next` and `hub run`: take an `agent-ready` issue to a PR through the tracker port
 
 **Now: Phase 1, hub generator**
 
 - [ ] Dogfooding: `hub init` generating the platform's own hub
-- [ ] `hub next` and `hub run`: take an `agent-ready` issue to a PR through the tracker port (not implemented in 0.4.0)
 - [ ] `hub sync --adopt [--accept PATH]…`: join a hand-made hub
 - [ ] Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`) (their files and `hub bench` from 0.6.0)
 - [ ] Gate: an existing project's hand-made hub recreated with the same `make check` and bench
@@ -813,8 +817,9 @@ you. A managed file you edited by hand shows up as a conflict instead of being o
 **Does it send my code or transcripts anywhere?**
 agent-hub itself runs on your machine and has no server: `hub collect` writes to a local SQLite file. Its network calls
 go to GitHub: fetching the pinned release, `git fetch` in `hub worktree`, and `gh` for the PR and CI lines of
-`hub brief` unless you pass `--no-network`. The generated `make usage` target downloads `ccusage` from npm. No 0.4.0
-command calls Linear yet; `hub next` and `hub run` will. Your agent sessions still talk to their model provider as usual.
+`hub brief` unless you pass `--no-network`. The generated `make usage` target downloads `ccusage` from npm. `hub next`
+and `hub run` call Linear, with `LINEAR_API_KEY` or, with `tracker.transport` `"mcp"`, through your Linear MCP server
+and `claude -p`. Your agent sessions still talk to their model provider as usual.
 
 **Which trackers and agents are supported?**
 Linear and Claude Code today. The tracker is a port (`TrackerClient`) and the event model is agent-neutral, so other
