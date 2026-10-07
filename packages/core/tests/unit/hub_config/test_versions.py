@@ -266,6 +266,21 @@ def test_names_custom_source_when_pin_differs_and_hub_sets_repository() -> None:
     )
 
 
+def test_names_full_source_when_pin_differs_and_repository_at_cap() -> None:
+    [case] = [case for case in REPOSITORY_CASES if case.name == "200-chars"]
+    assert isinstance(case.value, str)
+
+    problem = find_version_problem(
+        with_repository(case.value, version="0.0.1"), running_version=RUNNING
+    )
+
+    assert problem is not None
+    assert problem.message.endswith(
+        f"run the pinned release: uvx --from {case.value}@v0.0.1"
+        "#subdirectory=packages/agent-hub hub"
+    )
+
+
 @pytest.mark.parametrize("case", BAD_REPOSITORIES, ids=case_name)
 def test_omits_pinned_command_when_repository_invalid(case: RepositoryCase) -> None:
     problem = find_version_problem(
