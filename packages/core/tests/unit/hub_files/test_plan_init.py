@@ -44,6 +44,7 @@ PURITY = re.compile(
 CORE_MODULES = (
     "json_form.py",
     "hub_config/conventions.py",
+    "hub_config/platform_repository.py",
     "hub_files/hub_lock.py",
     "hub_files/tree_snapshot.py",
     "hub_files/plan_init.py",
