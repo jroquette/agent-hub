@@ -19,7 +19,9 @@ import os
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -363,12 +365,7 @@ def test_exits_one_writing_nothing_when_repository_bad(
         assert part not in completed.stdout + completed.stderr, part
 
 
-@pytest.mark.parametrize(
-    "hub_json",
-    # Deeper than the JSON parser's stack: RecursionError, not ValueError.
-    [None, "{", "[" * 100_000 + "]" * 100_000],
-    ids=["missing", "invalid-json", "deep-nesting"],
-)
+@pytest.mark.parametrize("hub_json", [None, "{"], ids=["missing", "invalid-json"])
 def test_exits_one_writing_nothing_when_hub_json_unreadable(
     hub_json: str | None, tmp_path: Path, hook_python: str
 ) -> None:
@@ -381,6 +378,32 @@ def test_exits_one_writing_nothing_when_hub_json_unreadable(
     assert completed.returncode == 1
     assert (completed.stdout, completed.stderr) == ("", UNREADABLE_LINE)
     assert env_file.read_text(encoding="utf-8") == PRIOR_ENV
+
+
+def test_ends_in_fixed_outcome_when_hub_json_nested_deeply(
+    tmp_path: Path, hook_python: str, deep_nesting: Callable[[str], Any]
+) -> None:
+    # The parser raises RecursionError or returns a list, by interpreter and stack (conftest).
+    nesting = deep_nesting(hook_python)
+    (tmp_path / "github-env").write_text(PRIOR_ENV, encoding="utf-8")
+
+    completed, env_file = run_step(
+        demo_config(), tmp_path, TOKEN, hub_json=nesting.text, python=nesting.python
+    )
+
+    if nesting.raises:
+        assert completed.returncode == 1
+        assert (completed.stdout, completed.stderr) == ("", UNREADABLE_LINE)
+        assert env_file.read_text(encoding="utf-8") == PRIOR_ENV
+    else:
+        # A list has no platform.repository: the step maps the default platform, as when the
+        # key is absent (the step reads that key only; hub sync --check rejects the file).
+        assert completed.returncode == 0, completed.stderr
+        assert (completed.stdout, completed.stderr) == ("", "")
+        assert env_file.read_text(encoding="utf-8").splitlines() == [
+            PRIOR_ENV.rstrip("\n"),
+            *expected_lines(TOKEN, HUB_URL),
+        ]
 
 
 def test_reads_no_hub_json_when_token_empty(tmp_path: Path) -> None:

@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import stat
@@ -23,6 +24,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -195,6 +197,84 @@ def run_entry_point(
 def run_hook_file() -> Callable[..., subprocess.CompletedProcess[bytes]]:
     """``run_entry_point``: run a rendered hook file with an event on stdin."""
     return run_entry_point
+
+
+# A ``hub.json`` nested deeper than a JSON parser goes on a small C stack. Whether ``json.load``
+# raises RecursionError on it depends on the interpreter and its stack: 3.9 counts frames against
+# ``sys.getrecursionlimit()``, while 3.14 measures the C stack, so under a large or unlimited
+# ``ulimit -s`` (GitHub's runners) it parses into a list. A reader test probes the same
+# interpreter on the same input, then asserts that branch's outcome; its ``small-stack`` case
+# lowers the soft stack limit first, where the probe must raise, so RecursionError is always run.
+DEEP_NESTING = "[" * 100_000 + "]" * 100_000
+SMALL_STACK_KIB = 1024
+# argv: the file. Reads it as the readers do (``json.load`` of a UTF-8 stream) and says which.
+NESTING_PROBE = """\
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as stream:
+        json.load(stream)
+except RecursionError:
+    print("raises")
+else:
+    print("parses")
+"""
+
+
+@dataclass(frozen=True)
+class DeepNesting:
+    """``DEEP_NESTING`` on one interpreter and stack: what to link as ``python3``, and whether
+    ``json.load`` raises RecursionError there (else it parses into a list)."""
+
+    text: str
+    python: str
+    raises: bool
+
+
+def with_stack_limit(python: str, folder: Path, stack_kib: int) -> str:
+    """A ``/bin/sh`` wrapper in ``folder``: lowers the soft stack limit, then execs ``python``."""
+    folder.mkdir(parents=True, exist_ok=True)
+    wrapper = folder / "python-small-stack"
+    wrapper.write_text(
+        f"#!/bin/sh\nulimit -S -s {stack_kib} || exit 125\n"
+        f'exec {shlex.quote(os.path.realpath(python))} "$@"\n',
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
+    return str(wrapper)
+
+
+@pytest.fixture(params=[None, SMALL_STACK_KIB], ids=["inherited-stack", "small-stack"])
+def deep_nesting(request: pytest.FixtureRequest, tmp_path: Path) -> Callable[[str], DeepNesting]:
+    """Probe ``DEEP_NESTING`` on an interpreter, on this process's stack or a small one.
+
+    The probe runs as the readers do (``-I -S``, a from-scratch environment) through the same
+    ``python`` the test then links, and must say ``raises`` or ``parses``: a crash fails the test.
+    On the small stack it must raise.
+    """
+    stack_kib: int | None = request.param
+    folder = tmp_path / "deep-nesting"
+
+    def probe(python: str) -> DeepNesting:
+        runner = python if stack_kib is None else with_stack_limit(python, folder, stack_kib)
+        source = folder / "hub.json"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text(DEEP_NESTING, encoding="utf-8")
+        completed = subprocess.run(  # noqa: S603 - an interpreter from the test, fixed script
+            [runner, "-I", "-S", "-c", NESTING_PROBE, str(source)],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=child_env(),
+            timeout=CHILD_TIMEOUT,
+        )
+        outcome = completed.stdout.strip()
+        assert completed.returncode == 0, completed.stderr
+        assert outcome in ("raises", "parses"), completed.stdout
+        if stack_kib is not None:
+            assert outcome == "raises", f"{python} parses DEEP_NESTING on a {stack_kib} KiB stack"
+        return DeepNesting(text=DEEP_NESTING, python=runner, raises=outcome == "raises")
+
+    return probe
 
 
 # argv: a rendered hook file, one of its module constants, the constant's new value as JSON. Loads

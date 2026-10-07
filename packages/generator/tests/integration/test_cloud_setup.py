@@ -28,6 +28,7 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -700,17 +701,24 @@ class TestPlatformRepository:
             assert part not in completed.stderr + completed.stdout, part
 
     def test_exits_one_in_fixed_line_when_hub_json_nested_deeply(
-        self, cloud_ws: CloudWorkspace
+        self, cloud_ws: CloudWorkspace, hook_python: str, deep_nesting: Callable[[str], Any]
     ) -> None:
-        # Deeper than the JSON parser's stack: RecursionError, not ValueError.
+        # The parser raises RecursionError or returns a list, by interpreter and stack (conftest).
+        nesting = deep_nesting(hook_python)
+        (cloud_ws.bin / "python3").unlink()
+        (cloud_ws.bin / "python3").symlink_to(nesting.python)
         hub_json = cloud_ws.hub / "hub.json"
-        hub_json.write_text("[" * 100_000 + "]" * 100_000, encoding="utf-8")
+        hub_json.write_text(nesting.text, encoding="utf-8")
 
         completed = cloud_ws.run(env={"GH_TOKEN": TOKEN})
 
+        if nesting.raises:
+            expected = f"cloud-setup: cannot read hub.json as JSON: {hub_json.resolve()}\n"
+        else:
+            # A list is a document without a platform: the pin is read first.
+            expected = "cloud-setup: platform.version in hub.json must be X.Y.Z\n"
         assert completed.returncode == 1
-        unreadable = f"cloud-setup: cannot read hub.json as JSON: {hub_json.resolve()}\n"
-        assert completed.stderr == unreadable
+        assert completed.stderr == expected
         assert completed.stdout == ""
         assert cloud_ws.calls() == []
         assert cloud_ws.config("--global", "--get-all", HELPER_KEY) == []
