@@ -410,15 +410,28 @@ def test_exits_one_without_uvx_when_repository_bad(
 
 
 def test_exits_one_in_fixed_line_when_hub_json_nested_deeply(
-    hub: Path, run: Run, *, tools: None, log: Path
+    hub: Path,
+    run: Run,
+    *,
+    bin_dir: Path,
+    log: Path,
+    deep_nesting: Callable[[str], Any],
 ) -> None:
-    # Deeper than the JSON parser's stack: RecursionError, not ValueError.
-    (hub / "hub.json").write_text("[" * 100_000 + "]" * 100_000, encoding="utf-8")
+    # The parser raises RecursionError or returns a list, by interpreter and stack (conftest).
+    nesting = deep_nesting(sys.executable)
+    install_uvx(bin_dir, log)
+    link_tool(bin_dir, "python3", nesting.python)
+    (hub / "hub.json").write_text(nesting.text, encoding="utf-8")
 
     completed = run(hub / "hub", "brief")
 
+    if nesting.raises:
+        expected = f"hub: cannot read hub.json as JSON: {hub / 'hub.json'}\n"
+    else:
+        # A list is a document without a platform: the pin is checked first.
+        expected = "hub: platform.version in hub.json must be X.Y.Z\n"
     assert completed.returncode == 1
-    assert completed.stderr.decode() == f"hub: cannot read hub.json as JSON: {hub / 'hub.json'}\n"
+    assert completed.stderr.decode() == expected
     assert completed.stdout == b""
     assert calls(log) == []
 
