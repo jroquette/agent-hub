@@ -491,8 +491,11 @@ Exit codes: `0` no errors, `1` at least one error, `2` usage error. Rules and th
 ./hub worktree demo-7-login --only backend
 ```
 
-A repo can ship executable `scripts/worktree-setup.sh` and `scripts/worktree-teardown.sh`; `hub worktree` runs them
-with the worktree path, for env files, databases or ports.
+A repo can ship executable `scripts/worktree-setup.sh` and `scripts/worktree-teardown.sh`; `hub worktree` (and
+`hub run`, setup only) runs them with the worktree path and `HUB_WORKTREE_NAME`, `HUB_WORKTREE_BRANCH`, `HUB_REPO_DIR`,
+`HUB_HUB_DIR`, `HUB_WORKTREE_SLOT` and `HUB_PORT_OFFSET`, for env files, databases or ports. `HUB_REPO_DIR` and
+`HUB_HUB_DIR` are the repo's and the hub's main checkouts; `HUB_PORT_OFFSET` is the slot × 100, to add to the repo's
+ports, and two tasks can share a slot. See [docs/design/worktree-environment.md](docs/design/worktree-environment.md).
 
 </details>
 

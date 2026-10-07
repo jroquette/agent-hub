@@ -15,6 +15,7 @@ arguments), now exit 2 (spec § Port differences); ``test_rejects_name_without_i
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -54,6 +55,51 @@ def logging_script(log: Path, word: str, *, exit_code: int = 0) -> bytes:
         'test -d "$1" && echo "present"\n'
         f"exit {exit_code}\n"
     ).encode()
+
+
+# The six variables every worktree script gets (AGH-59), as literals, then two caller variables.
+SCRIPT_VARIABLES = (
+    "HUB_WORKTREE_NAME",
+    "HUB_WORKTREE_BRANCH",
+    "HUB_REPO_DIR",
+    "HUB_HUB_DIR",
+    "HUB_WORKTREE_SLOT",
+    "HUB_PORT_OFFSET",
+)
+LOGGED_VARIABLES = (*SCRIPT_VARIABLES, "MARKER", "HUB_OTHER")
+
+
+def variable_script(log: Path, env_log: Path, word: str) -> bytes:
+    """``logging_script``, which also appends ``<NAME>=<value>`` (``unset`` when unset) to
+    ``env_log`` for each of ``LOGGED_VARIABLES``, in that order."""
+    body = logging_script(log, word).removesuffix(b"exit 0\n")
+    lines = "".join(
+        f'printf \'%s=%s\\n\' {name} "${{{name}-unset}}" >> "{env_log}"\n'
+        for name in LOGGED_VARIABLES
+    )
+    return body + lines.encode() + b"exit 0\n"
+
+
+def expected_variables(
+    workspace: Workspace,
+    repo: str,
+    branch: str,
+    *,
+    slot: str,
+    offset: str,
+    extra: dict[str, str],
+) -> str:
+    """The env log of one script of task ``NAME`` in ``repo``: the six, then ``extra``'s values."""
+    values = {
+        "HUB_WORKTREE_NAME": NAME,
+        "HUB_WORKTREE_BRANCH": branch,
+        "HUB_REPO_DIR": os.path.realpath(workspace.ws / repo),
+        "HUB_HUB_DIR": os.path.realpath(workspace.hub),
+        "HUB_WORKTREE_SLOT": slot,
+        "HUB_PORT_OFFSET": offset,
+        **extra,
+    }
+    return "".join(f"{name}={values[name]}\n" for name in LOGGED_VARIABLES)
 
 
 def assert_refused(result: Result, message: str) -> None:
@@ -1091,3 +1137,266 @@ class TestConventions:
         assert not (demo_workspace.ws / "demo-api" / ".claude").exists()
         assert not (demo_workspace.ws / "demo-api" / ".git" / "FETCH_HEAD").exists()
         assert not demo_workspace.worktree("demo-web", "dem-7-b").exists()
+
+
+# dem-7-x: sha256 of the name mod 50 is 34, so its ports shift by 3400.
+SLOT = "34"
+OFFSET = "3400"
+# A caller's values for the six: each is overridden; HUB_OTHER passes through.
+CALLER_VARIABLES = {
+    "HUB_WORKTREE_NAME": "other",
+    "HUB_WORKTREE_SLOT": "99",
+    "HUB_PORT_OFFSET": "1",
+    "HUB_REPO_DIR": "/nope",
+    "HUB_HUB_DIR": "/nope",
+    "HUB_WORKTREE_BRANCH": "x",
+    "HUB_OTHER": "1",
+}
+# The design doc whose two ``sh`` examples (setup, then teardown) are run as the demo's scripts.
+DESIGN_DOC = Path(__file__).resolve().parents[4] / "docs" / "design" / "worktree-environment.md"
+
+
+def documented_scripts() -> list[str]:
+    """The ```` ```sh ```` blocks of ``DESIGN_DOC``, in order (the doc must exist)."""
+    assert DESIGN_DOC.is_file(), f"{DESIGN_DOC} is missing"
+    text = DESIGN_DOC.read_text(encoding="utf-8")
+    return re.findall(r"^```sh\n(.*?)^```$", text, flags=re.MULTILINE | re.DOTALL)
+
+
+class TestScriptEnvironment:
+    """The six ``HUB_*`` variables the repo's setup and teardown scripts get (AGH-59)."""
+
+    def test_passes_task_variables_when_setup_runs(
+        self, demo_workspace: Workspace, run_command: CommandRunner, tmp_path: Path
+    ) -> None:
+        log, env_log = tmp_path / "setup.log", tmp_path / "setup.env"
+        script = variable_script(log, env_log, "setup")
+        demo_workspace.advance("demo-api", {SETUP: (script, EXECUTABLE)})
+        worktree = demo_workspace.worktree("demo-api", NAME)
+
+        result = run_command(
+            demo_workspace.hub,
+            "worktree",
+            NAME,
+            "--only",
+            "demo-api",
+            env={"MARKER": "kept", "HUB_OTHER": None},
+        )
+
+        assert result.exit_code == 0, result.output
+        assert env_log.read_text() == expected_variables(
+            demo_workspace,
+            "demo-api",
+            BRANCH,
+            slot=SLOT,
+            offset=OFFSET,
+            extra={"MARKER": "kept", "HUB_OTHER": "unset"},
+        )
+        assert log.read_text() == script_logged(worktree)
+
+    def test_names_main_checkout_when_run_from_hub_worktree(
+        self, demo_workspace: Workspace, run_command: CommandRunner, tmp_path: Path
+    ) -> None:
+        env_log = tmp_path / "setup.env"
+        script = variable_script(tmp_path / "setup.log", env_log, "setup")
+        demo_workspace.advance("demo-api", {SETUP: (script, EXECUTABLE)})
+        hub = demo_workspace.hub
+        demo_workspace.git(hub, "-c", "init.defaultBranch=main", "init", "-q")
+        demo_workspace.git(hub, "add", "-A")
+        demo_workspace.git(hub, "commit", "-q", "-m", "hub")
+        hub_worktree = hub / ".claude" / "worktrees" / "x"
+        demo_workspace.git(hub, "worktree", "add", "-q", "-b", "x", str(hub_worktree))
+
+        result = run_command(
+            demo_workspace.base,
+            "worktree",
+            NAME,
+            "--only",
+            "demo-api",
+            env={"AGENT_HUB_ROOT": str(hub_worktree), "MARKER": None, "HUB_OTHER": None},
+        )
+
+        assert result.exit_code == 0, result.output
+        logged = env_log.read_text()
+        assert logged == expected_variables(
+            demo_workspace,
+            "demo-api",
+            BRANCH,
+            slot=SLOT,
+            offset=OFFSET,
+            extra={"MARKER": "unset", "HUB_OTHER": "unset"},
+        )
+        assert f"HUB_HUB_DIR={os.path.realpath(hub_worktree)}\n" not in logged
+
+    def test_shares_slot_across_repos_when_branches_differ(
+        self, demo_workspace: Workspace, run_command: CommandRunner, tmp_path: Path
+    ) -> None:
+        use_mixed_hub(demo_workspace)
+        branches = {"demo-api": "feature/dem-7/x", "demo-web": "jdoe/DEM-7-x"}
+        for repo in REPOS:
+            script = variable_script(tmp_path / f"{repo}.log", tmp_path / f"{repo}.env", "setup")
+            demo_workspace.advance(repo, {SETUP: (script, EXECUTABLE)})
+
+        result = run_command(
+            demo_workspace.hub, "worktree", NAME, env={"MARKER": None, "HUB_OTHER": None}
+        )
+
+        assert result.exit_code == 0, result.output
+        for repo, branch in branches.items():
+            assert (tmp_path / f"{repo}.env").read_text() == expected_variables(
+                demo_workspace,
+                repo,
+                branch,
+                slot=SLOT,
+                offset=OFFSET,
+                extra={"MARKER": "unset", "HUB_OTHER": "unset"},
+            )
+            assert f"branch   : {repo} {branch}" in result.stdout.splitlines()
+
+    def test_passes_setup_variables_to_teardown_when_remove_given(
+        self, demo_workspace: Workspace, run_command: CommandRunner, tmp_path: Path
+    ) -> None:
+        setup_env, teardown_env = tmp_path / "setup.env", tmp_path / "teardown.env"
+        teardown_log = tmp_path / "teardown.log"
+        setup = variable_script(tmp_path / "setup.log", setup_env, "setup")
+        teardown = variable_script(teardown_log, teardown_env, "teardown")
+        demo_workspace.advance(
+            "demo-api", {SETUP: (setup, EXECUTABLE), TEARDOWN: (teardown, EXECUTABLE)}
+        )
+        unset = {"MARKER": None, "HUB_OTHER": None}
+        created = run_command(demo_workspace.hub, "worktree", NAME, "--only", "demo-api", env=unset)
+        assert created.exit_code == 0, created.output
+        api = demo_workspace.worktree("demo-api", NAME)
+
+        result = run_command(
+            demo_workspace.hub, "worktree", "--remove", NAME, "--only", "demo-api", env=unset
+        )
+
+        assert result.exit_code == 0, result.output
+        assert result.stdout.splitlines() == [
+            f"  demo-api: teardown {api}",
+            "  demo-api: present",
+            f"removed  {api}",
+        ]
+        assert teardown_env.read_text() == setup_env.read_text()
+        assert teardown_env.read_text() == expected_variables(
+            demo_workspace,
+            "demo-api",
+            BRANCH,
+            slot=SLOT,
+            offset=OFFSET,
+            extra={"MARKER": "unset", "HUB_OTHER": "unset"},
+        )
+        assert teardown_log.read_text() == script_logged(api)
+
+    def test_overrides_caller_variables_when_scripts_run(
+        self, demo_workspace: Workspace, run_command: CommandRunner, tmp_path: Path
+    ) -> None:
+        setup_env, teardown_env = tmp_path / "setup.env", tmp_path / "teardown.env"
+        setup = variable_script(tmp_path / "setup.log", setup_env, "setup")
+        teardown = variable_script(tmp_path / "teardown.log", teardown_env, "teardown")
+        demo_workspace.advance(
+            "demo-api", {SETUP: (setup, EXECUTABLE), TEARDOWN: (teardown, EXECUTABLE)}
+        )
+        caller: dict[str, str | None] = {**CALLER_VARIABLES, "MARKER": None}
+
+        created = run_command(
+            demo_workspace.hub, "worktree", NAME, "--only", "demo-api", env=caller
+        )
+        removed = run_command(
+            demo_workspace.hub, "worktree", "--remove", NAME, "--only", "demo-api", env=caller
+        )
+
+        assert created.exit_code == 0, created.output
+        assert removed.exit_code == 0, removed.output
+        expected = expected_variables(
+            demo_workspace,
+            "demo-api",
+            BRANCH,
+            slot=SLOT,
+            offset=OFFSET,
+            extra={"MARKER": "unset", "HUB_OTHER": "1"},
+        )
+        assert setup_env.read_text() == expected
+        assert teardown_env.read_text() == expected
+
+    def test_shifts_ports_when_documented_scripts_run(
+        self, demo_workspace: Workspace, run_command: CommandRunner, tmp_path: Path
+    ) -> None:
+        """The design doc's examples, run under ``/bin/sh`` with a fake ``docker`` first on
+        ``PATH``: setup copies the main checkout's ``.env`` with shifted ports, teardown stops the
+        same compose project, and the gitignored ``.env`` leaves the worktree clean to remove."""
+        scripts = documented_scripts()
+        assert len(scripts) == 2, scripts
+        setup, teardown = (script.encode() for script in scripts)
+        demo_workspace.advance(
+            "demo-api",
+            {
+                SETUP: (setup, EXECUTABLE),
+                TEARDOWN: (teardown, EXECUTABLE),
+                ".gitignore": (b".env\n", PLAIN),
+            },
+        )
+        (demo_workspace.ws / "demo-api" / ".env").write_bytes(
+            b"API_PORT=8000\nCOMPOSE_PROJECT_NAME=old\nWEB_PORT=5173\nNAME=demo\n"
+        )
+        bin_dir, docker_log = tmp_path / "docker-bin", tmp_path / "docker.log"
+        bin_dir.mkdir()
+        docker = bin_dir / "docker"
+        docker.write_text(f'#!/bin/sh\nprintf \'%s\\n\' "$*" >> "{docker_log}"\n')
+        docker.chmod(EXECUTABLE)
+        env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+        worktree = demo_workspace.worktree("demo-api", NAME)
+
+        created = run_command(demo_workspace.hub, "worktree", NAME, "--only", "demo-api", env=env)
+        assert created.exit_code == 0, created.output
+        copied = (worktree / ".env").read_text()
+        removed = run_command(
+            demo_workspace.hub, "worktree", "--remove", NAME, "--only", "demo-api", env=env
+        )
+
+        assert copied == (
+            "API_PORT=11400\nWEB_PORT=8573\nNAME=demo\nCOMPOSE_PROJECT_NAME=demo-api-dem-7-x\n"
+        )
+        assert removed.exit_code == 0, removed.output
+        assert docker_log.read_text() == "compose -p demo-api-dem-7-x down\n"
+        assert not worktree.exists()
+        assert [line for line in copied.splitlines() if "COMPOSE_PROJECT_NAME" in line] == [
+            "COMPOSE_PROJECT_NAME=demo-api-dem-7-x"
+        ]
+
+    def test_skips_env_and_docker_when_documented_scripts_run_without_them(
+        self, demo_workspace: Workspace, run_command: CommandRunner, tmp_path: Path
+    ) -> None:
+        """The design doc's examples with no ``.env`` in the main checkout and no ``docker`` on
+        ``PATH``: setup writes only the compose project name, and teardown exits 0 so the worktree
+        is removed."""
+        setup, teardown = (script.encode() for script in documented_scripts())
+        demo_workspace.advance(
+            "demo-api",
+            {
+                SETUP: (setup, EXECUTABLE),
+                TEARDOWN: (teardown, EXECUTABLE),
+                ".gitignore": (b".env\n", PLAIN),
+            },
+        )
+        bin_dir = tmp_path / "no-docker-bin"
+        bin_dir.mkdir()
+        for tool in ("git", "basename"):
+            found = shutil.which(tool)
+            assert found is not None, tool
+            (bin_dir / tool).symlink_to(found)
+        env = {"PATH": str(bin_dir)}
+        worktree = demo_workspace.worktree("demo-api", NAME)
+
+        created = run_command(demo_workspace.hub, "worktree", NAME, "--only", "demo-api", env=env)
+        assert created.exit_code == 0, created.output
+        copied = (worktree / ".env").read_text()
+        removed = run_command(
+            demo_workspace.hub, "worktree", "--remove", NAME, "--only", "demo-api", env=env
+        )
+
+        assert not (demo_workspace.ws / "demo-api" / ".env").exists()
+        assert copied == "COMPOSE_PROJECT_NAME=demo-api-dem-7-x\n"
+        assert removed.exit_code == 0, removed.output
+        assert not worktree.exists()

@@ -22,6 +22,7 @@ from agent_hub.core.hub_files.extension_inputs import NO_EXTENSIONS, ExtensionIn
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.hub_files.rendered_link import RenderedLink
+from agent_hub.core.testing import builders
 from agent_hub.core.testing.builders import a_conventions_document, a_hub_document, a_second_repo
 from agent_hub.generator.built_json import managed_settings
 from agent_hub.generator.errors import GeneratorError, TemplateError
@@ -1873,9 +1874,10 @@ def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubCon
 
 # AGH-65 AC-65.7: sha256 of the files as rendered on main (4346e52) before the identity keys became
 # optional; a hub that sets them in hub.json keeps these bytes.
-DEMO_AGENTS_SHA256 = "4fa425f1b14b4be79bb4fcc6e8e38045371f6e754b4229aa3a57858e17d29c7c"
+# AGH-59: re-pinned when rule 4 named the script variables.
+DEMO_AGENTS_SHA256 = "fd0949e3a6f09c58089cbb5f4fcfcb86d9859128b6c5ea4c9827cec65f9ce655"
 ALL_MODULES_SHA256 = {
-    "AGENTS.md": "8c6b23e99897429c8eb9b73f248140e89bb142ece79f36f29793cf0ad355f3e1",
+    "AGENTS.md": "e641cdafe7fe9fc7f098c119eea03b34d48a2fd2fdc65239ed92fa25df5fd8ea",
     ".claude-plugin/marketplace.json": (
         "f7324911e70a0f3255274721636821a9b65a5716f04c5f6e3e470e74dc7b8ac7"
     ),
@@ -2123,6 +2125,44 @@ def test_names_worktree_setup_scripts_when_agents_rendered(demo_config: HubConfi
     assert step.count("`<repo>/scripts/worktree-teardown.sh`") == 1
     assert "`make worktree NAME=<team>-<n>-<desc>`" in step
     assert "(env files, databases, ports)" in step
+    for name in WORKTREE_VARIABLES:
+        assert step.count(f"`{name}`") == 1, name
+    # AGH-59: the dirs are the main checkouts, not the worktree; the offset is not unique per task.
+    assert "(the repo's and the hub's main checkouts)" in step
+    assert "two tasks can share a slot" in step
+
+
+# AGH-59: the variables the repo's worktree scripts get, as literals (the generator may not
+# import cli).
+WORKTREE_VARIABLES = (
+    "HUB_WORKTREE_NAME",
+    "HUB_WORKTREE_BRANCH",
+    "HUB_REPO_DIR",
+    "HUB_HUB_DIR",
+    "HUB_WORKTREE_SLOT",
+    "HUB_PORT_OFFSET",
+)
+
+
+@pytest.mark.parametrize(
+    "document",
+    [builders.a_hub_document, builders.a_two_team_document, builders.a_conventions_document],
+    ids=["demo", "two_teams", "conventions"],
+)
+def test_keeps_worktree_step_within_width_when_hubs_rendered(
+    document: Callable[[], dict[str, Any]],
+) -> None:
+    config = HubConfig.model_validate(document())
+    first = {file.path: file.content for file in render_hub(config).files}["AGENTS.md"]
+    second = {file.path: file.content for file in render_hub(config).files}["AGENTS.md"]
+    agents = first.decode("utf-8")
+    workflow = agents.split("## Workflow", 1)[1].split("\n## ", 1)[0]
+    step = " ".join(workflow.split("\n4. ", 1)[1].split("\n5. ", 1)[0].split())
+
+    assert [line for line in agents.splitlines() if len(line) > 120] == []
+    assert first == second
+    for name in WORKTREE_VARIABLES:
+        assert step.count(f"`{name}`") == 1, name
 
 
 def test_pins_hygiene_hooks_when_pre_commit_rendered(demo_config: HubConfig) -> None:
