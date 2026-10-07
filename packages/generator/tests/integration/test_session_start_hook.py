@@ -25,8 +25,14 @@ from typing import Any
 import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
-from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
+from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND, pinned_release_command
 from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.platform_repository_cases import (
+    CUSTOM_REPOSITORY,
+    REPOSITORY_CASES,
+    SECRET_PARTS,
+    RepositoryCase,
+)
 from agent_hub.generator.render_hub import render_hub
 
 HOOK = "plugin/hub-workflow/hooks/session_start.py"
@@ -123,8 +129,16 @@ elif mode == "long":
 )
 FALLBACK_HEADER = re.compile(
     r"# Brief \(fallback: hub brief (no uv|no version|resolve failed|timed out"
-    r"|failed|failed \(exit -?[0-9]+\)|failed \(no output\)|failed \(cannot start\))\)"
+    r"|failed|failed \(exit -?[0-9]+\)|failed \(no output\)|failed \(cannot start\)"
+    r"|bad platform\.repository)\)"
 )
+# AC-49.5's custom source for VERSION, spelled out.
+CUSTOM_SOURCE = (
+    f"git+https://git.acme.test/tools/agent-hub@v{VERSION}#subdirectory=packages/agent-hub"
+)
+BAD_REPOSITORIES = [case for case in REPOSITORY_CASES if not case.is_valid]
+# Marks a key the document leaves out (``None`` is a value: JSON ``null``).
+ABSENT = object()
 
 type RunHook = Callable[..., Any]
 
@@ -141,13 +155,16 @@ def release_argv(version: str, *arguments: str) -> list[str]:
     return [*command[1:], *(arguments or ("brief",))]
 
 
-def write_hub_json(hub: Path, *, version: object = VERSION) -> None:
-    """The builder's document with ``platform.version`` = ``version`` (absent when ``None``)."""
+def write_hub_json(hub: Path, *, version: object = VERSION, repository: object = ABSENT) -> None:
+    """The builder's document with ``platform.version`` = ``version`` (absent when ``None``) and
+    ``platform.repository`` = ``repository`` (absent when ``ABSENT``)."""
     document = a_hub_document()
     if version is None:
         del document["platform"]["version"]
     else:
         document["platform"]["version"] = version
+    if repository is not ABSENT:
+        document["platform"]["repository"] = repository
     (hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
 
 
@@ -553,3 +570,99 @@ def test_names_failed_when_pinned_brief_raises(
 
     assert context_of(completed) == expected_mini_brief("failed")
     assert calls(uvx_log) == []
+
+
+def test_briefs_from_custom_source_when_hub_sets_repository(
+    hub: Path, *, hook_python: str, run_hook_file: RunHook, bin_dir: Path, uvx_log: Path
+) -> None:
+    install_uvx(bin_dir, python=hook_python, log=uvx_log)
+    write_hub_json(hub, repository=CUSTOM_REPOSITORY)
+
+    completed, _ = start(hub, python=hook_python, run_hook_file=run_hook_file, bin_dir=bin_dir)
+
+    assert context_of(completed) == BRIEF.strip()
+    assert calls(uvx_log) == [
+        {"args": ["--from", CUSTOM_SOURCE, "hub", "--version"], "cwd": str(hub), "root": str(hub)},
+        {"args": ["--from", CUSTOM_SOURCE, "hub", "brief"], "cwd": str(hub), "root": str(hub)},
+    ]
+
+
+def test_briefs_from_default_source_when_repository_absent(
+    hub: Path, *, hook_python: str, run_hook_file: RunHook, bin_dir: Path, uvx_log: Path
+) -> None:
+    install_uvx(bin_dir, python=hook_python, log=uvx_log)
+    write_hub_json(hub)
+
+    completed, _ = start(hub, python=hook_python, run_hook_file=run_hook_file, bin_dir=bin_dir)
+
+    assert context_of(completed) == BRIEF.strip()
+    assert [call["args"] for call in calls(uvx_log)] == [
+        release_argv(VERSION, "--version"),
+        release_argv(VERSION),
+    ]
+
+
+@pytest.mark.parametrize("case", BAD_REPOSITORIES, ids=[case.name for case in BAD_REPOSITORIES])
+def test_names_bad_repository_cause_when_repository_bad(
+    hub: Path,
+    *,
+    hook_python: str,
+    run_hook_file: RunHook,
+    bin_dir: Path,
+    uvx_log: Path,
+    case: RepositoryCase,
+) -> None:
+    install_uvx(bin_dir, python=hook_python, log=uvx_log)
+    write_hub_json(hub, repository=case.value)
+
+    completed, _ = start(hub, python=hook_python, run_hook_file=run_hook_file, bin_dir=bin_dir)
+
+    context = context_of(completed)
+    assert context == expected_mini_brief("bad platform.repository")
+    assert FALLBACK_HEADER.fullmatch(context.splitlines()[0])
+    assert calls(uvx_log) == []
+    for part in SECRET_PARTS:
+        assert part.encode() not in completed.stdout + completed.stderr
+
+
+def test_names_no_version_first_when_version_and_repository_bad(
+    hub: Path, *, hook_python: str, run_hook_file: RunHook, bin_dir: Path, uvx_log: Path
+) -> None:
+    install_uvx(bin_dir, python=hook_python, log=uvx_log)
+    write_hub_json(hub, version=None, repository="git+ssh://git@github.com/acme/agent-hub")
+
+    completed, _ = start(hub, python=hook_python, run_hook_file=run_hook_file, bin_dir=bin_dir)
+
+    assert context_of(completed) == expected_mini_brief("no version")
+    assert calls(uvx_log) == []
+
+
+# argv: the rendered hook, a repository (JSON: a string or null), a version. Prints the hook's
+# ``release_source`` for them.
+RELEASE_SOURCE_PROBE = """
+import importlib.util, json
+spec = importlib.util.spec_from_file_location("session_start", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+print(json.dumps(module.release_source(json.loads(sys.argv[2]), sys.argv[3])))
+"""
+
+
+@pytest.mark.parametrize("repository", [CUSTOM_REPOSITORY, None], ids=["custom", "default"])
+def test_ties_custom_source_to_release_command_when_rendered(
+    hub: Path, *, hook_python: str, run_python: Callable[..., Any], repository: str | None
+) -> None:
+    source = run_python(
+        hook_python,
+        RELEASE_SOURCE_PROBE,
+        path=hub / HOOK.rsplit("/", 1)[0],
+        args=[str(hub / HOOK), json.dumps(repository), VERSION],
+    )
+
+    expected = (
+        pinned_release_command(VERSION, repository=repository)
+        if repository
+        else PINNED_RELEASE_COMMAND.format(version=VERSION)
+    )
+    assert expected is not None
+    assert ["uvx", "--from", source, "hub"] == expected.split()
