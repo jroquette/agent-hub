@@ -1,7 +1,8 @@
 #!/bin/sh
-# The hub command of the release pinned in hub.json (platform.version), read at every run: the
-# resolve step (hub --version), then the real call, which keeps the caller's folder and gets
-# AGENT_HUB_ROOT = this folder. No python3 or no uv: exit 127. The release cannot be resolved:
+# The hub command of the release pinned in hub.json (platform.version), from platform.repository
+# (absent: the platform's own), both read at every run: the resolve step (hub --version), then
+# the real call, which keeps the caller's folder and gets AGENT_HUB_ROOT = this folder. No python3
+# or no uv: exit 127. A bad pin or repository (never echoed), or a release that cannot be resolved:
 # exit 1, the real call never made. Otherwise the exit code is the real call's. Run it by its real
 # path: its folder is the hub, so a symlink to it elsewhere (on PATH) would read the link's folder.
 # Managed by hub sync.
@@ -14,7 +15,7 @@ command -v python3 >/dev/null 2>&1 || {
   echo "hub: python3 is not installed; it reads platform.version from hub.json" >&2
   exit 127
 }
-version=$(python3 -I -S -c '
+release=$(python3 -I -S -c '
 import json, re, sys
 try:
     with open(sys.argv[1], encoding="utf-8") as stream:
@@ -25,13 +26,25 @@ platform = document.get("platform") if isinstance(document, dict) else None
 version = platform.get("version") if isinstance(platform, dict) else None
 if not (isinstance(version, str) and re.fullmatch("[0-9]+[.][0-9]+[.][0-9]+", version)):
     sys.exit("hub: platform.version in hub.json must be X.Y.Z")
-print(version)
-' "$hub_dir/hub.json") || exit 1
+prefix = sys.argv[2]
+if "repository" in platform:
+    repository = platform["repository"]
+    if not (
+        isinstance(repository, str)
+        and len(repository) <= 200
+        and re.fullmatch(r"@@{platform_repository_pattern}", repository)
+    ):
+        sys.exit("hub: platform.repository in hub.json must be @@{platform_repository_form}")
+    prefix = repository + "@v"
+print(prefix + version)
+' "$hub_dir/hub.json" '@@{platform_repository}@v') || exit 1
+# A valid repository holds no "@", so the last "@v" starts the version.
+version=${release##*@v}
 command -v uvx >/dev/null 2>&1 || {
   echo "hub: uv is not installed; see https://docs.astral.sh/uv/getting-started/installation/" >&2
   exit 127
 }
-source="@@{platform_repository}@v$version#subdirectory=packages/agent-hub"
+source="$release#subdirectory=packages/agent-hub"
 uvx --from "$source" hub --version </dev/null >/dev/null || {
   echo "hub: cannot run agent-hub $version from $source; check read access to the repository (a credential, or the repository attached to this session)" >&2
   exit 1

@@ -6,7 +6,8 @@ with a ``hub.json`` pinned to ``4.5.6``: the shim reads nothing else. Each case 
 cases (arguments, exit codes, the hub's real path, ``$0`` without a slash) also under ``dash``
 (required under ``CI``, skipped locally without one) and ``bash --posix``. ``PATH`` holds only a
 test folder: a fake ``uvx`` (a Python logger: every argument as one JSON list item, the cwd,
-``AGENT_HUB_ROOT`` and stdin) and a ``python3`` link, each only when the case wants it.
+``AGENT_HUB_ROOT`` and stdin) and a ``python3`` link, each only when the case wants it. A case
+may set ``platform.repository`` too; the shim reads it at every run, like the pin (AGH-49).
 """
 
 import json
@@ -21,7 +22,14 @@ from typing import Any
 import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.platform_repository import PLATFORM_REPOSITORY_FORM
 from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.platform_repository_cases import (
+    CUSTOM_REPOSITORY,
+    REPOSITORY_CASES,
+    SECRET_PARTS,
+    RepositoryCase,
+)
 from agent_hub.generator.render_hub import render_hub
 
 VERSION = "4.5.6"
@@ -35,6 +43,16 @@ ACCESS_HINT = (
     "check read access to the repository (a credential, or the repository attached to this session)"
 )
 TIMEOUT = 30
+# The custom hub's source, written out so a change to how the shim builds it fails here.
+CUSTOM_SOURCE = "git+https://git.acme.test/tools/agent-hub@v4.5.6#subdirectory=packages/agent-hub"
+OTHER_REPOSITORY = "git+https://github.com/acme/agent-hub"
+BAD_REPOSITORY_LINE = f"hub: platform.repository in hub.json must be {PLATFORM_REPOSITORY_FORM}\n"
+# Parts of the bad values that a message echoing them would show (E10): the credential's user,
+# password and token, a port, a query and a scheme.
+VALUE_PARTS = (*SECRET_PARTS, "8443", "ref=x", "git+ssh")
+BAD_CASES = [case for case in REPOSITORY_CASES if not case.is_valid]
+# ``write_pin`` leaves ``platform.repository`` out unless a case passes one.
+ABSENT = object()
 FAKE_UVX = """\
 import json, os, sys
 args = sys.argv[2:]
@@ -91,9 +109,11 @@ def hub(tmp_path: Path, shim_files: dict[str, bytes]) -> Path:
     return root
 
 
-def write_pin(hub: Path, version: object) -> None:
+def write_pin(hub: Path, version: object, *, repository: object = ABSENT) -> None:
     document = a_hub_document()
     document["platform"]["version"] = version
+    if repository is not ABSENT:
+        document["platform"]["repository"] = repository
     (hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
 
 
@@ -341,3 +361,52 @@ def test_reads_own_folder_when_run_without_slash(
     assert completed.returncode == 0, completed.stderr
     assert calls(log)[-1]["cwd"] == str(hub)
     assert calls(log)[-1]["root"] == str(hub)
+
+
+def case_name(case: RepositoryCase) -> str:
+    return case.name
+
+
+@ALL_SHELLS
+def test_runs_custom_source_when_hub_sets_repository(
+    hub: Path, run: Run, *, tools: None, log: Path
+) -> None:
+    write_pin(hub, VERSION, repository=CUSTOM_REPOSITORY)
+
+    completed = run(hub / "hub", "brief")
+
+    assert completed.returncode == 0, completed.stderr
+    assert [call["args"] for call in calls(log)] == [
+        ["--from", CUSTOM_SOURCE, "hub", "--version"],
+        ["--from", CUSTOM_SOURCE, "hub", "brief"],
+    ]
+
+
+def test_reads_new_repository_when_hub_json_edited(
+    hub: Path, run: Run, *, tools: None, log: Path
+) -> None:
+    assert run(hub / "hub", "brief").returncode == 0
+    write_pin(hub, VERSION, repository=OTHER_REPOSITORY)
+
+    assert run(hub / "hub", "brief").returncode == 0
+
+    other = SOURCE.replace("jroquette", "acme")
+    assert [call["args"][1] for call in calls(log)] == [SOURCE, SOURCE, other, other]
+
+
+@ALL_SHELLS
+@pytest.mark.parametrize("case", BAD_CASES, ids=case_name)
+def test_exits_one_without_uvx_when_repository_bad(
+    hub: Path, run: Run, *, tools: None, log: Path, case: RepositoryCase
+) -> None:
+    write_pin(hub, VERSION, repository=case.value)
+
+    completed = run(hub / "hub", "brief")
+
+    assert completed.returncode == 1
+    assert calls(log) == []
+    # One fixed line: the key and the accepted form, never the value (D-bad, E10).
+    assert completed.stderr.decode() == BAD_REPOSITORY_LINE
+    assert completed.stdout == b""
+    for part in VALUE_PARTS:
+        assert part.encode() not in completed.stderr + completed.stdout, part
