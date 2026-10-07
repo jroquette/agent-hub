@@ -1875,9 +1875,9 @@ def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubCon
 # AGH-65 AC-65.7: sha256 of the files as rendered on main (4346e52) before the identity keys became
 # optional; a hub that sets them in hub.json keeps these bytes.
 # AGH-59: re-pinned when rule 4 named the script variables.
-DEMO_AGENTS_SHA256 = "bb169df5ea74f17a55e9a39c0a7b72ca27c68adfdd3a7ac0604bc29e1829677d"
+DEMO_AGENTS_SHA256 = "fd0949e3a6f09c58089cbb5f4fcfcb86d9859128b6c5ea4c9827cec65f9ce655"
 ALL_MODULES_SHA256 = {
-    "AGENTS.md": "825cf2b0ef0db82f6277333db30564cf11efc39495517c1d9027d900afbcb936",
+    "AGENTS.md": "e641cdafe7fe9fc7f098c119eea03b34d48a2fd2fdc65239ed92fa25df5fd8ea",
     ".claude-plugin/marketplace.json": (
         "f7324911e70a0f3255274721636821a9b65a5716f04c5f6e3e470e74dc7b8ac7"
     ),
@@ -2127,6 +2127,9 @@ def test_names_worktree_setup_scripts_when_agents_rendered(demo_config: HubConfi
     assert "(env files, databases, ports)" in step
     for name in WORKTREE_VARIABLES:
         assert step.count(f"`{name}`") == 1, name
+    # AGH-59: the dirs are the main checkouts, not the worktree; the offset is not unique per task.
+    assert "(the repo's and the hub's main checkouts)" in step
+    assert "two tasks can share a slot" in step
 
 
 # AGH-59: the variables the repo's worktree scripts get, as literals (the generator may not
