@@ -27,7 +27,7 @@ from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.core.testing.platform_repository_cases import (
     CUSTOM_REPOSITORY,
     REPOSITORY_CASES,
-    SECRET_PARTS,
+    VALUE_PARTS,
     RepositoryCase,
 )
 from agent_hub.generator.render_hub import render_hub
@@ -47,9 +47,6 @@ TIMEOUT = 30
 CUSTOM_SOURCE = "git+https://git.acme.test/tools/agent-hub@v4.5.6#subdirectory=packages/agent-hub"
 OTHER_REPOSITORY = "git+https://github.com/acme/agent-hub"
 BAD_REPOSITORY_LINE = f"hub: platform.repository in hub.json must be {PLATFORM_REPOSITORY_FORM}\n"
-# Parts of the bad values that a message echoing them would show (E10): the credential's user,
-# password and token, a port, a query and a scheme.
-VALUE_PARTS = (*SECRET_PARTS, "8443", "ref=x", "git+ssh")
 BAD_CASES = [case for case in REPOSITORY_CASES if not case.is_valid]
 # ``write_pin`` leaves ``platform.repository`` out unless a case passes one.
 ABSENT = object()
@@ -410,3 +407,31 @@ def test_exits_one_without_uvx_when_repository_bad(
     assert completed.stdout == b""
     for part in VALUE_PARTS:
         assert part.encode() not in completed.stderr + completed.stdout, part
+
+
+def test_exits_one_in_fixed_line_when_hub_json_nested_deeply(
+    hub: Path, run: Run, *, tools: None, log: Path
+) -> None:
+    # Deeper than the JSON parser's stack: RecursionError, not ValueError.
+    (hub / "hub.json").write_text("[" * 100_000 + "]" * 100_000, encoding="utf-8")
+
+    completed = run(hub / "hub", "brief")
+
+    assert completed.returncode == 1
+    assert completed.stderr.decode() == f"hub: cannot read hub.json as JSON: {hub / 'hub.json'}\n"
+    assert completed.stdout == b""
+    assert calls(log) == []
+
+
+def test_names_version_first_when_version_and_repository_bad(
+    hub: Path, run: Run, *, tools: None, log: Path
+) -> None:
+    write_pin(hub, "1.2", repository="git+ssh://git@github.com/acme/agent-hub")
+
+    completed = run(hub / "hub", "brief")
+
+    # The pin is checked first, as the SessionStart hook does (E13).
+    assert completed.returncode == 1
+    assert completed.stderr.decode() == "hub: platform.version in hub.json must be X.Y.Z\n"
+    assert completed.stdout == b""
+    assert calls(log) == []

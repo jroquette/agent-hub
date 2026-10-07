@@ -37,7 +37,7 @@ from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 from agent_hub.core.testing.platform_repository_cases import (
     CUSTOM_REPOSITORY,
     REPOSITORY_CASES,
-    SECRET_PARTS,
+    VALUE_PARTS,
     RepositoryCase,
 )
 
@@ -622,9 +622,6 @@ CUSTOM_SOURCE = f"{CUSTOM_REPOSITORY}@v{VERSION}#subdirectory=packages/agent-hub
 BAD_REPOSITORY_LINE = (
     f"cloud-setup: platform.repository in hub.json must be {PLATFORM_REPOSITORY_FORM}"
 )
-# Parts of the bad values that a message echoing them would show (E10): the credential's user,
-# password and token, a port, a query and a scheme.
-VALUE_PARTS = (*SECRET_PARTS, "8443", "ref=x", "git+ssh")
 BAD_CASES = [case for case in REPOSITORY_CASES if not case.is_valid]
 
 
@@ -701,3 +698,19 @@ class TestPlatformRepository:
         assert cloud_ws.config("--global", "--get-all", HELPER_KEY) == []
         for part in VALUE_PARTS:
             assert part not in completed.stderr + completed.stdout, part
+
+    def test_exits_one_in_fixed_line_when_hub_json_nested_deeply(
+        self, cloud_ws: CloudWorkspace
+    ) -> None:
+        # Deeper than the JSON parser's stack: RecursionError, not ValueError.
+        hub_json = cloud_ws.hub / "hub.json"
+        hub_json.write_text("[" * 100_000 + "]" * 100_000, encoding="utf-8")
+
+        completed = cloud_ws.run(env={"GH_TOKEN": TOKEN})
+
+        assert completed.returncode == 1
+        unreadable = f"cloud-setup: cannot read hub.json as JSON: {hub_json.resolve()}\n"
+        assert completed.stderr == unreadable
+        assert completed.stdout == ""
+        assert cloud_ws.calls() == []
+        assert cloud_ws.config("--global", "--get-all", HELPER_KEY) == []
