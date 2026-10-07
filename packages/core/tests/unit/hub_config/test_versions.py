@@ -2,6 +2,9 @@ from typing import Any
 
 import pytest
 
+from agent_hub.core.hub_config.document_check import check_hub_document
+from agent_hub.core.hub_config.platform_repository import PLATFORM_REPOSITORY_MESSAGE
+from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.hub_config.versions import (
     ECHO_LIMIT,
     PINNED_RELEASE_COMMAND,
@@ -9,8 +12,15 @@ from agent_hub.core.hub_config.versions import (
     find_version_problem,
     pinned_release,
     pinned_release_command,
+    pinned_repository,
 )
 from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.platform_repository_cases import (
+    CUSTOM_REPOSITORY,
+    REPOSITORY_CASES,
+    SECRET_PARTS,
+    RepositoryCase,
+)
 
 RUNNING = "0.3.1"
 
@@ -200,3 +210,80 @@ def test_drops_pinned_command_when_pin_longer_than_limit() -> None:
     assert len(at_limit) == ECHO_LIMIT
     assert pinned_release_command(at_limit) == PINNED_RELEASE_COMMAND.format(version=at_limit)
     assert pinned_release_command(over_limit) is None
+
+
+DEFAULT_REPOSITORY = "git+https://github.com/jroquette/agent-hub"
+BAD_REPOSITORIES = [case for case in REPOSITORY_CASES if not case.is_valid]
+# ``null`` keeps the null message in the model (ConfigObject); the pre-check omits it all alike.
+BAD_NON_NULL_REPOSITORIES = [case for case in BAD_REPOSITORIES if case.value is not None]
+
+
+def case_name(case: RepositoryCase) -> str:
+    return case.name
+
+
+def with_repository(value: object, *, version: str = RUNNING) -> dict[str, Any]:
+    return a_pinned_document(platform={"version": version, "repository": value})
+
+
+@pytest.mark.parametrize(
+    ("document", "expected"),
+    [
+        (None, DEFAULT_REPOSITORY),
+        ([], DEFAULT_REPOSITORY),
+        (_without("platform"), DEFAULT_REPOSITORY),
+        (a_pinned_document(platform=[CUSTOM_REPOSITORY]), DEFAULT_REPOSITORY),
+        (a_pinned_document(), DEFAULT_REPOSITORY),
+        (with_repository(CUSTOM_REPOSITORY), CUSTOM_REPOSITORY),
+        *((with_repository(case.value), None) for case in BAD_REPOSITORIES),
+    ],
+    ids=[
+        "null-document",
+        "array-document",
+        "platform-absent",
+        "platform-array",
+        "key-absent",
+        "custom",
+        *(f"bad-{case.name}" for case in BAD_REPOSITORIES),
+    ],
+)
+def test_reads_repository_leniently_when_document_parsed(
+    document: object, expected: str | None
+) -> None:
+    assert pinned_repository(document) == expected
+
+
+def test_names_custom_source_when_pin_differs_and_hub_sets_repository() -> None:
+    problem = find_version_problem(
+        with_repository(CUSTOM_REPOSITORY, version="0.0.1"), running_version=RUNNING
+    )
+
+    assert problem is not None
+    assert problem.path == "platform.version"
+    assert problem.message.endswith(
+        "run the pinned release: uvx --from"
+        " git+https://git.acme.test/tools/agent-hub@v0.0.1#subdirectory=packages/agent-hub hub"
+    )
+
+
+@pytest.mark.parametrize("case", BAD_REPOSITORIES, ids=case_name)
+def test_omits_pinned_command_when_repository_invalid(case: RepositoryCase) -> None:
+    problem = find_version_problem(
+        with_repository(case.value, version="0.0.1"), running_version=RUNNING
+    )
+
+    assert problem == ConfigProblem(
+        "platform.version",
+        f"this hub is pinned to 0.0.1 but this hub command is {RUNNING}; run the pinned release",
+    )
+    assert [part for part in SECRET_PARTS if part in problem.message] == []
+
+
+@pytest.mark.parametrize("case", BAD_NON_NULL_REPOSITORIES, ids=case_name)
+def test_reports_repository_after_pin_matches_when_value_bad(case: RepositoryCase) -> None:
+    document = with_repository(case.value)
+
+    assert find_version_problem(document, running_version=RUNNING) is None
+    assert check_hub_document(document, running_version=RUNNING) == (
+        ConfigProblem("platform.repository", PLATFORM_REPOSITORY_MESSAGE),
+    )

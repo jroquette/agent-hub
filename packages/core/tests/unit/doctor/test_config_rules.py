@@ -14,6 +14,12 @@ from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.json_form import dump_json
 from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.platform_repository_cases import (
+    CUSTOM_REPOSITORY,
+    REPOSITORY_CASES,
+    SECRET_PARTS,
+    RepositoryCase,
+)
 
 type SnapshotFactory = Callable[..., DoctorSnapshot]
 type Shown = tuple[str, Severity, str | None, int | None, str, str]
@@ -185,6 +191,54 @@ def test_drops_pinned_command_when_pin_too_long(snapshot_of: SnapshotFactory) ->
             "run the pinned release",
         )
     ]
+
+
+def pinned_with_repository(value: object) -> bytes:
+    """The builder's ``hub.json`` bytes pinned to 0.0.1, with ``platform.repository`` set."""
+    return document_bytes(
+        lambda document: document.update(platform={"version": "0.0.1", "repository": value})
+    )
+
+
+def test_fixes_with_custom_source_when_pin_differs_and_hub_sets_repository(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    command = (
+        "uvx --from git+https://git.acme.test/tools/agent-hub@v0.0.1"
+        "#subdirectory=packages/agent-hub hub"
+    )
+
+    failure = failure_of(pinned_with_repository(CUSTOM_REPOSITORY))
+
+    assert failure.pin == PinMismatch(pinned="0.0.1", running=RUNNING_VERSION, command=command)
+    assert [finding[5] for finding in findings_of(snapshot_of(config=failure))] == [
+        f"run the pinned release: {command}"
+    ]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [case for case in REPOSITORY_CASES if not case.is_valid],
+    ids=lambda case: case.name,
+)
+def test_fixes_without_command_when_pin_differs_and_repository_invalid(
+    snapshot_of: SnapshotFactory, case: RepositoryCase
+) -> None:
+    failure = failure_of(pinned_with_repository(case.value))
+
+    assert failure.pin == PinMismatch(pinned="0.0.1", running=RUNNING_VERSION, command=None)
+    findings = findings_of(snapshot_of(config=failure))
+    assert findings == [
+        (
+            "platform.version",
+            Severity.ERROR,
+            "hub.json",
+            None,
+            "this hub is pinned to 0.0.1 but this hub command is 0.2.0.",
+            "run the pinned release",
+        )
+    ]
+    assert [part for part in SECRET_PARTS if part in str(findings)] == []
 
 
 def test_reports_nothing_when_config_valid(snapshot_of: SnapshotFactory) -> None:
