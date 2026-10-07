@@ -14,9 +14,9 @@ path and the conflict wording: [hub-sync.md](hub-sync.md). What is rendered and 
 Root, `hub.json` (pin, `schema_version`, model) and the one tree read are plain sync's, with the same exit-1 lines.
 `hub.lock` may be absent; then no path has an entry. A lock that is a link, folder or other non-regular file, or is
 malformed, exits 1 with sync's `hub.lock: …` lines, the last one `hub.lock: restore it from git, or delete it and re-run
-hub sync --adopt`. Nothing is written before the plan (core `plan_adopt`) is whole. An existing hub migrates by adding
-`schema_version`, `platform` and, if it uses any, `modules` to its `hub.json`. Guard paths rooted at a repo stay as they
-are; one rooted at the hub's directory name is rewritten as `@hub/…`.
+hub sync --adopt`. Nothing is written before the plan (core `plan_adopt`) is whole. Before adopting, the owner edits
+`hub.json` by hand: adds `schema_version`, `platform` and, if used, `modules`; guard paths rooted at a repo stay,
+and one rooted at the hub's directory name becomes `@hub/…` (adopt rewrites no path).
 
 ### Per path
 
