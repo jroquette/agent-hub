@@ -29,6 +29,7 @@ from agent_hub.core.hub_config.model import (
     Tracker,
 )
 from agent_hub.core.testing.builders import a_conventions_document, a_hub_document, a_second_repo
+from agent_hub.core.testing.platform_repository_cases import REPOSITORY_CASES, RepositoryCase
 from agent_hub.generator.render_hub import render_hub
 
 READER = "plugin/hub-workflow/hooks/stdlib_reader.py"
@@ -175,6 +176,63 @@ def test_reports_version_absent_when_not_three_numbers(
 
     assert hub_file["platform"]["version"] is None
     assert hub_file["project"]["name"] == "demo"
+
+
+GOOD_REPOSITORIES = [case for case in REPOSITORY_CASES if case.is_valid]
+BAD_REPOSITORIES = [case for case in REPOSITORY_CASES if not case.is_valid]
+
+
+def with_repository(value: object) -> dict[str, Any]:
+    document = a_hub_document()
+    document["platform"]["repository"] = value
+    return document
+
+
+@pytest.mark.parametrize("case", GOOD_REPOSITORIES, ids=[case.name for case in GOOD_REPOSITORIES])
+def test_reads_repository_when_value_good(
+    tmp_path: Path, *, hook_python: str, read: Reader, case: RepositoryCase
+) -> None:
+    path = write_hub_file(tmp_path, with_repository(case.value))
+
+    hub_file = read(hook_python, path)["hub_file"]
+
+    assert hub_file["platform"] == {
+        "version": "0.2.0",
+        "repository": case.value,
+        "has_bad_repository": False,
+    }
+
+
+@pytest.mark.parametrize("case", BAD_REPOSITORIES, ids=[case.name for case in BAD_REPOSITORIES])
+def test_flags_bad_repository_when_value_bad(
+    tmp_path: Path, *, hook_python: str, read: Reader, case: RepositoryCase
+) -> None:
+    path = write_hub_file(tmp_path, with_repository(case.value))
+
+    hub_file = read(hook_python, path)["hub_file"]
+
+    # Only that key is affected: the pin and the rest of the file are still read.
+    assert hub_file["platform"] == {
+        "version": "0.2.0",
+        "repository": None,
+        "has_bad_repository": True,
+    }
+    assert hub_file["project"]["name"] == "demo"
+    assert [repo["dir"] for repo in hub_file["repos"]] == ["demo-api"]
+
+
+def test_reads_no_repository_when_key_absent(
+    tmp_path: Path, hook_python: str, read: Reader
+) -> None:
+    path = write_hub_file(tmp_path, a_minimal_document())
+
+    hub_file = read(hook_python, path)["hub_file"]
+
+    assert hub_file["platform"] == {
+        "version": "0.2.0",
+        "repository": None,
+        "has_bad_repository": False,
+    }
 
 
 def test_ignores_unknown_and_comment_keys_when_present(
