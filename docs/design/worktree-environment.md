@@ -23,7 +23,8 @@ it serves, where the main checkout and the hub are, and which ports to use. The 
   in the caller's process group (Ctrl-C reaches it). Each line it prints on stdout is shown as `  <repo>: <line>`;
   its stderr passes through unprefixed.
 - A setup that fails (non-zero exit, a signal, or it cannot start) stops the command with exit 1 and keeps the
-  worktree, with a hint to run the script again or remove the worktree. A failed teardown removes nothing.
+  worktree, with a hint to run the script again or remove the worktree. A failed teardown keeps that repo's worktree
+  (repos handled before it are already removed).
 
 ### Environment
 
@@ -58,10 +59,10 @@ A repo that keeps a gitignored `.env` in its main checkout and runs its services
 are POSIX `sh` and name the compose project `<repo>-<name>`. **The repo's `.gitignore` must list `.env`**: the copy
 would otherwise be an untracked file, and `--remove` refuses a dirty worktree before the teardown runs.
 
-`scripts/worktree-setup.sh` copies `$HUB_REPO_DIR/.env` into the worktree, every `<NAME>_PORT=<number>` line shifted
-by `$HUB_PORT_OFFSET`, and sets `COMPOSE_PROJECT_NAME` (dropping any copied one, so the result has exactly one). Only a
-line of the exact form `<NAME>_PORT=<digits>` is shifted: a quoted value, spaces around `=`, an inline comment,
-`export`, a CRLF ending or a bare `PORT` is copied unshifted, so write the ports in that form:
+`scripts/worktree-setup.sh` copies `$HUB_REPO_DIR/.env` into the worktree, every `<NAME>_PORT=<number>` line shifted by
+`$HUB_PORT_OFFSET`, and sets `COMPOSE_PROJECT_NAME` (dropping a copied `COMPOSE_PROJECT_NAME=…` line). Only a line of
+the exact form `<NAME>_PORT=<digits>`, `<NAME>` in upper case, is shifted: a quoted value, spaces around `=`, an inline
+comment, `export`, a CRLF ending or a bare `PORT` is copied unshifted, so write the ports in that form:
 
 ```sh
 #!/bin/sh
@@ -81,8 +82,8 @@ printf 'COMPOSE_PROJECT_NAME=%s\n' "$project" >> .env
 ```
 
 `scripts/worktree-teardown.sh` runs `docker compose down` under the same project name, and does nothing without
-`docker`. It fails closed: if `docker` is installed but `docker compose down` fails (daemon stopped, no compose
-plugin), it exits non-zero and `--remove` removes nothing; fix docker and rerun, or remove the worktree by hand with
+`docker`. It fails closed: if `docker` is installed but `docker compose down` fails (daemon stopped, no compose plugin),
+it exits non-zero and `--remove` keeps that repo's worktree; fix docker and rerun, or remove the worktree by hand with
 `git worktree remove`:
 
 ```sh
