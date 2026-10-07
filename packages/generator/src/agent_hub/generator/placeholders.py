@@ -3,12 +3,13 @@
 Keys are the Rendered values of docs/design/project-config.md, whose patterns make them safe
 unquoted in shell, Make and Markdown text; in YAML a template double-quotes them, because a valid
 value such as ``on``, ``NO`` or ``1.0`` would otherwise parse as another type (brain frontmatter
-lists repo dirs unquoted; its readers load it without type resolution). Plus the platform
-repository, the Makefile's module include lines, the module files ``AGENTS.md`` names and the
-``contract-sync`` source and target repo dirs (empty while the module is unselected), so its
-script never reads ``hub.json``, and ``AGENTS.md``'s worktree base and protected branches.
-``project.author_name``, ``repos[].check_fast``, ``repos[].check`` and ``platform.version`` are
-never keys: shims read them at run time, and the author name needs format quoting. A hub that
+lists repo dirs unquoted; its readers load it without type resolution). Plus the platform's default
+repository and core's pattern and form for ``platform.repository``, the Makefile's module include
+lines, the module files ``AGENTS.md`` names and the ``contract-sync`` source and target repo dirs
+(empty while the module is unselected), so its script never reads ``hub.json``, and ``AGENTS.md``'s
+worktree base and protected branches. ``project.author_name``, ``repos[].check_fast``,
+``repos[].check``, ``platform.version`` and ``platform.repository`` are never keys: shims read them
+at run time, and the author name needs format quoting. A hub that
 leaves the identity to each developer (no ``project.branch_prefix``, or no author) renders
 ``<prefix>`` and ``AGENTS.md``'s rule names the developer's sources instead (AGH-65); a hub that
 sets them keeps the bytes it had. A hub with several tracker teams names them all where
@@ -24,6 +25,11 @@ from typing import Final
 
 from agent_hub.core.doctor.snapshot import module_makefiles
 from agent_hub.core.hub_config.model import PREFIX_PLACEHOLDER, HubConfig
+from agent_hub.core.hub_config.platform_repository import (
+    DEFAULT_PLATFORM_REPOSITORY,
+    PLATFORM_REPOSITORY_FORM,
+    PLATFORM_REPOSITORY_PATTERN,
+)
 from agent_hub.core.hub_files.rendered_file import Ownership
 from agent_hub.core.workspace.shown_conventions import (
     ShownConventions,
@@ -32,10 +38,11 @@ from agent_hub.core.workspace.shown_conventions import (
 )
 from agent_hub.generator.registry import REGISTRY
 
-# The platform's git source, unpinned: shims append ``@v<platform.version>`` read from hub.json
-# at run time, then ``#subdirectory=packages/agent-hub`` (ADR 0013). A test ties it to core's
-# ``PINNED_RELEASE_COMMAND``.
-PLATFORM_REPOSITORY: Final = "git+https://github.com/jroquette/agent-hub"
+# The platform's default git source, unpinned: shims append ``@v<platform.version>`` read from
+# hub.json at run time, then ``#subdirectory=packages/agent-hub`` (ADR 0013). Core holds it; the
+# runtime readers take ``platform.repository`` from hub.json instead when it is set, so it is never
+# rendered (AGH-49).
+PLATFORM_REPOSITORY: Final = DEFAULT_PLATFORM_REPOSITORY
 _LIST_SEPARATOR = ", "
 # ``AGENTS.md`` names every module makefile by this one pattern (AGH-17 D5).
 MODULE_MAKEFILE_PATTERN: Final = "mk/<id>.mk"
@@ -108,6 +115,8 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
         "repo_githubs": _LIST_SEPARATOR.join(repo.github for repo in config.repos),
         "guard_deny_hosts": _LIST_SEPARATOR.join(config.guard.deny_hosts),
         "platform_repository": PLATFORM_REPOSITORY,
+        "platform_repository_pattern": PLATFORM_REPOSITORY_PATTERN,
+        "platform_repository_form": PLATFORM_REPOSITORY_FORM,
         "module_includes": _module_includes(config),
         **_module_files(config),
         **_contract_sync_repos(config),

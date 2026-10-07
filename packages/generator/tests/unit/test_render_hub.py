@@ -23,6 +23,7 @@ from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.hub_files.rendered_link import RenderedLink
 from agent_hub.core.testing.builders import a_conventions_document, a_hub_document, a_second_repo
+from agent_hub.core.testing.platform_repository_cases import CUSTOM_REPOSITORY
 from agent_hub.generator.built_json import managed_settings
 from agent_hub.generator.errors import GeneratorError, TemplateError
 from agent_hub.generator.hub_template import render_template
@@ -893,6 +894,28 @@ def test_renders_same_bytes_when_rendered_twice(demo_config: HubConfig) -> None:
 
     assert first == second
     assert render_digest(first) == render_digest(second)
+
+
+def with_platform_repository(config: HubConfig, repository: str) -> HubConfig:
+    """``config`` whose ``hub.json`` also sets ``platform.repository``."""
+    document = config.model_dump(mode="json", by_alias=True, exclude_none=True)
+    document["platform"]["repository"] = repository
+    return HubConfig.model_validate(document)
+
+
+def test_renders_same_bytes_when_hub_sets_platform_repository(
+    demo_config: HubConfig, all_modules_config: HubConfig
+) -> None:
+    for config in (demo_config, all_modules_config):
+        custom = with_platform_repository(config, CUSTOM_REPOSITORY)
+        assert custom.platform.repository == CUSTOM_REPOSITORY
+
+        rendered = render_hub(custom)
+
+        # AC-49.10: the readers take the key from hub.json at run time; the render never holds it.
+        assert render_digest(rendered) == render_digest(render_hub(config))
+        for file in rendered.files:
+            assert b"git.acme.test" not in file.content, file.path
 
 
 def test_renders_same_digest_when_hash_seed_and_timezone_differ(
