@@ -2017,9 +2017,9 @@ def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubCon
 # optional; a hub that sets them in hub.json keeps these bytes.
 # AGH-59: re-pinned when rule 4 named the script variables.
 # AGH-23: re-pinned when "What lives here" gained the superpowers bullet.
-DEMO_AGENTS_SHA256 = "613e9de14aa448d6807f30eda2cd219a87110cb58f52df4a93e38eae87df505d"
+DEMO_AGENTS_SHA256 = "c37082990349ec33b01ff15420cc843ca322731f13673801b0229c038b20d43c"
 ALL_MODULES_SHA256 = {
-    "AGENTS.md": "6634be8f3496922df2676c518374f69140d3053a2b905cc25a4cffe3a7813c60",
+    "AGENTS.md": "84eb444fff7418428e53665677af360bbfc3e2062bdedf70b2b9a605b02b4446",
     ".claude-plugin/marketplace.json": (
         "f7324911e70a0f3255274721636821a9b65a5716f04c5f6e3e470e74dc7b8ac7"
     ),
@@ -3241,7 +3241,7 @@ SUPERPOWERS_ENABLE_PHRASES = (
     '`"enabledPlugins": {"superpowers@claude-plugins-official": true}`',
     "`.claude/settings.project.json`",
     "`hub sync`",
-    "`claude plugin install superpowers@claude-plugins-official --scope project`",
+    "`claude plugin install superpowers@claude-plugins-official --scope local`",
     "Cloud sessions do not install repo-declared plugins",
     "claude.ai account",
 )
