@@ -48,7 +48,7 @@ jobs:
           try:
               with open("hub.json", encoding="utf-8") as stream:
                   document = json.load(stream)
-          except (OSError, ValueError):
+          except (OSError, ValueError, RecursionError):  # RecursionError: nesting too deep
               sys.exit("Platform read credential: cannot read hub.json as JSON")
           platform = document.get("platform") if isinstance(document, dict) else None
           prefix = sys.argv[1]
@@ -65,9 +65,10 @@ jobs:
           ' "$release") || exit 1
           case $release in
             git+https://github.com/*) ;;
-            *) echo "Platform read credential: platform.repository is not on github.com; AGENT_HUB_READ_TOKEN is not used"; exit 0 ;;
+            *) echo "Platform read credential: platform.repository is not on https://github.com/ (exact, lowercase); AGENT_HUB_READ_TOKEN is not used"; exit 0 ;;
           esac
           url="${release%@v}"
+          # insteadOf is a prefix match: the token reaches every github.com URL that starts with this one.
           url="${url#git+}"
           hub="https://github.com/@@{project_hub_repo}"
           {

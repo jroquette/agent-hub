@@ -30,7 +30,7 @@ from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.core.testing.platform_repository_cases import (
     CUSTOM_REPOSITORY,
     REPOSITORY_CASES,
-    SECRET_PARTS,
+    VALUE_PARTS,
     RepositoryCase,
 )
 from agent_hub.generator.render_hub import render_hub
@@ -621,8 +621,8 @@ def test_names_bad_repository_cause_when_repository_bad(
     assert context == expected_mini_brief("bad platform.repository")
     assert FALLBACK_HEADER.fullmatch(context.splitlines()[0])
     assert calls(uvx_log) == []
-    for part in SECRET_PARTS:
-        assert part.encode() not in completed.stdout + completed.stderr
+    for part in VALUE_PARTS:
+        assert part.encode() not in completed.stdout + completed.stderr, part
 
 
 def test_names_no_version_first_when_version_and_repository_bad(

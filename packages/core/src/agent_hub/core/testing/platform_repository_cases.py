@@ -3,7 +3,8 @@
 The model, the hooks' stdlib reader, the ``hub`` shim, cloud setup and the CI credential step
 each run this one table (docs/design/project-config.md). ``value`` is the JSON value of the key;
 ``is_valid`` is whether a reader takes it as the repository. Synthetic hosts and paths only; the
-credential values' user, password and token are in ``SECRET_PARTS``, which no output may hold.
+credential values' user, password and token are in ``SECRET_PARTS``, which no output may hold,
+and ``VALUE_PARTS`` adds the other parts of the bad values that an echo would show.
 """
 
 from dataclasses import dataclass
@@ -17,6 +18,9 @@ CREDENTIAL_VALUE: Final = "git+https://alice:s3cr3t@github.com/acme/agent-hub"
 # A token alone as userinfo, the way a pasted GitHub token would sit in the URL.
 BARE_USERINFO_VALUE: Final = "git+https://ghp_tokenonly123@github.com/acme/agent-hub"
 SECRET_PARTS: Final = ("alice", "s3cr3t", "ghp_tokenonly123")
+# Parts of the bad values that a message echoing them would show (E10): the credential's user,
+# password and token, a port, a query and a scheme. Every reader's bad-value test checks them.
+VALUE_PARTS: Final = (*SECRET_PARTS, "8443", "ref=x", "git+ssh")
 _ACME = "git+https://github.com/acme/"
 
 

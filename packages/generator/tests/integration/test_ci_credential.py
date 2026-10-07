@@ -31,7 +31,7 @@ from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.core.testing.platform_repository_cases import (
     CUSTOM_REPOSITORY,
     REPOSITORY_CASES,
-    SECRET_PARTS,
+    VALUE_PARTS,
     RepositoryCase,
 )
 from agent_hub.generator.placeholders import PLATFORM_REPOSITORY
@@ -261,17 +261,14 @@ GITHUB_LINES = [
     f"GIT_CONFIG_VALUE_1={HUB_URL}",
 ]
 OTHER_HOST_NOTICE = (
-    "Platform read credential: platform.repository is not on github.com; "
-    "AGENT_HUB_READ_TOKEN is not used\n"
+    "Platform read credential: platform.repository is not on https://github.com/ "
+    "(exact, lowercase); AGENT_HUB_READ_TOKEN is not used\n"
 )
 BAD_REPOSITORY_LINE = (
     "Platform read credential: platform.repository in hub.json must be "
     f"{PLATFORM_REPOSITORY_FORM}\n"
 )
 UNREADABLE_LINE = "Platform read credential: cannot read hub.json as JSON\n"
-# Parts of the bad values that a message echoing them would show (E10): the credential's user,
-# password and token, a port, a query and a scheme.
-VALUE_PARTS = (*SECRET_PARTS, "8443", "ref=x", "git+ssh")
 BAD_CASES = [case for case in REPOSITORY_CASES if not case.is_valid]
 
 
@@ -366,7 +363,12 @@ def test_exits_one_writing_nothing_when_repository_bad(
         assert part not in completed.stdout + completed.stderr, part
 
 
-@pytest.mark.parametrize("hub_json", [None, "{"], ids=["missing", "invalid-json"])
+@pytest.mark.parametrize(
+    "hub_json",
+    # Deeper than the JSON parser's stack: RecursionError, not ValueError.
+    [None, "{", "[" * 100_000 + "]" * 100_000],
+    ids=["missing", "invalid-json", "deep-nesting"],
+)
 def test_exits_one_writing_nothing_when_hub_json_unreadable(
     hub_json: str | None, tmp_path: Path, hook_python: str
 ) -> None:
