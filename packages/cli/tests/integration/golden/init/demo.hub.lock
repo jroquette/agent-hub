@@ -80,7 +80,7 @@
     "AGENTS.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "e808e8fa2bc1a585570a6d3b43ea0fe89367d3be4d117009f3a9f68a28f9b5e0"
+      "sha256": "6b74dd191d14c1fc5994632a3df09cf6724d8c9280172176e0caa540723e37c8"
     },
     "AGENTS.project.md": {
       "ownership": "seeded"
