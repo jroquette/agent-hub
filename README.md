@@ -31,7 +31,7 @@ hub init demo --repos acme/backend,acme/frontend --tracker linear:DEMO \
 ```
 
 ```text
-created 60 files (40 managed, 20 seeded) and 14 links in /home/jdoe/work/demo-hub
+created 62 files (41 managed, 21 seeded) and 15 links in /home/jdoe/work/demo-hub
 
 Next steps:
   1. cd /home/jdoe/work/demo-hub
@@ -160,7 +160,7 @@ uvx --from 'git+https://github.com/jroquette/agent-hub@v0.4.0#subdirectory=packa
   hub init demo --repos acme/backend,acme/frontend --tracker linear:DEMO --branch-prefix jdoe/ --hub-repo acme/demo-hub
 ```
 
-You should see `created 60 files (40 managed, 20 seeded) and 14 links` followed by the next steps.
+You should see `created 62 files (41 managed, 21 seeded) and 15 links` followed by the next steps.
 
 > [!NOTE]
 > `hub init` writes only into an empty folder (a `.git` is fine). Run it again in the same folder and it refuses with
