@@ -4,7 +4,8 @@
 deny  = hard block (secrets, force-push / push to the default branch, curl|sh, destructive infra and docker
         volumes, AI attribution in commits/PRs/branches, editing .git internals, network to guard.deny_hosts,
         reading or changing paths in guard.deny_paths, from a file tool or any Bash token)
-ask   = needs the user's confirmation (removing test assertions or adding skip/xfail/quarantine markers,
+ask   = needs the user's confirmation (removing test assertions (`assert`, `expect(`, `pytest.raises`,
+        `.assert_*(`, unittest's `.assertX(` and `self.fail(`) or adding skip/xfail/quarantine markers,
         deleting or sed-editing tests from Bash, editing the hub's guard files: plugin/hub-workflow/hooks/,
         plugin/<project>/hooks/, .claude/settings*.json, hub.lock and hub.json, in the hub or a hub worktree;
         editing paths in guard.ask_before_edit, writing brain/ outside now.md, journal/, _inbox/, auto/, features/)
@@ -59,7 +60,7 @@ GIT = r"\bgit(\s+-[Cc]\s+\S+)*\s+"
 SKIP_MARKERS = re.compile(
     r"@pytest\.mark\.(skip|skipif|xfail|quarantine)\b|\bpytest\.(skip|xfail)\(|\b(test|it|describe)\.(skip|fixme|todo)\(|\bx(it|describe)\("
 )
-TEST_PATH = r"(?:(\S*/)?(tests?|__tests__)/\S+|\S+\.(test|spec)\.[jt]sx?\b|\S*/test_\w+\.py\b)"
+TEST_PATH = r"(?:(\S*/)?(tests?|__tests__)/\S+|\S+\.(test|spec)\.[jt]sx?\b|['\"]?(\S*/)?test_\w+\.py\b)"
 BASH_WRITE = re.compile(r">>?|\btee\b|\bsed\s+(-\w*i\w*|--in-place)\b|\b(rm|mv|cp|truncate|ln)\b")
 WORKTREE_SEG = re.compile(r"/\.claude/worktrees/[^/]+(?=/)")
 SETTINGS_FILE = re.compile(r"\.claude/settings[^/]*\.json")
@@ -319,7 +320,7 @@ def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
 
 
 def _assert_count(s: str) -> int:
-    return len(re.findall(r"\bassert\b|\bexpect\(|\bpytest\.raises\b|\.assert_\w+\(", s or ""))
+    return len(re.findall(r"\bassert\b|\bexpect\(|\bpytest\.raises\b|\.assert_\w+\(|\.assert[A-Z]\w*\(|\bself\.fail\(", s or ""))
 
 
 def _brain_rel(path: str, cfg: Config) -> str | None:
