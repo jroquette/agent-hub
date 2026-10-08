@@ -257,7 +257,7 @@ def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
     c = cmd.replace("\\\n", " ")
     # longest first, so release/2 is named before release
     branches = "|".join(re.escape(b) for b in sorted(cfg.protected_branches, key=lambda b: (-len(b), b)))
-    if re.search(GIT + r"push\b[^;&|\n]*(\s--force\b|\s-f\b|\s--force-with-lease\b|\s\+\S)", c):
+    if re.search(GIT + r"push\b[^;&|\n]*(\s--force\b|\s-[a-zA-Z]*f[a-zA-Z]*\b|\s--force-with-lease\b|\s--mirror\b|\s\+\S)", c):
         return "deny", "force-push is not allowed; push a new commit (or a merge) instead"
     push = re.search(GIT + rf"push\b[^;&|\n]*(\s(origin\s+)?(?P<plain>{branches})\b|:(refs/heads/)?(?P<ref>{branches})\b)", c)
     if push:
