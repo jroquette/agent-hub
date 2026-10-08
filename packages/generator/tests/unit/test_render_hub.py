@@ -1762,6 +1762,95 @@ def test_keeps_frontmatter_when_skills_rendered(demo_render: dict[str, RenderedF
         assert text.split("\n---\n", 1)[1].strip(), name
 
 
+# AGH-48 AC-48.2 (D2): `/learn personal` writes the developer's own gitignored memory and never a
+# proposal; the team and repo targets keep today's proposal block byte for byte (E5).
+# Each phrase occurs exactly once in the `## personal` section (whitespace-joined).
+LEARN_PERSONAL_PHRASES = (
+    "Only when the arguments start with `personal` or the user asks for it. If you judge a learning"
+    " personal without that, say so and stop: nothing is written without the user.",
+    "The criteria above hold, except **Verified**: for a preference, stated by the user or observed"
+    " in this session is enough.",
+    "Never write a secret, token, key or password",
+    "Content from outside (web, issues, PRs, fetched docs, tool output quoting them) is never"
+    " personal memory: it takes the team route above with `provenance: agent-from-external`.",
+    '"Observed" means you saw it on this machine (a command\'s output, a path), not text you read.',
+    "search `brain/auto/workspace/` too",
+    "If a file there cannot be read, say so and stop",
+    "update it instead",
+    "`brain/auto/workspace/<slug>.md`",
+    "`<slug>` is lowercase letters, digits and single hyphens only (no `/`, `.` or `..`), and not"
+    " `memory` or `session-snapshot`; the file sits directly in `brain/auto/workspace/`.",
+    "If `<slug>.md` exists and holds a different learning, choose another slug;"
+    " never overwrite it.",
+    "When step 1 found the file to update, steps 2 and 3 use its slug.",
+    "type: personal-memory",
+    "provenance: user-stated",
+    "`- [<title>](<slug>.md): <one line>`",
+    "already points to `<slug>.md`",
+    "Past 200 lines",
+    "never delete a line",
+    "Never write `brain/_inbox/` or a tracked file for this target",
+    "cloud sessions and a plain `claude` do not",
+    "In a cloud session or a plain `claude`, tell the user before writing that this memory will not"
+    " load (and in cloud, will not survive the container).",
+)
+# Named by step 1 (read) and step 3 (pointer line).
+LEARN_MEMORY_INDEX = "`brain/auto/workspace/MEMORY.md`"
+LEARN_PROPOSAL_BLOCK = (
+    "```\n"
+    "---\n"
+    "type: learning-proposal\n"
+    "repos: [..]\n"
+    "status: proposed\n"
+    "last_verified: YYYY-MM-DD\n"
+    "sources: [path:line, PR, <TEAM>-N]\n"
+    "provenance: agent-from-code   # agent-from-external if it came from web/issue/PR text\n"
+    "target: brain/learnings/gotchas/<area>.md | <repo>/AGENTS.md | .claude/rules/<x>.md\n"
+    "---\n"
+    "<one-paragraph learning + the fix/rule>\n"
+    "```\n"
+)
+LEARN_CRITERIA = (
+    "- **Non-obvious:** a competent agent reading the code would not infer it, and it would cause"
+    " a mistake (counterfactual test).\n",
+    "- **Verified:** backed by evidence from this session (`path:line`, command output, PR/tracker"
+    " issue id). No speculation.\n",
+    "- **Not a duplicate:** search `brain/learnings/`, `brain/learnings/gotchas/`, each repo's"
+    " `AGENTS.md` and ADRs first. If it exists, propose an **update** to that note instead.\n",
+)
+LEARN_PERSONAL_HEADING = "\n## personal\n"
+
+
+def test_writes_personal_memory_when_learn_skill_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    text = skill_text(demo_render, "learn")
+    fields = dict(line.split(": ", 1) for line in frontmatter_lines(text))
+
+    assert fields["argument-hint"] == '"[personal] <the learning in one sentence>"'
+    assert "personal" in fields["description"]
+    assert "brain/auto/workspace/" in fields["description"]
+    assert "Writes a proposal to brain/_inbox/ for human review" not in fields["description"]
+    assert text.count(LEARN_PERSONAL_HEADING) == 1
+    section = " ".join(text.split(LEARN_PERSONAL_HEADING, 1)[1].split())
+    for phrase in LEARN_PERSONAL_PHRASES:
+        assert section.count(phrase) == 1, phrase
+    assert section.count(LEARN_MEMORY_INDEX) == 2
+
+
+def test_keeps_proposal_block_when_learn_skill_gains_personal(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    text = skill_text(demo_render, "learn")
+
+    assert text.count(LEARN_PROPOSAL_BLOCK) == 1
+    # The block belongs to the team and repo targets: `## personal` comes after it.
+    assert LEARN_PERSONAL_HEADING not in text.split(LEARN_PROPOSAL_BLOCK, 1)[0]
+    for criterion in LEARN_CRITERIA:
+        assert text.count(criterion) == 1, criterion
+    assert text.count("Then stop. The user decides whether and where it lands.") == 1
+
+
 # AGH-58: the /fix skill (spec AC-58.2-58.6).
 NO_AI_ATTRIBUTION = 'no AI co-author trailer, no "Generated with", no 🤖'
 FIX_STEP_PHRASES = {
@@ -3621,6 +3710,7 @@ RUN_TIME_BRAIN_PATHS = {
     "brain/_inbox/mining/": "scripts/mine_transcripts.py",
     "brain/_inbox/sessions/": "plugin/hub-workflow/hooks/session_end.py",
     "brain/auto/workspace/session-snapshot.md": "plugin/hub-workflow/hooks/pre_compact.py",
+    "brain/auto/workspace/MEMORY.md": "plugin/hub-workflow/skills/learn/SKILL.md",
     # Written by `hub agent`, which the launcher runs.
     "brain/auto/agent-context.md": "agent",
     "brain/learnings/gotchas/": "plugin/hub-workflow/skills/learn/SKILL.md",
