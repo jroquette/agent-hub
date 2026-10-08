@@ -285,6 +285,99 @@ def test_asks_when_write_shrinks_test_file(evaluate: Evaluate, tmp_path: Path) -
     assert verdict[0] == "ask"
 
 
+UNITTEST_LINES = (
+    "self.assertEqual(a, 1)",
+    "with self.assertRaises(ValueError):",
+    "self.assertTrue(x)",
+    'self.fail("no")',
+)
+UNITTEST_TEST_PATH = "/w/app/tests/unit/test_a.py"
+
+
+def removes(n: int) -> tuple[str, str]:
+    """The guard's verdict for an edit that removes ``n`` assertions from a test."""
+    return (
+        "ask",
+        f"this edit removes {n} assertion(s) from a test; "
+        "acceptance tests are a contract, confirm first",
+    )
+
+
+def test_asks_when_edit_removes_unittest_assertions(evaluate: Evaluate) -> None:
+    one_each = [
+        file(
+            "Edit",
+            {"file_path": UNITTEST_TEST_PATH, "old_string": line + "\n", "new_string": ""},
+            cfg=False,
+        )
+        for line in UNITTEST_LINES
+    ]
+    all_four = {
+        "file_path": UNITTEST_TEST_PATH,
+        "old_string": "\n".join(UNITTEST_LINES) + "\n",
+        "new_string": "",
+    }
+    multi_edit = {
+        "file_path": UNITTEST_TEST_PATH,
+        "edits": [{"old_string": line + "\n", "new_string": ""} for line in UNITTEST_LINES],
+    }
+
+    verdicts = evaluate(
+        [*one_each, file("Edit", all_four, cfg=False), f"check_file('MultiEdit', {multi_edit!r})"]
+    )
+
+    assert verdicts == [removes(1)] * 4 + [removes(4), removes(4)]
+
+
+def test_asks_when_write_removes_unittest_assertions(evaluate: Evaluate, tmp_path: Path) -> None:
+    path = tmp_path / "unittest" / "tests" / "test_x.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "import unittest\n\n\n"
+        "class TestX(unittest.TestCase):\n"
+        "    def test_x(self):\n"
+        "        a, x = 1, True\n"
+        "        self.assertEqual(a, 1)\n"
+        "        with self.assertRaises(ValueError):\n"
+        '            int("x")\n'
+        "        self.assertTrue(x)\n"
+        '        self.fail("no")\n',
+        encoding="utf-8",
+    )
+
+    verdicts = evaluate([file("Write", {"file_path": str(path), "content": ""}, cfg=False)])
+
+    assert verdicts == [removes(4)]
+
+
+def test_counts_mock_assertion_once_when_unittest_forms_counted(evaluate: Evaluate) -> None:
+    edits = [
+        {"file_path": UNITTEST_TEST_PATH, "old_string": line + "\n", "new_string": ""}
+        for line in ("self.assert_called_once_with(x)", "m.assert_called_once_with(x)")
+    ]
+
+    verdicts = evaluate([file("Edit", edit, cfg=False) for edit in edits])
+
+    assert verdicts == [removes(1), removes(1)]
+
+
+def test_allows_edit_when_unittest_assertion_swapped_or_added(evaluate: Evaluate) -> None:
+    swap = {
+        "file_path": UNITTEST_TEST_PATH,
+        "old_string": "self.assertEqual(a, 1)",
+        "new_string": "assert a == 1",
+    }
+    add = {
+        "file_path": UNITTEST_TEST_PATH,
+        "old_string": "self.assertTrue(x)",
+        "new_string": "self.assertTrue(x)\nself.assertEqual(a, 1)",
+    }
+
+    verdicts = evaluate([file("Edit", swap, cfg=False), file("Edit", add, cfg=False)])
+
+    assert verdicts == [None, None]
+
+
 def test_asks_when_edit_adds_skip_marker(evaluate: Evaluate) -> None:
     skip = {
         "file_path": "/w/app/tests/unit/test_x.py",
