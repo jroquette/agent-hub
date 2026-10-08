@@ -3,14 +3,14 @@
 `check_fast` command and block completion while it fails (feedback goes back to the agent). Releases after
 3 consecutive blocks to avoid loops. When checks pass and files changed, remind about /handoff (never
 blocks). The session starts at the first timestamp in the first START_BYTES of the main transcript; when
-none can be read there, at the transcript's birth time where the platform keeps one, else 12 h ago. Every
-git status and check fits in one BUDGET of seconds from the hook's start; each run gets the repo's
-`check_fast_timeout` (else TIMEOUT), capped by the budget left. A repo whose run was cut, never started for
-lack of budget, or that has no `check_fast` gets a "not run" line: it never blocks, and it is always named.
-A run with no failure and at least one budget or timeout line leaves the block counter as it was. Each
-check runs in its own process group, killed when the run ends (on a timeout, after a normal exit, and when
-the hook itself gets SIGTERM or SIGHUP), so no child of a check outlives the gate; its output goes to a
-temp file, so a background child holding it open never holds the gate up."""
+none can be read there, or it is in the future, at the transcript's birth time where the platform keeps
+one, else 12 h ago. Every git status and check fits in one BUDGET of seconds from the hook's start; each
+run gets the repo's `check_fast_timeout` (else TIMEOUT), capped by the budget left. A repo whose run was
+cut, never started for lack of budget, or that has no `check_fast` gets a "not run" line: it never blocks,
+and it is always named. A run with no failure and at least one budget or timeout line leaves the block
+counter as it was. Each check runs in its own process group, killed when the run ends (on a timeout, after
+a normal exit, and when the hook itself gets SIGTERM or SIGHUP), so no child of a check outlives the gate;
+its output goes to a temp file, so a background child holding it open never holds the gate up."""
 
 from __future__ import annotations
 
@@ -64,8 +64,9 @@ def usable_file(value: object) -> bool:
 
 
 def session_start(tp: object) -> float | None:
-    """The first timestamp with an offset in the transcript's first START_BYTES, or None. A line that is
-    not UTF-8, not a JSON object, or has no such timestamp is skipped."""
+    """The first timestamp with an offset in the transcript's first START_BYTES, or None, also when that
+    first one is in the future. A line that is not UTF-8, not a JSON object, or has no such timestamp is
+    skipped."""
     if not usable_file(tp):
         return None
     try:
@@ -84,7 +85,10 @@ def session_start(tp: object) -> float | None:
         try:
             when = datetime.fromisoformat(stamp[:-1] + "+00:00" if stamp.endswith("Z") else stamp)
             if when.tzinfo is not None:  # a time without an offset is no point in time
-                return when.timestamp()
+                start = when.timestamp()
+                # A start in the future (a clock set back, a transcript from another host) would
+                # hide every change: unusable, never clamped to now.
+                return start if start <= time.time() else None
         except (ValueError, OverflowError):  # e.g. month 13, an offset of 24 h or more
             continue
     return None
