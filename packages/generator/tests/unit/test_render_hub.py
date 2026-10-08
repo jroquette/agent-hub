@@ -57,6 +57,7 @@ DESIGN_PATHS = (
     "README.md",
     "agent",
     "brain/_inbox/.gitkeep",
+    "brain/auto/workspace/.gitkeep",
     "brain/decisions/index.md",
     "brain/domain/.gitkeep",
     "brain/features/.gitkeep",
@@ -3003,6 +3004,7 @@ UNRESOLVED_PLACEHOLDER = re.compile(r"@@(?:[A-Za-z_][A-Za-z0-9_]*|\{[^}]*\})")
 EMPTY_PATHS = (
     "AGENTS.project.md",
     "brain/_inbox/.gitkeep",
+    "brain/auto/workspace/.gitkeep",
     "brain/domain/.gitkeep",
     "brain/features/.gitkeep",
     "brain/journal/.gitkeep",
@@ -3555,6 +3557,17 @@ def test_references_created_brain_paths_when_markdown_rendered(demo_config: HubC
     assert brain_folders <= {resolvable_path(entry).split("/")[0] for entry in entries}
 
 
+# AC-48.5 (AGH-48 D1-gitkeep): the seeded brain index names the personal memory folder once.
+def test_names_personal_memory_in_index_when_brain_rendered(demo_config: HubConfig) -> None:
+    index = next(file for file in render_hub(demo_config).files if file.path == "brain/index.md")
+    lines = [
+        line for line in index.content.decode("utf-8").splitlines() if "`auto/workspace/`" in line
+    ]
+
+    assert len(lines) == 1
+    assert "gitignored" in lines[0]
+
+
 # The managed-files statement of the base AGENTS.md: the one place a hub names what `hub sync`
 # rewrites (the seeded README points to it), kept equal to the registry's managed set.
 MANAGED_FILES_STATEMENT = re.compile(r"rewrites these managed files: (.*?)\.(?:\s|$)", re.DOTALL)
@@ -3850,6 +3863,44 @@ def test_ignores_run_time_outputs_when_gitignore_rendered(
     assert set(AGH10_GITIGNORE) <= set(lines)
     assert len(lines) == len(set(lines))
     assert (demo.kind, demo.ownership) == (Kind.GENERIC, Ownership.SEEDED)
+    assert variant.content == demo.content
+
+
+# AC-48.3 (AGH-48 D1, D1-keep): the seeded .gitignore keeps today's lines in order and then ignores
+# the personal memory folder but its tracked `.gitkeep`.
+SEEDED_GITIGNORE = (
+    ".DS_Store",
+    ".env",
+    ".env.*",
+    "!.env.example",
+    ".claude/settings.local.json",
+    "hub.local.json",
+    ".claude/worktrees/",
+    "__pycache__/",
+    "*.pyc",
+    ".venv/",
+    "node_modules/",
+    ".agent-runs/",
+    "brain/_inbox/runs/",
+    "artifacts/",
+    "brain/_inbox/sessions/",
+    "brain/_inbox/mining/",
+    "brain/auto/workspace/session-snapshot.md",
+    "brain/auto/agent-context.md",
+)
+
+
+def test_ignores_personal_memory_when_gitignore_rendered(
+    demo_config: HubConfig, variant_config: HubConfig
+) -> None:
+    [demo, variant] = [
+        next(file for file in render_hub(config).files if file.path == ".gitignore")
+        for config in (demo_config, variant_config)
+    ]
+    lines = demo.content.decode("utf-8").splitlines()
+
+    assert lines[:18] == list(SEEDED_GITIGNORE)
+    assert lines[18:] == ["brain/auto/workspace/*", "!brain/auto/workspace/.gitkeep"]
     assert variant.content == demo.content
 
 
