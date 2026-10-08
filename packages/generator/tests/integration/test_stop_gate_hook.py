@@ -23,13 +23,19 @@ from typing import Any, Protocol
 
 import pytest
 
-from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.model import MAX_CHECK_FAST_TIMEOUT, HubConfig
 
 HOOK = "plugin/hub-workflow/hooks/stop_gate.py"
 TIMEOUT = 60
-# The late marker's child touches it 2 s after the check starts, and the check starts before the
-# hook returns: waiting this long after the return sees any marker a surviving child writes.
-LATE_AFTER = 2.5
+# The late marker's child touches it LATE_DELAY s after the check starts, and the check starts
+# before the hook returns: waiting LATE_MARGIN s more after the return sees any marker a surviving
+# child writes.
+LATE_DELAY = 2
+LATE_MARGIN = 0.5
+LATE_AFTER = LATE_DELAY + LATE_MARGIN
+# A cut run's marker comes after the latest cut a timeout case makes (the 3 s budget), so only a
+# child that outlives the kill can write it.
+CUT_DELAY = 4
 
 
 class RunHook(Protocol):
@@ -161,14 +167,14 @@ def write_transcript(
     return path
 
 
-def late_marker_check(tmp: Path, *, then: str) -> str:
-    """A check writing ``<tmp>/ready``, whose child touches ``<tmp>/late`` in 2 s, then ``then``.
+def late_marker_check(tmp: Path, *, then: str, delay: int = LATE_DELAY) -> str:
+    """A check writing ``ready``, then ``then``; a child touches ``late`` in ``delay`` s.
 
-    ``late`` appears only if that child outlives the gate (S5: a marker, not ``os.kill(pid, 0)``,
-    which a zombie answers when nothing reaps orphans).
+    Both are in ``tmp``. ``late`` appears only if that child outlives the gate (S5: a marker, not
+    ``os.kill(pid, 0)``, which a zombie answers when nothing reaps orphans).
     """
     ready, late = shlex.quote(str(tmp / "ready")), shlex.quote(str(tmp / "late"))
-    return f"echo started > {ready}; (sleep 2; touch {late}) & {then}"
+    return f"echo started > {ready}; (sleep {delay}; touch {late}) & {then}"
 
 
 def sleep_until(deadline: float) -> None:
@@ -264,7 +270,11 @@ def test_kills_process_group_when_check_exits(
 
 @pytest.mark.parametrize(
     ("repo_keys", "constant"),
-    [pytest.param({}, ("TIMEOUT", 1), id="timeout_constant")],
+    [
+        pytest.param({}, ("TIMEOUT", 1), id="timeout_constant"),
+        pytest.param({"check_fast_timeout": 1}, None, id="own_timeout"),
+        pytest.param({}, ("BUDGET", 3), id="budget"),
+    ],
 )
 def test_kills_process_group_when_check_times_out(
     run_hook: RunHook,
@@ -274,18 +284,21 @@ def test_kills_process_group_when_check_times_out(
     repo_keys: Mapping[str, object],
     constant: tuple[str, object] | None,
 ) -> None:
-    # AC-4: a check cut off at its limit leaves no grandchild behind.
+    # AC-4: a check cut off at its limit (the module's, the repo's own or the budget) leaves no
+    # grandchild behind, and a cut run never blocks (D4).
     (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
     marks = tmp_path / "marks"
     marks.mkdir()
-    repo = {"dir": "app", "check_fast": late_marker_check(marks, then="sleep 30"), **repo_keys}
+    check = late_marker_check(marks, then="sleep 30", delay=CUT_DELAY)
+    repo = {"dir": "app", "check_fast": check, **repo_keys}
 
     start = time.monotonic()
-    run_hook([repo], workspace / "app", constant=constant)
+    output = run_hook([repo], workspace / "app", constant=constant)
     end = time.monotonic()
 
+    assert "decision" not in output
     assert end - start < 20
-    sleep_until(end + LATE_AFTER)
+    sleep_until(end + CUT_DELAY + LATE_MARGIN)
     assert (marks / "ready").exists()
     assert not (marks / "late").exists()
 
@@ -328,20 +341,157 @@ def test_kills_process_group_when_hook_cancelled(
         cwd=tmp_path,
         env=scratch_env(tmp_path),
     ) as hook:
-        assert hook.stdin is not None
-        hook.stdin.write(json.dumps(event).encode("utf-8"))
-        hook.stdin.close()
-        deadline = time.monotonic() + TIMEOUT
-        while not (marks / "ready").exists() and time.monotonic() < deadline:
-            time.sleep(0.05)
-        assert (marks / "ready").exists()
+        try:
+            assert hook.stdin is not None
+            hook.stdin.write(json.dumps(event).encode("utf-8"))
+            hook.stdin.close()
+            deadline = time.monotonic() + TIMEOUT
+            while not (marks / "ready").exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert (marks / "ready").exists()
 
-        hook.send_signal(signal.SIGTERM)
-        stdout, stderr = hook.communicate(timeout=TIMEOUT)
-        end = time.monotonic()
+            hook.send_signal(signal.SIGTERM)
+            stdout, stderr = hook.communicate(timeout=TIMEOUT)
+            end = time.monotonic()
+        finally:  # a failed assert or a communicate timeout must not leave the hook running
+            hook.kill()
+            hook.wait(timeout=TIMEOUT)
 
     sleep_until(end + LATE_AFTER)
     assert not (marks / "late").exists()
     assert hook.returncode == 0
     assert stderr == b""
     assert stdout == b""
+
+
+# The not-run outcomes (D4): a cut or skipped run never blocks, and its line names the repo.
+BUDGET_SPENT_NOTE = (
+    "[hub stop-gate] check_fast did not finish in every changed repo; finishing anyway."
+)
+NO_GATE_NOTE = "[hub] code changed; no changed repo has a check_fast to run."
+
+
+def touch_both(workspace: Path, tmp_path: Path) -> Path:
+    """Change ``app/a.py`` and ``web/b.py``; a transcript that edits both."""
+    files = (workspace / "app" / "a.py", workspace / "web" / "b.py")
+    for path in files:
+        path.write_text("x = 1\n", encoding="utf-8")
+    touches = [("Edit", "file_path", str(path)) for path in files]
+    return write_transcript(tmp_path / "session.jsonl", touches=touches)
+
+
+def test_names_repos_not_run_when_budget_spent(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # AC-1: the first run is cut by the 3 s budget, the second never starts.
+    transcript = touch_both(workspace, tmp_path)
+    repos = [{"dir": "app", "check_fast": "sleep 30"}, {"dir": "web", "check_fast": "sleep 30"}]
+
+    start = time.monotonic()
+    output = run_hook(repos, workspace / "demo-hub", transcript=transcript, constant=("BUDGET", 3))
+    took = time.monotonic() - start
+
+    assert took < 6
+    assert "decision" not in output
+    message = output.get("systemMessage", "")
+    assert message.startswith(BUDGET_SPENT_NOTE)
+    assert "app (app): not run: budget" in message
+    assert "web (web): not run: budget" in message
+
+
+def test_runs_next_repo_in_remaining_budget_when_first_passes(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # AC-2: the time ``app`` leaves is enough for ``web``, whose failure still blocks.
+    transcript = touch_both(workspace, tmp_path)
+    repos = [{"dir": "app", "check_fast": "sleep 2"}, {"dir": "web", "check_fast": "exit 3"}]
+
+    output = run_hook(repos, workspace / "demo-hub", transcript=transcript, constant=("BUDGET", 4))
+
+    assert output.get("decision") == "block"
+    assert "## web (web): `exit 3` FAILED" in output["reason"]
+    assert "app (app): not run" not in output["reason"]
+
+
+def test_reports_timeout_without_block_when_own_timeout_hit(
+    run_hook: RunHook, workspace: Path
+) -> None:
+    # AC-3: the repo's own 1 s cuts the run; a timeout is not a failure.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    repo = {"dir": "app", "check_fast": "sleep 30", "check_fast_timeout": 1}
+
+    start = time.monotonic()
+    output = run_hook([repo], workspace / "app")
+    took = time.monotonic() - start
+
+    assert took < 5
+    assert "decision" not in output
+    message = output.get("systemMessage", "")
+    assert message.startswith(BUDGET_SPENT_NOTE)
+    assert "app (app): not run: timeout (1 s)" in message
+
+
+def test_releases_after_max_blocks_when_not_run_between(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # AC-6: a run with only not-run outcomes leaves the block counter as it was.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    repos = [{"dir": "app", "check_fast": "echo boom; exit 3"}]
+    session = f"max-blocks-{os.getpid()}-{tmp_path.name}"
+    counter = tmp_path / "tmp" / f"hub-stop-{session}.json"
+
+    def gate(constant: tuple[str, object] | None = None) -> dict[str, Any]:
+        return run_hook(repos, workspace / "app", constant=constant, session=session)
+
+    for _ in range(2):
+        output = gate()
+        assert output.get("decision") == "block"
+        assert "boom" in output["reason"]
+    output = gate(("BUDGET", 0))
+    assert "decision" not in output
+    assert "app (app): not run: budget" in output.get("systemMessage", "")
+    assert json.loads(counter.read_text(encoding="utf-8")) == {"blocks": 2}
+    output = gate()
+    assert output.get("decision") == "block"
+    assert "boom" in output["reason"]
+    output = gate()
+    assert "decision" not in output
+    assert "still failing after 3 attempts" in output.get("systemMessage", "")
+
+
+def test_names_repos_when_check_fast_empty_or_absent(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # AC-9: no command runs; both repos are named, neither blocks.
+    transcript = touch_both(workspace, tmp_path)
+    repos = [{"dir": "app", "check_fast": ""}, {"dir": "web"}]
+
+    output = run_hook(repos, workspace / "demo-hub", transcript=transcript)
+
+    assert "decision" not in output
+    message = output.get("systemMessage", "")
+    assert message.startswith(NO_GATE_NOTE)
+    assert "app (app): no check_fast configured" in message
+    assert "web (web): no check_fast configured" in message
+
+
+def test_keeps_budget_inside_hook_timeout_when_constants_rendered(
+    demo_config: HubConfig, pinned_timeout: Callable[..., Any]
+) -> None:
+    # AC-18: the shipped values, by literal; the run tests lower them.
+    def constant(name: str) -> object:
+        value, _ = pinned_timeout(demo_config, hook=HOOK, constant=name, event="Stop")
+        return value
+
+    budget, hook_timeouts = pinned_timeout(demo_config, hook=HOOK, constant="BUDGET", event="Stop")
+
+    assert budget == 160
+    assert hook_timeouts == {
+        "plugin/hub-workflow/hooks/hooks.json": [180],
+        ".claude/settings.json": [180],
+    }
+    assert budget < 180
+    timeout = constant("TIMEOUT")
+    assert (timeout, constant("MAX_BLOCKS"), constant("MIN_RUN")) == (150, 3, 1)
+    assert timeout <= budget
+    assert budget == MAX_CHECK_FAST_TIMEOUT

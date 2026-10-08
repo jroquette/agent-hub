@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Stop: if this session changed code in a repo checkout/worktree listed in hub.json, run that repo's
-`check_fast` command and block completion while it fails (feedback goes back to the agent). Repos with an
-empty `check_fast` are skipped. Releases after 3 consecutive blocks to avoid loops. When checks pass and
-files changed, remind about /handoff (never blocks). Each check runs in its own process group, killed when
+`check_fast` command and block completion while it fails (feedback goes back to the agent). Releases after
+3 consecutive blocks to avoid loops. When checks pass and files changed, remind about /handoff (never
+blocks). Every git status and check fits in one BUDGET of seconds from the hook's start; each run gets the
+repo's `check_fast_timeout` (else TIMEOUT), capped by the budget left. A repo whose run was cut, never
+started for lack of budget, or that has no `check_fast` gets a "not run" line: it never blocks and never
+moves the block counter, but it is always named. Each check runs in its own process group, killed when
 the run ends (on a timeout, after a normal exit, and when the hook itself gets SIGTERM or SIGHUP), so no child
 of a check outlives the gate; its output goes to a temp file, so a background child holding it open never
 holds the gate up."""
@@ -26,12 +29,17 @@ except Exception as error:  # a partial install: skip, never error the session
     print(f"[hub {os.path.splitext(os.path.basename(sys.argv[0] or 'hook'))[0]}] skipped: {type(error).__name__}", file=sys.stderr)
     sys.exit(0)
 
+HOOK_START = time.monotonic()
+
 CODE_EXT = {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".rs", ".java", ".kt", ".rb", ".sql",
             ".sh", ".toml", ".cfg", ".ini", ".yml", ".yaml"}
 CODE_NAMES = {"Makefile", "package.json", "pyproject.toml", "go.mod", "Cargo.toml", "Dockerfile"}
 MAX_BLOCKS = 3
-TIMEOUT = 150
+BUDGET = 160  # seconds from HOOK_START for every git status and check; the Stop hook's timeout is 180 s
+TIMEOUT = 150  # a repo's own limit when hub.json sets no check_fast_timeout
+MIN_RUN = 1  # a check starts only with this many seconds of budget left
 KILL_WAIT = 1
+GIT_TIMEOUT = 10
 OUTPUT_TAIL = 3000
 
 
@@ -43,9 +51,18 @@ def session_start_time(data: dict) -> float:
         return time.time() - 12 * 3600
 
 
-def changed_code(top: Path, since: float) -> list[str]:
+def left() -> float:
+    """Seconds of the budget still left."""
+    return HOOK_START + BUDGET - time.monotonic()
+
+
+def changed_code(top: Path, since: float) -> list[str] | None:
+    """The code files changed since `since`, or None when no budget is left to ask git."""
+    if left() <= 0:
+        return None
     out = []
-    for line in git(["status", "--porcelain", "--untracked-files=all"], top).splitlines():
+    status = git(["status", "--porcelain", "--untracked-files=all"], top, timeout=max(1, min(GIT_TIMEOUT, int(left()))))
+    for line in status.splitlines():
         rel = line[3:].split(" -> ")[-1].strip('"')
         p = top / rel
         if (p.suffix in CODE_EXT or p.name in CODE_NAMES) and p.exists() and p.stat().st_mtime >= since:
@@ -141,41 +158,61 @@ def main() -> None:
     blocks = saved.get("blocks") if isinstance(saved, dict) else None
     if not isinstance(blocks, int) or isinstance(blocks, bool):
         blocks = 0
-    changed_any, failures, skipped = False, [], []
-    for repo, top in candidates(cfg, cwd):
-        files = changed_code(top, since)
+    statuses = [(repo, top, changed_code(top, since)) for repo, top in candidates(cfg, cwd)]
+    failures, not_run, passed, cut = [], [], 0, False
+    for repo, top, files in statuses:
+        label = f"{repo} ({top.relative_to(cfg.workspace)})"
+        if files is None:
+            not_run.append(f"{label}: not run: budget")
+            cut = True
+            continue
         if not files:
             continue
-        changed_any = True
         entry = cfg.repo(repo)
         cmd = (entry.check_fast if entry else "").strip()
         if not cmd:
-            skipped.append(repo)
+            not_run.append(f"{label}: no check_fast configured")
             continue
-        status, out = run_check(cmd, top, TIMEOUT)
+        own = (entry.check_fast_timeout if entry else None) or TIMEOUT
+        budget_left = left()
+        if budget_left < MIN_RUN:
+            not_run.append(f"{label}: not run: budget")
+            cut = True
+            continue
+        status, out = run_check(cmd, top, min(own, budget_left))
         if status == "killed":
-            out = f"check_fast timed out (>{TIMEOUT} s)"
-        if status != "passed":
-            failures.append(f"## {repo} ({top.relative_to(cfg.workspace)}): `{cmd}` FAILED\nchanged: {', '.join(files[:8])}\n{out}")
+            not_run.append(f"{label}: not run: budget" if budget_left < own else f"{label}: not run: timeout ({own} s)")
+            cut = True
+        elif status == "failed":
+            failures.append(f"## {label}: `{cmd}` FAILED\nchanged: {', '.join(files[:8])}\n{out}")
+        else:
+            passed += 1
+    notes = "\n".join(not_run)
     if failures and blocks < MAX_BLOCKS:
+        found = "\n\n".join(failures) + (f"\n\n{notes}" if notes else "")
         try:
             state.write_text(json.dumps({"blocks": blocks + 1}))
         except OSError:  # without its counter the gate could never release: fail open, warn
             emit({"systemMessage": "[hub stop-gate] check_fast still failing and the block counter could not be saved; "
-                                   "finishing anyway. Do not claim the work is done.\n\n" + "\n\n".join(failures)})
+                                   "finishing anyway. Do not claim the work is done.\n\n" + found})
             return
-        emit({"decision": "block", "reason": "[hub stop-gate] Fix these before finishing (check_fast must pass):\n\n" + "\n\n".join(failures)})
+        emit({"decision": "block", "reason": "[hub stop-gate] Fix these before finishing (check_fast must pass):\n\n" + found})
+        return
+    if cut and not failures:  # only not-run outcomes: the block counter stays as it was
+        emit({"systemMessage": "[hub stop-gate] check_fast did not finish in every changed repo; finishing anyway. "
+                               "Do not claim those repos pass.\n" + notes})
         return
     try:
         state.unlink()
     except OSError:  # absent, or not a file
         pass
-    note = f" (no check_fast configured in hub.json for: {', '.join(sorted(set(skipped)))})" if skipped else ""
+    lines = f"\n{notes}" if notes else ""
     if failures:
-        emit({"systemMessage": f"[hub stop-gate] check_fast still failing after {MAX_BLOCKS} attempts; finishing anyway. Do not claim the work is done."})
-    elif changed_any:
-        emit({"systemMessage": f"[hub] code changed and check_fast is green{note}. If the work spans sessions, run /handoff."})
-
+        emit({"systemMessage": f"[hub stop-gate] check_fast still failing after {MAX_BLOCKS} attempts; finishing anyway. Do not claim the work is done.{lines}"})
+    elif passed:
+        emit({"systemMessage": f"[hub] code changed and check_fast is green. If the work spans sessions, run /handoff.{lines}"})
+    elif not_run:
+        emit({"systemMessage": f"[hub] code changed; no changed repo has a check_fast to run. If the work spans sessions, run /handoff.{lines}"})
 
 if __name__ == "__main__":
     run_hook(main)
