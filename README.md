@@ -293,14 +293,15 @@ The size decides the ceremony:
 | --- | --- | --- |
 | `/kickoff` | Shows the brief, runs the fast checks in repos with changes, proposes the next item | At the start of a session, or after `/clear` |
 | `/feature <idea or issue>` | Takes an idea to a merged, verified change (above) | For any change to the repos |
+| `/fix <issue>` | Takes a bug or a small task to a PR: a failing test committed first (RED), the smallest fix, the repo's gates and one `quality-reviewer` pass; no spec, plan or `brain/features/` folder | For a bug or a small task in one repo, at most 5 changed non-test files, no new contract and no guarded path; anything bigger goes to `/feature` |
 | `/handoff [title]` | Updates `brain/now.md` and the day's journal | At the end of a session |
 | `/research <question or issue>` | Documents how the code works today, with `path:line` references and no critique; writes `research.md` | Before planning, or for a question that spans many files |
 | `/create-plan <issue or slug>` | Turns a spec and its research into `plan.md`: small tasks, contracts first, each with a verification command; waits for your approval before any code | When a spec is ready and needs a plan |
 | `/recall <topic>` | Answers "what do we know about X, why was Y decided" from the brain, ADRs and past session transcripts, with sources | Before deciding something again |
 | `/learn <one sentence>` | Proposes one verified, non-obvious learning to `brain/_inbox/`; you decide whether and where it lands | When the next session should know something |
 
-Claude runs `/kickoff`, `/feature`, `/handoff` and `/learn` only when you type them; it may use the other three on its
-own when they fit.
+Claude runs `/kickoff`, `/feature`, `/fix`, `/handoff` and `/learn` only when you type them; it may use the other
+three on its own when they fit.
 
 <details>
 <summary><strong>The agents behind the commands</strong></summary>

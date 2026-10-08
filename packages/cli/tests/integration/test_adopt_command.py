@@ -54,8 +54,8 @@ LINKED = (".claude/agents", ".claude/skills")
 TARGETS = ("plugin/hub-workflow/agents", "plugin/hub-workflow/skills")
 REVIEW = "plugin/demo/skills/review"
 REVIEW_LINK = ".claude/skills/review"
-# How many links DEMO renders in each folder: 7 base agents; 7 base skills and ``review``.
-RENDERED_LINKS = {".claude/agents": 7, ".claude/skills": 8}
+# How many links DEMO renders in each folder: 7 base agents; 8 base skills and ``review``.
+RENDERED_LINKS = {".claude/agents": 7, ".claude/skills": 9}
 # The calls that look at a path without opening or listing it.
 LOOKS = frozenset({"lstat", "stat"})
 # The conftest's ``ac4.guard`` and ``ac4.schema``, for parameters (fixtures are not set yet).

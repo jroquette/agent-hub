@@ -10,7 +10,7 @@ argument-hint: "<idea or tracker issue id>"
 Paths below are relative to the hub (the directory with `hub.json`); repos are its siblings, listed in `hub.json` → `repos`, each with its own `AGENTS.md`.
 Agents are the hub's project subagents (`subagent_type: <name>`, from `.claude/agents/`; `hub-workflow:<name>` when installed as a plugin); each reads the brain first and ends with a compound step (`/learn` proposal or "no learning").
 
-1. **Size it** (ask if unclear): *spike* (throwaway learning, no merge), *bounded* (≤ a few PRs, known design), *architectural* (new contracts, paths under `guard.ask_before_edit`, or cross-repo design).
+1. **Size it** (ask if unclear): *spike* (throwaway learning, no merge), *bounded* (≤ a few PRs, known design), *architectural* (new contracts, paths under `guard.ask_before_edit`, or cross-repo design). A bug or a small bounded task within `/fix`'s limits (one repo, at most 5 changed non-test files, no new contract, no path under `guard.ask_before_edit`) goes to `/fix` instead (create its tracker issue first if there is none).
 2. **Spec** (bounded/architectural), **here in the main session** (subagents can't ask the user): one question at a time, then 2–3 approaches with a recommendation; if superpowers is enabled, use its `brainstorming`, otherwise lead it yourself. Then the **`requirements-analyst`** agent writes
    `brain/features/<slug>/spec.md` (AC ids, Given/When/Then, invariants, repos). **Gate: user approves the spec** (architectural; bounded may merge spec+plan approval).
 3. **Research**: **`researcher`** agent (or `/research` inline for small questions). **Plan**: **`architect`** agent → `plan.md` → **gate: user approves the plan**.
