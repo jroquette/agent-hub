@@ -147,6 +147,7 @@ _BASE_AGENTS: Final = (
 _BASE_SKILLS: Final = (
     "create-plan",
     "feature",
+    "fix",
     "handoff",
     "kickoff",
     "learn",
