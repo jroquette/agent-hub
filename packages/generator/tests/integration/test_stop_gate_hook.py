@@ -1106,3 +1106,35 @@ def test_reads_newest_subagent_first_when_fan_out_cap_reached(
     reason = output["reason"]
     assert f"## web (web): `{FAILING_CHECK}` FAILED" in reason
     assert reason.endswith("\n" + partial_note("more than 1 subagent file"))
+
+
+LISTING_CUT = """\
+import json, stop_gate
+stop_gate.BUDGET = 0
+stop_gate.scan = lambda path, found: True  # the main transcript is read: only the listing is cut
+found, why = stop_gate.touched_paths(sys.argv[1])
+print(json.dumps([sorted(found), why]))
+"""
+
+
+def test_notes_partial_read_when_fan_out_listing_cut_by_budget(
+    workspace: Path, *, hook_python: str, tmp_path: Path, run_python: Callable[..., Any]
+) -> None:
+    # S3, E34: the budget is checked while the subagents folder is listed, not only once it is
+    # listed and sorted, so a huge folder cannot hold the gate past its budget.
+    main = write_transcript(tmp_path / "session.jsonl")
+    for name in ("agent-1.jsonl", "agent-2.jsonl"):
+        write_transcript(
+            subagent_transcript(main, name),
+            touches=[("Edit", "file_path", str(workspace / "web" / "b.py"))],
+        )
+
+    result = run_python(
+        hook_python,
+        LISTING_CUT,
+        path=workspace / "demo-hub" / HOOK.rsplit("/", 1)[0],
+        args=[str(main)],
+        cwd=tmp_path,
+    )
+
+    assert result == [[], "budget spent"]
