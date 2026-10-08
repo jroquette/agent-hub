@@ -13,6 +13,6 @@ disable-model-invocation: true
 4. Check that `git config user.email` in the hub and in each repo equals `hub.json` → `project.author_email`; if it
    differs, say so before any commit. If the session was given a `claude/…` branch (cloud sessions), it is not a repo
    branch: work on `jdoe/{ISSUE}-{slug}` (or the repo's own, `AGENTS.md` → Conventions).
-5. Propose the next unfinished item (from `now.md` → "Next", the handoff, or open PRs in the brief) and ask before starting.
+5. Propose the next unfinished item (from `now.md` → "Next", the handoff, or open PRs in the brief) and ask before starting; suggest `/fix` for a bug or a small bounded task within `/fix`'s limits (one repo, at most 5 changed non-test files, no new contract, no path under `guard.ask_before_edit`), `/feature` otherwise (create the tracker issue first if there is none).
 
 Never start editing during /kickoff. If `now.md` and the repos disagree (e.g. a PR listed as open is merged), say so.
