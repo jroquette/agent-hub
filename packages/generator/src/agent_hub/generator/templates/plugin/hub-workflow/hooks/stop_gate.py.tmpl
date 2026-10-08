@@ -144,6 +144,8 @@ def touched_paths(tp: str) -> tuple[set[str], str]:
         return found, "budget spent"
     folder = os.path.join(tp[:-len(".jsonl")], "subagents") if tp.endswith(".jsonl") else ""
     names = newest_first(folder)
+    if names is None:
+        return found, "budget spent"
     for name in names[:MAX_SUBAGENT_FILES]:
         if not scan(os.path.join(folder, name), found):
             return found, "budget spent"
@@ -152,13 +154,16 @@ def touched_paths(tp: str) -> tuple[set[str], str]:
     return found, ""
 
 
-def newest_first(folder: str) -> list[str]:
-    """The names of the regular `*.jsonl` files in `folder`, newest first (by mtime, then by name). An
-    entry that cannot be stat-ed is left out; a folder that cannot be listed gives none."""
+def newest_first(folder: str) -> list[str] | None:
+    """The names of the regular `*.jsonl` files in `folder`, newest first (by mtime, then by name), or
+    None when the budget ran out while listing. An entry that cannot be stat-ed is left out; a folder
+    that cannot be listed gives none."""
     entries = []
     try:
         with os.scandir(folder) as found:
             for entry in found:
+                if left() <= 0:
+                    return None
                 if not entry.name.endswith(".jsonl"):
                     continue
                 try:
