@@ -1578,7 +1578,8 @@ def test_suggests_fix_or_feature_when_kickoff_rendered(
 
 # AGH-31 (AC-31.6): before step 1, kickoff Reads a probe only the hub guard answers, and says loudly
 # what is off when the answer is not the guard's. A guard deny alone proves only that the guard hook
-# answers (a user-level plugin install answers too, E11): the session brief must also be in context.
+# answers (a user-level plugin install answers too, E11); the brief comes from the same plugin
+# (E13), so guarded also needs the hub as the session's primary working directory.
 GUARD_PROBE = "`<hub>/.claude/guard_probe.p12`"
 UNGUARDED_ITEMS = (
     "the guard (secrets, force and default-branch pushes, AI attribution, test-assertion and"
@@ -1624,20 +1625,29 @@ def test_opens_with_guard_probe_when_kickoff_rendered(
         assert text.count("guard_probe") == 1
         assert "cloud-setup" not in text
     for phrase in (
-        "A result whose reason contains `[hub guard]` proves only that the guard hook answers",
-        "Call the session guarded only if the session brief injected by the SessionStart hook is"
-        " also already in your context",
-        "If the brief is missing or the result is anything else",
-        "unguarded or partly so",
-        "state that first, loudly",
+        "Call the session guarded only if both hold",
+        "the result is a denial whose reason contains `[hub guard]` and not `could not check`",
+        "a broken guard's ask also carries `[hub guard]`",
+        "your primary working directory (shown in your environment block) is `<hub>` itself",
+        "Claude Code loads a project's settings only from the directory the session started in",
+        "this session is unguarded",
+        "that the hub's settings are not loaded",
+        "state first, loudly",
         *UNGUARDED_ITEMS,
-        "start the session in the hub directory itself (not with the hub attached as an extra"
-        " directory) and run `/kickoff` again",
+        "start the session in the hub directory itself (not in an app repo or a parent directory,"
+        " and not with the hub attached as an extra directory), then run `/kickoff` again",
     ):
         assert phrase in paragraph, phrase
     # E11: the deny alone no longer claims that every hook and setting is loaded
     for overclaim in ("means the hooks are loaded", "attribution off"):
         assert overclaim not in paragraph, overclaim
+    # E13: the brief is no second signal (same plugin as the guard)
+    for dropped in (
+        "proves only that the guard hook answers",
+        "session brief injected by the SessionStart hook",
+        "If the brief is missing",
+    ):
+        assert dropped not in paragraph, dropped
     for text in texts:
         lines = text.splitlines()
         assert [line[:3] for line in lines if re.match(r"\d+\. ", line)] == [
