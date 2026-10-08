@@ -46,9 +46,10 @@ class RunHook(Protocol):
         repos: Sequence[Mapping[str, object]],
         cwd: Path,
         *,
-        transcript: Path | None = None,
+        transcript: Path | int | None = None,
         constant: tuple[str, object] | None = None,
         session: str | None = None,
+        pass_fds: Sequence[int] = (),
     ) -> dict[str, Any]: ...
 
 
@@ -91,8 +92,9 @@ def run_hook(
 ) -> RunHook:
     """Write ``hub.json`` with ``repos``, run the hook for an event at ``cwd``, return its JSON.
 
-    ``transcript`` becomes the event's ``transcript_path``, ``session`` its ``session_id``, and
-    ``constant`` replaces one module constant of the hook. The hook must exit 0 with an empty
+    ``transcript`` becomes the event's ``transcript_path`` (an ``int`` as written: a JSON number),
+    ``session`` its ``session_id``, ``constant`` replaces one module constant of the hook, and
+    ``pass_fds`` stay open in the hook (with no ``constant``). The hook must exit 0 with an empty
     stderr: its fail-open backstop would otherwise hide an inner error.
     """
     hub = workspace / "demo-hub"
@@ -104,15 +106,22 @@ def run_hook(
         repos: Sequence[Mapping[str, object]],
         cwd: Path,
         *,
-        transcript: Path | None = None,
+        transcript: Path | int | None = None,
         constant: tuple[str, object] | None = None,
         session: str | None = None,
+        pass_fds: Sequence[int] = (),
     ) -> dict[str, Any]:
+        assert constant is None or not pass_fds
         document = {"project": {"name": "demo"}, "repos": list(repos)}
         (hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
-        event = {"cwd": str(cwd), "session_id": session or f"test-{os.getpid()}-{tmp_path.name}"}
+        event: dict[str, object] = {
+            "cwd": str(cwd),
+            "session_id": session or f"test-{os.getpid()}-{tmp_path.name}",
+        }
         if transcript is not None:
-            event["transcript_path"] = str(transcript)
+            event["transcript_path"] = (
+                transcript if isinstance(transcript, int) else str(transcript)
+            )
         if constant is None:
             completed = subprocess.run(  # noqa: S603 - an interpreter from hook_python, the rendered hook
                 [hook_python, str(hub / HOOK)],
@@ -122,6 +131,7 @@ def run_hook(
                 cwd=elsewhere,
                 env=scratch_env(tmp_path),
                 timeout=TIMEOUT,
+                pass_fds=tuple(pass_fds),
             )
         else:
             completed = run_hook_with_constant(
@@ -545,3 +555,123 @@ def test_names_repo_not_run_when_git_status_cut_by_budget(
     message = output.get("systemMessage", "")
     assert message.startswith(BUDGET_SPENT_NOTE)
     assert "app (app): not run: budget" in message
+
+
+# The session window (D1): it opens at the main transcript's first timestamp, else today's rule.
+GREEN_NOTE = "[hub] code changed and check_fast is green."
+
+
+def utc_stamp(when: datetime, timespec: str = "milliseconds") -> str:
+    """``when`` as Claude Code writes a transcript timestamp: UTC, ``Z`` suffix."""
+    return when.astimezone(UTC).isoformat(timespec=timespec).replace("+00:00", "Z")
+
+
+def set_mtime(path: Path, when: datetime) -> None:
+    """Write ``path`` (a code file) and date it ``when``."""
+    path.write_text("x = 1\n", encoding="utf-8")
+    os.utime(path, (when.timestamp(), when.timestamp()))
+
+
+@pytest.mark.parametrize("timespec", ["milliseconds", "microseconds"])
+def test_dates_changes_from_transcript_when_session_start_read(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, timespec: str
+) -> None:
+    # AC-12: the window opens at the first line with a timestamp, here a queue-operation. The
+    # lines before it are skipped: one has no timestamp, one has no offset (a naive time read as
+    # local would open the window 2 h from now and hide new.py).
+    start = datetime.now(UTC) - timedelta(hours=1)
+    naive = (datetime.now(UTC) + timedelta(hours=2)).replace(tzinfo=None).isoformat()
+    lines = [
+        json.dumps({"type": "summary"}),
+        json.dumps({"type": "summary", "timestamp": naive}),
+        json.dumps({"type": "queue-operation", "timestamp": utc_stamp(start, timespec)}),
+    ]
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    repos = [{"dir": "app", "check_fast": "echo ran; exit 3"}]
+    set_mtime(workspace / "app" / "old.py", start - timedelta(minutes=10))
+
+    assert run_hook(repos, workspace / "app", transcript=transcript) == {}
+
+    set_mtime(workspace / "app" / "new.py", start + timedelta(minutes=1))
+    output = run_hook(repos, workspace / "app", transcript=transcript)
+
+    assert output.get("decision") == "block"
+    assert "ran" in output["reason"]
+    assert "new.py" in output["reason"]
+    assert "old.py" not in output["reason"]
+
+
+def write_unreadable(variant: str, path: Path, stamp: str) -> Path | int:
+    """The ``transcript_path`` of one unusable transcript; each timestamp in it is ``stamp``."""
+    line = json.dumps({"type": "queue-operation", "timestamp": stamp})
+    writers: dict[str, Callable[[], object]] = {
+        "missing": lambda: None,
+        "directory": path.mkdir,
+        "fifo": lambda: os.mkfifo(path),
+        # The timestamp line itself holds the bad byte: a decoder that replaced it would parse it.
+        "not_utf8": lambda: path.write_bytes(line[:-1].encode() + b', "x": "\xff"}\n'),
+        "not_json": lambda: path.write_text(f"timestamp: {stamp}\n{line[:-1]}\n", encoding="utf-8"),
+        "no_timestamp": lambda: path.write_text(
+            "\n".join(
+                [json.dumps({"type": "user"}), json.dumps({"type": "user", "time": stamp}), ""]
+            ),
+            encoding="utf-8",
+        ),
+        # Python 3.11+ parses any fraction, 3.9 only 3 or 6 digits: the hook takes neither.
+        "two_digit_fraction": lambda: path.write_text(
+            line.replace(stamp, stamp[:-2] + "Z") + "\n", encoding="utf-8"
+        ),
+    }
+    if variant in {"int_fd", "stdout_fd"}:
+        return {"int_fd": 7, "stdout_fd": 1}[variant]
+    writers[variant]()
+    return path
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "missing",
+        "int_fd",
+        "stdout_fd",
+        "open_fd",
+        "directory",
+        "fifo",
+        "not_utf8",
+        "not_json",
+        "no_timestamp",
+        "two_digit_fraction",
+    ],
+)
+def test_uses_fallback_window_when_session_start_unreadable(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, variant: str
+) -> None:
+    # AC-13: no session start read, so today's rule: the transcript's birth time where the
+    # platform keeps one, else 12 h ago. Every timestamp the variants hold is 10 min ago: one read
+    # by mistake would hide new.py (1 h old) and silence the gate.
+    stamp = utc_stamp(datetime.now(UTC) - timedelta(minutes=10))
+    set_mtime(workspace / "app" / "new.py", datetime.now(UTC) - timedelta(hours=1))
+    path = tmp_path / "session.jsonl"
+    repos = [{"dir": "app", "check_fast": "true"}]
+    if variant == "open_fd":
+        # An int is a file descriptor to os.stat and open: this one, open in the hook, is readable.
+        path.write_text(
+            json.dumps({"type": "queue-operation", "timestamp": stamp}) + "\n", encoding="utf-8"
+        )
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            output = run_hook(repos, workspace / "app", transcript=fd, pass_fds=(fd,))
+        finally:
+            os.close(fd)
+        transcript: Path | int = fd
+    else:
+        transcript = write_unreadable(variant, path, stamp)
+        output = run_hook(repos, workspace / "app", transcript=transcript)
+
+    named = isinstance(transcript, Path) and transcript.exists()
+    if named and hasattr(os.stat(transcript), "st_birthtime"):
+        assert output == {}
+    else:
+        assert "decision" not in output
+        assert output.get("systemMessage", "").startswith(GREEN_NOTE)

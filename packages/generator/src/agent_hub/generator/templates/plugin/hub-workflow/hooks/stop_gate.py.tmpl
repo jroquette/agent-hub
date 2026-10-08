@@ -2,14 +2,15 @@
 """Stop: if this session changed code in a repo checkout/worktree listed in hub.json, run that repo's
 `check_fast` command and block completion while it fails (feedback goes back to the agent). Releases after
 3 consecutive blocks to avoid loops. When checks pass and files changed, remind about /handoff (never
-blocks). Every git status and check fits in one BUDGET of seconds from the hook's start; each run gets the
-repo's `check_fast_timeout` (else TIMEOUT), capped by the budget left. A repo whose run was cut, never
-started for lack of budget, or that has no `check_fast` gets a "not run" line: it never blocks, and it is
-always named. A run whose only outcomes are budget or timeout "not run" lines leaves the block counter as
-it was. Each check runs in its own process group, killed when
-the run ends (on a timeout, after a normal exit, and when the hook itself gets SIGTERM or SIGHUP), so no child
-of a check outlives the gate; its output goes to a temp file, so a background child holding it open never
-holds the gate up."""
+blocks). The session starts at the first timestamp in the first START_BYTES of the main transcript; when
+none can be read there, at the transcript's birth time where the platform keeps one, else 12 h ago. Every
+git status and check fits in one BUDGET of seconds from the hook's start; each run gets the repo's
+`check_fast_timeout` (else TIMEOUT), capped by the budget left. A repo whose run was cut, never started for
+lack of budget, or that has no `check_fast` gets a "not run" line: it never blocks, and it is always named.
+A run with no failure and at least one budget or timeout line leaves the block counter as it was. Each
+check runs in its own process group, killed when the run ends (on a timeout, after a normal exit, and when
+the hook itself gets SIGTERM or SIGHUP), so no child of a check outlives the gate; its output goes to a
+temp file, so a background child holding it open never holds the gate up."""
 
 from __future__ import annotations
 
@@ -18,10 +19,12 @@ import math
 import os
 import re
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -43,14 +46,58 @@ MIN_RUN = 1  # a check starts only with this many seconds of budget left
 KILL_WAIT = 1
 GIT_TIMEOUT = 10
 OUTPUT_TAIL = 3000
+START_BYTES = 65_536  # the head of the main transcript read for the session start
+# A transcript timestamp, YYYY-MM-DDTHH:MM:SS.sssZ. Python 3.11+ parses more forms than 3.9
+# (any fraction length among them); this one shape reads the same on every interpreter.
+STAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3}|\.\d{6})?(Z|[+-]\d{2}:\d{2})?")
 
 
-def session_start_time(data: dict) -> float:
-    tp = data.get("transcript_path")
+def usable_file(value: object) -> bool:
+    """True when `value` is a non-empty str naming a regular file. An int would be a file descriptor to
+    os.stat and open, and a FIFO or device could block a read."""
+    if not isinstance(value, str) or not value:
+        return False
     try:
-        return os.stat(tp).st_birthtime if tp and hasattr(os.stat(tp), "st_birthtime") else time.time() - 12 * 3600
+        return stat.S_ISREG(os.stat(value).st_mode)
+    except (OSError, ValueError):  # ValueError: a NUL in the path
+        return False
+
+
+def session_start(tp: object) -> float | None:
+    """The first timestamp with an offset in the transcript's first START_BYTES, or None. A line that is
+    not UTF-8, not a JSON object, or has no such timestamp is skipped."""
+    if not usable_file(tp):
+        return None
+    try:
+        with open(tp, "rb") as f:
+            head = f.read(START_BYTES)
     except OSError:
-        return time.time() - 12 * 3600
+        return None
+    for line in head.splitlines():
+        try:
+            event = json.loads(line.decode("utf-8"))
+        except (ValueError, RecursionError):  # UnicodeDecodeError is a ValueError
+            continue
+        stamp = event.get("timestamp") if isinstance(event, dict) else None
+        if not isinstance(stamp, str) or not STAMP.fullmatch(stamp):
+            continue
+        try:
+            when = datetime.fromisoformat(stamp[:-1] + "+00:00" if stamp.endswith("Z") else stamp)
+            if when.tzinfo is not None:  # a time without an offset is no point in time
+                return when.timestamp()
+        except (ValueError, OverflowError):  # e.g. month 13, an offset of 24 h or more
+            continue
+    return None
+
+
+def fallback_start(tp: object) -> float:
+    """The start when the transcript gives none: its birth time where the platform keeps one, else 12 h ago."""
+    if isinstance(tp, str) and tp:
+        try:
+            return os.stat(tp).st_birthtime
+        except (AttributeError, OSError, ValueError):  # no birth time here, or no such file
+            pass
+    return time.time() - 12 * 3600
 
 
 def left() -> float:
@@ -155,7 +202,10 @@ def main() -> None:
     cfg = load_config(cwd)
     if not cfg.workspace:
         return
-    since = session_start_time(data)
+    tp = data.get("transcript_path")
+    since = session_start(tp)
+    if since is None:
+        since = fallback_start(tp)
     state = Path(tempfile.gettempdir()) / f"hub-stop-{data.get('session_id', 'x')}.json"
     try:
         saved = json.loads(state.read_text()) if state.exists() else {}
