@@ -5,7 +5,7 @@ import re
 from collections.abc import Iterator
 from typing import Annotated, Final, Literal
 
-from pydantic import AfterValidator, BeforeValidator, ConfigDict, Field
+from pydantic import AfterValidator, BeforeValidator, ConfigDict, Field, StrictInt
 from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from agent_hub.core.hub_config.config_object import (
@@ -40,6 +40,14 @@ JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 # only the object models.
 # Free text still lands in files and commands, so a control character is never part of it.
 FreeString = Annotated[str, Field(min_length=1, pattern=r"^[^\x00-\x1f\x7f]+$")]
+# A repo's fast gate may be empty or blank: no Stop gate (project-config.md).
+CommandString = Annotated[str, Field(pattern=r"^[^\x00-\x1f\x7f]*$")]
+# A repo's full gate: free text with at least one non-space character.
+RequiredCommand = Annotated[
+    str, Field(pattern=r"^[^\x00-\x1f\x7f]*[^\s\x00-\x1f\x7f][^\x00-\x1f\x7f]*$")
+]
+# The Stop hook's total budget (stop_gate.py.tmpl ``BUDGET``): no repo may ask for more.
+MAX_CHECK_FAST_TIMEOUT: Final = 160
 
 # Rendered values (project-config.md): values that land in shell, Make or YAML text. Pydantic's
 # Rust regex has no look-around, and ``[0-9]`` is spelled out because ``\d`` takes any digit.
@@ -284,8 +292,16 @@ class Repo(ConfigObject):
     dir: RepoDir
     github: GitHubRepo
     role: FreeString = "app"
-    check_fast: FreeString
-    check: FreeString
+    check_fast: CommandString | None = absent_by_default(
+        description="The fast gate the Stop hook runs. Absent, empty or blank: no Stop gate."
+    )
+    check_fast_timeout: Annotated[StrictInt, Field(ge=1, le=MAX_CHECK_FAST_TIMEOUT)] | None = (
+        absent_by_default(
+            description="Seconds the Stop hook gives check_fast, within its 160 s budget."
+            " Absent: 150."
+        )
+    )
+    check: RequiredCommand
     default_branch: BranchName | None = absent_by_default(
         description="The repo's default branch: worktree and PR base, push guard."
         " Absent: project.default_branch."

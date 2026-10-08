@@ -9,6 +9,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from agent_hub.core.hub_config.model import (
+    MAX_CHECK_FAST_TIMEOUT,
     MODULE_IDS,
     BranchName,
     BranchPrefix,
@@ -45,7 +46,6 @@ REQUIRED_KEYS: list[tuple[str | int, ...]] = [
     ("repos",),
     ("repos", 0, "dir"),
     ("repos", 0, "github"),
-    ("repos", 0, "check_fast"),
     ("repos", 0, "check"),
 ]
 
@@ -935,6 +935,48 @@ def test_rejects_free_string_when_control_character(
     path: tuple[str | int, ...], value: str
 ) -> None:
     assert error_locs(with_value(path, value)) == [path]
+
+
+def test_accepts_repo_when_check_fast_absent_or_blank() -> None:
+    document = a_hub_document()
+    del document["repos"][0]["check_fast"]
+
+    assert HubConfig.model_validate(document).repos[0].check_fast is None
+    for value in ("", "  "):
+        config = HubConfig.model_validate(with_value(("repos", 0, "check_fast"), value))
+        assert config.repos[0].check_fast == value
+
+
+@pytest.mark.parametrize("value", ["make check", " make check "])
+def test_accepts_check_when_it_holds_non_space(value: str) -> None:
+    config = HubConfig.model_validate(with_value(("repos", 0, "check"), value))
+
+    assert config.repos[0].check == value
+
+
+@pytest.mark.parametrize("value", [" ", "   ", "\t", " \t ", "\u00a0"])
+def test_rejects_check_when_blank(value: str) -> None:
+    assert error_locs(with_value(("repos", 0, "check"), value)) == [("repos", 0, "check")]
+
+
+@pytest.mark.parametrize("timeout", [1, 160])
+def test_accepts_check_fast_timeout_when_in_range(timeout: int) -> None:
+    config = HubConfig.model_validate(with_value(("repos", 0, "check_fast_timeout"), timeout))
+
+    assert config.repos[0].check_fast_timeout == timeout
+
+
+@pytest.mark.parametrize("timeout", [0, 161, 1.5, 150.0, "10", True, None])
+def test_rejects_check_fast_timeout_when_not_integer_in_range(timeout: object) -> None:
+    document = with_value(("repos", 0, "check_fast_timeout"), timeout)
+
+    [(loc, kind)] = error_types(document)
+    assert loc == ("repos", 0, "check_fast_timeout")
+    assert kind != "extra_forbidden"
+
+
+def test_states_check_fast_timeout_cap_when_module_read() -> None:
+    assert MAX_CHECK_FAST_TIMEOUT == 160
 
 
 def test_reports_other_errors_when_object_has_null_value() -> None:
