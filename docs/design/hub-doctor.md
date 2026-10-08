@@ -27,12 +27,12 @@ The snapshot is read from the cwd's real path (no walk-up) and holds the validat
 the files of the hub and the fixed set of paths the rules read by name. Two inputs are read only when a selected rule
 needs them: the parsed `hub.lock` and its managed paths, looked at by path (`lock.drift`), and the release's base hooks
 block, built by the templates package installed with the running CLI, so doctor still renders no file
-(`settings.weakening`). A third, read only when a repo rule (`brain.leak`, `links.dead`) is selected, is the files of
-each `repos[].dir` checkout at `../<dir>`: a missing or non-folder `../<dir>` gives one `info`, a checkout that cannot
-be listed one `error` (its cause), both at `../<dir>` on the first selected repo rule by id, never retuned; the repo
-rules skip both. A linked `../<dir>` is resolved once to its real path. A root with no `.git` entry, a hub inside a
-larger repository included, is walked, skipping `.git` and nested repositories. A root with a `.git` entry is listed
-with `git ls-files -z --cached --others --exclude-standard`, and git must name the root as the work-tree top; git
+(`settings.weakening`). A third, read only when a repo rule (`brain.leak`, `links.dead`, `repos.agents`) is selected, is
+the files of each `repos[].dir` checkout at `../<dir>`: a missing or non-folder `../<dir>` gives one `info`, a checkout
+that cannot be listed one `error` (its cause), both at `../<dir>` on the first selected repo rule by id, never retuned;
+the repo rules skip both. A linked `../<dir>` is resolved once to its real path. A root with no `.git` entry, a hub
+inside a larger repository included, is walked, skipping `.git` and nested repositories. A root with a `.git` entry is
+listed with `git ls-files -z --cached --others --exclude-standard`, and git must name the root as the work-tree top; git
 missing, failing, timing out or naming another top is a tree problem, never a walk. No link is followed, and git runs
 only when a selected rule needs a listing. A tree problem (a failed listing or read of the hub) is one `error` finding
 at path `.` on the first selected rule, by id, that reads the listing, else the first by id other than `config.schema`
@@ -69,6 +69,7 @@ from core's `RULE_MODULES`; a module's rules are core functions registered when 
 | `features.tracker` | error | each listed `brain/features/*/features.json`: shape, AC ids, evidence, and the cross-check with a listed sibling `spec.md`; links are not followed | feature check |
 | `bench.tasks` | error | module `bench`, snapshot only (no git, no process): listed `brain/workflow/bench/tasks.json` is a strict JSON list (at most 1 MiB, 200 cases; absent or `[]` is clean); each case an object with `id` (`[A-Za-z0-9._-]{1,64}`, unique ignoring case), `repo` (a `repos[].dir` unless `excluded`), `merge` (a 7–40 hex sha), `prompt` (1–20 000 characters, not starting with `-`), `hidden_tests` (1–100 literal relative paths of at most 1 024 characters: no glob or `\`, no leading `/`, `-` or `:` (pathspec magic), no empty, `.`, `..` or `.git` segment in any case, no control, format or surrogate character), `test_cmd` (1–32 non-empty strings of at most 1 024 characters); optional `setup_cmd` (at most 4 096 characters), `env` (at most 32 keys `[A-Za-z_][A-Za-z0-9_]*`, values string, number or boolean), `excluded` (boolean); no NUL in a string a process gets; one finding per problem | module `bench` |
 | `config.identity` | info | the branch prefix this developer gets when no file sets one: derived from the effective email (named with its source); can be disabled, cannot be retuned (a `severity` is a `config.schema` error), so every developer's run exits alike | AGH-65 |
+| `repos.agents` | warning | each checked-out repo's root holds `AGENTS.md` as the repo rules list it (a file or a link, not followed; empty passes; a gitignored or deleted file does not count, an unreadable one does; `CLAUDE.md`, a nested or differently cased name do not count); the fix names the hub's seeded `docs/app-repo-AGENTS.md` and the repo's `check_fast` and `check` (escaped, cut); missing or unlistable checkouts are the runner's | AGH-76 |
 
 "config lint" and "feature check" are the hub scripts these rules replace ([hub-generator.md](hub-generator.md),
 Commands). Each ported rule keeps the old check's behavior, pinned first by characterization tests, but for what its

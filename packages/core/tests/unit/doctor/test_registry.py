@@ -24,6 +24,7 @@ RELEASED_IDS = (
     "features.tracker",
     "bench.tasks",
     "config.identity",
+    "repos.agents",
 )
 
 # The "Default" column of docs/design/hub-doctor.md § Rules.
@@ -48,6 +49,7 @@ DESIGN_SEVERITIES = {
     "features.tracker": Severity.ERROR,
     "bench.tasks": Severity.ERROR,
     "config.identity": Severity.INFO,
+    "repos.agents": Severity.WARNING,
 }
 
 

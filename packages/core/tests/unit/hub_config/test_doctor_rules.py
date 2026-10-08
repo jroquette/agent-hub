@@ -35,6 +35,7 @@ RULE_TABLE_IDS = [
     "features.tracker",
     "bench.tasks",
     "config.identity",
+    "repos.agents",
 ]
 CONFIGURABLE_IDS = [rule_id for rule_id in RULE_TABLE_IDS if rule_id != "config.schema"]
 # config.identity's info must read the same for every developer: it can be disabled, not retuned.
@@ -111,6 +112,28 @@ def test_rejects_rule_when_id_unknown() -> None:
 
 def test_rejects_rule_when_option_unknown() -> None:
     assert error_types({"links.dead": {"max": 1}}) == [(("links.dead", "max"), "extra_forbidden")]
+
+
+@pytest.mark.parametrize(
+    ("entry", "dumped"),
+    [
+        ({"enabled": False}, {"enabled": False}),
+        ({"severity": "error"}, {"enabled": True, "severity": "error"}),
+    ],
+    ids=["disabled", "error"],
+)
+def test_accepts_repo_agents_settings_when_disabled_or_retuned(
+    entry: dict[str, Any], dumped: dict[str, Any]
+) -> None:
+    rules = DoctorRules.model_validate({"repos.agents": entry})
+
+    assert rules.model_dump(mode="json", exclude_none=True) == {"repos.agents": dumped}
+
+
+def test_rejects_repo_agents_option_when_key_unknown() -> None:
+    assert error_types({"repos.agents": {"max_lines": 1}}) == [
+        (("repos.agents", "max_lines"), "extra_forbidden")
+    ]
 
 
 def test_rejects_severity_when_not_known_level() -> None:

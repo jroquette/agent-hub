@@ -69,6 +69,7 @@ CORE_MODULES = (
     "doctor/text_rules.py",
     "doctor/links_rule.py",
     "doctor/brain_leak_rule.py",
+    "doctor/repo_agents_rule.py",
     "doctor/bench_rule.py",
     "tracker/__init__.py",
     "tracker/tracker_client.py",
