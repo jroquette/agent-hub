@@ -477,6 +477,39 @@ def test_lists_no_override_line_when_repo_conventions_empty() -> None:
     )
 
 
+# AGH-98: one line names the overriding repos and points to hub.json, so the block stays the same
+# size whatever the repos' patterns; a repo with no override is not named.
+def test_names_overriding_repos_in_one_line_when_several_repos_override() -> None:
+    document = a_conventions_document()
+    document["repos"][1]["conventions"] = {"branch": "web/{ISSUE}", "pr_title": "web: {summary}"}
+    document["repos"].append({**a_second_repo(), "dir": "demo-docs", "github": "acme/demo-docs"})
+
+    section = substitution_mapping(HubConfig.model_validate(document))["conventions_section"]
+
+    bullets = section.split("\n\n")[-1].split("\n- ")
+    assert len(bullets) == 4
+    assert " ".join(bullets[-1].split()) == (
+        "`demo-api`, `demo-web` override some keys: `hub.json` → `repos[].conventions`;"
+        " `hub worktree` and `hub run` apply them."
+    )
+    assert all(len(line) <= 120 for line in section.splitlines())
+    for pattern in ("feature/{issue_lower}/{slug}", "web/{ISSUE}", "web: {summary}"):
+        assert pattern not in section, pattern
+    assert "demo-docs" not in section
+
+
+def test_names_overriding_repo_in_singular_when_one_repo_overrides() -> None:
+    section = substitution_mapping(HubConfig.model_validate(a_conventions_document()))[
+        "conventions_section"
+    ]
+
+    assert section.splitlines()[-1] == (
+        "- `demo-api` overrides some keys: `hub.json` → `repos[].conventions`;"
+        " `hub worktree` and `hub run` apply them."
+    )
+    assert "demo-web" not in section
+
+
 EXAMPLE_TITLE = {"type": "feat", "scope": "core", "summary": "add the collector"}
 MARKDOWN_MARKER = re.compile(r"^\s*(?:#{1,6}|[-*+>]|\d+[.)])(?: |$)")
 
