@@ -5,6 +5,27 @@ disable-model-invocation: true
 argument-hint: "<PR>"
 ---
 
-# /review
+# /review <PR>
 
-This workflow is not written yet: say so and stop. Use `/feature` or `/fix` meanwhile.
+Paths below are relative to the hub (the directory with `hub.json`); the PR's repo is the entry of `hub.json` → `repos` whose `github` matches it, and its `AGENTS.md` sets the rules the code is held to.
+Step types follow the workflow schema: `script` runs commands with no judgement, `agent` reasons, `gate` waits for the user. The whole review is read-only until step 7.
+Never approve a PR this session opened or pushed to, and never merge: merging is the user's, through `/deliver`.
+
+1. `script` **Read the PR** by number or URL, read-only: `gh pr view <PR> --json number,title,body,author,headRefName,baseRefName,headRefOid,files,reviews`, `gh pr diff <PR>`, `gh pr checks <PR>`.
+   Code beyond the diff is read at the head commit (`git fetch origin pull/<n>/head`, then `git show <sha>:<path>`): no checkout over a working tree, no commit, no push.
+   Find its tracker issue (@@{tracker_team_key}) in the branch, title or body and read it; a `/feature` PR also has `brain/features/<slug>/spec.md`, `plan.md` and `features.json`.
+   **Stop** when the PR cannot be read, is closed or merged, or its repo is not in `hub.json`. No tracker issue: say so, and review against the PR body alone.
+2. `agent` **Decisions** that bind the change, `/recall`-style: `brain/decisions/index.md` and the repo's ADRs, `brain/learnings/` and its gotchas, matched by the changed paths and their area. Keep each hit's path; a decision you cannot cite by path does not count.
+3. `agent` **`spec-reviewer`** in a fresh context, given the diff, the head commit and the ticket, spec or plan: anything missing or extra against them.
+   When the ticket has ACs, it marks every AC `covered`, `not covered` or `not testable`, naming the test that covers it (`path::test`) or why none can.
+4. `agent` **`quality-reviewer`** in a fresh context, on the same diff: invariants, security and secrets, idempotency and failure paths, and tests that pass vacuously (would they fail if the code were wrong?).
+   Both reviewers stay read-only and see only their own input, not each other's findings.
+5. `agent` **Consolidate** both reports and step 2 into one list. Each finding: `path:line`, severity (blocking / should-fix / nit), the source it rests on (an AC id, an ADR or brain note by path, a learning) and a suggested change.
+   A finding with no evidence is dropped, or kept as a question to the author. Duplicates merge; nits go only when nothing heavier is left. Show the list and the AC table.
+6. `gate` **The user picks** which findings to post, edits their wording if needed, and the verdict: approve, request changes or comment. No answer, no post.
+   A PR opened or pushed to by this session, or authored by the `gh` user, can only get comment.
+7. `script` **Post** one pending review with the chosen findings as inline comments (`gh api repos/<owner>/<repo>/pulls/<n>/reviews` with `comments` and no `event`), then submit it with the chosen verdict.
+   Nothing is posted before the gate in step 6, and never a second review for the same pass. The comments are the user's words: no AI attribution, no "Generated with", no 🤖, beyond a footer the host adds itself.
+   Then post the review link on the tracker issue; the issue's state does not change here.
+
+Recurring findings go to `/learn` as proposals, so later plans can check for them; the review itself writes nothing in `brain/`.
