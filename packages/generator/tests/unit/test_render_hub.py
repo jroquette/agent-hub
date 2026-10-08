@@ -65,6 +65,7 @@ DESIGN_PATHS = (
     "brain/learnings/.gitkeep",
     "brain/now.md",
     "brain/playbooks/.gitkeep",
+    "docs/app-repo-AGENTS.md",
     "hub",
     "hub.schema.json",
     # AGH-17 D5: the demo selects `bench` and `cloud`.
@@ -3535,6 +3536,59 @@ def test_lists_repos_when_readme_rendered(variant_config: HubConfig) -> None:
     readme = text_of(variant_config, "README.md")
 
     assert "demo-api, demo-web" in readme
+
+
+def test_names_app_repo_agents_once_when_readme_rendered(demo_config: HubConfig) -> None:
+    lines = text_of(demo_config, "README.md").splitlines()
+
+    naming = [line for line in lines if "`docs/app-repo-AGENTS.md`" in line]
+    assert len(naming) == 1
+    assert "`AGENTS.md`" in naming[0]
+    assert "root" in naming[0]
+    # Q-6: appended after the repos line, with a blank line before it.
+    assert lines[-1] == naming[0]
+    assert lines[-2] == ""
+    assert lines[-3] == "Repos, checked out next to this hub: demo-api."
+
+
+APP_REPO_AGENTS = "docs/app-repo-AGENTS.md"
+# AC-76.2: the starter's sections, in order.
+STARTER_SECTIONS = [
+    "## What this repo is",
+    "## Run it locally",
+    "## Checks",
+    "## Conventions",
+    "## Never",
+]
+
+
+def test_renders_same_app_repo_agents_when_configs_differ(demo_config: HubConfig) -> None:
+    configs = [
+        demo_config,
+        HubConfig.model_validate(builders.a_two_team_document()),
+        HubConfig.model_validate(a_conventions_document()),
+    ]
+
+    texts = {text_of(config, APP_REPO_AGENTS) for config in configs}
+
+    assert len(texts) == 1
+    lines = next(iter(texts)).splitlines()
+    assert len(lines) <= 40
+    assert [line for line in lines if len(line) > 120] == []
+
+
+def test_holds_starter_sections_when_app_repo_agents_rendered(demo_config: HubConfig) -> None:
+    text = text_of(demo_config, APP_REPO_AGENTS)
+    lines = text.splitlines()
+
+    assert [line for line in lines if line.startswith("## ")] == STARTER_SECTIONS
+    # Plan E9: every slot is a code span, so a rendered view shows it.
+    assert "`<check_fast>`" in text
+    assert "`<check>`" in text
+    assert len([line for line in lines if "hub doctor" in line and "100" in line]) == 1
+    assert "@@" not in text
+    assert "](" not in text
+    assert "brain" not in text.lower()
 
 
 # AC-4.33 (Q-17): the seeded .gitignore keeps AGH-10's base entries and ignores what the hooks and

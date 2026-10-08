@@ -140,6 +140,9 @@
     "brain/playbooks/.gitkeep": {
       "ownership": "seeded"
     },
+    "docs/app-repo-AGENTS.md": {
+      "ownership": "seeded"
+    },
     "hub": {
       "executable": true,
       "ownership": "managed",

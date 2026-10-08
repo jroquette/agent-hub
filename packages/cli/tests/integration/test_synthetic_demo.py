@@ -480,6 +480,55 @@ def test_counts_info_when_demo_checkout_missing(
     )
 
 
+APP_REPO_AGENTS = "docs/app-repo-AGENTS.md"
+
+
+def test_finds_nothing_when_app_repo_agents_copied_to_checkouts(
+    demo_two_repo_hub: Path, run_doctor: DoctorRunner, demo_checkout: CheckoutFactory
+) -> None:
+    # Each repo's AGENTS.md is the hub's starter as copied, slots unfilled (AC-76.11).
+    starter = (demo_two_repo_hub / APP_REPO_AGENTS).read_bytes()
+    for name in ("demo-api", "demo-web"):
+        (demo_checkout(name) / "AGENTS.md").write_bytes(starter)
+
+    result = run_doctor(demo_two_repo_hub)
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        0,
+        "0 errors, 0 warnings, 0 infos\n",
+        "",
+    )
+
+
+def repo_agents_warning(name: str) -> str:
+    return (
+        f"warning repos.agents ../{name}: no AGENTS.md at the repo root (hub agent loads none for"
+        f" it) Fix: copy {APP_REPO_AGENTS} to ../{name}/AGENTS.md and fill it in;"
+        " check_fast: make check-fast, check: make check"
+    )
+
+
+def test_warns_once_per_repo_when_app_repo_agents_absent(
+    demo_two_repo_hub: Path, run_doctor: DoctorRunner, demo_checkout: CheckoutFactory
+) -> None:
+    # The committed AGENTS.md deleted from the work tree is not listed, so it does not count
+    # (plan E5).
+    for name in ("demo-api", "demo-web"):
+        (demo_checkout(name) / "AGENTS.md").unlink()
+
+    result = run_doctor(demo_two_repo_hub)
+
+    assert (result.exit_code, result.stdout.splitlines(), result.stderr) == (
+        0,
+        [
+            repo_agents_warning("demo-api"),
+            repo_agents_warning("demo-web"),
+            "0 errors, 2 warnings, 0 infos",
+        ],
+        "",
+    )
+
+
 MAKEFILE_LINE = b"local: ; @true\n"
 AGENTS_LINE = b"- A rule the project wrote here.\n"
 
