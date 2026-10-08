@@ -923,10 +923,17 @@ def test_denies_guard_probe_when_kickoff_path_read(
         (read | {"cwd": str(outside)}, outside),
     ]
 
+    # E11: the same hooks in a user-level plugin cache (no hub settings loaded) deny it too, so a
+    # deny proves only that the guard hook answers
+    cache = guarded_hub.parent.parent / PLUGIN_CACHE
+    shutil.copytree(guarded_hub / HOOKS, cache)
+
     verdicts = guard(guarded_hub / HOOKS, runs)
+    cached = guard(cache, runs)
 
     assert len(verdicts) == len(runs)
-    for verdict in verdicts:
+    assert len(cached) == len(runs)
+    for verdict in (*verdicts, *cached):
         assert verdict is not None
         decision, reason = verdict
         assert decision == "deny", verdict
