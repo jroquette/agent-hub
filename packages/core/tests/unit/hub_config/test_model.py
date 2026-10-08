@@ -954,8 +954,19 @@ def test_accepts_check_when_it_holds_non_space(value: str) -> None:
     assert config.repos[0].check == value
 
 
-@pytest.mark.parametrize("value", [" ", "   ", "\t", " \t ", "\u00a0"])
+@pytest.mark.parametrize("value", ["", " ", "   ", "\u00a0", "\u3000", " \u2028 "])
 def test_rejects_check_when_blank(value: str) -> None:
+    with pytest.raises(ValidationError) as caught:
+        HubConfig.model_validate(with_value(("repos", 0, "check"), value))
+
+    [error] = caught.value.errors()
+    assert error["loc"] == ("repos", 0, "check")
+    assert error["type"] == "blank_command"
+    assert error["msg"] == "must hold a non-space character"
+
+
+@pytest.mark.parametrize("value", ["\t", " \t ", "\x85"])
+def test_rejects_check_when_blank_with_control_character(value: str) -> None:
     assert error_locs(with_value(("repos", 0, "check"), value)) == [("repos", 0, "check")]
 
 

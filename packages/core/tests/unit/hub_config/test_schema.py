@@ -213,3 +213,20 @@ def test_rejects_blank_check_when_schema_exported() -> None:
         assert re.search(check["pattern"], value), value
     for value in ("", " ", "\t", " \t ", "make\ncheck"):
         assert not re.search(check["pattern"], value), value
+
+
+def test_agrees_with_str_strip_when_check_pattern_read() -> None:
+    """The schema rejects exactly the ``check`` values the model's ``strip()`` rule rejects.
+
+    The space class is spelled out: JSON Schema's ECMA ``\\s`` and Python's ``str.isspace``
+    disagree on U+0085 and U+FEFF.
+    """
+    pattern = read_shipped_schema()["$defs"]["Repo"]["properties"]["check"]["pattern"]
+    control = re.compile(r"[\x00-\x1f\x7f]")
+
+    assert "\\s" not in pattern
+    for code in range(0x110000):
+        char = chr(code)
+        if control.match(char) or 0xD800 <= code <= 0xDFFF:
+            continue
+        assert bool(re.fullmatch(pattern, char)) is not char.isspace(), hex(code)
