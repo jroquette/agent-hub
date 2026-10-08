@@ -153,6 +153,9 @@
     "brain/_inbox/.gitkeep": {
       "ownership": "seeded"
     },
+    "brain/auto/workspace/.gitkeep": {
+      "ownership": "seeded"
+    },
     "brain/decisions/index.md": {
       "ownership": "seeded"
     },
