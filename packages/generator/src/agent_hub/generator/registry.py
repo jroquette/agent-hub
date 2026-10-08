@@ -216,6 +216,7 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
     _generic_seeded("brain/learnings/.gitkeep", "brain/learnings/gitkeep.tmpl"),
     _generic_seeded("brain/now.md", "brain/now.md.tmpl"),
     _generic_seeded("brain/playbooks/.gitkeep", "brain/playbooks/gitkeep.tmpl"),
+    _generic_seeded("docs/app-repo-AGENTS.md", "docs/app-repo-AGENTS.md.tmpl"),
     _entry_point("hub"),
     TemplateEntry(
         path="hub.schema.json",
