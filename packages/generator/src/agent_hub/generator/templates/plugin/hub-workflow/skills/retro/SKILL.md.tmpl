@@ -5,6 +5,23 @@ disable-model-invocation: true
 argument-hint: "[period]"
 ---
 
-# /retro
+# /retro [period]
 
-This workflow is not written yet: say so and stop. Use `/feature` or `/fix` meanwhile.
+Paths below are relative to the hub (the directory with `hub.json`); repos are its siblings, listed in `hub.json` → `repos`. The period is the argument (`14d`, `since <date>`), else the last 14 days.
+Each step carries its type: `script` runs commands and reads files, with no judgement; `agent` reads and reasons; `gate` waits for the user's decision.
+Metrics stay local and aggregated: by step, gate, repo, ticket size or run, never by person. No ranking or comparison of individual developers; leave author names out of what you quote.
+
+1. `script` **Gather** the period's data, each source on its own, its output redirected to a file and `$?` checked:
+   `make mine DAYS=<n>` (transcript failures), `make retro DAYS=<n>` (PRs, cycle time, runs, CI, memory), `./hub stats` when the pinned CLI has it, `.agent-runs/*.jsonl` (outcome, failure stage, cost), the merged PRs of each repo in `hub.json` → `repos` with their review rounds (`gh pr list --state merged`), the number of proposals in `brain/_inbox/`, and the `brain/journal/` entries of the period.
+   A source that is absent, empty or fails is **missing**: list it with the reason (command not there, no file, non-zero exit) and go on with the rest. Every source missing: say so and stop.
+2. `agent` **Find where the flow gets stuck**: the steps with the most blocks or reruns, the gates that wait longest, review findings that repeat across PRs, `agent-failed` causes, cost outliers per ticket size.
+   Each finding names its numbers and where they come from (the metric, the run ids or the PR links). Numbers that disagree between sources are reported as such, not averaged.
+3. `agent` **Propose at most 5 changes**, each tied to the finding it rests on: a skill or agent text edit, a guard rule, a plan checklist item, or a bench case for `./hub bench` (when `hub.json` → `modules` has `bench`; `make bench-validate` checks it).
+   Per proposal: the change, the evidence (the metric or the runs), the expected effect and how the next retro tells whether it worked. A proposal without evidence is dropped, not softened; fewer than 5 is fine and none is a valid answer.
+4. `gate` **The user picks** which proposals to pursue: any, all or none. Nothing is filed before the answer.
+5. `script` **File the chosen ones**: one tracker issue each (team from `hub.json` → `tracker`), with the evidence in its body, ready for `/triage`.
+   A workflow-text change that can be benchmarked gets a `./hub bench` comparison plan in its issue (`make bench ARGS=…`: the two plugin variants, the cases, runs and budget); without the `bench` module, say so in the issue.
+6. `agent` **Record**: a retro section in today's `brain/journal/` entry (period, sources used and missing, findings, chosen and dropped proposals with their issue ids), and each learning through `/learn`, which writes to `brain/_inbox/`.
+   If the hub's checkout is on the default branch, the note goes on a `project.branch_prefix` branch and a PR, authored by the user: no AI co-author trailer, no "Generated with", no 🤖; no push to the default branch, no force-push.
+
+Never: edit a skill, an agent, a hook, a guard rule or the structure of `brain/` yourself (each change goes through the issue filed in step 5 and its own workflow); promote inbox proposals (that is `/learn promote`); quote transcripts, secrets or tool inputs; name or rank individual developers.
