@@ -44,6 +44,10 @@
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/feature"
     },
+    ".claude/skills/fix": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/fix"
+    },
     ".claude/skills/handoff": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/handoff"
@@ -274,7 +278,12 @@
     "plugin/hub-workflow/skills/feature/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "7c91bad507a52927c3f3ba2d3bedb77677b9b7fe3618f4632b614f92f88dd426"
+      "sha256": "92bc00d59d4ffd22596819332bd9aa008f0b040aa741d864697d41868df483e2"
+    },
+    "plugin/hub-workflow/skills/fix/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "cde4336ba1ee3685d61789ada2f9ac6e1a57f102d8913b8bf52ef9b73ade6f12"
     },
     "plugin/hub-workflow/skills/handoff/SKILL.md": {
       "executable": false,
@@ -284,7 +293,7 @@
     "plugin/hub-workflow/skills/kickoff/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "20b3555ff9d4226d008cc8dd7dc5faf08e91314baba9525bfacf8673dc011b03"
+      "sha256": "1ebada6a3b0f17a151502d975e2760bcb9b37d3e19a4252b621eaf7589b6713e"
     },
     "plugin/hub-workflow/skills/learn/SKILL.md": {
       "executable": false,
