@@ -2428,8 +2428,10 @@ def test_shows_conventions_in_agents_when_hub_sets_them() -> None:
         (line,) = [line for line in block.splitlines() if line.startswith(label)]
         assert line.count("e.g.") == 1, label
     assert [line for line in block.splitlines() if "`demo-api`" in line] == [
-        "- `demo-api` overrides branch `feature/{issue_lower}/{slug}`."
+        "- `demo-api` overrides some keys: `hub.json` → `repos[].conventions`;"
+        " `hub worktree` and `hub run` apply them."
     ]
+    assert "feature/{issue_lower}/{slug}" not in agents
     assert "`jdoe/{ISSUE}-{slug}`" in rule_one(agents)
     assert "<team>-<n>-<desc>" not in rule_one(agents)
     assert "work on `jdoe/{ISSUE}-{slug}`" in texts[KICKOFF_PATH]
@@ -2461,8 +2463,8 @@ def test_keeps_lines_within_width_when_conventions_long() -> None:
 
         agents = text_of(HubConfig.model_validate(document), "AGENTS.md")
 
-        # The rule, the three shapes and their examples, and the three repo overrides.
-        assert agents.count("x" * 40) == 10, no_prefix
+        # The rule and the three shapes and their examples; the repo's overrides stay in hub.json.
+        assert agents.count("x" * 40) == 7, no_prefix
         assert [line for line in agents.splitlines() if len(line) > 120] == [], no_prefix
 
 
@@ -2493,7 +2495,12 @@ def test_keeps_agents_within_line_cap_when_many_repos_override_long_conventions(
     agents = text_of(a_stacked_conventions_config(8), "AGENTS.md")
 
     assert len(agents.splitlines()) <= 100
-    assert [line for line in agents.splitlines() if len(line) > 120] == []
+    # The repo list (`@@{repo_dirs}`, one unwrapped line) is not the Conventions block's to wrap.
+    assert [
+        line
+        for line in agents.splitlines()
+        if len(line) > 120 and not line.startswith("- Repos, checked out next to this hub: ")
+    ] == []
     # The rule and the three project shapes and examples; no repo's pattern.
     assert agents.count("x" * 40) == 7
 

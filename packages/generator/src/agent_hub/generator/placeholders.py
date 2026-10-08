@@ -87,11 +87,6 @@ _CONVENTIONS_LEAD: Final = (
     "session follow them. `{ISSUE}` is the issue id, `{issue_lower}` the same in lowercase,"
     " `{slug}` the worktree's `<desc>`."
 )
-_OVERRIDE_LABELS: Final = {
-    "branch": "branch",
-    "commit_title": "commit title",
-    "pr_title": "PR title",
-}
 # A code span, and the character that stands for each space inside one while wrapping (no
 # pattern may hold a backtick or a control character, so spans pair up and the glue is free).
 _CODE_SPAN: Final = re.compile(r"`[^`]*`")
@@ -197,7 +192,7 @@ def _conventions_texts(config: HubConfig) -> dict[str, str]:
     Unconfigured (no ``conventions`` key at any level): the template text they replaced and no
     block, so the files keep their bytes. Configured: the project's effective branch shape, with
     ``{prefix}`` shown as the rendered prefix and the other placeholders as written, and a block
-    with each project shape and one example, then one line per repo naming the keys it overrides.
+    with each project shape and one example, then one line naming the repos that override any.
     """
     shown = shown_conventions(config)
     if shown is None:
@@ -218,11 +213,11 @@ def _conventions_texts(config: HubConfig) -> dict[str, str]:
         ),
         "kickoff_branch": shape
         + (" (or the repo's own, `AGENTS.md` → Conventions)" if own_branch else ""),
-        "conventions_section": _conventions_section(config, shown=shown),
+        "conventions_section": _conventions_section(shown),
     }
 
 
-def _conventions_section(config: HubConfig, *, shown: ShownConventions) -> str:
+def _conventions_section(shown: ShownConventions) -> str:
     """The Conventions block, from the blank lines before its heading to its last line."""
     shapes = (
         ("Branch", shown.branch),
@@ -230,16 +225,15 @@ def _conventions_section(config: HubConfig, *, shown: ShownConventions) -> str:
         ("PR title", shown.pr_title),
     )
     items = [f"{label}: `{pattern.shape}`, e.g. `{pattern.example}`." for label, pattern in shapes]
-    for repo_dir, repo in shown.repos.items():
-        if not repo.overrides:
-            continue
-        keys = [f"{_OVERRIDE_LABELS[key]} `{value}`" for key, value in repo.overrides.items()]
-        # E14: with no pr_title at any layer, the repo's own commit_title titles its PRs.
-        follows = "commit_title" in repo.overrides and not (
-            config.conventions_for(repo_dir).pr_title_explicit
+    # AGH-98: one line names the overriding repos; their patterns stay in hub.json, so the block
+    # keeps its size whatever the patterns and however many repos override.
+    overriding = [f"`{repo_dir}`" for repo_dir, repo in shown.repos.items() if repo.overrides]
+    if overriding:
+        verb = "overrides" if len(overriding) == 1 else "override"
+        items.append(
+            f"{_LIST_SEPARATOR.join(overriding)} {verb} some keys: `hub.json` →"
+            " `repos[].conventions`; `hub worktree` and `hub run` apply them."
         )
-        note = " (the PR title follows it)" if follows else ""
-        items.append(f"`{repo_dir}` overrides {_LIST_SEPARATOR.join(keys)}{note}.")
     bullets = "\n".join(_filled_after(f"- {item}", lead="") for item in items)
     return f"\n\n## Conventions\n\n{_CONVENTIONS_LEAD}\n\n{bullets}"
 
