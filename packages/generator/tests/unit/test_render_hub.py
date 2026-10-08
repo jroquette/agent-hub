@@ -15,6 +15,8 @@ from typing import Any
 
 import pytest
 
+from agent_hub.core.doctor.config_lint import line_count
+from agent_hub.core.doctor.instruction_rules import DEFAULT_MAX_LINES
 from agent_hub.core.doctor.snapshot import module_makefiles
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
@@ -95,6 +97,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/hooks/stop_gate.py",
     "plugin/hub-workflow/skills/create-plan/SKILL.md",
     "plugin/hub-workflow/skills/feature/SKILL.md",
+    "plugin/hub-workflow/skills/fix/SKILL.md",
     "plugin/hub-workflow/skills/handoff/SKILL.md",
     "plugin/hub-workflow/skills/kickoff/SKILL.md",
     "plugin/hub-workflow/skills/learn/SKILL.md",
@@ -116,7 +119,7 @@ BASE_AGENTS = (
     "researcher",
     "spec-reviewer",
 )
-BASE_SKILLS = ("create-plan", "feature", "handoff", "kickoff", "learn", "recall", "research")
+BASE_SKILLS = ("create-plan", "feature", "fix", "handoff", "kickoff", "learn", "recall", "research")
 
 GENERATOR_PACKAGE = "agent_hub.generator"
 # A synthetic package of test templates, importable only while a test's fixture puts it on sys.path.
@@ -221,12 +224,12 @@ def test_returns_rendered_hub_when_demo_rendered(demo_config: HubConfig) -> None
     assert isinstance(rendered, RenderedHub)
     assert isinstance(rendered.links, tuple)
     assert all(type(link) is RenderedLink for link in rendered.links)
-    # AC-4.6: exactly the 14 links of spec "The rendered set", sorted by path.
+    # AC-4.6: the 14 links of spec "The rendered set", plus AGH-58's /fix: 15, sorted by path.
     assert [link.path for link in rendered.links] == [
         *(f".claude/agents/{name}.md" for name in BASE_AGENTS),
         *(f".claude/skills/{name}" for name in BASE_SKILLS),
     ]
-    assert len(rendered.links) == 14
+    assert len(rendered.links) == 15
     assert all(
         (link.kind, link.ownership) == (Kind.GENERIC, Ownership.MANAGED) for link in rendered.links
     )
@@ -249,7 +252,7 @@ def test_links_seven_agents_when_demo_rendered(demo_config: HubConfig) -> None:
         assert resolved in file_paths, link.path
 
 
-def test_links_seven_skills_when_demo_rendered(demo_config: HubConfig) -> None:
+def test_links_eight_skills_when_demo_rendered(demo_config: HubConfig) -> None:
     rendered = render_hub(demo_config)
 
     skill_links = [link for link in rendered.links if link.path.startswith(".claude/skills/")]
@@ -1345,6 +1348,7 @@ SKILL_COMMANDS = {
         "`./hub worktree <team>-<n>-<slug> [--only <repo>]` (`make worktree NAME=…`)",
         f"`{FEATURE_CHECK_COMMAND}`",
     ),
+    "fix": ("`./hub worktree <team>-<n>-<desc> --only <repo>` (`make worktree NAME=… ONLY=…`)",),
 }
 MAKE_COMMAND = re.compile(r"`make ([a-z][a-z0-9-]*)")
 
@@ -1354,7 +1358,7 @@ def skill_text(render: dict[str, RenderedFile], name: str) -> str:
 
 
 @pytest.mark.parametrize("skill", sorted(SKILL_COMMANDS))
-def test_names_hub_commands_when_kickoff_or_feature_rendered(
+def test_names_hub_commands_when_workflow_skill_rendered(
     skill: str, demo_render: dict[str, RenderedFile]
 ) -> None:
     text = skill_text(demo_render, skill)
@@ -1374,6 +1378,7 @@ SUPERPOWERS_CONDITION = "if superpowers is enabled"
 SUPERPOWERS_SKILL_FILES = {
     "plugin/hub-workflow/skills/create-plan/SKILL.md",
     "plugin/hub-workflow/skills/feature/SKILL.md",
+    "plugin/hub-workflow/skills/fix/SKILL.md",
 }
 FEATURE_SUPERPOWERS_SKILLS = (
     "brainstorming",
@@ -1526,6 +1531,7 @@ def test_names_transcript_script_when_recall_rendered(
 SKILL_FRONTMATTER_KEYS = {
     "create-plan": ["name", "description", "argument-hint"],
     "feature": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "fix": ["name", "description", "disable-model-invocation", "argument-hint"],
     "handoff": ["name", "description", "disable-model-invocation", "argument-hint"],
     "kickoff": ["name", "description", "disable-model-invocation"],
     "learn": ["name", "description", "disable-model-invocation", "argument-hint"],
@@ -1547,6 +1553,165 @@ def test_keeps_frontmatter_when_skills_rendered(demo_render: dict[str, RenderedF
         assert fields["description"].strip(), name
         assert fields.get("disable-model-invocation", "true") == "true", name
         assert text.split("\n---\n", 1)[1].strip(), name
+
+
+# AGH-58: the /fix skill (spec AC-58.2-58.6).
+NO_AI_ATTRIBUTION = 'no AI co-author trailer, no "Generated with", no 🤖'
+FIX_STEP_PHRASES = {
+    1: ("ticket", "if it cannot be read, say so and stop"),
+    2: ("`./hub worktree <team>-<n>-<desc>", "`make worktree NAME=…"),
+    3: ("expected behaviour", "fails for the reported reason", "import", "setup", "RED"),
+    4: ("smallest",),
+    5: (
+        "`check_fast`, then its `check`",
+        "`hub.json`",
+        "an empty one is a missing gate: say so in the PR body",
+    ),
+    6: ("`quality-reviewer`", "diff", "Should-fix findings", "follow-ups"),
+    7: ("PR", NO_AI_ATTRIBUTION, "No push to the default branch, no force-push"),
+    8: ("In Review", "PR link"),
+}
+FIX_SWITCH_PHRASES = (
+    "**Stop and switch to `/feature`**",
+    "new contract",
+    "`guard.ask_before_edit`",
+    "more than one repo",
+    "more than 5 non-test files",
+    "Tests do not count",
+    "`tests/`",
+    "the RED commit stays on the branch",
+    "same worktree",
+    "reusing the existing issue",
+    "skip its step 5",
+)
+FIX_RECORD_PHRASES = (
+    "the RED command and the failing assertion line",
+    "the fix summary",
+    "the `quality-reviewer` verdict",
+    "no `brain/features/<slug>/` folder",
+    "if nothing can be tested, say so in one line of the PR body",
+    "`check_fast`, `check` and the review still apply",
+    "On `CHANGES` with blockers",
+    "re-run `check_fast` and `check`",
+    "record the findings and the fixes in the PR body",
+    "no second review pass",
+    "`/learn`",
+    "`/handoff`",
+)
+FIX_RED_PUSH = "The RED commit stays local: the branch is pushed only after GREEN"
+STEP_START = re.compile(r"^(\d+)\. ")
+
+
+def numbered_steps(text: str) -> dict[int, list[str]]:
+    """Each numbered step's physical lines: its ``N. `` line and the three-space lines after it."""
+    steps: dict[int, list[str]] = {}
+    current: list[str] | None = None
+    for line in text.splitlines():
+        start = STEP_START.match(line)
+        if start:
+            current = steps.setdefault(int(start.group(1)), [])
+            current.append(line)
+        elif current is not None and line.startswith("   "):
+            current.append(line)
+        else:
+            current = None
+    return steps
+
+
+def test_lists_fix_steps_and_frontmatter_when_fix_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    text = skill_text(demo_render, "fix")
+
+    steps = numbered_steps(text)
+
+    assert list(steps) == list(range(1, 9))
+    for number, phrases in FIX_STEP_PHRASES.items():
+        step = " ".join(steps[number])
+        for phrase in phrases:
+            assert phrase in step, (number, phrase)
+    assert "approves the plan" not in text
+    fields = dict(line.split(": ", 1) for line in frontmatter_lines(text))
+    assert fields["name"] == "fix"
+    assert fields["disable-model-invocation"] == "true"
+    assert fields["argument-hint"] == '"<tracker issue id>"'
+
+
+def test_names_switch_to_feature_when_fix_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    text = skill_text(demo_render, "fix")
+
+    step = " ".join(numbered_steps(text).get(1, []))
+
+    assert text.count("switch to `/feature`") == 1
+    for phrase in FIX_SWITCH_PHRASES:
+        assert phrase in step, phrase
+
+
+def test_names_superpowers_once_when_fix_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    text = skill_text(demo_render, "fix")
+    steps = numbered_steps(text)
+
+    assert len(superpowers_lines(text)) == 1
+    [line] = superpowers_lines(text)
+
+    assert SUPERPOWERS_CONDITION in line
+    assert line.index(SUPERPOWERS_CONDITION) < line.index("otherwise")
+    assert "`test-driven-development`" in line
+    # The fallback is the RED rule on the line before; step 3 holds no more than its three lines.
+    assert line in steps[3]
+    assert len(steps[3]) <= 3
+    assert text.index("fails for the reported reason") < text.index(SUPERPOWERS_CONDITION)
+
+
+def test_keeps_record_in_pr_body_when_fix_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    text = skill_text(demo_render, "fix")
+
+    for phrase in FIX_RECORD_PHRASES:
+        assert phrase in text, phrase
+
+
+@pytest.mark.parametrize(
+    ("document", "expected"),
+    [
+        (builders.a_hub_document, "on branch `jdoe/<team>-<n>-<desc>`."),
+        (
+            builders.a_conventions_document,
+            "on branch `jdoe/{ISSUE}-{slug}` (or the repo's own, `AGENTS.md` → Conventions).",
+        ),
+    ],
+    ids=["demo", "conventions"],
+)
+def test_names_configured_branch_when_fix_rendered(
+    document: Callable[[], dict[str, Any]], expected: str
+) -> None:
+    config = HubConfig.model_validate(document())
+    render = {file.path: file for file in render_hub(config).files}
+
+    text = skill_text(render, "fix")
+
+    assert expected == f"on branch {substitution_mapping(config)['kickoff_branch']}."
+    assert text.count(expected) == 1
+    assert FIX_RED_PUSH in text
+    assert NO_AI_ATTRIBUTION in text
+    assert text.index(FIX_RED_PUSH) < text.index("**Ship**")
+
+
+# AGH-58 (AC-58.7): the rendered /fix skill fits the size rule's default for skills; the limit is
+# a literal so a change to the constant does not move the test with it.
+@pytest.mark.parametrize(
+    "document",
+    [builders.a_hub_document, builders.a_two_team_document, builders.a_conventions_document],
+    ids=["demo", "two_teams", "conventions"],
+)
+def test_fits_size_limit_when_fix_rendered(document: Callable[[], dict[str, Any]]) -> None:
+    assert DEFAULT_MAX_LINES["*/*"] == 80
+    config = HubConfig.model_validate(document())
+
+    text = {file.path: file.content for file in render_hub(config).files}[
+        "plugin/hub-workflow/skills/fix/SKILL.md"
+    ].decode("utf-8")
+
+    assert line_count(text) <= DEFAULT_MAX_LINES["*/*"]
 
 
 def test_has_no_author_when_base_manifest_rendered(demo_render: dict[str, RenderedFile]) -> None:

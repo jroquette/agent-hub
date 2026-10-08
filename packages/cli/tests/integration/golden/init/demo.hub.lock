@@ -44,6 +44,10 @@
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/feature"
     },
+    ".claude/skills/fix": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/fix"
+    },
     ".claude/skills/handoff": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/handoff"
@@ -275,6 +279,11 @@
       "executable": false,
       "ownership": "managed",
       "sha256": "7c91bad507a52927c3f3ba2d3bedb77677b9b7fe3618f4632b614f92f88dd426"
+    },
+    "plugin/hub-workflow/skills/fix/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "cde4336ba1ee3685d61789ada2f9ac6e1a57f102d8913b8bf52ef9b73ade6f12"
     },
     "plugin/hub-workflow/skills/handoff/SKILL.md": {
       "executable": false,

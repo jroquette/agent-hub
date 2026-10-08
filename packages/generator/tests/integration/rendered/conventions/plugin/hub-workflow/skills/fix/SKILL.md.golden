@@ -1,0 +1,27 @@
+---
+name: fix
+description: Short path for a bug or a small bounded task in one repo. Reproduces it with a failing test committed as RED, makes the smallest fix, runs the repo's gates, gets one quality-reviewer pass and opens the PR; no spec, plan or evaluator.
+disable-model-invocation: true
+argument-hint: "<tracker issue id>"
+---
+
+# /fix <issue>
+
+Paths below are relative to the hub (the directory with `hub.json`); repos are its siblings, listed in `hub.json` → `repos`, each with its own `AGENTS.md`: read the one for the repo you change.
+No spec, no plan gate and no `brain/features/<slug>/` folder: the PR body and the tracker hold the record.
+
+1. **Read the ticket** (if it cannot be read, say so and stop) and size it against `/fix`'s limits: one repo, at most 5 changed non-test files, no new contract, no path under `guard.ask_before_edit`.
+   **Stop and switch to `/feature`** when the change needs a new contract (a schema, migration, API or config key), touches a path under `hub.json` → `guard.ask_before_edit`, spans more than one repo, or changes more than 5 non-test files.
+   Tests do not count: a test is a path under a `tests/` or `test/` folder (golden fixtures included) or one the repo's `AGENTS.md` names as a test. A trigger found after the RED commit works the same: the RED commit stays on the branch and `/feature` continues from its step 2 on the same worktree, reusing the existing issue (skip its step 5; its step 4 only adds issues for new work).
+2. **Workspace**: `./hub worktree <team>-<n>-<desc> --only <repo>` (`make worktree NAME=… ONLY=…`), named by the tracker issue (an isolated worktree from a freshly fetched default branch), on branch `jdoe/{ISSUE}-{slug}` (or the repo's own, `AGENTS.md` → Conventions).
+3. **Reproduce, then RED**: reproduce the report, then write a test from the ticket's expected behaviour, run it and record that it fails for the reported reason (not an import or setup error); commit it as RED. The RED commit stays local: the branch is pushed only after GREEN.
+   Test first: if superpowers is enabled, use its `test-driven-development` for this step; otherwise follow the rule above yourself.
+   Nothing to reproduce (a docs or config task): still write a failing test when the change is checkable (a scan, a render, a config load); if nothing can be tested, say so in one line of the PR body and go to step 4; `check_fast`, `check` and the review still apply.
+4. **Fix**: the smallest change that turns the RED test green. Never weaken existing assertions or add skip markers.
+5. **Gates**: the repo's `check_fast`, then its `check` (both from `hub.json`), each with its output redirected to a file and `$?` checked; an empty one is a missing gate: say so in the PR body. Both green is GREEN.
+6. **Review**: one **`quality-reviewer`** agent pass on the diff. On `CHANGES` with blockers: fix them, re-run `check_fast` and `check`, and record the findings and the fixes in the PR body; no second review pass. Should-fix findings without blockers: fix them or list them in the PR body as follow-ups.
+7. **Ship**: commit, push the branch and open the PR, authored by the user: no AI co-author trailer, no "Generated with", no 🤖; commit and PR titles as the repo's `AGENTS.md` sets them. No push to the default branch, no force-push.
+   The PR body holds the RED command and the failing assertion line, the fix summary and the `quality-reviewer` verdict.
+8. **Tracker**: post the PR link on the issue and move it to In Review.
+
+Learnings go through `/learn`; `/handoff` if the fix spans sessions.
