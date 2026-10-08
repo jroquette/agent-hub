@@ -149,6 +149,9 @@
         },
         "config.identity": {
           "$ref": "#/$defs/IdentityRuleSettings"
+        },
+        "config.stop_gate": {
+          "$ref": "#/$defs/StopGateRuleSettings"
         }
       },
       "title": "DoctorRules",
@@ -437,6 +440,22 @@
       ],
       "title": "Severity",
       "type": "string"
+    },
+    "StopGateRuleSettings": {
+      "additionalProperties": false,
+      "description": "``config.stop_gate``: whether it runs. It has no ``severity``: a repo without a Stop gate\nstays a warning, never an error that fails the hub's checks on its own.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        }
+      },
+      "title": "StopGateRuleSettings",
+      "type": "object"
     },
     "Tracker": {
       "additionalProperties": false,

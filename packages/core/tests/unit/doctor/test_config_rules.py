@@ -13,7 +13,7 @@ from agent_hub.core.hub_config.local_config import LocalConfig, check_local_docu
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.json_form import dump_json
-from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 from agent_hub.core.testing.platform_repository_cases import (
     CUSTOM_REPOSITORY,
     REPOSITORY_CASES,
@@ -28,6 +28,7 @@ RUNNING_VERSION = "0.2.0"
 SCHEMA_FIX = "fix hub.json (docs/design/project-config.md)"
 LOCAL_FIX = "fix hub.local.json (docs/design/developer-identity.md)"
 IDENTITY_FIX = "set project.branch_prefix in hub.local.json to choose another"
+STOP_GATE_FIX = "set the repo's check_fast to its fast gate command (docs/design/project-config.md)"
 
 
 def document_bytes(edit: Callable[[dict[str, Any]], object]) -> bytes:
@@ -355,3 +356,72 @@ def test_reports_nothing_when_prefix_from_file(
     assert identity_findings(snapshot_of(branch_prefix=prefix)) == []
     # No prefix at all (a team hub with no email anywhere) is no finding either.
     assert identity_findings(snapshot_of()) == []
+
+
+def stop_gate_findings(snapshot: DoctorSnapshot) -> list[Shown]:
+    # Read through the module, so a missing rule fails each test rather than the collection.
+    rule = config_rules.CONFIG_STOP_GATE
+    return [
+        (
+            finding.rule,
+            finding.severity,
+            finding.path,
+            finding.line,
+            finding.message,
+            finding.fix,
+        )
+        for finding in rule.check(snapshot)
+    ]
+
+
+def stop_gate_finding(index: int, repo_dir: str) -> Shown:
+    message = f"repos[{index}].check_fast: no Stop gate for {repo_dir}"
+    return ("config.stop_gate", Severity.WARNING, "hub.json", None, message, STOP_GATE_FIX)
+
+
+def two_repo_config(edit: Callable[[list[dict[str, Any]]], object]) -> HubConfig:
+    """The builder's document with ``demo-web`` added, after ``edit`` changed both repos."""
+    document = a_hub_document()
+    document["repos"].append(a_second_repo())
+    edit(document["repos"])
+    return HubConfig.model_validate(document)
+
+
+def test_declares_stop_gate_rule_when_rule_read() -> None:
+    rule = config_rules.CONFIG_STOP_GATE
+
+    assert rule.id == "config.stop_gate"
+    assert rule.severity is Severity.WARNING
+    assert rule.reads == frozenset()
+    assert rule.module is None
+
+
+@pytest.mark.parametrize("blank", ["", "  "])
+def test_reports_stop_gate_when_check_fast_absent_or_blank(
+    snapshot_of: SnapshotFactory, blank: str
+) -> None:
+    config = two_repo_config(
+        lambda repos: (repos[0].pop("check_fast"), repos[1].update(check_fast=blank))
+    )
+
+    assert stop_gate_findings(snapshot_of(config=config)) == [
+        stop_gate_finding(0, "demo-api"),
+        stop_gate_finding(1, "demo-web"),
+    ]
+
+
+def test_reports_no_stop_gate_when_every_repo_has_command(snapshot_of: SnapshotFactory) -> None:
+    config = two_repo_config(lambda repos: repos[1].update(check_fast=" make check-fast "))
+
+    assert stop_gate_findings(snapshot_of(config=config)) == []
+    assert stop_gate_findings(snapshot_of()) == []
+
+
+def test_reports_no_stop_gate_when_config_failed(snapshot_of: SnapshotFactory) -> None:
+    failure = failure_of(
+        document_bytes(
+            lambda document: (document["repos"][0].pop("check_fast"), document.update(shade=1))
+        )
+    )
+
+    assert stop_gate_findings(snapshot_of(config=failure)) == []

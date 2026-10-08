@@ -8,7 +8,12 @@ from typing import Final
 
 from agent_hub.core.doctor.bench_rule import BENCH_TASKS
 from agent_hub.core.doctor.brain_leak_rule import BRAIN_LEAK
-from agent_hub.core.doctor.config_rules import CONFIG_IDENTITY, CONFIG_SCHEMA, PLATFORM_VERSION
+from agent_hub.core.doctor.config_rules import (
+    CONFIG_IDENTITY,
+    CONFIG_SCHEMA,
+    CONFIG_STOP_GATE,
+    PLATFORM_VERSION,
+)
 from agent_hub.core.doctor.features_rule import FEATURES_TRACKER
 from agent_hub.core.doctor.finding import Rule
 from agent_hub.core.doctor.frontmatter_rule import RULES_FRONTMATTER
@@ -46,4 +51,5 @@ REGISTRY: Final[tuple[Rule, ...]] = (
     FEATURES_TRACKER,
     BENCH_TASKS,
     CONFIG_IDENTITY,
+    CONFIG_STOP_GATE,
 )
