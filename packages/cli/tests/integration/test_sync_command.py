@@ -1004,6 +1004,53 @@ def test_records_seeded_when_managed_becomes_seeded(
     assert (demo_hub / "hub.lock").read_bytes() == (demo_hub_template / "hub.lock").read_bytes()
 
 
+APP_REPO_AGENTS = "docs/app-repo-AGENTS.md"
+
+
+def test_creates_app_repo_agents_when_sync_finds_no_entry(
+    demo_hub: Path, demo_hub_template: Path, run_sync: SyncRunner
+) -> None:
+    # A hub from before the starter existed: no file and no lock entry.
+    (demo_hub / APP_REPO_AGENTS).unlink()
+    lock: dict[str, Any] = json.loads((demo_hub / "hub.lock").read_bytes())
+    del lock["files"][APP_REPO_AGENTS]
+    (demo_hub / "hub.lock").write_bytes(dump_json(lock))
+
+    result = run_sync(demo_hub)
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        0,
+        f"created {APP_REPO_AGENTS}\nupdated hub.lock\n",
+        "",
+    )
+    assert (demo_hub / APP_REPO_AGENTS).read_bytes() == (
+        demo_hub_template / APP_REPO_AGENTS
+    ).read_bytes()
+    after: dict[str, Any] = json.loads((demo_hub / "hub.lock").read_bytes())
+    assert after["files"][APP_REPO_AGENTS] == {"ownership": "seeded"}
+
+
+@pytest.mark.parametrize("change", ["edited", "deleted"])
+def test_keeps_app_repo_agents_when_sync_runs_after_edit_or_delete(
+    demo_hub: Path, run_sync: SyncRunner, change: str, *, tree_digest: TreeDigest
+) -> None:
+    starter = demo_hub / APP_REPO_AGENTS
+    if change == "edited":
+        starter.write_bytes(b"# Ours\n")
+    else:
+        starter.unlink()
+    before = tree_digest(demo_hub)
+
+    result = run_sync(demo_hub)
+
+    assert (result.exit_code, result.stdout, result.stderr) == (0, "up to date\n", "")
+    assert tree_digest(demo_hub) == before
+    if change == "edited":
+        assert starter.read_bytes() == b"# Ours\n"
+    else:
+        assert not starter.exists()
+
+
 def outside_copy(tmp_path: Path, source: Path) -> Path:
     """A copy of ``source`` in a folder outside the hub, links kept as links."""
     outside = tmp_path / "outside" / source.name
