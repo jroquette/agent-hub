@@ -300,3 +300,27 @@ def test_keeps_default_commit_step_when_repo_sets_no_commit_title() -> None:
 
     assert "(DEM-N)" in step
     assert "{ISSUE}" not in step
+
+
+def allowed_tools(argv: list[str]) -> list[str]:
+    return argv[argv.index("--allowedTools") + 1 : argv.index("--disallowedTools")]
+
+
+@pytest.mark.parametrize("fast_gate", [None, ""], ids=["absent", "empty"])
+def test_passes_full_gate_when_repo_has_no_fast_gate(fast_gate: str | None) -> None:
+    document = a_hub_document()
+    repo = document["repos"][0]
+    del repo["check_fast"]
+    if fast_gate is not None:
+        repo["check_fast"] = fast_gate
+    repo["check"] = "tox -e full"
+    children = children_of(document, "demo-api")
+
+    argv = children.session_argv(an_issue(id="DEM-1"), OPTIONS)
+
+    prompt = argv[argv.index("-p") + 1]
+    assert "run its full gate (`tox -e full`)" in prompt
+    assert "(``)" not in prompt
+    tools = allowed_tools(argv)
+    assert tools.count("Bash(tox:*)") == 1
+    assert "Bash(:*)" not in tools
