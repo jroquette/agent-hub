@@ -350,7 +350,8 @@ Hooks are small scripts Claude Code runs on its own at fixed moments; you never 
   `check_fast_timeout` (150 s if unset), capped by the time left, and is stopped together with everything it started. A
   repo whose check timed out or did not get to run prints a `not run` line instead: it never blocks, and it is never
   silently counted as passing; transcripts read only in part (out of time, or past the newest 1,024 subagent files) add
-  a note. A repo without `check_fast` has no Stop gate (`hub doctor` warns).
+  a note. A repo without `check_fast` has no Stop gate: when it changed, the gate names it (`no check_fast configured`)
+  and never blocks; `hub doctor` warns.
 - **Before Claude Code shortens a long conversation to free memory** (`PreCompact`), a snapshot (your last request, and
   the branch and changed files of each checkout) is saved to `brain/auto/workspace/session-snapshot.md` and put back
   in the context afterwards.
@@ -564,7 +565,7 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `repos[].github` | yes | | GitHub `owner/name` |
 | `repos[].role` | no | `app` | Free string; `app` is the only known value |
 | `repos[].check_fast` | no | | The repo's fast gate command, run by the Stop hook; unset or blank, the repo has no Stop gate |
-| `repos[].check_fast_timeout` | no | `150` | Seconds the Stop hook gives `check_fast` (1-160, within its 160 s budget) |
+| `repos[].check_fast_timeout` | no | `150` | Seconds the Stop hook gives `check_fast` (1–160, within its 160 s budget) |
 | `repos[].check` | yes | | The repo's full gate command (not blank), run before a PR |
 | `repos[].default_branch` | no | `project.default_branch` | Base of the repo's worktrees and PRs; the guard blocks pushes to it |
 | `guard.ask_before_edit` | no | `[]` | Paths where the guard asks before an edit |
@@ -593,7 +594,7 @@ Example (synthetic project):
       "dir": "backend",                         // cloned at ../backend
       "github": "acme/backend",
       "check_fast": "make check-fast",          // the Stop hook runs this
-      "check_fast_timeout": 120,                // seconds the Stop hook gives it (1-160)
+      "check_fast_timeout": 120,                // seconds the Stop hook gives it (1–160)
       "check": "make check"                     // the full gate before a PR
     }
   ],

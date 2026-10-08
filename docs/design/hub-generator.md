@@ -85,8 +85,8 @@ round it. The real limits are OS permissions and Claude Code's permission rules;
 ask on edits of the hooks folders. The settings' denies and sandbox are defense in depth: sandboxed Bash runs without a
 prompt (`autoAllowBashIfSandboxed` defaults to true), and the sandbox's excluded commands run unsandboxed through the
 normal permission flow. The stop gate checks the checkouts holding cwd or a file the session or its subagents edited,
-changed since the transcript's first timestamp; in one 160 s budget each run gets `repos[].check_fast_timeout` (default
-150 s), then its process group is killed; a skipped or cut run prints `not run`, never blocks. Proof: integration tests.
+changed since the transcript's first timestamp (else its birth time, else 12 h ago); in one 160 s budget each run gets
+`repos[].check_fast_timeout` (default 150 s), then its group is killed; a cut run says `not run`. Proof: integration tests.
 
 ### Commands
 
