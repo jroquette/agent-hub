@@ -1494,3 +1494,82 @@ class TestIdentity:
         lines = lines_of(run_doctor(root), exit_code=0)
 
         assert lines == [CLEAN]
+
+
+STOP_GATE_FIX = (
+    "Fix: set the repo's check_fast to its fast gate command (docs/design/project-config.md)"
+)
+
+
+def edit_hub_json(hub: Path, edit: Callable[[dict[str, Any]], object]) -> None:
+    """Rewrite the hub's ``hub.json`` after ``edit`` changed the document in place."""
+    path = hub / "hub.json"
+    document = json.loads(path.read_text())
+    edit(document)
+    path.write_text(json.dumps(document))
+
+
+def stop_gate_line(index: int, repo_dir: str) -> str:
+    return (
+        f"warning config.stop_gate hub.json: repos[{index}].check_fast:"
+        f" no Stop gate for {repo_dir} {STOP_GATE_FIX}"
+    )
+
+
+def drop_both_gates(document: dict[str, Any]) -> None:
+    del document["repos"][0]["check_fast"]
+    document["repos"][1]["check_fast"] = ""
+
+
+class TestStopGate:
+    @pytest.fixture(autouse=True)
+    def checkouts(self, demo_checkout: CheckoutFactory) -> None:
+        demo_checkout("demo-api")
+        demo_checkout("demo-web")
+
+    def test_warns_once_per_repo_when_stop_gate_missing(
+        self, demo_two_repo_hub: Path, run_doctor: DoctorRunner
+    ) -> None:
+        edit_hub_json(demo_two_repo_hub, drop_both_gates)
+
+        lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=0)
+
+        assert lines == [
+            stop_gate_line(0, "demo-api"),
+            stop_gate_line(1, "demo-web"),
+            "0 errors, 2 warnings, 0 infos",
+        ]
+
+    def test_reports_nothing_when_stop_gate_rule_disabled(
+        self, demo_two_repo_hub: Path, run_doctor: DoctorRunner
+    ) -> None:
+        def disabled(document: dict[str, Any]) -> None:
+            drop_both_gates(document)
+            document["doctor"] = {"rules": {"config.stop_gate": {"enabled": False}}}
+
+        edit_hub_json(demo_two_repo_hub, disabled)
+
+        lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=0)
+
+        assert lines == [CLEAN]
+
+    def test_refuses_stop_gate_severity_when_hub_json_retunes_it(
+        self, demo_two_repo_hub: Path, run_doctor: DoctorRunner
+    ) -> None:
+        # Kept a warning, so a missing gate never fails a hub's doctor run on its own.
+        edit_hub_json(
+            demo_two_repo_hub,
+            lambda document: document.update(
+                doctor={"rules": {"config.stop_gate": {"severity": "error"}}}
+            ),
+        )
+
+        lines = lines_of(run_doctor(demo_two_repo_hub), exit_code=1)
+
+        assert lines == [
+            schema_line(
+                'doctor.rules["config.stop_gate"].severity: config.stop_gate is always a warning;'
+                " remove severity"
+            ),
+            ONE_ERROR,
+        ]

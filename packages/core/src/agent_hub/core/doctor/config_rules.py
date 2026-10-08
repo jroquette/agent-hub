@@ -1,11 +1,13 @@
-"""The rules that judge the config: ``config.schema``, ``platform.version``, ``config.identity``.
+"""The rules that judge the config: ``config.schema``, ``platform.version``, ``config.identity``,
+``config.stop_gate``.
 
 ``config_state`` turns what the cli read into the config or why it failed, in the order of
 docs/design/project-config.md § Versioning: a pin other than the running ``hub`` is only a
 ``platform.version`` finding (the pinned release judges the rest, the developer's
 ``hub.local.json`` included); every other problem is a ``config.schema`` finding, and so is each
 problem of ``hub.local.json``. ``config.identity`` names the branch prefix a developer gets
-when no file sets one (docs/design/developer-identity.md).
+when no file sets one (docs/design/developer-identity.md). ``config.stop_gate`` names each repo
+whose ``check_fast`` is absent, empty or blank: the Stop hook has no fast gate to run for it.
 """
 
 from collections.abc import Iterable
@@ -16,6 +18,7 @@ from agent_hub.core.doctor.snapshot import ConfigFailure, DoctorSnapshot, PinMis
 from agent_hub.core.hub_config.doctor_rules import (
     CONFIG_IDENTITY_RULE,
     CONFIG_SCHEMA_RULE,
+    CONFIG_STOP_GATE_RULE,
     PLATFORM_VERSION_RULE,
     RULE_MODULES,
     Severity,
@@ -37,6 +40,9 @@ CONFIG_SCHEMA_FIX: Final = "fix hub.json (docs/design/project-config.md)"
 LOCAL_FILE_FIX: Final = "fix hub.local.json (docs/design/developer-identity.md)"
 IDENTITY_FIX: Final = "set project.branch_prefix in hub.local.json to choose another"
 PINNED_RELEASE_FIX: Final = "run the pinned release"
+STOP_GATE_FIX: Final = (
+    "set the repo's check_fast to its fast gate command (docs/design/project-config.md)"
+)
 
 
 def config_state(
@@ -87,6 +93,21 @@ def _config_identity(snapshot: DoctorSnapshot) -> Iterable[Finding]:
     return (CONFIG_IDENTITY.finding(path=None, message=message, fix=IDENTITY_FIX),)
 
 
+def _config_stop_gate(snapshot: DoctorSnapshot) -> Iterable[Finding]:
+    config = snapshot.config
+    if not isinstance(config, HubConfig):
+        return ()
+    return tuple(
+        CONFIG_STOP_GATE.finding(
+            path=CONFIG_PATH,
+            message=f"repos[{index}].check_fast: no Stop gate for {repo.dir}",
+            fix=STOP_GATE_FIX,
+        )
+        for index, repo in enumerate(config.repos)
+        if not (repo.check_fast or "").strip()
+    )
+
+
 def _platform_version(snapshot: DoctorSnapshot) -> Iterable[Finding]:
     if not isinstance(snapshot.config, ConfigFailure) or snapshot.config.pin is None:
         return ()
@@ -123,4 +144,12 @@ CONFIG_IDENTITY: Final = Rule(
     module=RULE_MODULES.get(CONFIG_IDENTITY_RULE),
     reads=frozenset({Read.DEVELOPER_IDENTITY}),
     check=_config_identity,
+)
+CONFIG_STOP_GATE: Final = Rule(
+    id=CONFIG_STOP_GATE_RULE,
+    severity=Severity.WARNING,
+    summary="a Stop gate for each repo: its check_fast is set and not blank",
+    module=RULE_MODULES.get(CONFIG_STOP_GATE_RULE),
+    reads=frozenset(),
+    check=_config_stop_gate,
 )
