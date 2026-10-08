@@ -266,7 +266,7 @@
     "plugin/hub-workflow/hooks/guard.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "bb194478a9caf1f5626b9d5d65c8410898421644e1eb017445bc12f0cfcb8d32"
+      "sha256": "57d0a281cc0fb3c5008653f1a5def3a228cec3088bd4254c50cddbbe4a46a295"
     },
     "plugin/hub-workflow/hooks/hooks.json": {
       "executable": false,
@@ -351,7 +351,7 @@
     "plugin/hub-workflow/skills/kickoff/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "37f02a893e2433bd7291491e5721f4e78f4661fef611c4ad3ece9fbd97183c07"
+      "sha256": "0f2ba510721a09cad781983b60f5d3c9544b984dae0da3d9c530600c73bcdb4a"
     },
     "plugin/hub-workflow/skills/learn/SKILL.md": {
       "executable": false,

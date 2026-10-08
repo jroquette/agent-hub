@@ -1628,6 +1628,91 @@ def test_suggests_fix_or_feature_when_kickoff_rendered(
     assert "Never start editing during /kickoff" in text
 
 
+# AGH-31 (AC-31.6): before step 1, kickoff Reads a probe only the hub guard answers, and says loudly
+# what is off when the answer is not the guard's. A guard deny alone proves only that the guard hook
+# answers (a user-level plugin install answers too, E11); the brief comes from the same plugin
+# (E13), so guarded also needs the hub as the session's primary working directory.
+GUARD_PROBE = "`<hub>/.claude/guard_probe.p12`"
+UNGUARDED_ITEMS = (
+    "the guard (secrets, force and default-branch pushes, AI attribution, test-assertion and"
+    " guarded-path asks)",
+    "the session brief",
+    "the post-edit format and lint",
+    "the stop gate",
+    "the pre-compact snapshot",
+    "the session-end inbox stub",
+    "the attribution settings (no AI co-author or 'Generated with' lines)",
+    "the permission rules and the sandbox",
+)
+
+
+def probe_paragraph(text: str) -> str:
+    """The text between the ``# /kickoff`` heading and step 1."""
+    return text.split("# /kickoff\n\n", 1)[1].split("\n1. ", 1)[0]
+
+
+def test_opens_with_guard_probe_when_kickoff_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    renders = (
+        demo_render,
+        {file.path: file for file in render_hub(a_team_config()).files},
+        {
+            file.path: file
+            for file in render_hub(HubConfig.model_validate(a_conventions_document())).files
+        },
+    )
+    texts = [skill_text(render, "kickoff") for render in renders]
+    paragraphs = [probe_paragraph(text) for text in texts]
+
+    for raw in paragraphs:
+        assert raw.strip(), raw
+        assert "\n\n" not in raw.strip(), raw
+        assert all(len(line) <= 120 for line in raw.splitlines()), raw
+    normalized = {" ".join(raw.split()) for raw in paragraphs}
+    assert len(normalized) == 1, normalized
+    [paragraph] = normalized
+    assert paragraph.count(GUARD_PROBE) == 1
+    for text in texts:
+        assert text.count("guard_probe") == 1
+        assert "cloud-setup" not in text
+    for phrase in (
+        "Call the session guarded only if both hold",
+        "the result is a denial whose reason contains `[hub guard]` and not `could not check`",
+        "a broken guard's ask also carries `[hub guard]`",
+        "your primary working directory (shown in your environment block) is `<hub>` itself",
+        "Claude Code loads a project's settings only from the directory the session started in",
+        "this session is unguarded",
+        "that the hub's settings are not loaded",
+        "state first, loudly",
+        *UNGUARDED_ITEMS,
+        "start the session in the hub directory itself (not in an app repo or a parent directory,"
+        " and not with the hub attached as an extra directory), then run `/kickoff` again",
+    ):
+        assert phrase in paragraph, phrase
+    # E11: the deny alone no longer claims that every hook and setting is loaded
+    for overclaim in ("means the hooks are loaded", "attribution off"):
+        assert overclaim not in paragraph, overclaim
+    # E13: the brief is no second signal (same plugin as the guard)
+    for dropped in (
+        "proves only that the guard hook answers",
+        "session brief injected by the SessionStart hook",
+        "If the brief is missing",
+    ):
+        assert dropped not in paragraph, dropped
+    for text in texts:
+        lines = text.splitlines()
+        assert [line[:3] for line in lines if re.match(r"\d+\. ", line)] == [
+            "1. ",
+            "2. ",
+            "3. ",
+            "4. ",
+            "5. ",
+        ]
+        [first] = [line for line in lines if line.startswith("1. ")]
+        assert first.startswith("1. Run `./hub brief`"), first
+
+
 def test_names_transcript_script_when_recall_rendered(
     demo_render: dict[str, RenderedFile],
 ) -> None:
