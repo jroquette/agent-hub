@@ -346,7 +346,7 @@
     "plugin/hub-workflow/skills/incident/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "be2689debac1c7e232115a303195f610e629505e62da16d10a43e059b88bdc9e"
+      "sha256": "c9e5d8bd37b8f6f91263c93ab099784dfe9293dad8f318229aee881f55c8f27c"
     },
     "plugin/hub-workflow/skills/kickoff/SKILL.md": {
       "executable": false,
