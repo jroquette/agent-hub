@@ -55,6 +55,8 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "brain/learnings/.gitkeep": (Kind.GENERIC, Ownership.SEEDED, None),
     "brain/now.md": (Kind.GENERIC, Ownership.SEEDED, None),
     "brain/playbooks/.gitkeep": (Kind.GENERIC, Ownership.SEEDED, None),
+    # The `README.md` row's generic list also names the starter for each repo's root `AGENTS.md`.
+    "docs/app-repo-AGENTS.md": (Kind.GENERIC, Ownership.SEEDED, None),
     # Row "`plugin/<project>/**` (project agents, skills, guard extension; empty folders hold a
     # `.gitkeep`)": project-owned, seeded (AGH-19 spec D2, "The rendered set").
     "plugin/@@{project_name}/.claude-plugin/plugin.json": (
@@ -94,6 +96,7 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "plugin/hub-workflow/hooks/stop_gate.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/create-plan/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/feature/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/skills/fix/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/handoff/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/kickoff/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/learn/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
@@ -334,6 +337,19 @@ def test_matches_design_classification_when_compared() -> None:
     assert {entry.path for entry in REGISTRY if entry.executable} == (
         EXECUTABLE_PATHS | MODULE_EXECUTABLE_PATHS
     )
+
+
+def test_seeds_app_repo_agents_when_registry_read() -> None:
+    entries = [entry for entry in REGISTRY if entry.path == "docs/app-repo-AGENTS.md"]
+
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry.kind is Kind.GENERIC
+    assert entry.ownership is Ownership.SEEDED
+    assert entry.source == TemplateSource(
+        GENERATOR_PACKAGE, f"{TEMPLATES_FOLDER}/docs/app-repo-AGENTS.md.tmpl"
+    )
+    assert entry.build is None
 
 
 @pytest.mark.parametrize(

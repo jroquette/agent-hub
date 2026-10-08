@@ -150,6 +150,9 @@
         "config.identity": {
           "$ref": "#/$defs/IdentityRuleSettings"
         },
+        "repos.agents": {
+          "$ref": "#/$defs/RuleSettings"
+        },
         "config.stop_gate": {
           "$ref": "#/$defs/StopGateRuleSettings"
         }

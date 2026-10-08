@@ -24,6 +24,7 @@ RELEASED_IDS = (
     "features.tracker",
     "bench.tasks",
     "config.identity",
+    "repos.agents",
     "config.stop_gate",
 )
 
@@ -49,6 +50,7 @@ DESIGN_SEVERITIES = {
     "features.tracker": Severity.ERROR,
     "bench.tasks": Severity.ERROR,
     "config.identity": Severity.INFO,
+    "repos.agents": Severity.WARNING,
     "config.stop_gate": Severity.WARNING,
 }
 

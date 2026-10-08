@@ -89,12 +89,14 @@ BOX_CHARACTERS = "│╭╮╰╯─"
 
 @pytest.fixture(autouse=True)
 def demo_api_folder(tmp_path: Path) -> None:
-    """DEMO's one repo as an empty folder next to the hub: a checkout with no file (plan E3a).
+    """DEMO's one repo as a folder next to the hub: a checkout whose only file is an empty
+    ``AGENTS.md``, which ``repos.agents`` accepts (plan E3a).
 
     So a run of every rule on a ``DEMO`` hub reports no missing checkout; the tests of the
     checkouts themselves make them git repos (``demo_checkout``) or remove them.
     """
     (tmp_path / "demo-api").mkdir()
+    (tmp_path / "demo-api" / "AGENTS.md").write_bytes(b"")
 
 
 @pytest.fixture
@@ -1275,6 +1277,52 @@ def test_reports_error_when_checkout_cannot_be_looked_at(
     ]
 
 
+REPO_AGENTS_LINE = (
+    "warning repos.agents ../demo-api: no AGENTS.md at the repo root (hub agent loads none for it)"
+    " Fix: copy docs/app-repo-AGENTS.md to ../demo-api/AGENTS.md and fill it in;"
+    " check_fast: make check-fast, check: make check"
+)
+
+
+@pytest.mark.parametrize(
+    ("settings", "expected"),
+    [
+        (None, (0, [REPO_AGENTS_LINE, "0 errors, 1 warning, 0 infos"])),
+        ({"enabled": False}, (0, [CLEAN])),
+        ({"severity": "error"}, (1, [REPO_AGENTS_LINE.replace("warning", "error", 1), ONE_ERROR])),
+    ],
+    ids=["default", "disabled", "error"],
+)
+def test_follows_repo_agents_settings_when_checkout_lacks_file(
+    demo_hub: Path,
+    demo_document: dict[str, Any],
+    run_doctor: DoctorRunner,
+    *,
+    settings: dict[str, Any] | None,
+    expected: tuple[int, list[str]],
+) -> None:
+    (demo_hub.parent / "demo-api" / "AGENTS.md").unlink()
+    if settings is not None:
+        demo_document["doctor"] = {"rules": {"repos.agents": settings}}
+        (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    exit_code, lines = expected
+
+    assert lines_of(run_doctor(demo_hub), exit_code=exit_code) == lines
+
+
+def test_reports_checkout_on_repo_agents_when_only_it_selected(
+    demo_two_repo_hub: Path, run_doctor: DoctorRunner, demo_checkout: CheckoutFactory
+) -> None:
+    # With brain.leak and links.dead not selected, the runner's checkout info lands on
+    # repos.agents, the first selected repo reader (plan E3).
+    demo_checkout("demo-api")
+
+    lines = lines_of(run_doctor(demo_two_repo_hub, "--only", "repos.agents"), exit_code=0)
+
+    assert lines == [MISSING_WEB.replace("brain.leak", "repos.agents"), ONE_INFO]
+
+
 type Workspace = Any
 
 DERIVED_INFO = (
@@ -1311,6 +1359,17 @@ def hub_worktree_of(workspace: Workspace) -> Path:
 
 
 class TestIdentity:
+    @pytest.fixture(autouse=True)
+    def repo_agents_files(self, request: pytest.FixtureRequest) -> None:
+        """An empty untracked ``AGENTS.md`` in each workspace clone, so full runs stay clean.
+
+        ``demo_workspace`` itself stays unchanged: other commands' tests need clean trees.
+        """
+        if "demo_workspace" in request.fixturenames:
+            workspace = request.getfixturevalue("demo_workspace")
+            for repo in ("demo-api", "demo-web"):
+                (workspace.ws / repo / "AGENTS.md").write_bytes(b"")
+
     def test_reports_derived_prefix_info_when_only_git_sets_email(
         self, demo_workspace: Workspace, run_doctor: DoctorRunner, traced_git: Any
     ) -> None:

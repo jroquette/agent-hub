@@ -407,9 +407,10 @@ def test_finds_nothing_when_doctor_runs_on_fresh_init(
     ancestors: Ancestors,
     under: PathFilter,
 ) -> None:
-    # DEMO's one repo, an empty folder next to the hubs: no rule reads it before PR 3, and an
-    # empty non-git checkout gives no finding after it (plan E3a).
+    # DEMO's one repo, a folder next to the hubs: a non-git checkout holding only an empty
+    # AGENTS.md gives no finding (plan E3a).
     (tmp_path / "demo-api").mkdir()
+    (tmp_path / "demo-api" / "AGENTS.md").write_bytes(b"")
     committed = tmp_path / "committed"
     shutil.copytree(demo_hub_template, committed, symlinks=True)
     home = tmp_path / "git-home"
@@ -459,7 +460,7 @@ def test_finds_nothing_when_doctor_runs_on_fresh_init(
 def test_counts_info_when_demo_checkout_missing(
     demo_two_repo_hub: Path, run_doctor: DoctorRunner, demo_checkout: CheckoutFactory
 ) -> None:
-    # Both checkouts are synthetic git repos with a committed README.md (AC-11.29).
+    # Both checkouts are synthetic git repos with a committed README.md and AGENTS.md (AC-11.29).
     demo_checkout("demo-api")
     web = demo_checkout("demo-web")
 
@@ -475,6 +476,55 @@ def test_counts_info_when_demo_checkout_missing(
     assert (missing.exit_code, missing.stdout.splitlines()[-1:], missing.stderr) == (
         0,
         ["0 errors, 0 warnings, 1 info"],
+        "",
+    )
+
+
+APP_REPO_AGENTS = "docs/app-repo-AGENTS.md"
+
+
+def test_finds_nothing_when_app_repo_agents_copied_to_checkouts(
+    demo_two_repo_hub: Path, run_doctor: DoctorRunner, demo_checkout: CheckoutFactory
+) -> None:
+    # Each repo's AGENTS.md is the hub's starter as copied, slots unfilled (AC-76.11).
+    starter = (demo_two_repo_hub / APP_REPO_AGENTS).read_bytes()
+    for name in ("demo-api", "demo-web"):
+        (demo_checkout(name) / "AGENTS.md").write_bytes(starter)
+
+    result = run_doctor(demo_two_repo_hub)
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        0,
+        "0 errors, 0 warnings, 0 infos\n",
+        "",
+    )
+
+
+def repo_agents_warning(name: str) -> str:
+    return (
+        f"warning repos.agents ../{name}: no AGENTS.md at the repo root (hub agent loads none for"
+        f" it) Fix: copy {APP_REPO_AGENTS} to ../{name}/AGENTS.md and fill it in;"
+        " check_fast: make check-fast, check: make check"
+    )
+
+
+def test_warns_once_per_repo_when_app_repo_agents_absent(
+    demo_two_repo_hub: Path, run_doctor: DoctorRunner, demo_checkout: CheckoutFactory
+) -> None:
+    # The committed AGENTS.md deleted from the work tree is not listed, so it does not count
+    # (plan E5).
+    for name in ("demo-api", "demo-web"):
+        (demo_checkout(name) / "AGENTS.md").unlink()
+
+    result = run_doctor(demo_two_repo_hub)
+
+    assert (result.exit_code, result.stdout.splitlines(), result.stderr) == (
+        0,
+        [
+            repo_agents_warning("demo-api"),
+            repo_agents_warning("demo-web"),
+            "0 errors, 2 warnings, 0 infos",
+        ],
         "",
     )
 
