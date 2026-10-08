@@ -5,6 +5,23 @@ disable-model-invocation: true
 argument-hint: "<PR or tracker issue id>"
 ---
 
-# /deliver
+# /deliver <PR or issue>
 
-This workflow is not written yet: say so and stop. Use `/feature` or `/fix` meanwhile.
+Takes over once `/feature`, `/fix` or `hub ship` opened the PR(s); reads and writes them through the GitHub tools or `gh`. Paths are relative to the hub (the directory with `hub.json`); each repo's values (default branch, `check_fast`, `check`) come from `hub.json` → `repos`.
+Each step names its type: `script` is deterministic, `agent` needs judgement, `gate` is a condition checked before going on, `human` waits for the user.
+
+1. **Read the state** (`script`): the tracker issue and every PR linked to it (if it cannot be read, say so and stop); per PR: head SHA, CI per check, mergeability, open review threads, linked tracker issue.
+   Several repos (the PRs `hub ship` linked): take the merge order from the plan's contract order (`brain/features/<slug>/plan.md`); if there is no plan, ask the user for it.
+2. **Fix what blocks it** (`agent`), in this order, in the PR's worktree:
+   - **Conflict**: merge the default branch into the head (a merge commit); never rebase, never rewrite history. Regenerate lockfiles with the repo's own tooling, never by hand.
+   - **CI red**: per failing check, the summary names the failing check, its root cause and the fix; "flake" is not a cause. Re-run a job at most once, and only when it died before the tests ran (runner lost, checkout or setup failed). Still red after that re-run: root-cause it like any other.
+   - **Review threads**: each one ends with a pushed fix and a reply naming the commit, or with a reply with the proposal and why it is not pushed (a larger ask or a design question: then stop for the user); none is left silent. Resolve the threads the push addressed.
+3. **Before each push** (`script`): the repo's `check_fast`, then its `check` (both from `hub.json`), each with its output redirected to a file and `$?` checked; both must pass. Then an adversarial re-read of the diff against the ticket's ACs. Push to the PR's own branch only.
+4. **Ready** (`gate`): CI green on the head SHA, mergeable, no thread waiting on us → tell the user the PR waits on reviewers. The skill never approves or merges.
+5. **Merge** (`human`): the user merges; wait for it.
+6. **After the merge** (`script`): wait for the default branch's CI on the merge commit. Red → open a `/fix` issue in the tracker (@@{tracker_team_key}) linked to the PR and stop.
+   Several repos (the PRs `hub ship` linked): after each merge, re-check the dependents before the next one lands (merge the default branch into each dependent's head, back to step 2), in the contract order.
+7. **Tracker** (`script`): post the PR link on the issue; move it to Done only once the merge commit is green. Offer to remove the worktree (`./hub worktree --remove <name>`).
+
+Never, in any step: skip, disable or quarantine a test, add a skip marker or weaken an assertion; push an empty commit; close or reopen the PR. No push to the default branch, no force-push.
+Every commit is authored by the user: no AI co-author trailer, no "Generated with", no 🤖. Learnings go through `/learn`.
