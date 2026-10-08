@@ -235,6 +235,8 @@ def test_asks_when_bash_removes_bare_test_name(evaluate: Evaluate) -> None:
         "mv test_x.py old.py",
         "truncate -s 0 test_x.py",
         "sed -i 's/a/b/' test_x.py",
+        "rm 'test_x.py'",
+        'git rm "test_x.py"',
     ]
 
     verdicts = verdicts_of(evaluate, [bash(command) for command in commands])
@@ -249,6 +251,8 @@ def test_allows_bash_when_bare_test_name_only_read(evaluate: Evaluate) -> None:
         "rm mytest_x.py",
         "rm test_x.pyc",
         "rm test_data.json",
+        "rm 'mytest_x.py'",
+        "rm a'test_x.py",
     ]
 
     verdicts = verdicts_of(evaluate, [bash(command) for command in commands])
