@@ -119,7 +119,37 @@ def test_never_approves_own_pr_nor_merges_when_skill_rendered() -> None:
 
     assert "Never approve a PR this session opened" in body
     assert "never merge" in body
-    assert "Stop" in _step(1)
+    assert "can only get comment" in _step(6)
+
+
+def test_stops_on_an_unreviewable_pr_when_skill_rendered() -> None:
+    step = _step(1)
+
+    assert "**Stop** when the PR cannot be read" in step
+    assert "closed or merged" in step
+    assert "not in `hub.json`" in step
+
+
+def test_never_checks_out_nor_pushes_when_pr_read() -> None:
+    step = _step(1)
+
+    assert "no checkout over a working tree, no commit, no push" in step
+
+
+def test_resumes_the_pending_review_when_submit_failed() -> None:
+    step = _step(7)
+
+    assert "do not create another" in step
+    assert "`PENDING`" in step
+    assert "/reviews/<id>/events" in step
+    assert "stop and report it: never rerun the step" in step
+
+
+def test_files_recurring_findings_as_external_when_proposed_to_learn() -> None:
+    body = _body()
+
+    assert "`/learn`" in body
+    assert "provenance: agent-from-external" in body
 
 
 def test_keeps_project_values_out_when_demo_hub_rendered() -> None:
