@@ -517,6 +517,7 @@ def test_keeps_budget_inside_hook_timeout_when_constants_rendered(
     assert budget < 180
     timeout = constant("TIMEOUT")
     assert (timeout, constant("MAX_BLOCKS"), constant("MIN_RUN")) == (150, 3, 1)
+    assert constant("MAX_SUBAGENT_FILES") == 1024  # E34
     assert timeout <= budget
     assert budget == MAX_CHECK_FAST_TIMEOUT
 
@@ -1059,12 +1060,15 @@ def test_notes_partial_read_when_fan_out_scan_cut_by_files(
     run_hook: RunHook, workspace: Path, tmp_path: Path
 ) -> None:
     # S3: subagent files past MAX_SUBAGENT_FILES (lowered to 1) are not read; a note says so.
+    # The newest are read first (E34): the one touching web is the older.
     main = write_transcript(tmp_path / "session.jsonl")
     write_transcript(subagent_transcript(main, "agent-1.jsonl"))
-    write_transcript(
+    older = write_transcript(
         subagent_transcript(main, "agent-2.jsonl"),
         touches=[("Edit", "file_path", changed(workspace / "web" / "b.py"))],
     )
+    back = time.time() - 60
+    os.utime(older, (back, back))
 
     output = run_hook(
         [{"dir": "web", "check_fast": FAILING_CHECK}],
@@ -1074,3 +1078,31 @@ def test_notes_partial_read_when_fan_out_scan_cut_by_files(
     )
 
     assert output == {"systemMessage": partial_note("more than 1 subagent file")}
+
+
+def test_reads_newest_subagent_first_when_fan_out_cap_reached(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # E34: past the cap, the newest subagent transcripts are the ones read. The newer file sorts
+    # last by name, so a read in name order would take the older one and miss web.
+    main = write_transcript(tmp_path / "session.jsonl")
+    newer = write_transcript(
+        subagent_transcript(main, "agent-b.jsonl"),
+        touches=[("Edit", "file_path", changed(workspace / "web" / "b.py"))],
+    )
+    older = write_transcript(subagent_transcript(main, "agent-a.jsonl"))
+    now = time.time()
+    os.utime(older, (now - 60, now - 60))
+    os.utime(newer, (now - 30, now - 30))
+
+    output = run_hook(
+        [{"dir": "web", "check_fast": FAILING_CHECK}],
+        workspace / "demo-hub",
+        transcript=main,
+        constant=("MAX_SUBAGENT_FILES", 1),
+    )
+
+    assert output.get("decision") == "block"
+    reason = output["reason"]
+    assert f"## web (web): `{FAILING_CHECK}` FAILED" in reason
+    assert reason.endswith("\n" + partial_note("more than 1 subagent file"))

@@ -3,7 +3,7 @@
 `check_fast` command and block completion while it fails (feedback goes back to the agent). Releases after
 3 consecutive blocks to avoid loops. When checks pass and files changed, remind about /handoff (never
 blocks). The checkouts checked are the one holding the session's cwd, then each one holding a file that an
-Edit, Write, MultiEdit or NotebookEdit call touched, read from the main transcript and from up to
+Edit, Write, MultiEdit or NotebookEdit call touched, read from the main transcript and from the newest
 MAX_SUBAGENT_FILES subagent transcripts beside it; never another checkout or worktree, never the hub. A
 scan cut by the budget or by that cap adds a note. When the main transcript gives no session start and
 cwd is in no checkout, nothing is checked, and a note says so when some checkout changed. The session
@@ -52,7 +52,7 @@ KILL_WAIT = 1
 GIT_TIMEOUT = 10
 OUTPUT_TAIL = 3000
 START_BYTES = 65_536  # the head of the main transcript read for the session start
-MAX_SUBAGENT_FILES = 64  # subagent transcripts read for touched files, by name
+MAX_SUBAGENT_FILES = 1024  # subagent transcripts read for touched files, newest first
 # The file-writing tools and the input key holding the path each one wrote.
 WRITE_TOOLS = {"Edit": "file_path", "Write": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
 # A transcript timestamp, YYYY-MM-DDTHH:MM:SS.sssZ. Python 3.11+ parses more forms than 3.9
@@ -143,16 +143,32 @@ def touched_paths(tp: str) -> tuple[set[str], str]:
     if not scan(tp, found):
         return found, "budget spent"
     folder = os.path.join(tp[:-len(".jsonl")], "subagents") if tp.endswith(".jsonl") else ""
-    try:
-        names = sorted(e.name for e in os.scandir(folder) if e.name.endswith(".jsonl") and e.is_file())
-    except OSError:  # no subagents folder
-        names = []
+    names = newest_first(folder)
     for name in names[:MAX_SUBAGENT_FILES]:
         if not scan(os.path.join(folder, name), found):
             return found, "budget spent"
     if len(names) > MAX_SUBAGENT_FILES:
         return found, f"more than {MAX_SUBAGENT_FILES} subagent file{'' if MAX_SUBAGENT_FILES == 1 else 's'}"
     return found, ""
+
+
+def newest_first(folder: str) -> list[str]:
+    """The names of the regular `*.jsonl` files in `folder`, newest first (by mtime, then by name). An
+    entry that cannot be stat-ed is left out; a folder that cannot be listed gives none."""
+    entries = []
+    try:
+        with os.scandir(folder) as found:
+            for entry in found:
+                if not entry.name.endswith(".jsonl"):
+                    continue
+                try:
+                    if entry.is_file():
+                        entries.append((-entry.stat().st_mtime, entry.name))
+                except OSError:  # gone or unreadable since the listing
+                    continue
+    except OSError:  # no subagents folder
+        return []
+    return [name for _, name in sorted(entries)]
 
 
 def scan(path: str, found: set[str]) -> bool:
