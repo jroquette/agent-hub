@@ -48,6 +48,7 @@ DESIGN_SEVERITIES = {
     "features.tracker": Severity.ERROR,
     "bench.tasks": Severity.ERROR,
     "config.identity": Severity.INFO,
+    "repos.agents": Severity.WARNING,
 }
 
 
