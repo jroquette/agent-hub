@@ -36,6 +36,7 @@ MAKEFILE_OVERRIDE_RULE: Final = "makefile.override"
 FEATURES_TRACKER_RULE: Final = "features.tracker"
 BENCH_TASKS_RULE: Final = "bench.tasks"
 CONFIG_IDENTITY_RULE: Final = "config.identity"
+REPOS_AGENTS_RULE: Final = "repos.agents"
 
 RULE_IDS: Final = (
     CONFIG_SCHEMA_RULE,
@@ -58,6 +59,7 @@ RULE_IDS: Final = (
     FEATURES_TRACKER_RULE,
     BENCH_TASKS_RULE,
     CONFIG_IDENTITY_RULE,
+    REPOS_AGENTS_RULE,
 )
 
 # The rules a module owns: they run and may be configured only when the module is selected.
@@ -170,3 +172,4 @@ class DoctorRules(ConfigObject):
     features_tracker: RuleSettings | None = absent_by_default(alias="features.tracker")
     bench_tasks: RuleSettings | None = absent_by_default(alias="bench.tasks")
     config_identity: IdentityRuleSettings | None = absent_by_default(alias="config.identity")
+    repos_agents: RuleSettings | None = absent_by_default(alias="repos.agents")

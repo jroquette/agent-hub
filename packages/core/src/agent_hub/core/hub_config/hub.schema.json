@@ -149,6 +149,9 @@
         },
         "config.identity": {
           "$ref": "#/$defs/IdentityRuleSettings"
+        },
+        "repos.agents": {
+          "$ref": "#/$defs/RuleSettings"
         }
       },
       "title": "DoctorRules",

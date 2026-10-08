@@ -26,6 +26,13 @@ def test_matches_model_export_when_shipped_file_read() -> None:
     assert read_shipped_schema() == HubConfig.model_json_schema()
 
 
+def test_lists_repo_agents_as_rule_settings_when_schema_shipped() -> None:
+    properties = read_shipped_schema()["$defs"]["DoctorRules"]["properties"]
+
+    assert properties["repos.agents"] == {"$ref": "#/$defs/RuleSettings"}
+    assert list(properties)[-1] == "repos.agents"
+
+
 def test_forbids_extra_keys_when_object_has_fixed_keys() -> None:
     schema = read_shipped_schema()
     maps: list[tuple[str, dict[str, Any]]] = []
