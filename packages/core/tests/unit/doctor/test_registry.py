@@ -24,6 +24,7 @@ RELEASED_IDS = (
     "features.tracker",
     "bench.tasks",
     "config.identity",
+    "repos.agents",
 )
 
 # The "Default" column of docs/design/hub-doctor.md § Rules.

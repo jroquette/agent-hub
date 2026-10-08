@@ -407,9 +407,10 @@ def test_finds_nothing_when_doctor_runs_on_fresh_init(
     ancestors: Ancestors,
     under: PathFilter,
 ) -> None:
-    # DEMO's one repo, an empty folder next to the hubs: no rule reads it before PR 3, and an
-    # empty non-git checkout gives no finding after it (plan E3a).
+    # DEMO's one repo, a folder next to the hubs: a non-git checkout holding only an empty
+    # AGENTS.md gives no finding (plan E3a).
     (tmp_path / "demo-api").mkdir()
+    (tmp_path / "demo-api" / "AGENTS.md").write_bytes(b"")
     committed = tmp_path / "committed"
     shutil.copytree(demo_hub_template, committed, symlinks=True)
     home = tmp_path / "git-home"
@@ -459,7 +460,7 @@ def test_finds_nothing_when_doctor_runs_on_fresh_init(
 def test_counts_info_when_demo_checkout_missing(
     demo_two_repo_hub: Path, run_doctor: DoctorRunner, demo_checkout: CheckoutFactory
 ) -> None:
-    # Both checkouts are synthetic git repos with a committed README.md (AC-11.29).
+    # Both checkouts are synthetic git repos with a committed README.md and AGENTS.md (AC-11.29).
     demo_checkout("demo-api")
     web = demo_checkout("demo-web")
 
