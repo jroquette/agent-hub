@@ -36,9 +36,17 @@
     ".claude/settings.project.json": {
       "ownership": "seeded"
     },
+    ".claude/skills/adr": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/adr"
+    },
     ".claude/skills/create-plan": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/create-plan"
+    },
+    ".claude/skills/deliver": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/deliver"
     },
     ".claude/skills/feature": {
       "ownership": "managed",
@@ -52,6 +60,10 @@
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/handoff"
     },
+    ".claude/skills/incident": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/incident"
+    },
     ".claude/skills/kickoff": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/kickoff"
@@ -60,13 +72,41 @@
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/learn"
     },
+    ".claude/skills/onboard": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/onboard"
+    },
     ".claude/skills/recall": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/recall"
     },
+    ".claude/skills/refactor": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/refactor"
+    },
+    ".claude/skills/release": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/release"
+    },
     ".claude/skills/research": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/research"
+    },
+    ".claude/skills/retro": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/retro"
+    },
+    ".claude/skills/review": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/review"
+    },
+    ".claude/skills/triage": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/triage"
+    },
+    ".claude/skills/upgrade": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/upgrade"
     },
     ".github/workflows/ci.yml": {
       "executable": false,
@@ -273,15 +313,25 @@
       "ownership": "managed",
       "sha256": "9870d0f37d60d09ef8aa7a02522cd948fd8c1883afae0cf2abb9bfdd9e5ddd17"
     },
+    "plugin/hub-workflow/skills/adr/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "17aa09bf794e9863cdd92bf9c26abc93d60ff6641cda36bf440cead8b71d3d77"
+    },
     "plugin/hub-workflow/skills/create-plan/SKILL.md": {
       "executable": false,
       "ownership": "managed",
       "sha256": "ebf37bf3e98a742c2ac027e463c6c68c108ce16421582ba106e8f8d8c503e01c"
     },
+    "plugin/hub-workflow/skills/deliver/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "9f4c1db5cb9287a8b2403aee8357c0b5c5bbec7812b2f9e6e0322308fa923ea1"
+    },
     "plugin/hub-workflow/skills/feature/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "92bc00d59d4ffd22596819332bd9aa008f0b040aa741d864697d41868df483e2"
+      "sha256": "138eafe1eb3a0ab9ed1d64f136fbfde5001d0134b8a9f5c4b5b308b369648ee9"
     },
     "plugin/hub-workflow/skills/fix/SKILL.md": {
       "executable": false,
@@ -293,25 +343,65 @@
       "ownership": "managed",
       "sha256": "e2789656defde586cb980f5c08b0008829fb4abdaf75f24c24a68575dd94e33e"
     },
+    "plugin/hub-workflow/skills/incident/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "be2689debac1c7e232115a303195f610e629505e62da16d10a43e059b88bdc9e"
+    },
     "plugin/hub-workflow/skills/kickoff/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "68f9115612b4c237186102ef614e3b010de12176994ede298d66971d393b11db"
+      "sha256": "0f2ba510721a09cad781983b60f5d3c9544b984dae0da3d9c530600c73bcdb4a"
     },
     "plugin/hub-workflow/skills/learn/SKILL.md": {
       "executable": false,
       "ownership": "managed",
       "sha256": "d58bc967e02b570e0c29c149465bb6f5ffe1415f08e0b3076913c04aa6c310e5"
     },
+    "plugin/hub-workflow/skills/onboard/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "69fad0e6a229e6d09e4ddd5e0098e158da08664bf31d6e28b9597b7d19cdbbab"
+    },
     "plugin/hub-workflow/skills/recall/SKILL.md": {
       "executable": false,
       "ownership": "managed",
       "sha256": "62a78cf03c8b07910906921dc1816198f429ea24fd7a3c70e961516ed2ebd8ad"
     },
+    "plugin/hub-workflow/skills/refactor/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "26987cc57c23dbfa23bf304c3d91dca0b4365f5fcfd67099ee148e6581f16961"
+    },
+    "plugin/hub-workflow/skills/release/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "0fb8ef1d8f3ab9dcd062a2c107fc5fa0b4bac05e08c5c8ae90d15f9b7251e47f"
+    },
     "plugin/hub-workflow/skills/research/SKILL.md": {
       "executable": false,
       "ownership": "managed",
       "sha256": "bc91d1ca2541992c0529d5cb9ced9df2e16899872cc2ff958a4c51b7a6cf1856"
+    },
+    "plugin/hub-workflow/skills/retro/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "331627109dc382c2bf39d203033ede41f0a4f199bc863a129ce99107c2e48f79"
+    },
+    "plugin/hub-workflow/skills/review/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "3c115c4f0c7804433e8409aca0150210a370ad51725d5d31519f4073d8233ad4"
+    },
+    "plugin/hub-workflow/skills/triage/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "32239b4963a4d178c7f8ed5e3733c6c9e90a28bef4095c21bf191b6d2a066c8f"
+    },
+    "plugin/hub-workflow/skills/upgrade/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "fc4c24ef8ec49361c66afcffc081e3e36fc5a188fa00d182eebb6959086201b3"
     },
     "scripts/mine_transcripts.py": {
       "executable": true,

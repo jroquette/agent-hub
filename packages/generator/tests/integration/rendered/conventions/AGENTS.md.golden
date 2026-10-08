@@ -55,7 +55,8 @@ session follow them. `{ISSUE}` is the issue id, `{issue_lower}` the same in lowe
 - Branch: `jdoe/{ISSUE}-{slug}`, e.g. `jdoe/DEM-7-collector`.
 - Commit title: `{ISSUE}: {type}({scope}): {summary}`, e.g. `DEM-7: feat(core): add the collector`.
 - PR title: `{ISSUE}: {type}({scope}): {summary}`, e.g. `DEM-7: feat(core): add the collector`.
-- `demo-api` overrides branch `feature/{issue_lower}/{slug}`.
+- `demo-api` overrides some keys: `hub.json` → `repos[].conventions`; `hub worktree` and `hub run` apply them;
+  a `pr_title` neither layer sets follows the repo's own `commit_title`.
 
 ## Cross-repo rules
 
