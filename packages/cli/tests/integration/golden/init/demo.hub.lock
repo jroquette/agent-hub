@@ -371,7 +371,7 @@
     "plugin/hub-workflow/skills/refactor/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "26987cc57c23dbfa23bf304c3d91dca0b4365f5fcfd67099ee148e6581f16961"
+      "sha256": "1deff78ff32ecdf063d72c22a62ed204064155ad3e4b68a1321954f2ba0bf8b3"
     },
     "plugin/hub-workflow/skills/release/SKILL.md": {
       "executable": false,
