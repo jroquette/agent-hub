@@ -37,6 +37,7 @@ FEATURES_TRACKER_RULE: Final = "features.tracker"
 BENCH_TASKS_RULE: Final = "bench.tasks"
 CONFIG_IDENTITY_RULE: Final = "config.identity"
 REPOS_AGENTS_RULE: Final = "repos.agents"
+CONFIG_STOP_GATE_RULE: Final = "config.stop_gate"
 
 RULE_IDS: Final = (
     CONFIG_SCHEMA_RULE,
@@ -60,6 +61,7 @@ RULE_IDS: Final = (
     BENCH_TASKS_RULE,
     CONFIG_IDENTITY_RULE,
     REPOS_AGENTS_RULE,
+    CONFIG_STOP_GATE_RULE,
 )
 
 # The rules a module owns: they run and may be configured only when the module is selected.
@@ -92,6 +94,17 @@ class IdentityRuleSettings(ConfigObject):
                 " alike; remove severity"
             )
         }
+    )
+
+    enabled: StrictBool = True
+
+
+class StopGateRuleSettings(ConfigObject):
+    """``config.stop_gate``: whether it runs. It has no ``severity``: a repo without a Stop gate
+    stays a warning, never an error that fails the hub's checks on its own."""
+
+    rejected_keys = MappingProxyType(
+        {"severity": f"{CONFIG_STOP_GATE_RULE} is always a warning; remove severity"}
     )
 
     enabled: StrictBool = True
@@ -173,3 +186,4 @@ class DoctorRules(ConfigObject):
     bench_tasks: RuleSettings | None = absent_by_default(alias="bench.tasks")
     config_identity: IdentityRuleSettings | None = absent_by_default(alias="config.identity")
     repos_agents: RuleSettings | None = absent_by_default(alias="repos.agents")
+    config_stop_gate: StopGateRuleSettings | None = absent_by_default(alias="config.stop_gate")

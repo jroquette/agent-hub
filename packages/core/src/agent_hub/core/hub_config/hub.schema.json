@@ -152,6 +152,9 @@
         },
         "repos.agents": {
           "$ref": "#/$defs/RuleSettings"
+        },
+        "config.stop_gate": {
+          "$ref": "#/$defs/StopGateRuleSettings"
         }
       },
       "title": "DoctorRules",
@@ -379,14 +382,18 @@
           "type": "string"
         },
         "check_fast": {
-          "minLength": 1,
-          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
-          "title": "Check Fast",
+          "description": "The fast gate the Stop hook runs. Absent, empty or blank: no Stop gate.",
+          "pattern": "^[^\\x00-\\x1f\\x7f]*$",
           "type": "string"
         },
+        "check_fast_timeout": {
+          "description": "Seconds the Stop hook gives check_fast, within its 160 s budget. Absent: 150.",
+          "maximum": 160,
+          "minimum": 1,
+          "type": "integer"
+        },
         "check": {
-          "minLength": 1,
-          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "pattern": "^[^\\x00-\\x1f\\x7f]*[^\\x00-\\x1f\\x7f\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000][^\\x00-\\x1f\\x7f]*$",
           "title": "Check",
           "type": "string"
         },
@@ -403,7 +410,6 @@
       "required": [
         "dir",
         "github",
-        "check_fast",
         "check"
       ],
       "title": "Repo",
@@ -437,6 +443,22 @@
       ],
       "title": "Severity",
       "type": "string"
+    },
+    "StopGateRuleSettings": {
+      "additionalProperties": false,
+      "description": "``config.stop_gate``: whether it runs. It has no ``severity``: a repo without a Stop gate\nstays a warning, never an error that fails the hub's checks on its own.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        }
+      },
+      "title": "StopGateRuleSettings",
+      "type": "object"
     },
     "Tracker": {
       "additionalProperties": false,

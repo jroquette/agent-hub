@@ -5,7 +5,7 @@ import re
 from collections.abc import Iterator
 from typing import Annotated, Final, Literal
 
-from pydantic import AfterValidator, BeforeValidator, ConfigDict, Field
+from pydantic import AfterValidator, BeforeValidator, ConfigDict, Field, StrictInt
 from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from agent_hub.core.hub_config.config_object import (
@@ -40,6 +40,14 @@ JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 # only the object models.
 # Free text still lands in files and commands, so a control character is never part of it.
 FreeString = Annotated[str, Field(min_length=1, pattern=r"^[^\x00-\x1f\x7f]+$")]
+# A repo's fast gate may be empty or blank: no Stop gate (project-config.md).
+CommandString = Annotated[str, Field(pattern=r"^[^\x00-\x1f\x7f]*$")]
+# ``str.isspace`` outside the control characters, spelled out: JSON Schema's ``\s`` (ECMA) and
+# Python's disagree on U+0085 and U+FEFF.
+_SPACES = r"\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000"
+_NOT_BLANK_COMMAND = rf"^[^\x00-\x1f\x7f]*[^\x00-\x1f\x7f{_SPACES}][^\x00-\x1f\x7f]*$"
+# The Stop hook's total budget (stop_gate.py.tmpl ``BUDGET``): no repo may ask for more.
+MAX_CHECK_FAST_TIMEOUT: Final = 160
 
 # Rendered values (project-config.md): values that land in shell, Make or YAML text. Pydantic's
 # Rust regex has no look-around, and ``[0-9]`` is spelled out because ``\d`` takes any digit.
@@ -65,6 +73,21 @@ _PATH_CHAR = r"[!-.0-\[\]-~]"
 _PATH_CHAR_NOT_DOT = r"[!-\-0-\[\]-~]"
 _GUARD_SEGMENT = rf"(?:{_PATH_CHAR}*{_PATH_CHAR_NOT_DOT}{_PATH_CHAR}*|\.{{3,}})"
 GuardPath = Annotated[str, Field(pattern=rf"^{_GUARD_SEGMENT}(?:/{_GUARD_SEGMENT})*$")]
+
+
+def _not_blank(value: str) -> str:
+    if not value.strip():
+        raise PydanticCustomError("blank_command", "must hold a non-space character")
+    return value
+
+
+# A repo's full gate: free text with at least one non-space character. The validator gives the
+# readable error; the exported schema states the same rule as a pattern.
+RequiredCommand = Annotated[
+    CommandString,
+    AfterValidator(_not_blank),
+    Field(json_schema_extra={"pattern": _NOT_BLANK_COMMAND}),
+]
 
 
 def exact_int(value: object) -> object:
@@ -284,8 +307,16 @@ class Repo(ConfigObject):
     dir: RepoDir
     github: GitHubRepo
     role: FreeString = "app"
-    check_fast: FreeString
-    check: FreeString
+    check_fast: CommandString | None = absent_by_default(
+        description="The fast gate the Stop hook runs. Absent, empty or blank: no Stop gate."
+    )
+    check_fast_timeout: Annotated[StrictInt, Field(ge=1, le=MAX_CHECK_FAST_TIMEOUT)] | None = (
+        absent_by_default(
+            description="Seconds the Stop hook gives check_fast, within its 160 s budget."
+            " Absent: 150."
+        )
+    )
+    check: RequiredCommand
     default_branch: BranchName | None = absent_by_default(
         description="The repo's default branch: worktree and PR base, push guard."
         " Absent: project.default_branch."

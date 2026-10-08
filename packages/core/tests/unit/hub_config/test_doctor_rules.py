@@ -36,13 +36,20 @@ RULE_TABLE_IDS = [
     "bench.tasks",
     "config.identity",
     "repos.agents",
+    "config.stop_gate",
 ]
 CONFIGURABLE_IDS = [rule_id for rule_id in RULE_TABLE_IDS if rule_id != "config.schema"]
-# config.identity's info must read the same for every developer: it can be disabled, not retuned.
-RETUNABLE_IDS = [rule_id for rule_id in CONFIGURABLE_IDS if rule_id != "config.identity"]
+# config.identity's info must read the same for every developer, and config.stop_gate stays a
+# warning: each can be disabled, not retuned.
+RETUNABLE_IDS = [
+    rule_id
+    for rule_id in CONFIGURABLE_IDS
+    if rule_id not in {"config.identity", "config.stop_gate"}
+]
 IDENTITY_SEVERITY_MESSAGE = (
     "config.identity is always an info, so every developer's run exits alike; remove severity"
 )
+STOP_GATE_SEVERITY_MESSAGE = "config.stop_gate is always a warning; remove severity"
 
 
 def error_types(rules: dict[str, Any]) -> list[tuple[tuple[str | int, ...], str]]:
@@ -101,6 +108,18 @@ def test_rejects_severity_when_rule_is_config_identity(severity: str) -> None:
     assert (error["loc"], error["msg"]) == (
         ("config.identity", "severity"),
         IDENTITY_SEVERITY_MESSAGE,
+    )
+
+
+@pytest.mark.parametrize("severity", ["error", "warning", "info"])
+def test_rejects_severity_when_rule_is_config_stop_gate(severity: str) -> None:
+    with pytest.raises(ValidationError) as caught:
+        DoctorRules.model_validate({"config.stop_gate": {"enabled": True, "severity": severity}})
+
+    [error] = caught.value.errors()
+    assert (error["loc"], error["msg"]) == (
+        ("config.stop_gate", "severity"),
+        STOP_GATE_SEVERITY_MESSAGE,
     )
 
 
