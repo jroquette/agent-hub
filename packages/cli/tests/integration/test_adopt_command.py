@@ -52,10 +52,10 @@ CLASHING_LINK = ".claude/agents/architect.md"
 # skill, which the render links from ``.claude/skills``.
 LINKED = (".claude/agents", ".claude/skills")
 TARGETS = ("plugin/hub-workflow/agents", "plugin/hub-workflow/skills")
-REVIEW = "plugin/demo/skills/review"
-REVIEW_LINK = ".claude/skills/review"
-# How many links DEMO renders in each folder: 7 base agents; 8 base skills and ``review``.
-RENDERED_LINKS = {".claude/agents": 7, ".claude/skills": 9}
+PROJECT_SKILL = "plugin/demo/skills/demo-skill"
+PROJECT_SKILL_LINK = ".claude/skills/demo-skill"
+# How many links DEMO renders in each folder: 7 base agents; 18 base skills and ``demo-skill``.
+RENDERED_LINKS = {".claude/agents": 7, ".claude/skills": 19}
 # The calls that look at a path without opening or listing it.
 LOOKS = frozenset({"lstat", "stat"})
 # The conftest's ``ac4.guard`` and ``ac4.schema``, for parameters (fixtures are not set yet).
@@ -444,13 +444,13 @@ class TestAccept:
 
 def linked_plugin_folders(hub: Path, *, target: str = "plugin/hub-workflow") -> Path:
     """AC-16.7's hub: unadopted, ``.claude/skills`` and ``.claude/agents`` directory links into
-    ``target``, and a project skill ``review`` in ``plugin/demo/skills/``."""
+    ``target``, and a project skill ``demo-skill`` in ``plugin/demo/skills/``."""
     unadopted(hub)
     for folder in LINKED:
         shutil.rmtree(hub / folder)
         (hub / folder).symlink_to(f"../{target}/{folder.rpartition('/')[2]}")
-    (hub / REVIEW).mkdir()
-    (hub / REVIEW / "SKILL.md").write_bytes(b"---\nname: review\n---\n")
+    (hub / PROJECT_SKILL).mkdir()
+    (hub / PROJECT_SKILL / "SKILL.md").write_bytes(b"---\nname: demo-skill\n---\n")
     return hub
 
 
@@ -492,7 +492,7 @@ class TestMigration:
         assert under_links(lock_files(demo_hub)) == []
         assert not set(LINKED) & set(lock_files(demo_hub))
         after = tree_digest(demo_hub)
-        for path in (*LINKED, REVIEW, f"{REVIEW}/SKILL.md"):
+        for path in (*LINKED, PROJECT_SKILL, f"{PROJECT_SKILL}/SKILL.md"):
             assert after[path] == before[path], path
         assert {each: tree_digest(demo_hub / each) for each in TARGETS} == targets
 
@@ -561,7 +561,7 @@ class TestMigration:
 
         assert (result.exit_code, result.stderr) == (0, ""), result.output
         # E15: each link migrated, then every link under it created, in path order.
-        created = [*under_links(fresh), REVIEW_LINK]
+        created = [*under_links(fresh), PROJECT_SKILL_LINK]
         recorded = sorted(set(fresh) - set(created) - {"hub.json"})
         expected = sorted(
             [
@@ -572,17 +572,20 @@ class TestMigration:
             key=lambda line: line.partition(" ")[2],
         )
         assert result.stdout.splitlines() == [*expected, "updated hub.lock"]
-        # The links are real folders of managed links, ``review`` included, all recorded; the
+        # The links are real folders of managed links, ``demo-skill`` included, all recorded; the
         # targets are untouched.
         after = tree_digest(demo_hub)
-        assert after.pop(REVIEW_LINK)[::2] == ("link", f"../../{REVIEW}")
-        for path in (REVIEW, f"{REVIEW}/SKILL.md"):
+        assert after.pop(PROJECT_SKILL_LINK)[::2] == ("link", f"../../{PROJECT_SKILL}")
+        for path in (PROJECT_SKILL, f"{PROJECT_SKILL}/SKILL.md"):
             assert after.pop(path) == before[path], path
         # The lock is compared entry by entry below: it holds one more link.
         assert after.pop("hub.lock")[:2] == template.pop("hub.lock")[:2]
         assert after == template
         files = lock_files(demo_hub)
-        assert files.pop(REVIEW_LINK) == {"ownership": "managed", "symlink": f"../../{REVIEW}"}
+        assert files.pop(PROJECT_SKILL_LINK) == {
+            "ownership": "managed",
+            "symlink": f"../../{PROJECT_SKILL}",
+        }
         assert files == fresh
         assert {each: tree_digest(demo_hub / each) for each in TARGETS} == targets
         # Adopted: a rerun has nothing to do (an ``--accept`` now names no listed path).

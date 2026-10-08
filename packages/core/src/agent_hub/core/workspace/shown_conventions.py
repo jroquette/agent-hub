@@ -1,9 +1,10 @@
 """The branch and title shapes and examples a configured hub's texts show; pure.
 
 ``shown_conventions`` is their one source: the generator renders ``AGENTS.md``'s Conventions
-block and rule 1's branch from it, and doctor ``instructions.refs`` skips exactly its texts as
-code spans (AGH-57, plan O1 a, E32), so the two cannot drift. ``shown_prefix`` is the one source
-of the rendered ``{prefix}``, configured hub or not.
+block and rule 1's branch from it, and doctor ``instructions.refs`` skips its texts as code spans
+(AGH-57, plan O1 a, E32): each is a valid reference to the hub's conventions, rendered or not (a
+repo's own patterns stay in ``hub.json``, AGH-98), so the two cannot drift. ``shown_prefix``
+is the one source of the rendered ``{prefix}``, configured hub or not.
 
 Title examples are filled with ``fill_pattern``, the primitive ``runner.title_pattern``'s
 ``render_title`` wraps: importing ``runner`` here would close a package cycle (``runner`` reads
@@ -22,7 +23,7 @@ from agent_hub.core.workspace.branch_pattern import (
     branch_shape_text,
 )
 
-# The keys a repo line names, in the order the texts show them.
+# The keys a repo's ``conventions`` can set, in ``hub.json`` order.
 OVERRIDE_KEYS: Final = ("branch", "commit_title", "pr_title")
 # The example title's parts other than the issue (plan § Design 7).
 _EXAMPLE_TITLE: Final = {"type": "feat", "scope": "core", "summary": "add the collector"}
@@ -38,11 +39,12 @@ class ShownPattern(NamedTuple):
 class ShownRepo(NamedTuple):
     """What the texts show of one repo."""
 
-    # Its effective branch. The texts render only an overriding repo's shape; its example is
-    # not rendered, yet doctor skips it too (E31 a).
+    # Its effective branch: no text renders it, yet doctor skips its shape and example as valid
+    # references (E31 a).
     branch: ShownPattern
-    # Each key its ``conventions`` sets, in ``OVERRIDE_KEYS`` order, to the shape its line
-    # shows: the branch with ``{prefix}`` rendered, a title as written.
+    # Each key its ``conventions`` sets, in ``OVERRIDE_KEYS`` order, to its shape: the branch
+    # with ``{prefix}`` rendered, a title as written. The texts only name the repo when it sets
+    # any (AGH-98); doctor skips the shapes as valid references.
     overrides: Mapping[str, str]
 
 
@@ -58,7 +60,8 @@ class ShownConventions:
     repos: Mapping[str, ShownRepo]
 
     def texts(self) -> frozenset[str]:
-        """Every shape and example: the project's, each repo's branch and its overrides."""
+        """Every valid shape and example doctor skips: the project's, each repo's branch and its
+        overrides, whether or not a text renders them."""
         project = (*self.branch, *self.commit_title, *self.pr_title)
         repos = (
             text
