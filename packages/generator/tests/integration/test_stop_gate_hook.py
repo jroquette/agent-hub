@@ -578,13 +578,17 @@ def test_dates_changes_from_transcript_when_session_start_read(
 ) -> None:
     # AC-12: the window opens at the first line with a timestamp, here a queue-operation. The
     # lines before it are skipped: one has no timestamp, one has no offset (a naive time read as
-    # local would open the window 2 h from now and hide new.py).
+    # local would open the window 2 h from now and hide new.py). A later line comes after it: the
+    # first stamp opens the window, not the last (start + 30 min would hide new.py).
     start = datetime.now(UTC) - timedelta(hours=1)
     naive = (datetime.now(UTC) + timedelta(hours=2)).replace(tzinfo=None).isoformat()
     lines = [
         json.dumps({"type": "summary"}),
         json.dumps({"type": "summary", "timestamp": naive}),
         json.dumps({"type": "queue-operation", "timestamp": utc_stamp(start, timespec)}),
+        json.dumps(
+            {"type": "user", "timestamp": utc_stamp(start + timedelta(minutes=30), timespec)}
+        ),
     ]
     transcript = tmp_path / "session.jsonl"
     transcript.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -603,7 +607,7 @@ def test_dates_changes_from_transcript_when_session_start_read(
 
 
 def write_unreadable(variant: str, path: Path, stamp: str) -> Path | int:
-    """The ``transcript_path`` of one unusable transcript; each timestamp in it is ``stamp``."""
+    """The ``transcript_path`` of one unusable transcript; its timestamps are ``stamp`` or later."""
     line = json.dumps({"type": "queue-operation", "timestamp": stamp})
     writers: dict[str, Callable[[], object]] = {
         "missing": lambda: None,
@@ -621,6 +625,11 @@ def write_unreadable(variant: str, path: Path, stamp: str) -> Path | int:
         # Python 3.11+ parses any fraction, 3.9 only 3 or 6 digits: the hook takes neither.
         "two_digit_fraction": lambda: path.write_text(
             line.replace(stamp, stamp[:-2] + "Z") + "\n", encoding="utf-8"
+        ),
+        # A start in the future (a bad clock, a copied transcript) would hide every change.
+        "future": lambda: path.write_text(
+            line.replace(stamp, utc_stamp(datetime.now(UTC) + timedelta(hours=1))) + "\n",
+            encoding="utf-8",
         ),
     }
     if variant in {"int_fd", "stdout_fd"}:
@@ -642,14 +651,15 @@ def write_unreadable(variant: str, path: Path, stamp: str) -> Path | int:
         "not_json",
         "no_timestamp",
         "two_digit_fraction",
+        "future",
     ],
 )
 def test_uses_fallback_window_when_session_start_unreadable(
     run_hook: RunHook, workspace: Path, tmp_path: Path, *, variant: str
 ) -> None:
     # AC-13: no session start read, so today's rule: the transcript's birth time where the
-    # platform keeps one, else 12 h ago. Every timestamp the variants hold is 10 min ago: one read
-    # by mistake would hide new.py (1 h old) and silence the gate.
+    # platform keeps one, else 12 h ago. Every timestamp the variants hold is 10 min ago
+    # (``future``: 1 h ahead): one read by mistake would hide new.py (1 h old) and silence the gate.
     stamp = utc_stamp(datetime.now(UTC) - timedelta(minutes=10))
     set_mtime(workspace / "app" / "new.py", datetime.now(UTC) - timedelta(hours=1))
     path = tmp_path / "session.jsonl"
