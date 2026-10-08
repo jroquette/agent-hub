@@ -410,6 +410,22 @@ def test_reports_stop_gate_when_check_fast_absent_or_blank(
     ]
 
 
+@pytest.mark.parametrize("gate", [None, ""], ids=["absent", "empty"])
+def test_reports_stop_gate_at_own_index_when_later_repo_lacks_command(
+    snapshot_of: SnapshotFactory, gate: str | None
+) -> None:
+    # demo-api keeps its command: the finding names demo-web by its own place in repos.
+    def drop_web_gate(repos: list[dict[str, Any]]) -> None:
+        if gate is None:
+            del repos[1]["check_fast"]
+        else:
+            repos[1]["check_fast"] = gate
+
+    config = two_repo_config(drop_web_gate)
+
+    assert stop_gate_findings(snapshot_of(config=config)) == [stop_gate_finding(1, "demo-web")]
+
+
 def test_reports_no_stop_gate_when_every_repo_has_command(snapshot_of: SnapshotFactory) -> None:
     config = two_repo_config(lambda repos: repos[1].update(check_fast=" make check-fast "))
 
