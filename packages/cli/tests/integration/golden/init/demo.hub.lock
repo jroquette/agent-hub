@@ -401,7 +401,7 @@
     "plugin/hub-workflow/skills/upgrade/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "fc4c24ef8ec49361c66afcffc081e3e36fc5a188fa00d182eebb6959086201b3"
+      "sha256": "8dd1346e29f5a3a45435ffdfed986043795192d8f0404e5583668864e331182c"
     },
     "scripts/mine_transcripts.py": {
       "executable": true,

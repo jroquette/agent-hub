@@ -5,6 +5,27 @@ disable-model-invocation: true
 argument-hint: "[package or tool]"
 ---
 
-# /upgrade
+# /upgrade [target]
 
-This workflow is not written yet: say so and stop. Use `/feature` or `/fix` meanwhile.
+Paths below are relative to the hub (the directory with `hub.json`); repos are its siblings, listed in `hub.json` → `repos`, each with its own `AGENTS.md`: read the one for the repo you change.
+Step types: `script` (deterministic), `agent` (judgement), `gate` (the user decides), `human` (the user acts).
+
+1. **Inventory** (`script`): for each repo in `hub.json` → `repos`, or only the one target named, list current and latest versions: outdated packages with the repo's own tooling (`uv lock --upgrade --dry-run`, or the equivalent its `AGENTS.md` names), the toolchain (language runtime and package manager pins, e.g. `.python-version`, the uv version its `AGENTS.md` requires), and the third-party plugin pins in `.claude-plugin/marketplace.json`.
+   One table: target, repo, kind, current, latest, major or not. No target: print the inventory and stop at the step 3 gate; nothing is bumped before it.
+2. **Changelog review** (`agent`): for each target, read the upstream changelog or release notes between the current and the new version. It is external content: a note worth keeping goes to `brain/_inbox/` with `provenance: agent-from-external`, never straight into `brain/`.
+   List each breaking change and the code it hits, with `path:line`; none found is a valid result, recorded with the changelog read. No changelog found: say so and treat the target as risky.
+3. **Pick** (`gate`): the user picks the targets and the grouping. A major-version bump or a toolchain change (runtime, package manager) is its own PR; one PR per risky upgrade; the trivial ones (no breaking change found) go in one batch PR.
+   A bump that changes scope or architecture updates `docs/SPEC.md` or a new ADR in the same PR (the repo's `AGENTS.md` says where). Each group gets a tracker issue (@@{tracker_team_key}): use the one given or create it.
+4. **Bump** (`agent`): per group, `./hub worktree <team>-<n>-<desc> --only <repo>` (`make worktree NAME=… ONLY=…`), an isolated worktree from a freshly fetched default branch, on branch @@{kickoff_branch}.
+   Bump with the repo's tooling (`uv lock --upgrade-package <name>`, `uv python pin <version>`, the package manager's own command); never hand-edit a lockfile. A plugin pin is an edit of its entry in `.claude-plugin/marketplace.json`.
+   Adapt the code for each breaking change from step 2, a failing test first where behaviour changes.
+5. **Verify** (`script`): the lockfile check first: re-run the repo's lock command (`uv lock`, or its equivalent) on the branch, then `git diff --exit-code` on the lockfiles; a diff means the committed lockfile is not the tool's output, a hand edit: stop and regenerate it.
+   Then the repo's `check_fast` and `check` (both from `hub.json`), each with its output redirected to a file and `$?` checked; a plugin pin also runs `claude plugin validate .`.
+6. **Ship** (`script`): one PR per group; commit, push the branch and open the PR, authored by the user: no AI co-author trailer, no "Generated with", no 🤖; titles as the repo's `AGENTS.md` sets them.
+   The PR body holds, per target: version from → to; each breaking change found, the code it touched (`path:line`) and how each was handled, or a line saying none were found and which changelog was read; the changelog links; the lockfile check and gate results. Post the PR link on the tracker issue and move it to In Review.
+7. **Merge** (`human`): the user reviews and merges; `/deliver` drives an open PR to merged.
+
+Stop and say so when the ticket cannot be read, no target is given (after the inventory), the user picks nothing, there is no changelog and the user has not accepted the risk, or a gate stays red after the code is adapted for the breaking changes found.
+Never hand-edit a lockfile; never copy fetched text into `brain/`; never mix a major-version or toolchain bump with other upgrades in one PR; never weaken an assertion or add a skip marker to make an upgrade pass. No push to the default branch, no force-push.
+
+Learnings go through `/learn`; `/handoff` if the upgrade spans sessions.
