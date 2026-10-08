@@ -26,6 +26,7 @@ Never approve a PR this session opened or pushed to, and never merge: merging is
    A PR opened or pushed to by this session, or authored by the `gh` user, can only get comment.
 7. `script` **Post** one pending review with the chosen findings as inline comments (`gh api repos/<owner>/<repo>/pulls/<n>/reviews` with `comments` and no `event`), then submit it with the chosen verdict.
    Nothing is posted before the gate in step 6, and never a second review for the same pass. The comments are the user's words: no AI attribution, no "Generated with", no 🤖, beyond a footer the host adds itself.
-   Then post the review link on the tracker issue; the issue's state does not change here.
+   If the submit fails or the session stopped between the two calls, do not create another: find this user's `PENDING` review (`gh api repos/<owner>/<repo>/pulls/<n>/reviews`, state `PENDING`, user = the `gh` user) and submit that one (`POST .../reviews/<id>/events`).
+   Then post the review link on the tracker issue; the issue's state does not change here. If that post fails after the review is submitted, stop and report it: never rerun the step.
 
-Recurring findings go to `/learn` as proposals, so later plans can check for them; the review itself writes nothing in `brain/`.
+Recurring findings go to `/learn` as proposals with `provenance: agent-from-external` (they rest on PR text), so later plans can check for them; the review itself writes nothing in `brain/`.

@@ -391,7 +391,7 @@
     "plugin/hub-workflow/skills/review/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "34b0c9715224d6a7268e2cbe31c8deb2291d6ab96a1baebc78e6ebd4585419fd"
+      "sha256": "8bd87adc06ee3b57c6ee37a5c3c67a277e0ae09e836b63c04af3d484b702d156"
     },
     "plugin/hub-workflow/skills/triage/SKILL.md": {
       "executable": false,
