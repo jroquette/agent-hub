@@ -359,7 +359,7 @@
     "plugin/hub-workflow/skills/learn/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "d58bc967e02b570e0c29c149465bb6f5ffe1415f08e0b3076913c04aa6c310e5"
+      "sha256": "7642a6ad4883894c562151ea372d323740caff26054a30c4ae23d96e86aa43a0"
     },
     "plugin/hub-workflow/skills/onboard/SKILL.md": {
       "executable": false,
