@@ -2466,6 +2466,38 @@ def test_keeps_lines_within_width_when_conventions_long() -> None:
         assert [line for line in agents.splitlines() if len(line) > 120] == [], no_prefix
 
 
+def a_stacked_conventions_config(repo_count: int) -> HubConfig:
+    """``a_team_config``'s hub, 80-character patterns set by the project and by each of
+    ``repo_count`` repos (``demo-api``, then ``demo-web``-shaped ones)."""
+    branch = an_80_character_pattern("{prefix}", "/{ISSUE}-{slug}")
+    title = an_80_character_pattern("{ISSUE}: {type}({scope}): {summary} -- ", "")
+    long_conventions = {"branch": branch, "commit_title": title, "pr_title": title}
+    document = a_hub_document()
+    document["modules"] = {**document["modules"], "marketplace": {}}
+    for key in ("branch_prefix", "author_name", "author_email"):
+        del document["project"][key]
+    document["project"]["conventions"] = dict(long_conventions)
+    for n in range(1, repo_count):
+        repo = a_second_repo()
+        repo["dir"] = f"demo-web{n}"
+        repo["github"] = f"acme/demo-web{n}"
+        document["repos"].append(repo)
+    for repo in document["repos"]:
+        repo["conventions"] = dict(long_conventions)
+    return HubConfig.model_validate(document)
+
+
+# AGH-98: a valid hub (long patterns, no identity key, every module, 8 repos overriding every key)
+# renders an AGENTS.md its own `hub doctor` accepts: instructions.size errs above 100 lines.
+def test_keeps_agents_within_line_cap_when_many_repos_override_long_conventions() -> None:
+    agents = text_of(a_stacked_conventions_config(8), "AGENTS.md")
+
+    assert len(agents.splitlines()) <= 100
+    assert [line for line in agents.splitlines() if len(line) > 120] == []
+    # The rule and the three project shapes and examples; no repo's pattern.
+    assert agents.count("x" * 40) == 7
+
+
 def test_shows_prefix_placeholder_when_hub_leaves_prefix_to_developers() -> None:
     document = a_conventions_document()
     del document["project"]["branch_prefix"]
