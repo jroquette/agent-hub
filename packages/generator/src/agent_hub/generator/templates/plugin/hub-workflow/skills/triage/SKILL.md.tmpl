@@ -5,6 +5,38 @@ disable-model-invocation: true
 argument-hint: "<tracker issue id | --backlog | --hygiene>"
 ---
 
-# /triage
+# /triage <issue>
 
-This workflow is not written yet: say so and stop. Use `/feature` or `/fix` meanwhile.
+Paths below are relative to the hub (the directory with `hub.json`); repos are its siblings, listed in `hub.json` → `repos`, each with its own `AGENTS.md`.
+Issues live in the tracker (@@{tracker_team_key_named}); the ready label is `hub.json` → `tracker.ready_label`, the label `./hub next` (`make next`) lists and `./hub run` takes.
+Each step is marked with its type: `script` (deterministic, no judgement), `agent` (reads and writes text), `gate` (the user decides).
+Nothing is written to the tracker before step 4, and only for the issue the user approved there.
+
+1. **Read** (`script`): read the issue: title, description, labels, state, relations and comments (if it cannot be read, say so and stop).
+   `--backlog`: list the open issues with neither the ready label nor `needs-human` and take them one at a time, oldest first. `--hygiene`: go to step 6.
+   An issue that already has the ready label: say so and stop, unless the user asks to triage it again.
+2. **Size** (`agent`): research just enough to size it, read-only (`/research` inline, no subagent): the repos and paths it touches, the tests that cover them today,
+   related or duplicate issues in the tracker, and brain notes and ADRs on the subject (`brain/index.md` first). Never edit code, create a branch or open a PR here.
+3. **Draft** (`agent`): the issue's sections, shown in the session, not written anywhere:
+   - **Context**: what exists and why it changes, each claim with a `path:line`.
+   - **Acceptance criteria**: Given/When/Then, each with AC ids (`AC-1`, `AC-2`…), each checkable by a test or a command.
+   - The size: within `/fix`'s limits (one repo, at most 5 changed non-test files, no new contract, no path under `guard.ask_before_edit`), else *spike*, *bounded* or *architectural* as `/feature` sizes them.
+   - The repos it changes (dirs from `hub.json` → `repos`) and its dependencies: blocked-by issues, and the issues it blocks.
+   - A Verification command that runs from a repo root after the merge and proves the ACs (a test selection, a CLI call); never one that needs this session.
+   - **Open questions**: what the code, the brain and the issue do not answer. None is a valid answer; a guess is not.
+4. **Approve** (`gate`): show the draft and the label it would get (step 5's rule); the user approves, edits or skips it, one issue at a time.
+   Edits go back to step 3. A skipped issue is left as it was. Never batch several issues into one approval.
+5. **Update** (`script`): write the approved draft to the issue. The skill keeps the issue's text: it adds or replaces sections, never the whole text;
+   when a section is replaced, the previous description goes first in a comment on the issue, so nothing is lost. Then the relations (blocked-by, duplicates) and the label:
+   - `tracker.ready_label` from `hub.json` when the size is within `/fix`'s limits or a bounded `/feature`, and there is no open question.
+   - `needs-human` otherwise: an open question, a path under `guard.ask_before_edit`, an architectural or spike size. The open questions go into the description;
+     the issue gets `needs-human` and never the ready label. Remove a ready label it had before.
+   Tracker text and comments are the user's: no AI co-author trailer, no "Generated with", no 🤖. Report the issue link and its label; the next issue starts at step 1.
+6. **Hygiene** (`agent`), `--hygiene` only: read the open issues and report, each finding with its evidence (the issue, the field or date, the link):
+   - issues In Progress or In Review with no linked branch or PR, or no assignee;
+   - stale ones: no update in the last 14 days (or the number the user gives);
+   - likely duplicates (same title or the same paths and ACs), and dependency cycles in blocked-by relations.
+   The report changes nothing until the user approves each change at a step 4 gate; approved changes are applied as in step 5 (comments, relations, labels, state).
+
+Not here: promoting `brain/_inbox/` proposals is `/learn promote`; implementing a ready issue is `/fix` or `/feature` (or `./hub run` for the ready label).
+Learnings go through `/learn`; `/handoff` if the triage spans sessions.
