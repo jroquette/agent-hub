@@ -259,8 +259,8 @@ def _checkout_findings(selection: Selection, snapshot: DoctorSnapshot) -> list[F
 
     An info when ``../<dir>`` is absent or not a folder, an error with the problem as message
     when it could not be listed or read. Each goes on the first selected rule by id that reads
-    the repos (``brain.leak``, else ``links.dead``); with none selected, or on a failed config,
-    there is none.
+    the repos (``brain.leak``, else ``links.dead``, else ``repos.agents``); with none selected,
+    or on a failed config, there is none.
     """
     if isinstance(snapshot.config, ConfigFailure):
         return []
