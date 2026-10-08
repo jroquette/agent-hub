@@ -164,8 +164,10 @@ def test_exits_zero_when_installed_hub_doctors_fresh_init(
     work_dir = tmp_path / "work"
     work_dir.mkdir()
     assert not work_dir.resolve().is_relative_to(REPO_ROOT)
-    # DEMO's one repo next to the hub, empty, so the run stays clean once repos are read.
+    # DEMO's one repo next to the hub, holding only an empty AGENTS.md, so the run stays clean
+    # once repos are read.
     (work_dir / "demo-api").mkdir()
+    (work_dir / "demo-api" / "AGENTS.md").write_bytes(b"")
     env = {**installed_hub.env, "HOME": str(tmp_path / "home")}
     # No harness mode, and no git location or config of the caller: git reads the test HOME only.
     for variable in [*DROPPED_VARIABLES, "XDG_CONFIG_HOME"]:
@@ -200,8 +202,10 @@ def shim_hub(
     work_dir = tmp_path / "work"
     work_dir.mkdir()
     assert not work_dir.resolve().is_relative_to(REPO_ROOT)
-    # DEMO's one repo next to the hub, empty, so the doctor run stays clean (hub-doctor E3a).
+    # DEMO's one repo next to the hub, holding only an empty AGENTS.md, so the doctor run stays
+    # clean (hub-doctor E3a).
     (work_dir / "demo-api").mkdir()
+    (work_dir / "demo-api" / "AGENTS.md").write_bytes(b"")
     env = {**installed_hub.env, "HOME": str(tmp_path / "home")}
     for variable in [*DROPPED_VARIABLES, "XDG_CONFIG_HOME", "AGENT_HUB_ROOT"]:
         env.pop(variable, None)
