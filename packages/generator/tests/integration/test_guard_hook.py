@@ -65,6 +65,9 @@ DENY_BASH = [
     "git push --force origin me/dem-1-x",
     "git push -f",
     "git push origin +me/x",
+    "git push -fu origin me/dem-1-x",
+    "git push -uf origin me/dem-1-x",
+    "git push --mirror backup",
     "git push origin main",
     "git push origin HEAD:main",
     "git push origin trunk",
@@ -89,6 +92,8 @@ DENY_BASH = [
 ]
 ALLOW_BASH = [
     "git push -u origin me/dem-1-main-fix",
+    "git push -u origin feature",
+    "git push --follow-tags --no-verify origin me/dem-1-fix",
     "git push origin me/fix-worktree-test-root",
     "git status --short",
     "make check-fast",
@@ -182,6 +187,24 @@ def test_allows_command_when_no_bash_rule_matches(evaluate: Evaluate) -> None:
     verdicts = verdicts_of(evaluate, [bash(command) for command in ALLOW_BASH])
 
     assert verdicts == dict.fromkeys(verdicts)
+
+
+# AGH-113: a short-flag cluster holding ``f`` and ``--mirror`` force-update remote refs, so they
+# take the force-push reason; long options that only contain an ``f`` do not.
+def test_denies_force_push_when_flag_is_clustered_or_mirror(evaluate: Evaluate) -> None:
+    commands = [
+        "git push -fu origin me/dem-1-x",
+        "git push -uf origin me/dem-1-x",
+        "git push -vfu origin me/dem-1-x",
+        "git push --mirror backup",
+        "git -C ../app push --mirror origin",
+    ]
+
+    verdicts = verdicts_of(evaluate, [bash(command) for command in commands])
+
+    assert list(verdicts.values()) == [
+        ("deny", "force-push is not allowed; push a new commit (or a merge) instead")
+    ] * len(commands)
 
 
 def test_names_configured_branch_when_branch_rule_denies(evaluate: Evaluate) -> None:
