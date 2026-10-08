@@ -4,8 +4,9 @@
 3 consecutive blocks to avoid loops. When checks pass and files changed, remind about /handoff (never
 blocks). Every git status and check fits in one BUDGET of seconds from the hook's start; each run gets the
 repo's `check_fast_timeout` (else TIMEOUT), capped by the budget left. A repo whose run was cut, never
-started for lack of budget, or that has no `check_fast` gets a "not run" line: it never blocks and never
-moves the block counter, but it is always named. Each check runs in its own process group, killed when
+started for lack of budget, or that has no `check_fast` gets a "not run" line: it never blocks, and it is
+always named. A run whose only outcomes are budget or timeout "not run" lines leaves the block counter as
+it was. Each check runs in its own process group, killed when
 the run ends (on a timeout, after a normal exit, and when the hook itself gets SIGTERM or SIGHUP), so no child
 of a check outlives the gate; its output goes to a temp file, so a background child holding it open never
 holds the gate up."""
@@ -13,6 +14,7 @@ holds the gate up."""
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import signal
@@ -57,11 +59,15 @@ def left() -> float:
 
 
 def changed_code(top: Path, since: float) -> list[str] | None:
-    """The code files changed since `since`, or None when no budget is left to ask git."""
-    if left() <= 0:
+    """The code files changed since `since`, or None when the budget is spent before git answers: git()
+    reads a timeout as "", which is no clean tree. A git error or git's own GIT_TIMEOUT stays "no change"."""
+    cap = min(GIT_TIMEOUT, left())
+    if cap <= 0:
+        return None
+    status = git(["status", "--porcelain", "--untracked-files=all"], top, timeout=max(1, math.ceil(cap)))
+    if not status and cap < GIT_TIMEOUT and left() <= 0:
         return None
     out = []
-    status = git(["status", "--porcelain", "--untracked-files=all"], top, timeout=max(1, min(GIT_TIMEOUT, int(left()))))
     for line in status.splitlines():
         rel = line[3:].split(" -> ")[-1].strip('"')
         p = top / rel
@@ -213,6 +219,7 @@ def main() -> None:
         emit({"systemMessage": f"[hub] code changed and check_fast is green. If the work spans sessions, run /handoff.{lines}"})
     elif not_run:
         emit({"systemMessage": f"[hub] code changed; no changed repo has a check_fast to run. If the work spans sessions, run /handoff.{lines}"})
+
 
 if __name__ == "__main__":
     run_hook(main)
