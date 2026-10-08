@@ -3538,6 +3538,19 @@ def test_lists_repos_when_readme_rendered(variant_config: HubConfig) -> None:
     assert "demo-api, demo-web" in readme
 
 
+def test_names_app_repo_agents_once_when_readme_rendered(demo_config: HubConfig) -> None:
+    lines = text_of(demo_config, "README.md").splitlines()
+
+    naming = [line for line in lines if "`docs/app-repo-AGENTS.md`" in line]
+    assert len(naming) == 1
+    assert "`AGENTS.md`" in naming[0]
+    assert "root" in naming[0]
+    # Q-6: appended after the repos line, with a blank line before it.
+    assert lines[-1] == naming[0]
+    assert lines[-2] == ""
+    assert lines[-3] == "Repos, checked out next to this hub: demo-api."
+
+
 APP_REPO_AGENTS = "docs/app-repo-AGENTS.md"
 # AC-76.2: the starter's sections, in order.
 STARTER_SECTIONS = [
