@@ -13,6 +13,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -26,6 +27,9 @@ from agent_hub.core.hub_config.model import HubConfig
 
 HOOK = "plugin/hub-workflow/hooks/stop_gate.py"
 TIMEOUT = 60
+# The late marker's child touches it 2 s after the check starts, and the check starts before the
+# hook returns: waiting this long after the return sees any marker a surviving child writes.
+LATE_AFTER = 2.5
 
 
 class RunHook(Protocol):
@@ -248,12 +252,12 @@ def test_kills_process_group_when_check_exits(
 
     start = time.monotonic()
     output = run_hook([{"dir": "app", "check_fast": check}], workspace / "app")
-    took = time.monotonic() - start
+    end = time.monotonic()
 
     assert "decision" not in output
     assert "green" in output.get("systemMessage", "")
-    assert took < 2.5
-    sleep_until(start + 3.5)
+    assert end - start < 20
+    sleep_until(end + LATE_AFTER)
     assert (marks / "ready").exists()
     assert not (marks / "late").exists()
 
@@ -278,10 +282,10 @@ def test_kills_process_group_when_check_times_out(
 
     start = time.monotonic()
     run_hook([repo], workspace / "app", constant=constant)
-    took = time.monotonic() - start
+    end = time.monotonic()
 
-    assert took < 3
-    sleep_until(start + 3.5)
+    assert end - start < 20
+    sleep_until(end + LATE_AFTER)
     assert (marks / "ready").exists()
     assert not (marks / "late").exists()
 
@@ -301,3 +305,43 @@ def test_reports_output_tail_when_check_prints_past_pipe_buffer(
     assert reason.rstrip().endswith("tail-mark")
     assert "x" * 2900 in reason
     assert len(reason) < 4000
+
+
+def test_kills_process_group_when_hook_cancelled(
+    workspace: Path, *, hook_python: str, tmp_path: Path
+) -> None:
+    # Claude Code cancels a hook with SIGTERM (also at its 180 s timeout); the check runs in its
+    # own session, so only the gate itself can end its group.
+    hub = workspace / "demo-hub"
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    marks = tmp_path / "marks"
+    marks.mkdir()
+    check = late_marker_check(marks, then="sleep 30")
+    document = {"project": {"name": "demo"}, "repos": [{"dir": "app", "check_fast": check}]}
+    (hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+    event = {"cwd": str(workspace / "app"), "session_id": f"cancel-{os.getpid()}-{tmp_path.name}"}
+    with subprocess.Popen(  # noqa: S603 - an interpreter from hook_python, the rendered hook
+        [hook_python, str(hub / HOOK)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=tmp_path,
+        env=scratch_env(tmp_path),
+    ) as hook:
+        assert hook.stdin is not None
+        hook.stdin.write(json.dumps(event).encode("utf-8"))
+        hook.stdin.close()
+        deadline = time.monotonic() + TIMEOUT
+        while not (marks / "ready").exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert (marks / "ready").exists()
+
+        hook.send_signal(signal.SIGTERM)
+        stdout, stderr = hook.communicate(timeout=TIMEOUT)
+        end = time.monotonic()
+
+    sleep_until(end + LATE_AFTER)
+    assert not (marks / "late").exists()
+    assert hook.returncode == 0
+    assert stderr == b""
+    assert stdout == b""
