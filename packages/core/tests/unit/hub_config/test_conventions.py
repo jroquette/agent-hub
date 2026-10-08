@@ -352,9 +352,9 @@ CONVENTIONS_READERS = {
     # each repo's own keys, which name it in the Conventions block (the one raw read outside the
     # model)
     f"{CORE}/workspace/shown_conventions.py": 1,
-    # the module docstring, the Conventions block's lead text and its overriding-repos line name
-    # the keys; the values come from shown_conventions only
-    "generator/src/agent_hub/generator/placeholders.py": 3,
+    # the module docstring, the Conventions block's lead text, its overriding-repos line and
+    # kickoff's branch name the keys; the values come from shown_conventions only
+    "generator/src/agent_hub/generator/placeholders.py": 4,
     # RunChildren.conventions, the repo's effective conventions (conventions_for): its branch
     # and the prompt's commit title
     "cli/src/agent_hub/cli/run_children.py": 2,

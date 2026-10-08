@@ -366,6 +366,12 @@ def test_wraps_team_list_when_keys_long() -> None:
         assert ", ".join(keys) in " ".join(text.split()), key
 
 
+# AGH-98: the end of the names line, the same whatever repos it names.
+OVERRIDE_TAIL = (
+    " some keys: `hub.json` → `repos[].conventions`; `hub worktree` and `hub run` apply them;"
+    " a `pr_title` neither layer sets follows the repo's own `commit_title`."
+)
+
 # AGH-57 (plan § Design 7, E11): the mixed hub's branch rule, kickoff branch and Conventions block.
 MIXED_CONVENTIONS_SECTION = (
     "\n\n## Conventions\n\n"
@@ -378,8 +384,9 @@ MIXED_CONVENTIONS_SECTION = (
     " e.g. `DEM-7: feat(core): add the collector`.\n"
     "- PR title: `{ISSUE}: {type}({scope}): {summary}`,"
     " e.g. `DEM-7: feat(core): add the collector`.\n"
-    "- `demo-api` overrides some keys: `hub.json` → `repos[].conventions`;"
-    " `hub worktree` and `hub run` apply them."
+    "- `demo-api` overrides some keys: `hub.json` → `repos[].conventions`; `hub worktree` and"
+    " `hub run` apply them;\n"
+    "  a `pr_title` neither layer sets follows the repo's own `commit_title`."
 )
 
 
@@ -388,7 +395,7 @@ def test_shows_conventions_when_hub_sets_them() -> None:
 
     assert (mapping["branch_rule"], mapping["kickoff_branch"], mapping["conventions_section"]) == (
         "Branch: `jdoe/{ISSUE}-{slug}`, or the repo's own (see Conventions above).",
-        "`jdoe/{ISSUE}-{slug}` (or the repo's own, `AGENTS.md` → Conventions)",
+        "`jdoe/{ISSUE}-{slug}` (or the repo's own, `hub.json` → `repos[].conventions`)",
         MIXED_CONVENTIONS_SECTION,
     )
 
@@ -454,29 +461,26 @@ def test_shows_project_pr_title_when_repo_overrides_commit_title(
 
     lines = section.splitlines()
     assert pr_line in lines
-    assert lines[-1] == (
-        "- `demo-api` overrides some keys: `hub.json` → `repos[].conventions`;"
-        " `hub worktree` and `hub run` apply them."
-    )
+    assert last_bullet(section) == f"- `demo-api` overrides{OVERRIDE_TAIL}"
     assert "[{ISSUE}] {type}: {summary}" not in section
 
 
-def test_omits_follow_note_when_pr_title_explicit() -> None:
+def test_names_repo_without_its_title_when_project_sets_pr_title() -> None:
     section = section_with(
         {"pr_title": "{ISSUE}: {summary}"}, {"commit_title": "[{ISSUE}] {type}: {summary}"}
     )
 
-    assert section.splitlines()[-1] == (
-        "- `demo-api` overrides some keys: `hub.json` → `repos[].conventions`;"
-        " `hub worktree` and `hub run` apply them."
-    )
-    assert "follows" not in section
+    assert last_bullet(section) == f"- `demo-api` overrides{OVERRIDE_TAIL}"
+    assert section.count("follows") == 1
+    assert "[{ISSUE}] {type}: {summary}" not in section
 
 
 def test_lists_no_override_line_when_repo_conventions_empty() -> None:
     section = section_with({"branch": "{prefix}{ISSUE}-{slug}"}, {})
 
     assert "overrides" not in section
+    # AGH-98: no repo named, no PR-title clause.
+    assert "follows" not in section
     assert section.splitlines()[-1] == "- PR title: `{type}({scope}): {summary} ({ISSUE})`," + (
         " e.g. `feat(core): add the collector (DEM-7)`."
     )
@@ -493,10 +497,7 @@ def test_names_overriding_repos_in_one_line_when_several_repos_override() -> Non
 
     bullets = section.split("\n\n")[-1].split("\n- ")
     assert len(bullets) == 4
-    assert " ".join(bullets[-1].split()) == (
-        "`demo-api`, `demo-web` override some keys: `hub.json` → `repos[].conventions`;"
-        " `hub worktree` and `hub run` apply them."
-    )
+    assert last_bullet(section) == f"- `demo-api`, `demo-web` override{OVERRIDE_TAIL}"
     assert all(len(line) <= 120 for line in section.splitlines())
     for pattern in ("feature/{issue_lower}/{slug}", "web/{ISSUE}", "web: {summary}"):
         assert pattern not in section, pattern
@@ -508,14 +509,48 @@ def test_names_overriding_repo_in_singular_when_one_repo_overrides() -> None:
         "conventions_section"
     ]
 
-    assert section.splitlines()[-1] == (
-        "- `demo-api` overrides some keys: `hub.json` → `repos[].conventions`;"
-        " `hub worktree` and `hub run` apply them."
-    )
+    assert last_bullet(section) == f"- `demo-api` overrides{OVERRIDE_TAIL}"
     assert "demo-web" not in section
 
 
+def a_document_with_overriding_repos(count: int) -> dict[str, Any]:
+    """The mixed hub plus repos up to ``count`` overriding ones, ``demo-web`` still not one."""
+    document = a_conventions_document()
+    for n in range(2, count + 1):
+        repo = {**a_second_repo(), "dir": f"repo-{n}", "github": f"acme/repo-{n}"}
+        document["repos"].append({**repo, "conventions": {"branch": f"r{n}/{{ISSUE}}"}})
+    return document
+
+
+# AGH-98: at most three names, so the line keeps its size however many repos override.
+@pytest.mark.parametrize(
+    ("count", "names"),
+    [
+        (3, "`demo-api`, `repo-2`, `repo-3` override"),
+        (4, "`demo-api`, `repo-2`, `repo-3` and 1 more repo override"),
+        (6, "`demo-api`, `repo-2`, `repo-3` and 3 more repos override"),
+    ],
+    ids=["three", "one-more", "three-more"],
+)
+def test_names_three_repos_then_counts_rest_when_repos_override(count: int, names: str) -> None:
+    document = a_document_with_overriding_repos(count)
+
+    section = substitution_mapping(HubConfig.model_validate(document))["conventions_section"]
+
+    assert last_bullet(section) == f"- {names}{OVERRIDE_TAIL}"
+    assert "demo-web" not in section
+    assert "repo-4" not in section
+
+
+def last_bullet(section: str) -> str:
+    """The Conventions block's last list item, its wrapped lines joined by single spaces."""
+    return "- " + " ".join(section.rsplit("\n- ", 1)[1].split())
+
+
 EXAMPLE_TITLE = {"type": "feat", "scope": "core", "summary": "add the collector"}
+# A line past 120 characters holds one code span and only what stays glued to it: its indent, a
+# list label or `e.g.` before it, its punctuation after it (AGH-98, plan P-1).
+SINGLE_SPAN_LINE = re.compile(r"^ *(?:- (?:Branch|Commit title|PR title): |e\.g\. )?`[^`]*`[,.]$")
 MARKDOWN_MARKER = re.compile(r"^\s*(?:#{1,6}|[-*+>]|\d+[.)])(?: |$)")
 
 
@@ -542,7 +577,8 @@ def test_starts_no_continuation_line_with_markdown_marker_when_wrapped(title: st
     assert section.count(f"`{title}`") == 2
     assert section.count(f"`{example}`") == 2
     assert [span for span in re.findall("`[^`]*`", section) if "\n" in span] == []
-    assert [line for line in bullets if len(line) > 120] == []
+    # AGH-98: a line passes 120 characters only as one span glued to its label or `e.g.`.
+    assert [line for line in bullets if len(line) > 120 and not SINGLE_SPAN_LINE.match(line)] == []
 
 
 def test_keeps_code_span_on_its_own_line_when_longer_than_width() -> None:
@@ -553,5 +589,25 @@ def test_keeps_code_span_on_its_own_line_when_longer_than_width() -> None:
 
     shape = branch.replace("{prefix}", "jdoe/")
     lines = section.splitlines()
-    assert f"  `{shape}`," in lines
+    # AGH-98: the label stays on the span's line.
+    assert f"- Branch: `{shape}`," in lines
     assert [line for line in lines if line != line.rstrip()] == []
+
+
+# AGH-98: at the longest patterns each project item takes two lines, its label on the shape's line
+# and `e.g.` on the example's, never alone on a line.
+def test_keeps_label_and_example_with_their_spans_when_patterns_longest() -> None:
+    branch = "{prefix}" + "x" * (MAX_PATTERN_CHARS - len("{prefix}/{ISSUE}")) + "/{ISSUE}"
+    title = "{ISSUE}: {summary} " + "w" * (MAX_PATTERN_CHARS - len("{ISSUE}: {summary} "))
+    assert len(branch) == len(title) == MAX_PATTERN_CHARS
+
+    section = section_with(
+        {"branch": branch, "commit_title": title, "pr_title": title}, {"branch": "x/{ISSUE}"}
+    )
+
+    items = section.split("\n\n")[-1].split("\n- ")[:3]
+    assert [len(item.splitlines()) for item in items] == [2, 2, 2]
+    lines = section.splitlines()
+    assert [line for line in lines if line.strip() in ("e.g.", "-", "- Branch:")] == []
+    assert [item.splitlines()[1].startswith("  e.g. `") for item in items] == [True] * 3
+    assert sum(line.startswith("  e.g. `") for line in lines) == 3
