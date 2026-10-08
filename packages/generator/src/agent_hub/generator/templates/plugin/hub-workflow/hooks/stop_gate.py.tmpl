@@ -173,7 +173,8 @@ def scan(path: str, found: set[str]) -> bool:
                 for block in content if isinstance(content, list) else []:
                     if not isinstance(block, dict) or block.get("type") != "tool_use":
                         continue
-                    key, args = WRITE_TOOLS.get(block.get("name")), block.get("input")
+                    name, args = block.get("name"), block.get("input")
+                    key = WRITE_TOOLS.get(name) if isinstance(name, str) else None  # a list is unhashable
                     value = args.get(key) if key and isinstance(args, dict) else None
                     if isinstance(value, str) and os.path.isabs(value):
                         found.add(value)

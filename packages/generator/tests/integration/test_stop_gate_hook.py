@@ -902,14 +902,30 @@ def test_checks_cwd_first_when_fan_out_adds_touched(
 
 @pytest.mark.parametrize(
     "variant",
-    ["outside", "hub", "number", "empty", "relative", "read_tool", "bash_tool", "edit"],
+    [
+        "outside",
+        "hub",
+        "number",
+        "empty",
+        "relative",
+        "read_tool",
+        "bash_tool",
+        "sibling_prefix",
+        "edit",
+        "dotdot",
+        "symlink",
+    ],
 )
 def test_adds_no_candidate_when_fan_out_path_ignored(
     run_hook: RunHook, workspace: Path, tmp_path: Path, *, variant: str
 ) -> None:
     # AC-16 (D2, D9): only an absolute path in a repo checkout, from a file-writing tool, counts.
-    # ``relative`` would land in app from the hook's own cwd; ``edit`` proves the setup can block.
+    # ``relative`` would land in app from the hook's own cwd, ``sibling_prefix`` in app by a bare
+    # string prefix (``app2``). ``edit`` proves the setup can block; ``dotdot`` and ``symlink``
+    # reach app only once resolved.
     target = changed(workspace / "app" / "a.py")
+    (workspace / "app2").mkdir()
+    (tmp_path / "link").symlink_to(workspace / "app")
     touches: dict[str, tuple[str, str, object]] = {
         "outside": ("Edit", "file_path", str(tmp_path / "outside" / "x.py")),
         "hub": ("Edit", "file_path", str(workspace / "demo-hub" / "x.py")),
@@ -918,7 +934,10 @@ def test_adds_no_candidate_when_fan_out_path_ignored(
         "relative": ("Edit", "file_path", os.path.relpath(target, tmp_path / "elsewhere")),
         "read_tool": ("Read", "file_path", target),
         "bash_tool": ("Bash", "command", f"echo y > {shlex.quote(target)}"),
+        "sibling_prefix": ("Edit", "file_path", str(workspace / "app2" / "x.py")),
         "edit": ("Edit", "file_path", target),
+        "dotdot": ("Edit", "file_path", str(workspace / "demo-hub" / ".." / "app" / "a.py")),
+        "symlink": ("Edit", "file_path", str(tmp_path / "link" / "a.py")),
     }
     transcript = write_transcript(tmp_path / "session.jsonl", touches=[touches[variant]])
 
@@ -926,10 +945,32 @@ def test_adds_no_candidate_when_fan_out_path_ignored(
         [{"dir": "app", "check_fast": FAILING_CHECK}], workspace / "demo-hub", transcript=transcript
     )
 
-    if variant == "edit":
+    if variant in {"edit", "dotdot", "symlink"}:
         assert output.get("decision") == "block"
+        assert f"## app (app): `{FAILING_CHECK}` FAILED" in output["reason"]
     else:
         assert output == {}
+
+
+@pytest.mark.parametrize("name", [pytest.param([], id="list"), pytest.param({}, id="dict")])
+def test_reads_next_call_when_fan_out_tool_name_odd(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, name: object
+) -> None:
+    # Fail open: a tool name that is no string (unhashable, too) is skipped, never the gate.
+    target = changed(workspace / "app" / "a.py")
+    calls = [
+        {"type": "tool_use", "name": name, "input": {"file_path": target}},
+        {"type": "tool_use", "name": "Edit", "input": {"file_path": target}},
+    ]
+    lines = [json.dumps({"type": "assistant", "message": {"content": [call]}}) for call in calls]
+    transcript = write_transcript(tmp_path / "session.jsonl", extra_lines=lines)
+
+    output = run_hook(
+        [{"dir": "app", "check_fast": FAILING_CHECK}], workspace / "demo-hub", transcript=transcript
+    )
+
+    assert output.get("decision") == "block"
+    assert f"## app (app): `{FAILING_CHECK}` FAILED" in output["reason"]
 
 
 def run_with_unreadable(
