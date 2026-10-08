@@ -347,7 +347,8 @@ def run_failing_stop_gate(
     return run_hook_file(
         python,
         hub / HOOKS / "stop_gate.py",
-        stdin=json.dumps({"cwd": str(hub), "session_id": session}).encode(),
+        # The hook runs in the hub; the session's cwd is the changed checkout (D10: no transcript).
+        stdin=json.dumps({"cwd": str(hub.parent / "demo-api"), "session_id": session}).encode(),
         cwd=hub,
         env=env,
     )
