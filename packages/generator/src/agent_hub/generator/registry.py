@@ -145,14 +145,24 @@ _BASE_AGENTS: Final = (
 )
 # The base plugin's skills, one folder each (sorted).
 _BASE_SKILLS: Final = (
+    "adr",
     "create-plan",
+    "deliver",
     "feature",
     "fix",
     "handoff",
+    "incident",
     "kickoff",
     "learn",
+    "onboard",
     "recall",
+    "refactor",
+    "release",
     "research",
+    "retro",
+    "review",
+    "triage",
+    "upgrade",
 )
 # The upstream license files the base plugin's NOTICE names (sorted).
 _LICENSE_TEXTS: Final = ("Apache-2.0.txt", "MIT-compound-engineering-plugin.txt")
