@@ -221,6 +221,41 @@ def test_asks_when_bash_writes_protected_path(evaluate: Evaluate) -> None:
     assert read is None
 
 
+TEST_BASH_REASON = (
+    "deleting or sed-editing tests from Bash bypasses the assertion guard; "
+    "use Edit, or confirm this is intended"
+)
+
+
+def test_asks_when_bash_removes_bare_test_name(evaluate: Evaluate) -> None:
+    commands = [
+        "rm test_x.py",
+        "git rm test_x.py",
+        "git rm -f test_x.py",
+        "mv test_x.py old.py",
+        "truncate -s 0 test_x.py",
+        "sed -i 's/a/b/' test_x.py",
+    ]
+
+    verdicts = verdicts_of(evaluate, [bash(command) for command in commands])
+
+    assert verdicts == dict.fromkeys(verdicts, ("ask", TEST_BASH_REASON))
+
+
+def test_allows_bash_when_bare_test_name_only_read(evaluate: Evaluate) -> None:
+    commands = [
+        "cat test_x.py",
+        "pytest test_x.py",
+        "rm mytest_x.py",
+        "rm test_x.pyc",
+        "rm test_data.json",
+    ]
+
+    verdicts = verdicts_of(evaluate, [bash(command) for command in commands])
+
+    assert verdicts == dict.fromkeys(verdicts)
+
+
 # GuardFiles
 
 

@@ -60,7 +60,7 @@ GIT = r"\bgit(\s+-[Cc]\s+\S+)*\s+"
 SKIP_MARKERS = re.compile(
     r"@pytest\.mark\.(skip|skipif|xfail|quarantine)\b|\bpytest\.(skip|xfail)\(|\b(test|it|describe)\.(skip|fixme|todo)\(|\bx(it|describe)\("
 )
-TEST_PATH = r"(?:(\S*/)?(tests?|__tests__)/\S+|\S+\.(test|spec)\.[jt]sx?\b|\S*/test_\w+\.py\b)"
+TEST_PATH = r"(?:(\S*/)?(tests?|__tests__)/\S+|\S+\.(test|spec)\.[jt]sx?\b|(\S*/)?test_\w+\.py\b)"
 BASH_WRITE = re.compile(r">>?|\btee\b|\bsed\s+(-\w*i\w*|--in-place)\b|\b(rm|mv|cp|truncate|ln)\b")
 WORKTREE_SEG = re.compile(r"/\.claude/worktrees/[^/]+(?=/)")
 SETTINGS_FILE = re.compile(r"\.claude/settings[^/]*\.json")
