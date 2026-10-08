@@ -1577,7 +1577,8 @@ def test_suggests_fix_or_feature_when_kickoff_rendered(
 
 
 # AGH-31 (AC-31.6): before step 1, kickoff Reads a probe only the hub guard answers, and says loudly
-# what is off when the answer is not the guard's.
+# what is off when the answer is not the guard's. A guard deny alone proves only that the guard hook
+# answers (a user-level plugin install answers too, E11): the session brief must also be in context.
 GUARD_PROBE = "`<hub>/.claude/guard_probe.p12`"
 UNGUARDED_ITEMS = (
     "the guard (secrets, force and default-branch pushes, AI attribution, test-assertion and"
@@ -1587,7 +1588,7 @@ UNGUARDED_ITEMS = (
     "the stop gate",
     "the pre-compact snapshot",
     "the session-end inbox stub",
-    "attribution off",
+    "the attribution settings (no AI co-author or 'Generated with' lines)",
     "the permission rules and the sandbox",
 )
 
@@ -1623,15 +1624,20 @@ def test_opens_with_guard_probe_when_kickoff_rendered(
         assert text.count("guard_probe") == 1
         assert "cloud-setup" not in text
     for phrase in (
-        "A result whose reason contains `[hub guard]` means the hooks are loaded",
-        "Any other result",
-        "unguarded",
+        "A result whose reason contains `[hub guard]` proves only that the guard hook answers",
+        "Call the session guarded only if the session brief injected by the SessionStart hook is"
+        " also already in your context",
+        "If the brief is missing or the result is anything else",
+        "unguarded or partly so",
         "state that first, loudly",
         *UNGUARDED_ITEMS,
         "start the session in the hub directory itself (not with the hub attached as an extra"
         " directory) and run `/kickoff` again",
     ):
         assert phrase in paragraph, phrase
+    # E11: the deny alone no longer claims that every hook and setting is loaded
+    for overclaim in ("means the hooks are loaded", "attribution off"):
+        assert overclaim not in paragraph, overclaim
     for text in texts:
         lines = text.splitlines()
         assert [line[:3] for line in lines if re.match(r"\d+\. ", line)] == [
