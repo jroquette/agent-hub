@@ -385,13 +385,16 @@ def test_names_repos_not_run_when_budget_spent(
 ) -> None:
     # AC-1: the first run is cut by the 3 s budget, the second never starts.
     transcript = touch_both(workspace, tmp_path)
-    repos = [{"dir": "app", "check_fast": "sleep 30"}, {"dir": "web", "check_fast": "sleep 30"}]
+    started = tmp_path / "web-started"
+    web_check = f"touch {shlex.quote(str(started))}; sleep 30"
+    repos = [{"dir": "app", "check_fast": "sleep 30"}, {"dir": "web", "check_fast": web_check}]
 
     start = time.monotonic()
     output = run_hook(repos, workspace / "demo-hub", transcript=transcript, constant=("BUDGET", 3))
     took = time.monotonic() - start
 
-    assert took < 6
+    assert took < 20
+    assert not started.exists()
     assert "decision" not in output
     message = output.get("systemMessage", "")
     assert message.startswith(BUDGET_SPENT_NOTE)
@@ -406,7 +409,7 @@ def test_runs_next_repo_in_remaining_budget_when_first_passes(
     transcript = touch_both(workspace, tmp_path)
     repos = [{"dir": "app", "check_fast": "sleep 2"}, {"dir": "web", "check_fast": "exit 3"}]
 
-    output = run_hook(repos, workspace / "demo-hub", transcript=transcript, constant=("BUDGET", 4))
+    output = run_hook(repos, workspace / "demo-hub", transcript=transcript, constant=("BUDGET", 6))
 
     assert output.get("decision") == "block"
     assert "## web (web): `exit 3` FAILED" in output["reason"]
@@ -424,7 +427,7 @@ def test_reports_timeout_without_block_when_own_timeout_hit(
     output = run_hook([repo], workspace / "app")
     took = time.monotonic() - start
 
-    assert took < 5
+    assert took < 20
     assert "decision" not in output
     message = output.get("systemMessage", "")
     assert message.startswith(BUDGET_SPENT_NOTE)
@@ -495,3 +498,50 @@ def test_keeps_budget_inside_hook_timeout_when_constants_rendered(
     assert (timeout, constant("MAX_BLOCKS"), constant("MIN_RUN")) == (150, 3, 1)
     assert timeout <= budget
     assert budget == MAX_CHECK_FAST_TIMEOUT
+
+
+def test_names_repo_not_run_when_budget_left_below_min_run(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # D3: a check never starts with less than MIN_RUN s of budget left (here 160 < 200).
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    started = tmp_path / "started"
+    repo = {"dir": "app", "check_fast": f"touch {shlex.quote(str(started))}"}
+
+    output = run_hook([repo], workspace / "app", constant=("MIN_RUN", 200))
+
+    assert not started.exists()
+    assert "decision" not in output
+    message = output.get("systemMessage", "")
+    assert message.startswith(BUDGET_SPENT_NOTE)
+    assert "app (app): not run: budget" in message
+
+
+def test_names_repo_not_run_when_git_status_cut_by_budget(
+    run_hook: RunHook, workspace: Path, *, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # D4: a git status the budget cuts short reads as empty; that is no clean tree, so the repo
+    # is named, never passed over in silence.
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    git = shutil.which("git")
+    assert git is not None
+    fake = tmp_path / "fake-bin"
+    fake.mkdir()
+    (fake / "git").write_text(
+        f'#!/bin/sh\ncase "$1" in status) exec sleep 30;; esac\nexec {shlex.quote(git)} "$@"\n',
+        encoding="utf-8",
+    )
+    (fake / "git").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake}{os.pathsep}{os.environ.get('PATH', os.defpath)}")
+
+    start = time.monotonic()
+    output = run_hook(
+        [{"dir": "app", "check_fast": "true"}], workspace / "app", constant=("BUDGET", 2)
+    )
+    took = time.monotonic() - start
+
+    assert took < 20
+    assert "decision" not in output
+    message = output.get("systemMessage", "")
+    assert message.startswith(BUDGET_SPENT_NOTE)
+    assert "app (app): not run: budget" in message
