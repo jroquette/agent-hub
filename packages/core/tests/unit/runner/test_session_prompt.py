@@ -1,4 +1,7 @@
+import hashlib
 import json
+
+import pytest
 
 from agent_hub.core.hub_config.conventions import DEFAULT_COMMIT_TITLE, title_pattern_problem
 from agent_hub.core.runner.session_prompt import (
@@ -29,8 +32,19 @@ def prompt_for(issue: Issue, *, sensitive: tuple[str, ...] = ()) -> str:
         hub_name="hub",
         sensitive=sensitive,
         fast_gate="make check-fast",
+        full_gate="make check",
         prefix="DEM-",
     )
+
+
+# sha256 of ``prompt_for(an_issue())`` as built on c4d432a, before the full-gate step existed.
+PROMPT_DIGEST_WITH_FAST_GATE = "ca2d2873441aaf341b95b22e3e9882d7139ab8412adbb4b007faa8b5134abd0a"
+
+
+def test_keeps_prompt_bytes_when_fast_gate_configured() -> None:
+    prompt = prompt_for(an_issue())
+
+    assert hashlib.sha256(prompt.encode()).hexdigest() == PROMPT_DIGEST_WITH_FAST_GATE
 
 
 def test_pins_caps_when_module_loaded() -> None:
@@ -170,6 +184,47 @@ def test_adds_gate_word_once_when_fast_and_full_share_it() -> None:
     assert gate_tools(["tox -e fast", "./ci.sh"]) == ("Bash(./ci.sh:*)", "Bash(tox:*)")
 
 
+def gate_prompt(*, fast_gate: str | None, full_gate: str = "make check") -> str:
+    return implementing_prompt(
+        an_issue(),
+        repo="demo-api",
+        branch="jdoe/dem-1",
+        hub=HUB,
+        hub_name="hub",
+        sensitive=(),
+        fast_gate=fast_gate,
+        full_gate=full_gate,
+        prefix="DEM-",
+    )
+
+
+def step_three(prompt: str) -> str:
+    return " ".join(prompt.split("\n3. ", 1)[1].split("\n4. ", 1)[0].split())
+
+
+@pytest.mark.parametrize("fast_gate", [None, "", "   "], ids=["none", "empty", "blank"])
+def test_names_full_gate_when_repo_has_no_fast_gate(fast_gate: str | None) -> None:
+    step = step_three(gate_prompt(fast_gate=fast_gate))
+
+    assert step.startswith(
+        "This repo has no fast gate: run its full gate (`make check`) and the tests you touched"
+        " until green. Run every command in the foreground"
+    )
+    assert "(``)" not in step
+    assert "Run the fast gate" not in step
+
+
+def test_keeps_braces_when_full_gate_holds_them() -> None:
+    step = step_three(gate_prompt(fast_gate=None, full_gate="tox -e {x}"))
+
+    assert "run its full gate (`tox -e {x}`)" in step
+
+
+def test_skips_missing_command_when_gate_tools_built() -> None:
+    assert gate_tools([None, "", "  ", "tox -e full"]) == ("Bash(tox:*)",)
+    assert gate_tools([None]) == ()
+
+
 def test_orders_argv_when_built() -> None:
     argv = implementing_argv(
         prompt="the prompt",
@@ -297,6 +352,7 @@ def configured_prompt(issue: Issue, *, commit_title: str, sensitive: tuple[str, 
         hub_name="hub",
         sensitive=sensitive,
         fast_gate="make check-fast",
+        full_gate="make check",
         prefix="DEM-",
         commit_title=commit_title,
     )

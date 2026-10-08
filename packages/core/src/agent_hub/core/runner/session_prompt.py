@@ -9,6 +9,8 @@ by ``ISSUE_ID_PATTERN`` (both adapters refuse any other), so the issue's share o
 bounded whatever the tracker holds; with the hub's own paths and commands, the prompt stays
 under Linux's limit for one argument (``MAX_ARGUMENT_BYTES``) (E21).
 
+Step 3 names the repo's fast gate, or its full gate (``check``) when the repo has no fast gate
+(``check_fast`` absent, empty or blank); with a fast gate the prompt is the same as before.
 Step 4 states the repo's effective ``commit_title`` with one example; with the default pattern
 it keeps the Conventional Commits wording it has always had.
 """
@@ -76,7 +78,7 @@ _STEPS = """You are implementing issue {issue} in this worktree ({repo}, branch 
    `BLOCKED: <reason>` without editing anything.
 2. TDD: write the failing test first when behaviour changes; then the smallest change that makes it
    pass. Never weaken or delete an existing assertion.
-3. Run the fast gate (`{fast_gate}`) and the tests you touched until green. Run every command in
+3. {gate_step} Run every command in
    the foreground (never in the background) and don't search outside this worktree.
 4. Commit with {commit_shape}, authored by the configured git
    user. No AI co-author trailer, no "Generated with", no 🤖. Do NOT push.
@@ -96,15 +98,17 @@ def implementing_prompt(
     hub: str,
     hub_name: str,
     sensitive: Sequence[str],
-    fast_gate: str,
+    fast_gate: str | None,
+    full_gate: str,
     prefix: str,
     commit_title: str = DEFAULT_COMMIT_TITLE,
 ) -> str:
     """The implementing session's prompt: the steps, then the issue in a fenced block.
 
     ``hub`` is the hub's path and ``hub_name`` its folder name; ``sensitive`` lists the guard's
-    ``ask_before_edit`` paths; ``fast_gate`` is the repo's ``check_fast``; ``prefix`` the issue
-    prefix (``DEM-``); ``commit_title`` the repo's effective commit title pattern.
+    ``ask_before_edit`` paths; ``fast_gate`` is the repo's ``check_fast`` (``None``, empty or
+    blank: the repo has none, and step 3 names ``full_gate``, its ``check``, instead); ``prefix``
+    the issue prefix (``DEM-``); ``commit_title`` the repo's effective commit title pattern.
     """
     guarded = (
         f"touches a file matching {', '.join(sensitive)} (needs an approved plan) or "
@@ -118,7 +122,7 @@ def implementing_prompt(
         hub=hub,
         hub_name=hub_name,
         sensitive=guarded,
-        fast_gate=fast_gate,
+        gate_step=_gate_step(fast_gate, full_gate),
         commit_shape=_commit_shape(commit_title, issue_id=issue.id, prefix=prefix),
         verdict=_VERDICT_SHAPE,
     )
@@ -132,6 +136,16 @@ def implementing_prompt(
     return f"{steps}\n{fence}text\n{body}\n{fence}\n\n{ISSUE_END}\n"
 
 
+def _gate_step(fast_gate: str | None, full_gate: str) -> str:
+    # A format value, never a format string: braces in a command stay as written.
+    if fast_gate and fast_gate.strip():
+        return f"Run the fast gate (`{fast_gate}`) and the tests you touched until green."
+    return (
+        f"This repo has no fast gate: run its full gate (`{full_gate}`) and the tests you"
+        " touched until green."
+    )
+
+
 def _commit_shape(commit_title: str, *, issue_id: str, prefix: str) -> str:
     # A format value, never a format string: braces in the pattern stay as written.
     if commit_title == DEFAULT_COMMIT_TITLE:
@@ -140,9 +154,12 @@ def _commit_shape(commit_title: str, *, issue_id: str, prefix: str) -> str:
     return f"the title `{commit_title}` (e.g. `{example}`)"
 
 
-def gate_tools(commands: Iterable[str]) -> tuple[str, ...]:
-    """``Bash(<first word>:*)`` of each gate command, once each, unless already allowed."""
-    words = {command.split()[0] for command in commands if command.strip()}
+def gate_tools(commands: Iterable[str | None]) -> tuple[str, ...]:
+    """``Bash(<first word>:*)`` of each gate command, once each, unless already allowed.
+
+    A ``None``, empty or blank command (a repo with no fast gate) adds nothing.
+    """
+    words = {command.split()[0] for command in commands if command and command.strip()}
     tools = (f"Bash({word}:*)" for word in sorted(words))
     return tuple(tool for tool in tools if tool not in IMPLEMENTING_TOOLS)
 

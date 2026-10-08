@@ -160,6 +160,7 @@ class RunChildren:
             hub_name=self.hub.name,
             sensitive=self.config.guard.ask_before_edit,
             fast_gate=repo.check_fast,
+            full_gate=repo.check,
             prefix=f"{self.team}-",
             commit_title=self.conventions.commit_title,
         )
