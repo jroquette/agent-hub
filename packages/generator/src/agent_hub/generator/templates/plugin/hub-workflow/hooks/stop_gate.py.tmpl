@@ -3,8 +3,9 @@
 `check_fast` command and block completion while it fails (feedback goes back to the agent). Repos with an
 empty `check_fast` are skipped. Releases after 3 consecutive blocks to avoid loops. When checks pass and
 files changed, remind about /handoff (never blocks). Each check runs in its own process group, killed when
-the run ends (on a timeout and after a normal exit), so no child of a check outlives the gate; its output goes
-to a temp file, so a background child holding it open never holds the gate up."""
+the run ends (on a timeout, after a normal exit, and when the hook itself gets SIGTERM or SIGHUP), so no child
+of a check outlives the gate; its output goes to a temp file, so a background child holding it open never
+holds the gate up."""
 
 from __future__ import annotations
 
@@ -69,6 +70,7 @@ def run_check(cmd: str, top: Path, limit: float) -> tuple[str, str]:
     except OSError as e:
         return "failed", f"check_fast could not start: {e}"
     with out:
+        exit_on_cancel()
         try:
             proc = subprocess.Popen(["bash", "-c", cmd], cwd=top, stdin=subprocess.DEVNULL, stdout=out,
                                     stderr=subprocess.STDOUT, env=env, start_new_session=True)
@@ -84,6 +86,20 @@ def run_check(cmd: str, top: Path, limit: float) -> tuple[str, str]:
         if code is None:
             return "killed", ""
         return ("passed" if code == 0 else "failed"), output_tail(out)
+
+
+def cancelled(signum: int, frame: object) -> None:
+    raise SystemExit(0)  # unwinds through run_check's finally, past run_hook's `except Exception`: exit 0
+
+
+def exit_on_cancel() -> None:
+    """Make SIGTERM and SIGHUP (Claude Code cancelling the hook, or its timeout) exit cleanly, so the
+    check's process group, in a session of its own, is killed on the way out."""
+    for name in ("SIGTERM", "SIGHUP"):
+        try:
+            signal.signal(getattr(signal, name), cancelled)
+        except (AttributeError, OSError, ValueError):  # no such signal here, or not the main thread
+            pass
 
 
 def stop(proc: subprocess.Popen) -> None:
