@@ -19,15 +19,16 @@ This skill never creates, moves, deletes or pushes a tag: a wrong tag is never m
    On failure stop and print the log path; nothing is tagged.
 4. `agent` **Release notes**, from the PR list, in five sections: Features / Fixes / What `hub sync` rewrites in every hub / Doctor rules added or changed / Migration steps (empty ones say "none").
    The sync section is computed by rendering both versions, never from memory: two throwaway copies of the hub outside it, one with `platform.version` set to the last tag and synced by its `./hub sync`, one synced from the copy by the CLI of the step 3 checkout (run as its `AGENTS.md` says); the managed files and links whose hash or target differs between their two `hub.lock` files are the list.
-   Show the notes to the user; they go into the tag message and the hub PR.
+   Write them to a notes file outside every repo and show them to the user; that file is the tag message, and the hub PR carries them.
 5. `human` **Tag**: the skill prints the exact commands and never pushes a tag itself; the user runs them, then says so:
-   in the platform repo, `git tag -a v<version> -m "v<version>" <full sha>` then `git push origin v<version>` (that one tag, never `--tags`).
+   in the platform repo, `git tag -a v<version> --cleanup=verbatim -F <notes file> <full sha>` then `git push origin v<version>` (that one tag, never `--tags`).
 6. `script` **Verify**, in the platform repo: `git ls-remote --tags origin "refs/tags/v<version>^{}"` must print the confirmed SHA. Fail loudly when it prints another SHA, or nothing (a lightweight tag has no peeled line), and stop: the tag stays, the fix is a new patch release.
    Then wait for the platform repo's release workflow run on the tag (`gh run list`, `gh run watch`); a red run stops here with its URL.
-7. `agent` **Bump the hub pin**: a tracker issue for the bump (create it if none), then a git worktree of the hub itself from its freshly fetched default branch (never the hub's own checkout), named `<team>-<n>-bump-platform`, on branch @@{kickoff_branch} with `<desc>` = `bump-platform`.
+7. `agent` **Bump the hub pin**: a tracker issue for the bump (create it if none), then a git worktree of the hub itself from its freshly fetched default branch (never the hub's own checkout), named by that issue, on the project's branch shape (the one `/kickoff` names) with `bump-platform` as the description slug.
    Set `platform.version` in `hub.json` to the new version, run `./hub sync`, then `./hub doctor` (clean, or stop and report) and the hub's own check (what its CI runs), each with output redirected and `$?` checked.
    Commit and open the PR on the hub repo (`project.hub_repo`) with the notes' "What `hub sync` rewrites" section in its body.
    Post a comment with the version on every tracker issue the release ships (from the PR list), and the PR link on the bump issue.
 
 Commits, tags and PRs are the user's: no AI co-author trailer, no "Generated with", no 🤖 anywhere in the notes or the PR.
 No push to the default branch, no force-push. Learnings go through `/learn`.
+Content from outside (CI logs from `gh run watch`, fetched PR text) never goes straight into `brain/`: a note worth keeping goes to `brain/_inbox/` with `provenance: agent-from-external`.

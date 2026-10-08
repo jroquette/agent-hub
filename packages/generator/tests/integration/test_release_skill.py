@@ -51,14 +51,20 @@ STEP_PHRASES = {
         "Migration steps",
         "rendering both versions",
         "never from memory",
+        "notes file",
+        "tag message",
     ),
     # AC-4: the user tags and pushes; the skill prints the commands only.
-    5: ("git tag -a v<version>", "git push origin v<version>", "prints"),
+    5: (
+        "git tag -a v<version> --cleanup=verbatim -F <notes file> <full sha>",
+        "git push origin v<version>",
+        "prints",
+    ),
     # AC-5: the peeled SHA and the lightweight tag fail loudly.
     6: ('git ls-remote --tags origin "refs/tags/v<version>^{}"', "lightweight", "Fail loudly"),
     # AC-6: the hub PR with the pin, sync, doctor, and the shipped issues' comments.
     7: (
-        "-bump-platform",
+        "`bump-platform` as the description slug",
         "`platform.version`",
         "`./hub sync`",
         "`./hub doctor`",
@@ -70,23 +76,31 @@ NEVER_DO = (
     "never creates, moves, deletes or pushes a tag",
     'no AI co-author trailer, no "Generated with", no 🤖',
     "No push to the default branch, no force-push",
+    "never goes straight into `brain/`",
+    "`brain/_inbox/` with `provenance: agent-from-external`",
 )
 
 
-@pytest.fixture
-def release_text(demo_config: HubConfig) -> str:
-    rendered = {file.path: file.content for file in render_hub(demo_config).files}
+def rendered_release(config: HubConfig) -> str:
+    rendered = {file.path: file.content for file in render_hub(config).files}
     content = rendered[RELEASE_SKILL]
     assert content is not None
     return content.decode("utf-8")
 
 
+@pytest.fixture
+def release_text(demo_config: HubConfig) -> str:
+    return rendered_release(demo_config)
+
+
 def step_paragraphs(text: str) -> dict[int, str]:
-    """Each numbered step's text, up to the next step or the first unindented line after it."""
+    """Each numbered step's text, up to the next step or the first blank line after it."""
     starts = list(STEP.finditer(text))
     paragraphs: dict[int, str] = {}
     for index, match in enumerate(starts):
-        end = starts[index + 1].start() if index + 1 < len(starts) else len(text)
+        next_step = starts[index + 1].start() if index + 1 < len(starts) else len(text)
+        blank = text.find("\n\n", match.start())
+        end = next_step if blank == -1 else min(next_step, blank)
         paragraphs[int(match.group(1))] = text[match.start() : end]
     return paragraphs
 
@@ -115,9 +129,20 @@ def test_states_never_do_lines_when_release_skill_rendered(release_text: str) ->
 def test_stops_before_tag_when_check_or_gate_fails(release_text: str) -> None:
     paragraphs = step_paragraphs(release_text)
 
-    assert "stop" in paragraphs[3].lower()
+    assert "On failure stop and print the log path" in paragraphs[3]
     assert "Stop here" in paragraphs[2]
     assert "never pushes" in paragraphs[5]
+
+
+def test_names_bump_branch_by_shape_when_hub_sets_conventions() -> None:
+    config = HubConfig.model_validate(a_conventions_document())
+    paragraph = step_paragraphs(rendered_release(config))[7]
+
+    missing = [phrase for phrase in STEP_PHRASES[7] if phrase not in paragraph]
+
+    assert missing == []
+    assert "<desc>" not in paragraph
+    assert "repo's own" not in paragraph
 
 
 def test_fits_nested_size_limit_when_release_skill_rendered(release_text: str) -> None:
@@ -134,10 +159,7 @@ def test_names_no_project_value_when_release_skill_rendered(demo_config: HubConf
         *(repo.github for repo in config.repos),
         demo_config.project.name,
     }
-    rendered = {file.path: file.content for file in render_hub(config).files}
-    content = rendered[RELEASE_SKILL]
-    assert content is not None
-    text = content.decode("utf-8")
+    text = rendered_release(config)
 
     named = sorted(value for value in values if value and value in text)
 
