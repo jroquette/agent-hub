@@ -2,13 +2,16 @@
 """Stop: if this session changed code in a repo checkout/worktree listed in hub.json, run that repo's
 `check_fast` command and block completion while it fails (feedback goes back to the agent). Repos with an
 empty `check_fast` are skipped. Releases after 3 consecutive blocks to avoid loops. When checks pass and
-files changed, remind about /handoff (never blocks)."""
+files changed, remind about /handoff (never blocks). Each check runs in its own process group, killed when
+the run ends (on a timeout and after a normal exit), so no child of a check outlives the gate; its output goes
+to a temp file, so a background child holding it open never holds the gate up."""
 
 from __future__ import annotations
 
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -27,6 +30,8 @@ CODE_EXT = {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".rs", "
 CODE_NAMES = {"Makefile", "package.json", "pyproject.toml", "go.mod", "Cargo.toml", "Dockerfile"}
 MAX_BLOCKS = 3
 TIMEOUT = 150
+KILL_WAIT = 1
+OUTPUT_TAIL = 3000
 
 
 def session_start_time(data: dict) -> float:
@@ -54,16 +59,54 @@ def candidates(cfg: Config, cwd: Path) -> list[tuple[str, Path]]:
     return inside[-1:] if inside else res
 
 
-def run_check(cmd: str, top: Path) -> tuple[bool, str]:
+def run_check(cmd: str, top: Path, limit: float) -> tuple[str, str]:
+    """(status, output tail) of one check: "passed", "failed" (non-zero exit, could not start) or "killed"
+    (still running after `limit` s). The output goes to an unnamed temp file and the gate waits for bash
+    alone; then it kills the check's process group, whichever way the run ended."""
+    env = dict(os.environ, NO_COLOR="1", FORCE_COLOR="0", CLICOLOR="0")
     try:
-        env = dict(os.environ, NO_COLOR="1", FORCE_COLOR="0", CLICOLOR="0")
-        p = subprocess.run(["bash", "-c", cmd], cwd=top, capture_output=True, text=True, timeout=TIMEOUT, env=env)
-        out = re.sub(r"\x1b\[[0-9;]*m", "", p.stdout + p.stderr)
-        return p.returncode == 0, out[-3000:]
-    except subprocess.TimeoutExpired:
-        return False, f"check_fast timed out (>{TIMEOUT} s)"
+        out = tempfile.TemporaryFile()
     except OSError as e:
-        return False, f"check_fast could not start: {e}"
+        return "failed", f"check_fast could not start: {e}"
+    with out:
+        try:
+            proc = subprocess.Popen(["bash", "-c", cmd], cwd=top, stdin=subprocess.DEVNULL, stdout=out,
+                                    stderr=subprocess.STDOUT, env=env, start_new_session=True)
+        except OSError as e:
+            return "failed", f"check_fast could not start: {e}"
+        code = None
+        try:
+            code = proc.wait(timeout=limit)
+        except subprocess.TimeoutExpired:
+            pass
+        finally:  # an exception kills the group too
+            stop(proc)
+        if code is None:
+            return "killed", ""
+        return ("passed" if code == 0 else "failed"), output_tail(out)
+
+
+def stop(proc: subprocess.Popen) -> None:
+    """Kill the check's whole process group: a leader exiting does not end its background children."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except OSError:  # ProcessLookupError: the group is already empty
+        pass
+    try:
+        proc.wait(timeout=KILL_WAIT)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
+def output_tail(out) -> str:
+    """The last OUTPUT_TAIL characters of the check's output, ANSI colors removed."""
+    try:
+        size = out.seek(0, os.SEEK_END)
+        out.seek(max(0, size - 4 * OUTPUT_TAIL))
+        text = out.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)[-OUTPUT_TAIL:]
 
 
 def main() -> None:
@@ -93,8 +136,10 @@ def main() -> None:
         if not cmd:
             skipped.append(repo)
             continue
-        ok, out = run_check(cmd, top)
-        if not ok:
+        status, out = run_check(cmd, top, TIMEOUT)
+        if status == "killed":
+            out = f"check_fast timed out (>{TIMEOUT} s)"
+        if status != "passed":
             failures.append(f"## {repo} ({top.relative_to(cfg.workspace)}): `{cmd}` FAILED\nchanged: {', '.join(files[:8])}\n{out}")
     if failures and blocks < MAX_BLOCKS:
         try:

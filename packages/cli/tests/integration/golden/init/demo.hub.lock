@@ -264,7 +264,7 @@
     "plugin/hub-workflow/hooks/stop_gate.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "4e859f915101c88e20efc95e7325d299498a865c010cf13ed66f203cb13aa3fd"
+      "sha256": "582210ef9fc2ef88c9284d88052fa8ae76b9ac2180656d419b3a5bac9e2ed37b"
     },
     "plugin/hub-workflow/skills/create-plan/SKILL.md": {
       "executable": false,
