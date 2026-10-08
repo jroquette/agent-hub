@@ -1517,6 +1517,64 @@ def test_checks_git_identity_when_kickoff_skill_rendered(
     assert "cloud-setup" not in text
 
 
+# AGH-58 (AC-58.8, AC-58.9): /feature and /kickoff send a bug or a small bounded task within
+# /fix's limits to /fix; the spike definition and the *Spike* line stay as they were.
+FIX_LIMIT_PHRASES = (
+    "one repo",
+    "at most 5 changed non-test files",
+    "no new contract",
+    "`guard.ask_before_edit`",
+)
+FEATURE_SPIKE_DEFINITION = "*spike* (throwaway learning, no merge)"
+FEATURE_SPIKE_LINE = (
+    "*Spike*: skip 2, 4 and the plan gate; timebox; `researcher` findings in"
+    " `brain/features/<slug>/research.md`; no merge."
+)
+
+
+def test_routes_small_work_to_fix_when_feature_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    lines = skill_text(demo_render, "feature").splitlines()
+    sizes = [line for line in lines if line.startswith("1. **Size it**")]
+
+    assert len(sizes) == 1
+    [size] = sizes
+    named = [sentence for sentence in re.split(r"(?<=\.) ", size) if "/fix" in sentence]
+    assert len(named) == 1, size
+    for phrase in ("bug", "small bounded task", *FIX_LIMIT_PHRASES):
+        assert phrase in named[0], phrase
+    assert "spike" not in named[0].lower()
+    assert "create" in named[0], named[0]
+    assert "tracker issue first if there is none" in named[0], named[0]
+    assert FEATURE_SPIKE_DEFINITION in size
+    assert FEATURE_SPIKE_LINE in lines
+    assert [line for line in lines if "/fix" in line] == [size]
+
+
+def test_suggests_fix_or_feature_when_kickoff_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    text = skill_text(demo_render, "kickoff")
+    lines = text.splitlines()
+    steps = [line for line in lines if line.startswith("5. ")]
+
+    assert len(steps) == 1
+    [step] = steps
+    for phrase in (
+        "Propose the next unfinished item",
+        "ask before starting",
+        "suggest `/fix` for a bug or a small bounded task",
+        *FIX_LIMIT_PHRASES,
+        "`/feature` otherwise",
+    ):
+        assert phrase in step, phrase
+    assert "create" in step, step
+    assert "tracker issue first if there is none" in step, step
+    assert [line for line in lines if "/fix" in line] == [step]
+    assert "Never start editing during /kickoff" in text
+
+
 def test_names_transcript_script_when_recall_rendered(
     demo_render: dict[str, RenderedFile],
 ) -> None:
