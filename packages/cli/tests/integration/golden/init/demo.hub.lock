@@ -316,7 +316,7 @@
     "plugin/hub-workflow/skills/adr/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "17aa09bf794e9863cdd92bf9c26abc93d60ff6641cda36bf440cead8b71d3d77"
+      "sha256": "15c0ba7b74a82b86249b5d4006702680cbb803759db7e453dcedc6a82e3451d9"
     },
     "plugin/hub-workflow/skills/create-plan/SKILL.md": {
       "executable": false,
