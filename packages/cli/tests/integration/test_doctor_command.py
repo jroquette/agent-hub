@@ -609,9 +609,14 @@ def test_finds_no_stale_reference_when_fresh_hub_sets_conventions(
     assert created.exit_code == 0, created.stderr
     agents = (root / "AGENTS.md").read_text(encoding="utf-8")
     assert all(
-        f"`{span}`" in agents
-        for span in ("work/{issue_lower}/{slug}", "work/dem-7/collector", "release/{ISSUE}")
+        f"`{span}`" in agents for span in ("work/{issue_lower}/{slug}", "work/dem-7/collector")
     )
+    # AGH-98: demo-api's own branch is named by the repo, its pattern stays in hub.json.
+    assert (
+        "- `demo-api` overrides some keys: `hub.json` → `repos[].conventions`;"
+        " `hub worktree` and `hub run` apply them."
+    ) in agents
+    assert "release/{ISSUE}" not in agents
     assert "- Commit title: `wip/{summary}`, e.g. `wip/add the collector`." in agents
     assert "- PR title: `wip/{summary}`, e.g. `wip/add the collector`." in agents
 

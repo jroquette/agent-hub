@@ -378,7 +378,8 @@ MIXED_CONVENTIONS_SECTION = (
     " e.g. `DEM-7: feat(core): add the collector`.\n"
     "- PR title: `{ISSUE}: {type}({scope}): {summary}`,"
     " e.g. `DEM-7: feat(core): add the collector`.\n"
-    "- `demo-api` overrides branch `feature/{issue_lower}/{slug}`."
+    "- `demo-api` overrides some keys: `hub.json` → `repos[].conventions`;"
+    " `hub worktree` and `hub run` apply them."
 )
 
 
@@ -424,7 +425,8 @@ def section_with(project: dict[str, str] | None, repo: dict[str, str]) -> str:
     return substitution_mapping(HubConfig.model_validate(document))["conventions_section"]
 
 
-# E14: a repo's own commit_title also titles its PRs when no layer sets pr_title.
+# The project's effective PR title line stays when a repo overrides commit_title; the repo's own
+# title (and E14's PR title that follows it) stays in hub.json (AGH-98).
 @pytest.mark.parametrize(
     ("project", "pr_line"),
     [
@@ -445,7 +447,7 @@ def section_with(project: dict[str, str] | None, repo: dict[str, str]) -> str:
     ],
     ids=["project-commit-title", "project-unset", "project-branch-only"],
 )
-def test_says_pr_title_follows_repo_commit_title_when_no_layer_sets_pr_title(
+def test_shows_project_pr_title_when_repo_overrides_commit_title(
     project: dict[str, str] | None, pr_line: str
 ) -> None:
     section = section_with(project, {"commit_title": "[{ISSUE}] {type}: {summary}"})
@@ -453,9 +455,10 @@ def test_says_pr_title_follows_repo_commit_title_when_no_layer_sets_pr_title(
     lines = section.splitlines()
     assert pr_line in lines
     assert lines[-1] == (
-        "- `demo-api` overrides commit title `[{ISSUE}] {type}: {summary}`"
-        " (the PR title follows it)."
+        "- `demo-api` overrides some keys: `hub.json` → `repos[].conventions`;"
+        " `hub worktree` and `hub run` apply them."
     )
+    assert "[{ISSUE}] {type}: {summary}" not in section
 
 
 def test_omits_follow_note_when_pr_title_explicit() -> None:
@@ -464,8 +467,10 @@ def test_omits_follow_note_when_pr_title_explicit() -> None:
     )
 
     assert section.splitlines()[-1] == (
-        "- `demo-api` overrides commit title `[{ISSUE}] {type}: {summary}`."
+        "- `demo-api` overrides some keys: `hub.json` → `repos[].conventions`;"
+        " `hub worktree` and `hub run` apply them."
     )
+    assert "follows" not in section
 
 
 def test_lists_no_override_line_when_repo_conventions_empty() -> None:
