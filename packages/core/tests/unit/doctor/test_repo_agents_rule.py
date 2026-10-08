@@ -186,15 +186,18 @@ def test_reports_checkout_on_first_repo_reader_when_repo_agents_selected(
     assert at_checkout == [(reporter, Severity.INFO)]
 
 
-@pytest.mark.parametrize(
-    ("check", "shown"),
-    [
-        ("x" * 100, "x" * 79 + "…"),
-        ("make check x", "make check\\u2028x"),
-        ("make check\x85x", "make check\\x85x"),
-    ],
-    ids=["long", "u2028", "nel"],
-)
+# A command from hub.json and how the fix shows it: escaped first, then cut to 80 characters
+# by whole escape sequences (plan E6). In ``escape_at_cut`` the escape crosses the cut, so it
+# is dropped whole; cutting first would keep the raw U+2028 and then escape it.
+ECHO_CASES = [
+    pytest.param("x" * 100, "x" * 79 + "…", id="long"),
+    pytest.param("make check\u2028x", "make check\\u2028x", id="u2028"),
+    pytest.param("make check\x85x", "make check\\x85x", id="nel"),
+    pytest.param("x" * 78 + "\u2028", "x" * 78 + "…", id="escape_at_cut"),
+]
+
+
+@pytest.mark.parametrize(("check", "shown"), ECHO_CASES)
 def test_cuts_echo_when_repo_agents_check_long_or_not_printable(
     snapshot_of: SnapshotFactory, check: str, shown: str
 ) -> None:
@@ -208,6 +211,26 @@ def test_cuts_echo_when_repo_agents_check_long_or_not_printable(
     assert len(fixes) == 1
     assert fixes[0].endswith("check: " + shown)
     assert fixes[0].splitlines() == [fixes[0]]
+    selection = Selection(rules=(REPOS_AGENTS,), notes=(), severities={})
+    messages = [finding.message for finding in run_rules(selection, snapshot)]
+    assert not any(message.startswith("rule crashed") for message in messages)
+
+
+@pytest.mark.parametrize(("check_fast", "shown"), ECHO_CASES)
+def test_cuts_echo_when_repo_agents_check_fast_long_or_not_printable(
+    snapshot_of: SnapshotFactory, check_fast: str, shown: str
+) -> None:
+    snapshot = snapshot_of(
+        config=a_config(("api", check_fast, "make check")),
+        repos={"api": {"README.md": b"# api\n"}},
+    )
+
+    fixes = [finding.fix for finding in found(snapshot)]
+
+    assert fixes == [
+        "copy docs/app-repo-AGENTS.md to ../api/AGENTS.md and fill it in;"
+        f" check_fast: {shown}, check: make check"
+    ]
     selection = Selection(rules=(REPOS_AGENTS,), notes=(), severities={})
     messages = [finding.message for finding in run_rules(selection, snapshot)]
     assert not any(message.startswith("rule crashed") for message in messages)
