@@ -399,6 +399,32 @@ class TestDryRun:
         assert len(lines) == 8
         assert run_workspace.calls("claude") == []
 
+    def test_prints_full_gate_step_when_repo_has_no_fast_gate(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        document = json.loads((workspace.hub / "hub.json").read_text())
+        (repo,) = [entry for entry in document["repos"] if entry["dir"] == "demo-api"]
+        del repo["check_fast"]
+        (workspace.hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+        inject(monkeypatch, run_tracker)
+        worktree = os.path.realpath(workspace.ws / "demo-api") + "/.claude/worktrees/dem-1"
+
+        result = run_command(workspace.hub, "run", "DEM-1", "--repo", "demo-api")
+
+        lines = dry_lines(result)
+        assert lines[0] == "would run: ./hub worktree dem-1 --only demo-api"
+        claude = lines[1]
+        assert "This repo has no fast gate" in claude
+        assert "run its full gate (`make check`)" in claude
+        assert "(``)" not in claude
+        assert lines[2] == f"would run: bash -c 'make check'   (cwd {worktree})"
+
     def test_writes_nothing_when_dry_run(
         self,
         run_workspace: Workspace,
