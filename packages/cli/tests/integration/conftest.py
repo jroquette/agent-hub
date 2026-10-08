@@ -244,7 +244,8 @@ type CheckoutFactory = Callable[[str], Path]
 
 @pytest.fixture
 def demo_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CheckoutFactory:
-    """``demo_checkout(dir)``: a synthetic git repo at ``tmp_path / dir`` with a committed README.
+    """``demo_checkout(dir)``: a synthetic git repo at ``tmp_path / dir`` with a committed README
+    and ``AGENTS.md``.
 
     Git reads the test's own ``HOME`` and config only, here and in the run (no system or global
     config, no ``XDG_CONFIG_HOME``), and never looks for a repository above ``tmp_path``.
@@ -268,6 +269,7 @@ def demo_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CheckoutFa
         # An empty folder may already stand there (plan E3a).
         root.mkdir(exist_ok=True)
         (root / "README.md").write_bytes(f"# {name}\n".encode())
+        (root / "AGENTS.md").write_bytes(f"# {name}\n".encode())
         author = ["-c", "user.name=Jane Doe", "-c", "user.email=jane@example.com"]
         for args in (
             ["-c", "init.defaultBranch=main", "init", "-q"],
