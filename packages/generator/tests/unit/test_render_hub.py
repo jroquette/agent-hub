@@ -96,14 +96,24 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/hooks/session_start.py",
     "plugin/hub-workflow/hooks/stdlib_reader.py",
     "plugin/hub-workflow/hooks/stop_gate.py",
+    "plugin/hub-workflow/skills/adr/SKILL.md",
     "plugin/hub-workflow/skills/create-plan/SKILL.md",
+    "plugin/hub-workflow/skills/deliver/SKILL.md",
     "plugin/hub-workflow/skills/feature/SKILL.md",
     "plugin/hub-workflow/skills/fix/SKILL.md",
     "plugin/hub-workflow/skills/handoff/SKILL.md",
+    "plugin/hub-workflow/skills/incident/SKILL.md",
     "plugin/hub-workflow/skills/kickoff/SKILL.md",
     "plugin/hub-workflow/skills/learn/SKILL.md",
+    "plugin/hub-workflow/skills/onboard/SKILL.md",
     "plugin/hub-workflow/skills/recall/SKILL.md",
+    "plugin/hub-workflow/skills/refactor/SKILL.md",
+    "plugin/hub-workflow/skills/release/SKILL.md",
     "plugin/hub-workflow/skills/research/SKILL.md",
+    "plugin/hub-workflow/skills/retro/SKILL.md",
+    "plugin/hub-workflow/skills/review/SKILL.md",
+    "plugin/hub-workflow/skills/triage/SKILL.md",
+    "plugin/hub-workflow/skills/upgrade/SKILL.md",
     "scripts/cloud-setup.sh",
     "scripts/mine_transcripts.py",
     "scripts/recall_transcripts.py",
@@ -120,7 +130,26 @@ BASE_AGENTS = (
     "researcher",
     "spec-reviewer",
 )
-BASE_SKILLS = ("create-plan", "feature", "fix", "handoff", "kickoff", "learn", "recall", "research")
+BASE_SKILLS = (
+    "adr",
+    "create-plan",
+    "deliver",
+    "feature",
+    "fix",
+    "handoff",
+    "incident",
+    "kickoff",
+    "learn",
+    "onboard",
+    "recall",
+    "refactor",
+    "release",
+    "research",
+    "retro",
+    "review",
+    "triage",
+    "upgrade",
+)
 
 GENERATOR_PACKAGE = "agent_hub.generator"
 # A synthetic package of test templates, importable only while a test's fixture puts it on sys.path.
@@ -225,12 +254,13 @@ def test_returns_rendered_hub_when_demo_rendered(demo_config: HubConfig) -> None
     assert isinstance(rendered, RenderedHub)
     assert isinstance(rendered.links, tuple)
     assert all(type(link) is RenderedLink for link in rendered.links)
-    # AC-4.6: the 14 links of spec "The rendered set", plus AGH-58's /fix: 15, sorted by path.
+    # AC-4.6: the 14 links of spec "The rendered set", plus AGH-58's /fix and the ten AGH-99
+    # skills: 25, sorted by path.
     assert [link.path for link in rendered.links] == [
         *(f".claude/agents/{name}.md" for name in BASE_AGENTS),
         *(f".claude/skills/{name}" for name in BASE_SKILLS),
     ]
-    assert len(rendered.links) == 15
+    assert len(rendered.links) == 25
     assert all(
         (link.kind, link.ownership) == (Kind.GENERIC, Ownership.MANAGED) for link in rendered.links
     )
@@ -872,7 +902,7 @@ def test_raises_value_error_when_custom_pair_not_seeded_and_managed_built(
 
 def test_links_project_entries_when_extensions_name_them(demo_config: HubConfig) -> None:
     extensions = ExtensionInputs(
-        project_json={}, agents=("planner.md", "reviewer.md"), skills=("review",)
+        project_json={}, agents=("planner.md", "reviewer.md"), skills=("demo-skill",)
     )
     plain = render_hub(demo_config)
 
@@ -882,10 +912,10 @@ def test_links_project_entries_when_extensions_name_them(demo_config: HubConfig)
     assert [link.path for link in rendered.links] == sorted(links)
     assert set(links) - {link.path for link in plain.links} == {
         ".claude/agents/reviewer.md",
-        ".claude/skills/review",
+        ".claude/skills/demo-skill",
     }
     assert links[".claude/agents/reviewer.md"].target == "../../plugin/demo/agents/reviewer.md"
-    assert links[".claude/skills/review"].target == "../../plugin/demo/skills/review"
+    assert links[".claude/skills/demo-skill"].target == "../../plugin/demo/skills/demo-skill"
     # A name the base plugin also has keeps the base link (the planner reports the clash).
     assert links[".claude/agents/planner.md"].target == (
         "../../plugin/hub-workflow/agents/planner.md"
@@ -1373,6 +1403,27 @@ def test_names_hub_commands_when_workflow_skill_rendered(
     assert set(named) <= set(targets), named
 
 
+# AGH-99: `/kickoff` and `/feature` route each kind of work to its workflow skill, and every
+# skill they name ships in the rendered base plugin.
+SKILL_ROUTES = {
+    "kickoff": ("fix", "feature", "triage", "deliver", "review"),
+    "feature": ("fix", "incident", "refactor", "upgrade", "adr"),
+}
+SKILL_REFERENCE = re.compile(r"`/([a-z][a-z-]*)`")
+
+
+@pytest.mark.parametrize("skill", sorted(SKILL_ROUTES))
+def test_routes_work_to_shipped_skills_when_entry_skill_rendered(
+    skill: str, demo_render: dict[str, RenderedFile]
+) -> None:
+    text = skill_text(demo_render, skill)
+
+    for target in SKILL_ROUTES[skill]:
+        assert f"`/{target}`" in text, target
+    named = set(SKILL_REFERENCE.findall(text)) - {skill}
+    assert named <= set(BASE_SKILLS), named
+
+
 # AGH-23 (AC-23.1-23.3): superpowers is optional, so every rendered base plugin line that names
 # it also carries its fallback, marked by the word `otherwise` on the same physical line.
 SUPERPOWERS_CONDITION = "if superpowers is enabled"
@@ -1588,14 +1639,24 @@ def test_names_transcript_script_when_recall_rendered(
 # The hub's skill frontmatter, key by key; the skills without `disable-model-invocation` stay
 # model-invocable.
 SKILL_FRONTMATTER_KEYS = {
+    "adr": ["name", "description", "disable-model-invocation", "argument-hint"],
     "create-plan": ["name", "description", "argument-hint"],
+    "deliver": ["name", "description", "disable-model-invocation", "argument-hint"],
     "feature": ["name", "description", "disable-model-invocation", "argument-hint"],
     "fix": ["name", "description", "disable-model-invocation", "argument-hint"],
     "handoff": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "incident": ["name", "description", "disable-model-invocation", "argument-hint"],
     "kickoff": ["name", "description", "disable-model-invocation"],
     "learn": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "onboard": ["name", "description", "disable-model-invocation", "argument-hint"],
     "recall": ["name", "description", "argument-hint"],
+    "refactor": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "release": ["name", "description", "disable-model-invocation", "argument-hint"],
     "research": ["name", "description", "argument-hint"],
+    "retro": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "review": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "triage": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "upgrade": ["name", "description", "disable-model-invocation", "argument-hint"],
 }
 
 

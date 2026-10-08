@@ -195,15 +195,15 @@ def test_merges_kept_sibling_when_init_runs(
 
 def test_links_project_entries_when_added(demo_hub: Path, run_sync: SyncRunner) -> None:
     """Q-17: a regular file under ``agents``, a folder under ``skills``; ``.gitkeep`` never."""
-    (demo_hub / "plugin/demo/skills/review").mkdir()
-    (demo_hub / "plugin/demo/skills/review/SKILL.md").write_bytes(b"# Review\n")
+    (demo_hub / "plugin/demo/skills/demo-skill").mkdir()
+    (demo_hub / "plugin/demo/skills/demo-skill/SKILL.md").write_bytes(b"# Demo skill\n")
     (demo_hub / "plugin/demo/agents/triager.md").write_bytes(b"# Triager\n")
 
     lines = success_lines(run_sync(demo_hub))
 
     added = {
         ".claude/agents/triager.md": "../../plugin/demo/agents/triager.md",
-        ".claude/skills/review": "../../plugin/demo/skills/review",
+        ".claude/skills/demo-skill": "../../plugin/demo/skills/demo-skill",
     }
     assert lines == [*(f"created {path}" for path in added), "updated hub.lock"]
     for path, target in added.items():
@@ -212,13 +212,13 @@ def test_links_project_entries_when_added(demo_hub: Path, run_sync: SyncRunner) 
     for folder in ("agents", "skills"):
         assert not os.path.lexists(demo_hub / f".claude/{folder}/.gitkeep")
 
-    shutil.rmtree(demo_hub / "plugin/demo/skills/review")
+    shutil.rmtree(demo_hub / "plugin/demo/skills/demo-skill")
 
     assert success_lines(run_sync(demo_hub)) == [
-        "deleted .claude/skills/review",
+        "deleted .claude/skills/demo-skill",
         "updated hub.lock",
     ]
-    assert not os.path.lexists(demo_hub / ".claude/skills/review")
+    assert not os.path.lexists(demo_hub / ".claude/skills/demo-skill")
 
 
 def test_exits_conflict_when_name_in_both_plugins(
