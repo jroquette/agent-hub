@@ -19,7 +19,7 @@ from agent_hub.core.doctor.config_lint import line_count
 from agent_hub.core.doctor.instruction_rules import DEFAULT_MAX_LINES
 from agent_hub.core.doctor.snapshot import module_makefiles
 from agent_hub.core.hub_config.conventions import MAX_PATTERN_CHARS
-from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.model import MODULE_IDS, HubConfig
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
 from agent_hub.core.hub_files.extension_inputs import NO_EXTENSIONS, ExtensionInputs
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
@@ -2390,9 +2390,10 @@ def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubCon
 # optional; a hub that sets them in hub.json keeps these bytes.
 # AGH-59: re-pinned when rule 4 named the script variables.
 # AGH-23: re-pinned when "What lives here" gained the superpowers bullet.
-DEMO_AGENTS_SHA256 = "c37082990349ec33b01ff15420cc843ca322731f13673801b0229c038b20d43c"
+# AGH-48: re-pinned when "Brain rules" gained the routing list.
+DEMO_AGENTS_SHA256 = "5de85459a09425dfeb75c0156f961131a623732a354902d8182264b7b3e1b05c"
 ALL_MODULES_SHA256 = {
-    "AGENTS.md": "84eb444fff7418428e53665677af360bbfc3e2062bdedf70b2b9a605b02b4446",
+    "AGENTS.md": "cc2d94cf6842e0c40c7a0d8ef193f5c2a47cebaf74d461ad9a7e313eacb2a939",
     ".claude-plugin/marketplace.json": (
         "f7324911e70a0f3255274721636821a9b65a5716f04c5f6e3e470e74dc7b8ac7"
     ),
@@ -2625,14 +2626,27 @@ def a_pattern_of(length: int, head: str, tail: str) -> str:
     return pattern
 
 
-def a_stacked_conventions_config(repo_count: int, pattern_chars: int = 80) -> HubConfig:
-    """``a_team_config``'s hub, ``pattern_chars``-character patterns set by the project and by
-    each of ``repo_count`` repos (``demo-api``, then ``demo-web``-shaped ones)."""
+def a_stacked_conventions_config(
+    repo_count: int, pattern_chars: int = 80, teams: tuple[str, ...] = ()
+) -> HubConfig:
+    """``a_team_config``'s hub with every module in ``MODULE_IDS``, ``pattern_chars``-character
+    patterns set by the project and by each of ``repo_count`` repos (``demo-api``, then
+    ``demo-web``-shaped ones), and the tracker ``teams`` when given.
+
+    ``contract-sync`` needs two repos: with one repo it is the only module left out.
+    """
     branch = a_pattern_of(pattern_chars, "{prefix}", "/{ISSUE}-{slug}")
     title = a_pattern_of(pattern_chars, "{ISSUE}: {type}({scope}): {summary} -- ", "")
     long_conventions = {"branch": branch, "commit_title": title, "pr_title": title}
     document = a_hub_document()
-    document["modules"] = {**document["modules"], "marketplace": {}}
+    modules: dict[str, Any] = {module: {} for module in MODULE_IDS}
+    if repo_count >= 2:
+        modules["contract-sync"] = {"source": "demo-api", "target": "demo-web1"}
+    else:
+        del modules["contract-sync"]
+    document["modules"] = modules
+    if teams:
+        document["tracker"] = {"kind": "linear", "teams": list(teams)}
     for key in ("branch_prefix", "author_name", "author_email"):
         del document["project"][key]
     document["project"]["conventions"] = dict(long_conventions)
@@ -2653,6 +2667,8 @@ def conventions_block(agents: str) -> str:
 # A line past 120 characters holds one code span and only what stays glued to it: its indent, a
 # list label or `e.g.` before it, its punctuation after it (AGH-98, plan P-1).
 SINGLE_SPAN_LINE = re.compile(r"^ *(?:- (?:Branch|Commit title|PR title): |e\.g\. )?`[^`]*`[,.]$")
+# AGH-110: the repo list (`@@{repo_dirs}`, one unwrapped line) is not Conventions' to wrap.
+REPO_LIST_LEAD = "- Repos, checked out next to this hub: "
 
 
 # AGH-98: a valid hub (no identity key, every module, every repo overriding every key) renders an
@@ -2672,7 +2688,7 @@ def test_keeps_agents_within_line_cap_when_repos_override_long_conventions(
     wide = [
         line
         for line in agents.splitlines()
-        if len(line) > 120 and not line.startswith("- Repos, checked out next to this hub: ")
+        if len(line) > 120 and not line.startswith(REPO_LIST_LEAD)
     ]
     if pattern_chars == 80:
         assert wide == []
@@ -2688,6 +2704,90 @@ def test_keeps_conventions_block_size_when_repo_count_grows(pattern_chars: int) 
 
     assert len(twenty.splitlines()) == len(one.splitlines())
     assert "and 17 more repos override" in " ".join(twenty.split())
+
+
+ROUTING_LABELS = (
+    "  - team fact: ",
+    "  - personal preference or machine detail: ",
+    "  - repo command or convention: ",
+)
+
+
+# AGH-48 AC-48.1: "Brain rules" routes each learning (team, personal, repo) by a lead-in bullet
+# and three consecutive sub-bullets that name folders only and keep `make` out of the section.
+# Every config AGH-98 stacks (plus two tracker teams) stays within 100 lines; the team list itself
+# is unbounded (AGH-112). No line passes 120 characters, except the repo list of 20 repos (AGH-110)
+# and, at the longest pattern, AGH-98's single-span lines.
+@pytest.mark.parametrize(
+    ("config_of", "wide_allowed"),
+    [
+        pytest.param(
+            lambda: HubConfig.model_validate(builders.a_hub_document()), "none", id="demo"
+        ),
+        pytest.param(
+            lambda: HubConfig.model_validate(builders.a_two_team_document()),
+            "none",
+            id="two_teams",
+        ),
+        pytest.param(
+            lambda: HubConfig.model_validate(builders.a_conventions_document()),
+            "none",
+            id="conventions",
+        ),
+        pytest.param(a_team_config, "none", id="team"),
+        pytest.param(lambda: a_stacked_conventions_config(1, 80), "none", id="stacked-80-1"),
+        pytest.param(lambda: a_stacked_conventions_config(20, 80), "repo_list", id="stacked-80-20"),
+        pytest.param(
+            lambda: a_stacked_conventions_config(1, MAX_PATTERN_CHARS),
+            "single_span",
+            id=f"stacked-{MAX_PATTERN_CHARS}-1",
+        ),
+        pytest.param(
+            lambda: a_stacked_conventions_config(20, MAX_PATTERN_CHARS),
+            "single_span",
+            id=f"stacked-{MAX_PATTERN_CHARS}-20",
+        ),
+        pytest.param(
+            lambda: a_stacked_conventions_config(20, MAX_PATTERN_CHARS, ("APP", "OPS")),
+            "single_span",
+            id=f"stacked-{MAX_PATTERN_CHARS}-20-two-teams",
+        ),
+    ],
+)
+def test_keeps_routing_list_in_brain_rules_when_agents_rendered(
+    config_of: Callable[[], HubConfig], wide_allowed: str
+) -> None:
+    config = config_of()
+    agents = text_of(config, "AGENTS.md")
+    section = agents.split("\n## Brain rules\n", 1)[1].split("\n## ", 1)[0]
+    lines = agents.splitlines()
+
+    (lead,) = [line for line in section.splitlines() if line.startswith("- Route each learning")]
+    assert "`/learn personal`" in lead
+    subs = [line for line in section.splitlines() if line.startswith("  - ")]
+    assert len(subs) == 3
+    assert [line[: len(label)] for line, label in zip(subs, ROUTING_LABELS, strict=True)] == list(
+        ROUTING_LABELS
+    )
+    assert "\n".join([lead, *subs]) in section
+    team, personal, repo = subs
+    assert "`brain/_inbox/`" in team
+    assert "`brain/auto/workspace/`" in personal
+    assert "never committed" in personal
+    assert "`<repo>/AGENTS.md`" in repo
+    for line in subs:
+        example = re.search(r"\(e\.g\. ([^)]*)\)", line)
+        assert example is not None and example.group(1).strip(), line
+    assert "make " not in section
+    assert re.search(r"brain/auto/workspace/[^\s`]", agents) is None
+    assert len(lines) <= 100
+    wide = [line for line in lines if len(line) > 120]
+    if wide_allowed != "none":
+        wide = [line for line in wide if not line.startswith(REPO_LIST_LEAD)]
+    if wide_allowed == "single_span":
+        wide = [line for line in wide if not SINGLE_SPAN_LINE.match(line)]
+    assert wide == []
+    assert text_of(config, "AGENTS.md") == agents
 
 
 def test_shows_prefix_placeholder_when_hub_leaves_prefix_to_developers() -> None:
