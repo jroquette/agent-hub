@@ -154,7 +154,7 @@
     "hub.schema.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "296987493e8fb4050d5218e05bb0326180e448e5b010eb845aecc16d8162037d"
+      "sha256": "9578ba38be3b8f6b8ff695d85f8209ab41060441a4aa32f10548be2997926f49"
     },
     "plugin/demo/.claude-plugin/plugin.json": {
       "ownership": "seeded"
@@ -266,12 +266,12 @@
     "plugin/hub-workflow/hooks/stdlib_reader.py": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "5b51eb7c7dd98df5c85c7bfe5e1b159aed105876ed610aa54d6f1f5bb6c97558"
+      "sha256": "a8c052eb0dd0a438226aa847490b1ce667f9ecd3f2c116b6e62e2f06f0e34d7f"
     },
     "plugin/hub-workflow/hooks/stop_gate.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "4e859f915101c88e20efc95e7325d299498a865c010cf13ed66f203cb13aa3fd"
+      "sha256": "9870d0f37d60d09ef8aa7a02522cd948fd8c1883afae0cf2abb9bfdd9e5ddd17"
     },
     "plugin/hub-workflow/skills/create-plan/SKILL.md": {
       "executable": false,

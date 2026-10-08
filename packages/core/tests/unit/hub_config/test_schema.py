@@ -1,4 +1,5 @@
 import json
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -30,7 +31,7 @@ def test_lists_repo_agents_as_rule_settings_when_schema_shipped() -> None:
     properties = read_shipped_schema()["$defs"]["DoctorRules"]["properties"]
 
     assert properties["repos.agents"] == {"$ref": "#/$defs/RuleSettings"}
-    assert list(properties)[-1] == "repos.agents"
+    assert list(properties)[-2:] == ["repos.agents", "config.stop_gate"]
 
 
 def test_forbids_extra_keys_when_object_has_fixed_keys() -> None:
@@ -183,3 +184,56 @@ def test_exports_optional_platform_repository_when_schema_exported() -> None:
         " <repository>@v<platform.version>#subdirectory=packages/agent-hub. Absent: the"
         " agent-hub release repository (docs/design/project-config.md).",
     }
+
+
+def test_exports_optional_gate_keys_when_schema_exported() -> None:
+    schema = read_shipped_schema()
+    repo = schema["$defs"]["Repo"]
+    check_fast = repo["properties"]["check_fast"]
+    timeout = repo["properties"]["check_fast_timeout"]
+
+    assert "check_fast" not in repo["required"]
+    assert "check_fast_timeout" not in repo["required"]
+    assert "check" in repo["required"]
+    assert check_fast["type"] == "string"
+    assert "minLength" not in check_fast
+    assert "anyOf" not in check_fast
+    assert "default" not in check_fast
+    assert re.search(check_fast["pattern"], "")
+    assert re.search(check_fast["pattern"], "  ")
+    assert not re.search(check_fast["pattern"], "make\ncheck")
+    assert timeout == {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 160,
+        "description": timeout["description"],
+    }
+    assert "check_fast" in timeout["description"]
+    assert schema["properties"]["schema_version"]["const"] == 1
+
+
+def test_rejects_blank_check_when_schema_exported() -> None:
+    check = read_shipped_schema()["$defs"]["Repo"]["properties"]["check"]
+
+    assert check["type"] == "string"
+    for value in ("make check", " make check "):
+        assert re.search(check["pattern"], value), value
+    for value in ("", " ", "\t", " \t ", "make\ncheck"):
+        assert not re.search(check["pattern"], value), value
+
+
+def test_agrees_with_str_strip_when_check_pattern_read() -> None:
+    """The schema rejects exactly the ``check`` values the model's ``strip()`` rule rejects.
+
+    The space class is spelled out: JSON Schema's ECMA ``\\s`` and Python's ``str.isspace``
+    disagree on U+0085 and U+FEFF.
+    """
+    pattern = read_shipped_schema()["$defs"]["Repo"]["properties"]["check"]["pattern"]
+    control = re.compile(r"[\x00-\x1f\x7f]")
+
+    assert "\\s" not in pattern
+    for code in range(0x110000):
+        char = chr(code)
+        if control.match(char) or 0xD800 <= code <= 0xDFFF:
+            continue
+        assert bool(re.fullmatch(pattern, char)) is not char.isspace(), hex(code)

@@ -103,6 +103,28 @@ def test_names_each_repo_checks_when_repo_agents_missing_in_two(
     ]
 
 
+@pytest.mark.parametrize("fast", [None, "", "   "], ids=["absent", "empty", "blank"])
+def test_names_only_check_when_repo_agents_check_fast_unset(
+    snapshot_of: SnapshotFactory, fast: str | None
+) -> None:
+    # No check_fast means no Stop gate (config.stop_gate warns): the fix names only check.
+    document = a_hub_document()
+    document["guard"] = {}
+    repo = a_second_repo() | {"dir": "api", "check": "make check"}
+    if fast is not None:
+        repo["check_fast"] = fast
+    else:
+        repo.pop("check_fast", None)
+    document["repos"] = [repo]
+    snapshot = snapshot_of(
+        config=HubConfig.model_validate(document), repos={"api": {"README.md": b"# api\n"}}
+    )
+
+    assert [finding.fix for finding in found(snapshot)] == [
+        "copy docs/app-repo-AGENTS.md to ../api/AGENTS.md and fill it in; check: make check"
+    ]
+
+
 @pytest.mark.parametrize(
     ("files", "links"),
     [

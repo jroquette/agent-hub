@@ -12,9 +12,10 @@ for it, so a repo without one gets no instructions of its own.
 - A missing checkout is skipped, and so is one that could not be listed: the runner reports
   each once, on the first selected repo rule by id (Q-9, E3).
 
-The fix names the hub's seeded starter and the repo's ``check_fast`` and ``check`` from
-``hub.json``, each escaped onto one line and then cut (E6): a valid command may hold U+2028 or
-U+0085, which would split the report line.
+The fix names the hub's seeded starter and the repo's ``check_fast`` (left out when absent or
+blank, as ``config.stop_gate`` reads it) and ``check`` from ``hub.json``, each escaped onto one
+line and then cut (E6): a valid command may hold U+2028 or U+0085, which would split the report
+line.
 """
 
 from collections.abc import Iterator
@@ -23,15 +24,14 @@ from typing import Final
 from agent_hub.core.doctor.finding import Finding, Read, Rule
 from agent_hub.core.doctor.snapshot import ConfigFailure, DoctorSnapshot
 from agent_hub.core.hub_config.doctor_rules import REPOS_AGENTS_RULE, RULE_MODULES, Severity
+from agent_hub.core.hub_config.model import Repo
 from agent_hub.core.hub_config.problems import one_line
 from agent_hub.core.hub_config.versions import cut_echo
 
 AGENTS_FILE: Final = "AGENTS.md"
 STARTER_PATH: Final = "docs/app-repo-AGENTS.md"
 MESSAGE: Final = "no AGENTS.md at the repo root (hub agent loads none for it)"
-FIX: Final = (
-    "copy {starter} to ../{dir}/AGENTS.md and fill it in; check_fast: {fast}, check: {full}"
-)
+FIX: Final = "copy {starter} to ../{dir}/AGENTS.md and fill it in; {checks}"
 
 
 def _repo_agents(snapshot: DoctorSnapshot) -> Iterator[Finding]:
@@ -47,13 +47,17 @@ def _repo_agents(snapshot: DoctorSnapshot) -> Iterator[Finding]:
         yield REPOS_AGENTS.finding(
             path=f"../{checkout.dir}",
             message=MESSAGE,
-            fix=FIX.format(
-                starter=STARTER_PATH,
-                dir=checkout.dir,
-                fast=_shown(repo.check_fast),
-                full=_shown(repo.check),
-            ),
+            fix=FIX.format(starter=STARTER_PATH, dir=checkout.dir, checks=_checks(repo)),
         )
+
+
+def _checks(repo: Repo) -> str:
+    """The repo's checks as the fix names them; an absent or blank ``check_fast`` is left out."""
+    full = f"check: {_shown(repo.check)}"
+    fast = repo.check_fast
+    if fast is None or not fast.strip():
+        return full
+    return f"check_fast: {_shown(fast)}, {full}"
 
 
 def _shown(command: str) -> str:
