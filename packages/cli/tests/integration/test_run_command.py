@@ -420,6 +420,7 @@ class TestDryRun:
         lines = dry_lines(result)
         assert lines[0] == "would run: ./hub worktree dem-1 --only demo-api"
         claude = lines[1]
+        assert claude.startswith("would run: claude -p ")
         assert "This repo has no fast gate" in claude
         assert "run its full gate (`make check`)" in claude
         assert "(``)" not in claude
