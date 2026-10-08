@@ -10,6 +10,7 @@ and a real 3.9), from a folder outside the workspace, with neither ``HUB_CONFIG`
 
 import ast
 import json
+import re
 import shutil
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
@@ -808,6 +809,36 @@ def test_allows_read_when_guard_file_read(guarded_hub: Path, guard: Guard) -> No
 
     for hooks in (guarded_hub / HOOKS, guarded_hub / WORKTREE / HOOKS):
         assert guard(hooks, runs) == [None] * len(runs)
+
+
+# AGH-31 (AC-31.5): the probe kickoff Reads, as written in the rendered kickoff, is denied by the
+# guard itself, from the hub, from a hub worktree and with no hub.json above the cwd.
+def test_denies_guard_probe_when_kickoff_path_read(
+    guarded_hub: Path, guard: Guard, tmp_path: Path
+) -> None:
+    kickoff = guarded_hub / "plugin/hub-workflow/skills/kickoff/SKILL.md"
+    [rel] = re.findall(r"`<hub>/([^`]+)`", kickoff.read_text(encoding="utf-8"))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    read = {"tool_name": "Read", "tool_input": {"file_path": str(guarded_hub / rel)}}
+    runs: list[tuple[dict[str, Any], Path]] = [
+        (read, guarded_hub),
+        (
+            {"tool_name": "Read", "tool_input": {"file_path": str(guarded_hub / WORKTREE / rel)}},
+            guarded_hub / WORKTREE,
+        ),
+        (read | {"cwd": str(outside)}, outside),
+    ]
+
+    verdicts = guard(guarded_hub / HOOKS, runs)
+
+    assert len(verdicts) == len(runs)
+    for verdict in verdicts:
+        assert verdict is not None
+        decision, reason = verdict
+        assert decision == "deny", verdict
+        assert reason.startswith("[hub guard] "), verdict
+    assert not (guarded_hub / rel).exists()
 
 
 def test_allows_edit_when_skill_edited(guarded_hub: Path, guard: Guard) -> None:

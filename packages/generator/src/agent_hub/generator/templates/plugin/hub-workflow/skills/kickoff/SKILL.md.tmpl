@@ -6,6 +6,15 @@ disable-model-invocation: true
 
 # /kickoff
 
+Before step 1, check that this session runs the hub's hooks: Read `<hub>/.claude/guard_probe.p12`, where `<hub>` is the
+absolute path of the directory with `hub.json` (the file does not exist and nothing creates it). A result whose reason
+contains `[hub guard]` means the hooks are loaded: say so in one line. Any other result (file not found, a denial
+without `[hub guard]`, an error) means this session is unguarded: state that first, loudly, before the brief, and list
+what is off: the guard (secrets, force and default-branch pushes, AI attribution, test-assertion and guarded-path
+asks), the session brief, the post-edit format and lint, the stop gate, the pre-compact snapshot, the session-end
+inbox stub, attribution off, and the permission rules and the sandbox. To be guarded, start the session in the hub
+directory itself (not with the hub attached as an extra directory) and run `/kickoff` again.
+
 1. Run `./hub brief` (`make brain-brief`) from the hub (the directory with `hub.json`) and show it verbatim.
 2. Read `brain/now.md` and the newest `brain/journal/YYYY/MM/DD.md`. If a handoff note is referenced there, read it fully.
 3. For each repo in `hub.json` → `repos` with local changes, run its `check_fast` command inside the worktree that has the changes
