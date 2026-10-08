@@ -372,7 +372,7 @@ def test_reads_check_fast_timeout_when_value_in_range(
     assert repo["check_fast_timeout"] == timeout
 
 
-@pytest.mark.parametrize("timeout", [0, 161, 1.5, "10", True, None, -1])
+@pytest.mark.parametrize("timeout", [0, 161, 1.5, 150.0, "10", True, None, -1])
 def test_treats_check_fast_timeout_absent_when_value_bad(
     tmp_path: Path, *, hook_python: str, read: Reader, timeout: object
 ) -> None:
