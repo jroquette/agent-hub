@@ -2,7 +2,12 @@
 """Stop: if this session changed code in a repo checkout/worktree listed in hub.json, run that repo's
 `check_fast` command and block completion while it fails (feedback goes back to the agent). Releases after
 3 consecutive blocks to avoid loops. When checks pass and files changed, remind about /handoff (never
-blocks). The session starts at the first timestamp in the first START_BYTES of the main transcript; when
+blocks). The checkouts checked are the one holding the session's cwd, then each one holding a file that an
+Edit, Write, MultiEdit or NotebookEdit call touched, read from the main transcript and from up to
+MAX_SUBAGENT_FILES subagent transcripts beside it; never another checkout or worktree, never the hub. A
+scan cut by the budget or by that cap adds a note. When the main transcript gives no session start and
+cwd is in no checkout, nothing is checked, and a note says so when some checkout changed. The session
+starts at the first timestamp in the first START_BYTES of the main transcript; when
 none can be read there, or it is in the future, at the transcript's birth time where the platform keeps
 one, else 12 h ago. Every git status and check fits in one BUDGET of seconds from the hook's start; each
 run gets the repo's `check_fast_timeout` (else TIMEOUT), capped by the budget left. A repo whose run was
@@ -47,6 +52,9 @@ KILL_WAIT = 1
 GIT_TIMEOUT = 10
 OUTPUT_TAIL = 3000
 START_BYTES = 65_536  # the head of the main transcript read for the session start
+MAX_SUBAGENT_FILES = 64  # subagent transcripts read for touched files, by name
+# The file-writing tools and the input key holding the path each one wrote.
+WRITE_TOOLS = {"Edit": "file_path", "Write": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
 # A transcript timestamp, YYYY-MM-DDTHH:MM:SS.sssZ. Python 3.11+ parses more forms than 3.9
 # (any fraction length among them); this one shape reads the same on every interpreter.
 STAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3}|\.\d{6})?(Z|[+-]\d{2}:\d{2})?")
@@ -127,11 +135,79 @@ def changed_code(top: Path, since: float) -> list[str] | None:
     return out
 
 
-def candidates(cfg: Config, cwd: Path) -> list[tuple[str, Path]]:
-    """Checkouts to consider: the one containing cwd, else every checkout/worktree of every configured repo."""
-    res = checkouts(cfg, cfg.repo_dirs)
-    inside = [(r, t) for r, t in res if cwd == t or t in cwd.parents]
-    return inside[-1:] if inside else res
+def touched_paths(tp: str) -> tuple[set[str], str]:
+    """The paths the session's file-writing calls touched, read from the main transcript `tp` (a usable
+    file) and its subagents' transcripts, with why the read stopped short ("" when it did not). An
+    unreadable subagent file, or line, adds nothing."""
+    found: set[str] = set()
+    if not scan(tp, found):
+        return found, "budget spent"
+    folder = os.path.join(tp[:-len(".jsonl")], "subagents") if tp.endswith(".jsonl") else ""
+    try:
+        names = sorted(e.name for e in os.scandir(folder) if e.name.endswith(".jsonl") and e.is_file())
+    except OSError:  # no subagents folder
+        names = []
+    for name in names[:MAX_SUBAGENT_FILES]:
+        if not scan(os.path.join(folder, name), found):
+            return found, "budget spent"
+    if len(names) > MAX_SUBAGENT_FILES:
+        return found, f"more than {MAX_SUBAGENT_FILES} subagent file{'' if MAX_SUBAGENT_FILES == 1 else 's'}"
+    return found, ""
+
+
+def scan(path: str, found: set[str]) -> bool:
+    """Add the paths `path`'s tool calls wrote to `found`, line by line; False when the budget ran out."""
+    try:
+        with open(path, "rb") as f:
+            for line in f:
+                if left() <= 0:
+                    return False
+                if b'"tool_use"' not in line:
+                    continue
+                try:
+                    event = json.loads(line.decode("utf-8"))
+                except (ValueError, RecursionError):  # UnicodeDecodeError is a ValueError
+                    continue
+                message = event.get("message") if isinstance(event, dict) else None
+                content = message.get("content") if isinstance(message, dict) else None
+                for block in content if isinstance(content, list) else []:
+                    if not isinstance(block, dict) or block.get("type") != "tool_use":
+                        continue
+                    key, args = WRITE_TOOLS.get(block.get("name")), block.get("input")
+                    value = args.get(key) if key and isinstance(args, dict) else None
+                    if isinstance(value, str) and os.path.isabs(value):
+                        found.add(value)
+    except OSError:  # gone, a folder, unreadable: nothing from it
+        pass
+    return left() > 0
+
+
+def checkout_of(path: str, tops: list[tuple[str, Path, str]]) -> tuple[str, Path, str] | None:
+    """The deepest checkout holding `path` (resolved), or None."""
+    inside = [t for t in tops if path == t[2] or path.startswith(t[2].rstrip(os.sep) + os.sep)]
+    return max(inside, key=lambda t: len(t[2])) if inside else None
+
+
+def candidates(cfg: Config, cwd: Path, touched: set[str], tops: list[tuple[str, Path, str]]) -> list[tuple[str, Path]]:
+    """Checkouts to consider: the one holding cwd first, then each one holding a touched path, by path."""
+    first = checkout_of(str(cwd), tops)
+    others = set()
+    for path in touched:
+        try:
+            top = checkout_of(os.path.realpath(path), tops)
+        except (OSError, ValueError):  # ValueError: a NUL in the path
+            continue
+        if top is not None and top != first:
+            others.add(top)
+    return [(r, t) for r, t, _ in ([first] if first else []) + sorted(others, key=lambda t: t[2])]
+
+
+def label_of(cfg: Config, repo: str, top: Path) -> str:
+    """`<repo> (<path from the workspace>)`."""
+    try:
+        return f"{repo} ({top.relative_to(cfg.workspace)})"
+    except ValueError:  # not under the workspace (a symlinked worktree)
+        return f"{repo} ({top})"
 
 
 def run_check(cmd: str, top: Path, limit: float) -> tuple[str, str]:
@@ -199,6 +275,12 @@ def output_tail(out) -> str:
     return re.sub(r"\x1b\[[0-9;]*m", "", text)[-OUTPUT_TAIL:]
 
 
+def emit_noted(note: str, payload: dict) -> None:
+    """Emit `payload` with `note`, when there is one, as the last line of its text."""
+    key = "reason" if "reason" in payload else "systemMessage"
+    emit(dict(payload, **{key: payload[key] + "\n" + note}) if note else payload)
+
+
 def main() -> None:
     data = read_input()
     event_cwd = data.get("cwd")
@@ -208,8 +290,23 @@ def main() -> None:
         return
     tp = data.get("transcript_path")
     since = session_start(tp)
+    readable = since is not None  # one test for the window and the fan-out (S2)
     if since is None:
         since = fallback_start(tp)
+    tops = []
+    for repo, top in checkouts(cfg, list(cfg.repo_dirs)):
+        try:
+            tops.append((repo, top, os.path.realpath(top)))
+        except (OSError, ValueError):
+            continue
+    touched, partial = touched_paths(tp) if readable and isinstance(tp, str) else (set(), "")
+    if not readable and checkout_of(str(cwd), tops) is None:
+        # D10: no file the session touched can be known, and cwd names no checkout: check none.
+        if any(changed_code(top, since) != [] for _, top, _ in tops):
+            emit({"systemMessage": "[hub stop-gate] the session transcript could not be read and the session's cwd "
+                                   "is in no repo checkout, so no repo was checked."})
+        return
+    note = f"[hub stop-gate] transcripts read in part ({partial}): a repo changed only through the unread part was not checked." if partial else ""
     state = Path(tempfile.gettempdir()) / f"hub-stop-{data.get('session_id', 'x')}.json"
     try:
         saved = json.loads(state.read_text()) if state.exists() else {}
@@ -218,10 +315,10 @@ def main() -> None:
     blocks = saved.get("blocks") if isinstance(saved, dict) else None
     if not isinstance(blocks, int) or isinstance(blocks, bool):
         blocks = 0
-    statuses = [(repo, top, changed_code(top, since)) for repo, top in candidates(cfg, cwd)]
+    statuses = [(repo, top, changed_code(top, since)) for repo, top in candidates(cfg, cwd, touched, tops)]
     failures, not_run, passed, cut = [], [], 0, False
     for repo, top, files in statuses:
-        label = f"{repo} ({top.relative_to(cfg.workspace)})"
+        label = label_of(cfg, repo, top)
         if files is None:
             not_run.append(f"{label}: not run: budget")
             cut = True
@@ -253,14 +350,14 @@ def main() -> None:
         try:
             state.write_text(json.dumps({"blocks": blocks + 1}))
         except OSError:  # without its counter the gate could never release: fail open, warn
-            emit({"systemMessage": "[hub stop-gate] check_fast still failing and the block counter could not be saved; "
-                                   "finishing anyway. Do not claim the work is done.\n\n" + found})
+            emit_noted(note, {"systemMessage": "[hub stop-gate] check_fast still failing and the block counter could not be saved; "
+                                               "finishing anyway. Do not claim the work is done.\n\n" + found})
             return
-        emit({"decision": "block", "reason": "[hub stop-gate] Fix these before finishing (check_fast must pass):\n\n" + found})
+        emit_noted(note, {"decision": "block", "reason": "[hub stop-gate] Fix these before finishing (check_fast must pass):\n\n" + found})
         return
     if cut and not failures:  # only not-run outcomes: the block counter stays as it was
-        emit({"systemMessage": "[hub stop-gate] check_fast did not finish in every changed repo; finishing anyway. "
-                               "Do not claim those repos pass.\n" + notes})
+        emit_noted(note, {"systemMessage": "[hub stop-gate] check_fast did not finish in every changed repo; finishing anyway. "
+                                           "Do not claim those repos pass.\n" + notes})
         return
     try:
         state.unlink()
@@ -268,11 +365,13 @@ def main() -> None:
         pass
     lines = f"\n{notes}" if notes else ""
     if failures:
-        emit({"systemMessage": f"[hub stop-gate] check_fast still failing after {MAX_BLOCKS} attempts; finishing anyway. Do not claim the work is done.{lines}"})
+        emit_noted(note, {"systemMessage": f"[hub stop-gate] check_fast still failing after {MAX_BLOCKS} attempts; finishing anyway. Do not claim the work is done.{lines}"})
     elif passed:
-        emit({"systemMessage": f"[hub] code changed and check_fast is green. If the work spans sessions, run /handoff.{lines}"})
+        emit_noted(note, {"systemMessage": f"[hub] code changed and check_fast is green. If the work spans sessions, run /handoff.{lines}"})
     elif not_run:
-        emit({"systemMessage": f"[hub] code changed; no changed repo has a check_fast to run. If the work spans sessions, run /handoff.{lines}"})
+        emit_noted(note, {"systemMessage": f"[hub] code changed; no changed repo has a check_fast to run. If the work spans sessions, run /handoff.{lines}"})
+    elif note:
+        emit({"systemMessage": note})
 
 
 if __name__ == "__main__":

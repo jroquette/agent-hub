@@ -192,11 +192,16 @@ def sleep_until(deadline: float) -> None:
     time.sleep(max(0.0, deadline - time.monotonic()))
 
 
-def test_blocks_stop_when_check_fast_fails(run_hook: RunHook, workspace: Path) -> None:
+def test_blocks_stop_when_check_fast_fails(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
     (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
     repos = [{"dir": "app", "check_fast": "echo boom; exit 3"}, {"dir": "web", "check_fast": ""}]
+    # From the hub, the gate checks the checkouts the session's file edits touched (D2).
+    touches = [("Edit", "file_path", str(workspace / "app" / "a.py"))]
+    transcript = write_transcript(tmp_path / "session.jsonl", touches=touches)
 
-    output = run_hook(repos, workspace / "demo-hub")
+    output = run_hook(repos, workspace / "demo-hub", transcript=transcript)
 
     assert output.get("decision") == "block"
     assert "boom" in output["reason"]
@@ -237,7 +242,13 @@ def test_gates_repos_when_hooks_run_from_hub_worktree(
         document = {"project": {"name": "demo"}, "repos": [{"dir": "app", "check_fast": check}]}
         (folder / "hub.json").write_text(json.dumps(document), encoding="utf-8")
     (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
-    event = {"cwd": str(worktree), "session_id": f"worktree-{os.getpid()}-{tmp_path.name}"}
+    touches = [("Edit", "file_path", str(workspace / "app" / "a.py"))]
+    transcript = write_transcript(tmp_path / "session.jsonl", touches=touches)
+    event = {
+        "cwd": str(worktree),
+        "session_id": f"worktree-{os.getpid()}-{tmp_path.name}",
+        "transcript_path": str(transcript),
+    }
 
     completed = subprocess.run(  # noqa: S603 - an interpreter from hook_python, the rendered hook
         [hook_python, str(worktree / HOOK)],
@@ -685,3 +696,340 @@ def test_uses_fallback_window_when_session_start_unreadable(
     else:
         assert "decision" not in output
         assert output.get("systemMessage", "").startswith(GREEN_NOTE)
+
+
+# The fan-out (D2, D8-D10): from the hub, the gate checks only the checkouts holding files the
+# session's (and its subagents') Edit, Write, MultiEdit and NotebookEdit calls touched.
+FAILING_CHECK = "echo ran-$PWD; exit 3"
+UNREADABLE_NOTE = (
+    "[hub stop-gate] the session transcript could not be read and the session's cwd is in no"
+    " repo checkout, so no repo was checked."
+)
+UNREADABLE_VARIANTS = [
+    "missing",
+    "int_fd",
+    "stdout_fd",
+    "open_fd",
+    "directory",
+    "fifo",
+    "not_utf8",
+    "not_json",
+    "no_timestamp",
+    "two_digit_fraction",
+    "future",
+]
+
+
+def partial_note(reason: str) -> str:
+    """The note of a transcript scan cut short (S3)."""
+    return (
+        f"[hub stop-gate] transcripts read in part ({reason}): a repo changed only through the"
+        " unread part was not checked."
+    )
+
+
+def init_checkout(path: Path, tmp_path: Path) -> Path:
+    """A git repository at ``path``: a worktree to ``checkouts()``, which needs only ``.git``."""
+    git = shutil.which("git")
+    assert git is not None
+    path.mkdir(parents=True)
+    subprocess.run(  # noqa: S603 - git found on PATH, fixed arguments
+        [git, "init", "-q"], cwd=path, check=True, capture_output=True, env=scratch_env(tmp_path)
+    )
+    return path
+
+
+def changed(path: Path) -> str:
+    """Write the code file ``path`` (a change this session) and return it as a string."""
+    path.write_text("x = 1\n", encoding="utf-8")
+    return str(path)
+
+
+def subagent_transcript(main: Path, name: str) -> Path:
+    """The path of subagent transcript ``name`` of the session whose transcript is ``main``."""
+    folder = main.with_suffix("") / "subagents"
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / name
+
+
+def test_checks_touched_worktree_only_when_fan_out_from_hub(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # AC-14: a stale worktree and the main checkout, both changed, are not this session's.
+    worktrees = workspace / "app" / ".claude" / "worktrees"
+    mine = init_checkout(worktrees / "dem-1-x", tmp_path)
+    stale = init_checkout(worktrees / "dem-2-y", tmp_path)
+    changed(stale / "y.py")
+    changed(workspace / "app" / "main.py")
+    touches = [
+        ("Edit", "file_path", changed(mine / "x.py")),
+        ("MultiEdit", "file_path", str(mine / "z.py")),
+        ("Write", "file_path", changed(workspace / "web" / "w.py")),
+        ("NotebookEdit", "notebook_path", str(workspace / "web" / "n.ipynb")),
+    ]
+    transcript = write_transcript(tmp_path / "session.jsonl", touches=touches)
+    repos = [
+        {"dir": "app", "check_fast": FAILING_CHECK},
+        {"dir": "web", "check_fast": FAILING_CHECK},
+    ]
+
+    output = run_hook(repos, workspace / "demo-hub", transcript=transcript)
+
+    assert output.get("decision") == "block"
+    reason = output["reason"]
+    first = reason.index(f"## app (app/.claude/worktrees/dem-1-x): `{FAILING_CHECK}` FAILED")
+    assert reason.index(f"## web (web): `{FAILING_CHECK}` FAILED") > first
+    assert "dem-2-y" not in reason
+    assert "## app (app):" not in reason
+
+
+@pytest.mark.parametrize(
+    ("tool", "key"),
+    [
+        pytest.param("Edit", "file_path", id="edit"),
+        pytest.param("Write", "file_path", id="write"),
+        pytest.param("MultiEdit", "file_path", id="multi_edit"),
+        pytest.param("NotebookEdit", "notebook_path", id="notebook_edit"),
+    ],
+)
+def test_adds_candidate_when_fan_out_tool_writes_file(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, tool: str, key: str
+) -> None:
+    # D9: each file-writing tool alone makes its checkout a candidate.
+    changed(workspace / "app" / "a.py")
+    transcript = write_transcript(
+        tmp_path / "session.jsonl", touches=[(tool, key, str(workspace / "app" / "nb.ipynb"))]
+    )
+
+    output = run_hook(
+        [{"dir": "app", "check_fast": FAILING_CHECK}], workspace / "demo-hub", transcript=transcript
+    )
+
+    assert output.get("decision") == "block"
+    assert f"## app (app): `{FAILING_CHECK}` FAILED" in output["reason"]
+
+
+def test_adds_subagent_touches_when_fan_out_reads_subagents(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # AC-15 (D8): a file only a subagent edited still makes its checkout a candidate.
+    main = write_transcript(tmp_path / "session.jsonl")
+    write_transcript(
+        subagent_transcript(main, "agent-1.jsonl"),
+        touches=[("Edit", "file_path", changed(workspace / "web" / "b.py"))],
+    )
+
+    output = run_hook(
+        [{"dir": "web", "check_fast": FAILING_CHECK}], workspace / "demo-hub", transcript=main
+    )
+
+    assert output.get("decision") == "block"
+    assert f"## web (web): `{FAILING_CHECK}` FAILED" in output["reason"]
+
+
+def test_keeps_main_session_start_when_fan_out_reads_subagent(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # AC-15: the session starts at the main transcript's first event (an hour ago), never at a
+    # subagent's (two days ago), so a file dated a day back is no change of this session.
+    main = write_transcript(tmp_path / "session.jsonl")
+    old, new = workspace / "web" / "old.py", workspace / "web" / "new.py"
+    write_transcript(
+        subagent_transcript(main, "agent-1.jsonl"),
+        start=datetime.now(UTC) - timedelta(days=2),
+        touches=[("Edit", "file_path", str(old)), ("Write", "file_path", str(new))],
+    )
+    set_mtime(old, datetime.now(UTC) - timedelta(days=1))
+    repos = [{"dir": "web", "check_fast": FAILING_CHECK}]
+
+    assert run_hook(repos, workspace / "demo-hub", transcript=main) == {}
+
+    changed(new)
+    output = run_hook(repos, workspace / "demo-hub", transcript=main)
+
+    assert output.get("decision") == "block"
+    assert "new.py" in output["reason"]
+    assert "old.py" not in output["reason"]
+
+
+@pytest.mark.parametrize("variant", ["missing_dir", "directory_file", "not_utf8"])
+def test_ignores_subagent_when_fan_out_cannot_read_it(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, variant: str
+) -> None:
+    # AC-15 (D8, fail open): an unreadable subagent transcript adds nothing; the gate goes on.
+    main = write_transcript(tmp_path / "session.jsonl")
+    target = changed(workspace / "web" / "b.py")
+    line = json.dumps(
+        {
+            "type": "assistant",
+            "message": {
+                "content": [{"type": "tool_use", "name": "Edit", "input": {"file_path": target}}]
+            },
+        }
+    )
+    if variant == "directory_file":  # uid 0 reads through mode bits: a folder, not a chmod
+        subagent_transcript(main, "agent-1.jsonl").mkdir()
+    elif variant == "not_utf8":  # the touching line itself holds the bad byte
+        subagent_transcript(main, "agent-1.jsonl").write_bytes(
+            line[:-1].encode() + b', "x": "\xff"}\n'
+        )
+
+    output = run_hook(
+        [{"dir": "web", "check_fast": FAILING_CHECK}], workspace / "demo-hub", transcript=main
+    )
+
+    assert output == {}
+
+
+def test_checks_cwd_first_when_fan_out_adds_touched(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # AC-16: cwd's checkout comes first, then the touched ones (web sorts after app).
+    changed(workspace / "web" / "b.py")
+    touches = [("Edit", "file_path", changed(workspace / "app" / "a.py"))]
+    transcript = write_transcript(tmp_path / "session.jsonl", touches=touches)
+    repos = [
+        {"dir": "app", "check_fast": FAILING_CHECK},
+        {"dir": "web", "check_fast": FAILING_CHECK},
+    ]
+
+    output = run_hook(repos, workspace / "web", transcript=transcript)
+
+    assert output.get("decision") == "block"
+    reason = output["reason"]
+    assert reason.index("## web (web):") < reason.index("## app (app):")
+
+
+@pytest.mark.parametrize(
+    "variant",
+    ["outside", "hub", "number", "empty", "relative", "read_tool", "bash_tool", "edit"],
+)
+def test_adds_no_candidate_when_fan_out_path_ignored(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, variant: str
+) -> None:
+    # AC-16 (D2, D9): only an absolute path in a repo checkout, from a file-writing tool, counts.
+    # ``relative`` would land in app from the hook's own cwd; ``edit`` proves the setup can block.
+    target = changed(workspace / "app" / "a.py")
+    touches: dict[str, tuple[str, str, object]] = {
+        "outside": ("Edit", "file_path", str(tmp_path / "outside" / "x.py")),
+        "hub": ("Edit", "file_path", str(workspace / "demo-hub" / "x.py")),
+        "number": ("Edit", "file_path", 5),
+        "empty": ("Write", "file_path", ""),
+        "relative": ("Edit", "file_path", os.path.relpath(target, tmp_path / "elsewhere")),
+        "read_tool": ("Read", "file_path", target),
+        "bash_tool": ("Bash", "command", f"echo y > {shlex.quote(target)}"),
+        "edit": ("Edit", "file_path", target),
+    }
+    transcript = write_transcript(tmp_path / "session.jsonl", touches=[touches[variant]])
+
+    output = run_hook(
+        [{"dir": "app", "check_fast": FAILING_CHECK}], workspace / "demo-hub", transcript=transcript
+    )
+
+    if variant == "edit":
+        assert output.get("decision") == "block"
+    else:
+        assert output == {}
+
+
+def run_with_unreadable(
+    run_hook: RunHook, variant: str, *, workspace: Path, cwd: Path, check: str, tmp_path: Path
+) -> dict[str, Any]:
+    """Run the gate with the AC-13 transcript ``variant`` after ``app/new.py`` changed."""
+    path = tmp_path / "session.jsonl"
+    stamp = utc_stamp(datetime.now(UTC) - timedelta(minutes=10))
+    repos = [{"dir": "app", "check_fast": check}]
+    if variant != "open_fd":
+        transcript = write_unreadable(variant, path, stamp)
+        changed(workspace / "app" / "new.py")  # after the transcript: newer than its birth time
+        return run_hook(repos, cwd, transcript=transcript)
+    path.write_text(
+        json.dumps({"type": "queue-operation", "timestamp": stamp}) + "\n", encoding="utf-8"
+    )
+    changed(workspace / "app" / "new.py")
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        return run_hook(repos, cwd, transcript=fd, pass_fds=(fd,))
+    finally:
+        os.close(fd)
+
+
+@pytest.mark.parametrize("variant", UNREADABLE_VARIANTS)
+def test_checks_nothing_when_fan_out_fallback_unreadable(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, variant: str
+) -> None:
+    # AC-17 (D10): no touched path can be read and cwd is the hub: nothing runs, and a note says so.
+    ran = tmp_path / "ran"
+    check = f"touch {shlex.quote(str(ran))}; exit 3"
+
+    output = run_with_unreadable(
+        run_hook,
+        variant,
+        workspace=workspace,
+        cwd=workspace / "demo-hub",
+        check=check,
+        tmp_path=tmp_path,
+    )
+
+    assert output == {"systemMessage": UNREADABLE_NOTE}
+    assert not ran.exists()
+
+
+@pytest.mark.parametrize("variant", UNREADABLE_VARIANTS)
+def test_checks_cwd_checkout_when_fan_out_fallback_in_repo(
+    run_hook: RunHook, workspace: Path, tmp_path: Path, *, variant: str
+) -> None:
+    # AC-17 (D10): with cwd in a checkout, that checkout is still checked.
+    output = run_with_unreadable(
+        run_hook,
+        variant,
+        workspace=workspace,
+        cwd=workspace / "app",
+        check=FAILING_CHECK,
+        tmp_path=tmp_path,
+    )
+
+    assert output.get("decision") == "block"
+    assert f"## app (app): `{FAILING_CHECK}` FAILED" in output["reason"]
+
+
+def test_notes_partial_read_when_fan_out_scan_cut_by_budget(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # S3, S4: no budget left for the scan or the status; both are named, nothing passes silently.
+    changed(workspace / "app" / "a.py")
+    transcript = write_transcript(tmp_path / "session.jsonl")
+
+    output = run_hook(
+        [{"dir": "app", "check_fast": "true"}],
+        workspace / "app",
+        transcript=transcript,
+        constant=("BUDGET", 0),
+    )
+
+    assert "decision" not in output
+    message = output.get("systemMessage", "")
+    assert message.startswith(BUDGET_SPENT_NOTE)
+    assert "\napp (app): not run: budget\n" in message
+    assert message.endswith("\n" + partial_note("budget spent"))
+
+
+def test_notes_partial_read_when_fan_out_scan_cut_by_files(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # S3: subagent files past MAX_SUBAGENT_FILES (lowered to 1) are not read; a note says so.
+    main = write_transcript(tmp_path / "session.jsonl")
+    write_transcript(subagent_transcript(main, "agent-1.jsonl"))
+    write_transcript(
+        subagent_transcript(main, "agent-2.jsonl"),
+        touches=[("Edit", "file_path", changed(workspace / "web" / "b.py"))],
+    )
+
+    output = run_hook(
+        [{"dir": "web", "check_fast": FAILING_CHECK}],
+        workspace / "demo-hub",
+        transcript=main,
+        constant=("MAX_SUBAGENT_FILES", 1),
+    )
+
+    assert output == {"systemMessage": partial_note("more than 1 subagent file")}
