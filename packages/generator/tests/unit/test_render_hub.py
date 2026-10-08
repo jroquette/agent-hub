@@ -18,6 +18,7 @@ import pytest
 from agent_hub.core.doctor.config_lint import line_count
 from agent_hub.core.doctor.instruction_rules import DEFAULT_MAX_LINES
 from agent_hub.core.doctor.snapshot import module_makefiles
+from agent_hub.core.hub_config.conventions import MAX_PATTERN_CHARS
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
 from agent_hub.core.hub_files.extension_inputs import NO_EXTENSIONS, ExtensionInputs
@@ -1796,7 +1797,8 @@ def test_keeps_record_in_pr_body_when_fix_rendered(demo_render: dict[str, Render
         (builders.a_hub_document, "on branch `jdoe/<team>-<n>-<desc>`."),
         (
             builders.a_conventions_document,
-            "on branch `jdoe/{ISSUE}-{slug}` (or the repo's own, `AGENTS.md` → Conventions).",
+            "on branch `jdoe/{ISSUE}-{slug}`"
+            " (or the repo's own, `hub.json` → `repos[].conventions`).",
         ),
     ],
     ids=["demo", "conventions"],
@@ -2488,9 +2490,13 @@ def test_shows_conventions_in_agents_when_hub_sets_them() -> None:
     for label in ("- Branch: ", "- Commit title: ", "- PR title: "):
         (line,) = [line for line in block.splitlines() if line.startswith(label)]
         assert line.count("e.g.") == 1, label
-    assert [line for line in block.splitlines() if "`demo-api`" in line] == [
-        "- `demo-api` overrides branch `feature/{issue_lower}/{slug}`."
-    ]
+    (names,) = [item for item in block.split("\n- ") if "`demo-api`" in item]
+    assert " ".join(names.split()) == (
+        "`demo-api` overrides some keys: `hub.json` → `repos[].conventions`; `hub worktree` and"
+        " `hub run` apply them; a `pr_title` neither layer sets follows the repo's own"
+        " `commit_title`."
+    )
+    assert "feature/{issue_lower}/{slug}" not in agents
     assert "`jdoe/{ISSUE}-{slug}`" in rule_one(agents)
     assert "<team>-<n>-<desc>" not in rule_one(agents)
     assert "work on `jdoe/{ISSUE}-{slug}`" in texts[KICKOFF_PATH]
@@ -2522,9 +2528,80 @@ def test_keeps_lines_within_width_when_conventions_long() -> None:
 
         agents = text_of(HubConfig.model_validate(document), "AGENTS.md")
 
-        # The rule, the three shapes and their examples, and the three repo overrides.
-        assert agents.count("x" * 40) == 10, no_prefix
+        # The rule and the three shapes and their examples; the repo's overrides stay in hub.json.
+        assert agents.count("x" * 40) == 7, no_prefix
         assert [line for line in agents.splitlines() if len(line) > 120] == [], no_prefix
+
+
+def a_pattern_of(length: int, head: str, tail: str) -> str:
+    pattern = head + "x" * (length - len(head) - len(tail)) + tail
+    assert len(pattern) == length
+    return pattern
+
+
+def a_stacked_conventions_config(repo_count: int, pattern_chars: int = 80) -> HubConfig:
+    """``a_team_config``'s hub, ``pattern_chars``-character patterns set by the project and by
+    each of ``repo_count`` repos (``demo-api``, then ``demo-web``-shaped ones)."""
+    branch = a_pattern_of(pattern_chars, "{prefix}", "/{ISSUE}-{slug}")
+    title = a_pattern_of(pattern_chars, "{ISSUE}: {type}({scope}): {summary} -- ", "")
+    long_conventions = {"branch": branch, "commit_title": title, "pr_title": title}
+    document = a_hub_document()
+    document["modules"] = {**document["modules"], "marketplace": {}}
+    for key in ("branch_prefix", "author_name", "author_email"):
+        del document["project"][key]
+    document["project"]["conventions"] = dict(long_conventions)
+    for n in range(1, repo_count):
+        repo = a_second_repo()
+        repo["dir"] = f"demo-web{n}"
+        repo["github"] = f"acme/demo-web{n}"
+        document["repos"].append(repo)
+    for repo in document["repos"]:
+        repo["conventions"] = dict(long_conventions)
+    return HubConfig.model_validate(document)
+
+
+def conventions_block(agents: str) -> str:
+    return agents.split("\n## Conventions\n", 1)[1].split("\n## ", 1)[0]
+
+
+# A line past 120 characters holds one code span and only what stays glued to it: its indent, a
+# list label or `e.g.` before it, its punctuation after it (AGH-98, plan P-1).
+SINGLE_SPAN_LINE = re.compile(r"^ *(?:- (?:Branch|Commit title|PR title): |e\.g\. )?`[^`]*`[,.]$")
+
+
+# AGH-98: a valid hub (no identity key, every module, every repo overriding every key) renders an
+# AGENTS.md its own `hub doctor` accepts (instructions.size errs above 100 lines), whatever the
+# repo count and up to the longest pattern; the Conventions block does not grow with the repos.
+@pytest.mark.parametrize("pattern_chars", [80, MAX_PATTERN_CHARS])
+@pytest.mark.parametrize("repo_count", [1, 20])
+def test_keeps_agents_within_line_cap_when_repos_override_long_conventions(
+    repo_count: int, pattern_chars: int
+) -> None:
+    agents = text_of(a_stacked_conventions_config(repo_count, pattern_chars), "AGENTS.md")
+
+    assert len(agents.splitlines()) <= 100
+    # The rule and the three project shapes and examples; no repo's pattern.
+    assert len(re.findall("x{40,}", agents)) == 7
+    # AGH-110: the repo list (`@@{repo_dirs}`, one unwrapped line) is not this block's to wrap.
+    wide = [
+        line
+        for line in agents.splitlines()
+        if len(line) > 120 and not line.startswith("- Repos, checked out next to this hub: ")
+    ]
+    if pattern_chars == 80:
+        assert wide == []
+    assert [line for line in wide if not SINGLE_SPAN_LINE.match(line)] == []
+
+
+@pytest.mark.parametrize("pattern_chars", [80, MAX_PATTERN_CHARS])
+def test_keeps_conventions_block_size_when_repo_count_grows(pattern_chars: int) -> None:
+    one, twenty = (
+        conventions_block(text_of(a_stacked_conventions_config(count, pattern_chars), "AGENTS.md"))
+        for count in (1, 20)
+    )
+
+    assert len(twenty.splitlines()) == len(one.splitlines())
+    assert "and 17 more repos override" in " ".join(twenty.split())
 
 
 def test_shows_prefix_placeholder_when_hub_leaves_prefix_to_developers() -> None:
