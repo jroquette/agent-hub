@@ -75,6 +75,13 @@ IGNORED_PATHS: tuple[tuple[str | int, ...], ...] = (
 # (``test_platform_repository_parity.py``).
 PLATFORM_SOURCE_PATHS: tuple[tuple[str | int, ...], ...] = (("platform", "repository"),)
 
+# The model gives ``None`` when absent; the reader gives the gate's own default (``""`` = no fast
+# gate, ``None`` = ``TIMEOUT``): inherited-style, not compared with the model dump.
+GATE_DEFAULT_PATHS: tuple[tuple[str | int, ...], ...] = (
+    ("repos", 0, "check_fast"),
+    ("repos", 0, "check_fast_timeout"),
+)
+
 # argv: mode, reader file, hub.json path, checks (JSON: name -> [actual, expected] expressions,
 # evaluated with the reader's names and ``hub_file``). Modes: ``import`` (a sibling import, as the
 # hooks do), ``by_path`` (the registration the reader's docstring asks for, as the scripts do),
@@ -301,8 +308,8 @@ def test_matches_schema_defaults_when_hub_json_minimal(
 
 def test_lists_every_optional_field_when_model_inspected() -> None:
     """``OPTIONAL_PATHS``, ``INHERITED_PATHS``, ``LOCAL_PATHS``, ``TEAM_PATHS``,
-    ``IGNORED_PATHS`` and ``PLATFORM_SOURCE_PATHS`` list every optional key: a new one fails
-    here."""
+    ``IGNORED_PATHS``, ``PLATFORM_SOURCE_PATHS`` and ``GATE_DEFAULT_PATHS`` (seven tuples) list
+    every optional key: a new one fails here."""
     owners: tuple[tuple[tuple[str | int, ...], type[Any]], ...] = (
         ((), HubConfig),
         (("platform",), Platform),
@@ -328,7 +335,56 @@ def test_lists_every_optional_field_when_model_inspected() -> None:
         | set(TEAM_PATHS)
         | set(IGNORED_PATHS)
         | set(PLATFORM_SOURCE_PATHS)
+        | set(GATE_DEFAULT_PATHS)
     )
+
+
+def test_reads_gate_defaults_when_check_keys_absent(
+    tmp_path: Path, hook_python: str, read: Reader
+) -> None:
+    document = a_minimal_document()
+    del document["repos"][0]["check_fast"]
+    path = write_hub_file(tmp_path, document)
+
+    model = HubConfig.model_validate(document).repos[0]
+    [repo] = read(hook_python, path)["hub_file"]["repos"]
+
+    assert (model.check_fast, model.check_fast_timeout) == (None, None)
+    assert repo["check_fast"] == ""
+    assert repo["check_fast_timeout"] is None
+    assert repo["check"] == "make check"
+
+
+def with_check_fast_timeout(value: object) -> dict[str, Any]:
+    document = a_hub_document()
+    document["repos"][0]["check_fast_timeout"] = value
+    return document
+
+
+@pytest.mark.parametrize("timeout", [1, 150, 160])
+def test_reads_check_fast_timeout_when_value_in_range(
+    tmp_path: Path, *, hook_python: str, read: Reader, timeout: int
+) -> None:
+    path = write_hub_file(tmp_path, with_check_fast_timeout(timeout))
+
+    [repo] = read(hook_python, path)["hub_file"]["repos"]
+
+    assert repo["check_fast_timeout"] == timeout
+
+
+@pytest.mark.parametrize("timeout", [0, 161, 1.5, "10", True, None, -1])
+def test_treats_check_fast_timeout_absent_when_value_bad(
+    tmp_path: Path, *, hook_python: str, read: Reader, timeout: object
+) -> None:
+    path = write_hub_file(tmp_path, with_check_fast_timeout(timeout))
+
+    [repo] = read(hook_python, path)["hub_file"]["repos"]
+
+    # Only that key is affected: the rest of the repo entry is still read.
+    assert repo["check_fast_timeout"] is None
+    assert repo["dir"] == "demo-api"
+    assert repo["check_fast"] == "make check-fast"
+    assert repo["check"] == "make check"
 
 
 def test_reads_same_values_when_hub_sets_conventions(
@@ -1403,6 +1459,22 @@ def test_uses_model_patterns_when_source_checked(
     loaded = read(hook_python, path, checks=checks)
 
     assert loaded["equal"] == dict.fromkeys(patterns, True)
+
+
+def test_uses_model_timeout_bounds_when_source_checked(
+    tmp_path: Path, hook_python: str, read: Reader
+) -> None:
+    timeout = Repo.model_json_schema()["properties"]["check_fast_timeout"]
+    bounds = {
+        "CHECK_FAST_TIMEOUT_MIN": timeout["minimum"],
+        "CHECK_FAST_TIMEOUT_MAX": timeout["maximum"],
+    }
+    path = write_hub_file(tmp_path, a_hub_document())
+
+    checks = {name: (name, repr(value)) for name, value in bounds.items()}
+    loaded = read(hook_python, path, checks=checks)
+
+    assert loaded["equal"] == dict.fromkeys(bounds, True)
 
 
 def test_uses_core_local_file_when_source_checked(

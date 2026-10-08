@@ -376,14 +376,18 @@
           "type": "string"
         },
         "check_fast": {
-          "minLength": 1,
-          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
-          "title": "Check Fast",
+          "description": "The fast gate the Stop hook runs. Absent, empty or blank: no Stop gate.",
+          "pattern": "^[^\\x00-\\x1f\\x7f]*$",
           "type": "string"
         },
+        "check_fast_timeout": {
+          "description": "Seconds the Stop hook gives check_fast, within its 160 s budget. Absent: 150.",
+          "maximum": 160,
+          "minimum": 1,
+          "type": "integer"
+        },
         "check": {
-          "minLength": 1,
-          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "pattern": "^[^\\x00-\\x1f\\x7f]*[^\\s\\x00-\\x1f\\x7f][^\\x00-\\x1f\\x7f]*$",
           "title": "Check",
           "type": "string"
         },
@@ -400,7 +404,6 @@
       "required": [
         "dir",
         "github",
-        "check_fast",
         "check"
       ],
       "title": "Repo",
