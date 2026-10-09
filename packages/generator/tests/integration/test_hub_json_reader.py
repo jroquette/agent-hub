@@ -17,17 +17,20 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from agent_hub.core.hub_config.local_config import LOCAL_FILE, LOCAL_FILE_MAX_BYTES
 from agent_hub.core.hub_config.model import (
     Doctor,
     Guard,
+    GuardInfra,
     HubConfig,
     Platform,
     Project,
     Repo,
     Tracker,
 )
+from agent_hub.core.testing import builders
 from agent_hub.core.testing.builders import a_conventions_document, a_hub_document, a_second_repo
 from agent_hub.core.testing.platform_repository_cases import REPOSITORY_CASES, RepositoryCase
 from agent_hub.generator.render_hub import render_hub
@@ -80,6 +83,14 @@ PLATFORM_SOURCE_PATHS: tuple[tuple[str | int, ...], ...] = (("platform", "reposi
 GATE_DEFAULT_PATHS: tuple[tuple[str | int, ...], ...] = (
     ("repos", 0, "check_fast"),
     ("repos", 0, "check_fast_timeout"),
+)
+
+# ``guard.infra`` and its lists: absent: ``None`` in both; present: compared by
+# ``test_reads_infra_as_model_when_document_valid``.
+INFRA_PATHS: tuple[tuple[str | int, ...], ...] = (
+    ("guard", "infra"),
+    ("guard", "infra", "allow"),
+    ("guard", "infra", "prod_markers"),
 )
 
 # argv: mode, reader file, hub.json path, checks (JSON: name -> [actual, expected] expressions,
@@ -317,6 +328,7 @@ def test_lists_every_optional_field_when_model_inspected() -> None:
         (("tracker",), Tracker),
         (("repos", 0), Repo),
         (("guard",), Guard),
+        (("guard", "infra"), GuardInfra),
         (("doctor",), Doctor),
     )
     defaulted = {
@@ -328,6 +340,7 @@ def test_lists_every_optional_field_when_model_inspected() -> None:
     # ``$schema`` is an editor hint, not a default; ``guard`` and ``doctor`` are listed per field.
     containers = {("$schema",), ("guard",), ("doctor",)}
 
+    # ``INFRA_PATHS`` is the eighth tuple.
     assert defaulted - containers == (
         set(OPTIONAL_PATHS)
         | set(INHERITED_PATHS)
@@ -336,7 +349,135 @@ def test_lists_every_optional_field_when_model_inspected() -> None:
         | set(IGNORED_PATHS)
         | set(PLATFORM_SOURCE_PATHS)
         | set(GATE_DEFAULT_PATHS)
+        | set(INFRA_PATHS)
     )
+
+
+# ``guard.infra`` as the model accepts it; ``None`` leaves the key out of ``guard``.
+VALID_INFRA: tuple[object, ...] = (
+    None,
+    {},
+    builders.a_guard_infra(),
+    builders.a_guard_infra() | {"_note": "x"},
+)
+
+# ``guard.infra`` as the model rejects it, with the first location the reader cannot use (keys in
+# document order; an unknown key is unusable as a whole, E15).
+MALFORMED_INFRA: tuple[tuple[object, str], ...] = (
+    ([], "guard.infra"),
+    ("x", "guard.infra"),
+    (None, "guard.infra"),
+    ({"allow": "x"}, "guard.infra.allow"),
+    ({"allow": None}, "guard.infra.allow"),
+    ({"allow": ["ok", 7]}, "guard.infra.allow[1]"),
+    ({"allow": [""]}, "guard.infra.allow[0]"),
+    ({"prod_markers": ["  "]}, "guard.infra.prod_markers[0]"),
+    ({"prod_markers": ["a\u0001"]}, "guard.infra.prod_markers[0]"),
+    ({"allow": [7], "prod_markers": [7]}, "guard.infra.allow[0]"),
+    ({"prod_markers": [7], "allow": [7]}, "guard.infra.prod_markers[0]"),
+    ({"prod_markers": ["a\x7f"], "allow": ["x"]}, "guard.infra.prod_markers[0]"),
+    ({"allow": [True]}, "guard.infra.allow[0]"),
+    ({"allow": [["a"]]}, "guard.infra.allow[0]"),
+    ({"allow": ["x", "\ud800"], "prod_markers": ["\\bprod\\b"]}, "guard.infra.allow[1]"),
+    ({"allow": ["x"], "prod_marker": ["\\bprod\\b"]}, "guard.infra.prod_marker"),
+    ({"_note": "x", "alow": ["x"], "prod_markers": [7]}, "guard.infra.alow"),
+)
+
+MALFORMED_INFRA_IDS: tuple[str, ...] = (
+    "list",
+    "string",
+    "null",
+    "allow-string",
+    "allow-null",
+    "allow-non-string",
+    "allow-empty",
+    "markers-blank",
+    "markers-control",
+    "allow-first",
+    "markers-first",
+    "markers-delete",
+    "allow-bool",
+    "allow-nested",
+    "allow-surrogate",
+    "unknown-key",
+    "unknown-first",
+)
+
+
+def usable_list(infra: object, key: str) -> list[str]:
+    """What the reader keeps at ``key``: the list when the model accepts it alone, else ``[]``."""
+    if not isinstance(infra, dict) or key not in infra:
+        return []
+    try:
+        GuardInfra.model_validate({key: infra[key]})
+    except ValidationError:
+        return []
+    return list(infra[key])
+
+
+def with_infra(infra: object) -> dict[str, Any]:
+    """``a_hub_document()`` whose ``guard`` sets ``infra`` to ``infra`` as written."""
+    document = a_hub_document()
+    document["guard"]["infra"] = infra
+    return document
+
+
+@pytest.mark.parametrize("infra", VALID_INFRA, ids=["absent", "empty", "lists", "noted"])
+def test_reads_infra_as_model_when_document_valid(
+    tmp_path: Path, *, hook_python: str, read: Reader, infra: object
+) -> None:
+    document = a_hub_document() if infra is None else with_infra(infra)
+    path = write_hub_file(tmp_path, document)
+
+    model = HubConfig.model_validate(document).guard.infra
+    hub_file = read(hook_python, path)["hub_file"]
+
+    expected = None if model is None else model.model_dump(mode="json") | {"problem": ""}
+    assert hub_file["guard"]["infra"] == expected
+
+
+@pytest.mark.parametrize(("infra", "problem"), MALFORMED_INFRA, ids=MALFORMED_INFRA_IDS)
+def test_flags_infra_problem_when_value_malformed(
+    tmp_path: Path, *, hook_python: str, read: Reader, infra: object, problem: str
+) -> None:
+    document = with_infra(infra)
+    path = write_hub_file(tmp_path, document)
+
+    with pytest.raises(ValidationError):
+        HubConfig.model_validate(document)
+    # ``read`` fails the test when the child exits non-zero: the read never raises.
+    hub_file = read(hook_python, path)["hub_file"]
+
+    assert hub_file["guard"]["infra"]["problem"] == problem
+
+
+@pytest.mark.parametrize(("infra", "problem"), MALFORMED_INFRA, ids=MALFORMED_INFRA_IDS)
+def test_reads_usable_infra_list_when_other_value_malformed(
+    tmp_path: Path, *, hook_python: str, read: Reader, infra: object, problem: str
+) -> None:
+    path = write_hub_file(tmp_path, with_infra(infra))
+
+    read_infra = read(hook_python, path)["hub_file"]["guard"]["infra"]
+
+    # the unusable key's tuple is ``()``; the other one is read as usual (E10, E15)
+    assert read_infra == {
+        "allow": usable_list(infra, "allow"),
+        "prod_markers": usable_list(infra, "prod_markers"),
+        "problem": problem,
+    }
+
+
+def test_keeps_other_guard_lists_when_infra_malformed(
+    tmp_path: Path, hook_python: str, read: Reader
+) -> None:
+    document = with_infra([])
+    document["guard"]["deny_hosts"] = ["prod.example.com"]
+    path = write_hub_file(tmp_path, document)
+
+    guard = read(hook_python, path)["hub_file"]["guard"]
+
+    assert guard["ask_before_edit"] == ["demo-api/docs/adr"]
+    assert guard["deny_hosts"] == ["prod.example.com"]
 
 
 def test_reads_gate_defaults_when_check_keys_absent(

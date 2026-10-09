@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.testing import builders
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.generator.render_hub import render_hub
 
@@ -730,6 +731,93 @@ def test_adds_hub_config_guard_lists_when_stricter(
     assert [verdict and verdict[0] for verdict in kept] == ["deny", "deny", "ask", "ask", "deny"]
     assert [verdict and verdict[0] for verdict in tightened] == ["deny", "deny", "ask"]
     assert without == [None, None, None]
+
+
+# AGH-45 Q-2: ``$HUB_CONFIG`` cannot turn on or widen ``guard.infra``: the mode and ``allow`` are
+# the hook root's, while ``$HUB_CONFIG``'s ``prod_markers`` and problem are added. With no hook
+# root (plugin cache), the found file's ``guard.infra`` is used as is.
+INFRA_CODE = (
+    "import dataclasses, json\nfrom hubhooks import load_config\ncfg = load_config(None)\n"
+    "print(json.dumps(dataclasses.asdict(cfg.infra) if cfg.infra else None))\n"
+)
+
+
+def with_guard_infra(document: Mapping[str, Any], infra: object) -> dict[str, Any]:
+    """``document`` whose ``guard`` also sets ``infra``."""
+    return dict(document) | {"guard": dict(document.get("guard", {})) | {"infra": infra}}
+
+
+def test_keeps_hook_root_infra_when_hub_config_names_other_file(
+    hub: Path,
+    cached_hooks: Path,
+    *,
+    hook_python: str,
+    run_python: Callable[..., Any],
+    elsewhere: Path,
+) -> None:
+    infra = builders.a_guard_infra()
+    other = elsewhere / "other.json"
+    env = {"HUB_CONFIG": str(other)}
+
+    def infra_with(root: Mapping[str, Any] | None, config_infra: object) -> Any:
+        """``cfg.infra`` with ``root`` as the hook root's hub.json (``None``: the cached hooks)."""
+        other.write_text(json.dumps(with_guard_infra(ROOT_GUARD, config_infra)), encoding="utf-8")
+        if root is None:
+            return run_python(hook_python, INFRA_CODE, path=cached_hooks, cwd=elsewhere, env=env)
+        write_hub_json(hub, root)
+        return run_python(hook_python, INFRA_CODE, path=hub / HOOKS, cwd=elsewhere, env=env)
+
+    off = infra_with(ROOT_GUARD, infra)
+    widened = infra_with(
+        with_guard_infra(ROOT_GUARD, infra),
+        {"allow": ["--profile[= ]other\\b"], "prod_markers": ["\\bdemo-dev\\b"]},
+    )
+    unusable = infra_with(with_guard_infra(ROOT_GUARD, infra), [])
+    cached = infra_with(None, infra)
+
+    assert off is None
+    assert widened == {
+        "allow": infra["allow"],
+        "prod_markers": [*infra["prod_markers"], "\\bdemo-dev\\b"],
+        "problem": "",
+    }
+    assert unusable == {
+        "allow": infra["allow"],
+        "prod_markers": infra["prod_markers"],
+        "problem": "guard.infra",
+    }
+    assert cached == infra | {"problem": ""}
+
+
+def test_keeps_hook_root_infra_problem_when_hub_config_file_valid(
+    hub: Path, *, hook_python: str, run_python: Callable[..., Any], elsewhere: Path
+) -> None:
+    infra = builders.a_guard_infra()
+    other = elsewhere / "other.json"
+    env = {"HUB_CONFIG": str(other)}
+    write_hub_json(
+        hub, with_guard_infra(ROOT_GUARD, {"allow": infra["allow"], "prod_markers": [7]})
+    )
+
+    def infra_with(config: Mapping[str, Any]) -> Any:
+        """``cfg.infra`` with ``config`` as the ``$HUB_CONFIG`` file."""
+        other.write_text(json.dumps(config), encoding="utf-8")
+        return run_python(hook_python, INFRA_CODE, path=hub / HOOKS, cwd=elsewhere, env=env)
+
+    with_valid = infra_with(with_guard_infra(ROOT_GUARD, infra))
+    without = infra_with(ROOT_GUARD)
+
+    # E15: the hook root's own problem survives a usable $HUB_CONFIG guard.infra
+    assert with_valid == {
+        "allow": infra["allow"],
+        "prod_markers": infra["prod_markers"],
+        "problem": "guard.infra.prod_markers[0]",
+    }
+    assert without == {
+        "allow": infra["allow"],
+        "prod_markers": [],
+        "problem": "guard.infra.prod_markers[0]",
+    }
 
 
 PROTECTED_CODE = (

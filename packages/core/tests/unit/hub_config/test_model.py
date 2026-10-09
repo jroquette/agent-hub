@@ -2,6 +2,7 @@ import itertools
 import json
 import posixpath
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from agent_hub.core.hub_config.model import (
     BranchName,
     BranchPrefix,
     GitHubRepo,
+    GuardInfra,
     HubConfig,
     RepoDir,
     Tracker,
@@ -21,6 +23,7 @@ from agent_hub.core.hub_config.model import (
 from agent_hub.core.hub_config.platform_repository import PLATFORM_REPOSITORY_MESSAGE
 from agent_hub.core.testing.builders import (
     a_conventions_document,
+    a_guard_infra,
     a_hub_document,
     a_second_repo,
     a_two_team_document,
@@ -1164,6 +1167,70 @@ def test_rejects_guard_path_when_not_normalized_relative(guard_list: str, path: 
     document = with_value(("guard", guard_list), [path])
 
     assert error_types(document) == [(("guard", guard_list, 0), "string_pattern_mismatch")]
+
+
+def test_loads_guard_infra_lists_when_infra_given() -> None:
+    infra = a_guard_infra()
+    config = HubConfig.model_validate(with_value(("guard", "infra"), a_guard_infra()))
+    assert config.guard.infra is not None
+    assert config.guard.infra.allow == tuple(infra["allow"])
+    assert config.guard.infra.prod_markers == tuple(infra["prod_markers"])
+
+    empty = HubConfig.model_validate(with_value(("guard", "infra"), {})).guard.infra
+    assert isinstance(empty, GuardInfra)
+    assert empty is not None
+    assert empty.allow == ()
+    assert empty.prod_markers == ()
+
+    assert HubConfig.model_validate(a_hub_document()).guard.infra is None
+
+    noted = HubConfig.model_validate(with_value(("guard", "infra"), {"_note": "x"})).guard.infra
+    assert noted == empty
+
+
+# Nested one level deeper than the interpreter's recursion limit: ``re`` raises RecursionError.
+TOO_DEEP_PATTERN = "(" * (sys.getrecursionlimit() + 1) + ")" * (sys.getrecursionlimit() + 1)
+
+
+@pytest.mark.parametrize(
+    ("key", "patterns", "index"),
+    [
+        ("allow", ["ok", "("], 1),
+        ("prod_markers", ["[a-"], 0),
+        ("allow", ["a{4294967296}"], 0),
+        ("prod_markers", ["ok", TOO_DEEP_PATTERN], 1),
+    ],
+)
+def test_rejects_guard_infra_pattern_when_not_python_regex(
+    key: str, patterns: list[str], index: int
+) -> None:
+    document = with_value(("guard", "infra"), {key: patterns})
+    with pytest.raises(ValidationError) as caught:
+        HubConfig.model_validate(document)
+
+    [error] = caught.value.errors()
+    assert error["loc"] == ("guard", "infra", key, index)
+    assert error["msg"].startswith("not a Python regex: ")
+
+
+@pytest.mark.parametrize(
+    ("infra", "loc"),
+    [
+        ({"allow": [""]}, ("guard", "infra", "allow", 0)),
+        ({"allow": ["  "]}, ("guard", "infra", "allow", 0)),
+        ({"allow": ["\u2028"]}, ("guard", "infra", "allow", 0)),
+        ({"allow": ["a\x01"]}, ("guard", "infra", "allow", 0)),
+        ({"allow": [7]}, ("guard", "infra", "allow", 0)),
+        ({"allow": "x"}, ("guard", "infra", "allow")),
+        ({"x": []}, ("guard", "infra", "x")),
+        (None, ("guard", "infra")),
+        ([], ("guard", "infra")),
+    ],
+)
+def test_rejects_guard_infra_value_when_shape_wrong(
+    infra: object, loc: tuple[str | int, ...]
+) -> None:
+    assert error_locs(with_value(("guard", "infra"), infra)) == [loc]
 
 
 def test_accepts_hub_document_when_migrated_with_version_keys() -> None:
