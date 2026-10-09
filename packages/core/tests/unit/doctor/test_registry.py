@@ -26,6 +26,7 @@ RELEASED_IDS = (
     "config.identity",
     "repos.agents",
     "config.stop_gate",
+    "brain.memory",
 )
 
 # The "Default" column of docs/design/hub-doctor.md § Rules.

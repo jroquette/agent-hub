@@ -15,8 +15,12 @@ from collections.abc import Callable
 
 import pytest
 
+from agent_hub.core.doctor.brain_leak_rule import BRAIN_LEAK
 from agent_hub.core.doctor.brain_memory_rule import BRAIN_MEMORY
-from agent_hub.core.doctor.finding import Finding, Read
+from agent_hub.core.doctor.features_rule import FEATURES_TRACKER
+from agent_hub.core.doctor.finding import Finding, Read, Rule
+from agent_hub.core.doctor.registry import REGISTRY
+from agent_hub.core.doctor.run_rules import Selection, run_rules
 from agent_hub.core.doctor.snapshot import DoctorSnapshot
 from agent_hub.core.hub_config.doctor_rules import RULE_IDS, Severity
 from agent_hub.core.hub_files.tree_snapshot import FileEntry
@@ -265,3 +269,37 @@ def test_shows_no_memory_content_when_memory_listed(
         for finding in findings
         for value in (finding.path, finding.line, finding.message, finding.fix)
     )
+
+
+TREE_PROBLEM = "could not list the files: x"
+TREE_FIX = "fix the cause above so every file can be listed and read, then run hub doctor again"
+
+
+@pytest.mark.parametrize(
+    ("rules", "owner"),
+    [
+        pytest.param(REGISTRY, "attribution.ai", id="all"),
+        pytest.param((BRAIN_MEMORY,), "brain.memory", id="only"),
+        pytest.param((BRAIN_MEMORY, FEATURES_TRACKER), "brain.memory", id="before_features"),
+        pytest.param((BRAIN_LEAK, BRAIN_MEMORY), "brain.leak", id="after_leak"),
+    ],
+)
+def test_reports_tree_problem_on_first_reader_when_brain_memory_selected(
+    snapshot_of: SnapshotFactory, *, rules: tuple[Rule, ...], owner: str
+) -> None:
+    # Plan E4: the runner puts the hub tree problem on the first selected listing reader by id.
+    snapshot = snapshot_of(listed=(), problem=TREE_PROBLEM)
+    tree = Finding(
+        rule=owner,
+        severity=Severity.ERROR,
+        path=".",
+        line=None,
+        message=TREE_PROBLEM,
+        fix=TREE_FIX,
+    )
+
+    findings = run_rules(Selection(rules=rules, notes=(), severities={}), snapshot)
+
+    assert [finding for finding in findings if finding.path == "."] == [tree]
+    memory = [finding for finding in findings if finding.rule == "brain.memory"]
+    assert memory == ([tree] if owner == "brain.memory" else [])
