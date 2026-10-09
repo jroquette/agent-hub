@@ -8,6 +8,7 @@ from typing import Final
 
 from agent_hub.core.doctor.bench_rule import BENCH_TASKS
 from agent_hub.core.doctor.brain_leak_rule import BRAIN_LEAK
+from agent_hub.core.doctor.brain_memory_rule import BRAIN_MEMORY
 from agent_hub.core.doctor.config_rules import (
     CONFIG_IDENTITY,
     CONFIG_SCHEMA,
@@ -54,4 +55,5 @@ REGISTRY: Final[tuple[Rule, ...]] = (
     CONFIG_IDENTITY,
     REPOS_AGENTS,
     CONFIG_STOP_GATE,
+    BRAIN_MEMORY,
 )
