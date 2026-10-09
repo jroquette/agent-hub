@@ -52,6 +52,7 @@ DESIGN_SEVERITIES = {
     "config.identity": Severity.INFO,
     "repos.agents": Severity.WARNING,
     "config.stop_gate": Severity.WARNING,
+    "brain.memory": Severity.WARNING,
 }
 
 

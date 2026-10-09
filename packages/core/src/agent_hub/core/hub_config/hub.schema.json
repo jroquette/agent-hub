@@ -155,6 +155,9 @@
         },
         "config.stop_gate": {
           "$ref": "#/$defs/StopGateRuleSettings"
+        },
+        "brain.memory": {
+          "$ref": "#/$defs/RuleSettings"
         }
       },
       "title": "DoctorRules",
