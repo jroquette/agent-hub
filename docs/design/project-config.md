@@ -46,6 +46,9 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `guard.ask_before_edit` | list of paths | `[]` | guard: ask before an edit under them |
 | `guard.deny_hosts` | list of host names | `[]` | guard: deny network calls to them |
 | `guard.deny_paths` | list of paths | `[]` | guard: deny any read or edit under them |
+| `guard.infra` | object; not in `hub.local.json` | absent | hooks' config reader (validated); present, even `{}`, it turns on the guard's infra classification, described in the [SPEC](../SPEC.md) once it ships |
+| `guard.infra.allow` | list of Python `re` patterns (Infra patterns, below) | `[]` | hooks' config reader; the infra classification |
+| `guard.infra.prod_markers` | list of Python `re` patterns (Infra patterns, below) | `[]` | hooks' config reader; the infra classification |
 | `modules` | object keyed by module id | `{}` | generator, commands, doctor (Modules) |
 | `doctor.rules` | object keyed by rule id | `{}` | `hub doctor`; contract in [hub-doctor.md](hub-doctor.md) |
 
@@ -53,7 +56,8 @@ Unknown keys are an error at every object level; keys starting with `_` (such as
 every level, and the exported schema says the same ([ADR 0010](../adr/0010-hub-json-config-contract.md)). Cross-field
 checks are model validators JSON Schema cannot express, so there an editor accepts what the CLI rejects: unique
 `repos[].dir`, team keys unique ignoring case, guard path roots, `doctor.rules` entries of an unselected module,
-`contract-sync` repos, an explicit `pr_title` part (not `{ISSUE}`) the repo's effective `commit_title` lacks.
+`contract-sync` repos, an explicit `pr_title` part (not `{ISSUE}`) the repo's effective `commit_title` lacks, each
+`guard.infra` pattern compiles with Python's `re`.
 
 ### Rendered values
 
@@ -84,6 +88,11 @@ no `_` separator (hooks match branches with Python's `re`: exponential backtrack
   drops one `-`, `_`, `.` or `/` before it), literals `[A-Za-z0-9._/-]`; it must render to a valid branch. Titles:
   `{ISSUE}`, the commit's parts `{type}`, `{scope}`, `{summary}` (needed), placeholders separated by a literal; a
   literal holds no control, format or line-separator character (Unicode Cc, Cf, Zl, Zp), backtick or brace.
+- Infra patterns (`guard.infra.allow`, `guard.infra.prod_markers`): each one non-blank, with no control character, and
+  compiling with Python's `re`; one whose repeat count overflows (`a{4294967296}`) or whose nesting is too deep is
+  rejected too. They are searched (`re.search`) with no flags, in Python 3.9 `re` syntax, because the hooks run on the
+  system `python3`. Cost: patterns run on every Bash call that names a covered tool; avoid nested quantifiers
+  (`(a+)+$` takes over a second on a 25-character input).
 
 ### Versioning
 
