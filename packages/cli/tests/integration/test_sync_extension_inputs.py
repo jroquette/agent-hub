@@ -236,6 +236,21 @@ def test_exits_conflict_when_name_in_both_plugins(
     assert tree_digest(demo_hub) == before
 
 
+def test_reports_conflict_when_project_skill_named_onboard(
+    demo_hub: Path, run_sync: SyncRunner, tree_digest: TreeDigest
+) -> None:
+    # AGH-108: `onboard` is a base skill, so a project skill of that name conflicts until renamed.
+    (demo_hub / "plugin/demo/skills/onboard").mkdir()
+    (demo_hub / "plugin/demo/skills/onboard/SKILL.md").write_bytes(b"# Our onboarding\n")
+    before = tree_digest(demo_hub)
+
+    lines = failure_lines(run_sync(demo_hub), code=3)
+
+    both = "plugin/hub-workflow/skills/onboard and plugin/demo/skills/onboard"
+    assert lines == [f".claude/skills/onboard: in both plugins ({both})", CONFLICT_WAY_OUT]
+    assert tree_digest(demo_hub) == before
+
+
 @pytest.mark.parametrize(
     ("name", "shown"),
     [
