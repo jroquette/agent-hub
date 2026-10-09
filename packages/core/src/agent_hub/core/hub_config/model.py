@@ -329,7 +329,7 @@ class Repo(ConfigObject):
 def _python_regex(value: str) -> str:
     try:
         re.compile(value)
-    except re.error as error:
+    except (re.error, OverflowError, RecursionError) as error:
         raise PydanticCustomError(
             "python_regex", "not a Python regex: {error}", {"error": str(error)}
         ) from error

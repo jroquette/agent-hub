@@ -2,6 +2,7 @@ import itertools
 import json
 import posixpath
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from agent_hub.core.hub_config.model import (
     BranchName,
     BranchPrefix,
     GitHubRepo,
+    GuardInfra,
     HubConfig,
     RepoDir,
     Tracker,
@@ -1175,7 +1177,7 @@ def test_loads_guard_infra_lists_when_infra_given() -> None:
     assert config.guard.infra.prod_markers == tuple(infra["prod_markers"])
 
     empty = HubConfig.model_validate(with_value(("guard", "infra"), {})).guard.infra
-    assert type(empty).__name__ == "GuardInfra"
+    assert isinstance(empty, GuardInfra)
     assert empty is not None
     assert empty.allow == ()
     assert empty.prod_markers == ()
@@ -1186,9 +1188,18 @@ def test_loads_guard_infra_lists_when_infra_given() -> None:
     assert noted == empty
 
 
+# Nested one level deeper than the interpreter's recursion limit: ``re`` raises RecursionError.
+TOO_DEEP_PATTERN = "(" * (sys.getrecursionlimit() + 1) + ")" * (sys.getrecursionlimit() + 1)
+
+
 @pytest.mark.parametrize(
     ("key", "patterns", "index"),
-    [("allow", ["ok", "("], 1), ("prod_markers", ["[a-"], 0)],
+    [
+        ("allow", ["ok", "("], 1),
+        ("prod_markers", ["[a-"], 0),
+        ("allow", ["a{4294967296}"], 0),
+        ("prod_markers", ["ok", TOO_DEEP_PATTERN], 1),
+    ],
 )
 def test_rejects_guard_infra_pattern_when_not_python_regex(
     key: str, patterns: list[str], index: int
