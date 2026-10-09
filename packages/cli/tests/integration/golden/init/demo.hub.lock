@@ -124,7 +124,7 @@
     "AGENTS.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "9cdd60291e5536ae690b0bbdf09c913ebf20e02f79258c7d792c5538f833f53c"
+      "sha256": "6870ba5406b030530c12c1ea6148e266e01b7f6860fb6591449cf40ff7300801"
     },
     "AGENTS.project.md": {
       "ownership": "seeded"
@@ -151,6 +151,9 @@
       "sha256": "7b6e48ebcffc067cd1c16d586365ae21eeade8c0c1f2f2cb7d3d4ff9e868b048"
     },
     "brain/_inbox/.gitkeep": {
+      "ownership": "seeded"
+    },
+    "brain/auto/workspace/.gitkeep": {
       "ownership": "seeded"
     },
     "brain/decisions/index.md": {
@@ -266,7 +269,7 @@
     "plugin/hub-workflow/hooks/guard.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "bb194478a9caf1f5626b9d5d65c8410898421644e1eb017445bc12f0cfcb8d32"
+      "sha256": "3cf278b9b98f26417cb014e11d32a83b4f983fe90585b8dddeb160115ecbedc2"
     },
     "plugin/hub-workflow/hooks/hooks.json": {
       "executable": false,
@@ -326,7 +329,7 @@
     "plugin/hub-workflow/skills/deliver/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "9f4c1db5cb9287a8b2403aee8357c0b5c5bbec7812b2f9e6e0322308fa923ea1"
+      "sha256": "44655c4a7f254baeda594ddd62c658ae33a7b7070a0e510472b74166f04dc505"
     },
     "plugin/hub-workflow/skills/feature/SKILL.md": {
       "executable": false,
@@ -351,12 +354,12 @@
     "plugin/hub-workflow/skills/kickoff/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "37f02a893e2433bd7291491e5721f4e78f4661fef611c4ad3ece9fbd97183c07"
+      "sha256": "0f2ba510721a09cad781983b60f5d3c9544b984dae0da3d9c530600c73bcdb4a"
     },
     "plugin/hub-workflow/skills/learn/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "d58bc967e02b570e0c29c149465bb6f5ffe1415f08e0b3076913c04aa6c310e5"
+      "sha256": "7642a6ad4883894c562151ea372d323740caff26054a30c4ae23d96e86aa43a0"
     },
     "plugin/hub-workflow/skills/onboard/SKILL.md": {
       "executable": false,

@@ -18,6 +18,8 @@
 #     GH_TOKEN  optional: a fine-grained token for the repos, used by git only through a
 #               credential helper that reads the variable at credential time; never written to
 #               disk, never printed. Not needed when the repos are attached to the session.
+#               A session with repos attached is multi-repo: Claude Code then does not apply
+#               this hub's .claude/settings.json (hooks, attribution), and /kickoff reports it.
 #
 # Idempotent: a present repo is fetched, not cloned again. A repo that fails to fetch or clone is
 # a WARN, exit 0. Exit 1, one line naming the cause: no python3, no uv, an unreadable pin or
