@@ -124,7 +124,7 @@
     "AGENTS.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "9cdd60291e5536ae690b0bbdf09c913ebf20e02f79258c7d792c5538f833f53c"
+      "sha256": "6870ba5406b030530c12c1ea6148e266e01b7f6860fb6591449cf40ff7300801"
     },
     "AGENTS.project.md": {
       "ownership": "seeded"
@@ -151,6 +151,9 @@
       "sha256": "7b6e48ebcffc067cd1c16d586365ae21eeade8c0c1f2f2cb7d3d4ff9e868b048"
     },
     "brain/_inbox/.gitkeep": {
+      "ownership": "seeded"
+    },
+    "brain/auto/workspace/.gitkeep": {
       "ownership": "seeded"
     },
     "brain/decisions/index.md": {
@@ -356,7 +359,7 @@
     "plugin/hub-workflow/skills/learn/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "d58bc967e02b570e0c29c149465bb6f5ffe1415f08e0b3076913c04aa6c310e5"
+      "sha256": "7642a6ad4883894c562151ea372d323740caff26054a30c4ae23d96e86aa43a0"
     },
     "plugin/hub-workflow/skills/onboard/SKILL.md": {
       "executable": false,

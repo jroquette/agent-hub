@@ -46,7 +46,7 @@ The model has nine entities. All of them already exist implicitly in Loki Trader
 | Session | One concrete execution of an agent, with transcript, cost and outcome | JSONL transcripts and `.agent-runs/*.jsonl` |
 | WorkflowRun | One execution of a workflow; it contains the Sessions it starts ("run" is never a synonym for Session) | One `agent_runner.py` pass from issue to PR |
 | Brain | Curated, versioned knowledge, with provenance | `brain/` (index, now, decisions, learnings…) |
-| Learning | Something learned in a session, proposed and then accepted or rejected | `brain/_inbox/` → `brain/learnings/` and auto memory |
+| Learning | Something learned in a session, proposed and then accepted or rejected | `brain/_inbox/` → `brain/learnings/` (team); `brain/auto/workspace/` (personal auto memory, gitignored, never committed) |
 
 ## Layer 1: hub generator (CLI)
 
@@ -100,7 +100,7 @@ closes that (AGH-42).
 
 | Current piece | Becomes on the platform | Generic or module |
 | --- | --- | --- |
-| `brain/` (index, now, decisions, learnings, playbooks, journal, `_inbox/`, `auto/`) | Brain skeleton with frontmatter and provenance, seeded once; the content stays the project's | Generic |
+| `brain/` (index, now, decisions, learnings, playbooks, journal, `_inbox/`, `auto/` (`auto/workspace/`: each developer's personal memory, gitignored)) | Brain skeleton with frontmatter and provenance, seeded once; the content stays the project's | Generic |
 | `AGENTS.md`/`CLAUDE.md` with cross-repo rules | Managed base rules (authorship, worktree, no push to `main`) plus a seeded `AGENTS.project.md` for project rules | Generic + project rules |
 | `agent` (launcher with `--add-dir` and appended AGENTS.md files) | Shim for `hub agent`, which reads the repo list | Generic |
 | `scripts/worktree.sh` | `hub worktree`: isolated per-task worktrees, with their own ports and `.env` | Generic, with per-stack hooks |
