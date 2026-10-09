@@ -97,6 +97,25 @@ def a_conventions_document() -> dict[str, Any]:
     return document
 
 
+def a_guard_infra() -> dict[str, list[str]]:
+    """Build a synthetic ``guard.infra`` value as plain JSON data; a fresh copy per call.
+
+    ``allow`` names one development environment per covered tool's usual flag; ``prod_markers``
+    names the production environment and a placeholder account id.
+    """
+    return {
+        "allow": [
+            r"--profile[= ]demo-dev\b",
+            r"\bAWS_PROFILE=demo-dev\b",
+            r"--(kube-)?context[= ]kind-demo\b",
+            r"-var-file=dev\.tfvars\b",
+            r"--stack[= ]demo/dev\b",
+            r"--stage[= ]dev\b",
+        ],
+        "prod_markers": [r"\bdemo-prod\b", r"\b999999999999\b"],
+    }
+
+
 def an_issue(**overrides: object) -> Issue:
     """Build a synthetic open ``DEM`` issue; ``url`` follows ``id`` unless overridden."""
     fields: dict[str, object] = {
