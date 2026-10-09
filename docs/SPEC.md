@@ -58,6 +58,8 @@ The generator renders a hub in memory as a `RenderedHub`: its files (`RenderedFi
 
 `hub init` writes the rendered hub, a seeded `hub.json` and, last, `hub.lock` (v1), which records each managed file's SHA-256 and executable bit, each managed link's target and each seeded path. The init planner and the lock model are pure core code; the file adapter in `agent_hub.generator` reads the target tree and writes through temporary files in the same folder, never through a symlinked folder. `hub sync` reads the lock back, plans every path in core and applies the plan through the same adapter, `hub.lock` last ([design/hub-sync.md](design/hub-sync.md)).
 
+An agent that uses agent-hub for another project (rather than changing agent-hub) follows [USING.md](USING.md) (`docs/USING.md`), a runbook from finding the release to a verified, pushed hub and its first session; a doc-check in `make check` runs its commands against the CLI.
+
 ```
 hub init <project> --repos org/backend,org/frontend --tracker linear:LOK --branch-prefix jdoe/   # several teams: linear:APP,OPS
 hub init --config hub.json   # generates from an existing project config
