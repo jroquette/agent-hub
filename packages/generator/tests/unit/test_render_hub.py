@@ -3716,6 +3716,8 @@ RUN_TIME_BRAIN_PATHS = {
     "brain/learnings/gotchas/": "plugin/hub-workflow/skills/learn/SKILL.md",
     # Written by `hub run`, which the run-issue target runs (AGH-27).
     "brain/_inbox/runs/": "Makefile",
+    # Written by `/onboard propose` (AGH-108).
+    "brain/_inbox/onboard-proposal.md": "plugin/hub-workflow/skills/onboard/SKILL.md",
 }
 
 

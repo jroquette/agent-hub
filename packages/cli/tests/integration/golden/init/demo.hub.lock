@@ -364,7 +364,7 @@
     "plugin/hub-workflow/skills/onboard/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "69fad0e6a229e6d09e4ddd5e0098e158da08664bf31d6e28b9597b7d19cdbbab"
+      "sha256": "1cfd5c09f26206636ad41f78d5706de6f499f240cd670caa7bb1ad2ddad5aaf4"
     },
     "plugin/hub-workflow/skills/recall/SKILL.md": {
       "executable": false,
