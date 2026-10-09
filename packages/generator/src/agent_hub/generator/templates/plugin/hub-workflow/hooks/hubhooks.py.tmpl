@@ -11,6 +11,8 @@ from the session cwd (then $CLAUDE_PROJECT_DIR, then the process cwd) to the fir
 holding hub.json, or to a workspace directory whose child holds hub.json + brain/ and covers the
 start: the start is inside that hub, or inside a repo its hub.json lists (or one of that repo's
 worktrees). Another project's hub beside the start is never taken.
+$HUB_CONFIG cannot turn on or widen guard.infra: mode and allow are the hook root's; its
+prod_markers are added.
 hub.json is read only by stdlib_reader.py, which never raises and gives every key a default.
 One developer's identity (branch prefix, author) and tracker transport come from hub.local.json,
 else hub.json, else git config (docs/design/developer-identity.md), all in the identity home:
@@ -37,6 +39,7 @@ from stdlib_reader import (  # noqa: E402
     EffectiveValues,
     GuardSection,
     HubFile,
+    InfraSection,
     LocalFile,
     RepoEntry,
     load_hub_file,
@@ -159,6 +162,22 @@ def _union(first: tuple[str, ...], then: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(dict.fromkeys((*first, *then)))
 
 
+def _infra_of(hub_file: HubFile, root_file: HubFile | None) -> InfraSection | None:
+    """guard.infra: the config's as is without a root file (also in plugin-cache mode); else the
+    root's mode and allow, with the config's prod_markers and problem added."""
+    if root_file is None:
+        return hub_file.guard.infra
+    root = root_file.guard.infra
+    if root is None:
+        return None
+    other = hub_file.guard.infra
+    return InfraSection(
+        allow=root.allow,
+        prod_markers=_union(root.prod_markers, other.prod_markers if other is not None else ()),
+        problem=root.problem or (other.problem if other is not None else ""),
+    )
+
+
 def _branches(hub_file: HubFile) -> tuple[str, ...]:
     """The project's default branch, then each repo's effective one."""
     return (hub_file.project.default_branch, *(r.default_branch for r in hub_file.repos))
@@ -170,6 +189,8 @@ class Config:
     root is the hub (or hub worktree) holding the hook files, root_hub its main checkout, and
     root_project its own project name. root_file is the root's hub.json when the config is another
     file ($HUB_CONFIG): the guard's lists are then the union of both, so that file only tightens.
+    $HUB_CONFIG cannot turn on or widen guard.infra: mode and allow are the hook root's; its
+    prod_markers are added (infra is None when guard.infra is off).
     protected_branches (sorted, each once) is main, master and every default branch of the config,
     plus the root file's when there is one. identity gives the developer's values from local_file
     (hub.local.json), else the config, else git config run in identity_home (none without it);
@@ -207,6 +228,7 @@ class Config:
         self.ask_before_edit = _union(root_guard.ask_before_edit, hub_file.guard.ask_before_edit)
         self.deny_hosts = _union(root_guard.deny_hosts, hub_file.guard.deny_hosts)
         self.deny_paths = _union(root_guard.deny_paths, hub_file.guard.deny_paths)
+        self.infra = _infra_of(hub_file, root_file)
         root_branches = _branches(root_file) if root_file is not None else ()
         self.protected_branches = tuple(sorted({"main", "master", *_branches(hub_file), *root_branches}))
 
