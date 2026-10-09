@@ -29,9 +29,10 @@ _ALLOWED_COMMANDS: Final = (
 # ask, so each read-only command it names gets an exact allow: the right-hand sides of
 # `git show origin/<default>:hub.json | sha256sum` (or `| shasum -a 256`; the left one is
 # `git show *` above), the `./hub doctor` baseline, and per repo the checkout and default-branch
-# reads (`_onboard_repo_reads`). Its one write is the proposal, or a dated archive name beside it;
-# Claude Code checks Write and Edit against `Edit(path)` rules only, and `/` anchors at the hub.
-# `apply` stays interactive: nothing it writes, pushes or runs is allowed here.
+# reads (`_onboard_repo_reads`). It writes only the proposal and, before replacing an applied one,
+# a Write of its dated archive copy beside it (no `mv`); Claude Code checks Write and Edit against
+# `Edit(path)` rules only, and `/` anchors at the hub. The guard asks before an edit of the `hub`
+# or `agent` launcher. `apply` stays interactive: nothing it writes, pushes or runs is allowed here.
 _ONBOARD_PROPOSE_COMMANDS: Final = ("Bash(sha256sum)", "Bash(shasum -a 256)", "Bash(./hub doctor)")
 _ONBOARD_PROPOSAL_EDIT: Final = "Edit(/brain/_inbox/onboard-proposal*.md)"
 _DENIED_READS: Final = ("Read(**/*.pem)", "Read(**/*.key)")

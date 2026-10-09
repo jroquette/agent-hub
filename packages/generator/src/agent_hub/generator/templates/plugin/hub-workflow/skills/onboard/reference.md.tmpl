@@ -31,6 +31,6 @@ the `GAP`s with their tracker issue texts; the `hub.json` diff and the `AGENTS.p
 Cite repo lines by `path:line` and never quote one outside a fenced block (`./hub doctor` reports it as `brain.leak`).
 
 **Recovery**: a `propose` re-run overwrites a `proposed` file; on an `approved` one it stops and says to run `/onboard apply` or to delete or reset the proposal.
-An `applied` file is first renamed to `brain/_inbox/onboard-proposal-YYYY-MM-DD.md` (if that name exists, add `-2`, `-3` and so on before `.md`), then a new proposal is written.
+An `applied` file is first archived: write its content unchanged to `brain/_inbox/onboard-proposal-YYYY-MM-DD.md` (if that name exists, add `-2`, `-3` and so on before `.md`; never `mv`), then write the new proposal over `brain/_inbox/onboard-proposal.md`.
 An `approved` proposal whose hash no longer matches `hub.json`: stop and tell the human to delete or reset it. The agent never edits `status`, except to set `applied` once step 5 succeeds.
 A merged Gate PR needs no special path: the next `/onboard propose` finds its tasks in the repo as found commands, and they go through the normal path.
