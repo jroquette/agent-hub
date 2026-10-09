@@ -31,7 +31,7 @@ hub init demo --repos acme/backend,acme/frontend --tracker linear:DEMO \
 ```
 
 ```text
-created 73 files (51 managed, 22 seeded) and 25 links in /home/jdoe/work/demo-hub
+created 74 files (52 managed, 22 seeded) and 25 links in /home/jdoe/work/demo-hub
 
 Next steps:
   1. cd /home/jdoe/work/demo-hub
@@ -160,7 +160,7 @@ uvx --from 'git+https://github.com/jroquette/agent-hub@v0.4.0#subdirectory=packa
   hub init demo --repos acme/backend,acme/frontend --tracker linear:DEMO --branch-prefix jdoe/ --hub-repo acme/demo-hub
 ```
 
-You should see `created 73 files (51 managed, 22 seeded) and 25 links` followed by the next steps.
+You should see `created 74 files (52 managed, 22 seeded) and 25 links` followed by the next steps.
 
 > [!NOTE]
 > `hub init` writes only into an empty folder (a `.git` is fine). Run it again in the same folder and it refuses with
@@ -307,8 +307,10 @@ The size decides the ceremony:
 | `/refactor <issue>` | Makes a behaviour-preserving change: characterization tests first, then batched PRs that each pass `check` alone | When a refactor is too big for `/fix` and needs no spec |
 | `/upgrade [package or tool]` | Bumps a dependency, toolchain or plugin pin after reading its changelog, adapting to breaking changes | For dependency and toolchain bumps |
 | `/adr <question or issue>` | Records an architectural decision: options and trade-offs, your pick, a new ADR that supersedes and never edits | For a decision outside a `/feature` |
-| `/onboard <repos or project>` | Brings a project or repo into a hub: its real gates and guarded paths, init or adopt, app-repo `AGENTS.md` PRs, the doctor, a first smoke issue | When a project starts using a hub |
+| `/onboard [propose \| apply]` | Reads each repo read-only and proposes `hub.json` values, gates and `AGENTS.project.md` with `path:line` evidence; applies them only after your approval (`propose` only writes the proposal, for a headless run) | The first session in a new hub, or after adding a repo |
 | `/retro [period]` | Turns the period's run metrics into at most five evidence-backed changes to the workflows, filed as issues | Weekly, or after a rough stretch |
+
+An AI agent that sets up agent-hub for another project follows [docs/USING.md](docs/USING.md), a runbook that ends in `/onboard`.
 
 Claude runs `/research`, `/create-plan` and `/recall` on its own when they fit; every other command runs only when
 you type it.

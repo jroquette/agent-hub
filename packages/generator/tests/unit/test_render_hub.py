@@ -108,6 +108,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/skills/kickoff/SKILL.md",
     "plugin/hub-workflow/skills/learn/SKILL.md",
     "plugin/hub-workflow/skills/onboard/SKILL.md",
+    "plugin/hub-workflow/skills/onboard/reference.md",
     "plugin/hub-workflow/skills/recall/SKILL.md",
     "plugin/hub-workflow/skills/refactor/SKILL.md",
     "plugin/hub-workflow/skills/release/SKILL.md",
@@ -1436,6 +1437,35 @@ def test_routes_work_to_shipped_skills_when_entry_skill_rendered(
         assert f"`/{target}`" in text, target
     named = set(SKILL_REFERENCE.findall(text)) - {skill}
     assert named <= set(BASE_SKILLS), named
+
+
+# AGH-108 (AC-2.15c): step 1 of `/kickoff` and `/feature` sends a hub with no project rules yet, or
+# with a repo the project rules do not name, to `/onboard` first.
+ONBOARD_ROUTE_PHRASES = ("`/onboard`", "no project rules yet", "`AGENTS.project.md`", "new repo")
+
+
+def step_one(text: str) -> str:
+    """Step 1 of a skill: its ``1. `` line and the indented lines under it, space-joined."""
+    lines = text.splitlines()
+    start = next(index for index, line in enumerate(lines) if line.startswith("1. "))
+    end = start + 1
+    while end < len(lines) and lines[end].startswith("   "):
+        end += 1
+    return " ".join(lines[start:end])
+
+
+@pytest.mark.parametrize("skill", ["feature", "kickoff"])
+def test_routes_to_onboard_when_kickoff_or_feature_rendered(
+    skill: str, demo_render: dict[str, RenderedFile]
+) -> None:
+    text = skill_text(demo_render, skill)
+    first = step_one(text)
+
+    for phrase in ONBOARD_ROUTE_PHRASES:
+        assert phrase in first, phrase
+    assert text.count("/onboard") == first.count("/onboard") == 1
+    [sentence] = [part for part in re.split(r"(?<=\.) ", first) if "/onboard" in part]
+    assert "/fix" not in sentence, sentence
 
 
 # AGH-99: `/feature`'s architectural path records each decision its plan needs through `/adr`, in
@@ -3740,6 +3770,8 @@ RUN_TIME_BRAIN_PATHS = {
     "brain/learnings/gotchas/": "plugin/hub-workflow/skills/learn/SKILL.md",
     # Written by `hub run`, which the run-issue target runs (AGH-27).
     "brain/_inbox/runs/": "Makefile",
+    # Written by `/onboard propose` (AGH-108).
+    "brain/_inbox/onboard-proposal.md": "plugin/hub-workflow/skills/onboard/SKILL.md",
 }
 
 

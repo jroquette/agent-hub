@@ -1283,6 +1283,59 @@ def test_reports_error_when_checkout_cannot_be_looked_at(
     ]
 
 
+ONBOARD_PROPOSAL = "brain/_inbox/onboard-proposal.md"
+REPO_LINE = "Run the fast gate before every commit and the full gate before a PR."
+
+
+def an_onboard_proposal(*, quoted_in_prose: bool) -> str:
+    """A proposal in the ``/onboard`` skill's shape that cites ``REPO_LINE`` by ``path:line``."""
+    prose = f"{REPO_LINE}\n\n" if quoted_in_prose else ""
+    return (
+        "---\ntype: onboard-proposal\nstatus: proposed\nprovenance: agent-from-code\n"
+        "last_verified: 2026-10-09\nplatform_version: 0.0.0\nhub_json_sha256: 0\n---\n"
+        "# Onboarding proposal\n\n"
+        "| value | evidence |\n|---|---|\n| gate rule | ../demo-api/AGENTS.md:3 |\n\n"
+        f"{prose}"
+        "The AGENTS.project.md draft:\n\n"
+        f"```markdown\n# Project rules\n\n{REPO_LINE}\n```\n"
+    )
+
+
+def onboard_hub(hub: Path, demo_checkout: CheckoutFactory, *, quoted_in_prose: bool) -> Path:
+    """The two-repo hub, both repos checked out, ``demo-api``'s AGENTS.md holding ``REPO_LINE``
+    and the proposal citing it."""
+    api = demo_checkout("demo-api")
+    (api / "AGENTS.md").write_text(f"# demo-api\n\n{REPO_LINE}\n", encoding="utf-8")
+    demo_checkout("demo-web")
+    proposal = hub / ONBOARD_PROPOSAL
+    proposal.write_text(an_onboard_proposal(quoted_in_prose=quoted_in_prose), encoding="utf-8")
+    return hub
+
+
+def test_skips_fenced_quote_when_onboard_proposal_checked(
+    demo_two_repo_hub: Path, run_doctor: DoctorRunner, demo_checkout: CheckoutFactory
+) -> None:
+    # AGH-108 AC-2.5: the proposal cites repo lines by path:line and quotes them only in a fenced
+    # block, which brain.leak skips.
+    hub = onboard_hub(demo_two_repo_hub, demo_checkout, quoted_in_prose=False)
+
+    assert lines_of(run_doctor(hub), exit_code=0) == [CLEAN]
+
+
+def test_flags_prose_quote_when_onboard_proposal_checked(
+    demo_two_repo_hub: Path, run_doctor: DoctorRunner, demo_checkout: CheckoutFactory
+) -> None:
+    # The same line in the proposal's prose is a leak, named at the repo line.
+    hub = onboard_hub(demo_two_repo_hub, demo_checkout, quoted_in_prose=True)
+
+    assert lines_of(run_doctor(hub), exit_code=1) == [
+        "error brain.leak ../demo-api/AGENTS.md:3: line also in the brain at"
+        f" {ONBOARD_PROPOSAL}:15 Fix: reword or remove the line here, or reword the brain note"
+        " if it quotes this file",
+        ONE_ERROR,
+    ]
+
+
 REPO_AGENTS_LINE = (
     "warning repos.agents ../demo-api: no AGENTS.md at the repo root (hub agent loads none for it)"
     " Fix: copy docs/app-repo-AGENTS.md to ../demo-api/AGENTS.md and fill it in;"

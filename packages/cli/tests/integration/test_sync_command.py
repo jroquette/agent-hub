@@ -1030,6 +1030,51 @@ def test_creates_app_repo_agents_when_sync_finds_no_entry(
     assert after["files"][APP_REPO_AGENTS] == {"ownership": "seeded"}
 
 
+ONBOARD_SKILL = "plugin/hub-workflow/skills/onboard/SKILL.md"
+ONBOARD_REFERENCE = "plugin/hub-workflow/skills/onboard/reference.md"
+ONBOARD_LINK = ".claude/skills/onboard"
+
+
+@pytest.mark.parametrize("older", ["placeholder", "absent"])
+def test_creates_onboard_skill_when_older_hub_synced(
+    demo_hub: Path, demo_hub_template: Path, run_sync: SyncRunner, *, older: str
+) -> None:
+    # AGH-108: a hub from a release with the placeholder skill (no reference.md yet), or from
+    # before the skill.
+    lock: dict[str, Any] = json.loads((demo_hub / "hub.lock").read_bytes())
+    if older == "placeholder":
+        (demo_hub / ONBOARD_SKILL).write_bytes(OLDER_RENDER)
+        lock["files"][ONBOARD_SKILL]["sha256"] = hashlib.sha256(OLDER_RENDER).hexdigest()
+        (demo_hub / ONBOARD_REFERENCE).unlink()
+        del lock["files"][ONBOARD_REFERENCE]
+        expected = [f"updated {ONBOARD_SKILL}", f"created {ONBOARD_REFERENCE}"]
+    else:
+        (demo_hub / ONBOARD_LINK).unlink()
+        shutil.rmtree(demo_hub / os.path.dirname(ONBOARD_SKILL))
+        for path in (ONBOARD_LINK, ONBOARD_SKILL, ONBOARD_REFERENCE):
+            del lock["files"][path]
+        expected = [
+            f"created {ONBOARD_LINK}",
+            f"created {ONBOARD_SKILL}",
+            f"created {ONBOARD_REFERENCE}",
+        ]
+    (demo_hub / "hub.lock").write_bytes(dump_json(lock))
+
+    result = run_sync(demo_hub)
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        0,
+        "".join(f"{line}\n" for line in [*expected, "updated hub.lock"]),
+        "",
+    )
+    for path in (ONBOARD_SKILL, ONBOARD_REFERENCE):
+        assert (demo_hub / path).read_bytes() == (demo_hub_template / path).read_bytes(), path
+    assert os.readlink(demo_hub / ONBOARD_LINK) == "../../plugin/hub-workflow/skills/onboard"
+    assert (demo_hub / "hub.lock").read_bytes() == (demo_hub_template / "hub.lock").read_bytes()
+    again = run_sync(demo_hub)
+    assert (again.exit_code, again.stdout, again.stderr) == (0, "up to date\n", "")
+
+
 @pytest.mark.parametrize("change", ["edited", "deleted"])
 def test_keeps_app_repo_agents_when_sync_runs_after_edit_or_delete(
     demo_hub: Path, run_sync: SyncRunner, change: str, *, tree_digest: TreeDigest
