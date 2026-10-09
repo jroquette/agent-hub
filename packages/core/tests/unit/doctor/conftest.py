@@ -32,7 +32,7 @@ def snapshot_of() -> SnapshotFactory:
     adds entries of any kind (an executable file, a folder); ``lock`` is the lock read, ``None``
     when it was not; ``problem`` is why the hub's files could not all be listed or read, and
     ``paths_read`` whether every fixed and lock path was read (by default, when no ``problem``
-    is given); ``base_hooks`` is
+    is given); ``listed_by_git`` whether that listing came from git; ``base_hooks`` is
     the release's base hooks block, ``None`` when it was not built. ``repos`` maps each repo
     dir to its checkout's regular files by bytes, ``None`` when it has no checkout; keyed by repo
     dir, ``repo_links`` adds links by target, ``repo_listed`` replaces the checkout's listing
@@ -51,6 +51,7 @@ def snapshot_of() -> SnapshotFactory:
         lock: LockState | None = None,
         problem: str | None = None,
         paths_read: bool | None = None,
+        listed_by_git: bool = False,
         base_hooks: Mapping[str, JsonValue] | None = None,
         repos: Mapping[str, Mapping[str, bytes] | None] | None = None,
         repo_links: Mapping[str, Mapping[str, str]] | None = None,
@@ -75,6 +76,7 @@ def snapshot_of() -> SnapshotFactory:
                 listed=tuple(sorted(found)) if listed is None else listed,
                 problem=problem,
                 paths_read=problem is None if paths_read is None else paths_read,
+                listed_by_git=listed_by_git,
             ),
             lock=lock,
             base_hooks=base_hooks,
