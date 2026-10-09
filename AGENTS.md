@@ -1,5 +1,7 @@
 # AGENTS.md — agent-hub
 
+If you are USING agent-hub for another project (not changing agent-hub), read [docs/USING.md](docs/USING.md) and ignore the rules below.
+
 A platform to create, run and observe AI agent hubs for N projects.
 The spec is in `docs/SPEC.md`: read it before any task. The directions already set are in its "Defined directions" section.
 
