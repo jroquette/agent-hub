@@ -125,6 +125,8 @@ def test_falls_back_per_key_when_hub_json_mistyped(
     run_hook: Callable[..., subprocess.CompletedProcess[bytes]], hub: Path
 ) -> None:
     write_hub_json(hub, MISTYPED)
+    # The render seeds the folder's `.gitkeep`; `only_file` counts the hook's file only.
+    (hub / "brain" / "auto" / "workspace" / ".gitkeep").unlink()
     app = hub.parent / "demo-api" / "docs" / "adr"
     app.mkdir(parents=True)
     edit = {"file_path": str(app / "0001.md"), "old_string": "a", "new_string": "b"}

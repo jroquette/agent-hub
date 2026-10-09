@@ -217,6 +217,7 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
     _entry_point("agent"),
     # Each .gitkeep has its own empty source: every template file is used by exactly one entry.
     _generic_seeded("brain/_inbox/.gitkeep", "brain/_inbox/gitkeep.tmpl"),
+    _generic_seeded("brain/auto/workspace/.gitkeep", "brain/auto/workspace/gitkeep.tmpl"),
     _generic_seeded("brain/decisions/index.md", "brain/decisions/index.md.tmpl"),
     _generic_seeded("brain/domain/.gitkeep", "brain/domain/gitkeep.tmpl"),
     _generic_seeded("brain/features/.gitkeep", "brain/features/gitkeep.tmpl"),
