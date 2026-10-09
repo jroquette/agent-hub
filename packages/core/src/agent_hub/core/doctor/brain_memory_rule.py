@@ -5,15 +5,19 @@ for its ``.gitkeep``), so it must never be committed with the team's brain. Two 
 
 - (a) On a listing git made (``HubFiles.listed_by_git``), each listed path under the folder
   other than its ``.gitkeep`` is tracked or not ignored: one warning at the path, in listing
-  order, at most 10, then one ``N more`` warning at the folder. A walked listing (no ``.git``)
+  order, at most 10, then one ``N more … besides the 10 shown`` warning at the folder (the
+  report sorts it before the paths, so it reads alone). A walked listing (no ``.git``)
   lists every file on disk, ignored or not, so (a) is skipped there (D-walk).
 - (b) ``.gitignore`` has a line that ignores the folder (D-ignore): ``brain/auto/workspace``,
   ``brain/auto`` or ``brain``, with or without one leading ``/`` and one trailing ``/``, ``/*``
-  or ``/**``, trailing spaces dropped; a comment or ``!`` line never covers. Else one warning
-  at ``.gitignore``. ``.gitignore`` is read with the listing, not as a fixed path (plan E7): it
-  is absent when not listed and not in the entries, so an untracked ``.gitignore`` that ignores
-  itself reads as absent; absent gives one warning at ``.`` only when every fixed path was read.
-  A link or a file that is not UTF-8 text gives none (D-out).
+  or ``/**``, trailing spaces and a leading byte order mark dropped (as git drops them); a
+  comment or ``!`` line never covers. Else one warning at ``.gitignore``. This matches lines,
+  it does not run git's matcher: only the root ``.gitignore`` is read, so a nested one (as
+  ``brain/.gitignore``) that ignores the folder still warns. ``.gitignore`` is read with the
+  listing, not as a fixed path (plan E7): it is absent when not listed and not in the entries,
+  so an untracked ``.gitignore`` that ignores itself reads as absent; absent gives one warning
+  at ``.`` only when every fixed path was read. A link or a file that is not UTF-8 text gives
+  none (D-out).
 
 A hub listing problem gives nothing: the runner reports it once (AC-48.10). Only paths and
 counts are shown: no memory file's content is read or shown, and ``.gitignore`` lines are
@@ -34,14 +38,16 @@ GITIGNORE: Final = ".gitignore"
 MAX_PATH_FINDINGS: Final = 10
 COVERING: Final = frozenset({"brain/auto/workspace", "brain/auto", "brain"})
 LISTED_MESSAGE: Final = "personal memory file is tracked or not ignored by git"
-IGNORE_MESSAGE: Final = ".gitignore does not ignore brain/auto/workspace/ (personal memory)"
+IGNORE_MESSAGE: Final = ".gitignore has no line ignoring brain/auto/workspace/ (personal memory)"
 FIX: Final = (
     "add brain/auto/workspace/* and !brain/auto/workspace/.gitkeep to .gitignore;"
-    " if committed, git rm --cached the file (it stays on disk)"
+    ' if a memory file was committed, see "Personal memory (existing hubs)" in the agent-hub'
+    " README first"
 )
 
 # The trailing forms a covering line may end with, longest first: one is dropped.
 _TRAILERS: Final = ("/**", "/*", "/")
+_BOM: Final = "\ufeff"
 
 
 def _brain_memory(snapshot: DoctorSnapshot) -> Iterator[Finding]:
@@ -67,7 +73,8 @@ def _listed_memory(hub: HubFiles) -> Iterator[Finding]:
         files = "file is" if more == 1 else "files are"
         yield BRAIN_MEMORY.finding(
             path=FOLDER,
-            message=f"{more} more personal memory {files} tracked or not ignored by git",
+            message=f"{more} more personal memory {files} tracked or not ignored by git"
+            f" besides the {MAX_PATH_FINDINGS} shown",
             fix=FIX,
         )
 
@@ -81,7 +88,10 @@ def _ignore_finding(hub: HubFiles) -> Iterator[Finding]:
             yield BRAIN_MEMORY.finding(path=".", message=IGNORE_MESSAGE, fix=FIX)
         return
     text = file_text(entry)
-    if isinstance(text, str) and not any(_covers(line) for line in text_lines(text)):
+    if not isinstance(text, str):
+        return
+    # Git ignores a UTF-8 byte order mark before the first pattern.
+    if not any(_covers(line) for line in text_lines(text.removeprefix(_BOM))):
         yield BRAIN_MEMORY.finding(path=GITIGNORE, message=IGNORE_MESSAGE, fix=FIX)
 
 
