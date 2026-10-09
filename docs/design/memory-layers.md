@@ -59,12 +59,36 @@ byte.
 ### Existing hubs
 
 The next `hub sync` rewrites `AGENTS.md` and the learn skill (managed) and creates `brain/auto/workspace/.gitkeep`
-(seeded, absent). It never rewrites `.gitignore` (seeded): the developer appends the two lines by hand, and runs
-`git rm --cached` on a memory file already committed (README, "Personal memory (existing hubs)").
+(seeded, absent). It never rewrites `.gitignore` (seeded): the developer appends the two lines by hand and, for a
+memory file already committed, follows the README section "Personal memory (existing hubs)" (`git rm --cached`
+deletes teammates' copies when they pull, so they copy theirs out first). Until then `hub doctor` warns.
+
+### Doctor rule `brain.memory`
+
+`brain.memory` ([hub-doctor.md](hub-doctor.md), § Rules) warns when personal memory can reach git:
+
+- **(a) Listed memory.** Only when git made the hub listing (`HubFiles.listed_by_git`: the files tracked or not ignored
+  by this developer's git). Each listed path under `brain/auto/workspace/` but its `.gitkeep` is one warning at the
+  path, `personal memory file is tracked or not ignored by git`, in listing order, at most 10; past 10, one more at
+  `brain/auto/workspace/`, `N more personal memory files are tracked or not ignored by git besides the 10 shown`,
+  which the report sorts before the paths. A walked listing (no `.git`) holds ignored files too, so (a) is skipped.
+- **(b) The ignore line.** The root `.gitignore` needs one line ignoring the folder: `brain/auto/workspace`,
+  `brain/auto` or `brain`, with or without one leading `/` and one trailing `/`, `/*` or `/**`; trailing spaces and
+  one leading UTF-8 BOM are dropped, and a `#` or `!` line never covers. Else one warning at `.gitignore` (at `.` when
+  it is absent and every fixed path was read): `.gitignore has no line ignoring brain/auto/workspace/ (personal
+  memory)`. A link or non-UTF-8 `.gitignore` gives none; an untracked `.gitignore` that ignores itself reads as absent.
+- **Fix** (both): `add brain/auto/workspace/* and !brain/auto/workspace/.gitkeep to .gitignore; if a memory file was
+  committed, see "Personal memory (existing hubs)" in the agent-hub README first`.
+- **Limits.** (b) matches lines; it is not git's matcher. A nested `.gitignore` (`brain/.gitignore`) is not read, so
+  it still warns, and a later `!` line is not evaluated (a file it lets through is listed, so (a) reports it).
+- **Never content.** Only paths and counts are shown; no memory file is read, and `.gitignore` lines are only compared.
+- **Severity.** `warning` by default, so `hub doctor` still exits 0. `doctor.rules."brain.memory"` takes
+  `{"enabled": false}` to turn it off or `{"severity": "error"}` to fail the run on it.
 
 ## Invariants
 
-- Personal memory is never committed: `brain/auto/workspace/.gitkeep` is the only tracked file in the folder.
+- Personal memory is never committed: `brain/auto/workspace/.gitkeep` is the only tracked file in the folder
+  (`brain.memory` warns otherwise).
 - Team knowledge reaches `brain/` only through `brain/_inbox/` and a human; `/learn personal` never writes there.
 - No secret is written to any layer.
 - The routing list names no file under `brain/auto/workspace/`; its only path-shaped spans are `brain/`,
@@ -82,7 +106,8 @@ approval of that path.
   checkout belongs to one developer, so memory stays local. Rejected: a folder outside the hub.
 - **Direct write (D2).** `/learn personal` writes the topic file and the pointer itself, with no proposal and no human
   gate; the other targets keep the `brain/_inbox/` flow. Rejected: a personal proposal in `brain/_inbox/`.
-- **Existing hubs (D3).** One README line names the two `.gitignore` lines; sync never rewrites `.gitignore`.
+- **Existing hubs (D3).** One README line names the two `.gitignore` lines; sync never rewrites `.gitignore`, and
+  `brain.memory` warns until the lines are there. Rejected: rewriting `.gitignore` on sync.
 - **Routing in the managed `AGENTS.md` (D4).** Every hub gets it at its next sync. Rejected: `AGENTS.project.md`, a
   separate file. A four-line list replaced the first draft's table to keep `AGENTS.md` within its 100-line cap.
 

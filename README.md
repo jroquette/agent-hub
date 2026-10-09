@@ -635,9 +635,10 @@ at the root of the hub's main checkout. It is never committed, and only the CLI 
 - Nothing in it relaxes the guard: it cannot add or remove a guarded path, host, protected branch or repo.
 - **Personal memory (existing hubs):** `hub sync` creates `brain/auto/workspace/.gitkeep` but never rewrites
   `.gitignore`; add both lines: `printf 'brain/auto/workspace/*\n!brain/auto/workspace/.gitkeep\n' >> .gitignore`.
-  If a memory file was committed, `git ls-files brain/auto/workspace` lists it; run `git rm --cached -- <file>` for
-  each one except `.gitkeep`. It stays on your disk and in history, but teammates who pull that commit lose their
-  copy: tell them to copy it out first (or restore it with `git show <commit>~1:<file> > <file>`).
+  Until then `hub doctor` warns (`brain.memory`). If a memory file was committed, `git ls-files brain/auto/workspace`
+  lists it; run `git rm --cached -- <file>` for each one except `.gitkeep`. It stays on your disk and in history, but
+  teammates who pull that commit lose their copy: tell them to copy it out first (or restore it with
+  `git show <commit>~1:<file> > <file>`).
 
 Contract: [docs/design/developer-identity.md](docs/design/developer-identity.md).
 
