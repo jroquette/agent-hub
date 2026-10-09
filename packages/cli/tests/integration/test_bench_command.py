@@ -20,6 +20,7 @@ import signal
 import stat
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -1325,6 +1326,48 @@ class TestRun:
         assert not (results(workspace) / "L1.jsonl").exists()
         assert workspace.claude_calls() == []
         assert_checkout_untouched(workspace)
+
+    def test_runs_worktree_commands_one_at_a_time_when_jobs_run_in_parallel(
+        self,
+        bench_workspace: Workspace,
+        run_command: CommandRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from agent_hub.cli import bench_steps  # noqa: PLC0415 - the module this test patches
+
+        # A job's ``worktree prune`` during another job's ``worktree add`` in the same repo
+        # deletes the folder the add is filling, and the add fails (AGH-120). Each worktree
+        # command is widened here, so any two that overlap are seen.
+        workspace = bench_workspace
+        workspace.write_cases([workspace.case()])
+        real = bench_steps.run_child
+        guard = threading.Lock()
+        running: list[str] = []
+        overlaps: list[list[str]] = []
+
+        def spy(argv: list[str], **kwargs: Any) -> Any:
+            if "worktree" not in argv:
+                return real(argv, **kwargs)
+            step = " ".join(argv[argv.index("worktree") :][:2])
+            with guard:
+                running.append(step)
+                if len(running) > 1:
+                    overlaps.append(list(running))
+            try:
+                time.sleep(0.2)
+                return real(argv, **kwargs)
+            finally:
+                with guard:
+                    running.remove(step)
+
+        monkeypatch.setattr(bench_steps, "run_child", spy)
+
+        result = bench_run(
+            workspace, run_command, *("--runs", "2", "--parallel", "4", "--label", "L1")
+        )
+
+        assert result.exit_code == 0, result.output
+        assert overlaps == []
 
     @pytest.mark.parametrize("step", ["checkout", "reset"])
     def test_reports_run_failure_when_overlay_fails(
