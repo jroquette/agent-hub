@@ -28,12 +28,13 @@ grade. Waves of ``--parallel`` jobs start only while the budget holds (else the 
 line); each record is printed and appended to ``<ws>/_bench/results/<label>.jsonl`` in job order,
 then the summary is printed. A job whose worktree, setup, overlay or session cannot start (or
 whose overlay checkout or reset fails) has no record: its line goes to stderr and the run exits 1
-after the summary. A session that fails without a cost counts at ``--per-run``, as a timeout
-does. The settings, trace and results files are created owner-only (0600) and never opened
-through a link at their path. The session gets the sandbox's
-``effortLevel`` from ``BENCH_EFFORT`` (E10) and its telemetry tags, never the case's ``env``; with
-``--trace`` its stdout is kept whole in ``<results>/traces/<worktree>.jsonl`` and the result is
-read from its last ``OUTPUT_LIMIT`` bytes (E15), else stdout is captured with that cap.
+after the summary. The jobs' ``git worktree`` commands run one at a time, since git does not guard
+a repo's worktree list against concurrent add, remove and prune. A session that fails without a
+cost counts at ``--per-run``, as a timeout does. The settings, trace and results files are
+created owner-only (0600) and never opened through a link at their path. The session gets the
+sandbox's ``effortLevel`` from ``BENCH_EFFORT`` (E10) and its telemetry tags, never the case's
+``env``; with ``--trace`` its stdout is kept whole in ``<results>/traces/<worktree>.jsonl`` and the
+result is read from its last ``OUTPUT_LIMIT`` bytes (E15), else stdout is captured with that cap.
 """
 
 import contextlib
@@ -315,6 +316,9 @@ class BenchSteps:
     workspace: Path
     environ: Mapping[str, str]
     children: ChildGroups = field(default_factory=ChildGroups, repr=False)
+    # ``git worktree add``, ``remove`` and ``prune`` on one repo are not safe at the same time:
+    # a prune during another job's add deletes the folder the add is filling (AGH-120).
+    worktree_admin: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
     def worktrees(self) -> Path:
@@ -481,7 +485,8 @@ class BenchSteps:
             raise StepError(f"{self.worktrees}: {error.strerror or error}") from None
         try:
             argv = add_worktree_argv(repo=str(repo), worktree=str(path), commit=commit)
-            added = self._run(argv, cwd=self.workspace, env=self._env, timeout=GIT_TIMEOUT)
+            with self.worktree_admin:
+                added = self._run(argv, cwd=self.workspace, env=self._env, timeout=GIT_TIMEOUT)
             if added.returncode:
                 raise StepError(f"git worktree add failed: {_tail(added.stderr)}")
             if case.setup_cmd:
@@ -528,15 +533,16 @@ class BenchSteps:
     def _remove(self, repo: Path, path: Path) -> None:
         """Best effort, as the script: git forgets the worktree, its folder goes, git prunes."""
         remove, prune = remove_worktree_argvs(repo=str(repo), worktree=str(path))
-        with contextlib.suppress(StepError):
-            self._run(remove, cwd=self.workspace, env=self._env, timeout=GIT_TIMEOUT)
-        if os.path.islink(path):
-            with contextlib.suppress(OSError):
-                path.unlink()
-        else:
-            shutil.rmtree(path, ignore_errors=True)
-        with contextlib.suppress(StepError):
-            self._run(prune, cwd=self.workspace, env=self._env, timeout=GIT_TIMEOUT)
+        with self.worktree_admin:
+            with contextlib.suppress(StepError):
+                self._run(remove, cwd=self.workspace, env=self._env, timeout=GIT_TIMEOUT)
+            if os.path.islink(path):
+                with contextlib.suppress(OSError):
+                    path.unlink()
+            else:
+                shutil.rmtree(path, ignore_errors=True)
+            with contextlib.suppress(StepError):
+                self._run(prune, cwd=self.workspace, env=self._env, timeout=GIT_TIMEOUT)
 
     def _trace_path(self, worktree: str) -> Path:
         """The session's whole stream-json, kept: only its last ``OUTPUT_LIMIT`` bytes are read."""
