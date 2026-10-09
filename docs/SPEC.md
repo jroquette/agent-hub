@@ -75,6 +75,8 @@ hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …   # configura
 hub collect [FILE|-] [--db PATH]   # ingests canonical events from JSON Lines (stdin when FILE is omitted or -)
 ```
 
+A project starts with a minimal `hub init` (what is known: name, repos, tracker, branch prefix), then onboards in a session in that hub with the managed `/onboard` skill, which never runs `hub init` and also works on a hub joined with `hub sync --adopt`. It reads each repo read-only and proposes `hub.json` values, gates and the `AGENTS.project.md` rules with `path:line` evidence; it applies them only after approval. A run that cannot ask the user (headless, or `/onboard propose`) only writes the proposal to `brain/_inbox/onboard-proposal.md` with the `hub.json` hash it was made against, and a later interactive `/onboard apply` applies it once a human has approved it. A repo without a gate gets one composed from the tools it already declares, in its own task runner and through its own PR; `hub.json` names a gate command only after it has run green from the hub and, for a composed one, after that PR merges.
+
 `hub collect` (Phase 0) writes to `$XDG_DATA_HOME/agent-hub/agent-hub.db` (only when `XDG_DATA_HOME` is absolute), else
 `~/.local/share/agent-hub/agent-hub.db`, where `~` is `HOME` when it is non-empty and absolute, else the account's home
 from the password database; with neither, `hub collect` exits 1 asking for `--db` or `AGENT_HUB_DB`. The environment
