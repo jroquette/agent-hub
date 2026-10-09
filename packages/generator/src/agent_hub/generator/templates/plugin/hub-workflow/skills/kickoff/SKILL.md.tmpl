@@ -19,7 +19,7 @@ or 'Generated with' lines), and the permission rules and the sandbox. To be guar
 directory itself (not in an app repo or a parent directory, and not with the hub attached as an extra directory), then
 run `/kickoff` again.
 
-1. Run `./hub brief` (`make brain-brief`) from the hub (the directory with `hub.json`) and show it verbatim.
+1. Run `./hub brief` (`make brain-brief`) from the hub (the directory with `hub.json`) and show it verbatim. If `AGENTS.project.md` is empty (no project rules yet) or `hub.json` → `repos` has a new repo, one whose `dir` `AGENTS.project.md` does not name, suggest `/onboard` before anything else.
 2. Read `brain/now.md` and the newest `brain/journal/YYYY/MM/DD.md`. If a handoff note is referenced there, read it fully.
 3. For each repo in `hub.json` → `repos` with local changes, run its `check_fast` command inside the worktree that has the changes
    (never on a stale main checkout). A repo with an empty `check_fast` has no fast gate yet: say so.
