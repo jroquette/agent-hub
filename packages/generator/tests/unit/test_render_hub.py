@@ -1427,6 +1427,35 @@ def test_routes_work_to_shipped_skills_when_entry_skill_rendered(
     assert named <= set(BASE_SKILLS), named
 
 
+# AGH-108 (AC-2.15c): step 1 of `/kickoff` and `/feature` sends a hub with no project rules yet, or
+# with a repo the project rules do not name, to `/onboard` first.
+ONBOARD_ROUTE_PHRASES = ("`/onboard`", "no project rules yet", "`AGENTS.project.md`", "new repo")
+
+
+def step_one(text: str) -> str:
+    """Step 1 of a skill: its ``1. `` line and the indented lines under it, space-joined."""
+    lines = text.splitlines()
+    start = next(index for index, line in enumerate(lines) if line.startswith("1. "))
+    end = start + 1
+    while end < len(lines) and lines[end].startswith("   "):
+        end += 1
+    return " ".join(lines[start:end])
+
+
+@pytest.mark.parametrize("skill", ["feature", "kickoff"])
+def test_routes_to_onboard_when_kickoff_or_feature_rendered(
+    skill: str, demo_render: dict[str, RenderedFile]
+) -> None:
+    text = skill_text(demo_render, skill)
+    first = step_one(text)
+
+    for phrase in ONBOARD_ROUTE_PHRASES:
+        assert phrase in first, phrase
+    assert text.count("/onboard") == first.count("/onboard") == 1
+    [sentence] = [part for part in re.split(r"(?<=\.) ", first) if "/onboard" in part]
+    assert "/fix" not in sentence, sentence
+
+
 # AGH-23 (AC-23.1-23.3): superpowers is optional, so every rendered base plugin line that names
 # it also carries its fallback, marked by the word `otherwise` on the same physical line.
 SUPERPOWERS_CONDITION = "if superpowers is enabled"
