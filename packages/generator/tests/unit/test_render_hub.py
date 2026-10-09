@@ -1409,7 +1409,19 @@ def test_names_hub_commands_when_workflow_skill_rendered(
 # AGH-99: `/kickoff` and `/feature` route each kind of work to its workflow skill, and every
 # skill they name ships in the rendered base plugin.
 SKILL_ROUTES = {
-    "kickoff": ("fix", "feature", "triage", "deliver", "review"),
+    "kickoff": (
+        "fix",
+        "feature",
+        "triage",
+        "deliver",
+        "review",
+        "incident",
+        "refactor",
+        "upgrade",
+        "adr",
+        "release",
+        "retro",
+    ),
     "feature": ("fix", "incident", "refactor", "upgrade", "adr"),
 }
 SKILL_REFERENCE = re.compile(r"`/([a-z][a-z-]*)`")
@@ -1454,6 +1466,18 @@ def test_routes_to_onboard_when_kickoff_or_feature_rendered(
     assert text.count("/onboard") == first.count("/onboard") == 1
     [sentence] = [part for part in re.split(r"(?<=\.) ", first) if "/onboard" in part]
     assert "/fix" not in sentence, sentence
+
+
+# AGH-99: `/feature`'s architectural path records each decision its plan needs through `/adr`, in
+# the plan step, before the plan gate.
+def test_records_decisions_with_adr_when_feature_plan_step_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    text = skill_text(demo_render, "feature")
+    plan_step = next(line for line in text.splitlines() if line.startswith("3. **Research**"))
+
+    assert "`/adr`" in plan_step
+    assert plan_step.index("`/adr`") < plan_step.index("gate: user approves the plan")
 
 
 # AGH-23 (AC-23.1-23.3): superpowers is optional, so every rendered base plugin line that names
