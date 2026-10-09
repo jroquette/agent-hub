@@ -6,6 +6,19 @@ disable-model-invocation: true
 
 # /kickoff
 
+Before step 1, check that this session runs the hub's hooks and settings: Read `<hub>/.claude/guard_probe.p12`, where
+`<hub>` is the absolute path of the directory with `hub.json` (the file does not exist and nothing creates it). Call the
+session guarded only if both hold: the result is a denial whose reason contains `[hub guard]` and not `could not check`
+(a broken guard's ask also carries `[hub guard]`), and your primary working directory (shown in your environment block)
+is `<hub>` itself, because Claude Code loads a project's settings only from the directory the session started in. Then
+say so in one line. Otherwise state first, loudly, before the brief, that this session is unguarded (or, when only the
+denial holds, that the hub's settings are not loaded), and list what is or may be off: the guard (secrets, force and
+default-branch pushes, AI attribution, test-assertion and guarded-path asks), the session brief, the post-edit format
+and lint, the stop gate, the pre-compact snapshot, the session-end inbox stub, the attribution settings (no AI co-author
+or 'Generated with' lines), and the permission rules and the sandbox. To be guarded, start the session in the hub
+directory itself (not in an app repo or a parent directory, and not with the hub attached as an extra directory), then
+run `/kickoff` again.
+
 1. Run `./hub brief` (`make brain-brief`) from the hub (the directory with `hub.json`) and show it verbatim.
 2. Read `brain/now.md` and the newest `brain/journal/YYYY/MM/DD.md`. If a handoff note is referenced there, read it fully.
 3. For each repo in `hub.json` → `repos` with local changes, run its `check_fast` command inside the worktree that has the changes
