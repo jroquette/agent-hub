@@ -255,7 +255,12 @@ def test_keeps_secrets_out_when_onboard_rendered(text: str) -> None:
 
 def test_reads_repo_state_by_exit_code_when_onboard_rendered(steps: dict[int, str]) -> None:
     assert "`git -C ../<dir> rev-parse --show-toplevel` exits 0" in steps[2]
-    assert "`git symbolic-ref refs/remotes/origin/HEAD`" in steps[2]
+    assert "`git -C ../<dir> symbolic-ref refs/remotes/origin/HEAD`" in steps[2]
+    # AGH-114: the hub's settings allow these exact forms, so a headless propose runs them.
+    assert (
+        "Run each of these git commands on its own, as written: no `cd`, no loop, no `&&`"
+        in steps[2]
+    )
     assert "exit 128: ask the user or write an open question, never guess `main`" in steps[2]
     assert "`gh pr view <n> --json state --jq .state` exits 0 and prints `MERGED`" in steps[6]
     assert "if `./hub --help` exits 0 and its output lists `setup`, run `./hub setup`" in steps[8]
@@ -584,15 +589,17 @@ def test_states_proposal_format_when_reference_rendered(reference: str) -> None:
         assert phrase in proposal, phrase
 
 
-def test_renames_applied_proposal_when_propose_reruns(reference: str) -> None:
+def test_archives_applied_proposal_when_propose_reruns(reference: str) -> None:
     recovery = section(reference, "Recovery")
 
     assert "a `propose` re-run overwrites a `proposed` file" in recovery
+    # AGH-114: a Write of the dated copy, never `mv`: the settings allow only proposal writes.
     assert (
-        "An `applied` file is first renamed to `brain/_inbox/onboard-proposal-YYYY-MM-DD.md`"
-        in recovery
+        "An `applied` file is first archived: write its content unchanged to"
+        " `brain/_inbox/onboard-proposal-YYYY-MM-DD.md`" in recovery
     )
-    assert "then a new proposal is written" in recovery
+    assert "then write the new proposal over `brain/_inbox/onboard-proposal.md`" in recovery
+    assert "never `mv`" in recovery
     assert "stop and tell the human to delete or reset it" in recovery
     assert "The agent never edits `status`, except to set `applied`" in recovery
 

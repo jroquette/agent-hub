@@ -966,6 +966,63 @@ def test_allows_read_when_guard_file_read(guarded_hub: Path, guard: Guard) -> No
         assert guard(hooks, runs) == [None] * len(runs)
 
 
+# AGH-114: the hub-root launchers. `./hub doctor` runs with no prompt, so an edit of `hub` (or of
+# `agent`, which runs it) asks first; running them, reading them, or naming them in a write that
+# targets another file does not.
+LAUNCHERS = ("hub", "agent")
+LAUNCHER_RUNS = (
+    "./hub doctor",
+    "./hub doctor > /tmp/doctor.out 2>&1",
+    "./agent -p x > /tmp/agent.log",
+    "echo hub agent > /tmp/words.txt",
+    "cat hub agent",
+    "sed -n 1,5p hub",
+    "echo x > scripts/hub",
+    "echo x > docs/agent",
+)
+
+
+def test_asks_when_launcher_edited(guarded_hub: Path, guard: Guard) -> None:
+    bases = (guarded_hub, guarded_hub / WORKTREE)
+    runs: list[tuple[dict[str, Any], Path]] = []
+    named: list[str] = []
+    for base in bases:
+        for rel in LAUNCHERS:
+            for event in edit_events(base / rel):
+                runs.append((event, base))
+                named.append(str(base / rel))
+            for command in BASH_WRITES:
+                runs.append(bash_run(command.format(rel), base))
+                named.append(rel)
+            runs.append(bash_run(f"echo x > ./{rel}", base))
+            named.append(f"./{rel}")
+
+    for hooks in (guarded_hub / HOOKS, guarded_hub / WORKTREE / HOOKS):
+        verdicts = guard(hooks, runs)
+
+        missed = [
+            (event, verdict)
+            for (event, _), path, verdict in zip(runs, named, verdicts, strict=True)
+            if verdict is None or verdict[0] != "ask" or path not in verdict[1]
+        ]
+        assert len(runs) == 2 * len(LAUNCHERS) * (4 + len(BASH_WRITES) + 1)
+        assert missed == []
+
+
+def test_allows_launcher_when_run_or_read(guarded_hub: Path, guard: Guard) -> None:
+    runs = [
+        run
+        for base in (guarded_hub, guarded_hub / WORKTREE)
+        for run in (
+            *(bash_run(command, base) for command in LAUNCHER_RUNS),
+            *((event, base) for rel in LAUNCHERS for event in read_events(base / rel)),
+        )
+    ]
+
+    for hooks in (guarded_hub / HOOKS, guarded_hub / WORKTREE / HOOKS):
+        assert guard(hooks, runs) == [None] * len(runs)
+
+
 # AGH-31 (AC-31.5): the probe kickoff Reads, as written in the rendered kickoff, is denied by the
 # guard itself, from the hub, from a hub worktree and with no hub.json above the cwd.
 def test_denies_guard_probe_when_kickoff_path_read(
