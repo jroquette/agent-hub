@@ -292,6 +292,10 @@ def test_exits_zero_when_hub_unwritable(
     folder = hub / OUTPUT_FOLDERS[name]
     if variant == "blocked":
         folder.parent.mkdir(parents=True, exist_ok=True)
+        # A rendered hub seeds `brain/auto/workspace/.gitkeep`: the blocking file replaces the
+        # folder.
+        if folder.is_dir():
+            shutil.rmtree(folder)
         folder.write_text("in the way\n", encoding="utf-8")
     else:
         make_read_only(hub)
