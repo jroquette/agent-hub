@@ -326,12 +326,38 @@ class Repo(ConfigObject):
     )
 
 
+def _python_regex(value: str) -> str:
+    try:
+        re.compile(value)
+    except re.error as error:
+        raise PydanticCustomError(
+            "python_regex", "not a Python regex: {error}", {"error": str(error)}
+        ) from error
+    return value
+
+
+# A guard pattern: non-blank free text that compiles with Python's ``re``.
+InfraPattern = Annotated[RequiredCommand, AfterValidator(_python_regex)]
+
+
+class GuardInfra(ConfigObject):
+    """Regexes the guard hook matches against infra commands: allowed environments and production
+    markers."""
+
+    allow: tuple[InfraPattern, ...] = ()
+    prod_markers: tuple[InfraPattern, ...] = ()
+
+
 class Guard(ConfigObject):
     """Paths and hosts the hub's guard hook asks about or denies."""
 
     ask_before_edit: tuple[GuardPath, ...] = ()
     deny_hosts: tuple[HostName, ...] = ()
     deny_paths: tuple[GuardPath, ...] = ()
+    infra: GuardInfra | None = absent_by_default(
+        description="Turns on the guard's infra classification: Python re patterns, searched with"
+        " no flags. Absent: the fixed infra rule."
+    )
 
 
 class ModuleSettings(ConfigObject):
@@ -405,7 +431,8 @@ class HubConfig(ConfigObject):
         BeforeValidator(at_least_one_item),
         Field(json_schema_extra={"minItems": 1}),
     ]
-    guard: Guard = Guard()
+    # A factory, not an instance: the schema would export its unset keys as nulls.
+    guard: Guard = Field(default_factory=Guard)
     # A factory, not an instance: the schema would export its unset keys as nulls.
     modules: Modules = Field(default_factory=Modules)
     doctor: Doctor = Field(default_factory=Doctor)

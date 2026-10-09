@@ -196,9 +196,42 @@
           },
           "title": "Deny Paths",
           "type": "array"
+        },
+        "infra": {
+          "$ref": "#/$defs/GuardInfra",
+          "description": "Turns on the guard's infra classification: Python re patterns, searched with no flags. Absent: the fixed infra rule."
         }
       },
       "title": "Guard",
+      "type": "object"
+    },
+    "GuardInfra": {
+      "additionalProperties": false,
+      "description": "Regexes the guard hook matches against infra commands: allowed environments and production\nmarkers.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "allow": {
+          "default": [],
+          "items": {
+            "pattern": "^[^\\x00-\\x1f\\x7f]*[^\\x00-\\x1f\\x7f\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000][^\\x00-\\x1f\\x7f]*$",
+            "type": "string"
+          },
+          "title": "Allow",
+          "type": "array"
+        },
+        "prod_markers": {
+          "default": [],
+          "items": {
+            "pattern": "^[^\\x00-\\x1f\\x7f]*[^\\x00-\\x1f\\x7f\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000][^\\x00-\\x1f\\x7f]*$",
+            "type": "string"
+          },
+          "title": "Prod Markers",
+          "type": "array"
+        }
+      },
+      "title": "GuardInfra",
       "type": "object"
     },
     "IdentityRuleSettings": {
@@ -567,12 +600,7 @@
       "type": "array"
     },
     "guard": {
-      "$ref": "#/$defs/Guard",
-      "default": {
-        "ask_before_edit": [],
-        "deny_hosts": [],
-        "deny_paths": []
-      }
+      "$ref": "#/$defs/Guard"
     },
     "modules": {
       "$ref": "#/$defs/Modules"
