@@ -14,6 +14,8 @@ from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.generator.render_hub import render_hub
 
 RETRO_PATH = "plugin/hub-workflow/skills/retro/SKILL.md"
+KICKOFF_PATH = "plugin/hub-workflow/skills/kickoff/SKILL.md"
+KICKOFF_BRANCH = re.compile(r"branch: work on (`[^`]+`)\.")
 STEP = re.compile(r"^(\d+)\. `(agent|script|gate|human)` \*\*([^*]+)\*\*", re.MULTILINE)
 EXPECTED_STEPS = (
     ("1", "script", "Gather"),
@@ -26,10 +28,21 @@ EXPECTED_STEPS = (
 
 
 @pytest.fixture(scope="module")
-def retro_text() -> str:
+def rendered() -> dict[str, str]:
     config = HubConfig.model_validate(a_hub_document())
-    rendered = {file.path: file.content for file in render_hub(config).files}
-    return rendered[RETRO_PATH].decode("utf-8")
+    return {file.path: file.content.decode("utf-8") for file in render_hub(config).files}
+
+
+@pytest.fixture(scope="module")
+def retro_text(rendered: dict[str, str]) -> str:
+    return rendered[RETRO_PATH]
+
+
+@pytest.fixture(scope="module")
+def kickoff_branch(rendered: dict[str, str]) -> str:
+    match = KICKOFF_BRANCH.search(rendered[KICKOFF_PATH])
+    assert match is not None
+    return match.group(1)
 
 
 def body_of(text: str) -> str:
@@ -91,8 +104,48 @@ def test_keeps_authorship_with_the_user_when_hub_rendered(retro_text: str) -> No
         assert rule in retro_text, rule
 
 
-def test_names_no_project_value_when_hub_rendered(retro_text: str) -> None:
-    body = body_of(retro_text)
+def test_counts_the_inbox_before_mining_writes_to_it_when_hub_rendered(retro_text: str) -> None:
+    assert retro_text.index("proposals in `brain/_inbox/`") < retro_text.index(
+        "`make mine DAYS=<n>`"
+    )
+
+
+def test_reads_merged_prs_per_repo_with_reviews_when_hub_rendered(retro_text: str) -> None:
+    for part in (
+        "--repo <github>",
+        "--state merged",
+        "--search 'merged:>=<start date>'",
+        "--limit ",
+        "--json number,url,mergedAt,reviews",
+        "report that repo's PRs as **partial**",
+    ):
+        assert part in retro_text, part
+
+
+def test_keeps_external_content_out_of_the_brain_when_hub_rendered(retro_text: str) -> None:
+    assert "never quoted PR, issue or review text" in retro_text
+    assert "goes there with `provenance: agent-from-external`" in retro_text
+    never = next(line for line in retro_text.splitlines() if line.startswith("Never:"))
+    assert "copy PR, issue or review text into the journal" in never
+    assert "`provenance: agent-from-external`" in never
+
+
+def test_runs_the_hub_gate_before_its_pr_when_hub_rendered(retro_text: str) -> None:
+    assert (
+        "run the hub's `make check` with its output redirected to a file and `$?` checked"
+        in retro_text
+    )
+    assert "not green: fix it or stop, no PR" in retro_text
+
+
+def test_names_the_branch_as_kickoff_does_when_hub_rendered(
+    retro_text: str, kickoff_branch: str
+) -> None:
+    assert f"the note goes on branch {kickoff_branch} " in retro_text
+
+
+def test_names_no_project_value_when_hub_rendered(retro_text: str, kickoff_branch: str) -> None:
+    body = body_of(retro_text).replace(kickoff_branch, "")
     for value in ("demo", "acme", "jdoe", "Jane Doe"):
         assert value not in body, value
     assert re.search(r"\b(?:DEM|AGH)\b", body) is None
