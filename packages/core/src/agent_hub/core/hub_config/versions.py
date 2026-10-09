@@ -18,6 +18,7 @@ from agent_hub.core.hub_config.problems import (
     NOT_AN_OBJECT_MESSAGE,
     ROOT_PATH,
     ConfigProblem,
+    json_type,
     one_line,
 )
 
@@ -92,7 +93,7 @@ def find_version_problem(document: object, *, running_version: str) -> ConfigPro
 
 def _platform_problem(platform: object, *, is_present: bool) -> ConfigProblem:
     if is_present:
-        return ConfigProblem("platform", f"must be an object, not {_shown(platform)}")
+        return ConfigProblem("platform", f"must be an object, not {json_type(platform)}")
     return ConfigProblem("platform", 'required: the pinned release, as {"version": "1.2.3"}')
 
 

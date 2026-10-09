@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 from pydantic_core import InitErrorDetails, PydanticCustomError
 
+from agent_hub.core.hub_config.doctor_rules import DoctorRules
 from agent_hub.core.hub_config.document_check import check_hub_document
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
@@ -146,8 +147,9 @@ def test_quotes_key_when_file_key_spelled_like_marker(document: dict[str, Any], 
     assert problem.path == path
 
 
-# AGH-94: every key that holds an object, at each level, with a value of another JSON type that
-# carries a marker; the text a message would show if it echoed the value is listed with it.
+# AGH-94: every key that holds an object, at each level (each doctor rule's settings included),
+# with a value of another JSON type that carries a marker; the text a message would show if it
+# echoed the value is listed with it.
 OBJECT_KEYS: list[tuple[str | int, ...]] = [
     ("platform",),
     ("project",),
@@ -157,10 +159,11 @@ OBJECT_KEYS: list[tuple[str | int, ...]] = [
     ("repos", 0, "conventions"),
     ("guard",),
     ("modules",),
-    ("modules", "bench"),
-    ("modules", "contract-sync"),
+    *[("modules", name) for name in ("bench", "cloud", "contract-sync", "marketplace")],
     ("doctor",),
     ("doctor", "rules"),
+    *[("doctor", "rules", field.alias or name) for name, field in DoctorRules.model_fields.items()],
+    ("doctor", "rules", "instructions.size", "max_lines"),
 ]
 NOT_OBJECTS: list[tuple[object, str]] = [
     (SECRET_PARTS[1], SECRET_PARTS[1]),
@@ -180,9 +183,13 @@ def with_value_at(key: tuple[str | int, ...], value: object) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("key", OBJECT_KEYS, ids=[".".join(map(str, key)) for key in OBJECT_KEYS])
-def test_never_echoes_value_when_object_key_holds_other_type(key: tuple[str | int, ...]) -> None:
-    for value, shown in NOT_OBJECTS:
-        problems = problems_of(with_value_at(key, value))
+@pytest.mark.parametrize(
+    ("value", "shown"), NOT_OBJECTS, ids=["string", "number", "array", "boolean"]
+)
+def test_never_echoes_value_when_object_key_holds_other_type(
+    key: tuple[str | int, ...], value: object, shown: str
+) -> None:
+    problems = problems_of(with_value_at(key, value))
 
-        assert problems
-        assert not [problem for problem in problems if shown in problem.message], (value, problems)
+    assert problems
+    assert not [problem for problem in problems if shown in problem.message]
