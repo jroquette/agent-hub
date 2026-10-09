@@ -13,7 +13,7 @@ from agent_hub.core.hub_config.local_config import (
 from agent_hub.core.hub_config.model import Project, Tracker
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.testing.builders import a_hub_document
-from agent_hub.core.testing.platform_repository_cases import CUSTOM_REPOSITORY
+from agent_hub.core.testing.platform_repository_cases import CUSTOM_REPOSITORY, SECRET_PARTS
 
 RUNNING = "0.3.1"
 HUB_ONLY_MESSAGE = (
@@ -165,3 +165,24 @@ def test_shares_hub_patterns_when_schemas_compared(
 
     assert rule.keys() & {"pattern", "enum"}
     assert rule == rule_of(hub_model, key)
+
+
+# AGH-94: hub.local.json's objects, like hub.json's, never repeat a value of another JSON type.
+@pytest.mark.parametrize("key", ["project", "tracker"])
+@pytest.mark.parametrize(
+    ("value", "shown"),
+    [
+        (SECRET_PARTS[1], SECRET_PARTS[1]),
+        (31337, "31337"),
+        ([SECRET_PARTS[1]], SECRET_PARTS[1]),
+        (True, "true"),
+    ],
+    ids=["string", "number", "array", "boolean"],
+)
+def test_never_echoes_value_when_local_object_holds_other_type(
+    key: str, value: object, shown: str
+) -> None:
+    problems = problems_of({key: value})
+
+    assert problems
+    assert not [problem for problem in problems if shown in problem.message]
