@@ -20,22 +20,38 @@ NESTED_MAX_LINES = 80
 
 # Each step: its type, then phrases its text holds.
 STEPS = {
-    1: ("agent", ("public surface", "CLI output", "schemas", "import contracts")),
-    2: ("agent", ("characterization", "own commit", "unchanged code")),
-    3: ("gate", ("batch plan", "verification command", "15 non-test files")),
+    1: (
+        "agent",
+        (
+            "public surface",
+            "CLI output",
+            "schemas",
+            "import contracts",
+            "`brain/_inbox/` with `provenance: agent-from-external`",
+        ),
+    ),
+    2: ("agent", ("characterization", "own commit", "unchanged code", "never weakened")),
+    3: (
+        "gate",
+        (
+            "batch plan",
+            "verification command",
+            "15 non-test files",
+            "passes the repo's `check` on its own",
+        ),
+    ),
     4: ("agent", ("worktree", "`check_fast`", "`check`", "Coverage floors", "import-linter")),
     5: ("agent", ("`quality-reviewer`", "behaviour drift", "error messages", "ordering")),
-    6: ("script", ("PR", "previous batch", "issue")),
+    6: ("script", ("previous batch's PR", "batch k of N", "In Review")),
 }
 STOP_RULES = (
     "**Stop and switch to `/feature`**",
     "adds or changes a contract",
     "`guard.ask_before_edit`",
 )
-NEVER_DO = (
+SHIP_RULES = (
     'no AI co-author trailer, no "Generated with", no 🤖',
     "No push to the default branch, no force-push",
-    "never weakened",
 )
 STEP_LINE = re.compile(r"^(\d+)\. `([a-z]+)` \*\*", re.MULTILINE)
 
@@ -85,9 +101,11 @@ def test_sends_golden_diffs_to_pr_body_or_revert_when_batch_reviewed(skill_text:
     assert "the PR body explains each one, or the batch is reverted" in skill_text
 
 
-def test_keeps_authorship_rules_when_skill_rendered(skill_text: str) -> None:
-    for phrase in NEVER_DO:
-        assert phrase in skill_text, phrase
+def test_keeps_authorship_rules_in_pr_step_when_skill_rendered(skill_text: str) -> None:
+    ship = _step(skill_text, 6)
+
+    for phrase in SHIP_RULES:
+        assert phrase in ship, phrase
 
 
 def test_stays_generic_and_short_when_skill_rendered(skill_text: str) -> None:
