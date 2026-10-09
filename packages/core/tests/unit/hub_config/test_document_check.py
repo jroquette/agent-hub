@@ -8,6 +8,7 @@ from agent_hub.core.hub_config.document_check import check_hub_document
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.platform_repository_cases import SECRET_PARTS
 
 RUNNING = "0.3.1"
 MAX_LINES_PATH = 'doctor.rules["instructions.size"].max_lines'
@@ -143,3 +144,45 @@ def test_quotes_key_when_file_key_spelled_like_marker(document: dict[str, Any], 
     (problem,) = problems_of(document)
 
     assert problem.path == path
+
+
+# AGH-94: every key that holds an object, at each level, with a value of another JSON type that
+# carries a marker; the text a message would show if it echoed the value is listed with it.
+OBJECT_KEYS: list[tuple[str | int, ...]] = [
+    ("platform",),
+    ("project",),
+    ("project", "conventions"),
+    ("tracker",),
+    ("repos", 0),
+    ("repos", 0, "conventions"),
+    ("guard",),
+    ("modules",),
+    ("modules", "bench"),
+    ("modules", "contract-sync"),
+    ("doctor",),
+    ("doctor", "rules"),
+]
+NOT_OBJECTS: list[tuple[object, str]] = [
+    (SECRET_PARTS[1], SECRET_PARTS[1]),
+    (31337, "31337"),
+    ([SECRET_PARTS[1]], SECRET_PARTS[1]),
+    (True, "true"),
+]
+
+
+def with_value_at(key: tuple[str | int, ...], value: object) -> dict[str, Any]:
+    document = a_pinned_document()
+    parent: Any = document
+    for segment in key[:-1]:
+        parent = parent.setdefault(segment, {}) if isinstance(segment, str) else parent[segment]
+    parent[key[-1]] = value
+    return document
+
+
+@pytest.mark.parametrize("key", OBJECT_KEYS, ids=[".".join(map(str, key)) for key in OBJECT_KEYS])
+def test_never_echoes_value_when_object_key_holds_other_type(key: tuple[str | int, ...]) -> None:
+    for value, shown in NOT_OBJECTS:
+        problems = problems_of(with_value_at(key, value))
+
+        assert problems
+        assert not [problem for problem in problems if shown in problem.message], (value, problems)
