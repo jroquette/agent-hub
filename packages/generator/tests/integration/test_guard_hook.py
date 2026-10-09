@@ -13,6 +13,7 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -22,6 +23,7 @@ import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.ingestion.hook_envelope import HookEnvelope
+from agent_hub.core.testing import builders
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.generator.render_hub import render_hub
 
@@ -457,6 +459,409 @@ def test_denies_cdk_deploy_when_guard_infra_absent(evaluate: Evaluate) -> None:
     assert verdicts == dict.fromkeys(
         commands, ("deny", "infrastructure commands (terraform/aws/pulumi/kubectl) are human-only")
     )
+
+
+# AGH-45 infra mode: ``hub.json`` holds ``guard.infra`` (the builder's synthetic value unless a
+# test writes another). Reasons as the guard words them (D-B3).
+INFRA_MARKER_REASON = (
+    "this command matches guard.infra.prod_markers `{}` (hub.json): "
+    "production infrastructure is human-only"
+)
+INFRA_UNKNOWN_REASON = (
+    "{}: environment not recognised by guard.infra.allow (hub.json); put the environment on "
+    "this command, e.g. `--profile <env>` or an `AWS_PROFILE=<env> ` prefix (an exported or "
+    "inherited one does not count)"
+)
+INFRA_ASK_REASON = "`{} {}` changes infrastructure on an allowed environment; confirm first"
+INFRA_CONFIG_REASON = (
+    "{} (hub.json) cannot be used ({}); infrastructure commands are denied until it is fixed"
+)
+LEGACY_INFRA_REASON = "infrastructure commands (terraform/aws/pulumi/kubectl) are human-only"
+
+
+def marker(pattern: str) -> tuple[str, str]:
+    return ("deny", INFRA_MARKER_REASON.format(pattern))
+
+
+def unknown(tool: str) -> tuple[str, str]:
+    return ("deny", INFRA_UNKNOWN_REASON.format(tool))
+
+
+def infra_ask(tool: str, verb: str) -> tuple[str, str]:
+    return ("ask", INFRA_ASK_REASON.format(tool, verb))
+
+
+def unusable(location: str, cause: str) -> tuple[str, str]:
+    return ("deny", INFRA_CONFIG_REASON.format(location, cause))
+
+
+def infra_document(infra: object) -> dict[str, Any]:
+    """``HUB_JSON`` (a copy) with ``infra`` as its ``guard.infra``."""
+    document: dict[str, Any] = json.loads(json.dumps(HUB_JSON))
+    document["guard"]["infra"] = infra
+    return document
+
+
+def write_hub(workspace: Path, infra: object) -> Path:
+    """Write ``infra_document(infra)`` as the workspace hub's ``hub.json``; returns the hub."""
+    hub = workspace / "demo-hub"
+    (hub / "hub.json").write_text(json.dumps(infra_document(infra)), encoding="utf-8")
+    return hub
+
+
+@pytest.fixture
+def infra_evaluate(workspace: Path, evaluate: Evaluate) -> Evaluate:
+    """``evaluate`` on the workspace whose ``hub.json`` holds the builder's ``guard.infra``."""
+    write_hub(workspace, builders.a_guard_infra())
+    return evaluate
+
+
+def bash_verdicts(
+    evaluate: Evaluate, commands: Sequence[str], *, env: Mapping[str, str] | None = None
+) -> dict[str, Any]:
+    """``{command: check_bash(command, cfg)}``, in one child."""
+    return dict(zip(commands, evaluate([bash(c) for c in commands], env=env), strict=True))
+
+
+# AC-45.7: a read on an allowed environment, per tool, and a write outside D6.
+def test_allows_infra_read_when_environment_allowed(infra_evaluate: Evaluate) -> None:
+    commands = [
+        "aws s3 ls --profile demo-dev",
+        "AWS_PROFILE=demo-dev aws sts get-caller-identity",
+        "cdk diff --profile demo-dev",
+        "terraform plan -var-file=dev.tfvars",
+        "pulumi preview --stack demo/dev",
+        "kubectl get pods --context kind-demo",
+        "helm list --kube-context kind-demo",
+        "sam logs --profile demo-dev",
+        "serverless info --stage dev",
+        "aws s3 cp a s3://b/a --profile demo-dev",
+        "aws ssm put-parameter --name x --value y --profile demo-dev",
+    ]
+
+    verdicts = bash_verdicts(infra_evaluate, commands)
+
+    assert verdicts == dict.fromkeys(commands)
+
+
+# AC-45.8: a marker anywhere in the command denies, for each tool; none without a covered tool.
+def test_denies_infra_when_prod_marker_anywhere(infra_evaluate: Evaluate) -> None:
+    prod, account = r"\bdemo-prod\b", r"\b999999999999\b"
+    expected = {
+        "aws s3 ls --profile demo-prod": marker(prod),
+        "aws s3 ls --profile demo-dev; echo 999999999999": marker(account),
+        "cdk synth --profile demo-prod": marker(prod),
+        "kubectl get pods --context kind-demo -n demo-prod": marker(prod),
+        "terraform plan -var-file=demo-prod.tfvars": marker(prod),
+        "pulumi preview --stack demo/demo-prod": marker(prod),
+        "helm list --kube-context demo-prod": marker(prod),
+        "sam logs --profile demo-prod": marker(prod),
+        "serverless info --stage demo-prod": marker(prod),
+        "cdk diff --profile demo-prod": marker(prod),
+        "echo demo-prod": None,
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# AC-45.9: a part that matches no allow pattern and no local form is denied.
+def test_denies_infra_when_environment_unrecognised(infra_evaluate: Evaluate) -> None:
+    expected = {
+        "aws s3 ls": unknown("aws"),
+        "aws s3 ls --profile other": unknown("aws"),
+        "kubectl get pods": unknown("kubectl"),
+        "terraform plan": unknown("terraform"),
+        "helm list": unknown("helm"),
+        "pulumi preview": unknown("pulumi"),
+        "sam logs": unknown("sam"),
+        "serverless info": unknown("serverless"),
+        "cdk diff": unknown("cdk"),
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# AC-45.10 (D7): an environment set on another part, or inherited, never counts.
+def test_denies_carried_environment_when_set_before_part(infra_evaluate: Evaluate) -> None:
+    commands = [
+        "export AWS_PROFILE=demo-dev && aws s3 ls",
+        "AWS_PROFILE=demo-dev; aws s3 ls",
+        "export AWS_PROFILE=demo-dev\naws s3 ls",
+    ]
+
+    verdicts = bash_verdicts(infra_evaluate, commands)
+    inherited = bash_verdicts(infra_evaluate, ["aws s3 ls"], env={"AWS_PROFILE": "demo-dev"})
+
+    assert verdicts == dict.fromkeys(commands, unknown("aws"))
+    assert inherited == {"aws s3 ls": unknown("aws")}
+
+
+# AC-45.11 (D6): one case per ask verb on an allowed environment, then global options before
+# the verb (verbs are searched anywhere after the tool word in the part).
+def test_asks_infra_verb_when_environment_allowed(infra_evaluate: Evaluate) -> None:
+    expected = {
+        "aws ec2 terminate-instances --instance-ids i-0 --profile demo-dev": infra_ask(
+            "aws", "terminate-instances"
+        ),
+        "aws iam remove-role-from-instance-profile --role-name x --profile demo-dev": infra_ask(
+            "aws", "remove-role-from-instance-profile"
+        ),
+        "aws ec2 deregister-image --image-id ami-0 --profile demo-dev": infra_ask(
+            "aws", "deregister-image"
+        ),
+        "aws dynamodb delete-table --table-name x --profile demo-dev": infra_ask(
+            "aws", "delete-table"
+        ),
+        "aws s3 rm s3://b/k --profile demo-dev": infra_ask("aws", "s3 rm"),
+        "aws s3  rb s3://b --profile demo-dev": infra_ask("aws", "s3 rb"),
+        "aws cloudformation deploy --template-file t.yml --profile demo-dev": infra_ask(
+            "aws", "cloudformation deploy"
+        ),
+        "aws cloudformation delete-stack --stack-name x --profile demo-dev": infra_ask(
+            "aws", "cloudformation delete-stack"
+        ),
+        "cdk deploy --profile demo-dev": infra_ask("cdk", "deploy"),
+        "cdk destroy --profile demo-dev": infra_ask("cdk", "destroy"),
+        "terraform apply -var-file=dev.tfvars": infra_ask("terraform", "apply"),
+        "terraform destroy -var-file=dev.tfvars": infra_ask("terraform", "destroy"),
+        "terraform import -var-file=dev.tfvars x y": infra_ask("terraform", "import"),
+        "pulumi up --stack demo/dev": infra_ask("pulumi", "up"),
+        "pulumi destroy --stack demo/dev": infra_ask("pulumi", "destroy"),
+        "kubectl apply -f x.yaml --context kind-demo": infra_ask("kubectl", "apply"),
+        "kubectl create deployment x --image=y --context kind-demo": infra_ask("kubectl", "create"),
+        "kubectl delete pod x --context kind-demo": infra_ask("kubectl", "delete"),
+        "kubectl replace -f x.yaml --context kind-demo": infra_ask("kubectl", "replace"),
+        "kubectl patch deployment x -p y --context kind-demo": infra_ask("kubectl", "patch"),
+        "kubectl scale deployment x --replicas=0 --context kind-demo": infra_ask(
+            "kubectl", "scale"
+        ),
+        "helm install x ./c --kube-context kind-demo": infra_ask("helm", "install"),
+        "helm upgrade x ./c --kube-context kind-demo": infra_ask("helm", "upgrade"),
+        "helm uninstall x --kube-context kind-demo": infra_ask("helm", "uninstall"),
+        "helm rollback x 1 --kube-context kind-demo": infra_ask("helm", "rollback"),
+        "sam deploy --profile demo-dev": infra_ask("sam", "deploy"),
+        "sam delete --profile demo-dev": infra_ask("sam", "delete"),
+        "serverless deploy --stage dev": infra_ask("serverless", "deploy"),
+        "serverless remove --stage dev": infra_ask("serverless", "remove"),
+        "cdk --profile demo-dev deploy": infra_ask("cdk", "deploy"),
+        "terraform -chdir=infra apply -var-file=dev.tfvars": infra_ask("terraform", "apply"),
+        "kubectl --context kind-demo -n app delete pod x": infra_ask("kubectl", "delete"),
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# AC-45.12 (D5, D5-t): the local-only forms pass with no environment.
+def test_allows_local_form_when_no_environment(infra_evaluate: Evaluate) -> None:
+    commands = [
+        "aws --version",
+        "aws help",
+        "helm version",
+        "cdk synth",
+        "cdk ls",
+        "cdk list",
+        "cdk init app --language python",
+        "cdk doctor",
+        "cdk context",
+        "terraform fmt",
+        "terraform validate",
+        "terraform init -backend=false",
+        "pulumi version",
+        "helm template x ./c",
+        "helm lint ./c",
+        "kubectl version --client",
+        "sam build",
+        "sam validate",
+        "npx cdk synth",
+    ]
+
+    verdicts = bash_verdicts(infra_evaluate, commands)
+
+    assert verdicts == dict.fromkeys(commands)
+
+
+# AC-45.12 (D5-t): near misses of a local form; a part is local only when every mention is.
+def test_denies_near_local_form_when_no_environment(infra_evaluate: Evaluate) -> None:
+    expected = {
+        "cdk diff": unknown("cdk"),
+        "terraform init": unknown("terraform"),
+        "kubectl version": unknown("kubectl"),
+        "aws s3 rm s3://b --help": unknown("aws"),
+        "cdk synth $(aws s3 rm s3://b)": unknown("cdk"),
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# AC-45.13 (D3): each part gets a verdict; the strictest wins.
+def test_takes_strictest_part_when_command_chained(infra_evaluate: Evaluate) -> None:
+    expected = {
+        "aws s3 ls --profile demo-dev && aws s3 ls": unknown("aws"),
+        "aws s3 ls --profile demo-dev | kubectl apply -f - --context kind-demo": infra_ask(
+            "kubectl", "apply"
+        ),
+        "cdk synth && cdk deploy --profile demo-dev": infra_ask("cdk", "deploy"),
+        "aws s3 ls --profile demo-dev || aws s3 ls --profile demo-prod": marker(r"\bdemo-prod\b"),
+        "aws s3 ls --profile demo-dev\nterraform plan": unknown("terraform"),
+        "cdk synth; terraform fmt": None,
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# AC-45.14 (D2): wrapped and quoted tools are detected; so is a plain mention (accepted).
+def test_detects_wrapped_tool_when_infra_set(infra_evaluate: Evaluate) -> None:
+    expected = {
+        "npx cdk deploy": unknown("cdk"),
+        "env aws s3 ls": unknown("aws"),
+        "aws-vault exec x -- aws s3 ls": unknown("aws"),
+        'bash -c "aws s3 ls"': unknown("aws"),
+        "echo $(aws s3 ls)": unknown("aws"),
+        "'aws' s3 ls": unknown("aws"),
+        '"kubectl" get pods': unknown("kubectl"),
+        "`helm list`": unknown("helm"),
+        "grep aws notes.txt": unknown("aws"),
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# AC-45.15 (D-order) and E5: an infra allow or ask does not end the check; a later deny wins,
+# and on two asks the infra reason is kept.
+def test_applies_other_rules_when_infra_part_allowed_or_asked(infra_evaluate: Evaluate) -> None:
+    secret = (
+        "deny",
+        "reading secret file .env is not allowed (any command, not just cat); "
+        "reference the variable name instead",
+    )
+    expected = {
+        "aws s3 ls --profile demo-dev && cat .env": secret,
+        "aws s3 ls --profile demo-dev && git push --force": (
+            "deny",
+            "force-push is not allowed; push a new commit (or a merge) instead",
+        ),
+        "cdk deploy --profile demo-dev && curl https://prod.example.com/x": (
+            "deny",
+            "prod.example.com is in guard.deny_hosts (hub.json); agents do not reach it. "
+            "Use fixtures or a sandbox endpoint",
+        ),
+        "terraform apply -var-file=dev.tfvars && cat .env": secret,
+        "terraform apply -var-file=dev.tfvars && rm tests/test_x.py": infra_ask(
+            "terraform", "apply"
+        ),
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# AC-45.16 (D1, Q-1, E10, E16): a guard.infra the guard cannot use denies every covered-tool
+# command, naming the location (escaped); a command with no covered tool keeps its verdict.
+UNUSABLE_INFRA: list[tuple[object, tuple[str, str]]] = [
+    (
+        {"allow": ["("], "prod_markers": [r"\bdemo-prod\b"]},
+        unusable(
+            "guard.infra.allow[0]",
+            "not a Python regex here: missing ), unterminated subpattern at position 0",
+        ),
+    ),
+    (
+        builders.a_guard_infra() | {"prod_markers": ["ok", "[a-"]},
+        unusable(
+            "guard.infra.prod_markers[1]",
+            "not a Python regex here: unterminated character set at position 0",
+        ),
+    ),
+    ([], unusable("guard.infra", "malformed")),
+    ({"allow": "x"}, unusable("guard.infra.allow", "malformed")),
+    ({"allow": [""]}, unusable("guard.infra.allow[0]", "malformed")),
+    (
+        builders.a_guard_infra() | {"a\u0007": []},
+        unusable("guard.infra.a\\u0007", "malformed"),
+    ),
+]
+
+
+def test_denies_infra_when_config_unusable(evaluate: Evaluate, workspace: Path) -> None:
+    commands = ["aws s3 ls --profile demo-dev", "git status"]
+    found = []
+    for infra, _ in UNUSABLE_INFRA:
+        write_hub(workspace, infra)
+        found.append(bash_verdicts(evaluate, commands))
+
+    assert found == [
+        {"aws s3 ls --profile demo-dev": verdict, "git status": None}
+        for _, verdict in UNUSABLE_INFRA
+    ]
+
+
+# AC-45.16: a pattern only a newer ``re`` accepts (an atomic group, 3.11+) is unusable on 3.9.
+def test_denies_infra_when_pattern_needs_newer_python(
+    evaluate: Evaluate, workspace: Path, *, hook_python: str
+) -> None:
+    write_hub(workspace, {"allow": ["--profile[= ](?>dev)"]})
+
+    verdicts = bash_verdicts(evaluate, ["aws s3 ls --profile dev"])
+
+    expected = (
+        None
+        if hook_python == sys.executable
+        else unusable(
+            "guard.infra.allow[0]",
+            "not a Python regex here: unknown extension ?> at position 14",
+        )
+    )
+    assert verdicts == {"aws s3 ls --profile dev": expected}
+
+
+# AC-45.18 (Q-2): $HUB_CONFIG cannot turn infra mode on or widen allow; its markers add.
+def test_keeps_root_infra_mode_when_hub_config_names_other_file(
+    evaluate: Evaluate, workspace: Path, tmp_path: Path
+) -> None:
+    other = tmp_path / "other" / "other-hub"
+    (other / "brain").mkdir(parents=True)
+    other_file = other / "hub.json"
+    env = {"HUB_CONFIG": str(other_file)}
+    other_file.write_text(json.dumps(infra_document(builders.a_guard_infra())), encoding="utf-8")
+
+    legacy = bash_verdicts(evaluate, ["aws s3 ls --profile demo-dev"], env=env)
+    write_hub(workspace, builders.a_guard_infra())
+    wider = {"allow": [r"--profile[= ]other\b"], "prod_markers": [r"\bdemo-dev\b"]}
+    other_file.write_text(json.dumps(infra_document(wider)), encoding="utf-8")
+    combined = bash_verdicts(
+        evaluate, ["aws s3 ls --profile demo-dev", "aws s3 ls --profile other"], env=env
+    )
+
+    assert legacy == {"aws s3 ls --profile demo-dev": ("deny", LEGACY_INFRA_REASON)}
+    assert combined == {
+        "aws s3 ls --profile demo-dev": marker(r"\bdemo-dev\b"),
+        "aws s3 ls --profile other": unknown("aws"),
+    }
+
+
+# AC-45.4 (hooks half, ADR 0016): hub.local.json cannot widen guard.infra.
+def test_ignores_local_infra_when_local_file_sets_allow(
+    infra_evaluate: Evaluate, workspace: Path
+) -> None:
+    local = {"guard": {"infra": {"allow": [r"--profile[= ]other\b"]}}}
+    (workspace / "demo-hub" / "hub.local.json").write_text(json.dumps(local), encoding="utf-8")
+
+    verdicts = bash_verdicts(infra_evaluate, ["aws s3 ls --profile other"])
+
+    assert verdicts == {"aws s3 ls --profile other": unknown("aws")}
 
 
 # AGH-113: a short-flag cluster holding ``f`` and ``--mirror`` force-update remote refs, so they
