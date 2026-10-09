@@ -19,8 +19,8 @@ for its ``.gitkeep``), so it must never be committed with the team's brain. Two 
   at ``.`` only when every fixed path was read. A link or a file that is not UTF-8 text gives
   none (D-out).
 
-A hub listing problem gives nothing: the runner reports it once (AC-48.10). Only paths and
-counts are shown: no memory file's content is read or shown, and ``.gitignore`` lines are
+A hub listing problem gives nothing: the runner reports it once (AC-48.10). The rule never
+looks at a memory file's content and shows only paths and counts; ``.gitignore`` lines are
 only compared (AC-48.11). Paths go in the finding's ``path``, which the report escapes.
 """
 

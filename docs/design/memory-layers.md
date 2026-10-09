@@ -61,7 +61,8 @@ byte.
 The next `hub sync` rewrites `AGENTS.md` and the learn skill (managed) and creates `brain/auto/workspace/.gitkeep`
 (seeded, absent). It never rewrites `.gitignore` (seeded): the developer appends the two lines by hand and, for a
 memory file already committed, follows the README section "Personal memory (existing hubs)" (`git rm --cached`
-deletes teammates' copies when they pull, so they copy theirs out first). Until then `hub doctor` warns.
+deletes teammates' copies when they pull, so they copy theirs out first). `hub doctor` warns until both lines are in
+`.gitignore` and no memory file is tracked.
 
 ### Doctor rule `brain.memory`
 
@@ -76,12 +77,14 @@ deletes teammates' copies when they pull, so they copy theirs out first). Until 
   `brain/auto` or `brain`, with or without one leading `/` and one trailing `/`, `/*` or `/**`; trailing spaces and
   one leading UTF-8 BOM are dropped, and a `#` or `!` line never covers. Else one warning at `.gitignore` (at `.` when
   it is absent and every fixed path was read): `.gitignore has no line ignoring brain/auto/workspace/ (personal
-  memory)`. A link or non-UTF-8 `.gitignore` gives none; an untracked `.gitignore` that ignores itself reads as absent.
+  memory)`. A link or a `.gitignore` that is not UTF-8 text (a NUL included) gives none; an untracked `.gitignore`
+  that ignores itself reads as absent.
 - **Fix** (both): `add brain/auto/workspace/* and !brain/auto/workspace/.gitkeep to .gitignore; if a memory file was
   committed, see "Personal memory (existing hubs)" in the agent-hub README first`.
 - **Limits.** (b) matches lines; it is not git's matcher. A nested `.gitignore` (`brain/.gitignore`) is not read, so
   it still warns, and a later `!` line is not evaluated (a file it lets through is listed, so (a) reports it).
-- **Never content.** Only paths and counts are shown; no memory file is read, and `.gitignore` lines are only compared.
+- **Never content.** Only paths and counts are shown; the rule never looks at a memory file's content, and
+  `.gitignore` lines are only compared.
 - **Severity.** `warning` by default, so `hub doctor` still exits 0. `doctor.rules."brain.memory"` takes
   `{"enabled": false}` to turn it off or `{"severity": "error"}` to fail the run on it.
 
