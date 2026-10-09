@@ -36,6 +36,29 @@ def json_path(loc: Sequence[str | int]) -> str:
     return path or ROOT_PATH
 
 
+def json_type(value: object) -> str:
+    """The JSON type of a parsed value, as a message names it: ``a string``, ``null``, …
+
+    A message about a value of the wrong type names this, never the value, which may be a
+    secret pasted in the wrong place.
+    """
+    # ``bool`` first: it is an ``int`` subclass.
+    if isinstance(value, bool):
+        return "a boolean"
+    if isinstance(value, int | float):
+        return "a number"
+    if isinstance(value, str):
+        return "a string"
+    if isinstance(value, list):
+        return "an array"
+    if isinstance(value, dict):
+        return "an object"
+    if value is None:
+        return "null"
+    msg = f"not a parsed JSON value: {type(value).__name__}"
+    raise TypeError(msg)
+
+
 def one_line(text: str) -> str:
     """The text with every character that is not printable escaped, line breaks included."""
     return "".join(char if char.isprintable() else ascii(char)[1:-1] for char in text)

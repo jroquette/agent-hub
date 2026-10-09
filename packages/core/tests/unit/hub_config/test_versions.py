@@ -161,6 +161,30 @@ def test_reports_version_path_when_missing_or_malformed(document: object, path: 
     assert len(problem.message.splitlines()) == 1
 
 
+# AGH-94: a value pasted where the platform object belongs may be a secret, so the problem names
+# its JSON type, never the value.
+SECRET = SECRET_PARTS[1]
+
+
+@pytest.mark.parametrize(
+    ("platform", "json_type"),
+    [
+        (SECRET, "a string"),
+        (31337, "a number"),
+        (3.25, "a number"),
+        ([SECRET], "an array"),
+        (True, "a boolean"),
+        (False, "a boolean"),
+        (None, "null"),
+    ],
+    ids=["string", "integer", "float", "array", "true", "false", "null"],
+)
+def test_names_json_type_when_platform_not_object(platform: object, json_type: str) -> None:
+    problem = find_version_problem(a_pinned_document(platform=platform), running_version=RUNNING)
+
+    assert problem == ConfigProblem("platform", f"must be an object, not {json_type}")
+
+
 def test_returns_nothing_when_both_versions_supported() -> None:
     document = a_pinned_document(project="not checked here", unknown="ignored")
 
