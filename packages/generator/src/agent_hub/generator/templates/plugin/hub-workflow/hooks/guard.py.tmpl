@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """PreToolUse guard for a hub workspace (hub.json + sibling repos).
 
-deny  = hard block (secrets, force-push / push to the default branch, curl|sh, destructive infra and docker
-        volumes, AI attribution in commits/PRs/branches, editing .git internals, network to guard.deny_hosts,
+deny  = hard block (secrets, force-push / push to the default branch, curl|sh, docker volumes, infra commands
+        (with guard.infra: a production marker or an unrecognised environment; without it: the fixed infra
+        rule), AI attribution in commits/PRs/branches, editing .git internals, network to guard.deny_hosts,
         reading or changing paths in guard.deny_paths, from a file tool or any Bash token)
-ask   = needs the user's confirmation (removing test assertions (`assert`, `expect(`, `pytest.raises`,
+ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an allowed environment,
+        removing test assertions (`assert`, `expect(`, `pytest.raises`,
         `.assert_*(`, unittest's `.assertX(` and `self.fail(`) or adding skip/xfail/quarantine markers,
         deleting or sed-editing tests from Bash, editing the hub's guard files: plugin/hub-workflow/hooks/,
         plugin/<project>/hooks/, .claude/settings*.json, hub.lock and hub.json, in the hub or a hub worktree,
@@ -72,6 +74,41 @@ SKIP_MARKERS = re.compile(
     r"@pytest\.mark\.(skip|skipif|xfail|quarantine)\b|\bpytest\.(skip|xfail)\(|\b(test|it|describe)\.(skip|fixme|todo)\(|\bx(it|describe)\("
 )
 TEST_PATH = r"(?:(\S*/)?(tests?|__tests__)/\S+|\S+\.(test|spec)\.[jt]sx?\b|['\"]?(\S*/)?test_\w+\.py\b)"
+# guard.infra: the covered tools, each as a word followed by an optional closing quote, blanks and
+# an argument (group 2 starts at it), anywhere in a part, so wrappers and quotes do not hide it.
+INFRA_TOOLS = ("aws", "cdk", "terraform", "pulumi", "kubectl", "helm", "sam", "serverless")
+INFRA_TOOL = re.compile(r"\b(" + "|".join(INFRA_TOOLS) + r")\b['\"]?\s+(\S)")
+# The parts of a command: split at `&&`, `||`, `;`, `|` and newlines (not at a single `&`).
+INFRA_PART = re.compile(r"&&|\|\||[;|\n]")
+INFRA_END = r"(?![\w-])"
+INFRA_WORD = r"(?<![\w-])({})" + INFRA_END
+# Local-only forms, matched at the tool's first argument; kubectl's version needs --client in the
+# part, terraform's init needs -backend=false.
+INFRA_LOCAL_ANY = re.compile(r"(--version|version|help|--help)" + INFRA_END)
+INFRA_LOCAL = {
+    "cdk": re.compile(r"(synth|ls|list|init|doctor|context)" + INFRA_END),
+    "terraform": re.compile(r"(fmt|validate)" + INFRA_END),
+    "helm": re.compile(r"(template|lint)" + INFRA_END),
+    "sam": re.compile(r"(build|validate)" + INFRA_END),
+}
+INFRA_KUBECTL_VERSION = re.compile(r"(version|--version)" + INFRA_END)
+INFRA_KUBECTL_CLIENT = re.compile(INFRA_WORD.format("--client"))
+INFRA_TERRAFORM_INIT = re.compile(r"init" + INFRA_END)
+INFRA_NO_BACKEND = re.compile(INFRA_WORD.format("-backend=false"))
+# Verbs that ask on an allowed environment, searched as words anywhere after the tool word.
+INFRA_ASK_VERBS = {
+    tool: re.compile(INFRA_WORD.format(verbs))
+    for tool, verbs in (
+        ("aws", r"(delete|remove|terminate|deregister)-[\w-]+|s3\s+(rm|rb)|cloudformation\s+(deploy|delete-stack)"),
+        ("cdk", "deploy|destroy"),
+        ("terraform", "apply|destroy|import"),
+        ("pulumi", "up|destroy"),
+        ("kubectl", "apply|create|delete|replace|patch|scale"),
+        ("helm", "install|upgrade|uninstall|rollback"),
+        ("sam", "deploy|delete"),
+        ("serverless", "deploy|remove"),
+    )
+}
 BASH_WRITE = re.compile(r">>?|\btee\b|\bsed\s+(-\w*i\w*|--in-place)\b|\b(rm|mv|cp|truncate|ln)\b")
 WORKTREE_SEG = re.compile(r"/\.claude/worktrees/[^/]+(?=/)")
 SETTINGS_FILE = re.compile(r"\.claude/settings[^/]*\.json")
@@ -274,6 +311,84 @@ DENY_PATH_REASON = "{} is under guard.deny_paths `{}` (hub.json); agents neither
 GUARD_PARENT_REASON = "{} holds the hub's guard files ({}); removing or moving it changes the guard, confirm first"
 GUARD_FILE_REASON = ("{} is the hub's own guard or config ({}): hooks, the project guard extension, settings, "
                      "hub.lock, hub.json and the hub/agent launchers change only with the user's confirmation")
+INFRA_MARKER_REASON = "this command matches guard.infra.prod_markers `{}` (hub.json): production infrastructure is human-only"
+INFRA_UNKNOWN_REASON = ("{}: environment not recognised by guard.infra.allow (hub.json); put the environment on this "
+                        "command, e.g. `--profile <env>` or an `AWS_PROFILE=<env> ` prefix (an exported or inherited "
+                        "one does not count)")
+INFRA_ASK_REASON = "`{} {}` changes infrastructure on an allowed environment; confirm first"
+INFRA_CONFIG_REASON = "{} (hub.json) cannot be used ({}); infrastructure commands are denied until it is fixed"
+
+
+def _escaped(text: str) -> str:
+    """text with quotes, backslashes, control characters and non-ASCII as JSON escapes: a location
+    read from hub.json goes into a reason as plain text."""
+    return json.dumps(text)[1:-1]
+
+
+def _infra_compiled(key: str, patterns: tuple[str, ...]) -> tuple[list[re.Pattern[str]], Verdict]:
+    """(each guard.infra.<key> pattern compiled, None), or ([], the deny naming the first one this
+    interpreter cannot compile)."""
+    compiled = []
+    for index, pattern in enumerate(patterns):
+        try:
+            compiled.append(re.compile(pattern))
+        except (re.error, OverflowError, RecursionError) as error:
+            location = f"guard.infra.{key}[{index}]"
+            return [], ("deny", INFRA_CONFIG_REASON.format(location, f"not a Python regex here: {error}"))
+    return compiled, None
+
+
+def _infra_local(part: str, mention: re.Match[str]) -> bool:
+    """Whether a covered-tool mention is a local-only form (D5): its words right after the tool."""
+    tool, rest = mention.group(1), part[mention.start(2):]
+    if tool == "kubectl" and INFRA_KUBECTL_VERSION.match(rest):
+        return INFRA_KUBECTL_CLIENT.search(part) is not None
+    if tool == "terraform" and INFRA_TERRAFORM_INIT.match(rest):
+        return INFRA_NO_BACKEND.search(part) is not None
+    local = INFRA_LOCAL.get(tool)
+    return bool(INFRA_LOCAL_ANY.match(rest) or (local and local.match(rest)))
+
+
+def _infra_ask(part: str, mentions: list[re.Match[str]]) -> Verdict:
+    """The ask for the first ask verb after a tool mention in an allowed part, if any."""
+    for mention in mentions:
+        tool = mention.group(1)
+        verb = INFRA_ASK_VERBS[tool].search(part, mention.end(1))
+        if verb:
+            return "ask", INFRA_ASK_REASON.format(tool, " ".join(verb.group(0).split()))
+    return None
+
+
+def check_infra(c: str, cfg: Config) -> Verdict:
+    """The infra rule. Without guard.infra: the fixed rule (a deny or None). With it, only when a part
+    names a covered tool: an unusable guard.infra or pattern denies; a production marker anywhere
+    in the command denies; then per part, in order: one matching an allow pattern passes (the first
+    ask verb asks), one whose every tool mention is a local-only form passes, any other denies."""
+    infra = cfg.infra
+    if infra is None:
+        if re.search(r"\bterraform\s+(apply|destroy|import)\b|\baws\s+\S+|\bpulumi\s+(up|destroy)\b|\bkubectl\s+(apply|delete)\b|\bcdk\s+(deploy|destroy)\b", c):
+            return "deny", "infrastructure commands (terraform/aws/pulumi/kubectl) are human-only"
+        return None
+    parts = [part for part in INFRA_PART.split(c) if INFRA_TOOL.search(part)]
+    if not parts:
+        return None
+    if infra.problem:
+        return "deny", INFRA_CONFIG_REASON.format(_escaped(infra.problem), "malformed")
+    allow, failed = _infra_compiled("allow", infra.allow)
+    markers, failed_marker = _infra_compiled("prod_markers", infra.prod_markers)
+    if failed or failed_marker:
+        return failed or failed_marker
+    for pattern in markers:
+        if pattern.search(c):
+            return "deny", INFRA_MARKER_REASON.format(pattern.pattern)
+    verdict: Verdict = None
+    for part in parts:
+        mentions = list(INFRA_TOOL.finditer(part))
+        if any(pattern.search(part) for pattern in allow):
+            verdict = verdict or _infra_ask(part, mentions)
+        elif not all(_infra_local(part, mention) for mention in mentions):
+            return "deny", INFRA_UNKNOWN_REASON.format(mentions[0].group(1))
+    return verdict
 
 
 def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
@@ -293,8 +408,16 @@ def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
         return "deny", f"{host} is in guard.deny_hosts (hub.json); agents do not reach it. Use fixtures or a sandbox endpoint"
     if re.search(r"\bdocker\s+volume\s+(rm|prune)\b|\bdocker\s+compose\b[^;&|\n]*\bdown\b[^;&|\n]*\s-v\b", c):
         return "deny", "removing docker volumes deletes local data (databases, caches); a human does this"
-    if re.search(r"\bterraform\s+(apply|destroy|import)\b|\baws\s+\S+|\bpulumi\s+(up|destroy)\b|\bkubectl\s+(apply|delete)\b|\bcdk\s+(deploy|destroy)\b", c):
-        return "deny", "infrastructure commands (terraform/aws/pulumi/kubectl) are human-only"
+    infra = check_infra(c, cfg)
+    if infra and infra[0] == "deny":
+        return infra
+    return tighten(infra, _after_infra(c, cfg))
+
+
+def _after_infra(c: str, cfg: Config) -> Verdict:
+    """check_bash's rules after the infra rule (secrets, attribution, claude/ branches, .git,
+    deny_paths, guard files, tests, brain, ask_before_edit): an infra ask or allow does not end the
+    check, so a later deny wins and a later ask keeps the infra reason."""
     for seg in re.split(r"&&|\|\||[;|\n]", c):
         words = seg.split()
         if not words or words[0] in SAFE_ON_SECRETS:
