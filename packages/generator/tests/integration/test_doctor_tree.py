@@ -307,6 +307,39 @@ def test_reads_only_fixed_paths_when_listing_not_asked(
     assert not log.exists()
 
 
+@pytest.mark.parametrize(
+    ("tree_kind", "listing", "expected"),
+    [("git", True, True), ("walked", True, False), ("no_listing", False, False)],
+    ids=["git", "walked", "no_listing"],
+)
+def test_marks_git_listing_when_hub_tree_read(
+    work_tree: Path, *, tree_kind: str, listing: bool, expected: bool
+) -> None:
+    # Only a listing git made says so: a walk or no listing cannot tell tracked from ignored.
+    if tree_kind == "walked":
+        shutil.rmtree(work_tree / ".git")
+
+    tree = read_doctor_tree(work_tree, by_path=(), listing=listing)
+
+    assert tree.problem is None
+    assert tree.listed_by_git is expected
+
+
+@pytest.mark.parametrize(
+    ("tree_kind", "expected"), [("git", True), ("walked", False)], ids=["git", "walked"]
+)
+def test_marks_git_listing_when_checkout_read(
+    work_tree: Path, *, tree_kind: str, expected: bool
+) -> None:
+    if tree_kind == "walked":
+        shutil.rmtree(work_tree / ".git")
+
+    checkout = read_checkout(work_tree)
+
+    assert checkout.problem is None
+    assert checkout.listed_by_git is expected
+
+
 def gone(pid: int) -> bool:
     """Whether ``pid`` ends within a few seconds; a zombie (dead, not yet reaped) counts as gone."""
     assert REAL_PS is not None, "ps is needed to see the killed child"

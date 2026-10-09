@@ -24,6 +24,7 @@ from typer.testing import CliRunner, Result
 
 from agent_hub.cli import doctor_command
 from agent_hub.cli.main import app
+from agent_hub.core.doctor.brain_memory_rule import FIX as MEMORY_FIX
 from agent_hub.core.doctor.finding import Read, Rule
 from agent_hub.core.doctor.registry import REGISTRY
 from agent_hub.core.hub_config.doctor_rules import Severity
@@ -1380,6 +1381,109 @@ def test_reports_checkout_on_repo_agents_when_only_it_selected(
     lines = lines_of(run_doctor(demo_two_repo_hub, "--only", "repos.agents"), exit_code=0)
 
     assert lines == [MISSING_WEB.replace("brain.leak", "repos.agents"), ONE_INFO]
+
+
+MEMORY_CANARY = "ZZ-PERSONAL-CANARY-48"
+MEMORY_PATH = "brain/auto/workspace/prefs.md"
+MEMORY_LINE = (
+    f"warning brain.memory {MEMORY_PATH}: personal memory file is tracked or not ignored by git"
+    f" Fix: {MEMORY_FIX}"
+)
+
+
+def committed_memory_hub(root: Path) -> Path:
+    """``root`` committed, then a personal memory file force-added past the ignore lines."""
+    commit_all(root)
+    (root / MEMORY_PATH).write_text(f"{MEMORY_CANARY}\n", encoding="utf-8")
+    git = shutil.which("git")
+    assert git is not None
+    env = {"HOME": str(root.parent), "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
+    author = ["-c", "user.name=Jane Doe", "-c", "user.email=jane@example.com"]
+    for args in (
+        ["add", "-f", MEMORY_PATH],
+        [*author, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "memory"],
+    ):
+        subprocess.run([git, *args], cwd=root, env=env, check=True, capture_output=True)  # noqa: S603 - absolute git, fixed arguments
+    return root
+
+
+def test_hides_brain_memory_content_when_memory_committed(
+    demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    hub = committed_memory_hub(demo_hub)
+
+    text = run_doctor(hub)
+    shown = run_doctor(hub, "--json")
+
+    assert lines_of(text, exit_code=0) == [MEMORY_LINE, "0 errors, 1 warning, 0 infos"]
+    assert (shown.exit_code, shown.stderr) == (0, "")
+    assert json.loads(shown.stdout) == {
+        "findings": [
+            {
+                "rule": "brain.memory",
+                "severity": "warning",
+                "path": MEMORY_PATH,
+                "line": None,
+                "message": "personal memory file is tracked or not ignored by git",
+                "fix": MEMORY_FIX,
+            }
+        ],
+        "totals": {"errors": 0, "warnings": 1, "infos": 0},
+    }
+    for result in (text, shown):
+        assert MEMORY_CANARY not in result.stdout
+        assert MEMORY_CANARY not in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("settings", "expected"),
+    [
+        (None, (0, [MEMORY_LINE, "0 errors, 1 warning, 0 infos"])),
+        ({"enabled": False}, (0, [CLEAN])),
+        ({"severity": "error"}, (1, [MEMORY_LINE.replace("warning", "error", 1), ONE_ERROR])),
+    ],
+    ids=["default", "disabled", "error"],
+)
+def test_follows_brain_memory_settings_when_memory_committed(
+    demo_hub: Path,
+    demo_document: dict[str, Any],
+    run_doctor: DoctorRunner,
+    *,
+    settings: dict[str, Any] | None,
+    expected: tuple[int, list[str]],
+) -> None:
+    hub = committed_memory_hub(demo_hub)
+    if settings is not None:
+        # hub.json is read from the work tree; the change stays uncommitted and listed.
+        demo_document["doctor"] = {"rules": {"brain.memory": settings}}
+        (hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    exit_code, lines = expected
+
+    assert lines_of(run_doctor(hub), exit_code=exit_code) == lines
+
+
+def test_reports_listing_problem_on_brain_memory_when_it_sorts_first(
+    demo_hub: Path,
+    run_doctor: DoctorRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    no_git_path: Path,
+) -> None:
+    # Plan E4: with attribution.ai, bench.tasks and brain.leak unselected, brain.memory is the
+    # first selected listing reader by id, so the runner's one listing error lands on it.
+    (demo_hub / ".git").mkdir()
+    monkeypatch.setenv("PATH", str(no_git_path))
+
+    lines = lines_of(
+        run_doctor(demo_hub, "--only", "brain.memory", "--only", "features.tracker"),
+        exit_code=1,
+    )
+
+    assert lines == [
+        f"error brain.memory .: could not list the files: git not found {LISTING_FIX}",
+        ONE_ERROR,
+    ]
 
 
 type Workspace = Any

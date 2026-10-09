@@ -31,7 +31,13 @@ def test_lists_repo_agents_as_rule_settings_when_schema_shipped() -> None:
     properties = read_shipped_schema()["$defs"]["DoctorRules"]["properties"]
 
     assert properties["repos.agents"] == {"$ref": "#/$defs/RuleSettings"}
-    assert list(properties)[-2:] == ["repos.agents", "config.stop_gate"]
+    assert list(properties)[-3:] == ["repos.agents", "config.stop_gate", "brain.memory"]
+
+
+def test_lists_brain_memory_as_rule_settings_when_schema_shipped() -> None:
+    properties = read_shipped_schema()["$defs"]["DoctorRules"]["properties"]
+
+    assert properties["brain.memory"] == {"$ref": "#/$defs/RuleSettings"}
 
 
 def test_forbids_extra_keys_when_object_has_fixed_keys() -> None:

@@ -639,7 +639,8 @@ at the root of the hub's main checkout. It is never committed, and only the CLI 
   `.gitignore`; add both lines: `printf 'brain/auto/workspace/*\n!brain/auto/workspace/.gitkeep\n' >> .gitignore`.
   If a memory file was committed, `git ls-files brain/auto/workspace` lists it; run `git rm --cached -- <file>` for
   each one except `.gitkeep`. It stays on your disk and in history, but teammates who pull that commit lose their
-  copy: tell them to copy it out first (or restore it with `git show <commit>~1:<file> > <file>`).
+  copy: tell them to copy it out first (or restore it with `git show <commit>~1:<file> > <file>`). `hub doctor`
+  warns (`brain.memory`) until both lines are in `.gitignore` and no memory file is tracked.
 
 Contract: [docs/design/developer-identity.md](docs/design/developer-identity.md).
 

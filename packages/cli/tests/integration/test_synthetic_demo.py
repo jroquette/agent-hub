@@ -31,6 +31,7 @@ from typer.testing import CliRunner, Result
 from agent_hub.cli import adopt_command, sync_steps
 from agent_hub.cli.adopt_report import ADOPT_LISTED_WAY_OUT
 from agent_hub.cli.main import app
+from agent_hub.core.doctor.brain_memory_rule import FIX as MEMORY_FIX
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.hub_lock import build_hub_lock, lock_bytes
 from agent_hub.core.hub_files.rendered_file import Ownership
@@ -455,6 +456,57 @@ def test_finds_nothing_when_doctor_runs_on_fresh_init(
         )
         assert read - walked <= allowed, root.name
         assert tree_digest(tmp_path) == before, root.name
+
+
+# The two lines a fresh init's .gitignore ends with (AGH-48), and the one warning without them.
+MEMORY_IGNORE_LINES = b"brain/auto/workspace/*\n!brain/auto/workspace/.gitkeep\n"
+MEMORY_IGNORE_WARNING = (
+    "warning brain.memory .gitignore: .gitignore has no line ignoring brain/auto/workspace/"
+    f" (personal memory) Fix: {MEMORY_FIX}"
+)
+
+
+@pytest.mark.parametrize("listing", ["walked", "git"])
+def test_warns_brain_memory_once_when_doctor_runs_without_ignore_lines(
+    tmp_path: Path,
+    demo_hub_template: Path,
+    *,
+    monkeypatch: pytest.MonkeyPatch,
+    run_doctor: DoctorRunner,
+    listing: str,
+) -> None:
+    # Built as test_finds_nothing_when_doctor_runs_on_fresh_init builds its hubs (AC-48.13).
+    (tmp_path / "demo-api").mkdir()
+    (tmp_path / "demo-api" / "AGENTS.md").write_bytes(b"")
+    hub = tmp_path / listing
+    shutil.copytree(demo_hub_template, hub, symlinks=True)
+    gitignore = hub / ".gitignore"
+    content = gitignore.read_bytes()
+    assert content.endswith(MEMORY_IGNORE_LINES)
+    gitignore.write_bytes(content.removesuffix(MEMORY_IGNORE_LINES))
+    home = tmp_path / "git-home"
+    home.mkdir()
+    if listing == "git":
+        author = ["-c", "user.name=Jane Doe", "-c", "user.email=jane@example.com"]
+        git(["-c", "init.defaultBranch=main", "init", "-q"], cwd=hub, home=home)
+        git(["add", "-A"], cwd=hub, home=home)
+        git(
+            [*author, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"],
+            cwd=hub,
+            home=home,
+        )
+        assert git(["status", "--porcelain"], cwd=hub, home=home) == ""
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+    result = run_doctor(hub)
+
+    assert (result.exit_code, result.stdout.splitlines(), result.stderr) == (
+        0,
+        [MEMORY_IGNORE_WARNING, "0 errors, 1 warning, 0 infos"],
+        "",
+    )
 
 
 def test_counts_info_when_demo_checkout_missing(
