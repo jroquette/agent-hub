@@ -40,6 +40,25 @@ def test_lists_brain_memory_as_rule_settings_when_schema_shipped() -> None:
     assert properties["brain.memory"] == {"$ref": "#/$defs/RuleSettings"}
 
 
+def test_describes_guard_infra_when_schema_exported() -> None:
+    schema = read_shipped_schema()
+    definitions = schema["$defs"]
+
+    assert schema["properties"]["guard"] == {"$ref": "#/$defs/Guard"}
+    infra = definitions["Guard"]["properties"]["infra"]
+    assert infra["$ref"] == "#/$defs/GuardInfra"
+    assert set(infra) <= {"$ref", "description"}
+    guard_infra = definitions["GuardInfra"]
+    assert guard_infra["additionalProperties"] is False
+    assert guard_infra["patternProperties"] == COMMENT_KEYS
+    assert "required" not in guard_infra
+    for key in ("allow", "prod_markers"):
+        patterns = guard_infra["properties"][key]
+        assert patterns["type"] == "array", key
+        assert patterns["items"]["type"] == "string", key
+        assert patterns["default"] == [], key
+
+
 def test_forbids_extra_keys_when_object_has_fixed_keys() -> None:
     schema = read_shipped_schema()
     maps: list[tuple[str, dict[str, Any]]] = []

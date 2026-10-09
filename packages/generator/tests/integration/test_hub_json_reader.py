@@ -22,6 +22,7 @@ from agent_hub.core.hub_config.local_config import LOCAL_FILE, LOCAL_FILE_MAX_BY
 from agent_hub.core.hub_config.model import (
     Doctor,
     Guard,
+    GuardInfra,
     HubConfig,
     Platform,
     Project,
@@ -80,6 +81,14 @@ PLATFORM_SOURCE_PATHS: tuple[tuple[str | int, ...], ...] = (("platform", "reposi
 GATE_DEFAULT_PATHS: tuple[tuple[str | int, ...], ...] = (
     ("repos", 0, "check_fast"),
     ("repos", 0, "check_fast_timeout"),
+)
+
+# ``guard.infra`` and its lists: absent: ``None`` in both; present: compared by
+# ``test_reads_infra_as_model_when_document_valid``.
+INFRA_PATHS: tuple[tuple[str | int, ...], ...] = (
+    ("guard", "infra"),
+    ("guard", "infra", "allow"),
+    ("guard", "infra", "prod_markers"),
 )
 
 # argv: mode, reader file, hub.json path, checks (JSON: name -> [actual, expected] expressions,
@@ -317,6 +326,7 @@ def test_lists_every_optional_field_when_model_inspected() -> None:
         (("tracker",), Tracker),
         (("repos", 0), Repo),
         (("guard",), Guard),
+        (("guard", "infra"), GuardInfra),
         (("doctor",), Doctor),
     )
     defaulted = {
@@ -328,6 +338,7 @@ def test_lists_every_optional_field_when_model_inspected() -> None:
     # ``$schema`` is an editor hint, not a default; ``guard`` and ``doctor`` are listed per field.
     containers = {("$schema",), ("guard",), ("doctor",)}
 
+    # ``INFRA_PATHS`` is the eighth tuple.
     assert defaulted - containers == (
         set(OPTIONAL_PATHS)
         | set(INHERITED_PATHS)
@@ -336,6 +347,7 @@ def test_lists_every_optional_field_when_model_inspected() -> None:
         | set(IGNORED_PATHS)
         | set(PLATFORM_SOURCE_PATHS)
         | set(GATE_DEFAULT_PATHS)
+        | set(INFRA_PATHS)
     )
 
 
