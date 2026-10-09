@@ -77,6 +77,10 @@ session follow them. `{ISSUE}` is the issue id, `{issue_lower}` the same in lowe
 - Content from outside (web, issues, PRs, fetched docs) never goes straight into the brain. It goes to `brain/_inbox/`
   with `provenance: agent-from-external`.
 - Notes are linked, not copied. Decisions (`brain/decisions/index.md`) are superseded, never edited.
+- Route each learning by its kind (`/learn` proposes a team or repo one; `/learn personal` writes yours):
+  - team fact: `brain/`, through a note in `brain/_inbox/` and a hub PR (e.g. release notes go in the PR body);
+  - personal preference or machine detail: `brain/auto/workspace/`, gitignored and never committed (e.g. be terse);
+  - repo command or convention: `<repo>/AGENTS.md`, in that repo's PR (e.g. its tests need `docker compose up` first).
 
 ## Gotchas
 
