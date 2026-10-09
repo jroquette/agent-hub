@@ -31,7 +31,7 @@
     ".claude/settings.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "de3f8bee5f9146fced2db6d701be060d7d14f81c07a92cdcd40a572e6cbd0839"
+      "sha256": "efb32b8b0921b2c098aec3dff89c20122880e0b4a38c2d75ad3546a160f260b0"
     },
     ".claude/settings.project.json": {
       "ownership": "seeded"
