@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from agent_hub.core.hub_config.local_config import LOCAL_FILE, LOCAL_FILE_MAX_BYTES
 from agent_hub.core.hub_config.model import (
@@ -29,6 +30,7 @@ from agent_hub.core.hub_config.model import (
     Repo,
     Tracker,
 )
+from agent_hub.core.testing import builders
 from agent_hub.core.testing.builders import a_conventions_document, a_hub_document, a_second_repo
 from agent_hub.core.testing.platform_repository_cases import REPOSITORY_CASES, RepositoryCase
 from agent_hub.generator.render_hub import render_hub
@@ -349,6 +351,93 @@ def test_lists_every_optional_field_when_model_inspected() -> None:
         | set(GATE_DEFAULT_PATHS)
         | set(INFRA_PATHS)
     )
+
+
+# ``guard.infra`` as the model accepts it; ``None`` leaves the key out of ``guard``.
+VALID_INFRA: tuple[object, ...] = (
+    None,
+    {},
+    builders.a_guard_infra(),
+    builders.a_guard_infra() | {"_note": "x"},
+)
+
+# ``guard.infra`` as the model rejects it, with the first location the reader cannot use.
+MALFORMED_INFRA: tuple[tuple[object, str], ...] = (
+    ([], "guard.infra"),
+    ("x", "guard.infra"),
+    (None, "guard.infra"),
+    ({"allow": "x"}, "guard.infra.allow"),
+    ({"allow": None}, "guard.infra.allow"),
+    ({"allow": ["ok", 7]}, "guard.infra.allow[1]"),
+    ({"allow": [""]}, "guard.infra.allow[0]"),
+    ({"prod_markers": ["  "]}, "guard.infra.prod_markers[0]"),
+    ({"prod_markers": ["a\u0001"]}, "guard.infra.prod_markers[0]"),
+    ({"allow": [7], "prod_markers": [7]}, "guard.infra.allow[0]"),
+)
+
+
+def with_infra(infra: object) -> dict[str, Any]:
+    """``a_hub_document()`` whose ``guard`` sets ``infra`` to ``infra`` as written."""
+    document = a_hub_document()
+    document["guard"]["infra"] = infra
+    return document
+
+
+@pytest.mark.parametrize("infra", VALID_INFRA, ids=["absent", "empty", "lists", "noted"])
+def test_reads_infra_as_model_when_document_valid(
+    tmp_path: Path, *, hook_python: str, read: Reader, infra: object
+) -> None:
+    document = a_hub_document() if infra is None else with_infra(infra)
+    path = write_hub_file(tmp_path, document)
+
+    model = HubConfig.model_validate(document).guard.infra
+    hub_file = read(hook_python, path)["hub_file"]
+
+    expected = None if model is None else model.model_dump(mode="json") | {"problem": ""}
+    assert hub_file["guard"]["infra"] == expected
+
+
+@pytest.mark.parametrize(
+    ("infra", "problem"),
+    MALFORMED_INFRA,
+    ids=[
+        "list",
+        "string",
+        "null",
+        "allow-string",
+        "allow-null",
+        "allow-non-string",
+        "allow-empty",
+        "markers-blank",
+        "markers-control",
+        "allow-first",
+    ],
+)
+def test_flags_infra_problem_when_value_malformed(
+    tmp_path: Path, *, hook_python: str, read: Reader, infra: object, problem: str
+) -> None:
+    document = with_infra(infra)
+    path = write_hub_file(tmp_path, document)
+
+    with pytest.raises(ValidationError):
+        HubConfig.model_validate(document)
+    # ``read`` fails the test when the child exits non-zero: the read never raises.
+    hub_file = read(hook_python, path)["hub_file"]
+
+    assert hub_file["guard"]["infra"]["problem"] == problem
+
+
+def test_keeps_other_guard_lists_when_infra_malformed(
+    tmp_path: Path, hook_python: str, read: Reader
+) -> None:
+    document = with_infra([])
+    document["guard"]["deny_hosts"] = ["prod.example.com"]
+    path = write_hub_file(tmp_path, document)
+
+    guard = read(hook_python, path)["hub_file"]["guard"]
+
+    assert guard["ask_before_edit"] == ["demo-api/docs/adr"]
+    assert guard["deny_hosts"] == ["prod.example.com"]
 
 
 def test_reads_gate_defaults_when_check_keys_absent(
