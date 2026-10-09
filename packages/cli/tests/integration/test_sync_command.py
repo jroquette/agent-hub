@@ -1057,6 +1057,8 @@ def test_keeps_app_repo_agents_when_sync_runs_after_edit_or_delete(
 
 LEARN_SKILL = "plugin/hub-workflow/skills/learn/SKILL.md"
 MEMORY_GITKEEP = "brain/auto/workspace/.gitkeep"
+# Deepest first, as an older render lacks both.
+MEMORY_FOLDERS = ("brain/auto/workspace", "brain/auto")
 # The two lines a fresh init's .gitignore ends with (AGH-48); an older render lacks them.
 MEMORY_IGNORE_LINES = b"brain/auto/workspace/*\n!brain/auto/workspace/.gitkeep\n"
 MEMORY_IGNORE_WARNING = f"warning brain.memory {GITIGNORE}: {IGNORE_MESSAGE} Fix: {MEMORY_FIX}"
@@ -1066,12 +1068,15 @@ def test_creates_personal_memory_folder_when_sync_runs_on_older_hub(
     demo_hub: Path, demo_hub_template: Path, run_sync: SyncRunner, *, run_doctor: DoctorRunner
 ) -> None:
     # A hub from the release before personal memory (AC-48.14): older AGENTS.md and learn
-    # skill, no seeded .gitkeep and no lock entry for it, a .gitignore without the two lines.
+    # skill, no seeded .gitkeep, its folders or lock entry, a .gitignore without the two lines.
     lock: dict[str, Any] = json.loads((demo_hub / "hub.lock").read_bytes())
     for managed in ["AGENTS.md", LEARN_SKILL]:
         (demo_hub / managed).write_bytes(OLDER_RENDER)
         lock["files"][managed]["sha256"] = hashlib.sha256(OLDER_RENDER).hexdigest()
     (demo_hub / MEMORY_GITKEEP).unlink()
+    # Nor the folders: rmdir, so a file the render ever adds there fails here loudly.
+    for folder in MEMORY_FOLDERS:
+        (demo_hub / folder).rmdir()
     del lock["files"][MEMORY_GITKEEP]
     (demo_hub / "hub.lock").write_bytes(dump_json(lock))
     gitignore = demo_hub / GITIGNORE
@@ -1090,6 +1095,7 @@ def test_creates_personal_memory_folder_when_sync_runs_on_older_hub(
         "updated hub.lock",
     ]
     assert gitignore.read_bytes() == older_gitignore
+    assert [(demo_hub / folder).is_dir() for folder in MEMORY_FOLDERS] == [True, True]
     for rendered in ["AGENTS.md", MEMORY_GITKEEP, LEARN_SKILL]:
         assert (demo_hub / rendered).read_bytes() == (demo_hub_template / rendered).read_bytes()
     after: dict[str, Any] = json.loads((demo_hub / "hub.lock").read_bytes())
