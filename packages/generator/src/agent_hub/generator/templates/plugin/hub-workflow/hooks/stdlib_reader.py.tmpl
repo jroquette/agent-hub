@@ -23,6 +23,11 @@ this reader falls back instead.
   ``None``, the gate's default.
 - A repo's ``default_branch`` is its effective value: its own when it is a string matching the
   model's branch pattern, else the ``project`` section's ``default_branch`` (it inherits).
+- ``guard.infra`` is ``None`` when absent. Present, ``InfraSection.problem`` names the first value
+  the guard cannot use, and that key's tuple is ``()``: ``guard.infra`` when it is not an object
+  (``null`` included), ``guard.infra.<key>`` when its value is not a list (``null`` included), and
+  ``guard.infra.<key>[<i>]`` for an item that is not a string, is blank or holds a control
+  character. Unknown keys under it are ignored; patterns are compiled by the guard, not here.
 - Unknown keys and comment keys (``_`` first) are ignored. ``modules`` and ``doctor.rules`` keep
   each entry's settings, minus comment keys, without checking them.
 - ``hub.local.json`` (one developer's ``project.branch_prefix``, ``author_name``,
@@ -76,6 +81,8 @@ BRANCH_NAME = re.compile(
 BRANCH_PREFIX = re.compile(r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*/")
 EMAIL_ADDRESS = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+")
 FREE_STRING = re.compile(r"[^\x00-\x1f\x7f]+")
+# A character ``FREE_STRING`` refuses: an infra pattern holding one is unusable.
+CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
 # The git config key each git-read identity key comes from.
 GIT_KEYS = {"author_name": "user.name", "author_email": "user.email"}
 
@@ -134,12 +141,22 @@ class RepoEntry:
 
 
 @dataclass(frozen=True)
+class InfraSection:
+    """``guard.infra``; ``problem`` names the first value the guard cannot use."""
+
+    allow: tuple[str, ...] = ()
+    prod_markers: tuple[str, ...] = ()
+    problem: str = ""
+
+
+@dataclass(frozen=True)
 class GuardSection:
-    """``guard``."""
+    """``guard``; ``infra`` is ``None`` when ``guard.infra`` is absent."""
 
     ask_before_edit: tuple[str, ...] = ()
     deny_hosts: tuple[str, ...] = ()
     deny_paths: tuple[str, ...] = ()
+    infra: InfraSection | None = None
 
 
 @dataclass(frozen=True)
@@ -196,6 +213,7 @@ def load_hub_file(path: str | os.PathLike[str]) -> HubFile:
             ask_before_edit=_texts(guard, "ask_before_edit"),
             deny_hosts=_texts(guard, "deny_hosts"),
             deny_paths=_texts(guard, "deny_paths"),
+            infra=_infra(guard),
         ),
         modules=_settings_by_id(document.get("modules")),
         doctor=DoctorSection(rules=_settings_by_id(_object(document.get("doctor")).get("rules"))),
@@ -362,6 +380,35 @@ def _texts(section: dict[str, object], key: str) -> tuple[str, ...]:
     if isinstance(value, list) and all(isinstance(item, str) for item in value):
         return tuple(value)
     return ()
+
+
+def _infra(guard: dict[str, object]) -> InfraSection | None:
+    """``guard.infra``: ``None`` when absent; else its lists, with the first unusable location."""
+    if "infra" not in guard:
+        return None
+    infra = guard["infra"]
+    if not isinstance(infra, dict):
+        return InfraSection(problem="guard.infra")
+    section = _object(infra)
+    allow, allow_problem = _patterns(section, "allow")
+    prod_markers, markers_problem = _patterns(section, "prod_markers")
+    return InfraSection(
+        allow=allow, prod_markers=prod_markers, problem=allow_problem or markers_problem
+    )
+
+
+def _patterns(section: dict[str, object], key: str) -> tuple[tuple[str, ...], str]:
+    """The list at ``key`` and ``""``; ``()`` and the location of the first unusable value."""
+    if key not in section:
+        return (), ""
+    location = "guard.infra." + key
+    value = section[key]
+    if not isinstance(value, list):
+        return (), location
+    for index, item in enumerate(value):
+        if not isinstance(item, str) or not item.strip() or CONTROL_CHARACTER.search(item):
+            return (), f"{location}[{index}]"
+    return tuple(value), ""
 
 
 def _team_keys(tracker: dict[str, object]) -> tuple[str, ...]:
