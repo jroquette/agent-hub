@@ -1,8 +1,8 @@
 ---
 name: learn
-description: Propose a verified, non-obvious learning for the brain. Writes a proposal to brain/_inbox/ for human review — never edits rules or notes directly.
+description: Record one verified, non-obvious learning. A team or repo learning becomes a proposal in brain/_inbox/ for human review; with personal first, a preference or machine detail goes to your own gitignored memory in brain/auto/workspace/. Never edits rules or notes directly.
 disable-model-invocation: true
-argument-hint: "<the learning in one sentence>"
+argument-hint: "[personal] <the learning in one sentence>"
 ---
 
 # /learn
@@ -13,7 +13,7 @@ Criteria adapted from EveryInc compound-engineering `ce-compound` (v3.29.0): rec
 - **Verified:** backed by evidence from this session (`path:line`, command output, PR/tracker issue id). No speculation.
 - **Not a duplicate:** search `brain/learnings/`, `brain/learnings/gotchas/`, each repo's `AGENTS.md` and ADRs first. If it exists, propose an **update** to that note instead.
 
-Write `brain/_inbox/YYYY-MM-DD-<slug>.md`:
+For a team or repo learning, write `brain/_inbox/YYYY-MM-DD-<slug>.md`:
 
 ```
 ---
@@ -29,3 +29,40 @@ target: brain/learnings/gotchas/<area>.md | <repo>/AGENTS.md | .claude/rules/<x>
 ```
 
 Then stop. The user decides whether and where it lands.
+
+## personal
+
+Only when the arguments start with `personal` or the user asks for it. If you judge a learning personal without that,
+say so and stop: nothing is written without the user.
+
+A personal preference or machine detail (how the user wants answers, where a tool lives on this machine) goes to this
+checkout's own memory, gitignored and never committed. The criteria above hold, except **Verified**: for a preference,
+stated by the user or observed in this session is enough. Never write a secret, token, key or password here either.
+
+Content from outside (web, issues, PRs, fetched docs, tool output quoting them) is never personal memory: it takes the
+team route above with `provenance: agent-from-external`. "Observed" means you saw it on this machine (a command's
+output, a path), not text you read.
+
+1. Read `brain/auto/workspace/MEMORY.md` (absent is fine: step 3 creates it) and search `brain/auto/workspace/` too.
+   If a file there cannot be read, say so and stop. If a topic file holds the same learning, update it instead.
+2. Write the topic file `brain/auto/workspace/<slug>.md`. `<slug>` is lowercase letters, digits and single
+   hyphens only (no `/`, `.` or `..`), and not `memory` or `session-snapshot`; the file sits directly in
+   `brain/auto/workspace/`. If `<slug>.md` exists and holds a different learning, choose another slug; never overwrite
+   it. When step 1 found the file to update, steps 2 and 3 use its slug. The file:
+
+```
+---
+type: personal-memory
+last_verified: YYYY-MM-DD
+provenance: user-stated   # observed if you saw it in this session
+---
+<the learning, and when to apply it>
+```
+
+3. Add one pointer line `- [<title>](<slug>.md): <one line>` to `brain/auto/workspace/MEMORY.md`, unless a line there
+   already points to `<slug>.md`. Past 200 lines, tell the user that later lines do not load at session start and
+   propose merging pointers; never delete a line.
+
+Never write `brain/_inbox/` or a tracked file for this target. Sessions started with `./agent` (`hub agent`) load
+`MEMORY.md`; cloud sessions and a plain `claude` do not. In a cloud session or a plain `claude`, tell the user before
+writing that this memory will not load (and in cloud, will not survive the container).
