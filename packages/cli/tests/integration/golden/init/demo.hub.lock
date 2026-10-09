@@ -366,6 +366,11 @@
       "ownership": "managed",
       "sha256": "1cfd5c09f26206636ad41f78d5706de6f499f240cd670caa7bb1ad2ddad5aaf4"
     },
+    "plugin/hub-workflow/skills/onboard/reference.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "c06fda8b44522fb97ab70e464cd71ffc9decdaaa158d3ec689710d374e76c1e2"
+    },
     "plugin/hub-workflow/skills/recall/SKILL.md": {
       "executable": false,
       "ownership": "managed",

@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from agent_hub.core.doctor.config_lint import Frontmatter, line_count, parse_frontmatter
+from agent_hub.core.doctor.instruction_rules import DEFAULT_MAX_LINES
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership
 from agent_hub.core.testing import builders
@@ -420,4 +421,229 @@ def test_names_no_project_value_when_onboard_rendered(
         assert repo.dir not in body, repo.dir
     assert "@@{" not in text
     template = (TEMPLATES / f"{SKILL_PATH}.tmpl").read_text(encoding="utf-8")
+    assert PROJECT_ID.search(template) is None
+
+
+# reference.md: the rules SKILL.md applies (spec D-split).
+
+
+def test_registers_onboard_reference_when_registry_listed(text: str, reference: str) -> None:
+    [entry] = [entry for entry in REGISTRY if entry.path == REFERENCE_PATH]
+    config = HubConfig.model_validate(builders.a_hub_document())
+    links = [link.path for link in render_hub(config).links if "onboard" in link.path]
+    frontmatter = parse_frontmatter(reference)
+
+    assert (entry.kind, entry.ownership, entry.module) == (Kind.GENERIC, Ownership.MANAGED, None)
+    assert entry.source is not None
+    assert entry.source.name == f"templates/{REFERENCE_PATH}.tmpl"
+    assert sorted(e.path for e in REGISTRY if e.path.startswith(f"{FOLDER}/")) == [
+        SKILL_PATH,
+        REFERENCE_PATH,
+    ]
+    # One folder link covers both files.
+    assert links == [".claude/skills/onboard"]
+    assert isinstance(frontmatter, Frontmatter)
+    assert frontmatter.fields["name"] == "onboard-reference"
+    description = frontmatter.fields["description"]
+    assert isinstance(description, str)
+    assert description.strip()
+    assert "First read `reference.md` next to this file" in text
+
+
+def test_requires_evidence_when_onboard_rendered(
+    text: str, steps: dict[int, str], reference: str
+) -> None:
+    for phrase in (
+        "a command found in the repo (with its file)",
+        "tasks composed only from tools the repo declares",
+        "never invented",
+    ):
+        assert phrase in steps[3], phrase
+    # The runner order (O17): an existing Makefile, then the JS or Python runner, `make` last.
+    runner = section(reference, "Runner order")
+    order = (
+        "an existing `Makefile` first",
+        "`package.json` `scripts`",
+        "the `pyproject.toml` or `justfile` task runner the repo already uses",
+        "`make` only when the repo has no runner at all",
+    )
+    positions = [runner.index(phrase) for phrase in order]
+    assert positions == sorted(positions)
+    # A repo lacking a gate gets a Gate PR; only one with no usable tool is a `GAP` issue.
+    assert "per repo lacking a gate" in steps[6]
+    assert "A repo with no usable tool gets a `GAP` tracker issue instead" in steps[6]
+    assert "A repo with no usable tool at all is a `GAP`" in steps[3]
+    assert (
+        "`check_fast` stays absent from `hub.json` and `check` keeps its value, marked `GAP` or"
+        " `pending merge`" in section(reference, "Gate standard")
+    )
+
+
+def test_states_gate_standard_when_onboard_rendered(text: str, reference: str) -> None:
+    standard = section(reference, "Gate standard")
+
+    assert "fast (`check_fast`) = format, lint, typecheck, unit tests" in standard
+    assert "full (`check`) = fast + integration/e2e + coverage, where the repo has the tools" in (
+        standard
+    )
+    # agent-hub's docs, named as plain text: a generated hub cannot open them, so no link.
+    assert "agent-hub's docs/CONVENTIONS.md and docs/TESTING.md" in standard
+    for file_text in (text, reference):
+        assert "](" not in file_text
+        for specific in ("uv run", "ruff format --check", "mypy --strict", "%"):
+            assert specific not in file_text, specific
+
+
+def test_runs_gate_in_fresh_worktree_when_reference_rendered(reference: str) -> None:
+    running = section(reference, "Running a repo's gate")
+
+    for phrase in (
+        "it executes the repo's code",
+        "run only a command the user approved word for word in the proposal",
+        "show it before running it",
+        "never in the repo's main checkout",
+        "the worktree as the working directory",
+        "stdin from `/dev/null`",
+        "`check_fast` gets `check_fast_timeout` from `hub.json`, else 150 seconds, as the Stop"
+        " hook does",
+        "a log outside the hub and the repos (`${TMPDIR:-/tmp}/",
+        "green only if the command exits 0 and `git status --porcelain` in the worktree"
+        " afterwards exits 0 and prints nothing",
+    ):
+        assert phrase in running, phrase
+
+
+def test_uses_new_worktree_per_gate_run_when_gate_runs(reference: str) -> None:
+    running = section(reference, "Running a repo's gate")
+
+    for phrase in (
+        "each run gets its own new worktree, `./hub worktree <team>-<n>-gate-<dir>-<YYYYMMDDHHMM>"
+        " --only <dir>`",
+        "a new branch from a freshly fetched `origin/<default>`",
+        "If that folder (`../<dir>/.claude/worktrees/<name>`) or its branch already exists, stop,"
+        " name it and let the user remove it: never reuse it",
+        "remove the worktree with `./hub worktree --remove <name> --only <dir>` (exit 0)",
+        "A dirty worktree means the gate is not green: leave it in place and name it in the"
+        " proposal or the report",
+        "A dirty leftover from an earlier run is never removed and never counted as a gate"
+        " result: name it for the user",
+        "Never `git reset --hard`, `git clean` or delete a branch",
+    ):
+        assert phrase in running, phrase
+
+
+def test_runs_gate_pr_commands_after_commit_when_gate_pr_built(
+    steps: dict[int, str], reference: str
+) -> None:
+    assert "(`reference.md`, Running a repo's gate)" in steps[6]
+    assert (
+        "A Gate PR's new commands run in that PR's own worktree (its step 6 issue), not in a gate"
+        " worktree, and only after the runner edit is committed there; clean means clean after"
+        " that commit" in section(reference, "Running a repo's gate")
+    )
+
+
+def test_bounds_check_at_900_seconds_when_gate_runs(reference: str) -> None:
+    assert "`check` gets its own bound of 900 seconds" in section(
+        reference, "Running a repo's gate"
+    )
+
+
+def test_reads_exit_codes_when_reference_rendered(reference: str) -> None:
+    codes = section(reference, "Exit codes")
+
+    for phrase in (
+        "`./hub doctor`: 0 clean, 1 findings (list each with its fix), 2 usage error; any other"
+        " code is a tool failure: stop",
+        "`./hub sync`: 0 done, 3 conflict (stop and show it), 1 error (stop);"
+        " exit 4 exists only with `--check`",
+        "after a 3 or a 1, do not run `./hub doctor`",
+    ):
+        assert phrase in codes, phrase
+
+
+def test_states_proposal_format_when_reference_rendered(reference: str) -> None:
+    proposal = section(reference, "Proposal format")
+
+    for phrase in (
+        "`type: onboard-proposal`",
+        "`status: proposed | approved | applied`",
+        "`provenance: agent-from-code`",
+        "`last_verified`",
+        "`platform_version`",
+        "`hub_json_sha256`",
+        "the SHA-256 of the bytes of `hub.json` on the hub's default branch, from"
+        " `git show origin/<default>:hub.json | sha256sum` (or `| shasum -a 256`)",
+        "both commands must exit 0; on any other exit, stop and say why",
+        "the open questions",
+        "with the PR URL of a `pending merge` one",
+        "each in a fenced block",
+        "The draft names every repo by its `dir`",
+        "never quote one outside a fenced block",
+    ):
+        assert phrase in proposal, phrase
+
+
+def test_renames_applied_proposal_when_propose_reruns(reference: str) -> None:
+    recovery = section(reference, "Recovery")
+
+    assert "a `propose` re-run overwrites a `proposed` file" in recovery
+    assert (
+        "An `applied` file is first renamed to `brain/_inbox/onboard-proposal-YYYY-MM-DD.md`"
+        in recovery
+    )
+    assert "then a new proposal is written" in recovery
+    assert "stop and tell the human to delete or reset it" in recovery
+    assert "The agent never edits `status`, except to set `applied`" in recovery
+
+
+def test_stops_propose_when_proposal_approved(reference: str) -> None:
+    assert (
+        "on an `approved` one it stops and says to run `/onboard apply` or to delete or reset the"
+        " proposal" in section(reference, "Recovery")
+    )
+
+
+def test_numbers_archive_when_name_taken(reference: str) -> None:
+    assert "if that name exists, add `-2`, `-3` and so on before `.md`" in section(
+        reference, "Recovery"
+    )
+
+
+def test_finds_merged_gate_when_propose_reruns(reference: str) -> None:
+    assert (
+        "the next `/onboard propose` finds its tasks in the repo as found commands, and they go"
+        " through the normal path" in section(reference, "Recovery")
+    )
+
+
+@pytest.mark.parametrize("document", DOCUMENTS[1:], ids=["two_teams", "conventions"])
+def test_renders_same_onboard_reference_when_configs_differ(
+    document: Callable[[], dict[str, Any]], reference: str
+) -> None:
+    assert rendered(document, REFERENCE_PATH) == reference
+
+
+def test_fits_size_limit_when_onboard_reference_rendered(reference: str) -> None:
+    # The sibling skills' limit, a literal so a change to the constant does not move the test.
+    assert DEFAULT_MAX_LINES["*/*"] == 80
+
+    assert line_count(reference) <= DEFAULT_MAX_LINES["*/*"]
+
+
+@pytest.mark.parametrize("document", DOCUMENTS, ids=["demo", "two_teams", "conventions"])
+def test_names_no_project_value_when_onboard_reference_rendered(
+    document: Callable[[], dict[str, Any]],
+) -> None:
+    config = HubConfig.model_validate(document())
+    reference = rendered(document, REFERENCE_PATH)
+    body = reference.split("---", 2)[2]
+
+    assert config.project.name not in body
+    for key in config.tracker.team_keys:
+        assert key not in body, key
+    for repo in config.repos:
+        assert repo.dir not in body, repo.dir
+    assert "@@{" not in reference
+    template = (TEMPLATES / f"{REFERENCE_PATH}.tmpl").read_text(encoding="utf-8")
     assert PROJECT_ID.search(template) is None
