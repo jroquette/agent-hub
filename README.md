@@ -31,7 +31,7 @@ hub init demo --repos acme/backend,acme/frontend --tracker linear:DEMO \
 ```
 
 ```text
-created 62 files (41 managed, 21 seeded) and 15 links in /home/jdoe/work/demo-hub
+created 73 files (51 managed, 22 seeded) and 25 links in /home/jdoe/work/demo-hub
 
 Next steps:
   1. cd /home/jdoe/work/demo-hub
@@ -160,7 +160,7 @@ uvx --from 'git+https://github.com/jroquette/agent-hub@v0.4.0#subdirectory=packa
   hub init demo --repos acme/backend,acme/frontend --tracker linear:DEMO --branch-prefix jdoe/ --hub-repo acme/demo-hub
 ```
 
-You should see `created 62 files (41 managed, 21 seeded) and 15 links` followed by the next steps.
+You should see `created 73 files (51 managed, 22 seeded) and 25 links` followed by the next steps.
 
 > [!NOTE]
 > `hub init` writes only into an empty folder (a `.git` is fine). Run it again in the same folder and it refuses with
@@ -298,7 +298,7 @@ The size decides the ceremony:
 | `/research <question or issue>` | Documents how the code works today, with `path:line` references and no critique; writes `research.md` | Before planning, or for a question that spans many files |
 | `/create-plan <issue or slug>` | Turns a spec and its research into `plan.md`: small tasks, contracts first, each with a verification command; waits for your approval before any code | When a spec is ready and needs a plan |
 | `/recall <topic>` | Answers "what do we know about X, why was Y decided" from the brain, ADRs and past session transcripts, with sources | Before deciding something again |
-| `/learn <one sentence>` | Proposes one verified, non-obvious learning to `brain/_inbox/`; you decide whether and where it lands | When the next session should know something |
+| `/learn [personal] <one sentence>` | Proposes one verified, non-obvious learning to `brain/_inbox/`; you decide whether and where it lands. With `personal`, writes your own preference or machine detail to `brain/auto/workspace/` (gitignored, never committed) | When the next session should know something |
 | `/triage <issue>` | Brings a tracker issue to Definition of Ready (ACs, size, repos, dependencies, a verification command), then labels it ready or `needs-human` | Before an issue goes to `/fix`, `/feature` or `hub run` |
 | `/deliver <PR or issue>` | Drives an open PR to merged: conflicts, red CI and review threads, the gates before each push, the default branch's CI after the merge, then the tracker | After the PR is open |
 | `/review <PR>` | Reviews someone else's PR against its ticket, the ADRs and the brain; posts only what you approve | For a teammate's PR or one `hub run` opened |
@@ -363,8 +363,8 @@ Hooks are small scripts Claude Code runs on its own at fixed moments; you never 
   a note. A repo without `check_fast` has no Stop gate: when it changed, the gate names it (`no check_fast configured`)
   and never blocks; `hub doctor` warns.
 - **Before Claude Code shortens a long conversation to free memory** (`PreCompact`), a snapshot (your last request, and
-  the branch and changed files of each checkout) is saved to `brain/auto/workspace/session-snapshot.md` and put back
-  in the context afterwards.
+  the branch and changed files of each checkout) is saved to `brain/auto/workspace/session-snapshot.md` (your personal
+  memory folder, gitignored) and put back in the context afterwards.
 - **When the session ends** (`SessionEnd`), a short log entry is appended to `brain/_inbox/sessions/YYYY-MM-DD.md` for
   you to review.
 
@@ -633,6 +633,11 @@ at the root of the hub's main checkout. It is never committed, and only the CLI 
 - **Existing hubs:** `hub init` writes `hub.local.json` into `.gitignore`, but `.gitignore` is seeded, so `hub sync`
   never adds it. Add the line by hand: `echo hub.local.json >> .gitignore`.
 - Nothing in it relaxes the guard: it cannot add or remove a guarded path, host, protected branch or repo.
+- **Personal memory (existing hubs):** `hub sync` creates `brain/auto/workspace/.gitkeep` but never rewrites
+  `.gitignore`; add both lines: `printf 'brain/auto/workspace/*\n!brain/auto/workspace/.gitkeep\n' >> .gitignore`.
+  If a memory file was committed, `git ls-files brain/auto/workspace` lists it; run `git rm --cached -- <file>` for
+  each one except `.gitkeep`. It stays on your disk and in history, but teammates who pull that commit lose their
+  copy: tell them to copy it out first (or restore it with `git show <commit>~1:<file> > <file>`).
 
 Contract: [docs/design/developer-identity.md](docs/design/developer-identity.md).
 

@@ -399,6 +399,29 @@ def test_keeps_status_clean_when_hooks_and_mine_write(
     assert written <= ignored
 
 
+# AC-48.4 (AGH-48 D1): personal memory files stay out of git; the folder's `.gitkeep` is tracked.
+def test_keeps_personal_memory_ignored_when_hub_committed(run: Run, scripts_hub: Path) -> None:
+    git = ["git", "-c", "user.name=Demo", "-c", "user.email=demo@example.com"]
+    for argv in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "render"]):
+        assert run([*git, *argv]).returncode == 0, argv
+    memory = ("MEMORY.md", "prefs.md", "session-snapshot.md")
+    folder = scripts_hub / "brain" / "auto" / "workspace"
+    for name in memory:
+        (folder / name).write_text("a personal note\n", encoding="utf-8")
+
+    status = run(["git", "status", "--porcelain", "--untracked-files=all"])
+    assert status.returncode == 0, status.stderr
+    assert status.stdout == ""
+    for name in memory:
+        assert run(["git", "check-ignore", "-q", f"brain/auto/workspace/{name}"]).returncode == 0
+    assert (
+        run(["git", "check-ignore", "-q", "--no-index", "brain/auto/workspace/.gitkeep"]).returncode
+        == 1
+    )
+    listed = run(["git", "ls-files", "brain/auto/workspace"])
+    assert listed.stdout == "brain/auto/workspace/.gitkeep\n"
+
+
 def test_prints_match_when_recall_run(run: Run) -> None:
     recall = run(["python3", "scripts/recall_transcripts.py", "ledger"])
 

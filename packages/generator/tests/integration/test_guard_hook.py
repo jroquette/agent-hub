@@ -10,6 +10,7 @@ and a real 3.9), from a folder outside the workspace, with neither ``HUB_CONFIG`
 
 import ast
 import json
+import re
 import shutil
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
@@ -64,6 +65,9 @@ DENY_BASH = [
     "git push --force origin me/dem-1-x",
     "git push -f",
     "git push origin +me/x",
+    "git push -fu origin me/dem-1-x",
+    "git push -uf origin me/dem-1-x",
+    "git push --mirror backup",
     "git push origin main",
     "git push origin HEAD:main",
     "git push origin trunk",
@@ -88,6 +92,8 @@ DENY_BASH = [
 ]
 ALLOW_BASH = [
     "git push -u origin me/dem-1-main-fix",
+    "git push -u origin feature",
+    "git push --follow-tags --no-verify origin me/dem-1-fix",
     "git push origin me/fix-worktree-test-root",
     "git status --short",
     "make check-fast",
@@ -183,6 +189,24 @@ def test_allows_command_when_no_bash_rule_matches(evaluate: Evaluate) -> None:
     assert verdicts == dict.fromkeys(verdicts)
 
 
+# AGH-113: a short-flag cluster holding ``f`` and ``--mirror`` force-update remote refs, so they
+# take the force-push reason; long options that only contain an ``f`` do not.
+def test_denies_force_push_when_flag_is_clustered_or_mirror(evaluate: Evaluate) -> None:
+    commands = [
+        "git push -fu origin me/dem-1-x",
+        "git push -uf origin me/dem-1-x",
+        "git push -vfu origin me/dem-1-x",
+        "git push --mirror backup",
+        "git -C ../app push --mirror origin",
+    ]
+
+    verdicts = verdicts_of(evaluate, [bash(command) for command in commands])
+
+    assert list(verdicts.values()) == [
+        ("deny", "force-push is not allowed; push a new commit (or a merge) instead")
+    ] * len(commands)
+
+
 def test_names_configured_branch_when_branch_rule_denies(evaluate: Evaluate) -> None:
     claude_branch, default_branch = evaluate(
         [bash("git checkout -b claude/x"), bash("git push origin trunk")]
@@ -218,6 +242,45 @@ def test_asks_when_bash_writes_protected_path(evaluate: Evaluate) -> None:
 
     assert kinds(dict(zip(writes, verdicts, strict=True))) == dict.fromkeys(writes, "ask")
     assert read is None
+
+
+TEST_BASH_REASON = (
+    "deleting or sed-editing tests from Bash bypasses the assertion guard; "
+    "use Edit, or confirm this is intended"
+)
+
+
+def test_asks_when_bash_removes_bare_test_name(evaluate: Evaluate) -> None:
+    commands = [
+        "rm test_x.py",
+        "git rm test_x.py",
+        "git rm -f test_x.py",
+        "mv test_x.py old.py",
+        "truncate -s 0 test_x.py",
+        "sed -i 's/a/b/' test_x.py",
+        "rm 'test_x.py'",
+        'git rm "test_x.py"',
+    ]
+
+    verdicts = verdicts_of(evaluate, [bash(command) for command in commands])
+
+    assert verdicts == dict.fromkeys(verdicts, ("ask", TEST_BASH_REASON))
+
+
+def test_allows_bash_when_bare_test_name_only_read(evaluate: Evaluate) -> None:
+    commands = [
+        "cat test_x.py",
+        "pytest test_x.py",
+        "rm mytest_x.py",
+        "rm test_x.pyc",
+        "rm test_data.json",
+        "rm 'mytest_x.py'",
+        "rm a'test_x.py",
+    ]
+
+    verdicts = verdicts_of(evaluate, [bash(command) for command in commands])
+
+    assert verdicts == dict.fromkeys(verdicts)
 
 
 # GuardFiles
@@ -282,6 +345,99 @@ def test_asks_when_write_shrinks_test_file(evaluate: Evaluate, tmp_path: Path) -
     [verdict] = evaluate([file("Write", write, cfg=False)])
 
     assert verdict[0] == "ask"
+
+
+UNITTEST_LINES = (
+    "self.assertEqual(a, 1)",
+    "with self.assertRaises(ValueError):",
+    "self.assertTrue(x)",
+    'self.fail("no")',
+)
+UNITTEST_TEST_PATH = "/w/app/tests/unit/test_a.py"
+
+
+def removes(n: int) -> tuple[str, str]:
+    """The guard's verdict for an edit that removes ``n`` assertions from a test."""
+    return (
+        "ask",
+        f"this edit removes {n} assertion(s) from a test; "
+        "acceptance tests are a contract, confirm first",
+    )
+
+
+def test_asks_when_edit_removes_unittest_assertions(evaluate: Evaluate) -> None:
+    one_each = [
+        file(
+            "Edit",
+            {"file_path": UNITTEST_TEST_PATH, "old_string": line + "\n", "new_string": ""},
+            cfg=False,
+        )
+        for line in UNITTEST_LINES
+    ]
+    all_four = {
+        "file_path": UNITTEST_TEST_PATH,
+        "old_string": "\n".join(UNITTEST_LINES) + "\n",
+        "new_string": "",
+    }
+    multi_edit = {
+        "file_path": UNITTEST_TEST_PATH,
+        "edits": [{"old_string": line + "\n", "new_string": ""} for line in UNITTEST_LINES],
+    }
+
+    verdicts = evaluate(
+        [*one_each, file("Edit", all_four, cfg=False), f"check_file('MultiEdit', {multi_edit!r})"]
+    )
+
+    assert verdicts == [removes(1)] * 4 + [removes(4), removes(4)]
+
+
+def test_asks_when_write_removes_unittest_assertions(evaluate: Evaluate, tmp_path: Path) -> None:
+    path = tmp_path / "unittest" / "tests" / "test_x.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "import unittest\n\n\n"
+        "class TestX(unittest.TestCase):\n"
+        "    def test_x(self):\n"
+        "        a, x = 1, True\n"
+        "        self.assertEqual(a, 1)\n"
+        "        with self.assertRaises(ValueError):\n"
+        '            int("x")\n'
+        "        self.assertTrue(x)\n"
+        '        self.fail("no")\n',
+        encoding="utf-8",
+    )
+
+    verdicts = evaluate([file("Write", {"file_path": str(path), "content": ""}, cfg=False)])
+
+    assert verdicts == [removes(4)]
+
+
+def test_counts_mock_assertion_once_when_unittest_forms_counted(evaluate: Evaluate) -> None:
+    edits = [
+        {"file_path": UNITTEST_TEST_PATH, "old_string": line + "\n", "new_string": ""}
+        for line in ("self.assert_called_once_with(x)", "m.assert_called_once_with(x)")
+    ]
+
+    verdicts = evaluate([file("Edit", edit, cfg=False) for edit in edits])
+
+    assert verdicts == [removes(1), removes(1)]
+
+
+def test_allows_edit_when_unittest_assertion_swapped_or_added(evaluate: Evaluate) -> None:
+    swap = {
+        "file_path": UNITTEST_TEST_PATH,
+        "old_string": "self.assertEqual(a, 1)",
+        "new_string": "assert a == 1",
+    }
+    add = {
+        "file_path": UNITTEST_TEST_PATH,
+        "old_string": "self.assertTrue(x)",
+        "new_string": "self.assertTrue(x)\nself.assertEqual(a, 1)",
+    }
+
+    verdicts = evaluate([file("Edit", swap, cfg=False), file("Edit", add, cfg=False)])
+
+    assert verdicts == [None, None]
 
 
 def test_asks_when_edit_adds_skip_marker(evaluate: Evaluate) -> None:
@@ -808,6 +964,43 @@ def test_allows_read_when_guard_file_read(guarded_hub: Path, guard: Guard) -> No
 
     for hooks in (guarded_hub / HOOKS, guarded_hub / WORKTREE / HOOKS):
         assert guard(hooks, runs) == [None] * len(runs)
+
+
+# AGH-31 (AC-31.5): the probe kickoff Reads, as written in the rendered kickoff, is denied by the
+# guard itself, from the hub, from a hub worktree and with no hub.json above the cwd.
+def test_denies_guard_probe_when_kickoff_path_read(
+    guarded_hub: Path, guard: Guard, tmp_path: Path
+) -> None:
+    kickoff = guarded_hub / "plugin/hub-workflow/skills/kickoff/SKILL.md"
+    [rel] = re.findall(r"`<hub>/([^`]+)`", kickoff.read_text(encoding="utf-8"))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    read = {"tool_name": "Read", "tool_input": {"file_path": str(guarded_hub / rel)}}
+    runs: list[tuple[dict[str, Any], Path]] = [
+        (read, guarded_hub),
+        (
+            {"tool_name": "Read", "tool_input": {"file_path": str(guarded_hub / WORKTREE / rel)}},
+            guarded_hub / WORKTREE,
+        ),
+        (read | {"cwd": str(outside)}, outside),
+    ]
+
+    # E11: the same hooks in a user-level plugin cache (no hub settings loaded) deny it too, so a
+    # deny proves only that the guard hook answers
+    cache = guarded_hub.parent.parent / PLUGIN_CACHE
+    shutil.copytree(guarded_hub / HOOKS, cache)
+
+    verdicts = guard(guarded_hub / HOOKS, runs)
+    cached = guard(cache, runs)
+
+    assert len(verdicts) == len(runs)
+    assert len(cached) == len(runs)
+    for verdict in (*verdicts, *cached):
+        assert verdict is not None
+        decision, reason = verdict
+        assert decision == "deny", verdict
+        assert reason.startswith("[hub guard] "), verdict
+    assert not (guarded_hub / rel).exists()
 
 
 def test_allows_edit_when_skill_edited(guarded_hub: Path, guard: Guard) -> None:

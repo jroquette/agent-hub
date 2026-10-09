@@ -46,6 +46,7 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     # Row "Brain skeleton: `brain/index.md`, `brain/now.md`, `brain/decisions/index.md`, folder
     # `.gitkeep`s, journal template": generic, seeded (the folders and template are spec Q9).
     "brain/_inbox/.gitkeep": (Kind.GENERIC, Ownership.SEEDED, None),
+    "brain/auto/workspace/.gitkeep": (Kind.GENERIC, Ownership.SEEDED, None),
     "brain/decisions/index.md": (Kind.GENERIC, Ownership.SEEDED, None),
     "brain/domain/.gitkeep": (Kind.GENERIC, Ownership.SEEDED, None),
     "brain/features/.gitkeep": (Kind.GENERIC, Ownership.SEEDED, None),
@@ -358,6 +359,19 @@ def test_seeds_app_repo_agents_when_registry_read() -> None:
     assert entry.ownership is Ownership.SEEDED
     assert entry.source == TemplateSource(
         GENERATOR_PACKAGE, f"{TEMPLATES_FOLDER}/docs/app-repo-AGENTS.md.tmpl"
+    )
+    assert entry.build is None
+
+
+def test_seeds_personal_memory_folder_when_registry_read() -> None:
+    entries = [entry for entry in REGISTRY if entry.path == "brain/auto/workspace/.gitkeep"]
+
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry.kind is Kind.GENERIC
+    assert entry.ownership is Ownership.SEEDED
+    assert entry.source == TemplateSource(
+        GENERATOR_PACKAGE, f"{TEMPLATES_FOLDER}/brain/auto/workspace/gitkeep.tmpl"
     )
     assert entry.build is None
 
