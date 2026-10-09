@@ -70,7 +70,7 @@ from the start, a sibling hub only if the start is in it or a repo it lists. Tha
 `check_fast` the stop gate runs, the `platform.version` SessionStart fetches, default branch, branch prefix, hub,
 workspace), except that `$HUB_CONFIG`'s `ask_before_edit`, `deny_paths` and `deny_hosts` are added to the hook root's,
 never replace them; for `guard.infra`, the mode and `allow` are the hook root's only and `$HUB_CONFIG`'s `prod_markers`
-are added (in the plugin cache, the found file's `guard.infra` as is); the extension, `@hub/` anchors and guard-file
+and unusable-value problem are added (in the plugin cache, the found file's `guard.infra` as is); the extension, `@hub/` anchors and guard-file
 asks stay pinned to the hook root. Only SessionStart calls the CLI, from the hub with `AGENT_HUB_ROOT` set: the shim's
 resolve step (`uvx … hub --version`), then
 `uvx … hub brief`, both within one 10 s deadline; else a mini brief naming the cause (`no version`, `no uv`,
