@@ -105,6 +105,7 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "plugin/hub-workflow/skills/kickoff/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/learn/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/onboard/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/skills/onboard/reference.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/recall/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/refactor/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/release/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),

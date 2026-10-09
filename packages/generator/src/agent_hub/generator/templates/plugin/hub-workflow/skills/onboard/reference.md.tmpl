@@ -1,0 +1,36 @@
+---
+name: onboard-reference
+description: The rules /onboard follows - gate standard, runner order, running a repo's gate, exit codes, proposal format and recovery. Read by /onboard, not a command of its own.
+---
+
+# /onboard reference
+
+**Gate standard** (generic; its reference is agent-hub's docs/CONVENTIONS.md and docs/TESTING.md): fast (`check_fast`) = format, lint, typecheck, unit tests;
+full (`check`) = fast + integration/e2e + coverage, where the repo has the tools. Until a green, merged command exists, `check_fast` stays absent from `hub.json` and `check` keeps its value, marked `GAP` or `pending merge` in the proposal.
+
+**Runner order**: a composed gate goes into the runner the repo already has: an existing `Makefile` first; otherwise `package.json` `scripts`, or the `pyproject.toml` or `justfile` task runner the repo already uses;
+`make` only when the repo has no runner at all. `hub.json` then names the runner's invocation (`npm run check-fast`, `just check`).
+
+**Running a repo's gate**: it executes the repo's code, so run only a command the user approved word for word in the proposal, and show it before running it.
+For a found command (step 5), each run gets its own new worktree, `./hub worktree <team>-<n>-gate-<dir>-<YYYYMMDDHHMM> --only <dir>` (the onboarding issue's id, `<dir>` in lowercase, the current time),
+which `./hub worktree` creates on a new branch from a freshly fetched `origin/<default>`; never in the repo's main checkout. If that folder (`../<dir>/.claude/worktrees/<name>`) or its branch already exists, stop, name it and let the user remove it: never reuse it.
+A Gate PR's new commands run in that PR's own worktree (its step 6 issue), not in a gate worktree, and only after the runner edit is committed there; clean means clean after that commit.
+Run with the worktree as the working directory and stdin from `/dev/null`.
+Timeouts: `check_fast` gets `check_fast_timeout` from `hub.json`, else 150 seconds, as the Stop hook does; `check` gets its own bound of 900 seconds. Its output goes to a log outside the hub and the repos (`${TMPDIR:-/tmp}/onboard-<repo>-<gate>.log`).
+The run is green only if the command exits 0 and `git status --porcelain` in the worktree afterwards exits 0 and prints nothing; then remove the worktree with `./hub worktree --remove <name> --only <dir>` (exit 0).
+A dirty worktree means the gate is not green: leave it in place and name it in the proposal or the report. A dirty leftover from an earlier run is never removed and never counted as a gate result: name it for the user.
+Never `git reset --hard`, `git clean` or delete a branch: the agent never destroys work.
+
+**Exit codes**: `./hub doctor`: 0 clean, 1 findings (list each with its fix), 2 usage error; any other code is a tool failure: stop.
+`./hub sync`: 0 done, 3 conflict (stop and show it), 1 error (stop); exit 4 exists only with `--check`; after a 3 or a 1, do not run `./hub doctor`.
+
+**Proposal format**: frontmatter `type: onboard-proposal`, `status: proposed | approved | applied`, `provenance: agent-from-code`, `last_verified`, `platform_version` and `hub_json_sha256`:
+the SHA-256 of the bytes of `hub.json` on the hub's default branch, from `git show origin/<default>:hub.json | sha256sum` (or `| shasum -a 256`); both commands must exit 0; on any other exit, stop and say why.
+Body: an evidence table (value, `path:line`); the open questions; the gates found or composed, each tool's declaration by `path:line` and each gate's state, with the PR URL of a `pending merge` one;
+the `GAP`s with their tracker issue texts; the `hub.json` diff and the `AGENTS.project.md` draft, each in a fenced block. The draft names every repo by its `dir`, so `/kickoff` can tell which repos are onboarded.
+Cite repo lines by `path:line` and never quote one outside a fenced block (`./hub doctor` reports it as `brain.leak`).
+
+**Recovery**: a `propose` re-run overwrites a `proposed` file; on an `approved` one it stops and says to run `/onboard apply` or to delete or reset the proposal.
+An `applied` file is first renamed to `brain/_inbox/onboard-proposal-YYYY-MM-DD.md` (if that name exists, add `-2`, `-3` and so on before `.md`), then a new proposal is written.
+An `approved` proposal whose hash no longer matches `hub.json`: stop and tell the human to delete or reset it. The agent never edits `status`, except to set `applied` once step 5 succeeds.
+A merged Gate PR needs no special path: the next `/onboard propose` finds its tasks in the repo as found commands, and they go through the normal path.
