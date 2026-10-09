@@ -37,6 +37,7 @@ RULE_TABLE_IDS = [
     "config.identity",
     "repos.agents",
     "config.stop_gate",
+    "brain.memory",
 ]
 CONFIGURABLE_IDS = [rule_id for rule_id in RULE_TABLE_IDS if rule_id != "config.schema"]
 # config.identity's info must read the same for every developer, and config.stop_gate stays a
@@ -152,6 +153,12 @@ def test_accepts_repo_agents_settings_when_disabled_or_retuned(
 def test_rejects_repo_agents_option_when_key_unknown() -> None:
     assert error_types({"repos.agents": {"max_lines": 1}}) == [
         (("repos.agents", "max_lines"), "extra_forbidden")
+    ]
+
+
+def test_rejects_brain_memory_option_when_key_unknown() -> None:
+    assert error_types({"brain.memory": {"max_files": 1}}) == [
+        (("brain.memory", "max_files"), "extra_forbidden")
     ]
 
 
