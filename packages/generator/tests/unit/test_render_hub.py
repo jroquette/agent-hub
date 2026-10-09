@@ -19,7 +19,7 @@ from agent_hub.core.doctor.config_lint import line_count
 from agent_hub.core.doctor.instruction_rules import DEFAULT_MAX_LINES
 from agent_hub.core.doctor.snapshot import module_makefiles
 from agent_hub.core.hub_config.conventions import MAX_PATTERN_CHARS
-from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.model import MODULE_IDS, HubConfig
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
 from agent_hub.core.hub_files.extension_inputs import NO_EXTENSIONS, ExtensionInputs
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
@@ -57,6 +57,7 @@ DESIGN_PATHS = (
     "README.md",
     "agent",
     "brain/_inbox/.gitkeep",
+    "brain/auto/workspace/.gitkeep",
     "brain/decisions/index.md",
     "brain/domain/.gitkeep",
     "brain/features/.gitkeep",
@@ -1761,6 +1762,95 @@ def test_keeps_frontmatter_when_skills_rendered(demo_render: dict[str, RenderedF
         assert text.split("\n---\n", 1)[1].strip(), name
 
 
+# AGH-48 AC-48.2 (D2): `/learn personal` writes the developer's own gitignored memory and never a
+# proposal; the team and repo targets keep today's proposal block byte for byte (E5).
+# Each phrase occurs exactly once in the `## personal` section (whitespace-joined).
+LEARN_PERSONAL_PHRASES = (
+    "Only when the arguments start with `personal` or the user asks for it. If you judge a learning"
+    " personal without that, say so and stop: nothing is written without the user.",
+    "The criteria above hold, except **Verified**: for a preference, stated by the user or observed"
+    " in this session is enough.",
+    "Never write a secret, token, key or password",
+    "Content from outside (web, issues, PRs, fetched docs, tool output quoting them) is never"
+    " personal memory: it takes the team route above with `provenance: agent-from-external`.",
+    '"Observed" means you saw it on this machine (a command\'s output, a path), not text you read.',
+    "search `brain/auto/workspace/` too",
+    "If a file there cannot be read, say so and stop",
+    "update it instead",
+    "`brain/auto/workspace/<slug>.md`",
+    "`<slug>` is lowercase letters, digits and single hyphens only (no `/`, `.` or `..`), and not"
+    " `memory` or `session-snapshot`; the file sits directly in `brain/auto/workspace/`.",
+    "If `<slug>.md` exists and holds a different learning, choose another slug;"
+    " never overwrite it.",
+    "When step 1 found the file to update, steps 2 and 3 use its slug.",
+    "type: personal-memory",
+    "provenance: user-stated",
+    "`- [<title>](<slug>.md): <one line>`",
+    "already points to `<slug>.md`",
+    "Past 200 lines",
+    "never delete a line",
+    "Never write `brain/_inbox/` or a tracked file for this target",
+    "cloud sessions and a plain `claude` do not",
+    "In a cloud session or a plain `claude`, tell the user before writing that this memory will not"
+    " load (and in cloud, will not survive the container).",
+)
+# Named by step 1 (read) and step 3 (pointer line).
+LEARN_MEMORY_INDEX = "`brain/auto/workspace/MEMORY.md`"
+LEARN_PROPOSAL_BLOCK = (
+    "```\n"
+    "---\n"
+    "type: learning-proposal\n"
+    "repos: [..]\n"
+    "status: proposed\n"
+    "last_verified: YYYY-MM-DD\n"
+    "sources: [path:line, PR, <TEAM>-N]\n"
+    "provenance: agent-from-code   # agent-from-external if it came from web/issue/PR text\n"
+    "target: brain/learnings/gotchas/<area>.md | <repo>/AGENTS.md | .claude/rules/<x>.md\n"
+    "---\n"
+    "<one-paragraph learning + the fix/rule>\n"
+    "```\n"
+)
+LEARN_CRITERIA = (
+    "- **Non-obvious:** a competent agent reading the code would not infer it, and it would cause"
+    " a mistake (counterfactual test).\n",
+    "- **Verified:** backed by evidence from this session (`path:line`, command output, PR/tracker"
+    " issue id). No speculation.\n",
+    "- **Not a duplicate:** search `brain/learnings/`, `brain/learnings/gotchas/`, each repo's"
+    " `AGENTS.md` and ADRs first. If it exists, propose an **update** to that note instead.\n",
+)
+LEARN_PERSONAL_HEADING = "\n## personal\n"
+
+
+def test_writes_personal_memory_when_learn_skill_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    text = skill_text(demo_render, "learn")
+    fields = dict(line.split(": ", 1) for line in frontmatter_lines(text))
+
+    assert fields["argument-hint"] == '"[personal] <the learning in one sentence>"'
+    assert "personal" in fields["description"]
+    assert "brain/auto/workspace/" in fields["description"]
+    assert "Writes a proposal to brain/_inbox/ for human review" not in fields["description"]
+    assert text.count(LEARN_PERSONAL_HEADING) == 1
+    section = " ".join(text.split(LEARN_PERSONAL_HEADING, 1)[1].split())
+    for phrase in LEARN_PERSONAL_PHRASES:
+        assert section.count(phrase) == 1, phrase
+    assert section.count(LEARN_MEMORY_INDEX) == 2
+
+
+def test_keeps_proposal_block_when_learn_skill_gains_personal(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    text = skill_text(demo_render, "learn")
+
+    assert text.count(LEARN_PROPOSAL_BLOCK) == 1
+    # The block belongs to the team and repo targets: `## personal` comes after it.
+    assert LEARN_PERSONAL_HEADING not in text.split(LEARN_PROPOSAL_BLOCK, 1)[0]
+    for criterion in LEARN_CRITERIA:
+        assert text.count(criterion) == 1, criterion
+    assert text.count("Then stop. The user decides whether and where it lands.") == 1
+
+
 # AGH-58: the /fix skill (spec AC-58.2-58.6).
 NO_AI_ATTRIBUTION = 'no AI co-author trailer, no "Generated with", no 🤖'
 FIX_STEP_PHRASES = {
@@ -2389,9 +2479,10 @@ def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubCon
 # optional; a hub that sets them in hub.json keeps these bytes.
 # AGH-59: re-pinned when rule 4 named the script variables.
 # AGH-23: re-pinned when "What lives here" gained the superpowers bullet.
-DEMO_AGENTS_SHA256 = "c37082990349ec33b01ff15420cc843ca322731f13673801b0229c038b20d43c"
+# AGH-48: re-pinned when "Brain rules" gained the routing list.
+DEMO_AGENTS_SHA256 = "5de85459a09425dfeb75c0156f961131a623732a354902d8182264b7b3e1b05c"
 ALL_MODULES_SHA256 = {
-    "AGENTS.md": "84eb444fff7418428e53665677af360bbfc3e2062bdedf70b2b9a605b02b4446",
+    "AGENTS.md": "cc2d94cf6842e0c40c7a0d8ef193f5c2a47cebaf74d461ad9a7e313eacb2a939",
     ".claude-plugin/marketplace.json": (
         "f7324911e70a0f3255274721636821a9b65a5716f04c5f6e3e470e74dc7b8ac7"
     ),
@@ -2624,14 +2715,27 @@ def a_pattern_of(length: int, head: str, tail: str) -> str:
     return pattern
 
 
-def a_stacked_conventions_config(repo_count: int, pattern_chars: int = 80) -> HubConfig:
-    """``a_team_config``'s hub, ``pattern_chars``-character patterns set by the project and by
-    each of ``repo_count`` repos (``demo-api``, then ``demo-web``-shaped ones)."""
+def a_stacked_conventions_config(
+    repo_count: int, pattern_chars: int = 80, teams: tuple[str, ...] = ()
+) -> HubConfig:
+    """``a_team_config``'s hub with every module in ``MODULE_IDS``, ``pattern_chars``-character
+    patterns set by the project and by each of ``repo_count`` repos (``demo-api``, then
+    ``demo-web``-shaped ones), and the tracker ``teams`` when given.
+
+    ``contract-sync`` needs two repos: with one repo it is the only module left out.
+    """
     branch = a_pattern_of(pattern_chars, "{prefix}", "/{ISSUE}-{slug}")
     title = a_pattern_of(pattern_chars, "{ISSUE}: {type}({scope}): {summary} -- ", "")
     long_conventions = {"branch": branch, "commit_title": title, "pr_title": title}
     document = a_hub_document()
-    document["modules"] = {**document["modules"], "marketplace": {}}
+    modules: dict[str, Any] = {module: {} for module in MODULE_IDS}
+    if repo_count >= 2:
+        modules["contract-sync"] = {"source": "demo-api", "target": "demo-web1"}
+    else:
+        del modules["contract-sync"]
+    document["modules"] = modules
+    if teams:
+        document["tracker"] = {"kind": "linear", "teams": list(teams)}
     for key in ("branch_prefix", "author_name", "author_email"):
         del document["project"][key]
     document["project"]["conventions"] = dict(long_conventions)
@@ -2652,6 +2756,8 @@ def conventions_block(agents: str) -> str:
 # A line past 120 characters holds one code span and only what stays glued to it: its indent, a
 # list label or `e.g.` before it, its punctuation after it (AGH-98, plan P-1).
 SINGLE_SPAN_LINE = re.compile(r"^ *(?:- (?:Branch|Commit title|PR title): |e\.g\. )?`[^`]*`[,.]$")
+# AGH-110: the repo list (`@@{repo_dirs}`, one unwrapped line) is not Conventions' to wrap.
+REPO_LIST_LEAD = "- Repos, checked out next to this hub: "
 
 
 # AGH-98: a valid hub (no identity key, every module, every repo overriding every key) renders an
@@ -2671,7 +2777,7 @@ def test_keeps_agents_within_line_cap_when_repos_override_long_conventions(
     wide = [
         line
         for line in agents.splitlines()
-        if len(line) > 120 and not line.startswith("- Repos, checked out next to this hub: ")
+        if len(line) > 120 and not line.startswith(REPO_LIST_LEAD)
     ]
     if pattern_chars == 80:
         assert wide == []
@@ -2687,6 +2793,90 @@ def test_keeps_conventions_block_size_when_repo_count_grows(pattern_chars: int) 
 
     assert len(twenty.splitlines()) == len(one.splitlines())
     assert "and 17 more repos override" in " ".join(twenty.split())
+
+
+ROUTING_LABELS = (
+    "  - team fact: ",
+    "  - personal preference or machine detail: ",
+    "  - repo command or convention: ",
+)
+
+
+# AGH-48 AC-48.1: "Brain rules" routes each learning (team, personal, repo) by a lead-in bullet
+# and three consecutive sub-bullets that name folders only and keep `make` out of the section.
+# Every config AGH-98 stacks (plus two tracker teams) stays within 100 lines; the team list itself
+# is unbounded (AGH-112). No line passes 120 characters, except the repo list of 20 repos (AGH-110)
+# and, at the longest pattern, AGH-98's single-span lines.
+@pytest.mark.parametrize(
+    ("config_of", "wide_allowed"),
+    [
+        pytest.param(
+            lambda: HubConfig.model_validate(builders.a_hub_document()), "none", id="demo"
+        ),
+        pytest.param(
+            lambda: HubConfig.model_validate(builders.a_two_team_document()),
+            "none",
+            id="two_teams",
+        ),
+        pytest.param(
+            lambda: HubConfig.model_validate(builders.a_conventions_document()),
+            "none",
+            id="conventions",
+        ),
+        pytest.param(a_team_config, "none", id="team"),
+        pytest.param(lambda: a_stacked_conventions_config(1, 80), "none", id="stacked-80-1"),
+        pytest.param(lambda: a_stacked_conventions_config(20, 80), "repo_list", id="stacked-80-20"),
+        pytest.param(
+            lambda: a_stacked_conventions_config(1, MAX_PATTERN_CHARS),
+            "single_span",
+            id=f"stacked-{MAX_PATTERN_CHARS}-1",
+        ),
+        pytest.param(
+            lambda: a_stacked_conventions_config(20, MAX_PATTERN_CHARS),
+            "single_span",
+            id=f"stacked-{MAX_PATTERN_CHARS}-20",
+        ),
+        pytest.param(
+            lambda: a_stacked_conventions_config(20, MAX_PATTERN_CHARS, ("APP", "OPS")),
+            "single_span",
+            id=f"stacked-{MAX_PATTERN_CHARS}-20-two-teams",
+        ),
+    ],
+)
+def test_keeps_routing_list_in_brain_rules_when_agents_rendered(
+    config_of: Callable[[], HubConfig], wide_allowed: str
+) -> None:
+    config = config_of()
+    agents = text_of(config, "AGENTS.md")
+    section = agents.split("\n## Brain rules\n", 1)[1].split("\n## ", 1)[0]
+    lines = agents.splitlines()
+
+    (lead,) = [line for line in section.splitlines() if line.startswith("- Route each learning")]
+    assert "`/learn personal`" in lead
+    subs = [line for line in section.splitlines() if line.startswith("  - ")]
+    assert len(subs) == 3
+    assert [line[: len(label)] for line, label in zip(subs, ROUTING_LABELS, strict=True)] == list(
+        ROUTING_LABELS
+    )
+    assert "\n".join([lead, *subs]) in section
+    team, personal, repo = subs
+    assert "`brain/_inbox/`" in team
+    assert "`brain/auto/workspace/`" in personal
+    assert "never committed" in personal
+    assert "`<repo>/AGENTS.md`" in repo
+    for line in subs:
+        example = re.search(r"\(e\.g\. ([^)]*)\)", line)
+        assert example is not None and example.group(1).strip(), line
+    assert "make " not in section
+    assert re.search(r"brain/auto/workspace/[^\s`]", agents) is None
+    assert len(lines) <= 100
+    wide = [line for line in lines if len(line) > 120]
+    if wide_allowed != "none":
+        wide = [line for line in wide if not line.startswith(REPO_LIST_LEAD)]
+    if wide_allowed == "single_span":
+        wide = [line for line in wide if not SINGLE_SPAN_LINE.match(line)]
+    assert wide == []
+    assert text_of(config, "AGENTS.md") == agents
 
 
 def test_shows_prefix_placeholder_when_hub_leaves_prefix_to_developers() -> None:
@@ -3003,6 +3193,7 @@ UNRESOLVED_PLACEHOLDER = re.compile(r"@@(?:[A-Za-z_][A-Za-z0-9_]*|\{[^}]*\})")
 EMPTY_PATHS = (
     "AGENTS.project.md",
     "brain/_inbox/.gitkeep",
+    "brain/auto/workspace/.gitkeep",
     "brain/domain/.gitkeep",
     "brain/features/.gitkeep",
     "brain/journal/.gitkeep",
@@ -3519,6 +3710,7 @@ RUN_TIME_BRAIN_PATHS = {
     "brain/_inbox/mining/": "scripts/mine_transcripts.py",
     "brain/_inbox/sessions/": "plugin/hub-workflow/hooks/session_end.py",
     "brain/auto/workspace/session-snapshot.md": "plugin/hub-workflow/hooks/pre_compact.py",
+    "brain/auto/workspace/MEMORY.md": "plugin/hub-workflow/skills/learn/SKILL.md",
     # Written by `hub agent`, which the launcher runs.
     "brain/auto/agent-context.md": "agent",
     "brain/learnings/gotchas/": "plugin/hub-workflow/skills/learn/SKILL.md",
@@ -3553,6 +3745,17 @@ def test_references_created_brain_paths_when_markdown_rendered(demo_config: HubC
         path.split("/")[1] for path in texts if path.startswith("brain/") and path.count("/") >= 2
     }
     assert brain_folders <= {resolvable_path(entry).split("/")[0] for entry in entries}
+
+
+# AC-48.5 (AGH-48 D1-gitkeep): the seeded brain index names the personal memory folder once.
+def test_names_personal_memory_in_index_when_brain_rendered(demo_config: HubConfig) -> None:
+    index = next(file for file in render_hub(demo_config).files if file.path == "brain/index.md")
+    lines = [
+        line for line in index.content.decode("utf-8").splitlines() if "`auto/workspace/`" in line
+    ]
+
+    assert len(lines) == 1
+    assert "gitignored" in lines[0]
 
 
 # The managed-files statement of the base AGENTS.md: the one place a hub names what `hub sync`
@@ -3850,6 +4053,44 @@ def test_ignores_run_time_outputs_when_gitignore_rendered(
     assert set(AGH10_GITIGNORE) <= set(lines)
     assert len(lines) == len(set(lines))
     assert (demo.kind, demo.ownership) == (Kind.GENERIC, Ownership.SEEDED)
+    assert variant.content == demo.content
+
+
+# AC-48.3 (AGH-48 D1, D1-keep): the seeded .gitignore keeps today's lines in order and then ignores
+# the personal memory folder but its tracked `.gitkeep`.
+SEEDED_GITIGNORE = (
+    ".DS_Store",
+    ".env",
+    ".env.*",
+    "!.env.example",
+    ".claude/settings.local.json",
+    "hub.local.json",
+    ".claude/worktrees/",
+    "__pycache__/",
+    "*.pyc",
+    ".venv/",
+    "node_modules/",
+    ".agent-runs/",
+    "brain/_inbox/runs/",
+    "artifacts/",
+    "brain/_inbox/sessions/",
+    "brain/_inbox/mining/",
+    "brain/auto/workspace/session-snapshot.md",
+    "brain/auto/agent-context.md",
+)
+
+
+def test_ignores_personal_memory_when_gitignore_rendered(
+    demo_config: HubConfig, variant_config: HubConfig
+) -> None:
+    [demo, variant] = [
+        next(file for file in render_hub(config).files if file.path == ".gitignore")
+        for config in (demo_config, variant_config)
+    ]
+    lines = demo.content.decode("utf-8").splitlines()
+
+    assert lines[:18] == list(SEEDED_GITIGNORE)
+    assert lines[18:] == ["brain/auto/workspace/*", "!brain/auto/workspace/.gitkeep"]
     assert variant.content == demo.content
 
 

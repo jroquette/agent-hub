@@ -54,9 +54,9 @@ def run() -> Callable[..., subprocess.CompletedProcess[str]]:
     return _run
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def installed_hub(tmp_path_factory: pytest.TempPathFactory) -> InstalledHub:
-    """Install the meta-package once per module, pinned to uv.lock, into isolated tool dirs.
+    """Install the meta-package once per session, pinned to uv.lock, into isolated tool dirs.
 
     The install keeps the real ``HOME`` and ``XDG_*`` so uv finds its warm cache; tests that run
     ``hub`` against a database point ``HOME``/``XDG_DATA_HOME`` at their own ``tmp_path``.
