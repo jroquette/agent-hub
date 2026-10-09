@@ -5,6 +5,23 @@ disable-model-invocation: true
 argument-hint: "<question or tracker issue id>"
 ---
 
-# /adr
+# /adr <question>
 
-This workflow is not written yet: say so and stop. Use `/feature` or `/fix` meanwhile.
+Paths below are relative to the hub (the directory with `hub.json`); repos are its siblings, listed in `hub.json` → `repos`, each with its own `AGENTS.md`: read the one for the repo the decision lives in, and its ADR process (where ADRs live, the template, the status lines it allows).
+Step types: `human` (the user answers), `agent` (this session works), `gate` (the session waits for the user's decision), `script` (a fixed command).
+Inside `/feature`'s architectural path, run steps 1–5 once per ADR the plan needs, on that feature's issue, worktree and PR (step 6 is then `/feature`'s own).
+
+1. `human` **Question**: read the tracker issue (if it cannot be read, say so and stop; no issue: create it in @@{tracker_team_key} first). The user states the question and its forces (constraints, NFRs), one question at a time here in the main session.
+2. `agent` **Research**: the current code (`/research`), the repo's existing ADRs and `brain/decisions/` notes the decision touches or would supersede. External sources go to `brain/_inbox/` with `provenance: agent-from-external`, never straight into the brain or the ADR.
+3. `agent` **Options**: 2–4 options, each with its trade-offs against every force, and a recommendation with its reason.
+4. `gate` **Pick**: the user picks the option (or sends it back to step 2); nothing is written until the user picks.
+5. `agent` **Write**: in a worktree from `./hub worktree <team>-<n>-adr-<slug> --only <repo>` (`make worktree NAME=… ONLY=…`), on branch @@{kickoff_branch} with `adr-<slug>` as `<desc>`:
+   - The ADR `NNNN-<slug>.md` in the repo's ADR folder, numbered with the next free number read from the folder (the highest `NNNN` there plus one; never from a doc that names it), status Proposed, the repo's ADR template. Stop if that number is already taken (on the fetched default branch or by an open PR): say so and ask.
+   - It lists every option considered with its trade-offs, the forces, and why the chosen one wins.
+   - Replacing an accepted decision: a new ADR that supersedes it, naming it; never edit an accepted ADR's body, only the status line the repo's process allows (diff check: `git diff` of each accepted ADR against the default branch shows that line at most).
+   - The ADR folder is usually under `hub.json` → `guard.ask_before_edit`: every edit there goes through the guard's ask; never bypass the ask (no shell write, no other tool, no settings change). Denied: stop and say so.
+   - A change of scope or architecture also updates the repo's spec (the file its `AGENTS.md` names) in the same PR, and a link note in `brain/decisions/` points to the ADR (linked, not copied).
+6. `script` **Ship**: the repo's `check_fast`, then its `check` (from `hub.json`), each with its output redirected to a file and `$?` checked; then commit, push the branch and open the PR, authored by the user: no AI co-author trailer, no "Generated with", no 🤖; titles as the repo's `AGENTS.md` sets them. No push to the default branch, no force-push.
+   Post the PR link on the issue and move it to In Review. The status becomes Accepted at merge, as the repo's ADR process says.
+
+Learnings go through `/learn`; `/handoff` if the decision spans sessions.
