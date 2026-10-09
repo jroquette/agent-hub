@@ -32,18 +32,19 @@ the files of each `repos[].dir` checkout at `../<dir>`: a missing or non-folder 
 that cannot be listed one `error` (its cause), both at `../<dir>` on the first selected repo rule by id, never retuned;
 the repo rules skip both. A linked `../<dir>` is resolved once to its real path. A root with no `.git` entry, a hub
 inside a larger repository included, is walked, skipping `.git` and nested repositories. A root with a `.git` entry is
-listed with `git ls-files -z --cached --others --exclude-standard`, and git must name the root as the work-tree top; git
-missing, failing, timing out or naming another top is a tree problem, never a walk. No link is followed, and git runs
-only when a selected rule needs a listing. A tree problem (a failed listing or read of the hub) is one `error` finding
-at path `.` on the first selected rule, by id, that reads the listing, else the first by id other than `config.schema`
-and `platform.version` (none when only those run), never retuned; its message is the cause (`could not list the files:
-…` or `could not read the files: <path>: …`), its fix one line. Fixed paths are read one by one before the listing, so a
-failed listing keeps them; after a failed read no rule calls an absent path missing. A rule whose check raises gives one
-`error` of that rule at `.` (`rule crashed: <type>: <message>`), never retuned, and the other rules keep running. An
-instruction or plugin file that is not UTF-8 text (a NUL included) is one `error` at its path (`not UTF-8 text: …`),
-never retuned, from the first selected rule in registry order that reads it; the other rules skip it. Proof: one unit
-test per rule on an in-memory snapshot, plus one e2e test of the command on a synthetic hub. A rule's `module` comes
-from core's `RULE_MODULES`; a module's rules are core functions registered when the module ships.
+listed with `git ls-files -z --cached --others --exclude-standard`, and git must name the root as the work-tree top;
+`HubFiles.listed_by_git` says whether git made the listing. Git missing, failing, timing out or naming another top is a
+tree problem, never a walk. No link is followed, and git runs only when a selected rule needs a listing. A tree problem
+(a failed listing or read of the hub) is one `error` finding at path `.` on the first selected rule, by id, that reads
+the listing, else the first by id other than `config.schema` and `platform.version` (none when only those run), never
+retuned; its message is the cause (`could not list the files: …` or `could not read the files: <path>: …`), its fix one
+line. Fixed paths are read one by one before the listing, so a failed listing keeps them; after a failed read no rule
+calls an absent path missing. A rule whose check raises gives one `error` of that rule at `.` (`rule crashed: <type>:
+<message>`), never retuned, and the other rules keep running. An instruction or plugin file that is not UTF-8 text (a
+NUL included) is one `error` at its path (`not UTF-8 text: …`), never retuned, from the first selected rule in registry
+order that reads it; the other rules skip it. Proof: one unit test per rule on an in-memory snapshot, plus one e2e test
+of the command on a synthetic hub. A rule's `module` comes from core's `RULE_MODULES`; a module's rules are core
+functions registered when the module ships.
 
 ### Rules
 
@@ -71,6 +72,7 @@ from core's `RULE_MODULES`; a module's rules are core functions registered when 
 | `config.identity` | info | the branch prefix this developer gets when no file sets one: derived from the effective email (named with its source); can be disabled, cannot be retuned (a `severity` is a `config.schema` error), so every developer's run exits alike | AGH-65 |
 | `repos.agents` | warning | each checked-out repo's root holds `AGENTS.md` as the repo rules list it (a file or a link, not followed; empty passes; a gitignored or deleted file does not count, an unreadable one does; `CLAUDE.md`, a nested or differently cased name do not count); the fix names the hub's seeded `docs/app-repo-AGENTS.md` and the repo's `check_fast` (unless absent or blank) and `check` (escaped, cut); missing or unlistable checkouts are the runner's | AGH-76 |
 | `config.stop_gate` | warning | each repo whose `check_fast` is absent, empty or blank: `no Stop gate for <dir>` at `repos[<i>].check_fast`; can be disabled, cannot be retuned (a `severity` is a `config.schema` error) | AGH-52 |
+| `brain.memory` | warning | personal memory in `brain/auto/workspace/` stays out of git. (a) Only on a listing git made (`listed_by_git`: tracked or not ignored by this developer's git; a walk lists ignored files too, so (a) is skipped): each listed path under the folder but its `.gitkeep`, `personal memory file is tracked or not ignored by git`, in listing order, at most 10, then one at the folder, `N more personal memory files are tracked or not ignored by git besides the 10 shown` (`1 more … file is …`), which sorts before the paths. (b) The root `.gitignore` has a line `brain/auto/workspace`, `brain/auto` or `brain`, with or without one leading `/` and one trailing `/`, `/*` or `/**` (trailing spaces and one leading BOM dropped; a `#` or `!` line never covers), else `.gitignore has no line ignoring brain/auto/workspace/ (personal memory)` at `.gitignore`, or at `.` when it is absent and every fixed path was read (an untracked `.gitignore` that ignores itself reads as absent); a link or non-UTF-8 `.gitignore` gives none. A line match, not git's matcher: a nested `.gitignore` (`brain/.gitignore`) is not read, so it still warns, and a later `!` line is not evaluated (a file it lets through is (a)'s). Fix: `add brain/auto/workspace/* and !brain/auto/workspace/.gitkeep to .gitignore; if a memory file was committed, see "Personal memory (existing hubs)" in the agent-hub README first`. Paths and counts only, never a file's content | AGH-48 |
 
 "config lint" and "feature check" are the hub scripts these rules replace ([hub-generator.md](hub-generator.md),
 Commands). Each ported rule keeps the old check's behavior, pinned first by characterization tests, but for what its
