@@ -108,6 +108,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/skills/kickoff/SKILL.md",
     "plugin/hub-workflow/skills/learn/SKILL.md",
     "plugin/hub-workflow/skills/onboard/SKILL.md",
+    "plugin/hub-workflow/skills/onboard/reference.md",
     "plugin/hub-workflow/skills/recall/SKILL.md",
     "plugin/hub-workflow/skills/refactor/SKILL.md",
     "plugin/hub-workflow/skills/release/SKILL.md",

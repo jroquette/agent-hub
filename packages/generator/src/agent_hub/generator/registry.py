@@ -9,6 +9,7 @@ a builder and has no source file.
 """
 
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Final, NamedTuple
 
 from agent_hub.core.hub_config.schema import SCHEMA_FILE, SCHEMA_PACKAGE
@@ -164,6 +165,9 @@ _BASE_SKILLS: Final = (
     "triage",
     "upgrade",
 )
+# A skill's files besides `SKILL.md`, read by the skill; its folder link covers them (sorted).
+# `/onboard`'s rules (AGH-108, spec D-split).
+_SKILL_SUPPORT_FILES: Final = MappingProxyType({"onboard": ("reference.md",)})
 # The upstream license files the base plugin's NOTICE names (sorted).
 _LICENSE_TEXTS: Final = ("Apache-2.0.txt", "MIT-compound-engineering-plugin.txt")
 
@@ -287,9 +291,10 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
     # `render_entries` links each skill folder into `.claude/skills/`.
     *(
         _generic_managed(
-            f"{_BASE_PLUGIN}/skills/{name}/SKILL.md", f"{_BASE_PLUGIN}/skills/{name}/SKILL.md.tmpl"
+            f"{_BASE_PLUGIN}/skills/{name}/{file}", f"{_BASE_PLUGIN}/skills/{name}/{file}.tmpl"
         )
         for name in _BASE_SKILLS
+        for file in ("SKILL.md", *_SKILL_SUPPORT_FILES.get(name, ()))
     ),
     # Module cloud: git identity, fetch or clone the repos in a cloud session (spec D3).
     _module_entry_point("scripts/cloud-setup.sh", "cloud"),
