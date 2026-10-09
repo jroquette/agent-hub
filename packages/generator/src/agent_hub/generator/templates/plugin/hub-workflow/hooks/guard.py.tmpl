@@ -7,7 +7,8 @@ deny  = hard block (secrets, force-push / push to the default branch, curl|sh, d
 ask   = needs the user's confirmation (removing test assertions (`assert`, `expect(`, `pytest.raises`,
         `.assert_*(`, unittest's `.assertX(` and `self.fail(`) or adding skip/xfail/quarantine markers,
         deleting or sed-editing tests from Bash, editing the hub's guard files: plugin/hub-workflow/hooks/,
-        plugin/<project>/hooks/, .claude/settings*.json, hub.lock and hub.json, in the hub or a hub worktree;
+        plugin/<project>/hooks/, .claude/settings*.json, hub.lock and hub.json, in the hub or a hub worktree,
+        and the hub/agent launchers (a Bash write asks only when one is its target, so running them never asks);
         editing paths in guard.ask_before_edit, writing brain/ outside now.md, journal/, _inbox/, auto/, features/)
 Project values (default branch, tracker team, guard lists) come from hub.json. The branch prefix of a deny's
 hint is the developer's: hub.local.json, else hub.json, else the local part of git config user.email plus `/`
@@ -64,6 +65,10 @@ TEST_PATH = r"(?:(\S*/)?(tests?|__tests__)/\S+|\S+\.(test|spec)\.[jt]sx?\b|['\"]
 BASH_WRITE = re.compile(r">>?|\btee\b|\bsed\s+(-\w*i\w*|--in-place)\b|\b(rm|mv|cp|truncate|ln)\b")
 WORKTREE_SEG = re.compile(r"/\.claude/worktrees/[^/]+(?=/)")
 SETTINGS_FILE = re.compile(r"\.claude/settings[^/]*\.json")
+# The hub-root launchers: the managed settings allow `./hub doctor` with no prompt.
+LAUNCHERS = ("hub", "agent")
+WRITE_TARGET = re.compile(r">>?\s*([^\s;&|<>()`]+)")
+WRITE_ARGS = re.compile(r"\b(?:tee|sed\s+(?:-\w*i\w*|--in-place)|rm|mv|cp|truncate|ln)\b(.*)")
 HUB_PREFIX = "@hub"
 
 
@@ -189,10 +194,11 @@ def _hub_base(cfg: Config) -> str | None:
     return str(base).rstrip("/").lower() if base else None
 
 
-def guard_file(path: str, cfg: Config) -> str | None:
+def guard_file(path: str, cfg: Config, launchers: bool = True) -> str | None:
     """path relative to the hub when it is one of the guard's own files: its hooks, the project's
-    hooks (the guard extension), .claude/settings*.json, hub.lock or hub.json, in the hub holding
-    this file or one of its worktrees (in the plugin cache: the hub found). Case is ignored."""
+    hooks (the guard extension), .claude/settings*.json, hub.lock or hub.json, or (with launchers)
+    the hub and agent launchers, in the hub holding this file or one of its worktrees (in the
+    plugin cache: the hub found). Case is ignored."""
     base = _hub_base(cfg)
     if base is None or not path:
         return None
@@ -202,7 +208,7 @@ def guard_file(path: str, cfg: Config) -> str | None:
         if not c.startswith(head):
             continue
         rel = c[len(head):]
-        if any(rel == d or rel.startswith(d + "/") for d in dirs) or SETTINGS_FILE.fullmatch(rel) or rel in ("hub.lock", "hub.json"):
+        if any(rel == d or rel.startswith(d + "/") for d in dirs) or SETTINGS_FILE.fullmatch(rel) or rel in ("hub.lock", "hub.json") or (launchers and rel in LAUNCHERS):
             return rel
     return None
 
@@ -234,6 +240,14 @@ def _segments(command: str) -> list[str]:
     return first + more
 
 
+def _write_targets(segment: str) -> list[str]:
+    """The words a write segment may change: redirect targets, and the words after tee, sed -i,
+    rm, mv, cp, truncate or ln. Running `./hub doctor > out` names ./hub, but does not write it."""
+    targets = [t for target in WRITE_TARGET.findall(segment) for t in _tokens(target)]
+    args = WRITE_ARGS.search(segment)
+    return targets + (_tokens(args.group(1)) if args else [])
+
+
 def _tokens(segment: str) -> list[str]:
     """The segment's words that may name a path, options dropped: each with its outer quotes stripped,
     and again with every quote and backslash removed (`h"ub".json`, `hub\\.json`). Words split at
@@ -249,7 +263,7 @@ def _tokens(segment: str) -> list[str]:
 DENY_PATH_REASON = "{} is under guard.deny_paths `{}` (hub.json); agents neither read nor change it"
 GUARD_PARENT_REASON = "{} holds the hub's guard files ({}); removing or moving it changes the guard, confirm first"
 GUARD_FILE_REASON = ("{} is the hub's own guard or config ({}): hooks, the project guard extension, settings, "
-                     "hub.lock and hub.json change only with the user's confirmation")
+                     "hub.lock, hub.json and the hub/agent launchers change only with the user's confirmation")
 
 
 def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
@@ -296,6 +310,10 @@ def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
     for seg in _segments(c):
         if BASH_WRITE.search(seg):
             for tok in _tokens(seg):
+                rel = guard_file(tok, cfg, launchers=False)
+                if rel:
+                    return "ask", GUARD_FILE_REASON.format(tok, rel)
+            for tok in _write_targets(seg):
                 rel = guard_file(tok, cfg)
                 if rel:
                     return "ask", GUARD_FILE_REASON.format(tok, rel)
