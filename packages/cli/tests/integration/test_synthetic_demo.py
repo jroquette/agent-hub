@@ -461,7 +461,7 @@ def test_finds_nothing_when_doctor_runs_on_fresh_init(
 # The two lines a fresh init's .gitignore ends with (AGH-48), and the one warning without them.
 MEMORY_IGNORE_LINES = b"brain/auto/workspace/*\n!brain/auto/workspace/.gitkeep\n"
 MEMORY_IGNORE_WARNING = (
-    "warning brain.memory .gitignore: .gitignore does not ignore brain/auto/workspace/"
+    "warning brain.memory .gitignore: .gitignore has no line ignoring brain/auto/workspace/"
     f" (personal memory) Fix: {MEMORY_FIX}"
 )
 

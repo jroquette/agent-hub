@@ -30,12 +30,14 @@ type SnapshotFactory = Callable[..., DoctorSnapshot]
 COVERING_GITIGNORE = b"brain/auto/workspace/*\n!brain/auto/workspace/.gitkeep\n"
 GITKEEP = "brain/auto/workspace/.gitkeep"
 LISTED_MESSAGE = "personal memory file is tracked or not ignored by git"
-IGNORE_MESSAGE = ".gitignore does not ignore brain/auto/workspace/ (personal memory)"
+IGNORE_MESSAGE = ".gitignore has no line ignoring brain/auto/workspace/ (personal memory)"
 FIX = (
     "add brain/auto/workspace/* and !brain/auto/workspace/.gitkeep to .gitignore;"
-    " if committed, git rm --cached the file (it stays on disk)"
+    ' if a memory file was committed, see "Personal memory (existing hubs)" in the agent-hub'
+    " README first"
 )
 CANARY = "ZZ-PERSONAL-CANARY-48"
+OVERFLOW_ONE = "1 more personal memory file is tracked or not ignored by git besides the 10 shown"
 
 
 def found(snapshot: DoctorSnapshot) -> list[Finding]:
@@ -101,11 +103,11 @@ def test_keeps_listing_order_when_memory_files_listed(snapshot_of: SnapshotFacto
     ("count", "more"),
     [
         pytest.param(10, [], id="ten"),
+        pytest.param(11, [OVERFLOW_ONE], id="eleven"),
         pytest.param(
-            11, ["1 more personal memory file is tracked or not ignored by git"], id="eleven"
-        ),
-        pytest.param(
-            12, ["2 more personal memory files are tracked or not ignored by git"], id="twelve"
+            12,
+            ["2 more personal memory files are tracked or not ignored by git besides the 10 shown"],
+            id="twelve",
         ),
     ],
 )
@@ -121,6 +123,22 @@ def test_caps_listed_memory_findings_when_more_than_ten(
     # A literal 10, not the module's constant, so a changed cap fails here.
     assert found(snapshot) == [listed_memory(path) for path in paths[:10]] + [
         warning("brain/auto/workspace/", message) for message in more
+    ]
+
+
+def test_shows_overflow_first_when_findings_sorted(snapshot_of: SnapshotFactory) -> None:
+    # The report sorts by rule and path; the folder path sorts before every file under it, so
+    # the overflow line is read first and must make sense there.
+    paths = [f"brain/auto/workspace/m{index:02}.md" for index in range(11)]
+    snapshot = snapshot_of(
+        files={".gitignore": COVERING_GITIGNORE, GITKEEP: b""} | dict.fromkeys(paths, b"x\n"),
+        listed_by_git=True,
+    )
+
+    findings = run_rules(Selection(rules=(BRAIN_MEMORY,), notes=(), severities={}), snapshot)
+
+    assert list(findings) == [warning("brain/auto/workspace/", OVERFLOW_ONE)] + [
+        listed_memory(path) for path in paths[:10]
     ]
 
 
@@ -157,6 +175,7 @@ def test_passes_listed_paths_when_none_is_memory(
         pytest.param(b"brain/\n", id="brain"),
         pytest.param(b"brain/auto/workspace/*  \n", id="trailing_space"),
         pytest.param(b"node_modules/\r\nbrain/auto/workspace/*\r\n", id="crlf"),
+        pytest.param(b"\xef\xbb\xbfbrain/auto/workspace/*\n", id="bom"),
     ],
 )
 def test_passes_covering_gitignore_line_when_hub_listed(
@@ -168,18 +187,27 @@ def test_passes_covering_gitignore_line_when_hub_listed(
 
 
 @pytest.mark.parametrize(
-    "gitignore",
+    ("gitignore", "others"),
     [
-        pytest.param(b"brain/auto/workspace/session-snapshot.md\n", id="snapshot_only"),
-        pytest.param(b"# brain/auto/workspace/*\n", id="comment"),
-        pytest.param(b"!brain/auto/workspace/*\n", id="negation"),
-        pytest.param(b"", id="empty"),
+        pytest.param(b"brain/auto/workspace/session-snapshot.md\n", {}, id="snapshot_only"),
+        pytest.param(b"# brain/auto/workspace/*\n", {}, id="comment"),
+        pytest.param(b"!brain/auto/workspace/*\n", {}, id="negation"),
+        pytest.param(b"", {}, id="empty"),
+        # A documented limit: only the root .gitignore is read, so a nested one that does
+        # ignore the folder still warns. Reading nested ones would be a deliberate change.
+        pytest.param(
+            b"node_modules/\n",
+            {"brain/.gitignore": b"auto/workspace/*\n"},
+            id="limit_nested_gitignore_not_read",
+        ),
     ],
 )
 def test_warns_gitignore_when_no_line_covers(
-    snapshot_of: SnapshotFactory, gitignore: bytes
+    snapshot_of: SnapshotFactory, gitignore: bytes, others: dict[str, bytes]
 ) -> None:
-    snapshot = snapshot_of(files={".gitignore": gitignore, GITKEEP: b""}, listed_by_git=True)
+    snapshot = snapshot_of(
+        files={".gitignore": gitignore, GITKEEP: b""} | others, listed_by_git=True
+    )
 
     assert found(snapshot) == [IGNORE_FINDING]
 
