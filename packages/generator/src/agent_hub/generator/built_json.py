@@ -25,6 +25,16 @@ _ALLOWED_COMMANDS: Final = (
     "Bash(git log *)",
     "Bash(git show *)",
 )
+# AGH-114: a headless `/onboard propose` (the onboard skill's steps 1 to 4) runs with no one to
+# ask, so each read-only command it names gets an exact allow: the right-hand sides of
+# `git show origin/<default>:hub.json | sha256sum` (or `| shasum -a 256`; the left one is
+# `git show *` above), the `./hub doctor` baseline, and per repo the checkout and default-branch
+# reads (`_onboard_repo_reads`). It writes only the proposal and, before replacing an applied one,
+# a Write of its dated archive copy beside it (no `mv`); Claude Code checks Write and Edit against
+# `Edit(path)` rules only, and `/` anchors at the hub. The guard asks before an edit of the `hub`
+# or `agent` launcher. `apply` stays interactive: nothing it writes, pushes or runs is allowed here.
+_ONBOARD_PROPOSE_COMMANDS: Final = ("Bash(sha256sum)", "Bash(shasum -a 256)", "Bash(./hub doctor)")
+_ONBOARD_PROPOSAL_EDIT: Final = "Edit(/brain/_inbox/onboard-proposal*.md)"
 _DENIED_READS: Final = ("Read(**/*.pem)", "Read(**/*.key)")
 _DENIED_FORCE_PUSHES: Final = ("Bash(git push --force*)", "Bash(git push -f *)")
 # Claude Code matches each subcommand of `|`, `&&`, `;` on its own, so a shell fed by a pipe is
@@ -100,9 +110,10 @@ def managed_settings(config: HubConfig) -> JsonValue:
     """The managed ``.claude/settings.json``: the rules base every hub shares (spec D5).
 
     The schema, the authorship rule (empty attribution, no co-author line), the hooks block, the
-    read-only git allows, the base denies (secret reads, force pushes and pushes to a protected
-    branch, infra tools, ``ssh``, a bare ``sh`` or ``bash``), the repos as additional directories
-    (``../<dir>``, in ``hub.json`` order) and the base sandbox (AGH-16 D2, E14). Project settings
+    read-only git allows and those a headless ``/onboard propose`` needs (AGH-114), the base
+    denies (secret reads, force pushes and pushes to a protected branch, infra tools, ``ssh``, a
+    bare ``sh`` or ``bash``), the repos as additional directories (``../<dir>``, in ``hub.json``
+    order) and the base sandbox (AGH-16 D2, E14). Project settings
     (marketplace, plugins, extra sandbox hosts, ``env``, skill overrides) come from the seeded
     ``settings.project.json``, which may also override the sandbox's scalars.
     """
@@ -112,7 +123,12 @@ def managed_settings(config: HubConfig) -> JsonValue:
         "includeCoAuthoredBy": False,
         "hooks": base_hooks_block(),
         "permissions": {
-            "allow": list(_ALLOWED_COMMANDS),
+            "allow": [
+                *_ALLOWED_COMMANDS,
+                *_ONBOARD_PROPOSE_COMMANDS,
+                *_onboard_repo_reads(config),
+                _ONBOARD_PROPOSAL_EDIT,
+            ],
             "deny": [
                 *_DENIED_READS,
                 *_DENIED_FORCE_PUSHES,
@@ -128,6 +144,19 @@ def managed_settings(config: HubConfig) -> JsonValue:
             "network": {"allowLocalBinding": True, "allowedDomains": list(_SANDBOX_HOSTS)},
         },
     }
+
+
+def _onboard_repo_reads(config: HubConfig) -> list[str]:
+    """Two exact allows per repo, in ``hub.json`` order: the onboard skill's checkout test and its
+    default-branch read, each with the repo's own ``git -C ../<dir>`` (no wildcard to widen)."""
+    return [
+        rule
+        for repo in config.repos
+        for rule in (
+            f"Bash(git -C ../{repo.dir} rev-parse --show-toplevel)",
+            f"Bash(git -C ../{repo.dir} symbolic-ref refs/remotes/origin/HEAD)",
+        )
+    ]
 
 
 def _denied_pushes(config: HubConfig) -> list[str]:

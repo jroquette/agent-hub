@@ -25,10 +25,10 @@ Modes:
    This skill never runs `hub init`. Run `./hub doctor` once as a baseline and read its exit code as `reference.md` says.
    (`human`) Ask only what `hub.json` lacks and the repos cannot tell (a default branch, a runner), one question at a time; in `propose` mode it becomes an open question.
 2. **Discover** (`agent`): one fresh `researcher` agent per repo in `hub.json` → `repos`, read-only: it never writes in a repo and never runs a repo's code.
-   A repo is checked out when `git -C ../<dir> rev-parse --show-toplevel` exits 0; otherwise its row says `not checked out` and nothing is proposed for it.
+   A repo is checked out when `git -C ../<dir> rev-parse --show-toplevel` exits 0; otherwise its row says `not checked out` and nothing is proposed for it. Run each of these git commands on its own, as written: no `cd`, no loop, no `&&`.
    It reads only the root `Makefile`, `package.json`, `pyproject.toml`, `justfile` and `go.mod`, the CI workflows (`.github/workflows/*.yml`) and the top-level folder names; no tree walk.
    It reports, each with its `path:line`: the toolchain and task runner; the real format, lint, typecheck, test and build commands; the tools the repo declares;
-   the default branch from `git symbolic-ref refs/remotes/origin/HEAD` (exit 128: ask the user or write an open question, never guess `main`); migrations, ADRs and other folders worth a `guard.ask_before_edit` entry.
+   the default branch from `git -C ../<dir> symbolic-ref refs/remotes/origin/HEAD` (exit 128: ask the user or write an open question, never guess `main`); migrations, ADRs and other folders worth a `guard.ask_before_edit` entry.
 3. **Propose** (`agent`): write the proposal: the `hub.json` diff, the `AGENTS.project.md` draft, one evidence row per value, each repo's gates, the open questions and the `GAP`s.
    Each gate (`check_fast`, `check`) is a command found in the repo (with its file), else tasks composed only from tools the repo declares, each command citing the `path:line` where the repo declares that tool: never invented. A repo with no usable tool at all is a `GAP`.
 4. **Approve** (`gate`): show the proposal; the user approves, edits or drops each value, and the edits the user accepts are written into the proposal before step 5, so it holds what was approved word for word. `propose` mode ends here: the proposal stays `proposed` until a human sets `status: approved`, then `/onboard apply` runs in a session.

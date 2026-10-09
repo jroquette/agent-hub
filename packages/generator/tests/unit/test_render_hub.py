@@ -3334,6 +3334,26 @@ def test_writes_empty_file_when_gitkeep_or_project_rules_rendered(
 SETTINGS_KEYS = ["$schema", "attribution", "hooks", "includeCoAuthoredBy", "permissions", "sandbox"]
 SETTINGS_SCHEMA = "https://json.schemastore.org/claude-code-settings.json"
 SETTINGS_ALLOW = ["Bash(git status *)", "Bash(git diff *)", "Bash(git log *)", "Bash(git show *)"]
+# AGH-114: what `/onboard propose` runs headless with no prompt, from its skill text. The hash
+# pipe's two right-hand sides, the doctor baseline, the per-repo checkout and default-branch reads
+# (`git -C ../<dir>`, exact), and the proposal file with its dated archive names.
+ONBOARD_HASH_ALLOW = ["Bash(sha256sum)", "Bash(shasum -a 256)", "Bash(./hub doctor)"]
+ONBOARD_PROPOSAL_EDIT = "Edit(/brain/_inbox/onboard-proposal*.md)"
+
+
+def onboard_propose_allow(config_name: str) -> list[str]:
+    """The allows `/onboard propose` needs after the base git ones, exactly (AGH-114)."""
+    repo_reads = [
+        rule
+        for repo_dir in REPO_DIRS[config_name]
+        for rule in (
+            f"Bash(git -C ../{repo_dir} rev-parse --show-toplevel)",
+            f"Bash(git -C ../{repo_dir} symbolic-ref refs/remotes/origin/HEAD)",
+        )
+    ]
+    return [*ONBOARD_HASH_ALLOW, *repo_reads, ONBOARD_PROPOSAL_EDIT]
+
+
 SETTINGS_DENY_READS = ["Read(**/*.pem)", "Read(**/*.key)"]
 # The branches the guard protects (`main`, `master`, the project's and each repo's), sorted.
 PROTECTED_BRANCHES = {"demo": ["main", "master"], "variant": ["main", "master", "trunk"]}
@@ -3464,7 +3484,7 @@ def test_holds_rules_base_only_when_settings_rendered(
     assert settings["attribution"] == {"commit": "", "pr": ""}
     assert settings["includeCoAuthoredBy"] is False
     assert settings["permissions"] == {
-        "allow": SETTINGS_ALLOW,
+        "allow": [*SETTINGS_ALLOW, *onboard_propose_allow(config_name)],
         "deny": settings_deny(config_name),
         "additionalDirectories": [f"../{repo_dir}" for repo_dir in REPO_DIRS[config_name]],
     }
@@ -3481,6 +3501,26 @@ def test_holds_rules_base_only_when_settings_rendered(
     assert "matcher" not in settings["hooks"]["Stop"][0]
     for key in PROJECT_ONLY_SETTINGS:
         assert not key_anywhere(settings, key), key
+
+
+@pytest.mark.parametrize("config_name", CONFIG_NAMES)
+def test_allows_only_onboard_propose_when_settings_rendered(
+    config_name: str, request: pytest.FixtureRequest
+) -> None:
+    config = request.getfixturevalue(f"{config_name}_config")
+    rendered = {file.path: file for file in render_hub(config).files}
+
+    allow = strict_json(rendered[".claude/settings.json"].content)["permissions"]["allow"]
+
+    # AGH-114: a headless `/onboard propose` writes its proposal and hashes hub.json with no
+    # prompt; each allow is one of the skill's exact read-only forms, the base git reads before.
+    assert allow == [*SETTINGS_ALLOW, *onboard_propose_allow(config_name)]
+    # Nothing broader: no bare tool and no new Bash wildcard (the onboard commands match
+    # exactly), and the one file rule is the proposal's (Claude Code checks writes against
+    # `Edit(path)` rules only; a `Write(path)` rule is never consulted).
+    assert all(rule.endswith(")") and "(" in rule for rule in allow), allow
+    assert [rule for rule in allow if "*" in rule] == [*SETTINGS_ALLOW, ONBOARD_PROPOSAL_EDIT]
+    assert [rule for rule in allow if not rule.startswith("Bash(")] == [ONBOARD_PROPOSAL_EDIT]
 
 
 @pytest.mark.parametrize("config_name", CONFIG_NAMES)
