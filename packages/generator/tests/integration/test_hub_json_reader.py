@@ -361,7 +361,8 @@ VALID_INFRA: tuple[object, ...] = (
     builders.a_guard_infra() | {"_note": "x"},
 )
 
-# ``guard.infra`` as the model rejects it, with the first location the reader cannot use.
+# ``guard.infra`` as the model rejects it, with the first location the reader cannot use (keys in
+# document order; an unknown key is unusable as a whole, E15).
 MALFORMED_INFRA: tuple[tuple[object, str], ...] = (
     ([], "guard.infra"),
     ("x", "guard.infra"),
@@ -373,7 +374,45 @@ MALFORMED_INFRA: tuple[tuple[object, str], ...] = (
     ({"prod_markers": ["  "]}, "guard.infra.prod_markers[0]"),
     ({"prod_markers": ["a\u0001"]}, "guard.infra.prod_markers[0]"),
     ({"allow": [7], "prod_markers": [7]}, "guard.infra.allow[0]"),
+    ({"prod_markers": [7], "allow": [7]}, "guard.infra.prod_markers[0]"),
+    ({"prod_markers": ["a\x7f"], "allow": ["x"]}, "guard.infra.prod_markers[0]"),
+    ({"allow": [True]}, "guard.infra.allow[0]"),
+    ({"allow": [["a"]]}, "guard.infra.allow[0]"),
+    ({"allow": ["x", "\ud800"], "prod_markers": ["\\bprod\\b"]}, "guard.infra.allow[1]"),
+    ({"allow": ["x"], "prod_marker": ["\\bprod\\b"]}, "guard.infra.prod_marker"),
+    ({"_note": "x", "alow": ["x"], "prod_markers": [7]}, "guard.infra.alow"),
 )
+
+MALFORMED_INFRA_IDS: tuple[str, ...] = (
+    "list",
+    "string",
+    "null",
+    "allow-string",
+    "allow-null",
+    "allow-non-string",
+    "allow-empty",
+    "markers-blank",
+    "markers-control",
+    "allow-first",
+    "markers-first",
+    "markers-delete",
+    "allow-bool",
+    "allow-nested",
+    "allow-surrogate",
+    "unknown-key",
+    "unknown-first",
+)
+
+
+def usable_list(infra: object, key: str) -> list[str]:
+    """What the reader keeps at ``key``: the list when the model accepts it alone, else ``[]``."""
+    if not isinstance(infra, dict) or key not in infra:
+        return []
+    try:
+        GuardInfra.model_validate({key: infra[key]})
+    except ValidationError:
+        return []
+    return list(infra[key])
 
 
 def with_infra(infra: object) -> dict[str, Any]:
@@ -397,22 +436,7 @@ def test_reads_infra_as_model_when_document_valid(
     assert hub_file["guard"]["infra"] == expected
 
 
-@pytest.mark.parametrize(
-    ("infra", "problem"),
-    MALFORMED_INFRA,
-    ids=[
-        "list",
-        "string",
-        "null",
-        "allow-string",
-        "allow-null",
-        "allow-non-string",
-        "allow-empty",
-        "markers-blank",
-        "markers-control",
-        "allow-first",
-    ],
-)
+@pytest.mark.parametrize(("infra", "problem"), MALFORMED_INFRA, ids=MALFORMED_INFRA_IDS)
 def test_flags_infra_problem_when_value_malformed(
     tmp_path: Path, *, hook_python: str, read: Reader, infra: object, problem: str
 ) -> None:
@@ -425,6 +449,22 @@ def test_flags_infra_problem_when_value_malformed(
     hub_file = read(hook_python, path)["hub_file"]
 
     assert hub_file["guard"]["infra"]["problem"] == problem
+
+
+@pytest.mark.parametrize(("infra", "problem"), MALFORMED_INFRA, ids=MALFORMED_INFRA_IDS)
+def test_reads_usable_infra_list_when_other_value_malformed(
+    tmp_path: Path, *, hook_python: str, read: Reader, infra: object, problem: str
+) -> None:
+    path = write_hub_file(tmp_path, with_infra(infra))
+
+    read_infra = read(hook_python, path)["hub_file"]["guard"]["infra"]
+
+    # the unusable key's tuple is ``()``; the other one is read as usual (E10, E15)
+    assert read_infra == {
+        "allow": usable_list(infra, "allow"),
+        "prod_markers": usable_list(infra, "prod_markers"),
+        "problem": problem,
+    }
 
 
 def test_keeps_other_guard_lists_when_infra_malformed(

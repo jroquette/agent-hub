@@ -46,7 +46,7 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `guard.ask_before_edit` | list of paths | `[]` | guard: ask before an edit under them |
 | `guard.deny_hosts` | list of host names | `[]` | guard: deny network calls to them |
 | `guard.deny_paths` | list of paths | `[]` | guard: deny any read or edit under them |
-| `guard.infra` | object; not in `hub.local.json` | absent | hooks' config reader (validated); present, even `{}`, it turns on the guard's infra classification, described in the [SPEC](../SPEC.md) once it ships |
+| `guard.infra` | object; not in `hub.local.json` | absent | hooks' config reader (validated); present, even `{}`, it turns on the guard's infra classification, described in the [SPEC](../SPEC.md) once it ships; an unknown key under it (other than `_` keys) is unusable, so the hooks fail closed (the CLI rejects it) |
 | `guard.infra.allow` | list of Python `re` patterns (Infra patterns, below) | `[]` | hooks' config reader; the infra classification |
 | `guard.infra.prod_markers` | list of Python `re` patterns (Infra patterns, below) | `[]` | hooks' config reader; the infra classification |
 | `modules` | object keyed by module id | `{}` | generator, commands, doctor (Modules) |
@@ -117,8 +117,10 @@ rules only when selected ([hub-generator.md](hub-generator.md)). Phase 1 modules
   `hub.local.json: <json path>: <message>` for the developer's file ([developer-identity.md](developer-identity.md)).
 - **Hooks**: a defensive stdlib reader that never raises (`plugin/hub-workflow/hooks/stdlib_reader.py`; its defaults on
   a minimal `hub.json` match `HubConfig`'s in `test_hub_json_reader.py`): a missing file, bad JSON or a wrong type gives
-  the defaults; the hook fails open. It ignores unknown and `_` keys; a bad `repos[].default_branch` inherits; a
-  `tracker.teams` that is not a non-empty list of non-empty strings counts as absent. No hook reads `conventions`.
+  the defaults; the hook fails open. It ignores unknown and `_` keys, except under `guard.infra`, which fails closed: a
+  wrong type, an unusable item or an unknown key there sets `InfraSection.problem` to its location. A bad
+  `repos[].default_branch` inherits; a `tracker.teams` that is not a non-empty list of non-empty strings counts as
+  absent. No hook reads `conventions`.
 
 ### Tracker
 

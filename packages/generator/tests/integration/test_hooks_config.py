@@ -789,6 +789,37 @@ def test_keeps_hook_root_infra_when_hub_config_names_other_file(
     assert cached == infra | {"problem": ""}
 
 
+def test_keeps_hook_root_infra_problem_when_hub_config_file_valid(
+    hub: Path, *, hook_python: str, run_python: Callable[..., Any], elsewhere: Path
+) -> None:
+    infra = builders.a_guard_infra()
+    other = elsewhere / "other.json"
+    env = {"HUB_CONFIG": str(other)}
+    write_hub_json(
+        hub, with_guard_infra(ROOT_GUARD, {"allow": infra["allow"], "prod_markers": [7]})
+    )
+
+    def infra_with(config: Mapping[str, Any]) -> Any:
+        """``cfg.infra`` with ``config`` as the ``$HUB_CONFIG`` file."""
+        other.write_text(json.dumps(config), encoding="utf-8")
+        return run_python(hook_python, INFRA_CODE, path=hub / HOOKS, cwd=elsewhere, env=env)
+
+    with_valid = infra_with(with_guard_infra(ROOT_GUARD, infra))
+    without = infra_with(ROOT_GUARD)
+
+    # E15: the hook root's own problem survives a usable $HUB_CONFIG guard.infra
+    assert with_valid == {
+        "allow": infra["allow"],
+        "prod_markers": infra["prod_markers"],
+        "problem": "guard.infra.prod_markers[0]",
+    }
+    assert without == {
+        "allow": infra["allow"],
+        "prod_markers": [],
+        "problem": "guard.infra.prod_markers[0]",
+    }
+
+
 PROTECTED_CODE = (
     "import json\nfrom hubhooks import Config, load_config\n"
     "print(json.dumps([list(load_config(None).protected_branches),"

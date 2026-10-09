@@ -309,7 +309,7 @@
     "plugin/hub-workflow/hooks/stdlib_reader.py": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "afb834692e3b7cfd022889a3c6912eb6ba7e3e7170c2e44a6b346a7b7149dcf0"
+      "sha256": "16136944055c6e8ef80a97f272f4d09e77dce3b00420629ecf1df9bae18f1506"
     },
     "plugin/hub-workflow/hooks/stop_gate.py": {
       "executable": true,
