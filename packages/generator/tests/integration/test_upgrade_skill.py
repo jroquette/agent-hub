@@ -84,8 +84,13 @@ def test_fails_own_check_when_lockfile_hand_edited(skill: str) -> None:
     verify = _step(skill, "Verify")
 
     assert "never hand-edit a lockfile" in bump
+    # The diff runs against the bump's own commit,
+    # so the tool's fresh output is not mistaken for a hand edit.
+    assert "Commit the bump" in bump
+    assert "before step 5" in bump
+    assert "lockfile check first, on the committed branch with a clean tree" in verify
+    assert "`git diff --exit-code` on the lockfiles against that commit" in verify
     assert "lockfile check" in verify
-    assert "`git diff --exit-code`" in verify
     assert "a hand edit: stop" in verify
     assert "`claude plugin validate .`" in verify
     assert verify.index("lockfile check") < verify.index("`check_fast`") < verify.index("`check`")
@@ -137,4 +142,8 @@ def test_follows_workflow_rules_when_skill_rendered(skill: str) -> None:
         assert authorship in skill, authorship
     for project_value in ("demo", "DEM-", "acme", "Jane Doe"):
         assert project_value not in skill, project_value
+    # A tool-specific command is only ever an example of the repo's own tooling.
+    for line in lines:
+        if "`uv " in line:
+            assert "e.g." in line or "or the equivalent" in line, line
     assert "@@" not in skill
