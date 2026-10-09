@@ -4,7 +4,8 @@
 is tracked or not ignored: one warning per path, at most 10, then one ``N more`` at the folder;
 a walked listing skips (a). (b) ``.gitignore`` has a line covering the folder (``brain``,
 ``brain/auto`` or ``brain/auto/workspace``, with or without a leading ``/`` and a trailing
-``/``, ``/*`` or ``/**``; comment and ``!`` lines never cover), else one warning at it; absent
+``/``, ``/*`` or ``/**``; comment and ``!`` lines never cover; one leading BOM is stripped, any
+other BOM stays in the pattern as git keeps it), else one warning at it; absent
 (not listed, no entry) when every fixed path was read: one warning at ``.`` (plan E7: an
 untracked, self-ignored ``.gitignore`` reads as absent). A link or non-text ``.gitignore`` and a
 hub listing problem give none. No memory file's content is shown. Every text here is synthetic
@@ -193,6 +194,9 @@ def test_passes_covering_gitignore_line_when_hub_listed(
         pytest.param(b"# brain/auto/workspace/*\n", {}, id="comment"),
         pytest.param(b"!brain/auto/workspace/*\n", {}, id="negation"),
         pytest.param(b"", {}, id="empty"),
+        # Only a leading BOM is stripped: git keeps any other BOM as pattern bytes.
+        pytest.param(b"node_modules/\n\xef\xbb\xbfbrain/\n", {}, id="bom_mid_file"),
+        pytest.param(b"\xef\xbb\xbf\xef\xbb\xbfbrain/\n", {}, id="bom_doubled"),
         # A documented limit: only the root .gitignore is read, so a nested one that does
         # ignore the folder still warns. Reading nested ones would be a deliberate change.
         pytest.param(
