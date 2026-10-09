@@ -76,6 +76,8 @@ class _Listing:
     paths: tuple[str, ...]
     # What the listing already read (the walk reads as it lists; git only names paths).
     entries: Mapping[str, TreeEntry]
+    # Whether git made the listing (a walk, or no listing, cannot tell tracked from ignored).
+    by_git: bool = False
 
 
 _NO_LISTING: Final = _Listing(paths=(), entries={})
@@ -111,6 +113,7 @@ def read_doctor_tree(root: Path, *, by_path: Collection[str], listing: bool) -> 
         listed=listed,
         problem=fixed_problem,
         paths_read=fixed_problem is None,
+        listed_by_git=found.by_git,
     )
 
 
@@ -148,7 +151,13 @@ def read_checkout(root: Path) -> HubFiles:
     listed = tuple(
         path for path in found.paths if isinstance(entries.get(path), FileEntry | LinkEntry)
     )
-    return HubFiles(entries=_sorted(entries), listed=listed, problem=None, paths_read=True)
+    return HubFiles(
+        entries=_sorted(entries),
+        listed=listed,
+        problem=None,
+        paths_read=True,
+        listed_by_git=found.by_git,
+    )
 
 
 def _read_fixed(root: Path, by_path: Collection[str]) -> tuple[dict[str, TreeEntry], str | None]:
@@ -189,7 +198,7 @@ def _list_tree(root: Path, *, read_files: bool = True) -> _Listing:
     printed = _git(executable, _LIST_ARGUMENTS, cwd=root).split(b"\0")
     # ``dir/`` is an untracked nested repository or worktree: never listed or walked.
     paths = {os.fsdecode(path) for path in printed if path and not path.endswith(b"/")}
-    return _Listing(paths=tuple(sorted(paths)), entries={})
+    return _Listing(paths=tuple(sorted(paths)), entries={}, by_git=True)
 
 
 def _has_git_entry(root: Path) -> bool:

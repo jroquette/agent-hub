@@ -26,6 +26,7 @@ RELEASED_IDS = (
     "config.identity",
     "repos.agents",
     "config.stop_gate",
+    "brain.memory",
 )
 
 # The "Default" column of docs/design/hub-doctor.md § Rules.
@@ -52,6 +53,7 @@ DESIGN_SEVERITIES = {
     "config.identity": Severity.INFO,
     "repos.agents": Severity.WARNING,
     "config.stop_gate": Severity.WARNING,
+    "brain.memory": Severity.WARNING,
 }
 
 

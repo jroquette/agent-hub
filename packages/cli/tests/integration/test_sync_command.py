@@ -29,6 +29,8 @@ from typer.testing import CliRunner, Result
 from agent_hub.cli import sync_steps
 from agent_hub.cli.main import app
 from agent_hub.cli.sync_report import CONFLICT_WAY_OUT
+from agent_hub.core.doctor.brain_memory_rule import FIX as MEMORY_FIX
+from agent_hub.core.doctor.brain_memory_rule import GITIGNORE, IGNORE_MESSAGE
 from agent_hub.core.hub_files.hub_lock import ADOPT_POINTER
 from agent_hub.core.json_form import dump_json
 from agent_hub.core.testing.builders import a_second_repo
@@ -38,6 +40,8 @@ from agent_hub.core.testing.platform_repository_cases import CUSTOM_REPOSITORY
 # mode).
 type TreeDigest = Callable[[Path], dict[str, Any]]
 type SyncRunner = Callable[..., Result]
+# The conftest's in-process doctor.
+type DoctorRunner = Callable[..., Result]
 # The conftest's injected I/O error and temp-entry finder.
 type FailOnce = Callable[..., None]
 type TempEntries = Callable[[Path], list[str]]
@@ -1094,6 +1098,57 @@ def test_keeps_app_repo_agents_when_sync_runs_after_edit_or_delete(
         assert starter.read_bytes() == b"# Ours\n"
     else:
         assert not starter.exists()
+
+
+LEARN_SKILL = "plugin/hub-workflow/skills/learn/SKILL.md"
+MEMORY_GITKEEP = "brain/auto/workspace/.gitkeep"
+# Deepest first, as an older render lacks both.
+MEMORY_FOLDERS = ("brain/auto/workspace", "brain/auto")
+# The two lines a fresh init's .gitignore ends with (AGH-48); an older render lacks them.
+MEMORY_IGNORE_LINES = b"brain/auto/workspace/*\n!brain/auto/workspace/.gitkeep\n"
+MEMORY_IGNORE_WARNING = f"warning brain.memory {GITIGNORE}: {IGNORE_MESSAGE} Fix: {MEMORY_FIX}"
+
+
+def test_creates_personal_memory_folder_when_sync_runs_on_older_hub(
+    demo_hub: Path, demo_hub_template: Path, run_sync: SyncRunner, *, run_doctor: DoctorRunner
+) -> None:
+    # A hub from the release before personal memory (AC-48.14): older AGENTS.md and learn
+    # skill, no seeded .gitkeep, its folders or lock entry, a .gitignore without the two lines.
+    lock: dict[str, Any] = json.loads((demo_hub / "hub.lock").read_bytes())
+    for managed in ["AGENTS.md", LEARN_SKILL]:
+        (demo_hub / managed).write_bytes(OLDER_RENDER)
+        lock["files"][managed]["sha256"] = hashlib.sha256(OLDER_RENDER).hexdigest()
+    (demo_hub / MEMORY_GITKEEP).unlink()
+    # Nor the folders: rmdir, so a file the render ever adds there fails here loudly.
+    for folder in MEMORY_FOLDERS:
+        (demo_hub / folder).rmdir()
+    del lock["files"][MEMORY_GITKEEP]
+    (demo_hub / "hub.lock").write_bytes(dump_json(lock))
+    gitignore = demo_hub / GITIGNORE
+    content = gitignore.read_bytes()
+    assert content.endswith(MEMORY_IGNORE_LINES)
+    older_gitignore = content.removesuffix(MEMORY_IGNORE_LINES)
+    gitignore.write_bytes(older_gitignore)
+
+    result = run_sync(demo_hub)
+
+    assert (result.exit_code, result.stderr) == (0, ""), result.output
+    assert result.stdout.splitlines() == [
+        "updated AGENTS.md",
+        f"created {MEMORY_GITKEEP}",
+        f"updated {LEARN_SKILL}",
+        "updated hub.lock",
+    ]
+    assert gitignore.read_bytes() == older_gitignore
+    assert [(demo_hub / folder).is_dir() for folder in MEMORY_FOLDERS] == [True, True]
+    for rendered in ["AGENTS.md", MEMORY_GITKEEP, LEARN_SKILL]:
+        assert (demo_hub / rendered).read_bytes() == (demo_hub_template / rendered).read_bytes()
+    after: dict[str, Any] = json.loads((demo_hub / "hub.lock").read_bytes())
+    assert after["files"][MEMORY_GITKEEP] == {"ownership": "seeded"}
+    # demo_hub has no demo-api checkout, so the doctor also reports it (plan E12).
+    lines = unstyle(run_doctor(demo_hub).stdout).splitlines()
+    assert [line for line in lines if " brain.memory " in line] == [MEMORY_IGNORE_WARNING]
+    assert not [line for line in lines if "instructions.refs" in line]
 
 
 def outside_copy(tmp_path: Path, source: Path) -> Path:
