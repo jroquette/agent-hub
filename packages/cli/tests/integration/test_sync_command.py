@@ -1079,6 +1079,45 @@ def test_creates_onboard_skill_when_older_hub_synced(
     assert (again.exit_code, again.stdout, again.stderr) == (0, "up to date\n", "")
 
 
+SETTINGS = ".claude/settings.json"
+# AGH-114: the allows a release before it lacked, so a headless `/onboard propose` was denied.
+ONBOARD_PROPOSE_ALLOWS = [
+    "Bash(sha256sum)",
+    "Bash(shasum -a 256)",
+    "Bash(./hub doctor)",
+    "Bash(git -C ../demo-api rev-parse --show-toplevel)",
+    "Bash(git -C ../demo-api symbolic-ref refs/remotes/origin/HEAD)",
+    "Edit(/brain/_inbox/onboard-proposal*.md)",
+]
+
+
+def test_updates_settings_once_when_older_hub_synced(
+    demo_hub: Path, demo_hub_template: Path, run_sync: SyncRunner
+) -> None:
+    # A hub from the release before AGH-114: its settings.json has only the base git allows.
+    settings: dict[str, Any] = json.loads((demo_hub / SETTINGS).read_bytes())
+    allow = settings["permissions"]["allow"]
+    assert allow[-len(ONBOARD_PROPOSE_ALLOWS) :] == ONBOARD_PROPOSE_ALLOWS
+    settings["permissions"]["allow"] = allow[: -len(ONBOARD_PROPOSE_ALLOWS)]
+    older = dump_json(settings)
+    (demo_hub / SETTINGS).write_bytes(older)
+    lock: dict[str, Any] = json.loads((demo_hub / "hub.lock").read_bytes())
+    lock["files"][SETTINGS]["sha256"] = hashlib.sha256(older).hexdigest()
+    (demo_hub / "hub.lock").write_bytes(dump_json(lock))
+
+    result = run_sync(demo_hub)
+
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        0,
+        f"updated {SETTINGS}\nupdated hub.lock\n",
+        "",
+    )
+    assert (demo_hub / SETTINGS).read_bytes() == (demo_hub_template / SETTINGS).read_bytes()
+    assert (demo_hub / "hub.lock").read_bytes() == (demo_hub_template / "hub.lock").read_bytes()
+    again = run_sync(demo_hub)
+    assert (again.exit_code, again.stdout, again.stderr) == (0, "up to date\n", "")
+
+
 @pytest.mark.parametrize("change", ["edited", "deleted"])
 def test_keeps_app_repo_agents_when_sync_runs_after_edit_or_delete(
     demo_hub: Path, run_sync: SyncRunner, change: str, *, tree_digest: TreeDigest

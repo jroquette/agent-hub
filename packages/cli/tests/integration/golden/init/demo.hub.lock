@@ -31,7 +31,7 @@
     ".claude/settings.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "de3f8bee5f9146fced2db6d701be060d7d14f81c07a92cdcd40a572e6cbd0839"
+      "sha256": "efb32b8b0921b2c098aec3dff89c20122880e0b4a38c2d75ad3546a160f260b0"
     },
     ".claude/settings.project.json": {
       "ownership": "seeded"
@@ -269,7 +269,7 @@
     "plugin/hub-workflow/hooks/guard.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "3cf278b9b98f26417cb014e11d32a83b4f983fe90585b8dddeb160115ecbedc2"
+      "sha256": "3bdd73613507edf1d484e758bc9e80e45eeb12c8084c3894fc1a9956f76f7f33"
     },
     "plugin/hub-workflow/hooks/hooks.json": {
       "executable": false,
@@ -364,12 +364,12 @@
     "plugin/hub-workflow/skills/onboard/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "1cfd5c09f26206636ad41f78d5706de6f499f240cd670caa7bb1ad2ddad5aaf4"
+      "sha256": "1e9504ff4478a6af10eac3ab822c84ba984d42977d326acc5418327a627d55d2"
     },
     "plugin/hub-workflow/skills/onboard/reference.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "c06fda8b44522fb97ab70e464cd71ffc9decdaaa158d3ec689710d374e76c1e2"
+      "sha256": "127d621bb7b7a760717ecd9e8bb76c44e82bc754767529962709cbe4e810ae91"
     },
     "plugin/hub-workflow/skills/recall/SKILL.md": {
       "executable": false,
