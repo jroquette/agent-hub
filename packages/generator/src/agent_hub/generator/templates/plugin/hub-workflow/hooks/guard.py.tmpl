@@ -293,7 +293,7 @@ def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
         return "deny", f"{host} is in guard.deny_hosts (hub.json); agents do not reach it. Use fixtures or a sandbox endpoint"
     if re.search(r"\bdocker\s+volume\s+(rm|prune)\b|\bdocker\s+compose\b[^;&|\n]*\bdown\b[^;&|\n]*\s-v\b", c):
         return "deny", "removing docker volumes deletes local data (databases, caches); a human does this"
-    if re.search(r"\bterraform\s+(apply|destroy|import)\b|\baws\s+\S+|\bpulumi\s+(up|destroy)\b|\bkubectl\s+(apply|delete)\b", c):
+    if re.search(r"\bterraform\s+(apply|destroy|import)\b|\baws\s+\S+|\bpulumi\s+(up|destroy)\b|\bkubectl\s+(apply|delete)\b|\bcdk\s+(deploy|destroy)\b", c):
         return "deny", "infrastructure commands (terraform/aws/pulumi/kubectl) are human-only"
     for seg in re.split(r"&&|\|\||[;|\n]", c):
         words = seg.split()
