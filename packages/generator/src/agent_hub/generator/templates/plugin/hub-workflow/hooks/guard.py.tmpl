@@ -38,6 +38,7 @@ bounded by the sensor's 0.5 s, prints nothing and never changes the decision or 
 
 from __future__ import annotations
 
+import bisect
 import glob
 import json
 import os
@@ -80,21 +81,24 @@ SKIP_MARKERS = re.compile(
 TEST_PATH = r"(?:(\S*/)?(tests?|__tests__)/\S+|\S+\.(test|spec)\.[jt]sx?\b|['\"]?(\S*/)?test_\w+\.py\b)"
 # guard.infra: the covered tools, each as a word followed by an optional closing quote, blanks and
 # an argument (group 2 starts at it; a lookahead, so a tool word that is another tool's first
-# argument is a mention too), or by a redirection glued to it (`aws>/dev/null`: group 2 is None,
-# never a local form), anywhere in a part, so wrappers, quotes and redirections do not hide it.
+# argument is a mention too), or by a redirection glued to it (`aws>/dev/null`, `aws&>log`: group 2
+# is None, never a local form), anywhere in a part, so wrappers, quotes and redirections do not hide it.
 INFRA_TOOLS = ("aws", "cdk", "terraform", "pulumi", "kubectl", "helm", "sam", "serverless")
-INFRA_TOOL = re.compile(r"\b(" + "|".join(INFRA_TOOLS) + r")\b(?:['\"]?\s+(?=(\S))|(?=\d*[<>]))")
+INFRA_TOOL = re.compile(r"\b(" + "|".join(INFRA_TOOLS) + r")\b(?:['\"]?\s+(?=(\S))|(?=\d*[<>]|&>))")
 # The parts of a command: split at `&&`, `||`, `;`, `|` and newlines; each part is checked whole,
-# then each of its calls, split at a single `&`, `(`, `)`, a backtick, `{` and `}` (so `$(…)`,
-# `<(…)`, subshells and groups), so an allowed call never covers another one beside it.
+# then each tool mention in it against the call that holds it (the part split at a single `&`, `(`,
+# `)`, a backtick, `{` and `}`, so `$(…)`, `<(…)`, subshells and groups), so an allowed call never
+# covers another one beside it.
 INFRA_PART = re.compile(r"&&|\|\||[;|\n]")
 INFRA_CALL = re.compile(r"[&()`{}]")
-# What ends a part's evidence: an unquoted `#` at the start or after a blank (a comment).
-INFRA_SHELL = re.compile(r"[\\'\"]|(?:^|(?<=\s))#")
+# What ends a part's evidence: an unquoted `#` at the start or after a blank (a comment). `$'…'` is a
+# quote of its own, where a backslash escapes the next character.
+INFRA_SHELL = re.compile(r"\$'|[\\'\"]|(?:^|(?<=\s))#")
 INFRA_END = r"(?![\w-])"
 INFRA_WORD = r"(?<![\w-])({})" + INFRA_END
 # Local-only forms, matched at the tool's first argument; kubectl's version needs --client in the
-# part, terraform's init needs -backend=false.
+# call, terraform's init needs -backend=false, each with no later `--client=` (other than `true`) or
+# `-backend=` (the last flag wins).
 INFRA_LOCAL_ANY = re.compile(r"(--version|version|help|--help)" + INFRA_END)
 INFRA_LOCAL = {
     "cdk": re.compile(r"(synth|ls|list|init|doctor|context)" + INFRA_END),
@@ -107,6 +111,11 @@ INFRA_FLAG_END = r"(?=\s|$)"
 INFRA_KUBECTL_CLIENT = re.compile(r"(?<![\w-])--client" + INFRA_FLAG_END)
 INFRA_TERRAFORM_INIT = re.compile(r"init" + INFRA_END)
 INFRA_NO_BACKEND = re.compile(r"(?<![\w-])-backend=false" + INFRA_FLAG_END)
+# (needed flag, flags that keep it, flag word): the needed flag counts when the last flag word (in
+# any spelling, quoted too) lies in a flag that keeps it.
+INFRA_CLIENT = (INFRA_KUBECTL_CLIENT, re.compile(r"(?<![\w-])--client(?:=true)?" + INFRA_FLAG_END),
+                re.compile(r"client(?![\w-])"))
+INFRA_BACKEND = (INFRA_NO_BACKEND, INFRA_NO_BACKEND, re.compile(r"backend(?![\w-])"))
 
 
 class _Verbs:
@@ -320,7 +329,8 @@ def _segments(command: str) -> list[str]:
     """The command's segments split at `&&`, `||`, `;`, `|` and newlines, then also at a single `&`
     (both splits are kept, so a split only adds segments)."""
     first = re.split(r"&&|\|\||[;|\n]", command)
-    more = [seg for seg in re.split(r"&&|\|\||[;|&\n]", command) if seg not in first]
+    known = set(first)
+    more = [seg for seg in re.split(r"&&|\|\||[;|&\n]", command) if seg not in known]
     return first + more
 
 
@@ -336,10 +346,12 @@ def _tokens(segment: str) -> list[str]:
     """The segment's words that may name a path, options dropped: each with its outer quotes stripped,
     and again with every quote and backslash removed (`h"ub".json`, `hub\\.json`). Words split at
     blanks and redirections, and again also at parentheses and backticks (both kept: only adds words)."""
-    toks = []
+    toks: list[str] = []
+    seen: set[str] = set()
     for word in dict.fromkeys([*re.split(r"[\s<>]+", segment), *re.split(r"[\s<>()`]+", segment)]):
         for tok in (word.strip("'\""), re.sub(r"['\"\\\\]", "", word)):
-            if tok and not tok.startswith("-") and tok not in toks:
+            if tok and not tok.startswith("-") and tok not in seen:
+                seen.add(tok)
                 toks.append(tok)
     return toks
 
@@ -357,7 +369,7 @@ INFRA_CONFIG_REASON = "{} (hub.json) cannot be used ({}); infrastructure command
 INFRA_VALUE_CAP = 100  # characters of a value from hub.json or the command in an infra reason
 LEGACY_INFRA = re.compile(
     r"\bterraform\s+(apply|destroy|import)\b|\baws\s+\S+|\bpulumi\s+(up|destroy)\b|\bkubectl\s+(apply|delete)\b"
-    r"|\bcdk\s+(deploy|destroy)\b|\b(terraform|aws|pulumi|kubectl|cdk)\d*[<>]"
+    r"|\bcdk\s+(deploy|destroy)\b|\b(terraform|aws|pulumi|kubectl|cdk)(\d*[<>]|&>)"
 )
 
 
@@ -396,15 +408,18 @@ def _infra_compiled(key: str, patterns: tuple[str, ...]) -> tuple[list[re.Patter
 
 
 def _uncommented(text: str) -> str:
-    """text up to its first unquoted `#` at the start or after a blank (a comment); when the
-    quotes do not close, up to its first such `#` quoted or not (when unsure, cut)."""
+    """text up to its first unquoted `#` at the start or after a blank (a comment); `'…'`, `"…"` and
+    `$'…'` (where a backslash escapes) are quotes. When the quotes do not close, up to its first
+    such `#` quoted or not (when unsure, cut)."""
     if "#" not in text:
         return text
     quote, skip, first = "", -1, -1
     for found in INFRA_SHELL.finditer(text):
         at, char = found.start(), found.group(0)
         if at == skip:
-            continue
+            if char != "$'":
+                continue
+            char = "'"  # an escaped `$`: its quote is a plain one
         if char == "#":
             if not quote:
                 return text[:at]
@@ -413,51 +428,76 @@ def _uncommented(text: str) -> str:
             skip = at + 1 if quote != "'" else skip
         elif not quote:
             quote = char
-        elif char == quote:
+        elif quote == '"':
+            quote = "" if char == '"' else quote
+        elif char != '"':  # in '…' or $'…', a quote (or the one of a `$'`) closes it
             quote = ""
     return text[:first] if quote and first >= 0 else text
 
 
 class _Evidence:
-    """A part's or call's text without its comment, and its `--client` and `-backend=false`
-    flags, each searched at most once."""
+    """A part's or call's text without its comment, and whether its `--client` and `-backend=false`
+    flags hold (each searched at most once)."""
 
     def __init__(self, text: str) -> None:
         self.text = _uncommented(text)
         self.flags: dict[str, bool] = {}
 
-    def has(self, flag: re.Pattern[str]) -> bool:
-        if flag.pattern not in self.flags:
-            self.flags[flag.pattern] = flag.search(self.text) is not None
-        return self.flags[flag.pattern]
+    def has(self, flag: tuple[re.Pattern[str], re.Pattern[str], re.Pattern[str]]) -> bool:
+        needed, keeps, word = flag
+        if word.pattern not in self.flags:
+            words, kept = list(word.finditer(self.text)), list(keeps.finditer(self.text))
+            self.flags[word.pattern] = bool(
+                needed.search(self.text) and words and kept
+                and kept[-1].start() <= words[-1].start() < kept[-1].end())
+        return self.flags[word.pattern]
 
 
-def _infra_local(part: str, mention: re.Match[str], evidence: _Evidence) -> bool:
-    """Whether a covered-tool mention is a local-only form (D5): its words right after the tool
-    (a glued redirection never is)."""
+def _infra_local(text: str, mention: re.Match[str], evidence: _Evidence, end: int) -> bool:
+    """Whether a covered-tool mention is a local-only form (D5): its words right after the tool,
+    before end, the end of its call (a glued redirection, or blanks up to end, never are)."""
     tool, at = mention.group(1), mention.start(2)
-    if at < 0:
+    if not 0 <= at < end:
         return False
-    if tool == "kubectl" and INFRA_KUBECTL_VERSION.match(part, at):
-        return evidence.has(INFRA_KUBECTL_CLIENT)
-    if tool == "terraform" and INFRA_TERRAFORM_INIT.match(part, at):
-        return evidence.has(INFRA_NO_BACKEND)
+    if tool == "kubectl" and INFRA_KUBECTL_VERSION.match(text, at):
+        return evidence.has(INFRA_CLIENT)
+    if tool == "terraform" and INFRA_TERRAFORM_INIT.match(text, at):
+        return evidence.has(INFRA_BACKEND)
     local = INFRA_LOCAL.get(tool)
-    return bool(INFRA_LOCAL_ANY.match(part, at) or (local and local.match(part, at)))
+    return bool(INFRA_LOCAL_ANY.match(text, at) or (local and local.match(text, at)))
 
 
-def _infra_unknown(text: str, allow: list[re.Pattern[str]]) -> tuple[bool, str | None]:
+def _infra_unknown(text: str, mentions: list[re.Match[str]], allow: list[re.Pattern[str]]) -> tuple[bool, str | None]:
     """(whether text, without its comment, matches an allow pattern; the tool a deny names: its
     first mention when it is not allowed and some mention is not a local form, else None)."""
-    mentions = list(INFRA_TOOL.finditer(text))
     if not mentions:
         return False, None
     evidence = _Evidence(text)
     if any(pattern.search(evidence.text) for pattern in allow):
         return True, None
-    if all(_infra_local(text, mention, evidence) for mention in mentions):
+    if all(_infra_local(text, mention, evidence, len(text)) for mention in mentions):
         return False, None
     return False, mentions[0].group(1)
+
+
+def _infra_calls(part: str, mentions: list[re.Match[str]], allow: list[re.Pattern[str]]) -> tuple[bool, str | None]:
+    """Each mention of the part checked against the call that holds it, found by its offset: (whether
+    such a call matches an allow pattern; the tool a deny names: the first mention of the first
+    call where a mention is neither allowed nor a local form, else None)."""
+    starts = [0] + [found.end() for found in INFRA_CALL.finditer(part)]
+    calls: dict[int, tuple[bool, _Evidence, str]] = {}
+    allowed = False
+    for mention in mentions:
+        index = bisect.bisect_right(starts, mention.start()) - 1
+        end = starts[index + 1] - 1 if index + 1 < len(starts) else len(part)
+        if index not in calls:
+            evidence = _Evidence(part[starts[index]:end])
+            calls[index] = (any(pattern.search(evidence.text) for pattern in allow), evidence, mention.group(1))
+        call_allowed, evidence, first = calls[index]
+        allowed = allowed or call_allowed
+        if not call_allowed and not _infra_local(part, mention, evidence, end):
+            return allowed, first
+    return allowed, None
 
 
 def _infra_ask(part: str) -> Verdict:
@@ -480,9 +520,10 @@ def _infra_ask(part: str) -> Verdict:
 def check_infra(c: str, cfg: Config) -> Verdict:
     """The infra rule. Without guard.infra: the fixed rule (a deny or None). With it, only when a part
     names a covered tool: an unusable guard.infra or pattern denies; a production marker anywhere
-    in the command denies; then per part, in order: the part, then each of its calls, must match an
-    allow pattern (text after an unquoted ` #` does not count) or hold only local-only forms, else
-    deny; a part where something matched an allow pattern asks on its first ask verb."""
+    in the command denies; then per part, in order: the part, then the call that holds each tool
+    mention, must match an allow pattern (text after an unquoted ` #` does not count) or hold only
+    local-only forms, else deny; a part where something matched an allow pattern asks on its first
+    ask verb."""
     infra = cfg.infra
     if infra is None:
         if LEGACY_INFRA.search(c):
@@ -502,13 +543,11 @@ def check_infra(c: str, cfg: Config) -> Verdict:
             return "deny", INFRA_MARKER_REASON.format(_infra_value(pattern.pattern, _printable))
     verdict: Verdict = None
     for part in parts:
-        allowed, tool = _infra_unknown(part, allow)
-        calls = INFRA_CALL.split(part) if not tool else []
-        for call in calls if len(calls) > 1 else ():
-            call_allowed, tool = _infra_unknown(call, allow)
-            if tool:
-                break
-            allowed = allowed or call_allowed
+        mentions = list(INFRA_TOOL.finditer(part))
+        allowed, tool = _infra_unknown(part, mentions, allow)
+        if not tool and INFRA_CALL.search(part):
+            calls_allowed, tool = _infra_calls(part, mentions, allow)
+            allowed = allowed or calls_allowed
         if tool:
             return "deny", INFRA_UNKNOWN_REASON.format(tool)
         if allowed and verdict is None:
