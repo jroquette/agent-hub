@@ -8,9 +8,21 @@ from pydantic import BaseModel, ConfigDict
 # An issue identifier: team key, a dash, a number (``DEM-1``). Match it with ``fullmatch``.
 ISSUE_ID_PATTERN = re.compile(r"[A-Z][A-Z0-9]{0,9}-[1-9][0-9]{0,8}")
 
-# Linear's ``WorkflowState.type`` values of a state no one has started work in: a conditional
-# ``move_state`` (``only_if_unstarted``) moves only from these.
+# Linear's ``WorkflowState.type`` values; ``duplicate`` included, as Linear's API answers it.
+STATE_TYPES: Final = (
+    "triage",
+    "backlog",
+    "unstarted",
+    "started",
+    "completed",
+    "canceled",
+    "duplicate",
+)
+# The types of a state no one has started work in: a conditional ``move_state``
+# (``only_if_unstarted``) moves only from these.
 UNSTARTED_STATE_TYPES: Final = ("triage", "backlog", "unstarted")
+# The types of a closed state: done, canceled or duplicate.
+CLOSED_STATE_TYPES: Final = ("completed", "canceled", "duplicate")
 
 
 class Issue(BaseModel):
@@ -58,7 +70,8 @@ class TrackerClient(Protocol):
 
         True when the issue moved. Moving to the current state is a no-op (False). With
         ``only_if_unstarted``, an issue whose state type is not in ``UNSTARTED_STATE_TYPES`` is
-        left as it is (False) and ``state_name`` is not checked.
+        left as it is (False) and ``state_name`` is not checked. The check and the write are not
+        atomic (a read, then a write), so a change made in between is not seen, as with labels.
         """
         ...
 

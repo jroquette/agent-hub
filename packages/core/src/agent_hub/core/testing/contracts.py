@@ -344,6 +344,30 @@ class TrackerClientContract:
         assert moved is False
         assert tracker_backend == before
 
+    def test_raises_naming_state_when_unstarted_issue_moved_only_if_unstarted(
+        self, tracker_client: TrackerClient, tracker_backend: FakeTrackerBackend
+    ) -> None:
+        # DEM-1 is unstarted, so the flag does not skip the name check.
+        before = copy.deepcopy(tracker_backend)
+
+        error = _expecting_tracker_error(
+            lambda: tracker_client.move_state("DEM-1", "Shipped", only_if_unstarted=True)
+        )
+
+        assert str(error).startswith("move_state DEM-1: ")
+        assert "Shipped" in str(error)
+        assert tracker_backend == before
+
+    def test_keeps_state_when_unstarted_issue_moved_to_current_state_only_if_unstarted(
+        self, tracker_client: TrackerClient, tracker_backend: FakeTrackerBackend
+    ) -> None:
+        before = copy.deepcopy(tracker_backend)
+
+        moved = tracker_client.move_state("DEM-1", "Todo", only_if_unstarted=True)
+
+        assert moved is False
+        assert tracker_backend == before
+
     def test_returns_whether_moved_when_moved_only_if_unstarted_off(
         self, tracker_client: TrackerClient, tracker_backend: FakeTrackerBackend
     ) -> None:
