@@ -4171,6 +4171,7 @@ def test_names_known_traps_in_join_section_when_readme_rendered(demo_config: Hub
         "uv>=0.9",
         "Xcode Command Line Tools",
         "hub directory",
+        "the folder above the hub",
         "/kickoff",
         "guard_probe.p12",
     ):
@@ -4192,6 +4193,10 @@ def test_names_access_and_setup_in_join_section_when_readme_rendered() -> None:
         "public",
         "`platform.repository`",
         "`hub.local.json` (gitignored), else `hub.json`, else your git config",
+        "if `hub.json` leaves your\nidentity unset",
+        "else your git config (see `./hub setup` above)",
+        "each with its fix, then runs `./hub doctor`",
+        "\ncd demo-hub\n",
     ):
         assert text in section, text
     assert "@@" not in section

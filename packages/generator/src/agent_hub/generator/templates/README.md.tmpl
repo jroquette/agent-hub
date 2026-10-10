@@ -40,15 +40,15 @@ Clone the hub into the folder that will hold the project, then let `./hub setup`
 
 ```bash
 git clone https://github.com/@@{project_hub_repo}.git
-cd "$(basename @@{project_hub_repo})"
+cd @@{project_hub_dir}
 ./hub setup
 ```
 
 `./hub setup` clones the missing repos (@@{repo_dirs}) at `../<dir>` and fetches the others; if `hub.json` leaves your
-identity unset, it asks before writing it from git config to `hub.local.json` (`--yes` skips asking). It ends with
-`./hub doctor` and one `ok`/`missing` line per tool, credential and repo, each with its fix. Safe to run again.
+identity unset, it asks before writing it from git config to `hub.local.json` (`--yes` skips asking). It prints one
+`ok`/`missing` line per tool, credential and repo, each with its fix, then runs `./hub doctor`. Safe to run again.
 
-- Identity: `hub.local.json` (gitignored), else `hub.json`, else your git config; `./hub setup` writes `hub.local.json`.
+- Identity: `hub.local.json` (gitignored), else `hub.json`, else your git config (see `./hub setup` above).
 - @@{join_tracker_credential}
 
 Then, from the hub directory, run `./agent` and type `/kickoff`: its first line says whether the hub's guard is on.
@@ -59,6 +59,6 @@ Then, from the hub directory, run `./agent` and type `/kickoff`: its first line 
   `pip install --user 'uv>=0.9'`), then check `uv --version`.
 - macOS: `python3` and `git` come from the Xcode Command Line Tools; the first call offers to install them
   (`xcode-select --install` installs them directly).
-- The hub's hooks and settings load only when the session starts in the hub directory: not in an app repo, not in a
-  hub subfolder, not in a cloud session with the app repos attached. `/kickoff` probes the guard
-  (`.claude/guard_probe.p12`) and says so loudly when it is off.@@{join_cloud}
+- The hub's hooks and settings load only when the session starts in the hub directory: not in an app repo, not in
+  the folder above the hub or a hub subfolder, not in a cloud session with the app repos attached. `/kickoff`
+  probes the guard (`.claude/guard_probe.p12`) and says so loudly when it is off.@@{join_cloud}
