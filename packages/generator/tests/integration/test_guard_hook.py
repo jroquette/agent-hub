@@ -864,6 +864,197 @@ def test_ignores_local_infra_when_local_file_sets_allow(
     assert verdicts == {"aws s3 ls --profile other": unknown("aws")}
 
 
+# E19 (1): a single ``&``, ``$(…)``, backticks, ``<(…)``, ``( )`` and ``{ }`` also split a part,
+# so an allowed call does not cover another covered-tool call beside it.
+def test_denies_nested_call_when_separator_hides_it(infra_evaluate: Evaluate) -> None:
+    commands = [
+        "aws s3 ls --profile demo-dev & aws s3 cp x s3://b/x",
+        "aws s3 ls --profile demo-dev $(aws s3 cp x s3://b/x)",
+        "aws s3 ls --profile demo-dev `aws s3 cp x s3://b/x`",
+        "aws s3 ls --profile demo-dev <(aws s3 cp x s3://b/x)",
+        "( aws s3 ls --profile demo-dev ) & ( aws s3 cp x s3://b/x )",
+        "echo { --profile demo-dev } aws s3 cp x s3://b/x",
+        "bash -c 'aws s3 ls --profile demo-dev & aws s3 cp x s3://b/x'",
+        "echo --profile demo-dev & aws s3 cp x s3://b/x",
+    ]
+
+    verdicts = bash_verdicts(infra_evaluate, commands)
+
+    assert verdicts == dict.fromkeys(commands, unknown("aws"))
+
+
+# E19 (3): a redirection glued to the tool word does not hide the tool, with guard.infra ...
+GLUED_REDIRECTS = {
+    "aws>/dev/null s3 rm s3://b --recursive": "aws",
+    "terraform>log apply -auto-approve": "terraform",
+    "kubectl</dev/null delete ns x": "kubectl",
+}
+
+
+def test_denies_infra_when_redirect_glued_to_tool(infra_evaluate: Evaluate) -> None:
+    verdicts = bash_verdicts(infra_evaluate, list(GLUED_REDIRECTS))
+
+    assert verdicts == {command: unknown(tool) for command, tool in GLUED_REDIRECTS.items()}
+
+
+# ... and without it (D8 amended): the legacy rule denies them with its reason unchanged.
+def test_denies_legacy_infra_when_redirect_glued_to_tool(evaluate: Evaluate) -> None:
+    verdicts = bash_verdicts(evaluate, list(GLUED_REDIRECTS))
+
+    assert verdicts == dict.fromkeys(GLUED_REDIRECTS, ("deny", LEGACY_INFRA_REASON))
+
+
+# E19 S1: an environment or a local flag after an unquoted ` #` is a comment, not evidence.
+def test_denies_infra_when_environment_only_in_comment(infra_evaluate: Evaluate) -> None:
+    expected = {
+        "aws s3 cp x s3://b/x # --profile demo-dev": unknown("aws"),
+        "terraform init -reconfigure # -backend=false": unknown("terraform"),
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# E19 S2: options between the aws verb's words, and a quoted verb, still ask.
+def test_asks_infra_verb_when_options_or_quotes_split_it(infra_evaluate: Evaluate) -> None:
+    expected = {
+        "aws s3 --profile demo-dev rm s3://b --recursive": infra_ask("aws", "s3 rm"),
+        'aws s3 "rm" s3://b --profile demo-dev': infra_ask("aws", "s3 rm"),
+        "aws --profile demo-dev cloudformation --region eu-west-1 deploy --template-file t.yml": (
+            infra_ask("aws", "cloudformation deploy")
+        ),
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# E19 N1 and the spec review: `--client` ends at a blank or the part's end, and a tool word that
+# is another tool's first argument is a mention too (a local form only when every mention is).
+def test_sees_tool_word_when_flag_or_argument_hides_it(infra_evaluate: Evaluate) -> None:
+    expected = {
+        "kubectl version --client=false": unknown("kubectl"),
+        "aws kubectl delete pod x --profile demo-dev": infra_ask("kubectl", "delete"),
+        'cdk synth --app "aws s3 rm s3://b"': unknown("cdk"),
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# E19 S3: a value from hub.json or the command goes into a reason escaped (control characters and
+# non-ASCII as JSON escapes) and capped at INFRA_VALUE_CAP characters ("..." marks the cut), so
+# every infra reason stays within the guard's REASON_CAP.
+INFRA_VALUE_CAP = 100
+GUARD_REASON_CAP = 300
+
+
+def cut(value: str) -> str:
+    return value if len(value) <= INFRA_VALUE_CAP else value[: INFRA_VALUE_CAP - 3] + "..."
+
+
+def test_caps_and_escapes_infra_reason_when_value_long_or_odd(
+    evaluate: Evaluate, workspace: Path
+) -> None:
+    long_key, long_marker = "k" * 5000, r"\bdemo-dev\b" + "(x)?" * 1500
+    long_verb = "delete-" + "x" * 5000
+    cases: list[tuple[object, str, tuple[str, str]]] = [
+        (
+            builders.a_guard_infra() | {long_key: []},
+            "aws s3 ls --profile demo-dev",
+            unusable(cut("guard.infra." + long_key), "malformed"),
+        ),
+        ({"prod_markers": [long_marker]}, "aws s3 ls --profile demo-dev", marker(cut(long_marker))),
+        (
+            {"prod_markers": ["\\bdemo-dev\\b‮?"]},
+            "aws s3 ls --profile demo-dev",
+            marker("\\bdemo-dev\\b\\u202e?"),
+        ),
+        (
+            builders.a_guard_infra(),
+            f"aws ec2 {long_verb} --profile demo-dev",
+            infra_ask("aws", cut(long_verb)),
+        ),
+    ]
+    found = []
+    for infra, command, _ in cases:
+        write_hub(workspace, infra)
+        found.append(bash_verdicts(evaluate, [command])[command])
+
+    assert found == [verdict for _, _, verdict in cases]
+    assert max(len(verdict[1]) for verdict in found) <= GUARD_REASON_CAP
+    assert len(long_marker) > 6000
+
+
+# E19 (2): the ask verbs are searched once per distinct tool of a part, from its first mention,
+# not once per mention (a long part was quadratic). The child wraps each INFRA_ASK_VERBS entry in
+# a proxy that counts every call made through it, then checks long parts built in the child
+# from (text, times) pieces (one argument would exceed the OS limit).
+VERB_COUNT = """
+import json
+from pathlib import Path
+import guard
+from hubhooks import load_config
+
+calls = []
+
+
+class Counted:
+    def __init__(self, inner):
+        self.inner = inner
+
+    def __call__(self, *args):
+        calls.append(1)
+        return self.inner(*args)
+
+    def __getattr__(self, name):
+        attr = getattr(self.inner, name)
+        if not callable(attr):
+            return attr
+
+        def counted(*args, **kwargs):
+            calls.append(1)
+            return attr(*args, **kwargs)
+
+        return counted
+
+
+guard.INFRA_ASK_VERBS = {tool: Counted(verbs) for tool, verbs in guard.INFRA_ASK_VERBS.items()}
+cfg = load_config(Path(sys.argv[1]))
+found = []
+for pieces in json.loads(sys.argv[2]):
+    command = "".join(text * times for text, times in pieces)
+    del calls[:]
+    found.append([guard.check_bash(command, cfg), len(calls)])
+print(json.dumps(found))
+"""
+
+
+def test_searches_ask_verbs_once_per_tool_when_part_long(
+    workspace: Path, tmp_path: Path, *, hook_python: str, run_python: Callable[..., Any]
+) -> None:
+    hub = write_hub(workspace, builders.a_guard_infra())
+    home = tmp_path / "home"
+    home.mkdir()
+    one_tool = ("aws s3 ls --profile demo-dev ", 2000)
+    two_tools = ("aws s3 ls --profile demo-dev kubectl get pods --context kind-demo ", 1000)
+    commands = [[one_tool], [two_tools], [one_tool, ("&& ", 1), two_tools]]
+
+    found = run_python(
+        hook_python,
+        VERB_COUNT,
+        path=hub / HOOKS,
+        args=[str(hub), json.dumps(commands)],
+        cwd=tmp_path,
+        env={"HOME": str(home)},
+    )
+
+    assert found == [[None, 1], [None, 2], [None, 3]]
+
+
 # AGH-113: a short-flag cluster holding ``f`` and ``--mirror`` force-update remote refs, so they
 # take the force-push reason; long options that only contain an ``f`` do not.
 def test_denies_force_push_when_flag_is_clustered_or_mirror(evaluate: Evaluate) -> None:
