@@ -27,7 +27,7 @@ from typing import Any, Protocol
 
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.json_form import InvalidJsonError, JsonValue, load_json_bytes
-from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, Issue
+from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, UNSTARTED_STATE_TYPES, Issue
 from agent_hub.tracker_linear.claude_process import (
     CLAUDE_PROGRAM,
     ClaudeOutput,
@@ -144,11 +144,19 @@ class McpTrackerClient:
         _check_same_issue("get_issue", issue_id, issue.id)
         return issue
 
-    def move_state(self, issue_id: str, state_name: str) -> None:
-        """Move the issue to its team's state ``state_name``; the current state is a no-op."""
+    def move_state(
+        self, issue_id: str, state_name: str, *, only_if_unstarted: bool = False
+    ) -> bool:
+        """Move the issue to its team's state ``state_name``; the current state is a no-op.
+
+        With ``only_if_unstarted``, an issue whose state type is not unstarted is left alone
+        after the read, with no write call. True when the issue moved.
+        """
         self._start("move_state", issue_id)
         read = self._call(state_read_call(issue_id))
         _check_same_issue("move_state", issue_id, read.issue_id)
+        if only_if_unstarted and read.state_type not in UNSTARTED_STATE_TYPES:
+            return False
         if state_name not in read.states:
             team = _team_of(issue_id)
             raise TrackerError(
@@ -158,11 +166,12 @@ class McpTrackerClient:
                 fix=f"use the name of a workflow state of team {team}",
             )
         if read.state == state_name:
-            return
+            return False
         saved = self._call(save_state_call(issue_id, state_name))
         _check_echo(
             "move_state", issue_id, echoed=saved == StateSaved(issue_id=issue_id, state=state_name)
         )
+        return True
 
     def add_label(self, issue_id: str, name: str) -> None:
         """Add a label of the issue's team or the workspace; a present label is a no-op."""

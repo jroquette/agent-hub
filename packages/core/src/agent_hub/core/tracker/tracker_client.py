@@ -1,12 +1,16 @@
 """The TrackerClient port and the Issue it returns (Linear now, through an adapter)."""
 
 import re
-from typing import Protocol
+from typing import Final, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
 # An issue identifier: team key, a dash, a number (``DEM-1``). Match it with ``fullmatch``.
 ISSUE_ID_PATTERN = re.compile(r"[A-Z][A-Z0-9]{0,9}-[1-9][0-9]{0,8}")
+
+# Linear's ``WorkflowState.type`` values of a state no one has started work in: a conditional
+# ``move_state`` (``only_if_unstarted``) moves only from these.
+UNSTARTED_STATE_TYPES: Final = ("triage", "backlog", "unstarted")
 
 
 class Issue(BaseModel):
@@ -47,10 +51,14 @@ class TrackerClient(Protocol):
         """Return the issue with the identifier ``issue_id``."""
         ...
 
-    def move_state(self, issue_id: str, state_name: str) -> None:
+    def move_state(
+        self, issue_id: str, state_name: str, *, only_if_unstarted: bool = False
+    ) -> bool:
         """Move the issue to the state named ``state_name``.
 
-        Moving to the issue's current state is a no-op.
+        True when the issue moved. Moving to the current state is a no-op (False). With
+        ``only_if_unstarted``, an issue whose state type is not in ``UNSTARTED_STATE_TYPES`` is
+        left as it is (False) and ``state_name`` is not checked.
         """
         ...
 

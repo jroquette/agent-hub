@@ -196,10 +196,11 @@ class ReadyReply:
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class StateRead:
-    """The read before ``move_state``: the issue's state and its team's state names."""
+    """The read before ``move_state``: the issue's state, its type and its team's state names."""
 
     issue_id: str
     state: str
+    state_type: str
     states: tuple[str, ...]
 
 
@@ -298,7 +299,12 @@ _SHAPES: Mapping[CallKind, Shape] = {
         "more": bool,
     },
     CallKind.GET_ISSUE: {"issue": _ISSUE_FIELDS},
-    CallKind.READ_STATE: {"id": _ISSUE_ID, "state": _NAME, "states": _NAMES},
+    CallKind.READ_STATE: {
+        "id": _ISSUE_ID,
+        "state": _NAME,
+        "state_type": _NAME,
+        "states": _NAMES,
+    },
     CallKind.READ_LABELS: {"id": _ISSUE_ID, "labels": _ISSUE_LABELS, "available_labels": _NAMES},
     CallKind.READ_ISSUE: {"id": _ISSUE_ID},
     CallKind.SAVE_STATE: {"id": _ISSUE_ID, "state": _NAME},
@@ -333,9 +339,10 @@ _TASKS: Mapping[CallKind, str] = {
         f'Use get_issue to read the issue. Answer {{"issue": {_ISSUE_TEXT}}}}}.{_NOT_FOUND}'
     ),
     CallKind.READ_STATE: (
-        "Use get_issue to read the issue's state, and list_issue_statuses for the names of"
-        ' every workflow state of its team. Answer {"id": "<identifier>", "state": "<state'
-        f' name>", "states": ["<state name>"]}}.{_NOT_FOUND}'
+        "Use get_issue to read the issue's state, and list_issue_statuses for that state's type"
+        " and the names of every workflow state of its team. Answer"
+        ' {"id": "<identifier>", "state": "<state name>", "state_type": "<state type>",'
+        f' "states": ["<state name>"]}}.{_NOT_FOUND}'
     ),
     CallKind.READ_LABELS: (
         "Use get_issue to read the issue's label names, and list_issue_labels for the names"
@@ -408,7 +415,10 @@ def state_read_call(issue_id: str) -> McpCall[StateRead]:
         "move_state",
         issue_id,
         reader=lambda data: StateRead(
-            issue_id=data["id"], state=data["state"], states=tuple(data["states"])
+            issue_id=data["id"],
+            state=data["state"],
+            state_type=data["state_type"],
+            states=tuple(data["states"]),
         ),
     )
 

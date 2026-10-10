@@ -579,7 +579,12 @@ class FakeClaude:
 
     def _read_state(self, issue: Issue, _arguments: Json) -> Json:
         states = [state.name for state in self.backend.states[_team_of(issue)]]
-        return {"id": issue.id, "state": issue.state, "states": states}
+        return {
+            "id": issue.id,
+            "state": issue.state,
+            "state_type": self._state_type(issue),
+            "states": states,
+        }
 
     def _read_labels(self, issue: Issue, _arguments: Json) -> Json:
         return {
