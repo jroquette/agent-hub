@@ -130,6 +130,12 @@ def test_rejects_key_when_not_local(document: dict[str, Any], expected: ConfigPr
     assert problems_of(document) == (expected,)
 
 
+def test_refuses_tracker_states_when_local_file_sets_it() -> None:
+    document = {"tracker": {"states": {"started": "Doing"}}}
+
+    assert problems_of(document) == (ConfigProblem("tracker.states", HUB_ONLY_MESSAGE),)
+
+
 @pytest.mark.parametrize(
     ("path", "value"),
     [
