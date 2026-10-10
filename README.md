@@ -421,8 +421,9 @@ Hooks are small scripts Claude Code runs on its own at fixed moments; you never 
 - force-pushes and pushes to `main`, `master`, `project.default_branch` or any `repos[].default_branch`, from any
   directory;
 - `curl … | sh`, and network calls to the hosts in `guard.deny_hosts`;
-- deleting Docker volumes (`docker volume rm|prune`, `compose down -v`) and infrastructure commands (`terraform
-  apply|destroy|import`, any `aws` command, `pulumi up|destroy`, `kubectl apply|delete`);
+- deleting Docker volumes (`docker volume rm|prune`, `compose down -v`) and infrastructure commands: without
+  `guard.infra`, `terraform apply|destroy|import`, any `aws` subcommand, `pulumi up|destroy`, `kubectl apply|delete`,
+  `cdk deploy|destroy`; with it, see *Infra commands* below;
 - reading secret files (`.env*` other than `.env.example`, `.env.sample`, `.env.template`, `.env.test`,
   `.env.development` and `.env.staging`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, SSH private keys), from any tool or
   command;
@@ -438,6 +439,23 @@ Hooks are small scripts Claude Code runs on its own at fixed moments; you never 
 - writing in `brain/` outside `now.md`, `journal/`, `_inbox/`, `auto/` and `features/`;
 - editing a path in `guard.ask_before_edit`.
 
+**Infra commands.** Set `guard.infra` in `hub.json` (even `{}`) and the guard classifies commands that run `aws`,
+`cdk`, `terraform`, `pulumi`, `kubectl`, `helm`, `sam` or `serverless` by environment instead. The command is split
+into parts at `;`, `&&`, `||`, `|` and newlines, and each part into its calls (at a single `&`, `$( )`, backticks,
+`<( )`, `( )` and `{ }`). A command with a `guard.infra.prod_markers` match anywhere in it is blocked. Each part
+and each call that names a tool must carry its environment, matched by a `guard.infra.allow` pattern (e.g.
+`--profile demo-dev` or an `AWS_PROFILE=demo-dev ` prefix, whichever your patterns match, on that part: an exported
+or inherited one, or one from an earlier part, does not count; neither does a trailing ` # comment`), or be
+local-only (`--version`, `help`, `cdk synth`, `terraform fmt|validate`, `terraform init -backend=false`,
+`kubectl version --client`, `helm template|lint`, `sam build|validate`); anything else is blocked. On an allowed environment, deploy, destroy and delete verbs
+(`terraform apply|destroy|import`, `kubectl apply|delete|…`, `aws s3 rm`, `aws … delete-*`, `cdk deploy`, …) are
+asked first. The tool is found behind wrappers, quotes and redirections (`env aws …`, `bash -c "aws …"`,
+`aws>/dev/null …`), but its name is case-sensitive and quoting tricks inside it (`a""ws`) hide it. If `guard.infra` or
+one of its patterns cannot be used (a wrong value, or regex syntax the system Python 3.9 lacks), every infra command
+is blocked until it is fixed. Patterns are Python `re`, searched with no flags on every such command: avoid nested
+quantifiers like `(a+)+`. Until a separate change lands, the generated `.claude/settings.json` still denies every
+`terraform` and `aws` command, whatever the guard decides.
+
 Everything else goes through Claude Code's normal permission rules.
 
 **Configuration.** The lists come from `hub.json`: `guard.ask_before_edit`, `guard.deny_paths` and `guard.deny_hosts`,
@@ -445,6 +463,8 @@ plus `project.default_branch` and each `repos[].default_branch`. The branch hint
 (`hub.local.json`, else `hub.json`, else git config; see [developer-identity](docs/design/developer-identity.md)).
 An entry `@hub/<path>` means
 `<path>` inside the hub. A `hub.json` named by `$HUB_CONFIG` can only add entries to these lists, never remove them.
+Only the hub's own `hub.json` turns `guard.infra` on and sets `guard.infra.allow`: `hub.local.json` cannot set it, and
+a `$HUB_CONFIG` file can only add `guard.infra.prod_markers`.
 
 **Your own rules.** The seeded `plugin/<project>/hooks/project_guard.py` defines `check(event, cfg)`, which returns
 `None`, or `("ask", reason)` or `("deny", reason)`; by default it does nothing. It runs in a separate process with a
@@ -635,7 +655,9 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `guard.ask_before_edit` | no | `[]` | Paths where the guard asks before an edit |
 | `guard.deny_paths` | no | `[]` | Paths the guard never lets the agent read or edit |
 | `guard.deny_hosts` | no | `[]` | Hosts the guard blocks network calls to |
-| `guard.infra.allow`, `guard.infra.prod_markers` | no | `[]` | Python regexes for infra commands (allowed environments, production markers); validated, but the guard does not use them yet |
+| `guard.infra` | no | absent | Present, even `{}`, the guard classifies infra commands by environment (see the guard section); absent, the fixed infra rule |
+| `guard.infra.allow` | no | `[]` | Python `re` patterns for allowed environments, e.g. `--profile[= ]demo-dev\b` |
+| `guard.infra.prod_markers` | no | `[]` | Python `re` patterns that mark production; a match anywhere in an infra command blocks it |
 | `modules` | no | `{}` | Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`), from 0.6.0: each selected one renders its files and `mk/<id>.mk`; `contract-sync` takes `{"source": <repo dir>, "target": <repo dir>}`, the others `{}` |
 | `doctor.rules` | no | `{}` | Per-rule `hub doctor` settings |
 
