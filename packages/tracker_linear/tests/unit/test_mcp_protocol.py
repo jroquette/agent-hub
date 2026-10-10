@@ -231,6 +231,14 @@ def test_parses_reply_when_shape_exact(
     assert parse_reply(call, "  " + _line(reply) + "\n") == parsed
 
 
+def test_refuses_state_read_when_reply_lacks_state_type() -> None:
+    # The state type decides a conditional move: a read without it is another shape (O5).
+    reply = {"id": "DEM-1", "state": "Todo", "states": ["Todo", "Done"]}
+
+    with pytest.raises(TrackerError, match=r"^move_state DEM-1: the reply has another shape"):
+        parse_reply(state_read_call("DEM-1"), _line(reply))
+
+
 def _drop_first_key(reply: dict[str, Any]) -> dict[str, Any]:
     first = next(iter(reply))
     return {name: value for name, value in reply.items() if name != first}

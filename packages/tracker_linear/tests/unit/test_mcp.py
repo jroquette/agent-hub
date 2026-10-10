@@ -325,6 +325,19 @@ class TestWrites:
         assert [call.operation for call in fake_claude.calls] == [read]
         assert tracker_backend == before
 
+    def test_makes_no_write_call_when_started_issue_moved_only_if_unstarted(
+        self, fake_claude: Any, hub_root: Path, tracker_backend: FakeTrackerBackend
+    ) -> None:
+        before = copy.deepcopy(tracker_backend)
+
+        moved = _client(fake_claude, hub_root).move_state(
+            "DEM-2", "In Progress", only_if_unstarted=True
+        )
+
+        assert moved is False
+        assert _requests(fake_claude) == [("read_state", {"issue_id": "DEM-2"})]
+        assert tracker_backend == before
+
     @pytest.mark.parametrize(
         ("operation", "arguments", "cause"),
         [
