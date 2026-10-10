@@ -32,6 +32,7 @@ from agent_hub.core.hub_config.platform_repository import (
     PLATFORM_REPOSITORY_PATTERN,
     is_platform_repository,
 )
+from agent_hub.core.runner.report_writes import REVIEW_STATE
 
 HUB_ROOT = "@hub"
 JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
@@ -226,7 +227,8 @@ class TrackerStates(ConfigObject):
     """The workflow state names the CLI moves issues to; `review` is for the review step."""
 
     started: FreeString = "In Progress"
-    review: FreeString = "In Review"
+    # One source with the runner's move to review (report_writes).
+    review: FreeString = REVIEW_STATE
 
 
 class Tracker(ConfigObject):
