@@ -249,6 +249,15 @@ def test_refuses_state_read_when_reply_lacks_state_type() -> None:
         parse_reply(state_read_call("DEM-1"), _line(reply))
 
 
+@pytest.mark.parametrize("state_type", ["Unstarted", "Todo", "unstarted ", "started\n", ""])
+def test_refuses_state_read_when_state_type_not_linear_type(state_type: str) -> None:
+    # A garbled type would read as "not unstarted" and silently skip a conditional move.
+    reply = {"id": "DEM-1", "state": "Todo", "state_type": state_type, "states": ["Todo"]}
+
+    with pytest.raises(TrackerError, match=r"^move_state DEM-1: the reply has another shape"):
+        parse_reply(state_read_call("DEM-1"), _line(reply))
+
+
 def _drop_first_key(reply: dict[str, Any]) -> dict[str, Any]:
     first = next(iter(reply))
     return {name: value for name, value in reply.items() if name != first}
@@ -535,10 +544,6 @@ def test_refuses_name_when_request_name_over_cap(build: Any, operation: str) -> 
             {"id": "DEM-1", "state": _LONG_NAME, "state_type": "unstarted", "states": []},
         ),
         (
-            state_read_call("DEM-1"),
-            {"id": "DEM-1", "state": "Todo", "state_type": _LONG_NAME, "states": []},
-        ),
-        (
             label_read_call("add_label", "DEM-1"),
             {"id": "DEM-1", "labels": [], "available_labels": [_LONG_NAME]},
         ),
@@ -552,7 +557,6 @@ def test_refuses_name_when_request_name_over_cap(build: Any, operation: str) -> 
     ids=[
         "states",
         "state",
-        "read-state-type",
         "available-labels",
         "saved-labels",
         "issue-labels",

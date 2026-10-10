@@ -7,7 +7,12 @@ from agent_hub.core.errors import TrackerError
 from agent_hub.core.events.append_plan import plan_append
 from agent_hub.core.events.event import Event, EventKey
 from agent_hub.core.events.event_store import AppendResult
-from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, UNSTARTED_STATE_TYPES, Issue
+from agent_hub.core.tracker.tracker_client import (
+    CLOSED_STATE_TYPES,
+    ISSUE_ID_PATTERN,
+    UNSTARTED_STATE_TYPES,
+    Issue,
+)
 
 
 class InMemoryEventStore:
@@ -32,10 +37,6 @@ class InMemoryEventStore:
         return [event.model_copy(deep=True) for event in self._events]
 
 
-# Linear's ``WorkflowState.type`` values of a closed state: done, canceled and duplicate.
-_CLOSED_STATE_TYPES = frozenset({"completed", "canceled", "duplicate"})
-
-
 @dataclass(frozen=True, kw_only=True, slots=True)
 class TrackerState:
     """A workflow state of a team.
@@ -50,7 +51,7 @@ class TrackerState:
     @property
     def closed(self) -> bool:
         """True for a ``completed``, ``canceled`` or ``duplicate`` state."""
-        return self.type in _CLOSED_STATE_TYPES
+        return self.type in CLOSED_STATE_TYPES
 
 
 @dataclass(kw_only=True, slots=True)

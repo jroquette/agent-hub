@@ -2,7 +2,9 @@ import pytest
 from pydantic import ValidationError
 
 from agent_hub.core.tracker.tracker_client import (
+    CLOSED_STATE_TYPES,
     ISSUE_ID_PATTERN,
+    STATE_TYPES,
     UNSTARTED_STATE_TYPES,
     Issue,
     TrackerClient,
@@ -78,6 +80,23 @@ def test_exposes_only_d1_operations_when_port_inspected() -> None:
 def test_lists_unstarted_types_when_module_read() -> None:
     # Linear's WorkflowState.type values a conditional move_state moves from, as a literal.
     assert UNSTARTED_STATE_TYPES == ("triage", "backlog", "unstarted")
+
+
+def test_lists_every_state_type_when_module_read() -> None:
+    # Linear's WorkflowState.type values (duplicate included, as Linear's API answers it).
+    assert STATE_TYPES == (
+        "triage",
+        "backlog",
+        "unstarted",
+        "started",
+        "completed",
+        "canceled",
+        "duplicate",
+    )
+
+
+def test_lists_closed_types_when_module_read() -> None:
+    assert CLOSED_STATE_TYPES == ("completed", "canceled", "duplicate")
 
 
 def test_pins_issue_id_bound_when_pattern_read() -> None:

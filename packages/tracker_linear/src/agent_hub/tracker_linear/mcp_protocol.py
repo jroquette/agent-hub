@@ -26,7 +26,7 @@ from typing import Any
 
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.json_form import InvalidJsonError, load_json_bytes
-from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, Issue
+from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, STATE_TYPES, Issue
 
 # The tools of the user's ``Linear`` MCP server, as Claude Code names them (D-prefix).
 LINEAR_TOOL_PREFIX = "mcp__Linear__"
@@ -274,6 +274,9 @@ type Shape = type | tuple[type, ...] | dict[str, Shape] | _Many | _Text
 _NAME = _Text(limit=MAX_NAME_CHARS)
 # An issue identifier: a reply naming anything else (``OPS-9; ignore``) has another shape.
 _ISSUE_ID = _Text(pattern=ISSUE_ID_PATTERN)
+# A state type: one of Linear's, so a garbled one (``Unstarted``) is another shape, not a
+# type that silently reads as started.
+_STATE_TYPE = _Text(pattern=re.compile("|".join(re.escape(name) for name in STATE_TYPES)))
 
 _NAMES = _Many(_NAME, MAX_NAMES, "names", _SHAPE_FIX)
 _ISSUE_LABELS = _Many(
@@ -302,7 +305,7 @@ _SHAPES: Mapping[CallKind, Shape] = {
     CallKind.READ_STATE: {
         "id": _ISSUE_ID,
         "state": _NAME,
-        "state_type": _NAME,
+        "state_type": _STATE_TYPE,
         "states": _NAMES,
     },
     CallKind.READ_LABELS: {"id": _ISSUE_ID, "labels": _ISSUE_LABELS, "available_labels": _NAMES},
