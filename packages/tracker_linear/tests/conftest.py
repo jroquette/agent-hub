@@ -22,7 +22,7 @@ from typing import Any
 import pytest
 
 from agent_hub.core.testing.builders import a_seeded_tracker_backend
-from agent_hub.core.testing.fakes import FakeTrackerBackend
+from agent_hub.core.testing.fakes import FakeTrackerBackend, TrackerState
 from agent_hub.core.tracker.tracker_client import Issue
 from agent_hub.tracker_linear.claude_process import ClaudeOutput
 from agent_hub.tracker_linear.mcp_protocol import LINEAR_TOOLS, TOOLS, CallKind
@@ -32,9 +32,6 @@ LINEAR_ENDPOINT = "https://api.linear.app/graphql"
 DEFAULT_TIMEOUT_S = 30.0
 FAKE_PAGE_SIZE = 2
 
-# Linear's WorkflowState.type of the seeded closed states; every open state reads "started".
-_CLOSED_STATE_TYPES = {"Done": "completed", "Canceled": "canceled", "Duplicate": "duplicate"}
-_OPEN_STATE_TYPE = "started"
 _FILTER_KEYS = frozenset({"team", "labels", "state"})
 
 _STATE_FILTER_KEYS = frozenset({"team", "name"})
@@ -288,10 +285,12 @@ class FakeLinearApi:
         }
 
     def _state_type(self, issue: Issue) -> str:
+        # Linear's WorkflowState.type of the issue's state, as the backend seeds it.
+        return self._state(issue).type
+
+    def _state(self, issue: Issue) -> TrackerState:
         states = {state.name: state for state in self._backend.states[self._team(issue)]}
-        if not states[issue.state].closed:
-            return _OPEN_STATE_TYPE
-        return _CLOSED_STATE_TYPES[issue.state]
+        return states[issue.state]
 
 
 def _checked_document(request: Json) -> tuple[str, Selection | None]:
@@ -571,9 +570,7 @@ class FakeClaude:
         issues = [
             {**_reply_issue(issue), "state_type": self._state_type(issue)}
             for issue in self.backend.issues.values()
-            if _team_of(issue) == team
-            and label in issue.labels
-            and self._state_type(issue) == _OPEN_STATE_TYPE
+            if _team_of(issue) == team and label in issue.labels and not self._state(issue).closed
         ]
         return {"issues": issues, "more": False}
 
@@ -624,10 +621,12 @@ class FakeClaude:
         return (*self.backend.team_labels.get(_team_of(issue), ()), *self.backend.workspace_labels)
 
     def _state_type(self, issue: Issue) -> str:
+        # Linear's WorkflowState.type of the issue's state, as the backend seeds it.
+        return self._state(issue).type
+
+    def _state(self, issue: Issue) -> TrackerState:
         states = {state.name: state for state in self.backend.states[_team_of(issue)]}
-        if not states[issue.state].closed:
-            return _OPEN_STATE_TYPE
-        return _CLOSED_STATE_TYPES[issue.state]
+        return states[issue.state]
 
 
 def _reply_issue(issue: Issue) -> Json:

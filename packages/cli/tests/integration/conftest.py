@@ -1556,10 +1556,10 @@ def tracker_backend_for_run(*, failed: bool = True) -> FakeTrackerBackend:
     return FakeTrackerBackend(
         states={
             "DEM": (
-                TrackerState(name="Todo", closed=False),
-                TrackerState(name="In Progress", closed=False),
-                TrackerState(name="In Review", closed=False),
-                TrackerState(name="Done", closed=True),
+                TrackerState(name="Todo", type="unstarted"),
+                TrackerState(name="In Progress", type="started"),
+                TrackerState(name="In Review", type="started"),
+                TrackerState(name="Done", type="completed"),
             )
         },
         team_labels={"DEM": ("demo-api", "demo-web")},
