@@ -72,6 +72,7 @@ TEAM_PATHS: tuple[tuple[str | int, ...], ...] = (("tracker", "team"), ("tracker"
 IGNORED_PATHS: tuple[tuple[str | int, ...], ...] = (
     ("project", "conventions"),
     ("repos", 0, "conventions"),
+    ("tracker", "states"),
 )
 
 # Read leniently by the hooks; absent is ``None`` in both; agreement is the shared cases'
