@@ -274,7 +274,7 @@
     "plugin/hub-workflow/hooks/guard.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "98ef7c7200c67099678ad7d1286dfa9aa15772a16bc73198830a6bb6724ce01a"
+      "sha256": "57c3760081bb83e606b377bb67dc14e111c10fb48d0ce09d3dbe38a98576a14d"
     },
     "plugin/hub-workflow/hooks/hooks.json": {
       "executable": false,

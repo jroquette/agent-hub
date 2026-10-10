@@ -2,10 +2,14 @@
 """PreToolUse guard for a hub workspace (hub.json + sibling repos).
 
 deny  = hard block (secrets, force-push / push to the default branch, curl|sh, docker volumes, infra commands
-        (with guard.infra: a production marker or an unrecognised environment; without it: the fixed infra
-        rule), AI attribution in commits/PRs/branches, editing .git internals, network to guard.deny_hosts,
-        reading or changing paths in guard.deny_paths, from a file tool or any Bash token)
-ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an allowed environment,
+        (with guard.infra: a production marker anywhere, or a part or one of its calls (also split at a single
+        &, $( ), backticks, <( ), ( ), { }) with no allowed environment outside a ` #` comment and not a
+        local-only form; without it: the fixed infra rule; both see a redirection glued to the tool word,
+        aws>/dev/null; values in their reasons are escaped and capped), AI attribution in commits/PRs/branches,
+        editing .git internals, network to guard.deny_hosts, reading or changing paths in guard.deny_paths,
+        from a file tool or any Bash token)
+ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an allowed environment, anywhere
+        after the tool (aws's s3 … rm and cloudformation … deploy too, quoted or not),
         removing test assertions (`assert`, `expect(`, `pytest.raises`,
         `.assert_*(`, unittest's `.assertX(` and `self.fail(`) or adding skip/xfail/quarantine markers,
         deleting or sed-editing tests from Bash, editing the hub's guard files: plugin/hub-workflow/hooks/,
@@ -43,7 +47,7 @@ import subprocess
 import sys
 import tempfile
 from fnmatch import fnmatch
-from typing import IO, Optional
+from typing import IO, Callable, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
@@ -75,11 +79,18 @@ SKIP_MARKERS = re.compile(
 )
 TEST_PATH = r"(?:(\S*/)?(tests?|__tests__)/\S+|\S+\.(test|spec)\.[jt]sx?\b|['\"]?(\S*/)?test_\w+\.py\b)"
 # guard.infra: the covered tools, each as a word followed by an optional closing quote, blanks and
-# an argument (group 2 starts at it), anywhere in a part, so wrappers and quotes do not hide it.
+# an argument (group 2 starts at it; a lookahead, so a tool word that is another tool's first
+# argument is a mention too), or by a redirection glued to it (`aws>/dev/null`: group 2 is None,
+# never a local form), anywhere in a part, so wrappers, quotes and redirections do not hide it.
 INFRA_TOOLS = ("aws", "cdk", "terraform", "pulumi", "kubectl", "helm", "sam", "serverless")
-INFRA_TOOL = re.compile(r"\b(" + "|".join(INFRA_TOOLS) + r")\b['\"]?\s+(\S)")
-# The parts of a command: split at `&&`, `||`, `;`, `|` and newlines (not at a single `&`).
+INFRA_TOOL = re.compile(r"\b(" + "|".join(INFRA_TOOLS) + r")\b(?:['\"]?\s+(?=(\S))|(?=\d*[<>]))")
+# The parts of a command: split at `&&`, `||`, `;`, `|` and newlines; each part is checked whole,
+# then each of its calls, split at a single `&`, `(`, `)`, a backtick, `{` and `}` (so `$(…)`,
+# `<(…)`, subshells and groups), so an allowed call never covers another one beside it.
 INFRA_PART = re.compile(r"&&|\|\||[;|\n]")
+INFRA_CALL = re.compile(r"[&()`{}]")
+# What ends a part's evidence: an unquoted `#` at the start or after a blank (a comment).
+INFRA_SHELL = re.compile(r"[\\'\"]|(?:^|(?<=\s))#")
 INFRA_END = r"(?![\w-])"
 INFRA_WORD = r"(?<![\w-])({})" + INFRA_END
 # Local-only forms, matched at the tool's first argument; kubectl's version needs --client in the
@@ -92,22 +103,48 @@ INFRA_LOCAL = {
     "sam": re.compile(r"(build|validate)" + INFRA_END),
 }
 INFRA_KUBECTL_VERSION = re.compile(r"(version|--version)" + INFRA_END)
-INFRA_KUBECTL_CLIENT = re.compile(INFRA_WORD.format("--client"))
+INFRA_FLAG_END = r"(?=\s|$)"
+INFRA_KUBECTL_CLIENT = re.compile(r"(?<![\w-])--client" + INFRA_FLAG_END)
 INFRA_TERRAFORM_INIT = re.compile(r"init" + INFRA_END)
-INFRA_NO_BACKEND = re.compile(INFRA_WORD.format("-backend=false"))
-# Verbs that ask on an allowed environment, searched as words anywhere after the tool word.
+INFRA_NO_BACKEND = re.compile(r"(?<![\w-])-backend=false" + INFRA_FLAG_END)
+
+
+class _Verbs:
+    """A tool's ask verbs (words, quotes allowed): ``search(part, pos)`` is the reason's name of the
+    first one at or after pos, or None. A ``(lead, verbs)`` pair asks when one of ``verbs`` comes
+    anywhere after ``lead`` (aws `s3 … rm`); each search runs once from pos, so a part costs one
+    linear pass per pattern."""
+
+    def __init__(self, words: str, *pairs: tuple[str, str]) -> None:
+        self.words = re.compile(INFRA_WORD.format(words))
+        self.pairs = [(re.compile(INFRA_WORD.format(lead)), re.compile(INFRA_WORD.format(verbs)))
+                      for lead, verbs in pairs]
+
+    def search(self, part: str, pos: int) -> str | None:
+        found = []
+        word = self.words.search(part, pos)
+        if word:
+            found.append((word.start(), word.group(1)))
+        for lead, verbs in self.pairs:
+            first = lead.search(part, pos)
+            verb = verbs.search(part, first.end()) if first else None
+            if first and verb:
+                found.append((first.start(), f"{first.group(1)} {verb.group(1)}"))
+        return min(found)[1] if found else None
+
+
+# Verbs that ask on an allowed environment, searched as words anywhere after the tool's first
+# mention in the part, once per tool.
 INFRA_ASK_VERBS = {
-    tool: re.compile(INFRA_WORD.format(verbs))
-    for tool, verbs in (
-        ("aws", r"(delete|remove|terminate|deregister)-[\w-]+|s3\s+(rm|rb)|cloudformation\s+(deploy|delete-stack)"),
-        ("cdk", "deploy|destroy"),
-        ("terraform", "apply|destroy|import"),
-        ("pulumi", "up|destroy"),
-        ("kubectl", "apply|create|delete|replace|patch|scale"),
-        ("helm", "install|upgrade|uninstall|rollback"),
-        ("sam", "deploy|delete"),
-        ("serverless", "deploy|remove"),
-    )
+    "aws": _Verbs(r"(?:delete|remove|terminate|deregister)-[\w-]+", ("s3", "rm|rb"),
+                  ("cloudformation", "deploy|delete-stack")),
+    "cdk": _Verbs("deploy|destroy"),
+    "terraform": _Verbs("apply|destroy|import"),
+    "pulumi": _Verbs("up|destroy"),
+    "kubectl": _Verbs("apply|create|delete|replace|patch|scale"),
+    "helm": _Verbs("install|upgrade|uninstall|rollback"),
+    "sam": _Verbs("deploy|delete"),
+    "serverless": _Verbs("deploy|remove"),
 }
 BASH_WRITE = re.compile(r">>?|\btee\b|\bsed\s+(-\w*i\w*|--in-place)\b|\b(rm|mv|cp|truncate|ln)\b")
 WORKTREE_SEG = re.compile(r"/\.claude/worktrees/[^/]+(?=/)")
@@ -317,12 +354,32 @@ INFRA_UNKNOWN_REASON = ("{}: environment not recognised by guard.infra.allow (hu
                         "one does not count)")
 INFRA_ASK_REASON = "`{} {}` changes infrastructure on an allowed environment; confirm first"
 INFRA_CONFIG_REASON = "{} (hub.json) cannot be used ({}); infrastructure commands are denied until it is fixed"
+INFRA_VALUE_CAP = 100  # characters of a value from hub.json or the command in an infra reason
+LEGACY_INFRA = re.compile(
+    r"\bterraform\s+(apply|destroy|import)\b|\baws\s+\S+|\bpulumi\s+(up|destroy)\b|\bkubectl\s+(apply|delete)\b"
+    r"|\bcdk\s+(deploy|destroy)\b|\b(terraform|aws|pulumi|kubectl|cdk)\d*[<>]"
+)
 
 
 def _escaped(text: str) -> str:
     """text with quotes, backslashes, control characters and non-ASCII as JSON escapes: a location
     read from hub.json goes into a reason as plain text."""
     return json.dumps(text)[1:-1]
+
+
+def _printable(text: str) -> str:
+    """text with control characters and non-ASCII as JSON escapes (as _escaped), printable ASCII
+    kept: a pattern stays as written."""
+    return "".join(ch if " " <= ch <= "~" else _escaped(ch) for ch in text)
+
+
+def _infra_value(text: str, escape: Callable[[str], str] = _escaped) -> str:
+    """text escaped, at most INFRA_VALUE_CAP characters ("..." marks a cut), so an infra reason
+    stays one short line whatever hub.json or the command holds."""
+    shown = escape(text[:INFRA_VALUE_CAP])
+    if len(text) > INFRA_VALUE_CAP or len(shown) > INFRA_VALUE_CAP:
+        return shown[:INFRA_VALUE_CAP - 3] + "..."
+    return shown
 
 
 def _infra_compiled(key: str, patterns: tuple[str, ...]) -> tuple[list[re.Pattern[str]], Verdict]:
@@ -334,60 +391,128 @@ def _infra_compiled(key: str, patterns: tuple[str, ...]) -> tuple[list[re.Patter
             compiled.append(re.compile(pattern))
         except (re.error, OverflowError, RecursionError) as error:
             location = f"guard.infra.{key}[{index}]"
-            return [], ("deny", INFRA_CONFIG_REASON.format(location, f"not a Python regex here: {error}"))
+            return [], ("deny", INFRA_CONFIG_REASON.format(location, _infra_value(f"not a Python regex here: {error}", _printable)))
     return compiled, None
 
 
-def _infra_local(part: str, mention: re.Match[str]) -> bool:
-    """Whether a covered-tool mention is a local-only form (D5): its words right after the tool."""
-    tool, rest = mention.group(1), part[mention.start(2):]
-    if tool == "kubectl" and INFRA_KUBECTL_VERSION.match(rest):
-        return INFRA_KUBECTL_CLIENT.search(part) is not None
-    if tool == "terraform" and INFRA_TERRAFORM_INIT.match(rest):
-        return INFRA_NO_BACKEND.search(part) is not None
+def _uncommented(text: str) -> str:
+    """text up to its first unquoted `#` at the start or after a blank (a comment); when the
+    quotes do not close, up to its first such `#` quoted or not (when unsure, cut)."""
+    if "#" not in text:
+        return text
+    quote, skip, first = "", -1, -1
+    for found in INFRA_SHELL.finditer(text):
+        at, char = found.start(), found.group(0)
+        if at == skip:
+            continue
+        if char == "#":
+            if not quote:
+                return text[:at]
+            first = at if first < 0 else first
+        elif char == "\\":
+            skip = at + 1 if quote != "'" else skip
+        elif not quote:
+            quote = char
+        elif char == quote:
+            quote = ""
+    return text[:first] if quote and first >= 0 else text
+
+
+class _Evidence:
+    """A part's or call's text without its comment, and its `--client` and `-backend=false`
+    flags, each searched at most once."""
+
+    def __init__(self, text: str) -> None:
+        self.text = _uncommented(text)
+        self.flags: dict[str, bool] = {}
+
+    def has(self, flag: re.Pattern[str]) -> bool:
+        if flag.pattern not in self.flags:
+            self.flags[flag.pattern] = flag.search(self.text) is not None
+        return self.flags[flag.pattern]
+
+
+def _infra_local(part: str, mention: re.Match[str], evidence: _Evidence) -> bool:
+    """Whether a covered-tool mention is a local-only form (D5): its words right after the tool
+    (a glued redirection never is)."""
+    tool, at = mention.group(1), mention.start(2)
+    if at < 0:
+        return False
+    if tool == "kubectl" and INFRA_KUBECTL_VERSION.match(part, at):
+        return evidence.has(INFRA_KUBECTL_CLIENT)
+    if tool == "terraform" and INFRA_TERRAFORM_INIT.match(part, at):
+        return evidence.has(INFRA_NO_BACKEND)
     local = INFRA_LOCAL.get(tool)
-    return bool(INFRA_LOCAL_ANY.match(rest) or (local and local.match(rest)))
+    return bool(INFRA_LOCAL_ANY.match(part, at) or (local and local.match(part, at)))
 
 
-def _infra_ask(part: str, mentions: list[re.Match[str]]) -> Verdict:
-    """The ask for the first ask verb after a tool mention in an allowed part, if any."""
-    for mention in mentions:
+def _infra_unknown(text: str, allow: list[re.Pattern[str]]) -> tuple[bool, str | None]:
+    """(whether text, without its comment, matches an allow pattern; the tool a deny names: its
+    first mention when it is not allowed and some mention is not a local form, else None)."""
+    mentions = list(INFRA_TOOL.finditer(text))
+    if not mentions:
+        return False, None
+    evidence = _Evidence(text)
+    if any(pattern.search(evidence.text) for pattern in allow):
+        return True, None
+    if all(_infra_local(text, mention, evidence) for mention in mentions):
+        return False, None
+    return False, mentions[0].group(1)
+
+
+def _infra_ask(part: str) -> Verdict:
+    """The ask for the first ask verb after a tool's first mention in an allowed part, if any:
+    one search per distinct tool, from its first mention."""
+    seen = set()
+    for mention in INFRA_TOOL.finditer(part):
         tool = mention.group(1)
+        if tool in seen:
+            continue
+        seen.add(tool)
         verb = INFRA_ASK_VERBS[tool].search(part, mention.end(1))
         if verb:
-            return "ask", INFRA_ASK_REASON.format(tool, " ".join(verb.group(0).split()))
+            return "ask", INFRA_ASK_REASON.format(tool, _infra_value(" ".join(verb.split())))
+        if len(seen) == len(INFRA_TOOLS):
+            break
     return None
 
 
 def check_infra(c: str, cfg: Config) -> Verdict:
     """The infra rule. Without guard.infra: the fixed rule (a deny or None). With it, only when a part
     names a covered tool: an unusable guard.infra or pattern denies; a production marker anywhere
-    in the command denies; then per part, in order: one matching an allow pattern passes (the first
-    ask verb asks), one whose every tool mention is a local-only form passes, any other denies."""
+    in the command denies; then per part, in order: the part, then each of its calls, must match an
+    allow pattern (text after an unquoted ` #` does not count) or hold only local-only forms, else
+    deny; a part where something matched an allow pattern asks on its first ask verb."""
     infra = cfg.infra
     if infra is None:
-        if re.search(r"\bterraform\s+(apply|destroy|import)\b|\baws\s+\S+|\bpulumi\s+(up|destroy)\b|\bkubectl\s+(apply|delete)\b|\bcdk\s+(deploy|destroy)\b", c):
+        if LEGACY_INFRA.search(c):
             return "deny", "infrastructure commands (terraform/aws/pulumi/kubectl) are human-only"
         return None
     parts = [part for part in INFRA_PART.split(c) if INFRA_TOOL.search(part)]
     if not parts:
         return None
     if infra.problem:
-        return "deny", INFRA_CONFIG_REASON.format(_escaped(infra.problem), "malformed")
+        return "deny", INFRA_CONFIG_REASON.format(_infra_value(infra.problem), "malformed")
     allow, failed = _infra_compiled("allow", infra.allow)
     markers, failed_marker = _infra_compiled("prod_markers", infra.prod_markers)
     if failed or failed_marker:
         return failed or failed_marker
     for pattern in markers:
         if pattern.search(c):
-            return "deny", INFRA_MARKER_REASON.format(pattern.pattern)
+            return "deny", INFRA_MARKER_REASON.format(_infra_value(pattern.pattern, _printable))
     verdict: Verdict = None
     for part in parts:
-        mentions = list(INFRA_TOOL.finditer(part))
-        if any(pattern.search(part) for pattern in allow):
-            verdict = verdict or _infra_ask(part, mentions)
-        elif not all(_infra_local(part, mention) for mention in mentions):
-            return "deny", INFRA_UNKNOWN_REASON.format(mentions[0].group(1))
+        allowed, tool = _infra_unknown(part, allow)
+        calls = INFRA_CALL.split(part) if not tool else []
+        for call in calls if len(calls) > 1 else ():
+            call_allowed, tool = _infra_unknown(call, allow)
+            if tool:
+                break
+            allowed = allowed or call_allowed
+        if tool:
+            return "deny", INFRA_UNKNOWN_REASON.format(tool)
+        if allowed and verdict is None:
+            verdict = _infra_ask(part)
     return verdict
 
 
