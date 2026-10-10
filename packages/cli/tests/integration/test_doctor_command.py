@@ -322,6 +322,17 @@ def test_reports_transport_when_value_unknown(
     assert lines == [schema_line("tracker.transport: Input should be 'api' or 'mcp'"), ONE_ERROR]
 
 
+def test_reports_tracker_states_when_value_invalid(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["tracker"]["states"] = {"done": "x"}
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "config.schema"), exit_code=1)
+
+    assert lines == [schema_line("tracker.states.done: Extra inputs are not permitted"), ONE_ERROR]
+
+
 def test_stays_clean_when_transport_absent(
     demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
 ) -> None:
