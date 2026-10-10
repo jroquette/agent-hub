@@ -1055,6 +1055,149 @@ def test_searches_ask_verbs_once_per_tool_when_part_long(
     assert found == [[None, 1], [None, 2], [None, 3]]
 
 
+# E20 (B1): each tool mention is checked against the call that holds it, found by its offset in
+# the part, so a tool word followed only by blanks before a backtick, `{` or `}` is still a
+# mention of that call (with no argument there, never a local form).
+def test_denies_tool_mention_when_its_call_has_no_environment(infra_evaluate: Evaluate) -> None:
+    commands = [
+        "aws s3 ls --profile demo-dev & aws `echo s3 cp x s3://y`",
+        "aws s3 ls --profile demo-dev $(aws `echo s3 cp x s3://y`)",
+        "aws s3 ls --profile demo-dev & aws {s3,cp,x,s3://y}",
+        "aws }$'\\'' } &  --profile demo-dev",
+    ]
+
+    verdicts = bash_verdicts(infra_evaluate, commands)
+
+    assert verdicts == dict.fromkeys(commands, unknown("aws"))
+
+
+# E20 (S1): `$'…'` is its own quote kind, where a backslash escapes the next character, so an
+# escaped quote inside it neither hides a comment nor makes one.
+def test_cuts_comment_when_ansi_c_quote_holds_quote(infra_evaluate: Evaluate) -> None:
+    expected = {
+        "aws s3 cp x s3://y $'\\'' # --profile demo-dev '": unknown("aws"),
+        "aws $'\\'' #$' --profile demo-dev echo ": unknown("aws"),
+        "aws s3 cp x s3://y $'a #b' --profile demo-dev": None,
+        "aws s3 cp x s3://y $'it\\'s #1' --profile demo-dev": None,
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# E20: `&>` and `>&` glued to the tool word are glued redirections too, with guard.infra ...
+GLUED_AMPERSAND_REDIRECTS = ["aws&>/dev/null s3 rm s3://b", "aws>&2 s3 rm s3://b"]
+
+
+def test_denies_infra_when_ampersand_redirect_glued_to_tool(infra_evaluate: Evaluate) -> None:
+    verdicts = bash_verdicts(infra_evaluate, GLUED_AMPERSAND_REDIRECTS)
+
+    assert verdicts == dict.fromkeys(GLUED_AMPERSAND_REDIRECTS, unknown("aws"))
+
+
+# ... and without it: the legacy rule denies them with its reason unchanged.
+def test_denies_legacy_infra_when_ampersand_redirect_glued_to_tool(evaluate: Evaluate) -> None:
+    verdicts = bash_verdicts(evaluate, GLUED_AMPERSAND_REDIRECTS)
+
+    assert verdicts == dict.fromkeys(GLUED_AMPERSAND_REDIRECTS, ("deny", LEGACY_INFRA_REASON))
+
+
+# E20: a later `-backend=` other than `false`, or `--client=` other than `true`, voids the local
+# form (the last flag wins); the same flags in the other order keep it.
+def test_denies_local_form_when_later_flag_overrides_it(infra_evaluate: Evaluate) -> None:
+    expected = {
+        "terraform init -backend=false -backend=true -migrate-state": unknown("terraform"),
+        "kubectl version --client --client=false": unknown("kubectl"),
+        "terraform init -backend=true -backend=false": None,
+        "kubectl version --client=false --client": None,
+        "kubectl version --client --client=true": None,
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# E20 (S2): the helpers the later rules call on a long command (its segments, and the words of
+# each) deduplicate with a set kept beside their list (a list scan per item made them quadratic:
+# an infra ask on a 59 KB command took 7.8 s, near the hook's 10 s timeout). Every `in` test in
+# them reads a set.
+SET_HELPERS = ("_segments", "_tokens")
+
+
+def set_names(helper: ast.FunctionDef) -> set[str]:
+    """The names ``helper`` binds to a ``set(...)`` call."""
+    names = set()
+    for node in ast.walk(helper):
+        targets = node.targets if isinstance(node, ast.Assign) else []
+        targets = [node.target] if isinstance(node, ast.AnnAssign) else targets
+        value = node.value if isinstance(node, ast.Assign | ast.AnnAssign) else None
+        if (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and value.func.id == "set"
+        ):
+            names |= {target.id for target in targets if isinstance(target, ast.Name)}
+    return names
+
+
+def test_dedupes_with_set_when_rules_after_infra_split_command(workspace: Path) -> None:
+    source = (workspace / "demo-hub" / HOOKS / "guard.py").read_text(encoding="utf-8")
+    helpers = {
+        node.name: node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.FunctionDef) and node.name in SET_HELPERS
+    }
+    scans = [
+        f"{name}: {ast.unparse(node)}"
+        for name, helper in helpers.items()
+        for node in ast.walk(helper)
+        if isinstance(node, ast.Compare)
+        and any(isinstance(op, ast.In | ast.NotIn) for op in node.ops)
+        and not all(
+            isinstance(side, ast.Name) and side.id in set_names(helper) for side in node.comparators
+        )
+    ]
+
+    assert sorted(helpers) == list(SET_HELPERS)
+    assert scans == []
+
+
+# E20 (S2), end to end: the guard asks on a long allowed command with ten thousand words well
+# within the hook's 10 s timeout (the bound is loose; it took 7.8 s on 3.9 before the fix).
+LONG_ASK_SECONDS = 5.0
+
+
+def test_asks_in_time_when_allowed_command_has_many_words(
+    workspace: Path,
+    tmp_path: Path,
+    *,
+    hook_python: str,
+    run_hook_file: Callable[..., subprocess.CompletedProcess[bytes]],
+) -> None:
+    hub = write_hub(workspace, builders.a_guard_infra())
+    words = " ".join(f"t{index}" for index in range(10000))
+    command = f"aws s3 rm s3://b --recursive --profile demo-dev > {words}"
+    event = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(hub)}
+    reason = "[hub guard] " + INFRA_ASK_REASON.format("aws", "s3 rm")
+
+    started = time.monotonic()
+    completed = run_hook_file(
+        hook_python,
+        hub / HOOKS / "guard.py",
+        stdin=json.dumps(event).encode(),
+        cwd=hub,
+        env={"HOME": str(tmp_path / "home")},
+    )
+    elapsed = time.monotonic() - started
+
+    assert completed.returncode == 0, completed.stderr
+    output = json.loads(completed.stdout)["hookSpecificOutput"]
+    assert (output["permissionDecision"], output["permissionDecisionReason"]) == ("ask", reason)
+    assert elapsed < LONG_ASK_SECONDS
+
+
 # AGH-113: a short-flag cluster holding ``f`` and ``--mirror`` force-update remote refs, so they
 # take the force-push reason; long options that only contain an ``f`` do not.
 def test_denies_force_push_when_flag_is_clustered_or_mirror(evaluate: Evaluate) -> None:
