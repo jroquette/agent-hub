@@ -569,7 +569,7 @@
     },
     "TrackerStates": {
       "additionalProperties": false,
-      "description": "The workflow state names the CLI moves issues to; `review` is reserved for review.",
+      "description": "The workflow state names the CLI moves issues to; `review` is for the review step.",
       "patternProperties": {
         "^_": {}
       },
