@@ -32,12 +32,25 @@ class InMemoryEventStore:
         return [event.model_copy(deep=True) for event in self._events]
 
 
+# Linear's ``WorkflowState.type`` values of a closed state: done, canceled and duplicate.
+_CLOSED_STATE_TYPES = frozenset({"completed", "canceled", "duplicate"})
+
+
 @dataclass(frozen=True, kw_only=True, slots=True)
 class TrackerState:
-    """A workflow state of a team; ``closed`` marks done, canceled and duplicate states."""
+    """A workflow state of a team.
+
+    ``type`` is Linear's ``WorkflowState.type`` (``triage``, ``backlog``, ``unstarted``,
+    ``started``, ``completed``, ``canceled`` or ``duplicate``); ``closed`` is derived from it.
+    """
 
     name: str
-    closed: bool
+    type: str
+
+    @property
+    def closed(self) -> bool:
+        """True for a ``completed``, ``canceled`` or ``duplicate`` state."""
+        return self.type in _CLOSED_STATE_TYPES
 
 
 @dataclass(kw_only=True, slots=True)

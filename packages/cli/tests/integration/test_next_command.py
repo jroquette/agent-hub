@@ -52,7 +52,10 @@ def url_of(issue_id: str) -> str:
 
 
 def seeded_backend(*issues: Issue) -> FakeTrackerBackend:
-    open_states = (TrackerState(name="Todo", closed=False), TrackerState(name="Done", closed=True))
+    open_states = (
+        TrackerState(name="Todo", type="unstarted"),
+        TrackerState(name="Done", type="completed"),
+    )
     return FakeTrackerBackend(
         states={"DEM": open_states, "APP": open_states, "OPS": open_states},
         team_labels={"DEM": ("demo-api", "demo-web"), "APP": (), "OPS": ()},
