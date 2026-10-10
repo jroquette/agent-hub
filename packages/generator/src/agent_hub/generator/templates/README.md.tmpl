@@ -12,3 +12,53 @@ Workspace hub of the @@{project_name} project (`@@{project_hub_repo}`): every ch
 Repos, checked out next to this hub: @@{repo_dirs}.
 
 Each repo's root `AGENTS.md` (`hub agent` loads it) starts as a copy of `docs/app-repo-AGENTS.md`, filled in.
+
+## Join this hub
+
+Follow these steps once per machine to work on @@{project_name} from this hub.
+
+### Requirements
+
+| Tool | Needed | Used for |
+| --- | --- | --- |
+| [uv](https://docs.astral.sh/uv/getting-started/installation/) 0.9 or newer | required | runs `./hub` (through uv); fetches Python 3.14 |
+| `git` | required | clones the hub and its repos; worktrees, commits, pushes |
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude`) | required | the agent sessions `./agent` starts |
+| `python3` 3.9 or newer | required | `./hub` reads `hub.json` with it; the hooks (guard, brief, stop gate) run on it |
+| [`gh`](https://cli.github.com/) | optional | `gh auth setup-git`, and the auth, PR and CI lines of `./hub brief` |
+| tracker credential | optional | `./hub next` and `./hub run` read the tracker (the Tracker line below) |
+
+### Access
+
+`./hub` fetches the agent-hub platform, which is public (unless `hub.json` → `platform.repository` names another).
+This hub (`@@{project_hub_repo}`) and its repos need your own GitHub access through a git credential helper (e.g.
+`gh auth setup-git`), never a token in a URL or a file. Repos: @@{repo_githubs}.
+
+### Set up
+
+Clone the hub into the folder that will hold the project, then let `./hub setup` do the rest:
+
+```bash
+git clone https://github.com/@@{project_hub_repo}.git
+cd "$(basename @@{project_hub_repo})"
+./hub setup
+```
+
+`./hub setup` clones the missing repos (@@{repo_dirs}) at `../<dir>` and fetches the others; if `hub.json` leaves your
+identity unset, it asks before writing it from git config to `hub.local.json` (`--yes` skips asking). It ends with
+`./hub doctor` and one `ok`/`missing` line per tool, credential and repo, each with its fix. Safe to run again.
+
+- Identity: `hub.local.json` (gitignored), else `hub.json`, else your git config; `./hub setup` writes `hub.local.json`.
+- @@{join_tracker_credential}
+
+Then, from the hub directory, run `./agent` and type `/kickoff`: its first line says whether the hub's guard is on.
+
+### Known traps
+
+- uv older than 0.9 may offer only a Python 3.14 release candidate: run `uv self update` (in a cloud container,
+  `pip install --user 'uv>=0.9'`), then check `uv --version`.
+- macOS: `python3` and `git` come from the Xcode Command Line Tools; the first call offers to install them
+  (`xcode-select --install` installs them directly).
+- The hub's hooks and settings load only when the session starts in the hub directory: not in an app repo, not in a
+  hub subfolder, not in a cloud session with the app repos attached. `/kickoff` probes the guard
+  (`.claude/guard_probe.p12`) and says so loudly when it is off.@@{join_cloud}
