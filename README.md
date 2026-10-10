@@ -831,7 +831,7 @@ You need to be comfortable in a terminal and with git: you run a few commands an
 the programming; you review and merge their pull requests.
 
 **Is it free? Can I use it in my company?**
-The repository is private and has no license file yet, so it is not offered for use outside its owners today.
+The repository is public but has no license file yet, so it is not offered for use outside its owners today.
 
 **Does it replace Claude Code?**
 No. agent-hub prepares and launches Claude Code sessions (and will observe them); it is not an agent or a model

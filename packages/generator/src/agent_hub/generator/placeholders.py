@@ -134,6 +134,8 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
     return {
         "project_name": project.name,
         "project_hub_repo": project.hub_repo,
+        # The folder `git clone` makes for the hub; hub_repo is a validated `owner/name` (AGH-51).
+        "project_hub_dir": project.hub_repo.split("/", 1)[1],
         "project_branch_prefix": shown_prefix(config),
         "project_default_branch": project.default_branch,
         "tracker_team": config.tracker.default_team,

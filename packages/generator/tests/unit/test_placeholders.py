@@ -29,10 +29,11 @@ from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_m
 # names it (AGH-65). The team mentions of AGENTS.md and the plugin name every tracker team (AGH-56).
 # The branch rule, kickoff's branch and the Conventions block show the conventions (AGH-57).
 # The runtime readers check platform.repository against core's pattern and name its form (AGH-49).
-# The README's tracker credential line and cloud subsection (AGH-51).
+# The README's tracker credential line, cloud subsection and the hub's clone folder (AGH-51).
 RENDERED_KEYS = {
     "project_name",
     "project_hub_repo",
+    "project_hub_dir",
     "project_branch_prefix",
     "project_default_branch",
     "tracker_team",
@@ -109,6 +110,7 @@ def test_takes_values_from_model_when_demo_mapped(demo_config: HubConfig) -> Non
     assert mapping == {
         "project_name": "demo",
         "project_hub_repo": "acme/demo-hub",
+        "project_hub_dir": "demo-hub",
         "project_branch_prefix": "jdoe/",
         "project_default_branch": "main",
         "tracker_team": "DEM",
