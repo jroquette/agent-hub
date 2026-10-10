@@ -223,7 +223,7 @@ TeamKeys = Annotated[
 
 
 class TrackerStates(ConfigObject):
-    """The workflow state names the CLI moves issues to; `review` is reserved for review."""
+    """The workflow state names the CLI moves issues to; `review` is for the review step."""
 
     started: FreeString = "In Progress"
     review: FreeString = "In Review"
