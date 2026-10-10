@@ -15,14 +15,15 @@ rule reads the repos (its real path, taken once; inside it nothing is followed),
 developer's branch prefix when a rule reads it and the local file is valid (``git config`` runs
 in the main checkout only when no file sets the prefix). The findings
 go to stdout as lines and totals, or as one JSON object with ``--json``; the exit is 1 when one
-is an error, else 0.
+is an error, else 0. ``check_hub`` is the same check on a given root, for ``hub setup``.
 """
 
 import os
 import stat
+from collections.abc import Sequence
 from importlib.metadata import version
 from pathlib import Path
-from typing import Annotated, Final
+from typing import Annotated, Final, NamedTuple
 
 import typer
 
@@ -39,7 +40,7 @@ from agent_hub.cli.hub_root import local_home
 from agent_hub.cli.init_report import shown_path
 from agent_hub.cli.run_children import SESSION_HIDDEN, without
 from agent_hub.core.doctor.config_rules import config_state
-from agent_hub.core.doctor.finding import LISTING_READS, Read
+from agent_hub.core.doctor.finding import LISTING_READS, Finding, Read
 from agent_hub.core.doctor.lock_rules import lock_paths, lock_state
 from agent_hub.core.doctor.registry import REGISTRY
 from agent_hub.core.doctor.run_rules import (
@@ -103,16 +104,40 @@ def doctor(
         context.fail(f"unknown rule in --only: {shown_path(unknown[0])}")
     root = root_or_exit(None)
     _hub_or_exit(root)
+    run = check_hub(root, only=wanted)
+    if isinstance(run, UsageProblem):
+        context.fail(run.message)
+    for note in run.notes:
+        typer.echo(note, err=True)
+    if as_json:
+        typer.echo(report_json(run.findings), nl=False)
+    else:
+        for line in report_lines(run.findings):
+            typer.echo(line)
+    if count_findings(run.findings).has_errors:
+        raise typer.Exit(FINDINGS_FAILED)
+
+
+class DoctorRun(NamedTuple):
+    """The findings of one check, and the selection's notes (for stderr)."""
+
+    findings: tuple[Finding, ...]
+    notes: tuple[str, ...]
+
+
+def check_hub(root: str, *, only: Sequence[str] = ()) -> DoctorRun | UsageProblem:
+    """The check of ``hub doctor`` on the hub at ``root``: same reads, same order, no output.
+
+    ``only`` holds known rule ids; a selection the config refuses is the ``UsageProblem``.
+    """
     running = version(DISTRIBUTION)
     config = config_state(read_hub_bytes(Path(root, FILE_LABEL)), running_version=running)
     # No token reaches git, which only looks for the main checkout.
     home = local_home(Path(root), environ=without(os.environ, SESSION_HIDDEN))
     local = read_local_json(home / LOCAL_FILE)
-    selection = select_rules(REGISTRY, config=config, only=wanted)
+    selection = select_rules(REGISTRY, config=config, only=only)
     if isinstance(selection, UsageProblem):
-        context.fail(selection.message)
-    for note in selection.notes:
-        typer.echo(note, err=True)
+        return selection
     snapshot = DoctorSnapshot(
         config=config,
         running_version=running,
@@ -126,14 +151,7 @@ def doctor(
         snapshot = _hub_snapshot(
             root, config=config, running=running, selection=selection, local=local, home=home
         )
-    findings = run_rules(selection, snapshot)
-    if as_json:
-        typer.echo(report_json(findings), nl=False)
-    else:
-        for line in report_lines(findings):
-            typer.echo(line)
-    if count_findings(findings).has_errors:
-        raise typer.Exit(FINDINGS_FAILED)
+    return DoctorRun(findings=run_rules(selection, snapshot), notes=selection.notes)
 
 
 def _hub_or_exit(root: str) -> None:
