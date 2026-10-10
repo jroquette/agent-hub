@@ -556,12 +556,40 @@
           "pattern": "^[^\\x00-\\x1f\\x7f]+$",
           "title": "Failed Label",
           "type": "string"
+        },
+        "states": {
+          "$ref": "#/$defs/TrackerStates"
         }
       },
       "required": [
         "kind"
       ],
       "title": "Tracker",
+      "type": "object"
+    },
+    "TrackerStates": {
+      "additionalProperties": false,
+      "description": "The workflow state names the CLI moves issues to; `review` is reserved for review.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "started": {
+          "default": "In Progress",
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Started",
+          "type": "string"
+        },
+        "review": {
+          "default": "In Review",
+          "minLength": 1,
+          "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+          "title": "Review",
+          "type": "string"
+        }
+      },
+      "title": "TrackerStates",
       "type": "object"
     }
   },
