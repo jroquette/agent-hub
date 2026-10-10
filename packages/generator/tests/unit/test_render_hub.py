@@ -4113,8 +4113,8 @@ def join_of(config: HubConfig) -> str:
     return join_section(text_of(config, "README.md"))
 
 
-def test_keeps_join_section_within_60_lines_when_readme_rendered(demo_config: HubConfig) -> None:
-    readme = text_of(demo_config, "README.md")
+def test_keeps_join_section_within_60_lines_when_readme_rendered() -> None:
+    readme = text_of(join_config(), "README.md")
 
     section = join_section(readme)
 
