@@ -227,7 +227,8 @@ prefix); one set by an earlier part, exported or inherited never counts. Nothing
 set `guard.infra`, and a `hub.json` named by `$HUB_CONFIG` cannot turn it on or widen `allow` (the mode and `allow` are
 the hook root's; that file's `prod_markers` and unusable values are added). Values in the reasons are escaped and capped
 at 100 characters. Patterns are searched with no flags, in Python 3.9 `re` syntax, on every Bash call that names a
-covered tool, with no cost cap: avoid nested quantifiers. Without `guard.infra`, the fixed rule also denies a
+covered tool, with no cost cap: avoid nested quantifiers, and end an environment pattern with `(?=\s|$)` rather
+than `\b`, which also matches a name the shell glues to more text (`demo-dev"x`). Without `guard.infra`, the fixed rule also denies a
 redirection glued to `terraform`, `aws`, `pulumi`, `kubectl` or `cdk`. Until a separate change, the generated
 `.claude/settings.json` still denies every `terraform` and `aws` command, whatever the guard decides. Accepted limits:
 tool names are matched case-sensitively (`AWS` is not seen); quoting or brace tricks inside a tool's word (`a""ws`,
