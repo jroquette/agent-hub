@@ -34,3 +34,14 @@ class RunLogError(CliError):
 
     def __init__(self, error: OSError) -> None:
         super().__init__(f"could not write the run's records: {error.strerror or error}")
+
+
+class PrStepError(CliError):
+    """A step ``hub run`` and ``hub ship`` share failed; ``reason`` says which and why.
+
+    The caller names its own stage or phase: ``hub run`` turns it into its ``StageFailure``.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
