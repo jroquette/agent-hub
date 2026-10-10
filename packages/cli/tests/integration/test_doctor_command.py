@@ -23,10 +23,12 @@ from click import unstyle
 from typer.testing import CliRunner, Result
 
 from agent_hub.cli import doctor_command
+from agent_hub.cli.doctor_report import report_lines
 from agent_hub.cli.main import app
 from agent_hub.core.doctor.brain_memory_rule import FIX as MEMORY_FIX
 from agent_hub.core.doctor.finding import Read, Rule
 from agent_hub.core.doctor.registry import REGISTRY
+from agent_hub.core.doctor.run_rules import UsageProblem, count_findings
 from agent_hub.core.hub_config.doctor_rules import Severity
 from agent_hub.core.hub_config.platform_repository import PLATFORM_REPOSITORY_MESSAGE
 from agent_hub.core.json_form import dump_json
@@ -1795,3 +1797,23 @@ class TestStopGate:
             ),
             ONE_ERROR,
         ]
+
+
+def test_returns_findings_without_exit_when_root_given_from_elsewhere(
+    demo_hub: Path, run_doctor: DoctorRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # ``hub setup`` runs the check on its hub root, whatever the current folder is.
+    elsewhere = demo_hub.parent
+    assert not (elsewhere / "hub.json").exists()
+    monkeypatch.chdir(elsewhere)
+
+    run = doctor_command.check_hub(str(demo_hub))
+
+    assert not isinstance(run, UsageProblem)
+    assert report_lines(run.findings) == lines_of(run_doctor(demo_hub), exit_code=0)
+    assert run.notes == ()
+    (demo_hub / "AGENTS.md").write_bytes(b"# edited\n")
+    monkeypatch.chdir(elsewhere)
+    edited = doctor_command.check_hub(str(demo_hub))
+    assert not isinstance(edited, UsageProblem)
+    assert count_findings(edited.findings).has_errors
