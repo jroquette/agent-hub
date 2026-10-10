@@ -390,13 +390,23 @@ class TestWrites:
             (
                 "move_state",
                 ("DEM-1", "In Progress"),
-                {"id": "DEM-1", "state": "Todo", "states": ["Todo", "In Progress"]},
+                {
+                    "id": "DEM-1",
+                    "state": "Todo",
+                    "state_type": "unstarted",
+                    "states": ["Todo", "In Progress"],
+                },
                 {"id": "DEM-1", "state": "Done"},
             ),
             (
                 "move_state",
                 ("DEM-1", "In Progress"),
-                {"id": "DEM-1", "state": "Todo", "states": ["Todo", "In Progress"]},
+                {
+                    "id": "DEM-1",
+                    "state": "Todo",
+                    "state_type": "unstarted",
+                    "states": ["Todo", "In Progress"],
+                },
                 {"id": "DEM-2", "state": "In Progress"},
             ),
             (
@@ -451,7 +461,16 @@ class TestWrites:
         assert len(runner.argvs) == 2
 
     def test_raises_when_read_reply_names_other_issue(self, hub_root: Path) -> None:
-        runner = _Scripted(_reply({"id": "DEM-2", "state": "Todo", "states": ["Todo", "Done"]}))
+        runner = _Scripted(
+            _reply(
+                {
+                    "id": "DEM-2",
+                    "state": "Todo",
+                    "state_type": "unstarted",
+                    "states": ["Todo", "Done"],
+                }
+            )
+        )
 
         with pytest.raises(TrackerError, match=r"^move_state DEM-1: the reply names another issue"):
             _client(runner, hub_root).move_state("DEM-1", "Done")
@@ -532,7 +551,14 @@ _OPERATIONS: dict[str, tuple[tuple[Any, ...], tuple[dict[str, Any], ...], str]] 
     "get_issue": (("DEM-1",), (), "get_issue DEM-1: "),
     "move_state": (
         ("DEM-1", "In Progress"),
-        ({"id": "DEM-1", "state": "Todo", "states": ["Todo", "In Progress"]},),
+        (
+            {
+                "id": "DEM-1",
+                "state": "Todo",
+                "state_type": "unstarted",
+                "states": ["Todo", "In Progress"],
+            },
+        ),
         "move_state DEM-1: ",
     ),
     "add_label": (
@@ -714,7 +740,12 @@ class TestBounds:
             _client(_Scripted(padded + b" "), hub_root).get_issue("DEM-1")
 
     def test_refuses_reply_when_names_over_bound(self, hub_root: Path) -> None:
-        read = {"id": "DEM-1", "state": "Todo", "states": ["s"] * (MAX_NAMES + 1)}
+        read = {
+            "id": "DEM-1",
+            "state": "Todo",
+            "state_type": "unstarted",
+            "states": ["s"] * (MAX_NAMES + 1),
+        }
         runner = _Scripted(_reply(read))
 
         with pytest.raises(TrackerError, match=f"more than {MAX_NAMES} names"):

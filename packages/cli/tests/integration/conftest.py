@@ -1597,9 +1597,13 @@ class RecordingTracker:
         self._call("get_issue", issue_id)
         return self._client.get_issue(issue_id)
 
-    def move_state(self, issue_id: str, state_name: str) -> None:
-        self._call("move_state", issue_id, state_name)
-        self._client.move_state(issue_id, state_name)
+    def move_state(
+        self, issue_id: str, state_name: str, *, only_if_unstarted: bool = False
+    ) -> bool:
+        # The flag is recorded only when set, so an unconditional move records as before.
+        flag = ("only_if_unstarted",) if only_if_unstarted else ()
+        self._call("move_state", issue_id, state_name, *flag)
+        return self._client.move_state(issue_id, state_name, only_if_unstarted=only_if_unstarted)
 
     def add_label(self, issue_id: str, name: str) -> None:
         self._call("add_label", issue_id, name)
