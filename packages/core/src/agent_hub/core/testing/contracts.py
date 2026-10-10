@@ -293,6 +293,92 @@ class TrackerClientContract:
 
         assert tracker_backend == before
 
+    def test_returns_moved_when_issue_moved_only_if_unstarted(
+        self, tracker_client: TrackerClient, tracker_backend: FakeTrackerBackend
+    ) -> None:
+        # DEM-1 is in Todo, an unstarted state.
+        before = copy.deepcopy(tracker_backend)
+
+        moved = tracker_client.move_state("DEM-1", "In Progress", only_if_unstarted=True)
+
+        assert moved is True
+        expected = _sorted_labels(
+            before.issues["DEM-1"].model_copy(update={"state": "In Progress"})
+        )
+        assert _sorted_labels(tracker_backend.issues["DEM-1"]) == expected
+        assert _without(tracker_backend.issues, "DEM-1") == _without(before.issues, "DEM-1")
+        assert tracker_backend.states == before.states
+        assert _labels_unchanged(before, tracker_backend)
+        assert tracker_backend.comments == before.comments
+
+    def test_keeps_started_issue_when_moved_only_if_unstarted(
+        self, tracker_client: TrackerClient, tracker_backend: FakeTrackerBackend
+    ) -> None:
+        # DEM-2 is in In Progress, a started state.
+        before = copy.deepcopy(tracker_backend)
+
+        moved = tracker_client.move_state("DEM-2", "Todo", only_if_unstarted=True)
+
+        assert moved is False
+        assert tracker_backend == before
+
+    def test_keeps_closed_issue_when_moved_only_if_unstarted(
+        self, tracker_client: TrackerClient, tracker_backend: FakeTrackerBackend
+    ) -> None:
+        # DEM-4 is in Done, a completed state.
+        before = copy.deepcopy(tracker_backend)
+
+        moved = tracker_client.move_state("DEM-4", "In Progress", only_if_unstarted=True)
+
+        assert moved is False
+        assert tracker_backend == before
+
+    def test_skips_name_check_when_started_issue_moved_only_if_unstarted(
+        self, tracker_client: TrackerClient, tracker_backend: FakeTrackerBackend
+    ) -> None:
+        # "Shipped" is no state of DEM: a started issue is left alone before the name is checked.
+        before = copy.deepcopy(tracker_backend)
+
+        moved = tracker_client.move_state("DEM-2", "Shipped", only_if_unstarted=True)
+
+        assert moved is False
+        assert tracker_backend == before
+
+    def test_raises_naming_state_when_unstarted_issue_moved_only_if_unstarted(
+        self, tracker_client: TrackerClient, tracker_backend: FakeTrackerBackend
+    ) -> None:
+        # DEM-1 is unstarted, so the flag does not skip the name check.
+        before = copy.deepcopy(tracker_backend)
+
+        error = _expecting_tracker_error(
+            lambda: tracker_client.move_state("DEM-1", "Shipped", only_if_unstarted=True)
+        )
+
+        assert str(error).startswith("move_state DEM-1: ")
+        assert "Shipped" in str(error)
+        assert tracker_backend == before
+
+    def test_keeps_state_when_unstarted_issue_moved_to_current_state_only_if_unstarted(
+        self, tracker_client: TrackerClient, tracker_backend: FakeTrackerBackend
+    ) -> None:
+        before = copy.deepcopy(tracker_backend)
+
+        moved = tracker_client.move_state("DEM-1", "Todo", only_if_unstarted=True)
+
+        assert moved is False
+        assert tracker_backend == before
+
+    def test_returns_whether_moved_when_moved_only_if_unstarted_off(
+        self, tracker_client: TrackerClient, tracker_backend: FakeTrackerBackend
+    ) -> None:
+        # Unconditional: a started issue moves too, and the current state is a no-op.
+        before = copy.deepcopy(tracker_backend)
+
+        assert tracker_client.move_state("DEM-2", "Todo") is True
+        assert tracker_backend.issues["DEM-2"].state == "Todo"
+        assert tracker_client.move_state("DEM-3", "Todo") is False
+        assert tracker_backend.issues["DEM-3"] == before.issues["DEM-3"]
+
     def test_adds_label_keeping_others_when_team_label_known(
         self, tracker_client: TrackerClient, tracker_backend: FakeTrackerBackend
     ) -> None:

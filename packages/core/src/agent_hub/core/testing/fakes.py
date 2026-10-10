@@ -7,7 +7,12 @@ from agent_hub.core.errors import TrackerError
 from agent_hub.core.events.append_plan import plan_append
 from agent_hub.core.events.event import Event, EventKey
 from agent_hub.core.events.event_store import AppendResult
-from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, Issue
+from agent_hub.core.tracker.tracker_client import (
+    CLOSED_STATE_TYPES,
+    ISSUE_ID_PATTERN,
+    UNSTARTED_STATE_TYPES,
+    Issue,
+)
 
 
 class InMemoryEventStore:
@@ -34,10 +39,19 @@ class InMemoryEventStore:
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class TrackerState:
-    """A workflow state of a team; ``closed`` marks done, canceled and duplicate states."""
+    """A workflow state of a team.
+
+    ``type`` is Linear's ``WorkflowState.type`` (``triage``, ``backlog``, ``unstarted``,
+    ``started``, ``completed``, ``canceled`` or ``duplicate``); ``closed`` is derived from it.
+    """
 
     name: str
-    closed: bool
+    type: str
+
+    @property
+    def closed(self) -> bool:
+        """True for a ``completed``, ``canceled`` or ``duplicate`` state."""
+        return self.type in CLOSED_STATE_TYPES
 
 
 @dataclass(kw_only=True, slots=True)
@@ -76,10 +90,21 @@ class InMemoryTrackerClient:
         """Return the stored issue."""
         return self._issue("get_issue", issue_id)
 
-    def move_state(self, issue_id: str, state_name: str) -> None:
-        """Move the issue to a state of its team; the current state is a no-op."""
+    def move_state(
+        self, issue_id: str, state_name: str, *, only_if_unstarted: bool = False
+    ) -> bool:
+        """Move the issue to a state of its team; the current state is a no-op (False).
+
+        With ``only_if_unstarted``, an issue in a state of another type than
+        ``UNSTARTED_STATE_TYPES`` is left alone (False) before ``state_name`` is checked.
+        """
         issue = self._issue("move_state", issue_id)
-        names = [state.name for state in self._team_states("move_state", issue_id)]
+        states = self._team_states("move_state", issue_id)
+        if only_if_unstarted:
+            types = {state.name: state.type for state in states}
+            if types.get(issue.state) not in UNSTARTED_STATE_TYPES:
+                return False
+        names = [state.name for state in states]
         if state_name not in names:
             raise TrackerError(
                 operation="move_state",
@@ -87,8 +112,10 @@ class InMemoryTrackerClient:
                 cause=f"state {state_name!r} not found in team {_team_of(issue_id)}",
                 fix=f"use one of: {', '.join(names)}",
             )
-        if issue.state != state_name:
-            self._store(issue.model_copy(update={"state": state_name}))
+        if issue.state == state_name:
+            return False
+        self._store(issue.model_copy(update={"state": state_name}))
+        return True
 
     def add_label(self, issue_id: str, name: str) -> None:
         """Add a label of the issue's team or workspace; a present label is a no-op."""

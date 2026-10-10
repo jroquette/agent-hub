@@ -251,6 +251,31 @@ def test_sends_no_mutation_when_moved_to_current_state(
     assert _operation_names(fake_linear_api) == ["IssueRef"]
 
 
+def test_sends_only_issue_ref_when_started_issue_moved_only_if_unstarted(
+    fake_linear_api: Any, synthetic_key: str, tracker_backend: FakeTrackerBackend
+) -> None:
+    before = copy.deepcopy(tracker_backend)
+
+    moved = _client(fake_linear_api, synthetic_key).move_state(
+        "DEM-2", "In Progress", only_if_unstarted=True
+    )
+
+    assert moved is False
+    assert _operation_names(fake_linear_api) == ["IssueRef"]
+    assert tracker_backend == before
+
+
+def test_selects_state_type_when_issue_ref_requested(
+    fake_linear_api: Any, synthetic_key: str
+) -> None:
+    _client(fake_linear_api, synthetic_key).move_state("DEM-1", "Todo")
+
+    (lookup,) = fake_linear_api.requests
+    assert lookup["operationName"] == "IssueRef"
+    assert re.search(r"\bstate\s*\{\s*name\s+type\s*\}", lookup["query"])
+    assert fake_linear_api.responses[0]["issue"]["state"] == {"name": "Todo", "type": "unstarted"}
+
+
 def test_sends_no_mutation_when_present_label_added(
     fake_linear_api: Any, synthetic_key: str
 ) -> None:

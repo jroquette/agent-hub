@@ -4,7 +4,12 @@ import pytest
 
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.testing.builders import a_seeded_tracker_backend, an_event, an_issue
-from agent_hub.core.testing.fakes import InMemoryEventStore, InMemoryTrackerClient
+from agent_hub.core.testing.fakes import (
+    FakeTrackerBackend,
+    InMemoryEventStore,
+    InMemoryTrackerClient,
+    TrackerState,
+)
 
 
 def test_keeps_stored_event_when_caller_mutates_appended_payload() -> None:
@@ -227,3 +232,24 @@ def test_lists_nothing_when_team_has_issues_but_no_states() -> None:
     backend.issues["XYZ-1"] = an_issue(id="XYZ-1")
 
     assert InMemoryTrackerClient(backend).list_ready("XYZ", "agent-ready") == []
+
+
+def test_moves_triage_and_backlog_issues_when_moved_only_if_unstarted() -> None:
+    # The seeded backend has no triage or backlog state: this one has both, and a started one.
+    states = (
+        TrackerState(name="Triage", type="triage"),
+        TrackerState(name="Backlog", type="backlog"),
+        TrackerState(name="In Progress", type="started"),
+    )
+    backend = FakeTrackerBackend(
+        states={"DEM": states},
+        issues={
+            "DEM-1": an_issue(id="DEM-1", state="Triage"),
+            "DEM-2": an_issue(id="DEM-2", state="Backlog"),
+        },
+    )
+    client = InMemoryTrackerClient(backend)
+
+    assert client.move_state("DEM-1", "In Progress", only_if_unstarted=True) is True
+    assert client.move_state("DEM-2", "In Progress", only_if_unstarted=True) is True
+    assert {issue.state for issue in backend.issues.values()} == {"In Progress"}
