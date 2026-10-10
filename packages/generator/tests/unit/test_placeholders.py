@@ -179,8 +179,17 @@ def test_joins_repos_in_config_order_when_order_reversed() -> None:
     assert mapping["repo_githubs"] == "acme/zeta, acme/demo-api"
 
 
-@pytest.mark.parametrize("repo_count", [1, 2], ids=["one-repo", "two-repo"])
-def test_joins_workspace_repo_fields_when_repo_lists_rendered(repo_count: int) -> None:
+@pytest.mark.parametrize(
+    ("repo_count", "dirs", "githubs"),
+    [
+        (1, "demo-api", "acme/demo-api"),
+        (2, "demo-api, demo-web", "acme/demo-api, acme/demo-web"),
+    ],
+    ids=["one-repo", "two-repo"],
+)
+def test_joins_workspace_repo_fields_when_repo_lists_rendered(
+    repo_count: int, dirs: str, githubs: str
+) -> None:
     document = a_hub_document()
     if repo_count == 2:
         document["repos"].append(a_second_repo())
@@ -188,9 +197,9 @@ def test_joins_workspace_repo_fields_when_repo_lists_rendered(repo_count: int) -
 
     mapping = substitution_mapping(config)
 
-    repos = workspace_repos(config)
-    assert mapping["repo_dirs"] == ", ".join(repo.dir for repo in repos)
-    assert mapping["repo_githubs"] == ", ".join(repo.github for repo in repos)
+    assert [repo.dir for repo in workspace_repos(config)] == dirs.split(", ")
+    assert mapping["repo_dirs"] == dirs
+    assert mapping["repo_githubs"] == githubs
 
 
 def test_takes_repo_lists_from_workspace_repos_when_mapping_built(

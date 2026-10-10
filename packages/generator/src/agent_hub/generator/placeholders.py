@@ -107,14 +107,15 @@ _SEVERAL_TEAMS_KEY: Final = (
 def substitution_mapping(config: HubConfig) -> dict[str, str]:
     """Map each placeholder name to its text; lists keep ``hub.json`` order, joined by ``, ``."""
     project = config.project
+    repos = workspace_repos(config)
     return {
         "project_name": project.name,
         "project_hub_repo": project.hub_repo,
         "project_branch_prefix": shown_prefix(config),
         "project_default_branch": project.default_branch,
         "tracker_team": config.tracker.default_team,
-        "repo_dirs": _LIST_SEPARATOR.join(repo.dir for repo in workspace_repos(config)),
-        "repo_githubs": _LIST_SEPARATOR.join(repo.github for repo in workspace_repos(config)),
+        "repo_dirs": _LIST_SEPARATOR.join(repo.dir for repo in repos),
+        "repo_githubs": _LIST_SEPARATOR.join(repo.github for repo in repos),
         "guard_deny_hosts": _LIST_SEPARATOR.join(config.guard.deny_hosts),
         "platform_repository": PLATFORM_REPOSITORY,
         "platform_repository_pattern": PLATFORM_REPOSITORY_PATTERN,
