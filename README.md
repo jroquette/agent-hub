@@ -656,7 +656,7 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `guard.deny_paths` | no | `[]` | Paths the guard never lets the agent read or edit |
 | `guard.deny_hosts` | no | `[]` | Hosts the guard blocks network calls to |
 | `guard.infra` | no | absent | Present, even `{}`, the guard classifies infra commands by environment (see the guard section); absent, the fixed infra rule |
-| `guard.infra.allow` | no | `[]` | Python `re` patterns for allowed environments, e.g. `--profile[= ]demo-dev\b` |
+| `guard.infra.allow` | no | `[]` | Python `re` patterns for allowed environments, e.g. `--profile[= ]demo-dev(?=\s|$)`; end each pattern at whitespace or the end, since `\b` also matches `demo-dev"x`, a different profile to the shell |
 | `guard.infra.prod_markers` | no | `[]` | Python `re` patterns that mark production; a match anywhere in an infra command blocks it |
 | `modules` | no | `{}` | Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`), from 0.6.0: each selected one renders its files and `mk/<id>.mk`; `contract-sync` takes `{"source": <repo dir>, "target": <repo dir>}`, the others `{}` |
 | `doctor.rules` | no | `{}` | Per-rule `hub doctor` settings |

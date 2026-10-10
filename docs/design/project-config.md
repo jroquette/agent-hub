@@ -89,7 +89,9 @@ retype); brain frontmatter lists repo dirs unquoted (no type resolution). A safe
   literal holds no control, format or line-separator character (Unicode Cc, Cf, Zl, Zp), backtick or brace.
 - Infra patterns: non-blank, no control character, compiling with Python's `re` (no repeat count overflow such as
   `a{4294967296}`, no too-deep nesting); searched (`re.search`) with no flags in Python 3.9 `re` syntax (the hooks run
-  on the system `python3`). Avoid nested quantifiers: `(a+)+$` takes over a second on a 25-character input.
+  on the system `python3`). Avoid nested quantifiers: `(a+)+$` takes over a second on a 25-character input. End an
+  environment pattern with `(?=\s|$)`, not `\b`: the shell glues `demo-dev"x` or `demo-dev\2` into another name that
+  `\b` still matches.
 
 ### Versioning
 
