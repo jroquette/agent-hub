@@ -51,6 +51,22 @@ describe("CommandPalette", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("drops a search hit whose href is not an in-app path", async () => {
+    renderWithApi(<CommandPalette onClose={vi.fn()} initialQuery="run" />, {
+      routes: {
+        "/api/v1/search": aPage([
+          aSearchHit({ kind: "run", label: "Run evil", href: "javascript:alert(1)" }),
+          aSearchHit({ kind: "run", label: "Run outside", href: "//evil.example/x" }),
+          aSearchHit({ kind: "run", label: "Run a1b2c3d4", href: "/runs/a1b2c3d4e5f6" }),
+        ]),
+      },
+    });
+
+    expect(await screen.findByText("Run a1b2c3d4")).toBeInTheDocument();
+    expect(screen.queryByText("Run evil")).not.toBeInTheDocument();
+    expect(screen.queryByText("Run outside")).not.toBeInTheDocument();
+  });
+
   it("says what to try when nothing matches", async () => {
     renderWithApi(<CommandPalette onClose={vi.fn()} initialQuery="brain_memry" />, {
       routes: { "/api/v1/search": aPage([]) },

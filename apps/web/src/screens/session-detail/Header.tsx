@@ -10,6 +10,7 @@ import {
   Tooltip,
   copyText,
   useCopied,
+  OutsideLink,
 } from "../../components";
 import { fmtAgo, fmtClock, fmtDuration, fmtInt, fmtMoney } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
@@ -97,17 +98,11 @@ export function Header({ session, now, staleSince }: HeaderProps) {
           </AppLink>
         )}
         {session.pr ? (
-          <a
-            className="ah-row ah-small"
-            href={session.pr.url}
-            target="_blank"
-            rel="noreferrer"
-            style={{ gap: 4 }}
-          >
+          <OutsideLink className="ah-row ah-small" href={session.pr.url} style={{ gap: 4 }}>
             <Icon name="git-pull-request" size="sm" />
             PR #{session.pr.number} {session.pr.state}
             <Icon name="arrow-up-right" size="sm" />
-          </a>
+          </OutsideLink>
         ) : null}
         <IconButton
           icon={copied ? "check" : "link"}
