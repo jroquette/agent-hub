@@ -53,7 +53,7 @@ from agent_hub.cli.run_children import pr_body_command, pr_edit_command, push_en
 from agent_hub.cli.run_report import apply_writes
 from agent_hub.cli.ship_set import ShipTarget
 from agent_hub.core.errors import TrackerError
-from agent_hub.core.runner.report_writes import call_line, success_writes
+from agent_hub.core.runner.report_writes import TrackerWrite, call_line, success_writes
 from agent_hub.core.runner.ship_texts import ship_body, ship_comment, with_related
 from agent_hub.core.tracker.tracker_client import Issue, TrackerClient
 
@@ -311,14 +311,10 @@ def _push_and_open(run: ShipRun, target: ShipTarget) -> str:
     except PrStepError as error:
         raise _StepError(PUSH_STEP, error.reason) from None
     try:
-        # The newest commit's subject, as hub run's (spec Q-1).
-        subject = git_output(
-            child, "log", "-1", "--format=%s", environ=run.environ, timeout=timeouts.git
-        )
         opened = open_or_find_pr(
             child,
             target=pr_target,
-            title=_title(run, target, subject),
+            title=pr_title(run, target, child),
             body=ship_body(issue_id=run.issue.id, issue_url=run.issue.url),
             draft=run.draft,
             environ=run.environ,
@@ -330,9 +326,13 @@ def _push_and_open(run: ShipRun, target: ShipTarget) -> str:
     return opened.url
 
 
-def _title(run: ShipRun, target: ShipTarget, subject: str) -> str:
-    """The PR title, following the repo's conventions; one warning when ``commit_title`` does
-    not match the subject (as hub run's E12)."""
+def pr_title(run: ShipRun, target: ShipTarget, child: ChildCall) -> str:
+    """The PR title: the newest commit's subject (as hub run's, spec Q-1, read with ``git log``)
+    following the repo's conventions; one warning when ``commit_title`` does not match it (as
+    hub run's E12). A failed read is a ``PrStepError``."""
+    subject = git_output(
+        child, "log", "-1", "--format=%s", environ=run.environ, timeout=step_timeouts().git
+    )
     conventions = target.conventions
     titled = titled_pr(
         subject, conventions=conventions, issue_id=run.issue.id, workspace=str(run.hub.parent)
@@ -384,7 +384,7 @@ def _body_file(run: ShipRun, target: ShipTarget, body: str) -> Iterator[Path]:
     """``body`` in ``<hub>/.agent-runs/ship/<ISSUE>-<repo>.body``, owner-only, for ``gh pr edit
     --body-file``: one argv string of 128 KiB or more fails with E2BIG on Linux, and a body
     can be longer. The file is removed when the block ends, however it ends."""
-    path = check_log_path(run.hub, issue_id=run.issue.id, repo=target.repo).with_suffix(".body")
+    path = body_file_path(run, target)
     try:
         folder = _private_folder(run.hub)
     except OSError as error:
@@ -404,6 +404,11 @@ def _body_file(run: ShipRun, target: ShipTarget, body: str) -> Iterator[Path]:
                 os.unlink(path.name, dir_fd=folder)
     finally:
         os.close(folder)
+
+
+def body_file_path(run: ShipRun, target: ShipTarget) -> Path:
+    """Where the link phase writes the body ``gh pr edit --body-file`` reads for ``target``."""
+    return check_log_path(run.hub, issue_id=run.issue.id, repo=target.repo).with_suffix(".body")
 
 
 def _body_file_error(path: Path, error: OSError) -> _StepError:
@@ -431,12 +436,7 @@ def _body_of(read: ChildResult, *, url: str) -> str:
 
 def _report(run: ShipRun, urls: Sequence[str]) -> None:
     """The tracker writes of a shipped issue, in order, stopping at the first that fails."""
-    writes = success_writes(
-        run.issue,
-        review_state=run.review_state,
-        failed_label=run.failed_label,
-        comment=ship_comment(urls=urls, workspace=str(run.hub.parent)),
-    )
+    writes = tracker_writes(run, urls)
     outcome = apply_writes(run.client, writes)
     if outcome.error is None:
         return
@@ -454,6 +454,17 @@ def _report(run: ShipRun, urls: Sequence[str]) -> None:
         *not_moved,
         f"{PREFIX}: not confirmed: {shown_text(call_line(failed))} {UNCONFIRMED_HINT}",
         *(f"{PREFIX}: not done: {shown_text(call_line(write))}" for write in later),
+    )
+
+
+def tracker_writes(run: ShipRun, urls: Sequence[str]) -> tuple[TrackerWrite, ...]:
+    """The writes of a ship that opened ``urls``: the move to the review state, the failed
+    label removed when the issue read carries it, the comment listing the PRs."""
+    return success_writes(
+        run.issue,
+        review_state=run.review_state,
+        failed_label=run.failed_label,
+        comment=ship_comment(urls=urls, workspace=str(run.hub.parent)),
     )
 
 

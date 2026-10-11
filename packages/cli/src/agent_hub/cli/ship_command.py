@@ -16,21 +16,41 @@ import typer
 
 from agent_hub.cli.command_exits import fail
 from agent_hub.cli.effective_config import effective_with_prefix_or_fail
-from agent_hub.cli.errors import ShipError
+from agent_hub.cli.errors import PrStepError, ShipError
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
 from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit
 from agent_hub.cli.init_report import shown_text
-from agent_hub.cli.run_children import CHILD_HIDDEN, without
+from agent_hub.cli.run_children import (
+    CHILD_HIDDEN,
+    gate_command,
+    pr_create_command,
+    pr_edit_command,
+    push_command,
+    without,
+    would_run_line,
+)
 from agent_hub.cli.ship_set import ShipSet, issue_from_cwd, shipping_set
-from agent_hub.cli.ship_steps import PREFIX, ShipRun, ship_issue, tracker_failure_line
+from agent_hub.cli.ship_steps import (
+    PREFIX,
+    ShipRun,
+    body_file_path,
+    pr_title,
+    ship_child,
+    ship_issue,
+    tracker_failure_line,
+    tracker_writes,
+)
 from agent_hub.cli.tracker_client import missing_key_line, resolve_tracker_client, transport_line
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.team_keys import team_of, teams_text
-from agent_hub.core.runner.report_writes import REVIEW_STATE
+from agent_hub.core.runner.report_writes import REVIEW_STATE, call_line
+from agent_hub.core.runner.ship_texts import ship_body
 from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, Issue, TrackerClient
 
 COMMAND: Final = "ship"
+# A PR url in the dry run's link edits and comment: the PRs are not opened.
+DRY_RUN_URL: Final = "<PR url of {repo}>"
 NOT_IN_TASK_WORKTREE: Final = (
     "give ISSUE or run hub ship from a task worktree (<repo>/.claude/worktrees/<team>-<n>[-<desc>])"
 )
@@ -85,8 +105,7 @@ def ship(
     except ShipError as error:
         fail(f"{PREFIX}: {error}")
     _print_set(found)
-    if dry_run:
-        return
+    # One ShipRun for both paths: the dry run prints the writes the live ship would make.
     ship_run = ShipRun(
         targets=found.targets,
         issue=picked,
@@ -97,6 +116,9 @@ def ship(
         review_state=REVIEW_STATE,
         failed_label=config.tracker.failed_label,
     )
+    if dry_run:
+        _print_dry_run(ship_run)
+        return
     raise typer.Exit(ship_issue(ship_run))
 
 
@@ -105,6 +127,35 @@ def _print_set(found: ShipSet) -> None:
         typer.echo(f"ship: {target.repo}  {shown_text(target.branch)}")
     for target in found.skipped:
         typer.echo(f"skipped: {target.repo} (no commits ahead of origin/{shown_text(target.base)})")
+
+
+def _print_dry_run(run: ShipRun) -> None:
+    """Every child and tracker write a live ship would make, per target in ``hub.json`` order;
+    the PRs' urls are placeholders. Only git reads run (each title's ``git log``): no check,
+    push or ``gh``, no tracker write, no log or body file."""
+    urls = tuple(DRY_RUN_URL.format(repo=target.repo) for target in run.targets)
+    body = ship_body(issue_id=run.issue.id, issue_url=run.issue.url)
+    for target, url in zip(run.targets, urls, strict=True):
+        cwd = target.worktree
+        try:
+            title = pr_title(run, target, ship_child(cwd))
+        except PrStepError as error:
+            fail(f"{PREFIX}: {target.repo}: {error.reason}")
+        pr = pr_create_command(
+            github=target.github,
+            base=target.base,
+            branch=target.branch,
+            title=title,
+            body=body,
+            draft=run.draft,
+        )
+        for argv in (gate_command(target.check), push_command(target.branch), pr):
+            typer.echo(would_run_line(argv, cwd=cwd))
+        if len(urls) > 1:
+            edit = pr_edit_command(url, body_file_path(run, target))
+            typer.echo(would_run_line(edit, cwd=cwd))
+    for write in tracker_writes(run, urls):
+        typer.echo(f"would call: {shown_text(call_line(write))}")
 
 
 def _cwd_issue(context: typer.Context, config: HubConfig, workspace: Path) -> str:

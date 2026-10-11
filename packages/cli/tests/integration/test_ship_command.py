@@ -19,7 +19,7 @@ from typer.testing import Result
 
 from agent_hub.cli import run_steps, ship_command, ship_set, ship_steps
 from agent_hub.cli.child_process import ChildResult, run_child
-from agent_hub.cli.run_children import push_command
+from agent_hub.cli.run_children import push_command, shown_command
 from agent_hub.core.doctor.text_rules import ATTRIBUTIONS
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.runner.run_texts import ROBOT
@@ -2024,3 +2024,137 @@ class TestShipLongBodies:
             "DEM-7-demo-api.log",
             "DEM-7-demo-web.log",
         ]
+
+
+DRY_API_PR = "<PR url of demo-api>"
+DRY_WEB_PR = "<PR url of demo-web>"
+GIT_READS = {"branch", "rev-list", "log"}
+
+
+def git_subcommand(argv: list[str]) -> str:
+    """The git subcommand of ``argv``: the first argument after the ``-c`` options."""
+    rest = argv[1:]
+    while rest[0] == "-c":
+        rest = rest[2:]
+    return rest[0]
+
+
+@pytest.mark.usefixtures("with_key")
+class TestShipDryRun:
+    def test_prints_children_and_writes_when_dry_run(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        api, web = both_ahead(make_task_worktree)
+
+        result = ship_live(ship_workspace, run_command, child_calls, "--dry-run")
+
+        assert result.exit_code == 0, result.output
+        api_body = body_file(ship_workspace, "demo-api")
+        web_body = body_file(ship_workspace, "demo-web")
+        api_title, web_title = "feat(api): add x (DEM-7)", "feat(web): add y (DEM-7)"
+        assert result.stdout.splitlines() == [
+            "ship: demo-api  jdoe/dem-7-x",
+            "ship: demo-web  jdoe/dem-7",
+            f"would run: bash -c 'make check'   (cwd {api})",
+            f"would run: {shown_command(push_command('jdoe/dem-7-x'))}   (cwd {api})",
+            f"would run: {shown_command(create_call(API_GITHUB, 'jdoe/dem-7-x', api_title))}"
+            f"   (cwd {api})",
+            f"would run: gh pr edit '{DRY_API_PR}' --body-file {api_body}   (cwd {api})",
+            f"would run: bash -c 'make check'   (cwd {web})",
+            f"would run: {shown_command(push_command('jdoe/dem-7'))}   (cwd {web})",
+            f"would run: {shown_command(create_call('acme/demo-web', 'jdoe/dem-7', web_title))}"
+            f"   (cwd {web})",
+            f"would run: gh pr edit '{DRY_WEB_PR}' --body-file {web_body}   (cwd {web})",
+            f"would call: move_state({ISSUE}, In Review)",
+            "would call: "
+            + json.dumps(f"comment({ISSUE}, Pull requests:\n- {DRY_API_PR}\n- {DRY_WEB_PR})"),
+        ]
+
+    def test_adds_draft_when_dry_run_draft(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        api = make_task_worktree("demo-api", "dem-7-x", ["feat(api): add x (DEM-7)"])
+
+        result = ship_live(ship_workspace, run_command, child_calls, "--dry-run", "--draft")
+
+        assert result.exit_code == 0, result.output
+        creates = [line for line in result.stdout.splitlines() if " gh pr create " in line]
+        draft = create_call(API_GITHUB, "jdoe/dem-7-x", "feat(api): add x (DEM-7)", draft=True)
+        assert creates == [f"would run: {shown_command(draft)}   (cwd {api})"]
+        # One PR: nothing to link.
+        assert " gh pr edit " not in result.stdout
+
+    def test_reads_issue_once_when_dry_run(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        both_ahead(make_task_worktree)
+
+        result = ship_live(ship_workspace, run_command, child_calls, "--dry-run")
+
+        assert result.exit_code == 0, result.output
+        assert tracker.calls == [("get_issue", ISSUE)]
+        assert tracker.backend.issues[ISSUE].state != "In Review"
+
+    def test_runs_only_git_reads_when_dry_run(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        both_ahead(make_task_worktree)
+
+        result = ship_live(ship_workspace, run_command, child_calls, "--dry-run")
+
+        assert result.exit_code == 0, result.output
+        assert set(child_calls.programs()) == {"git"}
+        assert {git_subcommand(call.argv) for call in child_calls.calls} <= GIT_READS
+        assert "log" in {git_subcommand(call.argv) for call in child_calls.calls}
+        for tool in ("gh", "make"):
+            assert ship_workspace.calls(tool) == []
+        assert ship_workspace.prs() == []
+
+    def test_leaves_workspace_unchanged_when_dry_run(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+        tree_digest: Callable[..., Any],
+    ) -> None:
+        api, web = both_ahead(make_task_worktree)
+        # Stale stat data: a read that may refresh the index (git status) would rewrite it.
+        for worktree in (api, web):
+            for tracked in worktree.glob("*.md"):
+                os.utime(tracked, (time.time() + 5, time.time() + 5))
+        workspace = ship_workspace.workspace.hub.parent
+        before = tree_digest(workspace)
+
+        result = ship_live(ship_workspace, run_command, child_calls, "--dry-run")
+
+        assert result.exit_code == 0, result.output
+        assert tree_digest(workspace) == before
+        assert not (ship_workspace.workspace.hub / ".agent-runs" / "ship").exists()
+        assert not log_path(ship_workspace, "demo-api").exists()
