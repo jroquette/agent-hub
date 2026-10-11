@@ -166,12 +166,16 @@ class HubFilesReadModels:
         )
 
     def get_feature(self, project: str, slug: str) -> FeatureDetail:
-        """One feature with its acceptance criteria."""
-        found = self._project(project)
+        """One feature with its acceptance criteria; an unknown project is an unknown feature."""
+        missing = EntityNotFoundError(entity="feature", entity_id=f"{project}/{slug}")
+        try:
+            found = self._project(project)
+        except EntityNotFoundError:
+            raise missing from None
         for folder in self._reader.feature_folders(found.path):
             if folder.slug == slug:
                 return feature_detail(folder, project=found.name)
-        raise EntityNotFoundError(entity="feature", entity_id=f"{project}/{slug}")
+        raise missing
 
     def doctor_findings(self, scope: Scope) -> Page[FindingView]:
         """Doctor findings of every scoped hub that names its project, in ``hub doctor`` order."""
