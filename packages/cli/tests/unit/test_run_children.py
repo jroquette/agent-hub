@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 from agent_hub.cli.child_process import ChildResult
-from agent_hub.cli.run_children import RunChildren, RunOptions, push_env
+from agent_hub.cli.run_children import RunChildren, RunOptions, push_env, session_env
 from agent_hub.cli.worktree_steps import worktree_task
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing.builders import (
@@ -324,3 +324,24 @@ def test_passes_full_gate_when_repo_has_no_fast_gate(fast_gate: str | None) -> N
     tools = allowed_tools(argv)
     assert tools.count("Bash(tox:*)") == 1
     assert "Bash(:*)" not in tools
+
+
+def test_sets_agent_hub_run_variables_when_session_env_built() -> None:
+    env = session_env(
+        {"PATH": "/bin", "AGENT_HUB_STEP": "stale", "LINEAR_API_KEY": "x"},
+        repo="demo-api",
+        issue_id="DEM-1",
+        run_id="1a2b3c4d",
+    )
+
+    assert env["AGENT_HUB_RUN_ID"] == "1a2b3c4d"
+    assert env["AGENT_HUB_STEP"] == "implement"
+    assert env["AGENT_HUB_ATTEMPT"] == "1"
+    assert env["OTEL_RESOURCE_ATTRIBUTES"] == "repo=demo-api,issue=DEM-1,agent_run=1a2b3c4d"
+    assert "LINEAR_API_KEY" not in env
+
+
+def test_passes_attempt_when_agent_hub_run_session_retried() -> None:
+    env = session_env({}, repo="demo-api", issue_id="DEM-1", run_id="1a2b3c4d", attempt=2)
+
+    assert env["AGENT_HUB_ATTEMPT"] == "2"
