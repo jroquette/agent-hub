@@ -1,12 +1,16 @@
 """In-memory fakes of the core ports, used by unit tests and checked by the contract suites."""
 
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.events.append_plan import plan_append
 from agent_hub.core.events.event import Event, EventKey
+from agent_hub.core.events.event_query import EventPage, EventQuery
 from agent_hub.core.events.event_store import AppendResult
+from agent_hub.core.events.stored_event import StoredEvent
 from agent_hub.core.tracker.tracker_client import (
     CLOSED_STATE_TYPES,
     ISSUE_ID_PATTERN,
@@ -16,25 +20,72 @@ from agent_hub.core.tracker.tracker_client import (
 
 
 class InMemoryEventStore:
-    """An ``EventStore`` kept in memory; it plans the whole batch before changing anything."""
+    """An ``EventStore`` kept in memory; it plans the whole batch before changing anything.
+
+    Like the SQLite store, it mints a UUIDv7 ``event_id`` and a ``received_at`` for each new
+    event, and numbers events from 1 in append order.
+    """
 
     def __init__(self) -> None:
         self._by_key: dict[EventKey, Event] = {}
-        self._events: list[Event] = []
+        self._stored: list[StoredEvent] = []
 
     def append(self, events: Sequence[Event]) -> AppendResult:
         """Append the new events of the batch; a conflict raises before any change."""
         plan = plan_append(events, self._by_key)
+        received_at = datetime.now(UTC)
         for event in plan.new_events:
             # Event is frozen only shallowly: keep a copy, so the caller's payload stays theirs.
-            stored = event.model_copy(deep=True)
-            self._by_key[event.key] = stored
-            self._events.append(stored)
+            copied = event.model_copy(deep=True)
+            self._by_key[event.key] = copied
+            self._stored.append(
+                StoredEvent(
+                    seq=len(self._stored) + 1,
+                    event_id=str(uuid.uuid7()),
+                    received_at=received_at,
+                    event=copied,
+                )
+            )
         return AppendResult(appended=len(plan.new_events), duplicates=plan.duplicates)
 
     def read_all(self) -> list[Event]:
         """Return every stored event in the order it was appended."""
-        return [event.model_copy(deep=True) for event in self._events]
+        return [stored.event.model_copy(deep=True) for stored in self._stored]
+
+    def query(self, query: EventQuery) -> EventPage:
+        """The stored events matching ``query`` (see ``EventReader.query``)."""
+        matching = [stored for stored in self._stored if _matches(stored, query)]
+        if query.order == "desc":
+            matching.reverse()
+        items = tuple(stored.model_copy(deep=True) for stored in matching[: query.limit])
+        has_more = len(matching) > query.limit
+        next_after_seq = items[-1].seq if has_more and query.order == "asc" else None
+        return EventPage(items=items, next_after_seq=next_after_seq)
+
+    def find(self, event_id: str) -> StoredEvent | None:
+        """The stored event with this storage id, or None."""
+        for stored in self._stored:
+            if stored.event_id == event_id:
+                return stored.model_copy(deep=True)
+        return None
+
+    def high_water_mark(self) -> int:
+        """The last append sequence, 0 when empty."""
+        return len(self._stored)
+
+
+def _matches(stored: StoredEvent, query: EventQuery) -> bool:
+    event = stored.event
+    checks = (
+        query.project is None or event.project == query.project,
+        query.session is None or event.session == query.session,
+        not query.types or event.type in query.types,
+        query.since is None or event.timestamp >= query.since,
+        query.until is None or event.timestamp < query.until,
+        query.after_seq is None or stored.seq > query.after_seq,
+        query.before_seq is None or stored.seq < query.before_seq,
+    )
+    return all(checks)
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

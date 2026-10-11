@@ -8,12 +8,16 @@ suite's fixtures (``event_store``; ``tracker_client`` and ``tracker_backend``) a
 """
 
 import copy
+import re
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime, timedelta
 from functools import partial
 
 from agent_hub.core.errors import EventConflictError, TrackerError
-from agent_hub.core.events.event import Event
+from agent_hub.core.events.event import Event, EventType
+from agent_hub.core.events.event_query import EventQuery
 from agent_hub.core.events.event_store import AppendResult, EventStore
+from agent_hub.core.events.stored_event import UUID_TEXT_PATTERN
 from agent_hub.core.testing.builders import an_event, an_issue
 from agent_hub.core.testing.fakes import FakeTrackerBackend
 from agent_hub.core.tracker.tracker_client import Issue, TrackerClient
@@ -123,6 +127,166 @@ class EventStoreContract:
 
         assert result == AppendResult(appended=0, duplicates=0)
         assert event_store.read_all() == []
+
+
+_QUERY_START = datetime(2026, 9, 27, 10, 0, tzinfo=UTC)
+
+
+def _query_fixture(event_store: EventStore) -> list[Event]:
+    # Six events over two projects, two sessions and three types, one minute apart.
+    events = [
+        an_event(project="demo", session="s1", type="session.start", timestamp=_QUERY_START),
+        an_event(project="demo", session="s1", timestamp=_QUERY_START + timedelta(minutes=1)),
+        an_event(
+            project="demo",
+            session="s2",
+            type="message",
+            timestamp=_QUERY_START + timedelta(minutes=2),
+        ),
+        an_event(project="other", session="s1", timestamp=_QUERY_START + timedelta(minutes=3)),
+        an_event(
+            project="demo",
+            session="s1",
+            type="message",
+            timestamp=_QUERY_START + timedelta(minutes=4),
+        ),
+        an_event(project="demo", session="s2", timestamp=_QUERY_START + timedelta(minutes=5)),
+    ]
+    event_store.append(events)
+    return events
+
+
+class EventReaderContract:
+    """What every ``EventStore`` read does: bounded queries, lookups by id, the high-water mark.
+
+    Runs with the same ``event_store`` fixture as ``EventStoreContract``.
+    """
+
+    def test_returns_events_in_append_order_when_query_unfiltered(
+        self, event_store: EventStore
+    ) -> None:
+        events = _query_fixture(event_store)
+
+        page = event_store.query(EventQuery())
+
+        assert [stored.event for stored in page.items] == events
+        seqs = [stored.seq for stored in page.items]
+        assert seqs == sorted(seqs)
+        assert len(set(seqs)) == len(seqs)
+        assert page.next_after_seq is None
+
+    def test_mints_distinct_uuid_ids_when_events_appended(self, event_store: EventStore) -> None:
+        _query_fixture(event_store)
+
+        items = event_store.query(EventQuery()).items
+
+        ids = [stored.event_id for stored in items]
+        assert len(set(ids)) == len(ids)
+        assert all(re.fullmatch(UUID_TEXT_PATTERN, event_id) for event_id in ids)
+        assert all(stored.received_at is not None for stored in items)
+
+    def test_filters_by_project_and_session_when_both_given(self, event_store: EventStore) -> None:
+        events = _query_fixture(event_store)
+
+        page = event_store.query(EventQuery(project="demo", session="s1"))
+
+        assert [stored.event for stored in page.items] == [events[0], events[1], events[4]]
+
+    def test_filters_by_types_when_types_given(self, event_store: EventStore) -> None:
+        events = _query_fixture(event_store)
+
+        page = event_store.query(
+            EventQuery(types=frozenset({EventType.MESSAGE, EventType.SESSION_START}))
+        )
+
+        assert [stored.event for stored in page.items] == [events[0], events[2], events[4]]
+
+    def test_keeps_since_and_drops_until_when_time_range_given(
+        self, event_store: EventStore
+    ) -> None:
+        events = _query_fixture(event_store)
+
+        page = event_store.query(
+            EventQuery(
+                since=_QUERY_START + timedelta(minutes=1),
+                until=_QUERY_START + timedelta(minutes=4),
+            )
+        )
+
+        assert [stored.event for stored in page.items] == events[1:4]
+
+    def test_reads_sequence_window_when_after_and_before_seq_given(
+        self, event_store: EventStore
+    ) -> None:
+        _query_fixture(event_store)
+        seqs = [stored.seq for stored in event_store.query(EventQuery()).items]
+
+        page = event_store.query(EventQuery(after_seq=seqs[1], before_seq=seqs[4]))
+
+        assert [stored.seq for stored in page.items] == seqs[2:4]
+
+    def test_pages_with_next_after_seq_when_limit_reached(self, event_store: EventStore) -> None:
+        events = _query_fixture(event_store)
+
+        first = event_store.query(EventQuery(limit=4))
+        second = event_store.query(EventQuery(limit=4, after_seq=first.next_after_seq))
+
+        assert [stored.event for stored in first.items] == events[:4]
+        assert first.next_after_seq == first.items[-1].seq
+        assert [stored.event for stored in second.items] == events[4:]
+        assert second.next_after_seq is None
+
+    def test_ends_paging_when_limit_equals_remaining_events(self, event_store: EventStore) -> None:
+        _query_fixture(event_store)
+
+        page = event_store.query(EventQuery(limit=6))
+
+        assert len(page.items) == 6
+        assert page.next_after_seq is None
+
+    def test_returns_newest_first_when_order_desc(self, event_store: EventStore) -> None:
+        events = _query_fixture(event_store)
+
+        page = event_store.query(EventQuery(order="desc", limit=2))
+        older = event_store.query(EventQuery(order="desc", limit=10, before_seq=page.items[-1].seq))
+
+        assert [stored.event for stored in page.items] == [events[5], events[4]]
+        assert page.next_after_seq is None
+        assert [stored.event for stored in older.items] == list(reversed(events[:4]))
+
+    def test_finds_stored_event_when_event_id_known(self, event_store: EventStore) -> None:
+        _query_fixture(event_store)
+        third = event_store.query(EventQuery()).items[2]
+
+        assert event_store.find(third.event_id) == third
+
+    def test_finds_nothing_when_event_id_unknown(self, event_store: EventStore) -> None:
+        _query_fixture(event_store)
+
+        assert event_store.find("01929a4e-6c1d-7f3a-9b2e-5d1c0a8e4f17") is None
+
+    def test_reports_zero_high_water_mark_when_store_empty(self, event_store: EventStore) -> None:
+        assert event_store.high_water_mark() == 0
+
+    def test_moves_high_water_mark_to_last_seq_when_events_appended(
+        self, event_store: EventStore
+    ) -> None:
+        _query_fixture(event_store)
+
+        assert event_store.high_water_mark() == event_store.query(EventQuery()).items[-1].seq
+
+    def test_keeps_high_water_mark_and_ids_when_duplicates_appended(
+        self, event_store: EventStore
+    ) -> None:
+        events = _query_fixture(event_store)
+        before = event_store.query(EventQuery()).items
+        mark = event_store.high_water_mark()
+
+        result = event_store.append(events)
+
+        assert result == AppendResult(appended=0, duplicates=len(events))
+        assert event_store.high_water_mark() == mark
+        assert event_store.query(EventQuery()).items == before
 
 
 def _expecting_tracker_error(call: Callable[[], object]) -> TrackerError:
