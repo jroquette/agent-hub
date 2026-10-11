@@ -10,6 +10,7 @@ from agent_hub.api.rfc9457 import (
     hub_conflict_problem,
     hub_invalid_problem,
     hub_registry_problem,
+    invalid_cursor_problem,
     not_found_problem,
     problem,
 )
@@ -138,3 +139,23 @@ def test_answers_registered_problem_when_extra_error_raised(open_client: Any, fa
     assert response.status_code == 422
     assert response.json()["title"] == "No hub.json"
     assert response.json()["errors"] == []
+
+
+class InvalidCursorError(Exception):
+    """Stands in for core/readmodels/cursor's error until the composition registers it."""
+
+
+def test_names_cursor_parameter_when_invalid_cursor_raised(open_client: Any, fakes: Any) -> None:
+    events = fakes.EventReadModels(failure=InvalidCursorError("bad base64"))
+
+    with open_client(
+        ports=ApiPorts(event_read_models=events),
+        problems={InvalidCursorError: invalid_cursor_problem},
+    ) as client:
+        response = client.get("/api/v1/sessions", params={"cursor": "garbage"})
+
+    assert response.status_code == 400
+    assert response.json()["errors"] == [
+        {"parameter": "cursor", "message": "not a cursor this server issued"}
+    ]
+    assert "bad base64" not in response.text
