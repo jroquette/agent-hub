@@ -279,3 +279,13 @@ def test_lists_findings_in_doctor_shape_when_scoped() -> None:
     assert findings[0].severity in set(Severity)
     assert again == findings
     assert reader.snapshots == {DEMO: 1}
+
+
+def test_raises_not_found_when_scoped_project_has_no_readable_hub() -> None:
+    # OTHER is registered but its hub.json cannot be read: no readable hub names "other".
+    models, _, _ = read_models({DEMO: a_demo_hub()}, DEMO, OTHER)
+
+    with pytest.raises(EntityNotFoundError) as raised:
+        models.doctor_findings(Scope(project="other"))
+
+    assert raised.value.entity_id == "other"

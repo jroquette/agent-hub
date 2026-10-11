@@ -56,3 +56,19 @@ def test_lists_only_scoped_project_when_two_hubs_registered(
 
     assert _api_findings(composed, "other") == _doctor_json(other, monkeypatch)
     assert _api_findings(composed, "demo") == _doctor_json(demo, monkeypatch)
+
+
+def test_answers_not_found_problem_when_registered_hub_becomes_unreadable(
+    composed: Any, make_hub: Callable[..., Path]
+) -> None:
+    hub = make_hub()
+    assert composed.client.post("/api/v1/hubs", json={"path": str(hub)}).status_code == 201
+    (hub / "hub.json").write_text("{not json", encoding="utf-8")
+
+    response = composed.client.get("/api/v1/doctor/findings", params={"project": "demo"})
+
+    assert response.status_code == 404, response.text
+    assert response.headers["content-type"] == "application/problem+json"
+    assert "demo" in response.json()["detail"]
+    [view] = composed.client.get("/api/v1/hubs").json()["items"]
+    assert view["valid"] is False
