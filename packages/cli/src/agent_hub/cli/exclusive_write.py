@@ -24,7 +24,8 @@ def write_exclusive(folder: Path, name: str, content: bytes, *, mode: int = 0o64
     writable, a file system without hard links, a clash on the temp name) is raised, even when
     the name also exists; its message names paths, so a caller shows only its ``strerror``.
     Once the link is made, nothing turns the True into an error: syncing the folder and
-    removing the temp are best effort.
+    removing the temp are best effort. A temp left after a failed removal holds the whole
+    ``content`` at the final ``mode``, never a partial write.
     """
     temp = folder / f".{name}{TEMP_INFIX}{secrets.token_hex(4)}"
     descriptor = os.open(temp, _TEMP_FLAGS, 0o600)
