@@ -3,6 +3,7 @@ from datetime import timedelta
 from agent_hub.core.events.event import EventSource
 from agent_hub.core.readmodels.fact_keys import (
     canonical_events,
+    canonical_part,
     fact_key,
     resolve_facts,
     usage_key,
@@ -138,3 +139,21 @@ def test_keys_learning_proposal_by_proposal_when_hook_and_transcript_report_it()
 
     assert fact_key(transcript_copy) == fact_key(hook_copy) == "learning.proposed:toolu_9"
     assert fact_key(an_event(type="learning.proposed", payload={})) is None
+
+
+def test_returns_input_unchanged_when_events_already_canonical() -> None:
+    ordered = canonical_events(shuffled(as_stored(a_session_events()), seed=3))
+
+    again = canonical_events(ordered)
+
+    assert again is ordered
+    assert canonical_events(list(ordered)) == ordered
+
+
+def test_keeps_part_canonical_when_part_of_canonical_events_marked() -> None:
+    ordered = canonical_events(as_stored(a_session_events()))
+
+    part = canonical_part(ordered[::2])
+
+    assert canonical_events(part) is part
+    assert part == ordered[::2]
