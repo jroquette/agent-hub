@@ -3,8 +3,9 @@
 The hub is ``AGENT_HUB_ROOT`` when ``./hub`` exports it, else the current folder; without a
 ``hub.json`` entry there the exit is 2. ``hub.json`` is read once: any problem with it, a pin
 other than this release included (plan E1), prints the reader's lines and exits 1 before any
-git call. Then the checklist, each item's lines printed as soon as it is decided, and the totals
-line ``setup: ...``; the exit is 0 when every item is ``ok``, else 1.
+git call. Then the checklist, each item's lines printed as soon as it is decided (so far the
+tools and the tracker credential, ``setup_tools``), and the totals line ``setup: ...``; the exit
+is 0 when every item is ``ok``, else 1.
 """
 
 import os
@@ -12,8 +13,10 @@ from typing import Annotated, Final
 
 import typer
 
+from agent_hub.cli import setup_tools
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
-from agent_hub.cli.hub_root import hub_root_or_exit
+from agent_hub.cli.hub_root import hub_root_or_exit, local_home
+from agent_hub.cli.run_children import SESSION_HIDDEN, without
 from agent_hub.core.workspace.setup_checklist import (
     ChecklistItem,
     item_lines,
@@ -49,7 +52,13 @@ def setup(
 ) -> None:
     """Set up this machine for the hub: tools, identity, repos, then hub doctor."""
     root = hub_root_or_exit(os.environ, command=COMMAND)
-    load_hub_config_or_exit(root / FILE_LABEL)
+    config = load_hub_config_or_exit(root / FILE_LABEL)
+    # No token reaches git, which only looks for the main checkout.
+    home = local_home(root, environ=without(os.environ, SESSION_HIDDEN))
     checklist = Checklist()
+    probe = setup_tools.tool_probe(os.environ, cwd=root)
+    transport = setup_tools.effective_transport(config, home=home)
+    for item in setup_tools.tool_items(probe, transport=transport, environ=os.environ):
+        checklist.add(item)
     typer.echo(summary_line(checklist.items))
     raise typer.Exit(setup_exit(checklist.items))
