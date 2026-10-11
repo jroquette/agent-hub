@@ -269,12 +269,12 @@
     "plugin/hub-workflow/hooks/event_sensor.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "b57a24def97671381bcbd9d6da64fad99a510fa603147fc3a86e17e1ee7da369"
+      "sha256": "46ba13d517e3a9974c75b5c1ad46c29337eab3235077dabd8d00b374a5ad118a"
     },
     "plugin/hub-workflow/hooks/guard.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "3e7910f16fa33dc63a7fd2b975e9c48e96167a10f04ddee1faa24588d6635dee"
+      "sha256": "dd7a1f2e8751d9328208826826c45192dce216de69f0e75f83a06d5070a09906"
     },
     "plugin/hub-workflow/hooks/hooks.json": {
       "executable": false,
@@ -319,7 +319,7 @@
     "plugin/hub-workflow/hooks/stop_gate.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "04be3bad3e16afbda5274cb6430863001384d249f0492fc3e3bd7b9c6c9e14be"
+      "sha256": "fda989c56a96c0b52c630a60efa31fb0858322292df04031c3bc99165a025066"
     },
     "plugin/hub-workflow/skills/adr/SKILL.md": {
       "executable": false,

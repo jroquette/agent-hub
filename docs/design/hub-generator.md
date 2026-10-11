@@ -91,8 +91,11 @@ changed since the transcript's first timestamp (else its birth time, else 12 h a
 `repos[].check_fast_timeout` (default 150 s), then its group is killed; a cut run says `not run`.
 The event sensor `event_sensor.py` (AGH-200) is registered beside them on eleven events (SessionStart,
 UserPromptSubmit, PreToolUse, PostToolUse and PostToolUseFailure with matcher `*`, Notification, Stop, SubagentStart,
-SubagentStop, PreCompact, SessionEnd; timeout 5 s): it reads the input (at most 16 MiB), replaces each string over
-64 KiB with `{"_omitted_bytes": n}`, wraps it in the v1 envelope `{v, project, repo, run, step, attempt, sent_at, hook}`
+SubagentStop, PreCompact, SessionEnd; timeout 5 s): it reads the input (at most 16 MiB), reduces each body to its size
+(the prompt to `prompt_chars` and `prompt_slash_command`; a Write's `content` and an Edit's or MultiEdit edit's
+`old_string`/`new_string` to `<key>_lines`, a Write under `brain/_inbox/` keeping its first heading as
+`content_heading`; `tool_response` to `tool_response_bytes`), replaces each string still over 64 KiB with
+`{"_omitted_bytes": n}`, wraps it in the v1 envelope `{v, project, repo, run, step, attempt, sent_at, hook}`
 (project from `hub.json`, repo from the cwd's checkout or worktree, run/step/attempt from `AGENT_HUB_RUN_ID`,
 `AGENT_HUB_STEP`, `AGENT_HUB_ATTEMPT`, each null when out of bounds) and POSTs it to `/api/v1/events/hooks` of
 `AGENT_HUB_WEB_URL` (default `http://127.0.0.1:7420`; only plain `http` to `127.0.0.1`, `[::1]` or `localhost`, any other

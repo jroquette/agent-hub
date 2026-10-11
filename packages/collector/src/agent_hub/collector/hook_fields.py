@@ -26,12 +26,17 @@ SOURCE: Final = "source"
 MODEL: Final = "model"
 # UserPromptSubmit
 PROMPT: Final = "prompt"
+# What the hook sensor sends in place of the prompt (S1): its length and leading /name.
+PROMPT_CHARS: Final = "prompt_chars"
+PROMPT_SLASH_COMMAND: Final = "prompt_slash_command"
 # PreToolUse, PostToolUse, PostToolUseFailure
 TOOL_NAME: Final = "tool_name"
 TOOL_INPUT: Final = "tool_input"
 TOOL_USE_ID: Final = "tool_use_id"
 # PostToolUse
 TOOL_RESPONSE: Final = "tool_response"
+# What the hook sensor sends in place of the tool's output (S1): its UTF-8 size.
+TOOL_RESPONSE_BYTES: Final = "tool_response_bytes"
 DURATION_MS: Final = "duration_ms"
 # PostToolUseFailure
 ERROR: Final = "error"
