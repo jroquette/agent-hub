@@ -76,7 +76,7 @@ def test_prints_url_and_serves_on_loopback_when_started(served: ServedApp, tmp_p
     assert (settings.db_path, settings.port) == (db_path, port)
 
 
-def test_uses_port_7420_when_no_port_given(served: ServedApp) -> None:
+def test_uses_default_port_when_no_port_given(served: ServedApp) -> None:
     result = _web([])
 
     # 7420 may be taken on the machine running the tests; either way the line names it.
