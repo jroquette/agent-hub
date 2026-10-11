@@ -2,6 +2,8 @@ import pytest
 
 from agent_hub.core.hub_config.conventions import DEFAULT_BRANCH
 from agent_hub.core.workspace.worktree_name import (
+    issue_of_worktree,
+    task_worktree_names,
     worktree_branch,
     worktree_name_example,
     worktree_name_problem,
@@ -82,3 +84,38 @@ def test_accepts_names_when_keys_share_prefix() -> None:
 def test_ignores_key_case_when_matching(teams: tuple[str, ...]) -> None:
     assert worktree_name_problem("app-1", teams=teams) is None
     assert worktree_name_problem("APP-1", teams=teams) is not None
+
+
+def test_lists_task_names_when_issue_matches() -> None:
+    names = ["dem-7-x", "dem-8", "dem-7", "dem-7-a.b"]
+
+    assert task_worktree_names(names, issue_id="DEM-7", teams=("DEM",)) == (
+        "dem-7",
+        "dem-7-a.b",
+        "dem-7-x",
+    )
+
+
+def test_skips_longer_number_when_prefix_shared() -> None:
+    names = ["dem-70", "dem-70-x", "dem-7-x"]
+
+    assert task_worktree_names(names, issue_id="DEM-7", teams=("DEM",)) == ("dem-7-x",)
+
+
+@pytest.mark.parametrize("name", ["DEM-7", "dem-7-", "dem-7/x", "dem-7\n", ".dem-7", "xyz-7"])
+def test_skips_name_when_not_worktree_name(name: str) -> None:
+    assert task_worktree_names([name], issue_id="DEM-7", teams=("DEM",)) == ()
+
+
+@pytest.mark.parametrize(("name", "issue"), [("ops-3", "OPS-3"), ("app-12-x", "APP-12")])
+def test_gives_configured_team_when_name_is_task_worktree(name: str, issue: str) -> None:
+    assert issue_of_worktree(name, teams=("APP", "OPS")) == issue
+
+
+def test_keeps_key_spelling_when_team_configured_in_other_case() -> None:
+    assert issue_of_worktree("ops-3", teams=("app", "Ops")) == "Ops-3"
+
+
+@pytest.mark.parametrize("name", ["xyz-3", "ops-3-", "OPS-3", "ops"])
+def test_gives_none_when_team_foreign(name: str) -> None:
+    assert issue_of_worktree(name, teams=("APP", "OPS")) is None

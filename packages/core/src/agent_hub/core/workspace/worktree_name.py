@@ -1,9 +1,9 @@
 """The task worktree name: the tracker issue, optionally with a short description."""
 
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 
-from agent_hub.core.hub_config.team_keys import teams_text
+from agent_hub.core.hub_config.team_keys import team_of, teams_text
 from agent_hub.core.workspace.branch_pattern import render_branch
 
 # A validated name: the issue (``<team>-<n>``, lowercase) and, after a dash, the description.
@@ -28,6 +28,35 @@ def worktree_name_problem(name: str, *, teams: Sequence[str]) -> str | None:
     )
 
 
+def task_worktree_names(
+    names: Iterable[str], *, issue_id: str, teams: Sequence[str]
+) -> tuple[str, ...]:
+    """The valid worktree names of ``names`` whose issue is ``issue_id``, sorted.
+
+    The whole issue part is compared, so ``dem-70`` is never a task worktree of ``DEM-7``.
+    """
+    wanted = issue_id.lower()
+    return tuple(
+        sorted(
+            name
+            for name in names
+            if worktree_name_problem(name, teams=teams) is None and _issue_part(name) == wanted
+        )
+    )
+
+
+def issue_of_worktree(name: str, *, teams: Sequence[str]) -> str | None:
+    """The issue a task worktree name stands for, spelled ``<configured key>-<n>``, or None.
+
+    None when ``name`` is not ``<team>-<n>[-<desc>]`` for a key of ``teams``.
+    """
+    issue = _issue_part(name) if worktree_name_problem(name, teams=teams) is None else None
+    team = None if issue is None else team_of(issue, teams)
+    if issue is None or team is None:
+        return None
+    return f"{team}-{issue.partition('-')[2]}"
+
+
 def worktree_name_example(team: str) -> str:
     """An example of a valid worktree name for ``team``."""
     return f"{team.lower()}-7-collector"
@@ -45,3 +74,8 @@ def worktree_branch(name: str, *, prefix: str, pattern: str) -> str:
         raise ValueError(msg)
     issue_id, slug = parts.group(1), parts.group(2) or ""
     return render_branch(pattern, prefix=prefix, issue_id=issue_id, slug=slug)
+
+
+def _issue_part(name: str) -> str | None:
+    parts = _NAME_PARTS.fullmatch(name)
+    return None if parts is None else parts.group(1)
