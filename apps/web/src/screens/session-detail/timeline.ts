@@ -238,7 +238,8 @@ function applyResult(row: TraceEvent, result: ApiEvent): void {
   row.running = false;
   row.exit = num(payload, "exit_code");
   const ms = num(payload, "duration_ms");
-  row.durationS = ms === undefined ? undefined : ms / 1000;
+  // Sub-second tool timings read as "0 s"; only commands worth timing show one.
+  row.durationS = ms === undefined || ms < 1000 ? undefined : ms / 1000;
   const status = str(payload, "status");
   if (status === "error") {
     row.cat = "error";

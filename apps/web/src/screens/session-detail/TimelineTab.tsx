@@ -333,7 +333,9 @@ export function TimelineTab(props: TimelineTabProps) {
     };
   }, [props, virtualizer]);
 
-  const minimap = useMemo(() => minimapOf(trace, axis, MINIMAP_BINS), [trace, axis]);
+  // About one bin per two rows, so a short session still reads as a density strip.
+  const bins = Math.min(MINIMAP_BINS, Math.max(8, Math.ceil(trace.total / 2)));
+  const minimap = useMemo(() => minimapOf(trace, axis, bins), [trace, axis, bins]);
   const first = items[0]?.index ?? 0;
   const lastIndex = items[items.length - 1]?.index ?? 0;
   const span = Math.max(1, rows.length);

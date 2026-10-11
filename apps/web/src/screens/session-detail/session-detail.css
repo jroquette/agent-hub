@@ -149,7 +149,7 @@
 }
 .sd-cost {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: minmax(0, 1fr) minmax(440px, 1fr);
   gap: var(--space-4);
   align-items: start;
 }
@@ -181,4 +181,7 @@
   .sd-trace .ah-ev-new {
     animation: none;
   }
+}
+.sd-timeline .ah-rail {
+  width: auto;
 }
