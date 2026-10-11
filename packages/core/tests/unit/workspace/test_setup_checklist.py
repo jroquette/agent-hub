@@ -28,6 +28,7 @@ from agent_hub.core.workspace.setup_checklist import (
     python_item,
     repo_item,
     setup_exit,
+    sourced_identity_text,
     summary_line,
     tracker_item,
     uv_item,
@@ -536,6 +537,29 @@ class TestIdentity:
     @pytest.mark.parametrize(
         ("values", "text"),
         [
+            pytest.param(
+                keyed(GIT_PREFIX, GIT_NAME, GIT_EMAIL),
+                "jane/, Jane Roe <jane@example.com> (git config)",
+                id="git",
+            ),
+            pytest.param(
+                keyed(
+                    Sourced("jane/", Source.HUB, IdentityKey.BRANCH_PREFIX, derived=True),
+                    GIT_NAME,
+                ),
+                "jane/, Jane Roe (hub.json, git config)",
+                id="prefix-from-hub-email",
+            ),
+        ],
+    )
+    def test_names_sources_when_proposal_shown(
+        self, values: dict[IdentityKey, Sourced], text: str
+    ) -> None:
+        assert sourced_identity_text(values) == text
+
+    @pytest.mark.parametrize(
+        ("values", "text"),
+        [
             pytest.param(keyed(GIT_PREFIX, GIT_EMAIL), "jane/, jane@example.com", id="no-name"),
             pytest.param(keyed(GIT_EMAIL), "jane@example.com", id="email-only"),
             pytest.param(keyed(GIT_NAME), "Jane Roe", id="name-only"),
@@ -634,7 +658,9 @@ class TestIdentity:
                 id="git-problem",
             ),
             pytest.param(
-                invalid_prefix_item("j+x@example.com"),
+                invalid_prefix_item(
+                    Sourced("j+x@example.com", Source.GIT, IdentityKey.AUTHOR_EMAIL)
+                ),
                 [
                     'missing identity: git\'s user.email gives "j+x", not a valid branch prefix'
                     f" Fix: {IDENTITY_DOC_FIX}"
@@ -642,7 +668,25 @@ class TestIdentity:
                 id="invalid-prefix",
             ),
             pytest.param(
-                invalid_prefix_item("ja‮ne@example.com"),
+                invalid_prefix_item(from_hub("j+x@example.com", IdentityKey.AUTHOR_EMAIL)),
+                [
+                    'missing identity: hub.json\'s project.author_email gives "j+x",'
+                    f" not a valid branch prefix Fix: {IDENTITY_DOC_FIX}"
+                ],
+                id="invalid-prefix-from-hub-json",
+            ),
+            pytest.param(
+                invalid_prefix_item(from_local("j+x@example.com", IdentityKey.AUTHOR_EMAIL)),
+                [
+                    'missing identity: hub.local.json\'s project.author_email gives "j+x",'
+                    f" not a valid branch prefix Fix: {IDENTITY_DOC_FIX}"
+                ],
+                id="invalid-prefix-from-local-file",
+            ),
+            pytest.param(
+                invalid_prefix_item(
+                    Sourced("ja‮ne@example.com", Source.GIT, IdentityKey.AUTHOR_EMAIL)
+                ),
                 [
                     "missing identity: git's user.email gives"
                     ' "ja\\u202ene", not a valid branch prefix'
@@ -692,7 +736,7 @@ class TestIdentity:
                     ),
                 ),
                 [
-                    "missing identity: no branch prefix",
+                    f"missing identity: no branch prefix Fix: {IDENTITY_DOC_FIX}",
                     "        no branch prefix for this developer; set one of:",
                     "          hub.local.json → project.branch_prefix",
                     '          hub.local.json\'s project.author_email gives "j+x",'
