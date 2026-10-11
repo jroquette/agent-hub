@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent_hub.api.app import create_app
+from agent_hub.api.dependencies import ApiPorts
 from agent_hub.api.openapi_paths import P2_PATHS
 from agent_hub.api.settings import ApiSettings
 
@@ -49,9 +50,25 @@ def test_serves_openapi_document_when_requested(client: TestClient) -> None:
     assert response.json()["info"] == {"title": "agent-hub", "version": "0.1.0"}
 
 
-@pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
-def test_serves_no_docs_page_when_requested(client: TestClient, path: str) -> None:
-    assert client.get(path).status_code == 404
+@pytest.mark.parametrize("path", ["/docs", "/redoc"])
+def test_serves_app_instead_of_docs_page_when_requested(client: TestClient, path: str) -> None:
+    # The SPA answers every app route with its index page; FastAPI's docs pages are off.
+    response = client.get(path)
+
+    assert response.status_code == 200
+    assert "<title>agent-hub</title>" in response.text
+    assert "swagger" not in response.text.lower()
+    assert "redoc" not in response.text.lower()
+
+
+def test_serves_no_root_openapi_document_when_requested(client: TestClient) -> None:
+    assert client.get("/openapi.json").status_code == 404
+
+
+def test_keeps_ports_when_app_created(api_settings: ApiSettings) -> None:
+    ports = ApiPorts()
+
+    assert create_app(api_settings, ports=ports).state.ports is ports
 
 
 def test_keeps_settings_when_app_created(api_settings: ApiSettings) -> None:

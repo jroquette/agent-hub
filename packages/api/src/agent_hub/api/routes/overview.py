@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query
 
-from agent_hub.api.rfc9457 import NotImplementedInBuildError
+from agent_hub.api.dependencies import EventReadModelsDep, parse_filter
 from agent_hub.api.schemas import (
     DEFAULT_LIMIT,
     MAX_QUERY_TEXT,
@@ -14,31 +14,40 @@ from agent_hub.api.schemas import (
     ProjectParam,
 )
 from agent_hub.core.projects.project_views import ActivityItem, NeedsYouItem, SearchHit
+from agent_hub.core.readmodels.filters import PageRequest, Scope
 from agent_hub.core.readmodels.page import Page
 
 router = APIRouter(tags=["overview"], responses=PROBLEM_RESPONSES)
 
 
 @router.get("/needs-you")
-def list_needs_you(*, project: ProjectParam = None) -> Page[NeedsYouItem]:
+def list_needs_you(
+    models: EventReadModelsDep, *, project: ProjectParam = None
+) -> Page[NeedsYouItem]:
     """What waits for a person, oldest first."""
-    raise NotImplementedInBuildError("list_needs_you")
+    return models.needs_you(Scope(project=project))
 
 
 @router.get("/activity")
 def list_activity(
-    *, project: ProjectParam = None, cursor: CursorParam = None, limit: LimitParam = DEFAULT_LIMIT
+    models: EventReadModelsDep,
+    *,
+    project: ProjectParam = None,
+    cursor: CursorParam = None,
+    limit: LimitParam = DEFAULT_LIMIT,
 ) -> Page[ActivityItem]:
     """Notable events, newest first."""
-    raise NotImplementedInBuildError("list_activity")
+    return models.activity(parse_filter(PageRequest, project=project, cursor=cursor, limit=limit))
 
 
 @router.get("/search")
 def search(
+    models: EventReadModelsDep,
     *,
     q: Annotated[str, Query(min_length=1, max_length=MAX_QUERY_TEXT)],
     project: ProjectParam = None,
     limit: LimitParam = DEFAULT_LIMIT,
 ) -> Page[SearchHit]:
     """Search ids, paths, commands and tool names."""
-    raise NotImplementedInBuildError("search")
+    page = parse_filter(PageRequest, project=project, limit=limit)
+    return models.search_events(q, page)
