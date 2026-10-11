@@ -336,3 +336,54 @@ def test_prints_one_line_when_database_path_has_newline(tmp_path: Path) -> None:
     [line] = result.stderr.splitlines()
     assert line.startswith("error: ")
     assert not _has_control_character(line)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--transcript", "t.jsonl", "--runs", "runs"],
+        ["--transcript", "t.jsonl", "events.jsonl"],
+        ["--runs", "runs", "events.jsonl"],
+        ["--runs", "runs", "-"],
+    ],
+    ids=["transcript_and_runs", "transcript_and_file", "runs_and_file", "runs_and_stdin"],
+)
+def test_exits_with_usage_line_when_input_options_combined_usage(
+    tmp_path: Path, args: list[str]
+) -> None:
+    db_path = tmp_path / "events.db"
+
+    result = _collect([*args, "--db", str(db_path)])
+
+    assert result.exit_code == 2
+    assert "Usage: " in result.output
+    assert "use only one of FILE, --transcript and --runs" in result.output
+    assert not db_path.exists()
+
+
+@pytest.mark.parametrize(
+    "event_type", ["step.start", "step.end", "run.end", "learning.rejected", "session.summary"]
+)
+def test_accepts_event_when_type_is_new_in_phase_two_new_type(
+    tmp_path: Path, event_type: str
+) -> None:
+    event = an_event(type=event_type, payload={"run": "1a2b3c4d"})
+    file = _write_jsonl(tmp_path / "events.jsonl", [event])
+    db_path = tmp_path / "events.db"
+
+    result = _collect([str(file), "--db", str(db_path)])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "appended 1, duplicates 0\n"
+    assert _stored(db_path) == [event]
+
+
+def test_rejects_event_when_type_unknown_new_type(tmp_path: Path) -> None:
+    line = an_event().model_dump(mode="json") | {"type": "step.middle"}
+    file = tmp_path / "events.jsonl"
+    file.write_text(json.dumps(line) + "\n", encoding="utf-8")
+
+    result = _collect([str(file), "--db", str(tmp_path / "events.db")])
+
+    assert result.exit_code == 1
+    assert result.stderr.startswith("line 1: type: Input should be")
