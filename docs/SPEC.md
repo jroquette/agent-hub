@@ -236,8 +236,9 @@ The command is split into parts at `;`, `&&`, `||`, `|` and newlines, then:
    `--ignore-environment`) and a lone `--`; also `parallel`, and a `sed` whose script holds an `e` (its `e` command or
    the `s` command's `e` flag) or is read from a file (`-f`). Last, it asks when a part sets the environment twice (a
    second `AWS_PROFILE=`, `AWS_DEFAULT_PROFILE=`, `KUBECONFIG=` or `KUBE_CONTEXT=` word, `+=` too, or a second
-   `--profile`, `--context`, `--kube-context`, `-chdir`, `--stack` or `--workspace` flag), naming it. An ask verb (5)
-   keeps its reason and comes first; a deny stays a deny,
+   `--profile`, `--context`, `--kube-context`, `-chdir`, `--stack`, `--workspace`, `--stage` or `-var-file` flag, or
+   one setting under two spellings: `AWS_PROFILE=`, `AWS_DEFAULT_PROFILE=` and `--profile`; `-s` with `--stack` or
+   `--stage`), naming it. An ask verb (5) keeps its reason and comes first; a deny stays a deny,
    and a command that names no covered tool is not affected. An `allow` match that overlaps a quoted region (`'…'`,
    `"…"`, `$'…'`) is text, not evidence: it neither allows nor denies, and the quote makes the command ask.
 
