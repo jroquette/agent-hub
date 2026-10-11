@@ -212,7 +212,8 @@ class Session:
         self.flags = tuple(flags)
 
     def summary(self, task: StartedTask) -> list[str]:
-        """The lines after the ``created``/``exists`` lines: task, repos, worktrees, remove."""
+        """The lines after the ``created``/``exists`` lines: task, repos, worktrees, state,
+        remove."""
         branches = self.worktrees.task.branches
         distinct = set(branches.values())
         if len(distinct) == 1:
@@ -227,8 +228,18 @@ class Session:
             *named,
             f"repos    : {' '.join(task.repos)}",
             *(f"worktree : {self.worktrees.folder(repo)}" for repo in task.repos),
+            f"state    : {self._state(task)}",
             *(f"remove   : {line}" for line in removes),
         ]
+
+    def next_command(self, issue_id: str) -> str:
+        """The command that resumes the task and launches its session: the same ``--repo``s."""
+        return " ".join([f"./hub {COMMAND} {issue_id}", *(f"--repo {repo}" for repo in self.flags)])
+
+    def _state(self, task: StartedTask) -> str:
+        if task.moved:
+            return self.started_state
+        return f"{task.issue.state} (already started, not moved)"
 
 
 class ClaudeSession:
@@ -265,7 +276,7 @@ class ClaudeSession:
         if task.moved:
             lines.append(
                 f"state    : {task.issue.id} was moved to {session.started_state};"
-                f" {_next_command(task.issue.id, session.flags)} resumes it"
+                f" {session.next_command(task.issue.id)} resumes the task"
             )
         lines += [f"created  : {session.worktrees.folder(repo)}" for repo in task.created]
         removes = remove_commands(task.name, created=task.created, all_repos=session.all_repos)
@@ -282,6 +293,7 @@ class PrintedSession:
     def launch(self, task: StartedTask) -> None:
         for line in self._session.summary(task):
             typer.echo(line)
+        typer.echo(f"next     : {self._session.next_command(task.issue.id)}")
 
 
 def _refuse_usage(
@@ -312,10 +324,6 @@ def _failure_lines(failure: StartFailure) -> list[str]:
         *(f"created  : {path}" for path in failure.created),
         *(f"remove   : {line}" for line in failure.remove),
     ]
-
-
-def _next_command(issue_id: str, flags: Sequence[str]) -> str:
-    return " ".join([f"./hub {COMMAND} {issue_id}", *(f"--repo {repo}" for repo in flags)])
 
 
 def _git_or_exit() -> str:

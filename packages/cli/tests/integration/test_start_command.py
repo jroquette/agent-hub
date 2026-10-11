@@ -188,6 +188,18 @@ class StartRun:
     def repo_git_calls(self) -> list[tuple[str, str]]:
         return repo_git_calls(self.traced, self.workspace)
 
+    def hub_worktree(self, name: str, *arguments: str) -> None:
+        """``hub worktree <name> <arguments>``, as a developer makes a task's worktrees; the git
+        log is cleared afterwards, so it holds only what ``hub start`` runs."""
+        made = self._runner(self.workspace.hub, "worktree", name, *arguments)
+        assert made.exit_code == 0, made.output
+        self.traced.log_path.unlink(missing_ok=True)
+
+    def retitle(self, title: str, state: str) -> None:
+        """Give DEM-7 another title and state in the tracker."""
+        issues = self.tracker.backend.issues
+        issues[ISSUE] = issues[ISSUE].model_copy(update={"title": title, "state": state})
+
     def worktree(self, repo: str, name: str = NAME) -> Path:
         return Path(self.workspace.worktree(repo, name))
 
@@ -235,6 +247,11 @@ def set_started_state(workspace: Workspace, state: str) -> None:
 def stderr_lines(result: Result, prefix: str) -> list[str]:
     """The stderr lines that start with ``prefix``."""
     return [line for line in result.stderr.splitlines() if line.startswith(prefix)]
+
+
+def stdout_starting(result: Result, prefix: str) -> list[str]:
+    """The stdout lines that start with ``prefix``."""
+    return [line for line in result.stdout.splitlines() if line.startswith(prefix)]
 
 
 def logging_setup(log: Path) -> bytes:
@@ -520,3 +537,164 @@ class TestTracker:
         assert [call for call in hub_start.repo_git_calls() if "fetch" in call[1]] == []
         assert_no_worktree(hub_start.workspace)
         assert hub_start.execs == []
+
+
+OLD = "dem-7-old-title"
+CONDITIONAL_MOVE = ("move_state", ISSUE, "In Progress", "only_if_unstarted")
+
+
+@pytest.mark.usefixtures("with_key", "claude_first_on_path")
+class TestResume:
+    def test_reuses_worktrees_and_keeps_state_when_issue_in_review(
+        self, hub_start: StartRun
+    ) -> None:
+        hub_start.hub_worktree(OLD)
+        hub_start.hub_worktree("dem-70-x", "--only", "demo-api")
+        hub_start.retitle("A retitled issue", "In Review")
+
+        result = hub_start(ISSUE)
+
+        assert isinstance(result.exception, Execed), result.output
+        assert stdout_starting(result, "exists   ") == [
+            f"exists   {hub_start.worktree(repo, OLD)}" for repo in REPOS
+        ]
+        assert stdout_starting(result, "created  ") == []
+        assert "state    : In Review (already started, not moved)" in result.stdout.splitlines()
+        # Plan E5: one conditional move, which leaves a started issue as it is.
+        assert hub_start.tracker.calls == [("get_issue", ISSUE), CONDITIONAL_MOVE]
+        assert hub_start.state() == "In Review"
+        (launched,) = hub_start.execs
+        assert launched.argv[1:5] == [
+            "--add-dir",
+            str(hub_start.worktree("demo-api", OLD)),
+            "--add-dir",
+            str(hub_start.worktree("demo-web", OLD)),
+        ]
+        assert not hub_start.worktree("demo-api").exists()
+
+    def test_creates_missing_repo_under_existing_name_when_partial(
+        self, hub_start: StartRun
+    ) -> None:
+        hub_start.hub_worktree(OLD, "--only", "demo-api")
+        hub_start.retitle("A retitled issue", "In Progress")
+
+        result = hub_start(ISSUE)
+
+        assert isinstance(result.exception, Execed), result.output
+        web = hub_start.worktree("demo-web", OLD)
+        assert stdout_starting(result, "exists   ") == [
+            f"exists   {hub_start.worktree('demo-api', OLD)}"
+        ]
+        assert stdout_starting(result, "created  ") == [
+            f"created  {web} (jdoe/{OLD} from origin/trunk)"
+        ]
+        assert hub_start.workspace.git(web, "branch", "--show-current") == f"jdoe/{OLD}"
+        assert hub_start.tracker.calls == [("get_issue", ISSUE), CONDITIONAL_MOVE]
+        assert hub_start.state() == "In Progress"
+
+    def test_resumes_name_found_in_untouched_repo_when_repo_given(
+        self, hub_start: StartRun
+    ) -> None:
+        hub_start.hub_worktree(OLD, "--only", "demo-web")
+
+        result = hub_start(ISSUE, "--repo", "demo-api")
+
+        assert isinstance(result.exception, Execed), result.output
+        assert hub_start.worktree("demo-api", OLD).is_dir()
+        assert not hub_start.worktree("demo-api").exists()
+        (launched,) = hub_start.execs
+        assert launched.argv[1:3] == ["--add-dir", str(hub_start.worktree("demo-api", OLD))]
+        assert hub_start.tracker.calls == [("get_issue", ISSUE), CONDITIONAL_MOVE]
+
+    def test_moves_unstarted_issue_when_resumed(self, hub_start: StartRun) -> None:
+        hub_start.hub_worktree(OLD)
+
+        result = hub_start(ISSUE)
+
+        assert isinstance(result.exception, Execed), result.output
+        assert stdout_starting(result, "created  ") == []
+        assert hub_start.tracker.calls == [("get_issue", ISSUE), CONDITIONAL_MOVE]
+        assert hub_start.state() == "In Progress"
+        assert "state    : In Progress" in result.stdout.splitlines()
+        assert len(hub_start.execs) == 1
+
+
+@pytest.mark.usefixtures("with_key", "claude_first_on_path")
+class TestAmbiguous:
+    @pytest.mark.parametrize(
+        ("made", "listed"),
+        [
+            (
+                [("dem-7-a", "demo-api"), ("dem-7-b", "demo-api")],
+                "demo-api: dem-7-a, dem-7-b",
+            ),
+            (
+                [("dem-7-a", "demo-api"), ("dem-7-b", "demo-web")],
+                "demo-api: dem-7-a; demo-web: dem-7-b",
+            ),
+        ],
+        ids=["repo_has_two_matches", "repos_disagree"],
+    )
+    def test_refuses_before_fetch_when_tasks_ambiguous(
+        self, hub_start: StartRun, made: list[tuple[str, str]], listed: str
+    ) -> None:
+        for name, repo in made:
+            hub_start.hub_worktree(name, "--only", repo)
+
+        result = hub_start(ISSUE)
+
+        assert result.exit_code == 1, result.output
+        (line,) = stderr_lines(result, "hub start: ")
+        assert line.startswith(
+            f"hub start: worktrees of more than one task match the issue ({listed});"
+        ), line
+        assert [
+            arguments
+            for _, arguments in hub_start.repo_git_calls()
+            if arguments.startswith(("fetch", "worktree add"))
+        ] == []
+        assert hub_start.tracker.calls == [("get_issue", ISSUE)]
+        assert hub_start.state() == "Todo"
+        assert hub_start.execs == []
+
+
+@pytest.mark.usefixtures("with_key", "claude_first_on_path")
+class TestNoAgent:
+    def test_prints_summary_and_next_step_when_no_agent_given(self, hub_start: StartRun) -> None:
+        result = hub_start(ISSUE, "--repo", "demo-api", "--no-agent")
+
+        assert result.exit_code == 0, result.output
+        assert hub_start.state() == "In Progress"
+        assert hub_start.execs == []
+        assert result.stdout.splitlines()[-7:] == [
+            "",
+            f"task     : {NAME} (branch {BRANCH})",
+            "repos    : demo-api",
+            f"worktree : {hub_start.worktree('demo-api')}",
+            "state    : In Progress",
+            f"remove   : ./hub worktree --remove {NAME} --only demo-api",
+            "next     : ./hub start DEM-7 --repo demo-api",
+        ]
+
+
+@pytest.mark.usefixtures("with_key", "claude_first_on_path")
+class TestLaunchFailure:
+    def test_lists_moved_state_and_worktrees_when_exec_fails(
+        self, hub_start: StartRun, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def refuse(_file: str, _argv: list[str]) -> None:
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr(os, "execvp", refuse)
+
+        result = hub_start(ISSUE, "--repo", "demo-api")
+
+        assert result.exit_code == 1, result.output
+        assert result.stderr.splitlines()[1:] == [
+            "hub start: cannot start claude: Permission denied",
+            "state    : DEM-7 was moved to In Progress; ./hub start DEM-7 --repo demo-api"
+            " resumes the task",
+            f"created  : {hub_start.worktree('demo-api')}",
+            f"remove   : ./hub worktree --remove {NAME} --only demo-api",
+        ]
+        assert hub_start.state() == "In Progress"
