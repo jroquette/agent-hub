@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final, Literal, NamedTuple
 
-from agent_hub.core.hub_config.effective_identity import IdentityKey, Sourced
+from agent_hub.core.hub_config.effective_identity import IdentityKey, Sourced, email_giver
 from agent_hub.core.hub_config.problems import one_line
 from agent_hub.core.hub_config.workspace_repos import WorkspaceRepo
 
@@ -129,7 +129,7 @@ _IDENTITY_GAPS: Final[Mapping[IdentityGap, _Text]] = {
     IdentityGap.INVALID_LOCAL: _Text("hub.local.json is invalid", INVALID_LOCAL_FIX),
     IdentityGap.APPEARED: _Text("hub.local.json appeared while writing; left as is", RERUN_FIX),
     # The sub-lines (``no_prefix_lines``) list where a prefix can be set.
-    IdentityGap.NO_PREFIX: _Text("no branch prefix", None),
+    IdentityGap.NO_PREFIX: _Text("no branch prefix", PREFIX_FIX),
 }
 _GIT_KEYS: Final = {IdentityKey.AUTHOR_NAME: "user.name", IdentityKey.AUTHOR_EMAIL: "user.email"}
 _GIT_SET_COMMANDS: Final = {
@@ -291,7 +291,7 @@ def identity_written_item(values: Mapping[IdentityKey, Sourced]) -> ChecklistIte
 
     Raises ``ValueError`` when ``values`` is empty: a written file holds at least one key.
     """
-    return _ok("identity", f"wrote hub.local.json: {_sourced_text(values)}")
+    return _ok("identity", f"wrote hub.local.json: {sourced_identity_text(values)}")
 
 
 def identity_resolved_item(values: Mapping[IdentityKey, Sourced]) -> ChecklistItem:
@@ -299,7 +299,7 @@ def identity_resolved_item(values: Mapping[IdentityKey, Sourced]) -> ChecklistIt
 
     Raises ``ValueError`` when ``values`` is empty: an ok identity shows at least one value.
     """
-    return _ok("identity", _sourced_text(values))
+    return _ok("identity", sourced_identity_text(values))
 
 
 def identity_missing_item(gap: IdentityGap, *, sub_lines: Sequence[str] = ()) -> ChecklistItem:
@@ -335,11 +335,17 @@ def git_lacks_item(
     )
 
 
-def invalid_prefix_item(email: str) -> ChecklistItem:
-    """``identity`` missing because git's ``user.email`` local part is not a valid prefix."""
-    local_part = one_line(email.rpartition("@")[0])
+def invalid_prefix_item(email: Sourced) -> ChecklistItem:
+    """``identity`` missing because the effective email's local part is not a valid prefix.
+
+    The text names where that email comes from: git's ``user.email``, or ``hub.json``'s (or
+    ``hub.local.json``'s) ``project.author_email``.
+    """
+    local_part = one_line(email.value.rpartition("@")[0])
     return _missing(
-        "identity", f'git\'s user.email gives "{local_part}", not a valid branch prefix', PREFIX_FIX
+        "identity",
+        f'{email_giver(email)} gives "{local_part}", not a valid branch prefix',
+        PREFIX_FIX,
     )
 
 
@@ -403,7 +409,11 @@ def doctor_item(*, totals: str, has_errors: bool, finding_lines: Sequence[str]) 
     )
 
 
-def _sourced_text(values: Mapping[IdentityKey, Sourced]) -> str:
+def sourced_identity_text(values: Mapping[IdentityKey, Sourced]) -> str:
+    """``identity_text`` of ``values``, then their distinct sources in key order in brackets.
+
+    Raises ``ValueError`` when ``values`` is empty.
+    """
     if not values:
         msg = "an identity item needs at least one identity value"
         raise ValueError(msg)
