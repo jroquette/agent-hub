@@ -3,8 +3,9 @@
 Every run is in process, in a copy of the ``DEMO`` workspace (``demo_workspace``) whose git is
 ``env_traced_git``: each call is logged with its environment, then the real git runs. The tests
 replace only the command's seams: the tool probe (``setup_tools.tool_probe``), the terminal
-check of the prompt (``setup_identity.stdin_is_tty``) and the network timeout
-(``setup_repos.NETWORK_TIMEOUT_SECONDS``).
+check of the prompt (``setup_identity.stdin_is_tty``) and the timeouts
+(``setup_repos.NETWORK_TIMEOUT_SECONDS``, ``setup_repos.CHECK_TIMEOUT_SECONDS``,
+``setup_identity.PROBE_TIMEOUT_SECONDS``).
 """
 
 import errno
@@ -44,6 +45,7 @@ from agent_hub.core.workspace.setup_checklist import (
     PREFIX_FIX,
     PYTHON_FIX,
     RERUN_FIX,
+    STATUS_FIX,
     TRACKER_KEY_FIX,
     UV_FIX,
     ProbeResult,
@@ -1304,6 +1306,35 @@ def _mtimes(root: Path) -> dict[str, int]:
     return found
 
 
+def _repo_with_origin(workspace: Workspace, folder: Path) -> None:
+    """Make ``folder`` a repo with one commit and an ``origin``: what a fetch could reach."""
+    workspace.git(folder, "init", "-q", "-b", "trunk")
+    workspace.git(folder, "commit", "-q", "--allow-empty", "-m", "outer")
+    workspace.git(folder, "remote", "add", "origin", str(workspace.origin("demo-api")))
+
+
+def _hang_head_read(traced: TracedGit, folder: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Put first on ``PATH`` a ``git`` whose commit check in ``demo-api`` never answers (it
+    logs its pid, then becomes ``sleep 30``); every other call goes on to the traced git (which
+    logs it). The pid log."""
+    bin_dir = folder / "hanging-head-read-bin"
+    bin_dir.mkdir()
+    pid_log = folder / "hanging-head-read.pids"
+    script = bin_dir / "git"
+    script.write_text(
+        "#!/bin/sh\n"
+        'case " $* " in\n'
+        f'  *"/demo-api rev-parse --verify -q HEAD "*) echo "$$" >> {shlex.quote(str(pid_log))};'
+        " exec sleep 30 ;;\n"
+        "esac\n"
+        f'exec {shlex.quote(str(traced.bin_dir / "git"))} "$@"\n',
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    return pid_log
+
+
 def _cloned_line(repo: str, scheme: str) -> str:
     return f"ok      repo {repo}: cloned acme/{repo} into ../{repo} ({scheme})"
 
@@ -1371,7 +1402,14 @@ class TestRepos:
         assert result.exit_code == 0, result.output
 
     @pytest.mark.parametrize(
-        "entry", ["folder-with-file", "regular-file", "dangling-link", "empty-git-folder"]
+        "entry",
+        [
+            "folder-with-file",
+            "regular-file",
+            "dangling-link",
+            "empty-git-folder",
+            "linked-empty-git-folder",
+        ],
     )
     def test_leaves_entry_untouched_when_not_a_repository(
         self,
@@ -1386,6 +1424,9 @@ class TestRepos:
         path = ws / "demo-api"
         shutil.rmtree(path)
         checks: list[str] = []
+        check = f"-C {_ws(demo_workspace)}/demo-api rev-parse --verify -q HEAD"
+        # The repo git must never reach through ``../demo-api``, and its refs before the run.
+        guarded = ws
         if entry == "folder-with-file":
             path.mkdir()
             (path / "notes.txt").write_bytes(b"mine\n")
@@ -1393,33 +1434,45 @@ class TestRepos:
             path.write_bytes(b"mine\n")
         elif entry == "dangling-link":
             path.symlink_to(Path(demo_workspace.base) / "nowhere")
-        else:
+        elif entry == "empty-git-folder":
             # A ``.git`` folder git cannot read, in a workspace that is itself a repo with an
-            # origin: git must not search upwards and fetch into the workspace's repo.
+            # origin: git must not search upwards and fetch into the workspace's repo (E28).
             (path / ".git").mkdir(parents=True)
-            demo_workspace.git(ws, "init", "-q", "-b", "trunk")
-            demo_workspace.git(ws, "commit", "-q", "--allow-empty", "-m", "workspace")
-            demo_workspace.git(
-                ws, "remote", "add", "origin", str(demo_workspace.origin("demo-api"))
-            )
-            checks = [f"-C {_ws(demo_workspace)}/demo-api rev-parse --verify -q HEAD"]
-        refs = demo_workspace.git(ws, "for-each-ref") if entry == "empty-git-folder" else ""
+            _repo_with_origin(demo_workspace, ws)
+            checks = [check]
+        else:
+            # The same ``.git`` folder through a link, in a repo outside the workspace: the
+            # ceiling must hold at the link's target too, not only at the workspace (E30).
+            guarded = Path(demo_workspace.base) / "outer"
+            target = guarded / "sub" / "demo"
+            (target / ".git").mkdir(parents=True)
+            _repo_with_origin(demo_workspace, guarded)
+            path.symlink_to(target)
+            checks = [check]
+        refs = demo_workspace.git(guarded, "for-each-ref") if checks else ""
         before = (tree_digest(path), _mtimes(path))
 
         result = run_setup(demo_workspace.hub, "--yes")
 
         assert (tree_digest(path), _mtimes(path)) == before
-        assert _repo_lines(result.stdout) == [
-            "missing repo demo-api: ../demo-api exists but is not a git repository; left"
-            f" untouched Fix: {MOVE_AWAY_FIX.format(dir='demo-api')}",
-            "ok      repo demo-web: present, fetched",
-        ]
+        if checks:
+            # Git refuses the empty ``.git`` (exit 128): it never reads the repo around it.
+            first = (
+                "missing repo demo-api: git cannot read ../demo-api (git exit 128); left"
+                f" untouched Fix: {STATUS_FIX.format(dir='demo-api')}"
+            )
+        else:
+            first = (
+                "missing repo demo-api: ../demo-api exists but is not a git repository; left"
+                f" untouched Fix: {MOVE_AWAY_FIX.format(dir='demo-api')}"
+            )
+        assert _repo_lines(result.stdout) == [first, "ok      repo demo-web: present, fetched"]
         # Only the empty ``.git`` folder is asked for a commit; nothing is ever fetched there.
         assert [call.args for call in env_traced_git.calls() if "demo-api" in call.args] == checks
         totals = "setup: 1 missing, 9 ok"
-        if entry == "empty-git-folder":
-            assert demo_workspace.git(ws, "for-each-ref") == refs
-            # Doctor, read-only, reports the same folder: git puts it in the workspace's tree.
+        if checks:
+            assert demo_workspace.git(guarded, "for-each-ref") == refs
+            # Doctor, read-only, reports the same folder: git puts it in the enclosing repo's tree.
             assert "error brain.leak ../demo-api: " in _doctor_lines(result.stdout)[1]
             totals = "setup: 2 missing, 8 ok"
         assert result.stdout.splitlines()[-1] == totals
@@ -1575,6 +1628,36 @@ class TestRepos:
         assert [call.args for call in _network_calls(env_traced_git)] == [
             f"-C {_ws(demo_workspace)}/demo-web fetch --quiet origin"
         ]
+        assert result.stdout.splitlines()[-1] == "setup: 1 missing, 9 ok"
+        assert result.exit_code == 1
+
+    def test_reports_check_timeout_when_head_read_hangs(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        pid_log = _hang_head_read(env_traced_git, tmp_path, monkeypatch)
+        monkeypatch.setattr(setup_repos, "CHECK_TIMEOUT_SECONDS", 0.5)
+
+        result = run_setup(demo_workspace.hub, "--yes")
+
+        # The check is named, not the fetch: no fetch ran in ../demo-api (E29).
+        assert _repo_lines(result.stdout) == [
+            "missing repo demo-api: checking ../demo-api timed out after 0.5 s"
+            f" Fix: {STATUS_FIX.format(dir='demo-api')}",
+            "ok      repo demo-web: present, fetched",
+        ]
+        assert [call.args for call in _network_calls(env_traced_git)] == [
+            f"-C {_ws(demo_workspace)}/demo-web fetch --quiet origin"
+        ]
+        pids = [int(line) for line in pid_log.read_text(encoding="utf-8").split()]
+        assert len(pids) == 1
+        with pytest.raises(ProcessLookupError):
+            os.kill(pids[0], 0)
         assert result.stdout.splitlines()[-1] == "setup: 1 missing, 9 ok"
         assert result.exit_code == 1
 

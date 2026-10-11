@@ -880,6 +880,18 @@ class TestRepos:
                 " Fix: move ../demo-api away, then ./hub setup",
                 id="no-commit",
             ),
+            pytest.param(
+                repo_item(API, RepoOutcome.GIT_CANNOT_READ, returncode=128),
+                "missing repo demo-api: git cannot read ../demo-api (git exit 128); left untouched"
+                " Fix: git -C ../demo-api status, then ./hub setup",
+                id="git-cannot-read",
+            ),
+            pytest.param(
+                repo_item(API, RepoOutcome.CHECK_TIMED_OUT, timeout_seconds=10.0),
+                "missing repo demo-api: checking ../demo-api timed out after 10 s"
+                " Fix: git -C ../demo-api status, then ./hub setup",
+                id="check-timeout",
+            ),
         ],
     )
     def test_prints_repo_line_when_repo_outcome_known(self, item: ChecklistItem, line: str) -> None:
@@ -893,6 +905,8 @@ class TestRepos:
             pytest.param(RepoOutcome.FETCH_FAILED, "returncode", id="fetch-failed"),
             pytest.param(RepoOutcome.CLONE_TIMED_OUT, "timeout_seconds", id="clone-timeout"),
             pytest.param(RepoOutcome.FETCH_TIMED_OUT, "timeout_seconds", id="fetch-timeout"),
+            pytest.param(RepoOutcome.GIT_CANNOT_READ, "returncode", id="git-cannot-read"),
+            pytest.param(RepoOutcome.CHECK_TIMED_OUT, "timeout_seconds", id="check-timeout"),
         ],
     )
     def test_refuses_outcome_when_repo_text_lacks_argument(

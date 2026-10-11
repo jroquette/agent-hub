@@ -2,10 +2,10 @@
 
 ## Purpose
 
-A developer (or an agent) joining a project clones its hub next to the repos' folder and runs `./hub setup` there. It
-checks the tools and the tracker credential, writes the developer's `hub.local.json` when the hub needs one, clones the
-missing repos and fetches the present ones, runs `hub doctor`, and lists what is still missing, each with its fix. This
-is the contract for its options, output, writes, git environment and exit codes (AGH-71).
+A developer (or an agent) joining a project clones the hub into the folder that holds (or will hold) the project's
+repos, so they sit side by side, then runs `./hub setup` in it. It checks the tools and the tracker credential, writes
+`hub.local.json` when the hub needs one, clones the missing repos, fetches the present ones, runs `hub doctor` and lists
+what is still missing, each with its fix. Its contract: options, output, writes, git environment, exit codes (AGH-71).
 
 ## Contract
 
@@ -80,6 +80,8 @@ Repo gaps, with their Fix:
 - `fetch failed (git exit <n>)` / `fetch timed out after 600 s` → `git -C ../<dir> fetch origin`.
 - `../<dir> exists but is not a git repository; left untouched` and `../<dir> has no commit (an interrupted clone?)` →
   `move ../<dir> away, then ./hub setup`.
+- `git cannot read ../<dir> (git exit <n>); left untouched` / `checking ../<dir> timed out after 10 s` → `git -C
+  ../<dir> status, then ./hub setup`.
 - `git not found` / `git could not run` → the `git` fix.
 
 ### Steps and what they write
@@ -99,9 +101,9 @@ Repo gaps, with their Fix:
   url over the hub origin's scheme (`git@github.com:<owner/name>.git` when `origin` is a GitHub SSH remote, else
   `https://github.com/<owner/name>.git`); a folder, or a link to one, holding `.git` → `git -C ../<dir> rev-parse
   --verify -q HEAD`, then, on exit 0, `git -C ../<dir> fetch --quiet origin`; anything else is reported, never touched.
-  The commit check's exit 1 is `has no commit`, any other failing exit `not a git repository`, and its timeout (10 s,
-  a local read) is reported as `fetch timed out after 10 s`, the fetch never having run. Clones and fetches are cut at
-  600 s, their process group killed. Only git's exit code is read.
+  The commit check's exit 1 is `has no commit`; any other failing exit (dubious ownership, a bad config, an unreadable
+  `.git`) is `git cannot read`, and its timeout (10 s, a local read) `checking ../<dir> timed out`: no fetch runs
+  after either. Clones and fetches are cut at 600 s, their process group killed. Only git's exit code is read.
 - **Doctor.** `hub doctor`'s check runs in process on the root, whatever the cwd, with its own reads and rules.
 - Setup writes only the clones into absent entries and a new `hub.local.json`; it deletes nothing.
 
@@ -109,16 +111,17 @@ Repo gaps, with their Fix:
 
 Setup's own git calls (scheme read, check-ignore, clone, commit check, fetch) run with stdin from `/dev/null`,
 `GIT_TERMINAL_PROMPT=0`, no git location variable (`GIT_DIR` and the like) and no `LINEAR_API_KEY`; nothing else is
-added, so the developer's own config and credentials answer. Every call aimed at `../<dir>` also sets
-`GIT_CEILING_DIRECTORIES` to the workspace (the root's parent), so git never runs in a repo above `../<dir>`. The
-scheme read runs only when `<home>/.git` exists, with the ceiling at the home's parent.
+added, so the developer's own config and credentials answer. The commit check and the fetch (not the clone) also set
+`GIT_CEILING_DIRECTORIES` to the workspace (the root's parent) and the parent of `../<dir>`'s real path (git compares
+it with its resolved cwd), so even through a link git never runs in a repo above `../<dir>`. The scheme read runs only
+when `<home>/.git` exists, with the ceiling at the home's parent.
 
 ### Exit codes and seams
 
 0 when every item is `ok`; 1 after the full checklist when any is `missing`, or for an invalid `hub.json`; 2 for a
-usage error or not a hub. Tests replace three module-level seams, none a flag or a variable and none public:
-`setup_tools.tool_probe` (the tool probe factory), `setup_identity.stdin_is_tty` and
-`setup_repos.NETWORK_TIMEOUT_SECONDS`.
+usage error or not a hub. Tests replace module-level seams, none a flag or a variable and none public:
+`setup_tools.tool_probe` (the tool probe factory), `setup_identity.stdin_is_tty` and the timeouts
+`setup_repos.NETWORK_TIMEOUT_SECONDS`, `setup_repos.CHECK_TIMEOUT_SECONDS` and `setup_identity.PROBE_TIMEOUT_SECONDS`.
 
 ## Invariants
 
@@ -137,11 +140,11 @@ usage error or not a hub. Tests replace three module-level seams, none a flag or
 - [ADR 0002](../adr/0002-lean-hexagonal-architecture.md), [ADR 0008](../adr/0008-cli-as-composition-root.md): the
   checklist texts, version rule and exit rule are pure core (`workspace/setup_checklist.py`); subprocesses, the
   prompt and the write are in `cli`; the tool probe is a cli Protocol, not a port.
-- AGH-71 spec decisions D-cmd, D-order, D-repos, D-url, D-id, D-write, D-ignore, D-tools, D-doctor, D-exit, D-shared.
+- AGH-71's spec: the section order, git's output never shown, the scheme from the hub's `origin`, `hub.local.json`
+  never overwritten, doctor in process, one repo list (`workspace_repos`) shared with the generator.
 
 ## Open questions
 
-- SSH prompts: `GIT_TERMINAL_PROMPT=0` does not stop `ssh` asking for a passphrase or host key; the 600 s timeout ends
-  it (Q-5).
-- Whether to report a present repo whose `origin` is not `repos[].github` (Q-7).
-- Machine checks in `hub doctor` (AGH-66) and a team mode for `hub init` (F-1).
+- SSH prompts: `GIT_TERMINAL_PROMPT=0` does not stop `ssh` asking for a passphrase or host key; the 600 s timeout does.
+- Whether to report a present repo whose `origin` is not `repos[].github` (a missing `origin` fails the fetch).
+- Machine checks in `hub doctor` (AGH-66) and a team mode for `hub init` (a later issue).
