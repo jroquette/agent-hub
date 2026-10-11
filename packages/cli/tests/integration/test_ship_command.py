@@ -20,7 +20,9 @@ from typer.testing import Result
 from agent_hub.cli import run_steps, ship_command, ship_set, ship_steps
 from agent_hub.cli.child_process import ChildResult, run_child
 from agent_hub.cli.run_children import push_command
+from agent_hub.core.doctor.text_rules import ATTRIBUTIONS
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.runner.run_texts import ROBOT
 from agent_hub.core.runner.ship_texts import RELATED_END, RELATED_START
 from agent_hub.core.testing.builders import a_conventions_document
 from agent_hub.core.tracker.tracker_client import TrackerClient
@@ -631,7 +633,13 @@ class TestShipNoArgument:
         assert from_cwd.stdout == explicit.stdout
         assert derived == shipped_children(ship_workspace, child_calls)
         assert derived != []
-        assert tracker.calls[0] == tracker.calls[-1] == ("get_issue", ISSUE)
+        # Each run reads the issue, then makes the same writes.
+        shipped = [
+            ("get_issue", ISSUE),
+            ("move_state", ISSUE, "In Review"),
+            ("comment", ISSUE, f"Pull requests:\n- {API_PR}"),
+        ]
+        assert tracker.calls == shipped * 2
 
     def test_maps_team_spelling_when_hub_has_two_teams(
         self,
@@ -1399,6 +1407,12 @@ class TestShipPartial:
             linked_body(WEB_PR),
             linked_body(API_PR),
         ]
+        assert tracker.calls == [
+            ("get_issue", ISSUE),
+            ("get_issue", ISSUE),
+            ("move_state", ISSUE, "In Review"),
+            ("comment", ISSUE, f"Pull requests:\n- {API_PR}\n- {WEB_PR}"),
+        ]
 
 
 def linked_body(*urls: str, before: str = f"DEM-7 {ISSUE_URL}\n\n") -> str:
@@ -1607,3 +1621,334 @@ class TestShipLinks:
         ]
         assert [pr["body"] for pr in ship_workspace.prs()] == [linked_body(WEB_PR), SHIP_BODY]
         assert tracker.calls == [("get_issue", ISSUE)]
+
+
+SHIP_COMMENT = f"Pull requests:\n- {API_PR}\n- {WEB_PR}"
+
+
+@pytest.mark.usefixtures("with_key")
+class TestShipTracker:
+    def test_moves_then_comments_when_ship_succeeds(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        both_ahead(make_task_worktree)
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        assert tracker.calls == [
+            ("get_issue", ISSUE),
+            ("move_state", ISSUE, "In Review"),
+            ("comment", ISSUE, SHIP_COMMENT),
+        ]
+        assert "agent" not in SHIP_COMMENT.lower()
+        assert tracker.backend.issues[ISSUE].state == "In Review"
+
+    def test_removes_failed_label_when_issue_carries_it(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+        tracker_backend_for_ship: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The conftest's recording tracker, over a backend whose DEM-7 carries the label.
+        failed = type(tracker)(tracker_backend_for_ship(failed=True))
+        monkeypatch.setattr(ship_command, "resolve_tracker_client", Resolve(failed))
+        both_ahead(make_task_worktree)
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        assert failed.calls == [
+            ("get_issue", ISSUE),
+            ("move_state", ISSUE, "In Review"),
+            ("remove_label", ISSUE, "agent-failed"),
+            ("comment", ISSUE, SHIP_COMMENT),
+        ]
+        assert "agent-failed" not in failed.backend.issues[ISSUE].labels
+
+
+NO_RETRY_WORDS = ("retry", "try again", "run again", "re-run")
+NOT_DONE_COMMENT = "hub ship: not done: " + json.dumps(f"comment({ISSUE}, {SHIP_COMMENT})")
+
+
+def assert_no_retry_advice(result: Result) -> None:
+    shown = result.stderr.lower()
+    assert [word for word in NO_RETRY_WORDS if word in shown] == []
+
+
+@pytest.mark.usefixtures("with_key")
+class TestShipTrackerFailures:
+    def test_says_not_moved_when_move_fails(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        tracker.fail_on.add("move_state")
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 1, result.output
+        assert tracker.calls == [("get_issue", ISSUE), ("move_state", ISSUE, "In Review")]
+        assert result.stderr.splitlines()[-6:] == [
+            "hub ship: move_state DEM-7: synthetic outage",
+            f"hub ship: PR open: {API_PR}",
+            f"hub ship: PR open: {WEB_PR}",
+            "hub ship: the issue was not moved to In Review",
+            "hub ship: not done: move_state(DEM-7, In Review)",
+            NOT_DONE_COMMENT,
+        ]
+        assert_no_retry_advice(result)
+
+    def test_omits_not_moved_when_comment_fails(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        tracker.fail_on.add("comment")
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 1, result.output
+        assert tracker.calls == [
+            ("get_issue", ISSUE),
+            ("move_state", ISSUE, "In Review"),
+            ("comment", ISSUE, SHIP_COMMENT),
+        ]
+        assert result.stderr.splitlines()[-4:] == [
+            "hub ship: comment DEM-7: synthetic outage",
+            f"hub ship: PR open: {API_PR}",
+            f"hub ship: PR open: {WEB_PR}",
+            NOT_DONE_COMMENT,
+        ]
+        assert "not moved" not in result.stderr
+        assert_no_retry_advice(result)
+
+
+CO_AUTHOR = "Co-Authored-By: Claude <noreply@anthropic.com>"
+GENERATED = "Generated with [Claude Code](https://claude.com/claude-code)"
+ROBOT_LINE = "\N{ROBOT FACE} synthetic change"
+
+
+def workspace_paths(ship_workspace: Workspace) -> set[str]:
+    ws = ship_workspace.workspace.ws
+    return {str(ws), os.path.realpath(ws)}
+
+
+def shipped_texts(ship_workspace: Workspace, tracker: Any) -> list[str]:
+    """Every text hub ship gave ``gh`` or the tracker: each ``gh`` argument and each write's."""
+    gh = [argument for call in ship_workspace.calls("gh") for argument in call["argv"]]
+    written = [value for _, *values in tracker.calls[1:] for value in values]
+    return [*gh, *written]
+
+
+def assert_no_attribution(ship_workspace: Workspace, tracker: Any) -> None:
+    texts = shipped_texts(ship_workspace, tracker)
+    lines = [line for text in texts for line in text.split("\n")]
+    assert [line for line in lines if any(shape.matches(line) for shape in ATTRIBUTIONS)] == []
+    assert [text for text in texts if ROBOT in text] == []
+    paths = workspace_paths(ship_workspace)
+    assert [text for text in texts if any(path in text for path in paths)] == []
+
+
+@pytest.mark.usefixtures("with_key")
+class TestShipAttribution:
+    @pytest.mark.parametrize(
+        "subject",
+        [
+            f"feat(api): add x {CO_AUTHOR}",
+            f"feat(api): add x {GENERATED}",
+            f"feat(api): add x {ROBOT_LINE}",
+            "feat(api): edit {ws}/demo-api/x.py (DEM-7)",
+        ],
+        ids=["co-author", "generated", "robot", "workspace-path"],
+    )
+    def test_strips_attribution_when_subjects_carry_it(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+        subject: str,
+    ) -> None:
+        ws = os.path.realpath(ship_workspace.workspace.ws)
+        make_task_worktree("demo-api", "dem-7-x", [subject.replace("{ws}", ws)])
+        make_task_worktree("demo-web", "dem-7", ["feat(web): add y (DEM-7)"])
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        assert [call[0] for call in tracker.calls] == ["get_issue", "move_state", "comment"]
+        assert_no_attribution(ship_workspace, tracker)
+
+    def test_strips_attribution_when_found_body_carries_it(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        ws = os.path.realpath(ship_workspace.workspace.ws)
+        found = "https://github.com/acme/demo-api/pull/7"
+        body = f"Notes.\n{CO_AUTHOR}\n{GENERATED}\n{ROBOT_LINE}\nsee {ws}/demo-api/x.py\n"
+        ship_workspace.write_prs([seeded_pr(state="OPEN", url=found) | {"body": body}])
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        edits = [argv for argv in link_calls(ship_workspace) if argv[1] == "edit"]
+        assert edits[0] == [
+            *("pr", "edit", found, "--body"),
+            linked_body(WEB_PR, before="Notes.\nsee demo-api/x.py\n\n\n"),
+        ]
+        assert_no_attribution(ship_workspace, tracker)
+
+    def test_falls_back_to_issue_id_when_subject_only_attribution(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        make_task_worktree("demo-api", "dem-7-x", [CO_AUTHOR])
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        assert pr_titles(ship_workspace) == [ISSUE]
+        assert_no_attribution(ship_workspace, tracker)
+
+
+def synthetic_token() -> str:
+    return "gh" + "p_" + "y" * 36
+
+
+def child_kind(argv: list[str]) -> str:
+    """``check``, ``push``, ``gh`` or ``git`` (a read)."""
+    if argv[0] == "bash":
+        return "check"
+    if argv[0] == "git" and "push" in argv:
+        return "push"
+    return argv[0]
+
+
+@pytest.mark.usefixtures("with_key")
+class TestShipProcesses:
+    def test_keeps_children_in_caller_group_when_shipped(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        both_ahead(make_task_worktree)
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        assert {child_kind(call.argv) for call in child_calls.calls} == {
+            "check",
+            "push",
+            "gh",
+            "git",
+        }
+        assert {call.own_session for call in child_calls.calls} == {False}
+        assert {call["pgid"] for call in ship_workspace.calls("gh")} == {os.getpgid(0)}
+
+    def test_uses_step_timeouts_when_children_run(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        both_ahead(make_task_worktree)
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        timeouts = {(child_kind(call.argv), call.timeout) for call in child_calls.calls}
+        assert timeouts == {("check", 1_800), ("push", 300), ("gh", 120), ("git", 120)}
+
+    def test_scopes_tokens_when_children_run(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        monkeypatch.setenv("GH_TOKEN", synthetic_token())
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        assert [call.argv for call in child_calls.calls if KEY_VARIABLE in call.env] == []
+        with_token = {child_kind(call.argv) for call in child_calls.calls if "GH_TOKEN" in call.env}
+        assert with_token == {"push", "gh"}
+        assert all(
+            "GH_TOKEN" in call.env
+            for call in child_calls.calls
+            if child_kind(call.argv) in {"push", "gh"}
+        )
+
+    def test_never_shows_secret_values_when_shipped(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        monkeypatch.setenv("GH_TOKEN", synthetic_token())
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        logs = [log_path(ship_workspace, repo) for repo in ("demo-api", "demo-web")]
+        shown = [
+            result.stdout,
+            result.stderr,
+            *(path.read_text() for path in logs),
+            ship_workspace.state.read_text(),
+            *(value for _, *values in tracker.calls for value in values),
+        ]
+        for secret in (synthetic_key(), synthetic_token()):
+            assert [text for text in shown if secret in text] == []

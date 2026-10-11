@@ -22,11 +22,12 @@ from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit
 from agent_hub.cli.init_report import shown_text
 from agent_hub.cli.run_children import CHILD_HIDDEN, without
 from agent_hub.cli.ship_set import ShipSet, issue_from_cwd, shipping_set
-from agent_hub.cli.ship_steps import PREFIX, ShipRun, ship_issue
+from agent_hub.cli.ship_steps import PREFIX, ShipRun, ship_issue, tracker_failure_line
 from agent_hub.cli.tracker_client import missing_key_line, resolve_tracker_client, transport_line
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.team_keys import team_of, teams_text
+from agent_hub.core.runner.report_writes import REVIEW_STATE
 from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, Issue, TrackerClient
 
 COMMAND: Final = "ship"
@@ -87,7 +88,14 @@ def ship(
     if dry_run:
         return
     ship_run = ShipRun(
-        targets=found.targets, issue=picked, draft=draft, hub=hub, environ=os.environ
+        targets=found.targets,
+        issue=picked,
+        draft=draft,
+        hub=hub,
+        environ=os.environ,
+        client=client,
+        review_state=REVIEW_STATE,
+        failed_label=config.tracker.failed_label,
     )
     raise typer.Exit(ship_issue(ship_run))
 
@@ -133,9 +141,3 @@ def _read_issue_or_exit(client: TrackerClient, issue_id: str) -> Issue:
         return client.get_issue(issue_id)
     except TrackerError as error:
         fail(tracker_failure_line(error))
-
-
-def tracker_failure_line(error: TrackerError) -> str:
-    """``hub ship: <operation> <issue>: <cause>``, without the adapter's fix (spec E5)."""
-    subject = error.operation if error.issue_id is None else f"{error.operation} {error.issue_id}"
-    return f"{PREFIX}: {subject}: {error.cause}"

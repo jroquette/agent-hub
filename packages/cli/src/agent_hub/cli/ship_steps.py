@@ -9,6 +9,10 @@
 3. With two PRs or more, per PR in ``hub.json`` order: its body read back, its Related PRs
    section made to list the other PRs (``with_related``), and the body edited only when that
    changed it, so a re-run edits nothing. A failure lists the PRs; the tracker is not written.
+4. The tracker writes of ``success_writes``: the move to the review state, the failed label
+   removed when the issue read carries it, then one comment listing the PRs. The first write
+   that fails stops them; none is retried. The failure is named without the adapter's advice
+   (spec E5), then the PRs open, whether the issue was moved, and each write not made.
 
 Each child runs through ``ship_child``: in the caller's process group, with ``pr_steps``'
 environments, timeouts read from ``run_steps``' constants at call time (PD-2). A failure names
@@ -30,7 +34,7 @@ from agent_hub.cli import run_steps
 from agent_hub.cli.child_process import ChildResult, run_child
 from agent_hub.cli.command_exits import fail
 from agent_hub.cli.errors import ChildTimedOutError, PrStepError
-from agent_hub.cli.init_report import shown_path
+from agent_hub.cli.init_report import shown_path, shown_text
 from agent_hub.cli.pr_steps import (
     ChildCall,
     PrTarget,
@@ -45,9 +49,12 @@ from agent_hub.cli.pr_steps import (
     unmatched_warning,
 )
 from agent_hub.cli.run_children import pr_body_command, pr_edit_command, push_env
+from agent_hub.cli.run_report import apply_writes
 from agent_hub.cli.ship_set import ShipTarget
-from agent_hub.core.runner.ship_texts import ship_body, with_related
-from agent_hub.core.tracker.tracker_client import Issue
+from agent_hub.core.errors import TrackerError
+from agent_hub.core.runner.report_writes import call_line, success_writes
+from agent_hub.core.runner.ship_texts import ship_body, ship_comment, with_related
+from agent_hub.core.tracker.tracker_client import Issue, TrackerClient
 
 PREFIX: Final = "hub ship"
 NOTHING_CHECKED: Final = f"{PREFIX}: nothing was checked or pushed"
@@ -81,13 +88,17 @@ class _StepError(Exception):
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ShipRun:
-    """What a live ship works on: the targets, the issue read, the options and the hub."""
+    """What a live ship works on: the targets, the issue read, the options, the hub, and the
+    tracker with the review state and failed label its writes use."""
 
     targets: tuple[ShipTarget, ...]
     issue: Issue
     draft: bool
     hub: Path
     environ: Mapping[str, str]
+    client: TrackerClient
+    review_state: str
+    failed_label: str
 
 
 def ship_issue(run: ShipRun) -> int:
@@ -102,6 +113,7 @@ def ship_issue(run: ShipRun) -> int:
     urls = _open_prs(run)
     if len(urls) > 1:
         _link_prs(run, urls)
+    _report(run, urls)
     return 0
 
 
@@ -366,3 +378,34 @@ def _body_of(read: ChildResult, *, url: str) -> str:
     if not isinstance(body, str):
         raise _StepError(LINK_STEP, unreadable)
     return body
+
+
+def _report(run: ShipRun, urls: Sequence[str]) -> None:
+    """The tracker writes of a shipped issue, in order, stopping at the first that fails."""
+    writes = success_writes(
+        run.issue,
+        review_state=run.review_state,
+        failed_label=run.failed_label,
+        comment=ship_comment(urls=urls, workspace=str(run.hub.parent)),
+    )
+    outcome = apply_writes(run.client, writes)
+    if outcome.error is None:
+        return
+    pending = writes[outcome.done :]
+    not_moved = [
+        f"{PREFIX}: the issue was not moved to {shown_text(run.review_state)}"
+        for write in pending
+        if write.operation == "move_state"
+    ]
+    fail(
+        tracker_failure_line(outcome.error),
+        *(f"{PREFIX}: PR open: {url}" for url in urls),
+        *not_moved,
+        *(f"{PREFIX}: not done: {shown_text(call_line(write))}" for write in pending),
+    )
+
+
+def tracker_failure_line(error: TrackerError) -> str:
+    """``hub ship: <operation> <issue>: <cause>``, without the adapter's fix (spec E5)."""
+    subject = error.operation if error.issue_id is None else f"{error.operation} {error.issue_id}"
+    return f"{PREFIX}: {subject}: {error.cause}"
