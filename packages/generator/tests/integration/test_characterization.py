@@ -756,6 +756,92 @@ def retro_metrics_per_repo_branch(*, ws: Any) -> Run:
     return {"answers": RETRO_GH}
 
 
+# guard and stop_gate (AGH-200 E9): characterized from the unchanged templates before they emit
+# their decisions to the event server; their streams must never change because of that.
+def guard_hub_json(ws: Any) -> dict[str, Any]:
+    """The case ``hub.json`` with ``guard.ask_before_edit`` naming ``api/docs/adr``."""
+    return dict(ws.HUB_JSON, guard={"ask_before_edit": ["api/docs/adr"]})
+
+
+def guard_workspace(ws: Any) -> Path:
+    """The hub copy (with that guard list) and ``api``; returns ``api``."""
+    ws.hub_copy(guard_hub_json(ws), extra_files={"brain/now.md": "# Now\n"})
+    return Path(ws.make_repo(ws.root / "ws" / "api", files={"docs/adr/0001.md": "# ADR\n"}))
+
+
+def tool_event(cwd: Path, tool: str, **tool_input: Any) -> bytes:
+    data = {
+        "session_id": "abcdef123456",
+        "hook_event_name": "PreToolUse",
+        "tool_name": tool,
+        "tool_input": tool_input,
+        "tool_use_id": "toolu_01",
+        "cwd": str(cwd),
+    }
+    return json.dumps(data).encode()
+
+
+def guard_deny_push_main(*, ws: Any) -> Run:
+    api = guard_workspace(ws)
+    return {"stdin": tool_event(api, "Bash", command="git push origin main"), "cwd": api}
+
+
+def guard_deny_force_push(*, ws: Any) -> Run:
+    api = guard_workspace(ws)
+    return {"stdin": tool_event(api, "Bash", command="git push --force origin dev/x"), "cwd": api}
+
+
+def guard_deny_secret_write(*, ws: Any) -> Run:
+    api = guard_workspace(ws)
+    stdin = tool_event(api, "Write", file_path=str(api / ".env"), content="A=1\n")
+    return {"stdin": stdin, "cwd": api}
+
+
+def guard_ask_before_edit(*, ws: Any) -> Run:
+    api = guard_workspace(ws)
+    path = api / "docs" / "adr" / "0001.md"
+    stdin = tool_event(api, "Edit", file_path=str(path), old_string="ADR", new_string="Record")
+    return {"stdin": stdin, "cwd": api}
+
+
+def guard_allow(*, ws: Any) -> Run:
+    api = guard_workspace(ws)
+    return {"stdin": tool_event(api, "Bash", command="ls -la"), "cwd": api}
+
+
+def stop_hub_json(ws: Any, check_fast: str) -> dict[str, Any]:
+    """The case ``hub.json`` whose ``api`` runs ``check_fast``."""
+    repos = [dict(repo, check_fast=check_fast) for repo in ws.HUB_JSON["repos"]]
+    return dict(ws.HUB_JSON, repos=repos)
+
+
+def stop_gate_workspace(ws: Any, *, check_fast: str, changed: bool) -> Run:
+    """The hub copy and ``api`` (a new ``feature.py`` when ``changed``); the event's cwd is
+    ``api``, no transcript (so the window is the fallback's), and the block counter under
+    ``<ROOT>``. The change is an untracked file: the gate strips git's porcelain output, so the
+    first line's leading blank of an unstaged ` M` entry is lost and that file is not seen."""
+    ws.hub_copy(stop_hub_json(ws, check_fast), extra_files={"brain/now.md": "# Now\n"})
+    api = Path(ws.make_repo(ws.root / "ws" / "api", files={"app.py": "x = 1\n"}))
+    if changed:
+        ws.write_files(api, {"feature.py": "y = 2\n"})
+    temp = ws.root / "home" / "tmp"
+    temp.mkdir(parents=True, exist_ok=True)
+    data = {"session_id": "abcdef123456", "hook_event_name": "Stop", "cwd": str(api)}
+    return {"stdin": json.dumps(data).encode(), "cwd": api, "env": {"TMPDIR": str(temp)}}
+
+
+def stop_gate_check_passes(*, ws: Any) -> Run:
+    return stop_gate_workspace(ws, check_fast="echo checks ok", changed=True)
+
+
+def stop_gate_check_fails_block(*, ws: Any) -> Run:
+    return stop_gate_workspace(ws, check_fast="echo boom; exit 3", changed=True)
+
+
+def stop_gate_no_changed_code(*, ws: Any) -> Run:
+    return stop_gate_workspace(ws, check_fast="echo boom; exit 3", changed=False)
+
+
 CASES: dict[str, Builder] = {
     "post_edit/empty_stdin": post_edit_empty_stdin,
     "post_edit/missing_file": post_edit_missing_file,
@@ -793,14 +879,25 @@ CASES: dict[str, Builder] = {
     "retro_metrics/from_hub_worktree": retro_metrics_from_hub_worktree,
     "retro_metrics/bad_run_file": retro_metrics_bad_run_file,
     "retro_metrics/per_repo_branch": retro_metrics_per_repo_branch,
+    "guard/deny_push_main": guard_deny_push_main,
+    "guard/deny_force_push": guard_deny_force_push,
+    "guard/deny_secret_write": guard_deny_secret_write,
+    "guard/ask_before_edit": guard_ask_before_edit,
+    "guard/allow": guard_allow,
+    "stop_gate/check_passes": stop_gate_check_passes,
+    "stop_gate/check_fails_block": stop_gate_check_fails_block,
+    "stop_gate/no_changed_code": stop_gate_no_changed_code,
 }
-# AGH-7's case count per file under test, plus AGH-46's retro_metrics/per_repo_branch.
+# AGH-7's case count per file under test, plus AGH-46's retro_metrics/per_repo_branch and
+# AGH-200's guard and stop_gate cases (E9).
 CASES_PER_FILE = {
     "post_edit": 11,
     "session_start": 9,
     "session_end": 5,
     "pre_compact": 4,
     "retro_metrics": 7,
+    "guard": 5,
+    "stop_gate": 3,
 }
 
 
