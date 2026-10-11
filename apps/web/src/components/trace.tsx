@@ -20,7 +20,10 @@ export function CodeBlock({ code, prompt = "$", label, noCopy, wrap }: CodeBlock
   return (
     <div className="ah-code" role={label ? "group" : undefined} aria-label={label}>
       {prompt && <span className="ah-code-prompt">{prompt}</span>}
-      <pre style={wrap ? { whiteSpace: "pre-wrap" } : undefined}>{code}</pre>
+      {/* A command that does not wrap scrolls sideways, so the keyboard must reach it (axe). */}
+      <pre style={wrap ? { whiteSpace: "pre-wrap" } : undefined} tabIndex={wrap ? undefined : 0}>
+        {code}
+      </pre>
       {!noCopy && (
         <Button
           size="sm"

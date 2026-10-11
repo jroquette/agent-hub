@@ -33,6 +33,18 @@ describe("CodeBlock", () => {
     expect(container.querySelector(".ah-code-prompt")).toBeNull();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
+
+  it("lets the keyboard scroll a command that does not wrap", () => {
+    const { container } = render(<CodeBlock code="cd /a/long/path && claude --resume s" />);
+
+    expect(container.querySelector("pre")).toHaveAttribute("tabindex", "0");
+  });
+
+  it("leaves a wrapped command out of the tab order", () => {
+    const { container } = render(<CodeBlock code="hub web" wrap />);
+
+    expect(container.querySelector("pre")).not.toHaveAttribute("tabindex");
+  });
 });
 
 describe("JsonViewer", () => {
