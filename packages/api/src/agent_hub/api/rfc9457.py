@@ -109,6 +109,13 @@ def busy_problem(_: Exception) -> Problem:
     )
 
 
+def invalid_cursor_problem(_: Any) -> Problem:
+    """``InvalidCursorError`` (core/readmodels/cursor): 400 naming the ``cursor`` parameter."""
+    return _invalid_parameter_problem(
+        InvalidParameterError(parameter="cursor", reason="not a cursor this server issued")
+    )
+
+
 def hub_invalid_problem(error: Any) -> Problem:
     """``HubInvalidError`` (core/hubs): 422 with its title and one ``errors`` entry per problem.
 
