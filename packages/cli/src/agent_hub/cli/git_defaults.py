@@ -43,6 +43,8 @@ _CONFIG_KEYS = {AUTHOR_NAME: "user.name", AUTHOR_EMAIL: "user.email"}
 _REMOTE_KEY = "remote.origin.url"
 # Set, they point git at another repo than the target's own, whatever the top check says.
 _GIT_LOCATION_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
+# Git never moves up into these folders while it looks for a repo.
+_CEILING_VARIABLE = "GIT_CEILING_DIRECTORIES"
 
 # The three URL forms of a GitHub remote: the two SSH forms, then https. The host is exactly
 # github.com; the https form may carry a userinfo (a user or a token), limited to RFC 3986's
@@ -76,8 +78,15 @@ def hub_repo_from_remote(url: str) -> str | None:
 
 
 def remote_scheme(url: str | None) -> RemoteScheme:
-    """``ssh`` for a GitHub SSH remote of a repo, else ``https`` (any other host or shape too)."""
-    if url is None or _SSH_REMOTE.match(url) is None or hub_repo_from_remote(url) is None:
+    """``ssh`` when ``url`` starts with ``git@github.com:`` or ``ssh://git@github.com/``, else
+    ``https`` (spec D-url, a prefix match).
+
+    Any other form falls back to ``https``: another case of the host (``GIT@GITHUB.COM:``), a
+    port (``ssh://git@github.com:22/``), an SSH host alias from ``~/.ssh/config``, and a URL a
+    ``url.<base>.insteadOf`` rule would rewrite, since the configured value is read before git
+    rewrites it.
+    """
+    if url is None or _SSH_REMOTE.match(url) is None:
         return "https"
     return "ssh"
 
@@ -87,16 +96,20 @@ def read_remote_scheme(
 ) -> RemoteScheme:
     """The scheme of the hub's ``origin`` in ``home``; ``https`` when it cannot be read.
 
-    Git runs only when ``home`` has its own ``.git`` entry (a folder, or a worktree's file), so a
-    parent repo's origin is never taken, and not at all when ``env`` sets a git location
-    variable. Git missing, failing or running past ``timeout`` seconds gives ``https``. The URL
-    is read into a local and dropped: only the literal is returned.
+    Git runs only when ``home`` has its own ``.git`` entry (a folder, or a worktree's file), with
+    ``GIT_CEILING_DIRECTORIES`` set to ``home``'s parent, so a parent repo's origin is never
+    taken, and not at all when ``env`` sets a git location variable. Git missing, failing or
+    running past ``timeout`` seconds gives ``https``. The URL is read into a local and dropped:
+    only the literal is returned.
     """
     if not os.path.lexists(home / _GIT_ENTRY):
         return "https"
     if any(variable in env for variable in _GIT_LOCATION_VARIABLES):
         return "https"
-    git = _Git.find(target=home, timeout=timeout, env=env)
+    # The .git entry may be no repo (an empty folder, a dangling link): git then searches the
+    # parents, so the search stops at the hub, never reaching a parent repo's origin.
+    bounded = {**env, _CEILING_VARIABLE: str(home.parent)}
+    git = _Git.find(target=home, timeout=timeout, env=bounded)
     return remote_scheme(git.config(_REMOTE_KEY))
 
 

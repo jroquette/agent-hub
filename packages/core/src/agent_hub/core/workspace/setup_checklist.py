@@ -337,7 +337,7 @@ def git_lacks_item(
 
 def invalid_prefix_item(email: str) -> ChecklistItem:
     """``identity`` missing because git's ``user.email`` local part is not a valid prefix."""
-    local_part = email.rpartition("@")[0]
+    local_part = one_line(email.rpartition("@")[0])
     return _missing(
         "identity", f'git\'s user.email gives "{local_part}", not a valid branch prefix', PREFIX_FIX
     )

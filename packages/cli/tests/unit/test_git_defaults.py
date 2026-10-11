@@ -105,6 +105,11 @@ def test_raises_when_key_not_a_git_default(tmp_path: Path) -> None:
         ),
         pytest.param("https://git.acme.test/acme/demo-hub.git", "https", id="other-host-https"),
         pytest.param("git@git.acme.test:acme/demo-hub.git", "https", id="other-host-ssh"),
+        # D-url is a prefix match: the path after an SSH form is not checked.
+        pytest.param("git@github.com:acme", "ssh", id="scp-ssh-owner-only"),
+        # A port is not one of the two prefixes, nor is another case of the host.
+        pytest.param("ssh://git@github.com:22/acme/x.git", "https", id="url-ssh-port"),
+        pytest.param("GIT@GITHUB.COM:acme/x.git", "https", id="scp-ssh-upper-case"),
         pytest.param("", "https", id="empty"),
         pytest.param(None, "https", id="none"),
     ],
