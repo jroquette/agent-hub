@@ -249,3 +249,53 @@ def test_cuts_ascii_tag_to_limit_when_longer(
     assert exit_code == 1
     assert shown_tag == '"v' + "1" * 77 + "…"
     assert len(shown_tag) == 80
+
+
+SHA = "8a51e13" + "0" * 33
+
+
+def test_exits_zero_when_tag_annotated(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    write_pyprojects(tmp_path, cli="0.2.0", meta="0.2.0")
+
+    exit_code, out, err = run(
+        tmp_path, capsys, "--tag=v0.2.0", f"--peeled={SHA}\trefs/tags/v0.2.0^{{}}\n"
+    )
+
+    assert exit_code == 0
+    assert out == (
+        f'tag "v0.2.0" ok: annotated, equals the version "0.2.0" of {CLI} and {META}\n'
+    )
+    assert err == ""
+
+
+@pytest.mark.parametrize(
+    "peeled",
+    [
+        pytest.param("", id="no-peeled-line"),
+        pytest.param("\n", id="blank"),
+        pytest.param(f"{SHA}\trefs/tags/v0.2.1^{{}}\n", id="other-tag"),
+        pytest.param(f"{SHA}\trefs/tags/v0.2.0\n", id="unpeeled-line"),
+    ],
+)
+def test_rejects_tag_when_lightweight(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], peeled: str
+) -> None:
+    write_pyprojects(tmp_path, cli="0.2.0", meta="0.2.0")
+
+    exit_code, out, err = run(tmp_path, capsys, "--tag=v0.2.0", f"--peeled={peeled}")
+
+    assert exit_code == 1
+    assert out == ""
+    assert err == (
+        'tag "v0.2.0": is a lightweight tag (the remote has no peeled entry for it); a tag is never'
+        " moved: cut the next patch release with git tag -a\n"
+    )
+
+
+def test_rejects_peeled_without_tag(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    write_pyprojects(tmp_path, cli="0.2.0", meta="0.2.0")
+
+    with pytest.raises(SystemExit) as raised:
+        run(tmp_path, capsys, "--peeled=")
+
+    assert raised.value.code == 2
