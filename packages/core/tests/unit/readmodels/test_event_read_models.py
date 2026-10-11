@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from agent_hub.core.events.event import Event, EventType
+from agent_hub.core.events.event import MAX_ID_CHARS, Event, EventType
 from agent_hub.core.events.event_query import EventPage, EventQuery
 from agent_hub.core.events.stored_event import StoredEvent
 from agent_hub.core.readmodels import event_read_models
@@ -383,3 +383,23 @@ def test_refolds_only_changed_session_when_store_grows(
     assert folded == ["s-b"]
     assert after == before
     assert changed.last_activity_at == NOW - timedelta(minutes=1)
+
+
+def test_pages_search_without_repeats_when_session_ids_at_cap() -> None:
+    store = InMemoryEventStore()
+    ids = [f"{index}" + "s" * (MAX_ID_CHARS - 1) for index in range(5)]
+    for index, session in enumerate(ids):
+        store.append(a_session_events(session, start=SCENARIO_START + timedelta(minutes=index)))
+    service = _service(store, SCENARIO_START + timedelta(hours=1))[0]
+
+    seen: list[str] = []
+    cursor: str | None = None
+    for _ in range(10):
+        page = service.search_events("sss", PageRequest(limit=1, cursor=cursor))
+        seen.extend(hit.href for hit in page.items)
+        cursor = page.next_cursor
+        if cursor is None:
+            break
+
+    assert sorted(seen) == sorted(f"/sessions/{session}" for session in ids)
+    assert len(seen) == len(set(seen))

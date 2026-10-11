@@ -319,3 +319,13 @@ def test_never_raises_and_keeps_only_table_keys_when_lines_arbitrary_property(
 
     for event in batch.events:
         assert set(event.payload) <= ALLOWED_KEYS[event.type]
+
+
+def test_reports_problem_when_session_id_longer_than_cap() -> None:
+    lines = [a_user_line(sessionId="s" * 201), a_user_line("kept")]
+
+    batch = parse_transcript(transcript_text(lines), origin=ORIGIN)
+
+    assert [problem.line_number for problem in batch.problems] == [1]
+    assert batch.problems[0].reason == "sessionId: longer than 200 characters"
+    assert [event.payload["chars"] for event in batch.events] == [4]
