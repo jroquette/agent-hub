@@ -5,9 +5,10 @@ The hub is ``AGENT_HUB_ROOT`` when ``./hub`` exports it, else the current folder
 other than this release included (plan E1), prints the reader's lines and exits 1 before any
 git call. Then the checklist, each item's lines printed as soon as it is decided (so far the
 tools and the tracker credential, ``setup_tools``, then the developer's identity,
-``setup_identity``, whose proposal and prompt alone go to stderr, and whether git ignores
-``hub.local.json`` when it exists), and the totals line ``setup: ...``; the exit is 0 when
-every item is ``ok``, else 1.
+``setup_identity``, whose proposal and prompt alone go to stderr, whether git ignores
+``hub.local.json`` when it exists, then each repo cloned or fetched next to the hub,
+``setup_repos``), and the totals line ``setup: ...``; the exit is 0 when every item is ``ok``,
+else 1.
 """
 
 import os
@@ -15,11 +16,10 @@ from typing import Annotated, Final
 
 import typer
 
-from agent_hub.cli import setup_identity, setup_tools
+from agent_hub.cli import setup_identity, setup_repos, setup_tools
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
 from agent_hub.cli.hub_root import hub_root_or_exit, local_home
 from agent_hub.cli.run_children import SESSION_HIDDEN, without
-from agent_hub.cli.setup_repos import setup_git_env
 from agent_hub.core.workspace.setup_checklist import (
     ChecklistItem,
     item_lines,
@@ -65,7 +65,9 @@ def setup(
         checklist.add(item)
     for item in setup_identity.identity_items(config, home=home, is_confirmed_by_flag=yes):
         checklist.add(item)
-    for item in setup_identity.gitignore_items(home, env=setup_git_env(os.environ)):
+    for item in setup_identity.gitignore_items(home, env=setup_repos.setup_git_env(os.environ)):
+        checklist.add(item)
+    for item in setup_repos.repo_items(config, root=root, home=home, environ=os.environ):
         checklist.add(item)
     typer.echo(summary_line(checklist.items))
     raise typer.Exit(setup_exit(checklist.items))
