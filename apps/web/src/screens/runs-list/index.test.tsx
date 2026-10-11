@@ -85,6 +85,21 @@ describe("RunsListScreen", () => {
     );
   });
 
+  it.each(["javascript:alert(1)", "data:text/html,x"])(
+    "renders PR as plain text when the run's pr_url is %s",
+    async (prUrl) => {
+      renderWithApi(<RunsListScreen />, {
+        routes: { "/api/v1/workflow-runs": aPage([{ ...done, pr_url: prUrl }]) },
+        path: "/runs",
+      });
+
+      await screen.findByText("Layered memory");
+      const table = screen.getByRole("table", { name: /Workflow runs/ });
+      expect(within(table).queryByRole("link", { name: /PR/ })).not.toBeInTheDocument();
+      expect(within(table).getByText("PR")).toBeInTheDocument();
+    },
+  );
+
   it("disables Start run on an issue with the P4 tag", async () => {
     renderWithApi(<RunsListScreen />, { routes, path: "/runs" });
 

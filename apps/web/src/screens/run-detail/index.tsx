@@ -18,6 +18,7 @@ import {
   StatusBadge,
   Tabs,
   Time,
+  OutsideLink,
 } from "../../components";
 import { useNow } from "../../lib/clock";
 import { fmtClock, fmtDuration, fmtMoney, toNumber } from "../../lib/format";
@@ -168,10 +169,10 @@ function FailureBanner({ run, onTab }: { run: WorkflowRun; onTab: (tab: Tab) => 
         <div>{failureReason(run)}</div>
         {failure?.diagnosis_comment_url && (
           <div className="ah-small ah-muted">
-            <a href={failure.diagnosis_comment_url} target="_blank" rel="noreferrer">
+            <OutsideLink href={failure.diagnosis_comment_url}>
               Diagnosis posted to {run.issue?.key ?? "the issue"}
               <Icon name="arrow-up-right" size="sm" />
-            </a>
+            </OutsideLink>
           </div>
         )}
         <div className="ah-row ah-wrap" style={{ gap: 8, marginTop: 2 }}>
@@ -436,10 +437,10 @@ function PrTab({ run }: { run: WorkflowRun }) {
       <div className="ah-stack" style={{ gap: 12 }}>
         <div className="ah-row ah-wrap" style={{ gap: 12 }}>
           <Icon name="git-pull-request" />
-          <a href={run.pr_url} target="_blank" rel="noreferrer">
+          <OutsideLink href={run.pr_url}>
             Open the pull request
             <Icon name="arrow-up-right" size="sm" />
-          </a>
+          </OutsideLink>
         </div>
         <p className="ah-small ah-muted" style={{ margin: 0 }}>
           {NOT_CONNECTED("GitHub")} CI checks and review rounds are not shown.
@@ -522,16 +523,10 @@ function Header({ run, now }: { run: WorkflowRun; now: number }) {
           </Button>
         )}
         {run.issue?.url && (
-          <a
-            className="ah-btn"
-            href={run.issue.url}
-            target="_blank"
-            rel="noreferrer"
-            style={{ textDecoration: "none" }}
-          >
+          <OutsideLink className="ah-btn" href={run.issue.url} style={{ textDecoration: "none" }}>
             Open issue {run.issue.key}
             <Icon name="arrow-up-right" size="sm" />
-          </a>
+          </OutsideLink>
         )}
       </div>
       <div
@@ -580,17 +575,11 @@ function Header({ run, now }: { run: WorkflowRun; now: number }) {
           {run.session_ids.length} {run.session_ids.length === 1 ? "session" : "sessions"}
         </span>
         {run.pr_url ? (
-          <a
-            className="ah-row"
-            href={run.pr_url}
-            target="_blank"
-            rel="noreferrer"
-            style={{ gap: 4 }}
-          >
+          <OutsideLink className="ah-row" href={run.pr_url} style={{ gap: 4 }}>
             <Icon name="git-pull-request" size="sm" />
             PR
             <Icon name="arrow-up-right" size="sm" />
-          </a>
+          </OutsideLink>
         ) : (
           <span className="ah-subtle">no PR</span>
         )}
