@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""Hook sensor: send each Claude Code hook input to the local control plane (`hub web`).
+
+Registered for eleven events (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse,
+PostToolUseFailure, Notification, Stop, SubagentStart, SubagentStop, PreCompact, SessionEnd). It
+reads the input (at most MAX_STDIN bytes), replaces every string longer than MAX_STRING_BYTES
+(UTF-8) with {"_omitted_bytes": n}, wraps it in a v1 envelope
+{v, project, repo, run, step, attempt, sent_at, hook} and POSTs it to
+<AGENT_HUB_WEB_URL, else http://127.0.0.1:7420>/api/v1/events/hooks within TIMEOUT seconds.
+project is the hub's project (hub.json); repo the hub.json repo whose checkout or worktree holds
+the input's cwd, else null; run, step and attempt come from AGENT_HUB_RUN_ID, AGENT_HUB_STEP and
+AGENT_HUB_ATTEMPT (set by `hub run`), each null when it is out of bounds. A URL that is not plain
+http to 127.0.0.1, [::1] or localhost (no user, path or query) turns the sensor off: no socket
+is opened. An envelope over MAX_BODY_BYTES, an input that is not a JSON object, or no hub found
+sends nothing. The sensor never prints, never decides anything, and exits 0 whatever happens.
+The guard and the Stop gate send their decisions through send_decision (fail open as well).
+"""
+
+from __future__ import annotations
+
+import http.client
+import json
+import os
+import re
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import urlsplit
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from hubhooks import load_config
+except Exception:  # a partial install: the sensor sends nothing, silently
+    load_config = None
+
+MAX_STDIN = 16 * 1024 * 1024
+MAX_STRING_BYTES = 65_536
+MAX_BODY_BYTES = 1_048_576
+TIMEOUT = 0.5  # seconds for the whole send: connect, request and answer
+DEFAULT_URL = "http://127.0.0.1:7420"
+URL_VARIABLE = "AGENT_HUB_WEB_URL"
+HOOKS_PATH = "/api/v1/events/hooks"
+LOOPBACK_HOSTS = ("127.0.0.1", "::1", "localhost")
+MAX_STEP = 40
+MAX_ATTEMPT = 99
+
+
+def endpoint() -> tuple[str, int] | None:
+    """(host, port) of the event server, or None when the configured URL is not loopback http."""
+    url = os.environ.get(URL_VARIABLE) or DEFAULT_URL
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:  # a port out of range or not a number
+        return None
+    if parts.scheme != "http" or parts.username is not None or parts.password is not None:
+        return None
+    if parts.path not in ("", "/") or parts.query or parts.fragment:
+        return None
+    host = parts.hostname
+    if host not in LOOPBACK_HOSTS:
+        return None
+    return host, port if port is not None else 80
+
+
+def omit_large(value: object) -> object:
+    """value with each string longer than MAX_STRING_BYTES replaced by {"_omitted_bytes": n}."""
+    if isinstance(value, str):
+        size = len(value.encode("utf-8", "surrogatepass"))
+        return {"_omitted_bytes": size} if size > MAX_STRING_BYTES else value
+    if isinstance(value, dict):
+        return {key: omit_large(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [omit_large(item) for item in value]
+    return value
+
+
+def run_fields() -> dict:
+    """run, step and attempt from `hub run`'s variables; each None when absent or out of bounds."""
+    run = os.environ.get("AGENT_HUB_RUN_ID", "")
+    step = os.environ.get("AGENT_HUB_STEP", "")
+    attempt = os.environ.get("AGENT_HUB_ATTEMPT", "")
+    return {
+        "run": run if re.fullmatch(r"[0-9a-f]{8,12}", run) else None,
+        "step": step if 0 < len(step) <= MAX_STEP else None,
+        "attempt": int(attempt) if re.fullmatch(r"[1-9][0-9]?", attempt) else None,
+    }
+
+
+def repo_of(cwd: object, cfg) -> str | None:
+    """The hub.json repo whose main checkout (or one of its worktrees, which live inside it) holds
+    cwd; None for the hub, any other folder, or no cwd."""
+    if not isinstance(cwd, str) or not cwd or cfg.workspace is None:
+        return None
+    try:
+        where = Path(cwd).resolve()
+        workspace = Path(cfg.workspace).resolve()
+    except (OSError, ValueError, RuntimeError):
+        return None
+    for name in cfg.repo_dirs:
+        if not name or "/" in name or name in (".", ".."):
+            continue
+        home = workspace / name
+        if where == home or home in where.parents:
+            return name
+    return None
+
+
+def sent_at() -> str:
+    now = datetime.now(timezone.utc)
+    return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
+
+
+def build_envelope(hook: dict, decision: dict | None = None) -> dict | None:
+    """The v1 envelope of hook (oversized strings omitted), or None when no hub is found."""
+    if load_config is None:
+        return None
+    cwd = hook.get("cwd")
+    cfg = load_config(cwd if isinstance(cwd, str) and cwd else None)
+    if cfg.hub is None or not cfg.project_name:
+        return None
+    envelope = {
+        "v": 1,
+        "project": cfg.project_name,
+        "repo": repo_of(cwd, cfg),
+        **run_fields(),
+        "sent_at": sent_at(),
+        "hook": omit_large(hook),
+    }
+    if decision is not None:
+        envelope["decision"] = decision
+    return envelope
+
+
+def post_envelope(envelope: dict, timeout: float = TIMEOUT) -> None:
+    """POST envelope to the event server within timeout seconds; any failure is silent."""
+    try:
+        target = endpoint()
+        if target is None:
+            return
+        body = json.dumps(envelope, allow_nan=False).encode("ascii")
+        if len(body) > MAX_BODY_BYTES:
+            return
+        deadline = time.monotonic() + timeout
+        host, port = target
+        connection = http.client.HTTPConnection(host, port, timeout=timeout)
+        try:
+            connection.connect()
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return
+            connection.sock.settimeout(left)
+            connection.request("POST", HOOKS_PATH, body=body, headers={"Content-Type": "application/json"})
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return
+            connection.sock.settimeout(left)
+            connection.getresponse().read(4096)
+        finally:
+            connection.close()
+    except Exception:  # down, slow, refused, unencodable: the sensor fails open
+        return
+
+
+def send_decision(hook: dict, decision: dict) -> None:
+    """Send hook with the guard's or the Stop gate's decision; never raises, never prints."""
+    try:
+        envelope = build_envelope(hook, decision)
+        if envelope is not None:
+            post_envelope(envelope)
+    except Exception:
+        return
+
+
+def read_hook() -> dict | None:
+    """The hook input on stdin, or None: over MAX_STDIN bytes, not UTF-8, not a JSON object."""
+    raw = sys.stdin.buffer.read(MAX_STDIN + 1)
+    if len(raw) > MAX_STDIN:
+        return None
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (ValueError, RecursionError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def main() -> None:
+    hook = read_hook()
+    if hook is None:
+        return
+    envelope = build_envelope(hook)
+    if envelope is not None:
+        post_envelope(envelope)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except BaseException:  # noqa: B036 - nothing may reach the session: no output, exit 0
+        pass
+    sys.exit(0)
