@@ -13,7 +13,8 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         command it would let through that holds a character other than ASCII letters, digits, space, tab,
         _ - . / : = @ , + % and the joins ; && || | newline, or a word that always asks: a shell, python*,
         perl, node, ruby, php, xargs, eval, exec, source, `.` as a command, env -i/-u, sudo, su, doas, --,
-        parallel, a sed that runs text (e command or flag, -f), or a part that sets the environment twice),
+        parallel, a sed that runs text (e command or flag, -f), or a part that sets the environment twice,
+        under one spelling or two),
         removing test assertions (`assert`, `expect(`, `pytest.raises`,
         `.assert_*(`, unittest's `.assertX(` and `self.fail(`) or adding skip/xfail/quarantine markers,
         deleting or sed-editing tests from Bash, editing the hub's guard files: plugin/hub-workflow/hooks/,
@@ -121,10 +122,17 @@ INFRA_ENV_VALUE = {"-C", "-S", "--chdir", "--split-string"}  # env options whose
 INFRA_RUNS = re.compile(r"parallel\Z")
 INFRA_SED = re.compile(r"g?sed\Z")
 # E24: the environment settings counted per part (a `NAME=` or `NAME+=` word anywhere in it; a
-# flag as `--x v` or `--x=v`, terraform's chdir with one dash or two); a second one of a name asks.
+# flag as `--x v` or `--x=v`, terraform's chdir and var-file with one dash or two); a second one of
+# a name asks. E25: so does a second spelling of one setting: the AWS profile (either variable or
+# --profile), pulumi's stack (--stack, -s) and serverless's stage (--stage, -s).
 INFRA_ENV_SETTING = re.compile(
     r"(AWS_PROFILE|AWS_DEFAULT_PROFILE|KUBECONFIG|KUBE_CONTEXT)\+?=|(--profile|--context|--kube-context|-?-chdir"
-    r"|--stack|--workspace)(?:=|\Z)"
+    r"|--stack|--workspace|--stage|-s|-?-var-file)(?:=|\Z)"
+)
+INFRA_ENV_ALIASES = (
+    {"AWS_PROFILE", "AWS_DEFAULT_PROFILE", "--profile"},
+    {"--stack", "-s"},
+    {"--stage", "-s"},
 )
 INFRA_END = r"(?![\w-])"
 INFRA_WORD = r"(?<![\w-])({})" + INFRA_END
@@ -597,17 +605,22 @@ def _infra_risky(cmd: str) -> tuple[str, str] | None:
 
 def _infra_repeated(cmd: str) -> str | None:
     """The first environment setting (E24's names and flags) that a part of cmd (a command of safe
-    characters only, so a part is one call) sets a second time, as its name; else None."""
+    characters only, so a part is one call) sets a second time, as its name; else (E25) the first
+    two spellings of one setting in a part, as `first`/`second`; else None."""
     for part in INFRA_PART.split(cmd):
-        seen = set()
+        names = []
         for word in part.split():
             found = INFRA_ENV_SETTING.match(word)
-            if not found:
-                continue
-            name = found.group(1) or found.group(2).replace("--chdir", "-chdir")
-            if name in seen:
+            if found:
+                name = found.group(1) or found.group(2)
+                names.append(name[1:] if name in ("--chdir", "--var-file") else name)
+        for index, name in enumerate(names):
+            if name in names[:index]:
                 return name
-            seen.add(name)
+        for index, name in enumerate(names):
+            for earlier in names[:index]:
+                if any(earlier in group and name in group for group in INFRA_ENV_ALIASES):
+                    return f"{earlier}`/`{name}"
     return None
 
 
@@ -737,8 +750,8 @@ def check_infra(cmd: str, cfg: Config) -> Verdict:
     neither allows nor denies, E22) or hold only local-only forms, else deny; a part where
     something matched an allow pattern asks on its first ask verb. What would pass then asks,
     in this order, on the first character outside the safe list, then on the first word that
-    always asks (E23, E24), then on an environment set twice in a part (E24); so an ask verb keeps
-    its reason, and a deny is never relaxed."""
+    always asks (E23, E24), then on an environment set twice in a part (E24), also under two
+    spellings (E25); so an ask verb keeps its reason, and a deny is never relaxed."""
     infra = cfg.infra
     spaced = cmd.replace("\\\n", " ")
     if infra is None:
