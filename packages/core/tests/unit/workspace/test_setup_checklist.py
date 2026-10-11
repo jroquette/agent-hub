@@ -2,22 +2,36 @@ import dataclasses
 
 import pytest
 
+from agent_hub.core.hub_config.effective_identity import IdentityKey, Source, Sourced
+from agent_hub.core.hub_config.workspace_repos import WorkspaceRepo
 from agent_hub.core.workspace.setup_checklist import (
     PROBE_TIMEOUT_SECONDS,
     PYTHON_MINIMUM,
     UV_MINIMUM,
     ChecklistItem,
+    IdentityGap,
     ProbeResult,
+    RepoOutcome,
     State,
+    doctor_item,
     gh_item,
+    git_lacks_item,
+    gitignore_item,
+    identity_missing_item,
+    identity_resolved_item,
+    identity_text,
+    identity_written_item,
+    invalid_prefix_item,
     item_lines,
     presence_item,
     python_item,
+    repo_item,
     setup_exit,
     summary_line,
     tracker_item,
     uv_item,
     version_in,
+    write_error_item,
 )
 
 UV_PATH = "/opt/tools/uv"
@@ -372,3 +386,371 @@ class TestTools:
         )
 
         assert item_lines(item) == [line]
+
+
+DECLINED_FIX = (
+    "./hub setup --yes, or write hub.local.json yourself (docs/design/developer-identity.md)"
+)
+IDENTITY_DOC_FIX = (
+    "write hub.local.json with project.branch_prefix (docs/design/developer-identity.md)"
+)
+GIT_PREFIX = Sourced("jane/", Source.GIT, IdentityKey.BRANCH_PREFIX, derived=True)
+GIT_NAME = Sourced("Jane Roe", Source.GIT, IdentityKey.AUTHOR_NAME)
+GIT_EMAIL = Sourced("jane@example.com", Source.GIT, IdentityKey.AUTHOR_EMAIL)
+WEB = WorkspaceRepo("demo-web", "acme/demo-web")
+API = WorkspaceRepo("demo-api", "acme/demo-api")
+CLONE_FIX = (
+    "check that your git credentials can read github.com/acme/demo-web (e.g. gh auth setup-git),"
+    " then ./hub setup"
+)
+
+
+def from_hub(value: str, key: IdentityKey) -> Sourced:
+    return Sourced(value, Source.HUB, key)
+
+
+def from_local(value: str, key: IdentityKey, *, derived: bool = False) -> Sourced:
+    return Sourced(value, Source.LOCAL, key, derived=derived)
+
+
+def keyed(*values: Sourced) -> dict[IdentityKey, Sourced]:
+    return {value.key: value for value in values}
+
+
+class TestIdentity:
+    @pytest.mark.parametrize(
+        ("values", "line"),
+        [
+            pytest.param(
+                keyed(GIT_PREFIX, GIT_NAME, GIT_EMAIL),
+                "ok      identity: wrote hub.local.json: jane/, Jane Roe <jane@example.com>"
+                " (git config)",
+                id="all-three",
+            ),
+            pytest.param(
+                keyed(GIT_NAME, GIT_EMAIL),
+                "ok      identity: wrote hub.local.json: Jane Roe <jane@example.com> (git config)",
+                id="name-and-email",
+            ),
+            pytest.param(
+                keyed(GIT_PREFIX),
+                "ok      identity: wrote hub.local.json: jane/ (git config)",
+                id="prefix-only",
+            ),
+            pytest.param(
+                # hub.json sets only the email: the derived prefix keeps hub.json as its source.
+                keyed(
+                    Sourced("jane/", Source.HUB, IdentityKey.BRANCH_PREFIX, derived=True),
+                    GIT_NAME,
+                ),
+                "ok      identity: wrote hub.local.json: jane/, Jane Roe (hub.json, git config)",
+                id="prefix-from-hub-email",
+            ),
+        ],
+    )
+    def test_names_written_keys_when_identity_written(
+        self, values: dict[IdentityKey, Sourced], line: str
+    ) -> None:
+        assert item_lines(identity_written_item(values)) == [line]
+
+    @pytest.mark.parametrize(
+        ("values", "line"),
+        [
+            pytest.param(
+                keyed(
+                    from_hub("jdoe/", IdentityKey.BRANCH_PREFIX),
+                    from_hub("Jane Doe", IdentityKey.AUTHOR_NAME),
+                    from_hub("jane@example.com", IdentityKey.AUTHOR_EMAIL),
+                ),
+                "ok      identity: jdoe/, Jane Doe <jane@example.com> (hub.json)",
+                id="hub-json",
+            ),
+            pytest.param(
+                keyed(
+                    from_local("jane/", IdentityKey.BRANCH_PREFIX),
+                    GIT_NAME,
+                    from_local("jane@example.com", IdentityKey.AUTHOR_EMAIL),
+                ),
+                "ok      identity: jane/, Jane Roe <jane@example.com> (hub.local.json, git config)",
+                id="local-and-git",
+            ),
+            pytest.param(
+                keyed(
+                    from_local("jane/", IdentityKey.BRANCH_PREFIX, derived=True),
+                    from_hub("Jane Roe", IdentityKey.AUTHOR_NAME),
+                    from_local("jane@example.com", IdentityKey.AUTHOR_EMAIL),
+                ),
+                "ok      identity: jane/, Jane Roe <jane@example.com> (hub.local.json, hub.json)",
+                id="derived-prefix",
+            ),
+        ],
+    )
+    def test_names_sources_when_identity_resolved(
+        self, values: dict[IdentityKey, Sourced], line: str
+    ) -> None:
+        assert item_lines(identity_resolved_item(values)) == [line]
+
+    @pytest.mark.parametrize(
+        ("values", "text"),
+        [
+            pytest.param(keyed(GIT_PREFIX, GIT_EMAIL), "jane/, jane@example.com", id="no-name"),
+            pytest.param(keyed(GIT_EMAIL), "jane@example.com", id="email-only"),
+            pytest.param(keyed(GIT_NAME), "Jane Roe", id="name-only"),
+            pytest.param(
+                # Given out of key order: the text keeps prefix, then name and email.
+                {
+                    IdentityKey.AUTHOR_EMAIL: GIT_EMAIL,
+                    IdentityKey.AUTHOR_NAME: GIT_NAME,
+                    IdentityKey.BRANCH_PREFIX: GIT_PREFIX,
+                },
+                "jane/, Jane Roe <jane@example.com>",
+                id="reversed",
+            ),
+        ],
+    )
+    def test_orders_values_when_identity_text_built(
+        self, values: dict[IdentityKey, Sourced], text: str
+    ) -> None:
+        assert identity_text(values) == text
+
+    @pytest.mark.parametrize(
+        ("item", "lines"),
+        [
+            pytest.param(
+                identity_missing_item(IdentityGap.DECLINED),
+                [f"missing identity: hub.local.json not written (declined) Fix: {DECLINED_FIX}"],
+                id="declined",
+            ),
+            pytest.param(
+                identity_missing_item(IdentityGap.NO_TERMINAL),
+                [
+                    "missing identity: hub.local.json not written (stdin is not a terminal)"
+                    f" Fix: {DECLINED_FIX}"
+                ],
+                id="no-terminal",
+            ),
+            pytest.param(
+                git_lacks_item([IdentityKey.AUTHOR_EMAIL]),
+                [
+                    "missing identity: git config in the hub has no user.email"
+                    " Fix: git config user.email <you@example.com>, then ./hub setup"
+                ],
+                id="git-lacks-email",
+            ),
+            pytest.param(
+                git_lacks_item([IdentityKey.AUTHOR_NAME]),
+                [
+                    "missing identity: git config in the hub has no user.name"
+                    ' Fix: git config user.name "<Your Name>", then ./hub setup'
+                ],
+                id="git-lacks-name",
+            ),
+            pytest.param(
+                git_lacks_item([IdentityKey.AUTHOR_EMAIL, IdentityKey.AUTHOR_NAME]),
+                [
+                    "missing identity: git config in the hub has no user.name or user.email"
+                    ' Fix: git config user.name "<Your Name>" and git config user.email'
+                    " <you@example.com>, then ./hub setup"
+                ],
+                id="git-lacks-both",
+            ),
+            pytest.param(
+                git_lacks_item([IdentityKey.AUTHOR_EMAIL], git_problem="git not found"),
+                [
+                    "missing identity: git config in the hub has no user.email"
+                    " Fix: git config user.email <you@example.com>, then ./hub setup",
+                    "        git: git not found",
+                ],
+                id="git-problem",
+            ),
+            pytest.param(
+                invalid_prefix_item("j+x@example.com"),
+                [
+                    'missing identity: git\'s user.email gives "j+x", not a valid branch prefix'
+                    f" Fix: {IDENTITY_DOC_FIX}"
+                ],
+                id="invalid-prefix",
+            ),
+            pytest.param(
+                identity_missing_item(
+                    IdentityGap.INVALID_LOCAL,
+                    sub_lines=(
+                        "hub.local.json: repos: set only in hub.json",
+                        "hub.local.json: project.branch_prefix: must match",
+                    ),
+                ),
+                [
+                    "missing identity: hub.local.json is invalid"
+                    " Fix: fix hub.local.json (docs/design/developer-identity.md)",
+                    "        hub.local.json: repos: set only in hub.json",
+                    "        hub.local.json: project.branch_prefix: must match",
+                ],
+                id="invalid-local",
+            ),
+            pytest.param(
+                identity_missing_item(IdentityGap.APPEARED),
+                [
+                    "missing identity: hub.local.json appeared while writing; left as is"
+                    " Fix: ./hub setup"
+                ],
+                id="appeared",
+            ),
+            pytest.param(
+                write_error_item("Operation not permitted"),
+                [
+                    "missing identity: could not write hub.local.json: Operation not permitted"
+                    f" Fix: {DECLINED_FIX}"
+                ],
+                id="write-error",
+            ),
+            pytest.param(
+                identity_missing_item(
+                    IdentityGap.NO_PREFIX,
+                    sub_lines=(
+                        "no branch prefix for this developer; set one of:",
+                        "  hub.local.json → project.branch_prefix",
+                        '  hub.local.json\'s project.author_email gives "j+x", not a valid prefix',
+                    ),
+                ),
+                [
+                    "missing identity: no branch prefix",
+                    "        no branch prefix for this developer; set one of:",
+                    "          hub.local.json → project.branch_prefix",
+                    '          hub.local.json\'s project.author_email gives "j+x",'
+                    " not a valid prefix",
+                ],
+                id="no-prefix",
+            ),
+        ],
+    )
+    def test_gives_fix_when_identity_missing(self, item: ChecklistItem, lines: list[str]) -> None:
+        assert item_lines(item) == lines
+
+    @pytest.mark.parametrize(
+        "lacking",
+        [
+            pytest.param([IdentityKey.BRANCH_PREFIX], id="prefix"),
+            pytest.param(
+                [IdentityKey.BRANCH_PREFIX, IdentityKey.AUTHOR_EMAIL], id="prefix-and-email"
+            ),
+            pytest.param([], id="none"),
+        ],
+    )
+    def test_refuses_keys_when_git_lacks_no_git_key(self, lacking: list[IdentityKey]) -> None:
+        with pytest.raises(ValueError, match="author_name or author_email"):
+            git_lacks_item(lacking)
+
+    def test_prints_gitignore_line_when_local_file_not_ignored(self) -> None:
+        assert item_lines(gitignore_item()) == [
+            "missing gitignore: hub.local.json is not ignored by git"
+            " Fix: add the line hub.local.json to .gitignore and commit it"
+        ]
+
+
+class TestRepos:
+    @pytest.mark.parametrize(
+        ("item", "line"),
+        [
+            pytest.param(
+                repo_item(WEB, RepoOutcome.CLONED, scheme="ssh"),
+                "ok      repo demo-web: cloned acme/demo-web into ../demo-web (ssh)",
+                id="cloned-ssh",
+            ),
+            pytest.param(
+                repo_item(WEB, RepoOutcome.CLONED, scheme="https"),
+                "ok      repo demo-web: cloned acme/demo-web into ../demo-web (https)",
+                id="cloned-https",
+            ),
+            pytest.param(
+                repo_item(API, RepoOutcome.FETCHED),
+                "ok      repo demo-api: present, fetched",
+                id="fetched",
+            ),
+            pytest.param(
+                repo_item(WEB, RepoOutcome.CLONE_FAILED, returncode=128),
+                f"missing repo demo-web: clone failed (git exit 128) Fix: {CLONE_FIX}",
+                id="clone-failed",
+            ),
+            pytest.param(
+                repo_item(WEB, RepoOutcome.CLONE_TIMED_OUT, timeout_seconds=600.0),
+                f"missing repo demo-web: clone timed out after 600 s Fix: {CLONE_FIX}",
+                id="clone-timeout",
+            ),
+            pytest.param(
+                repo_item(WEB, RepoOutcome.CLONE_TIMED_OUT, timeout_seconds=1.0),
+                f"missing repo demo-web: clone timed out after 1 s Fix: {CLONE_FIX}",
+                id="clone-timeout-shrunk",
+            ),
+            pytest.param(
+                repo_item(API, RepoOutcome.FETCH_FAILED, returncode=1),
+                "missing repo demo-api: fetch failed (git exit 1)"
+                " Fix: git -C ../demo-api fetch origin",
+                id="fetch-failed",
+            ),
+            pytest.param(
+                repo_item(API, RepoOutcome.FETCH_TIMED_OUT, timeout_seconds=600.0),
+                "missing repo demo-api: fetch timed out after 600 s"
+                " Fix: git -C ../demo-api fetch origin",
+                id="fetch-timeout",
+            ),
+            pytest.param(
+                repo_item(WEB, RepoOutcome.NOT_A_REPO),
+                "missing repo demo-web: ../demo-web exists but is not a git repository;"
+                " left untouched Fix: move ../demo-web away, then ./hub setup",
+                id="not-a-repo",
+            ),
+            pytest.param(
+                repo_item(WEB, RepoOutcome.GIT_NOT_FOUND),
+                f"missing repo demo-web: git not found Fix: {GIT_FIX}",
+                id="git-not-found",
+            ),
+        ],
+    )
+    def test_prints_repo_line_when_repo_outcome_known(self, item: ChecklistItem, line: str) -> None:
+        assert item_lines(item) == [line]
+
+
+class TestDoctor:
+    @pytest.mark.parametrize(
+        ("totals", "has_errors", "findings", "lines"),
+        [
+            pytest.param(
+                "0 errors, 1 warning, 0 infos",
+                False,
+                [
+                    "warning makefile.override Makefile.project:12: redefines target 'check'"
+                    " Fix: rename the project target"
+                ],
+                [
+                    "ok      hub doctor: 0 errors, 1 warning, 0 infos",
+                    "        warning makefile.override Makefile.project:12: redefines target"
+                    " 'check' Fix: rename the project target",
+                ],
+                id="no-errors",
+            ),
+            pytest.param(
+                "0 errors, 1 warning, 0 infos",
+                False,
+                [],
+                ["ok      hub doctor: 0 errors, 1 warning, 0 infos"],
+                id="no-findings",
+            ),
+            pytest.param(
+                "1 error, 0 warnings, 0 infos",
+                True,
+                ["error lock.drift AGENTS.md: differs from hub.lock"],
+                [
+                    "missing hub doctor: 1 error, 0 warnings, 0 infos"
+                    " Fix: fix each error below, then ./hub doctor",
+                    "        error lock.drift AGENTS.md: differs from hub.lock",
+                ],
+                id="errors",
+            ),
+        ],
+    )
+    def test_carries_findings_when_doctor_item_built(
+        self, totals: str, *, has_errors: bool, findings: list[str], lines: list[str]
+    ) -> None:
+        item = doctor_item(totals=totals, has_errors=has_errors, finding_lines=findings)
+
+        assert item_lines(item) == lines

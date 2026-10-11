@@ -6,6 +6,7 @@ the same rule as in ``hub.json``; any other ``hub.json`` key is refused with a m
 says so (docs/design/developer-identity.md).
 """
 
+import json
 from collections.abc import Iterable, Mapping
 from types import MappingProxyType
 from typing import ClassVar, Final, Literal
@@ -27,6 +28,10 @@ from agent_hub.core.hub_config.problems import NOT_AN_OBJECT_MESSAGE, ROOT_PATH,
 LOCAL_FILE: Final = "hub.local.json"
 # Four short keys: the cap keeps a stray big file from being read on every call.
 LOCAL_FILE_MAX_BYTES: Final = 65_536
+
+# The identity keys in the order ``hub setup`` writes them (``effective_identity`` imports this
+# module, so the order is spelled here).
+_IDENTITY_ORDER: Final = ("branch_prefix", "author_name", "author_email")
 
 HUB_ONLY_MESSAGE: Final = (
     "set only in hub.json; hub.local.json holds project.branch_prefix, author_name,"
@@ -83,3 +88,17 @@ def check_local_document(document: object) -> LocalConfig | tuple[ConfigProblem,
         return LocalConfig.model_validate(document)
     except ValidationError as error:
         return validation_problems(error, document)
+
+
+def local_identity_bytes(values: Mapping[str, str]) -> bytes | tuple[ConfigProblem, ...]:
+    """The bytes of a ``hub.local.json`` holding ``values`` under ``project``, or their problems.
+
+    Keys come out in the order ``branch_prefix``, ``author_name``, ``author_email`` whatever the
+    mapping's order, indented 2, UTF-8 and not escaped, with a final newline.
+    """
+    checked = check_local_document({"project": dict(values)})
+    if not isinstance(checked, LocalConfig):
+        return checked
+    project = {key: values[key] for key in _IDENTITY_ORDER if key in values}
+    text = json.dumps({"project": project}, indent=2, ensure_ascii=False) + "\n"
+    return text.encode("utf-8")
