@@ -80,6 +80,7 @@ def test_records_passed_gate_when_gate_ok_stages() -> None:
         "command": "make check",
         "result": "passed",
         "attempt": 1,
+        "mode": "live",
     }
 
 

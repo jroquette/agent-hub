@@ -233,7 +233,7 @@ def _project_or_exit(project: str | None, *, runs: Path | None) -> str:
     if project:
         return project
     for hub in _hub_candidates(runs):
-        name = _hub_project(hub / FILE_LABEL)
+        name = hub_project_name(hub)
         if name is not None:
             return name
     _fail(NO_PROJECT)
@@ -249,9 +249,9 @@ def _hub_candidates(runs: Path | None) -> list[Path]:
     return candidates
 
 
-def _hub_project(path: Path) -> str | None:
-    """``project.name`` of the ``hub.json`` at ``path``, read leniently; None when unreadable."""
-    content = read_hub_bytes(path)
+def hub_project_name(hub: Path) -> str | None:
+    """``project.name`` of the hub's ``hub.json``, read leniently; None when unreadable."""
+    content = read_hub_bytes(hub / FILE_LABEL)
     if not isinstance(content, bytes):
         return None
     try:

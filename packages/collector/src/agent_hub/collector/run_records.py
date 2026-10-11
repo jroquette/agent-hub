@@ -62,6 +62,7 @@ class _Record:
             value = text(self.raw, key)
             if value is not None:
                 payload[key] = value
+        payload["mode"] = self.mode
         return payload
 
     @property
@@ -105,7 +106,7 @@ class RunEventMapper:
             progress.open_stage = key
             payload = record.base | {"stage": record.state, "attempt": progress.attempts[key]}
             if record.event == "picked":
-                payload |= {"mode": record.mode, "caps": _caps(record.raw)}
+                payload["caps"] = _caps(record.raw)
             events.append(self._event(record, EventType.STEP_START, payload, step=key))
         return events
 
@@ -170,7 +171,6 @@ class RunEventMapper:
             payload |= {"stage": progress.failure[0], "reason": progress.failure[1]}
         elif failed_stage is not None:
             payload["stage"] = failed_stage
-        payload["mode"] = record.mode
         return self._event(record, EventType.RUN_END, payload, step=None)
 
     def _event(
