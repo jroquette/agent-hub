@@ -71,6 +71,7 @@ hub brief [--no-network]   # session brief: now, journal, repo/PR/CI state
 hub agent [ARGS…]   # claude with every repo attached (./agent)
 hub next   # the tracker's ready issues, one line each
 hub run ISSUE --repo REPO [--live] [--budget USD] [--from implement|verify] …   # one issue to a PR through the tracker port
+hub ship [ISSUE] [--draft] [--dry-run]   # each changed repo's check, push and PR, PRs linked, the issue to review
 hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …   # configuration benchmark (module bench)
 hub collect [FILE|-] [--db PATH]   # ingests canonical events from JSON Lines (stdin when FILE is omitted or -)
 ```
@@ -99,6 +100,27 @@ key such a call would act on, or when `origin` is not the repo's GitHub url from
 session and the gate run as the user, so they can read the user's stored credentials or change the global git config,
 and a process they leave running could change the config between the guard's check and the call; only a sandbox
 closes that (AGH-42).
+
+`hub ship` ships an issue that may span repos (`ISSUE` defaults to the issue of the task worktree the cwd is in). Its
+set is each `hub.json` repo whose task worktree for the issue (`<repo>/.claude/worktrees/<team>-<n>[-<desc>]`, at
+most one per repo, on the task branch) has commits ahead of `origin/<default branch>` as last fetched: `hub ship`
+never fetches. It prints `ship: <repo>  <branch>` per repo in the set and `skipped: <repo> (no commits ahead of
+origin/<base>)` per repo left out, reads the issue once, then runs four phases, each in `hub.json` order. (1) With no
+uncommitted tracked change in any worktree, every repo's `check` runs, before any push; each writes its output tails
+to the owner-only `<hub>/.agent-runs/ship/<ISSUE>-<repo>.log` and prints `check passed: <repo>`; a worktree left
+dirty, or a HEAD or task branch that moved, during the checks stops the ship before any push. (2) Per repo, the push
+(behind `hub run`'s guard), then `gh pr create` (`--draft` when given; the title is the newest commit's subject
+following the repo's conventions), or the PR already open for the branch: `opened: <repo>  <url>` or `found: <repo>
+<url>`. (3) With two PRs or more, each PR's Related PRs section is made to list the others, its body edited through a
+file and only when that changes it. (4) The tracker writes: the move to the review state, the failed label removed
+when the issue carries it, then one comment listing the PRs. Every stderr line starts with `hub ship: `; a failure
+names the repo and the step and lists the PRs already open; the first tracker write that fails is shown as not
+confirmed (it may have landed) and the later ones as not done, none retried. Run again after a success, `hub ship`
+finds the open PRs, edits nothing and posts one more comment. `--dry-run` prints the set, then per repo the check,
+push, `gh pr create` and link edit it would run and each tracker write it would make, with placeholder PR urls; it
+runs only git reads, writes no file and does not write to the tracker. Usage errors exit 2 before any tracker call or
+child; any later failure exits 1. Secret scope as `hub run`: no child gets `LINEAR_API_KEY`, and only the push and
+`gh` get a GitHub token.
 
 **What to extract from `loki-trader-hub`**
 
