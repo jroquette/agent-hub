@@ -25,6 +25,7 @@ from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
 from agent_hub.cli.hub_root import hub_root_or_exit, local_home
 from agent_hub.cli.run_children import SESSION_HIDDEN, without
 from agent_hub.core.doctor.run_rules import UsageProblem, count_findings, sort_findings
+from agent_hub.core.hub_config.problems import one_line
 from agent_hub.core.workspace.setup_checklist import (
     DOCTOR_FIX,
     ChecklistItem,
@@ -85,10 +86,10 @@ def setup(
 def _doctor_item(root: Path) -> ChecklistItem:
     """``hub doctor``'s check of the hub at ``root`` (its real path), as one checklist item."""
     run = check_hub(str(root))
-    if isinstance(run, UsageProblem):
+    if isinstance(run, UsageProblem):  # pragma: no cover - unreachable: setup passes no --only
         # Only an ``--only`` selection is refused, and setup selects every rule.
         return ChecklistItem(
-            state=State.MISSING, item="hub doctor", detail=run.message, fix=DOCTOR_FIX
+            state=State.MISSING, item="hub doctor", detail=one_line(run.message), fix=DOCTOR_FIX
         )
     findings = sort_findings(run.findings)
     totals = count_findings(findings)

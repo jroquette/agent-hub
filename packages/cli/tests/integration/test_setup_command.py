@@ -1783,6 +1783,34 @@ class TestDoctor:
         assert result.stdout.splitlines()[-1] == "setup: 1 missing, 9 ok"
         assert result.exit_code == 1
 
+    @pytest.mark.parametrize("broken", ["non-utf8", "folder"])
+    def test_reports_missing_doctor_when_lock_unreadable(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        broken: str,
+    ) -> None:
+        hub = Path(demo_workspace.hub)
+        _give_repos_agents(demo_workspace)
+        lock = hub / "hub.lock"
+        lock.unlink()
+        if broken == "folder":
+            lock.mkdir()
+        else:
+            lock.write_bytes(b"\xff\xfe not utf-8\n")
+
+        result = run_setup(hub)
+
+        lines = _doctor_lines(result.stdout)
+        assert lines[0] == f"missing hub doctor: 1 error, 0 warnings, 0 infos Fix: {DOCTOR_FIX}"
+        assert len(lines) == 2
+        assert lines[1].startswith(f"{_SUB_LINE}error lock.drift hub.lock")
+        assert result.stdout.splitlines()[-1] == "setup: 1 missing, 9 ok"
+        assert result.exit_code == 1
+        assert "Traceback" not in result.stderr
+
 
 @pytest.mark.usefixtures("tools_ok")
 class TestIdempotent:
