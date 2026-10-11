@@ -476,14 +476,6 @@ INFRA_ASK_REASON = "`{} {}` changes infrastructure on an allowed environment; co
 INFRA_CONFIG_REASON = (
     "{} (hub.json) cannot be used ({}); infrastructure commands are denied until it is fixed"
 )
-INFRA_SIMPLE_REASON = (
-    "`{}` is a shell construct guard.infra does not check; "
-    "confirm this infrastructure command first"
-)
-INFRA_QUOTED_REASON = (
-    "{}: guard.infra.allow (hub.json) matches only quoted text here (`{}`), which may not be this "
-    "command's environment; confirm first, or write the environment unquoted"
-)
 INFRA_UNSAFE_REASON = (
     "`{}` is a character guard.infra does not check (it passes only letters, digits, blanks, "
     "`_-./:=@,+%` and the joins `;` `&&` `||` `|` newline); confirm this infrastructure command "
@@ -511,14 +503,6 @@ def infra_ask(tool: str, verb: str) -> tuple[str, str]:
 
 def unusable(location: str, cause: str) -> tuple[str, str]:
     return ("deny", INFRA_CONFIG_REASON.format(location, cause))
-
-
-def simple(construct: str) -> tuple[str, str]:
-    return ("ask", INFRA_SIMPLE_REASON.format(construct))
-
-
-def quoted(tool: str, value: str) -> tuple[str, str]:
-    return ("ask", INFRA_QUOTED_REASON.format(tool, value))
 
 
 def unsafe(char: str) -> tuple[str, str]:
@@ -691,7 +675,8 @@ def test_asks_infra_verb_when_environment_allowed(infra_evaluate: Evaluate) -> N
     assert verdicts == expected
 
 
-# AC-45.12 (D5, D5-t): the local-only forms pass with no environment.
+# AC-45.12 (D5, D5-t): the local-only forms pass with no environment (E23: `python`, a word that
+# always asks, makes `cdk init app --language python` ask).
 def test_allows_local_form_when_no_environment(infra_evaluate: Evaluate) -> None:
     commands = [
         "aws --version",
@@ -717,7 +702,7 @@ def test_allows_local_form_when_no_environment(infra_evaluate: Evaluate) -> None
 
     verdicts = bash_verdicts(infra_evaluate, commands)
 
-    assert verdicts == dict.fromkeys(commands)
+    assert verdicts == dict.fromkeys(commands) | {"cdk init app --language python": risky("python")}
 
 
 # AC-45.12 (D5-t): near misses of a local form; a part is local only when every mention is.
@@ -1106,14 +1091,14 @@ def test_denies_tool_mention_when_its_call_has_no_environment(infra_evaluate: Ev
 
 
 # E20 (S1): `$'…'` is its own quote kind, where a backslash escapes the next character, so an
-# escaped quote inside it neither hides a comment nor makes one (E21: an allowed command holding
-# `$'` asks, naming it).
+# escaped quote inside it neither hides a comment nor makes one (E23: an allowed command holding
+# `$'` asks, naming the `$`).
 def test_cuts_comment_when_ansi_c_quote_holds_quote(infra_evaluate: Evaluate) -> None:
     expected = {
         "aws s3 cp x s3://y $'\\'' # --profile demo-dev '": unknown("aws"),
         "aws $'\\'' #$' --profile demo-dev echo ": unknown("aws"),
-        "aws s3 cp x s3://y $'a #b' --profile demo-dev": simple("$'"),
-        "aws s3 cp x s3://y $'it\\'s #1' --profile demo-dev": simple("$'"),
+        "aws s3 cp x s3://y $'a #b' --profile demo-dev": unsafe("$"),
+        "aws s3 cp x s3://y $'it\\'s #1' --profile demo-dev": unsafe("$"),
     }
 
     verdicts = bash_verdicts(infra_evaluate, list(expected))
@@ -1235,35 +1220,37 @@ def test_asks_in_time_when_allowed_command_has_many_words(
     assert list_scans(source) == (list(SET_HELPERS), [])
 
 
-# E21 (a), simple-or-ask: an allow (or a D5 local form) holds only when the whole command has none
-# of the constructs the guard does not model; otherwise it asks, naming the leftmost one (escaped).
-# An infra ask keeps its reason, a deny stays a deny, a later rule's deny still wins (D-order), and
-# a command that names no covered tool keeps its verdict.
+# E21 (a), simple-or-ask, as E23 words it: an allow (or a D5 local form) holds only when the whole
+# command has safe characters only and no word that always asks; otherwise it asks, naming the
+# first such character, else the first such word (escaped). An infra ask keeps its reason, a deny
+# stays a deny, a later rule's deny still wins (D-order), and a command that names no covered tool
+# keeps its verdict. With the builder's blank-bounded patterns, a quote glued to the environment
+# leaves no evidence (deny).
 def test_asks_when_allowed_command_is_not_simple(infra_evaluate: Evaluate) -> None:
     expected = {
-        "aws s3 ls \\\n--profile demo-dev": simple("\\\\"),
-        "aws s3 ls --profile demo-dev $'x'": simple("$'"),
-        "aws s3 ls --profile demo-dev $$": simple("$$"),
-        "aws s3 ls --profile demo-dev `echo x`": simple("`"),
-        "aws s3 ls --profile demo-dev # note": simple("#"),
-        "aws s3 ls --profile demo-dev --query a''b": simple("a''b"),
-        'aws s3 ls --profile demo-dev --query "a"b': simple('\\"a\\"b'),
-        "aws s3 ls --profile demo-dev 'x": simple("'x"),
-        "terraform init -backend=false -backen''d=true -migrate-state": simple("-backen''d=true"),
-        "kubectl version --client --cli\\ent=false": simple("\\\\"),
-        "terraform init -backend=false -b\\ackend=true -migrate-state": simple("\\\\"),
-        "aws s3 ls --profile demo-dev | xargs echo": simple("xargs"),
-        "eval aws s3 ls --profile demo-dev": simple("eval"),
-        "exec aws s3 ls --profile demo-dev": simple("exec"),
-        "source env.sh && aws s3 ls --profile demo-dev": simple("source"),
-        ". env.sh && aws s3 ls --profile demo-dev": simple("."),
-        "bash -c 'aws s3 ls --profile demo-dev'": simple("bash -c"),
-        "sh -c 'aws s3 ls' --profile demo-dev": simple("sh -c"),
-        "zsh -xc 'aws s3 ls --profile demo-dev'": simple("zsh -xc"),
-        "dash -c 'cdk synth'": simple("dash -c"),
-        "aws s3 ls --profile demo-dev <<< x": simple("<<<"),
-        "cat <<EOF | aws s3 cp - s3://b/x --profile demo-dev\nx\nEOF": simple("<<"),
-        "cdk synth # x": simple("#"),
+        "aws s3 ls \\\n--profile demo-dev": unsafe("\\\\"),
+        "aws s3 ls --profile demo-dev $'x'": unsafe("$"),
+        "aws s3 ls --profile demo-dev $$": unsafe("$"),
+        "aws s3 ls --profile demo-dev `echo x`": unsafe("`"),
+        "aws s3 ls --profile demo-dev # note": unsafe("#"),
+        "aws s3 ls --profile demo-dev --query a''b": unsafe("'"),
+        'aws s3 ls --profile demo-dev --query "a"b': unsafe('\\"'),
+        "aws s3 ls --profile demo-dev 'x": unsafe("'"),
+        "terraform init -backend=false -backen''d=true -migrate-state": unsafe("'"),
+        "kubectl version --client --cli\\ent=false": unsafe("\\\\"),
+        "terraform init -backend=false -b\\ackend=true -migrate-state": unsafe("\\\\"),
+        "aws s3 ls --profile demo-dev | xargs echo": risky("xargs"),
+        "eval aws s3 ls --profile demo-dev": risky("eval"),
+        "exec aws s3 ls --profile demo-dev": risky("exec"),
+        "source env.sh && aws s3 ls --profile demo-dev": risky("source"),
+        ". env.sh && aws s3 ls --profile demo-dev": risky("."),
+        "bash -c 'aws s3 ls --profile demo-dev'": unknown("aws"),
+        "sh -c 'aws s3 ls' --profile demo-dev": unsafe("'"),
+        "zsh -xc 'aws s3 ls --profile demo-dev'": unknown("aws"),
+        "dash -c 'cdk synth'": unsafe("'"),
+        "aws s3 ls --profile demo-dev <<< x": unsafe("<"),
+        "cat <<EOF | aws s3 cp - s3://b/x --profile demo-dev\nx\nEOF": unsafe("<"),
+        "cdk synth # x": unsafe("#"),
         "aws s3 rm s3://b --profile demo-dev # x": infra_ask("aws", "s3 rm"),
         "aws s3 ls $'x'": unknown("aws"),
         "eval aws s3 ls": unknown("aws"),
@@ -1272,7 +1259,7 @@ def test_asks_when_allowed_command_is_not_simple(infra_evaluate: Evaluate) -> No
             "reading secret file .env is not allowed (any command, not just cat); "
             "reference the variable name instead",
         ),
-        "aws s3 ls --profile demo-dev --query 'Contents[].Key' --output \"text\"": None,
+        "aws s3 ls --profile demo-dev --query 'Contents[].Key' --output \"text\"": unsafe("'"),
         "helm lint .": None,
         "echo $'a' # b \\\\ | xargs echo": None,
         "bash -c 'echo a''b'": None,
@@ -1325,7 +1312,7 @@ def test_cuts_comment_when_dollar_dollar_precedes_quote(infra_evaluate: Evaluate
         "terraform init $$'\\' # -backend=false '": unknown("terraform"),
         "aws s3 cp x s3://y \\$$'\\'' # --profile demo-dev '": unknown("aws"),
         "aws s3 cp x s3://y $'\\\\' # --profile demo-dev '": unknown("aws"),
-        "aws s3 ls --profile demo-dev $$'#'": simple("$$"),
+        "aws s3 ls --profile demo-dev $$'#'": unsafe("$"),
     }
 
     verdicts = bash_verdicts(infra_evaluate, list(expected))
@@ -1347,7 +1334,7 @@ def test_joins_only_bash_line_continuations_when_infra_set(infra_evaluate: Evalu
         "aw\\\ns s3 rm s3://b": unknown("aws"),
         "aws s3 ls --profile demo-\\\nprod": marker(r"\bdemo-prod\b"),
         "aws s3 rm s3://b --profile demo-\\\ndev": infra_ask("aws", "s3 rm"),
-        "echo \\\\\naws s3 cp x s3://y --profile demo-dev": simple("\\\\"),
+        "echo \\\\\naws s3 cp x s3://y --profile demo-dev": unsafe("\\\\"),
     }
 
     verdicts = bash_verdicts(infra_evaluate, list(expected))
@@ -1356,27 +1343,27 @@ def test_joins_only_bash_line_continuations_when_infra_set(infra_evaluate: Evalu
 
 
 # E22: an allow match that overlaps a quoted region ('…', "…" or $'…') may be text bash passes as
-# one argument, not the command's environment: a part (or call) whose only allow evidence is quoted
-# asks, naming the quoted match (escaped), after any infra ask or E21 construct; a match fully
-# outside quotes still allows, a local form needs no evidence, and a deny stays a deny.
+# one argument, not the command's environment: it never allows (E23: a quote is not a safe
+# character, so such a command asks, naming the quote; the builder's blank-bounded patterns no
+# longer match an environment glued to a quote, so most of these now deny); a match fully outside
+# quotes still counts, a local form needs no evidence, an infra ask keeps its reason, and a deny
+# stays a deny.
 def test_asks_when_environment_only_quoted(infra_evaluate: Evaluate) -> None:
     expected = {
-        "aws s3 ls --query '--profile demo-dev'": quoted("aws", "--profile demo-dev"),
-        "aws s3 ls 'AWS_PROFILE=demo-dev'": quoted("aws", "AWS_PROFILE=demo-dev"),
-        'aws s3 ls x --query "--profile demo-dev"': quoted("aws", "--profile demo-dev"),
-        "aws s3 rm s3://b --query '--profile demo-dev'": quoted("aws", "--profile demo-dev"),
-        "sudo -u 'x;' aws s3 ls '--profile demo-dev'": quoted("aws", "--profile demo-dev"),
-        "AWS_PROFILE=demo-dev true & aws s3 ls '--profile demo-dev'": quoted(
-            "aws", "--profile demo-dev"
-        ),
-        "aws s3 ls --profile demo-dev --query 'x'": None,
+        "aws s3 ls --query '--profile demo-dev'": unknown("aws"),
+        "aws s3 ls 'AWS_PROFILE=demo-dev'": unknown("aws"),
+        'aws s3 ls x --query "--profile demo-dev"': unknown("aws"),
+        "aws s3 rm s3://b --query '--profile demo-dev'": unknown("aws"),
+        "sudo -u 'x;' aws s3 ls '--profile demo-dev'": unknown("aws"),
+        "AWS_PROFILE=demo-dev true & aws s3 ls '--profile demo-dev'": unknown("aws"),
+        "aws s3 ls --profile demo-dev --query 'x'": unsafe("'"),
         "AWS_PROFILE=demo-dev aws s3 ls": None,
-        "aws s3 ls --profile demo-dev --query '--profile demo-dev'": None,
-        "cdk synth '--profile demo-dev'": None,
+        "aws s3 ls --profile demo-dev --query '--profile demo-dev'": unsafe("'"),
+        "cdk synth '--profile demo-dev'": unsafe("'"),
         "aws s3 rm s3://b --profile demo-dev --query '--profile x'": infra_ask("aws", "s3 rm"),
         'aws s3 ls --profile "demo-dev"': unknown("aws"),
         "aws s3 ls '--profile demo-dev' & aws s3 cp x s3://y": unknown("aws"),
-        "aws s3 ls $'--profile demo-dev'": simple("$'"),
+        "aws s3 ls $'--profile demo-dev'": unknown("aws"),
     }
 
     verdicts = bash_verdicts(infra_evaluate, list(expected))
@@ -1385,14 +1372,14 @@ def test_asks_when_environment_only_quoted(infra_evaluate: Evaluate) -> None:
 
 
 # E22: with an allow pattern that matches the value alone, a quoted value (`--profile "demo-dev"`)
-# asks too; the reason shows the match escaped and capped.
+# asks, not denies (E23: the reason names the quote, escaped).
 def test_asks_when_allowed_value_quoted(evaluate: Evaluate, workspace: Path) -> None:
     write_hub(workspace, {"allow": [r"\bdemo-dev\S*"]})
     long_value = "demo-dev" + "x" * 200
     expected = {
-        'aws s3 ls --profile "demo-dev"': quoted("aws", 'demo-dev\\"'),
-        "aws s3 ls --profile 'demo-dev'": quoted("aws", "demo-dev'"),
-        f"aws s3 ls --profile '{long_value}'": quoted("aws", cut(long_value + "'")),
+        'aws s3 ls --profile "demo-dev"': unsafe('\\"'),
+        "aws s3 ls --profile 'demo-dev'": unsafe("'"),
+        f"aws s3 ls --profile '{long_value}'": unsafe("'"),
         "aws s3 ls --profile demo-dev": None,
     }
 

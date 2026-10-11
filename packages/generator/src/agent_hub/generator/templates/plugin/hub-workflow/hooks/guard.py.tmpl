@@ -10,8 +10,9 @@ deny  = hard block (secrets, force-push / push to the default branch, curl|sh, d
         from a file tool or any Bash token)
 ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an allowed environment, anywhere
         after the tool (aws's s3 … rm and cloudformation … deploy too, quoted or not); with guard.infra, a
-        command it would let through that is not simple: it holds a backslash, $', $$, a backtick, #, a
-        quote inside a word, xargs, eval, exec, source, `.`, bash/sh/zsh/dash -c, <<< or <<,
+        command it would let through that holds a character other than ASCII letters, digits, space, tab,
+        _ - . / : = @ , + % and the joins ; && || | newline, or a word that always asks: a shell, python*,
+        perl, node, ruby, php, xargs, eval, exec, source, `.` as a command, env -i/-u, sudo, su, doas, --),
         removing test assertions (`assert`, `expect(`, `pytest.raises`,
         `.assert_*(`, unittest's `.assertX(` and `self.fail(`) or adding skip/xfail/quarantine markers,
         deleting or sed-editing tests from Bash, editing the hub's guard files: plugin/hub-workflow/hooks/,
@@ -84,11 +85,12 @@ TEST_PATH = r"(?:(\S*/)?(tests?|__tests__)/\S+|\S+\.(test|spec)\.[jt]sx?\b|['\"]
 # guard.infra: the covered tools, each as a word followed by an optional closing quote, blanks and
 # an argument (group 2 starts at it; a lookahead, so a tool word that is another tool's first
 # argument is a mention too), by a redirection glued to it (`aws>/dev/null`, `aws&>log`), or by
-# nothing but blanks up to the end of its part or call (`xargs aws`, `(aws)`; these two have no
-# group 2, never a local form), anywhere in a part, so wrappers, quotes and redirections do not hide it.
+# nothing but blanks up to the end of its part or call, or by a `$`, `,` or `}` (`xargs aws`, `(aws)`,
+# `aws$x`, `{aws,s3}`; these two have no group 2, never a local form), anywhere in a part, so
+# wrappers, quotes, expansions and redirections do not hide it.
 INFRA_TOOLS = ("aws", "cdk", "terraform", "pulumi", "kubectl", "helm", "sam", "serverless")
 INFRA_TOOL = re.compile(
-    r"\b(" + "|".join(INFRA_TOOLS) + r")\b(?:['\"]?\s+(?=(\S))|(?=\d*[<>]|&>)|(?=['\"]?\s*(?:[&()`{}]|\Z)))"
+    r"\b(" + "|".join(INFRA_TOOLS) + r")\b(?:['\"]?\s+(?=(\S))|(?=\d*[<>]|&>)|(?=['\"]?\s*(?:[&()`{}$,]|\Z)))"
 )
 # The parts of a command: split at `&&`, `||`, `;`, `|` and newlines; each part is checked whole,
 # then each tool mention in it against the call that holds it (the part split at a single `&`, `(`,
@@ -101,17 +103,18 @@ INFRA_CALL = re.compile(r"[&()`{}]")
 # after a blank or an operator) and newlines.
 INFRA_LEX = re.compile(r"[\\'\"#\n$]")
 INFRA_WORD_BREAK = re.compile(r"[\s;&|()<>]")
-INFRA_QUOTE_NEXT = {"": re.compile("['\"]"), "'": re.compile("'"), '"': re.compile('"')}  # by open quote
-INFRA_WORD_PIECE = re.compile(r"[^\s;&|()<>]*")
-INFRA_WORD_TAIL = re.compile(r"[^\s;&|()<>]*\Z")
-# E21 simple-or-ask: the constructs the guard does not model. An infra allow (or local form) holds
-# only for a command that has none of them; else it asks, naming the leftmost one.
-INFRA_UNMODELLED = re.compile(r"\\|\$'|\$\$|`|#|<<<?|(?<![\w-])(?:xargs|eval|exec|source)(?![\w-])")
-INFRA_DOT = re.compile(
-    r"(?:^|[;&|(){}!\n]|(?<![\w-])(?:then|do|else|elif|if|while|until|time|command|builtin)(?=\s))\s*(\.)(?=[\s;&|)]|\Z)"
-)
-INFRA_SHELL_WORD = re.compile(r"(?<![\w.-])(?:ba|z|da)?sh(?![\w.-])")
-INFRA_SHELL_C = re.compile(r"(?<![\w-])-[a-zA-Z]*c[a-zA-Z]*(?![\w-])")
+# E23 safe characters: an infra allow (or a local form) holds only for a command made of ASCII
+# letters and digits, space, tab and `_ - . / : = @ , + %`, joined by `;`, `&&`, `||`, `|` or a
+# newline; the first other character (a match that is not `&&`) makes it ask.
+INFRA_UNSAFE = re.compile(r"&&|[^A-Za-z0-9 \t_\-./:=@,+%;|\n]")
+# E23 words that always ask in such a command (by the word's last path component): shells,
+# interpreters, xargs, eval, exec, source, sudo, su, doas; also a lone `--`, `.` in command
+# position, and env's -i or -u in any spelling before its command.
+INFRA_RISKY = re.compile(r"(?:sh|bash|zsh|dash|ksh|fish|perl|node|ruby|php|xargs|eval|exec|source|sudo|su|doas|python.*)\Z")
+INFRA_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
+INFRA_PREFIX_WORDS = {"if", "then", "else", "elif", "do", "while", "until", "time", "command", "builtin", "coproc"}
+INFRA_ENV_CLEAR = re.compile(r"-\Z|-[^-]*[iu]|--[iu]")  # `-`, `-i`, `-u`, `-0i`, `-uNAME`, `--unset`, `--ignore-…`
+INFRA_ENV_VALUE = {"-C", "-S", "--chdir", "--split-string"}  # env options whose value is the next word
 INFRA_END = r"(?![\w-])"
 INFRA_WORD = r"(?<![\w-])({})" + INFRA_END
 # Local-only forms, matched at the tool's first argument; kubectl's version needs --client in the
@@ -384,9 +387,10 @@ INFRA_UNKNOWN_REASON = ("{}: environment not recognised by guard.infra.allow (hu
                         "one does not count)")
 INFRA_ASK_REASON = "`{} {}` changes infrastructure on an allowed environment; confirm first"
 INFRA_CONFIG_REASON = "{} (hub.json) cannot be used ({}); infrastructure commands are denied until it is fixed"
-INFRA_SIMPLE_REASON = "`{}` is a shell construct guard.infra does not check; confirm this infrastructure command first"
-INFRA_QUOTED_REASON = ("{}: guard.infra.allow (hub.json) matches only quoted text here (`{}`), which may not be this "
-                       "command's environment; confirm first, or write the environment unquoted")
+INFRA_UNSAFE_REASON = ("`{}` is a character guard.infra does not check (it passes only letters, digits, blanks, "
+                       "`_-./:=@,+%` and the joins `;` `&&` `||` `|` newline); confirm this infrastructure command first")
+INFRA_RISKY_REASON = ("`{}` can run a command, or change its environment, out of guard.infra's sight (a shell, an "
+                      "interpreter, xargs, eval, exec, source, `.`, env -i/-u, sudo, su, doas, a lone `--`); confirm first")
 INFRA_VALUE_CAP = 100  # characters of a value from hub.json or the command in an infra reason
 LEGACY_INFRA = re.compile(
     r"\bterraform\s+(apply|destroy|import)\b|\baws\s+\S+|\bpulumi\s+(up|destroy)\b|\bkubectl\s+(apply|delete)\b"
@@ -496,47 +500,37 @@ def _uncommented(text: str) -> str:
     return text[:quoted] if unclosed and quoted >= 0 else text
 
 
-def _quote_in_word(text: str) -> tuple[int, str] | None:
-    """(where, the word) of the first quote that opens or closes inside a word (`a''b`, `"a"b`),
-    or that never closes; None when every quote spans whole words."""
-    quote, opened, pos = "", 0, 0
-    while True:
-        found = INFRA_QUOTE_NEXT[quote].search(text, pos)
-        if not found:
-            return (opened, _word_at(text, opened)) if quote else None
-        at, pos = found.start(), found.start() + 1
-        side = text[at + 1:at + 2] if quote else text[at - 1:at]
-        if side and not INFRA_WORD_BREAK.match(side):
-            return at, _word_at(text, at)
-        quote, opened = ("", opened) if quote else (found.group(0), at)
+def _infra_unsafe(cmd: str) -> str | None:
+    """The first character of cmd outside the E23 safe list (a `&` not in `&&` included), or None."""
+    for found in INFRA_UNSAFE.finditer(cmd):
+        if found.group(0) != "&&":
+            return found.group(0)
+    return None
 
 
-def _word_at(text: str, at: int) -> str:
-    """The word around text[at] (blanks and operators end it), at most INFRA_VALUE_CAP characters
-    before it."""
-    head = INFRA_WORD_TAIL.search(text[max(0, at - INFRA_VALUE_CAP):at])
-    tail = INFRA_WORD_PIECE.match(text, at + 1)
-    return (head.group(0) if head else "") + text[at] + (tail.group(0) if tail else "")
-
-
-def _infra_unmodelled(cmd: str) -> str | None:
-    """The leftmost construct of cmd the infra rule does not model (E21), or None for a simple
-    command."""
-    found = []
-    token = INFRA_UNMODELLED.search(cmd)
-    if token:
-        found.append((token.start(), token.group(0)))
-    dot = INFRA_DOT.search(cmd)
-    if dot:
-        found.append((dot.start(1), "."))
-    shell = INFRA_SHELL_WORD.search(cmd)
-    flag = INFRA_SHELL_C.search(cmd, shell.end()) if shell else None
-    if shell and flag:
-        found.append((shell.start(), f"{shell.group(0)} {flag.group(0)}"))
-    quoted = _quote_in_word(cmd)
-    if quoted:
-        found.append(quoted)
-    return min(found)[1] if found else None
+def _infra_risky(cmd: str) -> str | None:
+    """The first word of cmd (a command of safe characters only) that always asks (E23), as written:
+    a shell, interpreter, xargs, eval, exec, source, sudo, su or doas word anywhere, a lone `--`,
+    `.` in command position (after assignments, options and keywords such as `then`, `time`,
+    `command`), or env's -i/-u in any spelling among its options (then "env <option>"); else None."""
+    for part in INFRA_PART.split(cmd):
+        command, env, value = True, "", False
+        for word in part.split():
+            if word == "--" or INFRA_RISKY.match(word.rsplit("/", 1)[-1]):
+                return word
+            if env and (value or word.startswith("-")):
+                if not value and INFRA_ENV_CLEAR.match(word):
+                    return f"{env} {word}"
+                value = not value and word in INFRA_ENV_VALUE
+                continue
+            env = ""
+            if command and word == ".":
+                return word
+            if command and (INFRA_ASSIGNMENT.match(word) or word in INFRA_PREFIX_WORDS or word.startswith("-")):
+                continue
+            command = False
+            env = word if word.rsplit("/", 1)[-1] == "env" else ""
+    return None
 
 
 class _Evidence:
@@ -598,33 +592,31 @@ def _infra_local(text: str, mention: re.Match[str], evidence: _Evidence, end: in
 
 
 def _infra_unknown(text: str, base: int, mentions: list[re.Match[str]], allow: list[re.Pattern[str]],
-                   quoted: _Quoted) -> tuple[bool, str | None, tuple[str, str] | None]:
+                   quoted: _Quoted) -> tuple[bool, str | None]:
     """(whether text, at base in the command and without its comment, matches an allow pattern
     outside quotes; the tool a deny names: its first mention when it is not allowed, no match is
-    quoted and some mention is not a local form, else None; (that tool, the quoted match) when the
-    only matches are quoted and some mention is not a local form, else None)."""
+    quoted and some mention is not a local form, else None). A part whose only matches are quoted
+    is neither allowed nor denied (E22): the safe-character gate asks for it (E23)."""
     if not mentions:
-        return False, None, None
+        return False, None
     evidence = _Evidence(text)
     allowed, match = _infra_match(evidence, base, allow, quoted)
     if allowed:
-        return True, None, None
+        return True, None
     if all(_infra_local(text, mention, evidence, len(text)) for mention in mentions):
-        return False, None, None
-    tool = mentions[0].group(1)
-    return (False, None, (tool, match)) if match is not None else (False, tool, None)
+        return False, None
+    return False, (mentions[0].group(1) if match is None else None)
 
 
 def _infra_calls(part: str, base: int, mentions: list[re.Match[str]], allow: list[re.Pattern[str]],
-                 quoted: _Quoted) -> tuple[bool, str | None, tuple[str, str] | None]:
+                 quoted: _Quoted) -> tuple[bool, str | None]:
     """Each mention of the part (at base in the command) checked against the call that holds it,
     found by its offset: (whether such a call matches an allow pattern outside quotes; the tool a
     deny names: the first mention of the first call where a mention is neither allowed, nor a local
-    form, nor in a call whose only matches are quoted, else None; (the first mention of the first
-    such call, its quoted match), else None)."""
+    form, nor in a call whose only matches are quoted, else None)."""
     starts = [0] + [found.end() for found in INFRA_CALL.finditer(part)]
     calls: dict[int, tuple[bool, str | None, _Evidence, str]] = {}
-    allowed, ask = False, None
+    allowed = False
     for mention in mentions:
         index = bisect.bisect_right(starts, mention.start()) - 1
         end = starts[index + 1] - 1 if index + 1 < len(starts) else len(part)
@@ -636,9 +628,8 @@ def _infra_calls(part: str, base: int, mentions: list[re.Match[str]], allow: lis
         if call_allowed or _infra_local(part, mention, evidence, end):
             continue
         if match is None:
-            return allowed, first, None
-        ask = ask or (first, match)
-    return allowed, None, ask
+            return allowed, first
+    return allowed, None
 
 
 def _infra_ask(part: str) -> Verdict:
@@ -664,10 +655,11 @@ def check_infra(cmd: str, cfg: Config) -> Verdict:
     backslash-newlines bash joins joined, and only when a part names a covered tool: an unusable
     guard.infra or pattern denies; a production marker anywhere in the command denies; then per
     part, in order: the part, then the call that holds each tool mention, must match an allow
-    pattern (text after an unquoted ` #` does not count) or hold only local-only forms, else deny;
-    a part where something matched an allow pattern asks on its first ask verb; what would pass
-    asks when the command is not simple (E21); and a part or call whose only allow matches overlap
-    a quoted region asks (E22), never allows."""
+    pattern (text after an unquoted ` #` does not count; a match that overlaps a quoted region
+    neither allows nor denies, E22) or hold only local-only forms, else deny; a part where
+    something matched an allow pattern asks on its first ask verb. What would pass then asks,
+    in this order, on the first character outside the safe list, then on the first word that
+    always asks (E23); so an ask verb keeps its reason, and a deny is never relaxed."""
     infra = cfg.infra
     spaced = cmd.replace("\\\n", " ")
     if infra is None:
@@ -690,24 +682,26 @@ def check_infra(cmd: str, cfg: Config) -> Verdict:
         if pattern.search(c) or pattern.search(spaced):
             return "deny", INFRA_MARKER_REASON.format(_infra_value(pattern.pattern, _printable))
     verdict: Verdict = None
-    quoted, ask = _Quoted(c), None
+    quoted = _Quoted(c)
     for base, part in parts:
         mentions = list(INFRA_TOOL.finditer(part))
-        allowed, tool, part_ask = _infra_unknown(part, base, mentions, allow, quoted)
+        allowed, tool = _infra_unknown(part, base, mentions, allow, quoted)
         if not tool and INFRA_CALL.search(part):
-            calls_allowed, tool, calls_ask = _infra_calls(part, base, mentions, allow, quoted)
-            allowed, part_ask = allowed or calls_allowed, part_ask or calls_ask
+            calls_allowed, tool = _infra_calls(part, base, mentions, allow, quoted)
+            allowed = allowed or calls_allowed
         if tool:
             return "deny", INFRA_UNKNOWN_REASON.format(tool)
-        ask = ask or part_ask
         if allowed and verdict is None:
             verdict = _infra_ask(part)
-    construct = None if verdict else _infra_unmodelled(cmd)
-    if construct:
-        return "ask", INFRA_SIMPLE_REASON.format(_infra_value(construct))
-    if ask and verdict is None:
-        return "ask", INFRA_QUOTED_REASON.format(ask[0], _infra_value(ask[1]))
-    return verdict
+    if verdict:
+        return verdict
+    char = _infra_unsafe(cmd)
+    if char:
+        return "ask", INFRA_UNSAFE_REASON.format(_infra_value(char))
+    word = _infra_risky(cmd)
+    if word:
+        return "ask", INFRA_RISKY_REASON.format(_infra_value(word))
+    return None
 
 
 def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
