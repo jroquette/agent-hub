@@ -538,3 +538,50 @@ def test_gives_https_scheme_when_git_absent(no_git_path: Path, target: Path) -> 
     scheme = read_remote_scheme(target, env={"PATH": str(no_git_path)})
 
     assert scheme == "https"
+
+
+def test_bounds_git_search_to_hub_when_scheme_read(tmp_path: Path, target: Path) -> None:
+    # The .git entry may be no repo (an empty folder, a dangling link): git must not then
+    # search the hub's parents for one.
+    (target / ".git").mkdir()
+    log_path = tmp_path / "ceiling.log"
+    body = (
+        'printf \'%s\\t%s\\n\' "${GIT_CEILING_DIRECTORIES-unset}" "$*"'
+        f" >> {shlex.quote(str(log_path))}\n"
+        f"printf '%s\\n' {shlex.quote(SSH_REMOTE)}\n"
+    )
+    bin_dir = write_git_script(tmp_path / "ceiling-bin", body)
+
+    scheme = read_remote_scheme(target, env={"PATH": str(bin_dir)})
+
+    assert scheme == "ssh"
+    assert log_path.read_text(encoding="utf-8").splitlines() == [
+        f"{target.parent}\t{REMOTE_ARGUMENTS}"
+    ]
+
+
+@pytest.mark.parametrize("git_entry", ["empty-folder", "dangling-link"])
+def test_reads_no_parent_remote_scheme_when_git_entry_not_a_repository(
+    tmp_path: Path, target: Path, *, git_entry: str
+) -> None:
+    # A real git, the hub inside another repo whose origin is SSH.
+    real = shutil.which("git")
+    assert real is not None, "git is needed for this test"
+    env = {
+        "PATH": os.path.dirname(real),
+        "HOME": str(tmp_path / "home"),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+    }
+    for arguments in (["init", "-q"], ["remote", "add", "origin", SSH_REMOTE]):
+        subprocess.run(  # noqa: S603 - fixed argv, the real git on a tmp_path repo
+            [real, *arguments], cwd=tmp_path, env=env, check=True, capture_output=True
+        )
+    if git_entry == "empty-folder":
+        (target / ".git").mkdir()
+    else:
+        (target / ".git").symlink_to(tmp_path / "gone")
+
+    scheme = read_remote_scheme(target, env=env)
+
+    assert scheme == "https"

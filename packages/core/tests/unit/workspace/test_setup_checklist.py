@@ -642,6 +642,15 @@ class TestIdentity:
                 id="invalid-prefix",
             ),
             pytest.param(
+                invalid_prefix_item("ja‮ne@example.com"),
+                [
+                    "missing identity: git's user.email gives"
+                    ' "ja\\u202ene", not a valid branch prefix'
+                    f" Fix: {IDENTITY_DOC_FIX}"
+                ],
+                id="invalid-prefix-escaped",
+            ),
+            pytest.param(
                 identity_missing_item(
                     IdentityGap.INVALID_LOCAL,
                     sub_lines=(
