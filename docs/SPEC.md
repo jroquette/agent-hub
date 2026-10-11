@@ -209,6 +209,8 @@ default); `repo`, `agent`, `workflow` and `step` are optional. Unknown fields ar
 - `source` is a closed list: `claude_code`, `transcript`, `otel`, `executor`, `github` and `linear`. Widening either list
   later is a compatible change.
 - `timestamp` is an ISO 8601 string with an offset (numbers and naive times are rejected) and is stored in UTC.
+- `project`, `session` and a payload's `run` are at most 200 characters; a longer one is refused at ingestion (the
+  line's reason in `hub collect`, 422 on the hook route), so every id fits a detail path and a list cursor.
 - **Identity and idempotency:** `(source, source_id)` identifies an event. Ingesting an identical event again is a
   duplicate and is skipped; a different event with the same key is a conflict and fails the batch. Nothing stored is
   ever overwritten.

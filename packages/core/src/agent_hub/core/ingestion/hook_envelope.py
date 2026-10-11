@@ -1,10 +1,10 @@
 """The envelope the hook sensor posts: a Claude Code hook input plus where it came from (v1)."""
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, JsonValue, model_validator
 
-from agent_hub.core.events.event import UtcTimestamp
+from agent_hub.core.events.event import MAX_ID_CHARS, UtcTimestamp, longer_than_cap
 from agent_hub.core.hub_config.model import exact_int
 
 # A request body larger than this is refused before parsing.
@@ -47,3 +47,14 @@ class HookEnvelope(BaseModel):
     sent_at: UtcTimestamp
     hook: dict[str, JsonValue]
     decision: HookDecision | None = None
+
+    # ``project``, ``run`` and the hook's ``session_id`` are refused when longer than
+    # ``MAX_ID_CHARS`` (the API answers 422). Kept out of the docstring, which is the published
+    # schema's description.
+    @model_validator(mode="after")
+    def _ids_within_cap(self) -> Self:
+        session = self.hook.get("session_id")
+        for name, value in (("project", self.project), ("run", self.run), ("session_id", session)):
+            if isinstance(value, str) and len(value) > MAX_ID_CHARS:
+                raise ValueError(longer_than_cap(name))
+        return self

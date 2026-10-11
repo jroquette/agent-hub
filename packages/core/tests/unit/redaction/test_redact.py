@@ -153,6 +153,28 @@ def test_keeps_secret_name_when_assignment_redacted() -> None:
     assert redacted == "export API_TOKEN=[redacted: secret]"
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            'export DB_PASSWORD="correct horse & battery; staple" next',
+            'export DB_PASSWORD="[redacted: secret]" next',
+        ),
+        (
+            "api_token = 'two words, and more' --flag",
+            "api_token = '[redacted: secret]' --flag",
+        ),
+        (
+            'SECRET="esc \\" aped quote here"',
+            'SECRET="[redacted: secret]"',
+        ),
+        ('PASSWORD="no closing quote on this line', 'PASSWORD="[redacted: secret]'),
+    ],
+)
+def test_redacts_to_closing_quote_when_secret_value_quoted(text: str, expected: str) -> None:
+    assert redact_text(text) == expected
+
+
 def test_redacts_rest_of_text_when_private_key_block_unterminated() -> None:
     text = "key: -----BEGIN " + "PRIVATE KEY-----\n" + _PEM_BODY
 

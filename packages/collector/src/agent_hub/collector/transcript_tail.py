@@ -7,6 +7,9 @@ read takes at most ``max_bytes`` and stops at the last complete line, so a line 
 read next time. A line longer than ``max_line_bytes`` is skipped and counted. Offsets, turns and
 the usage message ids seen live in memory per path, the newest ``max_paths`` kept; after a
 restart a file is read again from the start and the store's idempotency drops the duplicates.
+A read is two-phase: it leaves the progress as it was and returns a position; ``commit`` moves
+the progress there once the events are stored, so a failed append loses no line. Only the
+newest read of a path can be committed; an older position is ignored.
 The events are attributed to the ref's project, repo and agent, as the hook mapper set them.
 """
 
@@ -14,12 +17,13 @@ import os
 import stat
 import threading
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final
 
 from agent_hub.collector.transcript import MAX_LINE_BYTES, TranscriptOrigin, parse_transcript
-from agent_hub.core.ingestion.ingestion_ports import TailResult, TranscriptRef
+from agent_hub.core.events.event import Event
+from agent_hub.core.ingestion.ingestion_ports import TailPosition, TailResult, TranscriptRef
 
 MAX_READ_BYTES: Final = 8 * 1_048_576
 MAX_PATHS: Final = 10_000
@@ -27,13 +31,20 @@ _OPEN_FLAGS: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 _NEWLINE: Final = b"\n"
 
 
-@dataclass(kw_only=True, slots=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
 class _Progress:
     offset: int = 0
     turn: int = 0
     seen_messages: frozenset[str] = frozenset()
     # Inside a line longer than the limit: drop bytes up to its newline.
     is_skipping: bool = False
+
+
+@dataclass(kw_only=True, slots=True)
+class _PathState:
+    committed: _Progress
+    # The newest read's end, waiting for its commit: (version, progress).
+    pending: tuple[int, _Progress] | None = None
 
 
 class TranscriptTail:
@@ -51,11 +62,12 @@ class TranscriptTail:
         self._max_bytes = max_bytes
         self._max_line_bytes = max_line_bytes
         self._max_paths = max_paths
-        self._progress: OrderedDict[str, _Progress] = OrderedDict()
+        self._states: OrderedDict[str, _PathState] = OrderedDict()
+        self._versions = 0
         self._lock = threading.Lock()
 
     def read_new(self, ref: TranscriptRef) -> TailResult:
-        """The events of the lines appended to ``ref.path`` since the last read of it."""
+        """The events of the lines appended to ``ref.path`` since the last committed read."""
         origin = TranscriptOrigin(
             project=ref.project, repo=ref.repo, agent=ref.agent, session=ref.session
         )
@@ -64,6 +76,15 @@ class TranscriptTail:
             return TailResult(events=(), refused=True)
         with self._lock:
             return self._read(real, origin)
+
+    def commit(self, position: TailPosition) -> None:
+        """Move the progress of ``position.path`` to the read it names, if it is the newest."""
+        with self._lock:
+            state = self._states.get(position.path)
+            if state is None or state.pending is None or state.pending[0] != position.version:
+                return
+            state.committed = state.pending[1]
+            state.pending = None
 
     def _allowed_path(self, path: str) -> str | None:
         # The folders are resolved; the file itself is opened with O_NOFOLLOW, so a link there
@@ -86,43 +107,47 @@ class TranscriptTail:
             info = os.fstat(descriptor)
             if not stat.S_ISREG(info.st_mode):
                 return TailResult(events=(), refused=True)
-            progress = self._progress_of(real, size=info.st_size)
-            chunk = os.pread(descriptor, self._max_bytes, progress.offset)
+            state = self._state_of(real, size=info.st_size)
+            chunk = os.pread(descriptor, self._max_bytes, state.committed.offset)
         except OSError:
             return TailResult(events=(), refused=True)
         finally:
             os.close(descriptor)
-        return self._parse(chunk, progress, origin)
+        events, skipped, reached = self._parse(chunk, state.committed, origin)
+        self._versions += 1
+        state.pending = (self._versions, reached)
+        position = TailPosition(path=real, version=self._versions)
+        return TailResult(events=events, skipped_lines=skipped, position=position)
 
-    def _progress_of(self, real: str, *, size: int) -> _Progress:
-        progress = self._progress.get(real)
-        if progress is None or size < progress.offset:
+    def _state_of(self, real: str, *, size: int) -> _PathState:
+        state = self._states.get(real)
+        if state is None or size < state.committed.offset:
             # New, or truncated and rewritten: read it from the start again.
-            progress = _Progress()
-        self._progress[real] = progress
-        self._progress.move_to_end(real)
-        while len(self._progress) > self._max_paths:
-            self._progress.popitem(last=False)
-        return progress
+            state = _PathState(committed=_Progress())
+        self._states[real] = state
+        self._states.move_to_end(real)
+        while len(self._states) > self._max_paths:
+            self._states.popitem(last=False)
+        return state
 
-    def _parse(self, chunk: bytes, progress: _Progress, origin: TranscriptOrigin) -> TailResult:
+    def _parse(
+        self, chunk: bytes, progress: _Progress, origin: TranscriptOrigin
+    ) -> tuple[tuple[Event, ...], int, _Progress]:
+        """The events of ``chunk``'s complete lines, the lines skipped and the progress reached."""
         skipped = 0
         if progress.is_skipping:
             end = chunk.find(_NEWLINE)
             if end < 0:
-                progress.offset += len(chunk)
-                return TailResult(events=())
-            progress.offset += end + 1
-            progress.is_skipping = False
+                return (), 0, replace(progress, offset=progress.offset + len(chunk))
+            progress = replace(progress, offset=progress.offset + end + 1, is_skipping=False)
             chunk = chunk[end + 1 :]
         end = chunk.rfind(_NEWLINE)
         if end < 0:
             if len(chunk) >= min(self._max_bytes, self._max_line_bytes):
                 # One line fills the read and is still not complete: too long, skip it.
-                progress.offset += len(chunk)
-                progress.is_skipping = True
+                progress = replace(progress, offset=progress.offset + len(chunk), is_skipping=True)
                 skipped += 1
-            return TailResult(events=(), skipped_lines=skipped)
+            return (), skipped, progress
         complete = chunk[: end + 1]
         batch = parse_transcript(
             complete.decode("utf-8", errors="replace"),
@@ -131,7 +156,10 @@ class TranscriptTail:
             seen_messages=progress.seen_messages,
             max_line_bytes=self._max_line_bytes,
         )
-        progress.offset += len(complete)
-        progress.turn = batch.end_turn
-        progress.seen_messages = batch.seen_messages
-        return TailResult(events=batch.events, skipped_lines=skipped + len(batch.problems))
+        reached = replace(
+            progress,
+            offset=progress.offset + len(complete),
+            turn=batch.end_turn,
+            seen_messages=batch.seen_messages,
+        )
+        return batch.events, skipped + len(batch.problems), reached

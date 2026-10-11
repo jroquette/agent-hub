@@ -39,7 +39,8 @@ class SqliteEventStore:
 
     An append reads the stored events with the batch's keys and writes the new ones in one
     ``BEGIN IMMEDIATE`` transaction, so no other writer runs between the read and the write.
-    Database errors leave as ``DatabaseAccessError``; a conflict leaves as core's
+    Database errors leave as ``DatabaseAccessError`` (``DatabaseBusyError`` when the lock was
+    held past the busy timeout, on a read or an append); a conflict leaves as core's
     ``EventConflictError``, raised before anything is written.
     """
 
@@ -57,8 +58,7 @@ class SqliteEventStore:
                 # duplicate or raises a conflict. A second integrity error is not retried.
                 return self._append_once(events)
         except SQLAlchemyError as error:
-            msg = f"cannot write to the event database: {describe_database_error(error)}"
-            raise DatabaseAccessError(msg) from error
+            raise _write_error(error) from error
 
     def read_all(self) -> list[Event]:
         """Return every stored event in the order it was appended."""
@@ -165,6 +165,13 @@ def query_statement(query: EventQuery) -> Select[Any]:
         conditions.append(events.c.id < query.before_seq)
     order = events.c.id.asc() if query.order == "asc" else events.c.id.desc()
     return select(events).where(*conditions).order_by(order).limit(query.limit + 1)
+
+
+def _write_error(error: SQLAlchemyError) -> DatabaseAccessError:
+    description = describe_database_error(error)
+    if _is_busy(error):
+        return DatabaseBusyError(f"the event database is busy: {description}")
+    return DatabaseAccessError(f"cannot write to the event database: {description}")
 
 
 def _read_error(error: SQLAlchemyError) -> DatabaseAccessError:

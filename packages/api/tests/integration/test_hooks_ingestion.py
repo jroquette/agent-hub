@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from agent_hub.api.dependencies import ApiPorts
 from agent_hub.core.ingestion.hook_envelope import MAX_BODY_BYTES
 from agent_hub.core.ingestion.ingest_hook import IngestHook
-from agent_hub.core.ingestion.ingestion_ports import TailResult, TranscriptRef
+from agent_hub.core.ingestion.ingestion_ports import TailPosition, TailResult, TranscriptRef
 from agent_hub.core.ingestion.ingestion_status import IngestionCounters
 from agent_hub.storage.event_store import SqliteEventStore, open_event_store
 
@@ -34,6 +34,9 @@ ENVELOPE: dict[str, Any] = {
 class NoTranscript:
     def read_new(self, ref: TranscriptRef) -> TailResult:
         return TailResult(events=())
+
+    def commit(self, position: TailPosition) -> None:
+        return None
 
 
 @pytest.fixture
@@ -96,6 +99,26 @@ def test_rejects_unprocessable_problem_and_appends_nothing_when_envelope_malform
     assert response.status_code == 422, response.text
     assert response.headers["content-type"] == "application/problem+json"
     assert response.json()["title"] == "Invalid request body"
+    assert store.read_all() == []
+
+
+LONG_IDS: list[tuple[dict[str, Any], str]] = [
+    (ENVELOPE | {"project": "p" * 201}, "project"),
+    (ENVELOPE | {"run": "r" * 201}, "run"),
+    (ENVELOPE | {"hook": ENVELOPE["hook"] | {"session_id": "s" * 201}}, "session_id"),
+]
+
+
+@pytest.mark.parametrize("case", LONG_IDS, ids=[field for _, field in LONG_IDS])
+def test_rejects_unprocessable_problem_when_id_longer_than_cap(
+    hooks_client: TestClient, store: SqliteEventStore, case: tuple[dict[str, Any], str]
+) -> None:
+    body, field = case
+
+    response = hooks_client.post("/api/v1/events/hooks", json=body)
+
+    assert response.status_code == 422, response.text
+    assert f"{field}: longer than 200 characters" in response.text
     assert store.read_all() == []
 
 

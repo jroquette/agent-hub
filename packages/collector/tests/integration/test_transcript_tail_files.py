@@ -1,13 +1,20 @@
 """The live transcript tail on real files under a temporary ``~/.claude/projects`` (D9, E6)."""
 
 import os
+from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from agent_hub.collector.claude_hooks import ClaudeHookMapper
 from agent_hub.collector.transcript_tail import TranscriptTail
-from agent_hub.core.ingestion.ingestion_ports import TranscriptRef
+from agent_hub.core.events.event import Event
+from agent_hub.core.events.event_store import AppendResult
+from agent_hub.core.ingestion.ingest_hook import IngestHook
+from agent_hub.core.ingestion.ingestion_ports import TailResult, TranscriptRef
+from agent_hub.core.ingestion.ingestion_status import IngestionCounters
+from agent_hub.core.testing.fakes import InMemoryEventStore
 from agent_hub.core.testing.hook_inputs import a_hook_input, an_envelope
 from agent_hub.core.testing.transcript_lines import (
     TRANSCRIPT_SESSION,
@@ -29,6 +36,14 @@ def _tail(projects: Path, **options: int) -> TranscriptTail:
     return TranscriptTail(projects, **options)
 
 
+def _read(tail: TranscriptTail, ref: TranscriptRef) -> TailResult:
+    """One read, committed as ``IngestHook`` commits it once the events are stored."""
+    result = tail.read_new(ref)
+    if result.position is not None:
+        tail.commit(result.position)
+    return result
+
+
 def _ref(path: Path, kind: str = "main") -> TranscriptRef:
     return TranscriptRef.model_validate(
         {
@@ -48,11 +63,11 @@ def test_reads_only_new_lines_when_offset_kept(projects: Path) -> None:
     tail = _tail(projects)
     ref = _ref(path)
 
-    first = tail.read_new(ref)
+    first = _read(tail, ref)
     with path.open("a") as file:
         file.write(transcript_text([a_user_line("two"), an_assistant_line([a_text_block()])]))
-    second = tail.read_new(ref)
-    third = tail.read_new(ref)
+    second = _read(tail, ref)
+    third = _read(tail, ref)
 
     assert [event.payload["turn"] for event in first.events] == [1]
     assert [event.payload["turn"] for event in second.events] == [2, 2]
@@ -68,10 +83,10 @@ def test_waits_for_newline_when_last_line_is_partial_line(projects: Path) -> Non
     tail = _tail(projects)
     ref = _ref(path)
 
-    before = tail.read_new(ref)
+    before = _read(tail, ref)
     with path.open("a") as file:
         file.write(whole[-10:])
-    after = tail.read_new(ref)
+    after = _read(tail, ref)
 
     assert before.events == ()
     assert before.skipped_lines == 0
@@ -83,7 +98,7 @@ def test_refuses_path_when_outside_projects_folder(projects: Path, tmp_path: Pat
     outside.write_text(transcript_text([a_user_line()]))
     tail = _tail(projects)
 
-    result = tail.read_new(_ref(outside))
+    result = _read(tail, _ref(outside))
 
     assert result.refused
     assert result.events == ()
@@ -95,7 +110,7 @@ def test_refuses_path_when_dot_dot_leaves_projects_folder(projects: Path, tmp_pa
     tail = _tail(projects)
     sneaky = projects / "-work-demo-api" / ".." / ".." / ".." / ".." / "elsewhere.jsonl"
 
-    assert tail.read_new(_ref(sneaky)).refused
+    assert _read(tail, _ref(sneaky)).refused
 
 
 def test_refuses_path_when_it_is_a_symlink(projects: Path, tmp_path: Path) -> None:
@@ -109,8 +124,8 @@ def test_refuses_path_when_it_is_a_symlink(projects: Path, tmp_path: Path) -> No
     out_link.symlink_to(outside)
     tail = _tail(projects)
 
-    assert tail.read_new(_ref(link)).refused
-    assert tail.read_new(_ref(out_link)).refused
+    assert _read(tail, _ref(link)).refused
+    assert _read(tail, _ref(out_link)).refused
 
 
 def test_refuses_path_when_not_a_regular_file(projects: Path) -> None:
@@ -120,9 +135,9 @@ def test_refuses_path_when_not_a_regular_file(projects: Path) -> None:
     folder.mkdir()
     tail = _tail(projects)
 
-    assert tail.read_new(_ref(fifo)).refused
-    assert tail.read_new(_ref(folder)).refused
-    assert tail.read_new(_ref(projects / "missing.jsonl")).refused
+    assert _read(tail, _ref(fifo)).refused
+    assert _read(tail, _ref(folder)).refused
+    assert _read(tail, _ref(projects / "missing.jsonl")).refused
 
 
 def test_reads_in_bounded_pieces_when_file_larger_than_max_bytes_offset(projects: Path) -> None:
@@ -133,7 +148,7 @@ def test_reads_in_bounded_pieces_when_file_larger_than_max_bytes_offset(projects
 
     turns: list[object] = []
     for _ in range(40):
-        turns.extend(event.payload["turn"] for event in tail.read_new(ref).events)
+        turns.extend(event.payload["turn"] for event in _read(tail, ref).events)
 
     assert turns == list(range(1, 31))
 
@@ -146,7 +161,7 @@ def test_skips_and_counts_line_when_longer_than_line_limit(projects: Path) -> No
     tail = _tail(projects, max_bytes=1_000, max_line_bytes=600)
     ref = _ref(path)
 
-    results = [tail.read_new(ref) for _ in range(12)]
+    results = [_read(tail, ref) for _ in range(12)]
 
     assert sum(result.skipped_lines for result in results) == 1
     assert [event.payload["chars"] for result in results for event in result.events] == [5, 300]
@@ -157,10 +172,10 @@ def test_rereads_from_start_when_file_truncated_offset(projects: Path) -> None:
     path.write_text(transcript_text([a_user_line("one"), a_user_line("two")]))
     tail = _tail(projects)
     ref = _ref(path)
-    tail.read_new(ref)
+    _read(tail, ref)
 
     path.write_text(transcript_text([a_user_line("new")]))
-    result = tail.read_new(ref)
+    result = _read(tail, ref)
 
     assert [event.payload["chars"] for event in result.events] == [3]
 
@@ -175,7 +190,7 @@ def test_attributes_events_when_mapper_remembers_origin_of_stop_hook(projects: P
         an_envelope(a_hook_input("Stop", transcript_path=str(path)), project="other")
     )
     assert mapping.transcript is not None
-    result = tail.read_new(mapping.transcript)
+    result = _read(tail, mapping.transcript)
 
     [event] = result.events
     assert (event.project, event.repo, event.agent) == ("other", "demo-api", "main")
@@ -205,3 +220,73 @@ def test_attributes_events_from_ref_when_ref_names_project_repo_and_agent(projec
 
     [event] = result.events
     assert (event.project, event.repo, event.agent) == ("other", None, "Plan")
+
+
+def test_returns_same_events_when_previous_read_not_committed(projects: Path) -> None:
+    path = projects / "-work-demo-api" / f"{TRANSCRIPT_SESSION}.jsonl"
+    path.write_text(transcript_text([a_user_line("one"), an_assistant_line([a_text_block()])]))
+    tail = _tail(projects)
+    ref = _ref(path)
+
+    uncommitted = tail.read_new(ref)
+    again = tail.read_new(ref)
+    assert again.position is not None
+    tail.commit(again.position)
+    after_commit = tail.read_new(ref)
+
+    assert len(uncommitted.events) == 2
+    assert again.events == uncommitted.events
+    assert after_commit.events == ()
+
+
+def test_ignores_commit_when_position_is_stale(projects: Path) -> None:
+    path = projects / "-work-demo-api" / f"{TRANSCRIPT_SESSION}.jsonl"
+    path.write_text(transcript_text([a_user_line("one")]))
+    tail = _tail(projects)
+    ref = _ref(path)
+    stale = tail.read_new(ref).position
+    path.write_text(transcript_text([a_user_line("a much longer prompt")]))
+    fresh = tail.read_new(ref)
+    assert stale is not None
+
+    tail.commit(stale)
+
+    assert tail.read_new(ref).events == fresh.events
+
+
+def test_rereads_lines_when_store_fails_once_during_hook_ingestion(projects: Path) -> None:
+    path = projects / "-work-demo-api" / f"{TRANSCRIPT_SESSION}.jsonl"
+    path.write_text(transcript_text([a_user_line("one"), an_assistant_line([a_text_block()])]))
+    store = _FailingOnceStore()
+    ingest = IngestHook(
+        store,
+        ClaudeHookMapper(),
+        TranscriptTail(projects),
+        status=IngestionCounters(clock=lambda: datetime(2026, 10, 11, tzinfo=UTC)),
+    )
+    stop = an_envelope(a_hook_input("Stop", transcript_path=str(path)))
+
+    with pytest.raises(_StoreBusyError):
+        ingest.execute(stop)
+    retried = ingest.execute(stop)
+
+    assert retried.appended == 2
+    assert {event.source for event in store.read_all()} == {"transcript"}
+
+
+class _FailingOnceStore(InMemoryEventStore):
+    """Fails the first append that carries transcript events, as a busy database would."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.failed = False
+
+    def append(self, events: Sequence[Event]) -> AppendResult:
+        if not self.failed and any(event.source == "transcript" for event in events):
+            self.failed = True
+            raise _StoreBusyError
+        return super().append(events)
+
+
+class _StoreBusyError(Exception):
+    pass

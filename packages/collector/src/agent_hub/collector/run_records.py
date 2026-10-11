@@ -21,12 +21,15 @@ from typing import Final
 from agent_hub.collector.errors import CollectorError
 from agent_hub.collector.hook_fields import text
 from agent_hub.collector.tool_metadata import COMMAND_LIMIT, first_line, short_text
-from agent_hub.core.events.event import Event, EventSource, EventType
+from agent_hub.core.events.event import MAX_ID_CHARS, Event, EventSource, EventType
 from agent_hub.core.events.payload_keys import CAPS_KEYS
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.runner.run_record import Stage
 
 RUN_WORKFLOW: Final = "issue-to-pr"
+# A run's events are the session ``run:<run>``, which must fit the id cap.
+RUN_SESSION_PREFIX: Final = "run:"
+MAX_RUN_CHARS: Final = MAX_ID_CHARS - len(RUN_SESSION_PREFIX)
 STAGE_KEYS: Final[Mapping[str, str]] = {
     Stage.PICKED: "pick",
     Stage.WORKTREE: "worktree",
@@ -183,7 +186,7 @@ class RunEventMapper:
             source_id = f"{source_id}:{step}"
         return Event(
             project=self._project,
-            session=f"run:{record.run}",
+            session=f"{RUN_SESSION_PREFIX}{record.run}",
             type=kind,
             timestamp=record.moment,
             source=EventSource.EXECUTOR,
@@ -210,6 +213,9 @@ def _checked(raw: Record) -> _Record:
     run = text(raw, "run")
     if run is None:
         msg = "run: expected a non-empty string"
+        raise RunRecordError(msg)
+    if len(run) > MAX_RUN_CHARS:
+        msg = f"run: longer than {MAX_RUN_CHARS} characters"
         raise RunRecordError(msg)
     state = text(raw, "state")
     if state not in set(Stage):

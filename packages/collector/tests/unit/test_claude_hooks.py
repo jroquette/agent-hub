@@ -402,6 +402,44 @@ def _every_hook_event() -> list[Event]:
             a_hook_input("Stop"),
             decision=HookDecision(by="stop_gate", kind="block", command="make", exit_code=1),
         ),
+        # S1: the sensor's reduced shapes (sizes in place of bodies).
+        an_envelope(
+            a_hook_input(
+                "UserPromptSubmit",
+                prompt=...,
+                prompt_chars=37,
+                prompt_slash_command="/feature:plan",
+            )
+        ),
+        an_envelope(
+            a_hook_input(
+                "PreToolUse",
+                tool_name="Edit",
+                tool_input={"file_path": "/w/a.py", "old_string_lines": 1, "new_string_lines": 2},
+            )
+        ),
+        an_envelope(
+            a_hook_input(
+                "PreToolUse",
+                tool_name="MultiEdit",
+                tool_input={
+                    "file_path": "/w/a.py",
+                    "edits": [{"old_string_lines": 3, "new_string_lines": 0}],
+                },
+            )
+        ),
+        an_envelope(
+            a_hook_input(
+                "PreToolUse",
+                tool_name="Write",
+                tool_input={
+                    "file_path": "/w/brain/_inbox/n.md",
+                    "content_lines": 2,
+                    "content_heading": "Idea",
+                },
+            )
+        ),
+        an_envelope(a_hook_input("PostToolUse", tool_response=..., tool_response_bytes=123_456)),
     ]
     return [event for envelope in envelopes for event in mapper.map(envelope).events]
 
@@ -421,3 +459,54 @@ def test_maps_only_payload_kept_keys_when_every_hook_and_decision_mapped() -> No
     }
     for event in events:
         assert kept_payload(event.type, event.payload) == event.payload, event.type
+
+
+# S1: the sensor sends sizes in place of bodies; the mapper reads both shapes alike.
+def test_maps_prompt_size_and_command_when_sensor_sent_reduced_prompt() -> None:
+    hook = a_hook_input(
+        "UserPromptSubmit", prompt=..., prompt_chars=37, prompt_slash_command="/feature:plan"
+    )
+
+    event = _only(hook)
+
+    assert event.payload == {"role": "user", "chars": 37, "slash_command": "/feature:plan"}
+
+
+def test_maps_line_counts_when_sensor_sent_reduced_edit() -> None:
+    reduced = {"file_path": f"{HOOK_CWD}/src/app.py", "old_string_lines": 1, "new_string_lines": 2}
+    edits = {
+        "file_path": f"{HOOK_CWD}/src/app.py",
+        "edits": [
+            {"old_string_lines": 1, "new_string_lines": 2},
+            {"old_string_lines": 3, "new_string_lines": 0},
+        ],
+    }
+
+    edit = _only(a_hook_input("PreToolUse", tool_name="Edit", tool_input=reduced))
+    multi = _only(a_hook_input("PreToolUse", tool_name="MultiEdit", tool_input=edits))
+
+    assert (edit.payload["lines_added"], edit.payload["lines_removed"]) == (2, 1)
+    assert (multi.payload["lines_added"], multi.payload["lines_removed"]) == (2, 4)
+
+
+def test_maps_lines_and_learning_when_sensor_sent_reduced_write() -> None:
+    def events(tool_input: dict[str, Any]) -> tuple[Event, ...]:
+        hook = a_hook_input("PreToolUse", tool_name="Write", tool_input=tool_input)
+        return ClaudeHookMapper().map(an_envelope(hook)).events
+
+    inbox = "/work/demo-hub/brain/_inbox/note.md"
+    plain = events({"file_path": f"{HOOK_CWD}/a.py", "content_lines": 4_000})
+    headed = events({"file_path": inbox, "content_lines": 2, "content_heading": "Idea"})
+    bare = events({"file_path": inbox, "content_lines": 2})
+
+    assert [event.payload.get("lines_added") for event in plain] == [4_000]
+    assert [event.payload.get("text") for event in headed] == [None, "Idea"]
+    assert [event.payload.get("text") for event in bare] == [None, "note"]
+
+
+def test_maps_output_size_when_sensor_sent_reduced_response() -> None:
+    hook = a_hook_input("PostToolUse", tool_response=..., tool_response_bytes=123_456)
+
+    event = _only(hook)
+
+    assert event.payload["output_bytes"] == 123_456

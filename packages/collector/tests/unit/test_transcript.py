@@ -310,3 +310,13 @@ def test_maps_only_payload_kept_keys_when_every_record_kind_parsed() -> None:
     assert {event.type for event in events} >= {"message", "reasoning", "tool.call", "tool.result"}
     for event in events:
         assert kept_payload(event.type, event.payload) == event.payload, event.type
+
+
+def test_reports_problem_when_session_id_longer_than_cap() -> None:
+    lines = [a_user_line(sessionId="s" * 201), a_user_line("kept")]
+
+    batch = parse_transcript(transcript_text(lines), origin=ORIGIN)
+
+    assert [problem.line_number for problem in batch.problems] == [1]
+    assert batch.problems[0].reason == "sessionId: longer than 200 characters"
+    assert [event.payload["chars"] for event in batch.events] == [4]
