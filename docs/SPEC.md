@@ -216,8 +216,9 @@ The command is split into parts at `;`, `&&`, `||`, `|` and newlines, then:
    is denied naming that part's or call's first tool; an allowed call never covers another one beside it. Text after an unquoted ` #` (a comment) is not
    evidence, for `allow` or for a local form.
 4. Local-only forms, at the tool's first argument: `version`, `--version`, `help`, `--help` for any tool (`kubectl`'s
-   `version` only with `--client` in the part); `cdk synth|ls|list|init|doctor|context`; `terraform fmt|validate`, and
-   `init` only with `-backend=false`; `helm template|lint`; `sam build|validate`. A glued redirection is never one.
+   `version` only with `--client` in the same call); `cdk synth|ls|list|init|doctor|context`; `terraform fmt|validate`, and
+   `init` only with `-backend=false`, each voided by a later `--client=` other than `true` or `-backend=` other than
+   `false` (the last flag wins); `helm template|lint`; `sam build|validate`. A glued redirection is never one.
 5. In a part that something matched `allow` in, the first ask verb after each tool asks, as a word anywhere after
    the tool, quoted or not: `aws` `delete-*|remove-*|terminate-*|deregister-*`, `s3 … rm|rb` and
    `cloudformation … deploy|delete-stack`; `cdk deploy|destroy`; `terraform apply|destroy|import`;
@@ -256,10 +257,12 @@ space, which the shell does not split words on. Without `guard.infra`, the fixed
 redirection glued to `terraform`, `aws`, `pulumi`, `kubectl` or `cdk`. Until a separate change, the generated
 `.claude/settings.json` still denies every `terraform` and `aws` command, whatever the guard decides. Accepted limits:
 tool names are matched case-sensitively (`AWS` is not seen); quoting or glob tricks inside a tool's word (`a""ws`,
-`a?s`, `aws*`) hide it (AGH-127); the fixed rule misses options before the verb (`terraform -chdir=x apply`, AGH-126);
+`a?s`, `aws*`) hide it (AGH-127); the fixed rule (without `guard.infra`) misses options before the verb
+(`terraform -chdir=x apply`) and a tool word with nothing after it (`xargs aws`), which only infra mode catches
+(AGH-126); abbreviated long options (e.g. `--prof`) are not recognised as environment flags;
 which option takes the next word as its value is not modelled, so an allowed environment can be another option's
 value (`aws s3 ls --query --profile=demo-dev`, `kubectl get pods --field-manager --context=kind-demo`); only the
-names above count as setting the environment twice.
+names above count as setting the environment twice (`--chdir` and `--var-file` count with `-chdir` and `-var-file`).
 
 ## Layer 2: control plane and observability
 

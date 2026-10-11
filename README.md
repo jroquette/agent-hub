@@ -446,8 +446,9 @@ into parts at `;`, `&&`, `||`, `|` and newlines, and each part into its calls (a
 and each call that names a tool must carry its environment, matched by a `guard.infra.allow` pattern (e.g.
 `--profile demo-dev` or an `AWS_PROFILE=demo-dev ` prefix, whichever your patterns match, on that part: an exported
 or inherited one, or one from an earlier part, does not count; neither does a trailing ` # comment`), or be
-local-only (`--version`, `help`, `cdk synth`, `terraform fmt|validate`, `terraform init -backend=false`,
-`kubectl version --client`, `helm template|lint`, `sam build|validate`); anything else is blocked. On an allowed environment, deploy, destroy and delete verbs
+local-only (`version`, `--version`, `help` or `--help` for any tool, `kubectl`'s version only with `--client`;
+`cdk synth|ls|list|init|doctor|context`, `terraform fmt|validate`, `terraform init -backend=false`,
+`helm template|lint`, `sam build|validate`); anything else is blocked. On an allowed environment, deploy, destroy and delete verbs
 (`terraform apply|destroy|import`, `kubectl apply|delete|…`, `aws s3 rm`, `aws … delete-*`, `cdk deploy`, …) are
 asked first. A command that would pass is asked first too unless every character in it is an ASCII letter or digit,
 a space, a tab or one of `_ - . / : = @ , + %`, joined only by `;`, `&&`, `||`, `|` or newlines: a `$`, a quote, a
