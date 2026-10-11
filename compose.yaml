@@ -1,0 +1,55 @@
+# The agent-hub control plane in Docker (ADR 0022): `make up`, `make down`, `make logs`, `make ps`.
+# Variables (see .env.example): AGENT_HUB_HUBS_ROOT (required; `make up` sets it to the folder
+# that holds this repo), AGENT_HUB_PORT (host port, default 7420), AGENT_HUB_CLAUDE_PROJECTS
+# (default ~/.claude/projects), AGENT_HUB_BUILD_CA and AGENT_HUB_INSTALL_GIT (build only).
+name: agent-hub
+
+services:
+  agent-hub:
+    build:
+      context: .
+      args:
+        INSTALL_GIT: ${AGENT_HUB_INSTALL_GIT:-1}
+      secrets:
+        - build_ca
+    image: agent-hub:local
+    # The host sees the server on loopback only.
+    ports:
+      - "127.0.0.1:${AGENT_HUB_PORT:-7420}:7420"
+    environment:
+      # The hooks send host transcript paths; the same folder is mounted at the same path.
+      AGENT_HUB_CLAUDE_PROJECTS: ${AGENT_HUB_CLAUDE_PROJECTS:-${HOME}/.claude/projects}
+      # The browser's Host is the published port's, which may differ from 7420.
+      AGENT_HUB_ALLOWED_HOSTS: "127.0.0.1:${AGENT_HUB_PORT:-7420},localhost:${AGENT_HUB_PORT:-7420}"
+    volumes:
+      - agent-hub-data:/data
+      # Registered hubs keep their host paths, so the hubs root is mounted at the same path.
+      - ${AGENT_HUB_HUBS_ROOT:?set AGENT_HUB_HUBS_ROOT to the folder that holds your hubs}:${AGENT_HUB_HUBS_ROOT:?}:ro
+      - ${AGENT_HUB_CLAUDE_PROJECTS:-${HOME}/.claude/projects}:${AGENT_HUB_CLAUDE_PROJECTS:-${HOME}/.claude/projects}:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+    user: "10001:10001"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import http.client as h; c = h.HTTPConnection('127.0.0.1', 7420, timeout=4); c.request('GET', '/api/v1/collector/status'); raise SystemExit(c.getresponse().status != 200)"
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  agent-hub-data:
+
+secrets:
+  # Optional: the CA of a TLS-intercepting proxy, for the build's npm and uv downloads only.
+  build_ca:
+    file: ${AGENT_HUB_BUILD_CA:-/dev/null}
