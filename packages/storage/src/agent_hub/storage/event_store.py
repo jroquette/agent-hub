@@ -1,18 +1,21 @@
 """The SQLite ``EventStore`` adapter and the entry point that opens it."""
 
 import json
+import sqlite3
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Connection, Engine, RowMapping, insert, select, tuple_
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy import Connection, Engine, RowMapping, Select, func, insert, select, tuple_
+from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 
 from agent_hub.core.events.append_plan import plan_append
 from agent_hub.core.events.event import Event, EventKey
+from agent_hub.core.events.event_query import EventPage, EventQuery
 from agent_hub.core.events.event_store import AppendResult
+from agent_hub.core.events.stored_event import StoredEvent
 from agent_hub.storage.db import events
 from agent_hub.storage.engine import create_sqlite_engine
 from agent_hub.storage.errors import DatabaseAccessError, describe_database_error
@@ -22,6 +25,13 @@ from agent_hub.storage.migration import upgrade_to_head
 KEYS_PER_QUERY = 500
 # The canonical columns; the storage fields (event_id, received_at) are not part of an Event.
 EVENT_FIELDS = tuple(Event.model_fields)
+
+
+class DatabaseBusyError(DatabaseAccessError):
+    """Another connection held the database lock for longer than the busy timeout.
+
+    The API answers it with 503 "Collector database busy"; a retry usually succeeds.
+    """
 
 
 class SqliteEventStore:
@@ -52,13 +62,41 @@ class SqliteEventStore:
 
     def read_all(self) -> list[Event]:
         """Return every stored event in the order it was appended."""
+        rows = self._read(select(events).order_by(events.c.id))
+        return [_to_event(row) for row in rows]
+
+    def query(self, query: EventQuery) -> EventPage:
+        """The stored events matching ``query`` (see ``EventReader.query``).
+
+        Reads on a deferred transaction, so it never waits for the write lock; with WAL it
+        sees the last committed append.
+        """
+        rows = self._read(query_statement(query))
+        items = tuple(_to_stored(row) for row in rows[: query.limit])
+        has_more = len(rows) > query.limit
+        next_after_seq = items[-1].seq if has_more and query.order == "asc" else None
+        return EventPage(items=items, next_after_seq=next_after_seq)
+
+    def find(self, event_id: str) -> StoredEvent | None:
+        """The stored event with this storage id, or None."""
+        rows = self._read(select(events).where(events.c.event_id == event_id))
+        return _to_stored(rows[0]) if rows else None
+
+    def high_water_mark(self) -> int:
+        """The largest append sequence, 0 when the store is empty."""
         try:
             with self._engine.connect() as connection:
-                rows = connection.execute(select(events).order_by(events.c.id)).mappings().all()
+                mark = connection.execute(select(func.max(events.c.id))).scalar()
         except SQLAlchemyError as error:
-            msg = f"cannot read the event database: {describe_database_error(error)}"
-            raise DatabaseAccessError(msg) from error
-        return [_to_event(row) for row in rows]
+            raise _read_error(error) from error
+        return int(mark or 0)
+
+    def _read(self, statement: Select[Any]) -> list[RowMapping]:
+        try:
+            with self._engine.connect() as connection:
+                return list(connection.execute(statement).mappings().all())
+        except SQLAlchemyError as error:
+            raise _read_error(error) from error
 
     def _append_once(self, batch: Sequence[Event]) -> AppendResult:
         with (
@@ -105,6 +143,47 @@ def open_event_store(path: Path) -> SqliteEventStore:
     return SqliteEventStore(engine)
 
 
+def query_statement(query: EventQuery) -> Select[Any]:
+    """The ``SELECT`` that answers ``query``: one row more than its limit, to tell a next page.
+
+    Its filters lead with ``project`` and order by ``id``, so SQLite can use the read indexes.
+    """
+    conditions = []
+    if query.project is not None:
+        conditions.append(events.c.project == query.project)
+    if query.session is not None:
+        conditions.append(events.c.session == query.session)
+    if query.types:
+        conditions.append(events.c.type.in_(sorted(str(type_) for type_ in query.types)))
+    if query.since is not None:
+        conditions.append(events.c.timestamp >= query.since)
+    if query.until is not None:
+        conditions.append(events.c.timestamp < query.until)
+    if query.after_seq is not None:
+        conditions.append(events.c.id > query.after_seq)
+    if query.before_seq is not None:
+        conditions.append(events.c.id < query.before_seq)
+    order = events.c.id.asc() if query.order == "asc" else events.c.id.desc()
+    return select(events).where(*conditions).order_by(order).limit(query.limit + 1)
+
+
+def _read_error(error: SQLAlchemyError) -> DatabaseAccessError:
+    description = describe_database_error(error)
+    if _is_busy(error):
+        return DatabaseBusyError(f"the event database is busy: {description}")
+    return DatabaseAccessError(f"cannot read the event database: {description}")
+
+
+def _is_busy(error: SQLAlchemyError) -> bool:
+    cause = getattr(error, "orig", None)
+    code = getattr(cause, "sqlite_errorcode", None)
+    return (
+        isinstance(error, OperationalError)
+        and code is not None
+        and code & 0xFF in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
+    )
+
+
 def _to_row(event: Event) -> dict[str, Any]:
     # JSON mode turns the enums into their values; the timestamp stays a datetime for UtcDateTime.
     # Only new events become rows, so the storage fields are minted once per event.
@@ -117,3 +196,12 @@ def _to_row(event: Event) -> dict[str, Any]:
 
 def _to_event(row: RowMapping) -> Event:
     return Event.model_validate({field: row[field] for field in EVENT_FIELDS})
+
+
+def _to_stored(row: RowMapping) -> StoredEvent:
+    return StoredEvent(
+        seq=row["id"],
+        event_id=row["event_id"],
+        received_at=row["received_at"],
+        event=_to_event(row),
+    )
