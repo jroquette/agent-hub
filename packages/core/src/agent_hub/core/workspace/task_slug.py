@@ -57,5 +57,5 @@ def task_folder_problem(folder: str, issue_id: str) -> str | None:
         return None
     return (
         f"worktree {folder} is not a task name, {issue}[-<desc>] with <desc> in [a-z0-9._-];"
-        " rename or remove it"
+        " move or remove it with git worktree"
     )

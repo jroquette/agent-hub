@@ -49,7 +49,9 @@ class TaskWorktrees(Protocol):
     def task_folders(self, issue_id: str, repos: Sequence[str]) -> Mapping[str, Sequence[str]]:
         """Each of ``repos``' worktree folder names that ``is_task_folder`` gives to ``issue_id``.
 
-        ``start_task`` passes every hub repo, so a task started in other repos is resumed.
+        ``start_task`` passes every hub repo, so a task started in other repos is resumed. The
+        mapping is keyed by repo in ``repos`` order; a repo without worktrees gives ``()``. A
+        folder that cannot be listed raises ``StartStepError``.
         """
         ...
 
