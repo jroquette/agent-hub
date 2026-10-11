@@ -9,6 +9,7 @@ argv, the environment and the cwd, then raises, so nothing is exec'd (plan E3); 
 ``PATH`` is an empty executable put first, so git stays reachable.
 """
 
+import json
 import os
 import shutil
 from collections.abc import Callable, Iterator, Mapping
@@ -22,6 +23,8 @@ from typer.testing import Result
 from agent_hub.cli import start_command
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.tracker.tracker_client import TrackerClient
+from agent_hub.core.workspace.agent_launch import settings_json
+from agent_hub.core.workspace.start_prompt import start_prompt
 
 pytestmark = pytest.mark.disable_socket
 
@@ -172,9 +175,15 @@ class StartRun:
         self.resolve = resolve
         self._runner = runner
 
-    def __call__(self, *arguments: str, env: Mapping[str, str | None] | None = None) -> Result:
+    def __call__(self, *arguments: str) -> Result:
         """``hub start <arguments>`` from the hub folder."""
-        return self._runner(self.workspace.hub, "start", *arguments, env=env)
+        return self.run_in(self.workspace.hub, *arguments)
+
+    def run_in(
+        self, folder: Path, *arguments: str, env: Mapping[str, str | None] | None = None
+    ) -> Result:
+        """``hub start <arguments>`` from ``folder``, with ``env`` as ``CliRunner``'s."""
+        return self._runner(folder, "start", *arguments, env=env)
 
     def repo_git_calls(self) -> list[tuple[str, str]]:
         return repo_git_calls(self.traced, self.workspace)
@@ -213,6 +222,19 @@ def only_git_on_path(start: StartRun, folder: Path, monkeypatch: pytest.MonkeyPa
     (folder / "git").symlink_to(start.traced.bin_dir / "git")
     monkeypatch.setenv("PATH", str(folder))
     assert shutil.which("claude") is None
+
+
+def set_started_state(workspace: Workspace, state: str) -> None:
+    """Set ``tracker.states.started`` in the hub's ``hub.json``."""
+    path = workspace.hub / "hub.json"
+    document = json.loads(path.read_text())
+    document["tracker"]["states"] = {"started": state}
+    path.write_text(json.dumps(document, indent=2) + "\n")
+
+
+def stderr_lines(result: Result, prefix: str) -> list[str]:
+    """The stderr lines that start with ``prefix``."""
+    return [line for line in result.stderr.splitlines() if line.startswith(prefix)]
 
 
 def logging_setup(log: Path) -> bytes:
@@ -319,3 +341,182 @@ class TestFresh:
         assert hub_start.resolve.roots == [hub_start.workspace.hub]
         assert len(hub_start.execs) == 1
         assert f"created  {worktree} ({BRANCH} from origin/trunk)" in result.stdout.splitlines()
+
+
+@pytest.mark.usefixtures("with_key", "claude_first_on_path")
+class TestConventions:
+    def test_creates_each_repo_on_its_branch_when_conventions_differ(
+        self, hub_start: StartRun
+    ) -> None:
+        workspace = hub_start.workspace
+        workspace.use_conventions(
+            repos={"demo-web": {"branch": "{prefix}feature/{issue_lower}-{slug}"}}
+        )
+        workspace.use_repo_branch("demo-web", "develop")
+        branches = {"demo-api": BRANCH, "demo-web": "jdoe/feature/dem-7-add-the-collector"}
+        bases = {"demo-api": "trunk", "demo-web": "develop"}
+
+        result = hub_start(ISSUE)
+
+        assert isinstance(result.exception, Execed), result.output
+        lines = result.stdout.splitlines()
+        for repo in REPOS:
+            worktree = hub_start.worktree(repo)
+            assert f"created  {worktree} ({branches[repo]} from origin/{bases[repo]})" in lines
+            assert workspace.git(worktree, "branch", "--show-current") == branches[repo]
+            assert workspace.git(worktree, "rev-parse", "HEAD") == workspace.origin_head(
+                repo, bases[repo]
+            )
+        assert f"task     : {NAME}" in lines
+        assert [line for line in lines if line.startswith("branch   : ")] == [
+            f"branch   : {repo} {branches[repo]}" for repo in REPOS
+        ]
+
+
+@pytest.mark.usefixtures("with_key", "claude_first_on_path")
+class TestLaunch:
+    def test_attaches_worktrees_from_main_checkout_when_launched(self, hub_start: StartRun) -> None:
+        hub = hub_start.workspace.hub
+
+        result = hub_start(ISSUE)
+
+        assert isinstance(result.exception, Execed), result.output
+        issue = hub_start.tracker.backend.issues[ISSUE]
+        (launched,) = hub_start.execs
+        assert launched.file == "claude"
+        assert launched.cwd == os.path.realpath(hub)
+        assert launched.argv == [
+            "claude",
+            "--add-dir",
+            str(hub_start.worktree("demo-api")),
+            "--add-dir",
+            str(hub_start.worktree("demo-web")),
+            "--append-system-prompt-file",
+            str(hub / "brain" / "auto" / "agent-context-dem-7.md"),
+            "--settings",
+            settings_json(str(hub)),
+            start_prompt(issue, task=NAME),
+        ]
+        for repo in REPOS:
+            assert str(hub_start.workspace.ws / repo) not in launched.argv
+        assert launched.environ[VARIABLE] == "1"
+
+    def test_runs_from_main_checkout_when_started_from_hub_worktree(
+        self, hub_start: StartRun
+    ) -> None:
+        workspace = hub_start.workspace
+        hub = workspace.hub
+        workspace.git(hub, "-c", "init.defaultBranch=main", "init", "-q")
+        workspace.git(hub, "add", "-A")
+        workspace.git(hub, "commit", "-q", "-m", "hub")
+        hub_worktree = hub / ".claude" / "worktrees" / "x"
+        workspace.git(hub, "worktree", "add", "-q", "-b", "x", str(hub_worktree))
+        # Read from the worktree, this hub.json would exit 1: only the main checkout's is read.
+        (hub_worktree / "hub.json").write_bytes(b"{}\n")
+
+        result = hub_start.run_in(workspace.base, ISSUE, env={"AGENT_HUB_ROOT": str(hub_worktree)})
+
+        assert isinstance(result.exception, Execed), result.output
+        (launched,) = hub_start.execs
+        assert launched.cwd == os.path.realpath(hub)
+        context = hub / "brain" / "auto" / "agent-context-dem-7.md"
+        assert launched.argv[5:9] == [
+            "--append-system-prompt-file",
+            str(context),
+            "--settings",
+            settings_json(str(hub)),
+        ]
+        assert context.is_file()
+        assert hub_start.resolve.roots == [hub]
+
+    def test_writes_task_context_file_when_launched(self, hub_start: StartRun) -> None:
+        workspace = hub_start.workspace
+        marker = b"# demo-api\nMARKER only on the task branch\n"
+        workspace.advance("demo-api", {"AGENTS.md": (marker, 0o644)})
+        assert not (workspace.ws / "demo-api" / "AGENTS.md").exists()
+
+        result = hub_start(ISSUE)
+
+        assert isinstance(result.exception, Execed), result.output
+        auto = workspace.hub / "brain" / "auto"
+        label = f"demo-api/.claude/worktrees/{NAME}"
+        assert (auto / "agent-context-dem-7.md").read_bytes() == (
+            f"\n# Instructions for ../{label} (from {label}/AGENTS.md)\n\n".encode() + marker
+        )
+        assert not (auto / "agent-context.md").exists()
+
+
+@pytest.mark.usefixtures("with_key", "claude_first_on_path")
+class TestRollback:
+    def test_lists_both_and_drops_all_when_second_setup_fails(self, hub_start: StartRun) -> None:
+        workspace = hub_start.workspace
+        workspace.advance("demo-web", {SETUP: (b"#!/bin/sh\nexit 3\n", EXECUTABLE)})
+
+        result = hub_start(ISSUE)
+
+        assert result.exit_code == 1, result.output
+        (line,) = stderr_lines(result, "hub start: ")
+        assert line.startswith("hub start: demo-web: scripts/worktree-setup.sh exited 3;"), line
+        assert stderr_lines(result, "created  : ") == [
+            f"created  : {hub_start.worktree(repo)}" for repo in REPOS
+        ]
+        # Plan E10: the lines hub start prints after the error, not the script's own hint.
+        assert stderr_lines(result, "remove   : ") == [f"remove   : ./hub worktree --remove {NAME}"]
+        assert hub_start.state() == "Todo"
+        assert [call for call in hub_start.tracker.calls if call[0] == "move_state"] == []
+        assert hub_start.execs == []
+
+    def test_prints_only_lines_when_some_repos_created(self, hub_start: StartRun) -> None:
+        web = hub_start.workspace.ws / "demo-web"
+        (web / ".git").rename(web / "git-away")
+
+        result = hub_start(ISSUE)
+
+        assert result.exit_code == 1, result.output
+        assert stderr_lines(result, "hub start: ") == [
+            f"hub start: {web} is not a git checkout; clone it next to the hub"
+        ]
+        assert stderr_lines(result, "created  : ") == [
+            f"created  : {hub_start.worktree('demo-api')}"
+        ]
+        assert stderr_lines(result, "remove   : ") == [
+            f"remove   : ./hub worktree --remove {NAME} --only demo-api"
+        ]
+        assert hub_start.state() == "Todo"
+        assert hub_start.execs == []
+
+
+@pytest.mark.usefixtures("with_key", "claude_first_on_path")
+class TestTracker:
+    def test_keeps_and_lists_worktrees_when_started_state_unknown(
+        self, hub_start: StartRun
+    ) -> None:
+        set_started_state(hub_start.workspace, "Doing")
+
+        result = hub_start(ISSUE)
+
+        assert result.exit_code == 1, result.output
+        assert stderr_lines(result, "hub start: ") == [
+            "hub start: move_state DEM-7: state 'Doing' not found in team DEM;"
+            " use one of: Todo, In Progress, In Review, Done"
+        ]
+        assert stderr_lines(result, "created  : ") == [
+            f"created  : {hub_start.worktree(repo)}" for repo in REPOS
+        ]
+        assert stderr_lines(result, "remove   : ") == [f"remove   : ./hub worktree --remove {NAME}"]
+        for repo in REPOS:
+            assert hub_start.worktree(repo).is_dir()
+        assert hub_start.state() == "Todo"
+        assert hub_start.execs == []
+
+    def test_creates_nothing_when_issue_unknown(self, hub_start: StartRun) -> None:
+        result = hub_start("DEM-99")
+
+        assert result.exit_code == 1, result.output
+        (line,) = stderr_lines(result, "hub start: ")
+        assert line.startswith("hub start: get_issue DEM-99: "), line
+        assert stderr_lines(result, "created  : ") == []
+        assert hub_start.tracker.calls == [("get_issue", "DEM-99")]
+        assert [call for call in hub_start.repo_git_calls() if "fetch" in call[1]] == []
+        assert_no_worktree(hub_start.workspace)
+        assert hub_start.execs == []
