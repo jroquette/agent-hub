@@ -194,17 +194,22 @@ def no_prefix_lines(
     """
     lines = list(_NO_PREFIX_LINES)
     if email is not None:
-        giver = (
-            "git's user.email"
-            if email.source is Source.GIT
-            else f"{email.source.value}'s project.author_email"
+        lines.append(
+            f'  {email_giver(email)} gives "{_local_part(email.value)}", not a valid prefix'
         )
-        lines.append(f'  {giver} gives "{_local_part(email.value)}", not a valid prefix')
     if is_email_rejected:
         lines.append("  git's user.email is not an email address")
     if git_problem is not None:
         lines.append(f"  git: {git_problem}")
     return lines
+
+
+def email_giver(email: Sourced) -> str:
+    """Where an effective email comes from, as the texts name it: ``git's user.email``, or
+    ``hub.json's project.author_email`` (``hub.local.json``'s likewise)."""
+    if email.source is Source.GIT:
+        return "git's user.email"
+    return f"{email.source.value}'s project.author_email"
 
 
 def _from_files(key: IdentityKey, *, local: IdentityValues, hub: IdentityValues) -> Sourced | None:
