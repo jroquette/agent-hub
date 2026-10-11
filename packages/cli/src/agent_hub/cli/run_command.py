@@ -37,7 +37,7 @@ from agent_hub.cli.tracker_client import missing_key_line, resolve_tracker_clien
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.team_keys import team_of, teams_text
-from agent_hub.core.runner.report_writes import REVIEW_STATE, call_line, success_writes
+from agent_hub.core.runner.report_writes import call_line, success_writes
 from agent_hub.core.runner.run_record import Stage, picked_data
 from agent_hub.core.runner.run_texts import pr_body, success_comment
 from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, Issue, TrackerClient
@@ -198,9 +198,12 @@ def _print_dry_run(
         summary=DRY_RUN_TEXT,
         workspace=str(children.workspace),
     )
-    failed_label = children.config.tracker.failed_label
+    tracker = children.config.tracker
     for write in success_writes(
-        issue, review_state=REVIEW_STATE, failed_label=failed_label, comment=comment
+        issue,
+        review_state=tracker.states.review,
+        failed_label=tracker.failed_label,
+        comment=comment,
     ):
         typer.echo(f"would call: {shown_text(call_line(write))}")
 

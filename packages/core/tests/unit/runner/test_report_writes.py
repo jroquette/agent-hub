@@ -1,3 +1,5 @@
+from agent_hub.core.hub_config.model import TrackerStates
+from agent_hub.core.hub_config.schema import read_shipped_schema
 from agent_hub.core.runner.report_writes import (
     REVIEW_STATE,
     TrackerWrite,
@@ -12,6 +14,15 @@ COMMENT = "Run ab12cd34 opened https://github.com/acme/demo-api/pull/99. Adds th
 
 def test_pins_review_state_when_module_loaded() -> None:
     assert REVIEW_STATE == "In Review"
+
+
+def test_defaults_review_state_to_review_state_when_states_not_set() -> None:
+    shipped = read_shipped_schema()["$defs"]["TrackerStates"]["properties"]["review"]
+
+    # One source (Q-6): the model's default, the shipped schema's and REVIEW_STATE agree.
+    assert TrackerStates().review == REVIEW_STATE
+    assert TrackerStates.model_fields["review"].default is REVIEW_STATE
+    assert shipped["default"] == REVIEW_STATE
 
 
 def test_orders_success_writes_when_run_succeeds() -> None:

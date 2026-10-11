@@ -1689,6 +1689,40 @@ class TestShipTracker:
         ]
         assert "agent-failed" not in failed.backend.issues[ISSUE].labels
 
+    def test_uses_configured_review_state_when_states_set(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+        tracker_backend_for_ship: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The team has "Code Review" and no "In Review": a move to "In Review" would fail.
+        coded = type(tracker)(tracker_backend_for_ship(states=("Todo", "Code Review")))
+        monkeypatch.setattr(ship_command, "resolve_tracker_client", Resolve(coded))
+        hub = ship_workspace.workspace.hub
+        document = json.loads((hub / "hub.json").read_text())
+        document["tracker"]["states"] = {"review": "Code Review"}
+        (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+        both_ahead(make_task_worktree)
+
+        dry = run_command(hub, "ship", ISSUE, "--dry-run")
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert dry.exit_code == 0, dry.output
+        assert f"would call: move_state({ISSUE}, Code Review)" in dry.stdout.splitlines()
+        assert result.exit_code == 0, result.output
+        assert coded.calls == [
+            ("get_issue", ISSUE),
+            ("get_issue", ISSUE),
+            ("move_state", ISSUE, "Code Review"),
+            ("comment", ISSUE, SHIP_COMMENT),
+        ]
+        assert coded.backend.issues[ISSUE].state == "Code Review"
+
 
 NO_RETRY_WORDS = ("retry", "try again", "run again", "re-run")
 COMMENT_LINE = json.dumps(f"comment({ISSUE}, {SHIP_COMMENT})")
