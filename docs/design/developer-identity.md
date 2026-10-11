@@ -45,8 +45,8 @@ cloud setup. The `hub.json` fields themselves are in [project-config.md](project
   identity home, 10 s each, with `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR` and the session's tokens dropped.
 - `hub next`, `hub brief`, `hub agent` and `hub bench` use `hub.json` with the local values over it
   (`load_effective_config_or_exit`). A bad `hub.local.json` exits 1 with its problem lines. A local
-  `tracker.transport` picks the adapter of `hub next` and `hub run`.
-- `hub worktree` (create and `--remove`) and `hub run` resolve the prefix before any git write
+  `tracker.transport` picks the adapter of `hub next`, `hub run` and `hub start`.
+- `hub worktree` (create and `--remove`), `hub run` and `hub start` resolve the prefix before any git write
   (`effective_with_prefix_or_fail`). A bad local file, or no prefix, is a usage error, exit 2:
   ```
   no branch prefix for this developer; set one of:
@@ -122,4 +122,4 @@ HUB_AUTHOR_NAME/HUB_AUTHOR_EMAIL; commits carry the container's identity`, write
 ## Open questions
 
 - A team mode for `hub init` (no identity in `hub.json`): open, a later issue; `hub setup` writes the developer's file.
-- Whether doctor should also report no prefix at all (`hub worktree` and `hub run` would refuse).
+- Whether doctor should also report no prefix at all (`hub worktree`, `hub run` and `hub start` would refuse).

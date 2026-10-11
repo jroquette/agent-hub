@@ -11,12 +11,13 @@ The product and its phases are in [SPEC.md](../SPEC.md). Phase 1 is designed as 
 | [hub-sync.md](hub-sync.md) | `hub.lock`, `hub sync`, `--check`, the write path, the `*.project.json` merge, the project-entry links | syncing a hub, reading the lock |
 | [hub-adopt.md](hub-adopt.md) | `hub sync --adopt`: per-path rules, `--accept`, the directory-link migration, listing lines, exit codes, project guards on adoption | adopting a hand-made hub (with [hub-sync.md](hub-sync.md)) |
 | [hub-setup.md](hub-setup.md) | one-command onboarding of a developer's machine: tools, identity, repos, doctor | changing hub setup or what it checks |
+| [hub-start.md](hub-start.md) | `hub start ISSUE`: the issue to its worktrees, its started state and a Claude Code session; resume, task name, launch, failure lines | changing hub start, its task names or its launch |
 | [hub-doctor.md](hub-doctor.md) | the `hub doctor` rule interface, rule set, output and exit codes | adding or tuning a check |
 | [memory-layers.md](memory-layers.md) | where a learning goes (team brain, personal memory, repo `AGENTS.md`), `/learn personal`, the personal-memory `.gitignore` lines | a change touches `brain/auto/`, `/learn` or the routing list |
 | [domain-model.md](domain-model.md) | the nine entities: identity, attributes, relations, phase (sketch) | modeling an entity in core; for Session, WorkflowRun or Learning read [event-derivations.md](event-derivations.md) too |
 | [event-derivations.md](event-derivations.md) | how Session, WorkflowRun and Learning are folded from events, and what events may hold (sketch) | a derived entity (with [domain-model.md](domain-model.md)), a projection or a view over events; a source adapter: its "Sources and privacy" part (redaction before append) and the SPEC's [canonical event](../SPEC.md#data-sources-and-event-model) |
 | [workflow-schema.md](workflow-schema.md) | the declarative workflow document (sketch, Phase 4) | workflow steps, gates or the executor |
-| [worktree-environment.md](worktree-environment.md) | what the repo's worktree setup and teardown scripts get: argv, cwd, the six `HUB_*` variables, the port slot, examples | writing or running a repo's worktree script, changing what `hub worktree` or `hub run` passes it |
+| [worktree-environment.md](worktree-environment.md) | what the repo's worktree setup and teardown scripts get: argv, cwd, the six `HUB_*` variables, the port slot, examples | writing or running a repo's worktree script, changing what `hub worktree`, `hub run` or `hub start` passes it |
 
 ## Rules for these files
 
@@ -33,4 +34,5 @@ The product and its phases are in [SPEC.md](../SPEC.md). Phase 1 is designed as 
 - [ADR 0012](../adr/0012-cli-subsumes-hub-scripts.md): hub logic moves into the CLI, except the hooks.
 - [ADR 0013](../adr/0013-release-by-git-tags.md): the CLI is released by semver git tags and pinned per hub.
 - [ADR 0014](../adr/0014-tracker-port-linear-graphql.md): the tracker is a core port; Linear is reached over GraphQL.
+- [ADR 0015](../adr/0015-linear-mcp-tracker-transport.md): transport `mcp`: the user's Linear MCP server, via `claude -p`.
 - [ADR 0016](../adr/0016-per-developer-identity.md): identity per developer: `hub.local.json`, `hub.json`, git config.

@@ -43,8 +43,8 @@ with `uv run --locked --all-packages python scripts/check_pr_title.py "<title>"`
 and prints the allowed types and scopes when the title is invalid. Commits inside a branch should use the same format,
 but only the PR title is enforced.
 
-Per-package changelogs and semantic versions will be generated from this history; the release tool comes in a
-follow-up chore.
+Releases are cut with the hub's `/release` skill (§ Releases), which proposes the version bump from the PR titles
+merged since the last tag. Changelogs are not generated yet.
 
 ## Project management (Linear)
 
@@ -54,8 +54,11 @@ follow-up chore.
 - **Labels:**
   - type, exactly one per issue: `feature`, `bug`, `chore`, `spike`, `docs`;
   - area: `pkg:core`, `pkg:storage`, `pkg:collector`, `pkg:cli`, `pkg:generator`, `pkg:tracker`, `pkg:api`, `app:web`;
-  - automation: `agent-ready` (an agent may pick it up), `agent-failed` (an agent run failed; the issue has the diagnosis).
-- **Size:** `spike`, `bounded` or `architectural`. No story points; cycle time is tracked instead.
+  - automation: `agent-ready` (an agent may pick it up), `agent-failed` (an agent run failed; the issue has the
+    diagnosis), `needs-human` (set by `/triage`: an open question, a guarded path, or an architectural or spike size;
+    never together with `agent-ready`).
+- **Size:** within `/fix`'s limits (one repo, at most 5 changed non-test files, no new contract, no guarded path), else
+  `spike`, `bounded` or `architectural` as `/feature` sizes them. No story points; cycle time is tracked instead.
 
 ### Issue template
 
@@ -79,8 +82,14 @@ Links, constraints, open questions.
 An issue can be labeled `agent-ready` (or picked up) when:
 
 - its acceptance criteria are testable, written as Given/When/Then with AC ids;
-- the affected packages are tagged with area labels;
-- its dependencies are linked (blocked-by / related issues).
+- its size is set (an `agent-ready` issue is within `/fix`'s limits or a bounded `/feature`);
+- the repos it changes are named and the affected packages are tagged with area labels;
+- its dependencies are linked (blocked-by / related issues);
+- it has a verification command that runs from the repo root after the merge and proves the ACs;
+- it has no open question.
+
+`/triage <issue>` drafts these sections, and after the owner's approval writes them and sets `agent-ready`, or
+`needs-human` when something above is missing.
 
 ### Definition of Done
 
@@ -94,7 +103,7 @@ The same checklist is in the PR template.
 
 ## Architecture Decision Records
 
-- Location and name: `docs/adr/NNNN-kebab-title.md`, numbered in sequence (`0017-…` is next).
+- Location and name: `docs/adr/NNNN-kebab-title.md`, numbered in sequence: the next free number in `docs/adr/`.
 - Format: [MADR](https://adr.github.io/madr/): a header with `Status`, `Date` and `Deciders`, then the sections Context
   and Problem Statement, Considered Options, Decision Outcome (with Consequences) and More Information. Follow
   [ADR 0001](adr/0001-uv-workspace-with-namespace-packages.md) as the model.
@@ -164,6 +173,9 @@ makes it with `git tag -a`, by hand or through an agent session the owner asks t
 create it through the GitHub Releases UI or with a plain `git tag`: both make a lightweight tag, which `release.yml`
 rejects.
 
+The hub's `/release` skill walks these steps: it proposes the version, checks the exact commit, writes the notes
+(they become the tag message) and prints the tag commands for the owner to run; it never creates or pushes a tag.
+
 1. The release PR sets `version` in `packages/cli/pyproject.toml` and `packages/agent-hub/pyproject.toml` to `X.Y.Z`,
    runs `uv lock` and commits `uv.lock`. `make lockstep` (in `make check-fast`) fails while the two versions differ.
    The other packages keep their versions.
@@ -183,7 +195,7 @@ rejects.
 
 - A wrong or failed tag is never moved or deleted: fix the cause in a PR, bump the patch version and tag that. This
   holds for a lightweight tag too: the existing ones stay as they are.
-- Tag immutability rests on this written rule: GitHub tag rulesets on a private repo need a paid plan.
+- Tag immutability rests on this written rule (tag rulesets are not set up).
 
 ## Manual repository and Linear settings
 
