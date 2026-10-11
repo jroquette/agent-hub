@@ -484,6 +484,16 @@ INFRA_QUOTED_REASON = (
     "{}: guard.infra.allow (hub.json) matches only quoted text here (`{}`), which may not be this "
     "command's environment; confirm first, or write the environment unquoted"
 )
+INFRA_UNSAFE_REASON = (
+    "`{}` is a character guard.infra does not check (it passes only letters, digits, blanks, "
+    "`_-./:=@,+%` and the joins `;` `&&` `||` `|` newline); confirm this infrastructure command "
+    "first"
+)
+INFRA_RISKY_REASON = (
+    "`{}` can run a command, or change its environment, out of guard.infra's sight (a shell, an "
+    "interpreter, xargs, eval, exec, source, `.`, env -i/-u, sudo, su, doas, a lone `--`); "
+    "confirm first"
+)
 LEGACY_INFRA_REASON = "infrastructure commands (terraform/aws/pulumi/kubectl) are human-only"
 
 
@@ -509,6 +519,14 @@ def simple(construct: str) -> tuple[str, str]:
 
 def quoted(tool: str, value: str) -> tuple[str, str]:
     return ("ask", INFRA_QUOTED_REASON.format(tool, value))
+
+
+def unsafe(char: str) -> tuple[str, str]:
+    return ("ask", INFRA_UNSAFE_REASON.format(char))
+
+
+def risky(word: str) -> tuple[str, str]:
+    return ("ask", INFRA_RISKY_REASON.format(word))
 
 
 def infra_document(infra: object) -> dict[str, Any]:
@@ -1382,6 +1400,216 @@ def test_asks_when_allowed_value_quoted(evaluate: Evaluate, workspace: Path) -> 
 
     assert verdicts == expected
     assert max(len(verdict[1]) for verdict in verdicts.values() if verdict) <= GUARD_REASON_CAP
+
+
+# E23 (B1): allow evidence inside a redirection target is not the command's environment. The
+# builder's patterns are bounded by blanks (`(?<![^ \t])`, `^[ \t]*`), so a target glued to `>`
+# matches none and the part is denied; a target after `> ` matches, and the `>` asks.
+def test_denies_or_asks_when_redirect_target_holds_environment(infra_evaluate: Evaluate) -> None:
+    expected = {
+        "aws s3 sync . s3://b >AWS_PROFILE=demo-dev": unknown("aws"),
+        "aws s3 sync . s3://b 2>AWS_PROFILE=demo-dev": unknown("aws"),
+        "aws s3 cp x s3://b >--profile=demo-dev": unknown("aws"),
+        "aws s3 cp x s3://b >&AWS_PROFILE=demo-dev": unknown("aws"),
+        "kubectl rollout restart deploy/api >--context=kind-demo": unknown("kubectl"),
+        "terraform plan >-var-file=dev.tfvars": unknown("terraform"),
+        "pulumi preview >--stack=demo/dev": unknown("pulumi"),
+        "serverless invoke -f x >--stage=dev": unknown("serverless"),
+        "env >&AWS_PROFILE=demo-dev aws s3 sync . s3://b": unknown("aws"),
+        "AWS_PROFILE=demo-dev>x aws s3 sync . s3://b": unknown("aws"),
+        "aws s3 cp x s3://b 2> --profile demo-dev": unsafe(">"),
+        "kubectl rollout restart deploy/a < --context=kind-demo": unsafe("<"),
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# E23: the safe-character gate does not depend on how the patterns are written: with `\b`-ended
+# patterns that match inside a redirection target, a brace expansion or after a carriage return,
+# the command still asks, naming the character (escaped).
+def test_asks_when_command_has_unsafe_character_whatever_patterns(
+    evaluate: Evaluate, workspace: Path
+) -> None:
+    write_hub(
+        workspace,
+        {
+            "allow": [
+                r"--profile[= ]demo-dev\b",
+                r"\bAWS_PROFILE=demo-dev\b",
+                r"--context[= ]kind-demo\b",
+            ]
+        },
+    )
+    expected = {
+        "aws s3 sync . s3://b >AWS_PROFILE=demo-dev": unsafe(">"),
+        "aws s3 sync . s3://b --profile=demo-dev{,-admin}": unsafe("{"),
+        "aws s3 sync . s3://b\rAWS_PROFILE=demo-dev": unsafe("\\r"),
+        "kubectl rollout restart deploy/a --context=kind-demo{,-prod2}": unsafe("{"),
+        "aws s3 sync . s3://b --profile demo-dev": None,
+    }
+
+    verdicts = bash_verdicts(evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# E23 (B2): a shell, an interpreter, xargs, eval, exec, source or `.` (in command position), and
+# sudo, su or doas, anywhere in a command that mentions a covered tool, ask (the word as written,
+# escaped and capped), after a deny and after a character the gate does not pass.
+def test_asks_when_command_reaches_shell_or_interpreter(infra_evaluate: Evaluate) -> None:
+    long_path = "/" + "x" * 200 + "/python3"
+    expected = {
+        "AWS_PROFILE=demo-dev echo aws s3 sync . s3://b | sh": risky("sh"),
+        "AWS_PROFILE=demo-dev echo aws s3 sync . s3://b | bash -s": risky("bash"),
+        "AWS_PROFILE=demo-dev echo aws s3 sync . s3://b | env sh": risky("sh"),
+        "AWS_PROFILE=demo-dev echo aws s3 sync . s3://b | xargs -n9": risky("xargs"),
+        "echo kubectl rollout restart deploy/a --context=kind-demo | sed s/x// | sh": risky("sh"),
+        "AWS_PROFILE=demo-dev echo aws s3 sync . s3://b | python3 x.py": risky("python3"),
+        "aws s3 ls --profile demo-dev | /usr/bin/python3.12 x.py": risky("/usr/bin/python3.12"),
+        f"aws s3 ls --profile demo-dev | {long_path}": risky(cut(long_path)),
+        "AWS_PROFILE=demo-dev perl x.pl aws": risky("perl"),
+        "aws s3 ls --profile demo-dev | node x.js": risky("node"),
+        "aws s3 ls --profile demo-dev | ruby x.rb": risky("ruby"),
+        "aws s3 ls --profile demo-dev | php x.php": risky("php"),
+        "aws s3 ls --profile demo-dev | zsh": risky("zsh"),
+        "aws s3 ls --profile demo-dev | dash": risky("dash"),
+        "aws s3 ls --profile demo-dev | ksh": risky("ksh"),
+        "aws s3 ls --profile demo-dev | fish": risky("fish"),
+        "eval aws s3 ls --profile demo-dev": risky("eval"),
+        "exec aws s3 ls --profile demo-dev": risky("exec"),
+        "source env.sh && aws s3 ls --profile demo-dev": risky("source"),
+        ". env.sh && aws s3 ls --profile demo-dev": risky("."),
+        "if true; then . env.sh; fi; aws s3 ls --profile demo-dev": risky("."),
+        "AWS_PROFILE=demo-dev sudo aws s3 sync . s3://b": risky("sudo"),
+        "AWS_PROFILE=demo-dev aws s3 ls | su x": risky("su"),
+        "AWS_PROFILE=demo-dev doas aws s3 sync . s3://b": risky("doas"),
+        "bash <(AWS_PROFILE=demo-dev echo aws s3 sync . s3://b)": unknown("aws"),
+        "AWS_PROFILE=demo-dev echo aws s3 sync . s3://b > /tmp/x.sh && sh /tmp/x.sh": unsafe(">"),
+        "perl -e 'system q[aws s3 sync . s3://b]' --profile=demo-dev": unsafe("'"),
+        "aws s3 ls --profile demo-dev | sh && cat .env": (
+            "deny",
+            "reading secret file .env is not allowed (any command, not just cat); "
+            "reference the variable name instead",
+        ),
+        "helm lint .": None,
+        "aws s3 sync . s3://b --profile demo-dev": None,
+        "echo x | sh": None,
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+    assert max(len(verdict[1]) for verdict in verdicts.values() if verdict) <= GUARD_REASON_CAP
+
+
+# E23 (B3): a tool word followed by `$`, `,` or `}` is a mention with no local form, so a glued
+# expansion (`{aws,…}`, `aws$x`, `terraform${IFS}apply`) is denied without an environment in its
+# call (a brace group is a call of its own) and asks with one.
+GLUED_EXPANSIONS = {
+    "{aws,s3,sync,.,s3://b}": unknown("aws"),
+    "{aws,} s3 sync . s3://b": unknown("aws"),
+    "{,aws} s3 sync . s3://b": unknown("aws"),
+    "terraform${IFS}apply -auto-approve": unknown("terraform"),
+    "aws$() s3 sync . s3://b": unknown("aws"),
+    "aws$@ s3 sync . s3://b": unknown("aws"),
+    "aws${x} s3 sync . s3://b": unknown("aws"),
+    "aws$IFS s3 sync . s3://b --profile demo-dev": unsafe("$"),
+    "{aws,s3,sync,.,s3://b} --profile demo-dev": unknown("aws"),
+    "AWS_PROFILE=demo-dev {aws,s3,sync,.,s3://b}": unknown("aws"),
+}
+
+
+def test_denies_tool_word_when_expansion_glued_to_it(infra_evaluate: Evaluate) -> None:
+    verdicts = bash_verdicts(infra_evaluate, list(GLUED_EXPANSIONS))
+
+    assert verdicts == GLUED_EXPANSIONS
+
+
+# E23 (S1): a lone `--`, env's -i/-u (any spelling: `-`, a cluster, `--unset`, a glued value,
+# `--ignore-environment`) before its command, sudo, su and doas ask; env with no such option,
+# and an `-i` after env's command, pass.
+def test_asks_when_argument_may_drop_environment(infra_evaluate: Evaluate) -> None:
+    expected = {
+        "kubectl get pods -- --context=kind-demo": risky("--"),
+        "kubectl rollout restart deploy/a -- --context=kind-demo": risky("--"),
+        "terraform plan -- -var-file=dev.tfvars": risky("--"),
+        "AWS_PROFILE=demo-dev env -u AWS_PROFILE aws s3 sync . s3://b": risky("env -u"),
+        "AWS_PROFILE=demo-dev env -i aws s3 sync . s3://b": risky("env -i"),
+        "AWS_PROFILE=demo-dev env - aws s3 sync . s3://b": risky("env -"),
+        "AWS_PROFILE=demo-dev env -0i aws s3 ls": risky("env -0i"),
+        "AWS_PROFILE=demo-dev env -uAWS_PROFILE aws s3 ls": risky("env -uAWS_PROFILE"),
+        "AWS_PROFILE=demo-dev env --unset=AWS_PROFILE aws s3 ls": risky("env --unset=AWS_PROFILE"),
+        "AWS_PROFILE=demo-dev env --ignore-environment aws s3 ls": risky(
+            "env --ignore-environment"
+        ),
+        "AWS_PROFILE=demo-dev /usr/bin/env -C /tmp -u AWS_PROFILE aws s3 ls": risky(
+            "/usr/bin/env -u"
+        ),
+        "AWS_PROFILE=demo-dev env aws s3 ls": None,
+        "AWS_PROFILE=demo-dev env FOO=1 aws s3 ls --include x -i": None,
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# E23: the safe characters are ASCII letters and digits, space, tab and `_ - . / : = @ , + %`,
+# joined by `;`, `&&`, `||`, `|` or a newline; any other character (a single `&`, `|&`, other
+# whitespace, non-ASCII) asks, naming the first one (escaped). Plain commands still pass.
+def test_asks_when_command_has_unsafe_character(infra_evaluate: Evaluate) -> None:
+    expected = {
+        "aws s3 ls --profile demo-dev \rx": unsafe("\\r"),
+        "aws s3 ls --profile demo-dev \u000bx": unsafe("\\u000b"),
+        "aws s3 ls --profile demo-dev x y": unsafe("\\u00a0"),
+        "aws s3 ls --profile demo-dev xé": unsafe("\\u00e9"),
+        "aws s3 ls --profile demo-dev &": unsafe("&"),
+        "aws s3 ls --profile demo-dev &&& cat x": unsafe("&"),
+        "aws s3 ls --profile demo-dev |& cat": unsafe("&"),
+        "aws s3 ls --profile demo-dev ~/x": unsafe("~"),
+        "aws s3 ls --profile demo-dev *": unsafe("*"),
+        "aws s3 ls --profile demo-dev x?": unsafe("?"),
+        "aws s3 ls --profile demo-dev [x]": unsafe("["),
+        "aws s3 ls --profile demo-dev !x": unsafe("!"),
+        "aws s3 ls --profile demo-dev $x": unsafe("$"),
+        "aws s3 ls --profile demo-dev (x)": unsafe("("),
+        'aws s3 ls --profile demo-dev; echo "done"': unsafe('\\"'),
+        "aws s3 ls --profile demo-dev\taws s3 ls --profile=demo-dev": None,
+        "AWS_PROFILE=demo-dev terraform plan": None,
+        "kubectl get pods --context kind-demo | grep x": None,
+        "cdk synth": None,
+        "aws s3 ls --profile demo-dev && echo a,b+c%d@e:f || true\naws --version; cdk ls": None,
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# E23: the builder's patterns (the docs' advice) match only a whole blank-bounded word, and the
+# AWS_PROFILE prefix only at the start of the part: a longer value, a mid-command assignment or a
+# `\s`-only separator is no evidence.
+def test_denies_when_environment_not_blank_bounded(infra_evaluate: Evaluate) -> None:
+    expected = {
+        "aws s3 ls AWS_PROFILE=demo-dev": unknown("aws"),
+        "FOO=1 AWS_PROFILE=demo-dev aws s3 ls": unknown("aws"),
+        "AWS_PROFILE=demo-dev.x aws s3 ls": unknown("aws"),
+        "aws s3 sync . s3://b --profile demo-dev.x": unknown("aws"),
+        "aws s3 sync . s3://b --profile=demo-dev,staging": unknown("aws"),
+        "aws s3 sync . s3://b --profile=demo-dev\r": unknown("aws"),
+        "helm list --kube-context kind-demo.x": unknown("helm"),
+        "pulumi preview --stack demo/dev/x": unknown("pulumi"),
+        "terraform plan -var-file=dev.tfvars.bak": unknown("terraform"),
+        "serverless info --stage dev:x": unknown("serverless"),
+        "  AWS_PROFILE=demo-dev\taws s3 ls": None,
+        "cd x && AWS_PROFILE=demo-dev aws s3 ls": None,
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
 
 
 # AGH-113: a short-flag cluster holding ``f`` and ``--mirror`` force-update remote refs, so they
