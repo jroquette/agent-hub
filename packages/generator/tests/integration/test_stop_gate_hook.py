@@ -229,6 +229,27 @@ def test_stays_silent_when_no_code_changed(run_hook: RunHook, workspace: Path) -
     assert run_hook([{"dir": "app", "check_fast": "exit 1"}], workspace / "demo-hub") == {}
 
 
+def test_blocks_when_only_change_is_unstaged_edit(
+    run_hook: RunHook, workspace: Path, tmp_path: Path
+) -> None:
+    # Porcelain reads an unstaged edit as " M app.py": the leading blank is part of the line.
+    app = workspace / "app"
+    (app / "app.py").write_text("x = 1\n", encoding="utf-8")
+    git = shutil.which("git")
+    assert git is not None
+    identity = ["-c", "user.name=t", "-c", "user.email=t@example.com"]
+    for args in (["add", "app.py"], [*identity, "commit", "-qm", "c"]):
+        subprocess.run(  # noqa: S603 - git found on PATH, fixed arguments
+            [git, *args], cwd=app, check=True, capture_output=True, env=scratch_env(tmp_path)
+        )
+    (app / "app.py").write_text("x = 2\n", encoding="utf-8")
+
+    output = run_hook([{"dir": "app", "check_fast": "echo boom; exit 3"}], app)
+
+    assert output.get("decision") == "block"
+    assert "boom" in output["reason"]
+
+
 def test_gates_repos_when_hooks_run_from_hub_worktree(
     workspace: Path, *, hook_python: str, tmp_path: Path
 ) -> None:
