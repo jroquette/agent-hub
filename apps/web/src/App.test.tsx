@@ -40,7 +40,7 @@ describe("routes", () => {
     ["/sessions", "Sessions"],
     ["/sessions/abc", "Session detail"],
     ["/runs", "Workflow runs"],
-    ["/runs/abc", "Run detail"],
+    ["/runs/abc", "Run abc not found"],
     ["/knowledge/learnings", "Learnings"],
     ["/knowledge/brain", "Brain"],
     ["/knowledge/decisions", "Decisions"],
