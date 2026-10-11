@@ -17,8 +17,8 @@ counter as it was. Each check runs in its own process group, killed when the run
 a normal exit, and when the hook itself gets SIGTERM or SIGHUP), so no child of a check outlives the gate;
 its output goes to a temp file, so a background child holding it open never holds the gate up.
 After a block is printed, it is sent to the local control plane through the event sensor's
-send_decision (event_sensor.py beside it): the hook input with
-decision {by: stop_gate, kind: block, command, exit_code} of the first failing repo, bounded by the
+send_decision (event_sensor.py beside it): the hook input, its content reduced to sizes
+(reduce_hook), with decision {by: stop_gate, kind: block, command, exit_code} of the first failing repo, bounded by the
 sensor's 0.5 s; it prints nothing and never changes the output or the exit code."""
 
 from __future__ import annotations

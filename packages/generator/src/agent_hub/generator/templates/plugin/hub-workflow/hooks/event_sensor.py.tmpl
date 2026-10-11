@@ -3,8 +3,12 @@
 
 Registered for eleven events (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse,
 PostToolUseFailure, Notification, Stop, SubagentStart, SubagentStop, PreCompact, SessionEnd). It
-reads the input (at most MAX_STDIN bytes), replaces every string longer than MAX_STRING_BYTES
-(UTF-8) with {"_omitted_bytes": n}, wraps it in a v1 envelope
+reads the input (at most MAX_STDIN bytes) and reduces what would carry content (reduce_hook): the
+prompt becomes prompt_chars and prompt_slash_command (its leading /name, if any); a Write's
+content, an Edit's or a MultiEdit edit's old_string and new_string become <key>_lines (line counts;
+a Write under brain/_inbox/ keeps its first markdown heading as content_heading); tool_response
+becomes tool_response_bytes. It then replaces every string longer than MAX_STRING_BYTES (UTF-8)
+with {"_omitted_bytes": n}, wraps it in a v1 envelope
 {v, project, repo, run, step, attempt, sent_at, hook} and POSTs it to
 <AGENT_HUB_WEB_URL, else http://127.0.0.1:7420>/api/v1/events/hooks within TIMEOUT seconds.
 project is the hub's project (hub.json); repo the hub.json repo whose checkout or worktree holds
@@ -25,7 +29,7 @@ import re
 import sys
 import time
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -44,6 +48,13 @@ HOOKS_PATH = "/api/v1/events/hooks"
 LOOPBACK_HOSTS = ("127.0.0.1", "::1", "localhost")
 MAX_STEP = 40
 MAX_ATTEMPT = 99
+# What reduce_hook keeps of content; the control plane's hook mapper reads these keys.
+FILE_TOOLS = ("Write", "Edit", "MultiEdit")
+STRING_KEYS = ("old_string", "new_string")
+INBOX = ("brain", "_inbox")
+# A prompt's slash command and a markdown heading, as the control plane reads them.
+SLASH_COMMAND = re.compile(r"(?:<command-name>)?(/[A-Za-z0-9_.:\-]+)")
+HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
 
 
 def endpoint() -> tuple[str, int] | None:
@@ -74,6 +85,80 @@ def omit_large(value: object) -> object:
     if isinstance(value, list):
         return [omit_large(item) for item in value]
     return value
+
+
+def line_count(text: str) -> int:
+    """Lines in text; a last line without a newline counts."""
+    if not text:
+        return 0
+    return text.count("\n") + (0 if text.endswith("\n") else 1)
+
+
+def output_size(value: object) -> int | None:
+    """The UTF-8 size of a tool's output (its compact JSON when not text); None when absent."""
+    if value is None:
+        return None
+    try:
+        text = value if isinstance(value, str) else json.dumps(value, separators=(",", ":"))
+    except (TypeError, ValueError, RecursionError):
+        return None
+    return len(text.encode("utf-8", "replace"))
+
+
+def in_inbox(path: object) -> bool:
+    """Whether path names a file under a brain/_inbox/ folder."""
+    if not isinstance(path, str):
+        return False
+    parts = PurePosixPath(path).parts
+    return any(parts[i : i + 2] == INBOX for i in range(len(parts) - 2))
+
+
+def reduce_strings(edit: dict) -> dict:
+    """edit with old_string and new_string replaced by their line counts."""
+    reduced = dict(edit)
+    for key in STRING_KEYS:
+        if key in reduced:
+            value = reduced.pop(key)
+            if isinstance(value, str):
+                reduced[key + "_lines"] = line_count(value)
+    return reduced
+
+
+def reduce_tool_input(tool_input: dict) -> dict:
+    """A Write, Edit or MultiEdit input with its content replaced by line counts."""
+    reduced = reduce_strings(tool_input)
+    if "content" in reduced:
+        content = reduced.pop("content")
+        if isinstance(content, str):
+            reduced["content_lines"] = line_count(content)
+            heading = HEADING.search(content) if in_inbox(reduced.get("file_path")) else None
+            if heading is not None:
+                reduced["content_heading"] = heading.group(1)
+    edits = reduced.get("edits")
+    if isinstance(edits, list):
+        reduced["edits"] = [reduce_strings(e) if isinstance(e, dict) else e for e in edits]
+    return reduced
+
+
+def reduce_hook(hook: dict) -> dict:
+    """hook without the bodies it may carry: the prompt, file content and the tool's output are
+    replaced by their sizes (see the module docstring); every other key is kept."""
+    reduced = dict(hook)
+    if "prompt" in reduced:
+        prompt = reduced.pop("prompt")
+        if isinstance(prompt, str):
+            reduced["prompt_chars"] = len(prompt)
+            command = SLASH_COMMAND.match(prompt.lstrip())
+            if command is not None:
+                reduced["prompt_slash_command"] = command.group(1)
+    if "tool_response" in reduced:
+        size = output_size(reduced.pop("tool_response"))
+        if size is not None:
+            reduced["tool_response_bytes"] = size
+    tool_input = reduced.get("tool_input")
+    if reduced.get("tool_name") in FILE_TOOLS and isinstance(tool_input, dict):
+        reduced["tool_input"] = reduce_tool_input(tool_input)
+    return reduced
 
 
 def run_fields() -> dict:
@@ -113,7 +198,8 @@ def sent_at() -> str:
 
 
 def build_envelope(hook: dict, decision: dict | None = None) -> dict | None:
-    """The v1 envelope of hook (oversized strings omitted), or None when no hub is found."""
+    """The v1 envelope of hook (reduced, then oversized strings omitted), or None when no hub is
+    found."""
     if load_config is None:
         return None
     cwd = hook.get("cwd")
@@ -126,7 +212,7 @@ def build_envelope(hook: dict, decision: dict | None = None) -> dict | None:
         "repo": repo_of(cwd, cfg),
         **run_fields(),
         "sent_at": sent_at(),
-        "hook": omit_large(hook),
+        "hook": omit_large(reduce_hook(hook)),
     }
     if decision is not None:
         envelope["decision"] = decision

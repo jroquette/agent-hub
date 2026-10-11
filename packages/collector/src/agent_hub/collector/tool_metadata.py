@@ -2,7 +2,10 @@
 
 Shared by the hook mapper (PreToolUse ``tool_input``) and the transcript parser (``tool_use``
 ``input``): both carry the same tool input, whose key names live in this module's table only.
-Line counts are taken before redaction; every kept text is redacted, then clipped.
+Line counts are taken before redaction; every kept text is redacted, then clipped. The hook
+sensor sends a Write's ``content`` as ``content_lines`` (plus ``content_heading`` under
+``brain/_inbox/``) and an edit's ``old_string``/``new_string`` as ``<key>_lines`` (S1); both shapes
+read alike.
 """
 
 import json
@@ -22,6 +25,10 @@ OLD_STRING: Final = "old_string"
 NEW_STRING: Final = "new_string"
 EDITS: Final = "edits"
 CONTENT: Final = "content"
+# What the hook sensor sends in place of file content (S1).
+LINES_SUFFIX: Final = "_lines"
+CONTENT_LINES: Final = "content_lines"
+CONTENT_HEADING: Final = "content_heading"
 COMMAND: Final = "command"
 PATTERN: Final = "pattern"
 SEARCH_PATH: Final = "path"
@@ -131,15 +138,13 @@ def line_count(text: str) -> int:
 def learning_proposal(tool_name: str, tool_input: ToolInput, *, tool_use_id: str) -> Payload | None:
     """A Write of a note under ``brain/_inbox/``: the proposal's id, title and target."""
     path = tool_input.get(FILE_PATH)
-    content = tool_input.get(CONTENT)
-    if tool_name != WRITE_TOOL or not isinstance(path, str) or not isinstance(content, str):
+    if tool_name != WRITE_TOOL or not isinstance(path, str) or _content_lines(tool_input) is None:
         return None
     parts = PurePosixPath(path).parts
     starts = [i for i in range(len(parts) - 2) if parts[i : i + 2] == INBOX]
     if not starts:
         return None
-    heading = _HEADING.search(content)
-    title = heading.group(1) if heading else PurePosixPath(path).stem
+    title = _heading(tool_input) or PurePosixPath(path).stem
     return {
         "proposal": tool_use_id,
         "text": short_text(title, TITLE_LIMIT),
@@ -154,9 +159,9 @@ def _file_change(
     if not payload:
         return {}
     if tool_name == WRITE_TOOL:
-        content = tool_input.get(CONTENT)
-        if isinstance(content, str):
-            payload["lines_added"] = line_count(content)
+        lines = _content_lines(tool_input)
+        if lines is not None:
+            payload["lines_added"] = lines
         return payload
     added, removed = _edit_lines(tool_input)
     payload |= {"lines_added": added, "lines_removed": removed, "new_file": False}
@@ -168,13 +173,38 @@ def _edit_lines(tool_input: ToolInput) -> tuple[int, int]:
     pairs = [edit for edit in edits if isinstance(edit, dict)] if isinstance(edits, list) else []
     if not pairs:
         pairs = [dict(tool_input)]
-    added = sum(_lines_of(edit.get(NEW_STRING)) for edit in pairs)
-    removed = sum(_lines_of(edit.get(OLD_STRING)) for edit in pairs)
+    added = sum(_lines_of(edit, NEW_STRING) for edit in pairs)
+    removed = sum(_lines_of(edit, OLD_STRING) for edit in pairs)
     return added, removed
 
 
-def _lines_of(value: JsonValue) -> int:
-    return line_count(value) if isinstance(value, str) else 0
+def _lines_of(edit: ToolInput, key: str) -> int:
+    value = edit.get(key)
+    if isinstance(value, str):
+        return line_count(value)
+    return _whole(edit.get(key + LINES_SUFFIX)) or 0
+
+
+def _content_lines(tool_input: ToolInput) -> int | None:
+    content = tool_input.get(CONTENT)
+    if isinstance(content, str):
+        return line_count(content)
+    return _whole(tool_input.get(CONTENT_LINES))
+
+
+def _heading(tool_input: ToolInput) -> str | None:
+    content = tool_input.get(CONTENT)
+    if isinstance(content, str):
+        found = _HEADING.search(content)
+        return found.group(1) if found else None
+    heading = tool_input.get(CONTENT_HEADING)
+    return heading if isinstance(heading, str) and heading else None
+
+
+def _whole(value: JsonValue) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    return None
 
 
 def _path_only(tool_input: ToolInput, *, repo_root: PurePosixPath | None) -> Payload:

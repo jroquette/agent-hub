@@ -24,7 +24,8 @@ That guarantee covers a buggy extension, not a hostile one: it runs as the user,
 rights, so its trust boundary is the ask on every edit of plugin/<project>/hooks/ (and of this folder).
 Everything else passes through to the normal permission rules.
 After a deny or an ask is printed, the guard sends it to the local control plane through the event
-sensor's send_decision (event_sensor.py beside it): the hook input with
+sensor's send_decision (event_sensor.py beside it): the hook input, its content reduced to sizes
+(reduce_hook: no file content or edit strings leave the machine), with
 decision {by: guard, kind, rule}, rule a stable id read from the reason (RULE_IDS). The send is
 bounded by the sensor's 0.5 s, prints nothing and never changes the decision or the exit code.
 """

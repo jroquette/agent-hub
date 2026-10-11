@@ -1709,6 +1709,23 @@ def test_emits_rule_id_when_guard_denies_or_asks(
         HookEnvelope.model_validate(body)
 
 
+def test_sends_line_counts_not_strings_when_guard_decides_on_edit(
+    workspace: Path, *, guard: Guard, event_server: Any, sensor_env: dict[str, str]
+) -> None:
+    hub = workspace / "demo-hub"
+    edit = {"file_path": "tests/test_a.py", "old_string": "assert x\n", "new_string": "x\ny"}
+
+    [verdict] = guard(hub / HOOKS, [(guard_event("Edit", edit, hub), hub)], env=sensor_env)
+
+    assert verdict is not None
+    [body] = event_server.bodies()
+    assert body["hook"]["tool_input"] == {
+        "file_path": "tests/test_a.py",
+        "old_string_lines": 1,
+        "new_string_lines": 2,
+    }
+
+
 def test_names_rule_when_reason_read(
     workspace: Path, hook_python: str, run_python: Callable[..., Any]
 ) -> None:

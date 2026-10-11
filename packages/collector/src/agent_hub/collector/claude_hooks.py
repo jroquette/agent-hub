@@ -1,5 +1,10 @@
 """Claude Code hook envelopes to canonical events (D8, E2-E4): the ``HookMapper`` adapter.
 
+The sensor reduces bodies to sizes before sending (S1): ``prompt_chars`` and
+``prompt_slash_command`` for the prompt, ``tool_response_bytes`` for the output, and line counts
+in a Write's or an Edit's ``tool_input`` (``tool_metadata``). Hook inputs that still carry the
+bodies, from an older sensor, map to the same payloads.
+
 One row of the plan's table per hook; trigger-only hooks (Stop, SubagentStart, SubagentStop,
 PreCompact, a Notification that is not a permission prompt) yield no event, and Stop,
 SubagentStop and SessionEnd name the transcript to read next. An envelope carrying the guard's
@@ -155,9 +160,15 @@ def _session_start(hook: _Hook) -> tuple[Event, ...]:
 def _user_prompt(hook: _Hook) -> tuple[Event, ...]:
     payload: Payload = {"role": "user"}
     prompt = hook.input.get(fields.PROMPT)
-    if isinstance(prompt, str):
-        payload["chars"] = len(prompt)
-        command = prompt_command(prompt)
+    if isinstance(prompt, str):  # an older sensor sent the prompt itself
+        chars: int | None = len(prompt)
+        command_text: str | None = prompt
+    else:
+        chars = fields.whole_number(hook.input, fields.PROMPT_CHARS)
+        command_text = fields.text(hook.input, fields.PROMPT_SLASH_COMMAND)
+    if chars is not None:
+        payload["chars"] = chars
+        command = None if command_text is None else prompt_command(command_text)
         if command is not None:
             payload["slash_command"] = command
     return (hook.event(EventType.MESSAGE, hook.hashed_id(hook.name), payload),)
@@ -184,6 +195,8 @@ def _post_tool_use(hook: _Hook) -> tuple[Event, ...]:
     payload = hook.tool_keys() | {"status": "ok"}
     payload |= _duration(hook)
     size = output_bytes(hook.input.get(fields.TOOL_RESPONSE))
+    if size is None:
+        size = fields.whole_number(hook.input, fields.TOOL_RESPONSE_BYTES)
     if size is not None:
         payload["output_bytes"] = size
     return (hook.event(EventType.TOOL_RESULT, hook.tool_id(hook.name), payload),)

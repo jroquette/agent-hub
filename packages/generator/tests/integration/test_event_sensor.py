@@ -58,6 +58,18 @@ def hook_input(event: str, cwd: Path) -> dict[str, Any]:
     return common | extra[event]
 
 
+def reduced(event: str, data: dict[str, Any]) -> dict[str, Any]:
+    """What the sensor sends of ``hook_input(event, ...)``: the prompt and output reduced (S1)."""
+    sent = dict(data)
+    if event == "UserPromptSubmit":
+        prompt = sent.pop("prompt")
+        sent["prompt_chars"] = len(prompt)
+    if event == "PostToolUse":
+        response = sent.pop("tool_response")
+        sent["tool_response_bytes"] = len(json.dumps(response, separators=(",", ":")).encode())
+    return sent
+
+
 EVENTS = (
     "SessionStart",
     "UserPromptSubmit",
@@ -162,7 +174,7 @@ def test_posts_envelope_when_server_up(
     assert envelope.v == 1
     assert (envelope.project, envelope.repo) == ("demo", None)
     assert (envelope.run, envelope.step, envelope.attempt, envelope.decision) == (None,) * 4
-    assert envelope.hook == data
+    assert envelope.hook == reduced(event, data)
 
 
 @pytest.mark.parametrize(
@@ -291,8 +303,9 @@ def test_omits_strings_when_oversize(
     event_server: Any,
     sensor_env: dict[str, str],
 ) -> None:
-    data = hook_input("PostToolUse", hub)
-    data["tool_response"] = {"stdout": "é" * OMIT_LIMIT, "lines": ["x" * (OMIT_LIMIT + 1), "ok"]}
+    data = hook_input("PostToolUseFailure", hub)
+    data["error"] = "é" * OMIT_LIMIT
+    data["extra"] = {"lines": ["x" * (OMIT_LIMIT + 1), "ok"]}
     data["tool_input"] = {"command": "y" * OMIT_LIMIT}
 
     completed, _ = run_sensor(
@@ -301,10 +314,8 @@ def test_omits_strings_when_oversize(
 
     assert_silent(completed)
     [body] = event_server.bodies()
-    assert body["hook"]["tool_response"] == {
-        "stdout": {"_omitted_bytes": 2 * OMIT_LIMIT},
-        "lines": [{"_omitted_bytes": OMIT_LIMIT + 1}, "ok"],
-    }
+    assert body["hook"]["error"] == {"_omitted_bytes": 2 * OMIT_LIMIT}
+    assert body["hook"]["extra"] == {"lines": [{"_omitted_bytes": OMIT_LIMIT + 1}, "ok"]}
     assert body["hook"]["tool_input"] == {"command": "y" * OMIT_LIMIT}
     HookEnvelope.model_validate(body)
 
@@ -321,7 +332,7 @@ def test_sends_nothing_when_oversize(
 ) -> None:
     data = hook_input("PostToolUse", hub)
     if size == "envelope_over_1_mib":  # each string is kept, together they pass 1 MiB
-        data["tool_response"] = {"parts": ["z" * 60_000] * 20}
+        data["tool_input"] = {"parts": ["z" * 60_000] * 20}
     else:
         data["tool_response"] = {"stdout": "z" * (16 * 1024 * 1024)}
 
@@ -425,3 +436,150 @@ def test_posts_run_fields_when_env_set(
     [body] = event_server.bodies()
     assert {key: body[key] for key in fields} == fields
     HookEnvelope.model_validate(body)
+
+
+# S1: the body of a prompt, a written file, an edit or a tool's output never leaves the machine.
+BODY = "SENTINEL-body-never-sent"
+
+
+def _sent_hook(
+    data: dict[str, Any],
+    *,
+    hub: Path,
+    python: str,
+    run_hook_file: RunHook,
+    event_server: Any,
+    env: dict[str, str],
+) -> dict[str, Any]:
+    completed, _ = run_sensor(run_hook_file, python, hub, stdin=json.dumps(data).encode(), env=env)
+    assert_silent(completed)
+    [body] = event_server.bodies()
+    HookEnvelope.model_validate(body)
+    assert BODY not in json.dumps(body)
+    hook: dict[str, Any] = body["hook"]
+    return hook
+
+
+@pytest.mark.parametrize(
+    ("prompt", "command"),
+    [(f"/feature add the export {BODY}", "/feature"), (f"plain words {BODY}", None)],
+)
+def test_sends_prompt_length_and_command_when_prompt_submitted(
+    prompt: str,
+    command: str | None,
+    *,
+    hub: Path,
+    hook_python: str,
+    run_hook_file: RunHook,
+    event_server: Any,
+    sensor_env: dict[str, str],
+) -> None:
+    data = hook_input("UserPromptSubmit", hub) | {"prompt": "  " + prompt}
+
+    hook = _sent_hook(
+        data,
+        hub=hub,
+        python=hook_python,
+        run_hook_file=run_hook_file,
+        event_server=event_server,
+        env=sensor_env,
+    )
+
+    assert "prompt" not in hook
+    assert hook["prompt_chars"] == len(prompt) + 2
+    assert hook.get("prompt_slash_command") == command
+
+
+@pytest.mark.parametrize(
+    ("tool_input", "sent"),
+    [
+        (
+            {"file_path": "/w/demo-api/a.py", "content": f"one\n{BODY}\nthree\n"},
+            {"file_path": "/w/demo-api/a.py", "content_lines": 3},
+        ),
+        (
+            {"file_path": "/w/demo-api/big.txt", "content": f"{BODY}\n" * 4_000},
+            {"file_path": "/w/demo-api/big.txt", "content_lines": 4_000},
+        ),
+        (
+            {
+                "file_path": "/w/demo-hub/brain/_inbox/note.md",
+                "content": f"intro {BODY}\n## Run tests with -x  ##\n{BODY}",
+            },
+            {
+                "file_path": "/w/demo-hub/brain/_inbox/note.md",
+                "content_lines": 3,
+                "content_heading": "Run tests with -x",
+            },
+        ),
+        (
+            {"file_path": "/w/a.py", "old_string": BODY, "new_string": f"{BODY}\n{BODY}"},
+            {"file_path": "/w/a.py", "old_string_lines": 1, "new_string_lines": 2},
+        ),
+        (
+            {
+                "file_path": "/w/a.py",
+                "edits": [{"old_string": f"{BODY}\n", "new_string": "", "replace_all": True}],
+            },
+            {
+                "file_path": "/w/a.py",
+                "edits": [{"old_string_lines": 1, "new_string_lines": 0, "replace_all": True}],
+            },
+        ),
+    ],
+    ids=["write", "write-over-64-kib", "inbox-heading", "edit", "multi-edit"],
+)
+def test_sends_line_counts_when_tool_input_carries_file_content(
+    tool_input: dict[str, Any],
+    sent: dict[str, Any],
+    *,
+    hub: Path,
+    hook_python: str,
+    run_hook_file: RunHook,
+    event_server: Any,
+    sensor_env: dict[str, str],
+) -> None:
+    tool = (
+        "MultiEdit" if "edits" in tool_input else "Edit" if "old_string" in tool_input else "Write"
+    )
+    data = hook_input("PreToolUse", hub) | {"tool_name": tool, "tool_input": tool_input}
+
+    hook = _sent_hook(
+        data,
+        hub=hub,
+        python=hook_python,
+        run_hook_file=run_hook_file,
+        event_server=event_server,
+        env=sensor_env,
+    )
+
+    assert hook["tool_input"] == sent
+
+
+def test_sends_output_size_when_tool_responds(
+    *,
+    hub: Path,
+    hook_python: str,
+    run_hook_file: RunHook,
+    event_server: Any,
+    sensor_env: dict[str, str],
+) -> None:
+    response = {"stdout": f"é {BODY}" * 10_000, "stderr": "", "interrupted": False}
+    data = hook_input("PostToolUse", hub) | {
+        "tool_name": "Write",
+        "tool_input": {"file_path": "/w/a.py", "content": BODY},
+        "tool_response": response,
+    }
+
+    hook = _sent_hook(
+        data,
+        hub=hub,
+        python=hook_python,
+        run_hook_file=run_hook_file,
+        event_server=event_server,
+        env=sensor_env,
+    )
+
+    assert "tool_response" not in hook
+    assert hook["tool_response_bytes"] == len(json.dumps(response, separators=(",", ":")).encode())
+    assert hook["tool_input"] == {"file_path": "/w/a.py", "content_lines": 1}
