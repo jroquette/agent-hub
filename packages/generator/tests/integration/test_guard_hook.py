@@ -476,6 +476,10 @@ INFRA_ASK_REASON = "`{} {}` changes infrastructure on an allowed environment; co
 INFRA_CONFIG_REASON = (
     "{} (hub.json) cannot be used ({}); infrastructure commands are denied until it is fixed"
 )
+INFRA_SIMPLE_REASON = (
+    "`{}` is a shell construct guard.infra does not check; "
+    "confirm this infrastructure command first"
+)
 LEGACY_INFRA_REASON = "infrastructure commands (terraform/aws/pulumi/kubectl) are human-only"
 
 
@@ -493,6 +497,10 @@ def infra_ask(tool: str, verb: str) -> tuple[str, str]:
 
 def unusable(location: str, cause: str) -> tuple[str, str]:
     return ("deny", INFRA_CONFIG_REASON.format(location, cause))
+
+
+def simple(construct: str) -> tuple[str, str]:
+    return ("ask", INFRA_SIMPLE_REASON.format(construct))
 
 
 def infra_document(infra: object) -> dict[str, Any]:
@@ -1072,13 +1080,14 @@ def test_denies_tool_mention_when_its_call_has_no_environment(infra_evaluate: Ev
 
 
 # E20 (S1): `$'…'` is its own quote kind, where a backslash escapes the next character, so an
-# escaped quote inside it neither hides a comment nor makes one.
+# escaped quote inside it neither hides a comment nor makes one (E21: an allowed command holding
+# `$'` asks, naming it).
 def test_cuts_comment_when_ansi_c_quote_holds_quote(infra_evaluate: Evaluate) -> None:
     expected = {
         "aws s3 cp x s3://y $'\\'' # --profile demo-dev '": unknown("aws"),
         "aws $'\\'' #$' --profile demo-dev echo ": unknown("aws"),
-        "aws s3 cp x s3://y $'a #b' --profile demo-dev": None,
-        "aws s3 cp x s3://y $'it\\'s #1' --profile demo-dev": None,
+        "aws s3 cp x s3://y $'a #b' --profile demo-dev": simple("$'"),
+        "aws s3 cp x s3://y $'it\\'s #1' --profile demo-dev": simple("$'"),
     }
 
     verdicts = bash_verdicts(infra_evaluate, list(expected))
@@ -1142,8 +1151,8 @@ def set_names(helper: ast.FunctionDef) -> set[str]:
     return names
 
 
-def test_dedupes_with_set_when_rules_after_infra_split_command(workspace: Path) -> None:
-    source = (workspace / "demo-hub" / HOOKS / "guard.py").read_text(encoding="utf-8")
+def list_scans(source: str) -> tuple[list[str], list[str]]:
+    """(the SET_HELPERS ``source`` defines, each ``in`` test in them that reads no set)."""
     helpers = {
         node.name: node
         for node in ast.walk(ast.parse(source))
@@ -1159,16 +1168,18 @@ def test_dedupes_with_set_when_rules_after_infra_split_command(workspace: Path) 
             isinstance(side, ast.Name) and side.id in set_names(helper) for side in node.comparators
         )
     ]
-
-    assert sorted(helpers) == list(SET_HELPERS)
-    assert scans == []
+    return sorted(helpers), scans
 
 
-# E20 (S2), end to end: the guard asks on a long allowed command with ten thousand words well
-# within the hook's 10 s timeout (the bound is loose; it took 7.8 s on 3.9 before the fix).
-LONG_ASK_SECONDS = 5.0
+def test_dedupes_with_set_when_rules_after_infra_split_command(workspace: Path) -> None:
+    source = (workspace / "demo-hub" / HOOKS / "guard.py").read_text(encoding="utf-8")
+
+    assert list_scans(source) == (list(SET_HELPERS), [])
 
 
+# E20 (S2), end to end, and E21 (S3): the hook asks with the exact infra reason on a long allowed
+# command with ten thousand words (59 KB; 7.8 s on 3.9 before the fix), and the guard it ran holds
+# no list scan in the helpers that split such a command (a structural check, not a clock).
 def test_asks_in_time_when_allowed_command_has_many_words(
     workspace: Path,
     tmp_path: Path,
@@ -1182,7 +1193,6 @@ def test_asks_in_time_when_allowed_command_has_many_words(
     event = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(hub)}
     reason = "[hub guard] " + INFRA_ASK_REASON.format("aws", "s3 rm")
 
-    started = time.monotonic()
     completed = run_hook_file(
         hook_python,
         hub / HOOKS / "guard.py",
@@ -1190,12 +1200,133 @@ def test_asks_in_time_when_allowed_command_has_many_words(
         cwd=hub,
         env={"HOME": str(tmp_path / "home")},
     )
-    elapsed = time.monotonic() - started
 
     assert completed.returncode == 0, completed.stderr
     output = json.loads(completed.stdout)["hookSpecificOutput"]
     assert (output["permissionDecision"], output["permissionDecisionReason"]) == ("ask", reason)
-    assert elapsed < LONG_ASK_SECONDS
+    assert len(command.split()) > 10000 and len(command) > 58000
+    source = (hub / HOOKS / "guard.py").read_text(encoding="utf-8")
+    assert list_scans(source) == (list(SET_HELPERS), [])
+
+
+# E21 (a), simple-or-ask: an allow (or a D5 local form) holds only when the whole command has none
+# of the constructs the guard does not model; otherwise it asks, naming the leftmost one (escaped).
+# An infra ask keeps its reason, a deny stays a deny, a later rule's deny still wins (D-order), and
+# a command that names no covered tool keeps its verdict.
+def test_asks_when_allowed_command_is_not_simple(infra_evaluate: Evaluate) -> None:
+    expected = {
+        "aws s3 ls \\\n--profile demo-dev": simple("\\\\"),
+        "aws s3 ls --profile demo-dev $'x'": simple("$'"),
+        "aws s3 ls --profile demo-dev $$": simple("$$"),
+        "aws s3 ls --profile demo-dev `echo x`": simple("`"),
+        "aws s3 ls --profile demo-dev # note": simple("#"),
+        "aws s3 ls --profile demo-dev --query a''b": simple("a''b"),
+        'aws s3 ls --profile demo-dev --query "a"b': simple('\\"a\\"b'),
+        "aws s3 ls --profile demo-dev 'x": simple("'x"),
+        "terraform init -backend=false -backen''d=true -migrate-state": simple("-backen''d=true"),
+        "kubectl version --client --cli\\ent=false": simple("\\\\"),
+        "terraform init -backend=false -b\\ackend=true -migrate-state": simple("\\\\"),
+        "aws s3 ls --profile demo-dev | xargs echo": simple("xargs"),
+        "eval aws s3 ls --profile demo-dev": simple("eval"),
+        "exec aws s3 ls --profile demo-dev": simple("exec"),
+        "source env.sh && aws s3 ls --profile demo-dev": simple("source"),
+        ". env.sh && aws s3 ls --profile demo-dev": simple("."),
+        "bash -c 'aws s3 ls --profile demo-dev'": simple("bash -c"),
+        "sh -c 'aws s3 ls' --profile demo-dev": simple("sh -c"),
+        "zsh -xc 'aws s3 ls --profile demo-dev'": simple("zsh -xc"),
+        "dash -c 'cdk synth'": simple("dash -c"),
+        "aws s3 ls --profile demo-dev <<< x": simple("<<<"),
+        "cat <<EOF | aws s3 cp - s3://b/x --profile demo-dev\nx\nEOF": simple("<<"),
+        "cdk synth # x": simple("#"),
+        "aws s3 rm s3://b --profile demo-dev # x": infra_ask("aws", "s3 rm"),
+        "aws s3 ls $'x'": unknown("aws"),
+        "eval aws s3 ls": unknown("aws"),
+        "aws s3 ls --profile demo-dev # x && cat .env": (
+            "deny",
+            "reading secret file .env is not allowed (any command, not just cat); "
+            "reference the variable name instead",
+        ),
+        "aws s3 ls --profile demo-dev --query 'Contents[].Key' --output \"text\"": None,
+        "helm lint .": None,
+        "echo $'a' # b \\\\ | xargs echo": None,
+        "bash -c 'echo a''b'": None,
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# E21 (b): with guard.infra, a tool word with nothing but blanks after it to the end of its part,
+# or of its call, is a mention with no environment (`xargs aws`, `x=aws`); the deny comes first,
+# so simple-or-ask never sees these.
+def test_denies_tool_word_when_nothing_follows_it(infra_evaluate: Evaluate) -> None:
+    expected = {
+        "echo s3 cp x s3://y | xargs aws": unknown("aws"),
+        "echo destroy -auto-approve | xargs terraform": unknown("terraform"),
+        "xargs -a args.txt aws": unknown("aws"),
+        "aws": unknown("aws"),
+        "exec aws": unknown("aws"),
+        "x=aws; $x s3 rm s3://b": unknown("aws"),
+        "aws s3 ls --profile demo-dev & aws": unknown("aws"),
+        "aws s3 ls --profile demo-dev & (aws)": unknown("aws"),
+        "aws s3 ls --profile demo-dev & aws&": unknown("aws"),
+        "aws s3 ls --profile demo-dev `aws`": unknown("aws"),
+        "cat f | xargs aws&": unknown("aws"),
+        "(xargs aws) < f": unknown("aws"),
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# ... and without it the fixed rule keeps its verdict (its gap is AGH-126).
+def test_keeps_legacy_verdict_when_tool_word_ends_command(evaluate: Evaluate) -> None:
+    commands = ["echo s3 cp x s3://y | xargs aws", "xargs -a args.txt aws"]
+
+    verdicts = bash_verdicts(evaluate, commands)
+
+    assert verdicts == dict.fromkeys(commands)
+
+
+# E21 (c): `$$` is a token of its own before `$'`, so `$$'\'` is `$$` and a plain `'\'`, and the
+# comment after it is cut, as bash reads it; an escaped `$` before `$'` leaves the `$'` quote.
+def test_cuts_comment_when_dollar_dollar_precedes_quote(infra_evaluate: Evaluate) -> None:
+    expected = {
+        "aws s3 cp x s3://y $$'\\' # --profile demo-dev '": unknown("aws"),
+        "aws s3 rm s3://y $$'\\' # --profile demo-dev '": unknown("aws"),
+        "terraform init $$'\\' # -backend=false '": unknown("terraform"),
+        "aws s3 cp x s3://y \\$$'\\'' # --profile demo-dev '": unknown("aws"),
+        "aws s3 cp x s3://y $'\\\\' # --profile demo-dev '": unknown("aws"),
+        "aws s3 ls --profile demo-dev $$'#'": simple("$$"),
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# E21 (d): with guard.infra, only the backslash-newlines bash joins are joined (an odd run of
+# backslashes, outside a comment and single quotes), and joined with nothing between, as bash
+# does; any other newline still ends a part (inside quotes too, as before: stricter, never looser).
+def test_joins_only_bash_line_continuations_when_infra_set(infra_evaluate: Evaluate) -> None:
+    expected = {
+        "aws s3 ls --profile demo-dev \\\\\naws s3 cp x s3://y": unknown("aws"),
+        "terraform init -backend=false \\\\\nterraform init -migrate-state": unknown("terraform"),
+        "echo --profile demo-dev # \\\naws s3 cp x s3://y": unknown("aws"),
+        "terraform init -backend=false # \\\nterraform init -migrate-state": unknown("terraform"),
+        "kubectl version --client \\\\\nkubectl delete ns prod": unknown("kubectl"),
+        "aws s3 ls --profile demo-dev '\\\naws s3 cp x s3://y'": unknown("aws"),
+        "aw\\\ns s3 rm s3://b": unknown("aws"),
+        "aws s3 ls --profile demo-\\\nprod": marker(r"\bdemo-prod\b"),
+        "aws s3 rm s3://b --profile demo-\\\ndev": infra_ask("aws", "s3 rm"),
+        "echo \\\\\naws s3 cp x s3://y --profile demo-dev": simple("\\\\"),
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
 
 
 # AGH-113: a short-flag cluster holding ``f`` and ``--mirror`` force-update remote refs, so they
