@@ -44,7 +44,11 @@ PREFIX_FIX: Final = (
 INVALID_LOCAL_FIX: Final = "fix hub.local.json (docs/design/developer-identity.md)"
 RERUN_FIX: Final = "./hub setup"
 SHORTER_GIT_FIX: Final = "shorten git's user.name or user.email in the hub, then ./hub setup"
-GITIGNORE_FIX: Final = "add the line hub.local.json to .gitignore and commit it"
+# Git keeps reporting a file it tracks as not ignored, whatever .gitignore lists (erratum E23).
+GITIGNORE_FIX: Final = (
+    "add the line hub.local.json to .gitignore and commit it;"
+    " if git tracks it, also git rm --cached hub.local.json"
+)
 CLONE_FIX: Final = (
     "check that your git credentials can read github.com/{github} (e.g. gh auth setup-git),"
     " then ./hub setup"

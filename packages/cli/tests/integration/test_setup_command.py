@@ -1035,6 +1035,26 @@ def _check_ignore_calls(traced: TracedGit) -> list[Any]:
     return [call for call in traced.calls() if " check-ignore " in f" {call.args} "]
 
 
+def _hang_check_ignore(traced: TracedGit, folder: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Put first on ``PATH`` a ``git`` whose ``check-ignore`` never answers (it logs its pid,
+    then becomes ``sleep 30``); every other call goes on to the traced git. The pid log."""
+    bin_dir = folder / "hanging-check-ignore-bin"
+    bin_dir.mkdir()
+    pid_log = folder / "hanging-check-ignore.pids"
+    script = bin_dir / "git"
+    script.write_text(
+        "#!/bin/sh\n"
+        'case " $* " in\n'
+        f'  *" check-ignore "*) echo "$$" >> {shlex.quote(str(pid_log))}; exec sleep 30 ;;\n'
+        "esac\n"
+        f'exec {shlex.quote(str(traced.bin_dir / "git"))} "$@"\n',
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    return pid_log
+
+
 @pytest.mark.usefixtures("tools_ok")
 class TestGitignore:
     def test_reports_gitignore_when_local_file_not_ignored(
@@ -1080,7 +1100,96 @@ class TestGitignore:
 
         assert WROTE_LINE in result.stdout.splitlines()
         assert "gitignore" not in result.stdout
+        # Asked once: git's own answer (no repository) is what gives no line.
+        assert len(_check_ignore_calls(env_traced_git)) == 1
         assert (hub / ".gitignore").read_bytes() == ignore_bytes
+        assert result.exit_code == 0, result.output
+
+    def test_names_tracked_file_fix_when_local_file_tracked(
+        self, demo_workspace: Workspace, env_traced_git: TracedGit, run_setup: SetupRunner
+    ) -> None:
+        hub = _team_hub(demo_workspace)
+        demo_workspace.write_local(LOCAL_BYTES.decode("utf-8"))
+        demo_workspace.init_hub_repo(None)
+        demo_workspace.git(hub, "add", "-f", LOCAL_FILE)
+        demo_workspace.git(hub, "commit", "-q", "-m", "track the local file")
+        ignore_bytes = (hub / ".gitignore").read_bytes()
+
+        result = run_setup(hub)
+
+        # .gitignore lists the file, yet git tracks it, so git does not ignore it.
+        assert LOCAL_FILE in ignore_bytes.decode("utf-8").splitlines()
+        assert [line for line in result.stdout.splitlines() if " gitignore: " in line] == [
+            "missing gitignore: hub.local.json is not ignored by git"
+            " Fix: add the line hub.local.json to .gitignore and commit it;"
+            " if git tracks it, also git rm --cached hub.local.json"
+        ]
+        assert (hub / ".gitignore").read_bytes() == ignore_bytes
+        assert (hub / LOCAL_FILE).read_bytes() == LOCAL_BYTES
+        assert result.exit_code == 1
+
+    def test_prints_no_gitignore_line_when_git_not_on_path(
+        self,
+        demo_workspace: Workspace,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        hub = _team_hub(demo_workspace)
+        demo_workspace.write_local(LOCAL_BYTES.decode("utf-8"))
+        _unignore_local_file(hub)
+        demo_workspace.init_hub_repo(None)
+        # The fake probe answers for the tools; git is on no PATH folder.
+        no_git = tmp_path / "no-git-bin"
+        no_git.mkdir()
+        monkeypatch.setenv("PATH", str(no_git))
+
+        result = run_setup(hub)
+
+        assert result.exception is None or isinstance(result.exception, SystemExit)
+        assert _identity_lines(result.stdout) == [
+            "ok      identity: jane/, Jane Roe <jane@example.com> (hub.local.json)"
+        ]
+        assert "gitignore" not in result.stdout
+        # Only the repos, which need git too, are missing.
+        assert result.stdout.splitlines()[-1] == "setup: 2 missing, 7 ok"
+        assert result.exit_code == 1
+
+    def test_prints_no_gitignore_line_when_check_ignore_hangs(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        hub = _team_hub(demo_workspace)
+        _unignore_local_file(hub)
+        demo_workspace.init_hub_repo(None)
+        pid_log = _hang_check_ignore(env_traced_git, tmp_path, monkeypatch)
+        monkeypatch.setattr(setup_identity, "PROBE_TIMEOUT_SECONDS", 0.5)
+        bounds: list[tuple[object, object]] = []
+        real_run_child = setup_identity.run_child
+
+        def recording_run_child(argv: Sequence[str], **options: Any) -> Any:
+            bounds.append((options.get("timeout"), options.get("output_limit")))
+            return real_run_child(argv, **options)
+
+        monkeypatch.setattr(setup_identity, "run_child", recording_run_child)
+
+        result = run_setup(hub, "--yes")
+
+        assert result.exception is None or isinstance(result.exception, SystemExit)
+        assert WROTE_LINE in result.stdout.splitlines()
+        assert "gitignore" not in result.stdout
+        # Bounded in time and in the output kept, as setup's other git calls.
+        assert bounds == [(0.5, setup_repos.OUTPUT_LIMIT)]
+        pids = [int(line) for line in pid_log.read_text(encoding="utf-8").split()]
+        assert len(pids) == 1
+        with pytest.raises(ProcessLookupError):
+            os.kill(pids[0], 0)
         assert result.exit_code == 0, result.output
 
     def test_prints_no_gitignore_line_when_no_local_file(

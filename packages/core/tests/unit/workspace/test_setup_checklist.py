@@ -807,7 +807,8 @@ class TestIdentity:
     def test_prints_gitignore_line_when_local_file_not_ignored(self) -> None:
         assert item_lines(gitignore_item()) == [
             "missing gitignore: hub.local.json is not ignored by git"
-            " Fix: add the line hub.local.json to .gitignore and commit it"
+            " Fix: add the line hub.local.json to .gitignore and commit it;"
+            " if git tracks it, also git rm --cached hub.local.json"
         ]
 
 

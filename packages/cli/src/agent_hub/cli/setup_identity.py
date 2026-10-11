@@ -25,6 +25,7 @@ from agent_hub.cli.effective_config import git_identity_reader
 from agent_hub.cli.errors import ChildTimedOutError
 from agent_hub.cli.exclusive_write import write_exclusive
 from agent_hub.cli.hub_config_reader import local_lines, read_local_json
+from agent_hub.cli.setup_repos import OUTPUT_LIMIT
 from agent_hub.core.hub_config.effective_identity import (
     GitReader,
     IdentityKey,
@@ -99,7 +100,9 @@ def gitignore_items(home: Path, *, env: Mapping[str, str]) -> list[ChecklistItem
         return []
     argv = [os.path.abspath(found), "-C", str(home), "check-ignore", "-q", LOCAL_FILE]
     try:
-        result = run_child(argv, cwd=home, env=env, timeout=PROBE_TIMEOUT_SECONDS)
+        result = run_child(
+            argv, cwd=home, env=env, timeout=PROBE_TIMEOUT_SECONDS, output_limit=OUTPUT_LIMIT
+        )
     except ChildTimedOutError, OSError:
         return []
     return [gitignore_item()] if result.returncode == _NOT_IGNORED else []
