@@ -234,9 +234,10 @@ def pr_body_command(url: str) -> list[str]:
     return ["gh", "pr", "view", url, "--json", "body"]
 
 
-def pr_edit_command(url: str, body: str) -> list[str]:
-    """The edit of the PR at ``url``: its body replaced by ``body``."""
-    return ["gh", "pr", "edit", url, "--body", body]
+def pr_edit_command(url: str, body_file: Path) -> list[str]:
+    """The edit of the PR at ``url``: its body replaced by the text of ``body_file`` (a body
+    can be longer than one argv string may be)."""
+    return ["gh", "pr", "edit", url, "--body-file", str(body_file)]
 
 
 def without(environ: Mapping[str, str], names: Iterable[str]) -> dict[str, str]:

@@ -1083,9 +1083,15 @@ class TestShipPrs:
             (["git", *push_command("jdoe/dem-7")[1:]], web),
             (create_call("acme/demo-web", "jdoe/dem-7", web_title), web),
             (["gh", "pr", "view", API_PR, "--json", "body"], api),
-            (["gh", "pr", "edit", API_PR, "--body", linked_body(WEB_PR)], api),
+            (
+                ["gh", "pr", "edit", API_PR, "--body-file", body_file(ship_workspace, "demo-api")],
+                api,
+            ),
             (["gh", "pr", "view", WEB_PR, "--json", "body"], web),
-            (["gh", "pr", "edit", WEB_PR, "--body", linked_body(API_PR)], web),
+            (
+                ["gh", "pr", "edit", WEB_PR, "--body-file", body_file(ship_workspace, "demo-web")],
+                web,
+            ),
         ]
         assert [(pr["url"], pr["draft"]) for pr in ship_workspace.prs()] == [
             (API_PR, False),
@@ -1415,6 +1421,11 @@ class TestShipPartial:
         ]
 
 
+def body_file(ship_workspace: Workspace, repo: str) -> str:
+    """The body file ``gh pr edit --body-file`` gets for ``repo``."""
+    return str(log_path(ship_workspace, repo).with_suffix(".body"))
+
+
 def linked_body(*urls: str, before: str = f"DEM-7 {ISSUE_URL}\n\n") -> str:
     """A shipped PR's body whose Related PRs section lists ``urls``."""
     listed = "".join(f"- {url}\n" for url in urls)
@@ -1448,9 +1459,9 @@ class TestShipLinks:
         assert result.exit_code == 0, result.output
         assert link_calls(ship_workspace) == [
             ["pr", "view", API_PR, "--json", "body"],
-            ["pr", "edit", API_PR, "--body", linked_body(WEB_PR)],
+            ["pr", "edit", API_PR, "--body-file", body_file(ship_workspace, "demo-api")],
             ["pr", "view", WEB_PR, "--json", "body"],
-            ["pr", "edit", WEB_PR, "--body", linked_body(API_PR)],
+            ["pr", "edit", WEB_PR, "--body-file", body_file(ship_workspace, "demo-web")],
         ]
         assert [call.cwd for call in child_calls.calls if call.argv[0] == "gh"][-4:] == [
             api,
@@ -1620,6 +1631,7 @@ class TestShipLinks:
             "hub ship: the issue was not moved",
         ]
         assert [pr["body"] for pr in ship_workspace.prs()] == [linked_body(WEB_PR), SHIP_BODY]
+        assert not os.path.lexists(body_file(ship_workspace, "demo-web"))
         assert tracker.calls == [("get_issue", ISSUE)]
 
 
@@ -1679,7 +1691,9 @@ class TestShipTracker:
 
 
 NO_RETRY_WORDS = ("retry", "try again", "run again", "re-run")
-NOT_DONE_COMMENT = "hub ship: not done: " + json.dumps(f"comment({ISSUE}, {SHIP_COMMENT})")
+COMMENT_LINE = json.dumps(f"comment({ISSUE}, {SHIP_COMMENT})")
+NOT_DONE_COMMENT = f"hub ship: not done: {COMMENT_LINE}"
+UNCONFIRMED = " (check the issue in the tracker)"
 
 
 def assert_no_retry_advice(result: Result) -> None:
@@ -1709,8 +1723,8 @@ class TestShipTrackerFailures:
             "hub ship: move_state DEM-7: synthetic outage",
             f"hub ship: PR open: {API_PR}",
             f"hub ship: PR open: {WEB_PR}",
-            "hub ship: the issue was not moved to In Review",
-            "hub ship: not done: move_state(DEM-7, In Review)",
+            "hub ship: the issue may not have been moved to In Review",
+            f"hub ship: not confirmed: move_state(DEM-7, In Review){UNCONFIRMED}",
             NOT_DONE_COMMENT,
         ]
         assert_no_retry_advice(result)
@@ -1739,9 +1753,11 @@ class TestShipTrackerFailures:
             "hub ship: comment DEM-7: synthetic outage",
             f"hub ship: PR open: {API_PR}",
             f"hub ship: PR open: {WEB_PR}",
-            NOT_DONE_COMMENT,
+            f"hub ship: not confirmed: {COMMENT_LINE}{UNCONFIRMED}",
         ]
         assert "not moved" not in result.stderr
+        assert "moved to" not in result.stderr
+        assert "not done" not in result.stderr
         assert_no_retry_advice(result)
 
 
@@ -1756,10 +1772,16 @@ def workspace_paths(ship_workspace: Workspace) -> set[str]:
 
 
 def shipped_texts(ship_workspace: Workspace, tracker: Any) -> list[str]:
-    """Every text hub ship gave ``gh`` or the tracker: each ``gh`` argument and each write's."""
-    gh = [argument for call in ship_workspace.calls("gh") for argument in call["argv"]]
+    """Every text hub ship gave ``gh`` or the tracker: each ``gh`` argument but a body file's
+    path (its text is the stored body), each PR's title and body as the fake stored them, and
+    each write's values."""
+    gh = []
+    for call in ship_workspace.calls("gh"):
+        argv = call["argv"]
+        gh += [arg for index, arg in enumerate(argv) if argv[index - 1 : index] != ["--body-file"]]
+    stored = [pr[field] for pr in ship_workspace.prs() for field in ("title", "body")]
     written = [value for _, *values in tracker.calls[1:] for value in values]
-    return [*gh, *written]
+    return [*gh, *stored, *written]
 
 
 def assert_no_attribution(ship_workspace: Workspace, tracker: Any) -> None:
@@ -1823,9 +1845,15 @@ class TestShipAttribution:
         assert result.exit_code == 0, result.output
         edits = [argv for argv in link_calls(ship_workspace) if argv[1] == "edit"]
         assert edits[0] == [
-            *("pr", "edit", found, "--body"),
-            linked_body(WEB_PR, before="Notes.\nsee demo-api/x.py\n\n\n"),
+            "pr",
+            "edit",
+            found,
+            "--body-file",
+            body_file(ship_workspace, "demo-api"),
         ]
+        assert ship_workspace.prs()[0]["body"] == linked_body(
+            WEB_PR, before="Notes.\nsee demo-api/x.py\n\n\n"
+        )
         assert_no_attribution(ship_workspace, tracker)
 
     def test_falls_back_to_issue_id_when_subject_only_attribution(
@@ -1952,3 +1980,47 @@ class TestShipProcesses:
         ]
         for secret in (synthetic_key(), synthetic_token()):
             assert [text for text in shown if secret in text] == []
+        # The control: the token did reach the children that need it.
+        given = [call for call in child_calls.calls if child_kind(call.argv) in {"push", "gh"}]
+        assert given != []
+        assert {call.env.get("GH_TOKEN") for call in given} == {synthetic_token()}
+
+
+# One argv string longer than this fails on Linux (MAX_ARG_STRLEN, 32 pages) with E2BIG.
+MAX_ARGUMENT_BYTES = 131_071
+
+
+@pytest.mark.usefixtures("with_key")
+class TestShipLongBodies:
+    def test_edits_by_file_when_found_body_exceeds_argument_limit(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        found = "https://github.com/acme/demo-api/pull/7"
+        long_body = "\N{CJK UNIFIED IDEOGRAPH-4E2D}" * 43_691
+        ship_workspace.write_prs([seeded_pr(state="OPEN", url=found) | {"body": long_body}])
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        expected = linked_body(WEB_PR, before=long_body + "\n\n")
+        assert len(expected.encode()) > MAX_ARGUMENT_BYTES
+        assert ship_workspace.prs()[0]["body"] == expected
+        longest = max(len(argument.encode()) for c in child_calls.calls for argument in c.argv)
+        assert longest <= MAX_ARGUMENT_BYTES
+        edits = [call["argv"] for call in ship_workspace.calls("gh") if call["argv"][1] == "edit"]
+        assert edits == [
+            ["pr", "edit", found, "--body-file", body_file(ship_workspace, "demo-api")],
+            ["pr", "edit", WEB_PR, "--body-file", body_file(ship_workspace, "demo-web")],
+        ]
+        folder = log_path(ship_workspace, "demo-api").parent
+        assert sorted(entry.name for entry in folder.iterdir()) == [
+            "DEM-7-demo-api.log",
+            "DEM-7-demo-web.log",
+        ]
