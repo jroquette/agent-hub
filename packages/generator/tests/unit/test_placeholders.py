@@ -31,9 +31,11 @@ from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_m
 # names it (AGH-65). The team mentions of AGENTS.md and the plugin name every tracker team (AGH-56).
 # The branch rule, kickoff's branch and the Conventions block show the conventions (AGH-57).
 # The runtime readers check platform.repository against core's pattern and name its form (AGH-49).
+# The README's tracker credential line, cloud subsection and the hub's clone folder (AGH-51).
 RENDERED_KEYS = {
     "project_name",
     "project_hub_repo",
+    "project_hub_dir",
     "project_branch_prefix",
     "project_default_branch",
     "tracker_team",
@@ -61,7 +63,28 @@ RENDERED_KEYS = {
     "branch_rule",
     "kickoff_branch",
     "conventions_section",
+    "join_tracker_credential",
+    "join_cloud",
 }
+
+# AGH-51: the README's Join section texts, word for word (§ Draft section of the plan).
+JOIN_TRACKER_API = (
+    "Tracker (optional): `LINEAR_API_KEY` in your environment for `./hub next` and `./hub run`,"
+    " never in a file;\n"
+    '  or the Linear MCP server, with `{"tracker": {"transport": "mcp"}}` in your `hub.local.json`.'
+)
+JOIN_CLOUD = (
+    "\n\n### In a cloud session (claude.ai/code)\n\n"
+    "- Give the Claude GitHub App access to this hub and its repos, and open the session on this"
+    " hub alone.\n"
+    "- Environment setup script: `bash scripts/cloud-setup.sh`. It clones the repos with"
+    " `GH_TOKEN`, a fine-grained token\n"
+    "  for them (Contents and Pull requests: read and write), set in the environment's variables,"
+    " never in a file.\n"
+    "- If `hub.json` names no author, set `HUB_AUTHOR_NAME` and `HUB_AUTHOR_EMAIL` there too:"
+    " your commit identity.\n"
+    "- First message: `/kickoff`; check that its guard probe says the session is guarded."
+)
 
 # Rule 1's branch as the template held it before AGH-57, with the demo's one team.
 DEMO_BRANCH_RULE = (
@@ -89,6 +112,7 @@ def test_takes_values_from_model_when_demo_mapped(demo_config: HubConfig) -> Non
     assert mapping == {
         "project_name": "demo",
         "project_hub_repo": "acme/demo-hub",
+        "project_hub_dir": "demo-hub",
         "project_branch_prefix": "jdoe/",
         "project_default_branch": "main",
         "tracker_team": "DEM",
@@ -118,7 +142,36 @@ def test_takes_values_from_model_when_demo_mapped(demo_config: HubConfig) -> Non
         "branch_rule": DEMO_BRANCH_RULE,
         "kickoff_branch": "`jdoe/<team>-<n>-<desc>`",
         "conventions_section": "",
+        "join_tracker_credential": JOIN_TRACKER_API,
+        "join_cloud": JOIN_CLOUD,
     }
+
+
+# AGH-51: the tracker credential line names the transport hub.json sets and the other one by its
+# hub.local.json override; both values are two lines, so the section keeps its size.
+def test_names_api_key_in_tracker_credential_when_transport_api(demo_config: HubConfig) -> None:
+    value = substitution_mapping(demo_config)["join_tracker_credential"]
+
+    assert "`LINEAR_API_KEY`" in value
+    assert '"transport": "mcp"' in value
+    assert "hub.local.json" in value
+    assert value.count("\n") == 1
+
+
+def test_names_mcp_server_in_tracker_credential_when_transport_mcp() -> None:
+    config = config_with(tracker={"kind": "linear", "team": "DEM", "transport": "mcp"})
+
+    value = substitution_mapping(config)["join_tracker_credential"]
+
+    assert "Linear MCP server" in value
+    assert "claude.ai" in value
+    assert '"transport": "api"' in value
+    assert "LINEAR_API_KEY" not in value
+    assert value.count("\n") == 1
+
+
+def test_leaves_cloud_join_empty_when_cloud_unselected(variant_config: HubConfig) -> None:
+    assert substitution_mapping(variant_config)["join_cloud"] == ""
 
 
 def test_joins_repos_in_config_order_when_variant_mapped(variant_config: HubConfig) -> None:

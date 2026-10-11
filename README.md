@@ -43,8 +43,8 @@ Next steps:
 
 > [!IMPORTANT]
 > agent-hub is **experimental** (0.x, Phase 1 of 4 in the [spec](docs/SPEC.md)). The hub generator and its commands
-> work and are tested; the web control plane does not exist yet. The repository is private, and every install needs
-> read access to it.
+> work and are tested; the web control plane does not exist yet. The repository is public: installing needs no
+> credential.
 
 ## Contents
 
@@ -122,13 +122,10 @@ the repos (git worktrees), and every change reaches `main` only through a pull r
 
 **Prerequisites**
 
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) **0.9.0 or newer** (it installs Python 3.14 for you).
-- `git` and `python3` on your `PATH` (the shims and hooks use the system `python3`, 3.9 or newer).
-- **Read access to this private repository**: your GitHub credentials through a git credential helper (for example
-  `gh auth setup-git`), or this repository attached to a cloud session. Never put a token inside the `git+https://` URL.
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (the `claude` command) to run `./agent`.
-- Optional: [`gh`](https://cli.github.com/) for the PR and CI lines of `hub brief`, and a Linear workspace for the
-  tracker.
+- What everyone on a hub needs (uv, git, Claude Code, Python 3.9 or newer, optional `gh` and tracker credential, with
+  the known traps): the Requirements table of the **Join this hub** section that every generated hub's `README.md`
+  carries; its source is [`README.md.tmpl`](packages/generator/src/agent_hub/generator/templates/README.md.tmpl).
+- To create a hub: a GitHub repository for it (`--hub-repo`) and a Linear team for its tracker.
 
 **1. Check that you can run the CLI.** `uvx` builds the tagged release from git and caches it; the first run takes a
 little longer.
@@ -837,7 +834,7 @@ You need to be comfortable in a terminal and with git: you run a few commands an
 the programming; you review and merge their pull requests.
 
 **Is it free? Can I use it in my company?**
-The repository is private and has no license file yet, so it is not offered for use outside its owners today.
+The repository is public but has no license file yet, so it is not offered for use outside its owners today.
 
 **Does it replace Claude Code?**
 No. agent-hub prepares and launches Claude Code sessions (and will observe them); it is not an agent or a model
