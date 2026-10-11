@@ -486,6 +486,14 @@ INFRA_RISKY_REASON = (
     "interpreter, xargs, eval, exec, source, `.`, env -i/-u, sudo, su, doas, a lone `--`); "
     "confirm first"
 )
+INFRA_RUNS_REASON = (
+    "`{}` runs text as a command out of guard.infra's sight (parallel, or sed's e command or a "
+    "sed script file); confirm first"
+)
+INFRA_REPEATED_REASON = (
+    "`{}` is set twice in one call: guard.infra checks the value it sees, the tool may use "
+    "another; confirm first"
+)
 LEGACY_INFRA_REASON = "infrastructure commands (terraform/aws/pulumi/kubectl) are human-only"
 
 
@@ -511,6 +519,14 @@ def unsafe(char: str) -> tuple[str, str]:
 
 def risky(word: str) -> tuple[str, str]:
     return ("ask", INFRA_RISKY_REASON.format(word))
+
+
+def runs(word: str) -> tuple[str, str]:
+    return ("ask", INFRA_RUNS_REASON.format(word))
+
+
+def repeated(name: str) -> tuple[str, str]:
+    return ("ask", INFRA_REPEATED_REASON.format(name))
 
 
 def infra_document(infra: object) -> dict[str, Any]:
@@ -1071,7 +1087,8 @@ def test_searches_ask_verbs_once_per_tool_when_part_long(
         env={"HOME": str(home)},
     )
 
-    assert found == [[None, 1], [None, 2], [None, 3]]
+    twice = list(repeated("--profile"))
+    assert found == [[twice, 1], [twice, 2], [twice, 3]]
 
 
 # E20 (B1): each tool mention is checked against the call that holds it, found by its offset in
@@ -1563,7 +1580,7 @@ def test_asks_when_command_has_unsafe_character(infra_evaluate: Evaluate) -> Non
         "aws s3 ls --profile demo-dev $x": unsafe("$"),
         "aws s3 ls --profile demo-dev (x)": unsafe("("),
         'aws s3 ls --profile demo-dev; echo "done"': unsafe('\\"'),
-        "aws s3 ls --profile demo-dev\taws s3 ls --profile=demo-dev": None,
+        "aws s3 ls --profile demo-dev\taws s3 ls --profile=demo-dev": repeated("--profile"),
         "AWS_PROFILE=demo-dev terraform plan": None,
         "kubectl get pods --context kind-demo | grep x": None,
         "cdk synth": None,
@@ -1592,6 +1609,77 @@ def test_denies_when_environment_not_blank_bounded(infra_evaluate: Evaluate) -> 
         "serverless info --stage dev:x": unknown("serverless"),
         "  AWS_PROFILE=demo-dev\taws s3 ls": None,
         "cd x && AWS_PROFILE=demo-dev aws s3 ls": None,
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# E24: a part that sets the environment twice (a second `AWS_PROFILE=`, `AWS_DEFAULT_PROFILE=`,
+# `KUBECONFIG=` or `KUBE_CONTEXT=` word, `+=` too, or a second `--profile`, `--context`,
+# `--kube-context`, `-chdir`, `--stack` or `--workspace` flag, either spelling) asks, naming it,
+# after an ask verb, an unsafe character and an always-ask word; a deny stays a deny, and one
+# setting per part passes.
+def test_asks_when_call_sets_environment_twice(infra_evaluate: Evaluate) -> None:
+    expected = {
+        "AWS_PROFILE=demo-dev AWS_PROFILE=staging aws s3 ls": repeated("AWS_PROFILE"),
+        "aws s3 ls --profile demo-dev --profile staging": repeated("--profile"),
+        "AWS_PROFILE=demo-dev env AWS_PROFILE=staging aws s3 ls": repeated("AWS_PROFILE"),
+        "kubectl get pods --context kind-demo --context=other": repeated("--context"),
+        "AWS_PROFILE=demo-dev AWS_PROFILE+=x aws s3 ls": repeated("AWS_PROFILE"),
+        "AWS_PROFILE=demo-dev timeout 9 env AWS_PROFILE=staging aws s3 ls": repeated("AWS_PROFILE"),
+        "AWS_DEFAULT_PROFILE=a aws s3 ls --profile demo-dev AWS_DEFAULT_PROFILE=b": repeated(
+            "AWS_DEFAULT_PROFILE"
+        ),
+        "KUBECONFIG=a KUBECONFIG=b kubectl get pods --context kind-demo": repeated("KUBECONFIG"),
+        "KUBE_CONTEXT=a env KUBE_CONTEXT=b kubectl get pods --context kind-demo": repeated(
+            "KUBE_CONTEXT"
+        ),
+        "helm list --kube-context=kind-demo --kube-context x": repeated("--kube-context"),
+        "terraform -chdir=a plan -var-file=dev.tfvars -chdir=b": repeated("-chdir"),
+        "pulumi preview --stack demo/dev --stack=other": repeated("--stack"),
+        "pulumi preview --stack demo/dev --workspace a --workspace=b": repeated("--workspace"),
+        "aws s3 rm s3://b/x --profile demo-dev --profile staging": infra_ask("aws", "s3 rm"),
+        "aws s3 ls --profile demo-dev --profile staging x?": unsafe("?"),
+        "aws s3 ls --profile demo-dev --profile staging | sh": risky("sh"),
+        "aws s3 ls --profile staging --profile staging": unknown("aws"),
+        "aws s3 ls --profile demo-dev": None,
+        "AWS_PROFILE=demo-dev aws s3 ls && AWS_PROFILE=demo-dev aws s3 ls": None,
+        "aws s3 ls --profile demo-dev; aws s3 ls --profile=demo-dev": None,
+        "kubectl get pods --context kind-demo -n a -n b": None,
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# E24: `parallel` (any path) and a sed whose script holds an `e` (its e command or the s
+# command's e flag, from the first operand, `-e`, a cluster or `--expression`, any unique
+# prefix) or comes from a file (`-f`, `--file`) ask in a command that mentions a covered tool;
+# quoted forms already ask on the quote, and a sed with no such script passes.
+def test_asks_when_parallel_or_sed_runs_text(infra_evaluate: Evaluate) -> None:
+    pipe = "echo aws s3 sync . s3://b --profile demo-dev | "
+    expected = {
+        "aws s3 ls --profile demo-dev | parallel": runs("parallel"),
+        "aws s3 ls --profile demo-dev | /usr/bin/parallel -j2": runs("/usr/bin/parallel"),
+        pipe + "sed e": runs("sed e"),
+        pipe + "sed 1e": runs("sed 1e"),
+        pipe + "sed -n e": runs("sed e"),
+        pipe + "sed -e e": runs("sed -e e"),
+        pipe + "sed -nee": runs("sed -nee"),
+        pipe + "sed --expression=e": runs("sed --expression=e"),
+        pipe + "sed --exp 1e": runs("sed --exp 1e"),
+        pipe + "sed s/x/y/e": runs("sed s/x/y/e"),
+        pipe + "sed -n -f x.sed": runs("sed -f x.sed"),
+        pipe + "sed --fi=x.sed": runs("sed --fi=x.sed"),
+        pipe + "/bin/gsed -E e": runs("/bin/gsed e"),
+        pipe + "sed 'e'": unsafe("'"),
+        pipe + "sh": risky("sh"),
+        "aws s3 ls --profile demo-dev | sed -n 1p": None,
+        "aws s3 ls --profile demo-dev | sed -E s/a/b/g notes": None,
+        "aws s3 ls --profile demo-dev | sed -l 9 -e s/a/b/ here": None,
     }
 
     verdicts = bash_verdicts(infra_evaluate, list(expected))
