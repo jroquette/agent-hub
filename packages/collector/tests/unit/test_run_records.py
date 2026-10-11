@@ -199,6 +199,7 @@ def test_marks_dry_run_when_record_not_live_stages() -> None:
         ({"ts": "yesterday"}, "ts"),
         ({"ts": "2026-10-11T09:00:00"}, "ts"),
         ({"run": ""}, "run"),
+        ({"run": "r" * 197}, "run: longer than 196 characters"),
         ({"state": "DANCING"}, "state"),
         ({"event": 3}, "event"),
     ],

@@ -8,6 +8,7 @@ from agent_hub.core.readmodels.cursor import (
     InvalidCursorError,
     decode_cursor,
     encode_cursor,
+    id_digest,
 )
 from agent_hub.core.readmodels.page import MAX_CURSOR_CHARS
 
@@ -37,6 +38,8 @@ def _encoded(raw: bytes) -> str:
         _encoded(b'{"h": -1, "k": [], "i": "x"}'),
         _encoded(b'{"h": 1, "k": [1.5], "i": "x"}'),
         _encoded(b'{"h": 1, "k": [], "i": "x", "extra": 1}'),
+        _encoded(b'{"h": 1, "k": []}'),
+        _encoded(b'{"h": 1, "k": [], "i": "x", "d": "ab"}'),
         "A" * (MAX_CURSOR_CHARS + 1),
     ],
 )
@@ -48,6 +51,15 @@ def test_raises_invalid_cursor_when_text_is_invalid(text: str) -> None:
     assert "cursor" in str(raised.value)
 
 
-def test_refuses_to_encode_when_cursor_would_be_too_long() -> None:
-    with pytest.raises(ValueError, match="cursor"):
-        encode_cursor(Cursor(hwm=1, key=("x" * 600,), id="a"))
+def test_encodes_id_digest_only_when_key_and_id_too_long() -> None:
+    long_id = "/sessions/" + "s" * 200
+
+    text = encode_cursor(Cursor(hwm=7, key=(1, "x" * 600), id=long_id))
+
+    assert len(text) <= MAX_CURSOR_CHARS
+    assert decode_cursor(text) == Cursor(hwm=7, key=(), id=None, id_digest=id_digest(long_id))
+
+
+def test_refuses_cursor_when_neither_id_nor_digest_given() -> None:
+    with pytest.raises(ValueError, match="id"):
+        Cursor(hwm=1, key=())

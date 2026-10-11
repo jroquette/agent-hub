@@ -13,7 +13,9 @@ class IngestHook:
 
     Every append goes through ``IngestEvents``, so redaction applies to hooks and transcripts
     alike. A Stop, SubagentStop or SessionEnd hook names a transcript; its new lines are read
-    after the hook's own events are stored, so a refused or empty read never loses them.
+    after the hook's own events are stored, so a refused or empty read never loses them. The
+    tail's position is committed only after its events are stored: a failed append leaves the
+    offset where it was, and the next read returns the same lines.
     """
 
     def __init__(
@@ -42,6 +44,8 @@ class IngestHook:
         tail = self._tailer.read_new(mapping.transcript)
         self._status.record_tail(refused=tail.refused, skipped_lines=tail.skipped_lines)
         tail_result = self._append(tail.events)
+        if tail.position is not None:
+            self._tailer.commit(tail.position)
         return AppendResult(
             appended=result.appended + tail_result.appended,
             duplicates=result.duplicates + tail_result.duplicates,

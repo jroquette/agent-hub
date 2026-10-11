@@ -1,6 +1,7 @@
 """``create_app``: the FastAPI application of ``hub web``."""
 
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from importlib.metadata import version
 from pathlib import Path
 
@@ -63,17 +64,28 @@ def create_app(
     ``ports`` are the adapters the routes use (a route whose port is None answers 501);
     ``problems`` adds error mappings for exceptions of the wired adapters. No docs pages are
     served. Requests pass, outermost first: the request log, the 500 guard, the local
-    security checks, then the routes.
+    security checks, then the routes. On shutdown the change feed is closed, so open streams end.
     """
+    ports = ports or ApiPorts()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            if ports.change_feed is not None:
+                ports.change_feed.close()
+
     app = FastAPI(
         title="agent-hub",
         version=version(DISTRIBUTION),
         openapi_url=f"{API_PREFIX}/openapi.json",
         docs_url=None,
         redoc_url=None,
+        lifespan=lifespan,
     )
     app.state.settings = api_settings
-    app.state.ports = ports or ApiPorts()
+    app.state.ports = ports
     install_problem_handlers(app, extra=problems)
     for module in ROUTERS:
         app.include_router(module.router, prefix=API_PREFIX)

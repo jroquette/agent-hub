@@ -28,6 +28,10 @@ _MARKER: Final = re.compile(r"\[redacted: [a-z ]+\]")
 _NOT_MARKER: Final = r"(?!\[redacted: )"
 _NAME_WORD: Final = r"(?:secret|token|password|passwd|api_key|apikey|private_key|credential)"
 _NAME_CHARS: Final = r"[A-Za-z0-9_.\-]"
+# ``<name holding a secret word> =``, the context kept before an assigned value.
+_ASSIGNED: Final = (
+    rf"(?<!{_NAME_CHARS}){_NAME_CHARS}{{0,64}}?{_NAME_WORD}{_NAME_CHARS}{{0,64}}\s*=\s*"
+)
 
 
 def marker(kind: str) -> str:
@@ -73,11 +77,23 @@ _RULES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
             re.IGNORECASE,
         ),
     ),
+    # A quoted value is replaced up to its closing quote (or the end of the line without one),
+    # spaces and all; an unquoted one up to the first space or separator.
     (
         "secret",
         re.compile(
-            rf"(?P<head>(?<!{_NAME_CHARS}){_NAME_CHARS}{{0,64}}?{_NAME_WORD}{_NAME_CHARS}{{0,64}}"
-            rf"\s*=\s*[\"']?){_NOT_MARKER}[^\s\"'&;,]{{8,}}",
+            rf"(?P<head>{_ASSIGNED}\"){_NOT_MARKER}(?:[^\"\\\n]|\\.){{8,}}(?P<tail>\")?",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "secret",
+        re.compile(rf"(?P<head>{_ASSIGNED}'){_NOT_MARKER}[^'\n]{{8,}}(?P<tail>')?", re.IGNORECASE),
+    ),
+    (
+        "secret",
+        re.compile(
+            rf"(?P<head>{_ASSIGNED}[\"']?){_NOT_MARKER}[^\s\"'&;,]{{8,}}",
             re.IGNORECASE,
         ),
     ),

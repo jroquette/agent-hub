@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated, NamedTuple
+from typing import Annotated, Final, NamedTuple, Self
 
 from pydantic import (
     AfterValidator,
@@ -12,7 +12,12 @@ from pydantic import (
     ConfigDict,
     Field,
     JsonValue,
+    model_validator,
 )
+
+# Ids that name a page or end up in a cursor: project, session and the payload's run (S2). An
+# event naming a longer one is refused at ingestion, with this reason.
+MAX_ID_CHARS: Final = 200
 
 
 class EventType(StrEnum):
@@ -88,8 +93,8 @@ class Event(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    project: str = Field(min_length=1)
-    session: str = Field(min_length=1)
+    project: str = Field(min_length=1, max_length=MAX_ID_CHARS)
+    session: str = Field(min_length=1, max_length=MAX_ID_CHARS)
     type: EventType
     timestamp: UtcTimestamp
     source: EventSource
@@ -100,7 +105,19 @@ class Event(BaseModel):
     workflow: str | None = None
     step: str | None = None
 
+    @model_validator(mode="after")
+    def _run_within_cap(self) -> Self:
+        run = self.payload.get("run")
+        if isinstance(run, str) and len(run) > MAX_ID_CHARS:
+            raise ValueError(longer_than_cap("run"))
+        return self
+
     @property
     def key(self) -> EventKey:
         """The event's identity ``(source, source_id)``."""
         return EventKey(source=self.source, source_id=self.source_id)
+
+
+def longer_than_cap(name: str) -> str:
+    """The reason an id longer than ``MAX_ID_CHARS`` is refused."""
+    return f"{name}: longer than {MAX_ID_CHARS} characters"

@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 import pytest
@@ -9,6 +10,7 @@ from agent_hub.core.ingestion.hook_envelope import HookEnvelope
 from agent_hub.core.ingestion.ingest_hook import IngestHook
 from agent_hub.core.ingestion.ingestion_ports import (
     HookMapping,
+    TailPosition,
     TailResult,
     TranscriptRef,
 )
@@ -44,10 +46,32 @@ class _Tailer:
     def __init__(self, result: TailResult) -> None:
         self.result = result
         self.refs: list[TranscriptRef] = []
+        self.committed: list[TailPosition] = []
 
     def read_new(self, ref: TranscriptRef) -> TailResult:
         self.refs.append(ref)
         return self.result
+
+    def commit(self, position: TailPosition) -> None:
+        self.committed.append(position)
+
+
+class _FailingOnceStore(InMemoryEventStore):
+    """Fails the first append that carries transcript events, then works."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.failed = False
+
+    def append(self, events: Sequence[Event]) -> AppendResult:
+        if not self.failed and any(event.source == "transcript" for event in events):
+            self.failed = True
+            raise _StoreDownError
+        return super().append(events)
+
+
+class _StoreDownError(Exception):
+    pass
 
 
 def _use_case(
@@ -148,3 +172,32 @@ def test_raises_conflict_and_appends_nothing_when_event_differs_from_stored() ->
         use_case.execute(_envelope())
 
     assert store.read_all() == [stored]
+
+
+def _stop_mapping() -> HookMapping:
+    ref = TranscriptRef(project="demo", session="session-1", path="/home/demo/t.jsonl", kind="main")
+    return HookMapping(events=(an_event(type="session.end"),), transcript=ref)
+
+
+def test_commits_tail_position_when_transcript_events_appended() -> None:
+    position = TailPosition(path="/home/demo/t.jsonl", version=3)
+    tail = TailResult(events=(an_event(source="transcript"),), position=position)
+    use_case, _, tailer, _ = _use_case(_stop_mapping(), tail)
+
+    use_case.execute(_envelope("Stop"))
+
+    assert tailer.committed == [position]
+
+
+def test_leaves_tail_position_uncommitted_when_transcript_append_fails() -> None:
+    position = TailPosition(path="/home/demo/t.jsonl", version=1)
+    tail = TailResult(events=(an_event(source="transcript"),), position=position)
+    store = _FailingOnceStore()
+    tailer = _Tailer(tail)
+    counters = IngestionCounters(clock=lambda: NOW)
+    use_case = IngestHook(store, _Mapper(_stop_mapping()), tailer, status=counters)
+
+    with pytest.raises(_StoreDownError):
+        use_case.execute(_envelope("Stop"))
+
+    assert tailer.committed == []

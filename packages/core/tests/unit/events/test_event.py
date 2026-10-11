@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from agent_hub.core.events.event import Event, EventKey, EventSource, EventType
+from agent_hub.core.events.event import MAX_ID_CHARS, Event, EventKey, EventSource, EventType
 
 SPEC_TYPES = [
     "session.start",
@@ -156,3 +156,25 @@ def test_exposes_key_when_event_validated() -> None:
     event = Event.model_validate(required_fields())
 
     assert event.key == EventKey(source=EventSource.CLAUDE_CODE, source_id="evt-1")
+
+
+@pytest.mark.parametrize("field", ["project", "session"])
+def test_rejects_event_when_id_longer_than_cap(field: str) -> None:
+    with pytest.raises(ValidationError, match=field):
+        Event.model_validate(required_fields() | {field: "x" * (MAX_ID_CHARS + 1)})
+
+
+def test_rejects_event_when_payload_run_longer_than_cap() -> None:
+    document = required_fields() | {"payload": {"run": "r" * (MAX_ID_CHARS + 1)}}
+
+    with pytest.raises(ValidationError, match="run: longer than 200 characters"):
+        Event.model_validate(document)
+
+
+def test_accepts_event_when_ids_at_cap() -> None:
+    longest = "x" * MAX_ID_CHARS
+    document = required_fields() | {"project": longest, "session": longest}
+
+    event = Event.model_validate(document | {"payload": {"run": longest}})
+
+    assert (event.project, event.session) == (longest, longest)
