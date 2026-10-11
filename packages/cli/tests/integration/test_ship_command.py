@@ -9,14 +9,21 @@ in-memory one (``ship_tracker``).
 
 import json
 import os
+import time
 from collections.abc import Callable
 from typing import Any
 
 import pytest
+from click import unstyle
 from typer.testing import Result
 
-from agent_hub.cli import ship_set
+from agent_hub.cli import run_steps, ship_command, ship_set
 from agent_hub.cli.child_process import ChildResult, run_child
+from agent_hub.cli.run_children import push_command
+from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.runner.ship_texts import RELATED_END, RELATED_START
+from agent_hub.core.testing.builders import a_conventions_document
+from agent_hub.core.tracker.tracker_client import TrackerClient
 
 pytestmark = pytest.mark.disable_socket
 
@@ -25,6 +32,62 @@ type CommandRunner = Callable[..., Result]
 type Workspace = Any
 
 API_GITHUB = "acme/demo-api"
+ISSUE = "DEM-7"
+KEY_VARIABLE = "LINEAR_API_KEY"
+# The characters of the box Rich may draw around a usage error.
+BOX_CHARACTERS = "│╭╮╰╯─"
+SHAPE = "issue must look like DEM-<n> (e.g. DEM-1)"
+
+
+def synthetic_key() -> str:
+    return "lin" + "_api_" + "x" * 40
+
+
+class Resolve:
+    """Replaces ``ship_command.resolve_tracker_client``: records the hub root, returns
+    ``client``."""
+
+    def __init__(self, client: object) -> None:
+        self.client = client
+        self.roots: list[object] = []
+
+    def __call__(self, config: HubConfig, environ: object, *, hub_root: object) -> TrackerClient:
+        self.roots.append(hub_root)
+        return self.client  # type: ignore[return-value]
+
+
+@pytest.fixture(autouse=True)
+def wide_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A usage message stays on one line of Rich's box.
+    monkeypatch.setenv("COLUMNS", "200")
+
+
+@pytest.fixture
+def with_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(KEY_VARIABLE, synthetic_key())
+
+
+@pytest.fixture
+def tracker(ship_tracker: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
+    """``ship_tracker``, the client every ``hub ship`` of the test resolves."""
+    monkeypatch.setattr(ship_command, "resolve_tracker_client", Resolve(ship_tracker))
+    return ship_tracker
+
+
+def assert_refused(result: Result, message: str) -> None:
+    """Exit 2 with ``message`` as one line of the usage error on stderr, nothing on stdout."""
+    assert result.exit_code == 2, result.output
+    assert result.stdout == ""
+    shown = unstyle(result.stderr)
+    assert "Usage: hub ship" in shown
+    texts = [line.strip(BOX_CHARACTERS + " ") for line in shown.splitlines()]
+    assert [text for text in texts if message in text] == [message], shown
+
+
+def set_transport(hub: Any, transport: str) -> None:
+    document = json.loads((hub / "hub.json").read_text())
+    document["tracker"]["transport"] = transport
+    (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
 
 
 def fake_gh(ship_workspace: Workspace, *arguments: str) -> ChildResult:
@@ -129,7 +192,11 @@ class TestShipFakes:
         assert [state.name for state in failed.states["DEM"]] == ["Todo", "Code Review"]
 
     def test_commits_subjects_when_task_worktree_made(
-        self, ship_workspace: Workspace, make_task_worktree: Callable[..., Any], child_calls: Any
+        self,
+        ship_workspace: Workspace,
+        make_task_worktree: Callable[..., Any],
+        *,
+        child_calls: Any,
     ) -> None:
         worktree = make_task_worktree("demo-api", "dem-7-x", ["feat(api): a (DEM-7)", "fix: b"])
         child_calls.clear()
@@ -143,3 +210,1053 @@ class TestShipFakes:
         assert [(call.argv, call.cwd, call.timeout) for call in child_calls.calls] == [
             (["git", "--version"], worktree, 60)
         ]
+
+
+@pytest.mark.usefixtures("with_key")
+class TestShipUsage:
+    def test_lists_options_when_help_requested(
+        self, ship_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        result = run_command(ship_workspace.workspace.hub, "ship", "--help")
+
+        assert result.exit_code == 0
+        words = " ".join(unstyle(result.stdout).replace(BOX_CHARACTERS[0], " ").split())
+        for text in ("[ISSUE]", "--draft", "--dry-run", "posts one more comment"):
+            assert text in words, text
+        assert "--skip-check" not in words
+
+    @pytest.mark.parametrize("issue", ["dem-1", "OPS-1", "DEM-0", "DEM-1x"])
+    def test_refuses_issue_when_malformed(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        tracker: Any,
+        child_calls: Any,
+        issue: str,
+    ) -> None:
+        result = run_command(ship_workspace.workspace.hub, "ship", issue)
+
+        assert_refused(result, SHAPE)
+        assert child_calls.calls == []
+        assert tracker.calls == []
+
+    def test_refuses_when_two_issues_given(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        result = run_command(ship_workspace.workspace.hub, "ship", "DEM-7", "DEM-8")
+
+        assert_refused(result, "Got unexpected extra argument(s) (DEM-8)")
+        assert child_calls.calls == []
+        assert tracker.calls == []
+
+    def test_refuses_when_folder_has_no_hub(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        ws = ship_workspace.workspace.ws
+
+        result = run_command(ws, "ship", ISSUE)
+
+        assert result.exit_code == 2
+        assert result.stdout == ""
+        assert result.stderr == (
+            f"{ws}: not a hub: no hub.json in this folder"
+            " (hub ship runs in the hub folder or through ./hub)\n"
+        )
+        assert child_calls.calls == []
+        assert tracker.calls == []
+
+    def test_names_key_when_api_key_missing(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        tracker: Any,
+        child_calls: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        set_transport(ship_workspace.workspace.hub, "api")
+        monkeypatch.delenv(KEY_VARIABLE)
+
+        result = run_command(ship_workspace.workspace.hub, "ship", ISSUE)
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert result.stderr == (
+            'hub ship: LINEAR_API_KEY is not set; export it, or set tracker.transport: "mcp"'
+            " in hub.json to reach Linear through its MCP server with claude -p\n"
+        )
+        assert child_calls.calls == []
+        assert tracker.calls == []
+
+    def test_stops_before_children_when_issue_read_fails(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        make_task_worktree: Callable[..., Any],
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        make_task_worktree("demo-api", "dem-7-x", ["feat(api): x (DEM-7)"])
+        child_calls.clear()
+        tracker.fail_on.add("get_issue")
+
+        result = run_command(ship_workspace.workspace.hub, "ship", ISSUE)
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert result.stderr.splitlines()[-1] == "hub ship: get_issue DEM-7: synthetic outage"
+        assert child_calls.calls == []
+        assert tracker.calls == [("get_issue", ISSUE)]
+
+    def test_exits_as_run_when_hub_json_invalid(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        hub = ship_workspace.workspace.hub
+        (hub / "hub.json").write_text('{"schema_version": 1, "project": 3}\n')
+
+        shipped = run_command(hub, "ship", ISSUE)
+        ran = run_command(hub, "run", ISSUE, "--repo", "demo-api")
+
+        assert shipped.exit_code == ran.exit_code == 1
+        assert shipped.stdout == ""
+        assert shipped.stderr == ran.stderr != ""
+        assert child_calls.calls == []
+        assert tracker.calls == []
+
+
+def use_mixed_hub(ship_workspace: Workspace) -> None:
+    """The mixed-conventions hub of AC 57.7 (``a_conventions_document``)."""
+    mixed = a_conventions_document()
+    api = next(repo["conventions"] for repo in mixed["repos"] if repo["dir"] == "demo-api")
+    ship_workspace.workspace.use_conventions(
+        project=mixed["project"]["conventions"], repos={"demo-api": api}
+    )
+
+
+def assert_nothing_shipped(ship_workspace: Workspace, child_calls: Any, tracker: Any) -> None:
+    """Only git read: no check, push, ``gh`` or tracker write."""
+    assert set(child_calls.programs()) <= {"git"}
+    assert [call.argv for call in child_calls.calls if "push" in call.argv] == []
+    for tool in ("gh", "make"):
+        assert ship_workspace.calls(tool) == []
+    assert tracker.calls == [("get_issue", ISSUE)]
+
+
+@pytest.mark.usefixtures("with_key")
+class TestShipSet:
+    def test_names_skipped_repo_when_dry_run(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        make_task_worktree: Callable[..., Any],
+        tracker: Any,
+    ) -> None:
+        make_task_worktree("demo-api", "dem-7-x", ["feat(api): a (DEM-7)", "fix(api): b (DEM-7)"])
+        make_task_worktree("demo-web", "dem-7", [])
+
+        result = run_command(ship_workspace.workspace.hub, "ship", ISSUE, "--dry-run")
+
+        assert result.exit_code == 0, result.output
+        assert result.stdout.splitlines()[:2] == [
+            "ship: demo-api  jdoe/dem-7-x",
+            "skipped: demo-web (no commits ahead of origin/trunk)",
+        ]
+        assert tracker.calls == [("get_issue", ISSUE)]
+
+    def test_ignores_longer_issue_number_when_dry_run(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        make_task_worktree: Callable[..., Any],
+        tracker: Any,
+    ) -> None:
+        make_task_worktree("demo-api", "dem-7-x", ["feat(api): a (DEM-7)"])
+        make_task_worktree("demo-api", "dem-70", ["feat(api): c (DEM-70)"])
+        make_task_worktree("demo-web", "dem-70", ["feat(web): c (DEM-70)"])
+
+        result = run_command(ship_workspace.workspace.hub, "ship", ISSUE, "--dry-run")
+
+        assert result.exit_code == 0, result.output
+        lines = result.stdout.splitlines()
+        assert lines[0] == "ship: demo-api  jdoe/dem-7-x"
+        assert not [line for line in lines if "dem-70" in line or "demo-web" in line]
+
+    def test_uses_repo_branch_convention_when_hub_mixed(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        make_task_worktree: Callable[..., Any],
+        tracker: Any,
+    ) -> None:
+        use_mixed_hub(ship_workspace)
+        make_task_worktree("demo-api", "dem-7-x", ["feat(api): a (DEM-7)"])
+        make_task_worktree("demo-web", "dem-7-x", ["feat(web): a (DEM-7)"])
+
+        result = run_command(ship_workspace.workspace.hub, "ship", ISSUE, "--dry-run")
+
+        assert result.exit_code == 0, result.output
+        assert result.stdout.splitlines()[:2] == [
+            "ship: demo-api  feature/dem-7/x",
+            "ship: demo-web  jdoe/DEM-7-x",
+        ]
+
+
+@pytest.mark.usefixtures("with_key")
+class TestShipRefusals:
+    def refused(
+        self, ship_workspace: Workspace, run_command: CommandRunner, *, child_calls: Any
+    ) -> Result:
+        """``hub ship DEM-7`` after the test's setup: exit 1, one stderr line after the
+        transport's, nothing on stdout."""
+        child_calls.clear()
+        result = run_command(ship_workspace.workspace.hub, "ship", ISSUE)
+        assert result.exit_code == 1, result.output
+        assert result.stdout == ""
+        assert len(result.stderr.splitlines()) == 2, result.stderr
+        return result
+
+    def test_names_both_paths_when_repo_has_two_task_worktrees(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        make_task_worktree: Callable[..., Any],
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        short = make_task_worktree("demo-api", "dem-7", ["feat(api): a (DEM-7)"])
+        longer = make_task_worktree("demo-api", "dem-7-x", ["feat(api): b (DEM-7)"])
+
+        result = self.refused(ship_workspace, run_command, child_calls=child_calls)
+
+        assert result.stderr.splitlines()[-1] == (
+            f"hub ship: demo-api: more than one task worktree for DEM-7: {short}, {longer};"
+            " remove one (hub worktree --remove <name>)"
+        )
+        assert_nothing_shipped(ship_workspace, child_calls, tracker)
+
+    def test_names_issue_and_repos_when_no_task_worktree(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        make_task_worktree: Callable[..., Any],
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        make_task_worktree("demo-api", "dem-70", ["feat(api): a (DEM-70)"])
+
+        result = self.refused(ship_workspace, run_command, child_calls=child_calls)
+
+        assert result.stderr.splitlines()[-1] == (
+            "hub ship: no task worktree for DEM-7 in demo-api, demo-web"
+            " (looked for <repo>/.claude/worktrees/dem-7[-<desc>])"
+        )
+        assert_nothing_shipped(ship_workspace, child_calls, tracker)
+
+    def test_refuses_when_no_repo_ahead(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        make_task_worktree: Callable[..., Any],
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        make_task_worktree("demo-api", "dem-7-x", [])
+        make_task_worktree("demo-web", "dem-7", [])
+
+        result = self.refused(ship_workspace, run_command, child_calls=child_calls)
+
+        assert result.stderr.splitlines()[-1] == (
+            "hub ship: no repo has commits ahead of its base for DEM-7:"
+            " demo-api (origin/trunk), demo-web (origin/trunk)"
+        )
+        assert_nothing_shipped(ship_workspace, child_calls, tracker)
+
+    def test_names_branches_when_worktree_on_other_branch(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        make_task_worktree: Callable[..., Any],
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        worktree = make_task_worktree("demo-api", "dem-7-x", ["feat(api): a (DEM-7)"])
+        make_task_worktree("demo-web", "dem-7", ["feat(web): a (DEM-7)"])
+        ship_workspace.workspace.git(worktree, "switch", "-q", "-c", "jdoe/other")
+
+        result = self.refused(ship_workspace, run_command, child_calls=child_calls)
+
+        assert result.stderr.splitlines()[-1] == (
+            f"hub ship: demo-api: {worktree} is on jdoe/other, not jdoe/dem-7-x"
+        )
+        assert_nothing_shipped(ship_workspace, child_calls, tracker)
+
+    def test_names_folder_when_worktree_has_no_git_entry(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        make_task_worktree: Callable[..., Any],
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        make_task_worktree("demo-api", "dem-7-x", ["feat(api): a (DEM-7)"])
+        folder = ship_workspace.workspace.worktree("demo-web", "dem-7")
+        folder.mkdir(parents=True)
+
+        result = self.refused(ship_workspace, run_command, child_calls=child_calls)
+
+        assert result.stderr.splitlines()[-1] == (
+            f"hub ship: demo-web: {folder} is not a git worktree: it has no .git entry"
+        )
+        assert_nothing_shipped(ship_workspace, child_calls, tracker)
+
+    def test_names_folder_when_worktrees_unlistable(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        make_task_worktree: Callable[..., Any],
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        make_task_worktree("demo-api", "dem-7-x", ["feat(api): a (DEM-7)"])
+        folder = ship_workspace.workspace.ws / "demo-web" / ".claude" / "worktrees"
+        folder.parent.mkdir(parents=True)
+        folder.write_text("not a folder\n")
+
+        result = self.refused(ship_workspace, run_command, child_calls=child_calls)
+
+        assert result.stderr.splitlines()[-1] == (
+            f"hub ship: demo-web: cannot list {folder}: Not a directory"
+        )
+        assert_nothing_shipped(ship_workspace, child_calls, tracker)
+
+    def test_names_repo_when_base_ref_missing(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        make_task_worktree: Callable[..., Any],
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        worktree = make_task_worktree("demo-api", "dem-7-x", ["feat(api): a (DEM-7)"])
+        ship_workspace.workspace.git(
+            ship_workspace.workspace.ws / "demo-api",
+            "update-ref",
+            "-d",
+            "refs/remotes/origin/trunk",
+        )
+
+        result = self.refused(ship_workspace, run_command, child_calls=child_calls)
+
+        line = result.stderr.splitlines()[-1]
+        assert line.startswith(f"hub ship: demo-api: git rev-list failed in {worktree}: ")
+        assert "origin/trunk" in line
+        assert_nothing_shipped(ship_workspace, child_calls, tracker)
+
+
+NOT_IN_TASK_WORKTREE = (
+    "give ISSUE or run hub ship from a task worktree (<repo>/.claude/worktrees/<team>-<n>[-<desc>])"
+)
+
+
+def shipped_children(ship_workspace: Workspace, child_calls: Any) -> list[tuple[Any, ...]]:
+    """What a ship ran: each child's argv and cwd, then each ``gh`` call's argv and cwd."""
+    children = [(tuple(call.argv), call.cwd) for call in child_calls.calls]
+    gh = [(tuple(call["argv"]), call["cwd"]) for call in ship_workspace.calls("gh")]
+    return [*children, *gh]
+
+
+def forget_ship(ship_workspace: Workspace, child_calls: Any, *, branch: str) -> None:
+    """Undo what a ship left outside the worktree: the PRs, the pushed branch, the calls."""
+    ship_workspace.state.unlink(missing_ok=True)
+    origin = ship_workspace.workspace.origin("demo-api")
+    ship_workspace.workspace.git(origin, "update-ref", "-d", f"refs/heads/{branch}")
+    (ship_workspace.logs / "gh.jsonl").unlink(missing_ok=True)
+    child_calls.clear()
+
+
+@pytest.mark.usefixtures("with_key")
+class TestShipNoArgument:
+    @pytest.mark.parametrize("below", [False, True], ids=["root", "below"])
+    def test_ships_worktree_issue_when_run_from_worktree(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        make_task_worktree: Callable[..., Any],
+        tracker: Any,
+        child_calls: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        below: bool,
+    ) -> None:
+        hub = ship_workspace.workspace.hub
+        worktree = make_task_worktree("demo-api", "dem-7-x", ["feat(api): a (DEM-7)"])
+        cwd = worktree / "src" if below else worktree
+        cwd.mkdir(exist_ok=True)
+        monkeypatch.setenv("AGENT_HUB_ROOT", str(hub))
+        child_calls.clear()
+
+        from_cwd = run_command(cwd, "ship")
+        derived = shipped_children(ship_workspace, child_calls)
+        forget_ship(ship_workspace, child_calls, branch="jdoe/dem-7-x")
+        explicit = run_command(hub, "ship", ISSUE)
+
+        assert from_cwd.exit_code == explicit.exit_code == 0, from_cwd.output
+        assert from_cwd.stdout == explicit.stdout
+        assert derived == shipped_children(ship_workspace, child_calls)
+        assert derived != []
+        assert tracker.calls[0] == tracker.calls[-1] == ("get_issue", ISSUE)
+
+    def test_maps_team_spelling_when_hub_has_two_teams(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        make_task_worktree: Callable[..., Any],
+        tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ship_workspace.workspace.use_teams("APP", "OPS")
+        issue = tracker.backend.issues[ISSUE]
+        tracker.backend.issues["OPS-3"] = issue.model_copy(update={"id": "OPS-3"})
+        worktree = make_task_worktree("demo-api", "ops-3", ["feat(api): a (OPS-3)"])
+        monkeypatch.setenv("AGENT_HUB_ROOT", str(ship_workspace.workspace.hub))
+
+        result = run_command(worktree, "ship", "--dry-run")
+
+        assert result.exit_code == 0, result.output
+        assert result.stdout.splitlines()[0] == "ship: demo-api  jdoe/ops-3"
+        assert tracker.calls == [("get_issue", "OPS-3")]
+
+    @pytest.mark.parametrize("folder", ["hub", "main-checkout"])
+    def test_refuses_when_cwd_outside_task_worktree(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        make_task_worktree: Callable[..., Any],
+        tracker: Any,
+        child_calls: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        folder: str,
+    ) -> None:
+        workspace = ship_workspace.workspace
+        make_task_worktree("demo-api", "dem-7-x", ["feat(api): a (DEM-7)"])
+        monkeypatch.setenv("AGENT_HUB_ROOT", str(workspace.hub))
+        child_calls.clear()
+        cwd = workspace.hub if folder == "hub" else workspace.ws / "demo-api"
+
+        result = run_command(cwd, "ship")
+
+        assert_refused(result, NOT_IN_TASK_WORKTREE)
+        assert child_calls.calls == []
+        assert tracker.calls == []
+
+
+def both_ahead(make_task_worktree: Callable[..., Any]) -> tuple[Any, Any]:
+    """``demo-api``'s ``dem-7-x`` and ``demo-web``'s ``dem-7``, one commit ahead each."""
+    api = make_task_worktree("demo-api", "dem-7-x", ["feat(api): add x (DEM-7)"])
+    web = make_task_worktree("demo-web", "dem-7", ["feat(web): add y (DEM-7)"])
+    return api, web
+
+
+def ship_live(
+    ship_workspace: Workspace, run_command: CommandRunner, child_calls: Any, *arguments: str
+) -> Result:
+    """``hub ship DEM-7 <arguments>`` from the hub, the setup's calls forgotten first."""
+    child_calls.clear()
+    return run_command(ship_workspace.workspace.hub, "ship", ISSUE, *arguments)
+
+
+def log_path(ship_workspace: Workspace, repo: str) -> Any:
+    return ship_workspace.workspace.hub / ".agent-runs" / "ship" / f"{ISSUE}-{repo}.log"
+
+
+def pushes(child_calls: Any) -> list[Any]:
+    return [call for call in child_calls.calls if call.argv[0] == "git" and "push" in call.argv]
+
+
+@pytest.mark.usefixtures("with_key")
+class TestShipCheck:
+    def test_refuses_before_checks_when_tree_dirty(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        make_task_worktree: Callable[..., Any],
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        _, web = both_ahead(make_task_worktree)
+        (web / "README.md").write_text("left behind\n")
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 1, result.output
+        assert result.stderr.splitlines()[1:] == [
+            "hub ship: demo-web: uncommitted changes in the worktree",
+            "hub ship: nothing was checked or pushed",
+        ]
+        assert "bash" not in child_calls.programs()
+        assert_nothing_shipped(ship_workspace, child_calls, tracker)
+
+    def test_runs_checks_in_order_before_push_when_both_ahead(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        make_task_worktree: Callable[..., Any],
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        api, web = both_ahead(make_task_worktree)
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        checks = [
+            (index, call.argv, call.cwd)
+            for index, call in enumerate(child_calls.calls)
+            if call.argv[0] == "bash"
+        ]
+        assert [(argv, cwd) for _, argv, cwd in checks] == [
+            (["bash", "-c", "make check"], api),
+            (["bash", "-c", "make check"], web),
+        ]
+        assert [call["cwd"] for call in ship_workspace.calls("make")] == [str(api), str(web)]
+        pushed = [
+            index for index, call in enumerate(child_calls.calls) if call in pushes(child_calls)
+        ]
+        assert len(pushed) == 2
+        assert all(checks[-1][0] < index for index in pushed)
+
+    def test_hides_keys_from_check_when_check_runs(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        make_task_worktree: Callable[..., Any],
+        tracker: Any,
+        child_calls: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        monkeypatch.setenv("GH_TOKEN", "gh-synthetic")
+        monkeypatch.setenv("GITHUB_TOKEN", "github-synthetic")
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        hidden = {KEY_VARIABLE, "GH_TOKEN", "GITHUB_TOKEN"}
+        checks = [call for call in child_calls.calls if call.argv[0] == "bash"]
+        assert len(checks) == 2
+        assert all(not hidden & set(call.env) for call in checks)
+        assert all(not hidden & set(call["env"]) for call in ship_workspace.calls("make"))
+
+    def test_writes_log_when_check_runs(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        make_task_worktree: Callable[..., Any],
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        make_task_worktree("demo-api", "dem-7-x", ["feat(api): add x (DEM-7)"])
+        path = log_path(ship_workspace, "demo-api")
+        path.parent.mkdir(parents=True)
+        path.write_text("an older run's log, longer than the new one\n" * 50)
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        assert path.read_bytes() == b"--- stdout ---\nsynthetic gate output\n--- stderr ---\n"
+        assert path.stat().st_mode & 0o777 == 0o600
+
+    def test_makes_private_log_folder_when_none_exists(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        make_task_worktree: Callable[..., Any],
+        tracker: Any,
+        child_calls: Any,
+        set_umask: Callable[[int], None],
+    ) -> None:
+        make_task_worktree("demo-api", "dem-7-x", ["feat(api): add x (DEM-7)"])
+        set_umask(0o022)
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        path = log_path(ship_workspace, "demo-api")
+        assert path.stat().st_mode & 0o777 == 0o600
+        for folder in (path.parent, path.parent.parent):
+            assert folder.stat().st_mode & 0o777 == 0o700
+
+    def test_stops_before_push_when_web_check_fails(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        make_task_worktree: Callable[..., Any],
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        check = "echo synthetic web failure >&2; exit 3"
+        set_check(ship_workspace.workspace.hub, "demo-web", check)
+        path = log_path(ship_workspace, "demo-web")
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 1, result.output
+        assert result.stderr.splitlines()[1:] == [
+            f"hub ship: demo-web: check failed ({check}); output in {path}",
+            "hub ship: nothing was pushed",
+        ]
+        assert path.read_bytes() == b"--- stdout ---\n--- stderr ---\nsynthetic web failure\n"
+        assert [call.argv[0] for call in child_calls.calls if call.argv[0] != "git"] == [
+            "bash",
+            "bash",
+        ]
+        assert_nothing_shipped_after_checks(ship_workspace, child_calls, tracker)
+
+    def test_fails_check_when_check_times_out(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        make_task_worktree: Callable[..., Any],
+        tracker: Any,
+        child_calls: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        make_task_worktree("demo-api", "dem-7-x", ["feat(api): add x (DEM-7)"])
+        monkeypatch.setattr(run_steps, "GATE_TIMEOUT", 1.0)
+        monkeypatch.setenv("FAKE_MAKE_SLEEP", "30")
+        path = log_path(ship_workspace, "demo-api")
+
+        started = time.monotonic()
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert time.monotonic() - started < 20
+        assert result.exit_code == 1, result.output
+        assert result.stderr.splitlines()[1:] == [
+            f"hub ship: demo-api: check failed (make check): bash timed out after 1 s;"
+            f" output in {path}",
+            "hub ship: nothing was pushed",
+        ]
+        assert path.read_bytes() == b"--- bash timed out after 1 s ---\n"
+        assert_nothing_shipped_after_checks(ship_workspace, child_calls, tracker)
+
+    def test_names_log_path_when_log_cannot_be_opened(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        make_task_worktree: Callable[..., Any],
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        make_task_worktree("demo-api", "dem-7-x", ["feat(api): add x (DEM-7)"])
+        folder = ship_workspace.workspace.hub / ".agent-runs" / "ship"
+        folder.parent.mkdir()
+        folder.write_text("not a folder\n")
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 1, result.output
+        lines = result.stderr.splitlines()[1:]
+        path = log_path(ship_workspace, "demo-api")
+        assert lines[0].startswith(f"hub ship: demo-api: cannot open the check log {path}: ")
+        assert lines[1:] == ["hub ship: nothing was pushed"]
+        assert "bash" not in child_calls.programs()
+        assert_nothing_shipped(ship_workspace, child_calls, tracker)
+
+
+def set_check(hub: Any, repo: str, check: str) -> None:
+    document = json.loads((hub / "hub.json").read_text())
+    entry = next(entry for entry in document["repos"] if entry["dir"] == repo)
+    entry["check"] = check
+    (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+
+
+def assert_nothing_shipped_after_checks(
+    ship_workspace: Workspace, child_calls: Any, tracker: Any
+) -> None:
+    """Checks may have run, but no push, ``gh`` call or tracker write."""
+    assert pushes(child_calls) == []
+    assert ship_workspace.calls("gh") == []
+    assert tracker.calls == [("get_issue", ISSUE)]
+
+
+API_PR = "https://github.com/acme/demo-api/pull/101"
+WEB_PR = "https://github.com/acme/demo-web/pull/102"
+ISSUE_URL = "https://linear.app/demo/issue/DEM-7"
+SHIP_BODY = f"DEM-7 {ISSUE_URL}\n\n{RELATED_START}\n## Related PRs\n{RELATED_END}"
+
+
+def create_call(github: str, branch: str, title: str, *, draft: bool = False) -> list[str]:
+    argv = [
+        *("gh", "pr", "create", "--repo", github, "--base", "trunk", "--head", branch),
+        *("--title", title, "--body", SHIP_BODY),
+    ]
+    return [*argv, "--draft"] if draft else argv
+
+
+def shipping_calls(child_calls: Any) -> list[tuple[list[str], Any]]:
+    """The token-bearing children, in order: each push and ``gh`` call, with its cwd."""
+    return [
+        (call.argv, call.cwd)
+        for call in child_calls.calls
+        if call.argv[0] == "gh" or call in pushes(child_calls)
+    ]
+
+
+def seeded_pr(*, state: str, url: str = "https://github.com/acme/demo-api/pull/7") -> Any:
+    return {
+        "repo": API_GITHUB,
+        "head": "jdoe/dem-7-x",
+        "base": "trunk",
+        "title": "by hand",
+        "url": url,
+        "state": state,
+        "body": "Opened by hand.",
+        "draft": False,
+    }
+
+
+@pytest.mark.usefixtures("with_key")
+class TestShipPrs:
+    def test_opens_prs_in_order_when_checks_pass(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        api, web = both_ahead(make_task_worktree)
+        workspace = ship_workspace.workspace
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        api_title, web_title = "feat(api): add x (DEM-7)", "feat(web): add y (DEM-7)"
+        assert shipping_calls(child_calls) == [
+            (["git", *push_command("jdoe/dem-7-x")[1:]], api),
+            (create_call(API_GITHUB, "jdoe/dem-7-x", api_title), api),
+            (["git", *push_command("jdoe/dem-7")[1:]], web),
+            (create_call("acme/demo-web", "jdoe/dem-7", web_title), web),
+        ]
+        assert [(pr["url"], pr["draft"]) for pr in ship_workspace.prs()] == [
+            (API_PR, False),
+            (WEB_PR, False),
+        ]
+        for repo, worktree, branch in (
+            ("demo-api", api, "jdoe/dem-7-x"),
+            ("demo-web", web, "jdoe/dem-7"),
+        ):
+            pushed = workspace.git(workspace.origin(repo), "rev-parse", f"refs/heads/{branch}")
+            assert pushed == workspace.git(worktree, "rev-parse", "HEAD")
+        assert result.stdout.splitlines()[-2:] == [
+            f"opened: demo-api  {API_PR}",
+            f"opened: demo-web  {WEB_PR}",
+        ]
+
+    def test_adds_draft_when_draft_given(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        both_ahead(make_task_worktree)
+
+        result = ship_live(ship_workspace, run_command, child_calls, "--draft")
+
+        assert result.exit_code == 0, result.output
+        creates = [call["argv"] for call in ship_workspace.calls("gh")]
+        assert [argv[-1] for argv in creates] == ["--draft", "--draft"]
+        assert [pr["draft"] for pr in ship_workspace.prs()] == [True, True]
+
+    def test_refuses_web_push_when_credential_helper_set(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        _, web = both_ahead(make_task_worktree)
+        value = "!echo synthetic-helper-value"
+        ship_workspace.workspace.git(web, "config", "credential.helper", value)
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 1, result.output
+        assert (
+            "hub ship: demo-web: push failed: git config holds keys a push would use"
+            " (credential.helper); the branch was not pushed"
+        ) in result.stderr.splitlines()
+        assert "synthetic-helper-value" not in result.output
+        assert [call.cwd.name for call in pushes(child_calls)] == ["dem-7-x"]
+        assert [pr["repo"] for pr in ship_workspace.prs()] == [API_GITHUB]
+
+    def test_refuses_web_push_when_origin_not_github(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        _, web = both_ahead(make_task_worktree)
+        ship_workspace.workspace.git(
+            web, "config", "remote.origin.url", "https://github.com/acme/other.git"
+        )
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 1, result.output
+        assert (
+            "hub ship: demo-web: push failed: remote.origin.url is not the GitHub url of"
+            " acme/demo-web; the branch was not pushed"
+        ) in result.stderr.splitlines()
+        assert [call.cwd.name for call in pushes(child_calls)] == ["dem-7-x"]
+
+    def test_uses_open_pr_when_create_fails(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        found = "https://github.com/acme/demo-api/pull/7"
+        ship_workspace.write_prs([seeded_pr(state="OPEN", url=found)])
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        assert [call["argv"][:3] for call in ship_workspace.calls("gh")] == [
+            ["pr", "create", "--repo"],
+            ["pr", "view", "jdoe/dem-7-x"],
+            ["pr", "create", "--repo"],
+        ]
+        assert [pr["url"] for pr in ship_workspace.prs()] == [found, WEB_PR]
+        assert result.stdout.splitlines()[-2:] == [
+            f"found: demo-api  {found}",
+            f"opened: demo-web  {WEB_PR}",
+        ]
+
+    def test_fails_when_found_pr_not_open(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        ship_workspace.write_prs([seeded_pr(state="CLOSED")])
+        monkeypatch.setenv("FAKE_GH_FAIL", "create:demo-api")
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 1, result.output
+        assert (
+            "hub ship: demo-api: pull request failed: gh pr create failed:"
+            " gh (fake): synthetic create failure"
+        ) in result.stderr.splitlines()
+        assert [call.cwd.name for call in pushes(child_calls)] == ["dem-7-x"]
+
+    def test_fails_when_gh_prints_no_url(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        monkeypatch.setenv("FAKE_GH_FAIL", "nourl:demo-api")
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 1, result.output
+        assert "hub ship: demo-api: pull request failed: gh printed no PR url" in (
+            result.stderr.splitlines()
+        )
+        assert ship_workspace.prs() == []
+
+
+def pr_titles(ship_workspace: Workspace) -> list[str]:
+    return [pr["title"] for pr in ship_workspace.prs()]
+
+
+@pytest.mark.usefixtures("with_key")
+class TestShipTitle:
+    def test_titles_pr_from_newest_commit_when_two_ahead(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        make_task_worktree(
+            "demo-api", "dem-7-x", ["feat(api): add x (DEM-7)", "fix(api): y (DEM-7)"]
+        )
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        assert pr_titles(ship_workspace) == ["fix(api): y (DEM-7)"]
+
+    def test_warns_once_when_subject_unmatched_in_mixed_hub(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        use_mixed_hub(ship_workspace)
+        make_task_worktree("demo-api", "dem-7-x", ["DEM-7: feat(api): add x"])
+        make_task_worktree("demo-web", "dem-7-x", ["feat(web): add y (DEM-7)"])
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        assert pr_titles(ship_workspace) == ["DEM-7: feat(api): add x", "feat(web): add y (DEM-7)"]
+        warning = (
+            "hub ship: warning: the commit subject `feat(web): add y (DEM-7)` does not match"
+            " commit_title `{ISSUE}: {type}({scope}): {summary}`; the PR title is the subject"
+        )
+        assert [line for line in result.stderr.splitlines() if "warning" in line] == [warning]
+
+    def test_holds_issue_and_empty_section_when_body_built(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        make_task_worktree("demo-api", "dem-7-x", ["feat(api): add x (DEM-7)"])
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        assert [pr["body"] for pr in ship_workspace.prs()] == [SHIP_BODY]
+        assert SHIP_BODY.count(RELATED_START) == SHIP_BODY.count(RELATED_END) == 1
+
+
+NOT_LINKED = "hub ship: no PR was linked and the issue was not moved"
+
+
+def reject_pushes(ship_workspace: Workspace, repo: str) -> None:
+    """A pre-receive hook in ``repo``'s origin that refuses every push."""
+    hook = ship_workspace.workspace.origin(repo) / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\necho synthetic rejection >&2\nexit 1\n")
+    hook.chmod(0o755)
+
+
+def assert_unlinked(ship_workspace: Workspace, tracker: Any) -> None:
+    """No PR body read or edited, no tracker write."""
+    gh = [call["argv"] for call in ship_workspace.calls("gh")]
+    assert gh != []
+    assert [argv for argv in gh if argv[:2] == ["pr", "edit"] or "body" in argv] == []
+    assert tracker.calls == [("get_issue", ISSUE)]
+
+
+@pytest.mark.usefixtures("with_key")
+class TestShipPartial:
+    def test_lists_open_pr_when_web_push_fails(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        reject_pushes(ship_workspace, "demo-web")
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 1, result.output
+        lines = result.stderr.splitlines()
+        assert lines[-3].startswith("hub ship: demo-web: push failed: push failed: ")
+        assert "synthetic rejection" in lines[-3]
+        assert lines[-2:] == [f"hub ship: PR open: {API_PR}", NOT_LINKED]
+        assert [pr["url"] for pr in ship_workspace.prs()] == [API_PR]
+        assert_unlinked(ship_workspace, tracker)
+
+    def test_names_pull_request_step_when_web_pr_fails(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        monkeypatch.setenv("FAKE_GH_FAIL", "create:demo-web,view:demo-web")
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 1, result.output
+        assert result.stderr.splitlines()[-3:] == [
+            "hub ship: demo-web: pull request failed: gh pr create failed:"
+            " gh (fake): synthetic create failure",
+            f"hub ship: PR open: {API_PR}",
+            NOT_LINKED,
+        ]
+        assert [call.cwd.name for call in pushes(child_calls)] == ["dem-7-x", "dem-7"]
+        assert_unlinked(ship_workspace, tracker)

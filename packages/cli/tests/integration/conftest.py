@@ -1636,7 +1636,8 @@ def logged_git(run_workspace: RunWorkspace) -> RunWorkspace:
 # makes: ``pr create``, ``pr view <branch> --repo R --json …``, ``pr view <url> --json …`` and
 # ``pr edit <url> --body B``. It serves only the ``--json`` fields asked for and exits 2 on any
 # other argv. ``FAKE_GH_FAIL`` (``<step>:<repo>,…``, steps ``create``, ``view``, ``body``,
-# ``edit``, repo as its dir) makes that call exit 1. Every call is logged as the run fakes log.
+# ``edit``, repo as its dir) makes that call exit 1; step ``nourl`` makes ``pr create`` exit 0
+# without printing a url or opening a PR. Every call is logged as the run fakes log.
 _SHIP_FAKE_GH = (
     _FAKE_LOG
     + """import re
@@ -1698,6 +1699,9 @@ if argv[:2] == ["pr", "create"]:
     given = options(argv[2:], ("--repo", "--base", "--head", "--title", "--body"), ("--draft",))
     repo, head = given["--repo"], given["--head"]
     fails("create", repo)
+    if ("nourl", repo.rsplit("/", 1)[-1]) in FAILS:
+        print("Creating pull request for " + head)
+        sys.exit(0)
     for pr in prs:
         if (pr["repo"], pr["head"], pr["state"]) == (repo, head, "OPEN"):
             print("a pull request for branch " + head + " already exists:\\n" + pr["url"],
