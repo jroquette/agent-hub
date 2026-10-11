@@ -33,6 +33,9 @@ LOCAL_FILE_MAX_BYTES: Final = 65_536
 # module, so the order is spelled here).
 _IDENTITY_ORDER: Final = ("branch_prefix", "author_name", "author_email")
 
+NO_IDENTITY_MESSAGE: Final = (
+    "holds no identity value: set branch_prefix, author_name or author_email"
+)
 HUB_ONLY_MESSAGE: Final = (
     "set only in hub.json; hub.local.json holds project.branch_prefix, author_name,"
     " author_email and tracker.transport"
@@ -94,8 +97,11 @@ def local_identity_bytes(values: Mapping[str, str]) -> bytes | tuple[ConfigProbl
     """The bytes of a ``hub.local.json`` holding ``values`` under ``project``, or their problems.
 
     Keys come out in the order ``branch_prefix``, ``author_name``, ``author_email`` whatever the
-    mapping's order, indented 2, UTF-8 and not escaped, with a final newline.
+    mapping's order, indented 2, UTF-8 and not escaped, with a final newline. An empty mapping
+    is a problem at ``project``, as an invalid value is: such a file would set nothing.
     """
+    if not values:
+        return (ConfigProblem("project", NO_IDENTITY_MESSAGE),)
     checked = check_local_document({"project": dict(values)})
     if not isinstance(checked, LocalConfig):
         return checked
