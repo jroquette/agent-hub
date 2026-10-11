@@ -5,9 +5,17 @@ credential prompt (``GIT_TERMINAL_PROMPT=0``), the tracker key never reaches git
 variable the caller set (``GIT_DIR``) never points git at another repo than the one the call
 names. Per ``repos`` entry, in ``hub.json`` order, at ``<hub parent>/<dir>``: no entry is
 cloned, over the scheme of the hub's own origin (``git_defaults.read_remote_scheme``); a folder
-holding a ``.git`` entry is fetched; anything else is reported and never touched. Only git's
-exit code is read: its output, which can name a URL or a credential, is discarded, and no URL
-is printed. Each call runs at most ``NETWORK_TIMEOUT_SECONDS`` (spec D-repos, D-url).
+(or a link to one) holding a ``.git`` entry is fetched once ``rev-parse --verify -q HEAD`` finds
+a commit there; anything else is reported and never touched. Only git's exit code is read: its
+output, which can name a URL or a credential, is discarded, and no URL is printed. Each clone
+or fetch runs at most ``NETWORK_TIMEOUT_SECONDS`` (spec D-repos, D-url).
+
+The commit check (errata E27, E28): exit 1 is a repo with no commit, what a clone killed at its
+timeout or by Ctrl-C leaves, where a fetch would succeed and hide it; any other failing exit is
+a ``.git`` git cannot read, so not a repository; a check that times out (``GIT_TIMEOUT_SECONDS``,
+a local read) is reported as the fetch timing out after that limit, as the fetch never ran.
+Every call aimed at ``../<dir>`` sets ``GIT_CEILING_DIRECTORIES`` to the workspace, so git never
+searches above ``../<dir>`` and runs in a repo that holds the workspace. Setup deletes nothing.
 """
 
 import os
@@ -18,7 +26,7 @@ from typing import Final, NamedTuple
 
 from agent_hub.cli.child_process import run_child
 from agent_hub.cli.errors import ChildTimedOutError
-from agent_hub.cli.git_defaults import RemoteScheme, read_remote_scheme
+from agent_hub.cli.git_defaults import GIT_TIMEOUT_SECONDS, RemoteScheme, read_remote_scheme
 from agent_hub.cli.run_children import child_env
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.workspace_repos import WorkspaceRepo, workspace_repos
@@ -31,6 +39,9 @@ OUTPUT_LIMIT: Final = 65_536
 
 _NO_PROMPT: Final = {"GIT_TERMINAL_PROMPT": "0"}
 _GIT_ENTRY: Final = ".git"
+_CEILING_VARIABLE: Final = "GIT_CEILING_DIRECTORIES"
+# ``rev-parse --verify -q`` exits 1 when the name does not resolve: an unborn HEAD here.
+_NO_COMMIT_EXIT: Final = 1
 
 
 class _Step(NamedTuple):
@@ -73,22 +84,49 @@ def _repo_item(
 ) -> ChecklistItem:
     dest = parent / repo.dir
     if not os.path.lexists(dest):
+        # Something may appear at ``dest`` before git starts: git refuses to clone into a
+        # non-empty folder (clone failed), and an empty one it may fill holds nothing to lose.
         step = _Step(
             [git, "clone", "--quiet", _clone_url(repo.github, scheme), str(dest)],
             done=RepoOutcome.CLONED,
             failed=RepoOutcome.CLONE_FAILED,
             timed_out=RepoOutcome.CLONE_TIMED_OUT,
         )
-    elif os.path.isdir(dest) and os.path.lexists(dest / _GIT_ENTRY):
-        step = _Step(
-            [git, "-C", str(dest), "fetch", "--quiet", "origin"],
-            done=RepoOutcome.FETCHED,
-            failed=RepoOutcome.FETCH_FAILED,
-            timed_out=RepoOutcome.FETCH_TIMED_OUT,
-        )
-    else:
+        return _run(repo, step, parent=parent, scheme=scheme, env=env)
+    # ``isdir`` follows a link: a link to a clone is fetched there (erratum E25).
+    if not (os.path.isdir(dest) and os.path.lexists(dest / _GIT_ENTRY)):
         return repo_item(repo, RepoOutcome.NOT_A_REPO)
-    return _run(repo, step, parent=parent, scheme=scheme, env=env)
+    bounded = {**env, _CEILING_VARIABLE: str(parent)}
+    gap = _commit_gap(repo, git=git, dest=dest, env=bounded)
+    if gap is not None:
+        return gap
+    step = _Step(
+        [git, "-C", str(dest), "fetch", "--quiet", "origin"],
+        done=RepoOutcome.FETCHED,
+        failed=RepoOutcome.FETCH_FAILED,
+        timed_out=RepoOutcome.FETCH_TIMED_OUT,
+    )
+    return _run(repo, step, parent=parent, scheme=scheme, env=bounded)
+
+
+def _commit_gap(
+    repo: WorkspaceRepo, *, git: str, dest: Path, env: Mapping[str, str]
+) -> ChecklistItem | None:
+    """Why the present repo at ``dest`` is not fetched (no commit, no readable repo), or None."""
+    argv = [git, "-C", str(dest), "rev-parse", "--verify", "-q", "HEAD"]
+    try:
+        result = run_child(
+            argv, cwd=dest.parent, env=env, timeout=GIT_TIMEOUT_SECONDS, output_limit=OUTPUT_LIMIT
+        )
+    except ChildTimedOutError:
+        return repo_item(repo, RepoOutcome.FETCH_TIMED_OUT, timeout_seconds=GIT_TIMEOUT_SECONDS)
+    except OSError:
+        return repo_item(repo, RepoOutcome.GIT_CANNOT_RUN)
+    if result.returncode == 0:
+        return None
+    if result.returncode == _NO_COMMIT_EXIT:
+        return repo_item(repo, RepoOutcome.NO_COMMIT)
+    return repo_item(repo, RepoOutcome.NOT_A_REPO)
 
 
 def _run(
@@ -109,8 +147,8 @@ def _run(
         # The error's text names git's path: the line is built from the constant alone.
         return repo_item(repo, step.timed_out, timeout_seconds=timeout)
     except OSError:
-        # Found on PATH but it cannot start: as unusable as no git at all.
-        return repo_item(repo, RepoOutcome.GIT_NOT_FOUND)
+        # Found on PATH but it cannot start (erratum E24).
+        return repo_item(repo, RepoOutcome.GIT_CANNOT_RUN)
     if result.returncode != 0:
         return repo_item(repo, step.failed, returncode=result.returncode)
     return repo_item(repo, step.done, scheme=scheme)

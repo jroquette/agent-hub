@@ -1364,12 +1364,15 @@ class TestRepos:
         ]
         assert [(call.args, call.prompt, call.has_key) for call in own] == [
             ("config --get remote.origin.url", "0", False),
+            (f"-C {ws}/demo-api rev-parse --verify -q HEAD", "0", False),
             (f"-C {ws}/demo-api fetch --quiet origin", "0", False),
             (f"clone --quiet https://github.com/acme/demo-web.git {ws}/demo-web", "0", False),
         ]
         assert result.exit_code == 0, result.output
 
-    @pytest.mark.parametrize("entry", ["folder-with-file", "regular-file", "dangling-link"])
+    @pytest.mark.parametrize(
+        "entry", ["folder-with-file", "regular-file", "dangling-link", "empty-git-folder"]
+    )
     def test_leaves_entry_untouched_when_not_a_repository(
         self,
         demo_workspace: Workspace,
@@ -1379,15 +1382,28 @@ class TestRepos:
         tree_digest: TreeDigest,
         entry: str,
     ) -> None:
-        path = Path(demo_workspace.ws) / "demo-api"
+        ws = Path(demo_workspace.ws)
+        path = ws / "demo-api"
         shutil.rmtree(path)
+        checks: list[str] = []
         if entry == "folder-with-file":
             path.mkdir()
             (path / "notes.txt").write_bytes(b"mine\n")
         elif entry == "regular-file":
             path.write_bytes(b"mine\n")
-        else:
+        elif entry == "dangling-link":
             path.symlink_to(Path(demo_workspace.base) / "nowhere")
+        else:
+            # A ``.git`` folder git cannot read, in a workspace that is itself a repo with an
+            # origin: git must not search upwards and fetch into the workspace's repo.
+            (path / ".git").mkdir(parents=True)
+            demo_workspace.git(ws, "init", "-q", "-b", "trunk")
+            demo_workspace.git(ws, "commit", "-q", "--allow-empty", "-m", "workspace")
+            demo_workspace.git(
+                ws, "remote", "add", "origin", str(demo_workspace.origin("demo-api"))
+            )
+            checks = [f"-C {_ws(demo_workspace)}/demo-api rev-parse --verify -q HEAD"]
+        refs = demo_workspace.git(ws, "for-each-ref") if entry == "empty-git-folder" else ""
         before = (tree_digest(path), _mtimes(path))
 
         result = run_setup(demo_workspace.hub, "--yes")
@@ -1398,8 +1414,15 @@ class TestRepos:
             f" untouched Fix: {MOVE_AWAY_FIX.format(dir='demo-api')}",
             "ok      repo demo-web: present, fetched",
         ]
-        assert [call for call in env_traced_git.calls() if "demo-api" in call.args] == []
-        assert result.stdout.splitlines()[-1] == "setup: 1 missing, 9 ok"
+        # Only the empty ``.git`` folder is asked for a commit; nothing is ever fetched there.
+        assert [call.args for call in env_traced_git.calls() if "demo-api" in call.args] == checks
+        totals = "setup: 1 missing, 9 ok"
+        if entry == "empty-git-folder":
+            assert demo_workspace.git(ws, "for-each-ref") == refs
+            # Doctor, read-only, reports the same folder: git puts it in the workspace's tree.
+            assert "error brain.leak ../demo-api: " in _doctor_lines(result.stdout)[1]
+            totals = "setup: 2 missing, 8 ok"
+        assert result.stdout.splitlines()[-1] == totals
         assert result.exit_code == 1
 
     def test_continues_after_failed_clone_when_origin_gone(
@@ -1496,6 +1519,90 @@ class TestRepos:
         assert result.stdout.splitlines()[-1] == "setup: 3 missing, 7 ok"
         assert result.exit_code == 1
 
+    def test_reports_failed_repos_when_git_cannot_run(
+        self,
+        demo_workspace: Workspace,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        _remove_repo(demo_workspace, "demo-web")
+        # On PATH and executable, but its interpreter does not exist: the exec fails.
+        broken = tmp_path / "broken-git-bin"
+        broken.mkdir()
+        git = broken / "git"
+        git.write_text(f"#!{tmp_path / 'no-such-interpreter'}\n", encoding="utf-8")
+        git.chmod(0o755)
+        monkeypatch.setenv("PATH", str(broken))
+
+        result = run_setup(demo_workspace.hub, "--yes")
+
+        assert _repo_lines(result.stdout) == [
+            f"missing repo {repo}: git could not run Fix: {GIT_FIX}"
+            for repo in ("demo-api", "demo-web")
+        ]
+        assert not (Path(demo_workspace.ws) / "demo-web").exists()
+        # The checklist goes on: doctor's line and the totals still print.
+        assert _doctor_lines(result.stdout)
+        assert result.stdout.splitlines()[-1].startswith("setup: ")
+        assert result.exit_code == 1
+
+    def test_reports_unborn_repo_when_clone_was_interrupted(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        tree_digest: TreeDigest,
+    ) -> None:
+        ws = Path(demo_workspace.ws)
+        path = ws / "demo-api"
+        shutil.rmtree(path)
+        # What a clone killed before its first checkout leaves: a repo with an origin, no commit.
+        demo_workspace.git(ws, "init", "-q", "demo-api")
+        demo_workspace.git(path, "remote", "add", "origin", str(demo_workspace.origin("demo-api")))
+        before = (tree_digest(path), _mtimes(path))
+
+        result = run_setup(demo_workspace.hub, "--yes")
+
+        assert _repo_lines(result.stdout) == [
+            "missing repo demo-api: ../demo-api has no commit (an interrupted clone?)"
+            f" Fix: {MOVE_AWAY_FIX.format(dir='demo-api')}",
+            "ok      repo demo-web: present, fetched",
+        ]
+        assert (tree_digest(path), _mtimes(path)) == before
+        assert [call.args for call in _network_calls(env_traced_git)] == [
+            f"-C {_ws(demo_workspace)}/demo-web fetch --quiet origin"
+        ]
+        assert result.stdout.splitlines()[-1] == "setup: 1 missing, 9 ok"
+        assert result.exit_code == 1
+
+    def test_fetches_linked_repo_when_dir_is_symlink(
+        self, demo_workspace: Workspace, env_traced_git: TracedGit, run_setup: SetupRunner
+    ) -> None:
+        ws = Path(demo_workspace.ws)
+        real = Path(demo_workspace.base) / "elsewhere" / "demo-api"
+        real.parent.mkdir()
+        (ws / "demo-api").rename(real)
+        (ws / "demo-api").symlink_to(real)
+
+        result = run_setup(demo_workspace.hub, "--yes")
+
+        assert _repo_lines(result.stdout) == [
+            "ok      repo demo-api: present, fetched",
+            "ok      repo demo-web: present, fetched",
+        ]
+        assert f"-C {_ws(demo_workspace)}/demo-api fetch --quiet origin" in [
+            call.args for call in _network_calls(env_traced_git)
+        ]
+        # The fetch reached the linked clone: its origin branch is the origin's head.
+        assert demo_workspace.git(real, "rev-parse", "origin/trunk") == (
+            demo_workspace.origin_head("demo-api")
+        )
+        assert (ws / "demo-api").is_symlink()
+        assert result.exit_code == 0, result.output
+
 
 # Top level, so ``-k "scheme or url"`` selects it.
 @pytest.mark.usefixtures("tools_ok")
@@ -1582,6 +1689,8 @@ _DOCTOR_LINE = re.compile(r"^(ok|missing) +hub doctor: ")
 _READ_ONLY_GIT = ("config --get ", "rev-parse ", "ls-files ")
 # A call's leading ``-c <name>=<value>`` options (doctor's git sets some): no subcommand.
 _GIT_OPTIONS = re.compile(r"^(-c [^ ]+ )+")
+# Setup's check that a present repo has a commit (``-C <repo>``, then a read): no write.
+_COMMIT_CHECK = re.compile(r"^-C [^ ]+ rev-parse --verify -q HEAD$")
 NO_GIT_FINDING_END = (
     "could not list the files: git not found Fix: fix the cause above so every file can be"
     " listed and read, then run hub doctor again"
@@ -1709,7 +1818,11 @@ class TestIdempotent:
         assert others
         for args in others:
             command = _GIT_OPTIONS.sub("", args)
-            assert command.startswith(_READ_ONLY_GIT) or " check-ignore -q " in command, args
+            assert (
+                command.startswith(_READ_ONLY_GIT)
+                or " check-ignore -q " in command
+                or _COMMIT_CHECK.match(command)
+            ), args
         assert _snapshot(hub / LOCAL_FILE) == local
         assert (tree_digest(hub), _mtimes(hub)) == hub_before
         assert [(_work_tree(tree_digest(r)), _work_tree(_mtimes(r))) for r in repos] == repos_before

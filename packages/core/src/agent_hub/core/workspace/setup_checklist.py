@@ -120,7 +120,9 @@ class RepoOutcome(StrEnum):
     FETCH_FAILED = "fetch-failed"
     FETCH_TIMED_OUT = "fetch-timed-out"
     NOT_A_REPO = "not-a-repo"
+    NO_COMMIT = "no-commit"
     GIT_NOT_FOUND = "git-not-found"
+    GIT_CANNOT_RUN = "git-cannot-run"
 
 
 class _Text(NamedTuple):
@@ -164,7 +166,11 @@ _REPO_TEXTS: Final[Mapping[RepoOutcome, _Text]] = {
     RepoOutcome.NOT_A_REPO: _Text(
         "../{dir} exists but is not a git repository; left untouched", MOVE_AWAY_FIX
     ),
+    # A clone killed mid-way leaves a .git with no commit, where a fetch would succeed (E27).
+    RepoOutcome.NO_COMMIT: _Text("../{dir} has no commit (an interrupted clone?)", MOVE_AWAY_FIX),
     RepoOutcome.GIT_NOT_FOUND: _Text("git not found", GIT_FIX),
+    # On PATH, but the exec failed (a bad interpreter, a broken binary): erratum E24.
+    RepoOutcome.GIT_CANNOT_RUN: _Text("git could not run", GIT_FIX),
 }
 
 _REPO_ARGUMENTS: Final[Mapping[RepoOutcome, str]] = {
