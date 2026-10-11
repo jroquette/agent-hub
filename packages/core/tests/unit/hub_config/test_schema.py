@@ -59,6 +59,24 @@ def test_describes_guard_infra_when_schema_exported() -> None:
         assert patterns["default"] == [], key
 
 
+def test_describes_tracker_states_when_schema_shipped() -> None:
+    schema = read_shipped_schema()
+    definitions = schema["$defs"]
+
+    assert definitions["Tracker"]["properties"]["states"] == {"$ref": "#/$defs/TrackerStates"}
+    tracker_states = definitions["TrackerStates"]
+    assert tracker_states["additionalProperties"] is False
+    assert tracker_states["patternProperties"] == COMMENT_KEYS
+    assert "required" not in tracker_states
+    for key, default in (("started", "In Progress"), ("review", "In Review")):
+        state = tracker_states["properties"][key]
+        assert state["type"] == "string", key
+        assert state["minLength"] == 1, key
+        assert state["default"] == default, key
+    # The key is optional with defaults, so the schema version does not move.
+    assert schema["properties"]["schema_version"]["const"] == 1
+
+
 def test_forbids_extra_keys_when_object_has_fixed_keys() -> None:
     schema = read_shipped_schema()
     maps: list[tuple[str, dict[str, Any]]] = []
