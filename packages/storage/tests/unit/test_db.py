@@ -9,17 +9,34 @@ from agent_hub.storage.db import UtcDateTime, events, metadata
 
 def test_declares_events_table_when_metadata_loaded() -> None:
     assert set(metadata.tables) == {"events"}
-    required = {"id", "project", "session", "type", "source", "source_id", "timestamp", "payload"}
-    optional = {"repo", "agent", "workflow", "step"}
+    required = {
+        "id",
+        "project",
+        "session",
+        "type",
+        "source",
+        "source_id",
+        "timestamp",
+        "payload",
+        "event_id",
+    }
+    optional = {"repo", "agent", "workflow", "step", "received_at"}
     assert {column.name for column in events.columns} == required | optional
     assert {column.name for column in events.columns if not column.nullable} == required
     assert [column.name for column in events.primary_key] == ["id"]
     assert isinstance(events.c.timestamp.type, UtcDateTime)
+    assert isinstance(events.c.received_at.type, UtcDateTime)
     assert isinstance(events.c.payload.type, JSON)
     unique = [item for item in events.constraints if isinstance(item, UniqueConstraint)]
-    assert [(item.name, [column.name for column in item.columns]) for item in unique] == [
-        ("uq_events_source_source_id", ["source", "source_id"])
+    assert sorted((item.name, [column.name for column in item.columns]) for item in unique) == [
+        ("uq_events_event_id", ["event_id"]),
+        ("uq_events_source_source_id", ["source", "source_id"]),
     ]
+    assert {index.name: [column.name for column in index.columns] for index in events.indexes} == {
+        "ix_events_project_session_id": ["project", "session", "id"],
+        "ix_events_project_type_timestamp": ["project", "type", "timestamp"],
+        "ix_events_project_timestamp": ["project", "timestamp"],
+    }
 
 
 def test_stores_utc_when_bound_value_has_offset() -> None:
