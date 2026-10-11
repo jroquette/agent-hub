@@ -1,0 +1,6816 @@
+{
+  "components": {
+    "schemas": {
+      "AcCounts": {
+        "additionalProperties": false,
+        "description": "Passing and total acceptance criteria, and how many are owner steps.",
+        "properties": {
+          "owner_steps": {
+            "minimum": 0.0,
+            "title": "Owner Steps",
+            "type": "integer"
+          },
+          "passing": {
+            "minimum": 0.0,
+            "title": "Passing",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "passing",
+          "total",
+          "owner_steps"
+        ],
+        "title": "AcCounts",
+        "type": "object"
+      },
+      "AcRow": {
+        "additionalProperties": false,
+        "description": "One acceptance criterion of ``features.json``.",
+        "properties": {
+          "command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "manual": {
+            "default": false,
+            "title": "Manual",
+            "type": "boolean"
+          },
+          "passes": {
+            "title": "Passes",
+            "type": "boolean"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          }
+        },
+        "required": [
+          "id",
+          "description",
+          "repo",
+          "passes"
+        ],
+        "title": "AcRow",
+        "type": "object"
+      },
+      "ActivityItem": {
+        "additionalProperties": false,
+        "description": "A notable event in the activity feed.",
+        "properties": {
+          "at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "href": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Href"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ActivityKind"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "text",
+          "project",
+          "at",
+          "href"
+        ],
+        "title": "ActivityItem",
+        "type": "object"
+      },
+      "ActivityKind": {
+        "enum": [
+          "reported",
+          "failed",
+          "learning",
+          "doctor",
+          "approval"
+        ],
+        "type": "string"
+      },
+      "ApiTimestamp": {
+        "format": "date-time",
+        "type": "string"
+      },
+      "Approval": {
+        "additionalProperties": false,
+        "description": "An approval. ``decided`` once a matching result exists; ``inferred`` when the decision is\ndeduced (a guard ask with no tool run before the next prompt or stop is declined).\n\n``how_to_decide`` is the terminal command that answers it, since Phase 2 is read-only:\n``cd <hub path> && claude --resume <session id>``.",
+        "properties": {
+          "decided": {
+            "title": "Decided",
+            "type": "boolean"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decision_event_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "derived": {
+            "default": true,
+            "title": "Derived",
+            "type": "boolean"
+          },
+          "feature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feature"
+          },
+          "gate_id": {
+            "title": "Gate Id",
+            "type": "string"
+          },
+          "how_to_decide": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "How To Decide"
+          },
+          "hub_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hub Path"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "inferred": {
+            "default": false,
+            "title": "Inferred",
+            "type": "boolean"
+          },
+          "issue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ApprovalKind"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          },
+          "request_event_id": {
+            "$ref": "#/components/schemas/EventId"
+          },
+          "requested_at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "requested_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By"
+          },
+          "rule": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "sources_missing": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EventSource"
+            },
+            "title": "Sources Missing",
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ApprovalStatus"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project",
+          "repo",
+          "kind",
+          "title",
+          "status",
+          "decided",
+          "gate_id",
+          "session_id",
+          "requested_by",
+          "requested_at",
+          "request_event_id"
+        ],
+        "title": "Approval",
+        "type": "object"
+      },
+      "ApprovalKind": {
+        "description": "The kinds of request D24 lists.",
+        "enum": [
+          "guard_ask",
+          "plan",
+          "spec",
+          "human_gate",
+          "permission"
+        ],
+        "title": "ApprovalKind",
+        "type": "string"
+      },
+      "ApprovalStatus": {
+        "enum": [
+          "open",
+          "approved",
+          "declined",
+          "changes_requested",
+          "rejected"
+        ],
+        "type": "string"
+      },
+      "CollectorStatus": {
+        "additionalProperties": false,
+        "description": "``GET /collector/status``: what ``hub web`` received and stored since it started.",
+        "properties": {
+          "appended": {
+            "minimum": 0.0,
+            "title": "Appended",
+            "type": "integer"
+          },
+          "db_path": {
+            "title": "Db Path",
+            "type": "string"
+          },
+          "duplicates": {
+            "minimum": 0.0,
+            "title": "Duplicates",
+            "type": "integer"
+          },
+          "events_total": {
+            "minimum": 0.0,
+            "title": "Events Total",
+            "type": "integer"
+          },
+          "hooks_received": {
+            "minimum": 0.0,
+            "title": "Hooks Received",
+            "type": "integer"
+          },
+          "last_event_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "redaction_ruleset": {
+            "default": "r1",
+            "title": "Redaction Ruleset",
+            "type": "string"
+          },
+          "running_version": {
+            "title": "Running Version",
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/SourceStatus"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "started_at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "state": {
+            "const": "running",
+            "default": "running",
+            "title": "State",
+            "type": "string"
+          },
+          "transcript_lines_skipped": {
+            "minimum": 0.0,
+            "title": "Transcript Lines Skipped",
+            "type": "integer"
+          },
+          "transcript_refused": {
+            "minimum": 0.0,
+            "title": "Transcript Refused",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "db_path",
+          "running_version",
+          "started_at",
+          "events_total",
+          "hooks_received",
+          "appended",
+          "duplicates",
+          "transcript_refused",
+          "transcript_lines_skipped",
+          "last_event_at",
+          "sources"
+        ],
+        "title": "CollectorStatus",
+        "type": "object"
+      },
+      "EventId": {
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "EventSource": {
+        "description": "Where an event comes from; with ``source_id`` it identifies the event.",
+        "enum": [
+          "claude_code",
+          "transcript",
+          "otel",
+          "executor",
+          "github",
+          "linear"
+        ],
+        "title": "EventSource",
+        "type": "string"
+      },
+      "EventType": {
+        "description": "The closed list of event types in the SPEC; widening it later is a compatible change.",
+        "enum": [
+          "session.start",
+          "session.end",
+          "tool.call",
+          "tool.result",
+          "message",
+          "reasoning",
+          "decision",
+          "gate.request",
+          "gate.result",
+          "learning.proposed",
+          "learning.accepted",
+          "learning.rejected",
+          "step.start",
+          "step.end",
+          "run.end",
+          "session.summary"
+        ],
+        "title": "EventType",
+        "type": "string"
+      },
+      "FeatureDetail": {
+        "additionalProperties": false,
+        "description": "A feature with its acceptance criteria rows.",
+        "properties": {
+          "ac_rows": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AcRow"
+            },
+            "title": "Ac Rows",
+            "type": "array"
+          },
+          "acs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AcCounts"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "derived": {
+            "default": true,
+            "title": "Derived",
+            "type": "boolean"
+          },
+          "files": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "issues": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/FeaturePhase"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Problem"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "repos": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Repos",
+            "type": "array"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "enum": [
+                  "spike",
+                  "bounded",
+                  "architectural"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "sources_missing": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EventSource"
+            },
+            "title": "Sources Missing",
+            "type": "array"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Verdict"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verdict_line": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict Line"
+          }
+        },
+        "required": [
+          "project",
+          "slug",
+          "issues",
+          "size",
+          "phase",
+          "files",
+          "acs",
+          "verdict",
+          "verdict_line",
+          "repos"
+        ],
+        "title": "FeatureDetail",
+        "type": "object"
+      },
+      "FeaturePhase": {
+        "enum": [
+          "spec",
+          "research",
+          "plan",
+          "tickets",
+          "implement",
+          "review",
+          "evaluate",
+          "shipped"
+        ],
+        "type": "string"
+      },
+      "FeatureView": {
+        "additionalProperties": false,
+        "description": "A feature as the Features list shows it; ``problem`` when a file of it is malformed.",
+        "properties": {
+          "acs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AcCounts"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "derived": {
+            "default": true,
+            "title": "Derived",
+            "type": "boolean"
+          },
+          "files": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "issues": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "phase": {
+            "$ref": "#/components/schemas/FeaturePhase"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Problem"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "repos": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Repos",
+            "type": "array"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "enum": [
+                  "spike",
+                  "bounded",
+                  "architectural"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "sources_missing": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EventSource"
+            },
+            "title": "Sources Missing",
+            "type": "array"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Verdict"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verdict_line": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict Line"
+          }
+        },
+        "required": [
+          "project",
+          "slug",
+          "issues",
+          "size",
+          "phase",
+          "files",
+          "acs",
+          "verdict",
+          "verdict_line",
+          "repos"
+        ],
+        "title": "FeatureView",
+        "type": "object"
+      },
+      "FileOperation": {
+        "enum": [
+          "read",
+          "edited",
+          "created",
+          "written"
+        ],
+        "type": "string"
+      },
+      "FindingView": {
+        "additionalProperties": false,
+        "description": "A finding of a registered hub's doctor run.",
+        "properties": {
+          "fix": {
+            "title": "Fix",
+            "type": "string"
+          },
+          "line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "rule": {
+            "title": "Rule",
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          }
+        },
+        "required": [
+          "project",
+          "rule",
+          "severity",
+          "path",
+          "line",
+          "message",
+          "fix"
+        ],
+        "title": "FindingView",
+        "type": "object"
+      },
+      "HookAccepted": {
+        "additionalProperties": false,
+        "description": "``POST /events/hooks``: how many events the envelope added and how many were known.",
+        "properties": {
+          "appended": {
+            "minimum": 0.0,
+            "title": "Appended",
+            "type": "integer"
+          },
+          "duplicates": {
+            "minimum": 0.0,
+            "title": "Duplicates",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "appended",
+          "duplicates"
+        ],
+        "title": "HookAccepted",
+        "type": "object"
+      },
+      "HookDecision": {
+        "additionalProperties": false,
+        "description": "What the guard or the Stop gate decided, sent with the hook input that caused it.",
+        "properties": {
+          "by": {
+            "enum": [
+              "guard",
+              "stop_gate"
+            ],
+            "title": "By",
+            "type": "string"
+          },
+          "command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "kind": {
+            "enum": [
+              "deny",
+              "ask",
+              "block"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "rule": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule"
+          }
+        },
+        "required": [
+          "by",
+          "kind"
+        ],
+        "title": "HookDecision",
+        "type": "object"
+      },
+      "HookEnvelope": {
+        "additionalProperties": false,
+        "description": "Version 1 of the sensor's envelope.\n\n``project`` comes from the hub's ``hub.json``; ``repo`` from the hook's cwd (a repo checkout\nor one of its worktrees), else None; ``run``, ``step`` and ``attempt`` from the variables\n``hub run`` sets for its session. ``hook`` is the Claude Code hook input as received, with\noversized strings already omitted by the sensor.",
+        "properties": {
+          "attempt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HookDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hook": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Hook",
+            "type": "object"
+          },
+          "project": {
+            "minLength": 1,
+            "title": "Project",
+            "type": "string"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          },
+          "run": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run"
+          },
+          "sent_at": {
+            "$ref": "#/components/schemas/UtcTimestamp"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step"
+          },
+          "v": {
+            "const": 1,
+            "title": "V",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "v",
+          "project",
+          "sent_at",
+          "hook"
+        ],
+        "title": "HookEnvelope",
+        "type": "object"
+      },
+      "HubCreate": {
+        "additionalProperties": false,
+        "description": "``POST /hubs``: the absolute path of a hub to register.",
+        "properties": {
+          "path": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "HubCreate",
+        "type": "object"
+      },
+      "HubHealth": {
+        "enum": [
+          "ok",
+          "warning",
+          "error"
+        ],
+        "type": "string"
+      },
+      "HubView": {
+        "additionalProperties": false,
+        "description": "A registered hub as read now.\n\n``valid`` is false when ``hub.json`` is unreadable or does not match the schema\n(``validation_errors``). A pin other than the running version is read anyway and shows as\na warning (\"pinned X, running Y\").",
+        "properties": {
+          "added_at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "guard_ask_before_edit": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Guard Ask Before Edit",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "lock_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LockState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lock_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lock Version"
+          },
+          "modules": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Modules",
+            "type": "array"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "platform_pin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Platform Pin"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "repos": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Repos",
+            "type": "array"
+          },
+          "running_version": {
+            "title": "Running Version",
+            "type": "string"
+          },
+          "valid": {
+            "title": "Valid",
+            "type": "boolean"
+          },
+          "validation_errors": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ValidationProblem"
+            },
+            "title": "Validation Errors",
+            "type": "array"
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "path",
+          "added_at",
+          "project",
+          "platform_pin",
+          "running_version",
+          "lock_version",
+          "lock_state",
+          "modules",
+          "guard_ask_before_edit",
+          "repos",
+          "valid"
+        ],
+        "title": "HubView",
+        "type": "object"
+      },
+      "IssueRef": {
+        "additionalProperties": false,
+        "description": "The tracker issue a run works on; title and url need Linear (``null`` in Phase 2).",
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "IssueRef",
+        "type": "object"
+      },
+      "JsonValue": {},
+      "Learning": {
+        "additionalProperties": false,
+        "description": "A learning; ``text`` is its title (120 characters at most, redacted).",
+        "properties": {
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author"
+          },
+          "brain_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brain Path"
+          },
+          "commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decided_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By"
+          },
+          "derived": {
+            "default": true,
+            "title": "Derived",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "proposed_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "enum": [
+                  "human",
+                  "agent",
+                  "agent-from-code",
+                  "agent-from-external"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provenance"
+          },
+          "rejection_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejection Reason"
+          },
+          "source_event_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Session Id"
+          },
+          "sources_missing": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EventSource"
+            },
+            "title": "Sources Missing",
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/components/schemas/LearningStatus"
+          },
+          "target": {
+            "$ref": "#/components/schemas/LearningTarget"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project",
+          "text",
+          "target",
+          "author",
+          "provenance",
+          "status",
+          "source_session_id",
+          "source_event_id",
+          "proposed_at"
+        ],
+        "title": "Learning",
+        "type": "object"
+      },
+      "LearningStatus": {
+        "description": "Where a learning is: proposed until a terminal event in source order decides it.",
+        "enum": [
+          "proposed",
+          "accepted",
+          "rejected"
+        ],
+        "title": "LearningStatus",
+        "type": "string"
+      },
+      "LearningTarget": {
+        "additionalProperties": false,
+        "description": "Where a learning would go: team brain, a repo's AGENTS.md, or personal memory.",
+        "properties": {
+          "kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "team",
+                  "repo",
+                  "personal"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          }
+        },
+        "required": [
+          "kind",
+          "path"
+        ],
+        "title": "LearningTarget",
+        "type": "object"
+      },
+      "LiveTile": {
+        "additionalProperties": false,
+        "description": "A session tile of the Live sessions screen.",
+        "properties": {
+          "agent": {
+            "title": "Agent",
+            "type": "string"
+          },
+          "attempt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt"
+          },
+          "budget_usd": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "derived": {
+            "default": true,
+            "title": "Derived",
+            "type": "boolean"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "errors": {
+            "minimum": 0.0,
+            "title": "Errors",
+            "type": "integer"
+          },
+          "failing_notice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failing Notice"
+          },
+          "files_touched": {
+            "minimum": 0.0,
+            "title": "Files Touched",
+            "type": "integer"
+          },
+          "group": {
+            "$ref": "#/components/schemas/TileGroup"
+          },
+          "guard_denials": {
+            "minimum": 0.0,
+            "title": "Guard Denials",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "is_subagent": {
+            "default": false,
+            "title": "Is Subagent",
+            "type": "boolean"
+          },
+          "issue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue"
+          },
+          "last_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Action"
+          },
+          "last_activity_at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "last_tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Tool"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Outcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "sources_missing": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EventSource"
+            },
+            "title": "Sources Missing",
+            "type": "array"
+          },
+          "sparkline_60s": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Sparkline 60S",
+            "type": "array"
+          },
+          "started_at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionStatus"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step"
+          },
+          "tokens_total": {
+            "minimum": 0.0,
+            "title": "Tokens Total",
+            "type": "integer"
+          },
+          "turns": {
+            "minimum": 0.0,
+            "title": "Turns",
+            "type": "integer"
+          },
+          "waiting_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting Reason"
+          }
+        },
+        "required": [
+          "id",
+          "project",
+          "repo",
+          "agent",
+          "status",
+          "group",
+          "last_action",
+          "last_tool",
+          "last_activity_at",
+          "started_at",
+          "turns",
+          "tokens_total",
+          "files_touched",
+          "errors",
+          "guard_denials",
+          "cost_usd"
+        ],
+        "title": "LiveTile",
+        "type": "object"
+      },
+      "LockState": {
+        "enum": [
+          "in_sync",
+          "drift",
+          "sync_pending",
+          "not_adopted"
+        ],
+        "type": "string"
+      },
+      "Money": {
+        "pattern": "^-?[0-9]+\\.[0-9]{4}$",
+        "type": "string"
+      },
+      "NeedsYouItem": {
+        "additionalProperties": false,
+        "description": "A verb-first line of the Needs you list.",
+        "properties": {
+          "context": {
+            "title": "Context",
+            "type": "string"
+          },
+          "href": {
+            "title": "Href",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/NeedsYouKind"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verb": {
+            "title": "Verb",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "verb",
+          "context",
+          "project",
+          "since",
+          "href"
+        ],
+        "title": "NeedsYouItem",
+        "type": "object"
+      },
+      "NeedsYouKind": {
+        "enum": [
+          "approval",
+          "failed",
+          "waiting",
+          "blocked",
+          "doctor",
+          "learning"
+        ],
+        "type": "string"
+      },
+      "NowItem": {
+        "additionalProperties": false,
+        "description": "One line of ``brain/now.md``.",
+        "properties": {
+          "last_verified": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Verified"
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provenance"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "NowItem",
+        "type": "object"
+      },
+      "Outcome": {
+        "description": "How an ended session ended; ``None`` when no source says.",
+        "enum": [
+          "done",
+          "stopped",
+          "blocked",
+          "error"
+        ],
+        "title": "Outcome",
+        "type": "string"
+      },
+      "Page_ActivityItem_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total_estimate": {
+            "minimum": 0.0,
+            "title": "Total Estimate",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_estimate"
+        ],
+        "title": "Page[ActivityItem]",
+        "type": "object"
+      },
+      "Page_Approval_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Approval"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total_estimate": {
+            "minimum": 0.0,
+            "title": "Total Estimate",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_estimate"
+        ],
+        "title": "Page[Approval]",
+        "type": "object"
+      },
+      "Page_FeatureView_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FeatureView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total_estimate": {
+            "minimum": 0.0,
+            "title": "Total Estimate",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_estimate"
+        ],
+        "title": "Page[FeatureView]",
+        "type": "object"
+      },
+      "Page_FindingView_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FindingView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total_estimate": {
+            "minimum": 0.0,
+            "title": "Total Estimate",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_estimate"
+        ],
+        "title": "Page[FindingView]",
+        "type": "object"
+      },
+      "Page_HubView_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/HubView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total_estimate": {
+            "minimum": 0.0,
+            "title": "Total Estimate",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_estimate"
+        ],
+        "title": "Page[HubView]",
+        "type": "object"
+      },
+      "Page_Learning_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Learning"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total_estimate": {
+            "minimum": 0.0,
+            "title": "Total Estimate",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_estimate"
+        ],
+        "title": "Page[Learning]",
+        "type": "object"
+      },
+      "Page_LiveTile_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LiveTile"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total_estimate": {
+            "minimum": 0.0,
+            "title": "Total Estimate",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_estimate"
+        ],
+        "title": "Page[LiveTile]",
+        "type": "object"
+      },
+      "Page_NeedsYouItem_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/NeedsYouItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total_estimate": {
+            "minimum": 0.0,
+            "title": "Total Estimate",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_estimate"
+        ],
+        "title": "Page[NeedsYouItem]",
+        "type": "object"
+      },
+      "Page_ProjectSummary_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total_estimate": {
+            "minimum": 0.0,
+            "title": "Total Estimate",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_estimate"
+        ],
+        "title": "Page[ProjectSummary]",
+        "type": "object"
+      },
+      "Page_RepoView_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RepoView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total_estimate": {
+            "minimum": 0.0,
+            "title": "Total Estimate",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_estimate"
+        ],
+        "title": "Page[RepoView]",
+        "type": "object"
+      },
+      "Page_SearchHit_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total_estimate": {
+            "minimum": 0.0,
+            "title": "Total Estimate",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_estimate"
+        ],
+        "title": "Page[SearchHit]",
+        "type": "object"
+      },
+      "Page_SessionFileChange_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SessionFileChange"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total_estimate": {
+            "minimum": 0.0,
+            "title": "Total Estimate",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_estimate"
+        ],
+        "title": "Page[SessionFileChange]",
+        "type": "object"
+      },
+      "Page_Session_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Session"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total_estimate": {
+            "minimum": 0.0,
+            "title": "Total Estimate",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_estimate"
+        ],
+        "title": "Page[Session]",
+        "type": "object"
+      },
+      "Page_TimelineEvent_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TimelineEvent"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total_estimate": {
+            "minimum": 0.0,
+            "title": "Total Estimate",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_estimate"
+        ],
+        "title": "Page[TimelineEvent]",
+        "type": "object"
+      },
+      "Page_WorkflowRun_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowRun"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total_estimate": {
+            "minimum": 0.0,
+            "title": "Total Estimate",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_estimate"
+        ],
+        "title": "Page[WorkflowRun]",
+        "type": "object"
+      },
+      "ProblemDetails": {
+        "additionalProperties": true,
+        "description": "An RFC 9457 problem; extension members (``errors``) are allowed.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "instance": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instance"
+          },
+          "status": {
+            "title": "Status",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "default": "about:blank",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "status"
+        ],
+        "title": "ProblemDetails",
+        "type": "object"
+      },
+      "ProjectDetail": {
+        "additionalProperties": false,
+        "description": "The Project overview header.",
+        "properties": {
+          "branch_prefix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Prefix"
+          },
+          "default_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Branch"
+          },
+          "hub_id": {
+            "title": "Hub Id",
+            "type": "string"
+          },
+          "hub_path": {
+            "title": "Hub Path",
+            "type": "string"
+          },
+          "hub_repo": {
+            "title": "Hub Repo",
+            "type": "string"
+          },
+          "lock_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LockState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lock_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lock Version"
+          },
+          "modules": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Modules",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "platform_version": {
+            "title": "Platform Version",
+            "type": "string"
+          },
+          "tracker": {
+            "$ref": "#/components/schemas/TrackerView"
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "hub_id",
+          "hub_path",
+          "hub_repo",
+          "tracker",
+          "default_branch",
+          "branch_prefix",
+          "platform_version",
+          "lock_version",
+          "lock_state",
+          "modules"
+        ],
+        "title": "ProjectDetail",
+        "type": "object"
+      },
+      "ProjectNow": {
+        "additionalProperties": false,
+        "description": "``brain/now.md`` split into its sections; ``problem`` when it cannot be read.",
+        "properties": {
+          "focus": {
+            "items": {
+              "$ref": "#/components/schemas/NowItem"
+            },
+            "title": "Focus",
+            "type": "array"
+          },
+          "next": {
+            "items": {
+              "$ref": "#/components/schemas/NowItem"
+            },
+            "title": "Next",
+            "type": "array"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Problem"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "source_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Path"
+          },
+          "watch": {
+            "items": {
+              "$ref": "#/components/schemas/NowItem"
+            },
+            "title": "Watch",
+            "type": "array"
+          }
+        },
+        "required": [
+          "project",
+          "focus",
+          "next",
+          "watch",
+          "source_path"
+        ],
+        "title": "ProjectNow",
+        "type": "object"
+      },
+      "ProjectSummary": {
+        "additionalProperties": false,
+        "description": "A Portfolio card: hub config plus the project's activity; PRs and issues need sources\nnot connected in Phase 2 (``null``).",
+        "properties": {
+          "cost_daily": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Money"
+            },
+            "title": "Cost Daily",
+            "type": "array"
+          },
+          "cost_period": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cost_previous_period": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "derived": {
+            "default": true,
+            "title": "Derived",
+            "type": "boolean"
+          },
+          "failed_runs_7d": {
+            "minimum": 0.0,
+            "title": "Failed Runs 7D",
+            "type": "integer"
+          },
+          "hub_health": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HubHealth"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hub_id": {
+            "title": "Hub Id",
+            "type": "string"
+          },
+          "hub_repo": {
+            "title": "Hub Repo",
+            "type": "string"
+          },
+          "live_sessions": {
+            "minimum": 0.0,
+            "title": "Live Sessions",
+            "type": "integer"
+          },
+          "lock_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LockState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lock_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lock Version"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "open_prs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Prs"
+          },
+          "platform_version": {
+            "title": "Platform Version",
+            "type": "string"
+          },
+          "ready_issues": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ready Issues"
+          },
+          "repos": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Repos",
+            "type": "array"
+          },
+          "runs_in_flight_by_stage": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/Stage"
+            },
+            "title": "Runs In Flight By Stage",
+            "type": "object"
+          },
+          "sources_missing": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EventSource"
+            },
+            "title": "Sources Missing",
+            "type": "array"
+          },
+          "tracker_teams": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tracker Teams",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "hub_id",
+          "hub_repo",
+          "tracker_teams",
+          "platform_version",
+          "lock_version",
+          "lock_state",
+          "repos",
+          "hub_health",
+          "live_sessions",
+          "runs_in_flight_by_stage",
+          "failed_runs_7d",
+          "cost_period",
+          "cost_previous_period"
+        ],
+        "title": "ProjectSummary",
+        "type": "object"
+      },
+      "PullRequestRef": {
+        "additionalProperties": false,
+        "description": "A pull request; GitHub is not connected in Phase 2, so sessions carry ``null``.",
+        "properties": {
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "url",
+          "state"
+        ],
+        "title": "PullRequestRef",
+        "type": "object"
+      },
+      "RepoView": {
+        "additionalProperties": false,
+        "description": "A repo of the project as ``hub.json`` and its checkout describe it.",
+        "properties": {
+          "agents_md_lines": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agents Md Lines"
+          },
+          "agents_md_present": {
+            "title": "Agents Md Present",
+            "type": "boolean"
+          },
+          "check": {
+            "title": "Check",
+            "type": "string"
+          },
+          "check_fast": {
+            "title": "Check Fast",
+            "type": "string"
+          },
+          "default_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Branch"
+          },
+          "derived": {
+            "default": true,
+            "title": "Derived",
+            "type": "boolean"
+          },
+          "dir": {
+            "title": "Dir",
+            "type": "string"
+          },
+          "github": {
+            "title": "Github",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "open_prs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Prs"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          },
+          "sources_missing": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EventSource"
+            },
+            "title": "Sources Missing",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "dir",
+          "github",
+          "role",
+          "default_branch",
+          "check_fast",
+          "check",
+          "agents_md_present",
+          "agents_md_lines"
+        ],
+        "title": "RepoView",
+        "type": "object"
+      },
+      "RunCaps": {
+        "additionalProperties": false,
+        "description": "The limits a run started with.",
+        "properties": {
+          "budget_usd": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max_turns": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Turns"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "tracker_transport": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tracker Transport"
+          }
+        },
+        "required": [
+          "budget_usd",
+          "max_turns",
+          "model",
+          "tracker_transport"
+        ],
+        "title": "RunCaps",
+        "type": "object"
+      },
+      "RunFailure": {
+        "additionalProperties": false,
+        "description": "Where and why a run failed, and the event to open (\"Open failing moment\").",
+        "properties": {
+          "diagnosis_comment_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diagnosis Comment Url"
+          },
+          "failing_event_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          }
+        },
+        "required": [
+          "stage",
+          "reason",
+          "failing_event_id"
+        ],
+        "title": "RunFailure",
+        "type": "object"
+      },
+      "RunGateResult": {
+        "additionalProperties": false,
+        "description": "A gate the executor ran (``gate_ok`` or a failed check).",
+        "properties": {
+          "command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "event_id": {
+            "$ref": "#/components/schemas/EventId"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "result": {
+            "enum": [
+              "passed",
+              "failed"
+            ],
+            "title": "Result",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "result"
+        ],
+        "title": "RunGateResult",
+        "type": "object"
+      },
+      "RunStep": {
+        "additionalProperties": false,
+        "description": "One step attempt, keyed ``(key, attempt)``; a loop back into verify is attempt 2.",
+        "properties": {
+          "attempt": {
+            "minimum": 1.0,
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "key": {
+            "$ref": "#/components/schemas/StepKey"
+          },
+          "max_attempts": {
+            "minimum": 1.0,
+            "title": "Max Attempts",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "session_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Session Ids",
+            "type": "array"
+          },
+          "started_at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "status": {
+            "$ref": "#/components/schemas/StepStatus"
+          }
+        },
+        "required": [
+          "key",
+          "attempt",
+          "max_attempts",
+          "status",
+          "started_at",
+          "ended_at"
+        ],
+        "title": "RunStep",
+        "type": "object"
+      },
+      "SearchHit": {
+        "additionalProperties": false,
+        "description": "A search result over ids, paths, commands and tool names; never payload bodies.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "href": {
+            "title": "Href",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SearchKind"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          }
+        },
+        "required": [
+          "kind",
+          "label",
+          "detail",
+          "project",
+          "href"
+        ],
+        "title": "SearchHit",
+        "type": "object"
+      },
+      "SearchKind": {
+        "enum": [
+          "session",
+          "run",
+          "approval",
+          "learning",
+          "feature",
+          "file",
+          "command",
+          "tool"
+        ],
+        "type": "string"
+      },
+      "Session": {
+        "additionalProperties": false,
+        "description": "A session folded from its events (status, counts, tokens, estimated cost).",
+        "properties": {
+          "agent": {
+            "title": "Agent",
+            "type": "string"
+          },
+          "attempt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt"
+          },
+          "cost_unknown_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Unknown Reason"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "derived": {
+            "default": true,
+            "title": "Derived",
+            "type": "boolean"
+          },
+          "end_inferred": {
+            "default": false,
+            "title": "End Inferred",
+            "type": "boolean"
+          },
+          "end_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Reason"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "errors": {
+            "minimum": 0.0,
+            "title": "Errors",
+            "type": "integer"
+          },
+          "files_touched": {
+            "minimum": 0.0,
+            "title": "Files Touched",
+            "type": "integer"
+          },
+          "gates": {
+            "minimum": 0.0,
+            "title": "Gates",
+            "type": "integer"
+          },
+          "guard_denials": {
+            "minimum": 0.0,
+            "title": "Guard Denials",
+            "type": "integer"
+          },
+          "has_transcript": {
+            "title": "Has Transcript",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "issue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue"
+          },
+          "last_activity_at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "learnings_proposed": {
+            "minimum": 0.0,
+            "title": "Learnings Proposed",
+            "type": "integer"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Outcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "parent_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Session Id"
+          },
+          "pr": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PullRequestRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/SessionSegment"
+            },
+            "title": "Segments",
+            "type": "array"
+          },
+          "sources_missing": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EventSource"
+            },
+            "title": "Sources Missing",
+            "type": "array"
+          },
+          "started_at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionStatus"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step"
+          },
+          "tokens": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TokenUsage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tool_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Tool Counts",
+            "type": "object"
+          },
+          "turns": {
+            "minimum": 0.0,
+            "title": "Turns",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "project",
+          "repo",
+          "agent",
+          "started_at",
+          "ended_at",
+          "last_activity_at",
+          "segments",
+          "status",
+          "outcome",
+          "end_reason",
+          "turns",
+          "tool_counts",
+          "files_touched",
+          "errors",
+          "guard_denials",
+          "gates",
+          "learnings_proposed",
+          "model",
+          "tokens",
+          "cost_usd",
+          "has_transcript"
+        ],
+        "title": "Session",
+        "type": "object"
+      },
+      "SessionCost": {
+        "additionalProperties": false,
+        "description": "The Cost tab: per-turn series and totals, always \"Estimated from transcript\" (D15).",
+        "properties": {
+          "budget_usd": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "derived": {
+            "default": true,
+            "title": "Derived",
+            "type": "boolean"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "prices_as_of": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prices As Of"
+          },
+          "run_total_usd": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/TurnCost"
+            },
+            "title": "Series",
+            "type": "array"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "sources_missing": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EventSource"
+            },
+            "title": "Sources Missing",
+            "type": "array"
+          },
+          "total_usd": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unknown_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unknown Reason"
+          }
+        },
+        "required": [
+          "session_id",
+          "model",
+          "series",
+          "total_usd",
+          "prices_as_of"
+        ],
+        "title": "SessionCost",
+        "type": "object"
+      },
+      "SessionFileChange": {
+        "additionalProperties": false,
+        "description": "A path a session touched, its operations and line counts (no content is stored).",
+        "properties": {
+          "added": {
+            "minimum": 0.0,
+            "title": "Added",
+            "type": "integer"
+          },
+          "event_ids": {
+            "items": {
+              "$ref": "#/components/schemas/EventId"
+            },
+            "title": "Event Ids",
+            "type": "array"
+          },
+          "ops": {
+            "items": {
+              "$ref": "#/components/schemas/FileOperation"
+            },
+            "title": "Ops",
+            "type": "array"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "removed": {
+            "minimum": 0.0,
+            "title": "Removed",
+            "type": "integer"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          }
+        },
+        "required": [
+          "repo",
+          "path",
+          "ops",
+          "added",
+          "removed",
+          "event_ids"
+        ],
+        "title": "SessionFileChange",
+        "type": "object"
+      },
+      "SessionSegment": {
+        "additionalProperties": false,
+        "description": "One stretch of a session; a later event after an end reopens it as a new segment.",
+        "properties": {
+          "end_inferred": {
+            "default": false,
+            "title": "End Inferred",
+            "type": "boolean"
+          },
+          "end_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Reason"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "index": {
+            "minimum": 1.0,
+            "title": "Index",
+            "type": "integer"
+          },
+          "started_at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          }
+        },
+        "required": [
+          "index",
+          "started_at",
+          "ended_at",
+          "end_reason"
+        ],
+        "title": "SessionSegment",
+        "type": "object"
+      },
+      "SessionStatus": {
+        "description": "Where a session is now (D14): waiting wins over live; ended is final until reopened.",
+        "enum": [
+          "live",
+          "waiting",
+          "idle",
+          "ended"
+        ],
+        "title": "SessionStatus",
+        "type": "string"
+      },
+      "SessionSummary": {
+        "additionalProperties": false,
+        "description": "3 to 5 deterministic lines (D17); a stored ``session.summary`` event wins (``stored``).",
+        "properties": {
+          "derived": {
+            "default": true,
+            "title": "Derived",
+            "type": "boolean"
+          },
+          "generated_at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/SummaryLine"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "sources_missing": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EventSource"
+            },
+            "title": "Sources Missing",
+            "type": "array"
+          },
+          "stored": {
+            "default": false,
+            "title": "Stored",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "session_id",
+          "lines",
+          "generated_at"
+        ],
+        "title": "SessionSummary",
+        "type": "object"
+      },
+      "SettingsView": {
+        "additionalProperties": false,
+        "description": "Read-only settings of the running ``hub web`` (no ``PATCH`` in Phase 2).",
+        "properties": {
+          "db_path": {
+            "title": "Db Path",
+            "type": "string"
+          },
+          "metadata_only": {
+            "default": true,
+            "title": "Metadata Only",
+            "type": "boolean"
+          },
+          "port": {
+            "title": "Port",
+            "type": "integer"
+          },
+          "prices_as_of": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prices As Of"
+          },
+          "redaction_kinds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Redaction Kinds",
+            "type": "array"
+          },
+          "redaction_ruleset": {
+            "default": "r1",
+            "title": "Redaction Ruleset",
+            "type": "string"
+          },
+          "registry_path": {
+            "title": "Registry Path",
+            "type": "string"
+          },
+          "running_version": {
+            "title": "Running Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "db_path",
+          "registry_path",
+          "port",
+          "running_version",
+          "redaction_kinds",
+          "prices_as_of"
+        ],
+        "title": "SettingsView",
+        "type": "object"
+      },
+      "Severity": {
+        "description": "The level of a finding.",
+        "enum": [
+          "error",
+          "warning",
+          "info"
+        ],
+        "title": "Severity",
+        "type": "string"
+      },
+      "SourceStatus": {
+        "additionalProperties": false,
+        "description": "When a source last sent an event, and whether that is recent enough.",
+        "properties": {
+          "last_event_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source": {
+            "$ref": "#/components/schemas/EventSource"
+          },
+          "state": {
+            "enum": [
+              "fresh",
+              "stale",
+              "never"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "last_event_at",
+          "state"
+        ],
+        "title": "SourceStatus",
+        "type": "object"
+      },
+      "Stage": {
+        "description": "A state of the run's machine; any stage before ``REPORTED`` can end in ``FAILED``.",
+        "enum": [
+          "PICKED",
+          "WORKTREE",
+          "IMPLEMENTING",
+          "VERIFYING",
+          "PR_OPEN",
+          "REPORTED",
+          "FAILED"
+        ],
+        "title": "Stage",
+        "type": "string"
+      },
+      "StepKey": {
+        "enum": [
+          "pick",
+          "worktree",
+          "implement",
+          "verify",
+          "pr"
+        ],
+        "type": "string"
+      },
+      "StepStatus": {
+        "enum": [
+          "running",
+          "ok",
+          "failed"
+        ],
+        "type": "string"
+      },
+      "SummaryLine": {
+        "additionalProperties": false,
+        "description": "One line of a session summary and the event it comes from.",
+        "properties": {
+          "event_id": {
+            "$ref": "#/components/schemas/EventId"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "event_id"
+        ],
+        "title": "SummaryLine",
+        "type": "object"
+      },
+      "TileGroup": {
+        "enum": [
+          "waiting",
+          "live",
+          "idle",
+          "ended_recently"
+        ],
+        "type": "string"
+      },
+      "TimelineEvent": {
+        "additionalProperties": false,
+        "description": "One stored event as the timeline and Raw events show it.\n\n``fact_key`` groups copies of the same fact from several sources; ``merged_sources`` lists\nthem on the winner; a loser has ``conflict`` set (D16). ``latency_ms`` is ``received_at``\nminus ``timestamp`` when both exist.",
+        "properties": {
+          "agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent"
+          },
+          "conflict": {
+            "default": false,
+            "title": "Conflict",
+            "type": "boolean"
+          },
+          "event_id": {
+            "$ref": "#/components/schemas/EventId"
+          },
+          "fact_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fact Key"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "merged_sources": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EventSource"
+            },
+            "title": "Merged Sources",
+            "type": "array"
+          },
+          "payload": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Payload",
+            "type": "object"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "received_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "session": {
+            "title": "Session",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/EventSource"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step"
+          },
+          "timestamp": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "type": {
+            "$ref": "#/components/schemas/EventType"
+          },
+          "workflow": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow"
+          }
+        },
+        "required": [
+          "event_id",
+          "seq",
+          "project",
+          "session",
+          "type",
+          "timestamp",
+          "received_at",
+          "latency_ms",
+          "source",
+          "source_id",
+          "repo",
+          "agent",
+          "workflow",
+          "step",
+          "payload"
+        ],
+        "title": "TimelineEvent",
+        "type": "object"
+      },
+      "TokenUsage": {
+        "additionalProperties": false,
+        "description": "Tokens counted from transcript usage, once per message id.",
+        "properties": {
+          "cache_read": {
+            "minimum": 0.0,
+            "title": "Cache Read",
+            "type": "integer"
+          },
+          "cache_write": {
+            "minimum": 0.0,
+            "title": "Cache Write",
+            "type": "integer"
+          },
+          "input": {
+            "minimum": 0.0,
+            "title": "Input",
+            "type": "integer"
+          },
+          "output": {
+            "minimum": 0.0,
+            "title": "Output",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "input",
+          "output",
+          "cache_read",
+          "cache_write"
+        ],
+        "title": "TokenUsage",
+        "type": "object"
+      },
+      "TrackerView": {
+        "additionalProperties": false,
+        "description": "The project's tracker settings from ``hub.json``.",
+        "properties": {
+          "failed_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed Label"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "ready_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ready Label"
+          },
+          "teams": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Teams",
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "teams",
+          "ready_label",
+          "failed_label"
+        ],
+        "title": "TrackerView",
+        "type": "object"
+      },
+      "TurnCost": {
+        "additionalProperties": false,
+        "description": "Tokens and estimated cost of one turn.",
+        "properties": {
+          "cache_read": {
+            "minimum": 0.0,
+            "title": "Cache Read",
+            "type": "integer"
+          },
+          "cache_write": {
+            "minimum": 0.0,
+            "title": "Cache Write",
+            "type": "integer"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "input": {
+            "minimum": 0.0,
+            "title": "Input",
+            "type": "integer"
+          },
+          "output": {
+            "minimum": 0.0,
+            "title": "Output",
+            "type": "integer"
+          },
+          "turn": {
+            "minimum": 0.0,
+            "title": "Turn",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "turn",
+          "input",
+          "output",
+          "cache_read",
+          "cache_write",
+          "cost_usd"
+        ],
+        "title": "TurnCost",
+        "type": "object"
+      },
+      "UtcTimestamp": {
+        "format": "date-time",
+        "type": "string"
+      },
+      "ValidationProblem": {
+        "additionalProperties": false,
+        "description": "One problem of a hub's ``hub.json``, located by a JSON pointer.",
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "pointer": {
+            "title": "Pointer",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pointer",
+          "message"
+        ],
+        "title": "ValidationProblem",
+        "type": "object"
+      },
+      "Verdict": {
+        "enum": [
+          "SHIP",
+          "SHIP-WITH-OWNER-STEPS",
+          "NO-SHIP"
+        ],
+        "type": "string"
+      },
+      "WorkflowRun": {
+        "additionalProperties": false,
+        "description": "A run folded from executor events (D9, D16): the first ``run.end`` wins.",
+        "properties": {
+          "caps": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunCaps"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cost_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "sessions",
+                  "executor"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Source"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "derived": {
+            "default": true,
+            "title": "Derived",
+            "type": "boolean"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunFailure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "gate_results": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RunGateResult"
+            },
+            "title": "Gate Results",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "issue": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IssueRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_activity_at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "live",
+                  "dry_run"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          },
+          "session_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Session Ids",
+            "type": "array"
+          },
+          "sources_missing": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EventSource"
+            },
+            "title": "Sources Missing",
+            "type": "array"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/Stage"
+          },
+          "started_at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/RunStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "workflow": {
+            "title": "Workflow",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project",
+          "repo",
+          "issue",
+          "workflow",
+          "stage",
+          "mode",
+          "started_at",
+          "ended_at",
+          "last_activity_at",
+          "steps",
+          "failure",
+          "caps",
+          "cost_usd"
+        ],
+        "title": "WorkflowRun",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "agent-hub",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/activity": {
+      "get": {
+        "description": "Notable events, newest first.",
+        "operationId": "list_activity_api_v1_activity_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ActivityItem_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Activity",
+        "tags": [
+          "overview"
+        ]
+      }
+    },
+    "/api/v1/approvals": {
+      "get": {
+        "description": "Approvals, oldest first.",
+        "operationId": "list_approvals_api_v1_approvals_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/ApprovalKind"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "open",
+              "enum": [
+                "open",
+                "decided",
+                "all"
+              ],
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Approval_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Approvals",
+        "tags": [
+          "approvals"
+        ]
+      }
+    },
+    "/api/v1/approvals/{approval_id}": {
+      "get": {
+        "description": "One approval.",
+        "operationId": "get_approval_api_v1_approvals__approval_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "approval_id",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Approval Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Approval"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Approval",
+        "tags": [
+          "approvals"
+        ]
+      }
+    },
+    "/api/v1/collector/status": {
+      "get": {
+        "description": "The collector's counters and sources.",
+        "operationId": "get_collector_status_api_v1_collector_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectorStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Collector Status",
+        "tags": [
+          "collector"
+        ]
+      }
+    },
+    "/api/v1/doctor/findings": {
+      "get": {
+        "description": "Findings of every (or one) project, as ``hub doctor --json`` reports them.",
+        "operationId": "list_doctor_findings_api_v1_doctor_findings_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_FindingView_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Doctor Findings",
+        "tags": [
+          "doctor"
+        ]
+      }
+    },
+    "/api/v1/events/hooks": {
+      "post": {
+        "description": "Map one hook envelope to events and append them (redacted).",
+        "operationId": "post_hook_api_v1_events_hooks_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HookEnvelope"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HookAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Post Hook",
+        "tags": [
+          "ingestion"
+        ]
+      }
+    },
+    "/api/v1/events/stream": {
+      "get": {
+        "description": "The global stream.",
+        "operationId": "stream_events_api_v1_events_stream_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Server-Sent Events: heartbeat, counts, collector"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Stream Events",
+        "tags": [
+          "streams"
+        ]
+      }
+    },
+    "/api/v1/features": {
+      "get": {
+        "description": "Features of every (or one) project.",
+        "operationId": "list_features_api_v1_features_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_FeatureView_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Features",
+        "tags": [
+          "features"
+        ]
+      }
+    },
+    "/api/v1/features/{project}/{slug}": {
+      "get": {
+        "description": "One feature with its acceptance criteria.",
+        "operationId": "get_feature_api_v1_features__project___slug__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeatureDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Feature",
+        "tags": [
+          "features"
+        ]
+      }
+    },
+    "/api/v1/hubs": {
+      "get": {
+        "description": "Every registered hub, valid or not.",
+        "operationId": "list_hubs_api_v1_hubs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_HubView_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Hubs",
+        "tags": [
+          "hubs"
+        ]
+      },
+      "post": {
+        "description": "Register a hub by its path.",
+        "operationId": "register_hub_api_v1_hubs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HubCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Register Hub",
+        "tags": [
+          "hubs"
+        ]
+      }
+    },
+    "/api/v1/hubs/{hub_id}": {
+      "delete": {
+        "description": "Forget a hub; its events stay in the store.",
+        "operationId": "remove_hub_api_v1_hubs__hub_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "hub_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Hub Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Remove Hub",
+        "tags": [
+          "hubs"
+        ]
+      }
+    },
+    "/api/v1/learnings": {
+      "get": {
+        "description": "Learnings, newest first.",
+        "operationId": "list_learnings_api_v1_learnings_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/LearningStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Learning_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Learnings",
+        "tags": [
+          "learnings"
+        ]
+      }
+    },
+    "/api/v1/learnings/{learning_id}": {
+      "get": {
+        "description": "One learning.",
+        "operationId": "get_learning_api_v1_learnings__learning_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "learning_id",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Learning Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Learning"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Learning",
+        "tags": [
+          "learnings"
+        ]
+      }
+    },
+    "/api/v1/live-sessions": {
+      "get": {
+        "description": "Live session tiles, waiting first.",
+        "operationId": "list_live_sessions_api_v1_live_sessions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_LiveTile_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Live Sessions",
+        "tags": [
+          "live"
+        ]
+      }
+    },
+    "/api/v1/live-sessions/stream": {
+      "get": {
+        "description": "Live tiles as they change.",
+        "operationId": "stream_live_sessions_api_v1_live_sessions_stream_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Server-Sent Events: tile.upsert, tile.remove, heartbeat"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Stream Live Sessions",
+        "tags": [
+          "streams"
+        ]
+      }
+    },
+    "/api/v1/needs-you": {
+      "get": {
+        "description": "What waits for a person, oldest first.",
+        "operationId": "list_needs_you_api_v1_needs_you_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_NeedsYouItem_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Needs You",
+        "tags": [
+          "overview"
+        ]
+      }
+    },
+    "/api/v1/projects": {
+      "get": {
+        "description": "A card per registered project.",
+        "operationId": "list_projects_api_v1_projects_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_ProjectSummary_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Projects",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}": {
+      "get": {
+        "description": "The Project overview header.",
+        "operationId": "get_project_api_v1_projects__project__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Project",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/now": {
+      "get": {
+        "description": "The project's ``brain/now.md``.",
+        "operationId": "get_project_now_api_v1_projects__project__now_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectNow"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Project Now",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/repos": {
+      "get": {
+        "description": "The project's repos.",
+        "operationId": "list_project_repos_api_v1_projects__project__repos_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_RepoView_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Project Repos",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/search": {
+      "get": {
+        "description": "Search ids, paths, commands and tool names.",
+        "operationId": "search_api_v1_search_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_SearchHit_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Search",
+        "tags": [
+          "overview"
+        ]
+      }
+    },
+    "/api/v1/sessions": {
+      "get": {
+        "description": "Sessions matching the filters, one page.",
+        "operationId": "list_sessions_api_v1_sessions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Repo"
+            }
+          },
+          {
+            "in": "query",
+            "name": "agent",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agent"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/SessionStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "outcome",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Outcome"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Outcome"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workflow",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workflow"
+            }
+          },
+          {
+            "in": "query",
+            "name": "run_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Run Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cost_min",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cost Min"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cost_max",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0.0,
+                  "type": "number"
+                },
+                {
+                  "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cost Max"
+            }
+          },
+          {
+            "in": "query",
+            "name": "file",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "File"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tool",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tool"
+            }
+          },
+          {
+            "in": "query",
+            "name": "guard_denial",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Guard Denial"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "-started_at",
+              "enum": [
+                "started_at",
+                "-started_at",
+                "last_activity_at",
+                "-last_activity_at",
+                "cost",
+                "-cost"
+              ],
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Session_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Sessions",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{session_id}": {
+      "get": {
+        "description": "One session.",
+        "operationId": "get_session_api_v1_sessions__session_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Session",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{session_id}/cost": {
+      "get": {
+        "description": "The session's estimated cost.",
+        "operationId": "get_session_cost_api_v1_sessions__session_id__cost_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionCost"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Session Cost",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{session_id}/events": {
+      "get": {
+        "description": "The session's events in timestamp order.",
+        "operationId": "list_session_events_api_v1_sessions__session_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "types",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/EventType"
+                  },
+                  "maxItems": 20,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Types"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_TimelineEvent_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Session Events",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{session_id}/events/stream": {
+      "get": {
+        "description": "One session's events as they arrive.",
+        "operationId": "stream_session_events_api_v1_sessions__session_id__events_stream_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Server-Sent Events: event, session, end, heartbeat"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Stream Session Events",
+        "tags": [
+          "streams"
+        ]
+      }
+    },
+    "/api/v1/sessions/{session_id}/files": {
+      "get": {
+        "description": "The paths the session touched.",
+        "operationId": "list_session_files_api_v1_sessions__session_id__files_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_SessionFileChange_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Session Files",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{session_id}/summary": {
+      "get": {
+        "description": "The session's summary lines.",
+        "operationId": "get_session_summary_api_v1_sessions__session_id__summary_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Session Summary",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/api/v1/settings": {
+      "get": {
+        "description": "Paths, port, version and privacy rules.",
+        "operationId": "get_settings_api_v1_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Settings",
+        "tags": [
+          "settings"
+        ]
+      }
+    },
+    "/api/v1/workflow-runs": {
+      "get": {
+        "description": "Workflow runs matching the filters, newest first.",
+        "operationId": "list_runs_api_v1_workflow_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Repo"
+            }
+          },
+          {
+            "in": "query",
+            "name": "stage",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Stage"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stage"
+            }
+          },
+          {
+            "in": "query",
+            "name": "outcome",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "done",
+                    "failed"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Outcome"
+            }
+          },
+          {
+            "in": "query",
+            "name": "failure_stage",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Stage"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Failure Stage"
+            }
+          },
+          {
+            "in": "query",
+            "name": "mode",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "live",
+                    "dry_run"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mode"
+            }
+          },
+          {
+            "in": "query",
+            "name": "issue",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Issue"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_WorkflowRun_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Runs",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/workflow-runs/{run_id}": {
+      "get": {
+        "description": "One workflow run with its steps.",
+        "operationId": "get_run_api_v1_workflow_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowRun"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Run",
+        "tags": [
+          "runs"
+        ]
+      }
+    },
+    "/api/v1/workflow-runs/{run_id}/stream": {
+      "get": {
+        "description": "One run's changes as they arrive.",
+        "operationId": "stream_run_api_v1_workflow_runs__run_id__stream_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Server-Sent Events: run, step, gate, heartbeat"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Stream Run",
+        "tags": [
+          "streams"
+        ]
+      }
+    }
+  }
+}
