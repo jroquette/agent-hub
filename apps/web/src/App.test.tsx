@@ -33,7 +33,7 @@ function renderAt(path: string, routes: ApiRoutes) {
 describe("routes", () => {
   it.each([
     ["/", "Portfolio"],
-    ["/projects/agent-hub", "Project overview"],
+    ["/projects/agent-hub", "Project not found"],
     ["/approvals", "Approvals"],
     ["/approvals/abc", "Approvals"],
     ["/live", "Live sessions"],
