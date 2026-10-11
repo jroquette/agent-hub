@@ -95,9 +95,9 @@ def test_rejects_batch_when_lines_invalid(tmp_path: Path) -> None:
 
 def test_rejects_batch_when_key_conflicts_with_stored_event(tmp_path: Path) -> None:
     db_path = tmp_path / "events.db"
-    stored = an_event(source="github", payload={"state": "open"})
+    stored = an_event(source="github", payload={"command": "open"})
     open_event_store(db_path).append([stored])
-    changed = an_event(source="github", source_id=stored.source_id, payload={"state": "closed"})
+    changed = an_event(source="github", source_id=stored.source_id, payload={"command": "closed"})
     file = _write_jsonl(tmp_path / "events.jsonl", [an_event(), changed])
 
     result = _collect([str(file), "--db", str(db_path)])
@@ -242,9 +242,9 @@ def _has_control_character(text: str) -> bool:
 def test_prints_one_line_when_conflicting_source_id_has_newline(tmp_path: Path) -> None:
     db_path = tmp_path / "events.db"
     source_id = "evt-1\nline 9: forged\x1b[2J"
-    stored = an_event(source_id=source_id, payload={"state": "open"})
+    stored = an_event(source_id=source_id, payload={"command": "open"})
     open_event_store(db_path).append([stored])
-    changed = an_event(source_id=source_id, payload={"state": "closed"})
+    changed = an_event(source_id=source_id, payload={"command": "closed"})
     file = _write_jsonl(tmp_path / "events.jsonl", [changed])
 
     result = _collect([str(file), "--db", str(db_path)])
@@ -287,9 +287,9 @@ def test_fails_without_creating_database_when_home_unresolvable(
 
 def test_reports_conflict_line_when_blank_lines_precede_events(tmp_path: Path) -> None:
     db_path = tmp_path / "events.db"
-    stored = an_event(payload={"state": "open"})
+    stored = an_event(payload={"command": "open"})
     open_event_store(db_path).append([stored])
-    changed = an_event(source_id=stored.source_id, payload={"state": "closed"})
+    changed = an_event(source_id=stored.source_id, payload={"command": "closed"})
     text = f"\n\n{an_event().model_dump_json()}\n\n{changed.model_dump_json()}\n"
 
     result = _collect(["--db", str(db_path)], stdin=text)
@@ -302,8 +302,8 @@ def test_reports_conflict_line_when_blank_lines_precede_events(tmp_path: Path) -
 
 def test_reports_conflict_line_when_batch_conflicts_with_itself(tmp_path: Path) -> None:
     db_path = tmp_path / "events.db"
-    first = an_event(payload={"state": "open"})
-    changed = an_event(source_id=first.source_id, payload={"state": "closed"})
+    first = an_event(payload={"command": "open"})
+    changed = an_event(source_id=first.source_id, payload={"command": "closed"})
     lines = ["", "", first, "", an_event(), first, "", changed]
     text = "\n".join(line if isinstance(line, str) else line.model_dump_json() for line in lines)
 

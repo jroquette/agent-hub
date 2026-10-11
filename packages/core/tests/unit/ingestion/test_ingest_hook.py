@@ -106,7 +106,7 @@ def test_counts_hook_when_mapping_yields_no_event() -> None:
 
 
 def test_tails_transcript_and_adds_its_events_when_mapping_names_one() -> None:
-    hook_event = an_event(type="session.end")
+    hook_event = an_event(type="session.end", payload={"outcome": None})
     transcript_events: tuple[Event, ...] = (
         an_event(source="transcript", type="message", payload={"role": "user"}),
         an_event(source="transcript", type="message", payload={"role": "assistant"}),

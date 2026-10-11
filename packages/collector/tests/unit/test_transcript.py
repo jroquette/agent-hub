@@ -11,6 +11,7 @@ from agent_hub.collector.transcript import (
     parse_transcript,
 )
 from agent_hub.core.events.event import Event
+from agent_hub.core.events.payload_keys import PAYLOAD_KEYS, kept_payload
 from agent_hub.core.testing.transcript_lines import (
     TRANSCRIPT_MODEL,
     TRANSCRIPT_SESSION,
@@ -26,40 +27,6 @@ from agent_hub.core.testing.transcript_lines import (
 
 ORIGIN = TranscriptOrigin(project="demo", repo="demo-api", agent="main", session=TRANSCRIPT_SESSION)
 SENTINEL = "SENTINEL-body-never-stored"
-ALLOWED_KEYS = {
-    "message": {
-        "role",
-        "chars",
-        "turn",
-        "slash_command",
-        "message_id",
-        "model",
-        "input_tokens",
-        "output_tokens",
-        "cache_read_tokens",
-        "cache_write_tokens",
-    },
-    "reasoning": {"chars", "turn"},
-    "tool.call": {
-        "tool",
-        "tool_use_id",
-        "turn",
-        "path",
-        "lines_added",
-        "lines_removed",
-        "new_file",
-        "command",
-        "pattern",
-        "url",
-        "mcp_server",
-        "mcp_tool",
-        "arg_keys",
-        "subagent_type",
-        "description",
-    },
-    "tool.result": {"tool_use_id", "status", "output_bytes", "error_line", "turn"},
-    "learning.proposed": {"proposal", "text", "target", "author"},
-}
 
 
 def _parse(lines: list[dict[str, Any]], **options: Any) -> list[Event]:
@@ -318,4 +285,28 @@ def test_never_raises_and_keeps_only_table_keys_when_lines_arbitrary_property(
     batch = parse_transcript(text, origin=ORIGIN)
 
     for event in batch.events:
-        assert set(event.payload) <= ALLOWED_KEYS[event.type]
+        assert set(event.payload) <= PAYLOAD_KEYS[event.type]
+
+
+def test_maps_only_payload_kept_keys_when_every_record_kind_parsed() -> None:
+    lines = [
+        a_user_line("prompt"),
+        an_assistant_line(
+            [
+                a_thinking_block("thinking"),
+                a_text_block("answer"),
+                a_tool_use_block(
+                    "toolu_w", "Write", {"file_path": "/x/brain/_inbox/n.md", "content": "# T"}
+                ),
+                a_tool_use_block("toolu_b", "Bash", {"command": "make check"}),
+            ],
+            usage=a_usage(),
+        ),
+        a_tool_result_line("toolu_b", content="out", is_error=True),
+    ]
+
+    events = _parse(lines)
+
+    assert {event.type for event in events} >= {"message", "reasoning", "tool.call", "tool.result"}
+    for event in events:
+        assert kept_payload(event.type, event.payload) == event.payload, event.type
