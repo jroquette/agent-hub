@@ -42,9 +42,9 @@ Next steps:
 ```
 
 > [!IMPORTANT]
-> agent-hub is **experimental** (0.x, Phase 1 of 4 in the [spec](docs/SPEC.md)). The hub generator and its commands
-> work and are tested; the web control plane does not exist yet. The repository is private, and every install needs
-> read access to it.
+> agent-hub is **experimental** (0.x, Phase 2 of 4 in the [spec](docs/SPEC.md)). The hub generator and its commands
+> work and are tested; the web control plane is read-only (it watches, it does not act yet). The repository is
+> private, and every install needs read access to it.
 
 ## Contents
 
@@ -52,6 +52,7 @@ Next steps:
 - [Why use it?](#-why-use-it)
 - [How it works](#-how-it-works)
 - [Quick Start](#-quick-start)
+- [Run the control plane](#-run-the-control-plane)
 - [Daily workflow](#-daily-workflow)
 - [Usage guide](#-usage-guide)
 - [Configuration](#-configuration)
@@ -200,6 +201,41 @@ git add -A && git commit -m "Create the hub"
 > `./agent` (and `hub agent`) attaches the repos listed in `hub.json` that are cloned next to the hub (`../backend`,
 > `../frontend` in this example), prints a `not attached` warning for each one it cannot find, and passes every
 > other argument to `claude`.
+
+## 📡 Run the control plane
+
+The control plane is `hub web`: a REST API and a web app that show your hubs' live sessions, workflow runs, approvals,
+features and health as they happen. It listens on `127.0.0.1` only (port 7420) and stores metadata only: never
+prompts, outputs or file contents. The commands below run from a clone of this repo.
+
+**In Docker (three commands).** The image runs as a non-root user on a read-only file system, and the port is
+published on the host's loopback only. The folder that holds this clone (your workspace with the hubs) is mounted
+read-only; set `AGENT_HUB_HUBS_ROOT` to use another one (see `.env.example`).
+
+```bash
+make up                              # build and start; prints http://127.0.0.1:7420
+make connect HUB=../my-project-hub   # register a hub and check that it sends events
+make down                            # stop (the data volume is kept); make logs, make ps
+```
+
+**Locally (one command).** No Docker; the database is `~/.local/share/agent-hub/agent-hub.db` unless `AGENT_HUB_DB`
+says otherwise.
+
+```bash
+make run                             # the same as uv run hub web
+```
+
+**See it with sample data.** With the app running (either way), `make demo` loads a synthetic demo hub, a live session
+with a guard denial, a session waiting on a guard ask, a failed run and an ended session with its cost, so every
+screen has content. It never reads your real transcripts.
+
+**Work on the web app.** `make dev` starts the API on 7420 and the Vite dev server with hot reload on
+`http://127.0.0.1:5173`, which forwards `/api` to the API; Ctrl C stops both.
+
+A hub sends events once its release has the sensor (`plugin/hub-workflow/hooks/event_sensor.py`, from 0.9.0): move
+`platform.version` in its `hub.json` and run `./hub sync`. `make connect` tells you when a hub needs it. The design
+and its safety rules: [ADR 0022](docs/adr/0022-container-packaging.md); the guide for other projects:
+[docs/USING.md](docs/USING.md).
 
 ## 🔄 Daily workflow
 
@@ -654,6 +690,11 @@ Contract: [docs/design/developer-identity.md](docs/design/developer-identity.md)
 | `AGENT_HUB_DB` | no | `$XDG_DATA_HOME/agent-hub/agent-hub.db`, else `~/.local/share/agent-hub/agent-hub.db` | Event database of `hub collect`; `--db` overrides it |
 | `XDG_DATA_HOME` | no | | Used for the default database path when it is absolute |
 | `HUB_AUTHOR_NAME`, `HUB_AUTHOR_EMAIL` | no | | Module `cloud`: your commit author in a cloud session, read by `scripts/cloud-setup.sh` only when `hub.json` names no author; written to the repo-local git config of the hub and each repo, never the global one (unset: a `WARN`, and commits carry the container's identity) |
+| `AGENT_HUB_CLAUDE_PROJECTS` | no | `~/.claude/projects` | The only folder `hub web` reads transcripts from (absolute path) |
+| `AGENT_HUB_ALLOWED_HOSTS` | no | | Extra exact `host[:port]` names `hub web` answers besides its loopback ones (comma list, never `*`) |
+| `AGENT_HUB_IN_CONTAINER` | no | | Set to `1` by the agent-hub image only: lets `hub web --host` bind outside loopback inside the container |
+| `AGENT_HUB_WEB_URL` | no | `http://127.0.0.1:7420` | Where a hub's event sensor sends events (loopback URLs only) |
+| `AGENT_HUB_HUBS_ROOT`, `AGENT_HUB_PORT` | no | the folder holding this clone, `7420` | `make up`: the hubs folder mounted read-only, the host port (on 127.0.0.1) |
 | `AGENT_HUB_ROOT` | no | the current folder | The hub folder for `hub worktree`, `hub brief` and `hub agent` (`hub sync` and `hub doctor` use the current folder); the `./hub` shim sets it for you |
 
 ## 🧱 Technical reference
