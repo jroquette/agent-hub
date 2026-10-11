@@ -7,16 +7,13 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from agent_hub.api.composition import COMPOSED_PROBLEMS
 from agent_hub.api.dependencies import ApiPorts
-from agent_hub.api.rfc9457 import busy_problem
 from agent_hub.storage.errors import DatabaseAccessError
+from agent_hub.storage.event_store import DatabaseBusyError
 
 # Synthetic, shaped like a key so a leak would be obvious; never a real secret.
 LEAK_SAMPLE = "sk-ant-api03-SYNTHETICsecretVALUE0123456789"
-
-
-class DatabaseBusyError(DatabaseAccessError):
-    """Stands in for the storage adapter's busy error until the composition wires the real one."""
 
 
 @pytest.mark.parametrize(
@@ -99,7 +96,7 @@ def test_answers_internal_problem_when_hook_ingestion_fails_on_secret_payload(
 def busy_client(open_client: Any, fakes: SimpleNamespace) -> Iterator[TestClient]:
     events = fakes.EventReadModels(failure=DatabaseBusyError("database is locked"))
     with open_client(
-        ports=ApiPorts(event_read_models=events), problems={DatabaseBusyError: busy_problem}
+        ports=ApiPorts(event_read_models=events), problems=COMPOSED_PROBLEMS
     ) as client:
         yield client
 

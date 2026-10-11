@@ -196,7 +196,12 @@ def test_maps_session_end_and_main_transcript_when_session_ends() -> None:
     assert event.source_id == f"{HOOK_SESSION}:SessionEnd:{SENT_AT}:{_h16(hook)}"
     assert event.payload == {"end_reason": "prompt_input_exit", "outcome": "stopped"}
     assert mapping.transcript == TranscriptRef(
-        session=HOOK_SESSION, path=HOOK_TRANSCRIPT, kind="main"
+        project="demo",
+        repo="demo-api",
+        agent="main",
+        session=HOOK_SESSION,
+        path=HOOK_TRANSCRIPT,
+        kind="main",
     )
 
 
@@ -215,7 +220,12 @@ def test_returns_main_transcript_and_no_event_when_stop() -> None:
 
     assert mapping.events == ()
     assert mapping.transcript == TranscriptRef(
-        session=HOOK_SESSION, path=HOOK_TRANSCRIPT, kind="main"
+        project="demo",
+        repo="demo-api",
+        agent="main",
+        session=HOOK_SESSION,
+        path=HOOK_TRANSCRIPT,
+        kind="main",
     )
 
 
@@ -224,7 +234,12 @@ def test_returns_subagent_transcript_and_no_event_when_subagent_stop() -> None:
 
     assert mapping.events == ()
     assert mapping.transcript == TranscriptRef(
-        session=HOOK_SESSION, path=SUBAGENT_TRANSCRIPT, kind="subagent"
+        project="demo",
+        repo="demo-api",
+        agent="Explore",
+        session=HOOK_SESSION,
+        path=SUBAGENT_TRANSCRIPT,
+        kind="subagent",
     )
 
 

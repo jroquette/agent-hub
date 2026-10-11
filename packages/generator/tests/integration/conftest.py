@@ -121,18 +121,21 @@ def rendered_hub(tmp_path: Path, rendered_tree: Callable[..., Path]) -> HubRende
 
 
 def child_env(extra: Mapping[str, str] | None = None) -> dict[str, str]:
-    """A child's environment from scratch: ``PATH`` and no git config, plus ``extra``.
+    """A child's environment from scratch: ``PATH``, no git config or event server, plus ``extra``.
 
     Git reads neither the system's nor the user's config (``GIT_CONFIG_NOSYSTEM``,
     ``GIT_CONFIG_GLOBAL``) unless ``extra`` sets them: a hook that asks git for the developer's
-    identity sees only what the test gives it. The harness mode variables and make's own are
-    dropped even from ``extra``: a child never updates goldens, keeps roots or joins a make
-    jobserver because this run does.
+    identity sees only what the test gives it. The control plane's URL is a loopback port nothing
+    listens on unless ``extra`` sets it, so a guard or Stop gate decision, or a sensor envelope,
+    never reaches a ``hub web`` running on this machine. The harness mode variables and make's
+    own are dropped even from ``extra``: a child never updates goldens, keeps roots or joins a
+    make jobserver because this run does.
     """
     env = {
         "PATH": os.environ.get("PATH", os.defpath),
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_GLOBAL": os.devnull,
+        SENSOR_URL_VARIABLE: f"http://127.0.0.1:{free_port()}",
     } | dict(extra or {})
     return {name: value for name, value in env.items() if name not in DROPPED_VARIABLES}
 

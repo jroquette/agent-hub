@@ -99,3 +99,14 @@ def test_infers_target_kind_when_target_is_a_path() -> None:
     assert kind_of("demo-api/AGENTS.md") == "repo"
     assert kind_of("brain/auto/workspace/notes.md") == "personal"
     assert kind_of("somewhere/else.md") is None
+
+
+def test_folds_one_learning_when_hook_and_transcript_both_propose_it() -> None:
+    [from_transcript] = learning_events(proposal="toolu_9")
+    from_hook = from_transcript.model_copy(
+        update={"source": "claude_code", "source_id": "session-1:PreToolUse:toolu_9"}
+    )
+
+    learnings = fold_learnings(as_stored([from_transcript, from_hook]))
+
+    assert list(learnings) == ["toolu_9"]

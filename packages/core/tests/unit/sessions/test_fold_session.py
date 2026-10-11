@@ -1,7 +1,8 @@
 from datetime import timedelta
 from decimal import Decimal
 
-from agent_hub.core.sessions.fold_session import fold_sessions
+from agent_hub.core.readmodels.fact_keys import canonical_events
+from agent_hub.core.sessions.fold_session import fold_sessions, group_by_session
 from agent_hub.core.sessions.session import Outcome, SessionStatus
 from agent_hub.core.testing.builders import an_event
 from agent_hub.core.testing.session_scenarios import (
@@ -157,3 +158,26 @@ def test_folds_each_session_apart_when_events_mix_sessions() -> None:
     assert sessions["s-b"].repo == "demo-web"
     assert sessions["s-a"].tokens is None
     assert sessions["s-a"].has_transcript is False
+
+
+def test_counts_learning_once_when_hook_and_transcript_both_propose_it() -> None:
+    [from_transcript] = learning_events(proposal="toolu_9")
+    from_hook = from_transcript.model_copy(
+        update={"source": "claude_code", "source_id": "session-1:PreToolUse:toolu_9"}
+    )
+    events = as_stored([*a_session_events(), from_transcript, from_hook])
+
+    session = fold_sessions(events, now=NOW)["session-1"]
+
+    assert session.learnings_proposed == 1
+
+
+def test_groups_events_in_canonical_order_when_events_shuffled() -> None:
+    events = as_stored([*a_session_events("s-1"), *a_session_events("s-2")])
+
+    groups = group_by_session(shuffled(events, seed=5))
+
+    assert set(groups) == {"s-1", "s-2"}
+    for group in groups.values():
+        assert canonical_events(group) is group
+        assert group == canonical_events(list(group))
