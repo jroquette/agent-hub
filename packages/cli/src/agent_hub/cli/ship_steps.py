@@ -1,7 +1,9 @@
 """The live phases of ``hub ship``, in order, each stopping the ship at its first failure.
 
 1. Every target's worktree holds no uncommitted tracked change, then every target's ``check``
-   runs, in ``hub.json`` order, before any push (spec D-order).
+   runs, in ``hub.json`` order, before any push (spec D-order). After the checks, each
+   worktree is clean again and its HEAD and task branch are where the check found them, so
+   what is pushed is what was checked.
 2. Per target: the push (after the push guard), then the PR opened or found. A failure lists
    the PRs already open; no PR is linked and the tracker is not written.
 
@@ -10,6 +12,7 @@ environments, timeouts read from ``run_steps``' constants at call time (PD-2). A
 the repo and the step, and what is already open; every stderr line starts with ``hub ship:``.
 """
 
+import contextlib
 import os
 import shutil
 from collections.abc import Mapping, Sequence
@@ -47,6 +50,7 @@ NOT_LINKED: Final = f"{PREFIX}: no PR was linked and the issue was not moved"
 # The check logs: <hub>/.agent-runs/ship/<ISSUE>-<repo>.log, owner-only (spec Q-2, PD-8).
 LOG_FOLDERS: Final = (".agent-runs", "ship")
 _LOG_FLAGS: Final = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC
+_FOLDER_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
 _PRIVATE_FILE: Final = 0o600
 _PRIVATE_FOLDER: Final = 0o700
 PUSH_STEP: Final = "push"
@@ -59,8 +63,10 @@ class _StepError(Exception):
     def __init__(self, step: str, reason: str) -> None:
         super().__init__(reason)
         self.step = step
-        # One line: a child's message may span several.
-        self.reason = " ".join(reason.split())
+        # One line: a child's message may span several. The step is named once, so a step's
+        # own "push failed: " is dropped.
+        shown = " ".join(reason.split())
+        self.reason = shown.removeprefix(f"{step} failed: ")
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -76,9 +82,13 @@ class ShipRun:
 
 def ship_issue(run: ShipRun) -> int:
     """Run the phases; 0 when every one passed. A failure prints its lines and exits 1."""
-    _refuse_uncommitted(run)
-    for target in run.targets:
-        _check(run, target)
+    _refuse_uncommitted(run, after=NOTHING_CHECKED)
+    checked = tuple(_check(run, target) for target in run.targets)
+    # What was checked is what is pushed: no change left beside the commits, no commit added.
+    _refuse_uncommitted(run, after=NOTHING_PUSHED)
+    for target, heads in zip(run.targets, checked, strict=True):
+        if _heads(run, target) != heads:
+            fail(f"{PREFIX}: {target.repo}: the branch moved during the check; nothing was pushed")
     _open_prs(run)
     return 0
 
@@ -128,14 +138,27 @@ def ship_child(worktree: Path) -> ChildCall:
     return child
 
 
-def _refuse_uncommitted(run: ShipRun) -> None:
+def _refuse_uncommitted(run: ShipRun, *, after: str) -> None:
     # As hub run's gate: the PR holds the commits only, so no tracked change may sit beside them.
     timeout = step_timeouts().git
     for target in run.targets:
         try:
             refuse_uncommitted(ship_child(target.worktree), environ=run.environ, timeout=timeout)
         except PrStepError as error:
-            fail(f"{PREFIX}: {target.repo}: {error.reason}", NOTHING_CHECKED)
+            fail(f"{PREFIX}: {target.repo}: {error.reason}", after)
+
+
+def _heads(run: ShipRun, target: ShipTarget) -> str:
+    """The worktree's HEAD and its task branch's commit, as git prints them."""
+    try:
+        return git_output(
+            ship_child(target.worktree),
+            *("rev-parse", "HEAD", f"refs/heads/{target.branch}"),
+            environ=run.environ,
+            timeout=step_timeouts().git,
+        )
+    except PrStepError as error:
+        fail(f"{PREFIX}: {target.repo}: {error.reason}", NOTHING_PUSHED)
 
 
 def check_log_path(hub: Path, *, issue_id: str, repo: str) -> Path:
@@ -143,12 +166,15 @@ def check_log_path(hub: Path, *, issue_id: str, repo: str) -> Path:
     return hub.joinpath(*LOG_FOLDERS, f"{issue_id}-{repo}.log")
 
 
-def _check(run: ShipRun, target: ShipTarget) -> None:
+def _check(run: ShipRun, target: ShipTarget) -> str:
     """Run the target's check with its log opened first: a log that cannot be opened stops the
-    ship before the check runs. The log gets the stdout tail, then the stderr tail (E7)."""
+    ship before the check runs. The log gets the stdout tail, then the stderr tail (E7). Returns
+    the heads the check ran on (``_heads``)."""
     path = check_log_path(run.hub, issue_id=run.issue.id, repo=target.repo)
     shown_log = shown_path(str(path))
-    with os.fdopen(_opened_log(path, repo=target.repo, shown_log=shown_log), "wb") as log:
+    descriptor = _opened_log(run.hub, path.name, repo=target.repo, shown_log=shown_log)
+    with os.fdopen(descriptor, "wb") as log:
+        heads = _heads(run, target)
         output, failure = _run_check(run, target)
         try:
             log.write(output)
@@ -162,6 +188,7 @@ def _check(run: ShipRun, target: ShipTarget) -> None:
     if failure is not None:
         fail(f"{PREFIX}: {target.repo}: {failure}; output in {shown_log}", NOTHING_PUSHED)
     typer.echo(f"check passed: {target.repo}")
+    return heads
 
 
 def _run_check(run: ShipRun, target: ShipTarget) -> tuple[bytes, str | None]:
@@ -182,19 +209,30 @@ def _run_check(run: ShipRun, target: ShipTarget) -> tuple[bytes, str | None]:
     return _log_text(result), failure
 
 
-def _opened_log(path: Path, *, repo: str, shown_log: str) -> int:
-    # Each folder owner-only when made; the file never through a link, emptied when it exists.
-    descriptor = None
+def _opened_log(hub: Path, name: str, *, repo: str, shown_log: str) -> int:
+    """The log ``name`` opened in ``<hub>/.agent-runs/ship``, walked by folder descriptor: each
+    folder made owner-only when absent, never followed through a link, and the file never
+    opened through one (emptied when it exists)."""
+    opened: list[int] = []
     try:
-        folder = path.parents[len(LOG_FOLDERS)]
-        for name in LOG_FOLDERS:
-            folder /= name
-            folder.mkdir(mode=_PRIVATE_FOLDER, exist_ok=True)
-        descriptor = os.open(path, _LOG_FLAGS, _PRIVATE_FILE)
+        opened.append(os.open(hub, _FOLDER_FLAGS))
+        for folder in LOG_FOLDERS:
+            with contextlib.suppress(FileExistsError):
+                os.mkdir(folder, _PRIVATE_FOLDER, dir_fd=opened[-1])
+            opened.append(os.open(folder, _FOLDER_FLAGS | os.O_NOFOLLOW, dir_fd=opened[-1]))
+        descriptor = os.open(name, _LOG_FLAGS, _PRIVATE_FILE, dir_fd=opened[-1])
+    except OSError as error:
+        fail(
+            f"{PREFIX}: {repo}: cannot open the check log {shown_log}: {error.strerror or error}",
+            NOTHING_PUSHED,
+        )
+    finally:
+        for folder_descriptor in opened:
+            os.close(folder_descriptor)
+    try:
         os.fchmod(descriptor, _PRIVATE_FILE)
     except OSError as error:
-        if descriptor is not None:
-            os.close(descriptor)
+        os.close(descriptor)
         fail(
             f"{PREFIX}: {repo}: cannot open the check log {shown_log}: {error.strerror or error}",
             NOTHING_PUSHED,

@@ -876,6 +876,104 @@ class TestShipCheck:
         assert path.read_bytes() == b"--- bash timed out after 1 s ---\n"
         assert_nothing_shipped_after_checks(ship_workspace, child_calls, tracker)
 
+    def test_refuses_log_when_log_path_is_symlink(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+        tmp_path: Any,
+    ) -> None:
+        make_task_worktree("demo-api", "dem-7-x", ["feat(api): add x (DEM-7)"])
+        outside = tmp_path / "outside.txt"
+        outside.write_bytes(b"not the log's\n")
+        path = log_path(ship_workspace, "demo-api")
+        path.parent.mkdir(parents=True)
+        path.symlink_to(outside)
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 1, result.output
+        lines = result.stderr.splitlines()[1:]
+        assert lines[0].startswith(f"hub ship: demo-api: cannot open the check log {path}: ")
+        assert lines[1:] == ["hub ship: nothing was pushed"]
+        assert outside.read_bytes() == b"not the log's\n"
+        assert "bash" not in child_calls.programs()
+
+    def test_refuses_log_when_log_folder_is_symlink(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+        tmp_path: Any,
+    ) -> None:
+        make_task_worktree("demo-api", "dem-7-x", ["feat(api): add x (DEM-7)"])
+        outside = tmp_path / "outside-folder"
+        outside.mkdir()
+        folder = ship_workspace.workspace.hub / ".agent-runs" / "ship"
+        folder.parent.mkdir()
+        folder.symlink_to(outside)
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 1, result.output
+        path = log_path(ship_workspace, "demo-api")
+        assert result.stderr.splitlines()[1].startswith(
+            f"hub ship: demo-api: cannot open the check log {path}: "
+        )
+        assert list(outside.iterdir()) == []
+        assert "bash" not in child_calls.programs()
+
+    def test_refuses_push_when_check_commits(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        identity = "-c user.name=Sneak -c user.email=sneak@example.com"
+        check = f"git {identity} commit --allow-empty -qm sneak && make check"
+        set_check(ship_workspace.workspace.hub, "demo-web", check)
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 1, result.output
+        assert result.stderr.splitlines()[1:] == [
+            "hub ship: demo-web: the branch moved during the check; nothing was pushed"
+        ]
+        assert pushes(child_calls) == []
+        assert_nothing_shipped_after_checks(ship_workspace, child_calls, tracker)
+
+    def test_refuses_push_when_check_edits_tracked_file(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        set_check(ship_workspace.workspace.hub, "demo-web", "echo edit >> README.md && make check")
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 1, result.output
+        assert result.stderr.splitlines()[1:] == [
+            "hub ship: demo-web: uncommitted changes in the worktree",
+            "hub ship: nothing was pushed",
+        ]
+        assert pushes(child_calls) == []
+        assert_nothing_shipped_after_checks(ship_workspace, child_calls, tracker)
+
     def test_names_log_path_when_log_cannot_be_opened(
         self,
         ship_workspace: Workspace,
@@ -1230,7 +1328,8 @@ class TestShipPartial:
 
         assert result.exit_code == 1, result.output
         lines = result.stderr.splitlines()
-        assert lines[-3].startswith("hub ship: demo-web: push failed: push failed: ")
+        assert lines[-3].startswith("hub ship: demo-web: push failed: ")
+        assert "push failed: push failed" not in result.stderr
         assert "synthetic rejection" in lines[-3]
         assert lines[-2:] == [f"hub ship: PR open: {API_PR}", NOT_LINKED]
         assert [pr["url"] for pr in ship_workspace.prs()] == [API_PR]

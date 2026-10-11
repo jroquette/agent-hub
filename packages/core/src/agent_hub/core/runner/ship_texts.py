@@ -31,8 +31,9 @@ _LATER_SECTION: Final = re.compile(
 
 
 def ship_body(*, issue_id: str, issue_url: str | None) -> str:
-    """A new PR's body: the issue id, its url when it is one printable ``https://`` url of at
-    most ``MAX_ISSUE_URL_CHARS``, then an empty Related PRs section."""
+    """A new PR's body: the issue id, its url when it is one printable ASCII ``https://`` url of
+    at most ``MAX_ISSUE_URL_CHARS`` that no attribution rule flags, then an empty Related PRs
+    section."""
     shown = f" {issue_url}" if issue_url is not None and _is_shown_url(issue_url) else ""
     return f"{issue_id}{shown}\n\n{_section(())}"
 
@@ -73,7 +74,9 @@ def _cleaned(text: str, *, workspace: str) -> str:
 def _is_shown_url(url: str) -> bool:
     return (
         url.startswith(_URL_SCHEME)
+        and url.isascii()
         and url.isprintable()
+        and not is_attribution(url)
         and " " not in url
         and len(url) <= MAX_ISSUE_URL_CHARS
     )
