@@ -6,6 +6,9 @@
    what is pushed is what was checked.
 2. Per target: the push (after the push guard), then the PR opened or found. A failure lists
    the PRs already open; no PR is linked and the tracker is not written.
+3. With two PRs or more, per PR in ``hub.json`` order: its body read back, its Related PRs
+   section made to list the other PRs (``with_related``), and the body edited only when that
+   changed it, so a re-run edits nothing. A failure lists the PRs; the tracker is not written.
 
 Each child runs through ``ship_child``: in the caller's process group, with ``pr_steps``'
 environments, timeouts read from ``run_steps``' constants at call time (PD-2). A failure names
@@ -13,6 +16,7 @@ the repo and the step, and what is already open; every stderr line starts with `
 """
 
 import contextlib
+import json
 import os
 import shutil
 from collections.abc import Mapping, Sequence
@@ -31,6 +35,7 @@ from agent_hub.cli.pr_steps import (
     ChildCall,
     PrTarget,
     StepTimeouts,
+    error_tail,
     git_output,
     open_or_find_pr,
     push_branch,
@@ -39,14 +44,16 @@ from agent_hub.cli.pr_steps import (
     titled_pr,
     unmatched_warning,
 )
+from agent_hub.cli.run_children import pr_body_command, pr_edit_command, push_env
 from agent_hub.cli.ship_set import ShipTarget
-from agent_hub.core.runner.ship_texts import ship_body
+from agent_hub.core.runner.ship_texts import ship_body, with_related
 from agent_hub.core.tracker.tracker_client import Issue
 
 PREFIX: Final = "hub ship"
 NOTHING_CHECKED: Final = f"{PREFIX}: nothing was checked or pushed"
 NOTHING_PUSHED: Final = f"{PREFIX}: nothing was pushed"
 NOT_LINKED: Final = f"{PREFIX}: no PR was linked and the issue was not moved"
+NOT_MOVED: Final = f"{PREFIX}: the issue was not moved"
 # The check logs: <hub>/.agent-runs/ship/<ISSUE>-<repo>.log, owner-only (spec Q-2, PD-8).
 LOG_FOLDERS: Final = (".agent-runs", "ship")
 _LOG_FLAGS: Final = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -55,6 +62,9 @@ _PRIVATE_FILE: Final = 0o600
 _PRIVATE_FOLDER: Final = 0o700
 PUSH_STEP: Final = "push"
 PR_STEP: Final = "pull request"
+LINK_STEP: Final = "link"
+# The most of a PR body read back that is parsed (gh prints it as JSON); more is refused.
+PR_BODY_OUTPUT_LIMIT: Final = 1 << 20
 
 
 class _StepError(Exception):
@@ -89,7 +99,9 @@ def ship_issue(run: ShipRun) -> int:
     for target, heads in zip(run.targets, checked, strict=True):
         if _heads(run, target) != heads:
             fail(f"{PREFIX}: {target.repo}: the branch moved during the check; nothing was pushed")
-    _open_prs(run)
+    urls = _open_prs(run)
+    if len(urls) > 1:
+        _link_prs(run, urls)
     return 0
 
 
@@ -303,3 +315,54 @@ def _title(run: ShipRun, target: ShipTarget, subject: str) -> str:
         )
         typer.echo(warning, err=True)
     return titled.title
+
+
+def _link_prs(run: ShipRun, urls: Sequence[str]) -> None:
+    """Per PR, in order: its Related PRs section made to list the other PRs."""
+    for target, url in zip(run.targets, urls, strict=True):
+        others = [other for other in urls if other != url]
+        try:
+            _link(run, target, url=url, others=others)
+        except _StepError as error:
+            fail(
+                f"{PREFIX}: {target.repo}: {error.step} failed: {error.reason}",
+                *(f"{PREFIX}: PR open: {shown}" for shown in urls),
+                NOT_MOVED,
+            )
+
+
+def _link(run: ShipRun, target: ShipTarget, *, url: str, others: Sequence[str]) -> None:
+    child = ship_child(target.worktree)
+    env = push_env(run.environ)
+    timeout = step_timeouts().gh
+    try:
+        read = child(
+            pr_body_command(url), env=env, timeout=timeout, output_limit=PR_BODY_OUTPUT_LIMIT
+        )
+        body = _body_of(read, url=url)
+        linked = with_related(body, urls=others, workspace=str(run.hub.parent))
+        if linked == body:
+            return
+        edited = child(pr_edit_command(url, linked), env=env, timeout=timeout)
+    except PrStepError as error:
+        raise _StepError(LINK_STEP, error.reason) from None
+    if edited.returncode != 0:
+        raise _StepError(LINK_STEP, f"gh pr edit failed: {error_tail(edited.stderr)}")
+
+
+def _body_of(read: ChildResult, *, url: str) -> str:
+    """The body ``gh pr view <url> --json body`` printed: a JSON object whose ``body`` is a
+    string, in less than ``PR_BODY_OUTPUT_LIMIT`` bytes (a longer output was cut)."""
+    unreadable = f"could not read the body of {url}"
+    if read.returncode != 0:
+        raise _StepError(LINK_STEP, f"{unreadable}: {error_tail(read.stderr)}")
+    if len(read.stdout) >= PR_BODY_OUTPUT_LIMIT:
+        raise _StepError(LINK_STEP, unreadable)
+    try:
+        found = json.loads(read.stdout)
+    except ValueError:
+        raise _StepError(LINK_STEP, unreadable) from None
+    body = found.get("body") if isinstance(found, dict) else None
+    if not isinstance(body, str):
+        raise _StepError(LINK_STEP, unreadable)
+    return body
