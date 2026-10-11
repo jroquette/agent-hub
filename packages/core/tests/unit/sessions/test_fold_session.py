@@ -157,3 +157,15 @@ def test_folds_each_session_apart_when_events_mix_sessions() -> None:
     assert sessions["s-b"].repo == "demo-web"
     assert sessions["s-a"].tokens is None
     assert sessions["s-a"].has_transcript is False
+
+
+def test_counts_learning_once_when_hook_and_transcript_both_propose_it() -> None:
+    [from_transcript] = learning_events(proposal="toolu_9")
+    from_hook = from_transcript.model_copy(
+        update={"source": "claude_code", "source_id": "session-1:PreToolUse:toolu_9"}
+    )
+    events = as_stored([*a_session_events(), from_transcript, from_hook])
+
+    session = fold_sessions(events, now=NOW)["session-1"]
+
+    assert session.learnings_proposed == 1
