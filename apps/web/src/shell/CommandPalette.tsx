@@ -7,6 +7,7 @@ import { Kbd } from "../components/core";
 import { Icon, type IconName } from "../components/Icon";
 import { Skeleton } from "../components/feedback";
 import { useApi } from "../lib/api";
+import { isInAppPath } from "../lib/safeHref";
 import { NAV } from "./Sidebar";
 
 type SearchHit = components["schemas"]["SearchHit"];
@@ -104,7 +105,7 @@ export function CommandPalette({ onClose, initialQuery = "", project }: CommandP
     const found = GROUPS.map((group) => ({
       title: group.title,
       items: hits
-        .filter((hit) => hit.kind === group.kind)
+        .filter((hit) => hit.kind === group.kind && isInAppPath(hit.href))
         .map((hit, i): PaletteItem => ({
           key: `${hit.kind}:${hit.href}:${String(i)}`,
           icon: group.icon,

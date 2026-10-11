@@ -11,6 +11,7 @@ import {
   IdChip,
   IssueLink,
   Kbd,
+  OutsideLink,
   MenuItem,
   Money,
   PathText,
@@ -160,7 +161,50 @@ describe("IssueLink", () => {
   });
 });
 
+describe("IssueLink with unsafe data", () => {
+  it.each(["javascript:alert(1)", "data:text/html,x"])(
+    "renders the key as plain text when the URL is %s",
+    (href) => {
+      render(<IssueLink id="AGH-48" href={href} />);
+
+      expect(screen.queryByRole("link")).not.toBeInTheDocument();
+      expect(screen.getByText("AGH-48")).toBeInTheDocument();
+    },
+  );
+});
+
+describe("OutsideLink", () => {
+  it("opens a safe https URL in a new tab", () => {
+    render(<OutsideLink href="https://github.com/acme/app/pull/7">PR</OutsideLink>);
+
+    const link = screen.getByRole("link", { name: "PR" });
+    expect(link).toHaveAttribute("href", "https://github.com/acme/app/pull/7");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noreferrer");
+  });
+
+  it.each(["javascript:alert(1)", "data:text/html,<b>x</b>", "//evil.example", null])(
+    "renders the label as plain text when the URL is %j",
+    (href) => {
+      render(<OutsideLink href={href}>PR</OutsideLink>);
+
+      expect(screen.queryByRole("link")).not.toBeInTheDocument();
+      expect(screen.getByText("PR")).toBeInTheDocument();
+    },
+  );
+});
+
 describe("AppLink", () => {
+  it.each(["javascript:alert(1)", "data:text/html,x", "//evil.example/x"])(
+    "renders plain text when the href from API data is %s",
+    (href) => {
+      inRouter(<AppLink href={href}>Open</AppLink>);
+
+      expect(screen.queryByRole("link")).not.toBeInTheDocument();
+      expect(screen.getByText("Open")).toBeInTheDocument();
+    },
+  );
+
   it("routes in-app paths and leaves other links as anchors", () => {
     inRouter(
       <>

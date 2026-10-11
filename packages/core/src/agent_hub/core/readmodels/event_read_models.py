@@ -5,9 +5,15 @@ learnings. A list's first page uses the store's current mark and its cursor carr
 following pages fold exactly the same events: appends between page requests never make an
 item repeat or vanish (AC-200.32); they show up on the next first page.
 
-Two memos keep reads cheap, both in process and never on disk: the loaded events, kept until
-the high-water mark moves, and the folded snapshot, kept for the same mark and the same second
-of ``now`` (statuses depend on the clock). Search reads only ids, paths, commands and tool
+Reads stay cheap with state kept in process and never on disk. The loaded events are indexed
+by session, run and learning, each group in canonical order; a new batch is read alone and
+sorts again only the groups it touches. Each session, run, session's approvals and the
+learnings keep their last fold and the group it came from, so a batch folds again only what it
+changed (a session also when the second of ``now`` moves: statuses depend on the clock). The
+folded snapshot is kept for the same mark and the same second of ``now`` (threads asking for it
+at once share one fold), and a session's sorted timeline for the same mark, so its pages are
+found by bisection. A cursor from before
+later appends folds its own events apart. Search reads only ids, paths, commands and tool
 names, never payload bodies.
 """
 
@@ -58,9 +64,9 @@ from agent_hub.core.readmodels.live_tiles import live_tiles
 from agent_hub.core.readmodels.page import Page
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.runner.run_record import Stage
-from agent_hub.core.runs.fold_run import fold_runs
+from agent_hub.core.runs.fold_run import fold_run, run_id_of
 from agent_hub.core.runs.workflow_run import WorkflowRun
-from agent_hub.core.sessions.fold_session import fold_session, group_by_session, run_issues
+from agent_hub.core.sessions.fold_session import SESSION_SOURCES, fold_session, run_issues
 from agent_hub.core.sessions.pricing import PRICES, PerMillion
 from agent_hub.core.sessions.session import (
     Session,
@@ -92,9 +98,103 @@ _SEARCH_ORDER: Mapping[SearchKind, int] = {
 }
 
 
-# What a session's fold depends on besides its id: its event count and highest seq, the time
-# it was folded at, and the run issues.
-type _SessionKey = tuple[int, int, datetime, frozenset[tuple[str, str]]]
+_LEARNING_TYPES = frozenset(
+    {EventType.LEARNING_PROPOSED, EventType.LEARNING_ACCEPTED, EventType.LEARNING_REJECTED}
+)
+
+type _CanonicalKey = tuple[datetime, str, str]
+type _Group = Sequence[StoredEvent]
+# What a run's fold reads from each session it started; nothing in it depends on ``now``.
+type _RunLink = tuple[str, datetime, Decimal | None, bool, str | None, int | None]
+
+
+def _canonical_key(stored: StoredEvent) -> _CanonicalKey:
+    # The order ``canonical_events`` sorts by; unique, since the store keeps one event per key.
+    return (stored.event.timestamp, str(stored.event.source), stored.event.source_id)
+
+
+def _merged(group: _Group, added: Sequence[StoredEvent]) -> list[StoredEvent]:
+    # A new list, sorted again: only the groups a batch touches pay for it.
+    return canonical_events([*group, *added])
+
+
+class _EventIndex:
+    """The loaded events grouped by the keys the folds need, each group in canonical order.
+
+    ``apply`` takes one batch: it sorts again only the groups the batch touched, and gives each
+    of them a new list, so a fold memo can tell a changed group by identity. Events are held
+    once (a run or learning group shares them with its session group).
+    """
+
+    def __init__(self) -> None:
+        self.hwm = 0
+        self.by_session: dict[str, _Group] = {}
+        self.by_run: dict[str, _Group] = {}
+        self.issues: dict[str, str] = {}
+        self.learning_events: _Group = ()
+        self.live_sessions: set[str] = set()
+        self.gate_sessions: set[str] = set()
+        self.last_activity: dict[str, datetime] = {}
+
+    def apply(self, batch: Iterable[StoredEvent], *, hwm: int) -> None:
+        """Add the events stored after ``self.hwm`` up to ``hwm``."""
+        sessions: dict[str, list[StoredEvent]] = {}
+        runs: dict[str, list[StoredEvent]] = {}
+        learnings: list[StoredEvent] = []
+        for stored in batch:
+            self._note(stored)
+            sessions.setdefault(stored.event.session, []).append(stored)
+            run_id = run_id_of(stored)
+            if run_id is not None:
+                runs.setdefault(run_id, []).append(stored)
+            if stored.event.type in _LEARNING_TYPES:
+                learnings.append(stored)
+        for session_id, added in sessions.items():
+            self.by_session[session_id] = _merged(self.by_session.get(session_id, ()), added)
+        for run_id, added in runs.items():
+            group = _merged(self.by_run.get(run_id, ()), added)
+            self.by_run[run_id] = group
+            issue = run_issues(group).get(run_id)
+            if issue is not None:
+                self.issues[run_id] = issue
+        if learnings:
+            self.learning_events = _merged(self.learning_events, learnings)
+        self.hwm = hwm
+
+    def _note(self, stored: StoredEvent) -> None:
+        event = stored.event
+        if event.type == EventType.GATE_REQUEST:
+            self.gate_sessions.add(event.session)
+        if event.source in SESSION_SOURCES:
+            self.live_sessions.add(event.session)
+        known = self.last_activity.get(event.project)
+        if known is None or event.timestamp > known:
+            self.last_activity[event.project] = event.timestamp
+
+    def up_to(self, hwm: int) -> _EventIndex:
+        """A new index of the events up to ``hwm`` only (a cursor taken before later appends)."""
+        older = _EventIndex()
+        older.apply(
+            (stored for group in self.by_session.values() for stored in group if stored.seq <= hwm),
+            hwm=hwm,
+        )
+        return older
+
+
+@dataclass(kw_only=True, slots=True)
+class _FoldMemos:
+    """The last fold of each key and the group it was folded from (compared by identity)."""
+
+    sessions: dict[str, tuple[_Group, datetime, str | None, Session]]
+    runs: dict[str, tuple[_Group, tuple[_RunLink, ...], WorkflowRun]]
+    approvals: dict[
+        str, tuple[_Group, frozenset[tuple[str, str]], dict[str, tuple[_CanonicalKey, Approval]]]
+    ]
+    learnings: tuple[_Group, dict[str, Learning]]
+
+    @classmethod
+    def empty(cls) -> _FoldMemos:
+        return cls(sessions={}, runs={}, approvals={}, learnings=((), {}))
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -103,8 +203,8 @@ class _Snapshot:
 
     hwm: int
     now: datetime
-    events: tuple[StoredEvent, ...]
     by_session: Mapping[str, Sequence[StoredEvent]]
+    last_activity: Mapping[str, datetime]
     sessions: Mapping[str, Session]
     runs: Mapping[str, WorkflowRun]
     approvals: Mapping[str, Approval]
@@ -244,18 +344,15 @@ class FoldedEventReadModels:
         self._now = now
         self._hub_path_of = hub_path_of
         self._prices = prices
-        # The events read so far and the mark they were read up to: the store only grows, so
-        # a later read takes only what was appended since.
-        self._loaded: tuple[int, tuple[StoredEvent, ...]] = (0, ())
-        self._loading = threading.Lock()
+        # The events read so far, grouped, and the mark they were read up to: the store only
+        # grows, so a later read takes only what was appended since.
+        self._index = _EventIndex()
+        self._memos = _FoldMemos.empty()
+        self._folding = threading.Lock()
         self._snapshots: FoldMemo[tuple[int, datetime], _Snapshot] = FoldMemo(max_entries=8)
         # A session's timeline depends only on its events, so it lives as long as the mark: the
         # pages of one long session (a 5,000-event one is 25 pages) build it once.
         self._timelines: FoldMemo[str, _SortedTimeline] = FoldMemo(max_entries=32)
-        # The last fold of each session and what it was folded from: a session whose events,
-        # ``now`` and run issues are unchanged is not folded again.
-        self._sessions: dict[str, tuple[_SessionKey, Session]] = {}
-        self._sessions_lock = threading.Lock()
 
     # Loading and folding
 
@@ -269,62 +366,64 @@ class FoldedEventReadModels:
                 return tuple(loaded)
             after_seq = page.next_after_seq
 
-    def _events_up_to(self, hwm: int) -> tuple[StoredEvent, ...]:
+    def _index_at(self, hwm: int) -> tuple[_EventIndex, _FoldMemos]:
+        """The index of the events up to ``hwm`` and the memos to fold it with."""
         current = self._reader.high_water_mark()
-        with self._loading:
-            loaded_hwm, events = self._loaded
-            if current != loaded_hwm:
-                # A smaller mark is another store at the same path: read it all again.
-                after = loaded_hwm if current > loaded_hwm else 0
-                kept = events if current > loaded_hwm else ()
-                events = kept + self._load(after=after, hwm=current)
-                self._loaded = (current, events)
-        if hwm >= current:
-            return events
-        return tuple(stored for stored in events if stored.seq <= hwm)
+        if current < self._index.hwm:
+            # A smaller mark is another store at the same path: read it all again.
+            self._index, self._memos = _EventIndex(), _FoldMemos.empty()
+        target = min(hwm, current)
+        if target > self._index.hwm:
+            self._index.apply(self._load(after=self._index.hwm, hwm=target), hwm=target)
+        if target == self._index.hwm:
+            return self._index, self._memos
+        # A cursor from before later appends: fold its events apart, keeping the memos.
+        return self._index.up_to(target), _FoldMemos.empty()
 
     def _fold(self, hwm: int, now: datetime) -> _Snapshot:
-        events = self._events_up_to(hwm)
-        # Sorted once here; every fold below takes the marked list as already canonical.
-        ordered = canonical_events(events)
-        by_session = group_by_session(ordered)
-        issues = run_issues(ordered)
-        sessions = self._fold_sessions(by_session, now=now, issues=issues)
-        hub_paths = self._hub_paths({stored.event.project for stored in events})
-        return _Snapshot(
-            hwm=hwm,
-            now=now,
-            events=events,
-            by_session=by_session,
-            sessions=sessions,
-            runs=fold_runs(ordered, sessions=sessions),
-            approvals=fold_approvals(ordered, hub_paths=hub_paths),
-            learnings=fold_learnings(ordered),
-        )
+        with self._folding:
+            index, memos = self._index_at(hwm)
+            # Sessions in the order their first events come in.
+            live = sorted(index.live_sessions, key=lambda s: _canonical_key(index.by_session[s][0]))
+            by_session = {session_id: index.by_session[session_id] for session_id in live}
+            sessions = self._fold_sessions(by_session, now=now, issues=index.issues, memos=memos)
+            hub_paths = self._hub_paths(index.last_activity)
+            return _Snapshot(
+                hwm=hwm,
+                now=now,
+                by_session=by_session,
+                last_activity=dict(index.last_activity),
+                sessions=sessions,
+                runs=_fold_runs(index, sessions, memos),
+                approvals=_fold_approvals(index, hub_paths, memos),
+                learnings=_fold_learnings(index, memos),
+            )
 
     def _fold_sessions(
         self,
-        by_session: Mapping[str, Sequence[StoredEvent]],
+        by_session: Mapping[str, _Group],
         *,
         now: datetime,
         issues: Mapping[str, str],
+        memos: _FoldMemos,
     ) -> dict[str, Session]:
-        issues_key = frozenset(issues.items())
-        with self._sessions_lock:
-            known = dict(self._sessions)
-        folded: dict[str, tuple[_SessionKey, Session]] = {}
+        # A session whose events, ``now`` and run issue are unchanged is not folded again; its
+        # run comes from its own events, so the same events name the same run.
+        folded: dict[str, Session] = {}
         for session_id, group in by_session.items():
-            # The store only grows, so a group's size and highest seq name its events.
-            key = (len(group), max(stored.seq for stored in group), now, issues_key)
-            found = known.get(session_id)
-            if found is not None and found[0] == key:
-                folded[session_id] = found
+            found = memos.sessions.get(session_id)
+            if (
+                found is not None
+                and found[0] is group
+                and found[1] == now
+                and found[2] == _run_issue(found[3], issues)
+            ):
+                folded[session_id] = found[3]
                 continue
             session = fold_session(group, now=now, issues=issues, prices=self._prices)
-            folded[session_id] = (key, session)
-        with self._sessions_lock:
-            self._sessions = folded
-        return {session_id: session for session_id, (_, session) in folded.items()}
+            memos.sessions[session_id] = (group, now, _run_issue(session, issues), session)
+            folded[session_id] = session
+        return folded
 
     def _hub_paths(self, projects: Iterable[str]) -> dict[str, str]:
         if self._hub_path_of is None:
@@ -513,7 +612,6 @@ class FoldedEventReadModels:
             if run.stage not in _IN_FLIGHT_DONE:
                 in_flight[run.stage] = in_flight.get(run.stage, 0) + 1
         now = snapshot.now
-        times = [s.event.timestamp for s in snapshot.events if s.event.project == project]
         return ProjectActivity(
             project=project,
             live_sessions=sum(1 for session in sessions if _is_running(session)),
@@ -522,7 +620,7 @@ class FoldedEventReadModels:
             cost_period=_cost_between(sessions, now - RECENT, now),
             cost_previous_period=_cost_between(sessions, now - 2 * RECENT, now - RECENT),
             cost_daily=_daily_costs(sessions, now),
-            last_activity_at=max(times, default=None),
+            last_activity_at=snapshot.last_activity.get(project),
         )
 
     def needs_you(self, scope: Scope) -> Page[NeedsYouItem]:
@@ -597,6 +695,93 @@ class FoldedEventReadModels:
                 if learning.status == LearningStatus.PROPOSED
             ),
         )
+
+
+# Folds by key over the index
+
+
+def _run_issue(session: Session, issues: Mapping[str, str]) -> str | None:
+    return None if session.run_id is None else issues.get(session.run_id)
+
+
+def _run_link(session: Session) -> _RunLink:
+    return (
+        session.id,
+        session.started_at,
+        session.cost_usd,
+        session.tokens is not None,
+        session.step,
+        session.attempt,
+    )
+
+
+def _fold_runs(
+    index: _EventIndex, sessions: Mapping[str, Session], memos: _FoldMemos
+) -> dict[str, WorkflowRun]:
+    """Every run, folding again only a run whose events or started sessions changed."""
+    started: dict[str, list[Session]] = {}
+    for session in sessions.values():
+        if session.run_id is not None:
+            started.setdefault(session.run_id, []).append(session)
+    runs: dict[str, WorkflowRun] = {}
+    by_first = sorted(index.by_run.items(), key=lambda item: _canonical_key(item[1][0]))
+    for run_id, group in by_first:
+        linked = started.get(run_id, [])
+        links = tuple(_run_link(session) for session in linked)
+        found = memos.runs.get(run_id)
+        if found is not None and found[0] is group and found[1] == links:
+            runs[run_id] = found[2]
+            continue
+        run = fold_run(run_id, group, sessions=linked)
+        memos.runs[run_id] = (group, links, run)
+        runs[run_id] = run
+    return runs
+
+
+def _session_approvals(
+    group: _Group, hub_paths: Mapping[str, str]
+) -> dict[str, tuple[_CanonicalKey, Approval]]:
+    folded = fold_approvals(group, hub_paths=hub_paths)
+    requests = {approval.request_event_id for approval in folded.values()}
+    keys = {s.event_id: _canonical_key(s) for s in group if s.event_id in requests}
+    return {
+        gate_id: (keys[approval.request_event_id], approval) for gate_id, approval in folded.items()
+    }
+
+
+def _fold_approvals(
+    index: _EventIndex, hub_paths: Mapping[str, str], memos: _FoldMemos
+) -> dict[str, Approval]:
+    """Every approval, folding again only the sessions whose events changed.
+
+    An approval is decided from its own session's events, so each session folds apart; a gate
+    id requested in two sessions keeps the request that comes first, as in one fold.
+    """
+    paths_key = frozenset(hub_paths.items())
+    first: dict[str, tuple[_CanonicalKey, Approval]] = {}
+    for session_id in index.gate_sessions:
+        group = index.by_session[session_id]
+        found = memos.approvals.get(session_id)
+        if found is not None and found[0] is group and found[1] == paths_key:
+            folded = found[2]
+        else:
+            folded = _session_approvals(group, hub_paths)
+            memos.approvals[session_id] = (group, paths_key, folded)
+        for gate_id, (key, approval) in folded.items():
+            known = first.get(gate_id)
+            if known is None or key < known[0]:
+                first[gate_id] = (key, approval)
+    ordered = sorted(first.items(), key=lambda item: item[1][0])
+    return {gate_id: approval for gate_id, (_, approval) in ordered}
+
+
+def _fold_learnings(index: _EventIndex, memos: _FoldMemos) -> dict[str, Learning]:
+    """Every learning, folded again only when a batch brought a learning event."""
+    group, learnings = memos.learnings
+    if group is not index.learning_events:
+        learnings = fold_learnings(index.learning_events)
+        memos.learnings = (index.learning_events, learnings)
+    return learnings
 
 
 # Session filters and sort

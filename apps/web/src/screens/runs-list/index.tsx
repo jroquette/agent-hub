@@ -15,6 +15,7 @@ import {
   StageChip,
   StatusBadge,
   Tooltip,
+  OutsideLink,
 } from "../../components";
 import type { DataTableColumn, Facet } from "../../components";
 import { useNow } from "../../lib/clock";
@@ -297,16 +298,10 @@ function columns(now: number): DataTableColumn<WorkflowRun>[] {
           <div className="ah-stack" style={{ gap: 2, alignItems: "flex-start" }}>
             <StatusBadge status={badge.status} label={badge.label} />
             {run.pr_url ? (
-              <a
-                className="ah-mono ah-small"
-                href={run.pr_url}
-                target="_blank"
-                rel="noreferrer"
-                title="Opens GitHub"
-              >
+              <OutsideLink className="ah-mono ah-small" href={run.pr_url} title="Opens GitHub">
                 PR
                 <Icon name="arrow-up-right" size="sm" />
-              </a>
+              </OutsideLink>
             ) : (
               <span className="ah-subtle ah-small">no PR</span>
             )}

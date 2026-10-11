@@ -10,6 +10,7 @@ import { Link } from "react-router";
 
 import { cx } from "../lib/cx";
 import { fmtAgo, fmtMoney, middleTruncate } from "../lib/format";
+import { safeHref } from "../lib/safeHref";
 import { usePreferences } from "../lib/preferences";
 import { Icon, type IconName } from "./Icon";
 
@@ -50,15 +51,48 @@ export interface AppLinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElemen
   href: string;
 }
 export function AppLink({ href, children, ...rest }: AppLinkProps) {
-  if (href.startsWith("/")) {
+  const safe = safeHref(href);
+  if (safe === null) {
     return (
-      <Link to={href} {...rest}>
+      <span className={rest.className} style={rest.style} title={UNSAFE_LINK_TITLE}>
+        {children}
+      </span>
+    );
+  }
+  if (safe.startsWith("/")) {
+    return (
+      <Link to={safe} {...rest}>
         {children}
       </Link>
     );
   }
   return (
-    <a href={href} {...rest}>
+    <a href={safe} {...rest}>
+      {children}
+    </a>
+  );
+}
+
+const UNSAFE_LINK_TITLE = "Link not shown: only http(s) and same-origin links are opened";
+
+/* ---------- Outside link: a URL from API data that opens in a new tab, or plain text if unsafe ---------- */
+export interface OutsideLinkProps extends Omit<
+  AnchorHTMLAttributes<HTMLAnchorElement>,
+  "href" | "target" | "rel"
+> {
+  href: string | null | undefined;
+}
+export function OutsideLink({ href, children, ...rest }: OutsideLinkProps) {
+  const safe = safeHref(href);
+  if (safe === null) {
+    return (
+      <span className={rest.className} style={rest.style} title={UNSAFE_LINK_TITLE}>
+        {children}
+      </span>
+    );
+  }
+  return (
+    <a href={safe} target="_blank" rel="noreferrer" {...rest}>
       {children}
     </a>
   );
@@ -262,17 +296,11 @@ export function IssueLink({ id, title, href, showTitle }: IssueLinkProps) {
   const label = `${id}${title ? " · " + title : ""}`;
   return (
     <span className="ah-row" style={{ gap: 6, minWidth: 0 }}>
-      {href ? (
-        <a
-          className="ah-issue"
-          href={href}
-          target="_blank"
-          rel="noreferrer"
-          title={`${label} · opens in Linear`}
-        >
+      {safeHref(href) !== null ? (
+        <OutsideLink className="ah-issue" href={href} title={`${label} · opens in Linear`}>
           {id}
           <Icon name="arrow-up-right" />
-        </a>
+        </OutsideLink>
       ) : (
         <span className="ah-issue" title={`${label} · Linear is not connected in this version.`}>
           {id}
