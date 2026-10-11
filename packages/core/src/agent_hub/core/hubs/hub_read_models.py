@@ -178,11 +178,18 @@ class HubFilesReadModels:
         raise missing
 
     def doctor_findings(self, scope: Scope) -> Page[FindingView]:
-        """Doctor findings of every scoped hub that names its project, in ``hub doctor`` order."""
+        """Doctor findings of every scoped hub that names its project, in ``hub doctor`` order.
+
+        A scope whose project no readable hub names (its ``hub.json`` became unreadable, or no
+        hub has it) is ``EntityNotFoundError``: an empty list would read as a clean doctor run.
+        """
+        hubs = tuple(self._doctor_hubs(scope))
+        if scope.project is not None and not hubs:
+            raise EntityNotFoundError(entity="project", entity_id=scope.project)
         return _page(
             tuple(
                 _finding_view(project, finding)
-                for project, hub_path in self._doctor_hubs(scope)
+                for project, hub_path in hubs
                 for finding in self._doctor.findings(hub_path)
             )
         )
