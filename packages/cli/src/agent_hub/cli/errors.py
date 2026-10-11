@@ -45,3 +45,8 @@ class PrStepError(CliError):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
+
+
+class ShipError(CliError):
+    """``hub ship`` refuses its shipping set: no task worktree, two in a repo, a wrong branch,
+    a git read that failed or nothing ahead. The message names the repo and the path."""
