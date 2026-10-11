@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Path
 
-from agent_hub.api.rfc9457 import NotImplementedInBuildError
+from agent_hub.api.dependencies import HubReadModelsDep
 from agent_hub.api.schemas import MAX_QUERY_TEXT, PROBLEM_RESPONSES
 from agent_hub.core.projects.project_views import (
     ProjectDetail,
@@ -20,24 +20,24 @@ ProjectPath = Annotated[str, Path(min_length=1, max_length=MAX_QUERY_TEXT)]
 
 
 @router.get("/projects")
-def list_projects() -> Page[ProjectSummary]:
+def list_projects(models: HubReadModelsDep) -> Page[ProjectSummary]:
     """A card per registered project."""
-    raise NotImplementedInBuildError("list_projects")
+    return models.list_projects()
 
 
 @router.get("/projects/{project}")
-def get_project(project: ProjectPath) -> ProjectDetail:
+def get_project(project: ProjectPath, models: HubReadModelsDep) -> ProjectDetail:
     """The Project overview header."""
-    raise NotImplementedInBuildError("get_project")
+    return models.get_project(project)
 
 
 @router.get("/projects/{project}/now")
-def get_project_now(project: ProjectPath) -> ProjectNow:
+def get_project_now(project: ProjectPath, models: HubReadModelsDep) -> ProjectNow:
     """The project's ``brain/now.md``."""
-    raise NotImplementedInBuildError("get_project_now")
+    return models.project_now(project)
 
 
 @router.get("/projects/{project}/repos")
-def list_project_repos(project: ProjectPath) -> Page[RepoView]:
+def list_project_repos(project: ProjectPath, models: HubReadModelsDep) -> Page[RepoView]:
     """The project's repos."""
-    raise NotImplementedInBuildError("list_project_repos")
+    return models.project_repos(project)
