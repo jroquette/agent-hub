@@ -109,6 +109,33 @@ def busy_problem(_: Exception) -> Problem:
     )
 
 
+def hub_invalid_problem(error: Any) -> Problem:
+    """``HubInvalidError`` (core/hubs): 422 with its title and one ``errors`` entry per problem.
+
+    Its ``problems`` are pointer/message pairs, as objects or as tuples.
+    """
+    errors: list[JsonValue] = []
+    for item in getattr(error, "problems", ()):
+        pointer, message = (
+            (item.pointer, item.message) if hasattr(item, "pointer") else (item[0], item[1])
+        )
+        errors.append({"pointer": str(pointer), "message": str(message)})
+    title = str(getattr(error, "title", "Invalid hub.json"))
+    return Problem(422, title, str(error), {"errors": errors})
+
+
+def hub_conflict_problem(error: Any) -> Problem:
+    """``HubConflictError`` (core/hubs): 409, the hub or its project is registered already."""
+    return Problem(409, "Hub already registered", str(error))
+
+
+def hub_registry_problem(_: Any) -> Problem:
+    """``HubRegistryError`` (core/hubs): 503; the cause names files, so it stays in the log."""
+    return Problem(
+        503, "Hub registry unreadable", "The registry of hubs could not be read or written."
+    )
+
+
 def _database_problem(_: Exception) -> Problem:
     # The adapter's message names the file and the driver's error; neither helps the browser.
     return Problem(
