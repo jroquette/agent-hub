@@ -57,7 +57,7 @@ def _scene() -> tuple[list[StoredEvent], object]:
     return events, now
 
 
-def test_orders_waiting_live_idle_then_recently_ended_when_tiles_built() -> None:
+def test_groups_waiting_live_idle_then_recently_ended_when_tiles_built() -> None:
     events, now = _scene()
     sessions = fold_sessions(events, now=now)
 
