@@ -262,9 +262,7 @@ def test_exits_zero_when_tag_annotated(tmp_path: Path, capsys: pytest.CaptureFix
     )
 
     assert exit_code == 0
-    assert out == (
-        f'tag "v0.2.0" ok: annotated, equals the version "0.2.0" of {CLI} and {META}\n'
-    )
+    assert out == (f'tag "v0.2.0" ok: annotated, equals the version "0.2.0" of {CLI} and {META}\n')
     assert err == ""
 
 
@@ -292,10 +290,24 @@ def test_rejects_tag_when_lightweight(
     )
 
 
-def test_rejects_peeled_without_tag(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_exits_two_when_peeled_without_tag(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     write_pyprojects(tmp_path, cli="0.2.0", meta="0.2.0")
 
     with pytest.raises(SystemExit) as raised:
         run(tmp_path, capsys, "--peeled=")
 
     assert raised.value.code == 2
+
+
+def test_reports_version_before_lightweight_when_both_wrong(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_pyprojects(tmp_path, cli="0.2.0", meta="0.2.0")
+
+    exit_code, out, err = run(tmp_path, capsys, "--tag=v0.2.1", "--peeled=")
+
+    assert exit_code == 1
+    assert out == ""
+    assert err == f'tag "v0.2.1": must be v + the version "0.2.0" of {CLI} and {META}\n'
