@@ -3808,6 +3808,9 @@ RUN_TIME_BRAIN_PATHS = {
     "brain/auto/workspace/MEMORY.md": "plugin/hub-workflow/skills/learn/SKILL.md",
     # Written by `hub agent`, which the launcher runs.
     "brain/auto/agent-context.md": "agent",
+    # Written by `hub start` (AGH-62), one per task; no rendered file runs it, so only the seeded
+    # .gitignore names it (`brain/auto/agent-context-*.md`, matched up to the `*`).
+    "brain/auto/agent-context-": ".gitignore",
     "brain/learnings/gotchas/": "plugin/hub-workflow/skills/learn/SKILL.md",
     # Written by `hub run`, which the run-issue target runs (AGH-27).
     "brain/_inbox/runs/": "Makefile",
@@ -4316,6 +4319,7 @@ AGH10_GITIGNORE = (
 )
 RUN_TIME_OUTPUTS = (
     "brain/auto/agent-context.md",
+    "brain/auto/agent-context-*.md",
     "brain/_inbox/sessions/",
     "brain/auto/workspace/session-snapshot.md",
     "brain/_inbox/mining/",
@@ -4359,6 +4363,8 @@ SEEDED_GITIGNORE = (
     "brain/_inbox/mining/",
     "brain/auto/workspace/session-snapshot.md",
     "brain/auto/agent-context.md",
+    # Written by `hub start`, one per task (AGH-62).
+    "brain/auto/agent-context-*.md",
 )
 
 
@@ -4371,8 +4377,11 @@ def test_ignores_personal_memory_when_gitignore_rendered(
     ]
     lines = demo.content.decode("utf-8").splitlines()
 
-    assert lines[:18] == list(SEEDED_GITIGNORE)
-    assert lines[18:] == ["brain/auto/workspace/*", "!brain/auto/workspace/.gitkeep"]
+    assert lines[: len(SEEDED_GITIGNORE)] == list(SEEDED_GITIGNORE)
+    assert lines[len(SEEDED_GITIGNORE) :] == [
+        "brain/auto/workspace/*",
+        "!brain/auto/workspace/.gitkeep",
+    ]
     assert variant.content == demo.content
 
 

@@ -31,6 +31,7 @@ from agent_hub.core.hub_config.platform_repository import (
     PLATFORM_REPOSITORY_FORM,
     PLATFORM_REPOSITORY_PATTERN,
 )
+from agent_hub.core.hub_config.workspace_repos import workspace_repos
 from agent_hub.core.hub_files.rendered_file import Ownership
 from agent_hub.core.workspace.shown_conventions import (
     ShownConventions,
@@ -131,6 +132,7 @@ _JOIN_CLOUD: Final = (
 def substitution_mapping(config: HubConfig) -> dict[str, str]:
     """Map each placeholder name to its text; lists keep ``hub.json`` order, joined by ``, ``."""
     project = config.project
+    repos = workspace_repos(config)
     return {
         "project_name": project.name,
         "project_hub_repo": project.hub_repo,
@@ -139,8 +141,8 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
         "project_branch_prefix": shown_prefix(config),
         "project_default_branch": project.default_branch,
         "tracker_team": config.tracker.default_team,
-        "repo_dirs": _LIST_SEPARATOR.join(repo.dir for repo in config.repos),
-        "repo_githubs": _LIST_SEPARATOR.join(repo.github for repo in config.repos),
+        "repo_dirs": _LIST_SEPARATOR.join(repo.dir for repo in repos),
+        "repo_githubs": _LIST_SEPARATOR.join(repo.github for repo in repos),
         "guard_deny_hosts": _LIST_SEPARATOR.join(config.guard.deny_hosts),
         "platform_repository": PLATFORM_REPOSITORY,
         "platform_repository_pattern": PLATFORM_REPOSITORY_PATTERN,

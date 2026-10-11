@@ -13,6 +13,8 @@ from agent_hub.cli.doctor_command import doctor
 from agent_hub.cli.generator import init
 from agent_hub.cli.next_command import next_command
 from agent_hub.cli.run_command import run
+from agent_hub.cli.setup_command import setup
+from agent_hub.cli.start_command import start
 from agent_hub.cli.sync_command import sync
 from agent_hub.cli.worktree_command import worktree
 
@@ -45,9 +47,11 @@ app.command("collect")(collect)
 app.command("init")(init)
 app.command("sync")(sync)
 app.command("doctor")(doctor)
+app.command("setup")(setup)
 app.command("worktree")(worktree)
 app.command("brief")(brief)
 app.command("agent", cls=PassThroughCommand, add_help_option=False)(agent)
 app.command("next")(next_command)
 app.command("run")(run)
 app.command("bench")(bench)
+app.command("start")(start)

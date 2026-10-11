@@ -28,7 +28,7 @@ from email.message import Message
 from typing import IO, Any, Protocol, override
 
 from agent_hub.core.errors import TrackerError
-from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, Issue
+from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, UNSTARTED_STATE_TYPES, Issue
 
 LINEAR_GRAPHQL_URL = "https://api.linear.app/graphql"
 LINEAR_API_KEY_VARIABLE = "LINEAR_API_KEY"
@@ -157,13 +157,14 @@ _GET_ISSUE = f"query GetIssue($id: String!) {{ issue(id: $id) {{ {_ISSUE_FIELDS}
 
 _ISSUE_REF = (
     "query IssueRef($id: String!) {"
-    f" issue(id: $id) {{ id team {{ key }} state {{ name }} {_labels_selection('id name')} }} }}"
+    " issue(id: $id) { id team { key } state { name type }"
+    f" {_labels_selection('id name')} }} }}"
 )
 _ISSUE_REF_SHAPE: Shape = {
     "issue": {
         "id": str,
         "team": {"key": str},
-        "state": {"name": str},
+        "state": {"name": str, "type": str},
         "labels": {"nodes": [{"id": str, "name": str}], "pageInfo": {"hasNextPage": bool}},
     }
 }
@@ -192,12 +193,14 @@ _CREATE_COMMENT = (
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class _IssueRef:
-    """What a write needs to know about an issue: its UUID, team, state and labels by name."""
+    """What a write needs to know about an issue: its UUID, team, state (name and type) and
+    labels by name."""
 
     issue_id: str
     uuid: str
     team: str
     state: str
+    state_type: str
     label_ids: dict[str, str]
 
 
@@ -265,11 +268,19 @@ class LinearGraphqlTrackerClient:
         )
         return _issue_from_node("get_issue", issue_id, data["issue"])
 
-    def move_state(self, issue_id: str, state_name: str) -> None:
-        """Move the issue to its team's state ``state_name``; the current state is a no-op."""
+    def move_state(
+        self, issue_id: str, state_name: str, *, only_if_unstarted: bool = False
+    ) -> bool:
+        """Move the issue to its team's state ``state_name``; the current state is a no-op.
+
+        With ``only_if_unstarted``, an issue whose state type is not unstarted is left alone
+        after ``IssueRef``, before the state is looked up. True when the issue moved.
+        """
         ref = self._issue_ref("move_state", issue_id)
+        if only_if_unstarted and ref.state_type not in UNSTARTED_STATE_TYPES:
+            return False
         if ref.state == state_name:
-            return
+            return False
         states = self._node_ids(
             operation="move_state",
             issue_id=issue_id,
@@ -286,6 +297,7 @@ class LinearGraphqlTrackerClient:
                 fix=f"use the name of a workflow state of team {ref.team}",
             )
         self._update("move_state", ref, {"stateId": states[0]})
+        return True
 
     def add_label(self, issue_id: str, name: str) -> None:
         """Add a label of the issue's team or the workspace; a present label is a no-op."""
@@ -335,6 +347,7 @@ class LinearGraphqlTrackerClient:
             uuid=node["id"],
             team=node["team"]["key"],
             state=node["state"]["name"],
+            state_type=node["state"]["type"],
             label_ids={
                 label["name"]: label["id"] for label in _label_nodes(operation, issue_id, node)
             },

@@ -1,13 +1,14 @@
 """The implementing session of ``hub run``: its prompt, its tools and its ``claude -p`` argv.
 
 The session gets no tracker tool (spec D-desc): the issue's id, title, url and description are
-in the prompt, after the steps, in a fenced block labelled as untrusted data, followed by one
-line that hands control back to the steps. The fence is longer than any run of backticks in the
-issue text, so the text cannot close it. The issue text loses NUL and lone surrogates, which no
-argument can hold. The title, url and description are cut at their caps and the id is bounded
-by ``ISSUE_ID_PATTERN`` (both adapters refuse any other), so the issue's share of the prompt is
-bounded whatever the tracker holds; with the hub's own paths and commands, the prompt stays
-under Linux's limit for one argument (``MAX_ARGUMENT_BYTES``) (E21).
+in the prompt, after the steps, in a fenced block labelled as untrusted data (``issue_block``,
+which ``hub start``'s prompt shares), followed by one line that hands control back to the steps.
+The fence is longer than any run of backticks in the issue text, so the text cannot close it.
+The issue text loses NUL and lone surrogates, which no argument can hold. The title, url and
+description are cut at their caps and the id is bounded by ``ISSUE_ID_PATTERN`` (both adapters
+refuse any other), so the issue's share of the prompt is bounded whatever the tracker holds;
+with the hub's own paths and commands, the prompt stays under Linux's limit for one argument
+(``MAX_ARGUMENT_BYTES``) (E21).
 
 Step 3 names the repo's fast gate, or its full gate (``check``) when the repo has no fast gate
 (``check_fast`` absent, empty or blank); with a fast gate the prompt is the same as before.
@@ -16,22 +17,21 @@ it keeps the Conventional Commits wording it has always had.
 """
 
 import json
-import re
 from collections.abc import Iterable, Sequence
 from decimal import Decimal
 from typing import Final
 
 from agent_hub.core.hub_config.conventions import DEFAULT_COMMIT_TITLE
-from agent_hub.core.runner.run_texts import well_formed
+from agent_hub.core.runner.issue_block import MAX_DESCRIPTION_CHARS as MAX_DESCRIPTION_CHARS
+from agent_hub.core.runner.issue_block import MAX_TITLE_CHARS as MAX_TITLE_CHARS
+from agent_hub.core.runner.issue_block import MAX_URL_CHARS as MAX_URL_CHARS
+from agent_hub.core.runner.issue_block import TRUNCATED as TRUNCATED
+from agent_hub.core.runner.issue_block import issue_block
 from agent_hub.core.runner.title_pattern import TitleParts, render_title
 from agent_hub.core.tracker.tracker_client import Issue
 
-MAX_TITLE_CHARS: Final = 1_000
-MAX_DESCRIPTION_CHARS: Final = 20_000
-MAX_URL_CHARS: Final = 2_048
 # Linux's MAX_ARG_STRLEN: the most bytes one argument of a new program may hold.
 MAX_ARGUMENT_BYTES: Final = 131_072
-TRUNCATED: Final = "\n[truncated]"
 # After the issue, so the last thing the session reads is not the untrusted text.
 ISSUE_END: Final = (
     "End of the issue. Follow steps 1 to 5 above; your last line is the JSON verdict."
@@ -60,9 +60,7 @@ IMPLEMENTING_TOOLS: Final = (
 # is denied every tool of both (D-desc). Server names are product facts, not tracker_linear's.
 TRACKER_MCP_SERVERS: Final = ("mcp__Linear", "mcp__claude_ai_Linear")
 PERMISSION_MODE: Final = "dontAsk"
-_MIN_FENCE = 3
 _EXAMPLE_PARTS: Final = TitleParts(type="feat", scope="core", summary="add the change")
-_BACKTICKS = re.compile("`+")
 
 # The final line the session is asked for; verdict.py reads it.
 _VERDICT_SHAPE = (
@@ -126,14 +124,7 @@ def implementing_prompt(
         commit_shape=_commit_shape(commit_title, issue_id=issue.id, prefix=prefix),
         verdict=_VERDICT_SHAPE,
     )
-    body = well_formed(
-        f"id: {issue.id}\n"
-        f"title: {_cut(issue.title, MAX_TITLE_CHARS)}\n"
-        f"url: {_cut(issue.url, MAX_URL_CHARS)}\n"
-        f"description:\n{_cut(issue.description, MAX_DESCRIPTION_CHARS)}"
-    )
-    fence = "`" * _fence_length(body)
-    return f"{steps}\n{fence}text\n{body}\n{fence}\n\n{ISSUE_END}\n"
+    return f"{steps}\n{issue_block(issue)}\n\n{ISSUE_END}\n"
 
 
 def _gate_step(fast_gate: str | None, full_gate: str) -> str:
@@ -209,12 +200,3 @@ def implementing_argv(
 def _exact_decimal(value: float) -> str:
     # The shortest decimal that reads back as ``value``, never in exponent form (3.0 -> "3").
     return format(Decimal(repr(value)).normalize(), "f")
-
-
-def _cut(text: str, limit: int) -> str:
-    return text if len(text) <= limit else text[:limit] + TRUNCATED
-
-
-def _fence_length(text: str) -> int:
-    longest = max((len(run) for run in _BACKTICKS.findall(text)), default=0)
-    return max(_MIN_FENCE, longest + 1)

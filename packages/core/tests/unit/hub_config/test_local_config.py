@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 import pytest
@@ -5,13 +6,15 @@ from pydantic import BaseModel
 
 from agent_hub.core.hub_config.document_check import check_hub_document
 from agent_hub.core.hub_config.local_config import (
+    LOCAL_FILE_MAX_BYTES,
     LocalConfig,
     LocalProject,
     LocalTracker,
     check_local_document,
+    local_identity_bytes,
 )
 from agent_hub.core.hub_config.model import Project, Tracker
-from agent_hub.core.hub_config.problems import ConfigProblem
+from agent_hub.core.hub_config.problems import ROOT_PATH, ConfigProblem
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.core.testing.platform_repository_cases import CUSTOM_REPOSITORY, SECRET_PARTS
 
@@ -130,6 +133,12 @@ def test_rejects_key_when_not_local(document: dict[str, Any], expected: ConfigPr
     assert problems_of(document) == (expected,)
 
 
+def test_refuses_tracker_states_when_local_file_sets_it() -> None:
+    document = {"tracker": {"states": {"started": "Doing"}}}
+
+    assert problems_of(document) == (ConfigProblem("tracker.states", HUB_ONLY_MESSAGE),)
+
+
 @pytest.mark.parametrize(
     ("path", "value"),
     [
@@ -191,3 +200,87 @@ def test_never_echoes_value_when_local_object_holds_other_type(
 
     assert problems
     assert not [problem for problem in problems if shown in problem.message]
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        pytest.param(
+            {
+                "branch_prefix": "jane/",
+                "author_name": "Jane Roe",
+                "author_email": "jane@example.com",
+            },
+            b'{\n  "project": {\n    "branch_prefix": "jane/",\n    "author_name": "Jane Roe",\n'
+            b'    "author_email": "jane@example.com"\n  }\n}\n',
+            id="all-three",
+        ),
+        pytest.param(
+            {"author_name": "Jane Roe", "author_email": "jane@example.com"},
+            b'{\n  "project": {\n    "author_name": "Jane Roe",\n'
+            b'    "author_email": "jane@example.com"\n  }\n}\n',
+            id="name-and-email",
+        ),
+        pytest.param(
+            {"author_name": "Jos\u00e9 Roe"},
+            '{\n  "project": {\n    "author_name": "Jos\u00e9 Roe"\n  }\n}\n'.encode(),
+            id="utf8",
+        ),
+        pytest.param(
+            {
+                "author_email": "jane@example.com",
+                "author_name": "Jane Roe",
+                "branch_prefix": "jane/",
+            },
+            b'{\n  "project": {\n    "branch_prefix": "jane/",\n    "author_name": "Jane Roe",\n'
+            b'    "author_email": "jane@example.com"\n  }\n}\n',
+            id="reversed",
+        ),
+    ],
+)
+def test_writes_identity_bytes_when_keys_proposed(values: dict[str, str], expected: bytes) -> None:
+    written = local_identity_bytes(values)
+
+    assert written == expected
+    # The bytes read back as the very values proposed: the writer and the reader agree.
+    assert check_local_document(json.loads(written)) == LocalConfig(project=LocalProject(**values))
+
+
+def test_returns_problem_when_no_identity_value_proposed() -> None:
+    assert local_identity_bytes({}) == (
+        ConfigProblem(
+            "project", "holds no identity value: set branch_prefix, author_name or author_email"
+        ),
+    )
+
+
+def test_returns_problems_when_proposed_value_invalid() -> None:
+    result = local_identity_bytes({"branch_prefix": "-x/", "author_name": "Jane Roe"})
+
+    assert result == (
+        ConfigProblem(
+            "project.branch_prefix", hub_problem_at("project.branch_prefix", "-x/").message
+        ),
+    )
+
+
+def _name_bytes(length: int) -> bytes | tuple[ConfigProblem, ...]:
+    """The identity bytes of an ``author_name`` of ``length`` characters, whose file is the
+    name plus a fixed frame."""
+    one_character = local_identity_bytes({"author_name": "J"})
+    assert isinstance(one_character, bytes)
+    frame = len(one_character) - 1
+    return local_identity_bytes({"author_name": "J" * (length - frame)})
+
+
+def test_writes_identity_bytes_when_file_size_at_reader_limit() -> None:
+    written = _name_bytes(LOCAL_FILE_MAX_BYTES)
+
+    assert isinstance(written, bytes)
+    assert len(written) == LOCAL_FILE_MAX_BYTES
+
+
+def test_returns_problem_when_identity_bytes_exceed_reader_limit() -> None:
+    assert _name_bytes(LOCAL_FILE_MAX_BYTES + 1) == (
+        ConfigProblem(ROOT_PATH, f"larger than {LOCAL_FILE_MAX_BYTES} bytes once written"),
+    )

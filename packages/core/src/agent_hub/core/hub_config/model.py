@@ -222,6 +222,13 @@ TeamKeys = Annotated[
 ]
 
 
+class TrackerStates(ConfigObject):
+    """The workflow state names the CLI moves issues to; `review` is for the review step."""
+
+    started: FreeString = "In Progress"
+    review: FreeString = "In Review"
+
+
 class Tracker(ConfigObject):
     """The task tracker, how the CLI reaches it and the labels the runner uses."""
 
@@ -246,6 +253,8 @@ class Tracker(ConfigObject):
     transport: Literal["api", "mcp"] = "api"
     ready_label: FreeString = "agent-ready"
     failed_label: FreeString = "agent-failed"
+    # A factory, not an instance: the schema would export its unset keys as nulls.
+    states: TrackerStates = Field(default_factory=TrackerStates)
 
     @property
     def team_keys(self) -> tuple[str, ...]:

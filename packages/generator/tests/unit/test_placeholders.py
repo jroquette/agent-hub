@@ -11,6 +11,7 @@ from agent_hub.core.hub_config.platform_repository import (
     PLATFORM_REPOSITORY_PATTERN,
 )
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
+from agent_hub.core.hub_config.workspace_repos import WorkspaceRepo, workspace_repos
 from agent_hub.core.runner.title_pattern import TitleParts, render_title
 from agent_hub.core.testing.builders import (
     a_conventions_document,
@@ -19,6 +20,7 @@ from agent_hub.core.testing.builders import (
     a_two_team_document,
 )
 from agent_hub.core.testing.platform_repository_cases import CUSTOM_REPOSITORY
+from agent_hub.generator import placeholders
 from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_mapping
 
 # AC-3.9: the Rendered values of project-config.md, the platform repository (erratum E3), the
@@ -228,6 +230,42 @@ def test_joins_repos_in_config_order_when_order_reversed() -> None:
 
     assert mapping["repo_dirs"] == "zeta, demo-api"
     assert mapping["repo_githubs"] == "acme/zeta, acme/demo-api"
+
+
+@pytest.mark.parametrize(
+    ("repo_count", "dirs", "githubs"),
+    [
+        (1, "demo-api", "acme/demo-api"),
+        (2, "demo-api, demo-web", "acme/demo-api, acme/demo-web"),
+    ],
+    ids=["one-repo", "two-repo"],
+)
+def test_joins_workspace_repo_fields_when_repo_lists_rendered(
+    repo_count: int, dirs: str, githubs: str
+) -> None:
+    document = a_hub_document()
+    if repo_count == 2:
+        document["repos"].append(a_second_repo())
+    config = HubConfig.model_validate(document)
+
+    mapping = substitution_mapping(config)
+
+    assert [repo.dir for repo in workspace_repos(config)] == dirs.split(", ")
+    assert mapping["repo_dirs"] == dirs
+    assert mapping["repo_githubs"] == githubs
+
+
+def test_takes_repo_lists_from_workspace_repos_when_mapping_built(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        placeholders, "workspace_repos", lambda _: (WorkspaceRepo("x-dir", "acme/x"),)
+    )
+
+    mapping = substitution_mapping(HubConfig.model_validate(a_hub_document()))
+
+    assert mapping["repo_dirs"] == "x-dir"
+    assert mapping["repo_githubs"] == "acme/x"
 
 
 @pytest.mark.parametrize(
