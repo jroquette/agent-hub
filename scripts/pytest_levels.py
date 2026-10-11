@@ -9,7 +9,9 @@ skipped, naming the first missing variable (never a value), unless ``LINEAR_API_
 ``AGENT_HUB_LIVE_ISSUE`` and ``AGENT_HUB_LIVE_LABEL`` are set and ``AGENT_HUB_LIVE`` is ``1``.
 A test marked ``live("mcp")`` reaches Linear through its MCP server, not the key, so it needs
 the same variables but ``LINEAR_API_KEY``, and ``AGENT_HUB_LIVE_HUB``: the hub root ``claude``
-runs from.
+runs from. A test marked ``live("claude")`` runs a real ``claude -p`` session and needs only
+``AGENT_HUB_LIVE=1`` (``make test-live`` sets it); it skips itself when ``claude`` is missing or
+not logged in.
 """
 
 import os
@@ -25,9 +27,13 @@ LIVE_SWITCH = "AGENT_HUB_LIVE"
 # Checked in this order; the skip reason names the first one missing.
 LIVE_VARIABLES = ("LINEAR_API_KEY", LIVE_SWITCH, "AGENT_HUB_LIVE_ISSUE", "AGENT_HUB_LIVE_LABEL")
 MCP_TRANSPORT = "mcp"
+CLAUDE_TRANSPORT = "claude"
+TRANSPORTS = (MCP_TRANSPORT, CLAUDE_TRANSPORT)
 # The hub root claude runs from, as in production: only a live("mcp") test needs it.
 LIVE_HUB = "AGENT_HUB_LIVE_HUB"
 MCP_LIVE_VARIABLES = (*(name for name in LIVE_VARIABLES if name != "LINEAR_API_KEY"), LIVE_HUB)
+CLAUDE_LIVE_VARIABLES = (LIVE_SWITCH,)
+_USAGE = "use live, live('mcp') or live('claude')"
 
 
 def level_of(path: str) -> str | None:
@@ -46,14 +52,17 @@ def live_skip_reason(environ: Mapping[str, str], *, transport: str | None) -> st
     """Why a ``live`` test cannot run under ``environ``, or None when it can.
 
     ``transport`` is the marker's argument: None for a bare ``live``, ``"mcp"`` for
-    ``live("mcp")``, which needs no ``LINEAR_API_KEY``.
+    ``live("mcp")``, which needs no ``LINEAR_API_KEY``, ``"claude"`` for ``live("claude")``,
+    which needs only the switch.
     """
-    if transport not in {None, MCP_TRANSPORT}:
-        message = (
-            f"live marker: unknown transport {transport!r}; use live or live({MCP_TRANSPORT!r})"
-        )
+    if transport is not None and transport not in TRANSPORTS:
+        message = f"live marker: unknown transport {transport!r}; {_USAGE}"
         raise pytest.UsageError(message)
-    names = LIVE_VARIABLES if transport is None else MCP_LIVE_VARIABLES
+    names = {
+        None: LIVE_VARIABLES,
+        MCP_TRANSPORT: MCP_LIVE_VARIABLES,
+        CLAUDE_TRANSPORT: CLAUDE_LIVE_VARIABLES,
+    }[transport]
     for name in names:
         value = environ.get(name, "")
         if name == LIVE_SWITCH and value != "1":
@@ -69,7 +78,7 @@ def live_transport(marker: pytest.Mark) -> str | None:
     Anything else (a keyword, a second argument, a value that is not a string) is refused
     rather than read as a bare ``live``, which would quietly demand ``LINEAR_API_KEY``.
     """
-    usage = f"use live or live({MCP_TRANSPORT!r})"
+    usage = _USAGE
     if marker.kwargs:
         names = ", ".join(sorted(marker.kwargs))
         raise pytest.UsageError(f"live marker: keyword argument {names} not accepted; {usage}")
