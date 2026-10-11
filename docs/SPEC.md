@@ -68,6 +68,7 @@ hub sync --adopt [--accept PATH]…   # joins a hand-made hub: identical files b
 hub doctor      # checks rules, links, dead references and instruction size
 hub setup [--yes]   # onboards this machine: clones or fetches the repos, writes hub.local.json after confirmation, lists what is missing
 hub worktree NAME [--only REPO]   # isolated worktrees for one task (--remove NAME removes them)
+hub start ISSUE [--repo DIR]… [--no-agent]   # issue to worktrees, In Progress and a claude session (resumes)
 hub brief [--no-network]   # session brief: now, journal, repo/PR/CI state
 hub agent [ARGS…]   # claude with every repo attached (./agent)
 hub next   # the tracker's ready issues, one line each

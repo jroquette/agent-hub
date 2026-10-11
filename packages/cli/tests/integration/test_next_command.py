@@ -52,7 +52,10 @@ def url_of(issue_id: str) -> str:
 
 
 def seeded_backend(*issues: Issue) -> FakeTrackerBackend:
-    open_states = (TrackerState(name="Todo", closed=False), TrackerState(name="Done", closed=True))
+    open_states = (
+        TrackerState(name="Todo", type="unstarted"),
+        TrackerState(name="Done", type="completed"),
+    )
     return FakeTrackerBackend(
         states={"DEM": open_states, "APP": open_states, "OPS": open_states},
         team_labels={"DEM": ("demo-api", "demo-web"), "APP": (), "OPS": ()},
@@ -366,6 +369,27 @@ def test_prints_reader_lines_when_hub_json_invalid(
     lines = result.stderr.splitlines()
     assert lines
     assert all(line.startswith("hub.json: ") for line in lines), lines
+    assert spy.calls == []
+
+
+@pytest.mark.usefixtures("with_key")
+def test_prints_reader_lines_when_tracker_states_invalid(
+    demo_workspace: Workspace, run_command: CommandRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spy = inject(monkeypatch, InMemoryTrackerClient(demo_backend()))
+    hub_json = demo_workspace.hub / "hub.json"
+    document = json.loads(hub_json.read_text())
+    document["tracker"]["states"] = {"started": ""}
+    hub_json.write_text(json.dumps(document, indent=2) + "\n")
+
+    result = run_command(demo_workspace.hub, "next")
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    lines = result.stderr.splitlines()
+    assert lines
+    assert all(line.startswith("hub.json: ") for line in lines), lines
+    assert any("tracker.states.started" in line for line in lines), lines
     assert spy.calls == []
 
 
