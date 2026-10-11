@@ -56,7 +56,7 @@ def test_exits_one_naming_port_when_port_in_use_by_another_process(busy_port: in
 
 
 @pytest.mark.parametrize(
-    "args", [["--port", "0"], ["--port", "65536"], ["--port", "web"], ["--host", "0.0.0.0"]]
+    "args", [["--port", "0"], ["--port", "65536"], ["--port", "web"], ["--host", "example.org"]]
 )
 def test_exits_two_when_invalid_option_given(args: list[str]) -> None:
     assert _web(args).exit_code == 2
