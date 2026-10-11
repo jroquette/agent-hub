@@ -12,7 +12,8 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         after the tool (aws's s3 … rm and cloudformation … deploy too, quoted or not); with guard.infra, a
         command it would let through that holds a character other than ASCII letters, digits, space, tab,
         _ - . / : = @ , + % and the joins ; && || | newline, or a word that always asks: a shell, python*,
-        perl, node, ruby, php, xargs, eval, exec, source, `.` as a command, env -i/-u, sudo, su, doas, --),
+        perl, node, ruby, php, xargs, eval, exec, source, `.` as a command, env -i/-u, sudo, su, doas, --,
+        parallel, a sed that runs text (e command or flag, -f), or a part that sets the environment twice),
         removing test assertions (`assert`, `expect(`, `pytest.raises`,
         `.assert_*(`, unittest's `.assertX(` and `self.fail(`) or adding skip/xfail/quarantine markers,
         deleting or sed-editing tests from Bash, editing the hub's guard files: plugin/hub-workflow/hooks/,
@@ -115,6 +116,16 @@ INFRA_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
 INFRA_PREFIX_WORDS = {"if", "then", "else", "elif", "do", "while", "until", "time", "command", "builtin", "coproc"}
 INFRA_ENV_CLEAR = re.compile(r"-\Z|-[^-]*[iu]|--[iu]")  # `-`, `-i`, `-u`, `-0i`, `-uNAME`, `--unset`, `--ignore-…`
 INFRA_ENV_VALUE = {"-C", "-S", "--chdir", "--split-string"}  # env options whose value is the next word
+# E24: parallel runs its input or arguments as commands, and so does sed's e (its e command, or
+# the s command's e flag) or a sed script read from a file (-f/--file): such a word asks.
+INFRA_RUNS = re.compile(r"parallel\Z")
+INFRA_SED = re.compile(r"g?sed\Z")
+# E24: the environment settings counted per part (a `NAME=` or `NAME+=` word anywhere in it; a
+# flag as `--x v` or `--x=v`, terraform's chdir with one dash or two); a second one of a name asks.
+INFRA_ENV_SETTING = re.compile(
+    r"(AWS_PROFILE|AWS_DEFAULT_PROFILE|KUBECONFIG|KUBE_CONTEXT)\+?=|(--profile|--context|--kube-context|-?-chdir"
+    r"|--stack|--workspace)(?:=|\Z)"
+)
 INFRA_END = r"(?![\w-])"
 INFRA_WORD = r"(?<![\w-])({})" + INFRA_END
 # Local-only forms, matched at the tool's first argument; kubectl's version needs --client in the
@@ -391,6 +402,10 @@ INFRA_UNSAFE_REASON = ("`{}` is a character guard.infra does not check (it passe
                        "`_-./:=@,+%` and the joins `;` `&&` `||` `|` newline); confirm this infrastructure command first")
 INFRA_RISKY_REASON = ("`{}` can run a command, or change its environment, out of guard.infra's sight (a shell, an "
                       "interpreter, xargs, eval, exec, source, `.`, env -i/-u, sudo, su, doas, a lone `--`); confirm first")
+INFRA_RUNS_REASON = ("`{}` runs text as a command out of guard.infra's sight (parallel, or sed's e command or a "
+                     "sed script file); confirm first")
+INFRA_REPEATED_REASON = ("`{}` is set twice in one call: guard.infra checks the value it sees, the tool may use "
+                         "another; confirm first")
 INFRA_VALUE_CAP = 100  # characters of a value from hub.json or the command in an infra reason
 LEGACY_INFRA = re.compile(
     r"\bterraform\s+(apply|destroy|import)\b|\baws\s+\S+|\bpulumi\s+(up|destroy)\b|\bkubectl\s+(apply|delete)\b"
@@ -508,28 +523,91 @@ def _infra_unsafe(cmd: str) -> str | None:
     return None
 
 
-def _infra_risky(cmd: str) -> str | None:
-    """The first word of cmd (a command of safe characters only) that always asks (E23), as written:
-    a shell, interpreter, xargs, eval, exec, source, sudo, su or doas word anywhere, a lone `--`,
-    `.` in command position (after assignments, options and keywords such as `then`, `time`,
-    `command`), or env's -i/-u in any spelling among its options (then "env <option>"); else None."""
+def _infra_sed(sed: str, words: list[str]) -> str | None:
+    """"<sed> <script>" when sed's arguments (words, as GNU sed reads them: options anywhere, short
+    ones clustered, long ones by any unique prefix) give it a script holding an `e` (from -e or
+    --expression, else its first operand) or a script file (-f or --file); else None (E24)."""
+    scripts: list[tuple[str, str, str]] = []
+    operands, take = [], ""
+    for word in words:
+        if take:
+            scripts.append((take[-1:], f"{take[:-1]} {word}", word))
+            take = ""
+        elif word.startswith("--") and len(word) > 2:
+            name, eq, value = word[2:].partition("=")
+            kind = ("e" if "expression".startswith(name) else "f" if len(name) > 1 and "file".startswith(name)
+                    else "l" if "line-length".startswith(name) else "")
+            if kind and eq:
+                scripts.append((kind, word, value))
+            elif kind:
+                take = word + kind
+        elif word.startswith("-") and len(word) > 1:
+            for at, char in enumerate(word[1:], 2):
+                if char in "efl":
+                    if word[at:]:
+                        scripts.append((char, word, word[at:]))
+                    else:
+                        take = f"-{char}{char}"
+                    break
+                if char == "i":  # -i[SUFFIX]: the rest is its suffix
+                    break
+        else:
+            operands.append(word)
+    if not any(kind in "ef" for kind, _, _ in scripts) and operands:
+        scripts.append(("e", operands[0], operands[0]))
+    for kind, shown, value in scripts:
+        if kind == "f" or (kind == "e" and "e" in value):
+            return f"{sed} {shown}"
+    return None
+
+
+def _infra_risky(cmd: str) -> tuple[str, str] | None:
+    """The first word of cmd (a command of safe characters only) that always asks, as written,
+    with its reason: a shell, interpreter, xargs, eval, exec, source, sudo, su or doas word
+    anywhere, a lone `--`, `.` in command position (after assignments, options and keywords such
+    as `then`, `time`, `command`), or env's -i/-u in any spelling among its options (then "env
+    <option>") (E23); parallel anywhere, or a sed that runs text (then "sed <script>") (E24);
+    else None."""
     for part in INFRA_PART.split(cmd):
         command, env, value = True, "", False
-        for word in part.split():
-            if word == "--" or INFRA_RISKY.match(word.rsplit("/", 1)[-1]):
-                return word
+        words = part.split()
+        for index, word in enumerate(words):
+            name = word.rsplit("/", 1)[-1]
+            if word == "--" or INFRA_RISKY.match(name):
+                return INFRA_RISKY_REASON, word
+            if INFRA_RUNS.match(name):
+                return INFRA_RUNS_REASON, word
+            sed = _infra_sed(word, words[index + 1:]) if INFRA_SED.match(name) else None
+            if sed:
+                return INFRA_RUNS_REASON, sed
             if env and (value or word.startswith("-")):
                 if not value and INFRA_ENV_CLEAR.match(word):
-                    return f"{env} {word}"
+                    return INFRA_RISKY_REASON, f"{env} {word}"
                 value = not value and word in INFRA_ENV_VALUE
                 continue
             env = ""
             if command and word == ".":
-                return word
+                return INFRA_RISKY_REASON, word
             if command and (INFRA_ASSIGNMENT.match(word) or word in INFRA_PREFIX_WORDS or word.startswith("-")):
                 continue
             command = False
             env = word if word.rsplit("/", 1)[-1] == "env" else ""
+    return None
+
+
+def _infra_repeated(cmd: str) -> str | None:
+    """The first environment setting (E24's names and flags) that a part of cmd (a command of safe
+    characters only, so a part is one call) sets a second time, as its name; else None."""
+    for part in INFRA_PART.split(cmd):
+        seen = set()
+        for word in part.split():
+            found = INFRA_ENV_SETTING.match(word)
+            if not found:
+                continue
+            name = found.group(1) or found.group(2).replace("--chdir", "-chdir")
+            if name in seen:
+                return name
+            seen.add(name)
     return None
 
 
@@ -659,7 +737,8 @@ def check_infra(cmd: str, cfg: Config) -> Verdict:
     neither allows nor denies, E22) or hold only local-only forms, else deny; a part where
     something matched an allow pattern asks on its first ask verb. What would pass then asks,
     in this order, on the first character outside the safe list, then on the first word that
-    always asks (E23); so an ask verb keeps its reason, and a deny is never relaxed."""
+    always asks (E23, E24), then on an environment set twice in a part (E24); so an ask verb keeps
+    its reason, and a deny is never relaxed."""
     infra = cfg.infra
     spaced = cmd.replace("\\\n", " ")
     if infra is None:
@@ -698,9 +777,12 @@ def check_infra(cmd: str, cfg: Config) -> Verdict:
     char = _infra_unsafe(cmd)
     if char:
         return "ask", INFRA_UNSAFE_REASON.format(_infra_value(char))
-    word = _infra_risky(cmd)
-    if word:
-        return "ask", INFRA_RISKY_REASON.format(_infra_value(word))
+    risky = _infra_risky(cmd)
+    if risky:
+        return "ask", risky[0].format(_infra_value(risky[1]))
+    name = _infra_repeated(cmd)
+    if name:
+        return "ask", INFRA_REPEATED_REASON.format(name)
     return None
 
 

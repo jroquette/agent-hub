@@ -230,9 +230,14 @@ The command is split into parts at `;`, `&&`, `||`, `|` and newlines, then:
    return, a vertical tab or a no-break space, anything non-ASCII) makes it ask, naming the first one. Then it asks on
    the first word that can run a command, or change its environment, out of the guard's sight: `sh`, `bash`, `zsh`,
    `dash`, `ksh`, `fish`, `python*`, `perl`, `node`, `ruby`, `php`, `xargs`, `eval`, `exec`, `source`, `sudo`, `su`,
-   `doas` (anywhere, by the word's last path component, so `cdk init app --language python` asks too), `.` as a
+   `doas` (anywhere, by the word's last path component, so `cdk init app --language python`, a local-only form, asks
+   too), `.` as a
    command, `env`'s `-i` or `-u` in any spelling before its command (`-`, `-0i`, `-uNAME`, `--unset=…`,
-   `--ignore-environment`) and a lone `--`. An ask verb (5) keeps its reason and comes first; a deny stays a deny,
+   `--ignore-environment`) and a lone `--`; also `parallel`, and a `sed` whose script holds an `e` (its `e` command or
+   the `s` command's `e` flag) or is read from a file (`-f`). Last, it asks when a part sets the environment twice (a
+   second `AWS_PROFILE=`, `AWS_DEFAULT_PROFILE=`, `KUBECONFIG=` or `KUBE_CONTEXT=` word, `+=` too, or a second
+   `--profile`, `--context`, `--kube-context`, `-chdir`, `--stack` or `--workspace` flag), naming it. An ask verb (5)
+   keeps its reason and comes first; a deny stays a deny,
    and a command that names no covered tool is not affected. An `allow` match that overlaps a quoted region (`'…'`,
    `"…"`, `$'…'`) is text, not evidence: it neither allows nor denies, and the quote makes the command ask.
 
@@ -250,7 +255,10 @@ space, which the shell does not split words on. Without `guard.infra`, the fixed
 redirection glued to `terraform`, `aws`, `pulumi`, `kubectl` or `cdk`. Until a separate change, the generated
 `.claude/settings.json` still denies every `terraform` and `aws` command, whatever the guard decides. Accepted limits:
 tool names are matched case-sensitively (`AWS` is not seen); quoting or glob tricks inside a tool's word (`a""ws`,
-`a?s`, `aws*`) hide it (AGH-127); the fixed rule misses options before the verb (`terraform -chdir=x apply`, AGH-126).
+`a?s`, `aws*`) hide it (AGH-127); the fixed rule misses options before the verb (`terraform -chdir=x apply`, AGH-126);
+which option takes the next word as its value is not modelled, so an allowed environment can be another option's
+value (`aws s3 ls --query --profile=demo-dev`, `kubectl get pods --field-manager --context=kind-demo`); only the
+names above count as setting the environment twice.
 
 ## Layer 2: control plane and observability
 
