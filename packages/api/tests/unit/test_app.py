@@ -1,7 +1,11 @@
+import asyncio
+from typing import Any
+
 import pytest
 from fastapi.testclient import TestClient
 
 from agent_hub.api.app import create_app
+from agent_hub.api.change_feed import ChangeFeed
 from agent_hub.api.dependencies import ApiPorts
 from agent_hub.api.openapi_paths import P2_PATHS
 from agent_hub.api.settings import ApiSettings
@@ -73,3 +77,14 @@ def test_keeps_ports_when_app_created(api_settings: ApiSettings) -> None:
 
 def test_keeps_settings_when_app_created(api_settings: ApiSettings) -> None:
     assert create_app(api_settings).state.settings is api_settings
+
+
+def test_closes_change_feed_when_app_shuts_down(api_settings: ApiSettings, fakes: Any) -> None:
+    reader = fakes.EventReader()
+    feed = ChangeFeed(reader, timer=fakes.Clock())
+    app = create_app(api_settings, ports=ApiPorts(event_reader=reader, change_feed=feed))
+
+    with TestClient(app):
+        assert asyncio.run(feed.wait_beyond(0, deadline=1)) == 0
+
+    assert asyncio.run(feed.wait_beyond(0, deadline=1)) is None

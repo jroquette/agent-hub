@@ -13,7 +13,7 @@ from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hubs.hub_registry import HubFileReader, UnreadHubFile
 from agent_hub.core.testing.builders import a_hub_document
-from agent_hub.generator.registered_hub_files import HubFileSystem
+from agent_hub.generator.registered_hub_files import MAX_HUB_JSON_BYTES, HubFileSystem
 
 RUNNING = "4.5.6"
 
@@ -68,6 +68,16 @@ def test_reports_missing_when_hub_json_absent(tmp_path: Path) -> None:
     assert isinstance(read, UnreadHubFile)
     assert read.is_missing
     assert read.message.startswith(f"cannot read {json.dumps(str(tmp_path / 'hub.json'))}")
+
+
+def test_reports_unread_when_hub_json_larger_than_cap(tmp_path: Path) -> None:
+    (tmp_path / "hub.json").write_bytes(b" " * (MAX_HUB_JSON_BYTES + 1))
+
+    read = HubFileSystem().read_hub_json(str(tmp_path))
+
+    assert isinstance(read, UnreadHubFile)
+    assert not read.is_missing
+    assert read.message.endswith(f"larger than {MAX_HUB_JSON_BYTES} bytes")
 
 
 def test_gives_times_of_present_paths_when_asked(hub: Path) -> None:

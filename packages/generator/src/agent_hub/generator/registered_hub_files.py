@@ -35,6 +35,8 @@ NOW_PATH: Final = ("brain", "now.md")
 AGENTS_MD: Final = "AGENTS.md"
 # ``brain/now.md`` and a repo's ``AGENTS.md`` are read up to this size.
 MAX_NOTE_BYTES: Final = 1_048_576
+# The server reads every registered hub's hub.json; a larger one is reported, not read.
+MAX_HUB_JSON_BYTES: Final = 1_048_576
 
 # Makes the git reader for one hub folder.
 type GitReaderFactory = Callable[[str], GitReader]
@@ -59,8 +61,10 @@ class HubFileSystem:
         return os.path.realpath(os.path.expanduser(path))
 
     def read_hub_json(self, hub_path: str) -> bytes | UnreadHubFile:
-        """The bytes of ``hub.json`` as read, or why not."""
-        return _unread_or_bytes(read_file_bytes(Path(hub_path, HUB_JSON)))
+        """The bytes of ``hub.json`` as read (at most ``MAX_HUB_JSON_BYTES``), or why not."""
+        return _unread_or_bytes(
+            read_file_bytes(Path(hub_path, HUB_JSON), max_bytes=MAX_HUB_JSON_BYTES)
+        )
 
     def read_lock(self, hub_path: str) -> LockState | None:
         """``hub.lock`` as found, never through a link; None when it cannot be read."""
