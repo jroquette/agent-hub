@@ -13,6 +13,9 @@ from agent_hub.core.ingestion.ingestion_ports import TailResult, TranscriptRef
 from agent_hub.core.ingestion.ingestion_status import IngestionCounters
 from agent_hub.storage.event_store import SqliteEventStore, open_event_store
 
+# Synthetic, shaped like a key so the redaction would catch it; never a real secret.
+SYNTHETIC_KEY = "sk-ant-api03-SYNTHETICsecretVALUE0123456789"
+
 ENVELOPE: dict[str, Any] = {
     "v": 1,
     "project": "demo",
@@ -134,3 +137,17 @@ def test_rejects_too_large_problem_and_appends_nothing_when_envelope_over_cap(
     assert response.status_code == 413
     assert response.headers["content-type"] == "application/problem+json"
     assert store.read_all() == []
+
+
+def test_stores_redacted_bash_call_when_sensor_envelope_posted_to_composed_app(
+    composed: Any,
+) -> None:
+    hook = ENVELOPE["hook"] | {"tool_input": {"command": f"ANTHROPIC_API_KEY={SYNTHETIC_KEY} make"}}
+
+    response = composed.client.post("/api/v1/events/hooks", json=ENVELOPE | {"hook": hook})
+
+    assert (response.status_code, response.json()) == (202, {"appended": 1, "duplicates": 0})
+    (stored,) = composed.rows()
+    assert (stored.type, stored.source, stored.session) == ("tool.call", "claude_code", "session-1")
+    assert stored.payload["tool"] == "Bash"
+    assert stored.payload["command"] == "ANTHROPIC_API_KEY=[redacted: anthropic key] make"
