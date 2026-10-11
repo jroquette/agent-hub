@@ -1655,6 +1655,47 @@ def test_asks_when_call_sets_environment_twice(infra_evaluate: Evaluate) -> None
     assert verdicts == expected
 
 
+# E25: the same setting under another spelling counts as set twice: an `AWS_PROFILE=` or
+# `AWS_DEFAULT_PROFILE=` word with each other or with a `--profile` flag (even naming the same
+# environment), `--stack` with `-s` (pulumi's), `--stage` with `-s` (serverless's), and a second
+# `--stage` or `-var-file` (one dash or two); the reason names both spellings in the order seen.
+# An ask verb keeps its reason, and one setting per part passes.
+def test_asks_when_call_sets_environment_twice_under_another_spelling(
+    infra_evaluate: Evaluate,
+) -> None:
+    expected = {
+        "AWS_PROFILE=demo-dev aws s3 ls --profile staging": repeated("AWS_PROFILE`/`--profile"),
+        "AWS_PROFILE=demo-dev aws s3 ls --profile demo-dev": repeated("AWS_PROFILE`/`--profile"),
+        "AWS_PROFILE=demo-dev aws s3 ls --profile=staging": repeated("AWS_PROFILE`/`--profile"),
+        "AWS_DEFAULT_PROFILE=staging aws s3 ls --profile demo-dev": repeated(
+            "AWS_DEFAULT_PROFILE`/`--profile"
+        ),
+        "AWS_PROFILE=demo-dev AWS_DEFAULT_PROFILE=staging aws s3 ls": repeated(
+            "AWS_PROFILE`/`AWS_DEFAULT_PROFILE"
+        ),
+        "serverless info --stage dev --stage prod2": repeated("--stage"),
+        "serverless info --stage dev -s prod2": repeated("--stage`/`-s"),
+        "serverless info --stage=dev -s=prod2": repeated("--stage`/`-s"),
+        "pulumi preview --stack demo/dev -s prod2": repeated("--stack`/`-s"),
+        "pulumi preview -s prod2 --stack demo/dev": repeated("-s`/`--stack"),
+        "pulumi preview --stack demo/dev -s a -s b": repeated("-s"),
+        "terraform plan -var-file=dev.tfvars -var-file=prod2.tfvars": repeated("-var-file"),
+        "terraform plan -var-file=dev.tfvars --var-file=prod2.tfvars": repeated("-var-file"),
+        "terraform plan -var-file=dev.tfvars -var-file prod2.tfvars": repeated("-var-file"),
+        "AWS_PROFILE=demo-dev aws s3 rm s3://b/x --profile staging": infra_ask("aws", "s3 rm"),
+        "aws s3 ls --profile demo-dev": None,
+        "AWS_PROFILE=demo-dev aws s3 ls": None,
+        "AWS_PROFILE=demo-dev aws s3 ls && aws s3 ls --profile demo-dev": None,
+        "pulumi preview --stack demo/dev": None,
+        "serverless info --stage dev": None,
+        "terraform plan -var-file=dev.tfvars": None,
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
 # E24: `parallel` (any path) and a sed whose script holds an `e` (its e command or the s
 # command's e flag, from the first operand, `-e`, a cluster or `--expression`, any unique
 # prefix) or comes from a file (`-f`, `--file`) ask in a command that mentions a covered tool;
