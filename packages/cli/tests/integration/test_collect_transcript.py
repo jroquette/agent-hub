@@ -147,3 +147,26 @@ def test_refuses_input_when_transcript_is_not_a_regular_file(tmp_path: Path) -> 
     assert folder.exit_code == 1
     assert "not a regular file" in folder.stderr
     assert not db.exists()
+
+
+def test_labels_repo_and_agent_like_live_tail_when_cwd_in_hub_repo(tmp_path: Path) -> None:
+    hub = tmp_path / "work" / "demo-hub"
+    hub.mkdir(parents=True)
+    (hub / "hub.json").write_text(
+        '{"project": {"name": "acme"}, "repos": [{"dir": "demo-api"}]}', encoding="utf-8"
+    )
+    path = tmp_path / "agent-7.jsonl"
+    path.write_text(
+        transcript_text([a_user_line(cwd=str(tmp_path / "work" / "demo-api"))]), encoding="utf-8"
+    )
+    db = tmp_path / "events.db"
+
+    result = CliRunner().invoke(
+        app,
+        ["collect", "--transcript", str(path), "--agent", "Explore", "--db", str(db)],
+        env={"AGENT_HUB_ROOT": str(hub)},
+    )
+
+    assert result.exit_code == 0, result.output
+    [event] = open_event_store(db).read_all()
+    assert (event.project, event.repo, event.agent) == ("acme", "demo-api", "Explore")

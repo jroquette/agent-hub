@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from agent_hub.api.dependencies import ApiPorts
 from agent_hub.core.ingestion.hook_envelope import MAX_BODY_BYTES
 from agent_hub.core.ingestion.ingest_hook import IngestHook
-from agent_hub.core.ingestion.ingestion_ports import TailResult, TranscriptRef
+from agent_hub.core.ingestion.ingestion_ports import TailPosition, TailResult, TranscriptRef
 from agent_hub.core.ingestion.ingestion_status import IngestionCounters
 from agent_hub.storage.event_store import SqliteEventStore, open_event_store
 
@@ -34,6 +34,9 @@ ENVELOPE: dict[str, Any] = {
 class NoTranscript:
     def read_new(self, ref: TranscriptRef) -> TailResult:
         return TailResult(events=())
+
+    def commit(self, position: TailPosition) -> None:
+        return None
 
 
 @pytest.fixture
