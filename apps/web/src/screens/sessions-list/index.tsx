@@ -1,3 +1,5 @@
+import "./sessions-list.css";
+
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
@@ -345,6 +347,130 @@ const COLUMN_DEFS: ColumnDef[] = [
   },
 ];
 
+/** Comfortable density: two-line cells, as the design's default view (spec 14). */
+const COMFORTABLE: ColumnDef[] = [
+  {
+    id: "started",
+    label: "Started",
+    on: true,
+    sort: "started_at",
+    column: ({ now, tz }) => ({
+      id: "started",
+      label: "Started",
+      sortable: true,
+      render: (s) => (
+        <div className="ah-stack" style={{ gap: 0, padding: "4px 0" }}>
+          <span className="ah-mono" style={{ fontSize: 12 }} title={s.started_at}>
+            {new Date(s.started_at).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })}{" "}
+            {fmtClock(s.started_at, tz)}
+          </span>
+          <span className="ah-small ah-subtle">
+            {fmtDuration(
+              ((s.ended_at ? Date.parse(s.ended_at) : now) - Date.parse(s.started_at)) / 1000,
+            )}
+          </span>
+        </div>
+      ),
+    }),
+  },
+  {
+    id: "where",
+    label: "Project › repo",
+    on: true,
+    column: () => ({
+      id: "where",
+      label: "Project › repo",
+      render: (s) => (
+        <div className="ah-stack" style={{ gap: 0, maxWidth: 200 }}>
+          <span
+            className="ah-small"
+            style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+          >
+            {s.project} › <span className="ah-mono">{s.repo ?? "—"}</span>
+          </span>
+          <span
+            className="ah-mono ah-small ah-muted"
+            style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            title={s.agent}
+          >
+            {s.agent.replace("hub-workflow:", "hw:")}
+          </span>
+        </div>
+      ),
+    }),
+  },
+  {
+    id: "issue",
+    label: "Issue / run",
+    on: true,
+    column: () => ({
+      id: "issue",
+      label: "Issue / run",
+      render: (s) => (
+        <div className="ah-stack" style={{ gap: 0 }}>
+          {s.issue ? (
+            <IssueLink id={s.issue} />
+          ) : (
+            <span className="ah-small ah-subtle">no issue</span>
+          )}
+          {s.run_id ? (
+            <span
+              className="ah-mono ah-small ah-subtle"
+              title={`Run ${s.run_id}${s.step ? ` · step ${s.step}` : ""}`}
+            >
+              run {short(s.run_id)}
+            </span>
+          ) : (
+            <span className="ah-small ah-subtle">no run</span>
+          )}
+        </div>
+      ),
+    }),
+  },
+  ...COLUMN_DEFS.filter((def) => def.id === "outcome"),
+  {
+    id: "turns",
+    label: "Turns · tok.",
+    on: true,
+    column: () => ({
+      id: "turns",
+      label: "Turns · tok.",
+      align: "right",
+      render: (s) => (
+        <div className="ah-stack" style={{ gap: 0, alignItems: "flex-end" }}>
+          <span>{fmtInt(s.turns)}</span>
+          <span
+            className="ah-subtle"
+            style={{ fontSize: 12, whiteSpace: "nowrap" }}
+            title={tokensTip(s)}
+          >
+            {fmtTokens(tokensTotal(s))}
+          </span>
+        </div>
+      ),
+    }),
+  },
+  ...COLUMN_DEFS.filter((def) => def.id === "cost"),
+  {
+    id: "fe",
+    label: "Files · err",
+    on: true,
+    column: () => ({
+      id: "fe",
+      label: "Files · err",
+      align: "right",
+      hint: "Files touched (edits, no reads) · tool errors and guard denials",
+      render: (s) => (
+        <span className="ah-row" style={{ gap: 0, justifyContent: "flex-end" }}>
+          <span style={{ width: 28 }}>{zeroSubtle(s.files_touched)}</span>
+          <span style={{ width: 28 }}>{zeroSubtle(s.errors + s.guard_denials, true)}</span>
+        </span>
+      ),
+    }),
+  },
+  ...COLUMN_DEFS.filter((def) => def.id === "transcript"),
+];
+
 function storedColumns(): Set<string> {
   const stored = readStored(COLUMNS_KEY);
   if (stored) return new Set(stored.split(","));
@@ -517,9 +643,10 @@ export function SessionsListScreen() {
   const period: Period = periodOf(params);
   const sort = sortOf(params);
   const chips = chipsOf(params);
-  const visible = COLUMN_DEFS.filter(
-    (def) => columns.has(def.id) && !(def.id === "project" && scope),
-  );
+  const visible =
+    density === "compact"
+      ? COLUMN_DEFS.filter((def) => columns.has(def.id) && !(def.id === "project" && scope))
+      : COMFORTABLE;
   const tableColumns = visible.map((def) => def.column({ now, tz }));
   const sortColumn = visible.find((def) => def.sort === sort.replace("-", ""));
   const projectCount = new Set(rows.map((s) => s.project)).size;
@@ -849,7 +976,9 @@ export function SessionsListScreen() {
           chosen={columns}
           onChange={(next) => {
             writeStored(COLUMNS_KEY, [...next].join(","));
+            writeStored(DENSITY_KEY, "compact");
             setColumns(next);
+            setDensity("compact");
           }}
         />
         <SegmentedControl
@@ -950,7 +1079,7 @@ export function SessionsListScreen() {
             }}
           />
         </div>
-        <div className="ah-grow" style={{ minWidth: 0 }}>
+        <div className="ah-grow sl-table" style={{ minWidth: 0 }}>
           {table}
         </div>
       </div>

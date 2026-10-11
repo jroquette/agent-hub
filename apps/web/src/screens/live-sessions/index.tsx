@@ -78,7 +78,7 @@ function tileModel(tile: LiveTile, now: number, grouping: Grouping): LiveSession
   const waitingMinutes = Math.max(1, Math.round(ago / 60));
   const action =
     tile.status === "waiting"
-      ? `Waiting ${String(waitingMinutes)} min · a guard ask has no timeout`
+      ? `Waiting ${String(waitingMinutes)} min${tile.waiting_reason === "Guard ask" ? " · a guard ask has no timeout" : ""}`
       : tile.status === "idle"
         ? `Last: ${tile.last_action ?? "no tool call yet"} · ${fmtAgo(ago)}`
         : (tile.last_action ?? "Starting");

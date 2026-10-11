@@ -98,7 +98,7 @@ export function CostTab({ sessionId }: { sessionId: string }) {
         )}
       </div>
       <div className="sd-cost">
-        <div className="ah-chart-card">
+        <div className="ah-chart-card" style={{ maxWidth: 720 }}>
           <h3 className="ah-chart-q">Which turns cost the most?</h3>
           <div className="ah-chart-meta">
             <span>Estimated USD per turn</span>
@@ -145,7 +145,7 @@ export function CostTab({ sessionId }: { sessionId: string }) {
                 return (
                   <span className="ah-row" style={{ gap: 6, justifyContent: "flex-end" }}>
                     {typical > 0 && value > typical * HIGH_FACTOR && (
-                      <span className="ah-chip ah-small">high</span>
+                      <span className="ah-badge ah-badge-idle">high</span>
                     )}
                     {fmtMoney(turn.cost_usd, 4)}
                   </span>
