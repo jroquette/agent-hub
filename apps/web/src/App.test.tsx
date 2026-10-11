@@ -6,6 +6,7 @@ import { App } from "./App";
 import { appRoutes } from "./routes";
 import { seriousViolations } from "./testing/axe";
 import {
+  aFeatureDetail,
   aHub,
   aPage,
   stubApi,
@@ -15,7 +16,11 @@ import {
   type ApiRoutes,
 } from "./testing/builders";
 
-const withHub: ApiRoutes = { "/api/v1/hubs": aPage([aHub()]), "/api/v1/projects": aPage([]) };
+const withHub: ApiRoutes = {
+  "/api/v1/hubs": aPage([aHub()]),
+  "/api/v1/projects": aPage([]),
+  "/api/v1/features/agent-hub/control-plane": aFeatureDetail(),
+};
 const noHub: ApiRoutes = { "/api/v1/hubs": aPage([]), "/api/v1/projects": aPage([]) };
 
 function renderAt(path: string, routes: ApiRoutes) {
@@ -41,16 +46,16 @@ describe("routes", () => {
     ["/sessions/abc", "Session detail"],
     ["/runs", "Workflow runs"],
     ["/runs/abc", "Run detail"],
-    ["/knowledge/learnings", "Learnings"],
+    ["/knowledge/learnings", "Knowledge"],
     ["/knowledge/brain", "Brain"],
     ["/knowledge/decisions", "Decisions"],
     ["/knowledge/context", "Context"],
     ["/features", "Features"],
-    ["/features/agent-hub/control-plane", "Feature detail"],
+    ["/features/agent-hub/control-plane", "control-plane"],
     ["/health", "Health"],
     ["/settings/hubs", "Settings"],
-    ["/welcome", "Welcome"],
-    ["/metrics", "Not found"],
+    ["/welcome", "Set up agent-hub on this machine"],
+    ["/metrics", "This page does not exist"],
   ])("opens %s on the %s screen when a hub is registered", async (path, title) => {
     renderAt(path, withHub);
 
@@ -70,7 +75,9 @@ describe("routes", () => {
   it("redirects to welcome when no hub is registered", async () => {
     const { router } = renderAt("/sessions", noHub);
 
-    expect(await screen.findByRole("heading", { level: 1, name: "Welcome" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Set up agent-hub on this machine" }),
+    ).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/welcome");
   });
 
