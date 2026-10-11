@@ -28,7 +28,8 @@ Makefile uses.
 | contract | A port's behavior: one suite in `agent_hub.core.testing.contracts`, run against the fake (`agent_hub.core.testing.fakes`) and against the real adapter; no network | `packages/<pkg>/tests/contract/` | `make check-fast` |
 | integration | Adapters against real infrastructure: a SQLite file under `tmp_path`, Alembic upgrade and downgrade; the generator's rendered hooks, scripts and `./hub` shim run in a temporary hub, with the characterization goldens; the CLI commands against local bare repos | `packages/<pkg>/tests/integration/` | `make check` |
 | e2e | The installed product and the gates as subprocesses: `hub` installed with `uv tool install`, ruff and mypy run with the repo's configs | root `tests/e2e/` | `make check` |
-| web (later) | The React app: Vitest for components, Playwright end to end | `apps/web` (Phase 2) | added with `apps/web` |
+| web | The React app: Vitest + Testing Library in jsdom for components and screens (states, a11y with `axe-core`), against `src/testing/builders.ts` fixtures and a mocked API (`renderWithApi`) | `apps/web/src/**/*.test.{ts,tsx}` beside the code | `make check-fast` (`web-fast`) |
+| web smoke | The built app on an installed `hub web`: Playwright (Chromium) visits the nine P2 pages of a synthetic scenario | `apps/web/e2e/smoke.spec.ts`, driven by root `tests/e2e/test_web_smoke.py` | `make check` (`test-e2e`) |
 
 A port's suite is written once, as reusable tests in `agent_hub.core.testing.contracts`, and each implementation's
 `tests/contract/` runs it against that implementation, so the fake used by unit tests is proven to behave like the real
@@ -150,8 +151,30 @@ tests (`tests/unit/scripts/test_check_test_layout.py`) have a failing and a pass
 
 ## Property tests
 
-Hypothesis property tests are required for secret redaction and for the transcript parser. Hypothesis is added as a
-dev dependency with the first of them; neither exists yet.
+Hypothesis property tests are required for secret redaction and for the transcript parser, and are named
+`test_<behavior>_when_<condition>_property` (`-k property` selects them): secrets inserted at random offsets never
+survive and redacting twice equals redacting once (`core:tests/unit/redaction/test_redact.py`); arbitrary transcript
+lines never raise and keep only the "Payload kept" keys (`collector:tests/unit/test_transcript.py`). Hypothesis is a
+dev dependency of the workspace.
+
+## Web tests
+
+- Every screen has a `-t states` test (loading skeleton after 300 ms, empty copy, a region-scoped problem with "Try
+  again", stale and offline) and a `-t a11y` test (no `axe-core` violation of impact serious or critical,
+  `src/testing/axe.ts`). Fixtures come only from `src/testing/builders.ts`; ESLint refuses a `*.json` import in a test.
+- Coverage: Vitest with V8, 80% of lines and of branches over `src/` (the generated `schema.d.ts`, `main.tsx` and
+  `src/testing/` excluded), in `web-fast`.
+- The smoke: `tests/e2e/test_web_smoke.py` installs `hub`, starts `hub web` on a temp database and registry, registers
+  two synthetic hubs (`hub init`), ingests a synthetic scenario (two projects, one live session with a guard denial,
+  one session waiting on a guard ask, one failed run, one 5,000-event session) through `POST /events/hooks` and
+  `hub collect`, and runs `npm --prefix apps/web exec playwright test` with `AGENT_HUB_WEB_URL`. Each page must load
+  with no console error, no page error, no request to another host and no serious or critical axe violation; Session
+  detail of the 5,000-event session must be complete in under 2 s. Playwright never downloads a browser here: the test
+  passes the Chromium headless shell found under `PLAYWRIGHT_BROWSERS_PATH` (else Playwright's cache) as
+  `AGENT_HUB_CHROMIUM`. Without npm or a Chromium it skips locally and fails under `CI`.
+- The same module checks the committed bundle for absolute URLs (AC-200.56): only an exact list of inert strings is
+  allowed (React's and React Router's error-text doc links, XML namespace ids, React Router's `http://localhost`
+  parsing base); any other URL, such as an external font, script or API, fails.
 
 ## Coverage
 
@@ -161,7 +184,8 @@ per package directory:
 | Package | Floor |
 |---|---|
 | `core` | 90% |
-| every other package | 80% |
+| every other package (`api` included) | 80% |
+| `apps/web` (Vitest, lines and branches separately) | 80% |
 
 - `make test-fast` erases the coverage data, then measures unit and contract tests with branch coverage for every
   `agent_hub` package (the Makefile `COV` list).
@@ -180,11 +204,15 @@ coverage.py and pytest-cov only offer a global `--fail-under`, which is why the 
 
 `make check-fast` (while working) runs, in order: `format` (`ruff format --check`), `lint`
 (`ruff check`), `typecheck` (`mypy`, strict), `layout` (the layout checker), `lockstep` (the cli and meta versions are
-equal) and `test-fast` (unit and contract tests with coverage).
+equal), `openapi-check` (the committed `openapi.json` and `schema.d.ts` match the app), `test-fast` (unit and contract
+tests with coverage) and `web-fast` (`npm ci`, then typecheck, ESLint, Prettier check, tokens drift and Vitest with
+coverage).
 
 `make check` (before a PR, and in CI) runs `check-fast`, then `test-integration`, `test-e2e`, `imports`
-(`lint-imports`), `migrations` (upgrade a scratch SQLite database to head, then `alembic check`) and `coverage` (the
-floors). The OpenAPI staleness step is added when `packages/api` exists.
+(`lint-imports`), `migrations` (upgrade a scratch SQLite database to head, then `alembic check`), `coverage` (the
+floors) and `web-dist-check` (rebuild the web app in a scratch folder and diff it with the committed `web_dist/`).
+The API's integration tests (including `test_performance.py`, the NFR budgets on 10,000 synthetic events) run in
+`test-integration`, and the web smoke in `test-e2e`.
 
 Make runs the steps left to right and stops at the first failure. Never run the gate targets with `-j`.
 

@@ -227,3 +227,15 @@ A human then reads the proposal and sets its `status` to `approved`, and `/onboa
 `/onboard`: raise `platform.version` in `hub.json` to the version of § Find the version and check the CLI, run
 `./hub sync`, and commit that change through a PR. If the newest release has no `.claude/skills/onboard` either, stop
 and tell the user; do not try other versions.
+
+To watch the hub's sessions, run `./hub web` from the hub folder on the same machine (the pinned release, through the
+shim) and open the URL it prints, `http://127.0.0.1:7420` by default. In the app, register the hub under Settings › Hubs with its absolute path. The hub's
+hooks send each session's events to it as they happen; without `hub web` running they do nothing and the session is
+unaffected. Older work can be added once: `./hub collect --transcript <file>` for a transcript under
+`~/.claude/projects/`, and `./hub collect --runs .agent-runs` for `hub run` records. Only metadata is stored (sizes,
+tools, repo-relative paths, short commands with secrets redacted), never prompt, output or file text.
+
+Release note for a hub that moves to a release with the control plane: `./hub sync` adds
+`plugin/hub-workflow/hooks/event_sensor.py` and rewrites `hooks.json`, `.claude/settings.json` (the sensor joins
+eleven hook events), `guard.py`, `stop_gate.py` and `hubhooks.py` once. Review that diff in the sync PR as usual; the
+guard's and the Stop gate's decisions do not change.
