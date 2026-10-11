@@ -118,6 +118,7 @@ function QueueRow({ l }: { l: Learning }) {
         </span>
         <span className="ah-row ah-wrap" style={{ gap: 6 }}>
           {l.provenance && <ProvenanceBadge provenance={l.provenance} />}
+          {ext && <ExternalLabel source="External" />}
           <span className="ah-small ah-subtle">{kind ? TARGET[kind].short : "no target"}</span>
           <span className="ah-small ah-subtle">· {l.project}</span>
         </span>
