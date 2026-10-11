@@ -148,9 +148,24 @@ def _ingest_everything(composed: Any, tmp_path: Path) -> None:
     _collect("--runs", str(runs), "--project", "demo", "--db", db)
     canonical = tmp_path / "events.jsonl"
     command = f"curl -H 'x-api-key: {LEAK_SAMPLE}' https://example.org"
-    event = an_event(session="session-3", payload={"tool": "Bash", "command": command})
+    # A JSON Lines file can name any payload key: keys outside "Payload kept" are dropped (D11).
+    body_keys = {"tool_input": {"command": BODY}, "output": BODY, "prompt": BODY, "content": BODY}
+    event = an_event(
+        session="session-3",
+        source_id="jsonl-bash",
+        payload={"tool": "Bash", "command": command} | body_keys,
+    )
     canonical.write_text(events_to_jsonl([event]), encoding="utf-8")
     _collect(str(canonical), "--db", db)
+
+
+def _jsonl_payload(db_path: Path) -> dict[str, Any]:
+    with sqlite3.connect(db_path) as connection:
+        [(payload,)] = connection.execute(
+            "SELECT payload FROM events WHERE source_id = 'jsonl-bash'"
+        ).fetchall()
+    loaded: dict[str, Any] = json.loads(payload)
+    return loaded
 
 
 def _stored_text(db_path: Path) -> str:
@@ -202,6 +217,10 @@ def test_stores_and_serves_no_body_or_secret_when_ingested_through_every_entry_p
     assert BODY not in stored
     assert LEAK_SAMPLE not in stored
     assert "[redacted: anthropic key]" in stored
+    assert _jsonl_payload(composed.settings.db_path) == {
+        "tool": "Bash",
+        "command": "curl -H 'x-api-key: [redacted: anthropic key]' https://example.org",
+    }
     for path in _paths(composed):
         response = composed.client.get(path)
         assert response.status_code == 200, (path, response.text)

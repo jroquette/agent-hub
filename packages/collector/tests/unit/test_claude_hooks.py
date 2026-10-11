@@ -8,6 +8,7 @@ import pytest
 
 from agent_hub.collector.claude_hooks import ClaudeHookMapper
 from agent_hub.core.events.event import Event
+from agent_hub.core.events.payload_keys import kept_payload
 from agent_hub.core.ingestion.hook_envelope import HookDecision
 from agent_hub.core.ingestion.ingestion_ports import TranscriptRef
 from agent_hub.core.testing.hook_inputs import (
@@ -375,3 +376,48 @@ def test_yields_nothing_when_session_id_missing() -> None:
 
     assert mapping.events == ()
     assert mapping.transcript is None
+
+
+def _every_hook_event() -> list[Event]:
+    mapper = ClaudeHookMapper()
+    envelopes = [
+        an_envelope(a_hook_input(name), run="1a2b3c4d", attempt=1) for name in HOOK_EVENT_NAMES
+    ]
+    envelopes += [
+        an_envelope(a_hook_input("Notification", notification_type="permission_prompt")),
+        an_envelope(
+            a_hook_input(
+                "PreToolUse",
+                tool_input={"file_path": "/w/brain/_inbox/n.md", "content": "# T"},
+                tool_name="Write",
+            )
+        ),
+        an_envelope(
+            a_hook_input("PreToolUse"), decision=HookDecision(by="guard", kind="deny", rule="r")
+        ),
+        an_envelope(
+            a_hook_input("PreToolUse"), decision=HookDecision(by="guard", kind="ask", rule="r")
+        ),
+        an_envelope(
+            a_hook_input("Stop"),
+            decision=HookDecision(by="stop_gate", kind="block", command="make", exit_code=1),
+        ),
+    ]
+    return [event for envelope in envelopes for event in mapper.map(envelope).events]
+
+
+def test_maps_only_payload_kept_keys_when_every_hook_and_decision_mapped() -> None:
+    events = _every_hook_event()
+
+    assert {event.type for event in events} >= {
+        "session.start",
+        "session.end",
+        "message",
+        "tool.call",
+        "tool.result",
+        "gate.request",
+        "gate.result",
+        "learning.proposed",
+    }
+    for event in events:
+        assert kept_payload(event.type, event.payload) == event.payload, event.type

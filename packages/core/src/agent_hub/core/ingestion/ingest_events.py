@@ -4,6 +4,7 @@ from collections.abc import Sequence
 
 from agent_hub.core.events.event import Event
 from agent_hub.core.events.event_store import AppendResult, EventStore
+from agent_hub.core.events.payload_keys import kept_payload
 from agent_hub.core.redaction.redact import redact_text, redact_value
 
 # The free-text labels an event carries besides its payload (D10).
@@ -15,8 +16,10 @@ class IngestEvents:
 
     Every entry point (hooks, transcripts, run records, JSON Lines) goes through here, so every
     stored event is redacted (D10): each string of ``payload``, at any depth, and the labels
-    ``repo``, ``agent``, ``workflow`` and ``step``. Redaction is idempotent, so a re-ingested
-    event is still a duplicate.
+    ``repo``, ``agent``, ``workflow`` and ``step``. After redaction the payload is trimmed to the
+    keys its type may store (D11, ``payload_keys``): any other key is dropped, not rejected, so
+    no entry point stores body text. Both steps are idempotent, so a re-ingested event is still
+    a duplicate.
     """
 
     def __init__(self, event_store: EventStore) -> None:
@@ -28,8 +31,10 @@ class IngestEvents:
 
 
 def redact_event(event: Event) -> Event:
-    """``event`` with its payload and labels redacted (D10); other fields are kept."""
-    update: dict[str, object] = {"payload": redact_value(dict(event.payload))}
+    """``event`` redacted (D10) and trimmed to its type's payload keys (D11); other fields kept."""
+    redacted = redact_value(dict(event.payload))
+    payload = kept_payload(event.type, redacted) if isinstance(redacted, dict) else {}
+    update: dict[str, object] = {"payload": payload}
     for label in _REDACTED_LABELS:
         value = getattr(event, label)
         if value is not None:

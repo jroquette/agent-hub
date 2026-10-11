@@ -27,10 +27,10 @@ def test_reports_duplicates_when_batch_ingested_twice() -> None:
 
 def test_propagates_conflict_when_batch_conflicts() -> None:
     event_store = InMemoryEventStore()
-    stored = an_event(payload={"version": 1})
+    stored = an_event(payload={"command": "make v1"})
     event_store.append([stored])
     before = event_store.read_all()
-    changed = an_event(source_id=stored.source_id, payload={"version": 2})
+    changed = an_event(source_id=stored.source_id, payload={"command": "make v2"})
 
     with pytest.raises(EventConflictError):
         IngestEvents(event_store).execute([an_event(), changed])
@@ -47,7 +47,7 @@ def test_redacts_payload_and_labels_when_events_hold_secrets() -> None:
     event_store = InMemoryEventStore()
     secret = _token()
     event = an_event(
-        payload={"command": f"curl -H 'x: {secret}'", "nested": [{"deep": secret}, 3]},
+        payload={"command": f"curl -H 'x: {secret}'", "arg_keys": [{"deep": secret}, 3]},
         repo=f"repo-{secret}",
         agent=f"agent-{secret}",
         workflow=f"flow-{secret}",
@@ -60,7 +60,7 @@ def test_redacts_payload_and_labels_when_events_hold_secrets() -> None:
     assert secret not in stored.model_dump_json()
     assert stored.payload == {
         "command": "curl -H 'x: [redacted: github token]'",
-        "nested": [{"deep": "[redacted: github token]"}, 3],
+        "arg_keys": [{"deep": "[redacted: github token]"}, 3],
     }
     assert stored.repo == "repo-[redacted: github token]"
     assert stored.agent == "agent-[redacted: github token]"
@@ -86,3 +86,32 @@ def test_keeps_none_labels_when_redacting_events() -> None:
     [stored] = event_store.read_all()
     assert stored.repo is None
     assert stored.agent is None
+
+
+def test_drops_keys_outside_payload_kept_when_any_entry_point_sends_them() -> None:
+    event_store = InMemoryEventStore()
+    event = an_event(
+        type="tool.call",
+        payload={
+            "tool": "Write",
+            "path": "src/app.py",
+            "content": "the file body",
+            "tool_input": {"content": "the file body"},
+            "run": "9c8d7e6f",
+        },
+    )
+
+    IngestEvents(event_store).execute([event])
+
+    [stored] = event_store.read_all()
+    assert stored.payload == {"tool": "Write", "path": "src/app.py", "run": "9c8d7e6f"}
+
+
+def test_drops_redacted_key_when_key_held_secret() -> None:
+    event_store = InMemoryEventStore()
+    event = an_event(type="message", payload={"role": "user", _token(): "x"})
+
+    IngestEvents(event_store).execute([event])
+
+    [stored] = event_store.read_all()
+    assert stored.payload == {"role": "user"}

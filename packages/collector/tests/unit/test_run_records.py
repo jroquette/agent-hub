@@ -10,6 +10,7 @@ from agent_hub.collector.run_records import (
     map_run_records,
 )
 from agent_hub.core.events.event import Event
+from agent_hub.core.events.payload_keys import kept_payload
 from agent_hub.core.testing.run_lines import (
     RUN_PR_URL,
     run_lines_failed_in_verify,
@@ -207,3 +208,14 @@ def test_rejects_record_when_field_invalid(change: dict[str, Any], reason: str) 
 
     with pytest.raises(RunRecordError, match=reason):
         RunEventMapper(project="d").map(record)
+
+
+def test_maps_only_payload_kept_keys_when_runs_succeed_and_fail() -> None:
+    events = [
+        *map_run_records(run_lines_picked_to_reported(), project="demo"),
+        *map_run_records(run_lines_failed_in_verify(), project="demo"),
+    ]
+
+    assert {event.type for event in events} >= {"step.start", "step.end", "gate.result", "run.end"}
+    for event in events:
+        assert kept_payload(event.type, event.payload) == event.payload, event.type

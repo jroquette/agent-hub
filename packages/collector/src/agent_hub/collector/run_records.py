@@ -22,6 +22,7 @@ from agent_hub.collector.errors import CollectorError
 from agent_hub.collector.hook_fields import text
 from agent_hub.collector.tool_metadata import COMMAND_LIMIT, first_line, short_text
 from agent_hub.core.events.event import Event, EventSource, EventType
+from agent_hub.core.events.payload_keys import CAPS_KEYS
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.runner.run_record import Stage
 
@@ -33,7 +34,8 @@ STAGE_KEYS: Final[Mapping[str, str]] = {
     Stage.VERIFYING: "verify",
     Stage.PR_OPEN: "pr",
 }
-CAPS: Final = ("budget", "max_turns", "model", "transport")
+# The caps a picked record carries, in a fixed order; the core table says which may be stored.
+CAPS: Final = tuple(sorted(CAPS_KEYS))
 GATE_KIND: Final = "check"
 
 type Payload = dict[str, JsonValue]
