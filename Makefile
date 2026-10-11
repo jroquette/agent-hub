@@ -11,9 +11,13 @@ COV := --cov=agent_hub.core --cov=agent_hub.storage --cov=agent_hub.collector \
        --cov=agent_hub.api \
        --cov=packages/storage/src/agent_hub/storage/migrations --cov-branch --cov-report=
 ALEMBIC := $(RUN) python -m agent_hub.storage.migration
+# The web app (apps/web): Node from apps/web/.node-version, dependencies from its package-lock.json.
+WEB := npm --prefix apps/web
+WEB_DIST := packages/api/src/agent_hub/api/web_dist
 
 .PHONY: help format lint typecheck layout lockstep test-fast check-fast test-integration test-e2e \
-        imports migrations coverage check hub-schema
+        imports migrations coverage check hub-schema web-install web-fast web-build web-dist-check \
+        openapi openapi-check
 
 help: ## List the targets
 	@grep -E '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "%-16s %s\n", $$1, $$2}'
@@ -37,7 +41,16 @@ test-fast: ## unit and contract tests; starts fresh coverage data
 	$(RUN) coverage erase
 	$(RUN) pytest -m "unit or contract" $(COV)
 
-check-fast: format lint typecheck layout lockstep test-fast ## the fast gate, run while working
+web-install: ## install the web app's dependencies exactly as package-lock.json pins them
+	$(WEB) ci --no-audit --no-fund
+
+web-fast: web-install ## web app: typecheck, ESLint, Prettier check, tokens drift, Vitest with coverage
+	$(WEB) run check
+
+openapi-check: web-install ## the committed openapi.json and the generated TS types match the app
+	$(RUN) python -m scripts.export_openapi --check && $(WEB) run gen:api:check
+
+check-fast: format lint typecheck layout lockstep openapi-check test-fast web-fast ## the fast gate, run while working
 
 test-integration: ## integration tests (real SQLite files under tmp_path), never live ones; appends coverage
 	$(RUN) pytest -m "integration and not live" $(COV) --cov-append
@@ -62,5 +75,16 @@ coverage: ## per-package floors (core 90%, others 80%) over the collected covera
 hub-schema: ## regenerate the shipped hub.json schema from HubConfig
 	$(RUN) python -m scripts.export_hub_schema
 
-# openapi: added when packages/api exists (the spec is regenerated and diffed in check).
-check: check-fast test-integration test-e2e imports migrations coverage ## the full gate, run before a PR
+# Not part of check: openapi-check (in check-fast) fails while either file is stale.
+openapi: web-install ## regenerate packages/api/openapi.json and apps/web/src/api/schema.d.ts
+	$(RUN) python -m scripts.export_openapi && $(WEB) run gen:api
+
+web-build: web-install ## build the web app into the API package (web_dist, committed)
+	$(WEB) run build
+
+web-dist-check: web-install ## rebuild the web app in a scratch dir and compare it with the committed web_dist
+	dir="$$(mktemp -d)" && trap 'rm -rf "$$dir"' EXIT && \
+	$(WEB) run build -- --outDir "$$dir" --emptyOutDir && \
+	diff -r "$$dir" $(WEB_DIST)
+
+check: check-fast test-integration test-e2e imports migrations coverage web-dist-check ## the full gate, run before a PR

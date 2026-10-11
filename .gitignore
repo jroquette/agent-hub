@@ -17,3 +17,7 @@ build/
 .coverage
 coverage.json
 .import_linter_cache/
+# The web app's test outputs.
+apps/web/coverage/
+apps/web/test-results/
+apps/web/playwright-report/
