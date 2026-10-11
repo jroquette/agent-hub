@@ -322,8 +322,10 @@ def checkouts(cfg: Config, names: list[str] | None = None) -> list[tuple[str, Pa
 
 
 def git(args: list[str], cwd: str | os.PathLike, timeout: int = 10) -> str:
+    """git's stdout without its trailing newlines ("" on an error or timeout). Leading blanks stay: a
+    porcelain status line is `XY path`, and an unstaged edit's X is a blank."""
     try:
-        return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=timeout).stdout.strip()
+        return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=timeout).stdout.rstrip("\n")
     except (OSError, subprocess.TimeoutExpired):
         return ""
 
