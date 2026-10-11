@@ -840,13 +840,19 @@ REPO_FAKE_DIRS = {
     "prettier": "node_modules/.bin",
     "eslint": "node_modules/.bin",
 }
-# The one table that names the files under test; ``{hub}`` is the case's hub copy.
+# The tables that name the files under test (AGH-7's, then ``DECISION_COMMANDS``).
 COMMANDS = {
     "retro_metrics": "scripts/retro_metrics.py",
     "post_edit": "plugin/hub-workflow/hooks/post_edit.py",
     "session_start": "plugin/hub-workflow/hooks/session_start.py",
     "session_end": "plugin/hub-workflow/hooks/session_end.py",
     "pre_compact": "plugin/hub-workflow/hooks/pre_compact.py",
+}
+# The hooks whose decisions the control plane records (AGH-200 E9): characterized from their
+# unchanged templates, then kept byte for byte while they emit to the event server.
+DECISION_COMMANDS = {
+    "guard": "plugin/hub-workflow/hooks/guard.py",
+    "stop_gate": "plugin/hub-workflow/hooks/stop_gate.py",
 }
 # AGH-7's per-case budget: from the workspace's creation through setup, run and compare (the
 # session-scoped render is not counted). The child gets what is left, at least the floor.
@@ -981,6 +987,7 @@ class CaseWorkspace:
     JOURNAL = JOURNAL
     HUB_DIR = HUB_DIR
     COMMANDS = COMMANDS
+    DECISION_COMMANDS = DECISION_COMMANDS
     at = staticmethod(at)
     write_files = staticmethod(write_files)
     write_exe = staticmethod(write_exe)
@@ -1155,7 +1162,7 @@ class CaseWorkspace:
 
     def command(self, name: str, *, hub: Path) -> list[str]:
         """The argv that runs the file under test ``name`` against the hub at ``hub``."""
-        return [self.python, f"{hub}/{COMMANDS[name]}"]
+        return [self.python, f"{hub}/{(COMMANDS | DECISION_COMMANDS)[name]}"]
 
     def brief_workspace(self) -> None:
         """The session start cases' workspace (see ``BRIEF_HUB_JSON``)."""

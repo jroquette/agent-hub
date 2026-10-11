@@ -1,0 +1,12 @@
+--- rc (2 bytes) ---
+0
+
+--- stdout (107 bytes) ---
+{"systemMessage": "[hub] code changed and check_fast is green. If the work spans sessions, run /handoff."}
+
+--- stderr (0 bytes) ---
+
+--- fs (0 bytes) ---
+
+--- calls (0 bytes) ---
+
