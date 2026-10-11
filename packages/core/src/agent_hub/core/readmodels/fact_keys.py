@@ -14,7 +14,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from agent_hub.core.events.event import Event, EventKey, EventSource, EventType
+from agent_hub.core.events.event import Event, EventSource, EventType
 from agent_hub.core.events.stored_event import StoredEvent
 
 _HOOKS_FIRST = (
@@ -107,17 +107,38 @@ def _canonical_sort_key(stored: StoredEvent) -> tuple[datetime, str, str]:
     return (stored.event.timestamp, str(stored.event.source), stored.event.source_id)
 
 
+class _CanonicalEvents(list[StoredEvent]):
+    """What ``canonical_events`` returns; passed to it again, it is returned as is.
+
+    Folds call ``canonical_events`` on each other's output many times per read; the marker
+    spares re-keying and re-sorting events already in canonical order. Never mutated.
+    """
+
+
+def canonical_part(events: Iterable[StoredEvent]) -> list[StoredEvent]:
+    """``events``, marked canonical: the caller took them, in order, from canonical events.
+
+    Any subsequence of canonical events is canonical; marking it spares the next fold that
+    takes it a new sort.
+    """
+    return _CanonicalEvents(events)
+
+
 def canonical_events(events: Iterable[StoredEvent]) -> list[StoredEvent]:
     """``events`` without repeats of one event, ordered by timestamp then identity.
 
     Of two copies of one event (same ``(source, source_id)``), the one stored first is kept.
     """
-    unique: dict[EventKey, StoredEvent] = {}
+    if isinstance(events, _CanonicalEvents):
+        return events
+    # Keyed like ``Event.key`` but without building one per event: folds call this often.
+    unique: dict[tuple[str, str], StoredEvent] = {}
     for stored in events:
-        known = unique.get(stored.event.key)
+        key = (stored.event.source, stored.event.source_id)
+        known = unique.get(key)
         if known is None or stored.seq < known.seq:
-            unique[stored.event.key] = stored
-    return sorted(unique.values(), key=_canonical_sort_key)
+            unique[key] = stored
+    return _CanonicalEvents(sorted(unique.values(), key=_canonical_sort_key))
 
 
 def _precedence_key(stored: StoredEvent) -> tuple[int, datetime, str]:
