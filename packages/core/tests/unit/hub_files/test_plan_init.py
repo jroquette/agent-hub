@@ -82,6 +82,7 @@ CORE_MODULES = (
     "workspace/agent_launch.py",
     "workspace/task_slug.py",
     "workspace/start_prompt.py",
+    "workspace/start_task.py",
     "runner/__init__.py",
     "runner/ready_list.py",
     "runner/session_prompt.py",
