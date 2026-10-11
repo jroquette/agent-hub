@@ -14,7 +14,6 @@ hook input's canonical JSON (sorted keys, compact).
 
 import hashlib
 import json
-import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -25,13 +24,17 @@ from agent_hub.collector.tool_metadata import (
     COMMAND_LIMIT,
     FILE_PATH,
     NAME_LIMIT,
+    first_line,
     learning_proposal,
     output_bytes,
+    prompt_command,
     repo_root_of,
     short_text,
     shown_path,
     tool_call_payload,
 )
+from agent_hub.collector.transcript import TranscriptOrigin
+from agent_hub.collector.transcript_tail import SessionOrigins
 from agent_hub.core.events.event import Event, EventSource, EventType
 from agent_hub.core.ingestion.hook_envelope import HookDecision, HookEnvelope
 from agent_hub.core.ingestion.ingestion_ports import HookMapping, TranscriptRef
@@ -39,9 +42,7 @@ from agent_hub.core.json_form import JsonValue
 
 RUN_WORKFLOW: Final = "issue-to-pr"
 MAIN_AGENT: Final = "main"
-ERROR_LINE_LIMIT: Final = 200
 INTERRUPTED: Final = "interrupted"
-_SLASH_COMMAND: Final = re.compile(r"/[A-Za-z0-9_.:\-]+")
 
 type Payload = dict[str, JsonValue]
 
@@ -118,7 +119,14 @@ class _Hook:
 
 
 class ClaudeHookMapper:
-    """Maps a sensor envelope to canonical events; never raises on missing or odd hook keys."""
+    """Maps a sensor envelope to canonical events; never raises on missing or odd hook keys.
+
+    With ``origins``, each transcript it names is remembered with its project, repo and agent,
+    so the transcript tail can attribute the transcript's events the same way.
+    """
+
+    def __init__(self, *, origins: SessionOrigins | None = None) -> None:
+        self._origins = origins
 
     def map(self, envelope: HookEnvelope) -> HookMapping:
         """The events of ``envelope`` and, for Stop/SubagentStop/SessionEnd, its transcript."""
@@ -130,7 +138,20 @@ class ClaudeHookMapper:
             return HookMapping(events=(_decision_event(hook, envelope.decision),))
         handler = _HANDLERS.get(hook.name)
         events = () if handler is None else handler(hook)
-        return HookMapping(events=events, transcript=_transcript(hook))
+        transcript = _transcript(hook)
+        if transcript is not None and self._origins is not None:
+            self._origins.remember(transcript, _origin(hook, transcript))
+        return HookMapping(events=events, transcript=transcript)
+
+
+def _origin(hook: _Hook, transcript: TranscriptRef) -> TranscriptOrigin:
+    # The main transcript is the main agent's; a subagent's is its agent type's.
+    agent_type = fields.text(hook.input, fields.AGENT_TYPE)
+    is_subagent = transcript.kind == "subagent"
+    agent = short_text(agent_type, NAME_LIMIT) if is_subagent and agent_type else MAIN_AGENT
+    return TranscriptOrigin(
+        project=hook.envelope.project, repo=hook.envelope.repo, agent=agent, session=hook.session
+    )
 
 
 def _session_start(hook: _Hook) -> tuple[Event, ...]:
@@ -153,16 +174,10 @@ def _user_prompt(hook: _Hook) -> tuple[Event, ...]:
     prompt = hook.input.get(fields.PROMPT)
     if isinstance(prompt, str):
         payload["chars"] = len(prompt)
-        command = slash_command(prompt)
+        command = prompt_command(prompt)
         if command is not None:
             payload["slash_command"] = command
     return (hook.event(EventType.MESSAGE, hook.hashed_id(hook.name), payload),)
-
-
-def slash_command(prompt: str) -> str | None:
-    """The ``/name`` a prompt starts with, never its arguments; None for plain text."""
-    found = _SLASH_COMMAND.match(prompt.lstrip())
-    return None if found is None else short_text(found.group(), NAME_LIMIT)
 
 
 def _pre_tool_use(hook: _Hook) -> tuple[Event, ...]:
@@ -200,12 +215,6 @@ def _post_tool_use_failure(hook: _Hook) -> tuple[Event, ...]:
     elif error is not None:
         payload["error_line"] = first_line(error)
     return (hook.event(EventType.TOOL_RESULT, hook.tool_id(hook.name), payload),)
-
-
-def first_line(text: str) -> str:
-    """The first non-blank line of an error, redacted and clipped (D11)."""
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    return short_text(lines[0] if lines else "", ERROR_LINE_LIMIT)
 
 
 def _notification(hook: _Hook) -> tuple[Event, ...]:
