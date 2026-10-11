@@ -227,6 +227,8 @@ The command is split into parts at `;`, `&&`, `||`, `|` and newlines, then:
    inside a word (`a''b`, `-backen''d`), `xargs`, `eval`, `exec`, `source`, `.` as a command, `bash`/`sh`/`zsh`/`dash`
    `-c`, a here-string `<<<` or a heredoc `<<`. Otherwise it asks, naming the first one; a deny or an ask stays as it
    is, and a command that names no covered tool is not affected.
+   An `allow` match that overlaps a quoted region (`'…'`, `"…"`, `$'…'`) is text, not evidence: a part or call whose
+   only matches are quoted asks, naming the match (so a quoted value such as `--profile "demo-dev"` asks too).
 
 The strictest part wins, and an infra allow or ask does not end the check: a later deny (a secret file) still wins.
 There is no carry-over: the environment must be on the part itself (`--profile <env>`, an `AWS_PROFILE=<env> `

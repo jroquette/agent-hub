@@ -451,7 +451,8 @@ local-only (`--version`, `help`, `cdk synth`, `terraform fmt|validate`, `terrafo
 (`terraform apply|destroy|import`, `kubectl apply|delete|…`, `aws s3 rm`, `aws … delete-*`, `cdk deploy`, …) are
 asked first. A command that would pass is asked first too when it is not simple, that is when it holds a backslash,
 `$'`, `$$`, a backtick, `#`, a quote inside a word (`a''b`), `xargs`, `eval`, `exec`, `source`, `.`, `bash -c` (or
-`sh`/`zsh`/`dash -c`), `<<<` or `<<`: the guard does not model these, so it never lets them through unseen. A tool
+`sh`/`zsh`/`dash -c`), `<<<` or `<<`: the guard does not model these, so it never lets them through unseen. An
+environment matched only inside quotes (`--query '--profile demo-dev'`, `--profile "demo-dev"`) is asked first too. A tool
 word with nothing after it (`… | xargs aws`) counts as a call with no environment. The tool is found behind wrappers, quotes and redirections (`env aws …`, `bash -c "aws …"`,
 `aws>/dev/null …`), but its name is case-sensitive and quoting tricks inside it (`a""ws`) hide it. If `guard.infra` or
 one of its patterns cannot be used (a wrong value, or regex syntax the system Python 3.9 lacks), every infra command
