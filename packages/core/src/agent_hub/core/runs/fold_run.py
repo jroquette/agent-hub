@@ -9,6 +9,7 @@ there; otherwise the run is at the stage of its latest step. Pure and order-inde
 from collections.abc import Iterable, Mapping, Sequence
 from decimal import Decimal, InvalidOperation
 from typing import Literal
+from urllib.parse import urlsplit
 
 from agent_hub.core.events.event import EventSource, EventType
 from agent_hub.core.events.stored_event import StoredEvent
@@ -42,6 +43,18 @@ _STAGES = frozenset(stage.value for stage in Stage)
 
 def _text(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _https_url(value: object) -> str | None:
+    """``value`` when it is an absolute https URL with a host, else None (never javascript:)."""
+    text = _text(value)
+    if text is None or any(ch.isspace() or not ch.isprintable() or ch == "\\" for ch in text):
+        return None
+    try:
+        parts = urlsplit(text)
+    except ValueError:  # e.g. an unclosed IPv6 bracket
+        return None
+    return text if parts.scheme == "https" and parts.hostname else None
 
 
 def _int(value: object) -> int | None:
@@ -246,7 +259,7 @@ def fold_run(
         cost_source=cost_source,
         session_ids=tuple(session.id for session in linked),
         gate_results=_gate_results(winners),
-        pr_url=_text(payload_of_end.get("pr_url")),
+        pr_url=_https_url(payload_of_end.get("pr_url")),
         sources_missing=RUN_SOURCES_MISSING,
     )
 

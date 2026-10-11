@@ -1,6 +1,8 @@
 from datetime import timedelta
 from decimal import Decimal
 
+import pytest
+
 from agent_hub.core.runner.run_record import Stage
 from agent_hub.core.runs.fold_run import fold_runs
 from agent_hub.core.testing.builders import an_event
@@ -66,6 +68,29 @@ def test_reports_run_with_caps_and_pr_when_run_succeeds() -> None:
     assert run.pr_url == "https://github.com/acme/demo-api/pull/7"
     assert run.workflow == "issue-to-pr"
     assert run.repo == "demo-api"
+
+
+@pytest.mark.parametrize(
+    "pr_url",
+    [
+        "javascript:alert(1)",
+        "data:text/html,<script>alert(1)</script>",
+        "http://github.com/acme/demo-api/pull/7",
+        "//evil.example/pull/7",
+        "https://",
+        "https://[::1/pull/7",
+        " https://github.com/acme/demo-api/pull/7",
+        "https://github.com/acme/demo-api/pull/7\nx",
+    ],
+)
+def test_drops_pr_url_when_it_is_not_an_https_url(pr_url: str) -> None:
+    events = a_run_events()
+    end = events[-1].model_copy(update={"payload": dict(events[-1].payload) | {"pr_url": pr_url}})
+
+    run = fold_runs(as_stored([*events[:-1], end]))["1a2b3c4d"]
+
+    assert run.stage == Stage.REPORTED
+    assert run.pr_url is None
 
 
 def test_shows_latest_stage_running_when_run_in_flight() -> None:
