@@ -17,7 +17,7 @@ import pytest
 from click import unstyle
 from typer.testing import Result
 
-from agent_hub.cli import run_steps, ship_command, ship_set
+from agent_hub.cli import run_steps, ship_command, ship_set, ship_steps
 from agent_hub.cli.child_process import ChildResult, run_child
 from agent_hub.cli.run_children import push_command
 from agent_hub.core.hub_config.model import HubConfig
@@ -1074,6 +1074,10 @@ class TestShipPrs:
             (create_call(API_GITHUB, "jdoe/dem-7-x", api_title), api),
             (["git", *push_command("jdoe/dem-7")[1:]], web),
             (create_call("acme/demo-web", "jdoe/dem-7", web_title), web),
+            (["gh", "pr", "view", API_PR, "--json", "body"], api),
+            (["gh", "pr", "edit", API_PR, "--body", linked_body(WEB_PR)], api),
+            (["gh", "pr", "view", WEB_PR, "--json", "body"], web),
+            (["gh", "pr", "edit", WEB_PR, "--body", linked_body(API_PR)], web),
         ]
         assert [(pr["url"], pr["draft"]) for pr in ship_workspace.prs()] == [
             (API_PR, False),
@@ -1104,7 +1108,8 @@ class TestShipPrs:
         result = ship_live(ship_workspace, run_command, child_calls, "--draft")
 
         assert result.exit_code == 0, result.output
-        creates = [call["argv"] for call in ship_workspace.calls("gh")]
+        gh = [call["argv"] for call in ship_workspace.calls("gh")]
+        creates = [argv for argv in gh if argv[:2] == ["pr", "create"]]
         assert [argv[-1] for argv in creates] == ["--draft", "--draft"]
         assert [pr["draft"] for pr in ship_workspace.prs()] == [True, True]
 
@@ -1175,6 +1180,10 @@ class TestShipPrs:
             ["pr", "create", "--repo"],
             ["pr", "view", "jdoe/dem-7-x"],
             ["pr", "create", "--repo"],
+            ["pr", "view", found],
+            ["pr", "edit", found],
+            ["pr", "view", WEB_PR],
+            ["pr", "edit", WEB_PR],
         ]
         assert [pr["url"] for pr in ship_workspace.prs()] == [found, WEB_PR]
         assert result.stdout.splitlines()[-2:] == [
@@ -1359,3 +1368,242 @@ class TestShipPartial:
         ]
         assert [call.cwd.name for call in pushes(child_calls)] == ["dem-7-x", "dem-7"]
         assert_unlinked(ship_workspace, tracker)
+
+    def test_finishes_without_duplicates_when_run_again(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        reject_pushes(ship_workspace, "demo-web")
+        failed = ship_live(ship_workspace, run_command, child_calls)
+        assert failed.exit_code == 1, failed.output
+        (ship_workspace.workspace.origin("demo-web") / "hooks" / "pre-receive").unlink()
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        assert result.stdout.splitlines()[-2:] == [
+            f"found: demo-api  {API_PR}",
+            f"opened: demo-web  {WEB_PR}",
+        ]
+        assert [(pr["repo"], pr["url"]) for pr in ship_workspace.prs()] == [
+            (API_GITHUB, API_PR),
+            ("acme/demo-web", WEB_PR),
+        ]
+        assert [pr["body"] for pr in ship_workspace.prs()] == [
+            linked_body(WEB_PR),
+            linked_body(API_PR),
+        ]
+
+
+def linked_body(*urls: str, before: str = f"DEM-7 {ISSUE_URL}\n\n") -> str:
+    """A shipped PR's body whose Related PRs section lists ``urls``."""
+    listed = "".join(f"- {url}\n" for url in urls)
+    return f"{before}{RELATED_START}\n## Related PRs\n{listed}{RELATED_END}"
+
+
+def link_calls(ship_workspace: Workspace) -> list[list[str]]:
+    """The ``gh`` calls of the link phase: each body read and each edit."""
+    return [
+        call["argv"]
+        for call in ship_workspace.calls("gh")
+        if call["argv"][:2] == ["pr", "edit"] or call["argv"][-2:] == ["--json", "body"]
+    ]
+
+
+@pytest.mark.usefixtures("with_key")
+class TestShipLinks:
+    def test_lists_other_pr_when_two_prs_open(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        api, web = both_ahead(make_task_worktree)
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        assert link_calls(ship_workspace) == [
+            ["pr", "view", API_PR, "--json", "body"],
+            ["pr", "edit", API_PR, "--body", linked_body(WEB_PR)],
+            ["pr", "view", WEB_PR, "--json", "body"],
+            ["pr", "edit", WEB_PR, "--body", linked_body(API_PR)],
+        ]
+        assert [call.cwd for call in child_calls.calls if call.argv[0] == "gh"][-4:] == [
+            api,
+            api,
+            web,
+            web,
+        ]
+        assert [pr["body"] for pr in ship_workspace.prs()] == [
+            linked_body(WEB_PR),
+            linked_body(API_PR),
+        ]
+
+    def test_skips_links_when_one_pr_shipped(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        make_task_worktree("demo-api", "dem-7-x", ["feat(api): add x (DEM-7)"])
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        assert [call["argv"][:2] for call in ship_workspace.calls("gh")] == [["pr", "create"]]
+        assert link_calls(ship_workspace) == []
+        assert [pr["body"] for pr in ship_workspace.prs()] == [SHIP_BODY]
+
+    def test_keeps_outside_text_when_body_edited(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        found = "https://github.com/acme/demo-api/pull/7"
+        before, after = "Notes by hand.\n  indented, trailing  \n\n", "\n\nA footer by hand.\n"
+        stale = (
+            f"{RELATED_START}\n## Related PRs\n- https://github.com/acme/old/pull/1\n{RELATED_END}"
+        )
+        ship_workspace.write_prs(
+            [seeded_pr(state="OPEN", url=found) | {"body": before + stale + after}]
+        )
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        api_body, web_body = (pr["body"] for pr in ship_workspace.prs())
+        assert api_body == linked_body(WEB_PR, before=before) + after
+        assert web_body == linked_body(found)
+
+    def test_appends_section_once_when_found_body_lacks_markers(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        found = "https://github.com/acme/demo-api/pull/7"
+        ship_workspace.write_prs([seeded_pr(state="OPEN", url=found)])
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        api_body = ship_workspace.prs()[0]["body"]
+        assert api_body == linked_body(WEB_PR, before="Opened by hand.\n\n")
+        assert api_body.count(RELATED_START) == api_body.count(RELATED_END) == 1
+
+    def test_skips_edit_when_run_again_unchanged(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        first = ship_live(ship_workspace, run_command, child_calls)
+        assert first.exit_code == 0, first.output
+        linked = ship_workspace.prs()
+        ship_workspace.logs.joinpath("gh.jsonl").unlink()
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        assert link_calls(ship_workspace) == [
+            ["pr", "view", API_PR, "--json", "body"],
+            ["pr", "view", WEB_PR, "--json", "body"],
+        ]
+        assert ship_workspace.prs() == linked
+        for pr in ship_workspace.prs():
+            assert pr["body"].count(RELATED_START) == pr["body"].count(RELATED_END) == 1
+
+    @pytest.mark.parametrize(
+        ("fails", "body", "suffix"),
+        [
+            ("body:demo-api", None, ": gh (fake): synthetic body failure"),
+            ("", 7, ""),
+            ("", "x" * (1 << 20), ""),
+        ],
+        ids=["gh-fails", "not-text", "too-long"],
+    )
+    def test_fails_link_step_when_body_unreadable(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        fails: str,
+        body: Any,
+        suffix: str,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        api = API_PR
+        if body is not None:
+            api = "https://github.com/acme/demo-api/pull/7"
+            ship_workspace.write_prs([seeded_pr(state="OPEN", url=api) | {"body": body}])
+        monkeypatch.setenv("FAKE_GH_FAIL", fails)
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 1, result.output
+        assert result.stderr.splitlines()[-4:] == [
+            f"hub ship: demo-api: link failed: could not read the body of {api}{suffix}",
+            f"hub ship: PR open: {api}",
+            f"hub ship: PR open: {WEB_PR}",
+            "hub ship: the issue was not moved",
+        ]
+        assert [argv for argv in link_calls(ship_workspace) if argv[1] == "edit"] == []
+        reads = [call for call in child_calls.calls if call.argv[-2:] == ["--json", "body"]]
+        assert [call.output_limit for call in reads] == [1_048_576]
+        assert ship_steps.PR_BODY_OUTPUT_LIMIT == 1_048_576
+        assert tracker.calls == [("get_issue", ISSUE)]
+
+    def test_fails_link_step_when_edit_fails(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        monkeypatch.setenv("FAKE_GH_FAIL", "edit:demo-web")
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 1, result.output
+        assert result.stderr.splitlines()[-4:] == [
+            "hub ship: demo-web: link failed: gh pr edit failed: gh (fake): synthetic edit failure",
+            f"hub ship: PR open: {API_PR}",
+            f"hub ship: PR open: {WEB_PR}",
+            "hub ship: the issue was not moved",
+        ]
+        assert [pr["body"] for pr in ship_workspace.prs()] == [linked_body(WEB_PR), SHIP_BODY]
+        assert tracker.calls == [("get_issue", ISSUE)]

@@ -229,6 +229,16 @@ def pr_view_command(*, github: str, branch: str) -> list[str]:
     return ["gh", "pr", "view", branch, "--repo", github, "--json", "url,state"]
 
 
+def pr_body_command(url: str) -> list[str]:
+    """The read of the body of the PR at ``url`` (the url names its repo)."""
+    return ["gh", "pr", "view", url, "--json", "body"]
+
+
+def pr_edit_command(url: str, body: str) -> list[str]:
+    """The edit of the PR at ``url``: its body replaced by ``body``."""
+    return ["gh", "pr", "edit", url, "--body", body]
+
+
 def without(environ: Mapping[str, str], names: Iterable[str]) -> dict[str, str]:
     """A copy of ``environ`` without ``names``."""
     hidden = set(names)
