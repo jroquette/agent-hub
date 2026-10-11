@@ -1,7 +1,9 @@
 """The SQLite ``EventStore`` adapter and the entry point that opens it."""
 
 import json
+import uuid
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,7 @@ from agent_hub.storage.migration import upgrade_to_head
 
 # Keys per lookup query: two bound parameters each, far below SQLite's parameter limit.
 KEYS_PER_QUERY = 500
+# The canonical columns; the storage fields (event_id, received_at) are not part of an Event.
 EVENT_FIELDS = tuple(Event.model_fields)
 
 
@@ -104,7 +107,12 @@ def open_event_store(path: Path) -> SqliteEventStore:
 
 def _to_row(event: Event) -> dict[str, Any]:
     # JSON mode turns the enums into their values; the timestamp stays a datetime for UtcDateTime.
-    return event.model_dump(mode="json") | {"timestamp": event.timestamp}
+    # Only new events become rows, so the storage fields are minted once per event.
+    return event.model_dump(mode="json") | {
+        "timestamp": event.timestamp,
+        "event_id": str(uuid.uuid7()),
+        "received_at": datetime.now(UTC),
+    }
 
 
 def _to_event(row: RowMapping) -> Event:
