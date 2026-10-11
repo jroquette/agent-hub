@@ -40,9 +40,12 @@ COMMAND_LIMIT: Final = 500
 PATTERN_LIMIT: Final = 200
 DESCRIPTION_LIMIT: Final = 80
 TITLE_LIMIT: Final = 120
+ERROR_LINE_LIMIT: Final = 200
 NAME_LIMIT: Final = 80
 WORKTREES: Final = (".claude", "worktrees")
 INBOX: Final = ("brain", "_inbox")
+# A prompt's slash command: typed first, or wrapped by Claude Code in its transcript.
+_SLASH_COMMAND: Final = re.compile(r"(?:<command-name>)?(/[A-Za-z0-9_.:\-]+)")
 _HEADING: Final = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
 
 type Payload = dict[str, JsonValue]
@@ -52,6 +55,18 @@ type ToolInput = Mapping[str, JsonValue]
 def short_text(value: str, limit: int) -> str:
     """``value`` redacted, then clipped to ``limit`` characters (D11's allowed short texts)."""
     return clip(redact_text(value), limit)
+
+
+def prompt_command(prompt: str) -> str | None:
+    """The ``/name`` a prompt starts with, never its arguments; None for plain text."""
+    found = _SLASH_COMMAND.match(prompt.lstrip())
+    return None if found is None else short_text(found.group(1), NAME_LIMIT)
+
+
+def first_line(text: str) -> str:
+    """The first non-blank line of an error, redacted and clipped (D11)."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return short_text(lines[0] if lines else "", ERROR_LINE_LIMIT)
 
 
 def tool_call_payload(
