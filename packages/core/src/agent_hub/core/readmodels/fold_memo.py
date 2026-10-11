@@ -2,7 +2,8 @@
 
 A fold is recomputed only when the store has grown since it was computed; nothing is written
 to disk, and a restart starts empty. The least recently used keys are dropped past
-``max_entries``. Safe to share between the API's worker threads.
+``max_entries``. Safe to share between the API's worker threads: threads asking for the same
+key at once wait for one computation instead of each folding the same events.
 """
 
 import threading
@@ -19,18 +20,38 @@ class FoldMemo[K: Hashable, V]:
         self._max_entries = max_entries
         self._entries: OrderedDict[K, tuple[int, V]] = OrderedDict()
         self._lock = threading.Lock()
+        # One lock per key being computed, so concurrent callers share one computation.
+        self._computing: dict[K, threading.Lock] = {}
 
     def get(self, key: K, *, hwm: int, compute: Callable[[], V]) -> V:
         """The value of ``key`` at ``hwm``: the memoized one, or ``compute()`` stored anew."""
         with self._lock:
-            entry = self._entries.get(key)
-            if entry is not None and entry[0] == hwm:
-                self._entries.move_to_end(key)
-                return entry[1]
-        value = compute()
-        with self._lock:
-            self._entries[key] = (hwm, value)
-            self._entries.move_to_end(key)
-            while len(self._entries) > self._max_entries:
-                self._entries.popitem(last=False)
-        return value
+            found = self._fresh(key, hwm)
+            if found is not None:
+                return found[0]
+            computing = self._computing.setdefault(key, threading.Lock())
+        try:
+            with computing:
+                with self._lock:
+                    found = self._fresh(key, hwm)
+                if found is not None:
+                    return found[0]
+                value = compute()
+                with self._lock:
+                    self._entries[key] = (hwm, value)
+                    self._entries.move_to_end(key)
+                    while len(self._entries) > self._max_entries:
+                        self._entries.popitem(last=False)
+                return value
+        finally:
+            with self._lock:
+                if self._computing.get(key) is computing and not computing.locked():
+                    del self._computing[key]
+
+    def _fresh(self, key: K, hwm: int) -> tuple[V] | None:
+        """The memoized value of ``key`` at ``hwm``, boxed (a value may be None); hold the lock."""
+        entry = self._entries.get(key)
+        if entry is None or entry[0] != hwm:
+            return None
+        self._entries.move_to_end(key)
+        return (entry[1],)

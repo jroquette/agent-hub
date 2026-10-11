@@ -11,6 +11,7 @@ of ``now`` (statuses depend on the clock). Search reads only ids, paths, command
 names, never payload bodies.
 """
 
+import bisect
 import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -155,6 +156,43 @@ def _paginate[T](
     return Page[T](items=tuple(page), next_cursor=next_cursor, total_estimate=len(items))
 
 
+def _timeline_key(item: TimelineEvent) -> SortKey:
+    return (_microseconds(item.timestamp), item.seq)
+
+
+@dataclass(frozen=True, slots=True)
+class _SortedTimeline:
+    """A session's timeline in page order with each item's ``(key, id)``, for O(log n) pages."""
+
+    items: tuple[TimelineEvent, ...]
+    positions: tuple[tuple[SortKey, str], ...]
+
+    @classmethod
+    def of(cls, timeline: Iterable[TimelineEvent]) -> _SortedTimeline:
+        ordered = sorted(timeline, key=lambda item: (_timeline_key(item), item.event_id))
+        positions = tuple((_timeline_key(item), item.event_id) for item in ordered)
+        return cls(items=tuple(ordered), positions=positions)
+
+    def page(self, request: PageRequest, *, hwm: int) -> Page[TimelineEvent]:
+        """The page ``_paginate`` would give for an ascending ``(timestamp, seq)`` order."""
+        start = 0
+        if request.cursor is not None:
+            cursor = decode_cursor(request.cursor)
+            try:
+                start = bisect.bisect_right(self.positions, (cursor.key, cursor.id))
+            except TypeError as error:
+                msg = "invalid cursor: it belongs to another list or sort"
+                raise InvalidCursorError(msg) from error
+        page = self.items[start : start + request.limit]
+        next_cursor = None
+        if start + request.limit < len(self.items):
+            key, item_id = self.positions[start + request.limit - 1]
+            next_cursor = encode_cursor(Cursor(hwm=hwm, key=key, id=item_id))
+        return Page[TimelineEvent](
+            items=page, next_cursor=next_cursor, total_estimate=len(self.items)
+        )
+
+
 def _whole[T](items: Sequence[T]) -> Page[T]:
     return Page[T](items=tuple(items), next_cursor=None, total_estimate=len(items))
 
@@ -187,6 +225,9 @@ class FoldedEventReadModels:
         self._loaded: tuple[int, tuple[StoredEvent, ...]] = (0, ())
         self._loading = threading.Lock()
         self._snapshots: FoldMemo[tuple[int, datetime], _Snapshot] = FoldMemo(max_entries=8)
+        # A session's timeline depends only on its events, so it lives as long as the mark: the
+        # pages of one long session (a 5,000-event one is 25 pages) build it once.
+        self._timelines: FoldMemo[str, _SortedTimeline] = FoldMemo(max_entries=32)
         # The last fold of each session and what it was folded from: a session whose events,
         # ``now`` and run issues are unchanged is not folded again.
         self._sessions: dict[str, tuple[_SessionKey, Session]] = {}
@@ -316,8 +357,14 @@ class FoldedEventReadModels:
         """The session's events in timestamp order, filtered by type (empty = all)."""
         snapshot = self._snapshot(page.cursor)
         self._session(snapshot, session_id)
-        timeline = _timeline(snapshot.by_session[session_id])
-        selected = [item for item in timeline if not types or item.type in types]
+        timeline = self._timelines.get(
+            session_id,
+            hwm=snapshot.hwm,
+            compute=lambda: _SortedTimeline.of(_timeline(snapshot.by_session[session_id])),
+        )
+        if not types:
+            return timeline.page(page, hwm=snapshot.hwm)
+        selected = [item for item in timeline.items if item.type in types]
         return _paginate(
             selected,
             key=lambda item: (_microseconds(item.timestamp), item.seq),

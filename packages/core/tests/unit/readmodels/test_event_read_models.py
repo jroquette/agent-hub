@@ -233,6 +233,30 @@ def test_pages_session_events_when_limit_smaller_than_events(store: InMemoryEven
     assert second.next_cursor is None
 
 
+def _all_pages(service: Any, types: frozenset[EventType], limit: int) -> list[list[str]]:
+    pages: list[list[str]] = []
+    cursor = None
+    while True:
+        page = service.session_events(
+            "s-a", types=types, page=PageRequest(limit=limit, cursor=cursor)
+        )
+        pages.append([item.event_id for item in page.items])
+        cursor = page.next_cursor
+        if cursor is None:
+            return pages
+
+
+def test_pages_unfiltered_events_like_filtered_ones_when_every_type_wanted(
+    store: InMemoryEventStore,
+) -> None:
+    service = _service(store, NOW)[0]
+
+    for limit in (1, 3, 7, 200):
+        assert _all_pages(service, frozenset(), limit) == _all_pages(
+            service, frozenset(EventType), limit
+        )
+
+
 def test_lists_runs_approvals_and_learnings_when_filtered(store: InMemoryEventStore) -> None:
     service = _service(store, NOW)[0]
 
