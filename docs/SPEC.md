@@ -91,7 +91,8 @@ oldest first within each team. With several teams a failing team gets one `team 
 the others are still listed, and the command exits 1. `hub run` reads
 the issue once (dry run by default: it prints every command and tracker write), then makes the worktree, runs the
 implementing `claude -p` session (no tracker tool: the issue's text is in its prompt), its own gate, the push and
-`gh pr create`, and reports through the port; records go to the hub's `.agent-runs/` and `brain/_inbox/runs/`. Secret
+`gh pr create`, and reports through the port (on success, like `hub ship`, it moves the issue to
+`tracker.states.review`, default `In Review`); records go to the hub's `.agent-runs/` and `brain/_inbox/runs/`. Secret
 scope: no child gets `LINEAR_API_KEY`. What may run the session's code (the session, the gate, git's reads of the
 worktree, `worktree add` and the repo's setup script) gets no GitHub token either. The fetch, the push and `gh` are
 the only calls that hold the tokens, each with git's hooks and fsmonitor off (and the push with signing off). Before

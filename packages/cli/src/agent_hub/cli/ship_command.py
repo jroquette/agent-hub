@@ -44,7 +44,7 @@ from agent_hub.cli.tracker_client import missing_key_line, resolve_tracker_clien
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.team_keys import team_of, teams_text
-from agent_hub.core.runner.report_writes import REVIEW_STATE, call_line
+from agent_hub.core.runner.report_writes import call_line
 from agent_hub.core.runner.ship_texts import ship_body
 from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, Issue, TrackerClient
 
@@ -113,7 +113,7 @@ def ship(
         hub=hub,
         environ=os.environ,
         client=client,
-        review_state=REVIEW_STATE,
+        review_state=config.tracker.states.review,
         failed_label=config.tracker.failed_label,
     )
     if dry_run:

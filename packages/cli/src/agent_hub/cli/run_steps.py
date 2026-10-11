@@ -59,7 +59,6 @@ from agent_hub.cli.run_report import apply_writes
 from agent_hub.cli.worktree_steps import check_branches, create_worktree, worktree_task
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.runner.report_writes import (
-    REVIEW_STATE,
     TrackerWrite,
     call_line,
     failure_writes,
@@ -334,7 +333,7 @@ class LiveRun:
         )
         return success_writes(
             self.issue,
-            review_state=REVIEW_STATE,
+            review_state=self.children.config.tracker.states.review,
             failed_label=self.children.config.tracker.failed_label,
             comment=comment,
         )
