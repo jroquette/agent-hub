@@ -12,6 +12,7 @@ from agent_hub.cli.child_process import ChildResult, run_child
 from agent_hub.cli.hub_root import (
     HUB_ROOT_VARIABLE,
     NOT_A_HUB_EXIT,
+    hub_checkout,
     hub_root_or_exit,
     local_home,
     main_checkout,
@@ -253,3 +254,38 @@ def test_keeps_root_when_git_names_top_that_does_not_exist(
     monkeypatch.setattr(hub_root, "run_child", answer)
 
     assert main_checkout(hub, git=found_git(), environ=git_environ(tmp_path)) == hub
+
+
+def test_returns_root_when_hub_not_worktree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(hub_root, "run_child", refuse_child)
+    plain = a_hub(tmp_path / "plain")
+    checkout = a_hub(tmp_path / "checkout")
+    (checkout / ".git").mkdir()
+
+    assert hub_checkout(plain, command="ship", environ=git_environ(tmp_path)) == plain
+    assert hub_checkout(checkout, command="ship", environ=git_environ(tmp_path)) == checkout
+
+
+def test_returns_main_checkout_when_hub_checkout_read_from_worktree(tmp_path: Path) -> None:
+    environ = git_environ(tmp_path)
+    hub = a_git_hub(tmp_path / "hub", environ)
+    worktree = hub / ".claude" / "worktrees" / "x"
+    run_git(hub, environ, "worktree", "add", "-q", "-b", "x", str(worktree))
+
+    assert hub_checkout(worktree, command="ship", environ=environ) == hub.resolve()
+
+
+def test_names_command_when_git_not_on_path_for_hub_checkout(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hub = a_hub(tmp_path / "hub")
+    (hub / ".git").write_text("gitdir: elsewhere\n")
+    environ = git_environ(tmp_path) | {"PATH": str(tmp_path / "empty")}
+
+    with pytest.raises(typer.Exit) as raised:
+        hub_checkout(hub, command="ship", environ=environ)
+
+    assert raised.value.exit_code == 1
+    assert capsys.readouterr().err == "hub ship: git is not on PATH; install git\n"
