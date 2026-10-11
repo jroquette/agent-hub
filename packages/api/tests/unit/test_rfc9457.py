@@ -1,10 +1,15 @@
 import json
+from typing import Any
 
+from agent_hub.api.dependencies import ApiPorts
 from agent_hub.api.rfc9457 import (
     PROBLEM_MEDIA_TYPE,
     PROBLEMS,
     NotImplementedInBuildError,
     busy_problem,
+    hub_conflict_problem,
+    hub_invalid_problem,
+    hub_registry_problem,
     not_found_problem,
     problem,
 )
@@ -74,3 +79,62 @@ def test_maps_every_table_entry_to_its_own_status_when_table_read() -> None:
         "BodyTooLargeError",
         "NotImplementedInBuildError",
     }
+
+
+class _Problem:
+    def __init__(self, pointer: str, message: str) -> None:
+        self.pointer = pointer
+        self.message = message
+
+
+class HubInvalidError(Exception):
+    """Stands in for core/hubs' error (stream F) until the composition registers the real one."""
+
+    def __init__(self, title: str, problems: tuple[object, ...]) -> None:
+        self.title = title
+        self.problems = problems
+        super().__init__(f"{title} in /home/demo/demo-hub")
+
+
+def test_lists_pointers_when_hub_invalid_mapped() -> None:
+    error = HubInvalidError(
+        "Invalid hub.json",
+        (_Problem("/repos/0/check_fast", "required"), ("/project/name", "too short")),
+    )
+
+    found = hub_invalid_problem(error)
+
+    assert (found.status, found.title) == (422, "Invalid hub.json")
+    assert found.members == {
+        "errors": [
+            {"pointer": "/repos/0/check_fast", "message": "required"},
+            {"pointer": "/project/name", "message": "too short"},
+        ]
+    }
+
+
+def test_answers_conflict_when_hub_conflict_mapped() -> None:
+    found = hub_conflict_problem(RuntimeError("project demo is registered from /home/demo/hub"))
+
+    assert (found.status, found.title) == (409, "Hub already registered")
+
+
+def test_hides_cause_when_hub_registry_unreadable() -> None:
+    found = hub_registry_problem(RuntimeError("/home/demo/.config/agent-hub/hubs.json: EACCES"))
+
+    assert (found.status, found.title) == (503, "Hub registry unreadable")
+    assert found.detail is not None
+    assert "hubs.json" not in found.detail
+
+
+def test_answers_registered_problem_when_extra_error_raised(open_client: Any, fakes: Any) -> None:
+    hubs = fakes.HubReadModels(failure=HubInvalidError("No hub.json", ()))
+
+    with open_client(
+        ports=ApiPorts(hub_read_models=hubs), problems={HubInvalidError: hub_invalid_problem}
+    ) as client:
+        response = client.post("/api/v1/hubs", json={"path": "/home/demo/nothing"})
+
+    assert response.status_code == 422
+    assert response.json()["title"] == "No hub.json"
+    assert response.json()["errors"] == []
