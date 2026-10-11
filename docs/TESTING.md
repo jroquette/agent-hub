@@ -27,7 +27,9 @@ Makefile uses.
 | unit | Core logic against in-memory fakes; one module at a time; no I/O, no network | `packages/<pkg>/tests/unit/`, root `tests/unit/` (repo scripts) | `make check-fast` |
 | contract | A port's behavior: one suite in `agent_hub.core.testing.contracts`, run against the fake (`agent_hub.core.testing.fakes`) and against the real adapter; no network | `packages/<pkg>/tests/contract/` | `make check-fast` |
 | integration | Adapters against real infrastructure: a SQLite file under `tmp_path`, Alembic upgrade and downgrade; the generator's rendered hooks, scripts and `./hub` shim run in a temporary hub, with the characterization goldens; the CLI commands against local bare repos | `packages/<pkg>/tests/integration/` | `make check` |
-| e2e | The installed product and the gates as subprocesses: `hub` installed with `uv tool install`, ruff and mypy run with the repo's configs | root `tests/e2e/` | `make check` |
+| e2e | The installed product and the gates as subprocesses: `hub` installed with `uv tool install`, ruff and mypy run with the repo's configs, `make demo`'s seed against `hub web` | root `tests/e2e/` | `make check` |
+| docker | The image and its Compose service, built and run, checked from the host (`tests/e2e/test_docker.py`, marker `docker`) | root `tests/e2e/` | `make test-docker` and its CI job, never `make check` |
+| live agent | A real `claude -p` session in a temp hub, seen through `hub web` (`tests/e2e/test_live_agent.py`, marker `live("claude")`) | root `tests/e2e/` | `make test-live`, by hand |
 | web | The React app: Vitest + Testing Library in jsdom for components and screens (states, a11y with `axe-core`), against `src/testing/builders.ts` fixtures and a mocked API (`renderWithApi`) | `apps/web/src/**/*.test.{ts,tsx}` beside the code | `make check-fast` (`web-fast`) |
 | web smoke | The built app on an installed `hub web`: Playwright (Chromium) visits the nine P2 pages of a synthetic scenario | `apps/web/e2e/smoke.spec.ts`, driven by root `tests/e2e/test_web_smoke.py` | `make check` (`test-e2e`) |
 
@@ -103,6 +105,15 @@ The folder decides the level; nobody writes level markers by hand.
   of the key, so it needs the same variables except `LINEAR_API_KEY`, plus `AGENT_HUB_LIVE_HUB`, the hub root `claude`
   runs from (the cwd production uses). Both smoke tests flip `AGENT_HUB_LIVE_LABEL` on the issue, so it is never the
   ready label; the MCP one fails at setup when it is `agent-ready` or the hub's `tracker.ready_label`.
+
+`live("claude")` marks `tests/e2e/test_live_agent.py`: it needs only `AGENT_HUB_LIVE=1` (`make test-live` sets it)
+and skips itself when `claude` is missing or not logged in for a fresh `CLAUDE_CONFIG_DIR`. Its hub, database, Claude
+Code config and transcript live in one temp folder that is deleted afterwards; it costs a few cents (Claude Haiku 4.5,
+at most three turns; `AGENT_HUB_LIVE_MODEL` picks another model).
+
+`docker` is the other hand-written marker: `tests/e2e/test_docker.py` builds the image (`agent-hub:local`), starts the
+Compose service under its own project name, port, hubs root and data volume, and removes them afterwards. Without a
+Docker daemon it skips, and under `CI` it fails. `make test-e2e` selects `e2e and not docker and not live`.
 
 Select a level with `-m`: `$R pytest -m unit`, `$R pytest -m "unit or contract"`, `$R pytest -m integration`,
 `$R pytest -m e2e`. A single file: `$R pytest packages/core/tests/unit/test_errors.py`.
