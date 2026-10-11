@@ -28,6 +28,7 @@ function isTab(value: string | null): value is Tab {
 function LoadingBody() {
   return (
     <div className="sd-body ah-stack" aria-busy="true">
+      <h1 className="ah-sr">Session detail</h1>
       <Skeleton width={360} height={24} />
       <Skeleton width={720} height={14} />
       <Skeleton height={88} radius={8} />
@@ -52,6 +53,7 @@ export function SessionDetailScreen() {
     const notFound = session.error.status === 404;
     return (
       <div className="sd-body" style={{ maxWidth: 760 }}>
+        <h1 className="ah-sr">Session detail</h1>
         <ProblemError
           title={notFound ? "Session not found" : "Could not load session"}
           detail={
