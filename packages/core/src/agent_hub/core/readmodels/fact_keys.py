@@ -33,11 +33,13 @@ _EXECUTOR_FIRST = (
     EventSource.GITHUB,
     EventSource.LINEAR,
 )
-# Tool calls, statuses, timings and errors: hooks then transcript. Steps, gates and run
-# state: executor then hooks. Tokens and model come only from the transcript (usage_key).
+# Tool calls, statuses, timings, errors and learning proposals: hooks then transcript. Steps,
+# gates and run state: executor then hooks. Tokens and model come only from the transcript
+# (usage_key).
 PRECEDENCE: Mapping[EventType, tuple[EventSource, ...]] = {
     EventType.TOOL_CALL: _HOOKS_FIRST,
     EventType.TOOL_RESULT: _HOOKS_FIRST,
+    EventType.LEARNING_PROPOSED: _HOOKS_FIRST,
     EventType.STEP_START: _EXECUTOR_FIRST,
     EventType.STEP_END: _EXECUTOR_FIRST,
     EventType.RUN_END: _EXECUTOR_FIRST,
@@ -88,6 +90,10 @@ def fact_key(event: Event) -> str | None:
     if match_type in {EventType.GATE_REQUEST, EventType.GATE_RESULT}:
         gate_id = _text(payload.get("gate_id"))
         return None if gate_id is None else f"{match_type}:{gate_id}"
+    if match_type == EventType.LEARNING_PROPOSED:
+        # A Write under brain/_inbox/ is seen by its hook and again in the transcript.
+        proposal = _text(payload.get("proposal"))
+        return None if proposal is None else f"{match_type}:{proposal}"
     return None
 
 

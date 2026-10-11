@@ -126,3 +126,15 @@ def test_orders_by_timestamp_then_identity_when_events_canonicalized() -> None:
     ordered = canonical_events(stored)
 
     assert [item.event.source_id for item in ordered] == ["a", "z", "b"]
+
+
+def test_keys_learning_proposal_by_proposal_when_hook_and_transcript_report_it() -> None:
+    transcript_copy = an_event(
+        type="learning.proposed", source="transcript", payload={"proposal": "toolu_9"}
+    )
+    hook_copy = an_event(
+        type="learning.proposed", source="claude_code", payload={"proposal": "toolu_9"}
+    )
+
+    assert fact_key(transcript_copy) == fact_key(hook_copy) == "learning.proposed:toolu_9"
+    assert fact_key(an_event(type="learning.proposed", payload={})) is None
