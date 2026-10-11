@@ -1,4 +1,5 @@
 import dataclasses
+from collections.abc import Callable
 
 import pytest
 
@@ -42,6 +43,8 @@ GIT_FIX = "install git 2.28 or newer (https://git-scm.com/downloads)"
 PYTHON_FIX = "install Python 3.9 or newer as python3 (https://www.python.org/downloads/)"
 CLAUDE_FIX = "install Claude Code (https://docs.anthropic.com/en/docs/claude-code/setup)"
 GH_FIX = "install the GitHub CLI (https://cli.github.com), then gh auth login"
+type VersionedProbe = Callable[[str | None, ProbeResult | None], ChecklistItem]
+TOOL_PATHS: dict[VersionedProbe, str] = {uv_item: UV_PATH, python_item: PYTHON_PATH}
 TIMED_OUT = ProbeResult(returncode=None, stdout=b"", is_timed_out=True)
 NOT_STARTED = ProbeResult(returncode=None, stdout=b"", is_timed_out=False)
 
@@ -198,68 +201,84 @@ class TestTools:
         assert version_in(stdout) == version
 
     @pytest.mark.parametrize(
-        ("item", "lines"),
+        ("stdout", "version"),
         [
+            pytest.param(b"1" * 5000 + b".0.0", None, id="past-int-digit-limit"),
+            pytest.param(b"9" * 100_000, None, id="long-digit-run"),
+            pytest.param(b"uv 999999.999999.999999", (999_999, 999_999, 999_999), id="six-digits"),
+            pytest.param(b"uv 1234567.0.0", None, id="seven-digit-major"),
+            pytest.param(b"uv 0.1234567.0", None, id="seven-digit-minor"),
+            pytest.param(b"uv 0.0.1234567", None, id="seven-digit-patch"),
+        ],
+    )
+    def test_reads_no_version_when_tools_print_huge_numbers(
+        self, stdout: bytes, version: tuple[int, int, int] | None
+    ) -> None:
+        assert version_in(stdout) == version
+
+    def test_shows_short_version_when_tools_print_widest_one(self) -> None:
+        item = uv_item(UV_PATH, answered(b"uv 999999.999999.999999"))
+
+        assert item_lines(item) == ["ok      uv: 999999.999999.999999"]
+        assert len(item.detail) <= 20
+
+    @pytest.mark.parametrize(
+        ("probe", "stdout", "lines"),
+        [
+            pytest.param(uv_item, b"uv 0.9.0", ["ok      uv: 0.9.0"], id="uv-minimum"),
             pytest.param(
-                uv_item(UV_PATH, answered(b"uv 0.9.0")),
-                ["ok      uv: 0.9.0"],
-                id="uv-minimum",
+                uv_item, b"uv 0.9.5 (abc 2025-09-30)\n", ["ok      uv: 0.9.5"], id="uv-newer"
             ),
             pytest.param(
-                uv_item(UV_PATH, answered(b"uv 0.9.5 (abc 2025-09-30)\n")),
-                ["ok      uv: 0.9.5"],
-                id="uv-newer",
-            ),
-            pytest.param(
-                uv_item(UV_PATH, answered(b"uv 0.8.24")),
+                uv_item,
+                b"uv 0.8.24",
                 ["missing uv: 0.8.24, need 0.9.0 or newer Fix: uv self update"],
                 id="uv-old",
             ),
             pytest.param(
-                python_item(PYTHON_PATH, answered(b"Python 3.9.0\n")),
-                ["ok      python3: 3.9.0"],
-                id="python-minimum",
+                python_item, b"Python 3.9.0\n", ["ok      python3: 3.9.0"], id="python-minimum"
             ),
             pytest.param(
-                python_item(PYTHON_PATH, answered(b"Python 3.12.4\n")),
-                ["ok      python3: 3.12.4"],
-                id="python-newer",
+                python_item, b"Python 3.12.4\n", ["ok      python3: 3.12.4"], id="python-newer"
             ),
             pytest.param(
-                python_item(PYTHON_PATH, answered(b"Python 3.8.18\n")),
+                python_item,
+                b"Python 3.8.18\n",
                 [f"missing python3: 3.8.18, need 3.9 or newer Fix: {PYTHON_FIX}"],
                 id="python-old",
             ),
         ],
     )
     def test_compares_minimum_when_tools_version_read(
-        self, item: ChecklistItem, lines: list[str]
+        self, probe: VersionedProbe, stdout: bytes, lines: list[str]
     ) -> None:
+        item = probe(TOOL_PATHS[probe], answered(stdout))
+
         assert item_lines(item) == lines
 
     @pytest.mark.parametrize(
-        ("item", "line"),
+        ("name", "line"),
         [
-            pytest.param(uv_item(None, None), f"missing uv: not on PATH Fix: {UV_FIX}", id="uv"),
+            pytest.param("uv", f"missing uv: not on PATH Fix: {UV_FIX}", id="uv"),
+            pytest.param("git", f"missing git: not on PATH Fix: {GIT_FIX}", id="git"),
             pytest.param(
-                presence_item("git", None), f"missing git: not on PATH Fix: {GIT_FIX}", id="git"
+                "python3", f"missing python3: not on PATH Fix: {PYTHON_FIX}", id="python3"
             ),
-            pytest.param(
-                python_item(None, None),
-                f"missing python3: not on PATH Fix: {PYTHON_FIX}",
-                id="python3",
-            ),
-            pytest.param(
-                presence_item("claude", None),
-                f"missing claude: not on PATH Fix: {CLAUDE_FIX}",
-                id="claude",
-            ),
-            pytest.param(gh_item(None, None), f"missing gh: not on PATH Fix: {GH_FIX}", id="gh"),
+            pytest.param("claude", f"missing claude: not on PATH Fix: {CLAUDE_FIX}", id="claude"),
+            pytest.param("gh", f"missing gh: not on PATH Fix: {GH_FIX}", id="gh"),
         ],
     )
-    def test_prints_absent_line_when_tools_not_on_path(
-        self, item: ChecklistItem, line: str
-    ) -> None:
+    def test_prints_absent_line_when_tools_not_on_path(self, name: str, line: str) -> None:
+        match name:
+            case "uv":
+                item = uv_item(None, None)
+            case "python3":
+                item = python_item(None, None)
+            case "gh":
+                item = gh_item(None, None)
+            case "git" | "claude":
+                item = presence_item(name, None)
+
         assert item_lines(item) == [line]
 
     @pytest.mark.parametrize("name", ["git", "claude"])
@@ -269,48 +288,57 @@ class TestTools:
         assert item_lines(item) == [f"ok      {name}: on PATH"]
 
     @pytest.mark.parametrize(
-        ("item", "line"),
+        ("probe", "result", "line"),
         [
             pytest.param(
-                uv_item(UV_PATH, answered(b"uv 0.9.5", returncode=2)),
+                uv_item,
+                answered(b"uv 0.9.5", returncode=2),
                 "missing uv: cannot read its version Fix: uv --version",
                 id="uv-exit-2",
             ),
             pytest.param(
-                uv_item(UV_PATH, answered(b"no version here")),
+                uv_item,
+                answered(b"no version here"),
                 "missing uv: cannot read its version Fix: uv --version",
                 id="uv-no-version",
             ),
             pytest.param(
-                uv_item(UV_PATH, NOT_STARTED),
+                uv_item,
+                NOT_STARTED,
                 "missing uv: cannot read its version Fix: uv --version",
                 id="uv-not-started",
             ),
             pytest.param(
-                uv_item(UV_PATH, TIMED_OUT),
+                uv_item,
+                TIMED_OUT,
                 "missing uv: timed out after 10 s Fix: uv --version",
                 id="uv-timeout",
             ),
             pytest.param(
-                python_item(PYTHON_PATH, answered(b"Python 3.12.4", returncode=2)),
+                python_item,
+                answered(b"Python 3.12.4", returncode=2),
                 "missing python3: cannot read its version Fix: python3 --version",
                 id="python-exit-2",
             ),
             pytest.param(
-                python_item(PYTHON_PATH, answered(b"\xff")),
+                python_item,
+                answered(b"\xff"),
                 "missing python3: cannot read its version Fix: python3 --version",
                 id="python-no-version",
             ),
             pytest.param(
-                python_item(PYTHON_PATH, TIMED_OUT),
+                python_item,
+                TIMED_OUT,
                 "missing python3: timed out after 10 s Fix: python3 --version",
                 id="python-timeout",
             ),
         ],
     )
     def test_prints_unreadable_line_when_tools_answer_badly(
-        self, item: ChecklistItem, line: str
+        self, probe: VersionedProbe, result: ProbeResult, line: str
     ) -> None:
+        item = probe(TOOL_PATHS[probe], result)
+
         assert item_lines(item) == [line]
 
     @pytest.mark.parametrize(

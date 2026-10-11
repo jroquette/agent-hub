@@ -52,7 +52,13 @@ _SUB_LINE_INDENT: Final = " " * 8
 _NOT_ON_PATH: Final = "not on PATH"
 _UNREADABLE: Final = "cannot read its version"
 _TIMED_OUT: Final = f"timed out after {PROBE_TIMEOUT_SECONDS:g} s"
-_VERSION: Final = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9]+)")
+# Tool output is untrusted: each part is capped, so the search stays linear and ``int`` never
+# sees more digits than it accepts. A longer number is no version, not a truncated one.
+_VERSION_PART_DIGITS: Final = 6
+_VERSION_PART: Final = f"([0-9]{{1,{_VERSION_PART_DIGITS}}})"
+_VERSION: Final = re.compile(
+    rf"(?<![0-9]){_VERSION_PART}\.{_VERSION_PART}\.{_VERSION_PART}(?![0-9])"
+)
 
 type Version = tuple[int, int, int]
 
@@ -154,7 +160,7 @@ class _VersionedTool(NamedTuple):
 _UV: Final = _VersionedTool(
     item="uv",
     minimum=UV_MINIMUM,
-    minimum_text="0.9.0",
+    minimum_text=".".join(str(part) for part in UV_MINIMUM),
     absent_fix=UV_FIX,
     old_fix=UV_UPDATE_FIX,
     unreadable_fix="uv --version",
@@ -162,7 +168,7 @@ _UV: Final = _VersionedTool(
 _PYTHON: Final = _VersionedTool(
     item="python3",
     minimum=PYTHON_MINIMUM,
-    minimum_text="3.9",
+    minimum_text=".".join(str(part) for part in PYTHON_MINIMUM[:2]),
     absent_fix=PYTHON_FIX,
     old_fix=PYTHON_FIX,
     unreadable_fix="python3 --version",
@@ -194,7 +200,10 @@ def setup_exit(items: Iterable[ChecklistItem]) -> int:
 
 
 def version_in(stdout: bytes) -> Version | None:
-    """The first ``X.Y.Z`` of the tool's output read as UTF-8, or None when it has none."""
+    """The first ``X.Y.Z`` of the tool's output read as UTF-8, or None when it has none.
+
+    Each part is 1 to 6 ASCII digits and not part of a longer number.
+    """
     match = _VERSION.search(stdout.decode("utf-8", errors="replace"))
     if match is None:
         return None
