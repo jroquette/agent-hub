@@ -128,7 +128,9 @@ class DoctorRun(NamedTuple):
 def check_hub(root: str, *, only: Sequence[str] = ()) -> DoctorRun | UsageProblem:
     """The check of ``hub doctor`` on the hub at ``root``: same reads, same order, no output.
 
-    ``only`` holds known rule ids; a selection the config refuses is the ``UsageProblem``.
+    ``root`` must be the hub's real absolute path, taken once (as ``root_or_exit`` gives it):
+    the repo checkouts are found at ``root/../<dir>`` and the findings name paths relative to
+    it. ``only`` holds known rule ids; a selection the config refuses is the ``UsageProblem``.
     """
     running = version(DISTRIBUTION)
     config = config_state(read_hub_bytes(Path(root, FILE_LABEL)), running_version=running)
