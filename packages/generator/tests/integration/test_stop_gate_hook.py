@@ -14,6 +14,7 @@ import os
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -24,6 +25,7 @@ from typing import Any, Protocol
 import pytest
 
 from agent_hub.core.hub_config.model import MAX_CHECK_FAST_TIMEOUT, HubConfig
+from agent_hub.core.ingestion.hook_envelope import HookEnvelope
 
 HOOK = "plugin/hub-workflow/hooks/stop_gate.py"
 TIMEOUT = 60
@@ -74,12 +76,26 @@ def workspace(
     return hub.parent
 
 
+def closed_port() -> int:
+    """A loopback port nothing listens on (bound, then released)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        port: int = probe.getsockname()[1]
+        return port
+
+
 def scratch_env(tmp_path: Path) -> dict[str, str]:
-    """``PATH`` from this process; ``HOME`` and ``TMPDIR`` under ``tmp_path``; nothing else."""
+    """``PATH`` from this process; ``HOME`` and ``TMPDIR`` under ``tmp_path``; the event server's
+    URL a loopback port nothing listens on (a block is never sent to a running ``hub web``)."""
     home, temp = tmp_path / "home", tmp_path / "tmp"
     home.mkdir(exist_ok=True)
     temp.mkdir(exist_ok=True)
-    return {"PATH": os.environ.get("PATH", os.defpath), "HOME": str(home), "TMPDIR": str(temp)}
+    return {
+        "PATH": os.environ.get("PATH", os.defpath),
+        "HOME": str(home),
+        "TMPDIR": str(temp),
+        "AGENT_HUB_WEB_URL": f"http://127.0.0.1:{closed_port()}",
+    }
 
 
 @pytest.fixture
@@ -1138,3 +1154,97 @@ def test_notes_partial_read_when_fan_out_listing_cut_by_budget(
     )
 
     assert result == [[], "budget spent"]
+
+
+# AGH-200 D7 (AC-200.10): a block is sent to the control plane after it is printed, with
+# ``decision: {by: stop_gate, kind: block, command, exit_code}`` (the first failing repo's).
+
+
+def run_gate(
+    workspace: Path,
+    hook_python: str,
+    *,
+    repos: Sequence[Mapping[str, object]],
+    env: Mapping[str, str],
+) -> tuple[subprocess.CompletedProcess[bytes], dict[str, object]]:
+    """Run the gate for a session whose cwd is ``app``; (its run, the event it got)."""
+    document = {"project": {"name": "demo"}, "repos": list(repos)}
+    (workspace / "demo-hub" / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+    event: dict[str, object] = {
+        "session_id": f"emit-{os.getpid()}",
+        "hook_event_name": "Stop",
+        "stop_hook_active": False,
+        "cwd": str(workspace / "app"),
+    }
+    completed = subprocess.run(  # noqa: S603 - an interpreter from hook_python, the rendered hook
+        [hook_python, str(workspace / "demo-hub" / HOOK)],
+        input=json.dumps(event).encode("utf-8"),
+        capture_output=True,
+        check=False,
+        cwd=workspace,
+        env=dict(env),
+        timeout=TIMEOUT,
+    )
+    return completed, event
+
+
+def test_emits_block_when_stop_gate_blocks(
+    workspace: Path, hook_python: str, *, tmp_path: Path, event_server: Any
+) -> None:
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    command = "echo boom; exit 3"
+    env = scratch_env(tmp_path) | {"AGENT_HUB_WEB_URL": event_server.url}
+
+    completed, event = run_gate(
+        workspace, hook_python, repos=[{"dir": "app", "check_fast": command}], env=env
+    )
+
+    assert (completed.returncode, completed.stderr) == (0, b"")
+    assert json.loads(completed.stdout)["decision"] == "block"
+    [body] = event_server.bodies()
+    envelope = HookEnvelope.model_validate(body)
+    assert envelope.hook == event
+    assert envelope.repo == "app"
+    assert envelope.decision is not None
+    assert envelope.decision.model_dump() == {
+        "by": "stop_gate",
+        "kind": "block",
+        "rule": None,
+        "command": command,
+        "exit_code": 3,
+    }
+
+
+@pytest.mark.parametrize("check_fast", ["true", "echo boom; exit 3"])
+def test_emits_nothing_when_stop_gate_passes_or_releases(
+    check_fast: str, workspace: Path, hook_python: str, *, tmp_path: Path, event_server: Any
+) -> None:
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    env = scratch_env(tmp_path) | {"AGENT_HUB_WEB_URL": event_server.url}
+    # A gate that already blocked MAX_BLOCKS times releases: no block, nothing sent.
+    (tmp_path / "tmp" / f"hub-stop-emit-{os.getpid()}.json").write_text('{"blocks": 3}')
+
+    completed, _ = run_gate(
+        workspace, hook_python, repos=[{"dir": "app", "check_fast": check_fast}], env=env
+    )
+
+    assert (completed.returncode, completed.stderr) == (0, b"")
+    assert "decision" not in json.loads(completed.stdout)
+    assert event_server.received == []
+
+
+def test_keeps_block_when_event_server_slow(
+    workspace: Path, hook_python: str, *, tmp_path: Path, event_server: Any
+) -> None:
+    (workspace / "app" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    event_server.delay = 3.0
+    env = scratch_env(tmp_path) | {"AGENT_HUB_WEB_URL": event_server.url}
+    started = time.monotonic()
+
+    completed, _ = run_gate(
+        workspace, hook_python, repos=[{"dir": "app", "check_fast": "exit 4"}], env=env
+    )
+
+    assert (completed.returncode, completed.stderr) == (0, b"")
+    assert json.loads(completed.stdout)["decision"] == "block"
+    assert time.monotonic() - started < 2.5

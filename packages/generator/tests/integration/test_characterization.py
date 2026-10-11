@@ -915,3 +915,55 @@ def test_lists_every_golden_when_cases_collected(golden: Any) -> None:
     assert golden.orphans(golden.GOLDEN_ROOT, CASES) == []
     if not golden.update_mode():  # in update mode the cases write what is missing
         assert golden.missing(golden.GOLDEN_ROOT, CASES) == []
+
+
+# AGH-200 D7 (AC-200.8, AC-200.10): the guard and the Stop gate send their decisions to the event
+# server; with it up or down their streams still equal the goldens, and up it gets exactly the
+# decision of each deny, ask or block.
+DECISION_SENT: dict[str, list[dict[str, Any]]] = {
+    "guard/deny_push_main": [{"by": "guard", "kind": "deny", "rule": "push_protected_branch"}],
+    "guard/deny_force_push": [{"by": "guard", "kind": "deny", "rule": "force_push"}],
+    "guard/deny_secret_write": [{"by": "guard", "kind": "deny", "rule": "secret_file"}],
+    "guard/ask_before_edit": [{"by": "guard", "kind": "ask", "rule": "ask_before_edit"}],
+    "guard/allow": [],
+    "stop_gate/check_passes": [],
+    "stop_gate/check_fails_block": [
+        {"by": "stop_gate", "kind": "block", "command": "echo boom; exit 3", "exit_code": 3}
+    ],
+    "stop_gate/no_changed_code": [],
+}
+
+
+def with_url(run: Run, url: str) -> Run:
+    return run | {"env": dict(run.get("env") or {}) | {"AGENT_HUB_WEB_URL": url}}
+
+
+@pytest.mark.parametrize("case", sorted(DECISION_SENT))
+def test_matches_golden_when_event_server_up(
+    case: str, *, char_workspace: Callable[..., Any], hook_python: str, event_server: Any
+) -> None:
+    ws = char_workspace(python=hook_python)
+
+    ws.run_case(case, **with_url(CASES[case](ws=ws), event_server.url))
+
+    assert [body["decision"] for body in event_server.bodies()] == DECISION_SENT[case]
+    assert {body["project"] for body in event_server.bodies()} <= {"demo"}
+
+
+@pytest.mark.parametrize("case", sorted(DECISION_SENT))
+def test_matches_golden_when_event_server_down(
+    case: str,
+    *,
+    char_workspace: Callable[..., Any],
+    hook_python: str,
+    server_down_env: dict[str, str],
+) -> None:
+    ws = char_workspace(python=hook_python)
+
+    ws.run_case(case, **with_url(CASES[case](ws=ws), server_down_env["AGENT_HUB_WEB_URL"]))
+
+
+def test_lists_every_decision_case_when_cases_collected() -> None:
+    assert sorted(DECISION_SENT) == sorted(
+        case for case in CASES if case.split("/", 1)[0] in ("guard", "stop_gate")
+    )
