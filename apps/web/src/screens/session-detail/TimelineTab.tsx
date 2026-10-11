@@ -541,7 +541,8 @@ export function TimelineTab(props: TimelineTabProps) {
           <div style={{ marginBottom: 12 }}>
             <Banner tone="info" boxed>
               Long session · {fmtInt(props.eventCount)} events in {fmtInt(trace.turns.length)}{" "}
-              turns. Turns are collapsed; expand a turn or use search and the minimap.
+              {trace.turns.length === 1 ? "turn" : "turns"}. Turns are collapsed; expand a turn or
+              use search and the minimap.
             </Banner>
           </div>
         )}

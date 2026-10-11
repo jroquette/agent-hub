@@ -75,6 +75,21 @@ function key(k: string, extra: KeyboardEventInit = {}) {
 }
 
 describe("TimelineTab", () => {
+  it("names one turn in the singular when a long session has a single turn", async () => {
+    const events = Array.from({ length: 5000 }, (_, index) =>
+      aTimelineEvent({
+        seq: index + 1,
+        timestamp: at(index + 1),
+        type: index === 0 ? "session.start" : "tool.call",
+        payload:
+          index === 0 ? { trigger: "startup" } : { tool: "Bash", tool_use_id: `t${String(index)}` },
+      }),
+    );
+    renderTrace(events);
+
+    expect(await screen.findByText(/Long session · 5,000 events in 1 turn\./)).toBeInTheDocument();
+  });
+
   it("expands a group and a lane in place when their toggles are pressed", async () => {
     renderTrace(trace());
 
