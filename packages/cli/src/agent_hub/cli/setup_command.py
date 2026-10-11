@@ -7,21 +7,29 @@ git call. Then the checklist, each item's lines printed as soon as it is decided
 tools and the tracker credential, ``setup_tools``, then the developer's identity,
 ``setup_identity``, whose proposal and prompt alone go to stderr, whether git ignores
 ``hub.local.json`` when it exists, then each repo cloned or fetched next to the hub,
-``setup_repos``), and the totals line ``setup: ...``; the exit is 0 when every item is ``ok``,
-else 1.
+``setup_repos``, then ``hub doctor``'s check, run in process on the hub root whatever the
+current folder, its findings under its totals), and the totals line ``setup: ...``; the exit
+is 0 when every item is ``ok``, else 1.
 """
 
 import os
+from pathlib import Path
 from typing import Annotated, Final
 
 import typer
 
 from agent_hub.cli import setup_identity, setup_repos, setup_tools
+from agent_hub.cli.doctor_command import check_hub
+from agent_hub.cli.doctor_report import finding_line, totals_line
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
 from agent_hub.cli.hub_root import hub_root_or_exit, local_home
 from agent_hub.cli.run_children import SESSION_HIDDEN, without
+from agent_hub.core.doctor.run_rules import UsageProblem, count_findings, sort_findings
 from agent_hub.core.workspace.setup_checklist import (
+    DOCTOR_FIX,
     ChecklistItem,
+    State,
+    doctor_item,
     item_lines,
     setup_exit,
     summary_line,
@@ -69,5 +77,23 @@ def setup(
         checklist.add(item)
     for item in setup_repos.repo_items(config, root=root, home=home, environ=os.environ):
         checklist.add(item)
+    checklist.add(_doctor_item(root))
     typer.echo(summary_line(checklist.items))
     raise typer.Exit(setup_exit(checklist.items))
+
+
+def _doctor_item(root: Path) -> ChecklistItem:
+    """``hub doctor``'s check of the hub at ``root`` (its real path), as one checklist item."""
+    run = check_hub(str(root))
+    if isinstance(run, UsageProblem):
+        # Only an ``--only`` selection is refused, and setup selects every rule.
+        return ChecklistItem(
+            state=State.MISSING, item="hub doctor", detail=run.message, fix=DOCTOR_FIX
+        )
+    findings = sort_findings(run.findings)
+    totals = count_findings(findings)
+    return doctor_item(
+        totals=totals_line(totals),
+        has_errors=totals.has_errors,
+        finding_lines=[finding_line(finding) for finding in findings],
+    )

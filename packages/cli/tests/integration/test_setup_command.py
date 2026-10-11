@@ -33,6 +33,7 @@ from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
 from agent_hub.core.workspace.setup_checklist import (
     CLAUDE_FIX,
     CLONE_FIX,
+    DOCTOR_FIX,
     FETCH_FIX,
     GH_FIX,
     GIT_FIX,
@@ -211,6 +212,30 @@ class TestFixtures:
         assert env_traced_git.calls() == []
 
 
+_SUMMARY_LINE = re.compile(r"^setup: ")
+ITEM_ORDER = [
+    "uv",
+    "git",
+    "python3",
+    "claude",
+    "gh",
+    "tracker",
+    "identity",
+    "repo demo-api",
+    "repo demo-web",
+    "hub doctor",
+]
+
+
+def _items(stdout: str) -> list[str]:
+    """The item names of the checklist lines, sub-lines and totals left out."""
+    return [
+        line[8:].split(":", 1)[0]
+        for line in stdout.splitlines()
+        if not line.startswith(_SUB_LINE) and not _SUMMARY_LINE.match(line)
+    ]
+
+
 class TestExit:
     @pytest.mark.parametrize(
         ("args", "problem"),
@@ -277,6 +302,39 @@ class TestExit:
         assert result.stdout == ""
         assert result.stderr == expected
         assert env_traced_git.calls() == []
+
+    def test_exits_zero_when_everything_set_up(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        tools_ok: FakeToolProbe,
+    ) -> None:
+        result = run_setup(demo_workspace.hub)
+
+        assert _items(result.stdout) == ITEM_ORDER
+        assert result.stdout.splitlines()[-1] == "setup: 10 ok"
+        assert result.exit_code == 0, result.output
+
+    def test_exits_one_after_full_checklist_when_item_missing(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        install_probe: ProbeInstaller,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv(KEY_VARIABLE, SYNTHETIC_KEY)
+        install_probe(paths={"gh": None})
+
+        result = run_setup(demo_workspace.hub)
+
+        assert _items(result.stdout) == ITEM_ORDER
+        assert f"missing gh: not on PATH Fix: {GH_FIX}" in result.stdout.splitlines()
+        assert result.stdout.splitlines()[-1] == "setup: 1 missing, 9 ok"
+        assert result.exit_code == 1
 
 
 def _write_tool(folder: Path, name: str, *, log_path: Path, output: str) -> None:
@@ -1153,7 +1211,9 @@ class TestGitignore:
         ]
         assert "gitignore" not in result.stdout
         # Only the repos, which need git too, are missing.
-        assert result.stdout.splitlines()[-1] == "setup: 2 missing, 7 ok"
+        # Doctor cannot list the files without git either: an error of its own.
+        assert _doctor_lines(result.stdout)[1].endswith(NO_GIT_FINDING_END)
+        assert result.stdout.splitlines()[-1] == "setup: 3 missing, 7 ok"
         assert result.exit_code == 1
 
     def test_prints_no_gitignore_line_when_check_ignore_hangs(
@@ -1272,7 +1332,7 @@ class TestRepos:
             _cloned_line("demo-web", "https"),
         ]
         assert (Path(demo_workspace.ws) / "demo-web" / ".git").is_dir()
-        assert result.stdout.splitlines()[-1] == "setup: 9 ok"
+        assert result.stdout.splitlines()[-1] == "setup: 10 ok"
         assert result.exit_code == 0, result.output
 
     def test_sets_no_prompt_and_drops_location_and_key_when_setup_git_runs(
@@ -1339,7 +1399,7 @@ class TestRepos:
             "ok      repo demo-web: present, fetched",
         ]
         assert [call for call in env_traced_git.calls() if "demo-api" in call.args] == []
-        assert result.stdout.splitlines()[-1] == "setup: 1 missing, 8 ok"
+        assert result.stdout.splitlines()[-1] == "setup: 1 missing, 9 ok"
         assert result.exit_code == 1
 
     def test_continues_after_failed_clone_when_origin_gone(
@@ -1360,7 +1420,7 @@ class TestRepos:
         for stream in (result.stdout_bytes, result.stderr_bytes):
             assert b"fatal" not in stream
             assert str(demo_workspace.origins).encode() not in stream
-        assert result.stdout.splitlines()[-1] == "setup: 1 missing, 8 ok"
+        assert result.stdout.splitlines()[-1] == "setup: 1 missing, 9 ok"
         assert result.exit_code == 1
 
     def test_continues_after_failed_fetch_when_origin_gone(
@@ -1378,7 +1438,7 @@ class TestRepos:
         for stream in (result.stdout_bytes, result.stderr_bytes):
             assert b"fatal" not in stream
             assert str(demo_workspace.origins).encode() not in stream
-        assert result.stdout.splitlines()[-1] == "setup: 1 missing, 8 ok"
+        assert result.stdout.splitlines()[-1] == "setup: 1 missing, 9 ok"
         assert result.exit_code == 1
 
     def test_reports_timeout_as_failed_when_clone_hangs(
@@ -1407,7 +1467,7 @@ class TestRepos:
         for call in hung:
             with pytest.raises(ProcessLookupError):
                 os.kill(call.pid, 0)
-        assert result.stdout.splitlines()[-1] == "setup: 2 missing, 7 ok"
+        assert result.stdout.splitlines()[-1] == "setup: 2 missing, 8 ok"
         assert result.exit_code == 1
 
     def test_reports_failed_repos_when_git_not_found(
@@ -1431,7 +1491,9 @@ class TestRepos:
             for repo in ("demo-api", "demo-web")
         ]
         assert not (Path(demo_workspace.ws) / "demo-web").exists()
-        assert result.stdout.splitlines()[-1] == "setup: 2 missing, 7 ok"
+        # Doctor cannot list the files without git either: an error of its own.
+        assert _doctor_lines(result.stdout)[1].endswith(NO_GIT_FINDING_END)
+        assert result.stdout.splitlines()[-1] == "setup: 3 missing, 7 ok"
         assert result.exit_code == 1
 
 
@@ -1508,3 +1570,176 @@ class TestScheme:
             assert b"demo-hub" not in stream
             assert b"://" not in stream
         assert result.exit_code == 0, result.output
+
+
+GOLDEN = Path(__file__).parent / "golden" / "setup"
+GOLDEN_HINT = (
+    "Update: GOLDEN_UPDATE=1 uv run --locked --all-packages pytest -m integration "
+    "packages/cli/tests/integration/test_setup_command.py -q -k golden, "
+    "then review and commit the golden diff"
+)
+_DOCTOR_LINE = re.compile(r"^(ok|missing) +hub doctor: ")
+_READ_ONLY_GIT = ("config --get ", "rev-parse ", "ls-files ")
+# A call's leading ``-c <name>=<value>`` options (doctor's git sets some): no subcommand.
+_GIT_OPTIONS = re.compile(r"^(-c [^ ]+ )+")
+NO_GIT_FINDING_END = (
+    "could not list the files: git not found Fix: fix the cause above so every file can be"
+    " listed and read, then run hub doctor again"
+)
+
+
+def _doctor_lines(stdout: str) -> list[str]:
+    """The ``hub doctor`` line and its sub-lines, up to the totals line."""
+    lines = stdout.splitlines()
+    start = next(index for index, line in enumerate(lines) if _DOCTOR_LINE.match(line))
+    end = next(index for index, line in enumerate(lines) if _SUMMARY_LINE.match(line))
+    return lines[start:end]
+
+
+def _plant_check_override(hub: Path) -> int:
+    """Give ``Makefile.project`` a rule for ``check``, a target the managed ``Makefile``
+    defines; the line it is on."""
+    project = hub / "Makefile.project"
+    before = project.read_bytes()
+    project.write_bytes(before + b"check:\n\t@echo ours\n")
+    return len(before.splitlines()) + 1
+
+
+def _override_line(line: int) -> str:
+    return (
+        f"{_SUB_LINE}warning makefile.override Makefile.project:{line}: redefines target 'check'"
+        " Fix: rename the project target"
+    )
+
+
+def _give_repos_agents(workspace: Workspace) -> None:
+    """Commit an empty ``AGENTS.md`` to each repo's origin and bring it into each clone there,
+    so doctor's ``repos.agents`` finds nothing to say."""
+    for repo in ("demo-api", "demo-web"):
+        workspace.advance(repo, {"AGENTS.md": (b"", 0o644)})
+        clone = Path(workspace.ws) / repo
+        if clone.exists():
+            workspace.git(clone, "pull", "-q", "--ff-only", "origin", "trunk")
+
+
+def _work_tree(digest: Mapping[str, Any]) -> dict[str, Any]:
+    """A digest or mtimes of a checkout without its ``.git`` folder, which a fetch updates."""
+    return {
+        path: entry
+        for path, entry in digest.items()
+        if path != ".git" and not path.startswith(".git/")
+    }
+
+
+@pytest.mark.usefixtures("tools_ok")
+class TestDoctor:
+    def test_runs_doctor_on_hub_root_when_cwd_elsewhere(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        hub = Path(demo_workspace.hub)
+        _give_repos_agents(demo_workspace)
+        line = _plant_check_override(hub)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.setenv("AGENT_HUB_ROOT", str(hub))
+
+        result = run_setup(elsewhere)
+
+        assert _doctor_lines(result.stdout) == [
+            "ok      hub doctor: 0 errors, 1 warning, 0 infos",
+            _override_line(line),
+        ]
+        assert result.stdout.splitlines()[-1] == "setup: 10 ok"
+        assert result.exit_code == 0, result.output
+
+    def test_reports_missing_doctor_when_lock_drifts(
+        self, demo_workspace: Workspace, env_traced_git: TracedGit, run_setup: SetupRunner
+    ) -> None:
+        hub = Path(demo_workspace.hub)
+        _give_repos_agents(demo_workspace)
+        (hub / "AGENTS.md").write_bytes(b"# edited\n")
+
+        result = run_setup(hub)
+
+        lines = _doctor_lines(result.stdout)
+        assert lines[0] == f"missing hub doctor: 1 error, 0 warnings, 0 infos Fix: {DOCTOR_FIX}"
+        assert len(lines) == 2
+        assert lines[1].startswith(f"{_SUB_LINE}error lock.drift AGENTS.md")
+        assert result.stdout.splitlines()[-1] == "setup: 1 missing, 9 ok"
+        assert result.exit_code == 1
+
+
+@pytest.mark.usefixtures("tools_ok")
+class TestIdempotent:
+    def test_changes_nothing_when_idempotent_run_repeats(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        tree_digest: TreeDigest,
+    ) -> None:
+        hub = _team_hub(demo_workspace)
+        demo_workspace.init_hub_repo(None)
+        repos = [Path(demo_workspace.ws) / repo for repo in ("demo-api", "demo-web")]
+        first = run_setup(hub, "--yes")
+        assert first.exit_code == 0, first.output
+        logged = len(env_traced_git.calls())
+        local = _snapshot(hub / LOCAL_FILE)
+        hub_before = (tree_digest(hub), _mtimes(hub))
+        repos_before = [(_work_tree(tree_digest(r)), _work_tree(_mtimes(r))) for r in repos]
+
+        second = run_setup(hub)
+
+        calls = [call.args for call in env_traced_git.calls()[logged:]]
+        assert not [args for args in calls if args.startswith("clone ")]
+        assert [args for args in calls if " fetch " in f" {args} "] == [
+            f"-C {_ws(demo_workspace)}/{repo} fetch --quiet origin"
+            for repo in ("demo-api", "demo-web")
+        ]
+        # Every other call only reads: the fetches above, then config reads and the
+        # check-ignore probe, none of which writes a working tree or a config.
+        others = [args for args in calls if " fetch " not in f" {args} "]
+        assert others
+        for args in others:
+            command = _GIT_OPTIONS.sub("", args)
+            assert command.startswith(_READ_ONLY_GIT) or " check-ignore -q " in command, args
+        assert _snapshot(hub / LOCAL_FILE) == local
+        assert (tree_digest(hub), _mtimes(hub)) == hub_before
+        assert [(_work_tree(tree_digest(r)), _work_tree(_mtimes(r))) for r in repos] == repos_before
+        assert second.stderr == ""
+        assert second.exit_code == 0, second.output
+
+
+class TestGolden:
+    def test_matches_golden_when_mixed_case_runs(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        install_probe: ProbeInstaller,
+        compare_text_golden: Callable[[bytes, Path, str], None],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # § Output's sample: a team hub with an SSH origin, demo-web missing, gh not logged
+        # in, no LINEAR_API_KEY, doctor reporting one warning, run with --yes.
+        demo_workspace.rewrite_github()
+        hub = _team_hub(demo_workspace)
+        demo_workspace.init_hub_repo("git@github.com:acme/demo-hub.git")
+        _give_repos_agents(demo_workspace)
+        _remove_repo(demo_workspace, "demo-web")
+        _plant_check_override(hub)
+        monkeypatch.delenv(KEY_VARIABLE, raising=False)
+        install_probe(results={"gh": ProbeResult(1, b"", is_timed_out=False)})
+
+        result = run_setup(hub, "--yes")
+
+        compare_text_golden(result.stdout_bytes, GOLDEN / "mixed.golden", GOLDEN_HINT)
+        assert result.exit_code == 1
