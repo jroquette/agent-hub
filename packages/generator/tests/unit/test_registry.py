@@ -85,6 +85,7 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "plugin/hub-workflow/agents/requirements-analyst.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/agents/researcher.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/agents/spec-reviewer.md": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/hooks/event_sensor.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/guard.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/hooks.json": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/hubhooks.py": (Kind.GENERIC, Ownership.MANAGED, None),
@@ -137,7 +138,8 @@ MODULE_FILES: dict[str, tuple[Kind, Ownership, str | None]] = {
 MODULE_EXECUTABLE_PATHS = frozenset({"scripts/cloud-setup.sh", "scripts/contract-sync.sh"})
 
 # AC-4.3 (Q-3): the base entry points with a `#!` line are executable; every other base file is
-# not: the six hooks `hooks.json` runs and the three scripts. Module scripts are listed apart.
+# not: the seven hooks `hooks.json` runs (AGH-200 adds the event sensor) and the three scripts.
+# Module scripts are listed apart.
 EXECUTABLE_PATHS = frozenset(
     {
         "agent",
@@ -145,6 +147,7 @@ EXECUTABLE_PATHS = frozenset(
         *(
             f"plugin/hub-workflow/hooks/{name}.py"
             for name in (
+                "event_sensor",
                 "guard",
                 "post_edit",
                 "pre_compact",

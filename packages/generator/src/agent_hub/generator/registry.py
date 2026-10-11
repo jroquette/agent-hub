@@ -270,7 +270,9 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
         for name in _BASE_AGENTS
     ),
     # The hooks, copied from the hub as they are (spec D4); only the entry points `hooks.json` runs
-    # are executable (Q-3): `hubhooks.py` and the reader are their shared modules.
+    # are executable (Q-3): `hubhooks.py` and the reader are their shared modules. The event
+    # sensor (AGH-200 D6) also lends its send function to the guard and the Stop gate.
+    _hook_entry_point("event_sensor"),
     _hook_entry_point("guard"),
     _generic_managed(f"{_BASE_PLUGIN}/hooks/hooks.json", f"{_BASE_PLUGIN}/hooks/hooks.json.tmpl"),
     _generic_managed(f"{_BASE_PLUGIN}/hooks/hubhooks.py", f"{_BASE_PLUGIN}/hooks/hubhooks.py.tmpl"),
