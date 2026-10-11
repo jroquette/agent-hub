@@ -4196,7 +4196,17 @@ PURITY = re.compile(
     r"symlink|walk|scandir|lstat|environ)|shutil|Path\.cwd|\bPath\(|"
     r"^\s*(import|from) (datetime|time|random|uuid|getpass|socket)\b"
 )
-ADAPTER_MODULES = frozenset({"hub_tree.py", "file_adapter.py", "doctor_tree.py"})
+ADAPTER_MODULES = frozenset(
+    {
+        "hub_tree.py",
+        "file_adapter.py",
+        "doctor_tree.py",
+        "doctor_snapshot.py",
+        "hub_config_files.py",
+        "feature_files.py",
+        "registered_hub_files.py",
+    }
+)
 RENDERING_MODULES = frozenset(
     {
         "__init__.py",
