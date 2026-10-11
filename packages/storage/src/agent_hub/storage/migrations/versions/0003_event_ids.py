@@ -88,7 +88,9 @@ def _fill_event_ids() -> None:
         return
     connection = op.get_bind()
     events = sa.table("events", sa.column("id", sa.Integer), sa.column("event_id", sa.String))
-    row_ids: Sequence[int] = connection.execute(sa.select(events.c.id).order_by(events.c.id)).scalars().all()
+    row_ids: Sequence[int] = (
+        connection.execute(sa.select(events.c.id).order_by(events.c.id)).scalars().all()
+    )
     for row_id in row_ids:
         connection.execute(
             events.update().where(events.c.id == row_id).values(event_id=str(uuid.uuid7()))
