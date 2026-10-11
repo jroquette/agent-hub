@@ -100,10 +100,13 @@ def _stored_summary(session_id: str, events: Sequence[StoredEvent]) -> SessionSu
     if not summaries:
         return None
     latest = summaries[-1]
-    raw = latest.event.payload.get("lines")
-    if not isinstance(raw, list):
-        text = latest.event.payload.get("text")
-        raw = text.splitlines() if isinstance(text, str) else []
+    payload_lines = latest.event.payload.get("lines")
+    text = latest.event.payload.get("text")
+    raw: list[object] = []
+    if isinstance(payload_lines, list):
+        raw = list(payload_lines)
+    elif isinstance(text, str):
+        raw = list(text.splitlines())
     texts = [line.strip() for line in raw if isinstance(line, str) and line.strip()]
     return SessionSummary(
         session_id=session_id,
