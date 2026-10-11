@@ -76,3 +76,58 @@ def test_removes_temp_and_raises_when_link_fails(
 
     assert raised.value.strerror == os.strerror(errno.EPERM)
     assert os.listdir(folder) == []
+
+
+def test_keeps_published_file_when_temp_removal_fails(
+    folder: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse_unlink(path: str | Path) -> None:
+        raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), str(path))
+
+    monkeypatch.setattr(exclusive_write.os, "unlink", refuse_unlink)
+
+    written = write_exclusive(folder, NAME, CONTENT)
+
+    assert written is True
+    assert (folder / NAME).read_bytes() == CONTENT
+
+
+def test_raises_link_error_when_temp_removal_also_fails(
+    folder: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse_link(source: str | Path, destination: str | Path) -> None:
+        raise PermissionError(errno.EPERM, os.strerror(errno.EPERM), str(destination))
+
+    def refuse_unlink(path: str | Path) -> None:
+        raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR), str(path))
+
+    monkeypatch.setattr(exclusive_write.os, "link", refuse_link)
+    monkeypatch.setattr(exclusive_write.os, "unlink", refuse_unlink)
+
+    with pytest.raises(PermissionError) as raised:
+        write_exclusive(folder, NAME, CONTENT)
+
+    assert raised.value.strerror == os.strerror(errno.EPERM)
+    assert not (folder / NAME).exists()
+
+
+def test_keeps_published_file_when_folder_sync_fails(
+    folder: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_fsync = os.fsync
+    synced_folders: list[int] = []
+
+    def refuse_folder_fsync(descriptor: int) -> None:
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            synced_folders.append(descriptor)
+            raise OSError(errno.EIO, os.strerror(errno.EIO))
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(exclusive_write.os, "fsync", refuse_folder_fsync)
+
+    written = write_exclusive(folder, NAME, CONTENT)
+
+    assert written is True
+    assert len(synced_folders) == 1
+    assert (folder / NAME).read_bytes() == CONTENT
+    assert sorted(os.listdir(folder)) == [NAME]
