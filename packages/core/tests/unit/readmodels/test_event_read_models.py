@@ -29,6 +29,7 @@ from agent_hub.core.testing.session_scenarios import (
     a_run_events,
     a_session_events,
     learning_events,
+    shuffled,
     usage_events,
     with_transcript_copies,
 )
@@ -383,3 +384,185 @@ def test_refolds_only_changed_session_when_store_grows(
     assert folded == ["s-b"]
     assert after == before
     assert changed.last_activity_at == NOW - timedelta(minutes=1)
+
+
+class FoldCounter:
+    """Counts the folds and canonical sorts ``FoldedEventReadModels`` runs, by wrapping them."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.runs: list[str] = []
+        self.approval_folds = 0
+        self.learning_folds = 0
+        self.sorted_events = 0
+        fold_run = event_read_models.fold_run
+        fold_approvals = event_read_models.fold_approvals
+        fold_learnings = event_read_models.fold_learnings
+        canonical = event_read_models.canonical_events
+
+        def counting_run(run_id: str, events: Any, **options: Any) -> Any:
+            self.runs.append(run_id)
+            return fold_run(run_id, events, **options)
+
+        def counting_approvals(events: Any, **options: Any) -> Any:
+            self.approval_folds += 1
+            return fold_approvals(events, **options)
+
+        def counting_learnings(events: Any) -> Any:
+            self.learning_folds += 1
+            return fold_learnings(events)
+
+        def counting_canonical(events: Any) -> Any:
+            materialized = events if isinstance(events, list) else list(events)
+            result = canonical(materialized)
+            if result is not materialized:
+                self.sorted_events += len(materialized)
+            return result
+
+        monkeypatch.setattr(event_read_models, "fold_run", counting_run)
+        monkeypatch.setattr(event_read_models, "fold_approvals", counting_approvals)
+        monkeypatch.setattr(event_read_models, "fold_learnings", counting_learnings)
+        monkeypatch.setattr(event_read_models, "canonical_events", counting_canonical)
+
+    def reset(self) -> None:
+        self.runs.clear()
+        self.approval_folds = self.learning_folds = self.sorted_events = 0
+
+
+def _many_runs_store() -> InMemoryEventStore:
+    store = InMemoryEventStore()
+    for number in range(20):
+        start = SCENARIO_START + timedelta(hours=number)
+        store.append(
+            [
+                *a_run_events(f"run{number:04d}", issue=f"DEM-{number}", start=start),
+                *a_session_events(f"s-{number:02d}", start=start),
+                _guard_ask(f"s-{number:02d}", 60 * number + 1),
+                *learning_events(f"learning-{number}", session=f"s-{number:02d}", start=start),
+            ]
+        )
+    return store
+
+
+def test_refolds_only_the_touched_run_when_a_batch_adds_to_one_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _many_runs_store()
+    counter = FoldCounter(monkeypatch)
+    service = _service(store, SCENARIO_START + timedelta(days=2))[0]
+    before = service.list_runs(RunFilter(limit=100))
+    counter.reset()
+
+    late = an_event(
+        session="run:run0003",
+        source="executor",
+        type="step.start",
+        step="verify",
+        timestamp=SCENARIO_START + timedelta(hours=3, minutes=50),
+        payload={"run": "run0003", "step": "verify", "attempt": 2},
+    )
+    store.append([late])
+    after = service.list_runs(RunFilter(limit=100))
+
+    assert counter.runs == ["run0003"]
+    assert counter.approval_folds == 0
+    assert counter.learning_folds == 0
+    assert after.total_estimate == before.total_estimate == 20
+
+
+def test_refolds_only_the_touched_session_approvals_when_a_batch_adds_to_one_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _many_runs_store()
+    counter = FoldCounter(monkeypatch)
+    service = _service(store, SCENARIO_START + timedelta(days=2))[0]
+    service.list_approvals(ApprovalFilter(status="all", limit=100))
+    counter.reset()
+
+    store.append(
+        [
+            an_event(
+                session="s-05",
+                type="message",
+                timestamp=SCENARIO_START + timedelta(hours=5, minutes=30),
+                payload={"role": "user"},
+            )
+        ]
+    )
+    approval = service.get_approval("toolu_ask_s-05")
+
+    assert counter.approval_folds == 1
+    assert counter.runs == []
+    assert counter.learning_folds == 0
+    assert approval.status == "declined"
+    assert service.list_approvals(ApprovalFilter(status="all", limit=100)).total_estimate == 20
+
+
+def test_refolds_learnings_only_when_a_batch_holds_a_learning_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _many_runs_store()
+    counter = FoldCounter(monkeypatch)
+    service = _service(store, SCENARIO_START + timedelta(days=2))[0]
+    service.list_learnings(LearningFilter(limit=100))
+    counter.reset()
+
+    store.append([an_event(session="s-07", timestamp=SCENARIO_START + timedelta(hours=7))])
+    service.list_learnings(LearningFilter(limit=100))
+    untouched = counter.learning_folds
+    store.append(
+        learning_events(
+            "learning-new", session="s-07", start=SCENARIO_START + timedelta(hours=7, minutes=9)
+        )
+    )
+    learnings = service.list_learnings(LearningFilter(limit=100))
+
+    assert untouched == 0
+    assert counter.learning_folds == 1
+    assert learnings.total_estimate == 21
+
+
+def test_sorts_only_the_touched_session_events_when_a_batch_arrives(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _many_runs_store()
+    counter = FoldCounter(monkeypatch)
+    service = _service(store, SCENARIO_START + timedelta(days=2))[0]
+    service.list_sessions(SessionFilter())
+    total = store.high_water_mark()
+    counter.reset()
+
+    store.append([an_event(session="s-11", timestamp=SCENARIO_START + timedelta(hours=11))])
+    service.list_sessions(SessionFilter())
+    touched = len(service.session_events("s-11", types=frozenset(), page=PageRequest()).items)
+
+    assert counter.sorted_events == touched
+    assert touched < total // 10
+
+
+def test_folds_same_views_as_a_fresh_read_when_events_arrive_in_shuffled_batches(
+    store: InMemoryEventStore,
+) -> None:
+    events = [*store.read_all(), *_many_runs_store().read_all()]
+    events.append(_guard_ask("s-b", 58).model_copy(update={"session": "s-c", "source_id": "dup"}))
+    growing = InMemoryEventStore()
+    service = _service(growing, NOW)[0]
+    order = shuffled(events, seed=7)
+    for start in range(0, len(order), 37):
+        growing.append(order[start : start + 37])
+        service.list_runs(RunFilter(limit=200))
+        service.list_approvals(ApprovalFilter(status="all", limit=200))
+        service.list_learnings(LearningFilter(limit=200))
+    fresh = _service(growing, NOW)[0]
+
+    for read in (
+        lambda s: s.list_sessions(SessionFilter(limit=200)),
+        lambda s: s.list_runs(RunFilter(limit=200)),
+        lambda s: s.list_approvals(ApprovalFilter(status="all", limit=200)),
+        lambda s: s.list_learnings(LearningFilter(limit=200)),
+        lambda s: s.needs_you(Scope()),
+        lambda s: s.activity(PageRequest(limit=200)),
+        lambda s: s.project_activity("demo"),
+        lambda s: s.search_events("make", PageRequest(limit=200)),
+    ):
+        assert read(service) == read(fresh)
+    assert service.get_approval("toolu_ask_s-b").session_id == "s-b"
