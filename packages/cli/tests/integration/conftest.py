@@ -12,7 +12,9 @@ an in-process run in a folder (``run_doctor``), the paths a run reads (``path_re
 filters (``reads_in``, ``ancestors``, ``under``); for ``hub bench`` the hub suite's bench
 workspace with a fake ``claude`` (``bench_workspace``); for a rendered ``./hub`` a ``uvx`` that
 runs this workspace's ``hub`` (``fake_uvx_bin``). In the ``DEMO`` workspace, ``traced_git``
-logs each git call and runs the real git.
+logs each git call and runs the real git; ``env_traced_git`` logs the environment of each call
+too, and can hang on a clone or fetch. For ``hub setup``, a byte-exact text golden harness
+(``compare_text_golden``).
 """
 
 import builtins
@@ -713,6 +715,42 @@ def lock_golden() -> Callable[..., None]:
     return compare_lock_golden
 
 
+def _compare_text_golden(actual: bytes, golden: Path, hint: str) -> None:
+    """Fail unless ``actual`` equals ``golden`` byte for byte; update mode rewrites it instead.
+
+    As ``compare_lock_golden``, with no normalization: update mode is read (and refused under
+    ``CI``) before anything is compared; ``hint`` says how to update.
+    """
+    update = golden_update_mode()
+    old = golden.read_bytes() if golden.is_file() else None
+    if old == actual:
+        return
+    if update:
+        golden.parent.mkdir(parents=True, exist_ok=True)
+        golden.write_bytes(actual)
+        sys.stderr.write(f"wrote {golden}\n")
+        return
+    if old is None:
+        pytest.fail(f"missing golden {golden}\n{hint}")
+    diff = difflib.unified_diff(
+        old.decode(errors="replace").splitlines(),
+        actual.decode(errors="replace").splitlines(),
+        "golden",
+        "actual",
+        lineterm="",
+    )
+    pytest.fail("\n".join([f"{golden} differs from the output:", *diff, hint]))
+
+
+type TextGoldenComparer = Callable[[bytes, Path, str], None]
+
+
+@pytest.fixture
+def compare_text_golden() -> TextGoldenComparer:
+    """Compare output bytes with a golden file ``(actual, golden, hint)`` or rewrite it."""
+    return _compare_text_golden
+
+
 @pytest.fixture
 def child_env() -> Callable[[Mapping[str, str]], dict[str, str]]:
     """Build a child's environment from ``values`` alone, the harness mode variables dropped."""
@@ -740,8 +778,9 @@ def _workspace_git_env(home: Path) -> dict[str, str]:
     }
 
 
-def _run_git(folder: Path, env: Mapping[str, str], *args: str) -> str:
-    git = shutil.which("git")
+def _run_git(folder: Path, env: Mapping[str, str], *args: str, path: str | None = None) -> str:
+    # ``path`` set: the git on that search path, never a traced one put first on ``PATH``.
+    git = shutil.which("git", path=path)
     assert git is not None, "git is needed for a DEMO workspace"
     completed = subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
         [os.path.abspath(git), *_WORKSPACE_IDENTITY, "-c", "commit.gpgsign=false", *args],
@@ -806,6 +845,35 @@ class DemoWorkspace:
         )
         config.write_text(f"{included}[user]\n\tname = {name}\n\temail = {email}\n")
         self._setenv("GIT_CONFIG_GLOBAL", str(config))
+
+    def rewrite_github(self, owner: str = "acme") -> None:
+        """Send the command's git for ``owner``'s GitHub repos, over https or ssh, to the local
+        origins: ``base/github.gitconfig`` becomes its global config. Call it before
+        ``git_identity``, which then includes it."""
+        assert self._setenv is not None, "only a test's copy of the workspace has an environment"
+        config = self.base / "github.gitconfig"
+        config.write_text(
+            f'[url "file://{self.origins}/"]\n'
+            f"\tinsteadOf = https://github.com/{owner}/\n"
+            f"\tinsteadOf = git@github.com:{owner}/\n",
+            encoding="utf-8",
+        )
+        self._setenv("GIT_CONFIG_GLOBAL", str(config))
+
+    def init_hub_repo(self, origin: str | None) -> None:
+        """Make the hub a git repo on ``trunk`` with one commit of its files, and ``origin`` its
+        ``origin`` remote when given (the URL is only recorded, never reached).
+
+        The workspace's own git runs, so a traced git logs none of these calls."""
+        steps = [
+            ("init", "-q", "-b", WORKSPACE_BRANCH),
+            ("add", "-A"),
+            ("commit", "-q", "-m", "init"),
+        ]
+        if origin is not None:
+            steps.append(("remote", "add", "origin", origin))
+        for step in steps:
+            _run_git(self.hub, self.env, *step, path=self.env["PATH"])
 
     def git(self, folder: Path, *args: str) -> str:
         """Run git in ``folder`` and return its stripped stdout; a failure fails the test."""
@@ -954,6 +1022,72 @@ def traced_git(
     script.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
     return FakeGit(bin_dir=bin_dir, log_path=log_path)
+
+
+class GitCall(NamedTuple):
+    """One call ``env_traced_git`` logged: its physical working directory, its arguments joined
+    by spaces, its ``GIT_TERMINAL_PROMPT`` (``unset`` when unset), and whether ``GIT_DIR`` and
+    ``LINEAR_API_KEY`` were set (even empty)."""
+
+    cwd: str
+    args: str
+    prompt: str
+    has_git_dir: bool
+    has_key: bool
+
+
+class EnvTracedGit(NamedTuple):
+    """A ``/bin/sh`` ``git`` in ``bin_dir`` that logs each call to ``log_path``, then runs the real
+    git, unless ``hang_path`` exists and the call is a clone or a fetch."""
+
+    bin_dir: Path
+    log_path: Path
+    hang_path: Path
+
+    def calls(self) -> list[GitCall]:
+        """Each logged call, in order."""
+        if not self.log_path.exists():
+            return []
+        lines = self.log_path.read_text(encoding="utf-8").splitlines()
+        return [
+            GitCall(cwd, args, prompt, has_git_dir=git_dir == "set", has_key=key == "set")
+            for cwd, args, prompt, git_dir, key in (line.split("\t") for line in lines)
+        ]
+
+
+@pytest.fixture
+def env_traced_git(
+    demo_workspace: DemoWorkspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> EnvTracedGit:
+    """``demo_workspace`` with a ``/bin/sh`` ``git`` first on ``PATH`` that logs each call with
+    its environment (``GitCall``), then runs the real git.
+
+    Once ``hang_path`` exists, a call whose arguments hold the word ``clone`` or ``fetch``
+    sleeps 30 s and exits 1 instead, as a network call that never answers.
+    """
+    real = shutil.which("git")
+    assert real is not None, "git is needed for a DEMO workspace"
+    bin_dir = tmp_path / "env-traced-git-bin"
+    bin_dir.mkdir()
+    log_path = tmp_path / "env-traced-git.log"
+    hang_path = tmp_path / "env-traced-git.hang"
+    script = bin_dir / "git"
+    script.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\t%s\\t%s\\t%s\\t%s\\n'"
+        ' "$(pwd -P)" "$*" "${GIT_TERMINAL_PROMPT-unset}" "${GIT_DIR+set}" "${LINEAR_API_KEY+set}"'
+        f" >> {shlex.quote(str(log_path))}\n"
+        f"if [ -e {shlex.quote(str(hang_path))} ]; then\n"
+        '  case " $* " in\n'
+        '    *" clone "*|*" fetch "*) sleep 30; exit 1 ;;\n'
+        "  esac\n"
+        "fi\n"
+        f'exec {shlex.quote(os.path.abspath(real))} "$@"\n',
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    return EnvTracedGit(bin_dir=bin_dir, log_path=log_path, hang_path=hang_path)
 
 
 type CommandRunner = Callable[..., Result]
