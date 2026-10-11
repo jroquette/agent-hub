@@ -11,6 +11,9 @@ from agent_hub.core.runner.ship_texts import (
 )
 
 WORKSPACE = "/work/ws"
+# The url cap, written once: the boundary urls are built from it, not from the module.
+URL_CAP = 2_048
+URL_START = "https://linear.app/"
 ISSUE_URL = "https://linear.app/acme/issue/DEM-7/x"
 API_PR = "https://github.com/acme/demo-api/pull/101"
 WEB_PR = "https://github.com/acme/demo-web/pull/102"
@@ -27,7 +30,7 @@ def section(*urls: str) -> str:
 def test_pins_markers_and_cap_when_module_loaded() -> None:
     assert RELATED_START == "<!-- hub-ship:related-prs:start -->"
     assert RELATED_END == "<!-- hub-ship:related-prs:end -->"
-    assert MAX_ISSUE_URL_CHARS == 2_048
+    assert MAX_ISSUE_URL_CHARS == URL_CAP
 
 
 def test_holds_issue_and_empty_section_when_body_built() -> None:
@@ -44,11 +47,21 @@ def test_holds_issue_and_empty_section_when_body_built() -> None:
         "http://linear.app/acme/issue/DEM-7",
         "https://linear.app/a b",
         "https://linear.app/a\nforged",
-        "https://linear.app/" + "x" * MAX_ISSUE_URL_CHARS,
+        URL_START + "x" * (URL_CAP + 1 - len(URL_START)),
+        "https://linear.app/x/\N{ROBOT FACE}",
+        "https://linear.app/a/" + "claude" + "/fix-1",
+        "https://linear.app/\u00e9t\u00e9",
     ],
 )
 def test_omits_url_when_not_https(url: str | None) -> None:
     assert ship_body(issue_id="DEM-7", issue_url=url) == f"DEM-7\n\n{EMPTY_SECTION}"
+
+
+def test_keeps_url_when_at_length_cap() -> None:
+    url = URL_START + "x" * (URL_CAP - len(URL_START))
+
+    assert len(url) == URL_CAP
+    assert ship_body(issue_id="DEM-7", issue_url=url) == f"DEM-7 {url}\n\n{EMPTY_SECTION}"
 
 
 def test_lists_urls_when_section_replaced() -> None:
