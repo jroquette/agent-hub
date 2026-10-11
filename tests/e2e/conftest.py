@@ -1,11 +1,14 @@
 """Shared e2e fixtures: e2e tests run real tools as subprocesses, from the repo root by default."""
 
 import os
+import selectors
 import shutil
+import signal
+import socket
 import subprocess
 import sys
 import tomllib
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -106,3 +109,74 @@ def _run_or_fail(
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+# How long ``hub web`` gets to print its URL line, and to exit once interrupted.
+WEB_START_SECONDS = 30
+WEB_STOP_SECONDS = 15
+
+
+@dataclass(frozen=True)
+class RunningWeb:
+    """A ``hub web`` started by the installed ``hub`` on temp paths; ``url`` has no slash."""
+
+    url: str
+    port: int
+    first_line: str
+    db_path: Path
+    env: Mapping[str, str]
+
+
+def free_loopback_port() -> int:
+    """A loopback port nothing listens on (bound, then released)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        port: int = probe.getsockname()[1]
+        return port
+
+
+def _first_line(process: subprocess.Popen[str]) -> str:
+    assert process.stdout is not None
+    with selectors.DefaultSelector() as selector:
+        selector.register(process.stdout, selectors.EVENT_READ)
+        if not selector.select(timeout=WEB_START_SECONDS):
+            return ""
+    return process.stdout.readline()
+
+
+@pytest.fixture
+def hub_web(installed_hub: InstalledHub, tmp_path: Path) -> Iterator[RunningWeb]:
+    """``hub web --port <free> --db <tmp>``, with HOME and the XDG folders under ``tmp_path``.
+
+    Stopped with SIGINT after the test, as Ctrl+C stops it; its log goes to a file.
+    """
+    port = free_loopback_port()
+    db_path = tmp_path / "data" / "web.db"
+    env = {
+        **installed_hub.env,
+        "HOME": str(tmp_path / "home"),
+        "XDG_DATA_HOME": str(tmp_path / "xdg-data"),
+        "XDG_CONFIG_HOME": str(tmp_path / "xdg-config"),
+    }
+    command = [str(installed_hub.executable), "web", "--port", str(port), "--db", str(db_path)]
+    with (tmp_path / "web.log").open("w", encoding="utf-8") as log:
+        process = subprocess.Popen(
+            command, cwd=tmp_path, env=env, stdout=subprocess.PIPE, stderr=log, text=True
+        )
+        try:
+            line = _first_line(process)
+            assert line, (tmp_path / "web.log").read_text(encoding="utf-8")
+            yield RunningWeb(
+                url=f"http://127.0.0.1:{port}",
+                port=port,
+                first_line=line,
+                db_path=db_path,
+                env=env,
+            )
+        finally:
+            process.send_signal(signal.SIGINT)
+            try:
+                process.wait(timeout=WEB_STOP_SECONDS)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
