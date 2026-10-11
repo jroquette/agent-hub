@@ -29,6 +29,11 @@ class EventType(StrEnum):
     GATE_RESULT = "gate.result"
     LEARNING_PROPOSED = "learning.proposed"
     LEARNING_ACCEPTED = "learning.accepted"
+    LEARNING_REJECTED = "learning.rejected"
+    STEP_START = "step.start"
+    STEP_END = "step.end"
+    RUN_END = "run.end"
+    SESSION_SUMMARY = "session.summary"
 
 
 class EventSource(StrEnum):
