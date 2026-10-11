@@ -7,7 +7,9 @@ repo from the target alone (with ``GIT_DIR`` alone it takes the cwd as the work 
 ``GIT_COMMON_DIR`` takes the config, remotes included, from another repo), so the remote is not
 read. A
 remote URL can carry a credential, so it never leaves this module: only the parsed
-``owner/name`` does, and no message or exception quotes the URL.
+``owner/name`` does, and no message or exception quotes the URL. For ``hub setup``, only the
+scheme of the hub's own origin leaves (``ssh`` or ``https``), read with one
+``git config --get remote.origin.url`` when the hub has its own ``.git`` entry.
 """
 
 import contextlib
@@ -19,7 +21,7 @@ import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -42,18 +44,22 @@ _REMOTE_KEY = "remote.origin.url"
 # Set, they point git at another repo than the target's own, whatever the top check says.
 _GIT_LOCATION_VARIABLES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
 
-# The three URL forms of a GitHub remote. The host is exactly github.com; the https form may
-# carry a userinfo (a user or a token), limited to RFC 3986's characters so that a host cannot
-# hide in front of it behind ``#``, ``?``, ``/`` or another ``@``.
+# The three URL forms of a GitHub remote: the two SSH forms, then https. The host is exactly
+# github.com; the https form may carry a userinfo (a user or a token), limited to RFC 3986's
+# characters so that a host cannot hide in front of it behind ``#``, ``?``, ``/`` or another ``@``.
+_SSH_FORMS = r"git@github\.com:|ssh://git@github\.com/"
 _GITHUB_REMOTE = re.compile(
-    r"(?:git@github\.com:"
-    r"|ssh://git@github\.com/"
+    rf"(?:{_SSH_FORMS}"
     r"|https://(?:[A-Za-z0-9._~%!$&'()*+,;=:-]*@)?github\.com/)"
     r"(?P<path>.*)"
 )
+_SSH_REMOTE = re.compile(rf"(?:{_SSH_FORMS})")
 _GIT_SUFFIX = ".git"
 # The model's own shape of ``owner/name``, so a parsed value is one hub.json accepts.
 _GITHUB_REPO: TypeAdapter[str] = TypeAdapter(GitHubRepo)
+_GIT_ENTRY = ".git"
+
+type RemoteScheme = Literal["ssh", "https"]
 
 
 def hub_repo_from_remote(url: str) -> str | None:
@@ -67,6 +73,31 @@ def hub_repo_from_remote(url: str) -> str | None:
     except ValidationError:
         # The error would quote the input: it is dropped, not chained.
         return None
+
+
+def remote_scheme(url: str | None) -> RemoteScheme:
+    """``ssh`` for a GitHub SSH remote of a repo, else ``https`` (any other host or shape too)."""
+    if url is None or _SSH_REMOTE.match(url) is None or hub_repo_from_remote(url) is None:
+        return "https"
+    return "ssh"
+
+
+def read_remote_scheme(
+    home: Path, *, env: Mapping[str, str], timeout: float = GIT_TIMEOUT_SECONDS
+) -> RemoteScheme:
+    """The scheme of the hub's ``origin`` in ``home``; ``https`` when it cannot be read.
+
+    Git runs only when ``home`` has its own ``.git`` entry (a folder, or a worktree's file), so a
+    parent repo's origin is never taken, and not at all when ``env`` sets a git location
+    variable. Git missing, failing or running past ``timeout`` seconds gives ``https``. The URL
+    is read into a local and dropped: only the literal is returned.
+    """
+    if not os.path.lexists(home / _GIT_ENTRY):
+        return "https"
+    if any(variable in env for variable in _GIT_LOCATION_VARIABLES):
+        return "https"
+    git = _Git.find(target=home, timeout=timeout, env=env)
+    return remote_scheme(git.config(_REMOTE_KEY))
 
 
 class GitDefaults(NamedTuple):
