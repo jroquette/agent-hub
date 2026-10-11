@@ -7,13 +7,15 @@ Every case runs in a copy of the ``DEMO`` workspace (``demo_workspace``): the hu
 """
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
 import pytest
 from typer.testing import Result
 
+from agent_hub.cli import ship_set
+from agent_hub.cli.child_process import ChildResult, run_child
 from agent_hub.cli.errors import ShipError
 from agent_hub.cli.hub_config_reader import load_hub_config_or_exit
 from agent_hub.cli.ship_set import ShipSet, issue_from_cwd, shipping_set
@@ -117,6 +119,86 @@ def refusal_of(workspace: Workspace) -> str:
     return str(raised.value)
 
 
+class TestShipSetReads:
+    def test_counts_against_remote_ref_when_local_branch_shadows_it(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        worktree = make_task_worktree(
+            demo_workspace, run_command, repo="demo-api", name="dem-7-x", commits=2
+        )
+        demo_workspace.git(worktree, "branch", "origin/trunk", "HEAD")
+
+        found = ship_set_of(demo_workspace)
+
+        assert [(target.repo, target.ahead) for target in found.targets] == [("demo-api", 2)]
+
+    def test_reads_without_tokens_or_locks_when_set_found(
+        self,
+        demo_workspace: Workspace,
+        run_command: CommandRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        make_task_worktree(demo_workspace, run_command, repo="demo-api", name="dem-7-x", commits=1)
+        calls: list[tuple[Sequence[str], dict[str, Any]]] = []
+
+        def spy(argv: Sequence[str], **options: Any) -> ChildResult:
+            calls.append((list(argv), options))
+            return run_child(argv, **options)
+
+        monkeypatch.setattr(ship_set, "run_child", spy)
+        secrets = {"GH_TOKEN": "gh-x", "GITHUB_TOKEN": "github-x", "LINEAR_API_KEY": "key-x"}
+        config = load_hub_config_or_exit(demo_workspace.hub / "hub.json")
+
+        shipping_set(
+            config,
+            workspace=demo_workspace.ws,
+            issue_id=ISSUE,
+            branch_prefix=PREFIX,
+            environ=dict(os.environ) | secrets,
+        )
+
+        assert [argv[1:] for argv, _ in calls] == [
+            ["branch", "--show-current"],
+            ["rev-list", "--count", "refs/remotes/origin/trunk..HEAD"],
+        ]
+        for _, options in calls:
+            assert not set(secrets) & set(options["env"])
+            assert options["env"]["GIT_OPTIONAL_LOCKS"] == "0"
+            assert options["timeout"] == 120.0
+            assert options["output_limit"] == 65536
+            assert options["own_session"] is False
+
+    def test_skips_symlinked_folder_when_real_worktree_beside_it(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        api = make_task_worktree(
+            demo_workspace, run_command, repo="demo-api", name="dem-7-x", commits=1
+        )
+        (api.parent / "dem-7").symlink_to(demo_workspace.ws / "demo-web")
+
+        found = ship_set_of(demo_workspace)
+
+        assert [target.worktree for target in found.targets] == [api]
+
+    def test_refuses_count_when_git_prints_huge_number(
+        self,
+        demo_workspace: Workspace,
+        run_command: CommandRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        make_task_worktree(demo_workspace, run_command, repo="demo-api", name="dem-7-x", commits=1)
+
+        def huge_count(argv: Sequence[str], **options: Any) -> ChildResult:
+            if "rev-list" in argv:
+                return ChildResult(returncode=0, stdout=b"9" * 5000 + b"\n", stderr=b"")
+            return run_child(argv, **options)
+
+        monkeypatch.setattr(ship_set, "run_child", huge_count)
+
+        with pytest.raises(ShipError, match="^demo-api: git rev-list printed no count in "):
+            ship_set_of(demo_workspace)
+
+
 class TestShipSetRefusals:
     def test_names_both_paths_when_repo_has_two_task_worktrees(
         self, demo_workspace: Workspace, run_command: CommandRunner
@@ -131,6 +213,19 @@ class TestShipSetRefusals:
         assert refusal_of(demo_workspace) == (
             f"demo-api: more than one task worktree for DEM-7: {short}, {longer};"
             " remove one (hub worktree --remove <name>)"
+        )
+
+    def test_counts_worktrees_when_repo_has_three(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        paths = [
+            make_task_worktree(demo_workspace, run_command, repo="demo-api", name=name, commits=1)
+            for name in ("dem-7", "dem-7-x", "dem-7-y")
+        ]
+
+        assert refusal_of(demo_workspace) == (
+            f"demo-api: 3 task worktrees for DEM-7: {paths[0]}, {paths[1]} and 1 more;"
+            " remove all but one (hub worktree --remove <name>)"
         )
 
     def test_names_issue_and_repos_when_no_task_worktree(
@@ -236,7 +331,7 @@ class TestShipIssueFromCwd:
                 issue_from_cwd(cwd, workspace=demo_workspace.ws, repos=REPOS, teams=("DEM",))
                 == "DEM-7"
             )
-        assert issue_from_cwd(below, workspace=link, repos=REPOS, teams=("APP", "dem")) == "dem-7"
+        assert issue_from_cwd(below, workspace=link, repos=REPOS, teams=("APP", "dem")) == "DEM-7"
 
     def test_gives_none_when_cwd_is_main_checkout(
         self, demo_workspace: Workspace, run_command: CommandRunner
