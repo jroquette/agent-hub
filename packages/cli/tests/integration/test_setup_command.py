@@ -31,6 +31,7 @@ from agent_hub.core.workspace.setup_checklist import (
     CLAUDE_FIX,
     GH_FIX,
     GIT_FIX,
+    GITIGNORE_FIX,
     IDENTITY_FILE_FIX,
     INVALID_LOCAL_FIX,
     PREFIX_FIX,
@@ -918,3 +919,82 @@ class TestPrompt:
         assert not (hub / LOCAL_FILE).exists()
         assert result.stderr == _proposal(hub, "jane/, Jane Roe <jane@example.com> (git config)")
         assert result.exit_code == 1
+
+
+GITIGNORE_LINE = f"missing gitignore: hub.local.json is not ignored by git Fix: {GITIGNORE_FIX}"
+
+
+def _unignore_local_file(hub: Path) -> bytes:
+    """Drop the ``hub.local.json`` line from the hub's ``.gitignore``; its new bytes."""
+    path = hub / ".gitignore"
+    kept = [line for line in path.read_text(encoding="utf-8").splitlines() if line != LOCAL_FILE]
+    path.write_text("".join(f"{line}\n" for line in kept), encoding="utf-8")
+    return path.read_bytes()
+
+
+def _check_ignore_calls(traced: TracedGit) -> list[Any]:
+    return [call for call in traced.calls() if " check-ignore " in f" {call.args} "]
+
+
+@pytest.mark.usefixtures("tools_ok")
+class TestGitignore:
+    def test_reports_gitignore_when_local_file_not_ignored(
+        self, demo_workspace: Workspace, env_traced_git: TracedGit, run_setup: SetupRunner
+    ) -> None:
+        hub = _team_hub(demo_workspace)
+        ignore_bytes = _unignore_local_file(hub)
+        demo_workspace.init_hub_repo(None)
+
+        result = run_setup(hub, "--yes")
+
+        lines = result.stdout.splitlines()
+        assert lines[lines.index(WROTE_LINE) + 1] == GITIGNORE_LINE
+        assert (hub / ".gitignore").read_bytes() == ignore_bytes
+        assert (hub / LOCAL_FILE).read_bytes() == LOCAL_BYTES
+        # Setup's own git env (E3): no prompt, no tracker key, though the command has one.
+        calls = _check_ignore_calls(env_traced_git)
+        assert [(call.args, call.prompt, call.has_key) for call in calls] == [
+            (f"-C {os.path.realpath(hub)} check-ignore -q {LOCAL_FILE}", "0", False)
+        ]
+        assert result.exit_code == 1
+
+    def test_prints_no_gitignore_line_when_local_file_ignored(
+        self, demo_workspace: Workspace, env_traced_git: TracedGit, run_setup: SetupRunner
+    ) -> None:
+        hub = _team_hub(demo_workspace)
+        demo_workspace.init_hub_repo(None)
+
+        result = run_setup(hub, "--yes")
+
+        assert WROTE_LINE in result.stdout.splitlines()
+        assert "gitignore" not in result.stdout
+        assert len(_check_ignore_calls(env_traced_git)) == 1
+        assert result.exit_code == 0, result.output
+
+    def test_prints_no_gitignore_line_when_hub_not_a_repository(
+        self, demo_workspace: Workspace, env_traced_git: TracedGit, run_setup: SetupRunner
+    ) -> None:
+        hub = _team_hub(demo_workspace)
+        ignore_bytes = _unignore_local_file(hub)
+
+        result = run_setup(hub, "--yes")
+
+        assert WROTE_LINE in result.stdout.splitlines()
+        assert "gitignore" not in result.stdout
+        assert (hub / ".gitignore").read_bytes() == ignore_bytes
+        assert result.exit_code == 0, result.output
+
+    def test_prints_no_gitignore_line_when_no_local_file(
+        self, demo_workspace: Workspace, env_traced_git: TracedGit, run_setup: SetupRunner
+    ) -> None:
+        hub = Path(demo_workspace.hub)
+        _unignore_local_file(hub)
+        demo_workspace.init_hub_repo(None)
+
+        result = run_setup(hub)
+
+        # Q-2: hub.json sets the identity, so no file is written and nothing is checked.
+        assert not (hub / LOCAL_FILE).exists()
+        assert "gitignore" not in result.stdout
+        assert _check_ignore_calls(env_traced_git) == []
+        assert result.exit_code == 0, result.output

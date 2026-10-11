@@ -6,11 +6,13 @@ every identity key, the identity is resolved as every command resolves it, git r
 the keys no file sets. Otherwise the keys ``hub.json`` leaves unset are proposed from the
 hub's git config, all or nothing: the proposal goes to stderr, then ``--yes`` writes it, a
 terminal is asked, and no terminal writes nothing. The write never replaces a file
-(``exclusive_write``). Only the checklist goes to stdout. ``stdin_is_tty`` is a seam the tests
+(``exclusive_write``). Then, when the file exists, ``gitignore_items`` asks the hub's git
+whether it ignores it. Only the checklist goes to stdout. ``stdin_is_tty`` is a seam the tests
 replace (docs/design/developer-identity.md).
 """
 
 import os
+import shutil
 import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -18,7 +20,9 @@ from typing import Final
 
 import typer
 
+from agent_hub.cli.child_process import run_child
 from agent_hub.cli.effective_config import git_identity_reader
+from agent_hub.cli.errors import ChildTimedOutError
 from agent_hub.cli.exclusive_write import write_exclusive
 from agent_hub.cli.hub_config_reader import local_lines, read_local_json
 from agent_hub.core.hub_config.effective_identity import (
@@ -34,9 +38,11 @@ from agent_hub.core.hub_config.local_config import LOCAL_FILE, LocalConfig, loca
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import one_line
 from agent_hub.core.workspace.setup_checklist import (
+    PROBE_TIMEOUT_SECONDS,
     ChecklistItem,
     IdentityGap,
     git_lacks_item,
+    gitignore_item,
     identity_missing_item,
     identity_resolved_item,
     identity_written_item,
@@ -50,6 +56,8 @@ ANSWER_LIMIT: Final = 64
 _YES: Final = frozenset({"y", "yes"})
 _NO_VALUES: Final = IdentityValues(branch_prefix=None, author_name=None, author_email=None)
 _GIT_KEYS: Final = (IdentityKey.AUTHOR_NAME, IdentityKey.AUTHOR_EMAIL)
+# check-ignore's exit when the path is not ignored; 0 is ignored, 128 an error (no repo).
+_NOT_IGNORED: Final = 1
 
 
 def stdin_is_tty() -> bool:
@@ -76,6 +84,25 @@ def identity_items(
         return [gap]
     values = {key: value for key, value in proposed.values.items() if value is not None}
     return [_write_item(values, home=home, is_confirmed_by_flag=is_confirmed_by_flag)]
+
+
+def gitignore_items(home: Path, *, env: Mapping[str, str]) -> list[ChecklistItem]:
+    """The ``gitignore`` item when ``home`` holds a ``hub.local.json`` its git does not ignore.
+
+    Only a clear answer counts: no file, no git, a folder that is no repo, a timeout or any
+    other exit gives no item. ``.gitignore`` is never edited.
+    """
+    if not os.path.lexists(home / LOCAL_FILE):
+        return []
+    found = shutil.which("git", path=env.get("PATH", os.defpath))
+    if found is None:
+        return []
+    argv = [os.path.abspath(found), "-C", str(home), "check-ignore", "-q", LOCAL_FILE]
+    try:
+        result = run_child(argv, cwd=home, env=env, timeout=PROBE_TIMEOUT_SECONDS)
+    except ChildTimedOutError, OSError:
+        return []
+    return [gitignore_item()] if result.returncode == _NOT_IGNORED else []
 
 
 def _resolved_item(
