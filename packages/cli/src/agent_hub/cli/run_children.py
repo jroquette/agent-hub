@@ -6,8 +6,9 @@ session may have written (the session itself, the gate, git's reads of its workt
 worktree add and the repo's setup script) also loses ``GH_TOKEN`` and ``GITHUB_TOKEN``. Only the
 fetch, the push and ``gh`` keep them (``push_env``), git's hooks and fsmonitor off for each (as
 config, and as ``-c`` on the fetch and the push), so a hook planted in the repo cannot run with
-them. The session also gets ``OTEL_RESOURCE_ATTRIBUTES``, and the setup script the task's six
-``HUB_*`` variables (``worktree_steps.script_env``).
+them. The session also gets ``OTEL_RESOURCE_ATTRIBUTES`` and the run variables the hook sensor
+reads (``AGENT_HUB_RUN_ID``, ``AGENT_HUB_STEP``, ``AGENT_HUB_ATTEMPT``), and the setup script the
+task's six ``HUB_*`` variables (``worktree_steps.script_env``).
 A dry run prints each child as ``would run: <argv>   (cwd <folder>)``, each argument shell-quoted,
 or JSON-escaped when it holds a line break or another unprintable character, so tracker text
 cannot write to the terminal.
@@ -44,6 +45,11 @@ KEY_VARIABLE: Final = "LINEAR_API_KEY"
 CHILD_HIDDEN: Final = (KEY_VARIABLE,)
 SESSION_HIDDEN: Final = (KEY_VARIABLE, "GH_TOKEN", "GITHUB_TOKEN")
 OTEL_VARIABLE: Final = "OTEL_RESOURCE_ATTRIBUTES"
+# Read by the hook sensor: the run, step and attempt its session belongs to (D6).
+RUN_ID_VARIABLE: Final = "AGENT_HUB_RUN_ID"
+STEP_VARIABLE: Final = "AGENT_HUB_STEP"
+ATTEMPT_VARIABLE: Final = "AGENT_HUB_ATTEMPT"
+IMPLEMENT_STEP: Final = "implement"
 # Set for the push and gh, above any repo config: no fsmonitor, signing or hook runs there.
 PUSH_OVERRIDES: Final = (
     ("core.fsmonitor", "false"),
@@ -239,11 +245,15 @@ def untrusted_env(environ: Mapping[str, str]) -> dict[str, str]:
 
 
 def session_env(
-    environ: Mapping[str, str], *, repo: str, issue_id: str, run_id: str
+    environ: Mapping[str, str], *, repo: str, issue_id: str, run_id: str, attempt: int = 1
 ) -> dict[str, str]:
-    """The implementing session's environment: ``untrusted_env`` and its telemetry tags."""
+    """The implementing session's environment: ``untrusted_env``, its telemetry tags and the
+    run variables the hook sensor attributes the session's events with (D6)."""
     env = untrusted_env(environ)
     env[OTEL_VARIABLE] = f"repo={repo},issue={issue_id},agent_run={run_id}"
+    env[RUN_ID_VARIABLE] = run_id
+    env[STEP_VARIABLE] = IMPLEMENT_STEP
+    env[ATTEMPT_VARIABLE] = str(attempt)
     return env
 
 
