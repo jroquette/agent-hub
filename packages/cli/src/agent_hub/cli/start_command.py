@@ -32,8 +32,8 @@ from agent_hub.cli.command_exits import fail
 from agent_hub.cli.effective_config import effective_with_prefix_or_fail
 from agent_hub.cli.errors import LaunchError, WorktreeError
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
-from agent_hub.cli.hub_root import hub_root_or_exit, local_home
-from agent_hub.cli.init_report import shown_path
+from agent_hub.cli.hub_root import hub_root_or_exit, main_checkout
+from agent_hub.cli.init_report import shown_path, shown_text
 from agent_hub.cli.run_children import CHILD_HIDDEN, SESSION_HIDDEN, without
 from agent_hub.cli.tracker_client import missing_key_line, resolve_tracker_client, transport_line
 from agent_hub.cli.worktree_steps import (
@@ -82,8 +82,7 @@ def start(
 ) -> None:
     """Start or resume an issue: its worktrees, its started state and a Claude Code session."""
     root = hub_root_or_exit(os.environ, command=COMMAND)
-    # No token reaches git, which only looks for the main checkout.
-    hub = local_home(root, environ=without(os.environ, SESSION_HIDDEN))
+    hub = _hub_checkout(root)
     hub_config = load_hub_config_or_exit(hub / FILE_LABEL)
     touched = _refuse_usage(context, hub_config, issue=issue, repos=repo)
     effective, prefix = effective_with_prefix_or_fail(context, hub_config, home=hub)
@@ -100,6 +99,7 @@ def start(
     )
     client = resolve_tracker_client(config, os.environ, hub_root=hub)
     session = Session(
+        issue_id=issue,
         hub=hub,
         worktrees=worktrees,
         all_repos=all_repos,
@@ -199,12 +199,15 @@ class Session:
     def __init__(
         self,
         *,
+        issue_id: str,
         hub: Path,
         worktrees: GitTaskWorktrees,
         all_repos: Sequence[str],
         started_state: str,
         flags: Sequence[str],
     ) -> None:
+        # The validated ISSUE argument, not the tracker's answer, names the task's files and lines.
+        self.issue_id = issue_id
         self.hub = hub
         self.worktrees = worktrees
         self.all_repos = tuple(all_repos)
@@ -232,14 +235,17 @@ class Session:
             *(f"remove   : {line}" for line in removes),
         ]
 
-    def next_command(self, issue_id: str) -> str:
+    def next_command(self) -> str:
         """The command that resumes the task and launches its session: the same ``--repo``s."""
-        return " ".join([f"./hub {COMMAND} {issue_id}", *(f"--repo {repo}" for repo in self.flags)])
+        return " ".join(
+            [f"./hub {COMMAND} {self.issue_id}", *(f"--repo {repo}" for repo in self.flags)]
+        )
 
     def _state(self, task: StartedTask) -> str:
         if task.moved:
             return self.started_state
-        return f"{task.issue.state} (already started, not moved)"
+        # The tracker's text: escaped, so it cannot fake a line or style the terminal.
+        return f"{shown_text(task.issue.state)} (already started, not moved)"
 
 
 class ClaudeSession:
@@ -256,7 +262,7 @@ class ClaudeSession:
             (f"{repo}/{WORKTREES_FOLDER}/{task.name}", session.worktrees.path(repo))
             for repo in task.repos
         ]
-        context_file = session.hub / _CONTEXT_FILE.format(issue=task.issue.id.lower())
+        context_file = session.hub / _CONTEXT_FILE.format(issue=session.issue_id.lower())
         try:
             os.chdir(session.hub)
             launch_claude(
@@ -275,8 +281,8 @@ class ClaudeSession:
         lines = [f"{_PREFIX}: {reason}"]
         if task.moved:
             lines.append(
-                f"state    : {task.issue.id} was moved to {session.started_state};"
-                f" {session.next_command(task.issue.id)} resumes the task"
+                f"state    : {session.issue_id} was moved to {session.started_state};"
+                f" {session.next_command()} resumes the task"
             )
         lines += [f"created  : {session.worktrees.folder(repo)}" for repo in task.created]
         removes = remove_commands(task.name, created=task.created, all_repos=session.all_repos)
@@ -293,7 +299,7 @@ class PrintedSession:
     def launch(self, task: StartedTask) -> None:
         for line in self._session.summary(task):
             typer.echo(line)
-        typer.echo(f"next     : {self._session.next_command(task.issue.id)}")
+        typer.echo(f"next     : {self._session.next_command()}")
 
 
 def _refuse_usage(
@@ -324,6 +330,19 @@ def _failure_lines(failure: StartFailure) -> list[str]:
         *(f"created  : {path}" for path in failure.created),
         *(f"remove   : {line}" for line in failure.remove),
     ]
+
+
+def _hub_checkout(root: Path) -> Path:
+    """The hub's main checkout, as ``hub run`` finds it: git runs only when ``root`` is a
+    worktree (its ``.git`` a file), and without git, or when it cannot run, the exit is 1."""
+    if not os.path.isfile(root / ".git"):
+        return root
+    git = _git_or_exit()
+    try:
+        # No token reaches git, which only looks for the main checkout.
+        return main_checkout(root, git=git, environ=without(os.environ, SESSION_HIDDEN))
+    except OSError as error:
+        fail(f"{_PREFIX}: git could not run: {_strerror(error)}")
 
 
 def _git_or_exit() -> str:
