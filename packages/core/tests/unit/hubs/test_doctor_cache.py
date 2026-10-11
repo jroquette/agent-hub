@@ -1,9 +1,9 @@
 from datetime import UTC, datetime, timedelta
 
+from agent_hub.core.doctor.config_rules import config_state
 from agent_hub.core.doctor.registry import REGISTRY
 from agent_hub.core.doctor.run_rules import Selection, run_rules, select_rules
 from agent_hub.core.doctor.snapshot import ConfigFailure
-from agent_hub.core.doctor.config_rules import config_state
 from agent_hub.core.hub_config.doctor_rules import CONFIG_SCHEMA_RULE, PLATFORM_VERSION_RULE
 from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import HubConfig

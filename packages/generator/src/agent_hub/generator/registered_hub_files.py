@@ -1,4 +1,4 @@
-"""The control plane's ``HubFileReader``: a registered hub's files read as ``hub doctor`` reads them.
+"""The control plane's ``HubFileReader``: a registered hub's files, read as ``hub doctor`` does.
 
 ``hub.json`` and ``hub.local.json`` go through ``hub_config_files``, the lock and the doctor
 snapshot through ``doctor_snapshot``, feature folders through ``feature_files``. The hub's
