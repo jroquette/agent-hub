@@ -480,6 +480,10 @@ INFRA_SIMPLE_REASON = (
     "`{}` is a shell construct guard.infra does not check; "
     "confirm this infrastructure command first"
 )
+INFRA_QUOTED_REASON = (
+    "{}: guard.infra.allow (hub.json) matches only quoted text here (`{}`), which may not be this "
+    "command's environment; confirm first, or write the environment unquoted"
+)
 LEGACY_INFRA_REASON = "infrastructure commands (terraform/aws/pulumi/kubectl) are human-only"
 
 
@@ -501,6 +505,10 @@ def unusable(location: str, cause: str) -> tuple[str, str]:
 
 def simple(construct: str) -> tuple[str, str]:
     return ("ask", INFRA_SIMPLE_REASON.format(construct))
+
+
+def quoted(tool: str, value: str) -> tuple[str, str]:
+    return ("ask", INFRA_QUOTED_REASON.format(tool, value))
 
 
 def infra_document(infra: object) -> dict[str, Any]:
@@ -1327,6 +1335,53 @@ def test_joins_only_bash_line_continuations_when_infra_set(infra_evaluate: Evalu
     verdicts = bash_verdicts(infra_evaluate, list(expected))
 
     assert verdicts == expected
+
+
+# E22: an allow match that overlaps a quoted region ('…', "…" or $'…') may be text bash passes as
+# one argument, not the command's environment: a part (or call) whose only allow evidence is quoted
+# asks, naming the quoted match (escaped), after any infra ask or E21 construct; a match fully
+# outside quotes still allows, a local form needs no evidence, and a deny stays a deny.
+def test_asks_when_environment_only_quoted(infra_evaluate: Evaluate) -> None:
+    expected = {
+        "aws s3 ls --query '--profile demo-dev'": quoted("aws", "--profile demo-dev"),
+        "aws s3 ls 'AWS_PROFILE=demo-dev'": quoted("aws", "AWS_PROFILE=demo-dev"),
+        'aws s3 ls x --query "--profile demo-dev"': quoted("aws", "--profile demo-dev"),
+        "aws s3 rm s3://b --query '--profile demo-dev'": quoted("aws", "--profile demo-dev"),
+        "sudo -u 'x;' aws s3 ls '--profile demo-dev'": quoted("aws", "--profile demo-dev"),
+        "AWS_PROFILE=demo-dev true & aws s3 ls '--profile demo-dev'": quoted(
+            "aws", "--profile demo-dev"
+        ),
+        "aws s3 ls --profile demo-dev --query 'x'": None,
+        "AWS_PROFILE=demo-dev aws s3 ls": None,
+        "aws s3 ls --profile demo-dev --query '--profile demo-dev'": None,
+        "cdk synth '--profile demo-dev'": None,
+        "aws s3 rm s3://b --profile demo-dev --query '--profile x'": infra_ask("aws", "s3 rm"),
+        'aws s3 ls --profile "demo-dev"': unknown("aws"),
+        "aws s3 ls '--profile demo-dev' & aws s3 cp x s3://y": unknown("aws"),
+        "aws s3 ls $'--profile demo-dev'": simple("$'"),
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# E22: with an allow pattern that matches the value alone, a quoted value (`--profile "demo-dev"`)
+# asks too; the reason shows the match escaped and capped.
+def test_asks_when_allowed_value_quoted(evaluate: Evaluate, workspace: Path) -> None:
+    write_hub(workspace, {"allow": [r"\bdemo-dev\S*"]})
+    long_value = "demo-dev" + "x" * 200
+    expected = {
+        'aws s3 ls --profile "demo-dev"': quoted("aws", 'demo-dev\\"'),
+        "aws s3 ls --profile 'demo-dev'": quoted("aws", "demo-dev'"),
+        f"aws s3 ls --profile '{long_value}'": quoted("aws", cut(long_value + "'")),
+        "aws s3 ls --profile demo-dev": None,
+    }
+
+    verdicts = bash_verdicts(evaluate, list(expected))
+
+    assert verdicts == expected
+    assert max(len(verdict[1]) for verdict in verdicts.values() if verdict) <= GUARD_REASON_CAP
 
 
 # AGH-113: a short-flag cluster holding ``f`` and ``--mirror`` force-update remote refs, so they
