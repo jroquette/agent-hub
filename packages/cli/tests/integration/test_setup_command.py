@@ -12,6 +12,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import stat
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
@@ -23,7 +24,7 @@ import pytest
 from click import unstyle
 from typer.testing import CliRunner, Result
 
-from agent_hub.cli import exclusive_write, setup_identity, setup_tools
+from agent_hub.cli import exclusive_write, setup_identity, setup_repos, setup_tools
 from agent_hub.cli.exclusive_write import TEMP_INFIX
 from agent_hub.cli.main import app
 from agent_hub.cli.setup_identity import ANSWER_LIMIT
@@ -31,11 +32,14 @@ from agent_hub.core.hub_config.local_config import LOCAL_FILE_MAX_BYTES
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
 from agent_hub.core.workspace.setup_checklist import (
     CLAUDE_FIX,
+    CLONE_FIX,
+    FETCH_FIX,
     GH_FIX,
     GIT_FIX,
     GITIGNORE_FIX,
     IDENTITY_FILE_FIX,
     INVALID_LOCAL_FIX,
+    MOVE_AWAY_FIX,
     PREFIX_FIX,
     PYTHON_FIX,
     RERUN_FIX,
@@ -48,6 +52,7 @@ from agent_hub.core.workspace.setup_checklist import (
 type Workspace = Any
 type TracedGit = Any
 type SetupRunner = Callable[..., Result]
+type TreeDigest = Callable[[Path], dict[str, Any]]
 
 OLD_PIN = "0.0.1"
 SYNTHETIC_KEY = "lin" + "_api_" + "x" * 12
@@ -1091,4 +1096,306 @@ class TestGitignore:
         assert not (hub / LOCAL_FILE).exists()
         assert "gitignore" not in result.stdout
         assert _check_ignore_calls(env_traced_git) == []
+        assert result.exit_code == 0, result.output
+
+
+_REPO_LINE = re.compile(r"^(ok|missing) +repo ")
+SYNTHETIC_TOKEN = "ghs" + "_" + "t0k" * 8
+
+
+def _repo_lines(stdout: str) -> list[str]:
+    return [line for line in stdout.splitlines() if _REPO_LINE.match(line)]
+
+
+def _network_calls(traced: TracedGit) -> list[Any]:
+    """The logged clones and fetches, in order."""
+    return [
+        call
+        for call in traced.calls()
+        if call.args.startswith("clone ") or " fetch " in f" {call.args} "
+    ]
+
+
+def _ws(workspace: Workspace) -> str:
+    return os.path.realpath(workspace.ws)
+
+
+def _remove_repo(workspace: Workspace, repo: str) -> None:
+    shutil.rmtree(Path(workspace.ws) / repo)
+
+
+def _mtimes(root: Path) -> dict[str, int]:
+    """Each entry's modification time under ``root`` (itself as ``.``), links not followed."""
+    found = {".": root.lstat().st_mtime_ns}
+    if root.is_dir() and not root.is_symlink():
+        for folder, folders, files in os.walk(root):
+            for name in [*folders, *files]:
+                path = Path(folder) / name
+                found[path.relative_to(root).as_posix()] = path.lstat().st_mtime_ns
+    return found
+
+
+def _cloned_line(repo: str, scheme: str) -> str:
+    return f"ok      repo {repo}: cloned acme/{repo} into ../{repo} ({scheme})"
+
+
+def _clone_fix(repo: str) -> str:
+    return CLONE_FIX.format(github=f"acme/{repo}")
+
+
+@pytest.mark.usefixtures("tools_ok")
+class TestRepos:
+    def test_clones_missing_and_fetches_present_when_repos_listed(
+        self, demo_workspace: Workspace, env_traced_git: TracedGit, run_setup: SetupRunner
+    ) -> None:
+        demo_workspace.rewrite_github()
+        _remove_repo(demo_workspace, "demo-web")
+        ws = _ws(demo_workspace)
+
+        result = run_setup(demo_workspace.hub, "--yes")
+
+        assert [call.args for call in _network_calls(env_traced_git)] == [
+            f"-C {ws}/demo-api fetch --quiet origin",
+            f"clone --quiet https://github.com/acme/demo-web.git {ws}/demo-web",
+        ]
+        assert _repo_lines(result.stdout) == [
+            "ok      repo demo-api: present, fetched",
+            _cloned_line("demo-web", "https"),
+        ]
+        assert (Path(demo_workspace.ws) / "demo-web" / ".git").is_dir()
+        assert result.stdout.splitlines()[-1] == "setup: 9 ok"
+        assert result.exit_code == 0, result.output
+
+    def test_sets_no_prompt_and_drops_location_and_key_when_setup_git_runs(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        demo_workspace.rewrite_github()
+        demo_workspace.init_hub_repo(None)
+        _remove_repo(demo_workspace, "demo-web")
+        monkeypatch.setenv("GIT_DIR", str(tmp_path / "elsewhere"))
+        assert os.environ[KEY_VARIABLE] == SYNTHETIC_KEY
+        hub = os.path.realpath(demo_workspace.hub)
+        ws = _ws(demo_workspace)
+
+        result = run_setup(demo_workspace.hub, "--yes")
+
+        calls = env_traced_git.calls()
+        assert [call.args for call in calls if call.has_git_dir] == []
+        own = [
+            call
+            for call in calls
+            if call.args.startswith(("clone ", "config --get remote.origin.url"))
+            or call.args.startswith((f"-C {ws}/", f"-C {hub} check-ignore"))
+        ]
+        assert [(call.args, call.prompt, call.has_key) for call in own] == [
+            ("config --get remote.origin.url", "0", False),
+            (f"-C {ws}/demo-api fetch --quiet origin", "0", False),
+            (f"clone --quiet https://github.com/acme/demo-web.git {ws}/demo-web", "0", False),
+        ]
+        assert result.exit_code == 0, result.output
+
+    @pytest.mark.parametrize("entry", ["folder-with-file", "regular-file", "dangling-link"])
+    def test_leaves_entry_untouched_when_not_a_repository(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        tree_digest: TreeDigest,
+        entry: str,
+    ) -> None:
+        path = Path(demo_workspace.ws) / "demo-api"
+        shutil.rmtree(path)
+        if entry == "folder-with-file":
+            path.mkdir()
+            (path / "notes.txt").write_bytes(b"mine\n")
+        elif entry == "regular-file":
+            path.write_bytes(b"mine\n")
+        else:
+            path.symlink_to(Path(demo_workspace.base) / "nowhere")
+        before = (tree_digest(path), _mtimes(path))
+
+        result = run_setup(demo_workspace.hub, "--yes")
+
+        assert (tree_digest(path), _mtimes(path)) == before
+        assert _repo_lines(result.stdout) == [
+            "missing repo demo-api: ../demo-api exists but is not a git repository; left"
+            f" untouched Fix: {MOVE_AWAY_FIX.format(dir='demo-api')}",
+            "ok      repo demo-web: present, fetched",
+        ]
+        assert [call for call in env_traced_git.calls() if "demo-api" in call.args] == []
+        assert result.stdout.splitlines()[-1] == "setup: 1 missing, 8 ok"
+        assert result.exit_code == 1
+
+    def test_continues_after_failed_clone_when_origin_gone(
+        self, demo_workspace: Workspace, env_traced_git: TracedGit, run_setup: SetupRunner
+    ) -> None:
+        demo_workspace.rewrite_github()
+        _remove_repo(demo_workspace, "demo-web")
+        shutil.rmtree(demo_workspace.origin("demo-web"))
+
+        result = run_setup(demo_workspace.hub, "--yes")
+
+        assert _repo_lines(result.stdout) == [
+            "ok      repo demo-api: present, fetched",
+            f"missing repo demo-web: clone failed (git exit 128) Fix: {_clone_fix('demo-web')}",
+        ]
+        assert not (Path(demo_workspace.ws) / "demo-web").exists()
+        # Git's stderr names the origin's path: none of it is shown.
+        for stream in (result.stdout_bytes, result.stderr_bytes):
+            assert b"fatal" not in stream
+            assert str(demo_workspace.origins).encode() not in stream
+        assert result.stdout.splitlines()[-1] == "setup: 1 missing, 8 ok"
+        assert result.exit_code == 1
+
+    def test_continues_after_failed_fetch_when_origin_gone(
+        self, demo_workspace: Workspace, env_traced_git: TracedGit, run_setup: SetupRunner
+    ) -> None:
+        shutil.rmtree(demo_workspace.origin("demo-api"))
+
+        result = run_setup(demo_workspace.hub, "--yes")
+
+        assert _repo_lines(result.stdout) == [
+            "missing repo demo-api: fetch failed (git exit 128)"
+            f" Fix: {FETCH_FIX.format(dir='demo-api')}",
+            "ok      repo demo-web: present, fetched",
+        ]
+        for stream in (result.stdout_bytes, result.stderr_bytes):
+            assert b"fatal" not in stream
+            assert str(demo_workspace.origins).encode() not in stream
+        assert result.stdout.splitlines()[-1] == "setup: 1 missing, 8 ok"
+        assert result.exit_code == 1
+
+    def test_reports_timeout_as_failed_when_clone_hangs(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        demo_workspace.rewrite_github()
+        _remove_repo(demo_workspace, "demo-web")
+        env_traced_git.hang_path.touch()
+        monkeypatch.setattr(setup_repos, "NETWORK_TIMEOUT_SECONDS", 1.0)
+
+        result = run_setup(demo_workspace.hub, "--yes")
+
+        # The hanging git is a ``sleep`` that exits 0 when not killed: the text tells the timeout.
+        assert _repo_lines(result.stdout) == [
+            "missing repo demo-api: fetch timed out after 1 s"
+            f" Fix: {FETCH_FIX.format(dir='demo-api')}",
+            f"missing repo demo-web: clone timed out after 1 s Fix: {_clone_fix('demo-web')}",
+        ]
+        hung = _network_calls(env_traced_git)
+        assert len(hung) == 2
+        for call in hung:
+            with pytest.raises(ProcessLookupError):
+                os.kill(call.pid, 0)
+        assert result.stdout.splitlines()[-1] == "setup: 2 missing, 7 ok"
+        assert result.exit_code == 1
+
+    def test_reports_failed_repos_when_git_not_found(
+        self,
+        demo_workspace: Workspace,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        _remove_repo(demo_workspace, "demo-web")
+        # The fake probe answers for the tools; git is on no PATH folder.
+        no_git = tmp_path / "no-git-bin"
+        no_git.mkdir()
+        monkeypatch.setenv("PATH", str(no_git))
+
+        result = run_setup(demo_workspace.hub, "--yes")
+
+        assert _repo_lines(result.stdout) == [
+            f"missing repo {repo}: git not found Fix: {GIT_FIX}"
+            for repo in ("demo-api", "demo-web")
+        ]
+        assert not (Path(demo_workspace.ws) / "demo-web").exists()
+        assert result.stdout.splitlines()[-1] == "setup: 2 missing, 7 ok"
+        assert result.exit_code == 1
+
+
+# Top level, so ``-k "scheme or url"`` selects it.
+@pytest.mark.usefixtures("tools_ok")
+class TestScheme:
+    @pytest.mark.parametrize(
+        "origin",
+        ["git@github.com:acme/demo-hub.git", "ssh://git@github.com/acme/demo-hub.git"],
+        ids=["scp", "ssh-url"],
+    )
+    def test_clones_ssh_url_when_hub_origin_is_ssh(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        origin: str,
+    ) -> None:
+        demo_workspace.rewrite_github()
+        demo_workspace.init_hub_repo(origin)
+        _remove_repo(demo_workspace, "demo-web")
+
+        result = run_setup(demo_workspace.hub, "--yes")
+
+        assert [
+            call.args for call in _network_calls(env_traced_git) if call.args.startswith("clone ")
+        ] == [f"clone --quiet git@github.com:acme/demo-web.git {_ws(demo_workspace)}/demo-web"]
+        assert _repo_lines(result.stdout)[1] == _cloned_line("demo-web", "ssh")
+        assert result.exit_code == 0, result.output
+
+    @pytest.mark.parametrize(
+        "origin",
+        [
+            f"https://x-access-token:{SYNTHETIC_TOKEN}@github.com/acme/demo-hub.git",
+            "https://git.acme.test/acme/demo-hub.git",
+        ],
+        ids=["token-https", "other-host"],
+    )
+    def test_clones_https_url_when_hub_origin_not_github_ssh(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        origin: str,
+    ) -> None:
+        demo_workspace.rewrite_github()
+        demo_workspace.init_hub_repo(origin)
+        _remove_repo(demo_workspace, "demo-web")
+
+        result = run_setup(demo_workspace.hub, "--yes")
+
+        assert [
+            call.args for call in _network_calls(env_traced_git) if call.args.startswith("clone ")
+        ] == [f"clone --quiet https://github.com/acme/demo-web.git {_ws(demo_workspace)}/demo-web"]
+        assert _repo_lines(result.stdout)[1] == _cloned_line("demo-web", "https")
+        assert result.exit_code == 0, result.output
+
+    def test_shows_no_remote_text_when_origin_holds_credential(
+        self, demo_workspace: Workspace, env_traced_git: TracedGit, run_setup: SetupRunner
+    ) -> None:
+        demo_workspace.rewrite_github()
+        demo_workspace.init_hub_repo(
+            f"https://x-access-token:{SYNTHETIC_TOKEN}@github.com/acme/demo-hub.git"
+        )
+        _remove_repo(demo_workspace, "demo-web")
+
+        result = run_setup(demo_workspace.hub, "--yes")
+
+        for stream in (result.stdout_bytes, result.stderr_bytes):
+            assert SYNTHETIC_TOKEN.encode() not in stream
+            assert b"x-access-token" not in stream
+            assert b"demo-hub" not in stream
+            assert b"://" not in stream
         assert result.exit_code == 0, result.output
