@@ -52,8 +52,9 @@ FEATURE_SPEC = "---\ntype: spec\nprocess_size: bounded\nrepos: [demo-api]\nlinea
 
 # Absolute URLs the built bundle may contain, each exact. None is ever requested: React's and
 # React Router's error texts name their docs, the XML namespaces are identifiers, and
-# ``http://localhost`` is React Router's base for parsing relative URLs. Any other absolute URL,
-# such as a font, script or API on another host, fails the check.
+# ``http://localhost`` is React Router's base for parsing relative URLs, as
+# ``https://same-origin.invalid/app`` (a reserved TLD that never resolves) is ``safeHref``'s.
+# Any other absolute URL, such as a font, script or API on another host, fails the check.
 INERT_BUNDLE_URLS = frozenset(
     {
         "https://reactjs.org/docs/error-decoder.html",
@@ -65,6 +66,7 @@ INERT_BUNDLE_URLS = frozenset(
         "http://www.w3.org/1998/Math/MathML",
         "http://www.w3.org/XML/1998/namespace",
         "http://localhost",
+        "https://same-origin.invalid/app",
     }
 )
 _ABSOLUTE_URL = re.compile(r"https?://[A-Za-z0-9.\-\[\]:]+(?:/[A-Za-z0-9._~/\-]*)?")
