@@ -28,6 +28,10 @@ from agent_hub.core.workspace.worktree_name import (
 )
 
 _GIT_ENTRY = ".git"
+# Longer than any commit count git prints; also keeps int() far from its digit limit.
+_MAX_COUNT_DIGITS = 20
+# The worktrees a "more than one" refusal names by path; the rest are counted.
+_NAMED_WORKTREES = 2
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -133,11 +137,19 @@ def _refuse_two_in_a_repo(
 ) -> None:
     for repo, worktrees in listed:
         if len(worktrees) > 1:
-            paths = ", ".join(shown_path(str(worktree)) for worktree in worktrees)
-            raise ShipError(
-                f"{repo.dir}: more than one task worktree for {issue_id}: {paths};"
-                " remove one (hub worktree --remove <name>)"
-            )
+            raise ShipError(f"{repo.dir}: {_too_many(worktrees, issue_id=issue_id)}")
+
+
+def _too_many(worktrees: Sequence[Path], *, issue_id: str) -> str:
+    paths = ", ".join(shown_path(str(worktree)) for worktree in worktrees[:_NAMED_WORKTREES])
+    hint = "(hub worktree --remove <name>)"
+    more = len(worktrees) - _NAMED_WORKTREES
+    if more == 0:
+        return f"more than one task worktree for {issue_id}: {paths}; remove one {hint}"
+    return (
+        f"{len(worktrees)} task worktrees for {issue_id}: {paths} and {more} more;"
+        f" remove all but one {hint}"
+    )
 
 
 def _refuse_without_git_entry(repo: Repo, worktree: Path) -> None:
@@ -175,9 +187,10 @@ def _refuse_other_branch(target: ShipTarget, *, environ: Mapping[str, str]) -> N
 
 
 def _ahead(target: ShipTarget, environ: Mapping[str, str]) -> int:
-    arguments = ("rev-list", "--count", f"origin/{target.base}..HEAD")
+    # The full ref: a local branch named origin/<base> would shadow the short name.
+    arguments = ("rev-list", "--count", f"refs/remotes/origin/{target.base}..HEAD")
     count = _git_read(target, arguments, environ=environ).strip()
-    if not (count.isascii() and count.isdecimal()):
+    if not (count.isascii() and count.isdecimal() and len(count) <= _MAX_COUNT_DIGITS):
         raise ShipError(
             f"{target.repo}: git rev-list printed no count in {shown_path(str(target.worktree))}"
         )

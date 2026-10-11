@@ -112,10 +112,11 @@ def test_gives_configured_team_when_name_is_task_worktree(name: str, issue: str)
     assert issue_of_worktree(name, teams=("APP", "OPS")) == issue
 
 
-def test_keeps_key_spelling_when_team_configured_in_other_case() -> None:
-    assert issue_of_worktree("ops-3", teams=("app", "Ops")) == "Ops-3"
+def test_uppercases_issue_when_team_configured_in_other_case() -> None:
+    """The id must pass ``ISSUE_ID_PATTERN``, so ``hub ship`` never refuses the id it derived."""
+    assert issue_of_worktree("ops-3", teams=("app", "Ops")) == "OPS-3"
 
 
-@pytest.mark.parametrize("name", ["xyz-3", "ops-3-", "OPS-3", "ops"])
+@pytest.mark.parametrize("name", ["xyz-3", "ops-3-", "OPS-3", "ops", "ops-0", "ops-0123"])
 def test_gives_none_when_team_foreign(name: str) -> None:
     assert issue_of_worktree(name, teams=("APP", "OPS")) is None

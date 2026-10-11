@@ -4,6 +4,7 @@ import re
 from collections.abc import Iterable, Sequence
 
 from agent_hub.core.hub_config.team_keys import team_of, teams_text
+from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN
 from agent_hub.core.workspace.branch_pattern import render_branch
 
 # A validated name: the issue (``<team>-<n>``, lowercase) and, after a dash, the description.
@@ -46,15 +47,17 @@ def task_worktree_names(
 
 
 def issue_of_worktree(name: str, *, teams: Sequence[str]) -> str | None:
-    """The issue a task worktree name stands for, spelled ``<configured key>-<n>``, or None.
+    """The issue id a task worktree name stands for (``<TEAM>-<n>``, uppercase), or None.
 
-    None when ``name`` is not ``<team>-<n>[-<desc>]`` for a key of ``teams``.
+    None when ``name`` is not ``<team>-<n>[-<desc>]`` for a key of ``teams``, or when its
+    issue is no valid id (``ISSUE_ID_PATTERN``: no ``0`` or leading zero), so a command never
+    refuses the id it derived.
     """
     issue = _issue_part(name) if worktree_name_problem(name, teams=teams) is None else None
-    team = None if issue is None else team_of(issue, teams)
-    if issue is None or team is None:
+    if issue is None or team_of(issue, teams) is None:
         return None
-    return f"{team}-{issue.partition('-')[2]}"
+    upper = issue.upper()
+    return upper if ISSUE_ID_PATTERN.fullmatch(upper) else None
 
 
 def worktree_name_example(team: str) -> str:
