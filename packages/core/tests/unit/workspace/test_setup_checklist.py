@@ -474,6 +474,13 @@ class TestIdentity:
                 "ok      identity: wrote hub.local.json: jane/, Jane Roe (hub.json, git config)",
                 id="prefix-from-hub-email",
             ),
+            pytest.param(
+                # A bidi override would reorder the terminal line: it is shown escaped.
+                keyed(Sourced("Jane\u202eRoe", Source.GIT, IdentityKey.AUTHOR_NAME), GIT_EMAIL),
+                "ok      identity: wrote hub.local.json: Jane\\u202eRoe <jane@example.com>"
+                " (git config)",
+                id="bidi-override-escaped",
+            ),
         ],
     )
     def test_names_written_keys_when_identity_written(
@@ -511,6 +518,14 @@ class TestIdentity:
                 "ok      identity: jane/, Jane Roe <jane@example.com> (hub.local.json, hub.json)",
                 id="derived-prefix",
             ),
+            pytest.param(
+                keyed(
+                    from_hub("Jane\u202eRoe", IdentityKey.AUTHOR_NAME),
+                    from_hub("jane@example.com", IdentityKey.AUTHOR_EMAIL),
+                ),
+                "ok      identity: Jane\\u202eRoe <jane@example.com> (hub.json)",
+                id="bidi-override-escaped",
+            ),
         ],
     )
     def test_names_sources_when_identity_resolved(
@@ -534,12 +549,39 @@ class TestIdentity:
                 "jane/, Jane Roe <jane@example.com>",
                 id="reversed",
             ),
+            pytest.param(
+                # C1 controls (NEL, CSI) are escaped like any other non-printable character.
+                keyed(
+                    Sourced("Jane\x85Roe", Source.GIT, IdentityKey.AUTHOR_NAME),
+                    Sourced("jane\x9b@example.com", Source.GIT, IdentityKey.AUTHOR_EMAIL),
+                ),
+                "Jane\\x85Roe <jane\\x9b@example.com>",
+                id="c1-controls-escaped",
+            ),
+            pytest.param(
+                keyed(Sourced("Jane\u202eRoe", Source.GIT, IdentityKey.AUTHOR_NAME)),
+                "Jane\\u202eRoe",
+                id="name-only-escaped",
+            ),
         ],
     )
     def test_orders_values_when_identity_text_built(
         self, values: dict[IdentityKey, Sourced], text: str
     ) -> None:
         assert identity_text(values) == text
+
+    @pytest.mark.parametrize(
+        "build",
+        [
+            pytest.param(identity_written_item, id="written"),
+            pytest.param(identity_resolved_item, id="resolved"),
+        ],
+    )
+    def test_refuses_item_when_identity_has_no_value(
+        self, build: Callable[[dict[IdentityKey, Sourced]], ChecklistItem]
+    ) -> None:
+        with pytest.raises(ValueError, match="at least one identity value"):
+            build({})
 
     @pytest.mark.parametrize(
         ("item", "lines"),
@@ -736,6 +778,22 @@ class TestRepos:
     )
     def test_prints_repo_line_when_repo_outcome_known(self, item: ChecklistItem, line: str) -> None:
         assert item_lines(item) == [line]
+
+    @pytest.mark.parametrize(
+        ("outcome", "argument"),
+        [
+            pytest.param(RepoOutcome.CLONED, "scheme", id="cloned"),
+            pytest.param(RepoOutcome.CLONE_FAILED, "returncode", id="clone-failed"),
+            pytest.param(RepoOutcome.FETCH_FAILED, "returncode", id="fetch-failed"),
+            pytest.param(RepoOutcome.CLONE_TIMED_OUT, "timeout_seconds", id="clone-timeout"),
+            pytest.param(RepoOutcome.FETCH_TIMED_OUT, "timeout_seconds", id="fetch-timeout"),
+        ],
+    )
+    def test_refuses_outcome_when_repo_text_lacks_argument(
+        self, outcome: RepoOutcome, argument: str
+    ) -> None:
+        with pytest.raises(ValueError, match=f"needs {argument}"):
+            repo_item(WEB, outcome)
 
 
 class TestDoctor:

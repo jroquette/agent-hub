@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 import pytest
@@ -231,7 +232,19 @@ def test_never_echoes_value_when_local_object_holds_other_type(
     ],
 )
 def test_writes_identity_bytes_when_keys_proposed(values: dict[str, str], expected: bytes) -> None:
-    assert local_identity_bytes(values) == expected
+    written = local_identity_bytes(values)
+
+    assert written == expected
+    # The bytes read back as the very values proposed: the writer and the reader agree.
+    assert check_local_document(json.loads(written)) == LocalConfig(project=LocalProject(**values))
+
+
+def test_returns_problem_when_no_identity_value_proposed() -> None:
+    assert local_identity_bytes({}) == (
+        ConfigProblem(
+            "project", "holds no identity value: set branch_prefix, author_name or author_email"
+        ),
+    )
 
 
 def test_returns_problems_when_proposed_value_invalid() -> None:

@@ -4,7 +4,9 @@ Each item prints as ``f"{state:<7} {item}: {detail}"``, then `` Fix: <fix>`` whe
 its sub-lines indented 8 spaces. The tool items read what a probe gave (``ProbeResult``); the cli
 runs the probes, git and the doctor and gives their outcome to the identity, repo and doctor
 items. No text here names a credential's value or a remote URL: the tracker item reads only
-whether ``LINEAR_API_KEY`` is set, and a repo line names ``owner/name`` and the scheme.
+whether ``LINEAR_API_KEY`` is set, and a repo line names ``owner/name`` and the scheme. An
+identity value is free text from a file or git, so it is shown through ``one_line``: a control
+character or a bidi override is escaped, never sent to the terminal.
 """
 
 import re
@@ -14,6 +16,7 @@ from enum import StrEnum
 from typing import Final, Literal, NamedTuple
 
 from agent_hub.core.hub_config.effective_identity import IdentityKey, Sourced
+from agent_hub.core.hub_config.problems import one_line
 from agent_hub.core.hub_config.workspace_repos import WorkspaceRepo
 
 PROBE_TIMEOUT_SECONDS: Final = 10.0
@@ -134,6 +137,7 @@ _GIT_SET_COMMANDS: Final = {
     IdentityKey.AUTHOR_EMAIL: "git config user.email <you@example.com>",
 }
 # Filled with ``str.format``: ``dir``, ``github``, ``scheme``, ``returncode``, ``seconds``.
+# Each outcome's text needs the ``repo_item`` argument named here; it is refused without it.
 _REPO_TEXTS: Final[Mapping[RepoOutcome, _Text]] = {
     RepoOutcome.CLONED: _Text("cloned {github} into ../{dir} ({scheme})", None),
     RepoOutcome.FETCHED: _Text("present, fetched", None),
@@ -145,6 +149,14 @@ _REPO_TEXTS: Final[Mapping[RepoOutcome, _Text]] = {
         "../{dir} exists but is not a git repository; left untouched", MOVE_AWAY_FIX
     ),
     RepoOutcome.GIT_NOT_FOUND: _Text("git not found", GIT_FIX),
+}
+
+_REPO_ARGUMENTS: Final[Mapping[RepoOutcome, str]] = {
+    RepoOutcome.CLONED: "scheme",
+    RepoOutcome.CLONE_FAILED: "returncode",
+    RepoOutcome.FETCH_FAILED: "returncode",
+    RepoOutcome.CLONE_TIMED_OUT: "timeout_seconds",
+    RepoOutcome.FETCH_TIMED_OUT: "timeout_seconds",
 }
 
 
@@ -258,25 +270,35 @@ def tracker_item(
 
 
 def identity_text(values: Mapping[IdentityKey, Sourced]) -> str:
-    """The prefix, then ``name <email>`` (or the one given), joined by ``, ``."""
-    prefix = values.get(IdentityKey.BRANCH_PREFIX)
-    name = values.get(IdentityKey.AUTHOR_NAME)
-    email = values.get(IdentityKey.AUTHOR_EMAIL)
-    parts = [prefix.value] if prefix is not None else []
+    """The prefix, then ``name <email>`` (or the one given), joined by ``, ``; each escaped.
+
+    Every value goes through ``one_line``, so a non-printable character shows as its escape.
+    """
+    prefix, name, email = (
+        values.get(key)
+        for key in (IdentityKey.BRANCH_PREFIX, IdentityKey.AUTHOR_NAME, IdentityKey.AUTHOR_EMAIL)
+    )
+    parts = [one_line(prefix.value)] if prefix is not None else []
     if name is not None and email is not None:
-        parts.append(f"{name.value} <{email.value}>")
+        parts.append(f"{one_line(name.value)} <{one_line(email.value)}>")
     else:
-        parts.extend(given.value for given in (name, email) if given is not None)
+        parts.extend(one_line(given.value) for given in (name, email) if given is not None)
     return ", ".join(parts)
 
 
 def identity_written_item(values: Mapping[IdentityKey, Sourced]) -> ChecklistItem:
-    """``identity`` after ``hub.local.json`` was written: only the written keys are named."""
+    """``identity`` after ``hub.local.json`` was written: only the written keys are named.
+
+    Raises ``ValueError`` when ``values`` is empty: a written file holds at least one key.
+    """
     return _ok("identity", f"wrote hub.local.json: {_sourced_text(values)}")
 
 
 def identity_resolved_item(values: Mapping[IdentityKey, Sourced]) -> ChecklistItem:
-    """``identity`` resolved from the files and git, each source named once, in key order."""
+    """``identity`` resolved from the files and git, each source named once, in key order.
+
+    Raises ``ValueError`` when ``values`` is empty: an ok identity shows at least one value.
+    """
     return _ok("identity", _sourced_text(values))
 
 
@@ -322,7 +344,11 @@ def invalid_prefix_item(email: str) -> ChecklistItem:
 
 
 def write_error_item(error: str) -> ChecklistItem:
-    """``identity`` missing because writing ``hub.local.json`` failed with ``error``."""
+    """``identity`` missing because writing ``hub.local.json`` failed with ``error``.
+
+    ``error`` is the ``OSError``'s ``strerror`` only, never ``str(error)``: that one carries
+    the file's path.
+    """
     return _missing("identity", f"could not write hub.local.json: {error}", IDENTITY_FILE_FIX)
 
 
@@ -335,11 +361,20 @@ def repo_item(
     repo: WorkspaceRepo,
     outcome: RepoOutcome,
     *,
-    scheme: Literal["ssh", "https"] = "https",
+    scheme: Literal["ssh", "https"] | None = None,
     returncode: int | None = None,
     timeout_seconds: float | None = None,
 ) -> ChecklistItem:
-    """``repo <dir>`` for ``outcome``; names ``owner/name`` and the scheme, never a URL."""
+    """``repo <dir>`` for ``outcome``; names ``owner/name`` and the scheme, never a URL.
+
+    Raises ``ValueError`` when the outcome's text needs an argument not given: ``scheme`` for
+    ``cloned``, ``returncode`` for a failure, ``timeout_seconds`` for a timeout.
+    """
+    given = {"scheme": scheme, "returncode": returncode, "timeout_seconds": timeout_seconds}
+    needed = _REPO_ARGUMENTS.get(outcome)
+    if needed is not None and given[needed] is None:
+        msg = f"repo outcome {outcome} needs {needed}"
+        raise ValueError(msg)
     text = _REPO_TEXTS[outcome]
     fields = {
         "dir": repo.dir,
@@ -369,6 +404,9 @@ def doctor_item(*, totals: str, has_errors: bool, finding_lines: Sequence[str]) 
 
 
 def _sourced_text(values: Mapping[IdentityKey, Sourced]) -> str:
+    if not values:
+        msg = "an identity item needs at least one identity value"
+        raise ValueError(msg)
     # A derived prefix carries its email's source.
     sources = dict.fromkeys(values[key].source.value for key in IdentityKey if key in values)
     return f"{identity_text(values)} ({', '.join(sources)})"
