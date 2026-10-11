@@ -201,8 +201,9 @@ can relax a guard. Commits are authored by the developer running the session, an
 repo-local, never global, only when `hub.json` holds no author.
 
 **The infra guard.** With `guard.infra`, the guard hook checks a Bash command only when it names a covered tool: the
-tool's word (case-sensitive) followed by an argument, by a redirection glued to it (`aws>/dev/null s3 ls`), or by
-nothing up to the end of its part or call (`… | xargs aws`, `(aws)`), wherever it sits, so wrappers, quotes and
+tool's word (case-sensitive) followed by an argument, by a redirection glued to it (`aws>/dev/null s3 ls`), by a
+`$`, `,` or `}` (`aws$x`, `{aws,s3}`), or by nothing up to the end of its part or call (`… | xargs aws`, `(aws)`;
+these never make a local-only form), wherever it sits, so wrappers, quotes and
 nested calls do not hide it (`env aws …`, `bash -c "aws …"`, `$(aws …)`, `'aws' …`, even `grep aws notes.txt`). Only
 the backslash-newlines bash joins are joined (after an odd run of backslashes, outside a comment and single quotes).
 The command is split into parts at `;`, `&&`, `||`, `|` and newlines, then:
@@ -222,13 +223,18 @@ The command is split into parts at `;`, `&&`, `||`, `|` and newlines, then:
    `cloudformation … deploy|delete-stack`; `cdk deploy|destroy`; `terraform apply|destroy|import`;
    `pulumi up|destroy`; `kubectl apply|create|delete|replace|patch|scale`;
    `helm install|upgrade|uninstall|rollback`; `sam deploy|delete`; `serverless deploy|remove`.
-6. Simple or ask: what would pass (an allowed part or a local-only form) passes only when the whole command is
-   simple, holding none of the constructs the guard does not model: a backslash, `$'`, `$$`, a backtick, `#`, a quote
-   inside a word (`a''b`, `-backen''d`), `xargs`, `eval`, `exec`, `source`, `.` as a command, `bash`/`sh`/`zsh`/`dash`
-   `-c`, a here-string `<<<` or a heredoc `<<`. Otherwise it asks, naming the first one; a deny or an ask stays as it
-   is, and a command that names no covered tool is not affected.
-   An `allow` match that overlaps a quoted region (`'…'`, `"…"`, `$'…'`) is text, not evidence: a part or call whose
-   only matches are quoted asks, naming the match (so a quoted value such as `--profile "demo-dev"` asks too).
+6. Safe characters or ask: what would pass (an allowed part or a local-only form) passes only when every character
+   of the whole command is an ASCII letter or digit, a space, a tab or one of `_ - . / : = @ , + %`, with the parts
+   joined only by `;`, `&&`, `||`, `|` or a newline. Any other character (`$`, a quote, a brace, `<`, `>`, a
+   backtick, `\`, `#`, `(`, `)`, `*`, `?`, `[`, `]`, `~`, `!`, a single `&`, other whitespace such as a carriage
+   return, a vertical tab or a no-break space, anything non-ASCII) makes it ask, naming the first one. Then it asks on
+   the first word that can run a command, or change its environment, out of the guard's sight: `sh`, `bash`, `zsh`,
+   `dash`, `ksh`, `fish`, `python*`, `perl`, `node`, `ruby`, `php`, `xargs`, `eval`, `exec`, `source`, `sudo`, `su`,
+   `doas` (anywhere, by the word's last path component, so `cdk init app --language python` asks too), `.` as a
+   command, `env`'s `-i` or `-u` in any spelling before its command (`-`, `-0i`, `-uNAME`, `--unset=…`,
+   `--ignore-environment`) and a lone `--`. An ask verb (5) keeps its reason and comes first; a deny stays a deny,
+   and a command that names no covered tool is not affected. An `allow` match that overlaps a quoted region (`'…'`,
+   `"…"`, `$'…'`) is text, not evidence: it neither allows nor denies, and the quote makes the command ask.
 
 The strictest part wins, and an infra allow or ask does not end the check: a later deny (a secret file) still wins.
 There is no carry-over: the environment must be on the part itself (`--profile <env>`, an `AWS_PROFILE=<env> `
@@ -236,12 +242,15 @@ prefix); one set by an earlier part, exported or inherited never counts. Nothing
 set `guard.infra`, and a `hub.json` named by `$HUB_CONFIG` cannot turn it on or widen `allow` (the mode and `allow` are
 the hook root's; that file's `prod_markers` and unusable values are added). Values in the reasons are escaped and capped
 at 100 characters. Patterns are searched with no flags, in Python 3.9 `re` syntax, on every Bash call that names a
-covered tool, with no cost cap: avoid nested quantifiers, and end an environment pattern with `(?=\s|$)` rather
-than `\b`, which also matches a name the shell glues to more text (`demo-dev"x`). Without `guard.infra`, the fixed rule also denies a
+covered tool, with no cost cap: avoid nested quantifiers. Bound an environment pattern by a space or tab, as a
+whole word (`(?<![^ \t])--profile[= ]demo-dev(?![^ \t])`), and an `AWS_PROFILE` prefix by the start of the part
+(`^[ \t]*AWS_PROFILE=demo-dev(?=[ \t])`): `\b` also matches inside a longer word (`demo-dev.x`, `demo-dev,staging`,
+a redirection target `>--profile=demo-dev`), and `\s` also matches a carriage return, a vertical tab or a no-break
+space, which the shell does not split words on. Without `guard.infra`, the fixed rule also denies a
 redirection glued to `terraform`, `aws`, `pulumi`, `kubectl` or `cdk`. Until a separate change, the generated
 `.claude/settings.json` still denies every `terraform` and `aws` command, whatever the guard decides. Accepted limits:
-tool names are matched case-sensitively (`AWS` is not seen); quoting or brace tricks inside a tool's word (`a""ws`,
-`{aws,x}`) hide it (AGH-127); the fixed rule misses options before the verb (`terraform -chdir=x apply`, AGH-126).
+tool names are matched case-sensitively (`AWS` is not seen); quoting or glob tricks inside a tool's word (`a""ws`,
+`a?s`, `aws*`) hide it (AGH-127); the fixed rule misses options before the verb (`terraform -chdir=x apply`, AGH-126).
 
 ## Layer 2: control plane and observability
 

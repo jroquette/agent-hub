@@ -48,7 +48,7 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `guard.deny_hosts` | list of host names | `[]` | guard: deny network calls to them |
 | `guard.deny_paths` | list of paths | `[]` | guard: deny any read or edit under them |
 | `guard.infra` | object; not in `hub.local.json` | absent | hooks' config reader (validated); present, even `{}`, it turns on the guard's infra classification (the [SPEC](../SPEC.md)'s infra guard; absent, the guard's fixed infra rule); an unknown key under it (other than `_` keys) is reported by the reader as unusable (`InfraSection.problem`; the CLI rejects it), and the guard then denies every infra command |
-| `guard.infra.allow` | list of Python `re` patterns (Infra patterns, below) | `[]` | hooks' config reader; guard: the allowed environments; a part or call naming a covered tool must match one unless it is a local-only form, and what passes is asked instead when the command is not simple (a backslash, `$'`, `$$`, a backtick, `#`, a quote inside a word, `xargs`, `eval`, `exec`, `source`, `.`, `bash`/`sh`/`zsh`/`dash -c`, `<<<`, `<<`: the [SPEC](../SPEC.md)'s infra guard); a match that overlaps a quoted region (`'…'`, `"…"`, `$'…'`) only asks |
+| `guard.infra.allow` | list of Python `re` patterns (Infra patterns, below) | `[]` | hooks' config reader; guard: the allowed environments; a part or call naming a covered tool must match one unless it is a local-only form, and what passes is asked instead when the command holds a character other than ASCII letters, digits, space, tab and `_ - . / : = @ , + %` (joined by `;`, `&&`, `||`, `|`, newline), or a word that always asks (a shell, `python*`, `perl`, `node`, `ruby`, `php`, `xargs`, `eval`, `exec`, `source`, `.` as a command, `env -i`/`-u`, `sudo`, `su`, `doas`, a lone `--`: the [SPEC](../SPEC.md)'s infra guard); a match that overlaps a quoted region (`'…'`, `"…"`, `$'…'`) neither allows nor denies |
 | `guard.infra.prod_markers` | list of Python `re` patterns (Infra patterns, below) | `[]` | hooks' config reader; guard: the production markers; a match anywhere in a command naming a covered tool denies it |
 | `modules` | object keyed by module id | `{}` | generator, commands, doctor (Modules) |
 | `doctor.rules` | object keyed by rule id | `{}` | `hub doctor`; contract in [hub-doctor.md](hub-doctor.md) |
@@ -89,9 +89,11 @@ retype); brain frontmatter lists repo dirs unquoted (no type resolution). A safe
   literal holds no control, format or line-separator character (Unicode Cc, Cf, Zl, Zp), backtick or brace.
 - Infra patterns: non-blank, no control character, compiling with Python's `re` (no repeat count overflow such as
   `a{4294967296}`, no too-deep nesting); searched (`re.search`) with no flags in Python 3.9 `re` syntax (the hooks run
-  on the system `python3`). Avoid nested quantifiers: `(a+)+$` takes over a second on a 25-character input. End an
-  environment pattern with `(?=\s|$)`, not `\b`: the shell glues `demo-dev"x` or `demo-dev\2` into another name that
-  `\b` still matches.
+  on the system `python3`). Avoid nested quantifiers: `(a+)+$` takes over a second on a 25-character input. Bound an
+  environment pattern by a space or tab, as a whole word, `(?<![^ \t])--profile[= ]demo-dev(?![^ \t])`, and an
+  `AWS_PROFILE` prefix by the part's start, `^[ \t]*AWS_PROFILE=demo-dev(?=[ \t])`; not `\b` (it also matches
+  `demo-dev.x`, `demo-dev{,-admin}` or a redirection target `>--profile=demo-dev`) or `\s` (it also matches a carriage
+  return, a vertical tab or a no-break space, which the shell does not split on).
 
 ### Versioning
 
