@@ -102,6 +102,26 @@ def test_rejects_unprocessable_problem_and_appends_nothing_when_envelope_malform
     assert store.read_all() == []
 
 
+LONG_IDS: list[tuple[dict[str, Any], str]] = [
+    (ENVELOPE | {"project": "p" * 201}, "project"),
+    (ENVELOPE | {"run": "r" * 201}, "run"),
+    (ENVELOPE | {"hook": ENVELOPE["hook"] | {"session_id": "s" * 201}}, "session_id"),
+]
+
+
+@pytest.mark.parametrize("case", LONG_IDS, ids=[field for _, field in LONG_IDS])
+def test_rejects_unprocessable_problem_when_id_longer_than_cap(
+    hooks_client: TestClient, store: SqliteEventStore, case: tuple[dict[str, Any], str]
+) -> None:
+    body, field = case
+
+    response = hooks_client.post("/api/v1/events/hooks", json=body)
+
+    assert response.status_code == 422, response.text
+    assert f"{field}: longer than 200 characters" in response.text
+    assert store.read_all() == []
+
+
 def test_rejects_unprocessable_problem_when_body_not_json(
     hooks_client: TestClient, store: SqliteEventStore
 ) -> None:

@@ -170,3 +170,15 @@ def test_labels_repo_and_agent_like_live_tail_when_cwd_in_hub_repo(tmp_path: Pat
     assert result.exit_code == 0, result.output
     [event] = open_event_store(db).read_all()
     assert (event.project, event.repo, event.agent) == ("acme", "demo-api", "Explore")
+
+
+def test_fails_and_writes_nothing_when_project_longer_than_cap(tmp_path: Path) -> None:
+    db = tmp_path / "events.db"
+
+    result = _collect(
+        ["--transcript", str(_transcript(tmp_path)), "--project", "p" * 201, "--db", str(db)]
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr == "error: --project: longer than 200 characters\n"
+    assert not db.exists()

@@ -33,7 +33,7 @@ from agent_hub.collector.jsonl import ParsedEvent, parse_events, read_stream, re
 from agent_hub.collector.run_records import RunEventMapper, RunRecordError
 from agent_hub.collector.transcript import TranscriptOrigin, parse_transcript
 from agent_hub.core.errors import EventConflictError
-from agent_hub.core.events.event import Event
+from agent_hub.core.events.event import MAX_ID_CHARS, Event, longer_than_cap
 from agent_hub.core.events.event_store import AppendResult
 from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.json_form import JsonValue
@@ -245,6 +245,8 @@ def _bounded_text(path: Path, max_bytes: int) -> str:
 
 
 def _project_or_exit(project: str | None, *, runs: Path | None) -> str:
+    if project and len(project) > MAX_ID_CHARS:
+        _fail(f"error: {longer_than_cap('--project')}")
     if project:
         return project
     for hub in _hub_candidates(runs):
@@ -269,7 +271,8 @@ def _hub_root() -> Path:
 
 
 def hub_project_name(hub: Path) -> str | None:
-    """``project.name`` of the hub's ``hub.json``, read leniently; None when unreadable."""
+    """``project.name`` of the hub's ``hub.json``, read leniently; None when unreadable or longer
+    than the id cap."""
     content = read_hub_bytes(hub / FILE_LABEL)
     if not isinstance(content, bytes):
         return None
@@ -279,7 +282,7 @@ def hub_project_name(hub: Path) -> str | None:
         return None
     section = document.get("project") if isinstance(document, dict) else None
     name = section.get("name") if isinstance(section, dict) else None
-    return name if isinstance(name, str) and name else None
+    return name if isinstance(name, str) and 0 < len(name) <= MAX_ID_CHARS else None
 
 
 def _default_database_path_or_exit() -> Path:

@@ -41,6 +41,7 @@ from agent_hub.core.readmodels.cursor import (
     InvalidCursorError,
     decode_cursor,
     encode_cursor,
+    id_digest,
 )
 from agent_hub.core.readmodels.fact_keys import canonical_events, resolve_facts
 from agent_hub.core.readmodels.filters import (
@@ -130,6 +131,28 @@ def _after(key: SortKey, item_id: str, cursor: Cursor, *, descending: bool) -> b
         raise InvalidCursorError(msg) from error
 
 
+def _after_cursor[T](
+    ordered: list[T],
+    cursor: Cursor,
+    *,
+    key: Callable[[T], SortKey],
+    item_id: Callable[[T], str],
+    descending: bool,
+) -> list[T]:
+    if cursor.id is not None:
+        return [
+            item
+            for item in ordered
+            if _after(key(item), item_id(item), cursor, descending=descending)
+        ]
+    # Compact cursor: start right after the item whose id has its digest, in the same snapshot.
+    for index, item in enumerate(ordered):
+        if id_digest(item_id(item)) == cursor.id_digest:
+            return ordered[index + 1 :]
+    msg = "invalid cursor: the item it points to is gone; load the first page again"
+    raise InvalidCursorError(msg)
+
+
 def _paginate[T](
     items: Sequence[T],
     *,
@@ -141,12 +164,13 @@ def _paginate[T](
 ) -> Page[T]:
     ordered = sorted(items, key=lambda item: (key(item), item_id(item)), reverse=descending)
     if request.cursor is not None:
-        cursor = decode_cursor(request.cursor)
-        ordered = [
-            item
-            for item in ordered
-            if _after(key(item), item_id(item), cursor, descending=descending)
-        ]
+        ordered = _after_cursor(
+            ordered,
+            decode_cursor(request.cursor),
+            key=key,
+            item_id=item_id,
+            descending=descending,
+        )
     page = ordered[: request.limit]
     next_cursor = None
     if len(ordered) > request.limit:

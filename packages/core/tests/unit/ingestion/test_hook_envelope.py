@@ -104,3 +104,16 @@ def test_rejects_envelope_when_sent_at_has_no_offset() -> None:
 
 def test_exposes_bounds_when_constants_read() -> None:
     assert (MAX_BODY_BYTES, MAX_STRING_BYTES, MAX_JSON_DEPTH) == (1_048_576, 65_536, 64)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "field"),
+    [
+        ({"project": "p" * 201}, "project"),
+        ({"run": "r" * 201}, "run"),
+        ({"hook": {"hook_event_name": "Stop", "session_id": "s" * 201}}, "session_id"),
+    ],
+)
+def test_rejects_envelope_when_id_longer_than_cap(overrides: dict[str, Any], field: str) -> None:
+    with pytest.raises(ValidationError, match=f"{field}: longer than 200 characters"):
+        HookEnvelope.model_validate(an_envelope_document(**overrides))

@@ -7,8 +7,9 @@ file order. Token usage is kept once per ``message.id`` (several lines repeat it
 id's first ``message`` event, or on a size-0 ``message`` added before its first block when the
 response starts with another block. ``source_id``: ``<sessionId>:<uuid>[:<block index>]``.
 
-A line that is not a JSON object, is too long or has no valid timestamp is a problem reported
-with its line number; a line of another type, or without the keys it needs, is ignored.
+A line that is not a JSON object, is too long, has no valid timestamp or names a session id
+longer than ``MAX_ID_CHARS`` is a problem reported with its line number; a line of another type,
+or without the keys it needs, is ignored.
 """
 
 import json
@@ -33,7 +34,13 @@ from agent_hub.collector.tool_metadata import (
     short_text,
     tool_call_payload,
 )
-from agent_hub.core.events.event import Event, EventSource, EventType
+from agent_hub.core.events.event import (
+    MAX_ID_CHARS,
+    Event,
+    EventSource,
+    EventType,
+    longer_than_cap,
+)
 from agent_hub.core.json_form import JsonValue
 
 MAX_LINE_BYTES: Final = 1_048_576
@@ -154,9 +161,12 @@ def _line_events(record: Record, origin: TranscriptOrigin, state: _State) -> Ite
     message = mapping(record, fields.MESSAGE)
     if kind not in {fields.USER, fields.ASSISTANT} or uuid is None or not message:
         return
+    session = text(record, fields.SESSION_ID) or origin.session
+    if len(session) > MAX_ID_CHARS:
+        raise _BadLineError(longer_than_cap(fields.SESSION_ID))
     line = _Line(
         origin=origin,
-        session=text(record, fields.SESSION_ID) or origin.session,
+        session=session,
         uuid=uuid,
         timestamp=_timestamp(record),
         repo_root=repo_root_of(text(record, fields.CWD), origin.repo),
