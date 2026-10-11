@@ -5,8 +5,16 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Path
 from fastapi.responses import StreamingResponse
 
-from agent_hub.api.rfc9457 import NotImplementedInBuildError
+from agent_hub.api.dependencies import StreamPorts, StreamPortsDep
 from agent_hub.api.schemas import MAX_QUERY_TEXT, LastEventIdHeader, ProjectParam
+from agent_hub.api.sse import StreamView, event_stream
+from agent_hub.api.stream_views import (
+    GlobalStreamView,
+    LiveStreamView,
+    RunStreamView,
+    SessionStreamView,
+)
+from agent_hub.core.readmodels.filters import Scope
 
 router = APIRouter(tags=["streams"])
 
@@ -17,6 +25,17 @@ class EventStreamResponse(StreamingResponse):
     """A ``text/event-stream`` response."""
 
     media_type = "text/event-stream"
+
+
+# A proxy or the browser must not buffer or keep a stream.
+STREAM_HEADERS = {"Cache-Control": "no-store", "X-Accel-Buffering": "no"}
+
+
+def _respond(
+    view: StreamView, ports: StreamPorts, last_event_id: str | None
+) -> EventStreamResponse:
+    stream = event_stream(view, reader=ports.reader, feed=ports.feed, last_event_id=last_event_id)
+    return EventStreamResponse(stream, headers=STREAM_HEADERS)
 
 
 def _stream_doc(events: str) -> dict[int | str, dict[str, Any]]:
@@ -38,10 +57,11 @@ def _stream_doc(events: str) -> dict[int | str, dict[str, Any]]:
     responses=_stream_doc("heartbeat, counts, collector"),
 )
 def stream_events(
-    *, project: ProjectParam = None, last_event_id: LastEventIdHeader = None
+    ports: StreamPortsDep, *, project: ProjectParam = None, last_event_id: LastEventIdHeader = None
 ) -> EventStreamResponse:
     """The global stream."""
-    raise NotImplementedInBuildError("stream_events")
+    view = GlobalStreamView(ports.models, ports.counters, Scope(project=project))
+    return _respond(view, ports, last_event_id)
 
 
 @router.get(
@@ -50,10 +70,10 @@ def stream_events(
     responses=_stream_doc("event, session, end, heartbeat"),
 )
 def stream_session_events(
-    session_id: IdPath, *, last_event_id: LastEventIdHeader = None
+    session_id: IdPath, ports: StreamPortsDep, *, last_event_id: LastEventIdHeader = None
 ) -> EventStreamResponse:
     """One session's events as they arrive."""
-    raise NotImplementedInBuildError("stream_session_events")
+    return _respond(SessionStreamView(ports.models, session_id), ports, last_event_id)
 
 
 @router.get(
@@ -62,10 +82,10 @@ def stream_session_events(
     responses=_stream_doc("tile.upsert, tile.remove, heartbeat"),
 )
 def stream_live_sessions(
-    *, project: ProjectParam = None, last_event_id: LastEventIdHeader = None
+    ports: StreamPortsDep, *, project: ProjectParam = None, last_event_id: LastEventIdHeader = None
 ) -> EventStreamResponse:
     """Live tiles as they change."""
-    raise NotImplementedInBuildError("stream_live_sessions")
+    return _respond(LiveStreamView(ports.models, Scope(project=project)), ports, last_event_id)
 
 
 @router.get(
@@ -73,6 +93,8 @@ def stream_live_sessions(
     response_class=EventStreamResponse,
     responses=_stream_doc("run, step, gate, heartbeat"),
 )
-def stream_run(run_id: IdPath, *, last_event_id: LastEventIdHeader = None) -> EventStreamResponse:
+def stream_run(
+    run_id: IdPath, ports: StreamPortsDep, *, last_event_id: LastEventIdHeader = None
+) -> EventStreamResponse:
     """One run's changes as they arrive."""
-    raise NotImplementedInBuildError("stream_run")
+    return _respond(RunStreamView(ports.models, run_id), ports, last_event_id)
