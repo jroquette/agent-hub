@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from agent_hub.api.app import create_app
-from agent_hub.api.server import LoopbackServer, PortInUseError, bind_loopback
+from agent_hub.api.server import LoopbackServer, PortInUseError, bind_address, bind_loopback
 from agent_hub.api.settings import ApiSettings
 
 
@@ -21,6 +21,25 @@ def test_binds_loopback_only_when_port_free() -> None:
         assert port > 0
     finally:
         sock.close()
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "127.0.0.2"])
+def test_binds_given_address_when_host_given(host: str) -> None:
+    sock = bind_address(host, 0)
+    try:
+        assert sock.getsockname()[0] == host
+    finally:
+        sock.close()
+
+
+def test_raises_port_in_use_when_given_address_taken() -> None:
+    first = bind_address("127.0.0.2", 0)
+    port = first.getsockname()[1]
+    try:
+        with pytest.raises(PortInUseError):
+            bind_address("127.0.0.2", port)
+    finally:
+        first.close()
 
 
 def test_raises_port_in_use_naming_port_when_port_taken() -> None:

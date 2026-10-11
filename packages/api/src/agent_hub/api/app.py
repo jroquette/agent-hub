@@ -93,7 +93,9 @@ def create_app(
     # on an API path, which must stay a 405.
     app.router.default = WebApp(web_dist)
     # add_middleware puts each new one outside the previous ones.
-    app.add_middleware(LocalSecurityMiddleware, port=api_settings.port)
+    app.add_middleware(
+        LocalSecurityMiddleware, port=api_settings.port, extra_hosts=api_settings.allowed_hosts
+    )
     app.add_middleware(UnhandledErrorMiddleware)
     app.add_middleware(RequestLogMiddleware)
     return app

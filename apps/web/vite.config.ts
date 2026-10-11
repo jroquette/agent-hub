@@ -1,12 +1,15 @@
 /// <reference types="vitest/config" />
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+import { DEV_SERVER, apiProxy } from "./src/lib/devProxy";
 
 // The production build goes into the API package, which serves it and ships it (D26).
 const OUT_DIR = "../../packages/api/src/agent_hub/api/web_dist";
 
 export default defineConfig({
   plugins: [react()],
+  // `make dev` (vite) only; the production app is served by `hub web` itself.
+  server: { ...DEV_SERVER, proxy: apiProxy() },
   build: {
     outDir: OUT_DIR,
     emptyOutDir: true,
