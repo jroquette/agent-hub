@@ -2,6 +2,7 @@ import { createElement, Fragment, useState } from "react";
 import type { ReactNode } from "react";
 
 import { fmtDuration, fmtMoney, fmtTokens } from "../lib/format";
+import { safeHref } from "../lib/safeHref";
 import { AppLink, IconButton, IdChip, IssueLink, Tooltip, Button, type Phase } from "./core";
 import { Sparkline } from "./data";
 import { Icon, type IconName } from "./Icon";
@@ -489,9 +490,6 @@ export function ActivityFeed({ items }: { items: ActivityEntry[] }) {
 }
 
 /* ---------- Mini Markdown renderer with frontmatter chips and AC tables ---------- */
-const SAFE_LINK = /^(https?:\/\/|\/|\.|#)/i;
-const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
-
 function inline(text: string): ReactNode[] {
   const out: ReactNode[] = [];
   const re = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\))/g;
@@ -506,10 +504,10 @@ function inline(text: string): ReactNode[] {
       const link = /\[([^\]]+)\]\(([^)]+)\)/.exec(token);
       const label = link?.[1] ?? token;
       const href = link?.[2] ?? "";
-      const safe = SAFE_LINK.test(href) || !SCHEME.test(href);
+      const safe = safeHref(href);
       out.push(
-        safe ? (
-          <a key={key++} href={href} rel="noreferrer">
+        safe !== null ? (
+          <a key={key++} href={safe} rel="noreferrer">
             {label}
           </a>
         ) : (

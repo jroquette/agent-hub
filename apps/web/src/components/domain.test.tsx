@@ -203,7 +203,7 @@ describe("Markdown", () => {
       <Markdown
         source={[
           "# Title",
-          "Some `code` and **bold** and [a link](https://example.com) and [bad](javascript:alert(1)).",
+          "Some `code` and **bold** and [a link](https://example.com) and [bad](javascript:alert(1)) and [blob](data:text/html,x) and [proto](//evil.example).",
           "- one",
           "- two",
           "1. first",
@@ -230,6 +230,8 @@ describe("Markdown", () => {
       "https://example.com",
     );
     expect(screen.queryByRole("link", { name: "bad" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "blob" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "proto" })).not.toBeInTheDocument();
     expect(screen.getAllByRole("listitem")).toHaveLength(3);
     expect(container.querySelector("blockquote")).toHaveTextContent("quoted");
     expect(screen.getByText("last verified").parentElement).toHaveAttribute("data-tone", "stale");
