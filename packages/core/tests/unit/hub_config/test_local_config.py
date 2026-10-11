@@ -9,6 +9,7 @@ from agent_hub.core.hub_config.local_config import (
     LocalProject,
     LocalTracker,
     check_local_document,
+    local_identity_bytes,
 )
 from agent_hub.core.hub_config.model import Project, Tracker
 from agent_hub.core.hub_config.problems import ConfigProblem
@@ -191,3 +192,53 @@ def test_never_echoes_value_when_local_object_holds_other_type(
 
     assert problems
     assert not [problem for problem in problems if shown in problem.message]
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        pytest.param(
+            {
+                "branch_prefix": "jane/",
+                "author_name": "Jane Roe",
+                "author_email": "jane@example.com",
+            },
+            b'{\n  "project": {\n    "branch_prefix": "jane/",\n    "author_name": "Jane Roe",\n'
+            b'    "author_email": "jane@example.com"\n  }\n}\n',
+            id="all-three",
+        ),
+        pytest.param(
+            {"author_name": "Jane Roe", "author_email": "jane@example.com"},
+            b'{\n  "project": {\n    "author_name": "Jane Roe",\n'
+            b'    "author_email": "jane@example.com"\n  }\n}\n',
+            id="name-and-email",
+        ),
+        pytest.param(
+            {"author_name": "Jos\u00e9 Roe"},
+            '{\n  "project": {\n    "author_name": "Jos\u00e9 Roe"\n  }\n}\n'.encode(),
+            id="utf8",
+        ),
+        pytest.param(
+            {
+                "author_email": "jane@example.com",
+                "author_name": "Jane Roe",
+                "branch_prefix": "jane/",
+            },
+            b'{\n  "project": {\n    "branch_prefix": "jane/",\n    "author_name": "Jane Roe",\n'
+            b'    "author_email": "jane@example.com"\n  }\n}\n',
+            id="reversed",
+        ),
+    ],
+)
+def test_writes_identity_bytes_when_keys_proposed(values: dict[str, str], expected: bytes) -> None:
+    assert local_identity_bytes(values) == expected
+
+
+def test_returns_problems_when_proposed_value_invalid() -> None:
+    result = local_identity_bytes({"branch_prefix": "-x/", "author_name": "Jane Roe"})
+
+    assert result == (
+        ConfigProblem(
+            "project.branch_prefix", hub_problem_at("project.branch_prefix", "-x/").message
+        ),
+    )
