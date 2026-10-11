@@ -130,12 +130,12 @@ def an_issue(**overrides: object) -> Issue:
 
 
 _OPEN_STATES = (
-    TrackerState(name="Todo", closed=False),
-    TrackerState(name="In Progress", closed=False),
+    TrackerState(name="Todo", type="unstarted"),
+    TrackerState(name="In Progress", type="started"),
 )
 _CLOSED_STATES = (
-    TrackerState(name="Done", closed=True),
-    TrackerState(name="Canceled", closed=True),
+    TrackerState(name="Done", type="completed"),
+    TrackerState(name="Canceled", type="canceled"),
 )
 
 # (id, state, labels): ready ones in every state, a repo label, an unlabelled one, another team.
@@ -183,7 +183,11 @@ def a_seeded_tracker_backend() -> FakeTrackerBackend:
     """
     return FakeTrackerBackend(
         states={
-            "DEM": (*_OPEN_STATES, *_CLOSED_STATES, TrackerState(name="Duplicate", closed=True)),
+            "DEM": (
+                *_OPEN_STATES,
+                *_CLOSED_STATES,
+                TrackerState(name="Duplicate", type="duplicate"),
+            ),
             "OPS": (*_OPEN_STATES, *_CLOSED_STATES),
         },
         team_labels={"DEM": ("demo-api", "bug"), "OPS": ()},
