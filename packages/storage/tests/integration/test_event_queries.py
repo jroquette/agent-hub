@@ -93,6 +93,15 @@ def test_raises_busy_error_when_find_or_mark_meets_locked_database(locked_db: Pa
         store.high_water_mark()
 
 
+def test_raises_busy_error_when_append_meets_locked_database(locked_db: Path) -> None:
+    store = SqliteEventStore(create_sqlite_engine(locked_db, busy_timeout_ms=50))
+
+    with pytest.raises(DatabaseBusyError) as raised:
+        store.append([an_event(source_id="busy-1")])
+
+    assert "busy" in str(raised.value)
+
+
 def test_raises_access_error_when_events_table_missing(tmp_path: Path) -> None:
     path = tmp_path / "empty.db"
     sqlite3.connect(path).close()
