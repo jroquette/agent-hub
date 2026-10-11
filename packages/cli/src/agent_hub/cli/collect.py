@@ -7,6 +7,10 @@ transcript (``--transcript FILE``, mapped to metadata-only events) or ``hub run`
 
 Transcripts and run records name no project: ``--project`` does, else the ``hub.json`` of the hub
 that holds the ``.agent-runs`` folder, else that of the hub root (``AGENT_HUB_ROOT`` or the cwd).
+A transcript's events get the labels the live tail gives them (B1), so a later Stop hook on the
+same file only finds duplicates: the repo is the hub root's ``hub.json`` repo whose checkout holds
+the transcript's cwd (as the hook sensor finds it), and the agent is ``--agent`` (``main`` for a
+session's own transcript; a subagent's transcript takes its agent type).
 """
 
 import json
@@ -23,6 +27,7 @@ from agent_hub.cli.database_path import default_database_path
 from agent_hub.cli.errors import CliError
 from agent_hub.cli.hub_config_reader import FILE_LABEL, read_hub_bytes
 from agent_hub.cli.hub_root import HUB_ROOT_VARIABLE
+from agent_hub.cli.transcript_repo import first_cwd, repo_of
 from agent_hub.collector.errors import CollectorError, InputNotFoundError, InputUnreadableError
 from agent_hub.collector.jsonl import ParsedEvent, parse_events, read_stream, read_text
 from agent_hub.collector.run_records import RunEventMapper, RunRecordError
@@ -77,6 +82,13 @@ def collect(
             show_default=False,
         ),
     ] = None,
+    agent: Annotated[
+        str,
+        typer.Option(
+            "--agent",
+            help="Agent of --transcript events: main, or a subagent transcript's agent type.",
+        ),
+    ] = TRANSCRIPT_AGENT,
     project: Annotated[
         str | None,
         typer.Option(
@@ -102,7 +114,9 @@ def collect(
     if sum(given is not None for given in (file, transcript, runs)) > 1:
         context.fail(ONE_INPUT)
     if transcript is not None:
-        events = _transcript_events(transcript, project=_project_or_exit(project, runs=None))
+        events = _transcript_events(
+            transcript, project=_project_or_exit(project, runs=None), agent=agent
+        )
         result = _ingest_or_exit(events, _database(db), position=_no_position)
     elif runs is not None:
         events = _run_events(runs, project=_project_or_exit(project, runs=runs))
@@ -139,9 +153,10 @@ def _parse_or_exit(text: str) -> list[ParsedEvent]:
     return list(batch.events)
 
 
-def _transcript_events(path: Path, *, project: str) -> list[Event]:
+def _transcript_events(path: Path, *, project: str, agent: str) -> list[Event]:
     text = _bounded_text_or_exit(path, MAX_TRANSCRIPT_BYTES)
-    origin = TranscriptOrigin(project=project, repo=None, agent=TRANSCRIPT_AGENT, session=path.stem)
+    repo = repo_of(first_cwd(text), _hub_root())
+    origin = TranscriptOrigin(project=project, repo=repo, agent=agent, session=path.stem)
     batch = parse_transcript(text, origin=origin)
     if batch.problems:
         _fail(*(f"line {problem.line_number}: {problem.reason}" for problem in batch.problems))
@@ -245,8 +260,12 @@ def _hub_candidates(runs: Path | None) -> list[Path]:
         folder = runs if runs.is_dir() else runs.parent
         if folder.resolve().name == RUNS_FOLDER:
             candidates.append(folder.resolve().parent)
-    candidates.append(Path(os.environ.get(HUB_ROOT_VARIABLE) or Path.cwd()))
+    candidates.append(_hub_root())
     return candidates
+
+
+def _hub_root() -> Path:
+    return Path(os.environ.get(HUB_ROOT_VARIABLE) or Path.cwd())
 
 
 def hub_project_name(hub: Path) -> str | None:

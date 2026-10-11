@@ -4,10 +4,16 @@ import os
 from pathlib import Path
 from typing import Any
 
+from typer.testing import CliRunner
+
+from agent_hub.cli.main import app as hub_cli
 from agent_hub.core.testing.hook_inputs import a_hook_input, an_envelope
 from agent_hub.core.testing.transcript_lines import (
     TRANSCRIPT_SESSION,
     a_text_block,
+    a_tool_result_line,
+    a_tool_use_block,
+    a_usage,
     a_user_line,
     an_assistant_line,
     transcript_text,
@@ -101,3 +107,41 @@ def test_reads_subagent_transcript_as_its_agent_when_subagent_stop_names_it(
     assert response.json() == {"appended": 1, "duplicates": 0}
     [row] = composed.rows()
     assert (row.source, row.agent, row.session) == ("transcript", "Explore", TRANSCRIPT_SESSION)
+
+
+def test_reports_only_duplicates_when_stop_follows_collect_of_same_transcript(
+    composed: Any, tmp_path: Path
+) -> None:
+    hub = tmp_path / "work" / "demo-hub"
+    hub.mkdir(parents=True)
+    (hub / "hub.json").write_text(
+        '{"project": {"name": "demo"}, "repos": [{"dir": "demo-api"}]}', encoding="utf-8"
+    )
+    cwd = str(tmp_path / "work" / "demo-api")
+    edit = {"file_path": f"{cwd}/src/app.py", "old_string": "a", "new_string": "b\nc"}
+    path = composed.projects / "-work-demo-api" / f"{TRANSCRIPT_SESSION}.jsonl"
+    path.write_text(
+        transcript_text(
+            [
+                a_user_line("one", cwd=cwd),
+                an_assistant_line(
+                    [a_tool_use_block("toolu_9", "Edit", edit)], usage=a_usage(), cwd=cwd
+                ),
+                a_tool_result_line("toolu_9", cwd=cwd),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    collected = CliRunner().invoke(
+        hub_cli,
+        ["collect", "--transcript", str(path), "--db", str(composed.settings.db_path)],
+        env={"AGENT_HUB_ROOT": str(hub)},
+    )
+    stop = _post(composed, a_hook_input("Stop", transcript_path=str(path), cwd=cwd))
+
+    assert collected.exit_code == 0, collected.output
+    rows = composed.rows()
+    assert collected.stdout == f"appended {len(rows)}, duplicates 0\n"
+    assert (stop.status_code, stop.json()) == (202, {"appended": 0, "duplicates": len(rows)})
+    assert {(row.repo, row.agent) for row in rows} == {("demo-api", "main")}
