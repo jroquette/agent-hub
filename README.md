@@ -41,6 +41,8 @@ Next steps:
   5. to upgrade later: edit platform.version in hub.json, then run hub sync
 ```
 
+This output is for a folder where `git init` already ran; in a folder without `.git`, a `git init` step follows `cd`.
+
 > [!IMPORTANT]
 > agent-hub is **experimental** (0.x, Phase 1 of 4 in the [spec](docs/SPEC.md)). The hub generator and its commands
 > work and are tested; the web control plane does not exist yet. The repository is public: installing needs no
@@ -127,6 +129,9 @@ the repos (git worktrees), and every change reaches `main` only through a pull r
   carries; its source is [`README.md.tmpl`](packages/generator/src/agent_hub/generator/templates/README.md.tmpl).
 - To create a hub: a GitHub repository for it (`--hub-repo`) and a Linear team for its tracker.
 
+To join a hub that already exists instead, clone it next to the project's repos and run `./hub setup` in it (see the
+hub's `README.md`, **Join this hub**); the steps below create a new hub.
+
 **1. Check that you can run the CLI.** `uvx` builds the tagged release from git and caches it; the first run takes a
 little longer.
 
@@ -212,9 +217,14 @@ the rest, and the hooks keep them inside the project's rules.
 1. **Start with `/kickoff`** (or after `/clear`). It shows the session brief (`./hub brief`), reads `brain/now.md` and
    the newest journal day, runs `check_fast` in each repo that has local changes, and proposes the next item. It asks
    before starting and never edits anything.
-2. **Do the work.** Use `/feature` for a change, `/research` or `/recall` for questions (see
+2. **Pick up an issue with `./hub start <ISSUE>`** (optional, from the hub's terminal). It creates the issue's
+   worktrees in the repos (or finds them: run it again to resume), moves the issue to `tracker.states.started`, then
+   opens Claude Code from the hub with those worktrees attached and the issue as the first prompt. `--repo DIR` limits
+   it to some repos; `--no-agent` stops before the session and prints the command that launches it. The hub's
+   `Makefile` has no target for it: call `./hub`.
+3. **Do the work.** Use `/feature` for a change, `/research` or `/recall` for questions (see
    [Skills and agents](#skills-and-agents)).
-3. **End with `/handoff`.** It rewrites `brain/now.md` (focus, work in flight, the exact next step, risks to watch)
+4. **End with `/handoff`.** It rewrites `brain/now.md` (focus, work in flight, the exact next step, risks to watch)
    and appends what was done, verified and learned to the day's journal, `brain/journal/YYYY/MM/DD.md`. The next
    session picks up from there without you explaining it again.
 
@@ -296,7 +306,7 @@ The size decides the ceremony:
 | `/create-plan <issue or slug>` | Turns a spec and its research into `plan.md`: small tasks, contracts first, each with a verification command; waits for your approval before any code | When a spec is ready and needs a plan |
 | `/recall <topic>` | Answers "what do we know about X, why was Y decided" from the brain, ADRs and past session transcripts, with sources | Before deciding something again |
 | `/learn [personal] <one sentence>` | Proposes one verified, non-obvious learning to `brain/_inbox/`; you decide whether and where it lands. With `personal`, writes your own preference or machine detail to `brain/auto/workspace/` (gitignored, never committed) | When the next session should know something |
-| `/triage <issue>` | Brings a tracker issue to Definition of Ready (ACs, size, repos, dependencies, a verification command), then labels it ready or `needs-human` | Before an issue goes to `/fix`, `/feature` or `hub run` |
+| `/triage <issue \| --backlog \| --hygiene> [--limit N]` | Brings a tracker issue to Definition of Ready (ACs, size, repos, dependencies, a verification command), then labels it ready or `needs-human`; `--backlog` takes the unlabeled open issues one by one, `--hygiene` reports orphan, stale and duplicate issues (at most 50 read per run, or `--limit N`) | Before an issue goes to `/fix`, `/feature` or `hub run` |
 | `/deliver <PR or issue>` | Drives an open PR to merged: conflicts, red CI and review threads, the gates before each push, the default branch's CI after the merge, then the tracker | After the PR is open |
 | `/review <PR>` | Reviews someone else's PR against its ticket, the ADRs and the brain; posts only what you approve | For a teammate's PR or one `hub run` opened |
 | `/release [version]` | Cuts a platform release: merged PRs, the bump, the check on the exact commit, notes with what `hub sync` rewrites, then the hub's pin bump | When `main` holds what the next version ships |
@@ -460,8 +470,9 @@ This is the most common path: a project with two repos tracked in Linear.
    `origin/main`. Remove them with `./hub worktree --remove demo-7-login` (branches are kept).
 
 6. **Keep the hub healthy.** Run `./hub doctor` in CI or before a release of your hub, and upgrade with the recipe
-   below. In your hub's CI, `./hub` needs the Actions secret `AGENT_HUB_READ_TOKEN`: a token with read-only Contents
-   on this repository only ([the hub's CI](docs/design/hub-adopt.md#in-the-hubs-ci)).
+   below. Your hub's CI needs no secret for this public repository; only when `platform.repository` names a private
+   source does `./hub` need the Actions secret `AGENT_HUB_READ_TOKEN`, a token with read-only Contents on that
+   repository only ([the hub's CI](docs/design/hub-adopt.md#in-the-hubs-ci)).
 
 ### Recipes
 
@@ -560,14 +571,19 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | --- | --- | --- | --- |
 | `schema_version` | yes | | Always `1` for now |
 | `platform.version` | yes | | The agent-hub release the hub runs (`X.Y.Z`) |
+| `platform.repository` | no | `git+https://github.com/jroquette/agent-hub` | The platform's git source, `git+https://<host>/<path>`, e.g. a private fork; the hub runs `<repository>@v<platform.version>#subdirectory=packages/agent-hub` |
 | `project.name` | yes | | Kebab-case project name |
 | `project.hub_repo` | yes | | GitHub `owner/name` of the hub |
 | `project.branch_prefix` | no | per developer | Prefix of every branch, e.g. `jdoe/`; leave it out on a team hub (see `hub.local.json` below) |
 | `project.default_branch` | no | `main` | Base of worktrees unless a repo sets its own; the guard blocks pushes to it |
 | `project.author_name`, `project.author_email` | no | per developer | Author of commits and PRs; leave them out on a team hub (see `hub.local.json` below) |
+| `project.conventions.branch` | no | `{prefix}{issue_lower}-{slug}` | Branch pattern; placeholders `{prefix}`, `{ISSUE}`, `{issue_lower}`, `{slug}`, and it needs `{ISSUE}` or `{issue_lower}` |
+| `project.conventions.commit_title` | no | `{type}({scope}): {summary} ({ISSUE})` | Commit title pattern; placeholders `{ISSUE}`, `{type}`, `{scope}`, `{summary}`, and it needs `{summary}` |
+| `project.conventions.pr_title` | no | the effective `commit_title` | PR title pattern, with `commit_title`'s placeholders |
 | `tracker.kind` | yes | | Task tracker; only `linear` today |
 | `tracker.team` | one of the two | | Tracker team key, e.g. `DEMO` |
 | `tracker.teams` | one of the two | | Several team keys, the first the default, e.g. `["APP", "OPS"]` |
+| `tracker.transport` | no | `api` | How the CLI reaches Linear: `api` (GraphQL with `LINEAR_API_KEY`) or `mcp` (the Linear MCP server through `claude -p`, [ADR 0015](docs/adr/0015-linear-mcp-tracker-transport.md)); `hub.local.json` may set it per developer |
 | `tracker.ready_label` | no | `agent-ready` | Label of issues an agent may pick up |
 | `tracker.failed_label` | no | `agent-failed` | Label set when an agent run fails |
 | `tracker.states.started` | no | `In Progress` | State `hub start` moves an issue to: on a fresh start, or on a resume while the issue is unstarted |
@@ -579,9 +595,11 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `repos[].check_fast_timeout` | no | `150` | Seconds the Stop hook gives `check_fast` (1–160, within its 160 s budget) |
 | `repos[].check` | yes | | The repo's full gate command (not blank), run before a PR |
 | `repos[].default_branch` | no | `project.default_branch` | Base of the repo's worktrees and PRs; the guard blocks pushes to it |
+| `repos[].conventions` | no | | Overrides `project.conventions` for this repo, key by key |
 | `guard.ask_before_edit` | no | `[]` | Paths where the guard asks before an edit |
 | `guard.deny_paths` | no | `[]` | Paths the guard never lets the agent read or edit |
 | `guard.deny_hosts` | no | `[]` | Hosts the guard blocks network calls to |
+| `guard.infra.allow`, `guard.infra.prod_markers` | no | `[]` | Python regexes for infra commands (allowed environments, production markers); validated, but the guard does not use them yet |
 | `modules` | no | `{}` | Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`), from 0.6.0: each selected one renders its files and `mk/<id>.mk`; `contract-sync` takes `{"source": <repo dir>, "target": <repo dir>}`, the others `{}` |
 | `doctor.rules` | no | `{}` | Per-rule `hub doctor` settings |
 
@@ -620,6 +638,8 @@ Example (synthetic project):
 
 On a hub shared by a team, leave the identity out of `hub.json`: each developer sets their own in a `hub.local.json`
 at the root of the hub's main checkout. It is never committed, and only the CLI and the hooks read it, never `hub sync`.
+`./hub setup` proposes it from the hub's git config and writes it after asking (`--yes`: without asking); it never
+rewrites an existing one.
 
 ```json
 {"project": {"branch_prefix": "jane/", "author_name": "Jane Roe", "author_email": "jane@example.com"},
@@ -630,7 +650,8 @@ at the root of the hub's main checkout. It is never committed, and only the CLI 
   `hub.json`'s rules, plus `_` comment keys; at most 64 KiB. Any other key is an error (`hub doctor` reports it).
 - **Precedence, per key:** `hub.local.json`, else `hub.json`, else the hub repo's `git config user.name`/`user.email`.
   With no prefix in either file, the prefix is your email's local part plus `/` (`jane@example.com` gives `jane/`).
-  With none at all, `hub worktree` and `hub run` refuse and name the three sources.
+  With none at all, `hub worktree`, `hub run` and `hub start` refuse and name the three sources; `hub setup` reports
+  the identity as missing.
 - **Existing hubs:** `hub init` writes `hub.local.json` into `.gitignore`, but `.gitignore` is seeded, so `hub sync`
   never adds it. Add the line by hand: `echo hub.local.json >> .gitignore`.
 - Nothing in it relaxes the guard: it cannot add or remove a guarded path, host, protected branch or repo.
@@ -647,11 +668,12 @@ Contract: [docs/design/developer-identity.md](docs/design/developer-identity.md)
 
 | Name | Required | Default | Description |
 | --- | --- | --- | --- |
-| `LINEAR_API_KEY` | for `hub next` and `hub run` with `tracker.transport` `"api"` (the default) | | Linear API key, read at call time; never stored in `hub.json` |
+| `LINEAR_API_KEY` | for `hub next`, `hub run` and `hub start` with `tracker.transport` `"api"` (the default) | | Linear API key, read at call time; never stored in `hub.json`; `hub setup` reports it when missing |
 | `AGENT_HUB_DB` | no | `$XDG_DATA_HOME/agent-hub/agent-hub.db`, else `~/.local/share/agent-hub/agent-hub.db` | Event database of `hub collect`; `--db` overrides it |
 | `XDG_DATA_HOME` | no | | Used for the default database path when it is absolute |
 | `HUB_AUTHOR_NAME`, `HUB_AUTHOR_EMAIL` | no | | Module `cloud`: your commit author in a cloud session, read by `scripts/cloud-setup.sh` only when `hub.json` names no author; written to the repo-local git config of the hub and each repo, never the global one (unset: a `WARN`, and commits carry the container's identity) |
-| `AGENT_HUB_ROOT` | no | the current folder | The hub folder for `hub worktree`, `hub brief`, `hub agent` and `hub start` (`hub sync` and `hub doctor` use the current folder); the `./hub` shim sets it for you |
+| `AGENT_HUB_ROOT` | no | the current folder | The hub folder for `hub setup`, `hub worktree`, `hub brief`, `hub agent`, `hub start`, `hub next`, `hub run` and `hub bench` (`hub sync` and `hub doctor` use the current folder); the `./hub` shim sets it for you |
+| `BENCH_EFFORT` | no | `medium` | Module `bench`: the `effortLevel` of `hub bench`'s sessions, `low`, `medium` or `high` |
 
 ## 🧱 Technical reference
 
@@ -667,7 +689,7 @@ flowchart BT
   storage["storage<br/>SQLAlchemy Core + Alembic, SQLite"] --> core["core<br/>entities, use cases, ports"]
   collector["collector<br/>event ingestion"] --> core
   generator["generator<br/>hub templates, renderer, file adapter"] --> core
-  tracker["tracker_linear<br/>Linear GraphQL"] --> core
+  tracker["tracker_linear<br/>Linear GraphQL or MCP"] --> core
   cli["cli<br/>the hub command (Typer)"] --> core
   cli --> storage
   cli --> collector
@@ -681,7 +703,7 @@ flowchart BT
 | `packages/storage` | `agent-hub-storage` | SQLite event store and the Alembic migrations, shipped in the package |
 | `packages/collector` | `agent-hub-collector` | Event collector adapter |
 | `packages/generator` | `agent-hub-generator` | Hub templates as package data, the `@@` renderer, the managed/seeded registry, the file adapter |
-| `packages/tracker_linear` | `agent-hub-tracker-linear` | `TrackerClient` over Linear's GraphQL API (stdlib only) |
+| `packages/tracker_linear` | `agent-hub-tracker-linear` | `TrackerClient` over Linear's GraphQL API (stdlib only), and `McpTrackerClient` over the Linear MCP server through `claude -p` ([ADR 0015](docs/adr/0015-linear-mcp-tracker-transport.md)) |
 | `packages/cli` | `agent-hub-cli` | The `hub` command |
 | `packages/agent-hub` | `agent-hub` | Meta-package that installs all of the above |
 
@@ -702,7 +724,7 @@ enforces this in `make check`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE
 ├── tests/
 │   ├── unit/scripts/        # tests of the repo scripts
 │   └── e2e/                 # installed hub + gate self-tests
-├── scripts/                 # repo tooling: test layout, coverage floors, PR title, release, schema export
+├── scripts/                 # repo tooling: test layout, pytest levels, coverage floors, PR title, release, schema export
 ├── docs/
 │   ├── SPEC.md              # product spec: vision, layers, event model, phases
 │   ├── ARCHITECTURE.md      # packages, dependency rule, where code goes
@@ -729,16 +751,20 @@ enforces this in `make check`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE
 | `hub sync [--check]` | Reapply the templates without overwriting what the project customized |
 | `hub sync --adopt [--accept PATH]… [--check]` | Join a hand-made hub to `hub.lock` (from 0.7.0): record what matches, create what is missing, list what differs |
 | `hub doctor [--only RULE]… [--json]` | Check rules, links, dead references, instruction size and template drift |
+| `hub setup [--yes]` | Set up this machine for the hub: tools (uv, git, python3, claude, gh) and the tracker credential, the developer identity (`hub.local.json` proposed from git config and written after asking; `--yes` without asking), each repo cloned or fetched next to the hub, then `hub doctor`; exit 0 when every line is `ok`, else 1, each missing line naming its fix |
 | `hub worktree NAME [--only REPO] [--remove]` | Create (or remove) one task's worktrees in the hub's repos |
 | `hub brief [--no-network]` | Print the session brief: `now.md`, recent journal, repo/PR/CI state |
 | `hub agent [ARGS…]` | Start `claude` with every repo attached; all arguments go to `claude` |
+| `hub next` | Print the tracker's ready issues (`tracker.ready_label`), oldest first: id, repo, title and url |
+| `hub run ISSUE --repo REPO [--live] [--max-turns N] [--budget USD] [--model M] [--effort low\|medium\|high] [--from implement\|verify]` | Take one issue to a PR: worktree, a headless implementing session, the repo's gate, PR, tracker report. A dry run unless `--live`; defaults `--max-turns 40`, `--budget 3.0`, `--model sonnet`, `--effort medium`; `--from verify` runs the gate, PR and report on the commits already made |
 | `hub start ISSUE [--repo DIR]… [--no-agent]` | Start an issue: its worktrees (named `<issue>-<title slug>`), the issue moved to `tracker.states.started`, then `claude` from the hub with those worktrees attached and the issue as first prompt; a rerun resumes the task; `--no-agent` prints how to launch it |
 | `hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …` | Benchmark the `hub-workflow` plugin on closed issues (module `bench`); `--validate` checks the graders |
 | `hub collect [FILE\|-] [--db PATH]` | Ingest canonical events from JSON Lines, all or nothing |
 | `hub --version` | Print the version |
 
 Command contracts: [docs/design/hub-generator.md](docs/design/hub-generator.md), [hub-sync.md](docs/design/hub-sync.md),
-[hub-adopt.md](docs/design/hub-adopt.md), [hub-doctor.md](docs/design/hub-doctor.md).
+[hub-adopt.md](docs/design/hub-adopt.md), [hub-doctor.md](docs/design/hub-doctor.md),
+[hub-setup.md](docs/design/hub-setup.md), [hub-start.md](docs/design/hub-start.md).
 
 </details>
 
@@ -756,6 +782,8 @@ Command contracts: [docs/design/hub-generator.md](docs/design/hub-generator.md),
 | Templates as package data; hub logic in the CLI | Hubs hold files and thin shims; logic is versioned and tested here | [ADR 0011](docs/adr/0011-templates-as-package-data.md), [ADR 0012](docs/adr/0012-cli-subsumes-hub-scripts.md) |
 | Releases are git tags run through `uvx` | No package index; each hub pins its own release | [ADR 0013](docs/adr/0013-release-by-git-tags.md) |
 | Tracker behind a core port; Linear over GraphQL | Swappable tracker; no SDK dependency | [ADR 0014](docs/adr/0014-tracker-port-linear-graphql.md) |
+| A Linear MCP transport, chosen by `tracker.transport` | Machines without a Linear API key reach the tracker; each `claude -p` call gets only the Linear tools it needs | [ADR 0015](docs/adr/0015-linear-mcp-tracker-transport.md) |
+| Identity from `hub.local.json`, then `hub.json`, then git config | A team shares one hub; each developer keeps their own branch prefix and author | [ADR 0016](docs/adr/0016-per-developer-identity.md) |
 
 Generated hooks are the exception to "logic lives in the CLI": they stay Python 3.9 standard-library scripts that never
 need the CLI. All but the guard fail open (the guard asks instead), so a session never breaks because of the
@@ -808,12 +836,13 @@ From the phases in [docs/SPEC.md](docs/SPEC.md#mvp-and-phases). Each phase start
 - [x] `hub worktree`, `hub brief`, `hub agent`, and the `./hub` and `./agent` shims pinned per hub (release 0.4.0)
 - [x] Tracker port with a Linear GraphQL adapter
 - [x] `hub next` and `hub run`: take an `agent-ready` issue to a PR through the tracker port
+- [x] Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`), their files and `hub bench` (release 0.6.0)
+- [x] `hub sync --adopt [--accept PATH]…`: join a hand-made hub (release 0.7.0)
+- [x] Dogfooding: the platform's own hub adopted with `hub sync --adopt` at 0.8.0
+- [x] `hub start` and `hub setup` (on `main`, after 0.8.0)
 
 **Now: Phase 1, hub generator**
 
-- [ ] Dogfooding: `hub init` generating the platform's own hub
-- [ ] `hub sync --adopt [--accept PATH]…`: join a hand-made hub
-- [ ] Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`) (their files and `hub bench` from 0.6.0)
 - [ ] Gate: an existing project's hand-made hub recreated with the same `make check` and bench
 
 **Next**
@@ -847,10 +876,11 @@ you. A managed file you edited by hand shows up as a conflict instead of being o
 
 **Does it send my code or transcripts anywhere?**
 agent-hub itself runs on your machine and has no server: `hub collect` writes to a local SQLite file. Its network calls
-go to GitHub: fetching the pinned release, `git fetch` in `hub worktree`, and `gh` for the PR and CI lines of
-`hub brief` unless you pass `--no-network`. The generated `make usage` target downloads `ccusage` from npm. `hub next`
-and `hub run` call Linear, with `LINEAR_API_KEY` or, with `tracker.transport` `"mcp"`, through your Linear MCP server
-and `claude -p`. Your agent sessions still talk to their model provider as usual.
+go to GitHub: fetching the pinned release, `git fetch` in `hub worktree` and `hub start`, `git clone` or `git fetch`
+of each repo and `gh auth status` in `hub setup`, the push and `gh pr create` of `hub run --live`, and `gh` for the
+PR and CI lines of `hub brief` unless you pass `--no-network`. The generated `make usage` target downloads `ccusage`
+from npm. `hub next`, `hub run` and `hub start` call Linear, with `LINEAR_API_KEY` or, with `tracker.transport`
+`"mcp"`, through your Linear MCP server and `claude -p`. Your agent sessions still talk to their model provider as usual.
 
 **Which trackers and agents are supported?**
 Linear and Claude Code today. The tracker is a port (`TrackerClient`) and the event model is agent-neutral, so other
