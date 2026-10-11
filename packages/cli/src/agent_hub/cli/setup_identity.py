@@ -148,8 +148,10 @@ def _proposal_gap(
         return None
     # The prefix is wanted, so the email was too: from hub.json, or from git and then valid
     # (else it is lacking above). A prefix is missing only for an email it cannot come from.
-    assert proposed.email is not None  # noqa: S101 - narrows the type; see the comment above
-    return invalid_prefix_item(proposed.email)
+    email = proposed.email
+    if email is None:  # pragma: no cover - unreachable, see above; the type allows it
+        return git_lacks_item([IdentityKey.AUTHOR_EMAIL], git_problem=git_problem())
+    return invalid_prefix_item(email)
 
 
 def _write_item(

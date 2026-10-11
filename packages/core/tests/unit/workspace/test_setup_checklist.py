@@ -869,6 +869,17 @@ class TestRepos:
                 f"missing repo demo-web: git not found Fix: {GIT_FIX}",
                 id="git-not-found",
             ),
+            pytest.param(
+                repo_item(WEB, RepoOutcome.GIT_CANNOT_RUN),
+                f"missing repo demo-web: git could not run Fix: {GIT_FIX}",
+                id="git-cannot-run",
+            ),
+            pytest.param(
+                repo_item(API, RepoOutcome.NO_COMMIT),
+                "missing repo demo-api: ../demo-api has no commit (an interrupted clone?)"
+                " Fix: move ../demo-api away, then ./hub setup",
+                id="no-commit",
+            ),
         ],
     )
     def test_prints_repo_line_when_repo_outcome_known(self, item: ChecklistItem, line: str) -> None:
