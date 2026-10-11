@@ -385,6 +385,8 @@ INFRA_UNKNOWN_REASON = ("{}: environment not recognised by guard.infra.allow (hu
 INFRA_ASK_REASON = "`{} {}` changes infrastructure on an allowed environment; confirm first"
 INFRA_CONFIG_REASON = "{} (hub.json) cannot be used ({}); infrastructure commands are denied until it is fixed"
 INFRA_SIMPLE_REASON = "`{}` is a shell construct guard.infra does not check; confirm this infrastructure command first"
+INFRA_QUOTED_REASON = ("{}: guard.infra.allow (hub.json) matches only quoted text here (`{}`), which may not be this "
+                       "command's environment; confirm first, or write the environment unquoted")
 INFRA_VALUE_CAP = 100  # characters of a value from hub.json or the command in an infra reason
 LEGACY_INFRA = re.compile(
     r"\bterraform\s+(apply|destroy|import)\b|\baws\s+\S+|\bpulumi\s+(up|destroy)\b|\bkubectl\s+(apply|delete)\b"
@@ -426,41 +428,48 @@ def _infra_compiled(key: str, patterns: tuple[str, ...]) -> tuple[list[re.Patter
     return compiled, None
 
 
-def _infra_shell(text: str) -> tuple[list[int], int, int, bool]:
+def _infra_shell(text: str) -> tuple[list[int], int, int, bool, list[tuple[int, int]]]:
     """How bash reads text's quotes, comments and backslashes: (where each backslash-newline it
     joins starts: after an odd run of backslashes, outside a comment, '…' and $'…'; where its first
     comment starts, or -1; where its first `#` inside a quote at a word start is, or -1; whether a
-    quote is left open)."""
+    quote is left open; each quoted region, '…', "…" or $'…', as (start, end) with its quotes, in
+    order, an open one up to the end of text)."""
     joins: list[int] = []
-    quote, comment, quoted, pos = "", -1, -1, 0
+    spans: list[tuple[int, int]] = []
+    quote, comment, quoted, pos, opened = "", -1, -1, 0, 0
     while True:
         found = INFRA_LEX.search(text, pos)
         if not found:
-            return joins, comment, quoted, quote not in ("", "#")
+            unclosed = quote not in ("", "#")
+            return joins, comment, quoted, unclosed, spans + [(opened, len(text))] * unclosed
         at, char = found.start(), found.group(0)
         pos = at + 1
         word_start = at == 0 or bool(INFRA_WORD_BREAK.match(text, at - 1))
+        closes = False
         if quote == "#":
             quote = "" if char == "\n" else quote
         elif quote == "'":
-            quote = "" if char == "'" else quote
+            closes = char == "'"
         elif quote == "$'":
             pos = at + 2 if char == "\\" else pos
-            quote = "" if char == "'" else quote
+            closes = char == "'"
         elif char == "\\":
             if text[at + 1:at + 2] == "\n":
                 joins.append(at)
             pos = at + 2
         elif quote == '"':
-            quote = "" if char == '"' else quote
+            closes = char == '"'
         elif char == "$" and text[at + 1:at + 2] == "$":
             pos = at + 2
         elif char == "$" and text[at + 1:at + 2] == "'":
-            quote, pos = "$'", at + 2
+            quote, pos, opened = "$'", at + 2, at
         elif char in "'\"":
-            quote = char
+            quote, opened = char, at
         elif char == "#" and word_start:
             quote, comment = "#", at if comment < 0 else comment
+        if closes:
+            quote = ""
+            spans.append((opened, at + 1))
         if char == "#" and word_start and quote not in ("", "#") and quoted < 0:
             quoted = at
 
@@ -481,7 +490,7 @@ def _uncommented(text: str) -> str:
     do not close, up to its first such `#` quoted or not (when unsure, cut)."""
     if "#" not in text:
         return text
-    _, comment, quoted, unclosed = _infra_shell(text)
+    _, comment, quoted, unclosed, _ = _infra_shell(text)
     if comment >= 0:
         return text[:comment]
     return text[:quoted] if unclosed and quoted >= 0 else text
@@ -548,6 +557,32 @@ class _Evidence:
         return self.flags[word.pattern]
 
 
+class _Quoted:
+    """A command's quoted regions ('…', "…" and $'…', with their quotes), as bash reads them."""
+
+    def __init__(self, text: str) -> None:
+        spans = _infra_shell(text)[4]
+        self.starts = [start for start, _ in spans]
+        self.ends = [end for _, end in spans]
+
+    def overlaps(self, start: int, end: int) -> bool:
+        """Whether text[start:end] (an empty one as its first character) overlaps a quoted region."""
+        index = bisect.bisect_left(self.starts, max(end, start + 1)) - 1
+        return index >= 0 and self.ends[index] > start
+
+
+def _infra_match(evidence: _Evidence, base: int, allow: list[re.Pattern[str]], quoted: _Quoted) -> tuple[bool, str | None]:
+    """(whether an allow pattern matches the evidence, which starts at base in the command, wholly
+    outside quotes; else the first match found, which overlaps a quoted region, or None) (E22)."""
+    first = None
+    for pattern in allow:
+        for found in pattern.finditer(evidence.text):
+            if not quoted.overlaps(base + found.start(), base + found.end()):
+                return True, None
+            first = found.group(0) if first is None else first
+    return False, first
+
+
 def _infra_local(text: str, mention: re.Match[str], evidence: _Evidence, end: int) -> bool:
     """Whether a covered-tool mention is a local-only form (D5): its words right after the tool,
     before end, the end of its call (a glued redirection, or blanks up to end, never are)."""
@@ -562,37 +597,48 @@ def _infra_local(text: str, mention: re.Match[str], evidence: _Evidence, end: in
     return bool(INFRA_LOCAL_ANY.match(text, at) or (local and local.match(text, at)))
 
 
-def _infra_unknown(text: str, mentions: list[re.Match[str]], allow: list[re.Pattern[str]]) -> tuple[bool, str | None]:
-    """(whether text, without its comment, matches an allow pattern; the tool a deny names: its
-    first mention when it is not allowed and some mention is not a local form, else None)."""
+def _infra_unknown(text: str, base: int, mentions: list[re.Match[str]], allow: list[re.Pattern[str]],
+                   quoted: _Quoted) -> tuple[bool, str | None, tuple[str, str] | None]:
+    """(whether text, at base in the command and without its comment, matches an allow pattern
+    outside quotes; the tool a deny names: its first mention when it is not allowed, no match is
+    quoted and some mention is not a local form, else None; (that tool, the quoted match) when the
+    only matches are quoted and some mention is not a local form, else None)."""
     if not mentions:
-        return False, None
+        return False, None, None
     evidence = _Evidence(text)
-    if any(pattern.search(evidence.text) for pattern in allow):
-        return True, None
+    allowed, match = _infra_match(evidence, base, allow, quoted)
+    if allowed:
+        return True, None, None
     if all(_infra_local(text, mention, evidence, len(text)) for mention in mentions):
-        return False, None
-    return False, mentions[0].group(1)
+        return False, None, None
+    tool = mentions[0].group(1)
+    return (False, None, (tool, match)) if match is not None else (False, tool, None)
 
 
-def _infra_calls(part: str, mentions: list[re.Match[str]], allow: list[re.Pattern[str]]) -> tuple[bool, str | None]:
-    """Each mention of the part checked against the call that holds it, found by its offset: (whether
-    such a call matches an allow pattern; the tool a deny names: the first mention of the first
-    call where a mention is neither allowed nor a local form, else None)."""
+def _infra_calls(part: str, base: int, mentions: list[re.Match[str]], allow: list[re.Pattern[str]],
+                 quoted: _Quoted) -> tuple[bool, str | None, tuple[str, str] | None]:
+    """Each mention of the part (at base in the command) checked against the call that holds it,
+    found by its offset: (whether such a call matches an allow pattern outside quotes; the tool a
+    deny names: the first mention of the first call where a mention is neither allowed, nor a local
+    form, nor in a call whose only matches are quoted, else None; (the first mention of the first
+    such call, its quoted match), else None)."""
     starts = [0] + [found.end() for found in INFRA_CALL.finditer(part)]
-    calls: dict[int, tuple[bool, _Evidence, str]] = {}
-    allowed = False
+    calls: dict[int, tuple[bool, str | None, _Evidence, str]] = {}
+    allowed, ask = False, None
     for mention in mentions:
         index = bisect.bisect_right(starts, mention.start()) - 1
         end = starts[index + 1] - 1 if index + 1 < len(starts) else len(part)
         if index not in calls:
             evidence = _Evidence(part[starts[index]:end])
-            calls[index] = (any(pattern.search(evidence.text) for pattern in allow), evidence, mention.group(1))
-        call_allowed, evidence, first = calls[index]
+            calls[index] = (*_infra_match(evidence, base + starts[index], allow, quoted), evidence, mention.group(1))
+        call_allowed, match, evidence, first = calls[index]
         allowed = allowed or call_allowed
-        if not call_allowed and not _infra_local(part, mention, evidence, end):
-            return allowed, first
-    return allowed, None
+        if call_allowed or _infra_local(part, mention, evidence, end):
+            continue
+        if match is None:
+            return allowed, first, None
+        ask = ask or (first, match)
+    return allowed, None, ask
 
 
 def _infra_ask(part: str) -> Verdict:
@@ -619,8 +665,9 @@ def check_infra(cmd: str, cfg: Config) -> Verdict:
     guard.infra or pattern denies; a production marker anywhere in the command denies; then per
     part, in order: the part, then the call that holds each tool mention, must match an allow
     pattern (text after an unquoted ` #` does not count) or hold only local-only forms, else deny;
-    a part where something matched an allow pattern asks on its first ask verb; and what would
-    pass asks when the command is not simple (E21)."""
+    a part where something matched an allow pattern asks on its first ask verb; what would pass
+    asks when the command is not simple (E21); and a part or call whose only allow matches overlap
+    a quoted region asks (E22), never allows."""
     infra = cfg.infra
     spaced = cmd.replace("\\\n", " ")
     if infra is None:
@@ -628,7 +675,9 @@ def check_infra(cmd: str, cfg: Config) -> Verdict:
             return "deny", "infrastructure commands (terraform/aws/pulumi/kubectl) are human-only"
         return None
     c = _infra_joined(cmd)
-    parts = [part for part in INFRA_PART.split(c) if INFRA_TOOL.search(part)]
+    bounds = [0] + [found.end() for found in INFRA_PART.finditer(c)]
+    ends = [found.start() for found in INFRA_PART.finditer(c)] + [len(c)]
+    parts = [(start, c[start:end]) for start, end in zip(bounds, ends) if INFRA_TOOL.search(c[start:end])]
     if not parts:
         return None
     if infra.problem:
@@ -641,19 +690,23 @@ def check_infra(cmd: str, cfg: Config) -> Verdict:
         if pattern.search(c) or pattern.search(spaced):
             return "deny", INFRA_MARKER_REASON.format(_infra_value(pattern.pattern, _printable))
     verdict: Verdict = None
-    for part in parts:
+    quoted, ask = _Quoted(c), None
+    for base, part in parts:
         mentions = list(INFRA_TOOL.finditer(part))
-        allowed, tool = _infra_unknown(part, mentions, allow)
+        allowed, tool, part_ask = _infra_unknown(part, base, mentions, allow, quoted)
         if not tool and INFRA_CALL.search(part):
-            calls_allowed, tool = _infra_calls(part, mentions, allow)
-            allowed = allowed or calls_allowed
+            calls_allowed, tool, calls_ask = _infra_calls(part, base, mentions, allow, quoted)
+            allowed, part_ask = allowed or calls_allowed, part_ask or calls_ask
         if tool:
             return "deny", INFRA_UNKNOWN_REASON.format(tool)
+        ask = ask or part_ask
         if allowed and verdict is None:
             verdict = _infra_ask(part)
     construct = None if verdict else _infra_unmodelled(cmd)
     if construct:
         return "ask", INFRA_SIMPLE_REASON.format(_infra_value(construct))
+    if ask and verdict is None:
+        return "ask", INFRA_QUOTED_REASON.format(ask[0], _infra_value(ask[1]))
     return verdict
 
 
