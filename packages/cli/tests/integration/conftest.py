@@ -1711,10 +1711,10 @@ def tracker_backend_for_run(*, failed: bool = True) -> FakeTrackerBackend:
     return FakeTrackerBackend(
         states={
             "DEM": (
-                TrackerState(name="Todo", closed=False),
-                TrackerState(name="In Progress", closed=False),
-                TrackerState(name="In Review", closed=False),
-                TrackerState(name="Done", closed=True),
+                TrackerState(name="Todo", type="unstarted"),
+                TrackerState(name="In Progress", type="started"),
+                TrackerState(name="In Review", type="started"),
+                TrackerState(name="Done", type="completed"),
             )
         },
         team_labels={"DEM": ("demo-api", "demo-web")},
@@ -1752,9 +1752,13 @@ class RecordingTracker:
         self._call("get_issue", issue_id)
         return self._client.get_issue(issue_id)
 
-    def move_state(self, issue_id: str, state_name: str) -> None:
-        self._call("move_state", issue_id, state_name)
-        self._client.move_state(issue_id, state_name)
+    def move_state(
+        self, issue_id: str, state_name: str, *, only_if_unstarted: bool = False
+    ) -> bool:
+        # The flag is recorded only when set, so an unconditional move records as before.
+        flag = ("only_if_unstarted",) if only_if_unstarted else ()
+        self._call("move_state", issue_id, state_name, *flag)
+        return self._client.move_state(issue_id, state_name, only_if_unstarted=only_if_unstarted)
 
     def add_label(self, issue_id: str, name: str) -> None:
         self._call("add_label", issue_id, name)
@@ -1773,6 +1777,30 @@ class RecordingTracker:
 def run_tracker() -> RecordingTracker:
     """A recording tracker over ``tracker_backend_for_run()``."""
     return RecordingTracker(tracker_backend_for_run())
+
+
+START_DESCRIPTION = "Collect the synthetic events.\n"
+
+
+def tracker_backend_for_start() -> FakeTrackerBackend:
+    """``hub start``'s tracker: DEM-7 ``Add the collector`` in ``Todo``, over the team states
+    ``Todo`` (unstarted), ``In Progress`` and ``In Review`` (started) and ``Done``."""
+    issue = an_issue(
+        id="DEM-7", title="Add the collector", description=START_DESCRIPTION, labels=()
+    )
+    backend = tracker_backend_for_run()
+    return FakeTrackerBackend(
+        states=backend.states,
+        team_labels=backend.team_labels,
+        workspace_labels=backend.workspace_labels,
+        issues={issue.id: issue},
+    )
+
+
+@pytest.fixture
+def start_tracker() -> RecordingTracker:
+    """A recording tracker over ``tracker_backend_for_start()``."""
+    return RecordingTracker(tracker_backend_for_start())
 
 
 @pytest.fixture

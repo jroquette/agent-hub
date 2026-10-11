@@ -122,6 +122,44 @@ def test_applies_defaults_when_optional_fields_absent() -> None:
     assert dump["doctor"] == {"rules": {}}
 
 
+def test_defaults_tracker_states_when_key_absent() -> None:
+    document = a_hub_document()
+    assert "states" not in document["tracker"]
+
+    config = HubConfig.model_validate(document)
+
+    assert config.tracker.states.started == "In Progress"
+    assert config.tracker.states.review == "In Review"
+
+
+def test_keeps_default_review_when_tracker_states_sets_started() -> None:
+    document = a_hub_document()
+    document["tracker"]["states"] = {"started": "Doing"}
+
+    config = HubConfig.model_validate(document)
+
+    assert config.tracker.states.started == "Doing"
+    assert config.tracker.states.review == "In Review"
+
+
+@pytest.mark.parametrize(
+    ("states", "expected"),
+    [
+        ({"done": "x"}, [(("tracker", "states", "done"), "extra_forbidden")]),
+        ({"started": ""}, [(("tracker", "states", "started"), "string_too_short")]),
+        ({"review": "a\x01b"}, [(("tracker", "states", "review"), "string_pattern_mismatch")]),
+    ],
+    ids=["unknown-key", "empty-started", "control-character-review"],
+)
+def test_rejects_tracker_states_at_its_location_when_value_invalid(
+    states: dict[str, str], expected: list[tuple[tuple[str | int, ...], str]]
+) -> None:
+    document = a_hub_document()
+    document["tracker"]["states"] = states
+
+    assert error_types(document) == expected
+
+
 def schema_defaults(node: object) -> list[object]:
     if isinstance(node, list):
         return [default for item in node for default in schema_defaults(item)]

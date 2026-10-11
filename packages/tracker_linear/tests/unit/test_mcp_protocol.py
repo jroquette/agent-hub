@@ -90,8 +90,18 @@ _REPLIES: list[tuple[McpCall[Any], dict[str, Any], object]] = [
     ),
     (
         state_read_call("DEM-1"),
-        {"id": "DEM-1", "state": "Todo", "states": ["Todo", "In Review", "Done"]},
-        StateRead(issue_id="DEM-1", state="Todo", states=("Todo", "In Review", "Done")),
+        {
+            "id": "DEM-1",
+            "state": "Todo",
+            "state_type": "unstarted",
+            "states": ["Todo", "In Review", "Done"],
+        },
+        StateRead(
+            issue_id="DEM-1",
+            state="Todo",
+            state_type="unstarted",
+            states=("Todo", "In Review", "Done"),
+        ),
     ),
     (
         label_read_call("add_label", "DEM-1"),
@@ -231,6 +241,23 @@ def test_parses_reply_when_shape_exact(
     assert parse_reply(call, "  " + _line(reply) + "\n") == parsed
 
 
+def test_refuses_state_read_when_reply_lacks_state_type() -> None:
+    # The state type decides a conditional move: a read without it is another shape (O5).
+    reply = {"id": "DEM-1", "state": "Todo", "states": ["Todo", "Done"]}
+
+    with pytest.raises(TrackerError, match=r"^move_state DEM-1: the reply has another shape"):
+        parse_reply(state_read_call("DEM-1"), _line(reply))
+
+
+@pytest.mark.parametrize("state_type", ["Unstarted", "Todo", "unstarted ", "started\n", ""])
+def test_refuses_state_read_when_state_type_not_linear_type(state_type: str) -> None:
+    # A garbled type would read as "not unstarted" and silently skip a conditional move.
+    reply = {"id": "DEM-1", "state": "Todo", "state_type": state_type, "states": ["Todo"]}
+
+    with pytest.raises(TrackerError, match=r"^move_state DEM-1: the reply has another shape"):
+        parse_reply(state_read_call("DEM-1"), _line(reply))
+
+
 def _drop_first_key(reply: dict[str, Any]) -> dict[str, Any]:
     first = next(iter(reply))
     return {name: value for name, value in reply.items() if name != first}
@@ -304,9 +331,16 @@ def test_rejects_reply_when_issues_over_bound() -> None:
     ids=["states", "labels"],
 )
 def test_rejects_reply_when_names_over_bound(call: McpCall[Any], field: str) -> None:
-    reply = {"id": "DEM-1", "state": "Todo", "labels": [], "available_labels": [], "states": []}
+    reply = {
+        "id": "DEM-1",
+        "state": "Todo",
+        "state_type": "unstarted",
+        "labels": [],
+        "available_labels": [],
+        "states": [],
+    }
     keys = {
-        "states": ("id", "state", "states"),
+        "states": ("id", "state", "state_type", "states"),
         "available_labels": ("id", "labels", "available_labels"),
     }[field]
     exact = {name: reply[name] for name in keys}
@@ -501,8 +535,14 @@ def test_refuses_name_when_request_name_over_cap(build: Any, operation: str) -> 
 @pytest.mark.parametrize(
     ("call", "reply"),
     [
-        (state_read_call("DEM-1"), {"id": "DEM-1", "state": "Todo", "states": [_LONG_NAME]}),
-        (state_read_call("DEM-1"), {"id": "DEM-1", "state": _LONG_NAME, "states": []}),
+        (
+            state_read_call("DEM-1"),
+            {"id": "DEM-1", "state": "Todo", "state_type": "unstarted", "states": [_LONG_NAME]},
+        ),
+        (
+            state_read_call("DEM-1"),
+            {"id": "DEM-1", "state": _LONG_NAME, "state_type": "unstarted", "states": []},
+        ),
         (
             label_read_call("add_label", "DEM-1"),
             {"id": "DEM-1", "labels": [], "available_labels": [_LONG_NAME]},
@@ -514,7 +554,14 @@ def test_refuses_name_when_request_name_over_cap(build: Any, operation: str) -> 
             {"issues": [{**_ISSUE_JSON, "state_type": _LONG_NAME}], "more": False},
         ),
     ],
-    ids=["states", "state", "available-labels", "saved-labels", "issue-labels", "state-type"],
+    ids=[
+        "states",
+        "state",
+        "available-labels",
+        "saved-labels",
+        "issue-labels",
+        "state-type",
+    ],
 )
 def test_refuses_reply_when_name_over_cap(call: McpCall[Any], reply: dict[str, Any]) -> None:
     with pytest.raises(TrackerError, match=f"a name over {MAX_NAME_CHARS} characters"):

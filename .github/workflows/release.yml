@@ -1,7 +1,7 @@
 # A release is an annotated tag vX.Y.Z on a commit of main, made by the owner by hand (ADR 0013,
-# docs/CONTRIBUTING.md). This job checks each pushed v* tag: its form and the cli and meta versions
-# (scripts/check_release.py), that its commit is on main, and that the pinned uvx command prints
-# that version. Read-only: it creates, moves and publishes nothing. No full gate here: main
+# docs/CONTRIBUTING.md). This job checks each pushed v* tag: its form, that it is annotated and the
+# cli and meta versions (scripts/check_release.py), that its commit is on main, and that the pinned
+# uvx command prints that version. Read-only: it creates, moves and publishes nothing. No full gate here: main
 # already passed `make check`.
 # The tag goes through env, never ${{ }} inside run: (script injection).
 name: release
@@ -35,11 +35,20 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           version: "0.12.19"
-      # First, so the later steps only ever print a validated vX.Y.Z.
-      - name: Check the tag form and the cli and meta versions
+      # First, so the later steps only ever print a validated vX.Y.Z. Annotated or not is asked of
+      # the remote: checkout may fetch an annotated tag as lightweight. Only an annotated tag has a
+      # peeled ^{} entry; ls-remote prints nothing for a lightweight one. The token reaches git only
+      # through the GIT_CONFIG_* rewrite (never in the URL, never printed).
+      - name: Check the tag form, that it is annotated, and the cli and meta versions
         env:
           TAG: ${{ github.ref_name }}
-        run: uv run --no-project --python 3.14 python scripts/check_release.py --tag="$TAG"
+          GIT_CONFIG_COUNT: "1"
+          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/
+        run: |
+          peeled="$(git ls-remote --tags origin "refs/tags/$TAG^{}")" \
+            || { echo "release check: git ls-remote failed (see git's error above)" >&2; exit 1; }
+          uv run --no-project --python 3.14 python scripts/check_release.py --tag="$TAG" --peeled="$peeled"
       # ^{commit} handles annotated and lightweight tags (checkout may fetch the tag as lightweight).
       - name: Check the tag is on main
         env:
@@ -49,8 +58,8 @@ jobs:
           commit="$(git rev-parse --verify -q "refs/tags/$TAG^{commit}")" || { echo "tag $TAG: not found in the checkout" >&2; exit 1; }
           git merge-base --is-ancestor "$commit" origin/main || { echo "tag $TAG: its commit is not on main" >&2; exit 1; }
           echo "tag $TAG: its commit is on main"
-      # Run outside the checkout, as a user would. The token reaches git only through the
-      # GIT_CONFIG_* rewrite below (never in the URL, never printed); uv fetches with system git.
+      # Run outside the checkout, as a user would. The token reaches git as in the first check;
+      # uv fetches with system git.
       - name: Check the pinned uvx command prints the version
         working-directory: ${{ runner.temp }}
         env:

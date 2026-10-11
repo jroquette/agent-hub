@@ -87,13 +87,13 @@ def test_seeds_teams_states_and_labels_when_tracker_backend_built() -> None:
     backend = a_seeded_tracker_backend()
 
     states = (
-        TrackerState(name="Todo", closed=False),
-        TrackerState(name="In Progress", closed=False),
-        TrackerState(name="Done", closed=True),
-        TrackerState(name="Canceled", closed=True),
+        TrackerState(name="Todo", type="unstarted"),
+        TrackerState(name="In Progress", type="started"),
+        TrackerState(name="Done", type="completed"),
+        TrackerState(name="Canceled", type="canceled"),
     )
     assert backend.states == {
-        "DEM": (*states, TrackerState(name="Duplicate", closed=True)),
+        "DEM": (*states, TrackerState(name="Duplicate", type="duplicate")),
         "OPS": states,
     }
     assert backend.team_labels == {"DEM": ("demo-api", "bug"), "OPS": ()}

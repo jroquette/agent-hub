@@ -573,6 +573,8 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `tracker.teams` | one of the two | | Several team keys, the first the default, e.g. `["APP", "OPS"]` |
 | `tracker.ready_label` | no | `agent-ready` | Label of issues an agent may pick up |
 | `tracker.failed_label` | no | `agent-failed` | Label set when an agent run fails |
+| `tracker.states.started` | no | `In Progress` | State `hub start` moves an issue to: on a fresh start, or on a resume while the issue is unstarted |
+| `tracker.states.review` | no | `In Review` | Reserved for the review step; not read yet |
 | `repos[].dir` | yes | | Folder name of the repo, next to the hub |
 | `repos[].github` | yes | | GitHub `owner/name` |
 | `repos[].role` | no | `app` | Free string; `app` is the only known value |
@@ -652,7 +654,7 @@ Contract: [docs/design/developer-identity.md](docs/design/developer-identity.md)
 | `AGENT_HUB_DB` | no | `$XDG_DATA_HOME/agent-hub/agent-hub.db`, else `~/.local/share/agent-hub/agent-hub.db` | Event database of `hub collect`; `--db` overrides it |
 | `XDG_DATA_HOME` | no | | Used for the default database path when it is absolute |
 | `HUB_AUTHOR_NAME`, `HUB_AUTHOR_EMAIL` | no | | Module `cloud`: your commit author in a cloud session, read by `scripts/cloud-setup.sh` only when `hub.json` names no author; written to the repo-local git config of the hub and each repo, never the global one (unset: a `WARN`, and commits carry the container's identity) |
-| `AGENT_HUB_ROOT` | no | the current folder | The hub folder for `hub worktree`, `hub brief` and `hub agent` (`hub sync` and `hub doctor` use the current folder); the `./hub` shim sets it for you |
+| `AGENT_HUB_ROOT` | no | the current folder | The hub folder for `hub worktree`, `hub brief`, `hub agent` and `hub start` (`hub sync` and `hub doctor` use the current folder); the `./hub` shim sets it for you |
 
 ## 🧱 Technical reference
 
@@ -733,6 +735,7 @@ enforces this in `make check`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE
 | `hub worktree NAME [--only REPO] [--remove]` | Create (or remove) one task's worktrees in the hub's repos |
 | `hub brief [--no-network]` | Print the session brief: `now.md`, recent journal, repo/PR/CI state |
 | `hub agent [ARGS…]` | Start `claude` with every repo attached; all arguments go to `claude` |
+| `hub start ISSUE [--repo DIR]… [--no-agent]` | Start an issue: its worktrees (named `<issue>-<title slug>`), the issue moved to `tracker.states.started`, then `claude` from the hub with those worktrees attached and the issue as first prompt; a rerun resumes the task; `--no-agent` prints how to launch it |
 | `hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …` | Benchmark the `hub-workflow` plugin on closed issues (module `bench`); `--validate` checks the graders |
 | `hub collect [FILE\|-] [--db PATH]` | Ingest canonical events from JSON Lines, all or nothing |
 | `hub --version` | Print the version |
