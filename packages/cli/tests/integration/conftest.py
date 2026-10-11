@@ -1784,6 +1784,7 @@ def ship_workspace(
 
 
 SHIP_STATES = ("Todo", "In Progress", "In Review", "Done")
+_SHIP_STATE_TYPES = {"Todo": "unstarted", "Done": "completed"}
 
 
 def _tracker_backend_for_ship(
@@ -1794,7 +1795,12 @@ def _tracker_backend_for_ship(
     labels = ("demo-api", "demo-web", *(("agent-failed",) if failed else ()))
     issue = an_issue(id="DEM-7", title="Synthetic ship issue", state="In Progress", labels=labels)
     return FakeTrackerBackend(
-        states={"DEM": tuple(TrackerState(name=name, closed=name == "Done") for name in states)},
+        states={
+            "DEM": tuple(
+                TrackerState(name=name, type=_SHIP_STATE_TYPES.get(name, "started"))
+                for name in states
+            )
+        },
         team_labels={"DEM": ("demo-api", "demo-web")},
         workspace_labels=("agent-ready", "agent-failed"),
         issues={issue.id: issue},
