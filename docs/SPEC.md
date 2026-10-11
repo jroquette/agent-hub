@@ -201,9 +201,11 @@ can relax a guard. Commits are authored by the developer running the session, an
 repo-local, never global, only when `hub.json` holds no author.
 
 **The infra guard.** With `guard.infra`, the guard hook checks a Bash command only when it names a covered tool: the
-tool's word (case-sensitive) followed by an argument or by a redirection glued to it (`aws>/dev/null s3 ls`), wherever
-it sits, so wrappers, quotes and nested calls do not hide it (`env aws …`, `bash -c "aws …"`, `$(aws …)`, `'aws' …`,
-even `grep aws notes.txt`). The command is split into parts at `;`, `&&`, `||`, `|` and newlines, then:
+tool's word (case-sensitive) followed by an argument, by a redirection glued to it (`aws>/dev/null s3 ls`), or by
+nothing up to the end of its part or call (`… | xargs aws`, `(aws)`), wherever it sits, so wrappers, quotes and
+nested calls do not hide it (`env aws …`, `bash -c "aws …"`, `$(aws …)`, `'aws' …`, even `grep aws notes.txt`). Only
+the backslash-newlines bash joins are joined (after an odd run of backslashes, outside a comment and single quotes).
+The command is split into parts at `;`, `&&`, `||`, `|` and newlines, then:
 
 1. An unusable `guard.infra` (a wrong type, an unusable item, an unknown key under it) or a pattern the hooks' Python
    cannot compile (newer syntax on the system 3.9, e.g. `(?>…)`) denies, naming its location: it fails closed.
@@ -220,6 +222,11 @@ even `grep aws notes.txt`). The command is split into parts at `;`, `&&`, `||`, 
    `cloudformation … deploy|delete-stack`; `cdk deploy|destroy`; `terraform apply|destroy|import`;
    `pulumi up|destroy`; `kubectl apply|create|delete|replace|patch|scale`;
    `helm install|upgrade|uninstall|rollback`; `sam deploy|delete`; `serverless deploy|remove`.
+6. Simple or ask: what would pass (an allowed part or a local-only form) passes only when the whole command is
+   simple, holding none of the constructs the guard does not model: a backslash, `$'`, `$$`, a backtick, `#`, a quote
+   inside a word (`a''b`, `-backen''d`), `xargs`, `eval`, `exec`, `source`, `.` as a command, `bash`/`sh`/`zsh`/`dash`
+   `-c`, a here-string `<<<` or a heredoc `<<`. Otherwise it asks, naming the first one; a deny or an ask stays as it
+   is, and a command that names no covered tool is not affected.
 
 The strictest part wins, and an infra allow or ask does not end the check: a later deny (a secret file) still wins.
 There is no carry-over: the environment must be on the part itself (`--profile <env>`, an `AWS_PROFILE=<env> `

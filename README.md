@@ -449,7 +449,10 @@ or inherited one, or one from an earlier part, does not count; neither does a tr
 local-only (`--version`, `help`, `cdk synth`, `terraform fmt|validate`, `terraform init -backend=false`,
 `kubectl version --client`, `helm template|lint`, `sam build|validate`); anything else is blocked. On an allowed environment, deploy, destroy and delete verbs
 (`terraform apply|destroy|import`, `kubectl apply|delete|…`, `aws s3 rm`, `aws … delete-*`, `cdk deploy`, …) are
-asked first. The tool is found behind wrappers, quotes and redirections (`env aws …`, `bash -c "aws …"`,
+asked first. A command that would pass is asked first too when it is not simple, that is when it holds a backslash,
+`$'`, `$$`, a backtick, `#`, a quote inside a word (`a''b`), `xargs`, `eval`, `exec`, `source`, `.`, `bash -c` (or
+`sh`/`zsh`/`dash -c`), `<<<` or `<<`: the guard does not model these, so it never lets them through unseen. A tool
+word with nothing after it (`… | xargs aws`) counts as a call with no environment. The tool is found behind wrappers, quotes and redirections (`env aws …`, `bash -c "aws …"`,
 `aws>/dev/null …`), but its name is case-sensitive and quoting tricks inside it (`a""ws`) hide it. If `guard.infra` or
 one of its patterns cannot be used (a wrong value, or regex syntax the system Python 3.9 lacks), every infra command
 is blocked until it is fixed. Patterns are Python `re`, searched with no flags on every such command: avoid nested
