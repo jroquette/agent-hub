@@ -9,10 +9,17 @@ from agent_hub.core.ingestion.hook_envelope import HookEnvelope
 
 
 class TranscriptRef(BaseModel):
-    """A transcript a hook names: the main one (Stop, SessionEnd) or a subagent's (SubagentStop)."""
+    """A transcript a hook names: the main one (Stop, SessionEnd) or a subagent's (SubagentStop).
+
+    ``project``, ``repo`` and ``agent`` are who the transcript's events belong to, as the hook
+    that named it was attributed; ``session`` is used for lines that name none.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    project: str = Field(min_length=1)
+    repo: str | None = None
+    agent: str | None = None
     session: str = Field(min_length=1)
     path: str = Field(min_length=1)
     kind: Literal["main", "subagent"]

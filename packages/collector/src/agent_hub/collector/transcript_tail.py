@@ -7,9 +7,7 @@ read takes at most ``max_bytes`` and stops at the last complete line, so a line 
 read next time. A line longer than ``max_line_bytes`` is skipped and counted. Offsets, turns and
 the usage message ids seen live in memory per path, the newest ``max_paths`` kept; after a
 restart a file is read again from the start and the store's idempotency drops the duplicates.
-
-A ``TranscriptRef`` names a session and a path but not who it belongs to: the hook mapper
-remembers each ref's origin (project, repo, agent) in ``SessionOrigins`` when it returns the ref.
+The events are attributed to the ref's project, repo and agent, as the hook mapper set them.
 """
 
 import os
@@ -29,26 +27,6 @@ _OPEN_FLAGS: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 _NEWLINE: Final = b"\n"
 
 
-class SessionOrigins:
-    """Who each transcript path belongs to, as the hook mapper last saw it (newest kept)."""
-
-    def __init__(self, *, max_paths: int = MAX_PATHS) -> None:
-        self._origins: OrderedDict[str, TranscriptOrigin] = OrderedDict()
-        self._max_paths = max_paths
-        self._lock = threading.Lock()
-
-    def remember(self, ref: TranscriptRef, origin: TranscriptOrigin) -> None:
-        with self._lock:
-            self._origins[ref.path] = origin
-            self._origins.move_to_end(ref.path)
-            while len(self._origins) > self._max_paths:
-                self._origins.popitem(last=False)
-
-    def origin_of(self, ref: TranscriptRef) -> TranscriptOrigin | None:
-        with self._lock:
-            return self._origins.get(ref.path)
-
-
 @dataclass(kw_only=True, slots=True)
 class _Progress:
     offset: int = 0
@@ -65,13 +43,11 @@ class TranscriptTail:
         self,
         projects_root: Path,
         *,
-        origins: SessionOrigins,
         max_bytes: int = MAX_READ_BYTES,
         max_line_bytes: int = MAX_LINE_BYTES,
         max_paths: int = MAX_PATHS,
     ) -> None:
         self._root = projects_root
-        self._origins = origins
         self._max_bytes = max_bytes
         self._max_line_bytes = max_line_bytes
         self._max_paths = max_paths
@@ -80,9 +56,9 @@ class TranscriptTail:
 
     def read_new(self, ref: TranscriptRef) -> TailResult:
         """The events of the lines appended to ``ref.path`` since the last read of it."""
-        origin = self._origins.origin_of(ref)
-        if origin is None:
-            return TailResult(events=())
+        origin = TranscriptOrigin(
+            project=ref.project, repo=ref.repo, agent=ref.agent, session=ref.session
+        )
         real = self._allowed_path(ref.path)
         if real is None:
             return TailResult(events=(), refused=True)

@@ -33,8 +33,6 @@ from agent_hub.collector.tool_metadata import (
     shown_path,
     tool_call_payload,
 )
-from agent_hub.collector.transcript import TranscriptOrigin
-from agent_hub.collector.transcript_tail import SessionOrigins
 from agent_hub.core.events.event import Event, EventSource, EventType
 from agent_hub.core.ingestion.hook_envelope import HookDecision, HookEnvelope
 from agent_hub.core.ingestion.ingestion_ports import HookMapping, TranscriptRef
@@ -121,12 +119,9 @@ class _Hook:
 class ClaudeHookMapper:
     """Maps a sensor envelope to canonical events; never raises on missing or odd hook keys.
 
-    With ``origins``, each transcript it names is remembered with its project, repo and agent,
-    so the transcript tail can attribute the transcript's events the same way.
+    Each transcript it names carries the hook's project, repo and agent, so the transcript
+    tail attributes the transcript's events the same way.
     """
-
-    def __init__(self, *, origins: SessionOrigins | None = None) -> None:
-        self._origins = origins
 
     def map(self, envelope: HookEnvelope) -> HookMapping:
         """The events of ``envelope`` and, for Stop/SubagentStop/SessionEnd, its transcript."""
@@ -139,19 +134,7 @@ class ClaudeHookMapper:
         handler = _HANDLERS.get(hook.name)
         events = () if handler is None else handler(hook)
         transcript = _transcript(hook)
-        if transcript is not None and self._origins is not None:
-            self._origins.remember(transcript, _origin(hook, transcript))
         return HookMapping(events=events, transcript=transcript)
-
-
-def _origin(hook: _Hook, transcript: TranscriptRef) -> TranscriptOrigin:
-    # The main transcript is the main agent's; a subagent's is its agent type's.
-    agent_type = fields.text(hook.input, fields.AGENT_TYPE)
-    is_subagent = transcript.kind == "subagent"
-    agent = short_text(agent_type, NAME_LIMIT) if is_subagent and agent_type else MAIN_AGENT
-    return TranscriptOrigin(
-        project=hook.envelope.project, repo=hook.envelope.repo, agent=agent, session=hook.session
-    )
 
 
 def _session_start(hook: _Hook) -> tuple[Event, ...]:
@@ -261,7 +244,18 @@ def _transcript(hook: _Hook) -> TranscriptRef | None:
         return None
     if path is None:
         return None
-    return TranscriptRef(session=hook.session, path=path, kind=kind)
+    # The main transcript is the main agent's; a subagent's is its agent type's.
+    agent_type = fields.text(hook.input, fields.AGENT_TYPE)
+    is_subagent = kind == "subagent"
+    agent = short_text(agent_type, NAME_LIMIT) if is_subagent and agent_type else MAIN_AGENT
+    return TranscriptRef(
+        project=hook.envelope.project,
+        repo=hook.envelope.repo,
+        agent=agent,
+        session=hook.session,
+        path=path,
+        kind=kind,
+    )
 
 
 def _decision_event(hook: _Hook, decision: HookDecision) -> Event:
