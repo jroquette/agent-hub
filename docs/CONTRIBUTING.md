@@ -160,7 +160,9 @@ regeneration in its PR.
 ## Releases
 
 A release is an annotated tag `vX.Y.Z` on a commit of `main` ([ADR 0013](adr/0013-release-by-git-tags.md)). The owner
-makes it, by hand or through an agent session the owner asks to; no workflow creates tags.
+makes it with `git tag -a`, by hand or through an agent session the owner asks to; no workflow creates tags. Never
+create it through the GitHub Releases UI or with a plain `git tag`: both make a lightweight tag, which `release.yml`
+rejects.
 
 1. The release PR sets `version` in `packages/cli/pyproject.toml` and `packages/agent-hub/pyproject.toml` to `X.Y.Z`,
    runs `uv lock` and commits `uv.lock`. `make lockstep` (in `make check-fast`) fails while the two versions differ.
@@ -169,16 +171,18 @@ makes it, by hand or through an agent session the owner asks to; no workflow cre
 
    ```bash
    git fetch origin
-   git log -1 --oneline origin/main    # the release PR's squash commit: note its SHA
+   git log -1 --oneline origin/main    # the commit the release PR landed as: note its SHA
    git tag -a vX.Y.Z -m "vX.Y.Z" <sha>   # that SHA, not origin/main, which may have moved on
    git push origin vX.Y.Z
    ```
 
-3. `.github/workflows/release.yml` runs on the tag. It checks the tag form and that the tag is `v` + the cli and meta
-   version (`scripts/check_release.py --tag=vX.Y.Z`), that its commit is on `main`, and that the pinned `uvx` command
-   prints `X.Y.Z`.
+3. `.github/workflows/release.yml` runs on the tag. It checks the tag form, that the tag is annotated (the remote has a
+   peeled `^{}` entry for it) and that it is `v` + the cli and meta version
+   (`scripts/check_release.py --tag=vX.Y.Z --peeled=…`), that its commit is on `main`, and that the pinned `uvx`
+   command prints `X.Y.Z`.
 
-- A wrong or failed tag is never moved or deleted: fix the cause in a PR, bump the patch version and tag that.
+- A wrong or failed tag is never moved or deleted: fix the cause in a PR, bump the patch version and tag that. This
+  holds for a lightweight tag too: the existing ones stay as they are.
 - Tag immutability rests on this written rule: GitHub tag rulesets on a private repo need a paid plan.
 
 ## Manual repository and Linear settings

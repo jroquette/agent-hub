@@ -1,9 +1,12 @@
 """Release check (ADR 0013): agent-hub-cli and the agent-hub meta-package share one version.
 
-With ``--tag=<name>``, the tag must also be ``v`` + that version. Stdlib only and no
-``scripts``/``agent_hub`` import, so the release job runs it by path without syncing the
-workspace: ``uv run --no-project python scripts/check_release.py --tag="$TAG"``. ``make lockstep``
-runs it as ``python -m scripts.check_release``. It reads files only: no network, no git.
+With ``--tag=<name>``, the tag must also be ``v`` + that version. With ``--peeled=<text>`` (the
+output of ``git ls-remote --tags origin "refs/tags/<name>^{}"``), the tag must also be annotated:
+only an annotated tag has a peeled entry. Stdlib only and no ``scripts``/``agent_hub`` import, so
+the release job runs it by path without syncing the workspace:
+``uv run --no-project python scripts/check_release.py --tag="$TAG" --peeled="$peeled"``.
+``make lockstep`` runs it as ``python -m scripts.check_release``. It reads files only: no network,
+no git.
 """
 
 import argparse
@@ -78,12 +81,27 @@ def tag_problem(tag: str, *, version: str) -> str | None:
     return None
 
 
+def peeled_problem(tag: str, peeled: str) -> str | None:
+    """Why ``tag`` is not annotated, given the remote's peeled ``ls-remote`` output, or None."""
+    entry = f"refs/tags/{tag}^{{}}"
+    if any(line.split("\t")[-1] == entry for line in peeled.splitlines()):
+        return None
+    return (
+        "is a lightweight tag (the remote has no peeled entry for it); a tag is never moved:"
+        " cut the next patch release with git tag -a"
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Check the versions under ``--root`` and the ``--tag``; print one line, 1 on a problem."""
-    arguments = _parser().parse_args(argv)
+    parser = _parser()
+    arguments = parser.parse_args(argv)
     tag: str | None = arguments.tag
+    peeled: str | None = arguments.peeled
+    if peeled is not None and tag is None:
+        parser.error("--peeled needs --tag")
     try:
-        version = _checked_version(Path(arguments.root), tag=tag)
+        version = _checked_version(Path(arguments.root), tag=tag, peeled=peeled)
     except _CheckFailedError as problem:
         prefix = "" if tag is None else f"tag {shown(tag)}: "
         print(f"{prefix}{problem}", file=sys.stderr)
@@ -91,19 +109,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     if tag is None:
         print(f"version lockstep ok: {_BOTH_FILES} are {shown(version)}")
     else:
-        print(f"tag {shown(tag)} ok: equals the version {shown(version)} of {_BOTH_FILES}")
+        annotated = "" if peeled is None else "annotated, "
+        print(
+            f"tag {shown(tag)} ok: {annotated}equals the version {shown(version)} of {_BOTH_FILES}"
+        )
     return 0
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", help="the pushed tag; pass it as --tag=<name>")
+    parser.add_argument(
+        "--peeled",
+        help='git ls-remote --tags origin "refs/tags/<tag>^{}"; empty for a lightweight tag',
+    )
     parser.add_argument("--root", default=str(REPO_ROOT), help="repo root (default: this repo)")
     return parser
 
 
-def _checked_version(root: Path, *, tag: str | None) -> str:
-    """The version cli and meta share (and the tag names); raises _CheckFailedError otherwise."""
+def _checked_version(root: Path, *, tag: str | None, peeled: str | None) -> str:
+    """The version cli and meta share (and the annotated tag names); else _CheckFailedError."""
     # The form first: a malformed tag fails the same way whatever the files hold.
     if tag is not None and RELEASE_TAG.fullmatch(tag) is None:
         raise _CheckFailedError(_TAG_FORM_PROBLEM)
@@ -113,6 +138,8 @@ def _checked_version(root: Path, *, tag: str | None) -> str:
     if problem is not None or cli is None:
         raise _CheckFailedError(problem)
     problem = None if tag is None else tag_problem(tag, version=cli)
+    if problem is None and tag is not None and peeled is not None:
+        problem = peeled_problem(tag, peeled)
     if problem is not None:
         raise _CheckFailedError(problem)
     return cli

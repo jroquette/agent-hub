@@ -149,7 +149,8 @@ for `--db` or `AGENT_HUB_DB` (`agent_hub.cli.database_path`). SQLite runs in WAL
 per use (no pool).
 
 The second port is `TrackerClient` (`agent_hub.core.tracker.tracker_client`): list the ready issues of a team, get an
-issue, move its state, add or remove a label and comment, each failure a `TrackerError`. Its fake is
+issue, move its state, add or remove a label and comment, each failure a `TrackerError`. `move_state` returns whether
+the issue moved; with `only_if_unstarted` it moves only from a `triage`, `backlog` or `unstarted` state. Its fake is
 `InMemoryTrackerClient`, and its contract suite `TrackerClientContract` runs against the fake,
 `LinearGraphqlTrackerClient` (`agent_hub.tracker_linear.graphql`) over an in-process fake of Linear's API, and
 `McpTrackerClient` (`agent_hub.tracker_linear.mcp`) over an injected runner that plays the model. The CLI picks the
