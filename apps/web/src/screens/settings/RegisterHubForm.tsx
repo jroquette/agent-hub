@@ -10,16 +10,25 @@ export interface RegisterHubFormProps {
   helper?: string | undefined;
   placeholder?: string | undefined;
   primary?: boolean | undefined;
+  /** The input's id, for a control elsewhere that moves focus to it. */
+  inputId?: string | undefined;
 }
 
 /**
  * Registers a hub by its path (`POST /hubs`, spec 22 step 1 and Settings › Hubs). A refused path
  * keeps its value and shows the problem under the input.
  */
-export function RegisterHubForm({ label, helper, placeholder, primary }: RegisterHubFormProps) {
+export function RegisterHubForm({
+  label,
+  helper,
+  placeholder,
+  primary,
+  inputId: givenId,
+}: RegisterHubFormProps) {
   const [path, setPath] = useState("");
   const register = useRegisterHub();
-  const inputId = useId();
+  const ownId = useId();
+  const inputId = givenId ?? ownId;
   const messageId = useId();
   const problem = register.error;
   const submit = (event: FormEvent) => {

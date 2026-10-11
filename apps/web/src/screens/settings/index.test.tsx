@@ -100,6 +100,14 @@ describe("SettingsScreen", () => {
     expect(requests.some((r) => r.method === "DELETE")).toBe(false);
   });
 
+  it("moves focus to the hub path from Add hub", async () => {
+    open("hubs");
+
+    await userEvent.click(screen.getByRole("button", { name: "Add hub" }));
+
+    expect(screen.getByLabelText("Hub path")).toHaveFocus();
+  });
+
   it("registers a hub from the Add hub form", async () => {
     const { requests } = open("hubs", { "POST /api/v1/hubs": aHub({ id: "hub-3" }) });
 
@@ -117,7 +125,7 @@ describe("SettingsScreen", () => {
   it("shows the collector's database, counters and every source", async () => {
     open("collector");
 
-    expect(await screen.findByText("/home/dev/.local/share/agent-hub/events.db")).toBeVisible();
+    expect(await screen.findByTitle("/home/dev/.local/share/agent-hub/events.db")).toBeVisible();
     expect(screen.getByText("1,284")).toBeInTheDocument();
     expect(screen.getByText("hub web")).toBeInTheDocument();
     const sources = screen.getByRole("table");

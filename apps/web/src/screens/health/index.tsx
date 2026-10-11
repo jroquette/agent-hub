@@ -144,7 +144,8 @@ function FindingBlock({ f, showProject }: { f: Finding; showProject: boolean }) 
           path: f.path,
           line: f.line,
           message: f.message,
-          fix: f.fix,
+          // Quoted commands get their own copyable block below.
+          fix: f.fix.replace(/`/g, ""),
         }}
       />
       {commands.length > 0 && (

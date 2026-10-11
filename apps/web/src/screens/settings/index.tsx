@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, Navigate, useParams } from "react-router";
 
@@ -159,11 +159,24 @@ function Hubs() {
   const hubs = useHubs();
   const remove = useRemoveHub();
   const [removing, setRemoving] = useState<HubView | null>(null);
+  const now = useNow(30_000);
+  const formId = useId();
   const name = (hub: HubView) => hub.project ?? hub.path;
   return (
     <Section
       title="Hubs"
       sub="Hub folders this app reads. Each hub is one project; nothing is written to them."
+      action={
+        <Button
+          variant="primary"
+          icon="plus"
+          onClick={() => {
+            document.getElementById(formId)?.focus();
+          }}
+        >
+          Add hub
+        </Button>
+      }
     >
       {hubs.isError ? (
         <ProblemError
@@ -188,17 +201,21 @@ function Hubs() {
                   <b>{hub.project ?? "—"}</b>
                   <span className="ah-small ah-muted">
                     {hub.repos.length} repo{hub.repos.length === 1 ? "" : "s"} · added{" "}
-                    <Time iso={hub.added_at} absolute />
+                    <Time
+                      iso={hub.added_at}
+                      ago={Math.max(1, (now - Date.parse(hub.added_at)) / 1000)}
+                    />
                   </span>
                 </span>
               ),
             },
-            { id: "path", label: "Path", render: (hub) => <PathText path={hub.path} /> },
+            { id: "path", label: "Path", render: (hub) => <PathText path={hub.path} max={32} /> },
             { id: "valid", label: "hub.json", render: (hub) => <HubValidity hub={hub} /> },
             { id: "pin", label: "Platform", render: (hub) => <HubPlatform hub={hub} /> },
             {
               id: "remove",
               label: <span className="ah-sr">Actions</span>,
+              width: 110,
               align: "right",
               render: (hub) => (
                 <Button
@@ -228,6 +245,7 @@ function Hubs() {
           label="Hub path"
           helper="The absolute path of the folder that contains hub.json."
           placeholder="/home/you/code/agent-hub-hub"
+          inputId={formId}
         />
         <Link className="ah-small" to="/welcome">
           Open the setup checklist
@@ -325,7 +343,7 @@ function Collector() {
               style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 16 }}
             >
               <Stat label="Database">
-                <PathText path={data.db_path} />
+                <PathText path={data.db_path} max={26} />
               </Stat>
               <Stat label="Address">
                 <span className="ah-mono">{address}</span>

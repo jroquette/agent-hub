@@ -89,16 +89,22 @@ describe("FeatureDetailScreen", () => {
     open();
 
     const callout = await screen.findByText("1 owner step left: AC-48.13");
-    expect(callout.closest('[role="status"]')).toHaveTextContent("memory loads");
+    expect(callout.closest('[role="status"]')).toHaveTextContent(
+      "memory loads. Recorded in features.json",
+    );
   });
 
   it("shows nine AC rows, then all of them on Show all", async () => {
     open();
 
     const table = await screen.findByRole("table", { name: "Acceptance criteria" });
-    expect(within(table).getAllByRole("button", { name: /^Expand AC-/ })).toHaveLength(9);
+    expect(within(table).getAllByRole("button", { name: /^(Expand|Collapse) AC-/ })).toHaveLength(
+      9,
+    );
     await userEvent.click(within(table).getByRole("button", { name: /Show all 13/ }));
-    expect(within(table).getAllByRole("button", { name: /^Expand AC-/ })).toHaveLength(13);
+    expect(within(table).getAllByRole("button", { name: /^(Expand|Collapse) AC-/ })).toHaveLength(
+      13,
+    );
   });
 
   it("filters the ACs to owner steps and marks them", async () => {
@@ -107,9 +113,20 @@ describe("FeatureDetailScreen", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Owner step 1" }));
 
     const table = screen.getByRole("table", { name: "Acceptance criteria" });
-    expect(within(table).getAllByRole("button", { name: /^Expand AC-/ })).toHaveLength(1);
+    expect(within(table).getAllByRole("button", { name: /^(Expand|Collapse) AC-/ })).toHaveLength(
+      1,
+    );
     expect(within(table).getByText("owner")).toBeInTheDocument();
     expect(within(table).getByText("manual · see eval.md")).toBeInTheDocument();
+  });
+
+  it("opens the first owner step's row by default", async () => {
+    open();
+
+    expect(await screen.findByRole("button", { name: "Collapse AC-48.13" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
   });
 
   it("expands an AC into Given / When / Then when asked by ?ac=", async () => {

@@ -62,6 +62,12 @@ const DOCS: Readonly<Record<string, { file: string; label: string; missing: stri
   },
 };
 
+/** An AC description as a sentence, so the callout's next sentence reads on. */
+function ownerLine(text: string | undefined): string {
+  if (!text) return "";
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
 /** Rows shown before "Show all": the first seven and the last two (spec 17). */
 const HEAD_ROWS = 7;
 const TAIL_ROWS = 2;
@@ -182,7 +188,9 @@ function AcTab({ detail }: { detail: Detail }) {
   const [filter, setFilter] = useState<"all" | Pass>("all");
   const [repo, setRepo] = useState<string | null>(null);
   const [all, setAll] = useState(asked !== null);
-  const [open, setOpen] = useState<string | null>(asked);
+  const [open, setOpen] = useState<string | null>(
+    asked ?? detail.ac_rows.find((ac) => passOf(ac) === "owner")?.id ?? null,
+  );
   const [copied, markCopied] = useCopied();
   if (detail.problem) {
     return (
@@ -356,7 +364,11 @@ function AcTab({ detail }: { detail: Detail }) {
                         {pass.label}
                       </span>
                     </td>
-                    <td className="ah-small" style={{ whiteSpace: "normal" }}>
+                    <td
+                      className="ah-small"
+                      title={ac.evidence ?? undefined}
+                      style={{ maxWidth: 176, overflow: "hidden", textOverflow: "ellipsis" }}
+                    >
                       {ac.evidence ?? <span className="ah-subtle">—</span>}
                     </td>
                     <td>
@@ -585,7 +597,9 @@ export function FeatureDetailScreen() {
           {detail.size && <span className="ah-fm-chip">{detail.size}</span>}
           <span className="ah-small ah-muted">
             {detail.project}
-            {detail.repos.length ? ` · ${detail.repos.join(", ")}` : ""}
+            {detail.repos.length && detail.repos.join(",") !== detail.project
+              ? ` · ${detail.repos.join(", ")}`
+              : ""}
           </span>
           <span className="ah-grow" />
           {state === "offline" && <AsOfStamp stale time={fmtClock(asOf, tz)} />}
@@ -627,7 +641,8 @@ export function FeatureDetailScreen() {
             {owners.length} owner step{owners.length === 1 ? "" : "s"} left:{" "}
             {owners.map((ac) => ac.id).join(", ")}
           </b>{" "}
-          {owners[0]?.description} Recorded in features.json as passes:false (manual owner step).
+          {ownerLine(owners[0]?.description)} Recorded in features.json as passes:false (manual
+          owner step).
         </Banner>
       )}
       <Tabs
