@@ -55,6 +55,7 @@ CLONE_FIX: Final = (
 )
 FETCH_FIX: Final = "git -C ../{dir} fetch origin"
 MOVE_AWAY_FIX: Final = "move ../{dir} away, then ./hub setup"
+STATUS_FIX: Final = "git -C ../{dir} status, then ./hub setup"
 DOCTOR_FIX: Final = "fix each error below, then ./hub doctor"
 
 _SUB_LINE_INDENT: Final = " " * 8
@@ -121,6 +122,8 @@ class RepoOutcome(StrEnum):
     FETCH_TIMED_OUT = "fetch-timed-out"
     NOT_A_REPO = "not-a-repo"
     NO_COMMIT = "no-commit"
+    GIT_CANNOT_READ = "git-cannot-read"
+    CHECK_TIMED_OUT = "check-timed-out"
     GIT_NOT_FOUND = "git-not-found"
     GIT_CANNOT_RUN = "git-cannot-run"
 
@@ -168,6 +171,12 @@ _REPO_TEXTS: Final[Mapping[RepoOutcome, _Text]] = {
     ),
     # A clone killed mid-way leaves a .git with no commit, where a fetch would succeed (E27).
     RepoOutcome.NO_COMMIT: _Text("../{dir} has no commit (an interrupted clone?)", MOVE_AWAY_FIX),
+    # The commit check's other refusals (dubious ownership, a bad config, an unreadable .git)
+    # and its timeout: no fetch ran, so neither names one (E29).
+    RepoOutcome.GIT_CANNOT_READ: _Text(
+        "git cannot read ../{dir} (git exit {returncode}); left untouched", STATUS_FIX
+    ),
+    RepoOutcome.CHECK_TIMED_OUT: _Text("checking ../{dir} timed out after {seconds} s", STATUS_FIX),
     RepoOutcome.GIT_NOT_FOUND: _Text("git not found", GIT_FIX),
     # On PATH, but the exec failed (a bad interpreter, a broken binary): erratum E24.
     RepoOutcome.GIT_CANNOT_RUN: _Text("git could not run", GIT_FIX),
@@ -179,6 +188,8 @@ _REPO_ARGUMENTS: Final[Mapping[RepoOutcome, str]] = {
     RepoOutcome.FETCH_FAILED: "returncode",
     RepoOutcome.CLONE_TIMED_OUT: "timeout_seconds",
     RepoOutcome.FETCH_TIMED_OUT: "timeout_seconds",
+    RepoOutcome.GIT_CANNOT_READ: "returncode",
+    RepoOutcome.CHECK_TIMED_OUT: "timeout_seconds",
 }
 
 

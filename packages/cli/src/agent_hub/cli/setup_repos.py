@@ -8,14 +8,17 @@ cloned, over the scheme of the hub's own origin (``git_defaults.read_remote_sche
 (or a link to one) holding a ``.git`` entry is fetched once ``rev-parse --verify -q HEAD`` finds
 a commit there; anything else is reported and never touched. Only git's exit code is read: its
 output, which can name a URL or a credential, is discarded, and no URL is printed. Each clone
-or fetch runs at most ``NETWORK_TIMEOUT_SECONDS`` (spec D-repos, D-url).
+or fetch runs at most ``NETWORK_TIMEOUT_SECONDS``.
 
-The commit check (errata E27, E28): exit 1 is a repo with no commit, what a clone killed at its
-timeout or by Ctrl-C leaves, where a fetch would succeed and hide it; any other failing exit is
-a ``.git`` git cannot read, so not a repository; a check that times out (``GIT_TIMEOUT_SECONDS``,
-a local read) is reported as the fetch timing out after that limit, as the fetch never ran.
-Every call aimed at ``../<dir>`` sets ``GIT_CEILING_DIRECTORIES`` to the workspace, so git never
-searches above ``../<dir>`` and runs in a repo that holds the workspace. Setup deletes nothing.
+The commit check (errata E27, E29): exit 1 is a repo with no commit, what a clone killed at its
+timeout or by Ctrl-C leaves, where a fetch would succeed and hide it; any other failing exit
+(dubious ownership, a bad config, an unreadable ``.git``) is ``git cannot read`` with git's
+exit code; a check that runs past ``CHECK_TIMEOUT_SECONDS`` (a local read) is reported as the
+check timing out, never as a fetch. The commit check and the fetch (not the clone) set
+``GIT_CEILING_DIRECTORIES`` to the workspace and to the folder holding ``../<dir>``'s real path
+(errata E28, E30): git compares the ceiling with its resolved cwd, so neither a ``.git`` it
+cannot read nor a link out of the workspace lets it run in a repo above ``../<dir>``. Setup
+deletes nothing.
 """
 
 import os
@@ -34,6 +37,8 @@ from agent_hub.core.workspace.setup_checklist import ChecklistItem, RepoOutcome,
 
 # A clone of a big repo over a slow link takes minutes; a call that hangs is cut here.
 NETWORK_TIMEOUT_SECONDS: Final = 600.0
+# The commit check is a local read: a check that hangs is cut here.
+CHECK_TIMEOUT_SECONDS: Final = GIT_TIMEOUT_SECONDS
 # Git's output is never shown: only this much of each stream is kept, then dropped.
 OUTPUT_LIMIT: Final = 65_536
 
@@ -96,7 +101,7 @@ def _repo_item(
     # ``isdir`` follows a link: a link to a clone is fetched there (erratum E25).
     if not (os.path.isdir(dest) and os.path.lexists(dest / _GIT_ENTRY)):
         return repo_item(repo, RepoOutcome.NOT_A_REPO)
-    bounded = {**env, _CEILING_VARIABLE: str(parent)}
+    bounded = {**env, _CEILING_VARIABLE: _ceiling(parent, dest)}
     gap = _commit_gap(repo, git=git, dest=dest, env=bounded)
     if gap is not None:
         return gap
@@ -112,21 +117,33 @@ def _repo_item(
 def _commit_gap(
     repo: WorkspaceRepo, *, git: str, dest: Path, env: Mapping[str, str]
 ) -> ChecklistItem | None:
-    """Why the present repo at ``dest`` is not fetched (no commit, no readable repo), or None."""
+    """Why the present repo at ``dest`` is not fetched (no commit, unreadable, hung), or None."""
     argv = [git, "-C", str(dest), "rev-parse", "--verify", "-q", "HEAD"]
+    # Read at call time, so a test can shorten it.
+    timeout = CHECK_TIMEOUT_SECONDS
     try:
         result = run_child(
-            argv, cwd=dest.parent, env=env, timeout=GIT_TIMEOUT_SECONDS, output_limit=OUTPUT_LIMIT
+            argv, cwd=dest.parent, env=env, timeout=timeout, output_limit=OUTPUT_LIMIT
         )
     except ChildTimedOutError:
-        return repo_item(repo, RepoOutcome.FETCH_TIMED_OUT, timeout_seconds=GIT_TIMEOUT_SECONDS)
+        return repo_item(repo, RepoOutcome.CHECK_TIMED_OUT, timeout_seconds=timeout)
     except OSError:
         return repo_item(repo, RepoOutcome.GIT_CANNOT_RUN)
     if result.returncode == 0:
         return None
     if result.returncode == _NO_COMMIT_EXIT:
         return repo_item(repo, RepoOutcome.NO_COMMIT)
-    return repo_item(repo, RepoOutcome.NOT_A_REPO)
+    return repo_item(repo, RepoOutcome.GIT_CANNOT_READ, returncode=result.returncode)
+
+
+def _ceiling(parent: Path, dest: Path) -> str:
+    """The workspace and the folder holding ``dest``'s target: git stops at both (E28, E30).
+
+    Git compares its ceiling with the resolved cwd, so a ``dest`` linked outside the workspace
+    needs the parent of its real path too; the workspace alone would let git climb from there.
+    """
+    folders = dict.fromkeys([str(parent), os.path.dirname(os.path.realpath(dest))])
+    return os.pathsep.join(folders)
 
 
 def _run(
