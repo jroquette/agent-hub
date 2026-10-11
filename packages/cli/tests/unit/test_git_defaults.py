@@ -2,7 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from agent_hub.cli.git_defaults import hub_repo_from_remote, read_git_defaults
+from agent_hub.cli.git_defaults import hub_repo_from_remote, read_git_defaults, remote_scheme
+
+# A synthetic token, built from fragments so no scanner takes it for a real one.
+SYNTHETIC_TOKEN = "x-access-token:" + "tok" + "_" + "x" * 12
 
 
 @pytest.mark.parametrize(
@@ -89,3 +92,25 @@ def test_drops_credentials_when_url_has_userinfo(url: str) -> None:
 def test_raises_when_key_not_a_git_default(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="branch_prefix"):
         read_git_defaults(missing=frozenset({"branch_prefix"}), target=tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        pytest.param("git@github.com:acme/demo-hub.git", "ssh", id="scp-ssh"),
+        pytest.param("ssh://git@github.com/acme/demo-hub.git", "ssh", id="url-ssh"),
+        pytest.param("https://github.com/acme/demo-hub.git", "https", id="https"),
+        pytest.param(
+            f"https://{SYNTHETIC_TOKEN}@github.com/acme/demo-hub.git", "https", id="https-token"
+        ),
+        pytest.param("https://git.acme.test/acme/demo-hub.git", "https", id="other-host-https"),
+        pytest.param("git@git.acme.test:acme/demo-hub.git", "https", id="other-host-ssh"),
+        pytest.param("", "https", id="empty"),
+        pytest.param(None, "https", id="none"),
+    ],
+)
+def test_gives_scheme_when_remote_url_given(url: str | None, expected: str) -> None:
+    # Called first, so a failing assertion shows the two schemes and never the URL.
+    scheme = remote_scheme(url)
+
+    assert scheme == expected

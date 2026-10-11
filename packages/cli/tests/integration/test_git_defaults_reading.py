@@ -19,6 +19,7 @@ from agent_hub.cli.git_defaults import (
     HUB_REPO,
     GitDefaults,
     read_git_defaults,
+    read_remote_scheme,
 )
 
 ALL_KEYS = frozenset({AUTHOR_NAME, AUTHOR_EMAIL, HUB_REPO})
@@ -447,3 +448,93 @@ def test_kills_git_group_when_interrupted_while_git_runs(
 
     # git runs in its own session, so its pid is its group: the whole group is killed.
     assert killed == [(started[0], signal.SIGKILL)]
+
+
+SSH_REMOTE = "git@github.com:acme/demo-hub.git"
+REMOTE_ARGUMENTS = "config --get remote.origin.url"
+
+
+@pytest.mark.parametrize("git_entry", ["folder", "file"])
+def test_reads_ssh_scheme_when_origin_is_ssh(
+    fake_git: FakeGitFactory, target: Path, *, git_entry: str
+) -> None:
+    # A worktree's .git is a file: it counts as the hub's own repo, as a folder does.
+    if git_entry == "folder":
+        (target / ".git").mkdir()
+    else:
+        (target / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")
+    git = fake_git({REMOTE_ARGUMENTS: SSH_REMOTE}, toplevel=target)
+
+    scheme = read_remote_scheme(target, env={"PATH": str(git.bin_dir)})
+
+    assert scheme == "ssh"
+    # One call, in the hub, and no top check.
+    assert git.calls() == [(str(target), REMOTE_ARGUMENTS)]
+
+
+def test_reads_https_scheme_when_origin_holds_credential(
+    fake_git: FakeGitFactory, target: Path, *, capfd: pytest.CaptureFixture[str]
+) -> None:
+    (target / ".git").mkdir()
+    git = fake_git({REMOTE_ARGUMENTS: REMOTE_WITH_USERINFO}, toplevel=target)
+
+    scheme = read_remote_scheme(target, env={"PATH": str(git.bin_dir)})
+
+    # Only the literal leaves: nothing of the URL is returned or printed.
+    assert scheme == "https"
+    assert capfd.readouterr() == ("", "")
+
+
+def test_reads_no_remote_scheme_when_hub_has_no_git_entry(
+    fake_git: FakeGitFactory, target: Path
+) -> None:
+    # Inside another repo, git would read that repo's origin: no .git here means no call.
+    git = fake_git({REMOTE_ARGUMENTS: SSH_REMOTE}, toplevel=target)
+
+    scheme = read_remote_scheme(target, env={"PATH": str(git.bin_dir)})
+
+    assert scheme == "https"
+    assert git.calls() == []
+
+
+@pytest.mark.parametrize("variable", ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"])
+def test_reads_no_remote_scheme_when_git_location_set(
+    fake_git: FakeGitFactory, tmp_path: Path, *, target: Path, variable: str
+) -> None:
+    # Git would take the remote of another repo than the hub's own.
+    (target / ".git").mkdir()
+    git = fake_git({REMOTE_ARGUMENTS: SSH_REMOTE}, toplevel=target)
+    env = {"PATH": str(git.bin_dir), variable: str(tmp_path / "other-repo" / ".git")}
+
+    scheme = read_remote_scheme(target, env=env)
+
+    assert scheme == "https"
+    assert git.calls() == []
+
+
+def test_gives_https_scheme_when_git_hangs(fake_git: FakeGitFactory, target: Path) -> None:
+    (target / ".git").mkdir()
+    git = fake_git({REMOTE_ARGUMENTS: SSH_REMOTE}, toplevel=target, hangs=True)
+    results: list[str] = []
+    # In a thread, so a read that never ends fails the test instead of hanging the run.
+    reader = threading.Thread(
+        target=lambda: results.append(
+            read_remote_scheme(target, env={"PATH": str(git.bin_dir)}, timeout=0.2)
+        ),
+        daemon=True,
+    )
+
+    reader.start()
+    reader.join(timeout=5)
+
+    assert not reader.is_alive()
+    assert results == ["https"]
+    assert [arguments for _, arguments in git.calls()] == [REMOTE_ARGUMENTS]
+
+
+def test_gives_https_scheme_when_git_absent(no_git_path: Path, target: Path) -> None:
+    (target / ".git").mkdir()
+
+    scheme = read_remote_scheme(target, env={"PATH": str(no_git_path)})
+
+    assert scheme == "https"
