@@ -255,9 +255,12 @@ def stdout_starting(result: Result, prefix: str) -> list[str]:
 
 
 def logging_setup(log: Path) -> bytes:
-    """A setup script that appends ``HUB_WORKTREE_NAME`` and its argument to ``log``."""
+    """A setup script that appends ``HUB_WORKTREE_NAME``, its argument and ``LINEAR_API_KEY``
+    (``unset`` when unset) to ``log``."""
     return (
-        f'#!/bin/sh\nprintf \'%s %s\\n\' "$HUB_WORKTREE_NAME" "$1" >> "{log}"\nexit 0\n'
+        "#!/bin/sh\n"
+        f'printf \'%s %s %s\\n\' "$HUB_WORKTREE_NAME" "$1" "${{LINEAR_API_KEY-unset}}" >> "{log}"\n'
+        "exit 0\n"
     ).encode()
 
 
@@ -348,7 +351,8 @@ class TestFresh:
         assert hub_start.workspace.git(worktree, "branch", "--show-current") == BRANCH
         # From a fresh fetch of origin/trunk (plan E4): the commit pushed after the clone.
         assert hub_start.workspace.git(worktree, "rev-parse", "HEAD") == head
-        assert log.read_text() == f"{NAME} {worktree}\n"
+        # The key with_key sets reaches the tracker, never the repo's script.
+        assert log.read_text() == f"{NAME} {worktree} unset\n"
         assert not (hub_start.workspace.ws / "demo-web" / ".claude").exists()
         assert hub_start.state() == "In Progress"
         assert hub_start.tracker.calls == [
@@ -698,3 +702,57 @@ class TestLaunchFailure:
             f"remove   : ./hub worktree --remove {NAME} --only demo-api",
         ]
         assert hub_start.state() == "In Progress"
+
+
+@pytest.mark.usefixtures("with_key", "claude_first_on_path")
+class TestShownText:
+    def test_escapes_state_when_tracker_state_holds_control_characters(
+        self, hub_start: StartRun
+    ) -> None:
+        state = "In \x1b[31mReview\nforged : line"
+        hub_start.hub_worktree(OLD)
+        hub_start.retitle("A retitled issue", state)
+
+        result = hub_start(ISSUE, "--no-agent")
+
+        assert result.exit_code == 0, result.output
+        assert stdout_starting(result, "state    : ") == [
+            f"state    : {json.dumps(state)} (already started, not moved)"
+        ]
+        assert "\x1b" not in result.stdout
+        assert "forged : line" not in result.stdout.splitlines()
+
+    def test_names_issue_argument_when_tracker_answers_other_id(self, hub_start: StartRun) -> None:
+        issues = hub_start.tracker.backend.issues
+        issues[ISSUE] = issues[ISSUE].model_copy(update={"id": "DEM-77"})
+
+        result = hub_start(ISSUE, "--repo", "demo-api", "--no-agent")
+
+        assert result.exit_code == 0, result.output
+        assert stdout_starting(result, "next     : ") == [
+            "next     : ./hub start DEM-7 --repo demo-api"
+        ]
+
+
+@pytest.mark.usefixtures("with_key")
+class TestHubCheckout:
+    def test_exits_one_when_git_missing_and_root_is_hub_worktree(
+        self, hub_start: StartRun, claude_first_on_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        workspace = hub_start.workspace
+        hub = workspace.hub
+        workspace.git(hub, "-c", "init.defaultBranch=main", "init", "-q")
+        workspace.git(hub, "add", "-A")
+        workspace.git(hub, "commit", "-q", "-m", "hub")
+        hub_worktree = hub / ".claude" / "worktrees" / "x"
+        workspace.git(hub, "worktree", "add", "-q", "-b", "x", str(hub_worktree))
+        # Falling back to the worktree as the hub would read this hub.json and exit on it.
+        (hub_worktree / "hub.json").write_bytes(b"{}\n")
+        monkeypatch.setenv("PATH", str(claude_first_on_path))
+
+        result = hub_start.run_in(workspace.base, ISSUE, env={"AGENT_HUB_ROOT": str(hub_worktree)})
+
+        assert result.exit_code == 1, result.output
+        assert result.stderr == "hub start: git is not on PATH; install git\n"
+        assert hub_start.tracker.calls == []
+        assert hub_start.execs == []
