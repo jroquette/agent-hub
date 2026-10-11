@@ -851,6 +851,10 @@ class DemoWorkspace:
         origins: ``base/github.gitconfig`` becomes its global config. Call it before
         ``git_identity``, which then includes it."""
         assert self._setenv is not None, "only a test's copy of the workspace has an environment"
+        assert self._replaced_global is None, (
+            "call rewrite_github before git_identity: both set GIT_CONFIG_GLOBAL, and only"
+            " git_identity includes the other"
+        )
         config = self.base / "github.gitconfig"
         config.write_text(
             f'[url "file://{self.origins}/"]\n'
@@ -864,7 +868,7 @@ class DemoWorkspace:
         """Make the hub a git repo on ``trunk`` with one commit of its files, and ``origin`` its
         ``origin`` remote when given (the URL is only recorded, never reached).
 
-        The workspace's own git runs, so a traced git logs none of these calls."""
+        The workspace's own git runs (``git``), so a traced git logs none of these calls."""
         steps = [
             ("init", "-q", "-b", WORKSPACE_BRANCH),
             ("add", "-A"),
@@ -873,11 +877,14 @@ class DemoWorkspace:
         if origin is not None:
             steps.append(("remote", "add", "origin", origin))
         for step in steps:
-            _run_git(self.hub, self.env, *step, path=self.env["PATH"])
+            self.git(self.hub, *step)
 
     def git(self, folder: Path, *args: str) -> str:
-        """Run git in ``folder`` and return its stripped stdout; a failure fails the test."""
-        return _run_git(folder, self.env, *args)
+        """Run git in ``folder`` and return its stripped stdout; a failure fails the test.
+
+        The git is found on the workspace's own ``PATH``, so a traced git a test put first on
+        the process's ``PATH`` never runs (nor logs, nor hangs) a workspace helper's call."""
+        return _run_git(folder, self.env, *args, path=self.env["PATH"])
 
     def origin(self, repo: str) -> Path:
         return self.origins / f"{repo}.git"
@@ -1027,13 +1034,15 @@ def traced_git(
 class GitCall(NamedTuple):
     """One call ``env_traced_git`` logged: its physical working directory, its arguments joined
     by spaces, its ``GIT_TERMINAL_PROMPT`` (``unset`` when unset), and whether ``GIT_DIR`` and
-    ``LINEAR_API_KEY`` were set (even empty)."""
+    ``LINEAR_API_KEY`` were set (even empty), and its process id (the git it ``exec``s, or
+    the ``sleep`` of a hang, keeps it)."""
 
     cwd: str
     args: str
     prompt: str
     has_git_dir: bool
     has_key: bool
+    pid: int
 
 
 class EnvTracedGit(NamedTuple):
@@ -1045,13 +1054,23 @@ class EnvTracedGit(NamedTuple):
     hang_path: Path
 
     def calls(self) -> list[GitCall]:
-        """Each logged call, in order."""
+        """Each logged call, in order.
+
+        One line per call, fields split on tabs: a tab or a newline inside an argument or the
+        working directory is not supported (it would split a call's line)."""
         if not self.log_path.exists():
             return []
         lines = self.log_path.read_text(encoding="utf-8").splitlines()
         return [
-            GitCall(cwd, args, prompt, has_git_dir=git_dir == "set", has_key=key == "set")
-            for cwd, args, prompt, git_dir, key in (line.split("\t") for line in lines)
+            GitCall(
+                cwd,
+                args,
+                prompt,
+                has_git_dir=git_dir == "set",
+                has_key=key == "set",
+                pid=int(pid),
+            )
+            for cwd, args, prompt, git_dir, key, pid in (line.split("\t") for line in lines)
         ]
 
 
@@ -1063,7 +1082,8 @@ def env_traced_git(
     its environment (``GitCall``), then runs the real git.
 
     Once ``hang_path`` exists, a call whose arguments hold the word ``clone`` or ``fetch``
-    sleeps 30 s and exits 1 instead, as a network call that never answers.
+    becomes ``sleep 30`` instead (``exec``, so it keeps the logged pid and no shell is left
+    holding the caller's pipes), as a network call that never answers.
     """
     real = shutil.which("git")
     assert real is not None, "git is needed for a DEMO workspace"
@@ -1074,12 +1094,13 @@ def env_traced_git(
     script = bin_dir / "git"
     script.write_text(
         "#!/bin/sh\n"
-        "printf '%s\\t%s\\t%s\\t%s\\t%s\\n'"
+        "printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n'"
         ' "$(pwd -P)" "$*" "${GIT_TERMINAL_PROMPT-unset}" "${GIT_DIR+set}" "${LINEAR_API_KEY+set}"'
+        ' "$$"'
         f" >> {shlex.quote(str(log_path))}\n"
         f"if [ -e {shlex.quote(str(hang_path))} ]; then\n"
         '  case " $* " in\n'
-        '    *" clone "*|*" fetch "*) sleep 30; exit 1 ;;\n'
+        '    *" clone "*|*" fetch "*) exec sleep 30 ;;\n'
         "  esac\n"
         "fi\n"
         f'exec {shlex.quote(os.path.abspath(real))} "$@"\n',
