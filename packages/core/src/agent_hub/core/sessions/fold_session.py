@@ -13,7 +13,7 @@ from datetime import datetime
 from agent_hub.core.approvals.fold_approvals import open_gate_ids
 from agent_hub.core.events.event import EventSource, EventType
 from agent_hub.core.events.stored_event import StoredEvent
-from agent_hub.core.readmodels.fact_keys import canonical_events, resolve_facts
+from agent_hub.core.readmodels.fact_keys import canonical_events, canonical_part, resolve_facts
 from agent_hub.core.sessions.pricing import PRICES, PerMillion
 from agent_hub.core.sessions.session import Outcome, Session, SessionSegment
 from agent_hub.core.sessions.session_cost import fold_session_cost, usage_records, usage_tokens
@@ -226,8 +226,9 @@ def group_by_session(events: Iterable[StoredEvent]) -> dict[str, list[StoredEven
     groups: dict[str, list[StoredEvent]] = {}
     for stored in canonical_events(events):
         groups.setdefault(stored.event.session, []).append(stored)
+    # Each group keeps the canonical order it was taken in.
     return {
-        session: group
+        session: canonical_part(group)
         for session, group in groups.items()
         if any(stored.event.source in SESSION_SOURCES for stored in group)
     }

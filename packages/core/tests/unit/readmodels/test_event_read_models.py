@@ -1,10 +1,14 @@
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
+from typing import Any
 
 import pytest
 
 from agent_hub.core.events.event import Event, EventType
 from agent_hub.core.events.event_query import EventPage, EventQuery
+from agent_hub.core.events.stored_event import StoredEvent
+from agent_hub.core.readmodels import event_read_models
 from agent_hub.core.readmodels.cursor import InvalidCursorError
 from agent_hub.core.readmodels.event_read_models import FoldedEventReadModels
 from agent_hub.core.readmodels.filters import (
@@ -17,7 +21,7 @@ from agent_hub.core.readmodels.filters import (
 )
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError, EventReadModels
 from agent_hub.core.runner.run_record import Stage
-from agent_hub.core.sessions.session import SessionStatus
+from agent_hub.core.sessions.session import Session, SessionStatus
 from agent_hub.core.testing.builders import an_event
 from agent_hub.core.testing.fakes import InMemoryEventStore
 from agent_hub.core.testing.session_scenarios import (
@@ -42,9 +46,11 @@ class CountingStore(InMemoryEventStore):
     def __init__(self) -> None:
         super().__init__()
         self.queries = 0
+        self.after: list[int | None] = []
 
     def query(self, query: EventQuery) -> EventPage:
         self.queries += 1
+        self.after.append(query.after_seq)
         return super().query(query)
 
 
@@ -337,3 +343,43 @@ def test_reuses_loaded_events_when_store_unchanged(store: InMemoryEventStore) ->
     counting.append([an_event(session="s-new")])
     assert service.get_session("s-new").id == "s-new"
     assert counting.queries > loaded
+
+
+def test_reads_only_new_events_when_store_grows(store: InMemoryEventStore) -> None:
+    counting = CountingStore()
+    counting.append(store.read_all())
+    service = _service(counting, NOW)[0]
+    service.list_sessions(SessionFilter())
+    mark = counting.high_water_mark()
+    counting.after.clear()
+
+    counting.append([an_event(session="s-new")])
+    session = service.get_session("s-new")
+
+    assert session.id == "s-new"
+    assert counting.after == [mark]
+    assert service.get_session("s-a").id == "s-a"
+
+
+def test_refolds_only_changed_session_when_store_grows(
+    store: InMemoryEventStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folded: list[str] = []
+    fold = event_read_models.fold_session
+
+    def counting_fold(events: Sequence[StoredEvent], **options: Any) -> Session:
+        folded.append(events[0].event.session)
+        return fold(events, **options)
+
+    monkeypatch.setattr(event_read_models, "fold_session", counting_fold)
+    service = _service(store, NOW)[0]
+    before = service.get_session("s-a")
+    folded.clear()
+
+    store.append([an_event(session="s-b", timestamp=NOW - timedelta(minutes=1))])
+    after = service.get_session("s-a")
+    changed = service.get_session("s-b")
+
+    assert folded == ["s-b"]
+    assert after == before
+    assert changed.last_activity_at == NOW - timedelta(minutes=1)

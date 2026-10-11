@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from typer.testing import CliRunner, Result
 
 from agent_hub.cli import web_command
@@ -76,8 +77,18 @@ def test_prints_url_and_serves_on_loopback_when_started(served: ServedApp, tmp_p
     assert (settings.db_path, settings.port) == (db_path, port)
 
 
-def test_uses_default_port_when_no_port_given(served: ServedApp) -> None:
-    result = _web([])
+def _scratch_env(tmp_path: Path) -> dict[str, str | None]:
+    """HOME and the XDG folders under ``tmp_path``: the database is never the developer's."""
+    return {
+        "HOME": str(tmp_path / "home"),
+        "XDG_DATA_HOME": str(tmp_path / "data"),
+        "XDG_CONFIG_HOME": str(tmp_path / "config"),
+        "AGENT_HUB_DB": None,
+    }
+
+
+def test_uses_default_port_when_no_port_given(served: ServedApp, tmp_path: Path) -> None:
+    result = _web([], env=_scratch_env(tmp_path))
 
     # 7420 may be taken on the machine running the tests; either way the line names it.
     assert (result.stdout, result.stderr) in {
@@ -112,7 +123,7 @@ def test_reads_database_from_environment_when_variable_set(
 
 
 def test_uses_home_config_when_config_home_relative(served: ServedApp, tmp_path: Path) -> None:
-    env = {"HOME": str(tmp_path / "home"), "XDG_CONFIG_HOME": "relative/config"}
+    env = _scratch_env(tmp_path) | {"XDG_CONFIG_HOME": "relative/config"}
 
     _web(["--port", str(_free_port())], env=env)
 
@@ -130,4 +141,40 @@ def test_exits_one_when_no_home_directory_found(
 
     assert result.exit_code == 1
     assert result.stderr.startswith("error: ")
+    assert served.app is None
+
+
+def test_serves_wired_routes_on_its_database_when_started(
+    served: ServedApp, tmp_path: Path
+) -> None:
+    db_path = tmp_path / "events.db"
+
+    result = _web(["--port", str(_free_port()), "--db", str(db_path)], env=_scratch_env(tmp_path))
+
+    assert result.exit_code == 0, result.output
+    assert served.app is not None
+    port = served.app.state.settings.port
+    with TestClient(served.app, base_url=f"http://127.0.0.1:{port}") as client:
+        status = client.get("/api/v1/collector/status")
+        hubs = client.get("/api/v1/hubs")
+    assert status.status_code == 200, status.text
+    assert status.json()["db_path"] == str(db_path)
+    assert hubs.json()["items"] == []
+    assert db_path.is_file()
+
+
+def test_exits_one_naming_database_when_it_cannot_be_opened(
+    served: ServedApp, tmp_path: Path
+) -> None:
+    blocker = tmp_path / "not-a-folder"
+    blocker.write_text("", encoding="utf-8")
+
+    result = _web(
+        ["--port", str(_free_port()), "--db", str(blocker / "events.db")],
+        env=_scratch_env(tmp_path),
+    )
+
+    assert result.exit_code == 1
+    assert result.stderr.startswith("error: cannot create the directory of the event database")
+    assert result.stdout == ""
     assert served.app is None

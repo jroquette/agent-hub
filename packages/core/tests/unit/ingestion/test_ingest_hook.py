@@ -111,7 +111,7 @@ def test_tails_transcript_and_adds_its_events_when_mapping_names_one() -> None:
         an_event(source="transcript", type="message", payload={"role": "user"}),
         an_event(source="transcript", type="message", payload={"role": "assistant"}),
     )
-    ref = TranscriptRef(session="session-1", path="/home/demo/t.jsonl", kind="main")
+    ref = TranscriptRef(project="demo", session="session-1", path="/home/demo/t.jsonl", kind="main")
     use_case, store, tailer, counters = _use_case(
         HookMapping(events=(hook_event,), transcript=ref),
         TailResult(events=transcript_events, skipped_lines=2),
@@ -126,7 +126,7 @@ def test_tails_transcript_and_adds_its_events_when_mapping_names_one() -> None:
 
 
 def test_counts_refusal_when_transcript_path_refused() -> None:
-    ref = TranscriptRef(session="session-1", path="/etc/passwd", kind="main")
+    ref = TranscriptRef(project="demo", session="session-1", path="/etc/passwd", kind="main")
     use_case, store, _, counters = _use_case(
         HookMapping(events=(), transcript=ref), TailResult(events=(), refused=True)
     )

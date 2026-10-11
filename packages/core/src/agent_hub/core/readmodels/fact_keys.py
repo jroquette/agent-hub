@@ -14,7 +14,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from agent_hub.core.events.event import Event, EventKey, EventSource, EventType
+from agent_hub.core.events.event import Event, EventSource, EventType
 from agent_hub.core.events.stored_event import StoredEvent
 
 _HOOKS_FIRST = (
@@ -33,11 +33,13 @@ _EXECUTOR_FIRST = (
     EventSource.GITHUB,
     EventSource.LINEAR,
 )
-# Tool calls, statuses, timings and errors: hooks then transcript. Steps, gates and run
-# state: executor then hooks. Tokens and model come only from the transcript (usage_key).
+# Tool calls, statuses, timings, errors and learning proposals: hooks then transcript. Steps,
+# gates and run state: executor then hooks. Tokens and model come only from the transcript
+# (usage_key).
 PRECEDENCE: Mapping[EventType, tuple[EventSource, ...]] = {
     EventType.TOOL_CALL: _HOOKS_FIRST,
     EventType.TOOL_RESULT: _HOOKS_FIRST,
+    EventType.LEARNING_PROPOSED: _HOOKS_FIRST,
     EventType.STEP_START: _EXECUTOR_FIRST,
     EventType.STEP_END: _EXECUTOR_FIRST,
     EventType.RUN_END: _EXECUTOR_FIRST,
@@ -88,6 +90,10 @@ def fact_key(event: Event) -> str | None:
     if match_type in {EventType.GATE_REQUEST, EventType.GATE_RESULT}:
         gate_id = _text(payload.get("gate_id"))
         return None if gate_id is None else f"{match_type}:{gate_id}"
+    if match_type == EventType.LEARNING_PROPOSED:
+        # A Write under brain/_inbox/ is seen by its hook and again in the transcript.
+        proposal = _text(payload.get("proposal"))
+        return None if proposal is None else f"{match_type}:{proposal}"
     return None
 
 
@@ -101,17 +107,38 @@ def _canonical_sort_key(stored: StoredEvent) -> tuple[datetime, str, str]:
     return (stored.event.timestamp, str(stored.event.source), stored.event.source_id)
 
 
+class _CanonicalEvents(list[StoredEvent]):
+    """What ``canonical_events`` returns; passed to it again, it is returned as is.
+
+    Folds call ``canonical_events`` on each other's output many times per read; the marker
+    spares re-keying and re-sorting events already in canonical order. Never mutated.
+    """
+
+
+def canonical_part(events: Iterable[StoredEvent]) -> list[StoredEvent]:
+    """``events``, marked canonical: the caller took them, in order, from canonical events.
+
+    Any subsequence of canonical events is canonical; marking it spares the next fold that
+    takes it a new sort.
+    """
+    return _CanonicalEvents(events)
+
+
 def canonical_events(events: Iterable[StoredEvent]) -> list[StoredEvent]:
     """``events`` without repeats of one event, ordered by timestamp then identity.
 
     Of two copies of one event (same ``(source, source_id)``), the one stored first is kept.
     """
-    unique: dict[EventKey, StoredEvent] = {}
+    if isinstance(events, _CanonicalEvents):
+        return events
+    # Keyed like ``Event.key`` but without building one per event: folds call this often.
+    unique: dict[tuple[str, str], StoredEvent] = {}
     for stored in events:
-        known = unique.get(stored.event.key)
+        key = (stored.event.source, stored.event.source_id)
+        known = unique.get(key)
         if known is None or stored.seq < known.seq:
-            unique[stored.event.key] = stored
-    return sorted(unique.values(), key=_canonical_sort_key)
+            unique[key] = stored
+    return _CanonicalEvents(sorted(unique.values(), key=_canonical_sort_key))
 
 
 def _precedence_key(stored: StoredEvent) -> tuple[int, datetime, str]:

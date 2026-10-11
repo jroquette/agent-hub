@@ -204,6 +204,15 @@ def test_raises_not_found_when_project_or_feature_unknown(read: object) -> None:
         read(models)
 
 
+def test_names_feature_id_when_feature_project_unknown() -> None:
+    models, _, _ = read_models({DEMO: a_demo_hub()}, DEMO)
+
+    with pytest.raises(EntityNotFoundError) as raised:
+        models.get_feature("nope", "demo-feature")
+
+    assert (raised.value.entity, raised.value.entity_id) == ("feature", "nope/demo-feature")
+
+
 def test_reads_now_note_when_present() -> None:
     models, _, _ = read_models({DEMO: a_demo_hub()}, DEMO)
 

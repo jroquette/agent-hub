@@ -11,6 +11,7 @@ of ``now`` (statuses depend on the clock). Search reads only ids, paths, command
 names, never payload bodies.
 """
 
+import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -41,7 +42,7 @@ from agent_hub.core.readmodels.cursor import (
     decode_cursor,
     encode_cursor,
 )
-from agent_hub.core.readmodels.fact_keys import resolve_facts
+from agent_hub.core.readmodels.fact_keys import canonical_events, resolve_facts
 from agent_hub.core.readmodels.filters import (
     ApprovalFilter,
     LearningFilter,
@@ -87,6 +88,11 @@ _SEARCH_ORDER: Mapping[SearchKind, int] = {
     "command": 6,
     "tool": 7,
 }
+
+
+# What a session's fold depends on besides its id: its event count and highest seq, the time
+# it was folded at, and the run issues.
+type _SessionKey = tuple[int, int, datetime, frozenset[tuple[str, str]]]
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -176,14 +182,21 @@ class FoldedEventReadModels:
         self._now = now
         self._hub_path_of = hub_path_of
         self._prices = prices
-        self._events: FoldMemo[str, tuple[StoredEvent, ...]] = FoldMemo(max_entries=1)
+        # The events read so far and the mark they were read up to: the store only grows, so
+        # a later read takes only what was appended since.
+        self._loaded: tuple[int, tuple[StoredEvent, ...]] = (0, ())
+        self._loading = threading.Lock()
         self._snapshots: FoldMemo[tuple[int, datetime], _Snapshot] = FoldMemo(max_entries=8)
+        # The last fold of each session and what it was folded from: a session whose events,
+        # ``now`` and run issues are unchanged is not folded again.
+        self._sessions: dict[str, tuple[_SessionKey, Session]] = {}
+        self._sessions_lock = threading.Lock()
 
     # Loading and folding
 
-    def _load(self, hwm: int) -> tuple[StoredEvent, ...]:
+    def _load(self, *, after: int, hwm: int) -> tuple[StoredEvent, ...]:
         loaded: list[StoredEvent] = []
-        after_seq = 0
+        after_seq = after
         while True:
             page = self._reader.query(EventQuery(after_seq=after_seq, limit=MAX_QUERY_LIMIT))
             loaded.extend(stored for stored in page.items if stored.seq <= hwm)
@@ -193,19 +206,25 @@ class FoldedEventReadModels:
 
     def _events_up_to(self, hwm: int) -> tuple[StoredEvent, ...]:
         current = self._reader.high_water_mark()
-        events = self._events.get("events", hwm=current, compute=lambda: self._load(current))
+        with self._loading:
+            loaded_hwm, events = self._loaded
+            if current != loaded_hwm:
+                # A smaller mark is another store at the same path: read it all again.
+                after = loaded_hwm if current > loaded_hwm else 0
+                kept = events if current > loaded_hwm else ()
+                events = kept + self._load(after=after, hwm=current)
+                self._loaded = (current, events)
         if hwm >= current:
             return events
         return tuple(stored for stored in events if stored.seq <= hwm)
 
     def _fold(self, hwm: int, now: datetime) -> _Snapshot:
         events = self._events_up_to(hwm)
-        by_session = group_by_session(events)
-        issues = run_issues(events)
-        sessions = {
-            session_id: fold_session(group, now=now, issues=issues, prices=self._prices)
-            for session_id, group in by_session.items()
-        }
+        # Sorted once here; every fold below takes the marked list as already canonical.
+        ordered = canonical_events(events)
+        by_session = group_by_session(ordered)
+        issues = run_issues(ordered)
+        sessions = self._fold_sessions(by_session, now=now, issues=issues)
         hub_paths = self._hub_paths({stored.event.project for stored in events})
         return _Snapshot(
             hwm=hwm,
@@ -213,10 +232,34 @@ class FoldedEventReadModels:
             events=events,
             by_session=by_session,
             sessions=sessions,
-            runs=fold_runs(events, sessions=sessions),
-            approvals=fold_approvals(events, hub_paths=hub_paths),
-            learnings=fold_learnings(events),
+            runs=fold_runs(ordered, sessions=sessions),
+            approvals=fold_approvals(ordered, hub_paths=hub_paths),
+            learnings=fold_learnings(ordered),
         )
+
+    def _fold_sessions(
+        self,
+        by_session: Mapping[str, Sequence[StoredEvent]],
+        *,
+        now: datetime,
+        issues: Mapping[str, str],
+    ) -> dict[str, Session]:
+        issues_key = frozenset(issues.items())
+        with self._sessions_lock:
+            known = dict(self._sessions)
+        folded: dict[str, tuple[_SessionKey, Session]] = {}
+        for session_id, group in by_session.items():
+            # The store only grows, so a group's size and highest seq name its events.
+            key = (len(group), max(stored.seq for stored in group), now, issues_key)
+            found = known.get(session_id)
+            if found is not None and found[0] == key:
+                folded[session_id] = found
+                continue
+            session = fold_session(group, now=now, issues=issues, prices=self._prices)
+            folded[session_id] = (key, session)
+        with self._sessions_lock:
+            self._sessions = folded
+        return {session_id: session for session_id, (_, session) in folded.items()}
 
     def _hub_paths(self, projects: Iterable[str]) -> dict[str, str]:
         if self._hub_path_of is None:
