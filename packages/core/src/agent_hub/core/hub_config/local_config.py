@@ -36,6 +36,8 @@ _IDENTITY_ORDER: Final = ("branch_prefix", "author_name", "author_email")
 NO_IDENTITY_MESSAGE: Final = (
     "holds no identity value: set branch_prefix, author_name or author_email"
 )
+# Written bytes the reader would refuse: no file is better than one every command rejects.
+TOO_LARGE_MESSAGE: Final = f"larger than {LOCAL_FILE_MAX_BYTES} bytes once written"
 HUB_ONLY_MESSAGE: Final = (
     "set only in hub.json; hub.local.json holds project.branch_prefix, author_name,"
     " author_email and tracker.transport"
@@ -98,7 +100,8 @@ def local_identity_bytes(values: Mapping[str, str]) -> bytes | tuple[ConfigProbl
 
     Keys come out in the order ``branch_prefix``, ``author_name``, ``author_email`` whatever the
     mapping's order, indented 2, UTF-8 and not escaped, with a final newline. An empty mapping
-    is a problem at ``project``, as an invalid value is: such a file would set nothing.
+    is a problem at ``project``, as an invalid value is: such a file would set nothing. Bytes
+    over ``LOCAL_FILE_MAX_BYTES``, which the reader refuses, are a problem at the root.
     """
     if not values:
         return (ConfigProblem("project", NO_IDENTITY_MESSAGE),)
@@ -107,4 +110,7 @@ def local_identity_bytes(values: Mapping[str, str]) -> bytes | tuple[ConfigProbl
         return checked
     project = {key: values[key] for key in _IDENTITY_ORDER if key in values}
     text = json.dumps({"project": project}, indent=2, ensure_ascii=False) + "\n"
-    return text.encode("utf-8")
+    content = text.encode("utf-8")
+    if len(content) > LOCAL_FILE_MAX_BYTES:
+        return (ConfigProblem(ROOT_PATH, TOO_LARGE_MESSAGE),)
+    return content
