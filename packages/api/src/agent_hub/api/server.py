@@ -1,7 +1,8 @@
-"""Serve the app on 127.0.0.1 only (D2, D25): the socket is bound here, then given to uvicorn.
+"""Serve the app on 127.0.0.1 (D2, D25): the socket is bound here, then given to uvicorn.
 
 Binding first means a port in use is reported before anything starts, and uvicorn never picks
-the address: there is no host option to get wrong.
+the address. ``hub web`` decides which address may be bound (loopback, or any address only
+inside the agent-hub container, ADR 0022); this module binds what it is given.
 """
 
 import errno
@@ -30,12 +31,21 @@ def bind_loopback(port: int) -> socket.socket:
 
     ``PortInUseError`` when the port is taken; any other ``OSError`` propagates.
     """
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    return bind_address(LOOPBACK, port)
+
+
+def bind_address(host: str, port: int) -> socket.socket:
+    """A listening socket on ``host:port``, ``host`` an IPv4 or IPv6 address (0 picks a port).
+
+    ``PortInUseError`` when the port is taken; any other ``OSError`` propagates.
+    """
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_STREAM)
     # Lets a restart reuse the port while old connections sit in TIME_WAIT; a live listener
     # still makes bind fail.
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        sock.bind((LOOPBACK, port))
+        sock.bind((host, port))
         sock.listen(socket.SOMAXCONN)
     except OSError as error:
         sock.close()

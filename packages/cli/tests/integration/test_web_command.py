@@ -63,6 +63,121 @@ def test_exits_two_when_invalid_option_given(args: list[str]) -> None:
     assert _web(args).exit_code == 2
 
 
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.168.1.20"])  # noqa: S104 -- refused here
+def test_refuses_address_outside_loopback_when_not_in_container(
+    served: ServedApp, tmp_path: Path, host: str
+) -> None:
+    env = _scratch_env(tmp_path) | {"AGENT_HUB_IN_CONTAINER": None}
+
+    result = _web(["--host", host, "--port", str(_free_port())], env=env)
+
+    assert result.exit_code == 2
+    assert result.stderr == "error: binding outside loopback needs AGENT_HUB_IN_CONTAINER=1\n"
+    assert served.app is None
+
+
+def test_refuses_address_outside_loopback_when_container_variable_not_one(
+    served: ServedApp, tmp_path: Path
+) -> None:
+    env = _scratch_env(tmp_path) | {"AGENT_HUB_IN_CONTAINER": "true"}
+
+    result = _web(["--host", "0.0.0.0", "--port", str(_free_port())], env=env)  # noqa: S104
+
+    assert result.exit_code == 2
+    assert served.app is None
+
+
+def test_binds_other_loopback_address_when_host_is_loopback(
+    served: ServedApp, tmp_path: Path
+) -> None:
+    port = _free_port()
+
+    result = _web(["--host", "127.0.0.2", "--port", str(port)], env=_scratch_env(tmp_path))
+
+    assert result.exit_code == 0, result.output
+    assert served.address == ("127.0.0.2", port)
+    assert result.stdout == f"agent-hub at http://127.0.0.1:{port}\nlistening on 127.0.0.2:{port}\n"
+
+
+def test_binds_loopback_when_host_is_localhost(served: ServedApp, tmp_path: Path) -> None:
+    port = _free_port()
+
+    result = _web(["--host", "localhost", "--port", str(port)], env=_scratch_env(tmp_path))
+
+    assert result.exit_code == 0, result.output
+    assert served.address == ("127.0.0.1", port)
+    assert result.stdout == f"agent-hub at http://127.0.0.1:{port}\n"
+
+
+def test_binds_every_address_and_prints_it_when_in_container(
+    served: ServedApp, tmp_path: Path
+) -> None:
+    port = _free_port()
+    env = _scratch_env(tmp_path) | {"AGENT_HUB_IN_CONTAINER": "1"}
+
+    result = _web(["--host", "0.0.0.0", "--port", str(port)], env=env)  # noqa: S104
+
+    assert result.exit_code == 0, result.output
+    assert served.address == ("0.0.0.0", port)  # noqa: S104 -- the container's bind
+    assert result.stdout == f"agent-hub at http://127.0.0.1:{port}\nlistening on 0.0.0.0:{port}\n"
+
+
+def test_answers_extra_host_when_allowed_hosts_variable_set(
+    served: ServedApp, tmp_path: Path
+) -> None:
+    env = _scratch_env(tmp_path) | {"AGENT_HUB_ALLOWED_HOSTS": "127.0.0.1:8000,agent-hub.test"}
+
+    result = _web(["--port", str(_free_port())], env=env)
+
+    assert result.exit_code == 0, result.output
+    assert served.app is not None
+    settings = served.app.state.settings
+    expected = {"127.0.0.1:8000", f"agent-hub.test:{settings.port}"}
+    assert settings.allowed_hosts == expected
+    with TestClient(served.app, base_url="http://127.0.0.1:8000") as client:
+        assert client.get("/api/v1/collector/status").status_code == 200
+
+
+def test_exits_two_naming_variable_when_allowed_hosts_has_wildcard(
+    served: ServedApp, tmp_path: Path
+) -> None:
+    env = _scratch_env(tmp_path) | {"AGENT_HUB_ALLOWED_HOSTS": "*"}
+
+    result = _web(["--port", str(_free_port())], env=env)
+
+    assert result.exit_code == 2
+    assert result.stderr == "error: AGENT_HUB_ALLOWED_HOSTS: '*' is not host[:port]\n"
+    assert served.app is None
+
+
+def test_tails_transcripts_under_variable_when_projects_variable_set(
+    served: ServedApp, tmp_path: Path
+) -> None:
+    projects = tmp_path / "claude" / "projects"
+    env = _scratch_env(tmp_path) | {"AGENT_HUB_CLAUDE_PROJECTS": str(projects)}
+
+    result = _web(["--port", str(_free_port())], env=env)
+
+    assert result.exit_code == 0, result.output
+    assert web_command.claude_projects_root(env | {"HOME": "/nowhere"}) == projects
+
+
+def test_uses_home_projects_when_projects_variable_empty(tmp_path: Path) -> None:
+    env = {"HOME": str(tmp_path), "AGENT_HUB_CLAUDE_PROJECTS": ""}
+
+    assert web_command.claude_projects_root(env) == tmp_path / ".claude" / "projects"
+
+
+def test_exits_one_when_projects_variable_relative(served: ServedApp, tmp_path: Path) -> None:
+    env = _scratch_env(tmp_path) | {"AGENT_HUB_CLAUDE_PROJECTS": "claude/projects"}
+
+    result = _web(["--port", str(_free_port())], env=env)
+
+    assert result.exit_code == 1
+    assert result.stderr == "error: AGENT_HUB_CLAUDE_PROJECTS must be an absolute path\n"
+    assert served.app is None
+
+
 def test_prints_url_and_serves_on_loopback_when_started(served: ServedApp, tmp_path: Path) -> None:
     port = _free_port()
     db_path = tmp_path / "events.db"

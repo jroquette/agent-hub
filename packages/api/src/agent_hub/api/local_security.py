@@ -5,8 +5,13 @@ request. So: the ``Host`` must name the loopback at this port (DNS rebinding), a
 ``DELETE`` carrying an ``Origin`` must come from this origin (cross-site writes), bodies stop at
 1 MiB, API answers are never cached, a CSP keeps the app to its own origin, and no CORS header
 is ever sent.
+
+``AGENT_HUB_ALLOWED_HOSTS`` (read by ``hub web``, parsed here) may add exact ``host[:port]``
+names, for example the host port a container publishes; never a wildcard.
 """
 
+import ipaddress
+import re
 from collections.abc import Iterable
 
 from starlette.datastructures import Headers, MutableHeaders
@@ -39,23 +44,72 @@ SECURITY_HEADERS = {
 }
 
 
-def allowed_hosts(port: int) -> frozenset[str]:
-    """The ``Host`` values this server answers: a loopback name with its port."""
-    return frozenset(f"{host}:{port}" for host in LOOPBACK_HOSTS)
+ALLOWED_HOSTS_VARIABLE = "AGENT_HUB_ALLOWED_HOSTS"
+# A DNS name (letters, digits, hyphens, dots; no label starts with a hyphen) or a bracketed
+# IPv6 address, then an optional port. Anything else, a wildcard included, is refused.
+_HOST_ENTRY = re.compile(
+    r"(?P<host>[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*"
+    r"|\[[0-9a-f:.]+\])(?::(?P<port>[0-9]{1,5}))?"
+)
+MAX_PORT = 65_535
 
 
-def allowed_origins(port: int) -> frozenset[str]:
+def allowed_hosts(port: int, *, extra: Iterable[str] = ()) -> frozenset[str]:
+    """The ``Host`` values this server answers: a loopback name with its port, plus ``extra``
+    (exact ``host:port`` values, from ``parse_allowed_hosts``)."""
+    return frozenset({*(f"{host}:{port}" for host in LOOPBACK_HOSTS), *extra})
+
+
+def allowed_origins(port: int, *, extra: Iterable[str] = ()) -> frozenset[str]:
     """The origins of this server, as a browser sends them in ``Origin``."""
-    return frozenset(f"http://{host}" for host in allowed_hosts(port))
+    return frozenset(f"http://{host}" for host in allowed_hosts(port, extra=extra))
+
+
+def parse_allowed_hosts(value: str, *, port: int) -> frozenset[str]:
+    """The ``host:port`` names of a comma list of ``host[:port]`` (the server's port when none).
+
+    Names are lowercased; empty entries are skipped. ``ValueError`` naming the variable for an
+    entry that is not a plain host and port, such as ``*``, a URL or a path.
+    """
+    names: set[str] = set()
+    for raw in value.split(","):
+        entry = raw.strip().lower()
+        if entry:
+            names.add(_host_and_port(entry, default_port=port))
+    return frozenset(names)
+
+
+def _host_and_port(entry: str, *, default_port: int) -> str:
+    matched = _HOST_ENTRY.fullmatch(entry)
+    problem = f"{ALLOWED_HOSTS_VARIABLE}: {entry!r} is not host[:port]"
+    if matched is None:
+        raise ValueError(problem)
+    host, port_text = matched["host"], matched["port"]
+    if host.startswith("["):
+        try:
+            ipaddress.IPv6Address(host[1:-1])
+        except ValueError:
+            raise ValueError(problem) from None
+    port = default_port if port_text is None else int(port_text)
+    if not 1 <= port <= MAX_PORT:
+        raise ValueError(problem)
+    return f"{host}:{port}"
 
 
 class LocalSecurityMiddleware:
     """Refuses foreign hosts, cross-origin writes and large bodies; adds the security headers."""
 
-    def __init__(self, app: ASGIApp, *, port: int, max_body_bytes: int = MAX_BODY_BYTES) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        port: int,
+        extra_hosts: Iterable[str] = (),
+        max_body_bytes: int = MAX_BODY_BYTES,
+    ) -> None:
         self.app = app
-        self._hosts = allowed_hosts(port)
-        self._origins = allowed_origins(port)
+        self._hosts = allowed_hosts(port, extra=extra_hosts)
+        self._origins = allowed_origins(port, extra=extra_hosts)
         self._max_body_bytes = max_body_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
