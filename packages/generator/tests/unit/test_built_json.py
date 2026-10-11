@@ -104,14 +104,33 @@ HOOK_ROWS = (
     ("PreCompact", None, "pre_compact.py", 20),
     ("SessionEnd", None, "session_end.py", 10),
 )
+# AGH-200 D6 and E2: the hook sensor's eleven events, in the order the managed settings list
+# them; the tool events match every tool (``*``).
+SENSOR_EVENTS = (
+    "SessionStart",
+    "PreToolUse",
+    "PostToolUse",
+    "Stop",
+    "PreCompact",
+    "SessionEnd",
+    "UserPromptSubmit",
+    "PostToolUseFailure",
+    "Notification",
+    "SubagentStart",
+    "SubagentStop",
+)
+SENSOR_MATCHERS = {"PreToolUse": "*", "PostToolUse": "*", "PostToolUseFailure": "*"}
+SENSOR_ROWS = tuple(
+    (event, SENSOR_MATCHERS.get(event), "event_sensor.py", 5) for event in SENSOR_EVENTS
+)
 
 
-def test_lists_six_hook_events_when_settings_built(demo_config: HubConfig) -> None:
+def test_lists_base_hooks_then_sensor_when_settings_built(demo_config: HubConfig) -> None:
     settings = managed_settings(demo_config)
     assert isinstance(settings, dict)
 
-    expected = {}
-    for event, matcher, file, timeout in HOOK_ROWS:
+    expected: dict[str, list[dict[str, object]]] = {}
+    for event, matcher, file, timeout in (*HOOK_ROWS, *SENSOR_ROWS):
         group: dict[str, object] = {
             "hooks": [
                 {
@@ -123,8 +142,36 @@ def test_lists_six_hook_events_when_settings_built(demo_config: HubConfig) -> No
         }
         if matcher is not None:
             group["matcher"] = matcher
-        expected[event] = [group]
+        expected.setdefault(event, []).append(group)
     assert settings["hooks"] == expected
+    assert list(settings["hooks"]) == list(SENSOR_EVENTS)
+
+
+def sensor_groups(hooks: object) -> dict[str, list[object]]:
+    """``{event: [the matcher of each group running event_sensor.py]}`` of a ``hooks`` value."""
+    assert isinstance(hooks, dict)
+    found: dict[str, list[object]] = {}
+    for event, groups in hooks.items():
+        for group in groups:
+            for hook in group["hooks"]:
+                if hook["command"].endswith('/event_sensor.py"'):
+                    assert hook["timeout"] == 5
+                    found.setdefault(event, []).append(group.get("matcher"))
+    return found
+
+
+def test_registers_sensor_for_eleven_events_when_settings_built(demo_config: HubConfig) -> None:
+    settings = managed_settings(demo_config)
+    assert isinstance(settings, dict)
+
+    found = sensor_groups(settings["hooks"])
+
+    assert found == {event: [SENSOR_MATCHERS.get(event)] for event in SENSOR_EVENTS}
+    assert len(found) == 11
+    assert sensor_groups(base_hooks_block()) == found
+    assert [hook.event for hook in HOOK_EVENTS if hook.file == "event_sensor.py"] == list(
+        SENSOR_EVENTS
+    )
 
 
 def test_renders_additional_directories_when_repos_listed(
@@ -166,8 +213,8 @@ def test_equals_managed_hooks_when_base_block_read(demo_config: HubConfig) -> No
     block = base_hooks_block()
 
     assert block == expected
-    assert list(block) == [hook.event for hook in HOOK_EVENTS]
-    assert len(block) == 6
+    assert list(block) == list(dict.fromkeys(hook.event for hook in HOOK_EVENTS))
+    assert len(block) == 11
     # Each call builds a new value: a caller that edits one, at the top or deeper, cannot change
     # the next.
     block["Stop"] = []

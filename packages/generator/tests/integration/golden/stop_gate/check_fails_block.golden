@@ -1,0 +1,15 @@
+--- rc (2 bytes) ---
+0
+
+--- stdout (175 bytes) ---
+{"decision": "block", "reason": "[hub stop-gate] Fix these before finishing (check_fast must pass):\n\n## api (api): `echo boom; exit 3` FAILED\nchanged: feature.py\nboom\n"}
+
+--- stderr (0 bytes) ---
+
+--- fs (89 bytes) ---
+A <ROOT>/home/tmp/hub-stop-abcdef123456.json
+| {"blocks": 1}
+\ no newline at end of file
+
+--- calls (0 bytes) ---
+
