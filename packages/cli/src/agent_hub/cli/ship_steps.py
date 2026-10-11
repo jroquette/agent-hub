@@ -12,7 +12,8 @@
 4. The tracker writes of ``success_writes``: the move to the review state, the failed label
    removed when the issue read carries it, then one comment listing the PRs. The first write
    that fails stops them; none is retried. The failure is named without the adapter's advice
-   (spec E5), then the PRs open, whether the issue was moved, and each write not made.
+   (spec E5), then the PRs open, the failed write as not confirmed (it may have landed), and
+   each later write as not done.
 
 Each child runs through ``ship_child``: in the caller's process group, with ``pr_steps``'
 environments, timeouts read from ``run_steps``' constants at call time (PD-2). A failure names
@@ -23,7 +24,7 @@ import contextlib
 import json
 import os
 import shutil
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -70,6 +71,7 @@ _PRIVATE_FOLDER: Final = 0o700
 PUSH_STEP: Final = "push"
 PR_STEP: Final = "pull request"
 LINK_STEP: Final = "link"
+UNCONFIRMED_HINT: Final = "(check the issue in the tracker)"
 # The most of a PR body read back that is parsed (gh prints it as JSON); more is refused.
 PR_BODY_OUTPUT_LIMIT: Final = 1 << 20
 
@@ -234,33 +236,47 @@ def _run_check(run: ShipRun, target: ShipTarget) -> tuple[bytes, str | None]:
 
 
 def _opened_log(hub: Path, name: str, *, repo: str, shown_log: str) -> int:
-    """The log ``name`` opened in ``<hub>/.agent-runs/ship``, walked by folder descriptor: each
-    folder made owner-only when absent, never followed through a link, and the file never
-    opened through one (emptied when it exists)."""
-    opened: list[int] = []
+    """The log ``name`` opened in ``<hub>/.agent-runs/ship`` (``_private_file``)."""
     try:
-        opened.append(os.open(hub, _FOLDER_FLAGS))
+        folder = _private_folder(hub)
+        try:
+            return _private_file(folder, name)
+        finally:
+            os.close(folder)
+    except OSError as error:
+        fail(
+            f"{PREFIX}: {repo}: cannot open the check log {shown_log}: {error.strerror or error}",
+            NOTHING_PUSHED,
+        )
+
+
+def _private_folder(hub: Path) -> int:
+    """``<hub>/.agent-runs/ship`` opened, walked by folder descriptor: each folder made
+    owner-only when absent and never followed through a link."""
+    opened = [os.open(hub, _FOLDER_FLAGS)]
+    try:
         for folder in LOG_FOLDERS:
             with contextlib.suppress(FileExistsError):
                 os.mkdir(folder, _PRIVATE_FOLDER, dir_fd=opened[-1])
             opened.append(os.open(folder, _FOLDER_FLAGS | os.O_NOFOLLOW, dir_fd=opened[-1]))
-        descriptor = os.open(name, _LOG_FLAGS, _PRIVATE_FILE, dir_fd=opened[-1])
-    except OSError as error:
-        fail(
-            f"{PREFIX}: {repo}: cannot open the check log {shown_log}: {error.strerror or error}",
-            NOTHING_PUSHED,
-        )
-    finally:
-        for folder_descriptor in opened:
-            os.close(folder_descriptor)
+    except OSError:
+        for descriptor in opened:
+            os.close(descriptor)
+        raise
+    for descriptor in opened[:-1]:
+        os.close(descriptor)
+    return opened[-1]
+
+
+def _private_file(folder: int, name: str) -> int:
+    """The file ``name`` in ``folder`` opened for writing, owner-only, never through a link
+    (emptied when it exists)."""
+    descriptor = os.open(name, _LOG_FLAGS, _PRIVATE_FILE, dir_fd=folder)
     try:
         os.fchmod(descriptor, _PRIVATE_FILE)
-    except OSError as error:
+    except OSError:
         os.close(descriptor)
-        fail(
-            f"{PREFIX}: {repo}: cannot open the check log {shown_log}: {error.strerror or error}",
-            NOTHING_PUSHED,
-        )
+        raise
     return descriptor
 
 
@@ -355,11 +371,44 @@ def _link(run: ShipRun, target: ShipTarget, *, url: str, others: Sequence[str]) 
         linked = with_related(body, urls=others, workspace=str(run.hub.parent))
         if linked == body:
             return
-        edited = child(pr_edit_command(url, linked), env=env, timeout=timeout)
+        with _body_file(run, target, linked) as path:
+            edited = child(pr_edit_command(url, path), env=env, timeout=timeout)
     except PrStepError as error:
         raise _StepError(LINK_STEP, error.reason) from None
     if edited.returncode != 0:
         raise _StepError(LINK_STEP, f"gh pr edit failed: {error_tail(edited.stderr)}")
+
+
+@contextlib.contextmanager
+def _body_file(run: ShipRun, target: ShipTarget, body: str) -> Iterator[Path]:
+    """``body`` in ``<hub>/.agent-runs/ship/<ISSUE>-<repo>.body``, owner-only, for ``gh pr edit
+    --body-file``: one argv string of 128 KiB or more fails with E2BIG on Linux, and a body
+    can be longer. The file is removed when the block ends, however it ends."""
+    path = check_log_path(run.hub, issue_id=run.issue.id, repo=target.repo).with_suffix(".body")
+    try:
+        folder = _private_folder(run.hub)
+    except OSError as error:
+        raise _body_file_error(path, error) from None
+    try:
+        try:
+            with os.fdopen(_private_file(folder, path.name), "wb") as file:
+                file.write(body.encode(errors="surrogatepass"))
+        except OSError as error:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(path.name, dir_fd=folder)
+            raise _body_file_error(path, error) from None
+        try:
+            yield path
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(path.name, dir_fd=folder)
+    finally:
+        os.close(folder)
+
+
+def _body_file_error(path: Path, error: OSError) -> _StepError:
+    shown = shown_path(str(path))
+    return _StepError(LINK_STEP, f"cannot write the body file {shown}: {error.strerror or error}")
 
 
 def _body_of(read: ChildResult, *, url: str) -> str:
@@ -391,17 +440,20 @@ def _report(run: ShipRun, urls: Sequence[str]) -> None:
     outcome = apply_writes(run.client, writes)
     if outcome.error is None:
         return
-    pending = writes[outcome.done :]
-    not_moved = [
-        f"{PREFIX}: the issue was not moved to {shown_text(run.review_state)}"
-        for write in pending
-        if write.operation == "move_state"
-    ]
+    # The write that raised may still have landed (an MCP write, a timed-out mutation): it is
+    # named as not confirmed; the writes after it were not made.
+    failed, *later = writes[outcome.done :]
+    not_moved = (
+        [f"{PREFIX}: the issue may not have been moved to {shown_text(run.review_state)}"]
+        if failed.operation == "move_state"
+        else []
+    )
     fail(
         tracker_failure_line(outcome.error),
         *(f"{PREFIX}: PR open: {url}" for url in urls),
         *not_moved,
-        *(f"{PREFIX}: not done: {shown_text(call_line(write))}" for write in pending),
+        f"{PREFIX}: not confirmed: {shown_text(call_line(failed))} {UNCONFIRMED_HINT}",
+        *(f"{PREFIX}: not done: {shown_text(call_line(write))}" for write in later),
     )
 
 

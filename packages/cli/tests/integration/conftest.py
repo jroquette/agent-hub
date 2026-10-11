@@ -1634,10 +1634,11 @@ def logged_git(run_workspace: RunWorkspace) -> RunWorkspace:
 # hub ship's fakes (AGH-63). Its ``gh`` keeps the PRs it opened in ``FAKE_GH_STATE``, a JSON list
 # of ``{repo, head, base, title, url, state, body, draft}``, and answers only the calls hub ship
 # makes: ``pr create``, ``pr view <branch> --repo R --json …``, ``pr view <url> --json …`` and
-# ``pr edit <url> --body B``. It serves only the ``--json`` fields asked for and exits 2 on any
-# other argv. ``FAKE_GH_FAIL`` (``<step>:<repo>,…``, steps ``create``, ``view``, ``body``,
-# ``edit``, repo as its dir) makes that call exit 1; step ``nourl`` makes ``pr create`` exit 0
-# without printing a url or opening a PR. Every call is logged as the run fakes log.
+# ``pr edit <url> --body B`` or ``--body-file F``. It serves only the ``--json`` fields asked
+# for and exits 2 on any other argv. ``FAKE_GH_FAIL`` (``<step>:<repo>,…``, steps ``create``,
+# ``view``, ``body``, ``edit``, repo as its dir) makes that call exit 1; step ``nourl`` makes
+# ``pr create`` exit 0 without printing a url or opening a PR. Every call is logged as the run
+# fakes log.
 _SHIP_FAKE_GH = (
     _FAKE_LOG
     + """import re
@@ -1726,6 +1727,13 @@ elif argv[:2] == ["pr", "view"] and len(argv) > 2:
     given = options(argv[3:], ("--json",))
     fails("body", repo_of(argv[2]))
     show(by_url(prs, argv[2]), fields(given["--json"]))
+elif argv[:2] == ["pr", "edit"] and len(argv) > 2 and "--body-file" in argv:
+    given = options(argv[3:], ("--body-file",))
+    fails("edit", repo_of(argv[2]))
+    with open(given["--body-file"], encoding="utf-8") as file:
+        by_url(prs, argv[2])["body"] = file.read()
+    save(prs)
+    print(argv[2])
 elif argv[:2] == ["pr", "edit"] and len(argv) > 2:
     given = options(argv[3:], ("--body",))
     fails("edit", repo_of(argv[2]))
