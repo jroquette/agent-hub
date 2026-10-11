@@ -1624,6 +1624,30 @@ def run_tracker() -> RecordingTracker:
     return RecordingTracker(tracker_backend_for_run())
 
 
+START_DESCRIPTION = "Collect the synthetic events.\n"
+
+
+def tracker_backend_for_start() -> FakeTrackerBackend:
+    """``hub start``'s tracker: DEM-7 ``Add the collector`` in ``Todo``, over the team states
+    ``Todo`` (unstarted), ``In Progress`` and ``In Review`` (started) and ``Done``."""
+    issue = an_issue(
+        id="DEM-7", title="Add the collector", description=START_DESCRIPTION, labels=()
+    )
+    backend = tracker_backend_for_run()
+    return FakeTrackerBackend(
+        states=backend.states,
+        team_labels=backend.team_labels,
+        workspace_labels=backend.workspace_labels,
+        issues={issue.id: issue},
+    )
+
+
+@pytest.fixture
+def start_tracker() -> RecordingTracker:
+    """A recording tracker over ``tracker_backend_for_start()``."""
+    return RecordingTracker(tracker_backend_for_start())
+
+
 @pytest.fixture
 def logged_git(run_workspace: RunWorkspace) -> RunWorkspace:
     """The run workspace with its ``git`` replaced by one that logs each call, then runs git."""
