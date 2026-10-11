@@ -658,6 +658,43 @@ class TestIdentity:
                 id="git-problem",
             ),
             pytest.param(
+                git_lacks_item([IdentityKey.AUTHOR_EMAIL], rejected=[IdentityKey.AUTHOR_EMAIL]),
+                [
+                    "missing identity: git's user.email is not an email address"
+                    " Fix: git config user.email <you@example.com>, then ./hub setup"
+                ],
+                id="git-email-rejected",
+            ),
+            pytest.param(
+                git_lacks_item([IdentityKey.AUTHOR_NAME], rejected=[IdentityKey.AUTHOR_NAME]),
+                [
+                    "missing identity: git's user.name holds a control character"
+                    ' Fix: git config user.name "<Your Name>", then ./hub setup'
+                ],
+                id="git-name-rejected",
+            ),
+            pytest.param(
+                git_lacks_item(
+                    [IdentityKey.AUTHOR_NAME, IdentityKey.AUTHOR_EMAIL],
+                    rejected=[IdentityKey.AUTHOR_EMAIL],
+                ),
+                [
+                    "missing identity: git config in the hub has no user.name;"
+                    " git's user.email is not an email address"
+                    ' Fix: git config user.name "<Your Name>" and git config user.email'
+                    " <you@example.com>, then ./hub setup"
+                ],
+                id="git-lacks-name-email-rejected",
+            ),
+            pytest.param(
+                identity_missing_item(IdentityGap.TOO_LARGE),
+                [
+                    "missing identity: hub.local.json not written (larger than 65536 bytes)"
+                    " Fix: shorten git's user.name or user.email in the hub, then ./hub setup"
+                ],
+                id="too-large",
+            ),
+            pytest.param(
                 invalid_prefix_item(
                     Sourced("j+x@example.com", Source.GIT, IdentityKey.AUTHOR_EMAIL)
                 ),
@@ -762,6 +799,10 @@ class TestIdentity:
     def test_refuses_keys_when_git_lacks_no_git_key(self, lacking: list[IdentityKey]) -> None:
         with pytest.raises(ValueError, match="author_name or author_email"):
             git_lacks_item(lacking)
+
+    def test_refuses_rejected_key_when_git_lacks_not_it(self) -> None:
+        with pytest.raises(ValueError, match="rejected"):
+            git_lacks_item([IdentityKey.AUTHOR_NAME], rejected=[IdentityKey.AUTHOR_EMAIL])
 
     def test_prints_gitignore_line_when_local_file_not_ignored(self) -> None:
         assert item_lines(gitignore_item()) == [

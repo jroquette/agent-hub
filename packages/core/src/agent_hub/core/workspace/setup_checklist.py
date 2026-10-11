@@ -16,6 +16,7 @@ from enum import StrEnum
 from typing import Final, Literal, NamedTuple
 
 from agent_hub.core.hub_config.effective_identity import IdentityKey, Sourced, email_giver
+from agent_hub.core.hub_config.local_config import LOCAL_FILE_MAX_BYTES
 from agent_hub.core.hub_config.problems import one_line
 from agent_hub.core.hub_config.workspace_repos import WorkspaceRepo
 
@@ -42,6 +43,7 @@ PREFIX_FIX: Final = (
 )
 INVALID_LOCAL_FIX: Final = "fix hub.local.json (docs/design/developer-identity.md)"
 RERUN_FIX: Final = "./hub setup"
+SHORTER_GIT_FIX: Final = "shorten git's user.name or user.email in the hub, then ./hub setup"
 GITIGNORE_FIX: Final = "add the line hub.local.json to .gitignore and commit it"
 CLONE_FIX: Final = (
     "check that your git credentials can read github.com/{github} (e.g. gh auth setup-git),"
@@ -101,6 +103,7 @@ class IdentityGap(StrEnum):
     INVALID_LOCAL = "invalid-local"
     APPEARED = "appeared"
     NO_PREFIX = "no-prefix"
+    TOO_LARGE = "too-large"
 
 
 class RepoOutcome(StrEnum):
@@ -130,8 +133,17 @@ _IDENTITY_GAPS: Final[Mapping[IdentityGap, _Text]] = {
     IdentityGap.APPEARED: _Text("hub.local.json appeared while writing; left as is", RERUN_FIX),
     # The sub-lines (``no_prefix_lines``) list where a prefix can be set.
     IdentityGap.NO_PREFIX: _Text("no branch prefix", PREFIX_FIX),
+    # Only git's values are free in length: the proposal holds nothing else (and the prefix).
+    IdentityGap.TOO_LARGE: _Text(
+        f"hub.local.json not written (larger than {LOCAL_FILE_MAX_BYTES} bytes)", SHORTER_GIT_FIX
+    ),
 }
 _GIT_KEYS: Final = {IdentityKey.AUTHOR_NAME: "user.name", IdentityKey.AUTHOR_EMAIL: "user.email"}
+# What a value git holds but the key's shape refuses is; the value itself is never repeated.
+_GIT_REJECTED: Final = {
+    IdentityKey.AUTHOR_NAME: "git's user.name holds a control character",
+    IdentityKey.AUTHOR_EMAIL: "git's user.email is not an email address",
+}
 _GIT_SET_COMMANDS: Final = {
     IdentityKey.AUTHOR_NAME: 'git config user.name "<Your Name>"',
     IdentityKey.AUTHOR_EMAIL: "git config user.email <you@example.com>",
@@ -315,21 +327,32 @@ def identity_missing_item(gap: IdentityGap, *, sub_lines: Sequence[str] = ()) ->
 
 
 def git_lacks_item(
-    lacking: Collection[IdentityKey], *, git_problem: str | None = None
+    lacking: Collection[IdentityKey],
+    *,
+    rejected: Collection[IdentityKey] = (),
+    git_problem: str | None = None,
 ) -> ChecklistItem:
     """``identity`` missing because git gives no valid ``user.name``/``user.email``.
 
-    ``git_problem`` (``git not found``, ``git timed out``) says why git gave no answer at all.
+    ``rejected`` are the ``lacking`` keys git holds a value of the wrong shape for: each is
+    named as such, not as absent. ``git_problem`` (``git not found``, ``git timed out``) says
+    why git gave no answer at all.
     """
     keys = [key for key in (IdentityKey.AUTHOR_NAME, IdentityKey.AUTHOR_EMAIL) if key in lacking]
     if not keys or IdentityKey.BRANCH_PREFIX in lacking:
         msg = "git lacks only author_name or author_email (git has no branch_prefix key)"
         raise ValueError(msg)
+    if not set(rejected) <= set(keys):
+        msg = "a rejected key is one git lacks a valid value for"
+        raise ValueError(msg)
+    absent = [_GIT_KEYS[key] for key in keys if key not in rejected]
+    parts = ["git config in the hub has no " + " or ".join(absent)] if absent else []
+    parts.extend(_GIT_REJECTED[key] for key in keys if key in rejected)
     commands = " and ".join(_GIT_SET_COMMANDS[key] for key in keys)
     return ChecklistItem(
         state=State.MISSING,
         item="identity",
-        detail="git config in the hub has no " + " or ".join(_GIT_KEYS[key] for key in keys),
+        detail="; ".join(parts),
         fix=f"{commands}, then ./hub setup",
         sub_lines=() if git_problem is None else (f"git: {git_problem}",),
     )

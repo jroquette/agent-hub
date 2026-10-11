@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from agent_hub.core.hub_config.document_check import check_hub_document
 from agent_hub.core.hub_config.local_config import (
+    LOCAL_FILE_MAX_BYTES,
     LocalConfig,
     LocalProject,
     LocalTracker,
@@ -13,7 +14,7 @@ from agent_hub.core.hub_config.local_config import (
     local_identity_bytes,
 )
 from agent_hub.core.hub_config.model import Project, Tracker
-from agent_hub.core.hub_config.problems import ConfigProblem
+from agent_hub.core.hub_config.problems import ROOT_PATH, ConfigProblem
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.core.testing.platform_repository_cases import CUSTOM_REPOSITORY, SECRET_PARTS
 
@@ -254,4 +255,26 @@ def test_returns_problems_when_proposed_value_invalid() -> None:
         ConfigProblem(
             "project.branch_prefix", hub_problem_at("project.branch_prefix", "-x/").message
         ),
+    )
+
+
+def _name_bytes(length: int) -> bytes | tuple[ConfigProblem, ...]:
+    """The identity bytes of an ``author_name`` of ``length`` characters, whose file is the
+    name plus a fixed frame."""
+    one_character = local_identity_bytes({"author_name": "J"})
+    assert isinstance(one_character, bytes)
+    frame = len(one_character) - 1
+    return local_identity_bytes({"author_name": "J" * (length - frame)})
+
+
+def test_writes_identity_bytes_when_file_size_at_reader_limit() -> None:
+    written = _name_bytes(LOCAL_FILE_MAX_BYTES)
+
+    assert isinstance(written, bytes)
+    assert len(written) == LOCAL_FILE_MAX_BYTES
+
+
+def test_returns_problem_when_identity_bytes_exceed_reader_limit() -> None:
+    assert _name_bytes(LOCAL_FILE_MAX_BYTES + 1) == (
+        ConfigProblem(ROOT_PATH, f"larger than {LOCAL_FILE_MAX_BYTES} bytes once written"),
     )

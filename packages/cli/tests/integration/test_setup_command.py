@@ -26,6 +26,8 @@ from typer.testing import CliRunner, Result
 from agent_hub.cli import exclusive_write, setup_identity, setup_tools
 from agent_hub.cli.exclusive_write import TEMP_INFIX
 from agent_hub.cli.main import app
+from agent_hub.cli.setup_identity import ANSWER_LIMIT
+from agent_hub.core.hub_config.local_config import LOCAL_FILE_MAX_BYTES
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
 from agent_hub.core.workspace.setup_checklist import (
     CLAUDE_FIX,
@@ -100,7 +102,7 @@ def run_setup(monkeypatch: pytest.MonkeyPatch) -> SetupRunner:
     """Run ``hub setup <args>`` in process with ``root`` as the current folder; ``input`` is
     its stdin."""
 
-    def run(root: Path, *args: str, input: str | None = None) -> Result:
+    def run(root: Path, *args: str, input: str | bytes | None = None) -> Result:
         monkeypatch.chdir(root)
         return CliRunner().invoke(app, ["setup", *args], input=input)
 
@@ -572,6 +574,11 @@ def _snapshot(path: Path) -> tuple[bytes, int]:
     return path.read_bytes(), path.stat().st_mtime_ns
 
 
+def _identity_reads(traced: TracedGit) -> list[str]:
+    """The logged reads of git's ``user.name`` and ``user.email``, in order."""
+    return [call.args for call in traced.calls() if call.args.startswith("config --get user.")]
+
+
 @pytest.mark.usefixtures("tools_ok")
 class TestIdentity:
     def test_reads_identity_from_hub_json_when_all_keys_set(
@@ -740,6 +747,34 @@ class TestIdentity:
         assert _identity_lines(result.stdout) == [GIT_LACKS_LINES["email"]]
         assert result.exit_code == 1
 
+    @pytest.mark.parametrize(
+        "local", [None, '{"project": {"branch_prefix": "jr/"}}\n'], ids=["no-local", "prefix-only"]
+    )
+    def test_names_rejected_email_when_git_email_not_an_address(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+        local: str | None,
+    ) -> None:
+        hub = _team_hub(demo_workspace, git=None)
+        _git_user(demo_workspace, monkeypatch, name="Jane Roe", email="jane at example")
+        if local is not None:
+            demo_workspace.write_local(local)
+
+        result = run_setup(hub, "--yes")
+
+        assert _identity_lines(result.stdout) == [
+            "missing identity: git's user.email is not an email address"
+            " Fix: git config user.email <you@example.com>, then ./hub setup"
+        ]
+        # Git's value is never repeated.
+        assert "jane at example" not in result.output
+        assert (hub / LOCAL_FILE).exists() is (local is not None)
+        assert result.exit_code == 1
+
 
 @pytest.mark.usefixtures("tools_ok")
 class TestWritesLocal:
@@ -763,7 +798,51 @@ class TestWritesLocal:
         assert stat.S_IMODE((hub / LOCAL_FILE).stat().st_mode) == 0o644
         assert _temp_names(hub) == []
         assert result.stderr == _proposal(hub, "jane/, Jane Roe <jane@example.com> (git config)")
+        assert _identity_reads(env_traced_git) == [
+            "config --get user.name",
+            "config --get user.email",
+        ]
         assert result.exit_code == 0, result.output
+
+    def test_reads_no_git_email_when_hub_sets_email(
+        self, demo_workspace: Workspace, env_traced_git: TracedGit, run_setup: SetupRunner
+    ) -> None:
+        hub = _team_hub(demo_workspace)
+        _edit_hub_json(
+            hub, lambda document: document["project"].update(author_email="jr@example.com")
+        )
+
+        result = run_setup(hub, "--yes")
+
+        assert _identity_lines(result.stdout) == [
+            "ok      identity: wrote hub.local.json: jr/, Jane Roe (hub.json, git config)"
+        ]
+        assert _identity_reads(env_traced_git) == ["config --get user.name"]
+        assert result.exit_code == 0, result.output
+
+    def test_writes_nothing_when_writes_local_exceeds_file_limit(
+        self,
+        demo_workspace: Workspace,
+        env_traced_git: TracedGit,
+        run_setup: SetupRunner,
+        *,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        hub = _team_hub(demo_workspace, git=None)
+        # One byte over the limit the reader keeps: AC-71.7's file with a longer name.
+        name = "J" * (LOCAL_FILE_MAX_BYTES + 1 - len(LOCAL_BYTES) + len(JANE[0]))
+        _git_user(demo_workspace, monkeypatch, name=name, email=JANE[1])
+
+        result = run_setup(hub, "--yes")
+
+        assert _identity_lines(result.stdout) == [
+            f"missing identity: hub.local.json not written (larger than {LOCAL_FILE_MAX_BYTES}"
+            " bytes) Fix: shorten git's user.name or user.email in the hub, then ./hub setup"
+        ]
+        assert not (hub / LOCAL_FILE).exists()
+        assert _temp_names(hub) == []
+        assert result.stderr == ""
+        assert result.exit_code == 1
 
     def test_writes_local_only_unset_keys_when_hub_sets_prefix(
         self, demo_workspace: Workspace, env_traced_git: TracedGit, run_setup: SetupRunner
@@ -862,7 +941,11 @@ class TestWritesLocal:
 
 @pytest.mark.usefixtures("tools_ok")
 class TestPrompt:
-    @pytest.mark.parametrize("answer", ["y\n", "YES\n", " yes \n"], ids=["y", "YES", "spaced"])
+    @pytest.mark.parametrize(
+        "answer",
+        ["y\n", "YES\n", " yes \n", "y" + " " * (ANSWER_LIMIT - 2) + "\n"],
+        ids=["y", "YES", "spaced", "at-limit"],
+    )
     def test_writes_file_when_prompt_answered_yes(
         self,
         demo_workspace: Workspace,
@@ -887,7 +970,17 @@ class TestPrompt:
         assert result.exit_code == 0, result.output
 
     @pytest.mark.parametrize(
-        "answer", ["n\n", "\n", "", "y" * 100 + "\n"], ids=["n", "empty", "eof", "long"]
+        "answer",
+        [
+            "n\n",
+            "\n",
+            "",
+            "y" * 100 + "\n",
+            "y" + " " * ANSWER_LIMIT + "\n",
+            b"\xff\n",
+            b"y\xff\n",
+        ],
+        ids=["n", "empty", "eof", "long", "y-past-limit", "not-utf8", "y-not-utf8"],
     )
     def test_writes_nothing_when_prompt_declined(
         self,
@@ -896,13 +989,14 @@ class TestPrompt:
         run_setup: SetupRunner,
         *,
         monkeypatch: pytest.MonkeyPatch,
-        answer: str,
+        answer: str | bytes,
     ) -> None:
         hub = _team_hub(demo_workspace)
         monkeypatch.setattr(setup_identity, "stdin_is_tty", lambda: True)
 
         result = run_setup(hub, input=answer)
 
+        assert result.exception is None or isinstance(result.exception, SystemExit)
         assert _identity_lines(result.stdout) == [DECLINED_LINE]
         assert not (hub / LOCAL_FILE).exists()
         assert result.stderr.endswith(_prompt(hub))
