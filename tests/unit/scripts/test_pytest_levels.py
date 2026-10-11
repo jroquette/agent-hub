@@ -31,6 +31,18 @@ def test_blocks_socket_when_test_is_unit_level() -> None:
         socket.socket()
 
 
+def test_allows_local_socket_pair_when_test_is_unit_level() -> None:
+    """pytest.ini passes --allow-unix-socket: asyncio's event loop needs a local socket pair
+    (the API's in-process tests run one), while network sockets stay blocked."""
+    first, second = socket.socketpair()
+    try:
+        first.sendall(b"x")
+        assert second.recv(1) == b"x"
+    finally:
+        first.close()
+        second.close()
+
+
 LIVE_VARIABLES = {
     "LINEAR_API_KEY": "lin_api_secret_value",
     "AGENT_HUB_LIVE": "1",
