@@ -8,8 +8,8 @@ from agent_hub.core.events.event import EventSource
 from agent_hub.core.features.feature_status import FeatureFolder
 from agent_hub.core.hub_config.doctor_rules import LOCK_DRIFT_RULE, Severity
 from agent_hub.core.hub_files.hub_lock import HubLock, ManagedFileEntry
-from agent_hub.core.hubs.hub_registry import HubConflictError, HubInvalidError, UnreadHubFile
 from agent_hub.core.hubs.hub_read_models import HubFilesReadModels
+from agent_hub.core.hubs.hub_registry import HubConflictError, HubInvalidError, UnreadHubFile
 from agent_hub.core.projects.project_views import ProjectActivity
 from agent_hub.core.readmodels.filters import Scope
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError, HubReadModels
