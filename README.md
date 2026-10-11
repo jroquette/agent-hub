@@ -449,11 +449,15 @@ or inherited one, or one from an earlier part, does not count; neither does a tr
 local-only (`--version`, `help`, `cdk synth`, `terraform fmt|validate`, `terraform init -backend=false`,
 `kubectl version --client`, `helm template|lint`, `sam build|validate`); anything else is blocked. On an allowed environment, deploy, destroy and delete verbs
 (`terraform apply|destroy|import`, `kubectl apply|delete|…`, `aws s3 rm`, `aws … delete-*`, `cdk deploy`, …) are
-asked first. A command that would pass is asked first too when it is not simple, that is when it holds a backslash,
-`$'`, `$$`, a backtick, `#`, a quote inside a word (`a''b`), `xargs`, `eval`, `exec`, `source`, `.`, `bash -c` (or
-`sh`/`zsh`/`dash -c`), `<<<` or `<<`: the guard does not model these, so it never lets them through unseen. An
-environment matched only inside quotes (`--query '--profile demo-dev'`, `--profile "demo-dev"`) is asked first too. A tool
-word with nothing after it (`… | xargs aws`) counts as a call with no environment. The tool is found behind wrappers, quotes and redirections (`env aws …`, `bash -c "aws …"`,
+asked first. A command that would pass is asked first too unless every character in it is an ASCII letter or digit,
+a space, a tab or one of `_ - . / : = @ , + %`, joined only by `;`, `&&`, `||`, `|` or newlines: a `$`, a quote, a
+brace, `<`, `>`, a backtick, `\`, `#`, `(`, `)`, `*`, `?`, `[`, `]`, `~`, `!`, a single `&`, a carriage return or any
+other character is asked about, by name, since the guard cannot tell what the shell makes of it. So is a word that can
+run a command, or change its environment, out of the guard's sight: a shell (`sh`, `bash`, `zsh`, `dash`, `ksh`,
+`fish`), `python*`, `perl`, `node`, `ruby`, `php`, `xargs`, `eval`, `exec`, `source`, `.` as a command, `env -i` or
+`env -u` (any spelling), `sudo`, `su`, `doas` and a lone `--`. A deploy verb's ask keeps its reason. A tool word with
+nothing after it (`… | xargs aws`), or with a `$`, `,` or `}` glued to it (`aws$x`, `{aws,s3}`), counts as a call
+with no environment. The tool is found behind wrappers, quotes and redirections (`env aws …`, `bash -c "aws …"`,
 `aws>/dev/null …`), but its name is case-sensitive and quoting tricks inside it (`a""ws`) hide it. If `guard.infra` or
 one of its patterns cannot be used (a wrong value, or regex syntax the system Python 3.9 lacks), every infra command
 is blocked until it is fixed. Patterns are Python `re`, searched with no flags on every such command: avoid nested
@@ -660,7 +664,7 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `guard.deny_paths` | no | `[]` | Paths the guard never lets the agent read or edit |
 | `guard.deny_hosts` | no | `[]` | Hosts the guard blocks network calls to |
 | `guard.infra` | no | absent | Present, even `{}`, the guard classifies infra commands by environment (see the guard section); absent, the fixed infra rule |
-| `guard.infra.allow` | no | `[]` | Python `re` patterns for allowed environments, e.g. `--profile[= ]demo-dev(?=\s|$)`; end each pattern at whitespace or the end, since `\b` also matches `demo-dev"x`, a different profile to the shell |
+| `guard.infra.allow` | no | `[]` | Python `re` patterns for allowed environments, e.g. `(?<![^ \t])--profile[= ]demo-dev(?![^ \t])` and `^[ \t]*AWS_PROFILE=demo-dev(?=[ \t])`; bound each by a space or tab (an `AWS_PROFILE` prefix by the part's start), since `\b` also matches `demo-dev.x` or `>--profile=demo-dev` and `\s` also matches a carriage return the shell does not split on |
 | `guard.infra.prod_markers` | no | `[]` | Python `re` patterns that mark production; a match anywhere in an infra command blocks it |
 | `modules` | no | `{}` | Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`), from 0.6.0: each selected one renders its files and `mk/<id>.mk`; `contract-sync` takes `{"source": <repo dir>, "target": <repo dir>}`, the others `{}` |
 | `doctor.rules` | no | `{}` | Per-rule `hub doctor` settings |
