@@ -416,6 +416,16 @@ def test_refuses_before_any_write_when_matching_folder_name_invalid() -> None:
     assert run.backend.issues["DEM-7"].state == "Todo"
 
 
+def test_refuses_before_any_write_when_one_repo_folder_name_invalid() -> None:
+    run = run_start(existing={"demo-api": ["dem-7-ok"], "demo-web": ["dem-7-Bad"]})
+
+    assert run.result is not None
+    assert (run.result.name, run.result.created, run.result.remove) == (None, (), ())
+    assert "dem-7-Bad" in run.result.reason
+    assert run.log == [("get_issue", "DEM-7"), ("task_folders", "DEM-7")]
+    assert run.backend.issues["DEM-7"].state == "Todo"
+
+
 def test_resumes_name_found_in_untouched_repo_when_repo_subset_given() -> None:
     run = run_start(repos=("demo-web",), existing={"demo-api": ["dem-7-old"]})
 
