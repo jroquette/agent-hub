@@ -146,22 +146,24 @@ class TestFixtures:
             "LINEAR_API_KEY": SYNTHETIC_KEY,
         }
 
-        subprocess.run(  # noqa: S603 - the traced git, fixed arguments, tmp_path folders
+        # Popen, for each child's pid: the traced git execs, so it logs its own.
+        with subprocess.Popen(  # noqa: S603 - the traced git, fixed arguments, tmp_path folders
             [git, "clone", "--quiet", "https://github.com/acme/demo-web.git", str(clone)],
             cwd=tmp_path,
             env=env,
-            check=True,
-        )
-        origin = subprocess.run(  # noqa: S603 - the traced git, fixed arguments
+        ) as cloning:
+            assert cloning.wait() == 0
+        with subprocess.Popen(  # noqa: S603 - the traced git, fixed arguments
             [git, "config", "--get", "remote.origin.url"],
             cwd=demo_workspace.hub,
             env={**os.environ, "GIT_DIR": str(demo_workspace.hub / ".git")},
-            check=True,
-            capture_output=True,
-        )
+            stdout=subprocess.PIPE,
+        ) as reading:
+            origin_url, _ = reading.communicate()
+        assert reading.returncode == 0
 
         assert (clone / "README.md").read_text(encoding="utf-8") == "# demo-web\n"
-        assert origin.stdout == b"git@github.com:acme/demo-hub.git\n"
+        assert origin_url == b"git@github.com:acme/demo-hub.git\n"
         assert [tuple(call) for call in env_traced_git.calls()] == [
             (
                 os.path.realpath(tmp_path),
@@ -169,6 +171,7 @@ class TestFixtures:
                 "0",
                 False,
                 True,
+                cloning.pid,
             ),
             (
                 os.path.realpath(demo_workspace.hub),
@@ -176,8 +179,20 @@ class TestFixtures:
                 "unset",
                 True,
                 False,
+                reading.pid,
             ),
         ]
+
+    def test_logs_no_workspace_call_when_env_traced_git_used(
+        self, demo_workspace: Workspace, env_traced_git: TracedGit
+    ) -> None:
+        before = demo_workspace.origin_head("demo-api")
+
+        after = demo_workspace.advance("demo-api")
+        demo_workspace.git(demo_workspace.ws / "demo-api", "fetch", "-q", "origin")
+
+        assert after != before
+        assert env_traced_git.calls() == []
 
 
 class TestExit:
