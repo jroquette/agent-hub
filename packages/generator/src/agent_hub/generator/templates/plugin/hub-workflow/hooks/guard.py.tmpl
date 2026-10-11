@@ -23,6 +23,10 @@ timeout, a file that resolves outside the hub) is an ask naming the cause, added
 That guarantee covers a buggy extension, not a hostile one: it runs as the user, with the user's
 rights, so its trust boundary is the ask on every edit of plugin/<project>/hooks/ (and of this folder).
 Everything else passes through to the normal permission rules.
+After a deny or an ask is printed, the guard sends it to the local control plane through the event
+sensor's send_decision (event_sensor.py beside it): the hook input with
+decision {by: guard, kind, rule}, rule a stable id read from the reason (RULE_IDS). The send is
+bounded by the sensor's 0.5 s, prints nothing and never changes the decision or the exit code.
 """
 
 from __future__ import annotations
@@ -47,6 +51,11 @@ except Exception as error:  # a partial install: ask, never let the call through
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
                                              "permissionDecisionReason": f"[hub guard] could not check this call ({type(error).__name__}); confirm"}}))
     sys.exit(0)
+
+try:  # the control plane's sender: without it, decisions are simply not recorded
+    from event_sensor import send_decision
+except Exception:
+    send_decision = None
 
 Verdict = Optional[tuple[str, str]]
 
@@ -552,6 +561,51 @@ def tighten(base: Verdict, extra: Verdict, failed: bool = False) -> Verdict:
     return base
 
 
+# The rule id the control plane records for a verdict, read from its reason: the first pattern that
+# matches (re.search). A combined reason (a base ask with an extension failure) is the base rule's.
+RULE_IDS = (
+    ("force_push", re.compile(r"^force-push is not allowed")),
+    ("push_protected_branch", re.compile(r"^pushing to \S+ is not allowed")),
+    ("curl_pipe_shell", re.compile(r"^curl\|sh is not allowed")),
+    ("docker_volumes", re.compile(r"^removing docker volumes")),
+    ("infra_commands", re.compile(r"^infrastructure commands")),
+    ("secret_read", re.compile(r"^reading secret file ")),
+    ("ai_attribution", re.compile(r"^(commits|PR text) carr(y|ies) no AI attribution")),
+    ("agent_branch", re.compile(r"^branches are \S*, never claude/")),
+    ("git_internals", re.compile(r"^\.git is git's own state")),
+    ("test_bash_edit", re.compile(r"^deleting or sed-editing tests")),
+    ("brain_curated", re.compile(r"^brain/ is curated")),
+    ("assertions_removed", re.compile(r"^this edit removes \d+ assertion")),
+    ("skip_marker", re.compile(r"^this edit adds a skip")),
+    ("secret_file", re.compile(r"^(\S.* may hold secrets|Grep over \.env files)")),
+    ("project_guard", re.compile(r"^project guard: ")),
+    ("deny_hosts", re.compile(r" is in guard\.deny_hosts \(hub\.json\)")),
+    ("deny_paths", re.compile(r" is under guard\.deny_paths `")),
+    ("guard_files", re.compile(r" is the hub's own guard or config \(")),
+    ("guard_parent", re.compile(r" holds the hub's guard files \(")),
+    ("ask_before_edit", re.compile(r" matches guard\.ask_before_edit `")),
+)
+
+
+def rule_of(reason: str) -> str | None:
+    """The rule id of a verdict's reason (RULE_IDS), or None when no pattern matches."""
+    for rule, pattern in RULE_IDS:
+        if pattern.search(reason):
+            return rule
+    return None
+
+
+def record(data: dict, decision: str, reason: str) -> None:
+    """Send the printed verdict to the control plane; never raises, never prints."""
+    if send_decision is None:
+        return
+    try:
+        sys.stdout.flush()
+        send_decision(data, {"by": "guard", "kind": decision, "rule": rule_of(reason)})
+    except Exception:
+        pass
+
+
 def main() -> None:
     data = read_input()
     tool = data.get("tool_name")
@@ -568,6 +622,7 @@ def main() -> None:
         decision, reason = verdict
         emit({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
                                      "permissionDecisionReason": f"[hub guard] {reason}"}})
+        record(data, decision, reason)
 
 
 def ask_on_error(kind: str) -> None:
