@@ -84,6 +84,7 @@ CORE_MODULES = (
     "runner/__init__.py",
     "runner/ready_list.py",
     "runner/session_prompt.py",
+    "runner/issue_block.py",
     "runner/title_pattern.py",
     "runner/verdict.py",
     "runner/run_texts.py",
