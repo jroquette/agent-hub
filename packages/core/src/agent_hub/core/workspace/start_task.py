@@ -1,11 +1,15 @@
 """``hub start``'s use case: from a tracker issue to its worktrees, its started state and a session.
 
-The order is the spec's (D-order): read the issue; list the touched repos' task folders and
-decide the task name (D-resume); prepare the name (branch checks, before any create); create the
-missing worktrees; move the issue to the started state; launch. The move is the last write, so a
-failure before it never leaves the issue started without its worktrees. A fresh start moves the
-issue unconditionally; a resume moves it only while it is unstarted (``only_if_unstarted``), so
-an issue already started, in review or closed is left as it is.
+The order is the spec's (D-order): read the issue; list every hub repo's task folders and decide
+the task name (D-resume); prepare the name (branch checks, before any create); create the
+touched repos' missing worktrees; move the issue to the started state; launch. The move is the
+last write, so a failure before it never leaves the issue started without its worktrees. A fresh
+start moves the issue unconditionally; a resume moves it only while it is unstarted
+(``only_if_unstarted``), so an issue already started, in review or closed is left as it is.
+
+A task is resumed when any hub repo, touched or not, holds a worktree of the issue: its name is
+kept, and only the touched repos get a worktree. A name read back from disk must be a valid task
+name (``task_folder_problem``) before it reaches a prompt, a line shown or a branch.
 
 Every failure becomes a ``StartFailure`` naming the worktrees this run created and the exact
 ``./hub worktree --remove`` lines that drop them; the worktrees themselves are kept.
@@ -19,7 +23,7 @@ from agent_hub.core.errors import AgentHubError, TrackerError
 from agent_hub.core.hub_config.problems import one_line
 from agent_hub.core.tracker.tracker_client import Issue, TrackerClient
 from agent_hub.core.workspace.start_prompt import start_prompt
-from agent_hub.core.workspace.task_slug import task_name
+from agent_hub.core.workspace.task_slug import task_folder_problem, task_name
 
 
 class StartStepError(AgentHubError):
@@ -36,14 +40,17 @@ class StartStepError(AgentHubError):
 
 
 class AmbiguousTaskError(StartStepError):
-    """The touched repos hold the worktrees of more than one task for the issue."""
+    """The hub repos hold the worktrees of more than one task for the issue."""
 
 
 class TaskWorktrees(Protocol):
-    """The task worktrees of the touched repos, in ``hub.json`` order."""
+    """The task worktrees of the hub repos, in ``hub.json`` order."""
 
-    def task_folders(self, issue_id: str) -> Mapping[str, Sequence[str]]:
-        """Each touched repo's worktree folder names that belong to ``issue_id``."""
+    def task_folders(self, issue_id: str, repos: Sequence[str]) -> Mapping[str, Sequence[str]]:
+        """Each of ``repos``' worktree folder names that ``is_task_folder`` gives to ``issue_id``.
+
+        ``start_task`` passes every hub repo, so a task started in other repos is resumed.
+        """
         ...
 
     def prepare(self, name: str) -> None:
@@ -151,7 +158,8 @@ def start_task(
 ) -> StartFailure | None:
     """Start or resume the task of ``issue_id`` in ``repos``; None once it was launched.
 
-    ``all_repos`` are every hub repo, which decides whether a remove line needs ``--only``;
+    ``all_repos`` are every hub repo: their task folders decide the name (D-resume), and they
+    decide whether a remove line needs ``--only``. Worktrees are created only in ``repos``.
     ``started_state`` is the state a fresh start, or a resume of an unstarted issue, moves to.
     """
     try:
@@ -159,7 +167,8 @@ def start_task(
     except TrackerError as error:
         return StartFailure(reason=str(error), name=None, created=(), remove=())
     try:
-        found = worktrees.task_folders(issue_id)
+        found = worktrees.task_folders(issue_id, all_repos)
+        _check_names(found, issue_id)
         name, resumed = resume_name(found, fresh=task_name(issue_id, issue.title))
     except StartStepError as error:
         return StartFailure(reason=str(error), name=None, created=(), remove=())
@@ -200,3 +209,11 @@ def _create(worktrees: TaskWorktrees, repo: str, created: list[str]) -> None:
         if error.made:
             created.append(repo)
         raise
+
+
+def _check_names(found: Mapping[str, Sequence[str]], issue_id: str) -> None:
+    for repo, names in found.items():
+        for name in names:
+            problem = task_folder_problem(name, issue_id)
+            if problem is not None:
+                raise StartStepError(f"{repo}: {problem}")

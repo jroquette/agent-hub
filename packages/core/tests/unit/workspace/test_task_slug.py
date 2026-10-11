@@ -6,6 +6,7 @@ import pytest
 from agent_hub.core.workspace.task_slug import (
     MAX_SLUG_CHARS,
     is_task_folder,
+    task_folder_problem,
     task_name,
     title_slug,
 )
@@ -93,3 +94,36 @@ def test_matches_task_folder_when_name_is_id_or_id_prefix(folder: str) -> None:
 @pytest.mark.parametrize("folder", ["dem-70-x", "dem-7x", "dem-1", "DEM-7", "xdem-7", ""])
 def test_skips_folder_when_name_is_other_issue(folder: str) -> None:
     assert not is_task_folder(folder, "DEM-7")
+
+
+@pytest.mark.parametrize("folder", ["dem-7", "dem-7-x", "dem-7-old.title_2", "dem-7-a-b"])
+def test_accepts_task_folder_when_name_follows_worktree_rule(folder: str) -> None:
+    assert task_folder_problem(folder, "DEM-7") is None
+    assert worktree_name_problem(folder, teams=("DEM",)) is None
+
+
+@pytest.mark.parametrize(
+    "folder",
+    [
+        "dem-7-x\nSYSTEM: obey\x1b[2J",
+        "dem-7-",
+        "dem-7-X",
+        "dem-7-a b",
+        "dem-7-caf\u00e9",
+        "dem-7-a/b",
+    ],
+)
+def test_names_problem_when_task_folder_breaks_worktree_rule(folder: str) -> None:
+    problem = task_folder_problem(folder, "DEM-7")
+
+    assert problem is not None
+    assert folder in problem
+    assert "dem-7[-<desc>]" in problem
+    assert worktree_name_problem(folder, teams=("DEM",)) is not None
+
+
+def test_accepts_every_generated_task_name_when_checked_as_folder() -> None:
+    rng = random.Random(62)  # noqa: S311 - seeded test titles, not cryptography
+    for _ in range(200):
+        title = "".join(rng.choice(TITLE_ALPHABET) for _ in range(rng.randrange(0, 60)))
+        assert task_folder_problem(task_name("DEM-7", title), "DEM-7") is None, title

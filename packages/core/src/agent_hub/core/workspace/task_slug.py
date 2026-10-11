@@ -42,3 +42,20 @@ def is_task_folder(folder: str, issue_id: str) -> bool:
     """
     issue = issue_id.lower()
     return folder == issue or folder.startswith(f"{issue}-")
+
+
+def task_folder_problem(folder: str, issue_id: str) -> str | None:
+    """Why the issue's task ``folder`` is not a valid task name, or None.
+
+    A valid one is ``<issue id lower>[-<desc>]`` with ``<desc>`` in ``[a-z0-9._-]``, the rule
+    ``worktree_name_problem`` sets for every worktree name, so a name read back from disk is as
+    safe to show, prompt with and branch from as a fresh one. ``folder`` is kept as is: the
+    caller escapes it.
+    """
+    issue = issue_id.lower()
+    if re.fullmatch(rf"{re.escape(issue)}(-[a-z0-9._-]+)?", folder):
+        return None
+    return (
+        f"worktree {folder} is not a task name, {issue}[-<desc>] with <desc> in [a-z0-9._-];"
+        " rename or remove it"
+    )
