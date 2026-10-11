@@ -19,6 +19,7 @@ SPEC_TYPES = [
     "learning.proposed",
     "learning.accepted",
 ]
+PHASE_TWO_TYPES = ["step.start", "step.end", "run.end", "learning.rejected", "session.summary"]
 SPEC_SOURCES = ["claude_code", "transcript", "otel", "executor", "github", "linear"]
 REQUIRED_FIELDS = ["project", "session", "type", "timestamp", "source", "source_id"]
 
@@ -82,6 +83,19 @@ def test_accepts_type_when_listed_in_spec(event_type: str) -> None:
     event = Event.model_validate(required_fields() | {"type": event_type})
 
     assert event.type == EventType(event_type)
+
+
+@pytest.mark.parametrize("event_type", PHASE_TWO_TYPES, ids=PHASE_TWO_TYPES)
+def test_accepts_type_when_type_is_new_in_phase_two(event_type: str) -> None:
+    event = Event.model_validate(required_fields() | {"type": event_type})
+
+    assert event.type == EventType(event_type)
+
+
+@pytest.mark.parametrize("event_type", ["step.begin", "hook.blocked", "run.start"])
+def test_rejects_type_when_type_is_unknown(event_type: str) -> None:
+    with pytest.raises(ValidationError, match="type"):
+        Event.model_validate(required_fields() | {"type": event_type})
 
 
 @pytest.mark.parametrize("source", SPEC_SOURCES, ids=SPEC_SOURCES)
