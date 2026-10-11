@@ -3,7 +3,7 @@
 The hub is ``AGENT_HUB_ROOT`` when ``./hub`` exports it, else the current folder; without a
 ``hub.json`` entry there the exit is 2. ``hub.json`` is read once: any problem with it, a pin
 other than this release included (plan E1), prints the reader's lines and exits 1 before any
-git call. Then the checklist, each item's lines printed as soon as it is decided (so far the
+git call. Then the checklist, each item's lines printed as soon as it is decided (the
 tools and the tracker credential, ``setup_tools``, then the developer's identity,
 ``setup_identity``, whose proposal and prompt alone go to stderr, whether git ignores
 ``hub.local.json`` when it exists, then each repo cloned or fetched next to the hub,
