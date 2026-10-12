@@ -3,12 +3,14 @@ from decimal import Decimal
 
 from agent_hub.core.readmodels.fact_keys import canonical_events
 from agent_hub.core.sessions.fold_session import fold_sessions, group_by_session
-from agent_hub.core.sessions.session import Outcome, SessionStatus
+from agent_hub.core.sessions.session import Actor, Outcome, SessionLabel, SessionStatus
 from agent_hub.core.testing.builders import an_event
 from agent_hub.core.testing.session_scenarios import (
     SCENARIO_START,
     a_run_events,
     a_session_events,
+    a_subagent_events,
+    an_agent_call,
     as_stored,
     learning_events,
     shuffled,
@@ -181,3 +183,34 @@ def test_groups_events_in_canonical_order_when_events_shuffled() -> None:
     for group in groups.values():
         assert canonical_events(group) is group
         assert group == canonical_events(list(group))
+
+
+def test_sets_label_and_actors_when_session_folded() -> None:
+    events = as_stored(
+        [
+            *a_session_events(
+                cwd="/work/demo-api/.claude/worktrees/dem-7-login",
+                git_branch="jdoe/dem-7-login",
+                slash_commands=("/kickoff", "/feature"),
+            ),
+            *an_agent_call("toolu_agent", at=SCENARIO_START + timedelta(seconds=30)),
+            *a_subagent_events("agent-a", start=SCENARIO_START + timedelta(minutes=1)),
+        ]
+    )
+
+    session = fold_sessions(events, now=NOW)["session-1"]
+
+    assert session.agent == "main"
+    assert session.label == SessionLabel(
+        issue=None,
+        workflow="/feature",
+        workflows=("/kickoff", "/feature"),
+        repo="demo-api",
+        branch="jdoe/dem-7-login",
+        worktree="dem-7-login",
+    )
+    assert [(actor.kind, actor.type, actor.description) for actor in session.actors] == [
+        ("main", None, None),
+        ("subagent", "Explore", "Find the session folds"),
+    ]
+    assert session.actors[0] == Actor(kind="main")
