@@ -167,6 +167,7 @@ def test_maps_error_line_when_post_tool_use_failure() -> None:
         "status": "error",
         "duration_ms": 80,
         "error_line": "Exit code 2",
+        "error_message": "Exit code 2 make: *** [check-fast] Error 2",
     }
 
 
@@ -174,6 +175,55 @@ def test_says_interrupted_when_failure_is_interrupt() -> None:
     event = _only(a_hook_input("PostToolUseFailure", is_interrupt=True))
 
     assert event.payload["error_line"] == "interrupted"
+
+
+def test_keeps_error_message_when_failure_has_long_error() -> None:
+    token = "gh" + "p_" + "Q7w8E9r0" * 5
+    error = ("e" * 279 + " " + token + " ").ljust(1_000, "x")
+    command = "make check " + "y" * 389
+
+    event = _only(a_hook_input("PostToolUseFailure", error=error, tool_input={"command": command}))
+
+    message = event.payload["error_message"]
+    assert isinstance(message, str)
+    assert len(message) <= 300
+    assert message.startswith("e" * 279)
+    assert "gh" + "p_" not in message
+    assert "Q7w8E9r0" not in message
+    assert len(str(event.payload["error_line"])) <= 200
+    call = _only(a_hook_input("PreToolUse", tool_input={"command": command}))
+    assert call.payload["command"] == command
+
+
+def test_omits_error_message_when_error_omitted_by_sensor() -> None:
+    event = _only(a_hook_input("PostToolUseFailure", error={"_omitted_bytes": 70_000}))
+
+    assert "error_message" not in event.payload
+    assert "error_line" not in event.payload
+    assert event.payload["status"] == "error"
+
+
+def test_omits_error_message_when_interrupted() -> None:
+    event = _only(a_hook_input("PostToolUseFailure", is_interrupt=True))
+
+    assert event.payload["error_line"] == "interrupted"
+    assert "error_message" not in event.payload
+
+
+def test_keeps_skill_when_pre_tool_use_is_skill() -> None:
+    event = _only(
+        a_hook_input(
+            "PreToolUse",
+            tool_name="Skill",
+            tool_input={"skill": "hub-workflow:feature", "args": "add the export button"},
+        )
+    )
+
+    assert event.payload == {
+        "tool": "Skill",
+        "tool_use_id": "toolu_01",
+        "skill": "hub-workflow:feature",
+    }
 
 
 def test_maps_permission_gate_when_notification_is_permission_prompt() -> None:
@@ -440,6 +490,13 @@ def _every_hook_event() -> list[Event]:
             )
         ),
         an_envelope(a_hook_input("PostToolUse", tool_response=..., tool_response_bytes=123_456)),
+        # AGH-201: the Skill tool's name, SendMessage's recipient.
+        an_envelope(a_hook_input("PreToolUse", tool_name="Skill", tool_input={"skill": "feature"})),
+        an_envelope(
+            a_hook_input(
+                "PreToolUse", tool_name="SendMessage", tool_input={"to": "a", "message": "m"}
+            )
+        ),
     ]
     return [event for envelope in envelopes for event in mapper.map(envelope).events]
 

@@ -2,10 +2,11 @@
 
 Shared by the hook mapper (PreToolUse ``tool_input``) and the transcript parser (``tool_use``
 ``input``): both carry the same tool input, whose key names live in this module's table only.
-Line counts are taken before redaction; every kept text is redacted, then clipped. The hook
-sensor sends a Write's ``content`` as ``content_lines`` (plus ``content_heading`` under
-``brain/_inbox/``) and an edit's ``old_string``/``new_string`` as ``<key>_lines`` (S1); both shapes
-read alike.
+Line counts are taken before redaction; every kept text is redacted, then clipped. The Skill
+tool keeps its skill's name and SendMessage its recipient, never the arguments or the message.
+The hook sensor sends a Write's ``content`` as ``content_lines`` (plus ``content_heading`` under
+``brain/_inbox/``) and an edit's ``old_string``/``new_string`` as ``<key>_lines`` (S1); both
+shapes read alike.
 """
 
 import json
@@ -35,12 +36,16 @@ SEARCH_PATH: Final = "path"
 URL: Final = "url"
 SUBAGENT_TYPE: Final = "subagent_type"
 DESCRIPTION: Final = "description"
+SKILL: Final = "skill"
+RECIPIENT: Final = "to"
 
 EDIT_TOOLS: Final = frozenset({"Edit", "MultiEdit"})
 WRITE_TOOL: Final = "Write"
 PATH_TOOLS: Final = frozenset({"Read", "NotebookEdit", "NotebookRead"})
 SEARCH_TOOLS: Final = frozenset({"Grep", "Glob"})
 AGENT_TOOLS: Final = frozenset({"Agent", "Task"})
+SKILL_TOOL: Final = "Skill"
+SEND_MESSAGE_TOOL: Final = "SendMessage"
 MCP_PREFIX: Final = "mcp__"
 
 COMMAND_LIMIT: Final = 500
@@ -49,10 +54,20 @@ DESCRIPTION_LIMIT: Final = 80
 TITLE_LIMIT: Final = 120
 ERROR_LINE_LIMIT: Final = 200
 NAME_LIMIT: Final = 80
+SKILL_LIMIT: Final = NAME_LIMIT
+ERROR_MESSAGE_LIMIT: Final = 300
+BRANCH_LIMIT: Final = 200
 WORKTREES: Final = (".claude", "worktrees")
 INBOX: Final = ("brain", "_inbox")
 # A prompt's slash command: typed first, or wrapped by Claude Code in its transcript.
 _SLASH_COMMAND: Final = re.compile(r"(?:<command-name>)?(/[A-Za-z0-9_.:\-]+)")
+# Tools that keep one short text of their input: (key, limit).
+_TEXT_KEY_TOOLS: Final[Mapping[str, tuple[str, int]]] = {
+    "Bash": (COMMAND, COMMAND_LIMIT),
+    SKILL_TOOL: (SKILL, SKILL_LIMIT),
+    SEND_MESSAGE_TOOL: (RECIPIENT, NAME_LIMIT),
+}
+_WHITESPACE: Final = re.compile(r"\s+")
 _HEADING: Final = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
 
 type Payload = dict[str, JsonValue]
@@ -76,6 +91,19 @@ def first_line(text: str) -> str:
     return short_text(lines[0] if lines else "", ERROR_LINE_LIMIT)
 
 
+def error_message(text: JsonValue) -> str | None:
+    """A failed tool's error text kept short (ADR 0023): None when not text or blank.
+
+    Redacted first, so a secret spread over lines (a PEM block) is still seen whole, then every
+    whitespace run becomes one space, then redacted again (joining lines must not reveal a
+    pattern), stripped and clipped to ``ERROR_MESSAGE_LIMIT`` characters.
+    """
+    if not isinstance(text, str):
+        return None
+    collapsed = redact_text(_WHITESPACE.sub(" ", redact_text(text))).strip()
+    return clip(collapsed, ERROR_MESSAGE_LIMIT) if collapsed else None
+
+
 def tool_call_payload(
     tool_name: str, tool_input: ToolInput, *, repo_root: PurePosixPath | None
 ) -> Payload:
@@ -84,8 +112,9 @@ def tool_call_payload(
         return _file_change(tool_name, tool_input, repo_root=repo_root)
     if tool_name in PATH_TOOLS:
         return _path_only(tool_input, repo_root=repo_root)
-    if tool_name == "Bash":
-        return _text_key(tool_input, COMMAND, COMMAND_LIMIT)
+    text_key = _TEXT_KEY_TOOLS.get(tool_name)
+    if text_key is not None:
+        return _text_key(tool_input, *text_key)
     if tool_name in SEARCH_TOOLS:
         return _search(tool_input, repo_root=repo_root)
     if tool_name == "WebFetch":

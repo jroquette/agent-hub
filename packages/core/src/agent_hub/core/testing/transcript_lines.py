@@ -13,6 +13,7 @@ from typing import Any, Final
 TRANSCRIPT_SESSION: Final = "session-1"
 TRANSCRIPT_CWD: Final = "/work/demo-api"
 TRANSCRIPT_MODEL: Final = "claude-opus-5-5"
+TRANSCRIPT_BRANCH: Final = "jdoe/dem-7-export"
 _uuids = count(1)
 
 type Line = dict[str, Any]
@@ -29,11 +30,15 @@ def _line(kind: str, body: dict[str, Any], **overrides: Any) -> Line:
         "parentUuid": None,
         "isSidechain": False,
         "cwd": TRANSCRIPT_CWD,
-        "gitBranch": "jdoe/dem-7-export",
+        "gitBranch": TRANSCRIPT_BRANCH,
         "version": "2.1.0",
         "message": body,
     }
-    line.update(overrides)
+    for key, value in overrides.items():
+        if value is ...:  # Ellipsis removes the key, so tests can drop optional ones.
+            line.pop(key, None)
+        else:
+            line[key] = value
     return line
 
 
