@@ -24,6 +24,7 @@ _HOOKS_FIRST = (
     EventSource.EXECUTOR,
     EventSource.GITHUB,
     EventSource.LINEAR,
+    EventSource.CONTROL_PLANE,
 )
 _EXECUTOR_FIRST = (
     EventSource.EXECUTOR,
@@ -32,10 +33,11 @@ _EXECUTOR_FIRST = (
     EventSource.OTEL,
     EventSource.GITHUB,
     EventSource.LINEAR,
+    EventSource.CONTROL_PLANE,
 )
 # Tool calls, statuses, timings, errors and learning proposals: hooks then transcript. Steps,
 # gates and run state: executor then hooks. Tokens and model come only from the transcript
-# (usage_key).
+# (usage_key). The app's own decisions (control plane) come last: never over a session's source.
 PRECEDENCE: Mapping[EventType, tuple[EventSource, ...]] = {
     EventType.TOOL_CALL: _HOOKS_FIRST,
     EventType.TOOL_RESULT: _HOOKS_FIRST,

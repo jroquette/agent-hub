@@ -89,3 +89,49 @@ def test_raises_conflict_when_payload_bool_becomes_int() -> None:
         plan_append([changed], stored_by_key(stored))
 
     assert caught.value.position == 0
+
+
+def test_counts_duplicate_when_allow_list_upgrade_adds_keys() -> None:
+    stored = an_event(type="tool.result", payload={"tool": "Bash", "status": "error"})
+    upgraded = an_event(
+        type="tool.result",
+        source_id=stored.source_id,
+        payload={
+            "tool": "Bash",
+            "status": "error",
+            "error_message": "exit 1: make: *** [check] Error 1",
+            "git_branch": "roquettejh/agh-7-x",
+        },
+    )
+
+    plan = plan_append([upgraded], stored_by_key(stored))
+
+    assert plan == AppendPlan(new_events=(), duplicates=1)
+
+
+def test_raises_conflict_when_allow_list_upgrade_also_changes_value() -> None:
+    stored = an_event(type="tool.result", payload={"tool": "Bash", "status": "error"})
+    changed = an_event(
+        type="tool.result",
+        source_id=stored.source_id,
+        payload={"tool": "Bash", "status": "ok", "error_message": "boom"},
+    )
+
+    with pytest.raises(EventConflictError):
+        plan_append([changed], stored_by_key(stored))
+
+
+def test_raises_conflict_when_allow_list_upgrade_changes_added_key_value() -> None:
+    stored = an_event(payload={"tool": "Skill", "skill": "feature"})
+    changed = an_event(source_id=stored.source_id, payload={"tool": "Skill", "skill": "fix"})
+
+    with pytest.raises(EventConflictError):
+        plan_append([changed], stored_by_key(stored))
+
+
+def test_raises_conflict_when_unlisted_key_added() -> None:
+    stored = an_event(payload={"tool": "Bash"})
+    changed = an_event(source_id=stored.source_id, payload={"tool": "Bash", "command": "ls"})
+
+    with pytest.raises(EventConflictError):
+        plan_append([changed], stored_by_key(stored))

@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict
 
 from agent_hub.core.errors import EventConflictError
 from agent_hub.core.events.event import Event, EventKey
+from agent_hub.core.events.payload_keys import ADDED_KEYS_V2
 
 
 class AppendPlan(BaseModel):
@@ -23,19 +24,35 @@ class AppendPlan(BaseModel):
 
 
 def _same_content(first: Event, second: Event) -> bool:
+    """Equal events, or equal once a key this release added is kept by only one of them (L2).
+
+    An event stored before ``ADDED_KEYS_V2`` existed and re-ingested with them is the same event:
+    each added key must be missing from one side or hold the same value on both.
+    """
+    first_json, second_json = _as_json(first), _as_json(second)
+    if first_json == second_json:
+        return True
+    shared = first.payload.keys() & second.payload.keys()
+    upgrade_only = ADDED_KEYS_V2 - shared
+    return _as_json(first, without=upgrade_only) == _as_json(second, without=upgrade_only)
+
+
+def _as_json(event: Event, *, without: frozenset[str] = frozenset()) -> str:
     # Compare as JSON values (P1): Python's == treats true, 1 and 1.0 as equal, JSON does not.
-    return _as_json(first) == _as_json(second)
-
-
-def _as_json(event: Event) -> str:
-    return json.dumps(event.model_dump(mode="json"), sort_keys=True)
+    dumped = event.model_dump(mode="json")
+    if without:
+        dumped["payload"] = {
+            key: value for key, value in dumped["payload"].items() if key not in without
+        }
+    return json.dumps(dumped, sort_keys=True)
 
 
 def plan_append(batch: Sequence[Event], stored: Mapping[EventKey, Event]) -> AppendPlan:
     """Classify each event of ``batch`` against ``stored`` and the events before it.
 
     An event equal to a stored one, or to an earlier one in the batch with the same key, is a
-    duplicate. A different event with the same key raises ``EventConflictError`` naming its
+    duplicate; so is one that differs only by keys of ``ADDED_KEYS_V2`` the other lacks (the
+    stored or earlier copy is kept). A different event with the same key raises ``EventConflictError`` naming its
     position in the batch.
     """
     seen: dict[EventKey, Event] = {}
