@@ -45,7 +45,14 @@ SCRIPT_VARIABLES: Final = (
     "HUB_WORKTREE_SLOT",
     "HUB_PORT_OFFSET",
 )
-_FETCH_HINT: Final = "; check the network and the remote"
+# AGH-134: inside the Claude Code sandbox a fetch over SSH fails with a network-shaped error, so
+# the hint names the sandbox and the bare command that runs outside it (an excluded command
+# escapes only when the Bash call is exactly that command), then the --no-fetch retry.
+_FETCH_HINT: Final = (
+    "; check the network and the remote. In a Claude Code sandbox git cannot reach an SSH remote:"
+    ' with {checkout} as the cwd, run "git fetch origin {branch}" as a Bash call of its own'
+    " (no cd &&, git -C, pipe or redirect), then ./hub worktree --no-fetch {name}"
+)
 _CLONE_HINT: Final = "clone it next to the hub"
 _DIRTY: Final = "it has modified or untracked files"
 # Each branch with the worktree it is checked out in (empty when none), as git worktree list
@@ -96,6 +103,8 @@ class WorktreeTask:
     fetch_env: dict[str, str]
     add_options: tuple[str, ...]
     fetch_options: tuple[str, ...]
+    # False (hub worktree --no-fetch): no fetch, the base is the already-fetched one.
+    fetch: bool = True
 
 
 def worktree_task(
@@ -113,6 +122,7 @@ def worktree_task(
     add_options: tuple[str, ...] = (),
     fetch_options: tuple[str, ...] = (),
     repos: Sequence[str] | None = None,
+    fetch: bool = True,
 ) -> WorktreeTask:
     """The task named ``name`` in the hub's repos (or ``only``, or the ``repos`` subset), checked.
 
@@ -129,7 +139,8 @@ def worktree_task(
     ``task.only`` stays None, so ``--remove`` lines are the caller's. Raises
     ``WorktreeUsageError`` for a name not shaped like the issue, an unknown ``only`` or
     ``repos`` dir, or a branch git refuses; ``ValueError`` when both ``only`` and ``repos`` are
-    given.
+    given. ``fetch`` False skips the fetch: each new worktree starts from the base as already
+    fetched (``create_worktree``).
     """
     if only is not None and repos is not None:
         msg = "worktree_task takes only or repos, not both"
@@ -177,6 +188,7 @@ def worktree_task(
         fetch_env=env if fetch_env is None else fetch_env,
         add_options=add_options,
         fetch_options=fetch_options,
+        fetch=fetch,
     )
 
 
@@ -284,7 +296,9 @@ def _checked_out_in(listed: bytes, branch: str) -> str | None:
 def create_worktree(task: WorktreeTask, repo: str, *, echo: Echo) -> Path:
     """Create ``repo``'s worktree from a fresh fetch (an existing one is kept); its path.
 
-    ``echo`` gets the ``exists``/``created`` line and each line of the setup script.
+    With ``task.fetch`` False nothing is fetched, and a base that was never fetched is refused
+    before the worktree is added. ``echo`` gets the ``exists``/``created`` line and each line of
+    the setup script.
     """
     checkout = task.workspace / repo
     if not os.path.lexists(checkout / ".git"):
@@ -293,14 +307,10 @@ def create_worktree(task: WorktreeTask, repo: str, *, echo: Echo) -> Path:
     if worktree.is_dir():
         echo(f"exists   {shown_path(str(worktree))}")
         return worktree
-    _git_or_raise(
-        task,
-        checkout,
-        (*task.fetch_options, "fetch", "-q", "origin"),
-        repo=repo,
-        step="could not fetch origin",
-        env=task.fetch_env,
-    )
+    if task.fetch:
+        _fetch(task, repo, checkout)
+    else:
+        _check_fetched_base(task, repo, checkout)
     branch = task.branches[repo]
     has_branch = _git(
         task, checkout, ("show-ref", "--verify", "-q", f"refs/heads/{branch}"), repo=repo
@@ -315,6 +325,35 @@ def create_worktree(task: WorktreeTask, repo: str, *, echo: Echo) -> Path:
     echo(f"created  {shown_path(str(worktree))} ({branch} from {task.bases[repo]})")
     _run_script(task, repo, worktree, script=SETUP_SCRIPT, echo=echo)
     return worktree
+
+
+def _fetch(task: WorktreeTask, repo: str, checkout: Path) -> None:
+    fetched = _git(
+        task,
+        checkout,
+        (*task.fetch_options, "fetch", "-q", "origin"),
+        repo=repo,
+        env=task.fetch_env,
+    )
+    if fetched.returncode != 0:
+        hint = _FETCH_HINT.format(
+            checkout=shown_path(str(checkout)),
+            branch=task.bases[repo].removeprefix("origin/"),
+            name=task.name,
+        )
+        raise WorktreeError(f"{repo}: could not fetch origin: {_first_line(fetched)}{hint}")
+
+
+def _check_fetched_base(task: WorktreeTask, repo: str, checkout: Path) -> None:
+    """Refuse a ``--no-fetch`` worktree whose base was never fetched into ``checkout``."""
+    base = task.bases[repo]
+    found = _git(task, checkout, ("rev-parse", "--verify", "-q", f"{base}^{{commit}}"), repo=repo)
+    if found.returncode != 0:
+        raise WorktreeError(
+            f"{repo}: {base} is not fetched: with {shown_path(str(checkout))} as the cwd, run"
+            f' "git fetch origin {base.removeprefix("origin/")}" as a Bash call of its own,'
+            " or drop --no-fetch"
+        )
 
 
 def remove_worktree(task: WorktreeTask, repo: str, *, echo: Echo) -> None:
@@ -420,12 +459,10 @@ def _git_or_raise(
     *,
     repo: str,
     step: str,
-    env: dict[str, str] | None = None,
 ) -> None:
-    result = _git(task, folder, arguments, repo=repo, env=env)
+    result = _git(task, folder, arguments, repo=repo)
     if result.returncode != 0:
-        hint = _FETCH_HINT if "fetch" in arguments else ""
-        raise WorktreeError(f"{repo}: {step}: {_first_line(result)}{hint}")
+        raise WorktreeError(f"{repo}: {step}: {_first_line(result)}")
 
 
 def _first_line(result: ChildResult) -> str:

@@ -47,6 +47,8 @@ class Read(StrEnum):
     PLUGIN_FILES = "plugin_files"
     # The developer's effective branch prefix, which may run ``git config`` in the hub.
     DEVELOPER_IDENTITY = "developer_identity"
+    # Each repo's remote, probed with ``git ls-remote`` inside a Claude Code session (AGH-134).
+    REMOTES = "remotes"
 
 
 # The reads the hub listing serves: the listing itself, and the file sets that come from it.

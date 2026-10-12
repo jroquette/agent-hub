@@ -1,21 +1,23 @@
 """``hub worktree``: matching, isolated worktrees for one task in the repos of the hub.
 
-The hub is ``AGENT_HUB_ROOT`` or the cwd; run from a worktree of the hub repo, the main checkout
-is the hub (its ``hub.json``, its workspace). Each repo ``<ws>/<dir>`` gets
-``<dir>/.claude/worktrees/<name>`` on its task branch (``<prefix><name>``, unless
-``hub.json``'s ``conventions`` set another ``branch`` pattern for it), from a freshly fetched
-``origin/<default_branch>`` (an existing branch is checked out as it is), then runs the repo's
-executable ``scripts/worktree-setup.sh <worktree>``; ``--remove`` runs ``worktree-teardown.sh``
-the same way, then ``git worktree remove`` (never forced; branches are kept). Usage problems (the
-name, ``--only``) exit 2 before git runs in any repo; a task branch that clashes with a worktree
-(``check_branches``) exits 1 before any repo is touched; another repo problem, or a script that
-fails, exits 1 when it is reached, and later repos are left alone. A worktree with modified or
-untracked files is never torn down. Git and the scripts run with no timeout in the caller's
-process group, so Ctrl-C reaches them. The scripts run with the worktree as their cwd and git's
-location variables dropped; they also get ``HUB_WORKTREE_NAME``, ``HUB_WORKTREE_BRANCH``,
-``HUB_REPO_DIR``, ``HUB_HUB_DIR``, ``HUB_WORKTREE_SLOT`` and ``HUB_PORT_OFFSET`` (see
-``docs/design/worktree-environment.md``). The steps themselves are ``worktree_steps``, shared
-with ``hub run``.
+The hub is ``AGENT_HUB_ROOT`` or the cwd; run from a worktree of the hub repo, the main checkout is
+the hub (its ``hub.json``, its workspace). Each repo ``<ws>/<dir>`` gets
+``<dir>/.claude/worktrees/<name>`` on its task branch (``<prefix><name>``, unless ``hub.json``'s
+``conventions`` set another ``branch`` pattern for it), from a freshly fetched
+``origin/<default_branch>`` (an existing branch is checked out as it is; ``--no-fetch`` skips the
+fetch and starts from ``origin/<default_branch>`` as already fetched, refusing a repo where it never
+was: the escape hatch inside the Claude Code sandbox, AGH-134), then runs the repo's executable
+``scripts/worktree-setup.sh <worktree>``; ``--remove`` runs ``worktree-teardown.sh`` the same way,
+then ``git worktree remove`` (never forced; branches are kept). Usage problems (the name,
+``--only``, ``--no-fetch`` with ``--remove``) exit 2 before git runs in any repo; a task branch that
+clashes with a worktree (``check_branches``) exits 1 before any repo is touched; another repo
+problem, or a script that fails, exits 1 when it is reached, and later repos are left alone. A
+worktree with modified or untracked files is never torn down. Git and the scripts run with no
+timeout in the caller's process group, so Ctrl-C reaches them. The scripts run with the worktree as
+their cwd and git's location variables dropped; they also get ``HUB_WORKTREE_NAME``,
+``HUB_WORKTREE_BRANCH``, ``HUB_REPO_DIR``, ``HUB_HUB_DIR``, ``HUB_WORKTREE_SLOT`` and
+``HUB_PORT_OFFSET`` (see ``docs/design/worktree-environment.md``). The steps themselves are
+``worktree_steps``, shared with ``hub run``.
 The prefix is the developer's: the main checkout's ``hub.local.json``, else ``hub.json``, else
 derived from git's ``user.email`` there; with none, or a malformed local file, it exits 2.
 """
@@ -60,8 +62,20 @@ def worktree(
         bool,
         typer.Option("--remove", help="Remove the task's worktrees instead (branches are kept)."),
     ] = False,
+    no_fetch: Annotated[
+        bool,
+        typer.Option(
+            "--no-fetch",
+            help=(
+                "Do not fetch: start from origin/<default branch> as already fetched (run a bare"
+                " git fetch first; for the Claude Code sandbox)."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Create isolated worktrees for one task in the hub's repos, or remove them."""
+    if remove and no_fetch:
+        context.fail("--no-fetch applies to creating worktrees, not to --remove")
     root = hub_root_or_exit(os.environ, command=COMMAND)
     git = _git_or_exit()
     env = git_env(os.environ, optional_locks=True)
@@ -80,22 +94,28 @@ def worktree(
             env=env,
             git_timeout=None,
             runner=run_child,
+            fetch=not no_fetch,
         )
     except WorktreeUsageError as error:
         context.fail(str(error))
     try:
-        if not remove:
-            check_branches(task)
-        for repo in task.repos:
-            if remove:
-                remove_worktree(task, repo, echo=typer.echo)
-            else:
-                create_worktree(task, repo, echo=typer.echo)
+        _act(task, remove=remove)
     except WorktreeError as error:
         fail(f"{_PREFIX}: {error}")
     if not remove:
         for line in _summary(task):
             typer.echo(line)
+
+
+def _act(task: WorktreeTask, *, remove: bool) -> None:
+    """Remove each repo's worktree, or check the branches and create them."""
+    if not remove:
+        check_branches(task)
+    for repo in task.repos:
+        if remove:
+            remove_worktree(task, repo, echo=typer.echo)
+        else:
+            create_worktree(task, repo, echo=typer.echo)
 
 
 def _git_or_exit() -> str:

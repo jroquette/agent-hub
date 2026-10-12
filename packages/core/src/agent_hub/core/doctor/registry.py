@@ -29,6 +29,7 @@ from agent_hub.core.doctor.lock_rules import LOCK_DRIFT
 from agent_hub.core.doctor.makefile_rules import MAKEFILE_OVERRIDE
 from agent_hub.core.doctor.permission_rules import MCP_PINNED, PERMISSIONS_BYPASS, SETTINGS_VALID
 from agent_hub.core.doctor.repo_agents_rule import REPOS_AGENTS
+from agent_hub.core.doctor.sandbox_rule import SANDBOX_WORKFLOW
 from agent_hub.core.doctor.settings_rules import SETTINGS_WEAKENING
 from agent_hub.core.doctor.text_rules import ATTRIBUTION_AI, SECRETS_CONFIG
 
@@ -56,4 +57,5 @@ REGISTRY: Final[tuple[Rule, ...]] = (
     REPOS_AGENTS,
     CONFIG_STOP_GATE,
     BRAIN_MEMORY,
+    SANDBOX_WORKFLOW,
 )

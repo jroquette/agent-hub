@@ -31,7 +31,7 @@
     ".claude/settings.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "3102129aeada9d76f505d5d9b8b4cd5f8a7388bfb8090892bbc81a394bf1ff56"
+      "sha256": "9acd1cb980fcf2f8660ef9755ec5b31d979819f032994d1292845d3809ef6360"
     },
     ".claude/settings.project.json": {
       "ownership": "seeded"
@@ -124,7 +124,7 @@
     "AGENTS.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "6870ba5406b030530c12c1ea6148e266e01b7f6860fb6591449cf40ff7300801"
+      "sha256": "896c787cd3f054d93de82c098a73983cbb44a03a392d98195cbdcee5e4400dcf"
     },
     "AGENTS.project.md": {
       "ownership": "seeded"
@@ -132,7 +132,7 @@
     "CLAUDE.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "6e4032263dc05cafaf9bbf87a56bfcf0876f3a7ea7868e97a053f4093b18acff"
+      "sha256": "e508056a1a52130bbb64f61dabafa8e8a7a2746ae6d445bbd94489354223da6e"
     },
     "Makefile": {
       "executable": false,
@@ -189,7 +189,7 @@
     "hub": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "5e7ca2afe5baec9eabf901c4aa6b5e0b9cbdcfcdcf0c61d233f2cedd458cbd51"
+      "sha256": "c3df2bd9e35bf8398d568d604cfe1709656a3e301cef56d2f16bb46985501260"
     },
     "hub.json": {
       "ownership": "seeded"
@@ -197,7 +197,7 @@
     "hub.schema.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "e5dd052ae151073716d0edc0f884f57f8331bf6929aa822c2c14415a450637ca"
+      "sha256": "5228cbc7bc30d22b74065deb63b6617f9db43633dc91516a398c8b29b3341b82"
     },
     "plugin/demo/.claude-plugin/plugin.json": {
       "ownership": "seeded"
