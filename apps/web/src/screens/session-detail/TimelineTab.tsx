@@ -17,10 +17,14 @@ import {
 import { fmtClock, fmtInt } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import type { ApiProblem } from "../../lib/api";
+import { Legend } from "./Legend";
+import type { Problem } from "./ProblemsPanel";
 import {
   LONG_SESSION_EVENTS,
   flattenTrace,
+  lineOf,
   minimapOf,
+  rowIdOf,
   type Facet,
   type FlatRow,
   type Trace,
@@ -94,8 +98,11 @@ export interface TimelineTabProps {
   liveCount: number;
   /** Ids of rows that arrived over the stream (they fade in). */
   newIds: ReadonlySet<string>;
+  /** The selected event id (a row's call or result). */
   selected: string | null;
   onSelect: (id: string | null) => void;
+  /** The session's problems by event id, for the rows' status badges. */
+  problems?: ReadonlyMap<string, Problem> | undefined;
   initialFollow: boolean;
   /** URL-backed view state. */
   query: string;
@@ -111,7 +118,12 @@ export interface TimelineTabProps {
 
 /** The trace: filters, virtualised turns with groups and lanes, minimap, follow tail (spec 10). */
 export function TimelineTab(props: TimelineTabProps) {
-  const { trace, live, selected, query, errorsOnly, axis } = props;
+  const { trace, live, query, errorsOnly, axis } = props;
+  // A problem or summary line may name a result folded into its call's row.
+  const selected = useMemo(
+    () => (props.selected ? (rowIdOf(trace, props.selected) ?? props.selected) : null),
+    [trace, props.selected],
+  );
   const { tz } = usePreferences();
   const [rail, setRail] = useState(true);
   const [types, setTypes] = useState<ReadonlySet<Facet>>(new Set());
@@ -168,7 +180,7 @@ export function TimelineTab(props: TimelineTabProps) {
       openGroups: groupsOpen,
       openLanes: lanesOpen,
       closedLanes,
-      lanesOpenByDefault: live,
+      lanesOpenByDefault: true,
       errorsOnly,
       types,
       tools,
@@ -181,7 +193,6 @@ export function TimelineTab(props: TimelineTabProps) {
     openGroups,
     openLanes,
     closedLanes,
-    live,
     errorsOnly,
     types,
     tools,
@@ -257,8 +268,7 @@ export function TimelineTab(props: TimelineTabProps) {
     announced.current = props.liveCount;
     lastDigest.current = Date.now();
     const last = [...rows].reverse().find((row) => row.t === "event");
-    const latest =
-      last?.t === "event" ? ` Latest: ${last.row.tool ?? last.row.label} ${last.row.text}.` : "";
+    const latest = last?.t === "event" ? ` Latest: ${lineOf(last.row)}.` : "";
     setDigest(`${String(fresh)} new ${fresh === 1 ? "event" : "events"}.${latest}`);
   }, [props.liveCount, rows]);
 
@@ -378,11 +388,10 @@ export function TimelineTab(props: TimelineTabProps) {
       id: "lane",
       title: "Lane",
       options: [
-        { id: "main", label: "Main", checked: lanes.has("main") },
+        { id: "main", label: "Main agent", checked: lanes.has("main") },
         ...trace.lanes.map((lane) => ({
           id: lane.id,
-          label: lane.agent,
-          mono: true,
+          label: `Subagent · ${lane.agent}`,
           checked: lanes.has(lane.id),
         })),
       ],
@@ -537,6 +546,7 @@ export function TimelineTab(props: TimelineTabProps) {
             </Button>
           )}
         </div>
+        <Legend />
         {long && (
           <div style={{ marginBottom: 12 }}>
             <Banner tone="info" boxed>
@@ -596,6 +606,7 @@ export function TimelineTab(props: TimelineTabProps) {
                       tz={tz}
                       sessionId={props.sessionId}
                       selected={selected}
+                      problems={props.problems}
                       openRows={openRows}
                       newIds={props.newIds}
                       laneLive={live && row.t === "lane" && row.lane.end === trace.end}

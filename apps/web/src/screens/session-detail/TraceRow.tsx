@@ -11,7 +11,9 @@ import {
   type TimelineEv,
 } from "../../components";
 import { fmtClock, fmtDuration, fmtInt, type TimeZoneMode } from "../../lib/format";
+import { ProblemBadge, type Problem } from "./ProblemsPanel";
 import { renderParts, type FlatRow, type TraceEvent } from "./timeline";
+import type { Phrase } from "./verbs";
 
 /** The copy every message and reasoning row shows when expanded (AC-200.47). */
 export const CONTENT_NOT_STORED =
@@ -28,6 +30,37 @@ export function Redacted({ text }: { text: string }) {
         ) : (
           <Fragment key={i}>{part.text}</Fragment>
         ),
+      )}
+    </>
+  );
+}
+
+/** A row's sentence: the verb, its object (a command or path in code) and the tail. */
+export function PhraseView({ phrase }: { phrase: Phrase }) {
+  return (
+    <>
+      <span className="sd-verb">{phrase.verb}</span>
+      {phrase.object !== undefined && (
+        <>
+          {" "}
+          {phrase.kind === "text" || phrase.kind === undefined ? (
+            <span className="sd-object">
+              <Redacted text={phrase.object} />
+            </span>
+          ) : (
+            <code className="ah-mono sd-object">
+              <Redacted text={phrase.object} />
+            </code>
+          )}
+        </>
+      )}
+      {phrase.tail && (
+        <>
+          {" "}
+          <span className="sd-tail">
+            <Redacted text={phrase.tail} />
+          </span>
+        </>
       )}
     </>
   );
@@ -116,7 +149,7 @@ export function rawOf(row: TraceEvent): Record<string, unknown> {
   };
 }
 
-function toEv(row: TraceEvent, time: string): TimelineEv {
+function toEv(row: TraceEvent, time: string, problem: Problem | undefined): TimelineEv {
   const tone =
     row.cat === "error" ? "var(--failed)" : row.cat === "guard" ? "var(--guard)" : undefined;
   return {
@@ -125,10 +158,11 @@ function toEv(row: TraceEvent, time: string): TimelineEv {
     iso: row.at,
     cat: row.cat,
     kind: row.label,
+    actor: row.actor,
     icon: row.icon,
     tool: row.tool,
-    text: <Redacted text={row.text} />,
-    mono: row.mono,
+    text: <PhraseView phrase={row.phrase} />,
+    mono: false,
     exit: row.exit,
     duration: row.durationS,
     plus: row.plus,
@@ -137,6 +171,12 @@ function toEv(row: TraceEvent, time: string): TimelineEv {
     badge: (
       <>
         {row.running && <StatusBadge status="running" />}
+        {row.label === "Denied by guard" && <StatusBadge status="guard" />}
+        {problem ? (
+          <ProblemBadge problem={problem} />
+        ) : (
+          row.cat === "error" && <StatusBadge status="failed" label="Failed" />
+        )}
         {row.note && (
           <span className="ah-small" style={{ color: tone ?? "var(--text-subtle)" }}>
             <Redacted text={row.note} />
@@ -155,6 +195,8 @@ export interface TraceRowProps {
   tz: TimeZoneMode;
   sessionId: string;
   selected: string | null;
+  /** The session's problems by event id (a row matches its call's or result's id). */
+  problems?: ReadonlyMap<string, Problem> | undefined;
   openRows: ReadonlySet<string>;
   newIds: ReadonlySet<string>;
   laneLive: boolean;
@@ -211,7 +253,11 @@ export function TraceRow(props: TraceRowProps) {
       const { lane, open } = row;
       const seconds = (Date.parse(lane.end) - Date.parse(lane.at)) / 1000;
       return (
-        <div className="sd-lane-head" role="group" aria-label={`Subagent ${lane.agent}`}>
+        <div
+          className="sd-lane-head"
+          role="group"
+          aria-label={`${lane.actor.label}${lane.description ? `: ${lane.description}` : ""}`}
+        >
           <div className="ah-lane-head">
             <button
               type="button"
@@ -223,9 +269,14 @@ export function TraceRow(props: TraceRowProps) {
             >
               <Icon name="chevron-right" size="sm" />
               <Icon name="network" size="sm" style={{ color: "var(--ev-tool)" }} />
-              <span className="ah-mono" style={{ fontSize: 13, fontWeight: 500 }}>
-                Subagent {lane.agent}
+              <span className="ah-actor" data-actor="subagent">
+                {lane.actor.label}
               </span>
+              {lane.description && (
+                <span className="sd-lane-task">
+                  <Redacted text={lane.description} />
+                </span>
+              )}
             </button>
             <span className="ah-mono ah-subtle ah-small">{short(lane.id)}</span>
             {props.laneLive && <StatusBadge status="running" label="Still running" />}
@@ -257,7 +308,12 @@ export function TraceRow(props: TraceRowProps) {
             </div>
             <div className="ah-ev-body">
               <div className="ah-ev-line">
-                <span className="ah-ev-kind">{group.items.length} calls</span>
+                <span className="ah-ev-kind">
+                  <span className="ah-actor" data-actor={group.actor.kind}>
+                    {group.actor.label}
+                  </span>
+                  <span className="ah-sr"> · </span>
+                </span>
                 <div className="ah-ev-main">
                   <button
                     type="button"
@@ -284,11 +340,14 @@ export function TraceRow(props: TraceRowProps) {
     case "event": {
       const ev = row.row;
       const open = props.openRows.has(ev.id);
+      const problem = ev.events
+        .map((event) => props.problems?.get(event.event_id))
+        .find((found) => found !== undefined);
       return (
         <div className={row.depth > 0 ? `sd-depth-${String(row.depth)}` : undefined}>
           <TimelineEvent
             key={`${ev.id}:${open ? "open" : "shut"}`}
-            ev={toEv(ev, timeOf(ev.at, ev.turn))}
+            ev={toEv(ev, timeOf(ev.at, ev.turn), problem)}
             current={props.selected === ev.id}
             expanded={open}
             isNew={props.newIds.has(ev.id)}

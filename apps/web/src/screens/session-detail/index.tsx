@@ -12,7 +12,8 @@ import { useCollectorState } from "../../shell/GlobalStream";
 import { CostTab } from "./CostTab";
 import { FilesTab } from "./FilesTab";
 import { Header } from "./Header";
-import { useSession, useSessionEvents, type Session } from "./queries";
+import { ProblemsPanel } from "./ProblemsPanel";
+import { useSession, useSessionEvents, useSessionProblems, type Session } from "./queries";
 import { RawTab } from "./RawTab";
 import { SummaryCard } from "./SummaryCard";
 import { buildTrace } from "./timeline";
@@ -102,7 +103,26 @@ function SessionDetailBody({ session }: { session: Session }) {
   const collector = useCollectorState();
   const live = session.status !== "ended";
   const events = useSessionEvents(session.id, live);
-  const trace = useMemo(() => buildTrace(events.events), [events.events]);
+  const trace = useMemo(
+    () => buildTrace(events.events, session.actors),
+    [events.events, session.actors],
+  );
+  const counts = session.problems;
+  const problemTotal = counts.needs_you + counts.open + counts.handled + counts.by_you;
+  const problems = useSessionProblems(session.id, problemTotal > 0);
+  const { refetch: refetchProblems } = problems;
+  // A live session's counts move over the stream: the list follows them (not on first load).
+  const countsKey = `${String(counts.needs_you)}/${String(counts.open)}/${String(counts.handled)}/${String(counts.by_you)}`;
+  const seenCounts = useRef(countsKey);
+  useEffect(() => {
+    if (seenCounts.current === countsKey) return;
+    seenCounts.current = countsKey;
+    if (problemTotal > 0) void refetchProblems();
+  }, [countsKey, problemTotal, refetchProblems]);
+  const problemsById = useMemo(
+    () => new Map((problems.data?.items ?? []).map((problem) => [problem.event_id, problem])),
+    [problems.data],
+  );
   const tabParam = params.get("tab");
   const tab: Tab = isTab(tabParam) ? tabParam : "timeline";
   const selected = params.get("event");
@@ -217,6 +237,13 @@ function SessionDetailBody({ session }: { session: Session }) {
             return at ? fmtClock(at, tz, true) : null;
           }}
         />
+        {problemTotal > 0 && problems.data && (
+          <ProblemsPanel
+            problems={problems.data}
+            timeOf={(at) => fmtClock(at, tz, true)}
+            onOpen={jump}
+          />
+        )}
         <Tabs
           label="Session views"
           value={tab}
@@ -242,6 +269,7 @@ function SessionDetailBody({ session }: { session: Session }) {
               liveCount={events.liveCount}
               newIds={newIds}
               selected={selected}
+              problems={problemsById}
               onSelect={(id) => {
                 setParam({ event: id });
               }}
