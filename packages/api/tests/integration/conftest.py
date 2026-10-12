@@ -183,6 +183,12 @@ with open(os.path.join(state, "calls.json-lines"), "a") as calls:
 if args[:2] == ["auth", "token"]:
     print("gho_not-a-real-token")
     sys.exit(0)
+pulls = os.path.join(state, "pulls.json-lines")
+if args[:2] == ["pr", "list"]:
+    flags = dict(zip(args[2::2], args[3::2]))
+    known = [json.loads(line) for line in open(pulls)] if os.path.exists(pulls) else []
+    print(json.dumps([{{"url": pull["url"]}} for pull in known if pull["head"] == flags["--head"]]))
+    sys.exit(0)
 if args[:2] != ["pr", "create"]:
     sys.exit(2)
 opts = dict(arg[2:].split("=", 1) for arg in args[2:] if arg.startswith("--") and "=" in arg)
@@ -196,7 +202,6 @@ head = subprocess.run(
 )
 if head.returncode != 0:
     sys.exit(1)
-pulls = os.path.join(state, "pulls.json-lines")
 count = sum(1 for _ in open(pulls)) if os.path.exists(pulls) else 0
 url = "https://github.com/" + opts["repo"] + "/pull/" + str(count + 1)
 with open(opts["body-file"]) as body_file:

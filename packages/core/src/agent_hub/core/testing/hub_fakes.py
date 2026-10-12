@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from agent_hub.core.brain.brain_note import BrainEntry
-from agent_hub.core.brain.brain_path import NOTE_SUFFIX, PERSONAL_FOLDER
+from agent_hub.core.brain.brain_path import NOTE_SUFFIX, is_personal_folder
 from agent_hub.core.doctor.run_rules import Selection
 from agent_hub.core.doctor.snapshot import DoctorSnapshot, HubFiles, LockAbsent, LockState
 from agent_hub.core.features.feature_status import FeatureFolder
@@ -94,7 +94,7 @@ class FakeHub:
 def _listed(path: str) -> bool:
     segments = path.split("/")
     hidden = any(segment.startswith(".") for segment in segments)
-    return path.endswith(NOTE_SUFFIX) and segments[0] != PERSONAL_FOLDER and not hidden
+    return path.endswith(NOTE_SUFFIX) and not is_personal_folder(segments[0]) and not hidden
 
 
 class FakeHubFileReader:
@@ -179,6 +179,17 @@ class FakeHubFileReader:
             if _listed(path) and path not in hub.brain_links
         )
         return BrainListing(entries=entries)
+
+    def brain_folders(self, hub_path: str) -> tuple[str, ...]:
+        """The top-level folders of the hub's listed brain files (a folder holding a link only
+        is left out)."""
+        hub = self._hub(hub_path)
+        folders = {
+            path.split("/", 1)[0]
+            for path in hub.brain
+            if "/" in path and _listed(path) and path not in hub.brain_links
+        }
+        return tuple(sorted(folders))
 
     def read_brain_file(self, hub_path: str, path: str, *, max_bytes: int) -> bytes | UnreadHubFile:
         """The brain file's bytes, or why not (missing, a link, over ``max_bytes``)."""

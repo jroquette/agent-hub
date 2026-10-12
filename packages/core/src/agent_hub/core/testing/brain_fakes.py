@@ -3,7 +3,9 @@
 
 ``FakeBrainOrigin`` keeps each branch's files (hub-relative path to text), its head commit and
 the pull requests opened; ``InMemoryBrainChangeRequests`` applies a ``BrainChange`` to it as
-the ``hub_git`` adapter does to a real ``origin``, with the same refusals.
+the ``hub_git`` adapter does to a real ``origin``, with the same refusals. A branch already on
+``origin`` (a retry after a partly finished action) is adopted when it has an open pull request
+and replaced when it has none, as the adapter does.
 """
 
 from dataclasses import dataclass, field
@@ -127,11 +129,27 @@ class InMemoryBrainChangeRequests:
             raise ChangeRequestConflictError(reason)
         if _hub_path(change.destination) in default:
             raise ChangeRequestConflictError(f"Destination exists: brain/{change.destination}")
-        if change.branch in self.origin.files:
-            raise ChangeRequestConflictError(f"Branch exists: {change.branch}")
+
+    def _adopted(self, change: BrainChange) -> ChangeRequestResult | None:
+        """The open pull request of ``change.branch`` when the branch exists; without one the
+        branch is deleted (it can only be a leftover of this action) and None returned."""
+        if change.branch not in self.origin.files:
+            return None
+        for pull in self.origin.pulls:
+            if pull.head == change.branch:
+                return ChangeRequestResult(pr_url=pull.url, branch=change.branch)
+        del self.origin.files[change.branch]
+        self.origin.heads.pop(change.branch, None)
+        return None
 
     def _open(self, change: BrainChange) -> ChangeRequestResult:
         self.calls.append(change)
+        if self.unavailable is not None:
+            raise ChangeRequestConflictError(self.unavailable)
+        _check_destination(change)
+        adopted = self._adopted(change)
+        if adopted is not None:
+            return adopted
         self._refuse(change)
         if self.fail_step is not None:
             raise ChangeRequestFailedError(step=self.fail_step)

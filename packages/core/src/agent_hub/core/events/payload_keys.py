@@ -18,9 +18,6 @@ from agent_hub.core.json_form import JsonValue
 # emitted it (E4), and the git branch its transcript line names (AGH-201).
 COMMON_PAYLOAD_KEYS: Final = frozenset({"run", "step", "attempt", "agent_id", "git_branch"})
 
-# The keys this release added to the allow-list (ADR 0023). An event stored before them that is
-# re-ingested with them is the same event: equal once these keys are removed from both payloads.
-ADDED_KEYS_V2: Final = frozenset({"error_message", "skill", "git_branch", "to"})
 
 _USAGE: Final = frozenset(
     {
@@ -132,6 +129,22 @@ _BY_TYPE: Final[dict[EventType, frozenset[str]]] = {
 
 PAYLOAD_KEYS: Final[Mapping[EventType, frozenset[str]]] = MappingProxyType(
     {event_type: keys | COMMON_PAYLOAD_KEYS for event_type, keys in _BY_TYPE.items()}
+)
+
+# The (event type, key) pairs this release added to the allow-list (ADR 0023): ``git_branch`` on
+# every type but ``session.start`` (which stored it before), ``skill`` and ``to`` on
+# ``tool.call``, ``error_message`` on ``tool.result``. An event stored before them that is
+# re-ingested with them is the same event: equal once its type's added keys are removed.
+_ADDED_BY_TYPE_V2: Final[dict[EventType, frozenset[str]]] = {
+    EventType.TOOL_CALL: frozenset({"skill", "to"}),
+    EventType.TOOL_RESULT: frozenset({"error_message"}),
+}
+ADDED_KEYS_V2: Final[Mapping[EventType, frozenset[str]]] = MappingProxyType(
+    {
+        event_type: _ADDED_BY_TYPE_V2.get(event_type, frozenset())
+        | (frozenset() if event_type == EventType.SESSION_START else frozenset({"git_branch"}))
+        for event_type in _BY_TYPE
+    }
 )
 
 # The executor's caps (budget, max turns, model, transport) are an object of these keys only.

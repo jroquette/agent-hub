@@ -9,7 +9,12 @@ import pytest
 from agent_hub.core.brain.brain_note import BrainEntry
 from agent_hub.core.hubs.hub_registry import BrainListing, UnreadHubFile
 from agent_hub.generator import brain_files
-from agent_hub.generator.brain_files import brain_file_size, list_brain, read_brain_file
+from agent_hub.generator.brain_files import (
+    brain_file_size,
+    brain_folders,
+    list_brain,
+    read_brain_file,
+)
 
 LIMIT = 1024
 
@@ -73,6 +78,116 @@ def test_skips_auto_and_hidden_when_listing(tmp_path: Path) -> None:
     os.mkfifo(brain / "pipe.md")
 
     assert paths_of(list_brain(tmp_path)) == ["index.md", "notes/auto/kept.md"]
+
+
+def test_skips_auto_when_name_differs_in_case(tmp_path: Path) -> None:
+    a_brain(tmp_path, {"index.md": b"#", "Auto/me.md": b"personal", "AUTO/x/me.md": b"p"})
+
+    assert paths_of(list_brain(tmp_path)) == ["index.md"]
+
+
+def test_skips_name_when_not_utf8(tmp_path: Path) -> None:
+    brain = a_brain(tmp_path, {"index.md": b"#", "notes/kept.md": b"#"})
+    descriptor = os.open(bytes(brain) + b"/bad\xff.md", os.O_WRONLY | os.O_CREAT, 0o644)
+    os.close(descriptor)
+    os.mkdir(bytes(brain) + b"/notes/bad\xfe")
+
+    listing = list_brain(tmp_path)
+
+    assert paths_of(listing) == ["index.md", "notes/kept.md"]
+    assert (listing.skipped, listing.truncated) == (2, False)
+
+
+class _CountingScandir:
+    """``os.scandir`` that counts every entry it hands out."""
+
+    def __init__(self, scandir: Any) -> None:
+        self.scandir = scandir
+        self.yielded = 0
+
+    def __call__(self, path: Any) -> Any:
+        counter = self
+
+        class _Counted:
+            def __init__(self) -> None:
+                self.found = counter.scandir(path)
+
+            def __enter__(self) -> _Counted:
+                self.found.__enter__()
+                return self
+
+            def __exit__(self, *exc: object) -> None:
+                self.found.__exit__(*exc)
+
+            def __iter__(self) -> Any:
+                for entry in self.found:
+                    counter.yielded += 1
+                    yield entry
+
+        return _Counted()
+
+
+def test_stops_examining_when_entry_budget_spent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(brain_files, "MAX_BRAIN_ENTRIES_EXAMINED", 5)
+    a_brain(
+        tmp_path,
+        {f"{folder}/n{index}.txt": b"#" for folder in "abcdefgh" for index in range(20)},
+    )
+    counting = _CountingScandir(os.scandir)
+    monkeypatch.setattr(brain_files.os, "scandir", counting)
+    stats: list[object] = []
+    real_stat = os.stat
+
+    def counted_stat(*args: Any, **kwargs: Any) -> os.stat_result:
+        stats.append(args[0])
+        return real_stat(*args, **kwargs)
+
+    monkeypatch.setattr(brain_files.os, "stat", counted_stat)
+
+    listing = list_brain(tmp_path)
+
+    assert listing.truncated is True
+    assert counting.yielded <= 5 + 1
+    assert len(stats) <= 5
+
+
+def test_lists_top_level_folders_when_brain_nested(tmp_path: Path) -> None:
+    brain = a_brain(
+        tmp_path,
+        {
+            "index.md": b"#",
+            "decisions/index.md": b"#",
+            "playbooks/deep/x.md": b"#",
+            "auto/me.md": b"#",
+            ".git/x.md": b"#",
+        },
+    )
+    (brain / "empty").mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (brain / "linked").symlink_to(outside)
+
+    assert brain_folders(tmp_path) == ("decisions", "empty", "playbooks")
+
+
+def test_lists_no_folders_when_hub_has_no_brain(tmp_path: Path) -> None:
+    assert brain_folders(tmp_path) == ()
+
+
+def test_stops_listing_folders_when_entry_budget_spent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(brain_files, "MAX_BRAIN_ENTRIES_EXAMINED", 3)
+    a_brain(tmp_path, {f"f{index}/x.md": b"#" for index in range(6)})
+    counting = _CountingScandir(os.scandir)
+    monkeypatch.setattr(brain_files.os, "scandir", counting)
+
+    folders = brain_folders(tmp_path)
+
+    assert len(folders) <= 3
+    assert counting.yielded <= 3 + 1
 
 
 def test_skips_brain_when_brain_is_link(tmp_path: Path) -> None:

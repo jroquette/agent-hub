@@ -1,9 +1,11 @@
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import pytest
 
 from agent_hub.core.events.event import Event, EventSource, EventType
+from agent_hub.core.events.event_store import AppendResult
 from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.learnings.brain_change_requests import (
     BrainChange,
@@ -328,3 +330,38 @@ def test_refuses_second_action_when_one_running() -> None:
     assert [call.action for call in changes.calls] == ["accept"]
     assert len(setup.decisions()) == 1
     assert decide.reject("toolu_2", reason="duplicate").state == LearningState.REJECTED_PR_OPEN
+
+
+class _FlakyIngest(IngestEvents):
+    """Fails the first ``execute`` (the store was down after the PR opened)."""
+
+    failures: int = 1
+
+    def execute(self, events: Sequence[Event]) -> AppendResult:
+        if self.failures:
+            self.failures -= 1
+            raise OSError("event store unavailable")
+        return super().execute(events)
+
+
+def test_adopts_opened_pull_request_when_retried_after_ingest_failed() -> None:
+    setup = Setup()
+    decide = DecideLearning(
+        setup.reads(),
+        _FlakyIngest(setup.store),
+        setup.port,
+        hub_of=lambda project: setup.hub,
+        today=lambda: NOW,
+    )
+
+    with pytest.raises(OSError, match="event store unavailable"):
+        decide.accept("toolu_1", target="learnings/")
+    assert setup.decisions() == []
+
+    result = decide.accept("toolu_1", target="learnings/")
+
+    assert result.state == LearningState.ACCEPTED_PR_OPEN
+    assert result.pr_url == "https://github.com/acme/demo-hub/pull/1"
+    assert len(setup.origin.pull_requests()) == 1
+    [event] = setup.decisions()
+    assert event.payload["pr_url"] == result.pr_url

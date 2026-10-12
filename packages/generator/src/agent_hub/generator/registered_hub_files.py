@@ -27,7 +27,12 @@ from agent_hub.core.hub_config.local_config import LOCAL_FILE, LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.hubs.hub_registry import BrainListing, UnreadHubFile
-from agent_hub.generator.brain_files import brain_file_size, list_brain, read_brain_file
+from agent_hub.generator.brain_files import (
+    brain_file_size,
+    brain_folders,
+    list_brain,
+    read_brain_file,
+)
 from agent_hub.generator.doctor_snapshot import build_doctor_snapshot, read_lock
 from agent_hub.generator.feature_files import read_feature_folders
 from agent_hub.generator.hub_config_files import UnreadFile, read_file_bytes, read_local_json
@@ -130,6 +135,10 @@ class HubFileSystem:
     def brain_tree(self, hub_path: str) -> BrainListing:
         """The ``.md`` notes under the hub's ``brain/``, bounded, no link followed."""
         return list_brain(Path(hub_path))
+
+    def brain_folders(self, hub_path: str) -> tuple[str, ...]:
+        """The top-level folders of the hub's ``brain/``, bounded, no link followed."""
+        return brain_folders(Path(hub_path))
 
     def read_brain_file(self, hub_path: str, path: str, *, max_bytes: int) -> bytes | UnreadHubFile:
         """The bytes of ``brain/<path>``, a regular file of at most ``max_bytes``, or why not."""
