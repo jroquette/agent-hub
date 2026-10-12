@@ -66,7 +66,9 @@ hub init --config hub.json   # generates from an existing project config
 hub sync        # reapplies templates without overwriting what the project customized
 hub sync --adopt [--accept PATH]…   # joins a hand-made hub: identical files become managed, differences are listed
 hub doctor      # checks rules, links, dead references and instruction size
+hub setup [--yes]   # onboards this machine: clones or fetches the repos, writes hub.local.json after confirmation, lists what is missing
 hub worktree NAME [--only REPO]   # isolated worktrees for one task (--remove NAME removes them)
+hub start ISSUE [--repo DIR]… [--no-agent]   # issue to worktrees, In Progress and a claude session (resumes)
 hub brief [--no-network]   # session brief: now, journal, repo/PR/CI state
 hub agent [ARGS…]   # claude with every repo attached (./agent)
 hub next   # the tracker's ready issues, one line each
@@ -74,6 +76,9 @@ hub run ISSUE --repo REPO [--live] [--budget USD] [--from implement|verify] … 
 hub ship [ISSUE] [--draft] [--dry-run]   # each changed repo's check, push and PR, PRs linked, the issue to review
 hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …   # configuration benchmark (module bench)
 hub collect [FILE|-] [--db PATH]   # ingests canonical events from JSON Lines (stdin when FILE is omitted or -)
+hub collect --transcript FILE [--project NAME]   # a Claude Code transcript, as metadata-only events
+hub collect --runs PATH [--project NAME]   # hub run records (.agent-runs/ file or folder) as executor events
+hub web [--host ADDR] [--port N] [--db PATH]   # the control plane: /api/v1 and the web app on 127.0.0.1 (port 7420)
 ```
 
 A project starts with a minimal `hub init` (what is known: name, repos, tracker, branch prefix), then onboards in a session in that hub with the managed `/onboard` skill, which never runs `hub init` and also works on a hub joined with `hub sync --adopt`. It reads each repo read-only and proposes `hub.json` values, gates and the `AGENTS.project.md` rules with `path:line` evidence; it applies them only after approval. A run that cannot ask the user (headless, or `/onboard propose`) only writes the proposal to `brain/_inbox/onboard-proposal.md` with the `hub.json` hash it was made against, and a later interactive `/onboard apply` applies it once a human has approved it. A repo without a gate gets one composed from the tools it already declares, in its own task runner and through its own PR; `hub.json` names a gate command only after it has run green from the hub and, for a composed one, after that PR merges.
@@ -85,6 +90,26 @@ variable `AGENT_HUB_DB` overrides that default and `--db PATH` overrides both. I
 schema before writing. A batch is all or nothing: an invalid line, a conflict, an input or storage error, or no usable
 home directory writes nothing and exits 1, with one line per error (naming the input line when there is one); usage
 errors exit 2. On success it prints `appended N, duplicates M`.
+
+`hub collect --transcript FILE` (a regular file, at most 256 MiB, lines at most 1 MiB) and `hub collect --runs PATH` (a
+`.agent-runs/*.jsonl` file or a folder of them, depth 1, at most 1,000 files of 64 MiB) map their input to canonical
+events with the same all-or-nothing rule; their events name no project of their own, so `--project` names it, else the
+`hub.json` of the hub folder they run in. FILE, `--transcript` and `--runs` exclude each other (exit 2). `hub run`
+also appends its executor events to the same store as it writes each record; an unwritable store prints one
+`hub run: event store unavailable: <reason>` line and the run carries on.
+
+`hub web` serves the control plane from one local process ([Layer 2](#layer-2-control-plane-and-observability)): the
+`/api/v1` REST and SSE API ([API.md](API.md)) and the committed build of the web app, from the database `hub collect`
+uses. It binds `127.0.0.1` (`--host` may name another loopback address or `localhost`), prints `agent-hub at
+http://127.0.0.1:<port>`, and exits 1 with one line naming the port when it is taken. Any other address exits 2
+(`binding outside loopback needs AGENT_HUB_IN_CONTAINER=1`) unless `AGENT_HUB_IN_CONTAINER` is `1`, which only the
+agent-hub image sets; there it binds `0.0.0.0` and Compose publishes the port on the host's `127.0.0.1` only
+([ADR 0022](adr/0022-container-packaging.md)). The `Host` and `Origin` checks stay loopback-only, plus the exact
+`host[:port]` names of `AGENT_HUB_ALLOWED_HOSTS` (never a wildcard). `AGENT_HUB_CLAUDE_PROJECTS` (absolute) replaces
+`~/.claude/projects` as the only folder the transcript tail reads. Hubs are registered from the app (Settings › Hubs)
+into `$XDG_CONFIG_HOME/agent-hub/hubs.json` (absolute only), else `~/.config/agent-hub/hubs.json` (mode 0600).
+The repo's `make run` (local), `make up`/`down`/`logs`/`ps` (Docker Compose), `make dev` (API plus the Vite dev
+server), `make demo` (synthetic data) and `make connect HUB=<path>` (register a hub, check its sensor) run it.
 
 `hub next` reads `list_ready` once per team, in `hub.json` order, and prints `<id>  <repo>  <title>  <url>` per issue,
 oldest first within each team. With several teams a failing team gets one `team <KEY>: <reason>` line on stderr while
@@ -146,7 +171,8 @@ Design rule: the generated hub is versioned files in a private GitHub repo, acce
 ### Team use and per-repo config
 
 One hub repo serves every developer of a project, so a value that belongs to one developer comes first from that
-developer's gitignored `hub.local.json`; the committed `hub.json` keeps it only for a single-developer hub. Real
+developer's gitignored `hub.local.json`, which `hub setup` writes; the committed `hub.json` keeps it only for a
+single-developer hub. Real
 projects also mix repos that differ in branch, check time and tracker
 team, so these keys are added. Each is optional and additive under `schema_version: 1` (a hub without it behaves as
 today), and the CLI's model and the hooks' stdlib reader accept it in the same change.
@@ -183,6 +209,17 @@ A web app reads the hubs and the agents' events and answers five questions, one 
 
 **Actions, not just reading (after v1).** Start a workflow on an issue, approve a gate, pause or cancel a session, accept a learning.
 
+**Phase 2, read-only (built).** `hub web` serves the views above that Phase 2 covers: Portfolio, Project overview,
+Approvals (read-only), Live sessions, Sessions and Session detail (Timeline, Files, Cost, Raw events), Workflow runs and
+Run detail, Features and Feature detail, Health (the doctor rules run in process per hub, cached 15 min), Knowledge ›
+Learnings (tagged Phase 3), Settings and Welcome. Session, WorkflowRun, Learning and Approval are pure folds in core,
+recomputed on read and memoized in process by the store's high-water mark ([event-derivations.md](design/event-derivations.md)).
+Cost is estimated from transcript usage times a dated price table and always labelled so; OpenTelemetry, GitHub and
+Linear are not connected in this version and their cells say so. Actions (approving, starting, retrying, accepting)
+appear only as disabled, phase-tagged buttons. The server is local only: loopback bind, `Host` and `Origin` checks,
+1 MiB request bodies, no CORS, and a CSP that keeps the app on its own origin. The approved UI design and the
+departures from it are in [design/control-plane/](design/control-plane/README.md); the decisions are ADRs 0017 to 0021.
+
 ## Data sources and event model
 
 Almost all of the data already exists. The platform normalizes five sources into a single event stream per session.
@@ -200,19 +237,45 @@ Almost all of the data already exists. The platform normalizes five sources into
 default); `repo`, `agent`, `workflow` and `step` are optional. Unknown fields are rejected.
 
 - `type` is a closed list: `session.start`, `session.end`, `tool.call`, `tool.result`, `message`, `reasoning`, `decision`,
-  `gate.request`, `gate.result`, `learning.proposed` and `learning.accepted`.
+  `gate.request`, `gate.result`, `learning.proposed`, `learning.accepted`, `learning.rejected`, `step.start`,
+  `step.end`, `run.end` and `session.summary` (the last five added in Phase 2 for runs, rejected learnings and stored
+  summaries).
 - `source` is a closed list: `claude_code`, `transcript`, `otel`, `executor`, `github` and `linear`. Widening either list
   later is a compatible change.
 - `timestamp` is an ISO 8601 string with an offset (numbers and naive times are rejected) and is stored in UTC.
+- `project`, `session` and a payload's `run` are at most 200 characters; a longer one is refused at ingestion (the
+  line's reason in `hub collect`, 422 on the hook route), so every id fits a detail path and a list cursor.
 - **Identity and idempotency:** `(source, source_id)` identifies an event. Ingesting an identical event again is a
   duplicate and is skipped; a different event with the same key is a conflict and fails the batch. Nothing stored is
   ever overwritten.
 - The input format of `hub collect` is JSON Lines, UTF-8, one event per line (records split on `\n`); blank lines are
   skipped and duplicate JSON keys are rejected.
+- The store adds two fields of its own at append: `event_id` (a UUIDv7, the SSE id and the API's event id) and
+  `received_at` (UTC; NULL for rows stored before Phase 2). The identity stays `(source, source_id)`; session and run
+  ids stay the sources' own.
 
-**Privacy and redaction.** Transcripts can contain secrets and personal data. Ingestion redacts key and token patterns before writing, and the data stays on the machine in v1.
-Redaction is not built yet: until it ships (Phase 2 at the latest, with the first real source), the collector accepts
-only synthetic input, and no real transcript or hook payload is fed to it.
+**Privacy: metadata only, redacted.** Transcripts and hooks can contain secrets and personal data, so every entry point
+(hooks, transcripts, run records and JSON Lines) goes through one core use case, `IngestEvents`, which applies two rules
+before anything is appended, and the data stays on the machine in v1:
+
+- **Redaction** (rule set `r1`, `agent_hub.core.redaction`): every string of the payload, at any depth, keys included,
+  and the labels `repo`, `agent`, `workflow` and `step`. A known secret is replaced whole by `[redacted: <kind>]`; the
+  kinds are `github token` (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`), `linear key` (`lin_api_`),
+  `anthropic key` (`sk-ant-`), `openai key` (`sk-`, `sk-proj-`), `aws access key` (`AKIA`/`ASIA` + 16), `aws secret`
+  (`aws_secret_access_key` assignments), `bearer token`, `private key` (a whole PEM block), `url credentials`
+  (`scheme://user:pass@`) and `secret` (a `NAME=value` or `"name": "value"` whose name says secret, token, password,
+  passwd, api_key, apikey, private_key or credential, with a value of 8+ characters). Redaction is idempotent and runs
+  before any truncation; a rule change is a new rule set version and a release note.
+- **Metadata only**: no prompt, message, reasoning, tool output, file content or diff text is stored. Each type keeps
+  only the payload keys of one table in core (`agent_hub.core.events.payload_keys`, the spec's "Payload kept": e.g.
+  `tool.call` keeps tool, tool use id, repo-relative path, line counts, a 500-character Bash command, a Grep/Glob
+  pattern, a WebFetch URL without query, MCP server, tool and argument names; `message` keeps role, size, turn,
+  slash-command name and token usage), plus `run`, `step`, `attempt` and `agent_id` on any type. The source adapters
+  build payloads from that table, and `IngestEvents` drops (never rejects) any other key after redaction. **Change to
+  `hub collect FILE` (Phase 2):** a canonical JSON Lines payload is now trimmed to that table too, so a key outside it
+  (a Phase 0 payload's `input`, `output`, `prompt`, `content`…) is not stored. Release note: re-collecting a file whose
+  events were stored before this change, with keys the table drops, now reports a conflict for those events (the
+  trimmed event differs from the stored one), as any changed re-ingest does.
 
 ## Proposed architecture
 
@@ -232,8 +295,13 @@ flowchart LR
 
 The sessions and GitHub/Linear feed the collector, and the web app reads everything through the API. The app's actions go back to the workflow executor. The API also reads the hub repos to show brain, rules and workflows.
 
-- **Stack (decided, ADRs 0001–0004, 0008, 0011 and 0014):** Python 3.14 in a uv workspace with one package per component (`core`, `storage`, `collector`, `generator`, `tracker_linear`, `cli`; `api` later) under a lean hexagonal architecture: entities, use cases and ports in `core`, adapters in the other packages. Persistence is SQLAlchemy Core + Alembic on SQLite, moving to Postgres via config when there are multiple users. FastAPI + Pydantic for the API and React on the front end come in Phase 2.
-- **Hooks as sensors:** the generated hub installs Claude Code hooks that send events to the local collector. Without the collector running, the hooks fail silently and the session carries on normally.
+- **Stack (decided, ADRs 0001–0004, 0008, 0011, 0014, 0017 and 0020):** Python 3.14 in a uv workspace with one package per component (`core`, `storage`, `collector`, `generator`, `tracker_linear`, `cli`, `api`) under a lean hexagonal architecture: entities, use cases and ports in `core`, adapters in the other packages. Persistence is SQLAlchemy Core + Alembic on SQLite, moving to Postgres via config when there are multiple users. The API is FastAPI + Pydantic in `packages/api`, a second composition root that `hub web` serves; the front end is React 18 + TypeScript in `apps/web`, whose production build is committed to `packages/api` so a `uvx` install needs no Node.
+- **Hooks as sensors** ([ADR 0021](adr/0021-hook-event-sensor.md)): the generated hub registers a stdlib Python 3.9 sensor, `plugin/hub-workflow/hooks/event_sensor.py`, for eleven Claude Code hooks (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PostToolUseFailure, Notification, Stop, SubagentStart, SubagentStop, PreCompact, SessionEnd). It wraps the hook input in a versioned envelope (`v: 1`, project, repo, the `hub run` run, step and attempt) and posts it to `POST /api/v1/events/hooks` with a 0.5 s timeout; it prints nothing and exits 0 on any failure, so without `hub web` the session carries on normally. `AGENT_HUB_WEB_URL` may only name a loopback URL. The guard and the Stop gate send their own decisions (a denial, an ask, a blocked Stop) the same way, after deciding, without changing their output or exit codes. On Stop, SubagentStop and SessionEnd the server reads the session's transcript from its last offset, only under `~/.claude/projects/` and never through a link.
+- **Packaging ([ADR 0022](adr/0022-container-packaging.md)):** besides `uvx`/`uv tool install`, the control plane
+  ships as a container image built from the repo (`Dockerfile`, `compose.yaml`): multi-stage (the web app built from
+  its lockfile, the workspace installed from `uv.lock`), base images pinned by digest, a non-root user (uid 10001), a
+  read-only root file system, every capability dropped, a `/data` volume for the database and registry, and the hubs
+  and transcripts mounted read-only at their host paths. It is local-only like `hub web`: published on `127.0.0.1`.
 - **Adapters:** Claude Code is the first. Other agents (Codex, Cursor) come in as adapters that emit the same canonical event.
 
 ## MVP and phases

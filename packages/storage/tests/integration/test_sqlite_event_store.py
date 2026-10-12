@@ -1,7 +1,9 @@
 import sqlite3
 import threading
+import uuid
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -168,3 +170,42 @@ def test_reads_but_cannot_write_when_other_connection_holds_write_lock(tmp_path:
     finally:
         writer.execute("ROLLBACK")
         writer.close()
+
+
+def _storage_fields(db_path: Path) -> list[tuple[str, str, str | None]]:
+    """``(source_id, event_id, received_at)`` of every row, in append order."""
+    connection = sqlite3.connect(db_path)
+    try:
+        query = "SELECT source_id, event_id, received_at FROM events ORDER BY id"
+        return [tuple(row) for row in connection.execute(query)]
+    finally:
+        connection.close()
+
+
+def test_mints_distinct_event_ids_when_events_appended(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    store = open_event_store(db_path)
+    before = datetime.now(UTC).replace(tzinfo=None)
+
+    store.append([an_event(), an_event(), an_event()])
+
+    rows = _storage_fields(db_path)
+    event_ids = [uuid.UUID(row[1]) for row in rows]
+    assert len(set(event_ids)) == 3
+    assert {event_id.version for event_id in event_ids} == {7}
+    received = [datetime.fromisoformat(str(row[2])) for row in rows]
+    assert all(before <= value <= datetime.now(UTC).replace(tzinfo=None) for value in received)
+
+
+def test_keeps_first_event_id_when_duplicate_appended(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    store = open_event_store(db_path)
+    event = an_event()
+    store.append([event])
+    first = _storage_fields(db_path)
+
+    result = store.append([event])
+
+    assert result == AppendResult(appended=0, duplicates=1)
+    assert _storage_fields(db_path) == first
+    assert store.read_all() == [event]

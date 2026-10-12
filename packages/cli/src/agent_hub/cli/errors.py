@@ -29,6 +29,10 @@ class WorktreeUsageError(WorktreeError):
     """A worktree task's input is refused: its name, its branch or the repo asked for."""
 
 
+class LaunchError(CliError):
+    """Claude Code could not be launched: its context file or the exec failed."""
+
+
 class RunLogError(CliError):
     """A record or the inbox line of ``hub run`` could not be written."""
 
@@ -50,3 +54,10 @@ class PrStepError(CliError):
 class ShipError(CliError):
     """``hub ship`` refuses its shipping set: no task worktree, two in a repo, a wrong branch,
     a git read that failed or nothing ahead. The message names the repo and the path."""
+
+
+class ProjectsRootError(CliError):
+    """``AGENT_HUB_CLAUDE_PROJECTS`` names a relative path."""
+
+    def __init__(self) -> None:
+        super().__init__("AGENT_HUB_CLAUDE_PROJECTS must be an absolute path")

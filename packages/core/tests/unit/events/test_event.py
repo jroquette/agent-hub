@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from agent_hub.core.events.event import Event, EventKey, EventSource, EventType
+from agent_hub.core.events.event import MAX_ID_CHARS, Event, EventKey, EventSource, EventType
 
 SPEC_TYPES = [
     "session.start",
@@ -19,6 +19,7 @@ SPEC_TYPES = [
     "learning.proposed",
     "learning.accepted",
 ]
+PHASE_TWO_TYPES = ["step.start", "step.end", "run.end", "learning.rejected", "session.summary"]
 SPEC_SOURCES = ["claude_code", "transcript", "otel", "executor", "github", "linear"]
 REQUIRED_FIELDS = ["project", "session", "type", "timestamp", "source", "source_id"]
 
@@ -84,6 +85,19 @@ def test_accepts_type_when_listed_in_spec(event_type: str) -> None:
     assert event.type == EventType(event_type)
 
 
+@pytest.mark.parametrize("event_type", PHASE_TWO_TYPES, ids=PHASE_TWO_TYPES)
+def test_accepts_type_when_type_is_new_in_phase_two(event_type: str) -> None:
+    event = Event.model_validate(required_fields() | {"type": event_type})
+
+    assert event.type == EventType(event_type)
+
+
+@pytest.mark.parametrize("event_type", ["step.begin", "hook.blocked", "run.start"])
+def test_rejects_type_when_type_is_unknown(event_type: str) -> None:
+    with pytest.raises(ValidationError, match="type"):
+        Event.model_validate(required_fields() | {"type": event_type})
+
+
 @pytest.mark.parametrize("source", SPEC_SOURCES, ids=SPEC_SOURCES)
 def test_accepts_source_when_listed_in_spec(source: str) -> None:
     event = Event.model_validate(required_fields() | {"source": source})
@@ -142,3 +156,25 @@ def test_exposes_key_when_event_validated() -> None:
     event = Event.model_validate(required_fields())
 
     assert event.key == EventKey(source=EventSource.CLAUDE_CODE, source_id="evt-1")
+
+
+@pytest.mark.parametrize("field", ["project", "session"])
+def test_rejects_event_when_id_longer_than_cap(field: str) -> None:
+    with pytest.raises(ValidationError, match=field):
+        Event.model_validate(required_fields() | {field: "x" * (MAX_ID_CHARS + 1)})
+
+
+def test_rejects_event_when_payload_run_longer_than_cap() -> None:
+    document = required_fields() | {"payload": {"run": "r" * (MAX_ID_CHARS + 1)}}
+
+    with pytest.raises(ValidationError, match="run: longer than 200 characters"):
+        Event.model_validate(document)
+
+
+def test_accepts_event_when_ids_at_cap() -> None:
+    longest = "x" * MAX_ID_CHARS
+    document = required_fields() | {"project": longest, "session": longest}
+
+    event = Event.model_validate(document | {"payload": {"run": longest}})
+
+    assert (event.project, event.session) == (longest, longest)

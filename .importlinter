@@ -17,15 +17,35 @@ forbidden_modules =
     agent_hub.generator
     agent_hub.tracker_linear
     agent_hub.cli
+    agent_hub.api
     sqlalchemy
     alembic
     typer
+    fastapi
+    starlette
+    uvicorn
 
 # cli is the composition root (ADR 0008): it may import the adapters to wire them into core use cases, nothing
-# imports it, and the adapters below it stay independent of each other ("|").
+# imports it, and the adapters below it stay independent of each other ("|"). api (Phase 2) is a second
+# composition root, one layer down: it wires the adapters for the web server and never imports cli.
 [importlinter:contract:composition-root]
 name = cli is the composition root
 type = layers
 layers =
     agent_hub.cli
+    agent_hub.api
     agent_hub.storage | agent_hub.collector | agent_hub.generator | agent_hub.tracker_linear
+
+# `hub web` is the one command that starts the API server; every other cli module stays free of it.
+[importlinter:contract:cli-api-web-command]
+name = cli reaches api only through web_command
+type = forbidden
+source_modules =
+    agent_hub.cli
+forbidden_modules =
+    agent_hub.api
+ignore_imports =
+    agent_hub.cli.web_command -> agent_hub.api
+    agent_hub.cli.web_command -> agent_hub.api.**
+# web_command may import the package or its modules, so one of the two lines can stay unmatched.
+unmatched_ignore_imports_alerting = none

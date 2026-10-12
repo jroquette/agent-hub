@@ -1,1 +1,4 @@
-"""Workspace rules behind the hub commands: worktree names, brief text, agent launch; pure."""
+"""Workspace rules behind the hub commands; pure.
+
+Worktree names, brief text, agent launch, the setup checklist.
+"""

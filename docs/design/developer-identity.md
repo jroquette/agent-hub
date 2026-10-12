@@ -35,6 +35,7 @@ cloud setup. The `hub.json` fields themselves are in [project-config.md](project
 - **Ignored by git.** `hub init` seeds `.gitignore` with `hub.local.json`. `.gitignore` is seeded, so `hub sync` never
   adds the line: an existing hub adds it by hand (README, `hub.local.json`).
 - **Nothing in it relaxes a guard**: it cannot add or remove a guard path, host, protected branch or repo.
+- **One writer:** `hub setup` ([hub-setup.md](hub-setup.md)) writes it, as a new file only, never overwritten.
 
 ### CLI
 
@@ -120,6 +121,5 @@ HUB_AUTHOR_NAME/HUB_AUTHOR_EMAIL; commits carry the container's identity`, write
 
 ## Open questions
 
-- A team mode for `hub init` (no identity in `hub.json`, a `hub.local.json` for the first developer): `hub setup`,
-  AGH-71.
+- A team mode for `hub init` (no identity in `hub.json`): open, a later issue; `hub setup` writes the developer's file.
 - Whether doctor should also report no prefix at all (`hub worktree` and `hub run` would refuse).

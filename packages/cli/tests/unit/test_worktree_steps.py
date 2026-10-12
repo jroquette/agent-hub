@@ -1,20 +1,23 @@
+import errno
+import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pytest
 
 from agent_hub.cli.child_process import ChildResult
-from agent_hub.cli.errors import WorktreeError
+from agent_hub.cli.errors import WorktreeError, WorktreeUsageError
 from agent_hub.cli.worktree_steps import (
     SCRIPT_VARIABLES,
     WORKTREES_FOLDER,
     WorktreeTask,
     check_branches,
     script_env,
+    task_folders,
     worktree_task,
 )
 from agent_hub.core.hub_config.model import HubConfig
-from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 
 NAME = "dem-1-x"
 BRANCH = "jdoe/dem-1-x"
@@ -168,3 +171,97 @@ def test_overrides_caller_values_when_script_env_built(tmp_path: Path) -> None:
     assert result["HUB_PORT_OFFSET"] == "2800"
     assert result["HUB_OTHER"] == "1"
     assert task.env == caller
+
+
+def two_repo_task(workspace: Path, *, repos: Sequence[str]) -> WorktreeTask:
+    """Task ``dem-1-x`` of the demo hub with ``demo-web`` added, over the ``repos`` subset."""
+    document = a_hub_document()
+    document["repos"].append(a_second_repo())
+    return worktree_task(
+        HubConfig.model_validate(document),
+        name=NAME,
+        branch_prefix="jdoe/",
+        only=None,
+        hub=workspace / "hub",
+        git="git",
+        env={},
+        git_timeout=None,
+        runner=ScriptedRunner("none", ACCEPTED),
+        repos=repos,
+    )
+
+
+def test_keeps_hub_order_when_repo_subset_given(tmp_path: Path) -> None:
+    task = two_repo_task(tmp_path, repos=("demo-web", "demo-api", "demo-web"))
+
+    assert task.repos == ("demo-api", "demo-web")
+    assert task.only is None
+    assert task.branches == {"demo-api": BRANCH, "demo-web": BRANCH}
+
+
+def test_touches_only_subset_when_one_repo_given(tmp_path: Path) -> None:
+    task = two_repo_task(tmp_path, repos=("demo-web",))
+
+    assert task.repos == ("demo-web",)
+    assert task.only is None
+    assert task.bases == {"demo-web": "origin/main"}
+
+
+def test_refuses_unknown_repo_when_subset_given(tmp_path: Path) -> None:
+    with pytest.raises(WorktreeUsageError) as raised:
+        two_repo_task(tmp_path, repos=("demo-api", "nope"))
+
+    assert str(raised.value) == "unknown repo in --repo: nope; use one of: demo-api demo-web"
+
+
+def test_refuses_only_and_subset_together_when_both_given(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="only or repos"):
+        worktree_task(
+            HubConfig.model_validate(a_hub_document()),
+            name=NAME,
+            branch_prefix="jdoe/",
+            only="demo-api",
+            hub=tmp_path / "hub",
+            git="git",
+            env={},
+            git_timeout=None,
+            runner=ScriptedRunner("none", ACCEPTED),
+            repos=("demo-api",),
+        )
+
+
+def test_lists_task_folders_when_names_match_issue(tmp_path: Path) -> None:
+    worktrees = tmp_path / "demo-api" / WORKTREES_FOLDER
+    for folder in ("dem-7-b", "dem-7-a", "dem-7", "dem-70-x", "dem-1"):
+        (worktrees / folder).mkdir(parents=True)
+    (worktrees / "dem-7-f").write_text("a file, not a folder\n")
+    (tmp_path / "demo-web").mkdir()
+
+    found = task_folders(tmp_path, ("demo-api", "demo-web", "demo-gone"), "DEM-7")
+
+    assert found == {
+        "demo-api": ("dem-7", "dem-7-a", "dem-7-b"),
+        "demo-web": (),
+        "demo-gone": (),
+    }
+
+
+def test_raises_naming_folder_when_task_folders_unreadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A refused listing, injected: a chmod 000 folder is still readable when the tests run as root.
+    worktrees = tmp_path / "demo-api" / WORKTREES_FOLDER
+    worktrees.mkdir(parents=True)
+    real = os.scandir
+
+    def refuse(path: str | os.PathLike[str]) -> object:
+        if Path(path) == worktrees:
+            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+        return real(path)
+
+    monkeypatch.setattr(os, "scandir", refuse)
+
+    with pytest.raises(WorktreeError) as raised:
+        task_folders(tmp_path, ("demo-api",), "DEM-7")
+
+    assert str(raised.value) == f"demo-api: cannot list {worktrees}: Permission denied"

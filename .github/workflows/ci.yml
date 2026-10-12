@@ -17,7 +17,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
         with:
@@ -44,5 +44,37 @@ jobs:
         run: >-
           uv run --locked --all-packages python -c
           "import sys; assert sys.version_info[:2] == (3, 14) and sys.version_info.releaselevel == 'final', sys.version"
+      # The web app (apps/web): Node from its .node-version, npm's cache keyed by its lockfile.
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: apps/web/.node-version
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install the web app's dependencies
+        run: npm --prefix apps/web ci --no-audit --no-fund
+      # Chromium for the Playwright smoke test (tests/e2e/test_web_smoke.py), which fails under CI
+      # when the browser is missing.
+      - name: Install Chromium for Playwright
+        run: npx --prefix apps/web playwright install --with-deps chromium
       - name: make check
         run: make check
+
+  # The image and its Compose service (Dockerfile, compose.yaml, ADR 0022): build them, run the
+  # service on a loopback port and test it from the host (make test-docker, marker docker). Not in
+  # `make check`, which needs no Docker; under CI the test fails when the daemon is missing.
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.12.19"
+      - name: Install Python (from .python-version)
+        run: uv python install
+      - name: Sync the workspace from uv.lock
+        run: uv sync --locked --all-packages
+      - name: make test-docker
+        run: make test-docker

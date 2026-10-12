@@ -15,7 +15,11 @@ cut, never started for lack of budget, or that has no `check_fast` gets a "not r
 and it is always named. A run with no failure and at least one budget or timeout line leaves the block
 counter as it was. Each check runs in its own process group, killed when the run ends (on a timeout, after
 a normal exit, and when the hook itself gets SIGTERM or SIGHUP), so no child of a check outlives the gate;
-its output goes to a temp file, so a background child holding it open never holds the gate up."""
+its output goes to a temp file, so a background child holding it open never holds the gate up.
+After a block is printed, it is sent to the local control plane through the event sensor's
+send_decision (event_sensor.py beside it): the hook input, its content reduced to sizes
+(reduce_hook), with decision {by: stop_gate, kind: block, command, exit_code} of the first failing repo, bounded by the
+sensor's 0.5 s; it prints nothing and never changes the output or the exit code."""
 
 from __future__ import annotations
 
@@ -38,6 +42,10 @@ try:
 except Exception as error:  # a partial install: skip, never error the session
     print(f"[hub {os.path.splitext(os.path.basename(sys.argv[0] or 'hook'))[0]}] skipped: {type(error).__name__}", file=sys.stderr)
     sys.exit(0)
+try:  # the control plane's sender: without it, blocks are simply not recorded
+    from event_sensor import send_decision
+except Exception:
+    send_decision = None
 
 HOOK_START = time.monotonic()
 
@@ -232,22 +240,22 @@ def label_of(cfg: Config, repo: str, top: Path) -> str:
         return f"{repo} ({top})"
 
 
-def run_check(cmd: str, top: Path, limit: float) -> tuple[str, str]:
-    """(status, output tail) of one check: "passed", "failed" (non-zero exit, could not start) or "killed"
-    (still running after `limit` s). The output goes to an unnamed temp file and the gate waits for bash
-    alone; then it kills the check's process group, whichever way the run ended."""
+def run_check(cmd: str, top: Path, limit: float) -> tuple[str, str, int | None]:
+    """(status, output tail, exit code) of one check: "passed", "failed" (non-zero exit, could not start:
+    no exit code) or "killed" (still running after `limit` s). The output goes to an unnamed temp file and
+    the gate waits for bash alone; then it kills the check's process group, whichever way the run ended."""
     env = dict(os.environ, NO_COLOR="1", FORCE_COLOR="0", CLICOLOR="0")
     try:
         out = tempfile.TemporaryFile()
     except OSError as e:
-        return "failed", f"check_fast could not start: {e}"
+        return "failed", f"check_fast could not start: {e}", None
     with out:
         exit_on_cancel()
         try:
             proc = subprocess.Popen(["bash", "-c", cmd], cwd=top, stdin=subprocess.DEVNULL, stdout=out,
                                     stderr=subprocess.STDOUT, env=env, start_new_session=True)
         except OSError as e:
-            return "failed", f"check_fast could not start: {e}"
+            return "failed", f"check_fast could not start: {e}", None
         code = None
         try:
             code = proc.wait(timeout=limit)
@@ -256,8 +264,8 @@ def run_check(cmd: str, top: Path, limit: float) -> tuple[str, str]:
         finally:  # an exception kills the group too
             stop(proc)
         if code is None:
-            return "killed", ""
-        return ("passed" if code == 0 else "failed"), output_tail(out)
+            return "killed", "", None
+        return ("passed" if code == 0 else "failed"), output_tail(out), code
 
 
 def cancelled(signum: int, frame: object) -> None:
@@ -303,6 +311,18 @@ def emit_noted(note: str, payload: dict) -> None:
     emit(dict(payload, **{key: payload[key] + "\n" + note}) if note else payload)
 
 
+def record(data: dict, failed: tuple[str, int | None]) -> None:
+    """Send a printed block to the control plane; never raises, never prints."""
+    if send_decision is None:
+        return
+    try:
+        sys.stdout.flush()
+        command, code = failed
+        send_decision(data, {"by": "stop_gate", "kind": "block", "command": command, "exit_code": code})
+    except Exception:
+        pass
+
+
 def main() -> None:
     data = read_input()
     event_cwd = data.get("cwd")
@@ -339,6 +359,7 @@ def main() -> None:
         blocks = 0
     statuses = [(repo, top, changed_code(top, since)) for repo, top in candidates(cfg, cwd, touched, tops)]
     failures, not_run, passed, cut = [], [], 0, False
+    first_failed = None  # (command, exit code) of the first failing check
     for repo, top, files in statuses:
         label = label_of(cfg, repo, top)
         if files is None:
@@ -358,11 +379,12 @@ def main() -> None:
             not_run.append(f"{label}: not run: budget")
             cut = True
             continue
-        status, out = run_check(cmd, top, min(own, budget_left))
+        status, out, code = run_check(cmd, top, min(own, budget_left))
         if status == "killed":
             not_run.append(f"{label}: not run: budget" if budget_left < own else f"{label}: not run: timeout ({own} s)")
             cut = True
         elif status == "failed":
+            first_failed = first_failed or (cmd, code)
             failures.append(f"## {label}: `{cmd}` FAILED\nchanged: {', '.join(files[:8])}\n{out}")
         else:
             passed += 1
@@ -376,6 +398,7 @@ def main() -> None:
                                                "finishing anyway. Do not claim the work is done.\n\n" + found})
             return
         emit_noted(note, {"decision": "block", "reason": "[hub stop-gate] Fix these before finishing (check_fast must pass):\n\n" + found})
+        record(data, first_failed)
         return
     if cut and not failures:  # only not-run outcomes: the block counter stays as it was
         emit_noted(note, {"systemMessage": "[hub stop-gate] check_fast did not finish in every changed repo; finishing anyway. "

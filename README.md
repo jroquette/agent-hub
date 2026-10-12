@@ -11,7 +11,7 @@
   <a href="https://github.com/jroquette/agent-hub/actions/workflows/ci.yml"><img alt="CI status" src="https://github.com/jroquette/agent-hub/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python 3.14" src="https://img.shields.io/badge/python-3.14-3776AB?logo=python&logoColor=white">
   <!-- Static badge: bump with each release tag (scripts/check_release.py keeps the package versions in lockstep; follow-up: automate). -->
-  <img alt="Version 0.8.0" src="https://img.shields.io/badge/version-0.8.0-blue">
+  <img alt="Version 0.9.0" src="https://img.shields.io/badge/version-0.9.0-blue">
   <img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-orange">
 </p>
 
@@ -42,9 +42,9 @@ Next steps:
 ```
 
 > [!IMPORTANT]
-> agent-hub is **experimental** (0.x, Phase 1 of 4 in the [spec](docs/SPEC.md)). The hub generator and its commands
-> work and are tested; the web control plane does not exist yet. The repository is private, and every install needs
-> read access to it.
+> agent-hub is **experimental** (0.x, Phase 2 of 4 in the [spec](docs/SPEC.md)). The hub generator and its commands
+> work and are tested; the web control plane is read-only (it watches, it does not act yet). The repository is
+> public: installing needs no credential.
 
 ## Contents
 
@@ -52,6 +52,7 @@ Next steps:
 - [Why use it?](#-why-use-it)
 - [How it works](#-how-it-works)
 - [Quick Start](#-quick-start)
+- [Run the control plane](#-run-the-control-plane)
 - [Daily workflow](#-daily-workflow)
 - [Usage guide](#-usage-guide)
 - [Configuration](#-configuration)
@@ -122,26 +123,23 @@ the repos (git worktrees), and every change reaches `main` only through a pull r
 
 **Prerequisites**
 
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) **0.9.0 or newer** (it installs Python 3.14 for you).
-- `git` and `python3` on your `PATH` (the shims and hooks use the system `python3`, 3.9 or newer).
-- **Read access to this private repository**: your GitHub credentials through a git credential helper (for example
-  `gh auth setup-git`), or this repository attached to a cloud session. Never put a token inside the `git+https://` URL.
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (the `claude` command) to run `./agent`.
-- Optional: [`gh`](https://cli.github.com/) for the PR and CI lines of `hub brief`, and a Linear workspace for the
-  tracker.
+- What everyone on a hub needs (uv, git, Claude Code, Python 3.9 or newer, optional `gh` and tracker credential, with
+  the known traps): the Requirements table of the **Join this hub** section that every generated hub's `README.md`
+  carries; its source is [`README.md.tmpl`](packages/generator/src/agent_hub/generator/templates/README.md.tmpl).
+- To create a hub: a GitHub repository for it (`--hub-repo`) and a Linear team for its tracker.
 
 **1. Check that you can run the CLI.** `uvx` builds the tagged release from git and caches it; the first run takes a
 little longer.
 
 ```bash
-uvx --from 'git+https://github.com/jroquette/agent-hub@v0.8.0#subdirectory=packages/agent-hub' hub --version
+uvx --from 'git+https://github.com/jroquette/agent-hub@v0.9.0#subdirectory=packages/agent-hub' hub --version
 ```
 
-You should see `0.8.0`.
+You should see `0.9.0`.
 
 > [!TIP]
 > To have `hub` on your `PATH`, install it once with
-> `uv tool install 'git+https://github.com/jroquette/agent-hub@v0.8.0#subdirectory=packages/agent-hub'`.
+> `uv tool install 'git+https://github.com/jroquette/agent-hub@v0.9.0#subdirectory=packages/agent-hub'`.
 > Generated hubs never need this: their `./hub` shim runs the release pinned in `hub.json`.
 
 **2. Create an empty folder for the hub.** It should be a sibling of the project's repos.
@@ -156,7 +154,7 @@ mkdir -p demo-hub && cd demo-hub && git init
 from your git `user.name` and `user.email` unless you pass `--author-name` and `--author-email`.
 
 ```bash
-uvx --from 'git+https://github.com/jroquette/agent-hub@v0.8.0#subdirectory=packages/agent-hub' \
+uvx --from 'git+https://github.com/jroquette/agent-hub@v0.9.0#subdirectory=packages/agent-hub' \
   hub init demo --repos acme/backend,acme/frontend --tracker linear:DEMO --branch-prefix jdoe/ --hub-repo acme/demo-hub
 ```
 
@@ -200,6 +198,41 @@ git add -A && git commit -m "Create the hub"
 > `./agent` (and `hub agent`) attaches the repos listed in `hub.json` that are cloned next to the hub (`../backend`,
 > `../frontend` in this example), prints a `not attached` warning for each one it cannot find, and passes every
 > other argument to `claude`.
+
+## 📡 Run the control plane
+
+The control plane is `hub web`: a REST API and a web app that show your hubs' live sessions, workflow runs, approvals,
+features and health as they happen. It listens on `127.0.0.1` only (port 7420) and stores metadata only: never
+prompts, outputs or file contents. The commands below run from a clone of this repo.
+
+**In Docker (three commands).** The image runs as a non-root user on a read-only file system, and the port is
+published on the host's loopback only. The folder that holds this clone (your workspace with the hubs) is mounted
+read-only; set `AGENT_HUB_HUBS_ROOT` to use another one (see `.env.example`).
+
+```bash
+make up                              # build and start; prints http://127.0.0.1:7420
+make connect HUB=../my-project-hub   # register a hub and check that it sends events
+make down                            # stop (the data volume is kept); make logs, make ps
+```
+
+**Locally (one command).** No Docker; the database is `~/.local/share/agent-hub/agent-hub.db` unless `AGENT_HUB_DB`
+says otherwise.
+
+```bash
+make run                             # the same as uv run hub web
+```
+
+**See it with sample data.** With the app running (either way), `make demo` loads a synthetic demo hub, a live session
+with a guard denial, a session waiting on a guard ask, a failed run and an ended session with its cost, so every
+screen has content. It never reads your real transcripts.
+
+**Work on the web app.** `make dev` starts the API on 7420 and the Vite dev server with hot reload on
+`http://127.0.0.1:5173`, which forwards `/api` to the API; Ctrl C stops both.
+
+A hub sends events once its release has the sensor (`plugin/hub-workflow/hooks/event_sensor.py`, from 0.9.0): move
+`platform.version` in its `hub.json` and run `./hub sync`. `make connect` tells you when a hub needs it. The design
+and its safety rules: [ADR 0022](docs/adr/0022-container-packaging.md); the guide for other projects:
+[docs/USING.md](docs/USING.md).
 
 ## 🔄 Daily workflow
 
@@ -573,7 +606,7 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `tracker.teams` | one of the two | | Several team keys, the first the default, e.g. `["APP", "OPS"]` |
 | `tracker.ready_label` | no | `agent-ready` | Label of issues an agent may pick up |
 | `tracker.failed_label` | no | `agent-failed` | Label set when an agent run fails |
-| `tracker.states.started` | no | `In Progress` | State the coming `hub start` moves an issue to; not read yet |
+| `tracker.states.started` | no | `In Progress` | State `hub start` moves an issue to: on a fresh start, or on a resume while the issue is unstarted |
 | `tracker.states.review` | no | `In Review` | Reserved for the review step; not read yet |
 | `repos[].dir` | yes | | Folder name of the repo, next to the hub |
 | `repos[].github` | yes | | GitHub `owner/name` |
@@ -594,7 +627,7 @@ Example (synthetic project):
 {
   "$schema": "./hub.schema.json",
   "schema_version": 1,
-  "platform": { "version": "0.8.0" },          // the release ./hub runs
+  "platform": { "version": "0.9.0" },          // the release ./hub runs
   "project": {
     "name": "demo",
     "hub_repo": "acme/demo-hub",
@@ -654,7 +687,12 @@ Contract: [docs/design/developer-identity.md](docs/design/developer-identity.md)
 | `AGENT_HUB_DB` | no | `$XDG_DATA_HOME/agent-hub/agent-hub.db`, else `~/.local/share/agent-hub/agent-hub.db` | Event database of `hub collect`; `--db` overrides it |
 | `XDG_DATA_HOME` | no | | Used for the default database path when it is absolute |
 | `HUB_AUTHOR_NAME`, `HUB_AUTHOR_EMAIL` | no | | Module `cloud`: your commit author in a cloud session, read by `scripts/cloud-setup.sh` only when `hub.json` names no author; written to the repo-local git config of the hub and each repo, never the global one (unset: a `WARN`, and commits carry the container's identity) |
-| `AGENT_HUB_ROOT` | no | the current folder | The hub folder for `hub worktree`, `hub brief` and `hub agent` (`hub sync` and `hub doctor` use the current folder); the `./hub` shim sets it for you |
+| `AGENT_HUB_CLAUDE_PROJECTS` | no | `~/.claude/projects` | The only folder `hub web` reads transcripts from (absolute path) |
+| `AGENT_HUB_ALLOWED_HOSTS` | no | | Extra exact `host[:port]` names `hub web` answers besides its loopback ones (comma list, never `*`) |
+| `AGENT_HUB_IN_CONTAINER` | no | | Set to `1` by the agent-hub image only: lets `hub web --host` bind outside loopback inside the container |
+| `AGENT_HUB_WEB_URL` | no | `http://127.0.0.1:7420` | Where a hub's event sensor sends events (loopback URLs only) |
+| `AGENT_HUB_HUBS_ROOT`, `AGENT_HUB_PORT` | no | the folder holding this clone, `7420` | `make up`: the hubs folder mounted read-only, the host port (on 127.0.0.1) |
+| `AGENT_HUB_ROOT` | no | the current folder | The hub folder for `hub worktree`, `hub brief`, `hub agent` and `hub start` (`hub sync` and `hub doctor` use the current folder); the `./hub` shim sets it for you |
 
 ## 🧱 Technical reference
 
@@ -735,6 +773,7 @@ enforces this in `make check`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE
 | `hub worktree NAME [--only REPO] [--remove]` | Create (or remove) one task's worktrees in the hub's repos |
 | `hub brief [--no-network]` | Print the session brief: `now.md`, recent journal, repo/PR/CI state |
 | `hub agent [ARGS…]` | Start `claude` with every repo attached; all arguments go to `claude` |
+| `hub start ISSUE [--repo DIR]… [--no-agent]` | Start an issue: its worktrees (named `<issue>-<title slug>`), the issue moved to `tracker.states.started`, then `claude` from the hub with those worktrees attached and the issue as first prompt; a rerun resumes the task; `--no-agent` prints how to launch it |
 | `hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …` | Benchmark the `hub-workflow` plugin on closed issues (module `bench`); `--validate` checks the graders |
 | `hub collect [FILE\|-] [--db PATH]` | Ingest canonical events from JSON Lines, all or nothing |
 | `hub --version` | Print the version |
@@ -836,7 +875,7 @@ You need to be comfortable in a terminal and with git: you run a few commands an
 the programming; you review and merge their pull requests.
 
 **Is it free? Can I use it in my company?**
-The repository is private and has no license file yet, so it is not offered for use outside its owners today.
+The repository is public but has no license file yet, so it is not offered for use outside its owners today.
 
 **Does it replace Claude Code?**
 No. agent-hub prepares and launches Claude Code sessions (and will observe them); it is not an agent or a model

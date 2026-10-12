@@ -1,70 +1,58 @@
-"""Read ``hub.json`` into its bytes and config, or the problems that stop it.
+"""Read ``hub.json`` into its bytes and config, or the problems that stop it, for the installed
+``hub``.
 
-This module reads the file; core's ``check_hub_document`` checks it, in the order of
-docs/design/project-config.md § Versioning: the pin, then ``schema_version``, then the model.
-The file is read once, as bytes, so a caller that copies it gets exactly what was checked.
-``read_hub_bytes`` returns only the bytes read and ``read_hub_json`` the problems;
-``load_hub_json_or_exit`` prints one line per problem and exits 1. ``read_local_json`` reads the
-developer's ``hub.local.json`` the same way, capped at ``LOCAL_FILE_MAX_BYTES``; an absent one sets
-nothing, and ``local_lines`` gives its problems' lines.
+The readers that do not exit live in ``agent_hub.generator.hub_config_files`` (the control plane
+reads registered hubs with them too) and are re-exported here: ``read_hub_bytes``,
+``read_local_json``, and ``read_hub_json``, whose pin is checked against the installed release.
+``load_hub_json_or_exit`` prints one line per problem and exits 1; ``local_lines`` gives the
+lines of ``hub.local.json``'s problems.
 """
 
-import json
-import os
-import stat
 from importlib.metadata import version
 from pathlib import Path
-from typing import NamedTuple, NoReturn
+from typing import NoReturn
 
 import typer
 
-from agent_hub.core.hub_config.document_check import check_hub_document
-from agent_hub.core.hub_config.local_config import (
-    LOCAL_FILE,
-    LOCAL_FILE_MAX_BYTES,
-    LocalConfig,
-    check_local_document,
-)
+from agent_hub.core.hub_config.local_config import LOCAL_FILE
 from agent_hub.core.hub_config.model import HubConfig
-from agent_hub.core.hub_config.problems import ROOT_PATH, ConfigProblem
-from agent_hub.core.json_form import InvalidJsonError, JsonValue, load_json_bytes
+from agent_hub.core.hub_config.problems import ConfigProblem
+from agent_hub.generator import hub_config_files
+from agent_hub.generator.hub_config_files import (
+    LoadedHubJson,
+    UnreadFile,
+    load_hub_document,
+    read_hub_bytes,
+    read_local_json,
+)
+
+__all__ = [
+    "DISTRIBUTION",
+    "FAILURE",
+    "FILE_LABEL",
+    "LoadedHubJson",
+    "load_hub_config_or_exit",
+    "load_hub_json_or_exit",
+    "local_lines",
+    "read_hub_bytes",
+    "read_hub_json",
+    "read_local_json",
+]
 
 # The installed release of the hub command, which a hub's pin must equal.
 DISTRIBUTION = "agent-hub-cli"
 FILE_LABEL = "hub.json"
 # An invalid hub.json. Typer keeps 2 for usage errors.
 FAILURE = 1
-# O_NONBLOCK: a FIFO swapped in after the check cannot block the open; fstat then refuses it.
-# No O_NOFOLLOW: a link to a regular file is read, as it always was.
-_OPEN_FLAGS = os.O_RDONLY | os.O_NONBLOCK
-
-
-class LoadedHubJson(NamedTuple):
-    """The bytes of a ``hub.json`` exactly as read, and the config they hold."""
-
-    content: bytes
-    config: HubConfig
-
-
-class _Unread(NamedTuple):
-    # Why the file could not be read, and whether it was absent (the exiting reader's hint).
-    problem: ConfigProblem
-    is_missing: bool
 
 
 def read_hub_json(path: Path) -> LoadedHubJson | tuple[ConfigProblem, ...]:
     """The bytes and validated config in ``path``, or the problems that stop its use.
 
-    Tell the two apart with ``isinstance(result, LoadedHubJson)``: a NamedTuple is a tuple too.
+    The pin must equal the installed ``hub``. Tell the two apart with
+    ``isinstance(result, LoadedHubJson)``: a NamedTuple is a tuple too.
     """
-    loaded = _load(path)
-    return (loaded.problem,) if isinstance(loaded, _Unread) else loaded
-
-
-def read_hub_bytes(path: Path) -> bytes | tuple[ConfigProblem, ...]:
-    """The bytes in ``path`` as read, or the problem that stopped the read; nothing is checked."""
-    content = _read_bytes(path)
-    return (content.problem,) if isinstance(content, _Unread) else content
+    return hub_config_files.read_hub_json(path, running_version=version(DISTRIBUTION))
 
 
 def load_hub_json_or_exit(path: Path, *, missing_hint: str | None = None) -> LoadedHubJson:
@@ -72,8 +60,8 @@ def load_hub_json_or_exit(path: Path, *, missing_hint: str | None = None) -> Loa
 
     When ``path`` does not exist and ``missing_hint`` is given, the hint is one more line.
     """
-    loaded = _load(path)
-    if isinstance(loaded, _Unread):
+    loaded = load_hub_document(path, running_version=version(DISTRIBUTION))
+    if isinstance(loaded, UnreadFile):
         _fail(loaded.problem, hint=missing_hint if loaded.is_missing else None)
     if not isinstance(loaded, LoadedHubJson):
         _fail(*loaded)
@@ -85,82 +73,9 @@ def load_hub_config_or_exit(path: Path) -> HubConfig:
     return load_hub_json_or_exit(path).config
 
 
-def read_local_json(path: Path) -> LocalConfig | tuple[ConfigProblem, ...]:
-    """The developer's local config in ``path``, ``LocalConfig()`` when absent, or its problems.
-
-    Read as ``hub.json`` is (a regular file only, never blocking on a FIFO), up to
-    ``LOCAL_FILE_MAX_BYTES``.
-    """
-    content = _read_bytes(path, max_bytes=LOCAL_FILE_MAX_BYTES)
-    if isinstance(content, _Unread):
-        return LocalConfig() if content.is_missing else (content.problem,)
-    parsed = _parse(content)
-    if isinstance(parsed, ConfigProblem):
-        return (parsed,)
-    return check_local_document(parsed)
-
-
 def local_lines(problems: tuple[ConfigProblem, ...]) -> list[str]:
     """One ``hub.local.json: <path>: <message>`` line per problem."""
     return [_line(LOCAL_FILE, problem) for problem in problems]
-
-
-def _load(path: Path) -> LoadedHubJson | _Unread | tuple[ConfigProblem, ...]:
-    content = _read_bytes(path)
-    if isinstance(content, _Unread):
-        return content
-    parsed = _parse(content)
-    if isinstance(parsed, ConfigProblem):
-        return (parsed,)
-    checked = check_hub_document(parsed, running_version=version(DISTRIBUTION))
-    if not isinstance(checked, HubConfig):
-        return checked
-    return LoadedHubJson(content=content, config=checked)
-
-
-def _read_bytes(path: Path, *, max_bytes: int | None = None) -> bytes | _Unread:
-    # The path is quoted and escaped, so it stays on the one line.
-    shown_path = json.dumps(str(path))
-    too_large = _Unread(
-        ConfigProblem(ROOT_PATH, f"cannot read {shown_path}: larger than {max_bytes} bytes"),
-        is_missing=False,
-    )
-    not_regular = _Unread(
-        ConfigProblem(ROOT_PATH, f"cannot read {shown_path}: not a regular file"), is_missing=False
-    )
-    # Opening a FIFO waits for a writer and a device can be endless: only a regular file is read,
-    # so a FIFO found here is never opened. A path that does not exist is left to the open, which
-    # names the reason.
-    if path.exists() and not path.is_file():
-        return not_regular
-    try:
-        descriptor = os.open(path, _OPEN_FLAGS)
-        # What was opened is what gets read: a swap after the check above fails here instead.
-        with open(descriptor, "rb") as opened:
-            found = os.fstat(opened.fileno())
-            if not stat.S_ISREG(found.st_mode):
-                return not_regular
-            if max_bytes is None:
-                return opened.read()
-            if found.st_size > max_bytes:
-                return too_large
-            # One byte more than allowed tells a file that grew after the fstat.
-            content = opened.read(max_bytes + 1)
-            return too_large if len(content) > max_bytes else content
-    except OSError as error:
-        reason = error.strerror or type(error).__name__
-        return _Unread(
-            ConfigProblem(ROOT_PATH, f"cannot read {shown_path}: {reason}"),
-            is_missing=isinstance(error, FileNotFoundError),
-        )
-
-
-def _parse(content: bytes) -> JsonValue | ConfigProblem:
-    # Core parses the bytes; each problem it names is one line at the root.
-    try:
-        return load_json_bytes(content)
-    except InvalidJsonError as error:
-        return ConfigProblem(ROOT_PATH, error.message)
 
 
 def _fail(*problems: ConfigProblem, hint: str | None = None) -> NoReturn:

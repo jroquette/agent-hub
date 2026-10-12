@@ -117,7 +117,13 @@ def test_names_only_command_modules_when_sources_scanned() -> None:
         if "resolve_tracker_client" in module.read_text()
     )
 
-    assert naming == ["next_command.py", "run_command.py", "ship_command.py", "tracker_client.py"]
+    assert naming == [
+        "next_command.py",
+        "run_command.py",
+        "ship_command.py",
+        "start_command.py",
+        "tracker_client.py",
+    ]
 
 
 MISSING_KEY = (

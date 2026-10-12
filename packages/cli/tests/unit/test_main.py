@@ -24,6 +24,7 @@ def test_lists_commands_when_help_requested() -> None:
         "init",
         "sync",
         "doctor",
+        "setup",
         "worktree",
         "brief",
         "agent",
@@ -31,6 +32,7 @@ def test_lists_commands_when_help_requested() -> None:
         "run",
         "ship",
         "bench",
+        "start",
     ):
         assert command in unstyle(result.stdout)
 

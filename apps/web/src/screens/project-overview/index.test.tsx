@@ -1,0 +1,341 @@
+import { act, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
+
+import { seriousViolations } from "../../testing/axe";
+import {
+  anApproval,
+  aFinding,
+  anId,
+  aPage,
+  aProblem,
+  aProjectDetail,
+  aProjectNow,
+  aProjectSummary,
+  aRepo,
+  aRun,
+  aSession,
+  at,
+  renderWithApi,
+  type ApiRoutes,
+} from "../../testing/builders";
+import { ProjectOverviewScreen } from ".";
+
+const recent = new Date(Date.now() - 3_600_000).toISOString();
+const old = new Date(Date.now() - 30 * 86_400_000).toISOString();
+
+const runs = aPage([
+  aRun({
+    id: "run-impl",
+    stage: "IMPLEMENTING",
+    issue: { key: "AGH-112", title: "Cap the tracker team list", url: null },
+    cost_usd: "2.1400",
+    caps: { budget_usd: "10.0000", max_turns: null, model: null, tracker_transport: null },
+  }),
+  aRun({
+    id: "run-done",
+    stage: "REPORTED",
+    ended_at: recent,
+    pr_url: "https://example.invalid/pr/69",
+    issue: { key: "AGH-48", title: "Layered memory", url: null },
+  }),
+  aRun({
+    id: "run-old",
+    stage: "REPORTED",
+    ended_at: old,
+    issue: { key: "AGH-1", title: "Old run", url: null },
+  }),
+  aRun({
+    id: "run-failed",
+    stage: "FAILED",
+    ended_at: recent,
+    failure: { stage: "VERIFYING", reason: "make check exit 2", failing_event_id: null },
+    issue: { key: "AGH-79", title: "Guard bypass", url: null },
+    steps: [
+      {
+        attempt: 2,
+        ended_at: recent,
+        key: "verify",
+        max_attempts: 2,
+        reason: null,
+        session_ids: [],
+        started_at: recent,
+        status: "failed",
+      },
+    ],
+  }),
+]);
+
+const routes: ApiRoutes = {
+  "/api/v1/projects/agent-hub": aProjectDetail({
+    lock_state: "sync_pending",
+    lock_version: "0.3.0",
+    modules: ["bench", "cloud"],
+    warnings: ["pinned 0.4.0, running 0.5.0"],
+  }),
+  "/api/v1/projects/agent-hub/now": aProjectNow({
+    watch: [
+      { text: "Bench stderr test is flaky", last_verified: "2026-01-01", provenance: "agent" },
+    ],
+  }),
+  "/api/v1/projects/agent-hub/repos": aPage([
+    aRepo(),
+    aRepo({ name: "docs", agents_md_present: false, agents_md_lines: null }),
+    aRepo({ name: "big", agents_md_lines: 132 }),
+  ]),
+  "/api/v1/projects": aPage([aProjectSummary()]),
+  "/api/v1/workflow-runs": runs,
+  "/api/v1/approvals": aPage([
+    anApproval({
+      id: anId(3),
+      kind: "plan",
+      title: "Doctor JSON output",
+      issue: "AGH-131",
+      requested_at: at(-600),
+    }),
+    anApproval({ id: anId(4), kind: "guard_ask" }),
+  ]),
+  "/api/v1/sessions": aPage([
+    aSession({
+      id: anId(1),
+      status: "ended",
+      outcome: "error",
+      errors: 6,
+      started_at: at(-9000),
+      ended_at: at(-6000),
+      agent: "main",
+    }),
+    aSession({ id: anId(2), status: "live", agent: "hub-workflow:planner", started_at: at(-100) }),
+  ]),
+  "/api/v1/doctor/findings": aPage([
+    aFinding({
+      severity: "warning",
+      rule: "brain.memory",
+      path: ".gitignore",
+      line: null,
+      message: "no line ignoring brain/auto/workspace/",
+    }),
+    aFinding({
+      severity: "error",
+      rule: "instructions.size",
+      path: "AGENTS.md",
+      line: 1,
+      message: "132 lines, limit 100",
+    }),
+  ]),
+};
+
+function renderProject(overrides: ApiRoutes = {}, name = "agent-hub") {
+  return renderWithApi(<ProjectOverviewScreen />, {
+    routes: { ...routes, ...overrides },
+    path: `/projects/${name}`,
+    route: "/projects/:project",
+  });
+}
+
+describe("ProjectOverviewScreen", () => {
+  it("shows the header with health, lock state, modules and warnings", async () => {
+    renderProject();
+
+    expect(await screen.findByRole("heading", { level: 1, name: "agent-hub" })).toBeInTheDocument();
+    expect(await screen.findByText("Health · 1 error, 1 warning")).toBeInTheDocument();
+    expect(screen.getByText("Sync pending (lock 0.3.0, pin 0.4.0)")).toBeInTheDocument();
+    expect(screen.getByText("bench")).toBeInTheDocument();
+    expect(screen.getByText("pinned 0.4.0, running 0.5.0")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Sections" })).toHaveTextContent(
+      "Jump toNowReposWork in flightRecent sessionsHealthCost",
+    );
+  });
+
+  it("shows the Now cards and marks one not verified for over 60 days", async () => {
+    renderProject();
+
+    const watch = await screen.findByRole("article", { name: "Watch" });
+    expect(within(watch).getByText("Bench stderr test is flaky")).toBeInTheDocument();
+    expect(within(watch).getByText(/^Not verified for \d+ days$/)).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("article", { name: "Focus" })).queryByText(/Not verified/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("lists repos with copyable checks, AGENTS.md size and missing files", async () => {
+    renderProject();
+
+    const table = await screen.findByRole("table", { name: "Repos" });
+    expect(within(table).getAllByText("make check-fast")).toHaveLength(3);
+    expect(within(table).getByText("Missing")).toBeInTheDocument();
+    expect(within(table).getByText("132 lines")).toBeInTheDocument();
+    expect(
+      within(table).getAllByTitle("GitHub is not connected in this version.").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("places runs on the Kanban by stage with the failed column and the gate strip", async () => {
+    const user = userEvent.setup();
+    renderProject();
+
+    const work = await screen.findByRole("region", { name: "Work in flight" });
+    await within(work).findByText("Cap the tracker team list");
+    expect(within(work).getByText("Layered memory")).toBeInTheDocument();
+    expect(within(work).queryByText("Old run")).not.toBeInTheDocument();
+    expect(within(work).getByText("Guard bypass").closest("a")).toHaveAttribute(
+      "href",
+      "/runs/run-failed",
+    );
+    expect(within(work).getByText(/verifying 2\/2 · make check exit 2/)).toBeInTheDocument();
+    expect(
+      within(work).getByRole("link", {
+        name: /Waiting at a gate:Doctor JSON output · \d/,
+      }),
+    ).toHaveAttribute("href", `/approvals/${anId(3)}`);
+
+    await user.click(within(work).getByRole("checkbox", { name: "Show failed (7 d)" }));
+    expect(within(work).queryByText("Guard bypass")).not.toBeInTheDocument();
+  });
+
+  it("collapses a column past five cards behind Show N more", async () => {
+    const user = userEvent.setup();
+    const many = aPage(
+      Array.from({ length: 7 }, (_, i) =>
+        aRun({
+          id: `r${String(i)}`,
+          stage: "VERIFYING",
+          issue: { key: `AGH-${String(i)}`, title: `Run ${String(i)}`, url: null },
+        }),
+      ),
+    );
+    renderProject({ "/api/v1/workflow-runs": many });
+
+    await user.click(await screen.findByRole("button", { name: "Show 2 more" }));
+    expect(screen.getByText("Run 6")).toBeInTheDocument();
+  });
+
+  it("lists recent sessions live first and opens one on click", async () => {
+    const user = userEvent.setup();
+    const { router } = renderProject();
+
+    const table = await screen.findByRole("table", { name: "Recent sessions" });
+    await within(table).findByText("main");
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows[0]).toHaveTextContent("hub-workflow:planner");
+    expect(rows[1]).toHaveTextContent("Error");
+    await user.click(within(table).getByText("main"));
+    expect(router.state.location.pathname).toBe(`/sessions/${anId(1)}`);
+  });
+
+  it("summarises health and cost with the estimated label", async () => {
+    renderProject();
+
+    const health = await screen.findByRole("region", { name: "Health" });
+    expect(await within(health).findByText("1 error · 1 warning · 0 info")).toBeInTheDocument();
+    const rules = within(health)
+      .getAllByText(/instructions\.size|brain\.memory/)
+      .map((n) => n.textContent);
+    expect(rules).toEqual(["instructions.size", "brain.memory"]);
+    expect(within(health).getByText("P4")).toBeInTheDocument();
+    const cost = screen.getByRole("region", { name: "Cost · 7 d" });
+    expect(await within(cost).findByText("$10.50")).toBeInTheDocument();
+    expect(within(cost).getByText("+31.3 % vs $8.00")).toBeInTheDocument();
+    expect(within(cost).getByText(/n = \d, too few to compare/)).toBeInTheDocument();
+    expect(within(cost).getByText(/Estimated from transcripts/)).toBeInTheDocument();
+  });
+
+  describe("states", () => {
+    it("shows the header skeleton after 300 ms while pending", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        renderProject({ "/api/v1/projects/agent-hub": "pending" });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(350);
+        });
+        expect(document.querySelectorAll(".ah-skel").length).toBeGreaterThan(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("shows each section's empty copy when the project has no activity", async () => {
+      renderProject({
+        "/api/v1/projects/agent-hub/now": aProjectNow({ focus: [], next: [], watch: [] }),
+        "/api/v1/workflow-runs": aPage([]),
+        "/api/v1/approvals": aPage([]),
+        "/api/v1/sessions": aPage([]),
+        "/api/v1/doctor/findings": aPage([]),
+        "/api/v1/projects": aPage([]),
+      });
+
+      expect(await screen.findByText("No current focus recorded")).toBeInTheDocument();
+      expect(await screen.findByText("No run in flight.")).toBeInTheDocument();
+      expect(await screen.findByText("No sessions yet.")).toBeInTheDocument();
+      expect(screen.getByText("cd /home/dev/agent-hub-hub && claude")).toBeInTheDocument();
+      expect(await screen.findByText("No findings.")).toBeInTheDocument();
+      expect(await screen.findByText("Health · no findings")).toBeInTheDocument();
+      expect(screen.getByText("No cost recorded for this project.")).toBeInTheDocument();
+    });
+
+    it("keeps a failing section's problem inside it", async () => {
+      renderProject({
+        "/api/v1/workflow-runs": aProblem({ status: 503, title: "Busy", detail: "Database busy." }),
+      });
+
+      expect(await screen.findByText("Could not load work in flight")).toBeInTheDocument();
+      expect(screen.getByText("Database busy.")).toBeInTheDocument();
+      expect(await screen.findByRole("table", { name: "Repos" })).toBeInTheDocument();
+    });
+
+    it("shows the now.md problem when the file cannot be read", async () => {
+      renderProject({
+        "/api/v1/projects/agent-hub/now": aProjectNow({
+          problem: "brain/now.md is not valid UTF-8.",
+        }),
+      });
+
+      expect(await screen.findByText("brain/now.md is not valid UTF-8.")).toBeInTheDocument();
+    });
+
+    it("shows Project not found for an unknown project", async () => {
+      renderProject(
+        { "/api/v1/projects/agent-hb": aProblem({ status: 404, title: "Not found" }) },
+        "agent-hb",
+      );
+
+      expect(await screen.findByRole("heading", { name: "Project not found" })).toBeInTheDocument();
+      expect(
+        screen.getByText("No registered hub has a project named agent-hb."),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "Go to Portfolio" })).toHaveAttribute("href", "/");
+    });
+
+    it("shows the problem when the project cannot be read", async () => {
+      const user = userEvent.setup();
+      const { requests } = renderProject({
+        "/api/v1/projects/agent-hub": aProblem({
+          status: 500,
+          title: "Internal error",
+          detail: "hub.json unreadable",
+        }),
+      });
+
+      expect(await screen.findByText("Could not load this project")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Try again" }));
+      await waitFor(() => {
+        expect(requests.filter((r) => r.url.endsWith("/projects/agent-hub")).length).toBe(2);
+      });
+    });
+
+    it("stamps the header as stale when the collector is offline", async () => {
+      renderProject();
+
+      await screen.findByRole("heading", { level: 1, name: "agent-hub" });
+      expect(screen.getByText(/^Stale · as of/)).toBeInTheDocument();
+    });
+  });
+
+  it("has no serious a11y violations (a11y)", async () => {
+    const { container } = renderProject();
+
+    await screen.findByText("Cap the tracker team list");
+    await screen.findByText("hub-workflow:planner");
+    expect(await seriousViolations(container)).toEqual([]);
+  });
+});
