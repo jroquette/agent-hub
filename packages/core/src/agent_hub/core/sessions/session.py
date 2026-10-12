@@ -2,7 +2,7 @@
 
 from datetime import date
 from enum import StrEnum
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import Field, JsonValue
 
@@ -56,13 +56,66 @@ class PullRequestRef(ViewModel):
     state: str
 
 
+# Deprecated fields stay in the API (v1 is additive) but are marked so in the OpenAPI document;
+# only the schema says so, reading the attribute raises no warning.
+DEPRECATED_FIELD: Final = {"deprecated": True}
+
+
+class SessionLabel(ViewModel):
+    """What a session is about, derived on read (S1): issue, workflow, repo and branch.
+
+    ``issue`` is ``<TEAM>-<n>`` found in ``branch`` or ``worktree`` with the hub's tracker teams,
+    else ``None``, never a guess. ``workflow`` is the session's main slash command or skill
+    (``/feature``); ``workflows`` lists every one in order. ``worktree`` is the folder name under
+    ``.claude/worktrees/`` in the session's ``cwd``.
+    """
+
+    issue: str | None
+    workflow: str | None
+    workflows: tuple[str, ...]
+    repo: str | None
+    branch: str | None
+    worktree: str | None
+    derived: bool = True
+
+
+type ActorKind = Literal["main", "subagent"]
+
+
+class Actor(ViewModel):
+    """Who acted in a session (S2): the main agent, or a subagent of a type.
+
+    A subagent carries its ``agent_id`` and, when its start is linked to the main agent's
+    Agent tool call, that call's ``description`` and ``started_by_event_id``.
+    """
+
+    kind: ActorKind
+    type: str | None = None
+    agent_id: str | None = None
+    description: str | None = None
+    started_by_event_id: EventId | None = None
+
+
+class ProblemCounts(ViewModel):
+    """A session's problems by owner-facing status (S4, E5); ``handled`` = recovered or
+    continued by the agent."""
+
+    needs_you: int = Field(default=0, ge=0)
+    open: int = Field(default=0, ge=0)
+    handled: int = Field(default=0, ge=0)
+    by_you: int = Field(default=0, ge=0)
+
+
 class Session(DerivedView):
-    """A session folded from its events (status, counts, tokens, estimated cost)."""
+    """A session folded from its events (status, counts, tokens, estimated cost).
+
+    ``agent`` is deprecated: ``actors`` and ``label`` say who acted and what the session is about.
+    """
 
     id: str
     project: str
     repo: str | None
-    agent: str
+    agent: str = Field(json_schema_extra=DEPRECATED_FIELD)
     parent_session_id: str | None = None
     run_id: str | None = None
     step: str | None = None
@@ -89,6 +142,9 @@ class Session(DerivedView):
     cost_unknown_reason: str | None = None
     has_transcript: bool
     pr: PullRequestRef | None = None
+    label: SessionLabel | None = None
+    actors: tuple[Actor, ...] = ()
+    problems: ProblemCounts = ProblemCounts()
 
 
 class SummaryLine(ViewModel):

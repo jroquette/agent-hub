@@ -46,6 +46,7 @@ export function aPage<T>(items: T[], extra: { next_cursor?: string | null } = {}
 
 export function aSession(overrides: Partial<Session> = {}): Session {
   return {
+    actors: [{ kind: "main" }],
     agent: "claude",
     cost_usd: "1.2500",
     derived: true,
@@ -65,6 +66,7 @@ export function aSession(overrides: Partial<Session> = {}): Session {
     outcome: null,
     parent_session_id: null,
     pr: null,
+    problems: { by_you: 0, handled: 0, needs_you: 0, open: 0 },
     project: "agent-hub",
     repo: "agent-hub",
     run_id: null,
@@ -222,6 +224,7 @@ export function aLearning(overrides: Partial<Learning> = {}): Learning {
 
 export function aLiveTile(overrides: Partial<LiveTile> = {}): LiveTile {
   return {
+    actors: [{ kind: "main" }],
     agent: "claude",
     attempt: null,
     budget_usd: null,
@@ -240,6 +243,7 @@ export function aLiveTile(overrides: Partial<LiveTile> = {}): LiveTile {
     last_activity_at: at(590),
     last_tool: "Bash",
     outcome: null,
+    problems: { by_you: 0, handled: 0, needs_you: 0, open: 0 },
     project: "agent-hub",
     repo: "agent-hub",
     run_id: null,

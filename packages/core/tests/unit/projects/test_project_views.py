@@ -18,7 +18,12 @@ from agent_hub.core.projects.project_views import (
     TrackerView,
 )
 from agent_hub.core.runner.run_record import Stage
-from agent_hub.core.sessions.session import SessionStatus
+from agent_hub.core.sessions.session import (
+    Actor,
+    ProblemCounts,
+    SessionLabel,
+    SessionStatus,
+)
 from agent_hub.core.testing.read_model_builders import EVENT_ID, HUB_ID, a_project_summary
 
 AT = datetime(2026, 10, 9, 14, 0, tzinfo=UTC)
@@ -134,3 +139,51 @@ def test_serializes_live_tile_and_counts_when_dumped() -> None:
 
     assert tile.model_dump(mode="json")["sparkline_60s"] == [0, 2, 1]
     assert counts.model_dump(mode="json")["doctor_errors"] is None
+
+
+def test_serializes_tile_when_label_and_problems_set() -> None:
+    tile = LiveTile(
+        id="session-1",
+        project="demo",
+        repo="demo-api",
+        agent="main",
+        status=SessionStatus.LIVE,
+        group="live",
+        last_action=None,
+        last_tool=None,
+        last_activity_at=AT,
+        started_at=AT,
+        turns=1,
+        tokens_total=0,
+        files_touched=0,
+        errors=1,
+        guard_denials=0,
+        cost_usd=None,
+        label=SessionLabel(
+            issue="DEM-7",
+            workflow="/feature",
+            workflows=("/feature",),
+            repo="demo-api",
+            branch="roquettejh/dem-7-x",
+            worktree=None,
+        ),
+        actors=(Actor(kind="main"),),
+        problems=ProblemCounts(needs_you=1),
+        needs_you_problem="Needs you: guard_denied in git push",
+    )
+
+    document = json.loads(tile.model_dump_json())
+
+    assert document["label"]["issue"] == "DEM-7"
+    assert document["actors"] == [
+        {
+            "kind": "main",
+            "type": None,
+            "agent_id": None,
+            "description": None,
+            "started_by_event_id": None,
+        }
+    ]
+    assert document["problems"]["needs_you"] == 1
+    assert document["needs_you_problem"] == "Needs you: guard_denied in git push"
+    assert LiveTile.model_json_schema()["properties"]["agent"]["deprecated"] is True

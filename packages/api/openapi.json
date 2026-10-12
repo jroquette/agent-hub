@@ -153,6 +153,70 @@
         ],
         "type": "string"
       },
+      "Actor": {
+        "additionalProperties": false,
+        "description": "Who acted in a session (S2): the main agent, or a subagent of a type.\n\nA subagent carries its ``agent_id`` and, when its start is linked to the main agent's\nAgent tool call, that call's ``description`` and ``started_by_event_id``.",
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ActorKind"
+          },
+          "started_by_event_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "Actor",
+        "type": "object"
+      },
+      "ActorKind": {
+        "enum": [
+          "main",
+          "subagent"
+        ],
+        "type": "string"
+      },
       "ApiTimestamp": {
         "format": "date-time",
         "type": "string"
@@ -1399,9 +1463,18 @@
       },
       "LiveTile": {
         "additionalProperties": false,
-        "description": "A session tile of the Live sessions screen.",
+        "description": "A session tile of the Live sessions screen.\n\n``agent`` is deprecated (``label`` and ``actors``); ``needs_you_problem`` is the owner-facing\nline of the first problem that needs the owner (\"Needs you: <kind> in <where>\").",
         "properties": {
+          "actors": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Actor"
+            },
+            "title": "Actors",
+            "type": "array"
+          },
           "agent": {
+            "deprecated": true,
             "title": "Agent",
             "type": "string"
           },
@@ -1500,6 +1573,16 @@
             ],
             "title": "Issue"
           },
+          "label": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionLabel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "last_action": {
             "anyOf": [
               {
@@ -1525,6 +1608,17 @@
             ],
             "title": "Last Tool"
           },
+          "needs_you_problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Needs You Problem"
+          },
           "outcome": {
             "anyOf": [
               {
@@ -1534,6 +1628,15 @@
                 "type": "null"
               }
             ]
+          },
+          "problems": {
+            "$ref": "#/components/schemas/ProblemCounts",
+            "default": {
+              "by_you": 0,
+              "handled": 0,
+              "needs_you": 0,
+              "open": 0
+            }
           },
           "project": {
             "title": "Project",
@@ -2277,6 +2380,38 @@
           "total_estimate"
         ],
         "title": "Page[WorkflowRun]",
+        "type": "object"
+      },
+      "ProblemCounts": {
+        "additionalProperties": false,
+        "description": "A session's problems by owner-facing status (S4, E5); ``handled`` = recovered or\ncontinued by the agent.",
+        "properties": {
+          "by_you": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "By You",
+            "type": "integer"
+          },
+          "handled": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Handled",
+            "type": "integer"
+          },
+          "needs_you": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Needs You",
+            "type": "integer"
+          },
+          "open": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Open",
+            "type": "integer"
+          }
+        },
+        "title": "ProblemCounts",
         "type": "object"
       },
       "ProblemDetails": {
@@ -3081,9 +3216,18 @@
       },
       "Session": {
         "additionalProperties": false,
-        "description": "A session folded from its events (status, counts, tokens, estimated cost).",
+        "description": "A session folded from its events (status, counts, tokens, estimated cost).\n\n``agent`` is deprecated: ``actors`` and ``label`` say who acted and what the session is about.",
         "properties": {
+          "actors": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Actor"
+            },
+            "title": "Actors",
+            "type": "array"
+          },
           "agent": {
+            "deprecated": true,
             "title": "Agent",
             "type": "string"
           },
@@ -3189,6 +3333,16 @@
             ],
             "title": "Issue"
           },
+          "label": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionLabel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "last_activity_at": {
             "$ref": "#/components/schemas/ApiTimestamp"
           },
@@ -3238,6 +3392,15 @@
                 "type": "null"
               }
             ]
+          },
+          "problems": {
+            "$ref": "#/components/schemas/ProblemCounts",
+            "default": {
+              "by_you": 0,
+              "handled": 0,
+              "needs_you": 0,
+              "open": 0
+            }
           },
           "project": {
             "title": "Project",
@@ -3503,6 +3666,89 @@
           "event_ids"
         ],
         "title": "SessionFileChange",
+        "type": "object"
+      },
+      "SessionLabel": {
+        "additionalProperties": false,
+        "description": "What a session is about, derived on read (S1): issue, workflow, repo and branch.\n\n``issue`` is ``<TEAM>-<n>`` found in ``branch`` or ``worktree`` with the hub's tracker teams,\nelse ``None``, never a guess. ``workflow`` is the session's main slash command or skill\n(``/feature``); ``workflows`` lists every one in order. ``worktree`` is the folder name under\n``.claude/worktrees/`` in the session's ``cwd``.",
+        "properties": {
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "derived": {
+            "default": true,
+            "title": "Derived",
+            "type": "boolean"
+          },
+          "issue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          },
+          "workflow": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow"
+          },
+          "workflows": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Workflows",
+            "type": "array"
+          },
+          "worktree": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worktree"
+          }
+        },
+        "required": [
+          "issue",
+          "workflow",
+          "workflows",
+          "repo",
+          "branch",
+          "worktree"
+        ],
+        "title": "SessionLabel",
         "type": "object"
       },
       "SessionSegment": {
