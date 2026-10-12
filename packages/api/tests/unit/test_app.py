@@ -22,6 +22,7 @@ BODIES: dict[tuple[str, str], object] = {
     ("post", "/api/v1/learnings/{learning_id}/accept"): {"target": "learnings/"},
     ("post", "/api/v1/learnings/{learning_id}/reject"): {"reason": "Duplicate of another note"},
 }
+OWN_ORIGIN = {"Origin": "http://127.0.0.1:7420"}
 QUERIES = {
     "/api/v1/search": {"q": "make"},
     "/api/v1/projects/{project}/brain/note": {"path": "index.md"},
@@ -41,7 +42,11 @@ def test_answers_not_implemented_problem_when_route_is_a_stub(
     url = _concrete(path)
 
     response = client.request(
-        method, url, json=BODIES.get((method, path)), params=QUERIES.get(path)
+        method,
+        url,
+        json=BODIES.get((method, path)),
+        params=QUERIES.get(path),
+        headers=OWN_ORIGIN,  # the learning actions need it (S7); the other routes ignore it
     )
 
     assert response.status_code == 501, response.text
