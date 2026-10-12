@@ -50,6 +50,8 @@ class EventSource(StrEnum):
     EXECUTOR = "executor"
     GITHUB = "github"
     LINEAR = "linear"
+    # Decisions the owner takes in the app (learning accept and reject, ADR 0024).
+    CONTROL_PLANE = "control_plane"
 
 
 class EventKey(NamedTuple):

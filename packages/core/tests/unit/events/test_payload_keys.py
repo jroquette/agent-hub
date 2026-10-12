@@ -1,5 +1,8 @@
+import pytest
+
 from agent_hub.core.events.event import EventType
 from agent_hub.core.events.payload_keys import (
+    ADDED_KEYS_V2,
     COMMON_PAYLOAD_KEYS,
     PAYLOAD_KEYS,
     kept_payload,
@@ -42,3 +45,28 @@ def test_keeps_payload_unchanged_when_every_key_allowed() -> None:
     payload = {"role": "user", "chars": 12, "turn": 1, "slash_command": "/feature"}
 
     assert kept_payload(EventType.MESSAGE, payload) == payload
+
+
+@pytest.mark.parametrize(
+    ("event_type", "key"),
+    [
+        (EventType.TOOL_CALL, "skill"),
+        (EventType.TOOL_CALL, "to"),
+        (EventType.TOOL_RESULT, "error_message"),
+        (EventType.TOOL_RESULT, "git_branch"),
+        (EventType.MESSAGE, "git_branch"),
+        (EventType.LEARNING_ACCEPTED, "pr_url"),
+        (EventType.LEARNING_ACCEPTED, "branch"),
+        (EventType.LEARNING_REJECTED, "state"),
+    ],
+    ids=lambda value: str(value),
+)
+def test_keeps_key_when_key_is_new_in_clarity(event_type: EventType, key: str) -> None:
+    assert kept_payload(event_type, {key: "x", "prompt": "body"}) == {key: "x"}
+
+
+def test_declares_added_keys_when_allow_list_widened() -> None:
+    every_key = frozenset().union(*PAYLOAD_KEYS.values())
+
+    assert ADDED_KEYS_V2 == {"error_message", "skill", "git_branch", "to"}
+    assert ADDED_KEYS_V2 <= every_key
