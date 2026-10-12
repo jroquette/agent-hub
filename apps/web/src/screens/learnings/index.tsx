@@ -140,7 +140,8 @@ export function LearningsScreen() {
         />
       </div>
     );
-  } else if (learnings.isSuccess && rows.length === 0) {
+  } else if (learnings.isSuccess && rows.length === 0 && chosen === null) {
+    // A learning pinned in the URL (just decided, or linked) stays open on an empty list.
     body = (
       <div style={{ padding: 32 }}>
         <EmptyState

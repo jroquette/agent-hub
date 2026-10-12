@@ -8,7 +8,14 @@ from typing import Any
 
 import httpx
 
-from scripts.seed_demo import ASK_SESSION, BACKFILL_SESSION, DEMO_PROJECT, LIVE_SESSION
+from scripts.seed_demo import (
+    ASK_SESSION,
+    BACKFILL_SESSION,
+    DEMO_PROJECT,
+    INBOX_NOTE,
+    LIVE_SESSION,
+    STUCK_SESSION,
+)
 from tests.e2e.conftest import RunningWeb
 
 REQUEST_SECONDS = 10
@@ -50,18 +57,26 @@ def test_fills_every_screen_when_demo_loaded_twice(
         cost = client.get(f"/api/v1/sessions/{ended[0]}/cost").json()
         live = [item["id"] for item in sessions if item["id"].startswith(LIVE_SESSION)]
         files = _items(client, f"/api/v1/sessions/{live[0]}/files")
+        live_events = _items(client, f"/api/v1/sessions/{live[0]}/events?limit=200")
+        live_problems = client.get(f"/api/v1/sessions/{live[0]}/problems").json()
+        stuck = [item["id"] for item in sessions if item["id"].startswith(STUCK_SESSION)]
+        stuck_problems = client.get(f"/api/v1/sessions/{stuck[0]}/problems").json()
+        learnings = _items(client, "/api/v1/learnings")
+        feature = client.get(f"/api/v1/features/{DEMO_PROJECT}/export-button")
+        tree = client.get(f"/api/v1/projects/{DEMO_PROJECT}/brain")
 
     assert len(hubs) == 1
     assert [project["name"] for project in projects] == [DEMO_PROJECT]
     by_kind = {
         prefix: sorted(item["status"] for item in sessions if item["id"].startswith(prefix))
-        for prefix in (LIVE_SESSION, ASK_SESSION, BACKFILL_SESSION)
+        for prefix in (LIVE_SESSION, ASK_SESSION, BACKFILL_SESSION, STUCK_SESSION)
     }
-    # Two runs, each with its own three sessions; the run records are the same both times.
+    # Two runs, each with its own four sessions; the run records are the same both times.
     assert by_kind == {
         LIVE_SESSION: ["live", "live"],
         ASK_SESSION: ["waiting", "waiting"],
         BACKFILL_SESSION: ["ended", "ended"],
+        STUCK_SESSION: ["idle", "idle"],
     }
     assert len(runs) == 1
     assert any(approval["session_id"].startswith(ASK_SESSION) for approval in approvals)
@@ -69,3 +84,40 @@ def test_fills_every_screen_when_demo_loaded_twice(
     assert findings.status_code == 200, findings.text
     assert cost["total_usd"] is not None
     assert [change["path"] for change in files] == ["src/export.py"]
+    # AGH-201: what every clarity screen shows.
+    labels = {
+        prefix: {
+            (item["label"]["issue"], item["label"]["workflow"])
+            for item in sessions
+            if item["id"].startswith(prefix)
+        }
+        for prefix in (LIVE_SESSION, BACKFILL_SESSION)
+    }
+    assert labels == {
+        LIVE_SESSION: {("AGH-7", "/feature")},
+        BACKFILL_SESSION: {("AGH-7", "/feature")},
+    }
+    tools = {event["payload"].get("tool") for event in live_events}
+    assert {"Skill", "Agent"} <= tools
+    assert any(event["agent"] == "Explore" for event in live_events)
+    assert [(p["kind"], p["resolution"]) for p in live_problems["items"]] == [
+        ("command_exit", "recovered"),
+        ("guard_denied", "open"),
+    ]
+    [needs_you] = stuck_problems["items"]
+    assert needs_you["resolution"] == "needs_you"
+    assert needs_you["message"].endswith("expected 3 rows, got 2")
+    # The same proposal both runs: one learning, its note read from the hub's inbox.
+    [learning] = learnings
+    assert learning["note_path"] == INBOX_NOTE
+    assert learning["text"] == "Keep the CSV header in the order of the table columns"
+    assert learning["summary"].startswith("The export test failed")
+    assert feature.status_code == 200, feature.text
+    assert {record["name"]: record["present"] for record in feature.json()["records"]} == {
+        "spec": True,
+        "research": False,
+        "plan": True,
+        "eval": True,
+        "issues": False,
+    }
+    assert tree.status_code == 200, tree.text

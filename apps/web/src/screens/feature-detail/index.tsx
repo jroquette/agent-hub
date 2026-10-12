@@ -104,13 +104,12 @@ function Stepper({ detail }: { detail: Detail }) {
         const state = states[i] ?? "pending";
         const dashed = state === "skipped" || state === "unknown";
         return (
-          <li
-            key={p.id}
-            className="ah-golden-step"
-            data-state={state}
-            style={dashed ? { opacity: 0.7 } : undefined}
-          >
-            <span className="ah-golden-dot" style={dashed ? { borderStyle: "dashed" } : undefined}>
+          <li key={p.id} className="ah-golden-step" data-state={state}>
+            {/* Only the dot fades: faded meta text would fail the contrast check (axe). */}
+            <span
+              className="ah-golden-dot"
+              style={dashed ? { borderStyle: "dashed", opacity: 0.7 } : undefined}
+            >
               {state === "done" && <Icon name="check" />}
             </span>
             <span className="ah-golden-name">{p.label}</span>

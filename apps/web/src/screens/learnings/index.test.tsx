@@ -143,6 +143,28 @@ describe("LearningsScreen", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps the decided learning open with its pull request when it was the last proposal", async () => {
+    let decided = false;
+    open({
+      "/api/v1/learnings": () => aPage(decided ? [] : [older]),
+      "POST /api/v1/learnings/l-old/accept": () => {
+        decided = true;
+        return aLearningActionResult();
+      },
+    });
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+
+    await userEvent.click(await within(detail).findByRole("button", { name: "Accept" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open pull request" }));
+
+    expect(await screen.findByText("Pull request opened")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getAllByRole("row")).toHaveLength(1);
+    });
+    expect(screen.getByText("Pull request opened")).toBeInTheDocument();
+    expect(screen.queryByText("Inbox empty")).not.toBeInTheDocument();
+  });
+
   it("opens the proposal named in the path when a link points at one", async () => {
     renderWithApi(<LearningsScreen />, {
       routes,
