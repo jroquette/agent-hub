@@ -3,13 +3,19 @@ import { describe, expect, it } from "vitest";
 
 import { useApi } from "../lib/api";
 import {
+  aBrainNote,
+  aBrainTree,
   aCollectorStatus,
   aFeature,
   aFeatureDetail,
+  aFeatureRecord,
   aFinding,
   aHub,
   aLearning,
+  aLearningActionResult,
+  aLearningDetail,
   aLiveTile,
+  anActor,
   aNeedsYouItem,
   anActivityItem,
   anApproval,
@@ -25,6 +31,9 @@ import {
   aSession,
   aSessionCost,
   aSessionFile,
+  aSessionLabel,
+  aSessionProblem,
+  aSessionProblems,
   aSessionSummary,
   aSettings,
   aStreamCounts,
@@ -67,6 +76,34 @@ describe("builders", () => {
     expect(aSession({ status: "ended" }).status).toBe("ended");
     expect(aTimelineEvent({ seq: 3 }).event_id).toBe(anId(3, "0192aaaa"));
     expect(aPage([1, 2])).toEqual({ items: [1, 2], next_cursor: null, total_estimate: 2 });
+  });
+
+  it("builds the clarity bodies and fields", () => {
+    const tile = aLiveTile({ problems: { by_you: 0, handled: 2, needs_you: 1, open: 0 } });
+    const problems = aSessionProblems();
+
+    expect(aSession().label).toEqual(aSessionLabel());
+    expect(aSession().actors).toEqual([anActor()]);
+    expect(aSessionLabel({ issue: null }).issue).toBeNull();
+    expect(anActor({ kind: "subagent", type: "Explore" }).type).toBe("Explore");
+    expect(tile.problems.needs_you).toBe(1);
+    expect(tile.label?.workflow).toBe("/feature");
+    expect(problems.summary[0]?.event_id).toBe(problems.items[0]?.event_id);
+    expect(aSessionProblem({ resolution: "recovered" }).resolution).toBe("recovered");
+    expect(aLearning().state).toBe("proposed");
+    expect(aLearning().note_path).toBe("brain/_inbox/web-gates.md");
+    expect(aLearningDetail().note?.path).toBe("_inbox/web-gates.md");
+    expect(aLearningActionResult().state).toBe("accepted_pr_open");
+    expect(aBrainTree().entries.map((entry) => entry.path)).toContain("index.md");
+    expect(aBrainNote({ path: "now.md" }).path).toBe("now.md");
+    expect(aFeatureRecord({ name: "plan", present: false }).present).toBe(false);
+    expect(aFeatureDetail().records.map((record) => record.name)).toEqual([
+      "spec",
+      "research",
+      "plan",
+      "eval",
+      "issues",
+    ]);
   });
 
   it("makes n ordered synthetic events of one session", () => {
