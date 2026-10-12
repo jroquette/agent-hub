@@ -248,8 +248,22 @@ Register the hub once, with its absolute path: in the app under Settings › Hub
 does not. The hub's hooks then send each session's events as they happen; without the control plane running they do
 nothing and the session is unaffected. Older work can be added once: `./hub collect --transcript <file>` for a
 transcript under `~/.claude/projects/`, and `./hub collect --runs .agent-runs` for `hub run` records. Only metadata
-is stored (sizes, tools, repo-relative paths, short commands with secrets redacted), never prompt, output or file
-text.
+is stored (sizes, tools, repo-relative paths, short commands with secrets redacted, and for a failed tool its error
+text, redacted and cut at 300 characters), never prompt, output or file text.
+
+Each session is shown by its issue and workflow (`TIP-1511 · /feature`), read from its branch or task worktree name
+and the hub's tracker team; each failure says what failed, where, which agent, and whether the agent handled it or
+it needs you. To read the brain, open Knowledge › Brain (or a project's Brain): it lists the hub's `brain/` notes
+(never `brain/auto/`) and renders any one, with links between notes; a feature's Spec, Research, Plan, Eval and
+Criteria tabs show its records. The app reads the registered hub's checkout as it is on disk, so pull the hub to see
+merged changes.
+
+Knowledge › Learnings shows each inbox note and can accept or reject it. Neither changes the brain or the user's
+checkout: each opens a pull request in the hub repo (branch `<branch_prefix>learning-<accept|reject>-<note>`,
+authored as the hub's author), and nothing changes until the user merges it. That needs, on the machine running
+`hub web`, a writable hub checkout whose `origin` is the hub's GitHub repo, `git`, and `gh` signed in to GitHub (the
+PR is opened as that `gh` account). Under Docker the hubs are mounted read-only, so both actions are disabled with
+"Hub is read-only here"; run `./hub web` locally to decide learnings.
 
 Release note for a hub that moves to a release with the control plane: `./hub sync` adds
 `plugin/hub-workflow/hooks/event_sensor.py` and rewrites `hooks.json`, `.claude/settings.json` (the sensor joins

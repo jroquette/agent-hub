@@ -5,7 +5,8 @@ decisions behind this layout are [ADR 0001](adr/0001-uv-workspace-with-namespace
 [ADR 0002](adr/0002-lean-hexagonal-architecture.md) (hexagonal architecture) and
 [ADR 0003](adr/0003-persistence-sqlalchemy-core-and-alembic.md) (persistence); the tracker port is
 [ADR 0014](adr/0014-tracker-port-linear-graphql.md); the control plane (`packages/api`, `apps/web`) is
-[ADR 0017](adr/0017-api-second-composition-root.md) to [ADR 0021](adr/0021-hook-event-sensor.md). The Phase 1 to 4 designs (hub config,
+[ADR 0017](adr/0017-api-second-composition-root.md) to [ADR 0021](adr/0021-hook-event-sensor.md), and the learning actions'
+`hub_git` adapter is [ADR 0024](adr/0024-learning-actions-from-the-app.md). The Phase 1 to 4 designs (hub config,
 generator, doctor, domain model, events, workflows) are indexed in [design/README.md](design/README.md).
 
 ## Packages
@@ -21,9 +22,10 @@ The repo is a uv workspace. The root `pyproject.toml` is virtual (no `[project]`
 | `packages/collector` | `agent-hub-collector` | `agent_hub.collector` | Collector adapter: maps outside input to canonical events, metadata only, and never stores them itself: `jsonl.py` (canonical JSON Lines), `claude_hooks.py` (`ClaudeHookMapper`, the sensor envelope to events, implementing core's `HookMapper`), `transcript.py` (a Claude Code transcript to events) with `transcript_tail.py` (`TranscriptTail`, core's `TranscriptTailer`: reads what a transcript gained, only under `~/.claude/projects/`, never through a link), `run_records.py` (`hub run` records to executor events) and `tool_metadata.py` (the metadata each tool call keeps) |
 | `packages/generator` | `agent-hub-generator` | `agent_hub.generator` | Hub generator: the hub templates as package data (base rules, brain skeleton, the base plugin `plugin/hub-workflow/` with its hooks and their stdlib reader, the seeded project plugin under the project's name, the transcript and retro scripts), the `@@` renderer, the JSON built in code (`built_json.py`: `.claude/settings.json`, the project settings and manifest, and `base_hooks_block`, the release's base hooks for `hub doctor`), the classification registry and `render_hub(config, extensions)`, which returns a `RenderedHub` (files and plugin links; `project_json_siblings` names the `*.project.json` it merges), with `json_merge.py` (`merge_json`, the strict merge of a `*.project.json` sibling) and `links.py` (`plugin_links`, `project_links` for the project's agents and skills); and the file adapter, never following a link: `hub_tree.py` reads a hub tree, one root entry (`read_root_entry`) or only the planned paths (`read_planned_tree`), `doctor_tree.py` lists and reads a tree for `hub doctor` (`read_doctor_tree`: `git ls-files` or a walk, plus fixed paths by path), `file_adapter.py` writes a plan through temporary files and applies a sync plan with its deletes through one held root (`apply_sync`) ([ADR 0011](adr/0011-templates-as-package-data.md)) |
 | `packages/tracker_linear` | `agent-hub-tracker-linear` | `agent_hub.tracker_linear` | Tracker adapter: `LinearGraphqlTrackerClient` (`graphql.py`) implements `TrackerClient` over Linear's GraphQL API with the standard library (`urllib`, no redirects followed, a 30 s timeout per socket operation); the key comes only from `LINEAR_API_KEY`, read at call time ([ADR 0014](adr/0014-tracker-port-linear-graphql.md)); `McpTrackerClient` (`mcp.py`) implements it over the user's Linear MCP server, each operation one or two headless `claude -p` calls run by `claude_process.py` (`run_claude`, the caller's process group, a timeout kills the child), with the request lines, prompts, per-call tool lists and reply checks in `mcp_protocol.py` ([ADR 0015](adr/0015-linear-mcp-tracker-transport.md)) |
+| `packages/hub_git` | `agent-hub-hub-git` | `agent_hub.hub_git` | Hub git adapter ([ADR 0024](adr/0024-learning-actions-from-the-app.md)): `GitBrainChangeRequests` (`brain_change_requests.py`) implements core's `BrainChangeRequests` port, opening a hub pull request for a learning decision from a temporary `--reference-if-able` clone of the hub's `origin` (the user's checkout is never touched), plus `availability`, the reason a hub cannot take actions; `git_runner.py` (`GitRunner`, `GitSession`: `git` and `gh` as argv lists under one 60 s deadline, no prompt, git's location variables dropped, no output logged); `refspec_guard.py` (`push_argv`, the only way a push is built: never the default branch, never forced, only `<prefix>learning-` branches); `github_remote.py` (the `owner/name` of a GitHub remote and the PR URL `gh` prints); `errors.py` (`HubGitError`). Version `0.1.0`, outside the CLI's lockstep |
 | `packages/cli` | `agent-hub-cli` | `agent_hub.cli` | The `hub` command (Typer); entry point `agent_hub.cli.main:app`. The composition root: `command_exits` (the exit helpers the hub commands share), `sync_command` (`hub sync`: load, render, read, plan, apply), `sync_report` (its change lines and conflict report), `sync_steps` (the lock read, tree read, render and apply `hub sync` and `--adopt` share), `adopt_command` (`hub sync --adopt`: plan, apply the settled paths, list the rest) and `adopt_report` (its listing, refusal and way-out lines), `doctor_command` (`hub doctor`: read the config and the tree, run the rules, exit 0, 1 or 2; `check_hub`, the same check without output, which `hub setup` runs) and `doctor_report` (its finding lines, totals and JSON), `tracker_client` (`resolve_tracker_client`: the `TrackerClient` adapter for `tracker.kind` and `tracker.transport`), `worktree_command` (`hub worktree`: one task's worktrees in every repo, their setup and teardown scripts, `--remove`), `worktree_steps` (the worktree steps `hub worktree`, `hub run` and `hub start` share, with a repo subset and an issue's task folders, raising `WorktreeError`; the scripts' environment, `script_env`), `next_command` (`hub next`: one `list_ready`, one line per issue), `run_command` (`hub run`: options, usage checks, the key check, the dry run), `run_steps` (the live stages and the report), `run_children` (the children's argv and environments, the dry run's lines), `run_report` (the tracker writes in order, stopping at the first failure), `run_log` (the run id, the records and the inbox line), `push_guard` (the git config keys and the origin the fetch and the push refuse), `pr_steps` (the gate, push guard, push, PR and title steps `hub run` and `hub ship` share, raising `PrStepError`), `ship_command` (`hub ship`: usage checks, the issue read, the dry run), `ship_set` (the repos `hub ship` ships: an issue's task worktrees ahead of origin's default branch, raising `ShipError`), `ship_steps` (`hub ship`'s live phases: checks, push and PRs, links, tracker writes), `bench_command` (`hub bench`: options, usage checks, the module check, `--validate` or a run) and `bench_steps` (read the cases, the bench worktrees, the lock, the grades and the run loop), `brief_command` (`hub brief`: reads `now.md`, the journal, git in each checkout and `gh` at once, then prints core's brief text), `agent_command` (`hub agent`: writes the repos' context file, then `exec`s `claude` with every repo attached; `PassThroughCommand` keeps every argument), `claude_launch` (the launch `hub agent` and `hub start` share: the folders' context file, then `exec` of `claude`), `start_command` (`hub start`: usage checks, then core's `start_task` over `GitTaskWorktrees` and a Claude or printed session), `setup_command` (`hub setup`: the sections in order, then the summary and exit) with `setup_tools` (the tools and the tracker credential), `setup_identity` (report, or propose and write, `hub.local.json`) and `setup_repos` (clone each missing repo over the scheme of the hub's `origin`, fetch each present one), `exclusive_write` (publish a new file once, never over another), `child_process` (`run_child` and `stream_child`, the one runner of git and scripts, and `git_env`, which drops git's location variables) `hub_root` (`hub_root_or_exit`: the hub from `AGENT_HUB_ROOT` or the cwd; `main_checkout`: the main checkout when the hub is a worktree of its repo; `hub_checkout`: the hub's main checkout `hub run` and `hub ship` work from), `hub_config_reader` (read `hub.json` and `hub.local.json`, or their problem lines), `effective_config` (`hub.json` with `hub.local.json` over it, and the branch prefix), `generator`, `init_config` and `init_report` (`hub init`: its `hub.json`, its write and its lines), `git_defaults` (what `hub init` and the identity read from git, and `read_remote_scheme`, the scheme of the hub's `origin`), `collect` and `database_path` (`hub collect` and its database file) and `errors` (the command's own errors) |
-| `packages/api` | `agent-hub-api` | `agent_hub.api` | The control plane's HTTP server (FastAPI, [API.md](API.md)), a second composition root ([ADR 0017](adr/0017-api-second-composition-root.md)): `composition.py` (`build_app(settings)` wires the SQLite store, the collector's mapper and tail, the generator's hub file readers and doctor snapshot, and the registry into core's read and ingestion use cases), `app.py` (`create_app`), thin `routes/` (one module per resource), `rfc9457.py` (the one error mapping), `sse.py` and `change_feed.py` (SSE replay, heartbeats and the 500 ms high-water-mark poll), `local_security.py` (D25), `static_files.py` (serves `web_dist/`, the committed production build of `apps/web`) and `server.py` (binds the address `hub web` allows, then runs uvicorn on that socket); `openapi.json` beside the package is the committed contract. Version `0.1.0`, outside the CLI's lockstep |
-| `packages/agent-hub` | `agent-hub` | `agent_hub_meta` (placeholder) | Meta-package: depends on the seven above and declares the `hub` script, so `uv tool install agent-hub` installs everything |
+| `packages/api` | `agent-hub-api` | `agent_hub.api` | The control plane's HTTP server (FastAPI, [API.md](API.md)), a second composition root ([ADR 0017](adr/0017-api-second-composition-root.md)): `composition.py` (`build_app(settings)` wires the SQLite store, the collector's mapper and tail, the generator's hub file readers and doctor snapshot, the registry and `hub_git`'s change requests into core's read, ingestion and learning use cases; `RegisteredHubFacts` reads each project's hub, author and label rules, and `CachedAvailability` keeps a hub's action availability for 10 s), `app.py` (`create_app`), thin `routes/` (one module per resource), `rfc9457.py` (the one error mapping), `sse.py` and `change_feed.py` (SSE replay, heartbeats and the 500 ms high-water-mark poll), `local_security.py` (D25, and the strict rule of the two learning decisions), `static_files.py` (serves `web_dist/`, the committed production build of `apps/web`) and `server.py` (binds the address `hub web` allows, then runs uvicorn on that socket); `openapi.json` beside the package is the committed contract. Version `0.1.0`, outside the CLI's lockstep |
+| `packages/agent-hub` | `agent-hub` | `agent_hub_meta` (placeholder) | Meta-package: depends on the eight above and declares the `hub` script, so `uv tool install agent-hub` installs everything |
 
 `apps/web` is the web app (React 18, TypeScript strict, Vite; [ADR 0020](adr/0020-web-stack-and-committed-build.md)),
 outside the uv workspace, with its own `package.json` and `package-lock.json`: `src/api/schema.d.ts` (generated from
@@ -60,9 +62,10 @@ the machine can satisfy `3.14`. Fix with `uv self update` and `uv python install
 2. `core` depends on nothing internal, and not on the adapter libraries `sqlalchemy`, `alembic` or `typer`.
 3. `agent_hub.cli` is the composition root ([ADR 0008](adr/0008-cli-as-composition-root.md)): it may import the adapter
    packages `storage`, `collector`, `generator` and `tracker_linear` to build adapters and pass them to core use cases.
-   Nothing imports `cli`.
-4. The adapter packages (`storage`, `collector`, `generator`, `tracker_linear`) never import each other; they depend
-   only on `core`.
+   Nothing imports `cli`. `agent_hub.api`, the second composition root, may import `storage`, `collector`, `generator`
+   and `hub_git`; `hub_git` is wired only there, for the learning decisions of `hub web`.
+4. The adapter packages (`storage`, `collector`, `generator`, `tracker_linear`, `hub_git`) never import each other;
+   they depend only on `core`.
 
 ```mermaid
 flowchart BT
@@ -79,6 +82,8 @@ flowchart BT
   api --> storage
   api --> collector
   api --> generator
+  hub_git[agent_hub.hub_git] --> core
+  api --> hub_git
   cli -. "web_command only" .-> api
 ```
 
@@ -86,10 +91,10 @@ import-linter enforces the rule with the contracts in `.importlinter` (`root_pac
 `include_external_packages = True`):
 
 - `core imports nothing internal` (forbidden): `agent_hub.core` must not import `agent_hub.storage`,
-  `agent_hub.collector`, `agent_hub.generator`, `agent_hub.tracker_linear`, `agent_hub.cli`, `sqlalchemy`, `alembic` or
-  `typer`.
+  `agent_hub.collector`, `agent_hub.generator`, `agent_hub.tracker_linear`, `agent_hub.hub_git`, `agent_hub.cli`,
+  `sqlalchemy`, `alembic` or `typer`.
 - `cli is the composition root` (layers): `agent_hub.cli`, then `agent_hub.api`, above the independent sibling layers
-  `agent_hub.storage | agent_hub.collector | agent_hub.generator | agent_hub.tracker_linear`. A lower layer importing a
+  `agent_hub.storage | agent_hub.collector | agent_hub.generator | agent_hub.tracker_linear | agent_hub.hub_git`. A lower layer importing a
   higher one, or one sibling importing another, breaks it, so `api` never imports `cli`.
 - `cli reaches api only through web_command` (forbidden): only `agent_hub.cli.web_command`, which starts the server for
   `hub web`, may import `agent_hub.api`.
@@ -118,9 +123,11 @@ the PR-title scopes (`SCOPES` in `scripts/check_pr_title.py` and the list in CON
   `GenerateHub`). They take ports as arguments and return domain models.
 - **Ports** (in core): interfaces for what the SPEC expects to swap: `EventStore` (SQLite now, Postgres later),
   `TrackerClient` (Linear first), `TranscriptSource` (Claude Code first); `hub start`'s `TaskWorktrees` and
-  `SessionLauncher` (`agent_hub.core.workspace.start_task`), so its use case runs over fakes. No port where no swap is
-  expected.
-- **Adapters** (other packages): `storage` implements `EventStore`; `tracker_linear` implements `TrackerClient`; `cli`
+  `SessionLauncher` (`agent_hub.core.workspace.start_task`), so its use case runs over fakes; `BrainChangeRequests`
+  (`agent_hub.core.learnings.brain_change_requests`), the hub pull request of a learning decision, and the learning
+  ports `LearningReads` and `LearningDecisions` the API routes depend on. No port where no swap is expected.
+- **Adapters** (other packages): `storage` implements `EventStore`; `tracker_linear` implements `TrackerClient`;
+  `hub_git` implements `BrainChangeRequests`; `cli`
   implements `TaskWorktrees` (`GitTaskWorktrees`) and `SessionLauncher` (`ClaudeSession`, `PrintedSession`);
   `collector` turns hook events and transcripts into canonical events and calls the ingestion use case; `cli` (and later
   `api`) parse input, call ONE use case and render the result; `generator` renders a hub's files and links from
@@ -145,12 +152,14 @@ flowchart LR
   subgraph adapters_out[Driven adapters]
     storage[storage: EventStore]
     tracker[tracker_linear: TrackerClient]
+    hubgit[hub_git: BrainChangeRequests]
   end
   cli --> usecases
   api --> usecases
   collector --> usecases
   storage -. implements .-> ports
   tracker -. implements .-> ports
+  hubgit -. implements .-> ports
 ```
 
 The first port is `EventStore` (`agent_hub.core.events.event_store`): an append-only store of canonical events,
@@ -178,6 +187,13 @@ Phase 2 adds the read side and the live ingestion, all in core, with no I/O:
   `HubReadModels`, implemented by `HubFilesReadModels` (`hubs/hub_read_models.py`), reads the registered hubs' files
   through a `HubFileReader` port and the doctor rules, with the `HubRegistry` port for `hubs.json` (adapter
   `storage/hub_registry.py`, `JsonHubRegistry`). The API's routes depend only on these two Protocols.
+- **Learnings and the brain (AGH-201).** `ReadLearnings` (`learnings/read_learnings.py`, the `LearningReads` port)
+  joins the folded learnings with their inbox notes, read on request through the `HubFileReader`'s bounded brain reads
+  (`brain_tree`, `read_brain_file`, `brain_file_size`, implemented in `generator/brain_files.py`); `DecideLearning`
+  (`learnings/decide_learning.py`, `LearningDecisions`) checks a decision, calls `BrainChangeRequests` and appends one
+  `control_plane` event. The path rules of every brain read are pure (`brain/brain_path.py`). Session labels, actors
+  and problems are folds beside the Session fold (`sessions/session_label.py`, `session_actors.py`,
+  `session_problems.py`).
 - **Doctor snapshot.** The doctor tree reader moved from `cli` to `generator` (`doctor_snapshot.py`,
   `build_doctor_snapshot`; `hub_config_files.py` for `hub.json`, `hub.lock` and `hub.local.json`), so `hub doctor` and
   the Health screen run the same rules on the same snapshot; git stays in the composition roots and is injected.
@@ -202,7 +218,8 @@ The control plane runs as one process, `hub web`, on the developer's machine ([A
   `AGENT_HUB_IN_CONTAINER=1`; Compose publishes the port on the host's `127.0.0.1` only and mounts the hubs root and
   `~/.claude/projects` read-only at their host paths, so paths in the registry and in hook events match.
 - **Development** (`make dev`): `hub web` on 7420 and Vite on `127.0.0.1:5173`, whose `/api` proxy
-  (`apps/web/src/lib/devProxy.ts`) sends the API's Host and drops Origin, so the API's checks need no exception.
+  (`apps/web/src/lib/devProxy.ts`) sends the API's Host, rewrites the dev app's own Origin to the API's and drops any
+  other, so the API's checks, the learning decisions' strict rule included, need no exception.
 
 The hub sensors post to `AGENT_HUB_WEB_URL` (default `http://127.0.0.1:7420`), the same address in every mode.
 
