@@ -44,7 +44,7 @@ Next steps:
 > [!IMPORTANT]
 > agent-hub is **experimental** (0.x, Phase 2 of 4 in the [spec](docs/SPEC.md)). The hub generator and its commands
 > work and are tested; the web control plane is read-only (it watches, it does not act yet). The repository is
-> private, and every install needs read access to it.
+> public: installing needs no credential.
 
 ## Contents
 
@@ -123,13 +123,10 @@ the repos (git worktrees), and every change reaches `main` only through a pull r
 
 **Prerequisites**
 
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) **0.9.0 or newer** (it installs Python 3.14 for you).
-- `git` and `python3` on your `PATH` (the shims and hooks use the system `python3`, 3.9 or newer).
-- **Read access to this private repository**: your GitHub credentials through a git credential helper (for example
-  `gh auth setup-git`), or this repository attached to a cloud session. Never put a token inside the `git+https://` URL.
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (the `claude` command) to run `./agent`.
-- Optional: [`gh`](https://cli.github.com/) for the PR and CI lines of `hub brief`, and a Linear workspace for the
-  tracker.
+- What everyone on a hub needs (uv, git, Claude Code, Python 3.9 or newer, optional `gh` and tracker credential, with
+  the known traps): the Requirements table of the **Join this hub** section that every generated hub's `README.md`
+  carries; its source is [`README.md.tmpl`](packages/generator/src/agent_hub/generator/templates/README.md.tmpl).
+- To create a hub: a GitHub repository for it (`--hub-repo`) and a Linear team for its tracker.
 
 **1. Check that you can run the CLI.** `uvx` builds the tagged release from git and caches it; the first run takes a
 little longer.
@@ -609,7 +606,7 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `tracker.teams` | one of the two | | Several team keys, the first the default, e.g. `["APP", "OPS"]` |
 | `tracker.ready_label` | no | `agent-ready` | Label of issues an agent may pick up |
 | `tracker.failed_label` | no | `agent-failed` | Label set when an agent run fails |
-| `tracker.states.started` | no | `In Progress` | State the coming `hub start` moves an issue to; not read yet |
+| `tracker.states.started` | no | `In Progress` | State `hub start` moves an issue to: on a fresh start, or on a resume while the issue is unstarted |
 | `tracker.states.review` | no | `In Review` | Reserved for the review step; not read yet |
 | `repos[].dir` | yes | | Folder name of the repo, next to the hub |
 | `repos[].github` | yes | | GitHub `owner/name` |
@@ -695,7 +692,7 @@ Contract: [docs/design/developer-identity.md](docs/design/developer-identity.md)
 | `AGENT_HUB_IN_CONTAINER` | no | | Set to `1` by the agent-hub image only: lets `hub web --host` bind outside loopback inside the container |
 | `AGENT_HUB_WEB_URL` | no | `http://127.0.0.1:7420` | Where a hub's event sensor sends events (loopback URLs only) |
 | `AGENT_HUB_HUBS_ROOT`, `AGENT_HUB_PORT` | no | the folder holding this clone, `7420` | `make up`: the hubs folder mounted read-only, the host port (on 127.0.0.1) |
-| `AGENT_HUB_ROOT` | no | the current folder | The hub folder for `hub worktree`, `hub brief` and `hub agent` (`hub sync` and `hub doctor` use the current folder); the `./hub` shim sets it for you |
+| `AGENT_HUB_ROOT` | no | the current folder | The hub folder for `hub worktree`, `hub brief`, `hub agent` and `hub start` (`hub sync` and `hub doctor` use the current folder); the `./hub` shim sets it for you |
 
 ## 🧱 Technical reference
 
@@ -776,6 +773,7 @@ enforces this in `make check`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE
 | `hub worktree NAME [--only REPO] [--remove]` | Create (or remove) one task's worktrees in the hub's repos |
 | `hub brief [--no-network]` | Print the session brief: `now.md`, recent journal, repo/PR/CI state |
 | `hub agent [ARGS…]` | Start `claude` with every repo attached; all arguments go to `claude` |
+| `hub start ISSUE [--repo DIR]… [--no-agent]` | Start an issue: its worktrees (named `<issue>-<title slug>`), the issue moved to `tracker.states.started`, then `claude` from the hub with those worktrees attached and the issue as first prompt; a rerun resumes the task; `--no-agent` prints how to launch it |
 | `hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …` | Benchmark the `hub-workflow` plugin on closed issues (module `bench`); `--validate` checks the graders |
 | `hub collect [FILE\|-] [--db PATH]` | Ingest canonical events from JSON Lines, all or nothing |
 | `hub --version` | Print the version |
@@ -877,7 +875,7 @@ You need to be comfortable in a terminal and with git: you run a few commands an
 the programming; you review and merge their pull requests.
 
 **Is it free? Can I use it in my company?**
-The repository is private and has no license file yet, so it is not offered for use outside its owners today.
+The repository is public but has no license file yet, so it is not offered for use outside its owners today.
 
 **Does it replace Claude Code?**
 No. agent-hub prepares and launches Claude Code sessions (and will observe them); it is not an agent or a model

@@ -1,0 +1,12 @@
+ok      uv: 0.9.5
+ok      git: on PATH
+ok      python3: 3.12.4
+ok      claude: on PATH
+missing gh: gh auth status exited 1 Fix: gh auth login
+missing tracker: LINEAR_API_KEY is not set (transport api) Fix: export LINEAR_API_KEY=<your Linear API key>, or set tracker.transport "mcp" in hub.local.json
+ok      identity: wrote hub.local.json: jane/, Jane Roe <jane@example.com> (git config)
+ok      repo demo-api: present, fetched
+ok      repo demo-web: cloned acme/demo-web into ../demo-web (ssh)
+ok      hub doctor: 0 errors, 1 warning, 0 infos
+        warning makefile.override Makefile.project:3: redefines target 'check' Fix: rename the project target
+setup: 2 missing, 8 ok

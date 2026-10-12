@@ -16,7 +16,8 @@ sets them keeps the bytes it had. A hub with several tracker teams names them al
 ``AGENTS.md`` and the plugin name the team; a one-team hub keeps its bytes (AGH-56). A hub that
 sets ``project.conventions`` or a ``repos[].conventions`` shows its branch shape in rule 1 and
 kickoff and gets a Conventions block in ``AGENTS.md``; an unconfigured hub keeps its bytes
-(AGH-57).
+(AGH-57). The README's Join section names the tracker credential by ``tracker.transport`` and has
+a cloud subsection only with ``modules.cloud`` (AGH-51).
 """
 
 import re
@@ -30,6 +31,7 @@ from agent_hub.core.hub_config.platform_repository import (
     PLATFORM_REPOSITORY_FORM,
     PLATFORM_REPOSITORY_PATTERN,
 )
+from agent_hub.core.hub_config.workspace_repos import workspace_repos
 from agent_hub.core.hub_files.rendered_file import Ownership
 from agent_hub.core.workspace.shown_conventions import (
     ShownConventions,
@@ -101,19 +103,46 @@ _GLUE: Final = "\x00"
 _SEVERAL_TEAMS_KEY: Final = (
     "the issue's team: a key of `tracker.teams` in `hub.json`, the first being the default"
 )
+# The README's Join section: the tracker credential line per ``tracker.transport``, each two lines
+# so the section's size does not depend on it, and the cloud subsection (AGH-51).
+_JOIN_TRACKER_API: Final = (
+    "Tracker (optional): `LINEAR_API_KEY` in your environment for `./hub next` and `./hub run`,"
+    " never in a file;\n"
+    '  or the Linear MCP server, with `{"tracker": {"transport": "mcp"}}` in your `hub.local.json`.'
+)
+_JOIN_TRACKER_MCP: Final = (
+    "Tracker (optional): the Linear MCP server in Claude Code, or the claude.ai Linear connector"
+    " in a cloud session;\n"
+    '  or the API transport, with `{"tracker": {"transport": "api"}}` in your `hub.local.json`.'
+)
+_JOIN_CLOUD: Final = (
+    "\n\n### In a cloud session (claude.ai/code)\n\n"
+    "- Give the Claude GitHub App access to this hub and its repos, and open the session on this"
+    " hub alone.\n"
+    "- Environment setup script: `bash scripts/cloud-setup.sh`. It clones the repos with"
+    " `GH_TOKEN`, a fine-grained token\n"
+    "  for them (Contents and Pull requests: read and write), set in the environment's variables,"
+    " never in a file.\n"
+    "- If `hub.json` names no author, set `HUB_AUTHOR_NAME` and `HUB_AUTHOR_EMAIL` there too:"
+    " your commit identity.\n"
+    "- First message: `/kickoff`; check that its guard probe says the session is guarded."
+)
 
 
 def substitution_mapping(config: HubConfig) -> dict[str, str]:
     """Map each placeholder name to its text; lists keep ``hub.json`` order, joined by ``, ``."""
     project = config.project
+    repos = workspace_repos(config)
     return {
         "project_name": project.name,
         "project_hub_repo": project.hub_repo,
+        # The folder `git clone` makes for the hub; hub_repo is a validated `owner/name` (AGH-51).
+        "project_hub_dir": project.hub_repo.split("/", 1)[1],
         "project_branch_prefix": shown_prefix(config),
         "project_default_branch": project.default_branch,
         "tracker_team": config.tracker.default_team,
-        "repo_dirs": _LIST_SEPARATOR.join(repo.dir for repo in config.repos),
-        "repo_githubs": _LIST_SEPARATOR.join(repo.github for repo in config.repos),
+        "repo_dirs": _LIST_SEPARATOR.join(repo.dir for repo in repos),
+        "repo_githubs": _LIST_SEPARATOR.join(repo.github for repo in repos),
         "guard_deny_hosts": _LIST_SEPARATOR.join(config.guard.deny_hosts),
         "platform_repository": PLATFORM_REPOSITORY,
         "platform_repository_pattern": PLATFORM_REPOSITORY_PATTERN,
@@ -124,6 +153,7 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
         **_branch_mentions(config),
         **_team_mentions(config),
         **_conventions_texts(config),
+        **_join_texts(config),
         "commit_author": (
             _USER_AUTHOR
             if project.author_name is not None and project.author_email is not None
@@ -131,6 +161,20 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
         ),
         "prefix_note": "" if project.branch_prefix is not None else _PREFIX_NOTE,
         "identity_email": _USER_EMAIL if project.author_email is not None else _DEVELOPER_EMAIL,
+    }
+
+
+def _join_texts(config: HubConfig) -> dict[str, str]:
+    """The README Join section's tracker credential line and its cloud subsection (AGH-51).
+
+    Both come from closed values: the transport literal picks the line, and the subsection is
+    empty unless ``modules.cloud`` is selected.
+    """
+    return {
+        "join_tracker_credential": (
+            _JOIN_TRACKER_MCP if config.tracker.transport == "mcp" else _JOIN_TRACKER_API
+        ),
+        "join_cloud": "" if config.modules.cloud is None else _JOIN_CLOUD,
     }
 
 
