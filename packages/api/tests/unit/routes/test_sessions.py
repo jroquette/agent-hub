@@ -11,7 +11,7 @@ from agent_hub.core.sessions.session import (
     SummaryLine,
     TimelineEvent,
 )
-from agent_hub.core.testing.read_model_builders import EVENT_ID, a_session
+from agent_hub.core.testing.read_model_builders import EVENT_ID, a_session, a_session_problems
 
 AT = datetime(2026, 10, 9, 14, 0, tzinfo=UTC)
 
@@ -143,8 +143,18 @@ def test_answers_not_found_when_session_unknown(wired: Any) -> None:
         assert response.json()["detail"] == "No session with id 'nope'."
 
 
-def test_answers_not_implemented_when_problems_requested(wired: Any) -> None:
+def test_maps_problems_when_session_problems_requested(wired: Any) -> None:
+    wired.events.problems["session-1"] = a_session_problems()
+
     response = wired.client.get("/api/v1/sessions/session-1/problems")
 
-    assert response.status_code == 501
-    assert response.json()["detail"] == "get_session_problems is not implemented in this build"
+    assert response.status_code == 200
+    assert response.json() == a_session_problems().model_dump(mode="json")
+    assert wired.events.calls == [("session_problems", "session-1")]
+
+
+def test_answers_not_found_when_problems_of_unknown_session_requested(wired: Any) -> None:
+    response = wired.client.get("/api/v1/sessions/nope/problems")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "No session with id 'nope'."
