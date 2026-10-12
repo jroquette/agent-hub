@@ -66,7 +66,15 @@ def test_keeps_key_when_key_is_new_in_clarity(event_type: EventType, key: str) -
 
 
 def test_declares_added_keys_when_allow_list_widened() -> None:
-    every_key = frozenset().union(*PAYLOAD_KEYS.values())
+    added = {(event_type, key) for event_type, keys in ADDED_KEYS_V2.items() for key in keys}
+    not_branch = {pair for pair in added if pair[1] != "git_branch"}
 
-    assert {"error_message", "skill", "git_branch", "to"} == ADDED_KEYS_V2
-    assert every_key >= ADDED_KEYS_V2
+    assert not_branch == {
+        (EventType.TOOL_CALL, "skill"),
+        (EventType.TOOL_CALL, "to"),
+        (EventType.TOOL_RESULT, "error_message"),
+    }
+    assert {event_type for event_type, key in added if key == "git_branch"} == (
+        set(PAYLOAD_KEYS) - {EventType.SESSION_START}
+    )
+    assert all(key in PAYLOAD_KEYS[event_type] for event_type, key in added)
