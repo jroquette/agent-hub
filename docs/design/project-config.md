@@ -27,45 +27,41 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `platform.repository` | `git+https://` repository root (Rendered values) | `git+https://github.com/jroquette/agent-hub` | shims, SessionStart, cloud setup, CI credential step (at run time); pin-mismatch command. Tokens only on exactly `https://github.com/`: CI maps `AGENT_HUB_READ_TOKEN` there alone, and cloud setup's `GH_TOKEN` helper answers for `github.com` alone; another host needs the repository attached or its own credential (follow-up) |
 | `project.name` | kebab-case (Rendered values) | req. | templates (plugin, marketplace names), `hub brief` |
 | `project.hub_repo` | `owner/name` | req. | `hub run` (PR links), marketplace |
-| `project.branch_prefix` | e.g. `jdoe/` (Rendered values) | optional, per developer ([developer-identity.md](developer-identity.md)) | `hub worktree`, `hub run`, guard branch hint, `AGENTS.md` |
+| `project.branch_prefix` | e.g. `jdoe/` (Rendered values) | optional, per developer ([developer-identity.md](developer-identity.md)); `hub setup` writes it to `hub.local.json` | `hub worktree`, `hub run`, `hub start`, guard branch hint, `AGENTS.md` |
 | `project.default_branch` | `^S(?:/S)*$` (Rendered values) | `main` | the hub's own branch (CI, brief hub line, retro), default of `repos[].default_branch`, guard |
 | `project.author_name`, `project.author_email` | strings | optional, per developer ([developer-identity.md](developer-identity.md)) | cloud setup (git identity), `attribution.ai` rule, marketplace owner, `AGENTS.md` |
-| `project.conventions` | object of optional patterns `branch`, `commit_title`, `pr_title` (Rendered values); not in `hub.local.json` | `branch` `{prefix}{issue_lower}-{slug}`, `commit_title` `{type}({scope}): {summary} ({ISSUE})`; `pr_title` the effective `commit_title` | `hub worktree` and `hub run` (branch per repo; refused, before anything is created, when its branch is checked out in another worktree, when the existing task worktree is on another branch, or when the task folder is not a worktree); the run prompt; the PR title: a repo whose titles are configured (either layer sets `commit_title` or `pr_title`) parses its newest commit subject with `commit_title` and renders `pr_title`, and no match keeps today's title, records `title_unmatched` and warns; `AGENTS.md`: the project's shapes and examples, then, when a repo sets `repos[].conventions`, one line naming at most three such repos and how many more (their patterns stay in `hub.json`) and saying that a `pr_title` neither layer sets follows the repo's own `commit_title`; kickoff: the branch shape only; doctor `instructions.refs`: skips, as valid references whether rendered or not, the project's shapes and examples, each repo's own shapes, and each repo's effective branch shape and example |
+| `project.conventions` | object of optional patterns `branch`, `commit_title`, `pr_title` (Rendered values); not in `hub.local.json` | `branch` `{prefix}{issue_lower}-{slug}`, `commit_title` `{type}({scope}): {summary} ({ISSUE})`; `pr_title` the effective `commit_title` | `hub worktree`, `hub run` and `hub start` (branch per repo; refused, before anything is created, when its branch is checked out in another worktree, when the existing task worktree is on another branch, or when the task folder is not a worktree); the run prompt; the PR title: a repo whose titles are configured (either layer sets `commit_title` or `pr_title`) parses its newest commit subject with `commit_title` and renders `pr_title`, and no match keeps today's title, records `title_unmatched` and warns; `AGENTS.md`: the project's shapes and examples, then, when a repo sets `repos[].conventions`, one line naming at most three such repos and how many more (their patterns stay in `hub.json`) and saying that a `pr_title` neither layer sets follows the repo's own `commit_title`; kickoff: the branch shape only; doctor `instructions.refs`: skips, as valid references whether rendered or not, the project's shapes and examples, each repo's own shapes, and each repo's effective branch shape and example |
 | `tracker.kind` | closed list: `linear` | req. | selects the tracker adapter (Tracker, below) |
-| `tracker.team`, `tracker.teams` | a team key; or a list of them (≥ 1, unique ignoring case), the first the default; `hub run`/`hub worktree` match keys ignoring case, `features.tracker` exactly | exactly one of the two | `hub next` (each team, in order), `hub run`, worktree names, `features.tracker`, branch hints, `AGENTS.md` |
+| `tracker.team`, `tracker.teams` | a team key; or a list of them (≥ 1, unique ignoring case), the first the default; `hub run`/`hub worktree` match keys ignoring case, `features.tracker` exactly | exactly one of the two | `hub next` (each team, in order), `hub run`, `hub start` (exact upper-case `<TEAM>-<n>`), worktree names, `features.tracker`, branch hints, `AGENTS.md` |
 | `tracker.ready_label`, `tracker.failed_label` | strings | `agent-ready`, `agent-failed` | `hub next` (ready), `hub run` on failure (failed) |
 | `tracker.states.started`, `tracker.states.review` | strings; an object with only these keys; not in `hub.local.json` | `In Progress`, `In Review` | `hub start` reads `started`: the state a fresh start, or a resume of an unstarted issue, moves to; `review`: the state `hub run` (success report and dry run) and `hub ship` move the issue to |
-| `tracker.transport` | closed list: `api`, `mcp`; `hub.local.json` may override it | `api` | `hub next`, `hub run` (adapter; Tracker, below) |
-| `repos[]` | list, at least one item | req. | launcher, worktrees, hooks, cloud setup |
+| `tracker.transport` | closed list: `api`, `mcp`; `hub.local.json` may override it | `api` | `hub next`, `hub run`, `hub start` (adapter; Tracker, below), `hub setup` (its `tracker` item) |
+| `repos[]` | list, at least one item | req. | launcher, worktrees, `hub setup` (clone or fetch each), `hub start`, hooks, cloud setup |
 | `repos[].dir` | one path segment (Rendered values), unique across `repos` ignoring case | req. | the sibling directory next to the hub |
-| `repos[].github` | `owner/name` | req. | cloud setup, `hub run` |
+| `repos[].github` | `owner/name` | req. | cloud setup, `hub run`, `hub setup` (clone URL over the scheme of the hub's `origin`) |
 | `repos[].role` | free string; `app` is the only known value | `app` | templates may branch on known roles |
 | `repos[].check_fast`, `repos[].check` | shell commands; `check_fast` may be absent, empty or blank (no Stop gate: `config.stop_gate` warns); `check` holds a non-space character | `check` req. | stop gate (`check_fast`), `hub run` (`check`, also step 3 when there is no `check_fast`), `hub doctor` (`repos.agents` fix, escaped) |
 | `repos[].check_fast_timeout` | strict integer 1–160 (seconds), within the stop gate's 160 s budget | 150 | stop gate |
 | `repos[].conventions` | like `project.conventions`; a project `pr_title` its `commit_title` cannot fill is reported at `project.conventions.pr_title`, naming each such `repos[<i>].conventions.commit_title` | per key the project's, else today's shape; `pr_title`, else the repo's effective `commit_title` | as `project.conventions`, for the repo; `AGENTS.md` names the repo, not its patterns |
-| `repos[].default_branch` | like `project.default_branch` | `project.default_branch` | `hub worktree`, `hub run` (base, `--base`), `hub brief`, retro CI, guard (union of `main`, `master` and every configured default branch, plus the root `hub.json`'s when `$HUB_CONFIG` points elsewhere, from any cwd); `AGENTS.md` names it only when set |
+| `repos[].default_branch` | like `project.default_branch` | `project.default_branch` | `hub worktree`, `hub run` (base, `--base`), `hub start`, `hub brief`, retro CI, guard (union of `main`, `master` and every configured default branch, plus the root `hub.json`'s when `$HUB_CONFIG` points elsewhere, from any cwd); `AGENTS.md` names it only when set |
 | `guard.ask_before_edit` | list of paths | `[]` | guard: ask before an edit under them |
 | `guard.deny_hosts` | list of host names | `[]` | guard: deny network calls to them |
 | `guard.deny_paths` | list of paths | `[]` | guard: deny any read or edit under them |
-| `guard.infra` | object; not in `hub.local.json` | absent | hooks' config reader (validated); present, even `{}`, it turns on the guard's infra classification, described in the [SPEC](../SPEC.md) once it ships; an unknown key under it (other than `_` keys) is reported by the reader as unusable (`InfraSection.problem`; the CLI rejects it) |
-| `guard.infra.allow` | list of Python `re` patterns (Infra patterns, below) | `[]` | hooks' config reader; the infra classification |
-| `guard.infra.prod_markers` | list of Python `re` patterns (Infra patterns, below) | `[]` | hooks' config reader; the infra classification |
+| `guard.infra`, with `allow` and `prod_markers` | object; each key a list of Python `re` patterns (Infra patterns, below); not in `hub.local.json` | absent; each list `[]` | hooks' config reader only (validated): the guard does not read it yet and keeps its fixed infra rule ([SPEC](../SPEC.md), AGH-45); an unknown key under it (other than `_` keys) is reported by the reader as unusable (`InfraSection.problem`; the CLI rejects it) |
 | `modules` | object keyed by module id | `{}` | generator, commands, doctor (Modules) |
 | `doctor.rules` | object keyed by rule id | `{}` | `hub doctor`; contract in [hub-doctor.md](hub-doctor.md) |
 
-Unknown keys are an error at every object level; keys starting with `_` (such as `_comment`) are accepted and ignored at
-every level, and the exported schema says the same ([ADR 0010](../adr/0010-hub-json-config-contract.md)). Cross-field
-checks are model validators JSON Schema cannot express, so there an editor accepts what the CLI rejects: unique
-`repos[].dir`, team keys unique ignoring case, guard path roots, `doctor.rules` entries of an unselected module,
-`contract-sync` repos, an explicit `pr_title` part (not `{ISSUE}`) the repo's effective `commit_title` lacks, each
-`guard.infra` pattern compiles with Python's `re`.
+Unknown keys are an error at every object level; `_` keys (such as `_comment`) are accepted and ignored at every level,
+and the exported schema says the same ([ADR 0010](../adr/0010-hub-json-config-contract.md)). Cross-field checks are
+model validators JSON Schema cannot express, so an editor accepts what the CLI rejects: unique `repos[].dir`, team keys
+unique ignoring case, guard path roots, `doctor.rules` entries of an unselected module, `contract-sync` repos, a
+`pr_title` part (not `{ISSUE}`) the repo's effective `commit_title` lacks, `guard.infra` patterns that compile.
 
 ### Rendered values
 
-The model restricts rendered values: safe unquoted in shell, Make and Markdown. YAML templates double-quote placeholders
-(`on`, `NO`, `1.0` would retype). Brain frontmatter lists repo dirs unquoted: readers load it without type resolution.
-`S` is a safe segment, `[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*`: no leading `-` or `.`, no `..`, no trailing punctuation,
-no `_` separator (hooks match branches with Python's `re`: exponential backtracking if a separator extends a segment).
+Rendered values are safe unquoted in shell, Make and Markdown; YAML templates double-quote them (`on`, `NO` would
+retype); brain frontmatter lists repo dirs unquoted (no type resolution). A safe segment `S` is
+`[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*`: no leading `-`/`.`, `..`, trailing punctuation or `_` separator (backtracking).
 
 - `project.name`: kebab-case `^[a-z0-9]+(-[a-z0-9]+)*$`. `repos[].dir`: `^S$`, unique ignoring case (`tradeSentinel`).
   `project.hub_repo`, `repos[].github`: `^S/S$`. `project.branch_prefix`: `^S/$`. `guard.deny_hosts`: `.`-joined DNS
@@ -76,41 +72,37 @@ no `_` separator (hooks match branches with Python's `re`: exponential backtrack
   `check_fast` and `check` are read at run time, never rendered.
 - `platform.version` matches `^[0-9]+\.[0-9]+\.[0-9]+$` in the CLI and the hooks' stdlib reader (a bad value counts as
   absent). `platform.repository` matches `^git\+https://H(?:/S)+$` (`H` as `guard.deny_hosts`), ≤ 200 characters, as
-  written: no credential, port, query, fragment, `@ref` or trailing `/`. Shims, SessionStart, cloud setup and the CI
-  credential step read it at run time, never baked in; a bad one stops each (SessionStart: mini brief), never echoed.
+  written: no credential, port, query, fragment, `@ref` or trailing `/`. Read at run time, never baked in; a bad one
+  stops each reader (SessionStart: mini brief), never echoed.
 - Guard paths: relative to the workspace (the directory holding the hub and its repos), normalized, `/`-separated, not
   absolute; segments are printable ASCII without space or `\`, never `.` or `..`. The first is a `repos[].dir` or `@hub`
   (the hub, whatever its checkout is called; `@` cannot start a `dir`); `guard.deny_paths` may also start with another
-  workspace directory (Loki's `_archive`). Hooks resolve `@hub` to the hub root holding the hook file.
-  Where each Loki guard goes on adoption: [hub-adopt.md](hub-adopt.md#project-guards).
+  workspace directory (Loki's `_archive`). Hooks resolve `@hub` to the hub root holding the hook file. Loki's guards on
+  adoption: [hub-adopt.md](hub-adopt.md#project-guards).
 - Conventions: each pattern ≤ 120 characters, each placeholder at most once. `branch`: `{prefix}` (the developer's
   effective branch prefix: `project.branch_prefix`, or `hub.local.json`), `{ISSUE}` (the issue id, e.g. `DEM-7`) or
   `{issue_lower}` (the same lowercased; one of the two needed), `{slug}` (the worktree name's description; empty, it
   drops one `-`, `_`, `.` or `/` before it), literals `[A-Za-z0-9._/-]`; it must render to a valid branch. Titles:
   `{ISSUE}`, the commit's parts `{type}`, `{scope}`, `{summary}` (needed), placeholders separated by a literal; a
   literal holds no control, format or line-separator character (Unicode Cc, Cf, Zl, Zp), backtick or brace.
-- Infra patterns (`guard.infra.allow`, `guard.infra.prod_markers`): each one non-blank, with no control character, and
-  compiling with Python's `re`; one whose repeat count overflows (`a{4294967296}`) or whose nesting is too deep is
-  rejected too. They are searched (`re.search`) with no flags, in Python 3.9 `re` syntax, because the hooks run on the
-  system `python3`. Cost: patterns run on every Bash call that names a covered tool; avoid nested quantifiers
-  (`(a+)+$` takes over a second on a 25-character input).
+- Infra patterns: non-blank, no control character, compiling with Python's `re` (no repeat count overflow such as
+  `a{4294967296}`, no too-deep nesting); searched (`re.search`) with no flags in Python 3.9 `re` syntax (the hooks run
+  on the system `python3`). Avoid nested quantifiers: `(a+)+$` takes over a second on a 25-character input.
 
 ### Versioning
 
 `schema_version` changes only on a breaking change (a key removed, renamed or retyped, or an optional key made
 required); adding an optional key keeps it. The CLI reads `platform.version` and `schema_version` leniently (plain JSON,
-no model) and checks them in that order before validating the whole file, so an older CLI facing a newer file reports
-the pin mismatch (whose fix settles both), not an unknown key. It supports one schema version: on any other, `hub sync`
-writes nothing and exits 1 ([hub-sync.md](hub-sync.md)) and `config.schema` reports an error, both naming the fix
-(update the file, or run the pinned release through the shim).
+no model), in that order, before validating the file, so an older CLI facing a newer file reports the pin mismatch
+(whose fix settles both), not an unknown key. On another schema version, `hub sync` writes nothing and exits 1
+([hub-sync.md](hub-sync.md)) and `config.schema` errors, both naming the fix (update the file, or use the shim).
 
 ### Modules
 
 Each entry's value is that module's settings object; an unknown id is an error. A module adds files, commands or doctor
-rules only when selected ([hub-generator.md](hub-generator.md)). Phase 1 modules: `cloud` (cloud-session setup), `bench`
-(configuration benchmark) and `marketplace` (the optional plugin marketplace) take `{}` only; `contract-sync`
-(cross-repo contract recipe) takes `{"source": "<repo dir>", "target": "<repo dir>"}`: both required, each a
-`repos[].dir`, and different (cross-field checks, at `modules.contract-sync.<key>`). `_` keys are ignored.
+rules only when selected ([hub-generator.md](hub-generator.md)). `cloud` (cloud-session setup), `bench` (configuration
+benchmark) and `marketplace` (plugin marketplace) take `{}` only; `contract-sync` (cross-repo contract recipe) takes
+`{"source": "<repo dir>", "target": "<repo dir>"}`, two different `repos[].dir` (at `modules.contract-sync.<key>`).
 
 ### Readers
 
@@ -118,42 +110,38 @@ rules only when selected ([hub-generator.md](hub-generator.md)). Phase 1 modules
   `hub.local.json: <json path>: <message>` for the developer's file ([developer-identity.md](developer-identity.md)).
 - **Hooks**: a defensive stdlib reader that never raises (`plugin/hub-workflow/hooks/stdlib_reader.py`; its defaults on
   a minimal `hub.json` match `HubConfig`'s in `test_hub_json_reader.py`): a missing file, bad JSON or a wrong type gives
-  the defaults; the hook fails open. It ignores unknown and `_` keys, except under `guard.infra`, where a
-  wrong type, an unusable item or an unknown key there sets `InfraSection.problem` to its location. A bad
-  `repos[].default_branch` inherits; a `tracker.teams` that is not a non-empty list of non-empty strings counts as
-  absent. No hook reads `conventions`.
+  the defaults; the hook fails open. It ignores unknown and `_` keys, except under `guard.infra` (a wrong type, an
+  unusable item or an unknown key sets `InfraSection.problem`). A bad `repos[].default_branch` inherits; a bad
+  `tracker.teams` (not a non-empty list of non-empty strings) counts as absent. No hook reads `conventions`.
 
 ### Tracker
 
 `tracker.kind` and `tracker.transport` pick the `TrackerClient` adapter: `api` is `LinearGraphqlTrackerClient` (key only
 from `LINEAR_API_KEY`, at call time, never `hub.json`); `mcp` is `McpTrackerClient`, short `claude -p` calls to the user's
-Linear MCP server ([ADR 0015](../adr/0015-linear-mcp-tracker-transport.md)). Both pass `TrackerClientContract`.
-With several teams, `hub next` calls `list_ready` once per team, in order.
+Linear MCP server ([ADR 0015](../adr/0015-linear-mcp-tracker-transport.md)). Both pass `TrackerClientContract`. `hub
+next` calls `list_ready` once per team, in order; `hub start` calls `get_issue`, then `move_state` (`only_if_unstarted`
+on a resume; [hub-start.md](hub-start.md)).
 
 ### Example (synthetic project)
 
 ```json
-{"$schema": "./hub.schema.json", "schema_version": 1, "platform": {"version": "0.2.0"},
- "project": {"name": "demo", "hub_repo": "acme/demo-hub", "branch_prefix": "jdoe/",
-             "author_name": "Jane Doe", "author_email": "jane@example.com"},
- "tracker": {"kind": "linear", "team": "DEM"},
+{"$schema": "./hub.schema.json", "schema_version": 1, "platform": {"version": "0.2.0"}, "tracker": {"kind": "linear", "team": "DEM"},
+ "project": {"name": "demo", "hub_repo": "acme/demo-hub", "branch_prefix": "jdoe/", "author_name": "Jane Doe", "author_email": "jane@example.com"},
  "repos": [{"dir": "demo-api", "github": "acme/demo-api", "check_fast": "make check-fast", "check_fast_timeout": 120, "check": "make check"}],
  "guard": {"ask_before_edit": ["demo-api/docs/adr"]}, "modules": {"cloud": {}, "bench": {}}}
 ```
 
 ## Invariants
 
-- `hub.json` is the only committed file of project values; no template or command hard-codes one. No field is a secret.
-- It stays readable by the Python 3.9 standard library `json` module, and nothing writes it after `hub init`.
+- `hub.json` is the only committed file of project values; no template or command hard-codes one; no field is a secret.
+  It stays readable by Python 3.9's `json`, nothing writes it after `hub init`, and a hook never fails because of it.
 - The CLI and `hub doctor` validate with the same model; the exported schema never drifts from it.
-- A hook never fails because of `hub.json`.
 
 ## Decisions
 
-- [ADR 0010](../adr/0010-hub-json-config-contract.md): JSON with a Pydantic model and an exported JSON Schema; TOML
-  rejected (no reader in the 3.9 stdlib), YAML rejected (a dependency and implicit typing).
-- [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md) (`hub.json` is seeded) and
-  [ADR 0013](../adr/0013-release-by-git-tags.md) (`platform.version` pins the CLI release).
+- [ADR 0010](../adr/0010-hub-json-config-contract.md): JSON, a Pydantic model and an exported schema; not TOML (no 3.9
+  stdlib reader) nor YAML (a dependency, implicit typing). [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md):
+  `hub.json` is seeded. [ADR 0013](../adr/0013-release-by-git-tags.md): `platform.version` pins the CLI release.
 - [ADR 0002](../adr/0002-lean-hexagonal-architecture.md): the model lives in core; `TrackerClient` is a port because a
   swap is expected ([SPEC](../SPEC.md)); [ADR 0014](../adr/0014-tracker-port-linear-graphql.md): the GraphQL adapter.
 

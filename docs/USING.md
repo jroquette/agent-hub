@@ -11,22 +11,23 @@ You are an agent asked to set up or run an agent hub for a project that is **not
 agent-hub's `AGENTS.md` (authorship, `roquettejh/` branches, `docs/SPEC.md` first) are for changing agent-hub and do
 not apply to your project. Your project's rules come from its own hub once it exists: `hub.json`, the rendered
 `AGENTS.md` and `AGENTS.project.md`. A teammate joining a project whose hub already exists clones that hub into the
-folder that holds (or will hold) the project's repos, so they sit side by side, then runs `./hub setup` in it instead;
-the rest of this guide creates a new hub.
+folder that holds (or will hold) the project's repos, so they sit side by side, then runs `./hub setup` in it instead
+(it exits 0 when every line is `ok`; each `missing` line names its fix); the rest of this guide creates a new hub.
 
 ## Prerequisites and access
 
 - uv 0.9.0 or newer, git 2.28 or newer (for `git init -b`), `python3` 3.9 or newer and `claude` (Claude Code).
 - `gh` (GitHub CLI), logged in, is optional: it creates the hub's repo and checks that it is private. Without it, the
   user does those two things (§ Commit and push once).
-- Read access to agent-hub, which is a private repo. Use a git credential helper, for example the one
-  `gh auth setup-git` sets up:
+- agent-hub is public: its `uvx` lines need no credential (unless the hub's `hub.json` → `platform.repository` names
+  another source). The hub's repo and the app repos need the user's git credentials through a credential helper, for
+  example the one `gh auth setup-git` sets up:
 
   ```sh
   gh auth setup-git
   ```
 
-  or work in a cloud session that has agent-hub attached. Either way, never put a token in the URL, in a file or in
+  or work in a cloud session that has those repos attached. Either way, never put a token in the URL, in a file or in
   a command line.
 
 ## Find the version and check the CLI

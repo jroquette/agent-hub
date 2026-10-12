@@ -63,11 +63,11 @@ An agent that uses agent-hub for another project (rather than changing agent-hub
 ```
 hub init <project> --repos org/backend,org/frontend --tracker linear:LOK --branch-prefix jdoe/   # several teams: linear:APP,OPS
 hub init --config hub.json   # generates from an existing project config
-hub sync        # reapplies templates without overwriting what the project customized
+hub sync [--check]   # reapplies templates without overwriting what the project customized (--check: plan only)
 hub sync --adopt [--accept PATH]…   # joins a hand-made hub: identical files become managed, differences are listed
-hub doctor      # checks rules, links, dead references and instruction size
+hub doctor [--only RULE]… [--json]   # checks rules, links, dead references and instruction size
 hub setup [--yes]   # onboards this machine: clones or fetches the repos, writes hub.local.json after confirmation, lists what is missing
-hub worktree NAME [--only REPO]   # isolated worktrees for one task (--remove NAME removes them)
+hub worktree NAME [--only REPO] [--remove]   # isolated worktrees for one task (--remove removes them)
 hub start ISSUE [--repo DIR]… [--no-agent]   # issue to worktrees, In Progress and a claude session (resumes)
 hub brief [--no-network]   # session brief: now, journal, repo/PR/CI state
 hub agent [ARGS…]   # claude with every repo attached (./agent)
@@ -149,6 +149,14 @@ only git reads, writes no file and does not write to the tracker. Usage errors e
 child run but `git` reads (the hub's main checkout, the git identity a branch prefix may come from); every other
 failure exits 1. No child gets `LINEAR_API_KEY`, and only the push and `gh` get a GitHub token.
 
+`hub start ISSUE` reads the issue once, then looks for its task worktrees in every repo: a name found there resumes the
+task, else the task is named `<issue lower>-<title slug>`. It checks the branches, creates the missing worktrees of the
+touched repos (`--repo`, default all) and, last, moves the issue to `tracker.states.started` (a resume moves it only
+from an unstarted state). Then it execs `claude` from the hub with the worktrees attached and the issue as the first
+prompt; `--no-agent` prints that command instead. A failure keeps the worktrees and prints the lines that remove them.
+Setup scripts get no `LINEAR_API_KEY`. Contracts: [design/hub-start.md](design/hub-start.md) and, for `hub setup`,
+[design/hub-setup.md](design/hub-setup.md).
+
 **What to extract from `loki-trader-hub`**
 
 | Current piece | Becomes on the platform | Generic or module |
@@ -184,8 +192,9 @@ today), and the CLI's model and the hooks' stdlib reader accept it in the same c
 | `tracker.teams` | Several tracker team keys, the first being the default; never set together with `tracker.team` | `[tracker.team]` | AGH-56 |
 | `platform.repository` | The platform's git source: the repository root as `git+https://<host>/<path>` (no credential, port, query, fragment, ref or trailing `/`; at most 200 characters). The shim, SessionStart and cloud setup read it at every run and run `<repository>@v<platform.version>#subdirectory=packages/agent-hub`; the CI credential step reads it to map the read token; a bad value stops each of them and is never echoed; not settable in `hub.local.json`. Tokens stay on `github.com`: the CI step maps `AGENT_HUB_READ_TOKEN` only when the repository is on exactly `https://github.com/` (another host gets no token), and cloud setup's `GH_TOKEN` helper answers for `github.com` only, so a mirror on another host needs the repository attached or its own credential (follow-up) | `git+https://github.com/jroquette/agent-hub` | AGH-49 |
 | `project.conventions`, `repos[].conventions` | Patterns for the task branch (`{prefix}`, `{ISSUE}`, `{issue_lower}`, `{slug}`; needs the issue) and the commit and PR titles (`{ISSUE}`, `{type}`, `{scope}`, `{summary}`; needs `{summary}`); a repo's keys override the project's, key by key; `hub worktree`, `hub run`, its prompt and `AGENTS.md` follow them; not settable in `hub.local.json` | Today's shapes: `{prefix}{issue_lower}-{slug}`, `{type}({scope}): {summary} ({ISSUE})`; a `pr_title` that no layer sets follows the effective `commit_title` | AGH-57 |
-| `guard.infra.allow`, `guard.infra.prod_markers` | Regexes over infra commands (`aws`, `cdk`, `terraform`, `pulumi`, `kubectl`, `helm`, `sam`, `serverless`): a prod marker denies, an allowed environment passes (deploy, destroy and delete verbs ask), anything else is denied | Today's infra rule, plus `cdk deploy`/`destroy` denied | AGH-45 |
-| Developer identity: `project.author_name`, `author_email`, `branch_prefix` | Become optional. Effective value: the gitignored `hub.local.json`, else `hub.json`, else the hub repo's `git config user.name`/`user.email`; the prefix, when no file sets it, is the effective email's local part plus `/` (ADR 0016) | Set per developer; `hub worktree`/`hub run` refuse without a prefix | AGH-65 |
+| `guard.infra.allow`, `guard.infra.prod_markers` | Regexes over infra commands (`aws`, `cdk`, `terraform`, `pulumi`, `kubectl`, `helm`, `sam`, `serverless`): a prod marker denies, an allowed environment passes (deploy, destroy and delete verbs ask), anything else is denied. The config ships and is validated (AGH-45, PR 1), but the guard does not read it yet: today's fixed infra rule (`terraform`, `aws`, `pulumi`, `kubectl`) applies | Today's infra rule, plus `cdk deploy`/`destroy` denied | AGH-45 |
+| `tracker.states.started`, `tracker.states.review` | The workflow state names: `hub start` moves an issue to `started` on a fresh start, or on a resume while it is unstarted; `review` is reserved for the review step and read by nothing yet; not settable in `hub.local.json` | `In Progress`, `In Review` | AGH-62 |
+| Developer identity: `project.author_name`, `author_email`, `branch_prefix` | Become optional. Effective value: the gitignored `hub.local.json`, else `hub.json`, else the hub repo's `git config user.name`/`user.email`; the prefix, when no file sets it, is the effective email's local part plus `/` (ADR 0016) | Set per developer, by `hub setup` in `hub.local.json`; `hub worktree`, `hub run` and `hub start` refuse without a prefix | AGH-65 |
 
 `hub.local.json` may hold only those identity keys and `tracker.transport`; any other key is an error, and nothing in it
 can relax a guard. Commits are authored by the developer running the session, and cloud setup writes `HUB_AUTHOR_NAME`/`HUB_AUTHOR_EMAIL`
@@ -295,7 +304,7 @@ flowchart LR
 
 The sessions and GitHub/Linear feed the collector, and the web app reads everything through the API. The app's actions go back to the workflow executor. The API also reads the hub repos to show brain, rules and workflows.
 
-- **Stack (decided, ADRs 0001–0004, 0008, 0011, 0014, 0017 and 0020):** Python 3.14 in a uv workspace with one package per component (`core`, `storage`, `collector`, `generator`, `tracker_linear`, `cli`, `api`) under a lean hexagonal architecture: entities, use cases and ports in `core`, adapters in the other packages. Persistence is SQLAlchemy Core + Alembic on SQLite, moving to Postgres via config when there are multiple users. The API is FastAPI + Pydantic in `packages/api`, a second composition root that `hub web` serves; the front end is React 18 + TypeScript in `apps/web`, whose production build is committed to `packages/api` so a `uvx` install needs no Node.
+- **Stack (decided, ADRs 0001–0004, 0008, 0011, 0014, 0015, 0017 and 0020):** Python 3.14 in a uv workspace with one package per component (`core`, `storage`, `collector`, `generator`, `tracker_linear`, `cli`, `api`) under a lean hexagonal architecture: entities, use cases and ports in `core`, adapters in the other packages. Persistence is SQLAlchemy Core + Alembic on SQLite, moving to Postgres via config when there are multiple users. The API is FastAPI + Pydantic in `packages/api`, a second composition root that `hub web` serves; the front end is React 18 + TypeScript in `apps/web`, whose production build is committed to `packages/api` so a `uvx` install needs no Node.
 - **Hooks as sensors** ([ADR 0021](adr/0021-hook-event-sensor.md)): the generated hub registers a stdlib Python 3.9 sensor, `plugin/hub-workflow/hooks/event_sensor.py`, for eleven Claude Code hooks (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PostToolUseFailure, Notification, Stop, SubagentStart, SubagentStop, PreCompact, SessionEnd). It wraps the hook input in a versioned envelope (`v: 1`, project, repo, the `hub run` run, step and attempt) and posts it to `POST /api/v1/events/hooks` with a 0.5 s timeout; it prints nothing and exits 0 on any failure, so without `hub web` the session carries on normally. `AGENT_HUB_WEB_URL` may only name a loopback URL. The guard and the Stop gate send their own decisions (a denial, an ask, a blocked Stop) the same way, after deciding, without changing their output or exit codes. On Stop, SubagentStop and SessionEnd the server reads the session's transcript from its last offset, only under `~/.claude/projects/` and never through a link.
 - **Packaging ([ADR 0022](adr/0022-container-packaging.md)):** besides `uvx`/`uv tool install`, the control plane
   ships as a container image built from the repo (`Dockerfile`, `compose.yaml`): multi-stage (the web app built from
@@ -316,6 +325,11 @@ The MVP goes up to Phase 2: generate hubs from Loki and see the agents' sessions
 | 3 · Knowledge and decisions | Provenance in the brain, inbox triage in the UI, extracted decisions, learning metrics | One learning traced from the session to the rule |
 | 4 · Workflows as data and actions | Generic executor reading the workflow, gates approved from the UI, adapters for other agents | — |
 
+Status (2026-10-12): Phase 0 done. Phase 1 in progress: `init`, `sync` (`--adopt`), `doctor`, `worktree`, `brief`,
+`agent`, `next`, `run` and `bench` shipped in v0.8.0; `setup` and `start` are on `main` (version 0.9.0, not tagged
+yet), with Phase 2's first slice, the read-only control plane `hub web` (AGH-200). The Phase 1 gate (Loki hub
+recreated) is open; pilot: AGH-54.
+
 The order follows dogfooding: the first generated hub is the platform's own, and the second replaces `loki-trader-hub`. Editable workflows come later because they depend on observation already showing where the current flow gets stuck.
 
 ## Open decisions
@@ -324,7 +338,7 @@ The recommendations are a starting point.
 
 | Decision | Options | Recommendation |
 | --- | --- | --- |
-| Name and where it lives | **Decided:** `agent-hub`, private repo in the personal account `jroquette` | — |
+| Name and where it lives | **Decided:** `agent-hub`, public repo in the personal account `jroquette` (AGH-51, D-access); each hub repo stays private | — |
 | Agent scope | Only Claude Code, or several from the start | Only Claude Code in v1, with the canonical event ready for adapters |
 | Where it runs | Local-first or hosted service | Local-first in v1, shared by a team through the hub repo. Hosted only when there is a second organization |
 | Stack | **Decided:** see [ADR 0001](adr/0001-uv-workspace-with-namespace-packages.md), [ADR 0002](adr/0002-lean-hexagonal-architecture.md), [ADR 0003](adr/0003-persistence-sqlalchemy-core-and-alembic.md), [ADR 0004](adr/0004-rest-api-standard.md) and [ADR 0008](adr/0008-cli-as-composition-root.md) | — |
@@ -342,7 +356,7 @@ The recommendations are a starting point.
 **2. Brain: stays in the hub repo, which is private and ours only.**
 
 - The hub remains versioned files in git plus the pinned CLI, as in Layer 1. The hub repo is private and only the owners have access.
-- The generic templates (base workflow plugin, base rules, base hooks, brain skeleton) are the product: they live in agent-hub, which is private too, and ship with the CLI. Only project-owned material (brain content, project rules, project workflows, project plugin) lives only in the hub. The code repos get the minimum: an `AGENTS.md` with basic commands and conventions.
+- The generic templates (base workflow plugin, base rules, base hooks, brain skeleton) are the product: they live in agent-hub, which is public, and ship with the CLI. Only project-owned material (brain content, project rules, project workflows, project plugin) lives only in the hub. The code repos get the minimum: an `AGENTS.md` with basic commands and conventions.
 - Our agent receives the brain because it is launched from the hub (launcher with the repos attached, as today). Another agent that opens only the code repos does not receive that knowledge.
 - `hub doctor` checks that nothing from the brain was copied into the code repos.
 - Cloud sessions need access to the hub repo through the GitHub App, granted only on our account.
