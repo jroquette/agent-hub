@@ -1988,6 +1988,38 @@ class TestShipProcesses:
             if child_kind(call.argv) in {"push", "gh"}
         )
 
+    def test_hides_tokens_from_hub_checkout_read_when_run_from_hub_worktree(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        both_ahead(make_task_worktree)
+        workspace = ship_workspace.workspace
+        hub = workspace.hub
+        # The hub as a repo, run from a worktree of it: git finds the main checkout first.
+        workspace.git(hub, "init", "-q")
+        workspace.git(hub, "add", "-A")
+        workspace.git(hub, "commit", "-q", "-m", "hub")
+        linked = hub.parent.parent / "hub-linked"
+        workspace.git(hub, "worktree", "add", "-q", str(linked))
+        monkeypatch.setenv("AGENT_HUB_ROOT", str(linked))
+        monkeypatch.setenv("GH_TOKEN", synthetic_token())
+        monkeypatch.setenv("GITHUB_TOKEN", synthetic_token())
+        child_calls.clear()
+
+        result = run_command(linked, "ship", ISSUE, "--dry-run")
+
+        assert result.exit_code == 0, result.output
+        checkout = [call for call in child_calls.calls if "--git-common-dir" in call.argv]
+        assert [call.cwd for call in checkout] == [linked]
+        hidden = {KEY_VARIABLE, "GH_TOKEN", "GITHUB_TOKEN"}
+        assert [call.argv for call in child_calls.calls if hidden & call.env.keys()] == []
+
     def test_never_shows_secret_values_when_shipped(
         self,
         ship_workspace: Workspace,
@@ -2089,8 +2121,6 @@ class TestShipDryRun:
         result = ship_live(ship_workspace, run_command, child_calls, "--dry-run")
 
         assert result.exit_code == 0, result.output
-        api_body = body_file(ship_workspace, "demo-api")
-        web_body = body_file(ship_workspace, "demo-web")
         api_title, web_title = "feat(api): add x (DEM-7)", "feat(web): add y (DEM-7)"
         assert result.stdout.splitlines() == [
             "ship: demo-api  jdoe/dem-7-x",
@@ -2099,12 +2129,10 @@ class TestShipDryRun:
             f"would run: {shown_command(push_command('jdoe/dem-7-x'))}   (cwd {api})",
             f"would run: {shown_command(create_call(API_GITHUB, 'jdoe/dem-7-x', api_title))}"
             f"   (cwd {api})",
-            f"would run: gh pr edit '{DRY_API_PR}' --body-file {api_body}   (cwd {api})",
             f"would run: bash -c 'make check'   (cwd {web})",
             f"would run: {shown_command(push_command('jdoe/dem-7'))}   (cwd {web})",
             f"would run: {shown_command(create_call('acme/demo-web', 'jdoe/dem-7', web_title))}"
             f"   (cwd {web})",
-            f"would run: gh pr edit '{DRY_WEB_PR}' --body-file {web_body}   (cwd {web})",
             f"would call: move_state({ISSUE}, In Review)",
             "would call: "
             + json.dumps(f"comment({ISSUE}, Pull requests:\n- {DRY_API_PR}\n- {DRY_WEB_PR})"),
@@ -2127,8 +2155,70 @@ class TestShipDryRun:
         creates = [line for line in result.stdout.splitlines() if " gh pr create " in line]
         draft = create_call(API_GITHUB, "jdoe/dem-7-x", "feat(api): add x (DEM-7)", draft=True)
         assert creates == [f"would run: {shown_command(draft)}   (cwd {api})"]
-        # One PR: nothing to link.
+        # A dry run never shows a link edit: the live one runs only when it changes a body.
         assert " gh pr edit " not in result.stdout
+
+    def test_prints_label_removal_when_dry_run_issue_carries_failed_label(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+        tracker_backend_for_ship: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The conftest's recording tracker, over a backend whose DEM-7 carries the label.
+        failed = type(tracker)(tracker_backend_for_ship(failed=True))
+        monkeypatch.setattr(ship_command, "resolve_tracker_client", Resolve(failed))
+        both_ahead(make_task_worktree)
+
+        result = ship_live(ship_workspace, run_command, child_calls, "--dry-run")
+
+        assert result.exit_code == 0, result.output
+        calls = [line for line in result.stdout.splitlines() if line.startswith("would call: ")]
+        assert calls == [
+            f"would call: move_state({ISSUE}, In Review)",
+            f"would call: remove_label({ISSUE}, agent-failed)",
+            "would call: "
+            + json.dumps(f"comment({ISSUE}, Pull requests:\n- {DRY_API_PR}\n- {DRY_WEB_PR})"),
+        ]
+        assert failed.calls == [("get_issue", ISSUE)]
+        assert "agent-failed" in failed.backend.issues[ISSUE].labels
+
+    def test_names_repo_when_dry_run_title_read_fails(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        api, web = both_ahead(make_task_worktree)
+        real = ship_steps.run_child
+
+        # demo-web's git log -1 fails as git does on a broken object; every other child runs.
+        def failing_log(argv: list[str], **options: Any) -> ChildResult:
+            if argv[1:2] == ["log"] and os.path.samefile(options["cwd"], web):
+                return ChildResult(128, b"", b"fatal: bad object HEAD\n")
+            return real(argv, **options)
+
+        monkeypatch.setattr(ship_steps, "run_child", failing_log)
+
+        result = ship_live(ship_workspace, run_command, child_calls, "--dry-run")
+
+        assert result.exit_code == 1, result.output
+        assert result.stderr.splitlines()[-1] == (
+            "hub ship: demo-web: git log failed: fatal: bad object HEAD"
+        )
+        shown = result.stdout.splitlines()
+        assert [line for line in shown if line.endswith(f"(cwd {web})")] == []
+        assert len([line for line in shown if line.endswith(f"(cwd {api})")]) == 3
+        assert [line for line in shown if line.startswith("would call: ")] == []
+        assert tracker.calls == [("get_issue", ISSUE)]
 
     def test_reads_issue_once_when_dry_run(
         self,
@@ -2181,7 +2271,9 @@ class TestShipDryRun:
         api, web = both_ahead(make_task_worktree)
         # Stale stat data: a read that may refresh the index (git status) would rewrite it.
         for worktree in (api, web):
-            for tracked in worktree.glob("*.md"):
+            tracked_files = list(worktree.glob("*.md"))
+            assert tracked_files != [], worktree
+            for tracked in tracked_files:
                 os.utime(tracked, (time.time() + 5, time.time() + 5))
         workspace = ship_workspace.workspace.hub.parent
         before = tree_digest(workspace)
