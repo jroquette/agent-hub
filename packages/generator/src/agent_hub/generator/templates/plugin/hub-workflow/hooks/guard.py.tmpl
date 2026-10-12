@@ -135,13 +135,18 @@ INFRA_ENV_ALIASES = (
     {"--stage", "-s"},
 )
 # E27: the environment selectors the guard knows. Each one in a part must lie inside an allow
-# match: a `NAME=` or `NAME+=` word anywhere in any part; a flag word, as `--x v` (with the next
-# word) or `--x=v`, in a part that names a covered tool (pulumi's -C only beside pulumi).
-INFRA_SELECTOR_ENV = re.compile(
+# match: a word anywhere in any part that holds a listed name as an identifier (E28: not only
+# `NAME=`, so `printf -v NAME`, `for NAME in`, `declare -n P=NAME`, `read NAME`, `export NAME` and
+# env's `--split-string=NAME=…` or `-SNAME=…`, a name glued to a one-dash option); a flag word, as
+# `--x v` (with the next word) or `--x=v`, in a part that names a covered tool (pulumi's -C only
+# beside pulumi).
+INFRA_SELECTOR_NAMES = (
     r"(?:AWS_PROFILE|AWS_DEFAULT_PROFILE|KUBECONFIG|KUBE_CONTEXT|HELM_KUBECONTEXT|TF_WORKSPACE|TF_DATA_DIR"
     r"|TF_CLI_ARGS(?:_[A-Za-z0-9_]+)?|PULUMI_BACKEND_URL|AWS_CONFIG_FILE|AWS_SHARED_CREDENTIALS_FILE"
-    r"|AWS_ROLE_ARN|CDK_DEFAULT_ACCOUNT)\+?="
+    r"|AWS_ROLE_ARN|CDK_DEFAULT_ACCOUNT)(?![A-Za-z0-9_])"
 )
+INFRA_SELECTOR_ENV = re.compile(r"(?<![A-Za-z0-9_])" + INFRA_SELECTOR_NAMES)
+INFRA_SELECTOR_GLUED = re.compile(r"-[A-Za-z0-9]+?" + INFRA_SELECTOR_NAMES)
 INFRA_SELECTOR_FLAG = re.compile(
     r"(?:--profile|--aws-profile|--context|--kube-context|--cluster|--server|--user|--kubeconfig"
     r"|--kube-apiserver|-?-chdir|--cwd|--stack|-s|--stage|--workspace|-?-var-file|-?-backend-config)(=|\Z)"
@@ -211,13 +216,16 @@ INFRA_ASK_VERBS = {
 }
 # E27: the commands that change a tool's own configuration (profiles, contexts, workspaces) ask
 # whatever their environment: a lead word anywhere after the tool's first mention in the part,
-# then one of its verbs anywhere after it.
+# then one of its verbs anywhere after it (E28: also kubectl's `config use|set|rename-context|
+# delete-context` and pulumi's `stack select`).
 INFRA_CONFIG_VERBS = {
     tool: (re.compile(INFRA_WORD.format(lead)), re.compile(INFRA_WORD.format(verbs)))
     for tool, lead, verbs in (
         ("aws", "configure", "set|import"),
-        ("kubectl", "config", "set-context|use-context|set-cluster|set-credentials"),
+        ("kubectl", "config", "set-context|use-context|set-cluster|set-credentials|use|set|rename-context"
+                              "|delete-context"),
         ("terraform", "workspace", "select|new"),
+        ("pulumi", "stack", "select"),
     )
 }
 BASH_WRITE = re.compile(r">>?|\btee\b|\bsed\s+(-\w*i\w*|--in-place)\b|\b(rm|mv|cp|truncate|ln)\b")
@@ -688,7 +696,7 @@ def _infra_selectors(cmd: str, allow: list[re.Pattern[str]]) -> str | None:
         words = [(word.start(), word.end()) for word in INFRA_BLANK_WORD.finditer(part)]
         selectors = []
         for index, (start, end) in enumerate(words):
-            if INFRA_SELECTOR_ENV.match(part, start, end):
+            if INFRA_SELECTOR_ENV.search(part, start, end) or INFRA_SELECTOR_GLUED.match(part, start, end):
                 selectors.append((start, end))
                 continue
             flag = None

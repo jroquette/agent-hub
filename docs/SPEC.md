@@ -240,17 +240,18 @@ The command is split into parts at `;`, `&&`, `||`, `|` and newlines, then:
    `--profile`, `--context`, `--kube-context`, `-chdir`, `--stack`, `--workspace`, `--stage` or `-var-file` flag, or
    one setting under two spellings: `AWS_PROFILE=`, `AWS_DEFAULT_PROFILE=` and `--profile`; `-s` with `--stack` or
    `--stage`), naming it. Then it asks when an environment selector lies outside every `allow` match on its part,
-   naming it as written: a `NAME=` or `NAME+=` word anywhere in any part for `AWS_PROFILE`, `AWS_DEFAULT_PROFILE`,
+   naming it as written: any word anywhere in any part that holds, as an identifier, one of `AWS_PROFILE`, `AWS_DEFAULT_PROFILE`,
    `KUBECONFIG`, `KUBE_CONTEXT`, `HELM_KUBECONTEXT`, `TF_WORKSPACE`, `TF_DATA_DIR`, `TF_CLI_ARGS` and
    `TF_CLI_ARGS_*`, `PULUMI_BACKEND_URL`, `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_ROLE_ARN`,
-   `CDK_DEFAULT_ACCOUNT`; and, in a part that names a covered tool, the flags `--profile`, `--aws-profile`,
+   `CDK_DEFAULT_ACCOUNT` (the whole word: `NAME=v`, `NAME+=v`, and also `export NAME`, `read NAME`, `printf -v NAME`,
+   `for NAME in`, `declare -n P=NAME`, `env --split-string=NAME=v` or `env -SNAME=v`); and, in a part that names a covered tool, the flags `--profile`, `--aws-profile`,
    `--context`, `--kube-context`, `--cluster`, `--server`, `--user`, `--kubeconfig`, `--kube-apiserver`,
    `-chdir`/`--chdir`, `--cwd`, `--stack`, `-s` (beside any covered tool: pulumi's stack, serverless's stage, kubectl's server), `--stage`,
    `--workspace`, `-var-file`/`--var-file`, `-backend-config`/`--backend-config` and, beside `pulumi`, `-C`, each as
    `--x v` (with the next word) or `--x=v`. So an `allow` pattern must match a whole setting (`--profile demo-dev`,
    `AWS_PROFILE=demo-dev`), not its value alone. Last, it asks on a command that changes a tool's own configuration:
-   `aws configure set|import`, `kubectl config set-context|use-context|set-cluster|set-credentials`,
-   `terraform workspace select|new`. An ask verb (5) keeps its reason and comes first; a deny stays a deny,
+   `aws configure set|import`, `kubectl config set-context|use-context|set-cluster|set-credentials|use|set|rename-context|delete-context`,
+   `terraform workspace select|new`, `pulumi stack select`. An ask verb (5) keeps its reason and comes first; a deny stays a deny,
    and a command that names no covered tool is not affected. An `allow` match that overlaps a quoted region (`'…'`,
    `"…"`, `$'…'`) is text, not evidence: it neither allows nor denies, and the quote makes the command ask.
 
