@@ -162,9 +162,9 @@ class TestUsage:
     def test_refuses_when_option_unknown(
         self, demo_workspace: Workspace, run_command: CommandRunner
     ) -> None:
-        result = run_command(demo_workspace.hub, "worktree", NAME, "--nope")
+        result = run_command(demo_workspace.hub, "worktree", NAME, "--zzz")
 
-        assert_refused(result, "No such option: --nope")
+        assert_refused(result, "No such option: --zzz")
         assert_untouched(demo_workspace)
 
     @pytest.mark.parametrize(
@@ -645,7 +645,13 @@ class TestRepoProblems:
         assert result.exit_code == 1
         assert result.stdout == ""
         assert result.stderr.startswith("hub worktree: demo-api: could not fetch origin: ")
-        assert result.stderr.endswith("; check the network and the remote\n")
+        # AGH-134: the hint names the sandbox and the bare fetch, then the --no-fetch retry.
+        assert result.stderr.endswith(
+            "; check the network and the remote. In a Claude Code sandbox git cannot reach an SSH"
+            f" remote: with {demo_workspace.ws / 'demo-api'} as the cwd, run"
+            ' "git fetch origin trunk" as a Bash call of its own (no cd &&, git -C, pipe or'
+            f" redirect), then ./hub worktree --no-fetch {NAME}\n"
+        )
         assert len(result.stderr.splitlines()) == 1
         assert not (demo_workspace.ws / "demo-api" / ".claude").exists()
 
@@ -1400,3 +1406,63 @@ class TestScriptEnvironment:
         assert copied == "COMPOSE_PROJECT_NAME=demo-api-dem-7-x\n"
         assert removed.exit_code == 0, removed.output
         assert not worktree.exists()
+
+
+class TestNoFetch:
+    """AGH-134: ``--no-fetch``, the sandbox's escape hatch after a bare ``git fetch``."""
+
+    def test_lists_no_fetch_when_help_requested(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        result = run_command(demo_workspace.hub, "worktree", "--help", env={"COLUMNS": "120"})
+
+        assert result.exit_code == 0
+        assert "--no-fetch" in unstyle(result.stdout)
+
+    def test_refuses_no_fetch_when_removing(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        result = run_command(demo_workspace.hub, "worktree", "--remove", "--no-fetch", NAME)
+
+        assert_refused(result, "--no-fetch applies to creating worktrees, not to --remove")
+        assert_untouched(demo_workspace)
+
+    def test_creates_from_fetched_base_without_fetch_when_no_fetch(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        cloned = {
+            repo: demo_workspace.git(demo_workspace.ws / repo, "rev-parse", "origin/trunk")
+            for repo in REPOS
+        }
+
+        result = run_command(demo_workspace.hub, "worktree", "--no-fetch", NAME)
+
+        assert result.exit_code == 0, result.output
+        assert result.stderr == ""
+        assert result.stdout.splitlines()[:2] == [
+            f"created  {demo_workspace.worktree(repo, NAME)} ({BRANCH} from origin/trunk)"
+            for repo in REPOS
+        ]
+        for repo in REPOS:
+            checkout = demo_workspace.ws / repo
+            assert not (checkout / ".git" / "FETCH_HEAD").exists()
+            worktree = demo_workspace.worktree(repo, NAME)
+            assert demo_workspace.git(worktree, "rev-parse", "HEAD") == cloned[repo]
+            assert cloned[repo] != demo_workspace.origin_head(repo)
+
+    def test_refuses_repo_when_base_never_fetched(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        checkout = demo_workspace.ws / "demo-api"
+        demo_workspace.git(checkout, "update-ref", "-d", "refs/remotes/origin/trunk")
+
+        result = run_command(demo_workspace.hub, "worktree", "--no-fetch", NAME)
+
+        assert result.exit_code == 1
+        assert result.stdout == ""
+        assert result.stderr == (
+            f"hub worktree: demo-api: origin/trunk is not fetched: with {checkout} as the cwd,"
+            ' run "git fetch origin trunk" as a Bash call of its own, or drop --no-fetch\n'
+        )
+        assert not (checkout / ".claude").exists()
+        assert not (checkout / ".git" / "FETCH_HEAD").exists()
