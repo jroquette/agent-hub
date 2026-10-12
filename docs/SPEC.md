@@ -271,8 +271,8 @@ generated `.claude/settings.json` leaves out its `Bash(terraform *)` and `Bash(a
 those commands; every other deny, the hooks and the sandbox stay as they are, and without `guard.infra` the file is
 unchanged. `./hub sync` applies it after `guard.infra` is added or removed; a project that wants the blanket denies
 back lists them in `.claude/settings.project.json`. The sandbox still limits the network: a project adds its cloud API
-hosts to `sandbox.network.allowedDomains`, or the tools to `sandbox.excludedCommands`, in
-`.claude/settings.project.json`, then runs `./hub sync`. Accepted limits:
+hosts to `sandbox.network.allowedDomains` in `.claude/settings.project.json`, then runs `./hub sync`; listing the tools
+in `sandbox.excludedCommands` instead runs them outside the sandbox with the host's credentials and network. Accepted limits:
 tool names are matched case-sensitively (`AWS` is not seen); quoting or glob tricks inside a tool's word (`a""ws`,
 `a?s`, `aws*`) hide it (AGH-127); the fixed rule (without `guard.infra`) misses options before the verb
 (`terraform -chdir=x apply`) and a tool word with nothing after it (`xargs aws`), which only infra mode catches
