@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import pytest
 
 from agent_hub.core.events.event import Event
+from agent_hub.core.hubs.hub_registry import BrainListing
 from agent_hub.core.learnings.brain_change_requests import CommitAuthor
 from agent_hub.core.learnings.learning import Learning, LearningState
 from agent_hub.core.learnings.learning_ports import LearningHub
@@ -315,6 +316,35 @@ def test_defaults_target_when_frontmatter_has_none() -> None:
     detail = _reads(brain).get_learning("toolu_1")
 
     assert detail.suggested_target == "learnings/"
+    assert detail.target_choices == ("learnings/", "playbooks/")
+
+
+class _NoWalkReader(FakeHubFileReader):
+    """A reader whose full brain walk fails the test: a learning detail must not need it."""
+
+    def brain_tree(self, hub_path: str) -> BrainListing:
+        raise AssertionError(f"walked the whole brain of {hub_path}")
+
+
+def test_lists_top_folders_without_walking_brain_when_detail_read() -> None:
+    brain = {
+        NOTE: NOTE_TEXT.encode(),
+        "playbooks/deep/cloud.md": b"# Cloud\n",
+        "Decisions/index.md": b"# Decisions\n",
+        "AUTO/me.md": b"# Me\n",
+        "now.md": b"# Now\n",
+    }
+    store = InMemoryEventStore()
+    store.append([_proposal()])
+    reads = ReadLearnings(
+        FoldedEventReadModels(store, now=lambda: NOW),
+        _NoWalkReader({HUB_PATH: FakeHub(brain=brain)}),
+        hub_of=lambda project: _hub(),
+        availability=lambda hub_path: None,
+    )
+
+    detail = reads.get_learning("toolu_1")
+
     assert detail.target_choices == ("learnings/", "playbooks/")
 
 

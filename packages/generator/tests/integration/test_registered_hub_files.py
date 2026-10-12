@@ -120,3 +120,4 @@ def test_reads_brain_note_when_hub_registered(hub: Path) -> None:
     assert isinstance(personal, UnreadHubFile)
     assert personal.is_missing
     assert reader.brain_file_size(hub_path, "auto/me.md") is None
+    assert reader.brain_folders(hub_path) == ("features",)
