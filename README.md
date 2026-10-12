@@ -483,8 +483,8 @@ quantifiers like `(a+)+`. With `guard.infra`, the generated `.claude/settings.js
 and `aws *`, so the guard decides those commands (every other deny stays); run `./hub sync` after adding or removing
 `guard.infra`, and add `Bash(terraform *)` or `Bash(aws *)` to `permissions.deny` in `.claude/settings.project.json`
 to keep a blanket deny. The sandbox still limits the network: add your cloud API hosts to
-`sandbox.network.allowedDomains`, or the tools to `sandbox.excludedCommands`, in `.claude/settings.project.json`,
-then run `./hub sync`.
+`sandbox.network.allowedDomains` in `.claude/settings.project.json`, then run `./hub sync`. Listing the tools in
+`sandbox.excludedCommands` instead runs them outside the sandbox with the host's credentials and network.
 
 Everything else goes through Claude Code's normal permission rules.
 
