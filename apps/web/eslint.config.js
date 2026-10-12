@@ -29,6 +29,18 @@ export default tseslint.config(
   },
   reactHooks.configs.flat["recommended-latest"],
   {
+    // AGH-201 marks Session.agent, LiveTile.agent and Learning.target deprecated in the API (they
+    // stay served). The screens move to label, actors and note_path in their own changes, which
+    // then drop this allowance.
+    files: ["src/**/*.{ts,tsx}"],
+    rules: {
+      "@typescript-eslint/no-deprecated": [
+        "error",
+        { allow: [{ from: "file", name: ["agent", "target"], path: "src/api/schema.d.ts" }] },
+      ],
+    },
+  },
+  {
     // Fixtures come from src/testing/builders.ts, never from JSON files (AC-200.64).
     files: ["src/**/*.test.{ts,tsx}", "e2e/**/*.ts"],
     rules: {
