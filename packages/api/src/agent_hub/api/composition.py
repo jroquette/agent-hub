@@ -8,13 +8,12 @@ the streams wait on, and the learning reads and decisions, which open hub pull r
 config reader of one hub folder, so the branch prefix and author match ``hub doctor``.
 """
 
-import inspect
 import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final
+from typing import Final
 
 from fastapi import FastAPI
 
@@ -278,11 +277,13 @@ def _event_read_models(
     hub_paths: _HubPaths,
     label_rules_of: Callable[[str], LabelRules | None],
 ) -> FoldedEventReadModels:
-    options: dict[str, Any] = {"now": settings.clock, "hub_path_of": hub_paths, "prices": PRICES}
-    # The label rules arrive with AGH-201's read-model wiring; until then they are not passed.
-    if "label_rules_of" in inspect.signature(FoldedEventReadModels).parameters:
-        options["label_rules_of"] = label_rules_of
-    return FoldedEventReadModels(store, **options)
+    return FoldedEventReadModels(
+        store,
+        now=settings.clock,
+        hub_path_of=hub_paths,
+        prices=PRICES,
+        label_rules_of=label_rules_of,
+    )
 
 
 def build_app(
