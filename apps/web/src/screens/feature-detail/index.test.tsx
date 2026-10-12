@@ -4,10 +4,28 @@ import { describe, expect, it, vi } from "vitest";
 
 import { GlobalStreamProvider } from "../../shell/GlobalStream";
 import { seriousViolations } from "../../testing/axe";
-import { aFeatureDetail, aProblem, renderWithApi, type ApiRoutes } from "../../testing/builders";
+import {
+  aBrainNote,
+  aFeatureDetail,
+  aFeatureRecord,
+  aProblem,
+  renderWithApi,
+  type ApiRoutes,
+} from "../../testing/builders";
 import { FeatureDetailScreen } from "./index";
 
 const API = "/api/v1/features/agent-hub/layered-memory";
+const NOTE = "/api/v1/projects/agent-hub/brain/note";
+
+/** Answers each record with a note naming its path and linking the brain index. */
+function records(request: Request) {
+  const path = new URL(request.url).searchParams.get("path") ?? "";
+  return aBrainNote({
+    path,
+    frontmatter: { status: "approved" },
+    markdown: `# Record ${path}\n\n## Open questions\n\nSee [the index](../../index.md).\n`,
+  });
+}
 const route = "features/:project/:slug";
 
 const rows = Array.from({ length: 12 }, (_, i) => ({
@@ -38,6 +56,13 @@ const detail = aFeatureDetail({
   issues: ["AGH-48", "AGH-49"],
   acs: { owner_steps: 1, passing: 10, total: 13 },
   ac_rows: rows,
+  records: (["spec", "research", "plan", "eval", "issues"] as const).map((name) =>
+    aFeatureRecord({
+      name,
+      path: `features/layered-memory/${name}.md`,
+      present: name !== "research",
+    }),
+  ),
 });
 
 function open(
@@ -52,7 +77,7 @@ function open(
   ) : (
     <FeatureDetailScreen />
   );
-  return renderWithApi(ui, { routes: { [API]: detail, ...extra }, path, route });
+  return renderWithApi(ui, { routes: { [API]: detail, [NOTE]: records, ...extra }, path, route });
 }
 
 describe("FeatureDetailScreen", () => {
@@ -152,15 +177,149 @@ describe("FeatureDetailScreen", () => {
     expect(copied).not.toContain("manual");
   });
 
-  it("shows the verdict line on the Evaluation tab and a missing document as missing", async () => {
-    open();
+  describe("records", () => {
+    it("has the Spec, Research, Plan, Eval and Criteria tabs (records)", async () => {
+      open();
 
-    await userEvent.click(await screen.findByRole("tab", { name: "Evaluation" }));
-    expect(screen.getByText("Verdict: **SHIP-WITH-OWNER-STEPS**")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("tab", { name: "Research" }));
-    expect(screen.getByText("No research.md for this feature.")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("tab", { name: "Spec" }));
-    expect(screen.getByText("brain/features/layered-memory/spec.md")).toBeInTheDocument();
+      const tabs = within(await screen.findByRole("tablist", { name: "Feature record" }));
+      expect(tabs.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+        "Spec",
+        "Research",
+        "Plan",
+        "Eval",
+        "Criteria13",
+        "Issues2",
+      ]);
+      expect(tabs.getByRole("tab", { name: /Criteria/ })).toHaveAttribute("aria-selected", "true");
+    });
+
+    it("reads the plan from the brain and renders it (records)", async () => {
+      const { requests } = open();
+
+      await userEvent.click(await screen.findByRole("tab", { name: "Plan" }));
+
+      expect(
+        await screen.findByRole("heading", {
+          level: 1,
+          name: "Record features/layered-memory/plan.md",
+        }),
+      ).toBeInTheDocument();
+      const asked = requests.find((r) => new URL(r.url).pathname === NOTE);
+      expect(new URL(asked?.url ?? "").searchParams.get("path")).toBe(
+        "features/layered-memory/plan.md",
+      );
+      expect(screen.getByRole("list", { name: "Frontmatter" })).toHaveTextContent(
+        "status: approved",
+      );
+      expect(screen.getByRole("link", { name: "Open in Brain" })).toHaveAttribute(
+        "href",
+        "/projects/agent-hub/brain/features/layered-memory/plan.md",
+      );
+    });
+
+    it("says No plan.md yet when the plan record is absent (records)", async () => {
+      open({
+        [API]: aFeatureDetail({
+          slug: "layered-memory",
+          records: [aFeatureRecord({ name: "plan", present: false })],
+        }),
+      });
+
+      await userEvent.click(await screen.findByRole("tab", { name: "Plan" }));
+
+      expect(screen.getByText("No plan.md yet.")).toBeInTheDocument();
+    });
+
+    it("says a missing research record is missing without asking the API (records)", async () => {
+      const { requests } = open();
+
+      await userEvent.click(await screen.findByRole("tab", { name: "Research" }));
+
+      expect(screen.getByText("No research.md yet.")).toBeInTheDocument();
+      expect(requests.some((r) => new URL(r.url).pathname === NOTE)).toBe(false);
+    });
+
+    it("opens a brain link of a record inside the app (records)", async () => {
+      const { router } = open({}, "/features/agent-hub/layered-memory?doc=spec");
+
+      await userEvent.click(await screen.findByRole("link", { name: "the index" }));
+
+      expect(router.state.location.pathname).toBe("/projects/agent-hub/brain/index.md");
+    });
+
+    it("shows the verdict above the eval record on the Eval tab (records)", async () => {
+      open();
+
+      await userEvent.click(await screen.findByRole("tab", { name: "Eval" }));
+
+      expect(screen.getByText("Verdict: **SHIP-WITH-OWNER-STEPS**")).toBeInTheDocument();
+      expect(
+        await screen.findByRole("heading", {
+          level: 1,
+          name: "Record features/layered-memory/eval.md",
+        }),
+      ).toBeInTheDocument();
+    });
+
+    it("expands an AC into its verification command and evidence (records)", async () => {
+      const write = vi.fn(() => Promise.resolve());
+      Object.defineProperty(navigator, "clipboard", {
+        value: { writeText: write },
+        configurable: true,
+      });
+      open();
+
+      const table = await screen.findByRole("table", { name: "Acceptance criteria" });
+      await userEvent.click(within(table).getByRole("button", { name: "Expand AC-48.2" }));
+
+      const details = within(table).getByText("Verification").closest("dl");
+      expect(details).toHaveTextContent("uv run pytest -k case_2");
+      expect(details).toHaveTextContent("Evidencetest run 2");
+      await userEvent.click(
+        within(table).getByRole("button", { name: "Copy the verification of AC-48.2" }),
+      );
+      expect(write).toHaveBeenCalledWith("uv run pytest -k case_2");
+    });
+
+    it("marks a manual AC's verification as an owner step (records)", async () => {
+      open();
+
+      const details = (await screen.findByText("Verification")).closest("dl");
+      expect(details).toHaveTextContent("Manual owner step.");
+      expect(details).toHaveTextContent("eval.md §Owner steps");
+    });
+
+    it("says when an AC has no evidence or verification yet (records)", async () => {
+      open({
+        [API]: aFeatureDetail({
+          slug: "layered-memory",
+          acs: { owner_steps: 0, passing: 0, total: 1 },
+          ac_rows: [
+            {
+              id: "AC-48.1",
+              description: "Plain",
+              repo: null,
+              passes: false,
+              manual: false,
+              evidence: null,
+              command: null,
+            },
+          ],
+        }),
+      });
+
+      await userEvent.click(await screen.findByRole("button", { name: "Expand AC-48.1" }));
+
+      expect(screen.getByText("No verification recorded.")).toBeInTheDocument();
+      expect(screen.getByText("No evidence recorded yet.")).toBeInTheDocument();
+    });
+
+    it("has no serious a11y violations on a record tab (a11y)", async () => {
+      const { container } = open({}, "/features/agent-hub/layered-memory?doc=plan");
+      await screen.findByRole("heading", { level: 2, name: "Open questions" });
+
+      expect(await seriousViolations(container)).toEqual([]);
+    });
   });
 
   it("lists the issues on the Issues tab", async () => {
