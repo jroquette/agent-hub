@@ -7,7 +7,6 @@ from typing import Annotated
 from fastapi import APIRouter, Path, Query
 
 from agent_hub.api.dependencies import EventReadModelsDep, parse_filter
-from agent_hub.api.rfc9457 import NotImplementedInBuildError
 from agent_hub.api.schemas import (
     DEFAULT_LIMIT,
     MAX_QUERY_TEXT,
@@ -132,5 +131,4 @@ def get_session_cost(session_id: SessionPath, models: EventReadModelsDep) -> Ses
 @router.get("/sessions/{session_id}/problems")
 def get_session_problems(session_id: SessionPath, models: EventReadModelsDep) -> SessionProblems:
     """The session's problems: 1 to 5 "what went wrong" lines, then each problem by time."""
-    del session_id, models
-    raise NotImplementedInBuildError("get_session_problems")
+    return models.session_problems(session_id)

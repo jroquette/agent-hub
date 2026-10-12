@@ -1,6 +1,14 @@
 from typing import Any
 
+import pytest
+
+from agent_hub.core.learnings.brain_change_requests import (
+    ChangeRequestConflictError,
+    ChangeRequestFailedError,
+    ChangeRequestTimeoutError,
+)
 from agent_hub.core.learnings.learning import LearningStatus
+from agent_hub.core.learnings.learning_ports import HubReadOnlyError, LearningConflictError
 from agent_hub.core.readmodels.filters import LearningFilter
 from agent_hub.core.testing.read_model_builders import a_learning, a_learning_detail
 
@@ -91,3 +99,78 @@ def test_rejects_body_when_reason_empty(wired: Any) -> None:
 
 def test_answers_not_found_when_learning_unknown(wired: Any) -> None:
     assert wired.client.get("/api/v1/learnings/nope").status_code == 404
+
+
+def test_rejects_body_when_target_too_long(wired: Any) -> None:
+    wired.wire(learning_decisions=wired.decisions)
+
+    response = wired.client.post(
+        "/api/v1/learnings/learning-1/accept", json={"target": "a" * 201}, headers=OWN_ORIGIN
+    )
+
+    assert response.status_code == 422
+    assert response.json()["errors"][0]["pointer"] == "/target"
+    assert wired.decisions.calls == []
+
+
+def test_rejects_body_when_reason_too_long(wired: Any) -> None:
+    wired.wire(learning_decisions=wired.decisions)
+
+    response = wired.client.post(
+        "/api/v1/learnings/learning-1/reject", json={"reason": "x" * 301}, headers=OWN_ORIGIN
+    )
+
+    assert response.status_code == 422
+    assert response.json()["errors"][0]["pointer"] == "/reason"
+
+
+def test_answers_conflict_with_pull_request_when_learning_already_decided(wired: Any) -> None:
+    wired.decisions.failure = LearningConflictError(
+        "Learning already accepted, PR open", pr_url="https://github.com/acme/demo-hub/pull/7"
+    )
+    wired.wire(learning_decisions=wired.decisions)
+
+    response = wired.client.post(
+        "/api/v1/learnings/learning-1/accept", json={"target": "learnings/"}, headers=OWN_ORIGIN
+    )
+
+    assert response.status_code == 409
+    assert response.json()["reason"] == "Learning already accepted, PR open"
+    assert response.json()["pr_url"] == "https://github.com/acme/demo-hub/pull/7"
+
+
+def test_answers_conflict_when_hub_read_only(wired: Any) -> None:
+    wired.decisions.failure = HubReadOnlyError("Hub is read-only here")
+    wired.wire(learning_decisions=wired.decisions)
+
+    response = wired.client.post(
+        "/api/v1/learnings/learning-1/reject", json={"reason": "Duplicate"}, headers=OWN_ORIGIN
+    )
+
+    assert response.status_code == 409
+    assert (response.json()["code"], response.json()["reason"]) == (
+        "hub_read_only",
+        "Hub is read-only here",
+    )
+
+
+@pytest.mark.parametrize(
+    ("error", "status"),
+    [
+        (ChangeRequestConflictError("Destination exists: brain/learnings/x.md"), 409),
+        (ChangeRequestFailedError(step="push"), 502),
+        (ChangeRequestTimeoutError(), 504),
+    ],
+)
+def test_maps_change_request_error_when_pull_request_not_opened(
+    wired: Any, error: Exception, status: int
+) -> None:
+    wired.decisions.failure = error
+    wired.wire(learning_decisions=wired.decisions)
+
+    response = wired.client.post(
+        "/api/v1/learnings/learning-1/accept", json={"target": "learnings/"}, headers=OWN_ORIGIN
+    )
+
+    assert response.status_code == status
+    assert response.headers["content-type"] == "application/problem+json"

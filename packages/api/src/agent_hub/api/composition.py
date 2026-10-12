@@ -2,13 +2,19 @@
 
 The event store at ``settings.db_path`` (opened and upgraded here), the hook mapper and live
 transcript tail of the collector, the hub registry at ``settings.registry_path`` and the hubs'
-files read as ``hub doctor`` reads them, the read models folded on request, and the change feed
-the streams wait on. Git stays with the caller (the CLI): ``read_git`` makes the git config
-reader of one hub folder, so the branch prefix the doctor reports matches ``hub doctor``.
+files read as ``hub doctor`` reads them, the read models folded on request, the change feed
+the streams wait on, and the learning reads and decisions, which open hub pull requests through
+``hub_git`` (ADR 0024). Git config stays with the caller (the CLI): ``read_git`` makes the git
+config reader of one hub folder, so the branch prefix and author match ``hub doctor``.
 """
 
-from collections.abc import Mapping
+import inspect
+import threading
+import time
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Final
 
 from fastapi import FastAPI
 
@@ -27,18 +33,45 @@ from agent_hub.api.settings import ApiSettings
 from agent_hub.api.static_files import WEB_DIST
 from agent_hub.collector.claude_hooks import ClaudeHookMapper
 from agent_hub.collector.transcript_tail import TranscriptTail
+from agent_hub.core.hub_config.effective_identity import (
+    GitReader,
+    IdentityKey,
+    IdentityValues,
+    resolve_identity,
+)
+from agent_hub.core.hub_config.local_config import LocalConfig
+from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hubs.hub_document import read_hub_document
 from agent_hub.core.hubs.hub_read_models import HubFilesReadModels
-from agent_hub.core.hubs.hub_registry import HubConflictError, HubInvalidError, HubRegistryError
+from agent_hub.core.hubs.hub_registry import (
+    HubConflictError,
+    HubFileReader,
+    HubInvalidError,
+    HubRegistry,
+    HubRegistryError,
+)
+from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.ingestion.ingest_hook import IngestHook
 from agent_hub.core.ingestion.ingestion_status import IngestionCounters
+from agent_hub.core.learnings.brain_change_requests import BrainChangeRequests, CommitAuthor
+from agent_hub.core.learnings.decide_learning import DecideLearning
+from agent_hub.core.learnings.learning_ports import LearningHub
+from agent_hub.core.learnings.read_learnings import (
+    HUB_NOT_REGISTERED,
+    ReadLearnings,
+    UnavailableHub,
+)
 from agent_hub.core.readmodels.cursor import InvalidCursorError
 from agent_hub.core.readmodels.event_read_models import FoldedEventReadModels
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError, HubReadModels
 from agent_hub.core.readmodels.settings_view import SettingsView
 from agent_hub.core.redaction.redact import KINDS as REDACTION_KINDS
 from agent_hub.core.sessions.pricing import PRICES, PRICES_AS_OF
+from agent_hub.core.sessions.session_label import LabelRules
 from agent_hub.generator.registered_hub_files import GitReaderFactory, HubFileSystem
-from agent_hub.storage.event_store import DatabaseBusyError, open_event_store
+from agent_hub.hub_git.brain_change_requests import GitBrainChangeRequests
+from agent_hub.hub_git.git_runner import GitRunner
+from agent_hub.storage.event_store import DatabaseBusyError, SqliteEventStore, open_event_store
 from agent_hub.storage.hub_registry import JsonHubRegistry
 
 # The errors of the wired adapters, each answered by its problem (API.md "Error mapping").
@@ -49,6 +82,16 @@ COMPOSED_PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     HubConflictError: hub_conflict_problem,
     HubRegistryError: hub_registry_problem,
 }
+
+
+# How long a hub's facts (hub.json, hub.local.json, git config) and a hub's action availability
+# (up to three child processes) are reused before they are read again.
+HUB_FACTS_SECONDS: Final = 5.0
+AVAILABILITY_SECONDS: Final = 10.0
+NO_AUTHOR: Final = "No commit author for this hub (set author_name and author_email)"
+HUB_CONFIG_INVALID: Final = "Hub config is invalid"
+HUB_LOCAL_INVALID: Final = "hub.local.json is invalid"
+_IDENTITY_KEYS: Final = tuple(IdentityKey)
 
 
 def default_projects_root() -> Path:
@@ -74,27 +117,207 @@ class _HubPaths:
             return None
 
 
+def _no_git(_keys: frozenset[str]) -> Mapping[str, str]:
+    return {}
+
+
+def _files_only(_hub_path: str) -> GitReader:
+    return _no_git
+
+
+@dataclass(frozen=True, slots=True)
+class _HubFacts:
+    """What the learning actions and the session labels need of one project's hub."""
+
+    hub: LearningHub | UnavailableHub
+    label_rules: LabelRules | None
+
+
+_UNREGISTERED: Final = _HubFacts(hub=UnavailableHub(reason=HUB_NOT_REGISTERED), label_rules=None)
+
+
+class RegisteredHubFacts:
+    """Each project's hub as the registry and its files name it, reread every ``ttl`` seconds.
+
+    ``hub_of`` is the hub a learning decision acts on (``hub.json`` with ``hub.local.json``,
+    else git config, for the author and branch prefix: ADR 0016), or why it cannot act;
+    ``label_rules_of`` the tracker teams and branch prefix a session's issue is read with. When
+    two hubs name a project, the first valid one registered wins, as in the hub read models.
+    """
+
+    def __init__(
+        self,
+        *,
+        registry: HubRegistry,
+        reader: HubFileReader,
+        running_version: str,
+        read_git: Callable[[str], GitReader] = _files_only,
+        ttl: float = HUB_FACTS_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._registry = registry
+        self._reader = reader
+        self._running = running_version
+        self._read_git = read_git
+        self._ttl = ttl
+        self._clock = clock
+        self._guard = threading.Lock()
+        self._read_at: float | None = None
+        self._facts: Mapping[str, _HubFacts] = {}
+
+    def hub_of(self, project: str) -> LearningHub | UnavailableHub:
+        """The project's hub for a learning decision, or why there is none."""
+        return self._current().get(project, _UNREGISTERED).hub
+
+    def label_rules_of(self, project: str) -> LabelRules | None:
+        """The project's tracker teams and branch prefix; None when no valid hub names it."""
+        return self._current().get(project, _UNREGISTERED).label_rules
+
+    def _current(self) -> Mapping[str, _HubFacts]:
+        with self._guard:
+            now = self._clock()
+            if self._read_at is None or now - self._read_at >= self._ttl:
+                self._facts = self._read()
+                self._read_at = now
+            return self._facts
+
+    def _read(self) -> dict[str, _HubFacts]:
+        try:
+            entries = self._registry.entries()
+        except HubRegistryError:
+            return {}
+        valid: dict[str, _HubFacts] = {}
+        invalid: dict[str, _HubFacts] = {}
+        for entry in entries:
+            document = read_hub_document(
+                self._reader.read_hub_json(entry.path), running_version=self._running
+            )
+            config = document.config
+            if config is None:
+                if document.project is not None and document.project not in invalid:
+                    hub = UnavailableHub(reason=HUB_CONFIG_INVALID, path=entry.path)
+                    invalid[document.project] = _HubFacts(hub=hub, label_rules=None)
+            elif config.project.name not in valid:
+                valid[config.project.name] = self._facts_of(entry.path, config)
+        return invalid | valid
+
+    def _facts_of(self, hub_path: str, config: HubConfig) -> _HubFacts:
+        local = self._reader.read_local(hub_path)
+        if not isinstance(local, LocalConfig):
+            rules = LabelRules(
+                teams=config.tracker.team_keys, branch_prefix=config.project.branch_prefix or ""
+            )
+            return _HubFacts(
+                hub=UnavailableHub(reason=HUB_LOCAL_INVALID, path=hub_path), label_rules=rules
+            )
+        values = resolve_identity(
+            local=IdentityValues.of(local.project),
+            hub=IdentityValues.of(config.project),
+            keys=_IDENTITY_KEYS,
+            read_git=self._read_git(hub_path),
+        ).values
+        prefix = values[IdentityKey.BRANCH_PREFIX]
+        branch_prefix = "" if prefix is None else prefix.value
+        rules = LabelRules(teams=config.tracker.team_keys, branch_prefix=branch_prefix)
+        name, email = values[IdentityKey.AUTHOR_NAME], values[IdentityKey.AUTHOR_EMAIL]
+        if name is None or email is None:
+            return _HubFacts(hub=UnavailableHub(reason=NO_AUTHOR, path=hub_path), label_rules=rules)
+        hub = LearningHub(
+            project=config.project.name,
+            path=hub_path,
+            hub_repo=config.project.hub_repo,
+            default_branch=config.project.default_branch,
+            branch_prefix=branch_prefix,
+            author=CommitAuthor(name=name.value, email=email.value),
+        )
+        return _HubFacts(hub=hub, label_rules=rules)
+
+
+class CachedAvailability:
+    """``BrainChangeRequests.availability`` per hub, reused for ``ttl`` seconds.
+
+    A check spawns up to three processes; a learnings list asks it once per project. The
+    decision itself checks again, uncached, before it acts.
+    """
+
+    def __init__(
+        self,
+        check: Callable[[str], str | None],
+        *,
+        ttl: float = AVAILABILITY_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._check = check
+        self._ttl = ttl
+        self._clock = clock
+        self._guard = threading.Lock()
+        self._seen: dict[str, tuple[float, str | None]] = {}
+
+    def __call__(self, hub_path: str) -> str | None:
+        now = self._clock()
+        with self._guard:
+            seen = self._seen.get(hub_path)
+        if seen is not None and now - seen[0] < self._ttl:
+            return seen[1]
+        reason = self._check(hub_path)
+        with self._guard:
+            self._seen[hub_path] = (now, reason)
+        return reason
+
+
+def default_brain_changes() -> BrainChangeRequests:
+    """The ``hub_git`` adapter with this process's environment (``AGENT_HUB_IN_CONTAINER=1``
+    makes every hub read-only)."""
+    return GitBrainChangeRequests(GitRunner())
+
+
+def _event_read_models(
+    store: SqliteEventStore,
+    settings: ApiSettings,
+    *,
+    hub_paths: _HubPaths,
+    label_rules_of: Callable[[str], LabelRules | None],
+) -> FoldedEventReadModels:
+    options: dict[str, Any] = {"now": settings.clock, "hub_path_of": hub_paths, "prices": PRICES}
+    # The label rules arrive with AGH-201's read-model wiring; until then they are not passed.
+    if "label_rules_of" in inspect.signature(FoldedEventReadModels).parameters:
+        options["label_rules_of"] = label_rules_of
+    return FoldedEventReadModels(store, **options)
+
+
 def build_app(
     settings: ApiSettings,
     *,
     projects_root: Path | None = None,
     read_git: GitReaderFactory | None = None,
     web_dist: Path = WEB_DIST,
+    brain_changes: BrainChangeRequests | None = None,
 ) -> FastAPI:
-    """The app of ``hub web``: every Phase 2 route wired to the real adapters.
+    """The app of ``hub web``: every route wired to the real adapters.
 
     ``projects_root`` is Claude Code's transcripts folder (default ``~/.claude/projects``):
-    the live tail reads only under it. ``DatabaseAccessError`` when the store cannot be opened.
+    the live tail reads only under it. ``brain_changes`` opens the learning decisions' hub pull
+    requests (default: ``git`` and ``gh`` through ``hub_git``). ``DatabaseAccessError`` when the
+    store cannot be opened.
     """
     store = open_event_store(settings.db_path)
     counters = IngestionCounters(clock=settings.clock)
     tail = TranscriptTail(projects_root or default_projects_root())
     ingest = IngestHook(store, ClaudeHookMapper(), tail, status=counters)
     hub_paths = _HubPaths()
-    events = FoldedEventReadModels(store, now=settings.clock, hub_path_of=hub_paths, prices=PRICES)
     reader = HubFileSystem() if read_git is None else HubFileSystem(read_git=read_git)
+    registry = JsonHubRegistry(settings.registry_path)
+    facts = RegisteredHubFacts(
+        registry=registry,
+        reader=reader,
+        running_version=settings.running_version,
+        read_git=_files_only if read_git is None else read_git,
+    )
+    events = _event_read_models(
+        store, settings, hub_paths=hub_paths, label_rules_of=facts.label_rules_of
+    )
     hubs = HubFilesReadModels(
-        registry=JsonHubRegistry(settings.registry_path),
+        registry=registry,
         reader=reader,
         activity=events,
         running_version=settings.running_version,
@@ -109,6 +332,10 @@ def build_app(
         clock=settings.clock,
     )
     hub_paths.hubs = hubs
+    changes = default_brain_changes() if brain_changes is None else brain_changes
+    learning_reads = ReadLearnings(
+        events, reader, hub_of=facts.hub_of, availability=CachedAvailability(changes.availability)
+    )
     ports = ApiPorts(
         event_read_models=events,
         hub_read_models=hubs,
@@ -116,5 +343,13 @@ def build_app(
         event_reader=store,
         change_feed=ChangeFeed(store, timer=SystemTimer(settings.clock)),
         counters=counters,
+        learning_reads=learning_reads,
+        learning_decisions=DecideLearning(
+            learning_reads,
+            IngestEvents(store),
+            changes,
+            hub_of=facts.hub_of,
+            today=settings.clock,
+        ),
     )
     return create_app(settings, ports=ports, problems=COMPOSED_PROBLEMS, web_dist=web_dist)
