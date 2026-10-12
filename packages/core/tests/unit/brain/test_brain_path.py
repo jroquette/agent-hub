@@ -39,6 +39,12 @@ def test_refuses_path_when_path_traversal_attempted(path: str) -> None:
     assert raised.value.reason
 
 
+@pytest.mark.parametrize("path", ["AUTO/x.md", "Auto/x.md", "aUtO/workspace/x.md"])
+def test_refuses_path_when_personal_folder_differs_in_case(path: str) -> None:
+    with pytest.raises(BrainPathError, match="personal memory"):
+        brain_relative(path)
+
+
 def test_refuses_path_when_path_longer_than_cap() -> None:
     with pytest.raises(BrainPathError, match="long"):
         brain_relative("a/" * (MAX_PATH_CHARS // 2) + "x.md")
@@ -69,6 +75,7 @@ def test_returns_brain_path_when_note_in_inbox() -> None:
     [
         "brain/learnings/x.md",
         "brain/_inbox/_archive/x.md",
+        "brain/_inbox/_Archive/x.md",
         "_inbox/x.md",
         "brain/_inbox/../hub.md",
         "agent-hub/AGENTS.md",
@@ -110,6 +117,28 @@ def test_names_destination_when_folder_allowed(target: str, expected: str) -> No
 def test_refuses_destination_when_folder_is_decisions_or_inbox(target: str) -> None:
     with pytest.raises(BrainPathError):
         accept_destination(target, PurePosixPath("_inbox/testing-x.md"))
+
+
+@pytest.mark.parametrize(
+    ("target", "folder"),
+    [
+        pytest.param("Decisions/", "Decisions", id="decisions"),
+        pytest.param("DECISIONS/x.md", "DECISIONS", id="decisions_note"),
+        pytest.param("_Inbox/", "_Inbox", id="inbox"),
+    ],
+)
+def test_refuses_destination_when_reserved_folder_differs_in_case(
+    target: str, folder: str
+) -> None:
+    with pytest.raises(BrainPathError) as refused:
+        accept_destination(target, PurePosixPath("_inbox/testing-x.md"))
+
+    assert refused.value.reason == f"A learning cannot be accepted into {folder}/"
+
+
+def test_refuses_destination_when_personal_folder_differs_in_case() -> None:
+    with pytest.raises(BrainPathError, match="personal memory"):
+        accept_destination("Auto/workspace/", PurePosixPath("_inbox/testing-x.md"))
 
 
 def test_names_archive_when_note_rejected() -> None:

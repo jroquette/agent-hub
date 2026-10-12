@@ -19,12 +19,12 @@ from agent_hub.core.brain.brain_path import (
     DEFAULT_ACCEPT_FOLDER,
     MAX_NOTE_BYTES,
     NOTE_SUFFIX,
-    REFUSED_DESTINATIONS,
     BrainPathError,
     accept_destination,
     archive_destination,
     brain_relative,
     inbox_note,
+    is_refused_destination,
 )
 from agent_hub.core.brain.frontmatter import Frontmatter, first_paragraph, split_frontmatter
 from agent_hub.core.hubs.hub_registry import HubFileReader, UnreadHubFile
@@ -270,6 +270,6 @@ class ReadLearnings:
         if hub_path is not None:
             for entry in self._files.brain_tree(hub_path).entries:
                 parts = PurePosixPath(entry.path).parts
-                if len(parts) > 1 and parts[0] not in REFUSED_DESTINATIONS:
+                if len(parts) > 1 and not is_refused_destination(parts[0]):
                     folders.add(f"{parts[0]}/")
         return tuple(sorted(folders))

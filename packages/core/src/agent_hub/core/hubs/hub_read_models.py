@@ -22,9 +22,9 @@ from agent_hub.core.brain.brain_note import (
 from agent_hub.core.brain.brain_path import (
     MAX_NOTE_BYTES,
     NOTE_SUFFIX,
-    PERSONAL_FOLDER,
     BrainPathError,
     brain_relative,
+    is_personal_folder,
 )
 from agent_hub.core.brain.frontmatter import split_frontmatter
 from agent_hub.core.doctor.finding import Finding
@@ -242,7 +242,7 @@ class HubFilesReadModels:
         try:
             relative = str(brain_relative(path))
         except BrainPathError:
-            if path.split("/", 1)[0] == PERSONAL_FOLDER:
+            if is_personal_folder(path.split("/", 1)[0]):
                 raise missing from None
             raise
         found = self._project(project)
@@ -345,7 +345,7 @@ def _listable(entry: BrainEntry) -> bool:
     segments = entry.path.split("/")
     return (
         entry.path.endswith(NOTE_SUFFIX)
-        and segments[0] != PERSONAL_FOLDER
+        and not is_personal_folder(segments[0])
         and not any(segment.startswith(".") or not segment for segment in segments)
     )
 
