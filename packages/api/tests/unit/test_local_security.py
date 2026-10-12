@@ -9,6 +9,8 @@ from agent_hub.api.local_security import (
     CONTENT_SECURITY_POLICY,
     allowed_hosts,
     allowed_origins,
+    is_json_media_type,
+    is_strict_write,
     parse_allowed_hosts,
 )
 from agent_hub.api.settings import ApiSettings
@@ -111,3 +113,48 @@ def test_serves_request_when_host_added_by_settings(tmp_path: Path, web_dist: Pa
     assert served.status_code == 200
     assert written.status_code != 403
     assert foreign.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "path", ["/api/v1/learnings/learning-1/accept", "/api/v1/learnings/a.b-c/reject"]
+)
+def test_marks_strict_write_when_post_to_learning_action(path: str) -> None:
+    assert is_strict_write("POST", path)
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/api/v1/learnings/learning-1/accept"),
+        ("POST", "/api/v1/hubs"),
+        ("POST", "/api/v1/events/hooks"),
+        ("DELETE", "/api/v1/hubs/hub-1"),
+        ("POST", "/api/v1/learnings/learning-1/archive"),
+        ("POST", "/api/v1/learnings/a/b/accept"),
+        ("POST", "/api/v1/learnings//accept"),
+        ("POST", "/api/v1/learnings/learning-1/accept/extra"),
+    ],
+)
+def test_keeps_default_checks_when_not_learning_action(method: str, path: str) -> None:
+    assert not is_strict_write(method, path)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "application/json",
+        "APPLICATION/JSON",
+        "application/json; charset=utf-8",
+        " application/json ;q",
+    ],
+)
+def test_reads_json_when_media_type_is_application_json(value: str) -> None:
+    assert is_json_media_type(value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, "", "text/plain", "application/jsonx", "application/merge-patch+json", "text/json"],
+)
+def test_refuses_json_when_media_type_is_other(value: str | None) -> None:
+    assert not is_json_media_type(value)

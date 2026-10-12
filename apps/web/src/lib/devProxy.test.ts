@@ -1,8 +1,23 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-import { API_TARGET, DEV_SERVER, apiProxy } from "./devProxy";
+import { API_TARGET, DEV_ORIGINS, DEV_SERVER, apiProxy } from "./devProxy";
 
 type Configure = NonNullable<ReturnType<typeof apiProxy>["/api"]["configure"]>;
+
+function proxied(origin: string | undefined, target?: string) {
+  const emitter = new EventEmitter();
+  const headers = new Map<string, string>(origin === undefined ? [] : [["origin", origin]]);
+  const request = {
+    getHeader: vi.fn((name: string) => headers.get(name)),
+    setHeader: vi.fn((name: string, value: string) => headers.set(name, value)),
+    removeHeader: vi.fn((name: string) => headers.delete(name)),
+  };
+  const { configure } = apiProxy(target)["/api"];
+  if (configure === undefined) throw new Error("the proxy has no configure hook");
+  configure(emitter as unknown as Parameters<Configure>[0], {});
+  emitter.emit("proxyReq", request);
+  return headers;
+}
 
 describe("apiProxy", () => {
   it("sends /api to hub web on 127.0.0.1:7420 with its own Host", () => {
@@ -14,16 +29,29 @@ describe("apiProxy", () => {
     expect(proxy["/api"].changeOrigin).toBe(true);
   });
 
-  it("drops the browser's Origin from every proxied request", () => {
-    const emitter = new EventEmitter();
-    const removeHeader = vi.fn();
-    const { configure } = apiProxy()["/api"];
-    if (configure === undefined) throw new Error("the proxy has no configure hook");
+  it.each(DEV_ORIGINS)("rewrites the dev server's own origin %s to the API's", (origin) => {
+    expect(proxied(origin).get("origin")).toBe(API_TARGET);
+  });
 
-    configure(emitter as unknown as Parameters<Configure>[0], {});
-    emitter.emit("proxyReq", { removeHeader });
+  it("rewrites the dev server's origin to the target it is given", () => {
+    expect(proxied("http://127.0.0.1:5173", "http://127.0.0.1:8001").get("origin")).toBe(
+      "http://127.0.0.1:8001",
+    );
+  });
 
-    expect(removeHeader).toHaveBeenCalledWith("origin");
+  it.each(["http://attacker.example", "null", "http://127.0.0.1:5174", "https://127.0.0.1:5173"])(
+    "drops a foreign origin %s, so the API refuses the learning actions",
+    (origin) => {
+      expect(proxied(origin).has("origin")).toBe(false);
+    },
+  );
+
+  it("adds no origin when the browser sent none", () => {
+    expect(proxied(undefined).has("origin")).toBe(false);
+  });
+
+  it("lists the dev server's loopback origins only", () => {
+    expect(DEV_ORIGINS).toEqual(["http://127.0.0.1:5173", "http://localhost:5173"]);
   });
 
   it("serves the dev app on loopback only, on a fixed port", () => {

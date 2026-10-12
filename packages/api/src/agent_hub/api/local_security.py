@@ -2,7 +2,8 @@
 
 The server binds 127.0.0.1 only, but a page on any site can still make the browser send it a
 request. So: the ``Host`` must name the loopback at this port (DNS rebinding), a ``POST`` or
-``DELETE`` carrying an ``Origin`` must come from this origin (cross-site writes), bodies stop at
+``DELETE`` carrying an ``Origin`` must come from this origin (cross-site writes), the learning
+actions also need that ``Origin``, a same-origin fetch and a JSON body (S7), bodies stop at
 1 MiB, API answers are never cached, a CSP keeps the app to its own origin, and no CORS header
 is ever sent.
 
@@ -23,6 +24,12 @@ from agent_hub.core.ingestion.hook_envelope import MAX_BODY_BYTES
 
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+# The writes that open a hub pull request (S7): besides the checks above, they need this
+# server's own ``Origin``, a same-origin fetch (when the browser says) and a JSON body, which a
+# cross-site form cannot send without a preflight that is never granted. Other writes keep the
+# checks above only (E9).
+STRICT_WRITES = re.compile(rf"^{re.escape(API_PREFIX)}/learnings/[^/]+/(accept|reject)$")
+JSON_MEDIA_TYPE = "application/json"
 CONTENT_SECURITY_POLICY = "; ".join(
     (
         "default-src 'self'",
@@ -96,6 +103,30 @@ def _host_and_port(entry: str, *, default_port: int) -> str:
     return f"{host}:{port}"
 
 
+def is_strict_write(method: str, path: str) -> bool:
+    """Whether a request is one of the writes that take the strict checks (``STRICT_WRITES``)."""
+    return method in STATE_CHANGING_METHODS and STRICT_WRITES.fullmatch(path) is not None
+
+
+def is_json_media_type(content_type: str | None) -> bool:
+    """Whether a ``Content-Type`` names ``application/json``, parameters (a charset) aside."""
+    if content_type is None:
+        return False
+    return content_type.split(";", 1)[0].strip().lower() == JSON_MEDIA_TYPE
+
+
+def _strict_refusal(headers: Headers) -> tuple[int, str, str] | None:
+    # The Host was checked first, so the server's own origin is the one the request names.
+    if headers.get("origin") != f"http://{headers.get('host')}":
+        return 403, "Forbidden origin", "This change is accepted only from this server's pages."
+    site = headers.get("sec-fetch-site")
+    if site is not None and site != "same-origin":
+        return 403, "Forbidden fetch site", "This change is accepted only from this server's pages."
+    if not is_json_media_type(headers.get("content-type")):
+        return 415, "Unsupported media type", f"The body must be {JSON_MEDIA_TYPE}."
+    return None
+
+
 class LocalSecurityMiddleware:
     """Refuses foreign hosts, cross-origin writes and large bodies; adds the security headers."""
 
@@ -135,6 +166,10 @@ class LocalSecurityMiddleware:
             and origin not in self._origins
         ):
             return 403, "Forbidden origin", "Changes are accepted only from this server's pages."
+        if is_strict_write(scope["method"], scope["path"]):
+            strict = _strict_refusal(headers)
+            if strict is not None:
+                return strict
         length = headers.get("content-length")
         if length is not None and (not length.isdigit() or int(length) > self._max_body_bytes):
             return 413, "Request body too large", self._too_large_detail()

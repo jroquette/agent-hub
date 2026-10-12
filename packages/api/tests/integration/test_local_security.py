@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 import pytest
@@ -112,3 +113,167 @@ def test_sends_no_cors_headers_when_preflight_requested(wired: Any) -> None:
     )
 
     assert not [name for name in response.headers if name.lower().startswith("access-control")]
+
+
+# The two learning actions open a hub PR, so they take stricter checks than the other writes
+# (S7, E9): the server's own Origin, no cross-site fetch and a JSON body.
+OWN_ORIGIN = "http://127.0.0.1:7420"
+type Action = tuple[str, dict[str, str]]
+LEARNING_ACTIONS: list[Action] = [
+    ("/api/v1/learnings/learning-1/accept", {"target": "learnings/"}),
+    ("/api/v1/learnings/learning-1/reject", {"reason": "Already in the brain"}),
+]
+# The policy as v0.9.0 serves it; control-plane clarity adds routes, never a source.
+V0_9_0_CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; "
+    "img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; "
+    "form-action 'self'; frame-ancestors 'none'"
+)
+
+
+def _post_action(wired: Any, action: Action, **headers: str) -> Any:
+    wired.wire(learning_decisions=wired.decisions)
+    sent = {"Origin": OWN_ORIGIN, "Content-Type": "application/json", **headers}
+    path, body = action
+    return wired.client.post(path, content=json.dumps(body), headers=sent)
+
+
+@pytest.mark.parametrize("action", LEARNING_ACTIONS)
+def test_accepts_learning_actions_when_origin_own_and_body_json(wired: Any, action: Action) -> None:
+    response = _post_action(wired, action, **{"Sec-Fetch-Site": "same-origin"})
+
+    assert response.status_code == 201
+    assert len(wired.decisions.calls) == 1
+
+
+@pytest.mark.parametrize("action", LEARNING_ACTIONS)
+def test_accepts_learning_actions_when_json_has_charset_and_no_fetch_metadata(
+    wired: Any, action: Action
+) -> None:
+    response = _post_action(wired, action, **{"Content-Type": "Application/JSON; charset=utf-8"})
+
+    assert response.status_code == 201
+
+
+@pytest.mark.parametrize("action", LEARNING_ACTIONS)
+def test_refuses_learning_actions_when_origin_missing(wired: Any, action: Action) -> None:
+    wired.wire(learning_decisions=wired.decisions)
+
+    path, body = action
+
+    response = wired.client.post(path, json=body)
+
+    assert response.status_code == 403
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json()["title"] == "Forbidden origin"
+    assert wired.decisions.calls == []
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://attacker.example",
+        "null",
+        "http://localhost:7420",  # another loopback name than the Host the request names
+        "https://127.0.0.1:7420",
+        "http://127.0.0.1:5173",
+    ],
+)
+@pytest.mark.parametrize("action", LEARNING_ACTIONS)
+def test_refuses_learning_actions_when_origin_foreign(
+    wired: Any, action: Action, origin: str
+) -> None:
+    response = _post_action(wired, action, Origin=origin)
+
+    assert response.status_code == 403
+    assert response.json()["title"] == "Forbidden origin"
+    assert wired.decisions.calls == []
+
+
+@pytest.mark.parametrize("site", ["cross-site", "same-site", "none"])
+@pytest.mark.parametrize("action", LEARNING_ACTIONS)
+def test_refuses_learning_actions_when_fetch_is_cross_site(
+    wired: Any, action: Action, site: str
+) -> None:
+    response = _post_action(wired, action, **{"Sec-Fetch-Site": site})
+
+    assert response.status_code == 403
+    assert response.json()["title"] == "Forbidden fetch site"
+    assert wired.decisions.calls == []
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    ["text/plain", "application/x-www-form-urlencoded", "multipart/form-data", None],
+)
+@pytest.mark.parametrize("action", LEARNING_ACTIONS)
+def test_refuses_learning_actions_when_content_type_is_text(
+    wired: Any, action: Action, content_type: str | None
+) -> None:
+    wired.wire(learning_decisions=wired.decisions)
+    headers = {"Origin": OWN_ORIGIN}
+    if content_type is not None:
+        headers["Content-Type"] = content_type
+
+    path, body = action
+
+    response = wired.client.post(path, content=json.dumps(body), headers=headers)
+
+    assert response.status_code == 415
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json()["title"] == "Unsupported media type"
+    assert wired.decisions.calls == []
+
+
+@pytest.mark.parametrize("action", LEARNING_ACTIONS)
+def test_refuses_learning_actions_when_host_foreign(wired: Any, action: Action) -> None:
+    response = _post_action(
+        wired, action, Host="attacker.example", Origin="http://attacker.example"
+    )
+
+    assert response.status_code == 403
+    assert response.json()["title"] == "Forbidden host"
+    assert wired.decisions.calls == []
+
+
+@pytest.mark.parametrize("action", LEARNING_ACTIONS)
+def test_refuses_learning_actions_when_body_over_cap(wired: Any, action: Action) -> None:
+    wired.wire(learning_decisions=wired.decisions)
+    oversized = b"{" + b" " * MAX_BODY_BYTES + b"}"
+
+    response = wired.client.post(
+        action[0],
+        content=oversized,
+        headers={"Origin": OWN_ORIGIN, "Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 413
+    assert wired.decisions.calls == []
+
+
+def test_keeps_existing_writes_when_origin_and_fetch_metadata_missing(wired: Any) -> None:
+    wired.hubs.hubs.append(a_hub_view())
+
+    response = wired.client.post(
+        "/api/v1/hubs", json=HUB_PATH, headers={"Sec-Fetch-Site": "cross-site"}
+    )
+
+    assert response.status_code == 201
+    assert wired.hubs.calls == [("register_hub", HUB_PATH["path"])]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/learnings",
+        "/api/v1/learnings/learning-1",
+        "/api/v1/sessions/session-1/problems",
+        "/api/v1/projects/demo/brain",
+        "/api/v1/projects/demo/brain/note?path=index.md",
+    ],
+)
+def test_keeps_csp_when_clarity_routes_served(wired: Any, path: str) -> None:
+    response = wired.client.get(path)
+
+    assert response.headers["content-security-policy"] == V0_9_0_CSP
+    assert response.headers["cache-control"] == "no-store"
