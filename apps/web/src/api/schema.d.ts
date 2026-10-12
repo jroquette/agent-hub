@@ -701,6 +701,25 @@ export interface components {
     };
     /** @enum {string} */
     ActivityKind: "reported" | "failed" | "learning" | "doctor" | "approval";
+    /**
+     * Actor
+     * @description Who acted in a session (S2): the main agent, or a subagent of a type.
+     *
+     *     A subagent carries its ``agent_id`` and, when its start is linked to the main agent's
+     *     Agent tool call, that call's ``description`` and ``started_by_event_id``.
+     */
+    Actor: {
+      /** Agent Id */
+      agent_id?: string | null;
+      /** Description */
+      description?: string | null;
+      kind: components["schemas"]["ActorKind"];
+      started_by_event_id?: components["schemas"]["EventId"] | null;
+      /** Type */
+      type?: string | null;
+    };
+    /** @enum {string} */
+    ActorKind: "main" | "subagent";
     /** Format: date-time */
     ApiTimestamp: string;
     /**
@@ -1125,9 +1144,20 @@ export interface components {
     /**
      * LiveTile
      * @description A session tile of the Live sessions screen.
+     *
+     *     ``agent`` is deprecated (``label`` and ``actors``); ``needs_you_problem`` is the owner-facing
+     *     line of the first problem that needs the owner ("Needs you: <kind> in <where>").
      */
     LiveTile: {
-      /** Agent */
+      /**
+       * Actors
+       * @default []
+       */
+      actors: components["schemas"]["Actor"][];
+      /**
+       * Agent
+       * @deprecated
+       */
       agent: string;
       /** Attempt */
       attempt?: number | null;
@@ -1157,12 +1187,24 @@ export interface components {
       is_subagent: boolean;
       /** Issue */
       issue?: string | null;
+      label?: components["schemas"]["SessionLabel"] | null;
       /** Last Action */
       last_action: string | null;
       last_activity_at: components["schemas"]["ApiTimestamp"];
       /** Last Tool */
       last_tool: string | null;
+      /** Needs You Problem */
+      needs_you_problem?: string | null;
       outcome?: components["schemas"]["Outcome"] | null;
+      /**
+       * @default {
+       *       "by_you": 0,
+       *       "handled": 0,
+       *       "needs_you": 0,
+       *       "open": 0
+       *     }
+       */
+      problems: components["schemas"]["ProblemCounts"];
       /** Project */
       project: string;
       /** Repo */
@@ -1363,6 +1405,33 @@ export interface components {
       next_cursor?: string | null;
       /** Total Estimate */
       total_estimate: number;
+    };
+    /**
+     * ProblemCounts
+     * @description A session's problems by owner-facing status (S4, E5); ``handled`` = recovered or
+     *     continued by the agent.
+     */
+    ProblemCounts: {
+      /**
+       * By You
+       * @default 0
+       */
+      by_you: number;
+      /**
+       * Handled
+       * @default 0
+       */
+      handled: number;
+      /**
+       * Needs You
+       * @default 0
+       */
+      needs_you: number;
+      /**
+       * Open
+       * @default 0
+       */
+      open: number;
     };
     /**
      * ProblemDetails
@@ -1620,9 +1689,19 @@ export interface components {
     /**
      * Session
      * @description A session folded from its events (status, counts, tokens, estimated cost).
+     *
+     *     ``agent`` is deprecated: ``actors`` and ``label`` say who acted and what the session is about.
      */
     Session: {
-      /** Agent */
+      /**
+       * Actors
+       * @default []
+       */
+      actors: components["schemas"]["Actor"][];
+      /**
+       * Agent
+       * @deprecated
+       */
       agent: string;
       /** Attempt */
       attempt?: number | null;
@@ -1656,6 +1735,7 @@ export interface components {
       id: string;
       /** Issue */
       issue?: string | null;
+      label?: components["schemas"]["SessionLabel"] | null;
       last_activity_at: components["schemas"]["ApiTimestamp"];
       /** Learnings Proposed */
       learnings_proposed: number;
@@ -1665,6 +1745,15 @@ export interface components {
       /** Parent Session Id */
       parent_session_id?: string | null;
       pr?: components["schemas"]["PullRequestRef"] | null;
+      /**
+       * @default {
+       *       "by_you": 0,
+       *       "handled": 0,
+       *       "needs_you": 0,
+       *       "open": 0
+       *     }
+       */
+      problems: components["schemas"]["ProblemCounts"];
       /** Project */
       project: string;
       /** Repo */
@@ -1736,6 +1825,34 @@ export interface components {
       removed: number;
       /** Repo */
       repo: string | null;
+    };
+    /**
+     * SessionLabel
+     * @description What a session is about, derived on read (S1): issue, workflow, repo and branch.
+     *
+     *     ``issue`` is ``<TEAM>-<n>`` found in ``branch`` or ``worktree`` with the hub's tracker teams,
+     *     else ``None``, never a guess. ``workflow`` is the session's main slash command or skill
+     *     (``/feature``); ``workflows`` lists every one in order. ``worktree`` is the folder name under
+     *     ``.claude/worktrees/`` in the session's ``cwd``.
+     */
+    SessionLabel: {
+      /** Branch */
+      branch: string | null;
+      /**
+       * Derived
+       * @default true
+       */
+      derived: boolean;
+      /** Issue */
+      issue: string | null;
+      /** Repo */
+      repo: string | null;
+      /** Workflow */
+      workflow: string | null;
+      /** Workflows */
+      workflows: string[];
+      /** Worktree */
+      worktree: string | null;
     };
     /**
      * SessionSegment
