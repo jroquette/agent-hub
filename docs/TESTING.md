@@ -27,7 +27,7 @@ Makefile uses.
 | unit | Core logic against in-memory fakes; one module at a time; no I/O, no network | `packages/<pkg>/tests/unit/`, root `tests/unit/` (repo scripts) | `make check-fast` |
 | contract | A port's behavior: one suite in `agent_hub.core.testing.contracts`, run against the fake (`agent_hub.core.testing.fakes`) and against the real adapter; no network | `packages/<pkg>/tests/contract/` | `make check-fast` |
 | integration | Adapters against real infrastructure: a SQLite file under `tmp_path`, Alembic upgrade and downgrade; the generator's rendered hooks, scripts and `./hub` shim run in a temporary hub, with the characterization goldens; the CLI commands against local bare repos | `packages/<pkg>/tests/integration/` | `make check` |
-| e2e | The installed product and the gates as subprocesses: `hub` installed with `uv tool install`, ruff and mypy run with the repo's configs, `make demo`'s seed against `hub web` | root `tests/e2e/` | `make check` |
+| e2e | The installed product and the gates as subprocesses: `hub` installed with `uv tool install`; `docs/USING.md`'s runbook run line by line; ruff and mypy run with the repo's configs; the import-linter contracts; the rendered hooks and scripts linted for Python 3.9; the package data the built wheels ship; `make demo`'s seed against `hub web` | root `tests/e2e/` | `make check` |
 | docker | The image and its Compose service, built and run, checked from the host (`tests/e2e/test_docker.py`, marker `docker`) | root `tests/e2e/` | `make test-docker` and its CI job, never `make check` |
 | live agent | A real `claude -p` session in a temp hub, seen through `hub web` (`tests/e2e/test_live_agent.py`, marker `live("claude")`) | root `tests/e2e/` | `make test-live`, by hand |
 | web | The React app: Vitest + Testing Library in jsdom for components and screens (states, a11y with `axe-core`), against `src/testing/builders.ts` fixtures and a mocked API (`renderWithApi`) | `apps/web/src/**/*.test.{ts,tsx}` beside the code | `make check-fast` (`web-fast`) |
@@ -56,9 +56,10 @@ case's temporary root and prints its path. The `hub init` golden,
 `packages/cli/tests/integration/golden/init/demo.hub.lock`, is the synthetic `demo` init's `hub.lock` with
 `platform_version` as `<VERSION>` and every hash kept, so a template change shows as a reviewed hash diff; it is `-text`
 too, and `GOLDEN_UPDATE=1` rewrites it the same way (the cli conftest's own harness, refused under `CI`).
-The text a two-team hub renders where it names the tracker teams, and the text a hub with conventions renders where
-it shows them, are checked in byte-exact under `packages/generator/tests/integration/rendered/two_teams/<path>.golden`
-and `rendered/conventions/<path>.golden` (`-text`) by `test_rendered_text.py`; `GOLDEN_UPDATE=1` rewrites them (refused
+The text a two-team hub renders where it names the tracker teams, the text a hub with conventions renders where
+it shows them, and the seeded starter `AGENTS.md` for app repos are checked in byte-exact under
+`packages/generator/tests/integration/rendered/two_teams/<path>.golden`, `rendered/conventions/<path>.golden` and
+`rendered/app_repo_agents/<path>.golden` (`-text`) by `test_rendered_text.py`; `GOLDEN_UPDATE=1` rewrites them (refused
 under `CI`).
 
 ## Layout
@@ -77,8 +78,8 @@ tests/e2e/
   `__init__.py`, so shared fixtures and helpers go in a `conftest.py` (for example `tests/e2e/conftest.py` provides the
   `repo_root` and `run` fixtures).
 - **Mirroring (unit tests).** A unit test file mirrors an existing src module:
-  `packages/core/src/agent_hub/core/ingestion/ingest_transcript.py` →
-  `packages/core/tests/unit/ingestion/test_ingest_transcript.py`. A package `foo/__init__.py` is mirrored by
+  `packages/core/src/agent_hub/core/ingestion/ingest_events.py` →
+  `packages/core/tests/unit/ingestion/test_ingest_events.py`. A package `foo/__init__.py` is mirrored by
   `test_foo.py`. Root unit tests mirror the repo root: `tests/unit/scripts/test_check_coverage.py` ↔
   `scripts/check_coverage.py`. Contract, integration and e2e tests are named after the behavior, not a module.
 

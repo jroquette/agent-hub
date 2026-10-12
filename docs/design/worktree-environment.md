@@ -5,19 +5,19 @@
 A task worktree of a repo that runs services (an API, a database, a web UI) collides with the main checkout and with
 other task worktrees on ports, compose projects and `.env` values. A repo can ship executable
 `scripts/worktree-setup.sh` and `scripts/worktree-teardown.sh` to give each worktree its own. This is the contract for
-how `hub worktree` and `hub run` run them and what they get, so a script needs no scheme of its own to tell which task
-it serves, where the main checkout and the hub are, and which ports to use. The commands themselves are in the
-[README](../../README.md) and [SPEC.md](../SPEC.md); the steps are `agent_hub.cli.worktree_steps`.
+how `hub worktree`, `hub run` and `hub start` run them and what they get, so a script needs no scheme of its own to tell
+which task it serves, where the main checkout and the hub are, and which ports to use. The commands themselves are in
+the [README](../../README.md) and [SPEC.md](../SPEC.md); the steps are `agent_hub.cli.worktree_steps`.
 
 ## Contract
 
 ### When the scripts run
 
-- **Setup** runs once, right after `git worktree add` creates the repo's worktree, in `hub worktree <name>` and in
-  `hub run` (which makes the worktree of its issue). It never runs on a worktree that already exists: a rerun prints
-  `exists` and leaves it alone.
+- **Setup** runs once, right after `git worktree add` creates the repo's worktree, in `hub worktree <name>`, in
+  `hub run` (which makes the worktree of its issue) and in `hub start` (each touched repo's missing worktree). It never
+  runs on a worktree that already exists: a rerun prints `exists` and leaves it alone.
 - **Teardown** runs in `hub worktree --remove <name>` only, before `git worktree remove`, and only on a clean worktree:
-  one with modified or untracked files is refused before the teardown runs. `hub run` never removes a worktree.
+  one with modified or untracked files is refused before the teardown runs. `hub run` and `hub start` never remove one.
 - A script runs only when it is an executable regular file in the new worktree (the repo's committed copy); otherwise
   it is skipped without a word. Its argv is `[<worktree>]` (`$1`), its cwd is the worktree, it has no timeout and runs
   in the caller's process group (Ctrl-C reaches it). Each line it prints on stdout is shown as `  <repo>: <line>`;
@@ -33,7 +33,7 @@ six variables set last, so a caller's value of any of them is overridden:
 
 | Variable | Value | `dem-7-x`, repo `demo-api` |
 |---|---|---|
-| `HUB_WORKTREE_NAME` | the task's worktree name (`hub run`: its slug) | `dem-7-x` |
+| `HUB_WORKTREE_NAME` | the task's worktree name (`hub run`: its slug; `hub start`: `<issue lower>-<title slug>`, or the name it resumes) | `dem-7-x` |
 | `HUB_WORKTREE_BRANCH` | this repo's task branch (it can differ per repo through `conventions`) | `jdoe/dem-7-x` |
 | `HUB_REPO_DIR` | the repo's main checkout `<workspace>/<repo>`, not the worktree (that is `$1`) | `/ws/demo-api` |
 | `HUB_HUB_DIR` | the hub's main checkout, also when the command runs from a hub worktree | `/ws/hub` |
@@ -43,8 +43,9 @@ six variables set last, so a caller's value of any of them is overridden:
 - `HUB_REPO_DIR` and `HUB_HUB_DIR` are absolute and built on the hub's real path (its links resolved).
 - **Slot:** `int(sha256(name).hexdigest(), 16) % 50`, the SHA-256 of the name's UTF-8 bytes read as one big-endian
   integer, from the whole worktree name (`core.workspace.worktree_slot`). **Offset:** `slot * 100`.
-- In `hub worktree` every other variable is the developer's shell environment, tokens included. In `hub run` the
-  setup script gets no `LINEAR_API_KEY`, `GH_TOKEN` or `GITHUB_TOKEN` (SPEC, secret scope of `hub run`).
+- In `hub worktree` every other variable is the developer's shell environment, tokens included. In `hub start` the
+  setup script gets no `LINEAR_API_KEY`; the GitHub tokens are kept. In `hub run` it gets no `LINEAR_API_KEY`,
+  `GH_TOKEN` or `GITHUB_TOKEN` (SPEC, secret scope of `hub run`).
 
 ### Collisions and overrides
 
@@ -119,7 +120,8 @@ checkout `.env` and `docker`.
   is where the gitignored `.env` to copy lives.
 - **Set last** (D-override): a caller's `HUB_PORT_OFFSET` never wins. After a collision a person edits the worktree's
   `.env` (setup never reruns on an existing worktree); no script does.
-- **No new secret scope** (D-secrets): `hub run` keeps its untrusted environment; `hub worktree` keeps the developer's.
+- **No new secret scope** (D-secrets): `hub run` keeps its untrusted environment; `hub worktree` keeps the developer's;
+  `hub start` keeps the developer's minus the tracker key ([hub-start.md](hub-start.md)).
 - No ADR: no architecture change. The scope was already in [SPEC.md](../SPEC.md) (isolated worktrees with their own
   ports and `.env`; the secret scope of `hub run`).
 

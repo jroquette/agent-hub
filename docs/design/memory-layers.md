@@ -5,8 +5,9 @@
 A learning belongs to one of three layers: the team's brain (`brain/`), one developer's personal memory
 (`brain/auto/workspace/`) or a repo's own rules (`<repo>/AGENTS.md`). This is the contract for where a hub tells an
 agent to put each one, how `/learn personal` writes the personal layer and how that layer stays out of git.
-`hub agent` (`./agent`) sets Claude Code's `autoMemoryDirectory` to `<hub>/brain/auto/workspace` (`agent_launch.py`),
-so Claude Code's auto memory and `/learn personal` share that folder. Each checkout of a hub belongs to one developer.
+`hub agent` (`./agent`) and `hub start` set Claude Code's `autoMemoryDirectory` to `<hub>/brain/auto/workspace`
+(`agent_launch.py`), so Claude Code's auto memory and `/learn personal` share that folder. Each checkout of a hub
+belongs to one developer.
 
 ## Contract
 
