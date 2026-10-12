@@ -1,14 +1,26 @@
 import { fireEvent, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { aPage, aProjectSummary, aSession, anId, at, renderWithApi } from "../../testing/builders";
+import {
+  aPage,
+  aProjectSummary,
+  aSession,
+  aSessionLabel,
+  anId,
+  at,
+  renderWithApi,
+} from "../../testing/builders";
 import { SessionsListScreen } from "./index";
+
+function named(name: string) {
+  return aSessionLabel({ issue: null, workflow: `/${name}`, workflows: [`/${name}`] });
+}
 
 const routes = {
   "/api/v1/sessions": aPage([
     aSession({
       id: anId(1, "ffff0001"),
-      agent: "a,b",
+      label: named("a,b"),
       status: "ended",
       outcome: null,
       ended_at: at(60),
@@ -16,12 +28,12 @@ const routes = {
     }),
     aSession({
       id: anId(2, "ffff0002"),
-      agent: "waiter",
+      label: named("waiter"),
       status: "waiting",
       tokens: null,
       end_inferred: true,
     }),
-    aSession({ id: anId(3, "ffff0003"), agent: "idler", status: "idle" }),
+    aSession({ id: anId(3, "ffff0003"), label: named("idler"), status: "idle" }),
   ]),
   "/api/v1/projects": aPage([aProjectSummary(), aProjectSummary({ name: "loki-trader" })]),
 };
@@ -36,7 +48,7 @@ describe("SessionsListScreen controls", () => {
       .mockImplementation(() => undefined);
     renderWithApi(<SessionsListScreen />, { routes, path: "/sessions" });
 
-    await screen.findByText("waiter");
+    await screen.findByText("/waiter");
     fireEvent.click(screen.getByRole("button", { name: "Export CSV" }));
     expect(create).toHaveBeenCalledTimes(1);
     expect(click).toHaveBeenCalledTimes(1);
@@ -48,14 +60,14 @@ describe("SessionsListScreen controls", () => {
       routes,
       path: "/sessions?sort=cost",
     });
-    await screen.findByText("waiter");
+    await screen.findByText("/waiter");
 
     expect(
       screen.getByText("Use the project switcher in the top bar to scope this list."),
     ).toBeInTheDocument();
     for (const [name, value] of [
       ["Repo", "agent-hub"],
-      ["Agent", "main"],
+      ["Agent type", "Explore"],
       ["Touched file (path or glob)", "a.py"],
     ] as const) {
       const input = screen.getByRole("textbox", { name });
@@ -70,7 +82,7 @@ describe("SessionsListScreen controls", () => {
     const search = router.state.location.search;
     for (const part of [
       "repo=agent-hub",
-      "agent=main",
+      "agent=Explore",
       "file=a.py",
       "cost_min=2",
       "status=waiting",
@@ -91,7 +103,7 @@ describe("SessionsListScreen controls", () => {
       routes,
       path: "/sessions?outcome=error",
     });
-    await screen.findByText("waiter");
+    await screen.findByText("/waiter");
 
     fireEvent.click(screen.getByRole("button", { name: "Unsaved view" }));
     fireEvent.click(screen.getByRole("button", { name: /Guard denials/ }));

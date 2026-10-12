@@ -8,13 +8,13 @@ import {
   Button,
   EmptyState,
   Icon,
-  IssueLink,
   ProblemError,
   SegmentedControl,
   SessionTile,
   Skeleton,
   StatusBadge,
   Tooltip,
+  sessionIdentity,
   type IconName,
   type LiveSession,
   type Status,
@@ -32,7 +32,9 @@ import {
   groupCounts,
   groupTiles,
   isGrouping,
+  problemsLine,
   splitTiles,
+  troubled,
   type Grouping,
   type TileGroup,
 } from "./tiles";
@@ -86,7 +88,10 @@ function tileModel(tile: LiveTile, now: number, grouping: Grouping): LiveSession
     <>
       <div style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{action}</div>
       {tile.failing_notice && (
-        <div className="ah-row ah-small" style={{ gap: 4, color: "var(--failed)", marginTop: 2 }}>
+        <div
+          className="ah-row ah-small"
+          style={{ gap: 4, color: "var(--text-muted)", marginTop: 2 }}
+        >
           <Icon name="circle-x" size="sm" />
           {tile.failing_notice}
         </div>
@@ -105,16 +110,17 @@ function tileModel(tile: LiveTile, now: number, grouping: Grouping): LiveSession
       )}
     </>
   );
+  const identity = sessionIdentity(tile);
   return {
     id: tile.id,
     status: tile.status,
     outcome: tile.outcome ? OUTCOME[tile.outcome] : undefined,
     reason: tile.waiting_reason ? `Waiting · ${tile.waiting_reason}` : undefined,
-    agent: tile.agent,
+    title: identity.title,
+    detail: identity.detail,
     subagent: tile.is_subagent,
     project: tile.project,
     repo: `${tile.repo ?? "—"} · ${runLine}`,
-    issue: tile.issue,
     lastAction: action,
     lastActionNode: node,
     lastIcon: tile.last_tool ? (TOOL_ICON[tile.last_tool] ?? "terminal") : "activity",
@@ -125,9 +131,9 @@ function tileModel(tile: LiveTile, now: number, grouping: Grouping): LiveSession
     files: tile.files_touched,
     cost: toNumber(tile.cost_usd),
     budget: grouping === "run" ? null : toNumber(tile.budget_usd),
-    errors: tile.errors,
+    problems: problemsLine(tile),
+    needsYou: troubled(tile),
     denials: tile.guard_denials,
-    failingGate: Boolean(tile.failing_notice),
     activity: tile.status === "idle" ? undefined : tile.sparkline_60s,
   };
 }
@@ -196,13 +202,14 @@ function EndedRow({ tile, now }: { tile: LiveTile; now: number }) {
     void navigate(`/sessions/${encodeURIComponent(tile.id)}`);
   };
   const endedAgo = tile.ended_at ? fmtAgo((now - Date.parse(tile.ended_at)) / 1000) : "";
+  const { title, detail } = sessionIdentity(tile);
   return (
     <div
       className="ah-tile"
       data-status="ended"
       role="link"
       tabIndex={0}
-      aria-label={`${tile.agent} in ${tile.project}, ended ${endedAgo}`}
+      aria-label={`${title} in ${tile.project}, ended ${endedAgo}`}
       onClick={open}
       onKeyDown={(event) => {
         if (event.key === "Enter") open();
@@ -215,12 +222,16 @@ function EndedRow({ tile, now }: { tile: LiveTile; now: number }) {
         flexWrap: "wrap",
       }}
     >
-      <Icon name="network" size="sm" style={{ color: "var(--text-subtle)" }} />
+      <Icon
+        name={tile.is_subagent ? "network" : "square-terminal"}
+        size="sm"
+        style={{ color: "var(--text-subtle)" }}
+      />
       <span className="ah-mono" style={{ fontSize: 13 }}>
-        {tile.agent}
+        {title}
       </span>
+      {detail && <span className="ah-mono ah-small ah-subtle">{detail}</span>}
       <span className="ah-small ah-muted">{tile.project}</span>
-      {tile.issue && <IssueLink id={tile.issue} />}
       <StatusBadge
         status={outcome}
         label={tile.outcome ? `Ended · ${tile.outcome}` : "Ended · no end event"}
@@ -270,7 +281,9 @@ function GroupSection({
       {grouping !== "flat" && (
         <div className="ah-caption ah-muted" style={{ margin: "0 0 8px" }}>
           {group.label} ·{" "}
-          {grouping === "agent" || group.key === "" ? group.tiles.length : groupCounts(group.tiles)}
+          {grouping === "workflow" || group.key === ""
+            ? group.tiles.length
+            : groupCounts(group.tiles)}
         </div>
       )}
       <div style={GRID}>
@@ -312,12 +325,10 @@ function useDigest(tiles: LiveTile[]): string {
     const newEnded = ended.filter((tile) => !before.ended.has(tile.id));
     const parts = [
       ...newWaiting.map(
-        (tile) =>
-          `1 session waiting for approval: ${tile.agent}${tile.issue ? `, ${tile.issue}` : ""}.`,
+        (tile) => `1 session waiting for approval: ${sessionIdentity(tile).title}.`,
       ),
       ...newEnded.map(
-        (tile) =>
-          `Session ended: ${tile.agent}${tile.issue ? `, ${tile.issue}` : ""}, ${tile.outcome ?? "ended"}.`,
+        (tile) => `Session ended: ${sessionIdentity(tile).title}, ${tile.outcome ?? "ended"}.`,
       ),
     ];
     if (parts.length > 0) {
