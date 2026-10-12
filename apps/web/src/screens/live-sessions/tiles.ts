@@ -35,7 +35,7 @@ export function problemsLine(tile: LiveTile): string | null {
   const parts = [
     handled > 0 ? `${count(handled, "problem", "problems")}, handled by the agent` : "",
     open > 0 ? `${count(open, "problem", "problems")}, agent is on it` : "",
-    by_you > 0 ? `${String(by_you)} interrupted by you` : "",
+    by_you > 0 ? `${String(by_you)} handled by you` : "",
   ].filter(Boolean);
   return parts.length > 0 ? parts.join(" · ") : null;
 }

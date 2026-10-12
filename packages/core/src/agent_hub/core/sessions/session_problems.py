@@ -8,8 +8,11 @@ its fact key), resolved in canonical order (timestamp, then ``(source, source_id
 * an interruption is ``by_you``, a declined guard ask ``by_you``, an open one ``needs_you``;
 * a later ``ok`` result of the same actor for the same tool and ``where`` (or a later pass of the
   same gate) is ``recovered``; a later tool call of the same actor is ``agent_continued``;
-* otherwise the problem is ``open`` while the session is live and ``needs_you`` once it waits,
-  idles or ends.
+* a subagent's problem is also ``agent_continued`` once any actor makes a later call (the main
+  agent carries on after the subagent's report);
+* otherwise the problem is ``open`` while the session is live and the main agent has not ended
+  its turn since (a later main-agent reply with no later call), and ``needs_you`` once it ended
+  its turn, waits, idles or ends.
 
 ``where`` is derived on read from the paired ``tool.call`` (L1), never stored.
 """
@@ -42,6 +45,7 @@ BASH_TOOL: Final = "Bash"
 GUARD_HOOK: Final = "guard"
 _INTERRUPTED: Final = ("interrupted", "[request interrupted")
 _GATE_PASSED: Final = frozenset({"passed", "approved"})
+_MAIN: Final = "main"
 _HANDLED: Final = frozenset({Resolution.RECOVERED, Resolution.AGENT_CONTINUED})
 
 type ActorKey = tuple[str, str | None]
@@ -156,6 +160,7 @@ class _Session:
         self.ok_results: dict[tuple[str, str | None, str | None], list[_Later]] = {}
         self.tool_calls: dict[str, list[_Later]] = {}
         self.replies: dict[str, list[_Later]] = {}
+        self.all_calls: list[_Later] = []
         self.gate_passes: dict[tuple[object, ...], list[_Later]] = {}
         for position, stored in enumerate(self.winners):
             self._index(position, stored)
@@ -168,6 +173,7 @@ class _Session:
             self.ok_results.setdefault(key, []).append((position, agent_id, stored))
         elif event.type == EventType.TOOL_CALL:
             self.tool_calls.setdefault(kind, []).append((position, agent_id, stored))
+            self.all_calls.append((position, agent_id, stored))
         elif event.type == EventType.MESSAGE and event.payload.get("role") == "assistant":
             self.replies.setdefault(kind, []).append((position, agent_id, stored))
         elif event.type == EventType.GATE_RESULT and event.payload.get("result") in _GATE_PASSED:
@@ -270,7 +276,10 @@ def _recovery(session: _Session, found: _Found) -> StoredEvent | None:
 
 
 def _continuation(session: _Session, found: _Found) -> StoredEvent | None:
-    return _first_after(session.tool_calls.get(found.actor[0], []), found)
+    own = _first_after(session.tool_calls.get(found.actor[0], []), found)
+    if own is not None or found.actor[0] == _MAIN:
+        return own
+    return _first_after(session.all_calls, found, any_actor=True)
 
 
 def _resolve(session: _Session, found: _Found) -> tuple[Resolution, str | None]:
@@ -287,8 +296,9 @@ def _resolve(session: _Session, found: _Found) -> tuple[Resolution, str | None]:
     continuation = _continuation(session, found)
     if continuation is not None:
         return Resolution.AGENT_CONTINUED, continuation.event_id
-    # A reply with no later call means the actor ended its turn with the problem unsolved.
-    ended_turn = _first_after(session.replies.get(found.actor[0], []), found) is not None
+    # A main-agent reply with no later call means its turn ended with the problem unsolved (a
+    # subagent's final report is not the end of the session's turn).
+    ended_turn = _first_after(session.replies.get(_MAIN, []), found, any_actor=True) is not None
     if session.status == SessionStatus.LIVE and not ended_turn:
         return Resolution.OPEN, None
     return Resolution.NEEDS_YOU, None

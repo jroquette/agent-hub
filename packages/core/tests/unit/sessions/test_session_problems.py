@@ -493,3 +493,36 @@ def test_writes_no_summary_when_session_has_no_problem() -> None:
 
     assert (problems.summary, problems.items) == ((), ())
     assert problem_counts(problems.items) == ProblemCounts()
+
+
+def _failing_subagent() -> list[Event]:
+    failing = a_subagent_events(
+        "agent-a",
+        start=_at(1),
+        tools=(("Bash", {"command": "make test"}),),
+        failed_tools=frozenset({0}),
+    )
+    report = an_event(
+        type="message",
+        timestamp=_at(4),
+        source_id="session-1:subagent-report",
+        agent="Explore",
+        payload={"role": "assistant", "chars": 300, "agent_id": "agent-a"},
+    )
+    return [*failing, report]
+
+
+def test_marks_agent_continued_when_main_agent_acts_after_subagent_failure() -> None:
+    stored = as_stored([_start(), *_failing_subagent(), _call(5, "t1", "Read", path="src/app.py")])
+
+    [problem] = fold_problems(stored, status=SessionStatus.LIVE).items
+
+    assert problem.resolution == Resolution.AGENT_CONTINUED
+
+
+def test_keeps_open_when_subagent_reports_after_failure_and_main_not_acted() -> None:
+    stored = as_stored([_start(), *_failing_subagent()])
+
+    [problem] = fold_problems(stored, status=SessionStatus.LIVE).items
+
+    assert problem.resolution == Resolution.OPEN
