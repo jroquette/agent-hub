@@ -494,6 +494,15 @@ INFRA_REPEATED_REASON = (
     "`{}` is set twice in one call: guard.infra checks the value it sees, the tool may use "
     "another; confirm first"
 )
+INFRA_SELECTOR_REASON = (
+    "`{}` selects an environment outside every guard.infra.allow match (hub.json): each "
+    "profile, context, kubeconfig, cluster, stack, stage, workspace, chdir or var-file setting "
+    "must lie in one; confirm first"
+)
+INFRA_CONFIG_VERB_REASON = (
+    "`{} {}` changes the tool's own configuration (profiles, contexts, workspaces), which later "
+    "commands use out of guard.infra's sight; confirm first"
+)
 LEGACY_INFRA_REASON = "infrastructure commands (terraform/aws/pulumi/kubectl) are human-only"
 
 
@@ -527,6 +536,14 @@ def runs(word: str) -> tuple[str, str]:
 
 def repeated(name: str) -> tuple[str, str]:
     return ("ask", INFRA_REPEATED_REASON.format(name))
+
+
+def selector(text: str) -> tuple[str, str]:
+    return ("ask", INFRA_SELECTOR_REASON.format(text))
+
+
+def config_verb(tool: str, verb: str) -> tuple[str, str]:
+    return ("ask", INFRA_CONFIG_VERB_REASON.format(tool, verb))
 
 
 def infra_document(infra: object) -> dict[str, Any]:
@@ -1389,7 +1406,8 @@ def test_asks_when_environment_only_quoted(infra_evaluate: Evaluate) -> None:
 
 
 # E22: with an allow pattern that matches the value alone, a quoted value (`--profile "demo-dev"`)
-# asks, not denies (E23: the reason names the quote, escaped).
+# asks, not denies (E23: the reason names the quote, escaped). E27: such a pattern does not hold
+# the `--profile` flag, so the unquoted command asks too, naming the selector.
 def test_asks_when_allowed_value_quoted(evaluate: Evaluate, workspace: Path) -> None:
     write_hub(workspace, {"allow": [r"\bdemo-dev\S*"]})
     long_value = "demo-dev" + "x" * 200
@@ -1397,7 +1415,7 @@ def test_asks_when_allowed_value_quoted(evaluate: Evaluate, workspace: Path) -> 
         'aws s3 ls --profile "demo-dev"': unsafe('\\"'),
         "aws s3 ls --profile 'demo-dev'": unsafe("'"),
         f"aws s3 ls --profile '{long_value}'": unsafe("'"),
-        "aws s3 ls --profile demo-dev": None,
+        "aws s3 ls --profile demo-dev": selector("--profile demo-dev"),
     }
 
     verdicts = bash_verdicts(evaluate, list(expected))
@@ -1726,6 +1744,247 @@ def test_asks_when_parallel_or_sed_runs_text(infra_evaluate: Evaluate) -> None:
     verdicts = bash_verdicts(infra_evaluate, list(expected))
 
     assert verdicts == expected
+
+
+# E27 (B1): every known environment selector must lie inside an allow match: an assignment of
+# one of SELECTOR_NAMES (`+=` too) anywhere in any part, and in a part that names a covered tool
+# one of SELECTOR_FLAGS as `--x v` or `--x=v` (pulumi's -C beside pulumi only); else the command
+# asks, naming the first one as written (a flag with its value, blanks collapsed; a flag that ends
+# the part alone). The builder's patterns hold each allowed setting whole, so they still pass.
+SELECTOR_NAMES = (
+    "KUBE_CONTEXT",
+    "HELM_KUBECONTEXT",
+    "TF_WORKSPACE",
+    "TF_DATA_DIR",
+    "TF_CLI_ARGS",
+    "TF_CLI_ARGS_plan",
+    "PULUMI_BACKEND_URL",
+    "AWS_CONFIG_FILE",
+    "AWS_SHARED_CREDENTIALS_FILE",
+    "AWS_ROLE_ARN",
+    "CDK_DEFAULT_ACCOUNT",
+)
+SELECTOR_FLAGS = (
+    "--aws-profile",
+    "--context",
+    "--kube-context",
+    "--cluster",
+    "--server",
+    "--user",
+    "--kubeconfig",
+    "--kube-apiserver",
+    "-chdir",
+    "--chdir",
+    "--cwd",
+    "--stack",
+    "-s",
+    "--stage",
+    "--workspace",
+    "-var-file",
+    "--var-file",
+    "-backend-config",
+)
+
+
+def test_asks_when_environment_selector_outside_allow_match(infra_evaluate: Evaluate) -> None:
+    read = "aws s3 ls --profile demo-dev"
+    expected: dict[str, Any] = {
+        "AWS_PROFILE=demo-staging terraform plan -var-file=dev.tfvars": selector(
+            "AWS_PROFILE=demo-staging"
+        ),
+        "AWS_PROFILE=demo-staging terraform refresh -var-file=dev.tfvars": selector(
+            "AWS_PROFILE=demo-staging"
+        ),
+        "AWS_PROFILE=demo-staging pulumi refresh --yes --stack demo/dev": selector(
+            "AWS_PROFILE=demo-staging"
+        ),
+        "AWS_PROFILE=demo-staging serverless invoke --function f --stage dev": selector(
+            "AWS_PROFILE=demo-staging"
+        ),
+        "AWS_DEFAULT_PROFILE=demo-staging terraform plan -var-file=dev.tfvars": selector(
+            "AWS_DEFAULT_PROFILE=demo-staging"
+        ),
+        "KUBECONFIG=/home/u/.kube/staging kubectl get secrets -A --context kind-demo": selector(
+            "KUBECONFIG=/home/u/.kube/staging"
+        ),
+        "kubectl get pods --context kind-demo --cluster eks-staging": selector(
+            "--cluster eks-staging"
+        ),
+        "terraform -chdir=../staging plan -var-file=dev.tfvars": selector("-chdir=../staging"),
+        "aws s3 ls --profile demo-staging --stage dev": selector("--profile demo-staging"),
+        "terraform plan -var-file=dev.tfvars --profile demo-staging": selector(
+            "--profile demo-staging"
+        ),
+        "kubectl get pods --context kind-demo -s https://10.0.0.5:6443": selector(
+            "-s https://10.0.0.5:6443"
+        ),
+        "pulumi preview --stack demo/dev -C ../staging": selector("-C ../staging"),
+        "pulumi preview --stack demo/dev -C=../staging": selector("-C=../staging"),
+        "export AWS_PROFILE=demo-staging; terraform plan -var-file=dev.tfvars": selector(
+            "AWS_PROFILE=demo-staging"
+        ),
+        f"{read} --cluster": selector("--cluster"),
+        f"{read} --cluster\teks-staging": selector("--cluster eks-staging"),
+        f"TF_CLI_ARGS+=-chdir=x {read}": selector("TF_CLI_ARGS+=-chdir=x"),
+        "AWS_PROFILE=demo-dev terraform plan -var-file=dev.tfvars": None,
+        "AWS_PROFILE=demo-dev aws s3 ls": None,
+        "kubectl get pods --context=kind-demo": None,
+        "helm list --kube-context kind-demo": None,
+        "pulumi preview --stack=demo/dev": None,
+        "serverless info --stage=dev": None,
+        "cdk diff --profile=demo-dev": None,
+        f"{read} | grep --context 3 x": None,
+        "kubectl get pods --context kind-demo -C x": None,
+    }
+    for name in SELECTOR_NAMES:
+        expected[f"{name}=x {read}"] = selector(f"{name}=x")
+    for flag in SELECTOR_FLAGS:
+        expected[f"{read} {flag} x"] = selector(f"{flag} x")
+        expected[f"{read} {flag}=x"] = selector(f"{flag}=x")
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# E27: the selector check comes after the repeated-environment one (E24/E25) and before the
+# configuration commands; an ask verb, an unsafe character and an always-ask word keep their
+# reasons, a deny stays a deny, and the named selector is capped like any infra value.
+def test_keeps_check_order_when_selector_uncovered(infra_evaluate: Evaluate) -> None:
+    cluster = "--cluster eks-" + "x" * 200
+    expected = {
+        "AWS_PROFILE=demo-staging aws s3 ls --profile demo-dev": repeated(
+            "AWS_PROFILE`/`--profile"
+        ),
+        "kubectl get pods --context kind-demo --context staging": repeated("--context"),
+        "kubectl config set-context x --cluster eks-staging --context kind-demo": selector(
+            "--cluster eks-staging"
+        ),
+        "aws s3 rm s3://b/x --profile demo-dev --cluster x": infra_ask("aws", "s3 rm"),
+        "aws s3 ls --profile demo-dev --cluster x?": unsafe("?"),
+        "aws s3 ls --profile demo-dev --cluster x | sh": risky("sh"),
+        "AWS_PROFILE=demo-staging aws s3 ls": unknown("aws"),
+        f"kubectl get pods --context kind-demo {cluster}": selector(cut(cluster)),
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# E27: a command that changes a tool's own configuration always asks (unless denied): aws
+# `configure set|import`, kubectl `config set-context|use-context|set-cluster|set-credentials`,
+# terraform `workspace select|new`; reading the configuration passes.
+def test_asks_when_command_changes_tool_configuration(infra_evaluate: Evaluate) -> None:
+    expected = {
+        "aws configure set region eu-west-1 --profile demo-dev": config_verb(
+            "aws", "configure set"
+        ),
+        "aws --profile demo-dev configure set region eu-west-1": config_verb(
+            "aws", "configure set"
+        ),
+        "aws configure import --csv file://c.csv --profile demo-dev": config_verb(
+            "aws", "configure import"
+        ),
+        "kubectl config set-context kind-demo --namespace x --context kind-demo": config_verb(
+            "kubectl", "config set-context"
+        ),
+        "kubectl config use-context kind-demo --context kind-demo": config_verb(
+            "kubectl", "config use-context"
+        ),
+        "kubectl config set-cluster kind-demo --context kind-demo": config_verb(
+            "kubectl", "config set-cluster"
+        ),
+        "kubectl config set-credentials u --token=x --context kind-demo": config_verb(
+            "kubectl", "config set-credentials"
+        ),
+        "terraform workspace select dev -var-file=dev.tfvars": config_verb(
+            "terraform", "workspace select"
+        ),
+        "terraform workspace new dev -var-file=dev.tfvars": config_verb(
+            "terraform", "workspace new"
+        ),
+        "aws configure set region eu-west-1": unknown("aws"),
+        "aws configure list --profile demo-dev": None,
+        "aws configure get region --profile demo-dev": None,
+        "kubectl config view --context kind-demo": None,
+        "terraform workspace show -var-file=dev.tfvars": None,
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# E27 (B2): sed's arguments are read in one pass per part, not once per sed word (a part of many
+# sed words was quadratic). The child hands _infra_sed a list that counts every word read from
+# it, then checks a ~10 KB part of sed words (words read <= words in the command) and the ~48 KB
+# shape that timed the hook out, which asks on its repeated environment.
+SED_SCAN = """
+import json
+from pathlib import Path
+import guard
+from hubhooks import load_config
+
+scanned = [0]
+
+
+class Counted(list):
+    def __iter__(self):
+        for item in list.__iter__(self):
+            scanned[0] += 1
+            yield item
+
+    def __getitem__(self, key):
+        item = list.__getitem__(self, key)
+        scanned[0] += len(item) if isinstance(key, slice) else 1
+        return item
+
+
+inner = guard._infra_sed
+
+
+def counted(*args):
+    return inner(*args[:-1], Counted(args[-1]))
+
+
+guard._infra_sed = counted
+cfg = load_config(Path(sys.argv[1]))
+found = []
+for pieces in json.loads(sys.argv[2]):
+    command = "".join(text * times for text, times in pieces)
+    scanned[0] = 0
+    verdict = guard.check_bash(command, cfg)
+    found.append([verdict, scanned[0] <= len(command.split()), len(command)])
+print(json.dumps(found))
+"""
+
+
+def test_reads_sed_arguments_once_when_part_has_many_sed_words(
+    workspace: Path, tmp_path: Path, *, hook_python: str, run_python: Callable[..., Any]
+) -> None:
+    hub = write_hub(workspace, builders.a_guard_infra())
+    home = tmp_path / "home"
+    home.mkdir()
+    flood = [("aws s3 ls --profile demo-dev ", 1), ("sed x ", 1700)]
+    ask = [
+        ("AWS_PROFILE=demo-dev aws s3 cp x s3://bucket/x --profile demo-staging ; echo ", 1),
+        ("sed x ", 8000),
+    ]
+
+    found = run_python(
+        hook_python,
+        SED_SCAN,
+        path=hub / HOOKS,
+        args=[str(hub), json.dumps([flood, ask])],
+        cwd=tmp_path,
+        env={"HOME": str(home)},
+    )
+
+    assert found == [
+        [None, True, 10229],
+        [list(repeated("AWS_PROFILE`/`--profile")), True, 48077],
+    ]
 
 
 # AGH-113: a short-flag cluster holding ``f`` and ``--mirror`` force-update remote refs, so they
