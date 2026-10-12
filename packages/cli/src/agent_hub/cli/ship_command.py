@@ -2,10 +2,12 @@
 
 The hub is ``AGENT_HUB_ROOT`` or the cwd; run from a worktree of the hub repo, its main checkout
 is the hub, as for ``hub run``. Without ``ISSUE`` the issue is the one of the task worktree the
-cwd is in. Usage problems exit 2 before any tracker call or child process: an issue not shaped
+cwd is in. Usage problems exit 2 before any tracker call, with no child run but git reads (the
+hub's main checkout, the git identity a branch prefix may come from): an issue not shaped
 ``<team>-<n>`` for a team of ``hub.json``, more than one issue, a folder that is not a hub, no
 ``ISSUE`` outside a task worktree, a malformed ``hub.local.json`` or no branch prefix. Then the
-issue is read once, before any child (spec D-read); every later failure exits 1.
+issue is read once, before the set is found or any step runs (spec D-read); every other failure
+exits 1.
 """
 
 import os
@@ -21,10 +23,9 @@ from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
 from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit
 from agent_hub.cli.init_report import shown_text
 from agent_hub.cli.run_children import (
-    CHILD_HIDDEN,
+    SESSION_HIDDEN,
     gate_command,
     pr_create_command,
-    pr_edit_command,
     push_command,
     without,
     would_run_line,
@@ -33,7 +34,6 @@ from agent_hub.cli.ship_set import ShipSet, issue_from_cwd, shipping_set
 from agent_hub.cli.ship_steps import (
     PREFIX,
     ShipRun,
-    body_file_path,
     pr_title,
     ship_child,
     ship_issue,
@@ -49,7 +49,7 @@ from agent_hub.core.runner.ship_texts import ship_body
 from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, Issue, TrackerClient
 
 COMMAND: Final = "ship"
-# A PR url in the dry run's link edits and comment: the PRs are not opened.
+# A PR url in the dry run's comment: the PRs are not opened.
 DRY_RUN_URL: Final = "<PR url of {repo}>"
 NOT_IN_TASK_WORKTREE: Final = (
     "give ISSUE or run hub ship from a task worktree (<repo>/.claude/worktrees/<team>-<n>[-<desc>])"
@@ -80,7 +80,8 @@ def ship(
     the issue.
     """
     root = hub_root_or_exit(os.environ, command=COMMAND)
-    hub = hub_checkout(root, command=COMMAND, environ=without(os.environ, CHILD_HIDDEN))
+    # No token reaches git, which only looks for the main checkout.
+    hub = hub_checkout(root, command=COMMAND, environ=without(os.environ, SESSION_HIDDEN))
     hub_config = load_hub_config_or_exit(hub / FILE_LABEL)
     workspace = hub.parent
     issue_id = issue if issue is not None else _cwd_issue(context, hub_config, workspace)
@@ -130,12 +131,13 @@ def _print_set(found: ShipSet) -> None:
 
 
 def _print_dry_run(run: ShipRun) -> None:
-    """Every child and tracker write a live ship would make, per target in ``hub.json`` order;
-    the PRs' urls are placeholders. Only git reads run (each title's ``git log``): no check,
+    """Per target in ``hub.json`` order the check, push and ``gh pr create`` a live ship would
+    run, then each tracker write it would make, the PRs' urls as placeholders (no link edit: the
+    live one depends on the bodies). Only git reads run (each title's ``git log``): no check,
     push or ``gh``, no tracker write, no log or body file."""
     urls = tuple(DRY_RUN_URL.format(repo=target.repo) for target in run.targets)
     body = ship_body(issue_id=run.issue.id, issue_url=run.issue.url)
-    for target, url in zip(run.targets, urls, strict=True):
+    for target in run.targets:
         cwd = target.worktree
         try:
             title = pr_title(run, target, ship_child(cwd))
@@ -151,9 +153,6 @@ def _print_dry_run(run: ShipRun) -> None:
         )
         for argv in (gate_command(target.check), push_command(target.branch), pr):
             typer.echo(would_run_line(argv, cwd=cwd))
-        if len(urls) > 1:
-            edit = pr_edit_command(url, body_file_path(run, target))
-            typer.echo(would_run_line(edit, cwd=cwd))
     for write in tracker_writes(run, urls):
         typer.echo(f"would call: {shown_text(call_line(write))}")
 
