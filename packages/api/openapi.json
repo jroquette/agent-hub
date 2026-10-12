@@ -465,7 +465,8 @@
           "otel",
           "executor",
           "github",
-          "linear"
+          "linear",
+          "control_plane"
         ],
         "title": "EventSource",
         "type": "string"

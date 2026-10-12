@@ -813,7 +813,8 @@ export interface components {
      * @description Where an event comes from; with ``source_id`` it identifies the event.
      * @enum {string}
      */
-    EventSource: "claude_code" | "transcript" | "otel" | "executor" | "github" | "linear";
+    EventSource:
+      "claude_code" | "transcript" | "otel" | "executor" | "github" | "linear" | "control_plane";
     /**
      * EventType
      * @description The closed list of event types in the SPEC; widening it later is a compatible change.
