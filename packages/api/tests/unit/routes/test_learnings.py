@@ -4,6 +4,9 @@ from agent_hub.core.learnings.learning import LearningStatus
 from agent_hub.core.readmodels.filters import LearningFilter
 from agent_hub.core.testing.read_model_builders import a_learning, a_learning_detail
 
+# The learning actions need the server's own Origin (S7, local_security.py).
+OWN_ORIGIN = {"Origin": "http://127.0.0.1:7420"}
+
 
 def test_maps_filters_when_learnings_listed(wired: Any) -> None:
     wired.events.learnings.append(a_learning())
@@ -45,7 +48,7 @@ def test_reads_through_learning_reads_when_wired(wired: Any) -> None:
 
 def test_answers_not_implemented_when_decisions_not_wired(wired: Any) -> None:
     response = wired.client.post(
-        "/api/v1/learnings/learning-1/accept", json={"target": "learnings/"}
+        "/api/v1/learnings/learning-1/accept", json={"target": "learnings/"}, headers=OWN_ORIGIN
     )
 
     assert response.status_code == 501
@@ -55,7 +58,7 @@ def test_opens_pull_request_when_learning_accepted(wired: Any) -> None:
     wired.wire(learning_decisions=wired.decisions)
 
     response = wired.client.post(
-        "/api/v1/learnings/learning-1/accept", json={"target": "learnings/"}
+        "/api/v1/learnings/learning-1/accept", json={"target": "learnings/"}, headers=OWN_ORIGIN
     )
 
     assert response.status_code == 201
@@ -67,7 +70,7 @@ def test_opens_pull_request_when_learning_rejected(wired: Any) -> None:
     wired.wire(learning_decisions=wired.decisions)
 
     response = wired.client.post(
-        "/api/v1/learnings/learning-1/reject", json={"reason": "  Duplicate  "}
+        "/api/v1/learnings/learning-1/reject", json={"reason": "  Duplicate  "}, headers=OWN_ORIGIN
     )
 
     assert response.status_code == 201
@@ -78,7 +81,9 @@ def test_opens_pull_request_when_learning_rejected(wired: Any) -> None:
 def test_rejects_body_when_reason_empty(wired: Any) -> None:
     wired.wire(learning_decisions=wired.decisions)
 
-    response = wired.client.post("/api/v1/learnings/learning-1/reject", json={"reason": " "})
+    response = wired.client.post(
+        "/api/v1/learnings/learning-1/reject", json={"reason": " "}, headers=OWN_ORIGIN
+    )
 
     assert response.status_code == 422
     assert wired.decisions.calls == []
