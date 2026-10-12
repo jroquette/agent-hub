@@ -1,14 +1,19 @@
 import datetime
 import json
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 import pytest
 
 from agent_hub.cli import run_log
 from agent_hub.cli.run_log import RunLog, new_run_id
+from agent_hub.core.events.event import Event
+from agent_hub.core.events.event_store import AppendResult
 from agent_hub.core.runner.run_record import Stage
+from agent_hub.core.testing.fakes import InMemoryEventStore
+from agent_hub.storage.errors import StorageError
+from agent_hub.storage.event_store import DatabaseBusyError
 
 UTC = datetime.UTC
 
@@ -93,3 +98,125 @@ def test_makes_eight_hex_characters_when_run_id_drawn() -> None:
 
     assert len(ids) == 20
     assert all(len(run_id) == 8 and int(run_id, 16) >= 0 for run_id in ids)
+
+
+class _BrokenStore:
+    def append(self, events: object) -> object:
+        raise StorageError("disk full")
+
+    def read_all(self) -> list[object]:
+        return []
+
+
+def _hub_with_project(tmp_path: Path, name: str = "demo") -> Path:
+    (tmp_path / "hub.json").write_text(json.dumps({"project": {"name": name}}))
+    return tmp_path
+
+
+def test_appends_executor_events_when_records_written_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    at(datetime.datetime(2026, 1, 15, 9, 0, tzinfo=UTC), monkeypatch)
+    store = InMemoryEventStore()
+    log = RunLog(
+        hub=_hub_with_project(tmp_path, "acme"),
+        run_id="ab12cd34",
+        issue_id="DEM-1",
+        repo="demo-api",
+        event_store=lambda: store,
+    )
+
+    log.record("picked", {"budget": 3.0, "max_turns": 40, "model": "sonnet", "transport": "api"})
+    log.state = Stage.WORKTREE
+    log.record("worktree_ready", {"path": "/w"})
+
+    events = store.read_all()
+    assert [(event.type, event.step) for event in events] == [
+        ("step.start", "pick"),
+        ("step.end", "pick"),
+        ("step.start", "worktree"),
+    ]
+    assert {event.project for event in events} == {"acme"}
+    assert {event.session for event in events} == {"run:ab12cd34"}
+
+
+def test_warns_once_and_keeps_writing_records_when_store_fails_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    at(datetime.datetime(2026, 1, 15, 9, 0, tzinfo=UTC), monkeypatch)
+    log = RunLog(
+        hub=_hub_with_project(tmp_path),
+        run_id="ab12cd34",
+        issue_id="DEM-1",
+        repo="demo-api",
+        event_store=_BrokenStore,
+    )
+
+    log.record("picked", {})
+    log.record("again", {})
+
+    assert capsys.readouterr().err == "hub run: event store unavailable: disk full\n"
+    (records,) = (tmp_path / ".agent-runs").iterdir()
+    assert len(records.read_text().splitlines()) == 2
+
+
+def test_warns_once_when_store_cannot_open_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    at(datetime.datetime(2026, 1, 15, 9, 0, tzinfo=UTC), monkeypatch)
+    calls: list[int] = []
+
+    def failing_open() -> InMemoryEventStore:
+        calls.append(1)
+        raise OSError("read-only file system")
+
+    log = RunLog(
+        hub=tmp_path, run_id="ab12cd34", issue_id="DEM-1", repo="demo-api", event_store=failing_open
+    )
+
+    log.record("picked", {})
+    log.record("failed", {"stage": "PICKED", "reason": "x"})
+
+    assert capsys.readouterr().err == "hub run: event store unavailable: read-only file system\n"
+    assert calls == [1]
+
+
+class _BusyOnceStore(InMemoryEventStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    def append(self, events: Sequence[Event]) -> AppendResult:
+        self.calls += 1
+        if self.calls == 1:
+            msg = "the event database is busy: database is locked"
+            raise DatabaseBusyError(msg)
+        return super().append(events)
+
+
+def test_skips_only_that_record_when_store_busy_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    at(datetime.datetime(2026, 1, 15, 9, 0, tzinfo=UTC), monkeypatch)
+    store = _BusyOnceStore()
+    log = RunLog(
+        hub=_hub_with_project(tmp_path),
+        run_id="ab12cd34",
+        issue_id="DEM-1",
+        repo="demo-api",
+        event_store=lambda: store,
+    )
+
+    log.record("picked", {})
+    log.state = Stage.WORKTREE
+    log.record("worktree_ready", {"path": "/w"})
+
+    assert capsys.readouterr().err == (
+        "hub run: event store busy, record skipped: "
+        "the event database is busy: database is locked\n"
+    )
+    events = store.read_all()
+    assert [(event.type, event.step) for event in events] == [
+        ("step.end", "pick"),
+        ("step.start", "worktree"),
+    ]

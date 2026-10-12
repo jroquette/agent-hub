@@ -18,6 +18,7 @@ import pytest
 from agent_hub.core.doctor.config_lint import line_count
 from agent_hub.core.doctor.instruction_rules import DEFAULT_MAX_LINES
 from agent_hub.core.doctor.snapshot import module_makefiles
+from agent_hub.core.doctor.text_rules import ATTRIBUTIONS, SECRETS
 from agent_hub.core.hub_config.conventions import MAX_PATTERN_CHARS
 from agent_hub.core.hub_config.model import MODULE_IDS, HubConfig
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
@@ -88,6 +89,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/agents/requirements-analyst.md",
     "plugin/hub-workflow/agents/researcher.md",
     "plugin/hub-workflow/agents/spec-reviewer.md",
+    "plugin/hub-workflow/hooks/event_sensor.py",
     "plugin/hub-workflow/hooks/guard.py",
     "plugin/hub-workflow/hooks/hooks.json",
     "plugin/hub-workflow/hooks/hubhooks.py",
@@ -2091,7 +2093,8 @@ def test_names_rendered_script_when_hooks_json_command_read(
         hook["command"] for groups in hooks.values() for group in groups for hook in group["hooks"]
     ]
 
-    assert len(commands) == len(hooks) == 6
+    # The six base hooks, then the event sensor on eleven events (AGH-200 E2).
+    assert (len(commands), len(hooks)) == (17, 11)
     for command in commands:
         match = HOOK_COMMAND.fullmatch(command)
         assert match, command
@@ -3420,17 +3423,23 @@ PROJECT_ONLY_SETTINGS = (
     "skillOverrides",
 )
 # Event → (matcher, hook file, timeout in seconds); `None`: the group has no matcher.
+# Each event's groups: its base hook, then the event sensor (AGH-200 D6, E2: eleven events).
+SENSOR = "event_sensor.py"
 SETTINGS_HOOKS = {
-    "SessionStart": ("startup|resume|clear|compact", "session_start.py", 20),
-    "PreToolUse": (
-        "Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetch",
-        "guard.py",
-        10,
-    ),
-    "PostToolUse": ("Edit|Write|MultiEdit", "post_edit.py", 60),
-    "Stop": (None, "stop_gate.py", 180),
-    "PreCompact": (None, "pre_compact.py", 20),
-    "SessionEnd": (None, "session_end.py", 10),
+    "SessionStart": [("startup|resume|clear|compact", "session_start.py", 20), (None, SENSOR, 5)],
+    "PreToolUse": [
+        ("Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetch", "guard.py", 10),
+        ("*", SENSOR, 5),
+    ],
+    "PostToolUse": [("Edit|Write|MultiEdit", "post_edit.py", 60), ("*", SENSOR, 5)],
+    "Stop": [(None, "stop_gate.py", 180), (None, SENSOR, 5)],
+    "PreCompact": [(None, "pre_compact.py", 20), (None, SENSOR, 5)],
+    "SessionEnd": [(None, "session_end.py", 10), (None, SENSOR, 5)],
+    "UserPromptSubmit": [(None, SENSOR, 5)],
+    "PostToolUseFailure": [("*", SENSOR, 5)],
+    "Notification": [(None, SENSOR, 5)],
+    "SubagentStart": [(None, SENSOR, 5)],
+    "SubagentStop": [(None, SENSOR, 5)],
 }
 SETTINGS_COMMAND = re.compile(
     r'python3 "\$CLAUDE_PROJECT_DIR/(plugin/hub-workflow/hooks/[^"/]+\.py)"'
@@ -3449,15 +3458,17 @@ def strict_json(content: bytes) -> Any:
     return json.loads(content.decode("utf-8"), parse_constant=reject_constant)
 
 
-def hook_groups(hooks: Mapping[str, Any]) -> dict[str, tuple[str | None, str, int]]:
-    """Each event's single group as (matcher, hook file name, timeout)."""
-    rows = {}
+def hook_groups(hooks: Mapping[str, Any]) -> dict[str, list[tuple[str | None, str, int]]]:
+    """Each event's groups, each one hook, as (matcher, command, timeout)."""
+    rows: dict[str, list[tuple[str | None, str, int]]] = {}
     for event, groups in hooks.items():
-        assert len(groups) == 1, event
-        assert len(groups[0]["hooks"]) == 1, event
-        hook = groups[0]["hooks"][0]
-        assert hook["type"] == "command", event
-        rows[event] = (groups[0].get("matcher"), hook["command"], hook["timeout"])
+        for group in groups:
+            assert len(group["hooks"]) == 1, event
+            hook = group["hooks"][0]
+            assert hook["type"] == "command", event
+            rows.setdefault(event, []).append(
+                (group.get("matcher"), hook["command"], hook["timeout"])
+            )
     return rows
 
 
@@ -3489,15 +3500,17 @@ def test_holds_rules_base_only_when_settings_rendered(
         "additionalDirectories": [f"../{repo_dir}" for repo_dir in REPO_DIRS[config_name]],
     }
     assert set(settings["hooks"]) == set(SETTINGS_HOOKS)
-    for event, (matcher, command, timeout) in hook_groups(settings["hooks"]).items():
-        expected_matcher, file, expected_timeout = SETTINGS_HOOKS[event]
-        assert (matcher, timeout) == (expected_matcher, expected_timeout), event
-        match = SETTINGS_COMMAND.fullmatch(command)
-        assert match, command
-        assert match[1] == f"plugin/hub-workflow/hooks/{file}", command
-        # A missing hook file makes `python3` exit 2, which blocks on PreToolUse and Stop.
-        assert match[1] in rendered, command
-        assert rendered[match[1]].executable, command
+    for event, rows in hook_groups(settings["hooks"]).items():
+        assert len(rows) == len(SETTINGS_HOOKS[event]), event
+        for (matcher, command, timeout), expected in zip(rows, SETTINGS_HOOKS[event], strict=True):
+            expected_matcher, file, expected_timeout = expected
+            assert (matcher, timeout) == (expected_matcher, expected_timeout), event
+            match = SETTINGS_COMMAND.fullmatch(command)
+            assert match, command
+            assert match[1] == f"plugin/hub-workflow/hooks/{file}", command
+            # A missing hook file makes `python3` exit 2, which blocks on PreToolUse and Stop.
+            assert match[1] in rendered, command
+            assert rendered[match[1]].executable, command
     assert "matcher" not in settings["hooks"]["Stop"][0]
     for key in PROJECT_ONLY_SETTINGS:
         assert not key_anywhere(settings, key), key
@@ -3563,12 +3576,14 @@ def test_matches_plugin_hooks_when_settings_compared(demo_render: dict[str, Rend
     # The same hooks, wired two ways: the settings block for cloud sessions (which do not install
     # repo plugins), `hooks.json` for a plugin install. Only the command's root differs.
     assert set(in_settings) == set(in_plugin)
-    for event, (matcher, command, timeout) in in_settings.items():
-        plugin_matcher, plugin_command, plugin_timeout = in_plugin[event]
-        assert (matcher, timeout) == (plugin_matcher, plugin_timeout), event
-        assert command == plugin_command.replace(
-            "${CLAUDE_PLUGIN_ROOT}", "$CLAUDE_PROJECT_DIR/plugin/hub-workflow"
-        ), event
+    for event, rows in in_settings.items():
+        assert len(rows) == len(in_plugin[event]), event
+        for (matcher, command, timeout), plugin_row in zip(rows, in_plugin[event], strict=True):
+            plugin_matcher, plugin_command, plugin_timeout = plugin_row
+            assert (matcher, timeout) == (plugin_matcher, plugin_timeout), event
+            assert command == plugin_command.replace(
+                "${CLAUDE_PLUGIN_ROOT}", "$CLAUDE_PROJECT_DIR/plugin/hub-workflow"
+            ), event
 
 
 # Spec AC-4.8 (Q-9): the files the generator builds from the config.
@@ -3807,6 +3822,9 @@ RUN_TIME_BRAIN_PATHS = {
     "brain/auto/workspace/MEMORY.md": "plugin/hub-workflow/skills/learn/SKILL.md",
     # Written by `hub agent`, which the launcher runs.
     "brain/auto/agent-context.md": "agent",
+    # Written by `hub start` (AGH-62), one per task; no rendered file runs it, so only the seeded
+    # .gitignore names it (`brain/auto/agent-context-*.md`, matched up to the `*`).
+    "brain/auto/agent-context-": ".gitignore",
     "brain/learnings/gotchas/": "plugin/hub-workflow/skills/learn/SKILL.md",
     # Written by `hub run`, which the run-issue target runs (AGH-27).
     "brain/_inbox/runs/": "Makefile",
@@ -4067,10 +4085,195 @@ def test_names_app_repo_agents_once_when_readme_rendered(demo_config: HubConfig)
     assert len(naming) == 1
     assert "`AGENTS.md`" in naming[0]
     assert "root" in naming[0]
-    # Q-6: appended after the repos line, with a blank line before it.
-    assert lines[-1] == naming[0]
-    assert lines[-2] == ""
-    assert lines[-3] == "Repos, checked out next to this hub: demo-api."
+    # Q-6: appended after the repos line, with a blank line before it; AGH-51's Join section
+    # follows it.
+    assert lines.count(JOIN_HEADING) == 1
+    heading = lines.index(JOIN_HEADING)
+    assert lines[heading - 2] == naming[0]
+    assert lines[heading - 1] == ""
+    assert lines[heading - 3] == ""
+    assert lines[heading - 4] == "Repos, checked out next to this hub: demo-api."
+
+
+# AGH-51: the README's last section, for a teammate joining the hub.
+JOIN_HEADING = "## Join this hub"
+URL_WITH_CREDENTIAL = re.compile(r"https://[^\s/]*@")
+
+
+def join_section(readme: str) -> str:
+    """The Join section: from its heading line, which occurs once, to the next ``## `` or EOF."""
+    lines = readme.splitlines(keepends=True)
+    starts = [n for n, line in enumerate(lines) if line.rstrip("\n") == JOIN_HEADING]
+    assert len(starts) == 1, starts
+    start = starts[0]
+    end = next((n for n in range(start + 1, len(lines)) if lines[n].startswith("## ")), len(lines))
+    return "".join(lines[start:end])
+
+
+def join_config(
+    *, modules: dict[str, Any] | None = None, repo_count: int = 2, transport: str = "api"
+) -> HubConfig:
+    """The demo with ``repo_count`` repos (``demo-api``, ``demo-web``, then synthetic ones)."""
+    document = a_hub_document()
+    if repo_count >= 2:
+        document["repos"].append(a_second_repo())
+    for n in range(3, repo_count + 1):
+        document["repos"].append(
+            {**a_second_repo(), "dir": f"demo-r{n}", "github": f"acme/demo-r{n}"}
+        )
+    document["modules"] = {"cloud": {}} if modules is None else modules
+    document["tracker"]["transport"] = transport
+    return HubConfig.model_validate(document)
+
+
+def join_of(config: HubConfig) -> str:
+    return join_section(text_of(config, "README.md"))
+
+
+def test_keeps_join_section_within_60_lines_when_readme_rendered() -> None:
+    readme = text_of(join_config(), "README.md")
+
+    section = join_section(readme)
+
+    assert readme.endswith(section)
+    assert len(section.splitlines()) <= 60
+
+
+def test_keeps_join_section_size_when_repos_grow() -> None:
+    by_repos = {n: len(join_of(join_config(repo_count=n)).splitlines()) for n in (1, 2, 10)}
+    by_transport = {
+        transport: len(join_of(join_config(transport=transport)).splitlines())
+        for transport in ("api", "mcp")
+    }
+
+    assert len(set(by_repos.values())) == 1, by_repos
+    assert len(set(by_transport.values())) == 1, by_transport
+    assert by_repos[2] == by_transport["api"]
+
+
+def test_lists_requirements_table_in_join_section_when_readme_rendered(
+    demo_config: HubConfig,
+) -> None:
+    lines = join_of(demo_config).splitlines()
+
+    separators = [n for n, line in enumerate(lines) if line.startswith("| --- |")]
+    assert len(separators) == 1
+    rows: dict[str, tuple[str, str]] = {}
+    for line in lines[separators[0] + 1 :]:
+        if not line.startswith("|"):
+            break
+        tool, needed, used_for = (cell.strip() for cell in line.strip().strip("|").split("|"))
+        rows[tool] = (needed, used_for)
+
+    def needed_by(*parts: str) -> str:
+        tools = [tool for tool in rows if all(part in tool for part in parts)]
+        assert len(tools) == 1, (parts, tools)
+        return rows[tools[0]][0]
+
+    for parts in (("uv", "0.9"), ("`git`",), ("Claude Code",), ("`python3`", "3.9")):
+        assert needed_by(*parts) == "required", parts
+    for parts in (("gh",), ("tracker credential",)):
+        assert needed_by(*parts) == "optional", parts
+    assert len(rows) == 6
+    assert [tool for tool, (_, used_for) in rows.items() if not used_for] == []
+
+
+def test_names_known_traps_in_join_section_when_readme_rendered(demo_config: HubConfig) -> None:
+    section = join_of(demo_config)
+
+    traps = section[section.index("### Known traps") :].split("\n### ", 1)[0]
+    for trap in (
+        "release candidate",
+        "uv self update",
+        "uv>=0.9",
+        "Xcode Command Line Tools",
+        "hub directory",
+        "the folder above the hub",
+        "/kickoff",
+        "guard_probe.p12",
+    ):
+        assert trap in traps, trap
+
+
+def test_names_access_and_setup_in_join_section_when_readme_rendered() -> None:
+    section = join_of(join_config())
+
+    for text in (
+        "`acme/demo-hub`",
+        "acme/demo-api",
+        "acme/demo-web",
+        "gh auth setup-git",
+        "./hub setup",
+        "`hub.local.json`",
+        "./agent",
+        "/kickoff",
+        "public",
+        "`platform.repository`",
+        "`hub.local.json` (gitignored), else `hub.json`, else your git config",
+        "if `hub.json` leaves your\nidentity unset",
+        "else your git config (see `./hub setup` above)",
+        "each with its fix, then runs `./hub doctor`",
+        "\ncd demo-hub\n",
+    ):
+        assert text in section, text
+    assert "@@" not in section
+    assert "None" not in section
+    assert URL_WITH_CREDENTIAL.search(section) is None
+    for line in section.splitlines():
+        for shape in (*SECRETS, *ATTRIBUTIONS):
+            assert not shape.matches(line), (shape.kind, line)
+    # Plan E6: two separately validated documents render the same README bytes.
+    readmes = {
+        {file.path: file for file in render_hub(join_config()).files}["README.md"].content
+        for _ in range(2)
+    }
+    assert len(readmes) == 1
+
+
+@pytest.mark.parametrize("transport", ["api", "mcp"])
+def test_renders_tracker_credential_in_join_section_when_transport_set(transport: str) -> None:
+    section = join_of(join_config(transport=transport))
+
+    if transport == "api":
+        assert "`LINEAR_API_KEY`" in section
+    else:
+        # Plan E3: the whole section, not only the credential line, leaves the key unnamed.
+        assert "Linear MCP server" in section
+        assert "LINEAR_API_KEY" not in section
+
+
+@pytest.mark.parametrize(
+    "modules",
+    [
+        {"bench": {}, "cloud": {}, "contract-sync": {}, "marketplace": {}},
+        {"cloud": {}},
+        {"marketplace": {}},
+        {},
+    ],
+    ids=["all", "cloud", "marketplace", "none"],
+)
+def test_names_cloud_steps_in_cloud_join_when_modules_vary(
+    modules: dict[str, dict[str, str]],
+) -> None:
+    # A copy: the parametrize values are shared between runs.
+    settings = {"contract-sync": {"source": "demo-api", "target": "demo-web"}}
+    selected = {module: settings.get(module, value) for module, value in modules.items()}
+
+    section = join_of(join_config(modules=selected))
+
+    if "cloud" in modules:
+        for text in (
+            "`bash scripts/cloud-setup.sh`",
+            "`GH_TOKEN`",
+            "hub alone",
+            "guard probe",
+            "HUB_AUTHOR_NAME",
+            "HUB_AUTHOR_EMAIL",
+        ):
+            assert text in section, text
+    else:
+        for text in ("### In a cloud session", "cloud-setup", "GH_TOKEN"):
+            assert text not in section, text
 
 
 APP_REPO_AGENTS = "docs/app-repo-AGENTS.md"
@@ -4130,6 +4333,7 @@ AGH10_GITIGNORE = (
 )
 RUN_TIME_OUTPUTS = (
     "brain/auto/agent-context.md",
+    "brain/auto/agent-context-*.md",
     "brain/_inbox/sessions/",
     "brain/auto/workspace/session-snapshot.md",
     "brain/_inbox/mining/",
@@ -4173,6 +4377,8 @@ SEEDED_GITIGNORE = (
     "brain/_inbox/mining/",
     "brain/auto/workspace/session-snapshot.md",
     "brain/auto/agent-context.md",
+    # Written by `hub start`, one per task (AGH-62).
+    "brain/auto/agent-context-*.md",
 )
 
 
@@ -4185,8 +4391,11 @@ def test_ignores_personal_memory_when_gitignore_rendered(
     ]
     lines = demo.content.decode("utf-8").splitlines()
 
-    assert lines[:18] == list(SEEDED_GITIGNORE)
-    assert lines[18:] == ["brain/auto/workspace/*", "!brain/auto/workspace/.gitkeep"]
+    assert lines[: len(SEEDED_GITIGNORE)] == list(SEEDED_GITIGNORE)
+    assert lines[len(SEEDED_GITIGNORE) :] == [
+        "brain/auto/workspace/*",
+        "!brain/auto/workspace/.gitkeep",
+    ]
     assert variant.content == demo.content
 
 
@@ -4196,7 +4405,17 @@ PURITY = re.compile(
     r"symlink|walk|scandir|lstat|environ)|shutil|Path\.cwd|\bPath\(|"
     r"^\s*(import|from) (datetime|time|random|uuid|getpass|socket)\b"
 )
-ADAPTER_MODULES = frozenset({"hub_tree.py", "file_adapter.py", "doctor_tree.py"})
+ADAPTER_MODULES = frozenset(
+    {
+        "hub_tree.py",
+        "file_adapter.py",
+        "doctor_tree.py",
+        "doctor_snapshot.py",
+        "hub_config_files.py",
+        "feature_files.py",
+        "registered_hub_files.py",
+    }
+)
 RENDERING_MODULES = frozenset(
     {
         "__init__.py",

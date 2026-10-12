@@ -4,8 +4,9 @@
 
 A sketch for Phases 2 and 3: how the three derived entities of the [domain model](domain-model.md) are computed from
 canonical events ([SPEC](../SPEC.md#data-sources-and-event-model)). For each one it lists the event types and fields
-that create, change and close it, and the properties any implementation must have. The payload keys named here are
-proposals that the Phase 2 source adapters fix; mechanisms not yet chosen are listed under Open questions.
+that create, change and close it, and the properties any implementation must have. Phase 2 built Session, WorkflowRun,
+Learning and Approval as folds in `agent_hub.core` (`sessions/`, `runs/`, `learnings/`, `approvals/`); the questions it
+decided are under "Phase 2 decisions", and what stays open is under Open questions.
 
 ## Contract
 
@@ -14,21 +15,22 @@ proposals that the Phase 2 source adapters fix; mechanisms not yet chosen are li
 - Redact before append, a requirement the SPEC already sets
   ([event model](../SPEC.md#data-sources-and-event-model), "Privacy and redaction"): ingestion redacts key and token
   patterns before an event is written. A stored event is never changed, so a secret that reaches the store stays.
-- Proposals for Phase 2, not decided (Open questions): redaction runs in the source adapter, the collector's own being
-  a second line; and events carry no raw message, reasoning or tool-output text, so `message`, `reasoning` and
-  `tool.result` events hold metadata (sizes, tool, status) and a reference to the redacted transcript blob, which has
-  its own short retention (SPEC direction 3).
+- Decided in Phase 2: redaction runs once, in core's `IngestEvents`, for every entry point, and events carry no raw
+  message, reasoning or tool-output text: each type keeps only the keys of the "Payload kept" table
+  (`agent_hub.core.events.payload_keys`), and `IngestEvents` drops any other key. No transcript blob is stored in
+  Phase 2; the transcript stays in Claude Code's folder.
 - The post-session extraction writes its results (summary, decisions, proposed learnings) as events, so they survive
   the deletion of the transcript. The Session records where its transcript is and when it is deleted.
 
 ### Fold: required properties
 
-- A derivation is a pure function in core over stored events. Rebuilding from the events gives the same state; how
-  and where the derived state is kept is open.
+- A derivation is a pure function in core over stored events, taking `now` as an argument. Rebuilding from the
+  events gives the same state. Derived state is recomputed on read and memoized in process, keyed by the store's
+  high-water mark (D12); nothing derived is written to disk.
 - The fold is idempotent: a duplicate never reaches the store, and folding the same events again, in any arrival
   order, gives the same state.
-- One fact reported by several sources (hooks, transcript, OTel) counts once. Either each attribute has one
-  authoritative source, or the sources share a correlation key; which one is open.
+- One fact reported by several sources (hooks, transcript, OTel) counts once, by a fold-time fact key (D16): the tool
+  use id; the transcript record uuid; `(run, step, attempt)` for steps; the transcript `message.id` for usage (E5).
 - State that depends on order (current step, last tool, first terminal event) follows one source's own sequence,
   never a sort of timestamps across sources, whose clocks and latencies differ.
 - Costs and token counts are summed exactly (`Decimal`, never float).
@@ -43,18 +45,22 @@ proposals that the Phase 2 source adapters fix; mechanisms not yet chosen are li
 | Change | every later event of that session | last activity; `tool.call` → tool counts (`payload.tool`) and files touched (`payload.path`); `tool.result` → errors; `otel` → tokens and cost; `decision` → decisions; an open `gate.request` → waiting; the transcript reference and deletion date |
 | Close | `session.end` | end = the last `session.end`; `payload.outcome` |
 
-A resumed session (several start and end pairs under one `session`) is one Session. Events that arrive after its end
-enrich it (a late cost, a PR link from `github`) but never reopen it. Events from `executor`, `github` or `linear`
-that name an existing session enrich it but never create one. A session without `session.end` stays open.
+A resumed session (several start and end pairs under one `session`) is one Session. Events from `executor`, `github` or
+`linear` that name an existing session enrich it but never create one. Status (D14), with `now` injected: `waiting`
+while a `gate.request` is unresolved; else `live` with an event in the last 5 minutes or a `tool.call` without its
+result; else `idle`; `ended` on `session.end`. With no event for 30 minutes and no end it is `ended` with
+`outcome: null` and `end_reason: "no_end_event"`, labelled inferred; a later event reopens it as a new segment. A
+session started by `hub run` carries the run, step and attempt in `payload` (the sensor reads them from
+`AGENT_HUB_RUN_ID`, `AGENT_HUB_STEP` and `AGENT_HUB_ATTEMPT`), which is how a Session joins its run.
 
 ### WorkflowRun
 
 Created and moved by `executor` events that carry `workflow`, `step` and the run id. A retried step carries its
 attempt number in `payload.attempt` and in the executor's `source_id`, so each attempt is a distinct event, and step
-state is keyed by `(step, attempt)`. How a Session joins its run is open. Mapping of the current issue-to-PR runner,
+state is keyed by `(step, attempt)`. A Session joins its run through the run id its events carry (Session above). Mapping of the current issue-to-PR runner,
 whose per-transition log already records a run id, the issue, the repo and the state:
 
-| Runner state | Event (proposed types, see Open questions) | Effect on the run |
+| Runner state | Event | Effect on the run |
 |---|---|---|
 | `PICKED` | `step.start`, step `pick`, `payload.issue` | creates it: workflow, issue, repo, start time |
 | `WORKTREE` | `step.start`, step `worktree` | current step |
@@ -75,11 +81,41 @@ A run ends only on its explicit terminal event, `run.end`, never because a step 
 | Create | `learning.proposed` | its `(source, source_id)` is the identity; `payload.text`, `payload.target` (the brain file it would change), `payload.author` (person or agent); `session` → source session, none for a person's proposal |
 | Change | none | nothing changes a learning between proposal and close |
 | Close | `learning.accepted` naming the proposal in `payload.proposal` | status accepted, who and when, `payload.brain_path` and `payload.commit` it became |
-| Close | a rejection (`learning.rejected`, proposed type) | status rejected, reason |
+| Close | `learning.rejected` naming the proposal | status rejected, reason |
 
 The first terminal event, in its source's own order, wins; a later one stays in the store and the fold ignores it. An
 accept whose proposal is not stored yet waits and is applied once the proposal arrives. A learning stays `proposed`
 until closed. Accepting one records the fact; editing the brain stays a human act.
+
+### Approval
+
+An open `gate.request` (kinds `guard_ask`, `plan`, `spec`, `human_gate`, `permission`; a Notification hook whose type
+is a permission prompt maps to `permission`) is decided by the `gate.result` with the same `payload.gate_id`. A guard
+ask is keyed by its tool use id: a PostToolUse or PostToolUseFailure with that id decides it `approved` (the tool ran,
+E3); the session's next UserPromptSubmit, Stop or SessionEnd without it decides it `declined`, labelled inferred.
+
+## Phase 2 decisions
+
+- **D5, stored ids.** The store mints `event_id` (UUIDv7) and `received_at` at append (ADR 0018); identity stays
+  `(source, source_id)`. Order and SSE resume use the store's append sequence.
+- **D8, source ids.** Hooks: `<session>:<hook>:<tool_use_id>`, else `<session>:<hook>:<sent_at>:<h16>` (the first 16 hex
+  digits of the SHA-256 of the hook input's canonical JSON). Transcript: `<session>:<record uuid>[:<content index>]`.
+  Executor: `<run>:<state>:<event>:<ts>:<type>` (E7: one record can yield the `step.end` of one stage and the
+  `step.start` of the next). Executor events carry `session = run:<run id>` and `workflow = issue-to-pr`.
+- **D12, storage of derived state.** Recomputed on read, memoized in process by high-water mark; no derived table.
+- **D14, session status and abandonment.** As in Session above.
+- **D16, one fact once.** Fact keys as above; precedence: tool call, status and timing from `claude_code` then
+  transcript; tool errors from `claude_code` then transcript `is_error`; tokens and model from the transcript; step,
+  gate and run state from the executor then `claude_code`. The losers stay in Raw events with a `conflict` flag.
+- **D18, hubs.** The hub registry (`hubs.json`) mints a UUIDv7 per registered hub; Project, Hub and Repo are still read
+  from each hub's `hub.json` and `hub.lock`.
+- **E3, tool errors.** From PostToolUseFailure (`status: error`, `error_line` the first line, `interrupted` on an
+  interrupt).
+- **E4, triggers and subagents.** `session.start.trigger` is the hook's `source` (startup, resume, clear, compact,
+  fork); `git_branch` comes only from the transcript. Events from inside a subagent carry `agent` = its type and
+  `payload.agent_id`. Stop, SubagentStart, SubagentStop, PreCompact and a Notification that is not a permission prompt
+  yield no event.
+- **E6, subagent transcripts.** On SubagentStop the server tails `agent_transcript_path`.
 
 ## Invariants
 
@@ -96,19 +132,7 @@ until closed. Accepting one records the fact; editing the brain stays a human ac
 
 ## Open questions
 
-- Proposed, a SPEC change for Phase 2 if adopted: events hold no raw message, reasoning or tool-output text, only
-  metadata and a reference to the redacted transcript blob; redaction runs in the source adapter, with the
-  collector's as a second line.
-
-- Proposed event types, a compatible SPEC change for Phase 2: `step.start`, `step.end`, `run.end`,
-  `learning.rejected` and a session summary type; the run id in `payload.run`.
-- Counting a fact once: an authoritative source per attribute, or a correlation key shared by the sources.
-- How a Session joins its WorkflowRun: a link event emitted by the executor, or the run id stamped on every event by
-  the hooks (from the environment the executor sets).
-- Each source's own sequence: in `source_id`, or a `payload.seq` the adapter assigns.
-- Storage of derived state (tables, a cache, recomputed on read) and how it is kept in step with new events.
-- Storage and retention of the transcript blob; the period is an open question of the SPEC.
-- `session` is required on every event: which value executor events and a person's learning carry outside an agent
-  session (the run id is the candidate for the executor), without the Session fold treating it as a session.
-- When an open session with no `session.end` counts as abandoned (an idle timeout, or never).
-- The exact payload keys per type, fixed by each source adapter's issue.
+- Storage and retention of a redacted transcript blob, if one is ever kept; the period is an open question of the SPEC.
+- A person's learning outside an agent session: which `session` value it carries.
+- Subagent lanes beyond `agent`/`agent_id` attribution, and linking a subagent transcript to its Agent tool call.
+- Persisted derived tables, when folding on read stops scaling (past about 100,000 events).

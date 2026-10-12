@@ -22,14 +22,16 @@ from typing import Any
 
 import pytest
 from click import unstyle
-from typer.testing import Result
+from typer.testing import CliRunner, Result
 
 from agent_hub.cli import run_command, run_log, run_steps
 from agent_hub.cli.errors import ChildTimedOutError
+from agent_hub.cli.main import app
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.runner.session_prompt import IMPLEMENTING_TOOLS
 from agent_hub.core.testing.builders import a_conventions_document
 from agent_hub.core.tracker.tracker_client import TrackerClient
+from agent_hub.storage.event_store import open_event_store
 
 pytestmark = pytest.mark.disable_socket
 
@@ -2838,3 +2840,73 @@ class TestFetchHooks:
         # The session's own commit runs hooks with no token; no hook may see one.
         seen = leaked.read_text().splitlines() if leaked.exists() else []
         assert not [line for line in seen if "TOKEN" in line or "LINEAR" in line], seen
+
+
+UNAVAILABLE = "hub run: event store unavailable: "
+
+
+@pytest.mark.usefixtures("with_key")
+class TestEvents:
+    """A live run appends its executor events as it records them, failing open (AC-200.14)."""
+
+    def test_stores_executor_events_when_database_writable_events(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Any,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        db = tmp_path / "events" / "events.db"
+        monkeypatch.setenv("AGENT_HUB_DB", str(db))
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        assert UNAVAILABLE not in result.stderr
+        run_id = run_id_of(run_workspace)
+        stored = open_event_store(db).read_all()
+        assert {event.session for event in stored} == {f"run:{run_id}"}
+        assert {event.project for event in stored} == {"demo"}
+        assert [event.step for event in stored if event.type == "step.start"] == [
+            "pick",
+            "worktree",
+            "implement",
+            "verify",
+            "pr",
+        ]
+        assert [event.payload["status"] for event in stored if event.type == "run.end"] == ["done"]
+        (call,) = run_workspace.calls("claude")
+        for name in ("AGENT_HUB_RUN_ID", "AGENT_HUB_STEP", "AGENT_HUB_ATTEMPT"):
+            assert name in call["env"]
+        backfill = CliRunner().invoke(
+            app, ["collect", "--runs", str(workspace.hub / ".agent-runs"), "--db", str(db)]
+        )
+        assert backfill.stdout == f"appended 0, duplicates {len(stored)}\n", backfill.output
+
+    def test_completes_with_one_line_when_database_unwritable_events(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Any,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        blocker = tmp_path / "not-a-folder"
+        blocker.write_text("a file where the database folder should be\n")
+        monkeypatch.setenv("AGENT_HUB_DB", str(blocker / "events.db"))
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        lines = [line for line in result.stderr.splitlines() if line.startswith(UNAVAILABLE)]
+        assert len(lines) == 1, result.stderr
+        assert "not-a-folder" in lines[0]
+        assert len(run_workspace.calls("gh")) >= 1
+        assert (workspace.hub / ".agent-runs").is_dir()

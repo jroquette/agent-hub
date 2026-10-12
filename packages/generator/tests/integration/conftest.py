@@ -19,12 +19,15 @@ import re
 import shlex
 import shutil
 import signal
+import socket
 import stat
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -118,18 +121,21 @@ def rendered_hub(tmp_path: Path, rendered_tree: Callable[..., Path]) -> HubRende
 
 
 def child_env(extra: Mapping[str, str] | None = None) -> dict[str, str]:
-    """A child's environment from scratch: ``PATH`` and no git config, plus ``extra``.
+    """A child's environment from scratch: ``PATH``, no git config or event server, plus ``extra``.
 
     Git reads neither the system's nor the user's config (``GIT_CONFIG_NOSYSTEM``,
     ``GIT_CONFIG_GLOBAL``) unless ``extra`` sets them: a hook that asks git for the developer's
-    identity sees only what the test gives it. The harness mode variables and make's own are
-    dropped even from ``extra``: a child never updates goldens, keeps roots or joins a make
-    jobserver because this run does.
+    identity sees only what the test gives it. The control plane's URL is a loopback port nothing
+    listens on unless ``extra`` sets it, so a guard or Stop gate decision, or a sensor envelope,
+    never reaches a ``hub web`` running on this machine. The harness mode variables and make's
+    own are dropped even from ``extra``: a child never updates goldens, keeps roots or joins a
+    make jobserver because this run does.
     """
     env = {
         "PATH": os.environ.get("PATH", os.defpath),
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_GLOBAL": os.devnull,
+        SENSOR_URL_VARIABLE: f"http://127.0.0.1:{free_port()}",
     } | dict(extra or {})
     return {name: value for name, value in env.items() if name not in DROPPED_VARIABLES}
 
@@ -334,13 +340,23 @@ def module_constant(source: str, name: str) -> object:
     raise AssertionError(f"no module-level {name} = <literal>")
 
 
+# The hook sensor (AGH-200) runs beside the base hook of an event, with its own short timeout.
+SENSOR_COMMAND_END = '/event_sensor.py"'
+
+
 def hook_timeouts(config: HubConfig, event: str) -> dict[str, list[object]]:
-    """The ``timeout`` of every ``event`` hook in the rendered ``hooks.json`` and settings."""
+    """The ``timeout`` of every ``event`` hook in the rendered ``hooks.json`` and settings, the
+    event sensor's group left out (it is not the hook a timeout constant belongs to)."""
     texts = {file.path: file.content for file in render_hub(config).files}
     found = {}
     for path in ("plugin/hub-workflow/hooks/hooks.json", ".claude/settings.json"):
         groups = json.loads(texts[path])["hooks"][event]
-        found[path] = [hook["timeout"] for group in groups for hook in group["hooks"]]
+        found[path] = [
+            hook["timeout"]
+            for group in groups
+            for hook in group["hooks"]
+            if not hook["command"].endswith(SENSOR_COMMAND_END)
+        ]
     return found
 
 
@@ -840,13 +856,19 @@ REPO_FAKE_DIRS = {
     "prettier": "node_modules/.bin",
     "eslint": "node_modules/.bin",
 }
-# The one table that names the files under test; ``{hub}`` is the case's hub copy.
+# The tables that name the files under test (AGH-7's, then ``DECISION_COMMANDS``).
 COMMANDS = {
     "retro_metrics": "scripts/retro_metrics.py",
     "post_edit": "plugin/hub-workflow/hooks/post_edit.py",
     "session_start": "plugin/hub-workflow/hooks/session_start.py",
     "session_end": "plugin/hub-workflow/hooks/session_end.py",
     "pre_compact": "plugin/hub-workflow/hooks/pre_compact.py",
+}
+# The hooks whose decisions the control plane records (AGH-200 E9): characterized from their
+# unchanged templates, then kept byte for byte while they emit to the event server.
+DECISION_COMMANDS = {
+    "guard": "plugin/hub-workflow/hooks/guard.py",
+    "stop_gate": "plugin/hub-workflow/hooks/stop_gate.py",
 }
 # AGH-7's per-case budget: from the workspace's creation through setup, run and compare (the
 # session-scoped render is not counted). The child gets what is left, at least the floor.
@@ -981,6 +1003,7 @@ class CaseWorkspace:
     JOURNAL = JOURNAL
     HUB_DIR = HUB_DIR
     COMMANDS = COMMANDS
+    DECISION_COMMANDS = DECISION_COMMANDS
     at = staticmethod(at)
     write_files = staticmethod(write_files)
     write_exe = staticmethod(write_exe)
@@ -1155,7 +1178,7 @@ class CaseWorkspace:
 
     def command(self, name: str, *, hub: Path) -> list[str]:
         """The argv that runs the file under test ``name`` against the hub at ``hub``."""
-        return [self.python, f"{hub}/{COMMANDS[name]}"]
+        return [self.python, f"{hub}/{(COMMANDS | DECISION_COMMANDS)[name]}"]
 
     def brief_workspace(self) -> None:
         """The session start cases' workspace (see ``BRIEF_HUB_JSON``)."""
@@ -1385,3 +1408,96 @@ def say_uncaptured(request: pytest.FixtureRequest, line: str) -> None:
         return
     with capture.global_and_fixture_disabled():
         sys.stderr.write(f"{line}\n")
+
+
+# The control plane's event server, as the hook sensor sees it (AGH-200 D.3): a loopback HTTP
+# server on a free port, in a thread, that records each POST and answers 202 after ``delay``.
+SENSOR_URL_VARIABLE = "AGENT_HUB_WEB_URL"
+HOOKS_PATH = "/api/v1/events/hooks"
+
+
+@dataclass
+class Received:
+    """One request the event server got: its method, path, headers and body."""
+
+    method: str
+    path: str
+    headers: dict[str, str]
+    body: bytes
+
+
+@dataclass
+class EventServer:
+    """What the ``event_server`` fixture serves: its base URL, what it got, and its delay."""
+
+    url: str
+    received: list[Received] = field(default_factory=list)
+    delay: float = 0.0
+
+    def bodies(self) -> list[Any]:
+        """The JSON bodies of the POSTs to the hooks path, in arrival order."""
+        return [json.loads(item.body) for item in self.received if item.path == HOOKS_PATH]
+
+
+def free_port() -> int:
+    """A loopback port nothing listens on (bound, then released)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        port: int = probe.getsockname()[1]
+        return port
+
+
+def handler_for(server: EventServer, lock: threading.Lock) -> type[BaseHTTPRequestHandler]:
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # noqa: N802 - http.server's method name
+            length = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(length)
+            with lock:
+                server.received.append(
+                    Received("POST", self.path, dict(self.headers.items()), body)
+                )
+            time.sleep(server.delay)
+            answer = b'{"appended": 1, "duplicates": 0}'
+            try:
+                self.send_response(202)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(answer)))
+                self.end_headers()
+                self.wfile.write(answer)
+            except OSError:  # the sensor gave up waiting and closed the socket
+                pass
+
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 - base signature
+            return
+
+    return Handler
+
+
+@pytest.fixture
+def event_server() -> Iterator[EventServer]:
+    """A loopback event server in a thread; ``delay`` makes it answer late."""
+    lock = threading.Lock()
+    served = EventServer(url="")
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(served, lock))
+    httpd.daemon_threads = True
+    served.url = f"http://127.0.0.1:{httpd.server_address[1]}"
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield served
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join(timeout=5)
+
+
+@pytest.fixture
+def sensor_env(event_server: EventServer) -> dict[str, str]:
+    """The child variables that point the sensor (and the guard and Stop gate) at the server."""
+    return {SENSOR_URL_VARIABLE: event_server.url}
+
+
+@pytest.fixture
+def server_down_env() -> dict[str, str]:
+    """The child variables that point the sensor at a loopback port nothing listens on."""
+    return {SENSOR_URL_VARIABLE: f"http://127.0.0.1:{free_port()}"}
