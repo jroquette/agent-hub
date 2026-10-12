@@ -89,7 +89,7 @@ class _Record(BaseModel):
 def feature_view(folder: FeatureFolder, *, project: str) -> FeatureView:
     """The feature as the Features list shows it."""
     detail = feature_detail(folder, project=project)
-    return FeatureView.model_validate(detail.model_dump(exclude={"ac_rows"}))
+    return FeatureView.model_validate(detail.model_dump(include=set(FeatureView.model_fields)))
 
 
 def feature_detail(folder: FeatureFolder, *, project: str) -> FeatureDetail:

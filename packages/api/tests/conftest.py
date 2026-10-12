@@ -290,9 +290,7 @@ class FakeHubReadModels:
 
 
 def _view_fields(detail: FeatureDetail) -> dict[str, object]:
-    fields = detail.model_dump()
-    fields.pop("ac_rows")
-    return fields
+    return detail.model_dump(include=set(FeatureView.model_fields))
 
 
 class FakeHookMapper:

@@ -374,6 +374,7 @@ export function aFeatureDetail(
         repo: "agent-hub",
       },
     ],
+    records: [],
     ...overrides,
   };
 }

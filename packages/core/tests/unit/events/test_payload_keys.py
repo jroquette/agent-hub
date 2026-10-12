@@ -68,5 +68,5 @@ def test_keeps_key_when_key_is_new_in_clarity(event_type: EventType, key: str) -
 def test_declares_added_keys_when_allow_list_widened() -> None:
     every_key = frozenset().union(*PAYLOAD_KEYS.values())
 
-    assert ADDED_KEYS_V2 == {"error_message", "skill", "git_branch", "to"}
-    assert ADDED_KEYS_V2 <= every_key
+    assert {"error_message", "skill", "git_branch", "to"} == ADDED_KEYS_V2
+    assert every_key >= ADDED_KEYS_V2

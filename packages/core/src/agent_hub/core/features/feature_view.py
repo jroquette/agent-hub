@@ -48,7 +48,20 @@ class FeatureView(DerivedView):
     problem: str | None = None
 
 
+type FeatureRecordName = Literal["spec", "research", "plan", "eval", "issues"]
+
+
+class FeatureRecord(ViewModel):
+    """One record file of a feature folder; ``path`` is relative to the hub's ``brain/``, so the
+    brain note route reads it."""
+
+    name: FeatureRecordName
+    path: str
+    present: bool
+
+
 class FeatureDetail(FeatureView):
-    """A feature with its acceptance criteria rows."""
+    """A feature with its acceptance criteria rows and its records (D3)."""
 
     ac_rows: tuple[AcRow, ...] = ()
+    records: tuple[FeatureRecord, ...] = ()

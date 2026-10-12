@@ -6,10 +6,15 @@ from typing import Literal
 from pydantic import Field
 
 from agent_hub.core.events.stored_event import EventId
-from agent_hub.core.readmodels.view_types import ApiTimestamp, DerivedView, Money, ViewModel
+from agent_hub.core.readmodels.view_types import (
+    DEPRECATED_FIELD,
+    ApiTimestamp,
+    DerivedView,
+    Money,
+    ViewModel,
+)
 from agent_hub.core.runner.run_record import Stage
 from agent_hub.core.sessions.session import (
-    DEPRECATED_FIELD,
     Actor,
     Outcome,
     ProblemCounts,

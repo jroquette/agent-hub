@@ -560,7 +560,7 @@
       },
       "FeatureDetail": {
         "additionalProperties": false,
-        "description": "A feature with its acceptance criteria rows.",
+        "description": "A feature with its acceptance criteria rows and its records (D3).",
         "properties": {
           "ac_rows": {
             "default": [],
@@ -616,6 +616,14 @@
           "project": {
             "title": "Project",
             "type": "string"
+          },
+          "records": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/FeatureRecord"
+            },
+            "title": "Records",
+            "type": "array"
           },
           "repos": {
             "items": {
@@ -699,6 +707,40 @@
           "review",
           "evaluate",
           "shipped"
+        ],
+        "type": "string"
+      },
+      "FeatureRecord": {
+        "additionalProperties": false,
+        "description": "One record file of a feature folder; ``path`` is relative to the hub's ``brain/``, so the\nbrain note route reads it.",
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/FeatureRecordName"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "present": {
+            "title": "Present",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "path",
+          "present"
+        ],
+        "title": "FeatureRecord",
+        "type": "object"
+      },
+      "FeatureRecordName": {
+        "enum": [
+          "spec",
+          "research",
+          "plan",
+          "eval",
+          "issues"
         ],
         "type": "string"
       },
@@ -1250,8 +1292,19 @@
       "JsonValue": {},
       "Learning": {
         "additionalProperties": false,
-        "description": "A learning; ``text`` is its title (120 characters at most, redacted).",
+        "description": "A learning; ``text`` is its title (120 characters at most, redacted).\n\n``target`` is deprecated (it names the inbox note); ``note_path`` says so explicitly (L12).\n``state`` is ``None`` until read with the hub. ``summary`` is the note's first paragraph,\nread on request; ``note_unavailable`` and ``actions_unavailable`` give the reason the note\ncannot be read or the learning cannot be accepted or rejected here.",
         "properties": {
+          "actions_unavailable": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actions Unavailable"
+          },
           "author": {
             "anyOf": [
               {
@@ -1273,6 +1326,17 @@
               }
             ],
             "title": "Brain Path"
+          },
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
           },
           "commit": {
             "anyOf": [
@@ -1314,6 +1378,39 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "note_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note Path"
+          },
+          "note_unavailable": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note Unavailable"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
           },
           "project": {
             "title": "Project",
@@ -1386,11 +1483,33 @@
             "title": "Sources Missing",
             "type": "array"
           },
+          "state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LearningState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "status": {
             "$ref": "#/components/schemas/LearningStatus"
           },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
           "target": {
-            "$ref": "#/components/schemas/LearningTarget"
+            "$ref": "#/components/schemas/LearningTarget",
+            "deprecated": true
           },
           "text": {
             "title": "Text",
@@ -1411,6 +1530,18 @@
         ],
         "title": "Learning",
         "type": "object"
+      },
+      "LearningState": {
+        "description": "Where the learning's note is (L11): in the inbox, in an open PR, or moved by a merge.\n\n``in_brain`` and ``archived`` are inferred from the hub checkout (the note sits at its\ndestination), since GitHub is not connected.",
+        "enum": [
+          "proposed",
+          "accepted_pr_open",
+          "rejected_pr_open",
+          "in_brain",
+          "archived"
+        ],
+        "title": "LearningState",
+        "type": "string"
       },
       "LearningStatus": {
         "description": "Where a learning is: proposed until a terminal event in source order decides it.",
