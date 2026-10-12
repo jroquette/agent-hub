@@ -1,5 +1,6 @@
+from agent_hub.core.events.event import Event
 from agent_hub.core.learnings.fold_learning import fold_learnings
-from agent_hub.core.learnings.learning import LearningStatus
+from agent_hub.core.learnings.learning import LearningState, LearningStatus
 from agent_hub.core.testing.builders import an_event
 from agent_hub.core.testing.session_scenarios import (
     SCENARIO_START,
@@ -110,3 +111,68 @@ def test_folds_one_learning_when_hook_and_transcript_both_propose_it() -> None:
     learnings = fold_learnings(as_stored([from_transcript, from_hook]))
 
     assert list(learnings) == ["toolu_9"]
+
+
+INBOX_NOTE = "brain/_inbox/2026-10-09-docker.md"
+PR_URL = "https://github.com/acme/demo-hub/pull/7"
+
+
+def _inbox_proposal() -> Event:
+    return an_event(
+        type="learning.proposed",
+        timestamp=SCENARIO_START,
+        payload={"proposal": "toolu_7", "text": "Tests need docker", "target": INBOX_NOTE},
+    )
+
+
+def test_names_note_path_when_proposal_written_to_inbox() -> None:
+    elsewhere = an_event(
+        type="learning.proposed",
+        payload={"proposal": "p", "text": "t", "target": "demo-api/AGENTS.md"},
+    )
+
+    learnings = fold_learnings(as_stored([_inbox_proposal(), elsewhere]))
+
+    assert learnings["toolu_7"].note_path == INBOX_NOTE
+    assert learnings["toolu_7"].state is None
+    assert learnings["p"].note_path is None
+
+
+def test_sets_pr_open_state_when_app_accepts() -> None:
+    accept = an_event(
+        type="learning.accepted",
+        timestamp=SCENARIO_START.replace(hour=15),
+        session="control-plane",
+        source="control_plane",
+        source_id="learning:toolu_7:accepted",
+        agent="you",
+        payload={
+            "proposal": "toolu_7",
+            "brain_path": "brain/learnings/2026-10-09-docker.md",
+            "pr_url": PR_URL,
+            "branch": "demo/learning-accept-2026-10-09-docker",
+            "state": "accepted_pr_open",
+            "author": "you",
+        },
+    )
+
+    learning = fold_learnings(as_stored([_inbox_proposal(), accept]))["toolu_7"]
+
+    assert learning.status == LearningStatus.ACCEPTED
+    assert learning.state == LearningState.ACCEPTED_PR_OPEN
+    assert (learning.pr_url, learning.branch) == (PR_URL, "demo/learning-accept-2026-10-09-docker")
+    assert learning.brain_path == "brain/learnings/2026-10-09-docker.md"
+    assert learning.note_path == INBOX_NOTE
+
+
+def test_ignores_state_when_decision_not_from_app() -> None:
+    reject = an_event(
+        type="learning.rejected",
+        timestamp=SCENARIO_START.replace(hour=15),
+        payload={"proposal": "toolu_7", "reason": "dup", "state": "rejected_pr_open"},
+    )
+
+    learning = fold_learnings(as_stored([_inbox_proposal(), reject]))["toolu_7"]
+
+    assert learning.status == LearningStatus.REJECTED
+    assert (learning.state, learning.pr_url) == (None, None)
