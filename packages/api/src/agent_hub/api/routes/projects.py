@@ -5,7 +5,6 @@ from typing import Annotated
 from fastapi import APIRouter, Path, Query
 
 from agent_hub.api.dependencies import HubReadModelsDep
-from agent_hub.api.rfc9457 import NotImplementedInBuildError
 from agent_hub.api.schemas import MAX_QUERY_TEXT, PROBLEM_RESPONSES
 from agent_hub.core.brain.brain_note import BrainNote, BrainTree
 from agent_hub.core.brain.brain_path import MAX_PATH_CHARS
@@ -50,8 +49,7 @@ def list_project_repos(project: ProjectPath, models: HubReadModelsDep) -> Page[R
 @router.get("/projects/{project}/brain")
 def get_brain_tree(project: ProjectPath, models: HubReadModelsDep) -> BrainTree:
     """The ``.md`` notes of the project's hub brain (``auto/`` excluded)."""
-    del project, models
-    raise NotImplementedInBuildError("get_brain_tree")
+    return models.brain_tree(project)
 
 
 @router.get("/projects/{project}/brain/note")
@@ -59,5 +57,4 @@ def get_brain_note(
     project: ProjectPath, path: NotePathParam, models: HubReadModelsDep
 ) -> BrainNote:
     """One brain note by its path under ``brain/``: frontmatter, markdown body and size."""
-    del project, path, models
-    raise NotImplementedInBuildError("get_brain_note")
+    return models.brain_note(project, path)
