@@ -7,6 +7,7 @@ Each builder returns a JSON value; ``render_hub`` writes it in the JSON byte for
 from typing import Final, NamedTuple
 
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_files.sandbox_settings import WORKFLOW_EXCLUDED_COMMANDS
 from agent_hub.generator.json_form import JsonValue
 
 # The base plugin's folder, the same in every hub; the project plugin's is `plugin/<project>`.
@@ -49,17 +50,10 @@ _DENIED_COMMANDS: Final = (
 )
 # The guard's own protected branches besides the config's default branches (`hubhooks.py`).
 _ALWAYS_PROTECTED: Final = ("main", "master")
-# Commands that reach the network or the host's credentials run outside the sandbox; the hosts are
-# the package registries and GitHub, the same in every hub.
-_SANDBOX_EXCLUDED: Final = (
-    "docker *",
-    "gh *",
-    "git push *",
-    "git fetch *",
-    "git pull *",
-    "git clone *",
-    "git ls-remote *",
-)
+# Commands that reach the network or the host's credentials run outside the sandbox: docker, then
+# the hub workflow's own (AGH-134: `hub worktree` by its three spellings, never `make *` or
+# `./hub *`); the hosts are the package registries and GitHub, the same in every hub.
+_SANDBOX_EXCLUDED: Final = ("docker *", *WORKFLOW_EXCLUDED_COMMANDS)
 _SANDBOX_HOSTS: Final = (
     "localhost",
     "127.0.0.1",

@@ -7,7 +7,9 @@ when one needs it or a file set that comes from it, read without following links
 when a rule reads the listing). Each repo checkout is ``../<dir>`` (its real path, taken once;
 inside it nothing is followed). The branch prefix needs git in the developer's main checkout,
 which stays with the caller: it passes ``branch_prefix``, called only when a rule reads the
-developer identity and the local file is valid.
+developer identity and the local file is valid. The remote probes (AGH-134) run git against the
+network, also the caller's: it passes ``remote_probes`` only from a Claude Code session, called
+only when a rule reads the remotes.
 """
 
 import os
@@ -18,7 +20,13 @@ from pathlib import Path
 from agent_hub.core.doctor.finding import LISTING_READS, Read
 from agent_hub.core.doctor.lock_rules import lock_paths, lock_state
 from agent_hub.core.doctor.run_rules import Selection
-from agent_hub.core.doctor.snapshot import DoctorSnapshot, LockState, RepoFiles, hub_paths
+from agent_hub.core.doctor.snapshot import (
+    DoctorSnapshot,
+    LockState,
+    RemoteProbe,
+    RepoFiles,
+    hub_paths,
+)
 from agent_hub.core.hub_config.effective_identity import Sourced
 from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
@@ -31,6 +39,8 @@ from agent_hub.generator.hub_tree import read_root_entry
 
 # The developer's effective branch prefix and its source, or None when no source gives one.
 type BranchPrefixReader = Callable[[], Sourced | None]
+# Each repo checkout's ``git ls-remote origin``, in ``hub.json`` order.
+type RemoteProber = Callable[[], tuple[RemoteProbe, ...]]
 
 
 def build_doctor_snapshot(
@@ -41,6 +51,7 @@ def build_doctor_snapshot(
     selection: Selection,
     local: LocalConfig | tuple[ConfigProblem, ...],
     branch_prefix: BranchPrefixReader | None,
+    remote_probes: RemoteProber | None = None,
 ) -> DoctorSnapshot:
     """The snapshot of the hub at ``root`` (its real path) for the selected rules."""
     reads = {read for rule in selection.rules for read in rule.reads}
@@ -52,6 +63,7 @@ def build_doctor_snapshot(
     prefix = None
     if Read.DEVELOPER_IDENTITY in reads and isinstance(local, LocalConfig) and branch_prefix:
         prefix = branch_prefix()
+    probes = remote_probes() if Read.REMOTES in reads and remote_probes else None
     return DoctorSnapshot(
         config=config,
         running_version=running,
@@ -61,6 +73,7 @@ def build_doctor_snapshot(
         repos=repos,
         local=local,
         branch_prefix=prefix,
+        remote_probes=probes,
     )
 
 

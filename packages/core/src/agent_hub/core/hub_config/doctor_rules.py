@@ -39,6 +39,7 @@ CONFIG_IDENTITY_RULE: Final = "config.identity"
 REPOS_AGENTS_RULE: Final = "repos.agents"
 CONFIG_STOP_GATE_RULE: Final = "config.stop_gate"
 BRAIN_MEMORY_RULE: Final = "brain.memory"
+SANDBOX_WORKFLOW_RULE: Final = "sandbox.workflow"
 
 RULE_IDS: Final = (
     CONFIG_SCHEMA_RULE,
@@ -64,6 +65,7 @@ RULE_IDS: Final = (
     REPOS_AGENTS_RULE,
     CONFIG_STOP_GATE_RULE,
     BRAIN_MEMORY_RULE,
+    SANDBOX_WORKFLOW_RULE,
 )
 
 # The rules a module owns: they run and may be configured only when the module is selected.
@@ -190,3 +192,4 @@ class DoctorRules(ConfigObject):
     repos_agents: RuleSettings | None = absent_by_default(alias="repos.agents")
     config_stop_gate: StopGateRuleSettings | None = absent_by_default(alias="config.stop_gate")
     brain_memory: RuleSettings | None = absent_by_default(alias="brain.memory")
+    sandbox_workflow: RuleSettings | None = absent_by_default(alias="sandbox.workflow")

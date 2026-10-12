@@ -1828,3 +1828,103 @@ def test_returns_findings_without_exit_when_root_given_from_elsewhere(
     edited = doctor_command.check_hub(str(demo_hub))
     assert not isinstance(edited, UsageProblem)
     assert count_findings(edited.findings).has_errors
+
+
+# AGH-134: sandbox.workflow probes each repo's remote only from a Claude Code session.
+SANDBOX_SETTINGS = ".claude/settings.json"
+
+
+def add_origin(checkout: Path, url: str) -> None:
+    git = shutil.which("git")
+    assert git is not None
+    subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
+        [git, "remote", "add", "origin", url], cwd=checkout, check=True, capture_output=True
+    )
+
+
+def bare_origin(tmp_path: Path) -> str:
+    git = shutil.which("git")
+    assert git is not None
+    origin = tmp_path / "origin.git"
+    subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
+        [git, "init", "-q", "--bare", str(origin)], check=True, capture_output=True
+    )
+    return str(origin)
+
+
+def test_reports_nothing_on_sandbox_workflow_when_synced(
+    demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    lines = lines_of(run_doctor(demo_hub, "--only", "sandbox.workflow"), exit_code=0)
+
+    assert lines == [CLEAN]
+
+
+def test_reports_missing_exclusions_when_settings_edited(
+    demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    settings = demo_hub / SANDBOX_SETTINGS
+    document = json.loads(settings.read_bytes())
+    document["sandbox"]["excludedCommands"].remove("make worktree *")
+    settings.write_bytes(dump_json(document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "sandbox.workflow"), exit_code=1)
+
+    assert lines == [
+        "error sandbox.workflow .claude/settings.json: sandbox.excludedCommands lacks"
+        " make worktree *: inside the sandbox the hub's own fetch, push, gh and worktree"
+        " commands fail Fix: run hub sync",
+        ONE_ERROR,
+    ]
+
+
+def test_warns_unreachable_remote_when_run_in_claude_session(
+    demo_hub: Path,
+    run_doctor: DoctorRunner,
+    *,
+    demo_checkout: CheckoutFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    add_origin(demo_checkout("demo-api"), str(tmp_path / "no-such-origin.git"))
+    monkeypatch.setenv("CLAUDECODE", "1")
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "sandbox.workflow"), exit_code=0)
+
+    assert len(lines) == 2
+    assert lines[0].startswith(
+        "warning sandbox.workflow ../demo-api: git ls-remote origin fails inside this sandboxed"
+        " session ("
+    )
+    assert lines[0].endswith(
+        "); a hub worktree that runs sandboxed fails the same way Fix: run ./hub worktree <name>"
+        " as a Bash call of its own (no cd &&, pipe or redirect), or a bare git fetch origin"
+        " <branch> with ../demo-api as the cwd, then ./hub worktree --no-fetch <name>"
+    )
+    assert lines[1] == "0 errors, 1 warning, 0 infos"
+
+
+def test_probes_no_remote_when_outside_claude_session(
+    demo_hub: Path, run_doctor: DoctorRunner, *, demo_checkout: CheckoutFactory, tmp_path: Path
+) -> None:
+    add_origin(demo_checkout("demo-api"), str(tmp_path / "no-such-origin.git"))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "sandbox.workflow"), exit_code=0)
+
+    assert lines == [CLEAN]
+
+
+def test_reports_nothing_when_remote_answers_in_claude_session(
+    demo_hub: Path,
+    run_doctor: DoctorRunner,
+    *,
+    demo_checkout: CheckoutFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    add_origin(demo_checkout("demo-api"), bare_origin(tmp_path))
+    monkeypatch.setenv("CLAUDECODE", "1")
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "sandbox.workflow"), exit_code=0)
+
+    assert lines == [CLEAN]
