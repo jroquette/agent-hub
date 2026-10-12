@@ -75,6 +75,7 @@ is a hub bug: log it in `brain/_inbox/`.
 
 ## Gotchas
 
+- Sandbox (`CLAUDE.md`): an excluded command escapes only as the whole Bash call; no `cd … &&`, `;`, `|`, `>`, `git -C`.
 - Hooks run on the system `python3`, which may be 3.9: no `match`, no runtime `X | Y` types, no `tomllib`.
 - Never `git stash` in agent worktrees (the stash stack is shared). Use a WIP commit.
 - `cmd | tail` hides the exit code. Redirect to a file and check `$?`.

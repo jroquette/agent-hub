@@ -71,6 +71,17 @@ class RepoFiles:
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
+class RemoteProbe:
+    """One ``repos[].dir`` checkout's ``git ls-remote origin``, run from this process (AGH-134).
+
+    ``problem`` is ``None`` when the remote answered, else the first line of why not.
+    """
+
+    dir: str
+    problem: str | None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
 class LockAbsent:
     """No ``hub.lock`` entry in the hub folder: the hub was never adopted."""
 
@@ -96,7 +107,10 @@ class DoctorSnapshot:
     ``local`` is the developer's ``hub.local.json`` (``LocalConfig()`` when absent) or its
     problems, read on every run. ``branch_prefix`` is the developer's effective prefix and its
     source when a selected rule reads the developer identity on a valid config and local file;
-    else ``None``, as when no source gives one.
+    else ``None``, as when no source gives one. ``remote_probes`` holds one probe per git checkout
+    of ``repos``, in ``hub.json`` order, when a selected rule reads the remotes and the caller
+    runs inside a Claude Code session (its commands sandboxed when the settings say so); else
+    ``None``.
     """
 
     config: HubConfig | ConfigFailure
@@ -107,6 +121,7 @@ class DoctorSnapshot:
     repos: tuple[RepoFiles, ...]
     local: LocalConfig | tuple[ConfigProblem, ...] = field(default_factory=LocalConfig)
     branch_prefix: Sourced | None = None
+    remote_probes: tuple[RemoteProbe, ...] | None = None
 
     @property
     def hub_config(self) -> HubConfig:

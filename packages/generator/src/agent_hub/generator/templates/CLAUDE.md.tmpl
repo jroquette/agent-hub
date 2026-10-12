@@ -5,3 +5,21 @@
 
 - Start a multi-repo session with `./agent` (`make agent`): it attaches every repo in `hub.json` and appends each repo's `AGENTS.md`.
 - When compacting, keep: the files modified so far, the current task and its tracker ID, and the exact test commands in use.
+
+## Sandbox
+
+`.claude/settings.json` runs Bash in Claude Code's sandbox: a second barrier that keeps an autonomous agent away from
+what it should not reach (production, cloud endpoints, your home folder). Keep it on; never ask to disable it.
+
+- Writes: only the hub, the repos and `$TMPDIR`. `./hub` moves uv's cache to `.hub-uv/` when it must.
+- Network: HTTP(S) to the `sandbox.network.allowedDomains` hosts only. SSH never passes: a sandboxed git over SSH fails
+  with `Broken pipe` or `Connection to UNKNOWN port`; an `Operation not permitted` is a write outside the workspace.
+  Neither is an access problem: do not hand the work back for it.
+- `sandbox.excludedCommands` (`git fetch`/`push`/`pull`/`clone`/`ls-remote`, `gh`, `docker`, `./hub worktree`,
+  `make worktree`, `make worktree-remove`) run outside it, after a permission prompt, but only when the Bash call is
+  exactly that command: no `cd … &&`, `;`, pipe, redirect, `$(…)` or `git -C`. Set the cwd in a call of its own,
+  then run the bare command (`git push -u origin <branch>`, `gh pr create …`).
+- `hub worktree` that cannot fetch prints the way out: a bare `git fetch origin <branch>` in each repo, then
+  `./hub worktree --no-fetch <name>`.
+- A project adds hosts or excluded commands in `.claude/settings.project.json`, never `make *` or `./hub *`;
+  `./hub doctor` checks the hub's own (`sandbox.workflow`).

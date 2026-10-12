@@ -158,6 +158,9 @@
         },
         "brain.memory": {
           "$ref": "#/$defs/RuleSettings"
+        },
+        "sandbox.workflow": {
+          "$ref": "#/$defs/RuleSettings"
         }
       },
       "title": "DoctorRules",

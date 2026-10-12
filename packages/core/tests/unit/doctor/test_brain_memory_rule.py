@@ -68,7 +68,7 @@ def test_declares_design_fields_when_brain_memory_rule_read() -> None:
     assert BRAIN_MEMORY.severity is Severity.WARNING
     assert BRAIN_MEMORY.reads == frozenset({Read.HUB_LISTING})
     assert BRAIN_MEMORY.module is None
-    assert RULE_IDS[-1] == "brain.memory"
+    assert RULE_IDS.index("brain.memory") == len(RULE_IDS) - 2
 
 
 def test_warns_each_listed_memory_file_when_git_listed(snapshot_of: SnapshotFactory) -> None:
