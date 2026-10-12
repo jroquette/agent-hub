@@ -479,8 +479,12 @@ with no environment. The tool is found behind wrappers, quotes and redirections 
 `aws>/dev/null …`), but its name is case-sensitive and quoting tricks inside it (`a""ws`) hide it. If `guard.infra` or
 one of its patterns cannot be used (a wrong value, or regex syntax the system Python 3.9 lacks), every infra command
 is blocked until it is fixed. Patterns are Python `re`, searched with no flags on every such command: avoid nested
-quantifiers like `(a+)+`. Until a separate change lands, the generated `.claude/settings.json` still denies every
-`terraform` and `aws` command, whatever the guard decides.
+quantifiers like `(a+)+`. With `guard.infra`, the generated `.claude/settings.json` no longer denies `terraform *`
+and `aws *`, so the guard decides those commands (every other deny stays); run `./hub sync` after adding or removing
+`guard.infra`, and add `Bash(terraform *)` or `Bash(aws *)` to `permissions.deny` in `.claude/settings.project.json`
+to keep a blanket deny. The sandbox still limits the network: add your cloud API hosts to
+`sandbox.network.allowedDomains` in `.claude/settings.project.json`, then run `./hub sync`. Listing the tools in
+`sandbox.excludedCommands` instead runs them outside the sandbox with the host's credentials and network.
 
 Everything else goes through Claude Code's normal permission rules.
 
@@ -681,7 +685,7 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `guard.ask_before_edit` | no | `[]` | Paths where the guard asks before an edit |
 | `guard.deny_paths` | no | `[]` | Paths the guard never lets the agent read or edit |
 | `guard.deny_hosts` | no | `[]` | Hosts the guard blocks network calls to |
-| `guard.infra` | no | absent | Present, even `{}`, the guard classifies infra commands by environment (see the guard section); absent, the fixed infra rule |
+| `guard.infra` | no | absent | Present, even `{}`, the guard classifies infra commands by environment (see the guard section) and `.claude/settings.json` drops its `terraform *` and `aws *` denies (after `./hub sync`); absent, the fixed infra rule |
 | `guard.infra.allow` | no | `[]` | Python `re` patterns for allowed environments, e.g. `(?<![^ \t])--profile[= ]demo-dev(?![^ \t])` and `^[ \t]*AWS_PROFILE=demo-dev(?=[ \t])`; bound each by a space or tab (an `AWS_PROFILE` prefix by the part's start), since `\b` also matches `demo-dev.x` or `>--profile=demo-dev` and `\s` also matches a carriage return the shell does not split on |
 | `guard.infra.prod_markers` | no | `[]` | Python `re` patterns that mark production; a match anywhere in an infra command blocks it |
 | `modules` | no | `{}` | Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`), from 0.6.0: each selected one renders its files and `mk/<id>.mk`; `contract-sync` takes `{"source": <repo dir>, "target": <repo dir>}`, the others `{}` |
