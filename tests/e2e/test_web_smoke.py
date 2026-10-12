@@ -126,15 +126,31 @@ def chromium_executable() -> str | None:
     """
     configured = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
     root = Path(configured) if configured else Path.home() / ".cache" / "ms-playwright"
-    browsers = WEB_DIR / "node_modules" / "playwright-core" / "browsers.json"
+    # The playwright-core under @playwright/test is the one `playwright install` runs; another
+    # copy (from @axe-core/playwright) can sit at the top of node_modules with a newer revision.
+    modules = WEB_DIR / "node_modules"
+    nested = modules / "playwright" / "node_modules" / "playwright-core" / "browsers.json"
+    browsers = nested if nested.is_file() else modules / "playwright-core" / "browsers.json"
     if browsers.is_file():
         listed = json.loads(browsers.read_text(encoding="utf-8"))["browsers"]
         revision = next(b["revision"] for b in listed if b["name"] == "chromium-headless-shell")
-        expected = sorted(root.glob(f"chromium_headless_shell-{revision}/chrome-*/headless_shell"))
+        expected = _headless_shells(root, revision)
         if expected:
             return str(expected[0])
-    found = sorted(root.glob("chromium_headless_shell-*/chrome-*/headless_shell"))
+    found = _headless_shells(root, "*")
     return str(found[-1]) if found else None
+
+
+def _headless_shells(root: Path, revision: str) -> list[Path]:
+    # Older Playwright builds ship chrome-linux/headless_shell; newer ones (1.5x+) ship
+    # chrome-headless-shell-linux64/chrome-headless-shell.
+    folder = f"chromium_headless_shell-{revision}"
+    return sorted(
+        [
+            *root.glob(f"{folder}/chrome-*/headless_shell"),
+            *root.glob(f"{folder}/chrome-headless-shell-*/chrome-headless-shell"),
+        ]
+    )
 
 
 def _make_hub(installed_hub: InstalledHub, root: Path, *, project: str, repo: str) -> Path:
