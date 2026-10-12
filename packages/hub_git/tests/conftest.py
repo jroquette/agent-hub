@@ -6,7 +6,9 @@ git config in the test's own ``HOME`` rewrites that url to the bare repository
 (``url.<bare>.insteadOf``), so git never reaches the network. The fake ``gh`` is a stdlib
 script: ``gh auth token`` succeeds unless the ``logged-out`` switch is on, and ``gh pr create``
 records the pull request (failing unless the head branch is on ``origin``) and prints its url,
-or fails (``fail`` switch) or prints something else (``garbage`` switch). Everything here is
+or fails (``fail`` switch) or prints something else (``garbage`` switch); ``gh pr list --head
+<branch> --state open --json url`` prints the recorded pull requests of that head as JSON (every
+recorded one is open), or fails (``list-fail`` switch). Everything here is
 synthetic: no real repository, account or token.
 """
 
@@ -45,6 +47,19 @@ if args[:2] == ["auth", "token"]:
         sys.exit(1)
     print("gho_not-a-real-token")
     sys.exit(0)
+pulls = os.path.join(state, "pulls.jsonl")
+if args[:2] == ["pr", "list"]:
+    if switch("list-fail"):
+        sys.exit(1)
+    flags = dict(zip(args[2::2], args[3::2]))
+    known = [json.loads(line) for line in open(pulls)] if os.path.exists(pulls) else []
+    open_pulls = [
+        {"url": pull["url"]}
+        for pull in known
+        if pull["head"] == flags.get("--head") and flags.get("--state") == "open"
+    ]
+    print(json.dumps(open_pulls))
+    sys.exit(0)
 if args[:2] != ["pr", "create"]:
     sys.exit(2)
 opts = dict(arg[2:].split("=", 1) for arg in args[2:] if arg.startswith("--") and "=" in arg)
@@ -60,7 +75,6 @@ head = subprocess.run(
 )
 if head.returncode != 0:
     sys.exit(1)
-pulls = os.path.join(state, "pulls.jsonl")
 count = sum(1 for _ in open(pulls)) if os.path.exists(pulls) else 0
 url = "https://github.com/" + opts["repo"] + "/pull/" + str(count + 1)
 with open(opts["body-file"]) as body_file:

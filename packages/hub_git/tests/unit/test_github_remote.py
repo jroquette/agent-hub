@@ -1,6 +1,11 @@
 import pytest
 
-from agent_hub.hub_git.github_remote import github_repo, pull_request_url
+from agent_hub.hub_git.github_remote import (
+    UnexpectedOutputError,
+    github_repo,
+    open_pull_request_url,
+    pull_request_url,
+)
 
 
 @pytest.mark.parametrize(
@@ -53,3 +58,38 @@ def test_finds_pull_request_when_last_line_names_hub_repo() -> None:
 )
 def test_finds_no_pull_request_when_output_unexpected(stdout: bytes) -> None:
     assert pull_request_url(stdout, hub_repo="acme/demo-hub") is None
+
+
+@pytest.mark.parametrize(
+    ("stdout", "found"),
+    [
+        pytest.param(b"[]\n", None, id="none"),
+        pytest.param(
+            b'[{"url": "https://github.com/Acme/Demo-Hub/pull/7"}]\n',
+            "https://github.com/Acme/Demo-Hub/pull/7",
+            id="one",
+        ),
+    ],
+)
+def test_reads_open_pull_request_when_list_well_formed(stdout: bytes, found: str | None) -> None:
+    assert open_pull_request_url(stdout, hub_repo="acme/demo-hub") == found
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        pytest.param(b"", id="empty"),
+        pytest.param(b"not json", id="not_json"),
+        pytest.param(b'{"url": "https://github.com/acme/demo-hub/pull/1"}', id="not_list"),
+        pytest.param(b'[{"href": "https://github.com/acme/demo-hub/pull/1"}]', id="no_url"),
+        pytest.param(b'[{"url": 1}]', id="url_not_text"),
+        pytest.param(b'[{"url": "https://github.com/other/hub/pull/1"}]', id="other_repo"),
+        pytest.param(b'[{"url": "https://github.com/acme/demo-hub/pull/1 x"}]', id="trailing"),
+        pytest.param(b'[{"url": "https://evil.example/acme/demo-hub/pull/1"}]', id="other_host"),
+        pytest.param(b"[1]", id="item_not_object"),
+        pytest.param(b"\xff", id="not_utf8"),
+    ],
+)
+def test_refuses_open_pull_request_list_when_output_unexpected(stdout: bytes) -> None:
+    with pytest.raises(UnexpectedOutputError):
+        open_pull_request_url(stdout, hub_repo="acme/demo-hub")
