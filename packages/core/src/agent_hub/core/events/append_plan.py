@@ -52,8 +52,8 @@ def plan_append(batch: Sequence[Event], stored: Mapping[EventKey, Event]) -> App
 
     An event equal to a stored one, or to an earlier one in the batch with the same key, is a
     duplicate; so is one that differs only by keys of ``ADDED_KEYS_V2`` the other lacks (the
-    stored or earlier copy is kept). A different event with the same key raises ``EventConflictError`` naming its
-    position in the batch.
+    stored or earlier copy is kept). A different event with the same key raises
+    ``EventConflictError`` naming its position in the batch.
     """
     seen: dict[EventKey, Event] = {}
     new_events: list[Event] = []
