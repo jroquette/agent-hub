@@ -192,13 +192,93 @@ today), and the CLI's model and the hooks' stdlib reader accept it in the same c
 | `tracker.teams` | Several tracker team keys, the first being the default; never set together with `tracker.team` | `[tracker.team]` | AGH-56 |
 | `platform.repository` | The platform's git source: the repository root as `git+https://<host>/<path>` (no credential, port, query, fragment, ref or trailing `/`; at most 200 characters). The shim, SessionStart and cloud setup read it at every run and run `<repository>@v<platform.version>#subdirectory=packages/agent-hub`; the CI credential step reads it to map the read token; a bad value stops each of them and is never echoed; not settable in `hub.local.json`. Tokens stay on `github.com`: the CI step maps `AGENT_HUB_READ_TOKEN` only when the repository is on exactly `https://github.com/` (another host gets no token), and cloud setup's `GH_TOKEN` helper answers for `github.com` only, so a mirror on another host needs the repository attached or its own credential (follow-up) | `git+https://github.com/jroquette/agent-hub` | AGH-49 |
 | `project.conventions`, `repos[].conventions` | Patterns for the task branch (`{prefix}`, `{ISSUE}`, `{issue_lower}`, `{slug}`; needs the issue) and the commit and PR titles (`{ISSUE}`, `{type}`, `{scope}`, `{summary}`; needs `{summary}`); a repo's keys override the project's, key by key; `hub worktree`, `hub run`, its prompt and `AGENTS.md` follow them; not settable in `hub.local.json` | Today's shapes: `{prefix}{issue_lower}-{slug}`, `{type}({scope}): {summary} ({ISSUE})`; a `pr_title` that no layer sets follows the effective `commit_title` | AGH-57 |
-| `guard.infra.allow`, `guard.infra.prod_markers` | Regexes over infra commands (`aws`, `cdk`, `terraform`, `pulumi`, `kubectl`, `helm`, `sam`, `serverless`): a prod marker denies, an allowed environment passes (deploy, destroy and delete verbs ask), anything else is denied. The config ships and is validated (AGH-45, PR 1), but the guard does not read it yet: today's fixed infra rule (`terraform`, `aws`, `pulumi`, `kubectl`) applies | Today's infra rule, plus `cdk deploy`/`destroy` denied | AGH-45 |
+| `guard.infra.allow`, `guard.infra.prod_markers` | Regexes over infra commands (`aws`, `cdk`, `terraform`, `pulumi`, `kubectl`, `helm`, `sam`, `serverless`), checked by the guard per part of the command: a prod marker anywhere denies, an environment on the part itself that `allow` matches passes (deploy, destroy and delete verbs ask), a local-only form passes, anything else is denied; `guard.infra` present, even `{}`, turns it on (rule below); not settable in `hub.local.json` | The fixed infra rule: `terraform apply\|destroy\|import`, any `aws` subcommand, `pulumi up\|destroy`, `kubectl apply\|delete` and `cdk deploy\|destroy` (the verb right after `cdk`) are denied | AGH-45 |
 | `tracker.states.started`, `tracker.states.review` | The workflow state names: `hub start` moves an issue to `started` on a fresh start, or on a resume while it is unstarted; `review` is reserved for the review step and read by nothing yet; not settable in `hub.local.json` | `In Progress`, `In Review` | AGH-62 |
 | Developer identity: `project.author_name`, `author_email`, `branch_prefix` | Become optional. Effective value: the gitignored `hub.local.json`, else `hub.json`, else the hub repo's `git config user.name`/`user.email`; the prefix, when no file sets it, is the effective email's local part plus `/` (ADR 0016) | Set per developer, by `hub setup` in `hub.local.json`; `hub worktree`, `hub run` and `hub start` refuse without a prefix | AGH-65 |
 
 `hub.local.json` may hold only those identity keys and `tracker.transport`; any other key is an error, and nothing in it
 can relax a guard. Commits are authored by the developer running the session, and cloud setup writes `HUB_AUTHOR_NAME`/`HUB_AUTHOR_EMAIL`
 repo-local, never global, only when `hub.json` holds no author.
+
+**The infra guard.** With `guard.infra`, the guard hook checks a Bash command only when it names a covered tool: the
+tool's word (case-sensitive) followed by an argument, by a redirection glued to it (`aws>/dev/null s3 ls`), by a
+`$`, `,` or `}` (`aws$x`, `{aws,s3}`), or by nothing up to the end of its part or call (`… | xargs aws`, `(aws)`;
+these never make a local-only form), wherever it sits, so wrappers, quotes and
+nested calls do not hide it (`env aws …`, `bash -c "aws …"`, `$(aws …)`, `'aws' …`, even `grep aws notes.txt`). Only
+the backslash-newlines bash joins are joined (after an odd run of backslashes, outside a comment and single quotes).
+The command is split into parts at `;`, `&&`, `||`, `|` and newlines, then:
+
+1. An unusable `guard.infra` (a wrong type, an unusable item, an unknown key under it) or a pattern the hooks' Python
+   cannot compile (newer syntax on the system 3.9, e.g. `(?>…)`) denies, naming its location: it fails closed.
+2. A `prod_markers` match anywhere in the whole command denies (`echo` of a marker alone names no tool and passes).
+3. Each part, then each call inside it that names a tool (the part split again at a single `&`, `(`, `)`, a
+   backtick, `$(`, `<(`, `{` and `}`), must match an `allow` pattern or hold only local-only forms, else the command
+   is denied naming that part's or call's first tool; an allowed call never covers another one beside it. Text after an unquoted ` #` (a comment) is not
+   evidence, for `allow` or for a local form.
+4. Local-only forms, at the tool's first argument: `version`, `--version`, `help`, `--help` for any tool (`kubectl`'s
+   `version` only with `--client` in the same call); `cdk synth|ls|list|init|doctor|context`; `terraform fmt|validate`, and
+   `init` only with `-backend=false`, each voided by a later `--client=` other than `true` or `-backend=` other than
+   `false` (the last flag wins); `helm template|lint`; `sam build|validate`. A glued redirection is never one.
+5. In a part that something matched `allow` in, the first ask verb after each tool asks, as a word anywhere after
+   the tool, quoted or not: `aws` `delete-*|remove-*|terminate-*|deregister-*`, `s3 … rm|rb` and
+   `cloudformation … deploy|delete-stack`; `cdk deploy|destroy`; `terraform apply|destroy|import`;
+   `pulumi up|destroy`; `kubectl apply|create|delete|replace|patch|scale`;
+   `helm install|upgrade|uninstall|rollback`; `sam deploy|delete`; `serverless deploy|remove`.
+6. Safe characters or ask: what would pass (an allowed part or a local-only form) passes only when every character
+   of the whole command is an ASCII letter or digit, a space, a tab or one of `_ - . / : = @ , + %`, with the parts
+   joined only by `;`, `&&`, `||`, `|` or a newline. Any other character (`$`, a quote, a brace, `<`, `>`, a
+   backtick, `\`, `#`, `(`, `)`, `*`, `?`, `[`, `]`, `~`, `!`, a single `&`, other whitespace such as a carriage
+   return, a vertical tab or a no-break space, anything non-ASCII) makes it ask, naming the first one. Then it asks on
+   the first word that can run a command, or change its environment, out of the guard's sight: `sh`, `bash`, `zsh`,
+   `dash`, `ksh`, `fish`, `python*`, `perl`, `node`, `ruby`, `php`, `xargs`, `eval`, `exec`, `source`, `sudo`, `su`,
+   `doas` (anywhere, by the word's last path component, so `cdk init app --language python`, a local-only form, asks
+   too), `.` as a
+   command, `env`'s `-i` or `-u` in any spelling before its command (`-`, `-0i`, `-uNAME`, `--unset=…`,
+   `--ignore-environment`) and a lone `--`; also `parallel`, and a `sed` whose script holds an `e` (its `e` command or
+   the `s` command's `e` flag) or is read from a file (`-f`). Last, it asks when a part sets the environment twice (a
+   second `AWS_PROFILE=`, `AWS_DEFAULT_PROFILE=`, `KUBECONFIG=` or `KUBE_CONTEXT=` word, `+=` too, or a second
+   `--profile`, `--context`, `--kube-context`, `-chdir`, `--stack`, `--workspace`, `--stage` or `-var-file` flag, or
+   one setting under two spellings: `AWS_PROFILE=`, `AWS_DEFAULT_PROFILE=` and `--profile`; `-s` with `--stack` or
+   `--stage`), naming it. Then it asks when an environment selector lies outside every `allow` match on its part,
+   naming it as written: any word anywhere in any part that holds, as an identifier, one of `AWS_PROFILE`, `AWS_DEFAULT_PROFILE`,
+   `KUBECONFIG`, `KUBE_CONTEXT`, `HELM_KUBECONTEXT`, `TF_WORKSPACE`, `TF_DATA_DIR`, `TF_CLI_ARGS` and
+   `TF_CLI_ARGS_*`, `PULUMI_BACKEND_URL`, `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_ROLE_ARN`,
+   `CDK_DEFAULT_ACCOUNT` (the whole word: `NAME=v`, `NAME+=v`, and also `export NAME`, `read NAME`, `printf -v NAME`,
+   `for NAME in`, `declare -n P=NAME`, `env --split-string=NAME=v` or `env -SNAME=v`); and, in a part that names a covered tool, the flags `--profile`, `--aws-profile`,
+   `--context`, `--kube-context`, `--cluster`, `--server`, `--user`, `--kubeconfig`, `--kube-apiserver`,
+   `-chdir`/`--chdir`, `--cwd`, `--stack`, `-s` (beside any covered tool: pulumi's stack, serverless's stage, kubectl's server), `--stage`,
+   `--workspace`, `-var-file`/`--var-file`, `-backend-config`/`--backend-config` and, beside `pulumi`, `-C`, each as
+   `--x v` (with the next word) or `--x=v`. So an `allow` pattern must match a whole setting (`--profile demo-dev`,
+   `AWS_PROFILE=demo-dev`), not its value alone. Last, it asks on a command that changes a tool's own configuration:
+   `aws configure set|import`, `kubectl config set-context|use-context|set-cluster|set-credentials|use|set|rename-context|delete-context`,
+   `terraform workspace select|new`, `pulumi stack select`. An ask verb (5) keeps its reason and comes first; a deny stays a deny,
+   and a command that names no covered tool is not affected. An `allow` match that overlaps a quoted region (`'…'`,
+   `"…"`, `$'…'`) is text, not evidence: it neither allows nor denies, and the quote makes the command ask.
+
+The strictest part wins, and an infra allow or ask does not end the check: a later deny (a secret file) still wins.
+There is no carry-over: the environment must be on the part itself (`--profile <env>`, an `AWS_PROFILE=<env> `
+prefix); one set by an earlier part, exported or inherited never counts. Nothing relaxes it: `hub.local.json` cannot
+set `guard.infra`, and a `hub.json` named by `$HUB_CONFIG` cannot turn it on or widen `allow` (the mode and `allow` are
+the hook root's; that file's `prod_markers` and unusable values are added). Values in the reasons are escaped and capped
+at 100 characters. Patterns are searched with no flags, in Python 3.9 `re` syntax, on every Bash call that names a
+covered tool, with no cost cap: avoid nested quantifiers. Bound an environment pattern by a space or tab, as a
+whole word (`(?<![^ \t])--profile[= ]demo-dev(?![^ \t])`), and an `AWS_PROFILE` prefix by the start of the part
+(`^[ \t]*AWS_PROFILE=demo-dev(?=[ \t])`): `\b` also matches inside a longer word (`demo-dev.x`, `demo-dev,staging`,
+a redirection target `>--profile=demo-dev`), and `\s` also matches a carriage return, a vertical tab or a no-break
+space, which the shell does not split words on. Without `guard.infra`, the fixed rule also denies a
+redirection glued to `terraform`, `aws`, `pulumi`, `kubectl` or `cdk`. Until a separate change, the generated
+`.claude/settings.json` still denies every `terraform` and `aws` command, whatever the guard decides. Accepted limits:
+tool names are matched case-sensitively (`AWS` is not seen); quoting or glob tricks inside a tool's word (`a""ws`,
+`a?s`, `aws*`) hide it (AGH-127); the fixed rule (without `guard.infra`) misses options before the verb
+(`terraform -chdir=x apply`) and a tool word with nothing after it (`xargs aws`), which only infra mode catches
+(AGH-126); abbreviated long options (e.g. `--prof`) and short options glued to their value or clustered
+(`-sdemo/prod`, `-ys demo/prod`) are not recognised as environment flags; which option takes the next word as its
+value is not modelled, so an allowed environment can be another option's value (`aws s3 ls --query
+--profile=demo-dev`, `kubectl get pods --field-manager --context=kind-demo`); only the names above count as setting
+the environment twice (`--chdir` and `--var-file` count with `-chdir` and `-var-file`); only the selectors above are
+checked, not others a tool reads (`--endpoint-url`, `--region`, `TF_VAR_*`, a tool's own config files); a command a
+wrapper runs elsewhere (`ssh host aws …`) is checked as text only. The selector flags are not scoped per tool, so
+`aws ecs … --cluster x` asks too.
 
 ## Layer 2: control plane and observability
 

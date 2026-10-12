@@ -1,10 +1,21 @@
 #!/usr/bin/env python3
 """PreToolUse guard for a hub workspace (hub.json + sibling repos).
 
-deny  = hard block (secrets, force-push / push to the default branch, curl|sh, destructive infra and docker
-        volumes, AI attribution in commits/PRs/branches, editing .git internals, network to guard.deny_hosts,
-        reading or changing paths in guard.deny_paths, from a file tool or any Bash token)
-ask   = needs the user's confirmation (removing test assertions (`assert`, `expect(`, `pytest.raises`,
+deny  = hard block (secrets, force-push / push to the default branch, curl|sh, docker volumes, infra commands
+        (with guard.infra: a production marker anywhere, or a part or one of its calls (also split at a single
+        &, $( ), backticks, <( ), ( ), { }) with no allowed environment outside a ` #` comment and not a
+        local-only form; without it: the fixed infra rule; both see a redirection glued to the tool word,
+        aws>/dev/null; values in their reasons are escaped and capped), AI attribution in commits/PRs/branches,
+        editing .git internals, network to guard.deny_hosts, reading or changing paths in guard.deny_paths,
+        from a file tool or any Bash token)
+ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an allowed environment, anywhere
+        after the tool (aws's s3 … rm and cloudformation … deploy too, quoted or not); with guard.infra, a
+        command it would let through that holds a character other than ASCII letters, digits, space, tab,
+        _ - . / : = @ , + % and the joins ; && || | newline, or a word that always asks: a shell, python*,
+        perl, node, ruby, php, xargs, eval, exec, source, `.` as a command, env -i/-u, sudo, su, doas, --,
+        parallel, a sed that runs text (e command or flag, -f), or a part that sets the environment twice,
+        under one spelling or two),
+        removing test assertions (`assert`, `expect(`, `pytest.raises`,
         `.assert_*(`, unittest's `.assertX(` and `self.fail(`) or adding skip/xfail/quarantine markers,
         deleting or sed-editing tests from Bash, editing the hub's guard files: plugin/hub-workflow/hooks/,
         plugin/<project>/hooks/, .claude/settings*.json, hub.lock and hub.json, in the hub or a hub worktree,
@@ -32,6 +43,7 @@ bounded by the sensor's 0.5 s, prints nothing and never changes the decision or 
 
 from __future__ import annotations
 
+import bisect
 import glob
 import json
 import os
@@ -41,7 +53,7 @@ import subprocess
 import sys
 import tempfile
 from fnmatch import fnmatch
-from typing import IO, Optional
+from typing import IO, Callable, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
@@ -72,6 +84,150 @@ SKIP_MARKERS = re.compile(
     r"@pytest\.mark\.(skip|skipif|xfail|quarantine)\b|\bpytest\.(skip|xfail)\(|\b(test|it|describe)\.(skip|fixme|todo)\(|\bx(it|describe)\("
 )
 TEST_PATH = r"(?:(\S*/)?(tests?|__tests__)/\S+|\S+\.(test|spec)\.[jt]sx?\b|['\"]?(\S*/)?test_\w+\.py\b)"
+# guard.infra: the covered tools, each as a word followed by an optional closing quote, blanks and
+# an argument (group 2 starts at it; a lookahead, so a tool word that is another tool's first
+# argument is a mention too), by a redirection glued to it (`aws>/dev/null`, `aws&>log`), or by
+# nothing but blanks up to the end of its part or call, or by a `$`, `,` or `}` (`xargs aws`, `(aws)`,
+# `aws$x`, `{aws,s3}`; these two have no group 2, never a local form), anywhere in a part, so
+# wrappers, quotes, expansions and redirections do not hide it.
+INFRA_TOOLS = ("aws", "cdk", "terraform", "pulumi", "kubectl", "helm", "sam", "serverless")
+INFRA_TOOL = re.compile(
+    r"\b(" + "|".join(INFRA_TOOLS) + r")\b(?:['\"]?\s+(?=(\S))|(?=\d*[<>]|&>)|(?=['\"]?\s*(?:[&()`{}$,]|\Z)))"
+)
+# The parts of a command: split at `&&`, `||`, `;`, `|` and newlines; each part is checked whole,
+# then each tool mention in it against the call that holds it (the part split at a single `&`, `(`,
+# `)`, a backtick, `{` and `}`, so `$(…)`, `<(…)`, subshells and groups), so an allowed call never
+# covers another one beside it.
+INFRA_PART = re.compile(r"&&|\|\||[;|\n]")
+INFRA_CALL = re.compile(r"[&()`{}]")
+# The characters the shell reader looks at: quotes ('…', "…", and `$'…'`, where a backslash escapes
+# the next character; `$$` is a token of its own), backslashes, a comment's `#` (at the start or
+# after a blank or an operator) and newlines.
+INFRA_LEX = re.compile(r"[\\'\"#\n$]")
+INFRA_WORD_BREAK = re.compile(r"[\s;&|()<>]")
+# E23 safe characters: an infra allow (or a local form) holds only for a command made of ASCII
+# letters and digits, space, tab and `_ - . / : = @ , + %`, joined by `;`, `&&`, `||`, `|` or a
+# newline; the first other character (a match that is not `&&`) makes it ask.
+INFRA_UNSAFE = re.compile(r"&&|[^A-Za-z0-9 \t_\-./:=@,+%;|\n]")
+# E23 words that always ask in such a command (by the word's last path component): shells,
+# interpreters, xargs, eval, exec, source, sudo, su, doas; also a lone `--`, `.` in command
+# position, and env's -i or -u in any spelling before its command.
+INFRA_RISKY = re.compile(r"(?:sh|bash|zsh|dash|ksh|fish|perl|node|ruby|php|xargs|eval|exec|source|sudo|su|doas|python.*)\Z")
+INFRA_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\+?=")
+INFRA_PREFIX_WORDS = {"if", "then", "else", "elif", "do", "while", "until", "time", "command", "builtin", "coproc"}
+INFRA_ENV_CLEAR = re.compile(r"-\Z|-[^-]*[iu]|--[iu]")  # `-`, `-i`, `-u`, `-0i`, `-uNAME`, `--unset`, `--ignore-…`
+INFRA_ENV_VALUE = {"-C", "-S", "--chdir", "--split-string"}  # env options whose value is the next word
+# E24: parallel runs its input or arguments as commands, and so does sed's e (its e command, or
+# the s command's e flag) or a sed script read from a file (-f/--file): such a word asks.
+INFRA_RUNS = re.compile(r"parallel\Z")
+INFRA_SED = re.compile(r"g?sed\Z")
+# E24: the environment settings counted per part (a `NAME=` or `NAME+=` word anywhere in it; a
+# flag as `--x v` or `--x=v`, terraform's chdir and var-file with one dash or two); a second one of
+# a name asks. E25: so does a second spelling of one setting: the AWS profile (either variable or
+# --profile), pulumi's stack (--stack, -s) and serverless's stage (--stage, -s).
+INFRA_ENV_SETTING = re.compile(
+    r"(AWS_PROFILE|AWS_DEFAULT_PROFILE|KUBECONFIG|KUBE_CONTEXT)\+?=|(--profile|--context|--kube-context|-?-chdir"
+    r"|--stack|--workspace|--stage|-s|-?-var-file)(?:=|\Z)"
+)
+INFRA_ENV_ALIASES = (
+    {"AWS_PROFILE", "AWS_DEFAULT_PROFILE", "--profile"},
+    {"--stack", "-s"},
+    {"--stage", "-s"},
+)
+# E27: the environment selectors the guard knows. Each one in a part must lie inside an allow
+# match: a word anywhere in any part that holds a listed name as an identifier (E28: not only
+# `NAME=`, so `printf -v NAME`, `for NAME in`, `declare -n P=NAME`, `read NAME`, `export NAME` and
+# env's `--split-string=NAME=…` or `-SNAME=…`, a name glued to a one-dash option); a flag word, as
+# `--x v` (with the next word) or `--x=v`, in a part that names a covered tool (pulumi's -C only
+# beside pulumi).
+INFRA_SELECTOR_NAMES = (
+    r"(?:AWS_PROFILE|AWS_DEFAULT_PROFILE|KUBECONFIG|KUBE_CONTEXT|HELM_KUBECONTEXT|TF_WORKSPACE|TF_DATA_DIR"
+    r"|TF_CLI_ARGS(?:_[A-Za-z0-9_]+)?|PULUMI_BACKEND_URL|AWS_CONFIG_FILE|AWS_SHARED_CREDENTIALS_FILE"
+    r"|AWS_ROLE_ARN|CDK_DEFAULT_ACCOUNT)(?![A-Za-z0-9_])"
+)
+INFRA_SELECTOR_ENV = re.compile(r"(?<![A-Za-z0-9_])" + INFRA_SELECTOR_NAMES)
+INFRA_SELECTOR_GLUED = re.compile(r"-[A-Za-z0-9]+?" + INFRA_SELECTOR_NAMES)
+INFRA_SELECTOR_FLAG = re.compile(
+    r"(?:--profile|--aws-profile|--context|--kube-context|--cluster|--server|--user|--kubeconfig"
+    r"|--kube-apiserver|-?-chdir|--cwd|--stack|-s|--stage|--workspace|-?-var-file|-?-backend-config)(=|\Z)"
+)
+INFRA_PULUMI_FLAG = re.compile(r"-C(=|\Z)")
+INFRA_BLANK_WORD = re.compile(r"[^ \t]+")
+INFRA_END = r"(?![\w-])"
+INFRA_WORD = r"(?<![\w-])({})" + INFRA_END
+# Local-only forms, matched at the tool's first argument; kubectl's version needs --client in the
+# call, terraform's init needs -backend=false, each with no later `--client=` (other than `true`) or
+# `-backend=` (the last flag wins).
+INFRA_LOCAL_ANY = re.compile(r"(--version|version|help|--help)" + INFRA_END)
+INFRA_LOCAL = {
+    "cdk": re.compile(r"(synth|ls|list|init|doctor|context)" + INFRA_END),
+    "terraform": re.compile(r"(fmt|validate)" + INFRA_END),
+    "helm": re.compile(r"(template|lint)" + INFRA_END),
+    "sam": re.compile(r"(build|validate)" + INFRA_END),
+}
+INFRA_KUBECTL_VERSION = re.compile(r"(version|--version)" + INFRA_END)
+INFRA_FLAG_END = r"(?=\s|$)"
+INFRA_KUBECTL_CLIENT = re.compile(r"(?<![\w-])--client" + INFRA_FLAG_END)
+INFRA_TERRAFORM_INIT = re.compile(r"init" + INFRA_END)
+INFRA_NO_BACKEND = re.compile(r"(?<![\w-])-backend=false" + INFRA_FLAG_END)
+# (needed flag, flags that keep it, flag word): the needed flag counts when the last flag word (in
+# any spelling, quoted too) lies in a flag that keeps it.
+INFRA_CLIENT = (INFRA_KUBECTL_CLIENT, re.compile(r"(?<![\w-])--client(?:=true)?" + INFRA_FLAG_END),
+                re.compile(r"client(?![\w-])"))
+INFRA_BACKEND = (INFRA_NO_BACKEND, INFRA_NO_BACKEND, re.compile(r"backend(?![\w-])"))
+
+
+class _Verbs:
+    """A tool's ask verbs (words, quotes allowed): ``search(part, pos)`` is the reason's name of the
+    first one at or after pos, or None. A ``(lead, verbs)`` pair asks when one of ``verbs`` comes
+    anywhere after ``lead`` (aws `s3 … rm`); each search runs once from pos, so a part costs one
+    linear pass per pattern."""
+
+    def __init__(self, words: str, *pairs: tuple[str, str]) -> None:
+        self.words = re.compile(INFRA_WORD.format(words))
+        self.pairs = [(re.compile(INFRA_WORD.format(lead)), re.compile(INFRA_WORD.format(verbs)))
+                      for lead, verbs in pairs]
+
+    def search(self, part: str, pos: int) -> str | None:
+        found = []
+        word = self.words.search(part, pos)
+        if word:
+            found.append((word.start(), word.group(1)))
+        for lead, verbs in self.pairs:
+            first = lead.search(part, pos)
+            verb = verbs.search(part, first.end()) if first else None
+            if first and verb:
+                found.append((first.start(), f"{first.group(1)} {verb.group(1)}"))
+        return min(found)[1] if found else None
+
+
+# Verbs that ask on an allowed environment, searched as words anywhere after the tool's first
+# mention in the part, once per tool.
+INFRA_ASK_VERBS = {
+    "aws": _Verbs(r"(?:delete|remove|terminate|deregister)-[\w-]+", ("s3", "rm|rb"),
+                  ("cloudformation", "deploy|delete-stack")),
+    "cdk": _Verbs("deploy|destroy"),
+    "terraform": _Verbs("apply|destroy|import"),
+    "pulumi": _Verbs("up|destroy"),
+    "kubectl": _Verbs("apply|create|delete|replace|patch|scale"),
+    "helm": _Verbs("install|upgrade|uninstall|rollback"),
+    "sam": _Verbs("deploy|delete"),
+    "serverless": _Verbs("deploy|remove"),
+}
+# E27: the commands that change a tool's own configuration (profiles, contexts, workspaces) ask
+# whatever their environment: a lead word anywhere after the tool's first mention in the part,
+# then one of its verbs anywhere after it (E28: also kubectl's `config use|set|rename-context|
+# delete-context` and pulumi's `stack select`).
+INFRA_CONFIG_VERBS = {
+    tool: (re.compile(INFRA_WORD.format(lead)), re.compile(INFRA_WORD.format(verbs)))
+    for tool, lead, verbs in (
+        ("aws", "configure", "set|import"),
+        ("kubectl", "config", "set-context|use-context|set-cluster|set-credentials|use|set|rename-context"
+                              "|delete-context"),
+        ("terraform", "workspace", "select|new"),
+        ("pulumi", "stack", "select"),
+    )
+}
 BASH_WRITE = re.compile(r">>?|\btee\b|\bsed\s+(-\w*i\w*|--in-place)\b|\b(rm|mv|cp|truncate|ln)\b")
 WORKTREE_SEG = re.compile(r"/\.claude/worktrees/[^/]+(?=/)")
 SETTINGS_FILE = re.compile(r"\.claude/settings[^/]*\.json")
@@ -246,7 +402,8 @@ def _segments(command: str) -> list[str]:
     """The command's segments split at `&&`, `||`, `;`, `|` and newlines, then also at a single `&`
     (both splits are kept, so a split only adds segments)."""
     first = re.split(r"&&|\|\||[;|\n]", command)
-    more = [seg for seg in re.split(r"&&|\|\||[;|&\n]", command) if seg not in first]
+    known = set(first)
+    more = [seg for seg in re.split(r"&&|\|\||[;|&\n]", command) if seg not in known]
     return first + more
 
 
@@ -262,10 +419,12 @@ def _tokens(segment: str) -> list[str]:
     """The segment's words that may name a path, options dropped: each with its outer quotes stripped,
     and again with every quote and backslash removed (`h"ub".json`, `hub\\.json`). Words split at
     blanks and redirections, and again also at parentheses and backticks (both kept: only adds words)."""
-    toks = []
+    toks: list[str] = []
+    seen: set[str] = set()
     for word in dict.fromkeys([*re.split(r"[\s<>]+", segment), *re.split(r"[\s<>()`]+", segment)]):
         for tok in (word.strip("'\""), re.sub(r"['\"\\\\]", "", word)):
-            if tok and not tok.startswith("-") and tok not in toks:
+            if tok and not tok.startswith("-") and tok not in seen:
+                seen.add(tok)
                 toks.append(tok)
     return toks
 
@@ -274,6 +433,496 @@ DENY_PATH_REASON = "{} is under guard.deny_paths `{}` (hub.json); agents neither
 GUARD_PARENT_REASON = "{} holds the hub's guard files ({}); removing or moving it changes the guard, confirm first"
 GUARD_FILE_REASON = ("{} is the hub's own guard or config ({}): hooks, the project guard extension, settings, "
                      "hub.lock, hub.json and the hub/agent launchers change only with the user's confirmation")
+INFRA_MARKER_REASON = "this command matches guard.infra.prod_markers `{}` (hub.json): production infrastructure is human-only"
+INFRA_UNKNOWN_REASON = ("{}: environment not recognised by guard.infra.allow (hub.json); put the environment on this "
+                        "command, e.g. `--profile <env>` or an `AWS_PROFILE=<env> ` prefix (an exported or inherited "
+                        "one does not count)")
+INFRA_ASK_REASON = "`{} {}` changes infrastructure on an allowed environment; confirm first"
+INFRA_CONFIG_REASON = "{} (hub.json) cannot be used ({}); infrastructure commands are denied until it is fixed"
+INFRA_UNSAFE_REASON = ("`{}` is a character guard.infra does not check (it passes only letters, digits, blanks, "
+                       "`_-./:=@,+%` and the joins `;` `&&` `||` `|` newline); confirm this infrastructure command first")
+INFRA_RISKY_REASON = ("`{}` can run a command, or change its environment, out of guard.infra's sight (a shell, an "
+                      "interpreter, xargs, eval, exec, source, `.`, env -i/-u, sudo, su, doas, a lone `--`); confirm first")
+INFRA_RUNS_REASON = ("`{}` runs text as a command out of guard.infra's sight (parallel, or sed's e command or a "
+                     "sed script file); confirm first")
+INFRA_REPEATED_REASON = ("`{}` is set twice in one call: guard.infra checks the value it sees, the tool may use "
+                         "another; confirm first")
+INFRA_SELECTOR_REASON = ("`{}` selects an environment outside every guard.infra.allow match (hub.json): each "
+                         "profile, context, kubeconfig, cluster, stack, stage, workspace, chdir or var-file setting "
+                         "must lie in one; confirm first")
+INFRA_CONFIG_VERB_REASON = ("`{} {}` changes the tool's own configuration (profiles, contexts, workspaces), which "
+                            "later commands use out of guard.infra's sight; confirm first")
+INFRA_VALUE_CAP = 100  # characters of a value from hub.json or the command in an infra reason
+LEGACY_INFRA = re.compile(
+    r"\bterraform\s+(apply|destroy|import)\b|\baws\s+\S+|\bpulumi\s+(up|destroy)\b|\bkubectl\s+(apply|delete)\b"
+    r"|\bcdk\s+(deploy|destroy)\b|\b(terraform|aws|pulumi|kubectl|cdk)(\d*[<>]|&>)"
+)
+
+
+def _escaped(text: str) -> str:
+    """text with quotes, backslashes, control characters and non-ASCII as JSON escapes: a location
+    read from hub.json goes into a reason as plain text."""
+    return json.dumps(text)[1:-1]
+
+
+def _printable(text: str) -> str:
+    """text with control characters and non-ASCII as JSON escapes (as _escaped), printable ASCII
+    kept: a pattern stays as written."""
+    return "".join(ch if " " <= ch <= "~" else _escaped(ch) for ch in text)
+
+
+def _infra_value(text: str, escape: Callable[[str], str] = _escaped) -> str:
+    """text escaped, at most INFRA_VALUE_CAP characters ("..." marks a cut), so an infra reason
+    stays one short line whatever hub.json or the command holds."""
+    shown = escape(text[:INFRA_VALUE_CAP])
+    if len(text) > INFRA_VALUE_CAP or len(shown) > INFRA_VALUE_CAP:
+        return shown[:INFRA_VALUE_CAP - 3] + "..."
+    return shown
+
+
+def _infra_compiled(key: str, patterns: tuple[str, ...]) -> tuple[list[re.Pattern[str]], Verdict]:
+    """(each guard.infra.<key> pattern compiled, None), or ([], the deny naming the first one this
+    interpreter cannot compile)."""
+    compiled = []
+    for index, pattern in enumerate(patterns):
+        try:
+            compiled.append(re.compile(pattern))
+        except (re.error, OverflowError, RecursionError) as error:
+            location = f"guard.infra.{key}[{index}]"
+            return [], ("deny", INFRA_CONFIG_REASON.format(location, _infra_value(f"not a Python regex here: {error}", _printable)))
+    return compiled, None
+
+
+def _infra_shell(text: str) -> tuple[list[int], int, int, bool, list[tuple[int, int]]]:
+    """How bash reads text's quotes, comments and backslashes: (where each backslash-newline it
+    joins starts: after an odd run of backslashes, outside a comment, '…' and $'…'; where its first
+    comment starts, or -1; where its first `#` inside a quote at a word start is, or -1; whether a
+    quote is left open; each quoted region, '…', "…" or $'…', as (start, end) with its quotes, in
+    order, an open one up to the end of text)."""
+    joins: list[int] = []
+    spans: list[tuple[int, int]] = []
+    quote, comment, quoted, pos, opened = "", -1, -1, 0, 0
+    while True:
+        found = INFRA_LEX.search(text, pos)
+        if not found:
+            unclosed = quote not in ("", "#")
+            return joins, comment, quoted, unclosed, spans + [(opened, len(text))] * unclosed
+        at, char = found.start(), found.group(0)
+        pos = at + 1
+        word_start = at == 0 or bool(INFRA_WORD_BREAK.match(text, at - 1))
+        closes = False
+        if quote == "#":
+            quote = "" if char == "\n" else quote
+        elif quote == "'":
+            closes = char == "'"
+        elif quote == "$'":
+            pos = at + 2 if char == "\\" else pos
+            closes = char == "'"
+        elif char == "\\":
+            if text[at + 1:at + 2] == "\n":
+                joins.append(at)
+            pos = at + 2
+        elif quote == '"':
+            closes = char == '"'
+        elif char == "$" and text[at + 1:at + 2] == "$":
+            pos = at + 2
+        elif char == "$" and text[at + 1:at + 2] == "'":
+            quote, pos, opened = "$'", at + 2, at
+        elif char in "'\"":
+            quote, opened = char, at
+        elif char == "#" and word_start:
+            quote, comment = "#", at if comment < 0 else comment
+        if closes:
+            quote = ""
+            spans.append((opened, at + 1))
+        if char == "#" and word_start and quote not in ("", "#") and quoted < 0:
+            quoted = at
+
+
+def _infra_joined(cmd: str) -> str:
+    """cmd with each backslash-newline bash joins removed (nothing put in its place, as bash does);
+    any other newline stays a part boundary."""
+    if "\\\n" not in cmd:
+        return cmd
+    joins = _infra_shell(cmd)[0]
+    starts = [0] + [at + 2 for at in joins]
+    return "".join(cmd[start:end] for start, end in zip(starts, joins + [len(cmd)]))
+
+
+def _uncommented(text: str) -> str:
+    """text up to its first comment (an unquoted `#` at the start or after a blank or operator);
+    `'…'`, `"…"` and `$'…'` (where a backslash escapes) are quotes, `$$` is a token. When the quotes
+    do not close, up to its first such `#` quoted or not (when unsure, cut)."""
+    if "#" not in text:
+        return text
+    _, comment, quoted, unclosed, _ = _infra_shell(text)
+    if comment >= 0:
+        return text[:comment]
+    return text[:quoted] if unclosed and quoted >= 0 else text
+
+
+def _infra_unsafe(cmd: str) -> str | None:
+    """The first character of cmd outside the E23 safe list (a `&` not in `&&` included), or None."""
+    for found in INFRA_UNSAFE.finditer(cmd):
+        if found.group(0) != "&&":
+            return found.group(0)
+    return None
+
+
+def _infra_sed(words: list[str]) -> dict[int, str]:
+    """{index: "<sed> <script>"} for each sed word of a part's words whose arguments (the words
+    after it, as GNU sed reads them: options anywhere, short ones clustered, long ones by any unique
+    prefix) give it a script holding an `e` (from -e or --expression, else its first operand) or a
+    script file (-f or --file) (E24). One pass over words (E27): a later sed's arguments are a
+    suffix of an earlier one's and read alike after the later sed word, which never takes the next
+    word as a value, so each sed keeps the scripts and operands found after it."""
+    seds: list[tuple[int, str]] = []
+    scripts: list[tuple[int, str, bool]] = []  # (option's index, as shown, whether it runs text)
+    operands: list[tuple[int, str]] = []
+    take, taken_at = "", 0
+    for index, word in enumerate(words):
+        sed = INFRA_SED.match(word.rsplit("/", 1)[-1])
+        if not seds:
+            if sed:
+                seds.append((index, word))
+            continue
+        if sed:
+            seds.append((index, word))
+        if take:
+            if take[-1] in "ef":
+                scripts.append((taken_at, f"{take[:-1]} {word}", take[-1] == "f" or "e" in word))
+            take = ""
+        elif word.startswith("--") and len(word) > 2:
+            name, eq, value = word[2:].partition("=")
+            kind = ("e" if "expression".startswith(name) else "f" if len(name) > 1 and "file".startswith(name)
+                    else "l" if "line-length".startswith(name) else "")
+            if kind and eq and kind in "ef":
+                scripts.append((index, word, kind == "f" or "e" in value))
+            elif kind and not eq:
+                take, taken_at = word + kind, index
+        elif word.startswith("-") and len(word) > 1:
+            for at, char in enumerate(word[1:], 2):
+                if char in "efl":
+                    if word[at:] and char in "ef":
+                        scripts.append((index, word, char == "f" or "e" in word[at:]))
+                    elif not word[at:]:
+                        take, taken_at = f"-{char}{char}", index
+                    break
+                if char == "i":  # -i[SUFFIX]: the rest is its suffix
+                    break
+        else:
+            operands.append((index, word))
+    runs_from: list[str | None] = [None] * (len(scripts) + 1)
+    for at in range(len(scripts) - 1, -1, -1):
+        runs_from[at] = scripts[at][1] if scripts[at][2] else runs_from[at + 1]
+    found: dict[int, str] = {}
+    script = operand = 0
+    for index, sed_word in seds:
+        while script < len(scripts) and scripts[script][0] <= index:
+            script += 1
+        while operand < len(operands) and operands[operand][0] <= index:
+            operand += 1
+        if script < len(scripts):
+            shown = runs_from[script]
+        else:
+            first = operands[operand][1] if operand < len(operands) else ""
+            shown = first if "e" in first else None
+        if shown:
+            found[index] = f"{sed_word} {shown}"
+    return found
+
+
+def _infra_risky(cmd: str) -> tuple[str, str] | None:
+    """The first word of cmd (a command of safe characters only) that always asks, as written,
+    with its reason: a shell, interpreter, xargs, eval, exec, source, sudo, su or doas word
+    anywhere, a lone `--`, `.` in command position (after assignments, options and keywords such
+    as `then`, `time`, `command`), or env's -i/-u in any spelling among its options (then "env
+    <option>") (E23); parallel anywhere, or a sed that runs text (then "sed <script>") (E24);
+    else None."""
+    for part in INFRA_PART.split(cmd):
+        command, env, value = True, "", False
+        words = part.split()
+        seds = _infra_sed(words)
+        for index, word in enumerate(words):
+            name = word.rsplit("/", 1)[-1]
+            if word == "--" or INFRA_RISKY.match(name):
+                return INFRA_RISKY_REASON, word
+            if INFRA_RUNS.match(name):
+                return INFRA_RUNS_REASON, word
+            if index in seds:
+                return INFRA_RUNS_REASON, seds[index]
+            if env and (value or word.startswith("-")):
+                if not value and INFRA_ENV_CLEAR.match(word):
+                    return INFRA_RISKY_REASON, f"{env} {word}"
+                value = not value and word in INFRA_ENV_VALUE
+                continue
+            env = ""
+            if command and word == ".":
+                return INFRA_RISKY_REASON, word
+            if command and (INFRA_ASSIGNMENT.match(word) or word in INFRA_PREFIX_WORDS or word.startswith("-")):
+                continue
+            command = False
+            env = word if word.rsplit("/", 1)[-1] == "env" else ""
+    return None
+
+
+def _infra_repeated(cmd: str) -> str | None:
+    """The first environment setting (E24's names and flags) that a part of cmd (a command of safe
+    characters only, so a part is one call) sets a second time, as its name; else (E25) the first
+    two spellings of one setting in a part, as `first`/`second`; else None."""
+    for part in INFRA_PART.split(cmd):
+        names = []
+        for word in part.split():
+            found = INFRA_ENV_SETTING.match(word)
+            if found:
+                name = found.group(1) or found.group(2)
+                names.append(name[1:] if name in ("--chdir", "--var-file") else name)
+        for index, name in enumerate(names):
+            if name in names[:index]:
+                return name
+        for index, name in enumerate(names):
+            for earlier in names[:index]:
+                if any(earlier in group and name in group for group in INFRA_ENV_ALIASES):
+                    return f"{earlier}`/`{name}"
+    return None
+
+
+def _infra_selectors(cmd: str, allow: list[re.Pattern[str]]) -> str | None:
+    """The first environment selector (E27) in a part of cmd (a command of safe characters only,
+    so a part is one call, with no quote or comment) that lies inside no allow match on that part,
+    as written (a flag with the word after it, blanks collapsed); else None."""
+    for part in INFRA_PART.split(cmd):
+        tools = {mention.group(1) for mention in INFRA_TOOL.finditer(part)}
+        words = [(word.start(), word.end()) for word in INFRA_BLANK_WORD.finditer(part)]
+        selectors = []
+        for index, (start, end) in enumerate(words):
+            if INFRA_SELECTOR_ENV.search(part, start, end) or INFRA_SELECTOR_GLUED.match(part, start, end):
+                selectors.append((start, end))
+                continue
+            flag = None
+            if tools:
+                flag = INFRA_SELECTOR_FLAG.match(part, start, end)
+                if not flag and "pulumi" in tools:
+                    flag = INFRA_PULUMI_FLAG.match(part, start, end)
+            if flag:
+                with_value = not flag.group(1) and index + 1 < len(words)
+                selectors.append((start, words[index + 1][1] if with_value else end))
+        if not selectors:
+            continue
+        matches = sorted((found.start(), found.end()) for pattern in allow for found in pattern.finditer(part))
+        starts, reach, furthest = [], [], -1
+        for start, end in matches:
+            furthest = max(furthest, end)
+            starts.append(start)
+            reach.append(furthest)
+        for start, end in selectors:
+            index = bisect.bisect_right(starts, start) - 1
+            if index < 0 or reach[index] < end:
+                return " ".join(part[start:end].split())
+    return None
+
+
+def _infra_config_verb(cmd: str) -> tuple[str, str] | None:
+    """(tool, "<lead> <verb>") for the first part of cmd where a command that changes a tool's own
+    configuration follows that tool's first mention (E27), one search per distinct tool; else None."""
+    for part in INFRA_PART.split(cmd):
+        seen = set()
+        for mention in INFRA_TOOL.finditer(part):
+            tool = mention.group(1)
+            if tool in seen or tool not in INFRA_CONFIG_VERBS:
+                continue
+            seen.add(tool)
+            lead, verbs = INFRA_CONFIG_VERBS[tool]
+            first = lead.search(part, mention.end(1))
+            verb = verbs.search(part, first.end()) if first else None
+            if first and verb:
+                return tool, f"{first.group(1)} {verb.group(1)}"
+            if len(seen) == len(INFRA_CONFIG_VERBS):
+                break
+    return None
+
+
+class _Evidence:
+    """A part's or call's text without its comment, and whether its `--client` and `-backend=false`
+    flags hold (each searched at most once)."""
+
+    def __init__(self, text: str) -> None:
+        self.text = _uncommented(text)
+        self.flags: dict[str, bool] = {}
+
+    def has(self, flag: tuple[re.Pattern[str], re.Pattern[str], re.Pattern[str]]) -> bool:
+        needed, keeps, word = flag
+        if word.pattern not in self.flags:
+            words, kept = list(word.finditer(self.text)), list(keeps.finditer(self.text))
+            self.flags[word.pattern] = bool(
+                needed.search(self.text) and words and kept
+                and kept[-1].start() <= words[-1].start() < kept[-1].end())
+        return self.flags[word.pattern]
+
+
+class _Quoted:
+    """A command's quoted regions ('…', "…" and $'…', with their quotes), as bash reads them."""
+
+    def __init__(self, text: str) -> None:
+        spans = _infra_shell(text)[4]
+        self.starts = [start for start, _ in spans]
+        self.ends = [end for _, end in spans]
+
+    def overlaps(self, start: int, end: int) -> bool:
+        """Whether text[start:end] (an empty one as its first character) overlaps a quoted region."""
+        index = bisect.bisect_left(self.starts, max(end, start + 1)) - 1
+        return index >= 0 and self.ends[index] > start
+
+
+def _infra_match(evidence: _Evidence, base: int, allow: list[re.Pattern[str]], quoted: _Quoted) -> tuple[bool, str | None]:
+    """(whether an allow pattern matches the evidence, which starts at base in the command, wholly
+    outside quotes; else the first match found, which overlaps a quoted region, or None) (E22)."""
+    first = None
+    for pattern in allow:
+        for found in pattern.finditer(evidence.text):
+            if not quoted.overlaps(base + found.start(), base + found.end()):
+                return True, None
+            first = found.group(0) if first is None else first
+    return False, first
+
+
+def _infra_local(text: str, mention: re.Match[str], evidence: _Evidence, end: int) -> bool:
+    """Whether a covered-tool mention is a local-only form (D5): its words right after the tool,
+    before end, the end of its call (a glued redirection, or blanks up to end, never are)."""
+    tool, at = mention.group(1), mention.start(2)
+    if not 0 <= at < end:
+        return False
+    if tool == "kubectl" and INFRA_KUBECTL_VERSION.match(text, at):
+        return evidence.has(INFRA_CLIENT)
+    if tool == "terraform" and INFRA_TERRAFORM_INIT.match(text, at):
+        return evidence.has(INFRA_BACKEND)
+    local = INFRA_LOCAL.get(tool)
+    return bool(INFRA_LOCAL_ANY.match(text, at) or (local and local.match(text, at)))
+
+
+def _infra_unknown(text: str, base: int, mentions: list[re.Match[str]], allow: list[re.Pattern[str]],
+                   quoted: _Quoted) -> tuple[bool, str | None]:
+    """(whether text, at base in the command and without its comment, matches an allow pattern
+    outside quotes; the tool a deny names: its first mention when it is not allowed, no match is
+    quoted and some mention is not a local form, else None). A part whose only matches are quoted
+    is neither allowed nor denied (E22): the safe-character gate asks for it (E23)."""
+    if not mentions:
+        return False, None
+    evidence = _Evidence(text)
+    allowed, match = _infra_match(evidence, base, allow, quoted)
+    if allowed:
+        return True, None
+    if all(_infra_local(text, mention, evidence, len(text)) for mention in mentions):
+        return False, None
+    return False, (mentions[0].group(1) if match is None else None)
+
+
+def _infra_calls(part: str, base: int, mentions: list[re.Match[str]], allow: list[re.Pattern[str]],
+                 quoted: _Quoted) -> tuple[bool, str | None]:
+    """Each mention of the part (at base in the command) checked against the call that holds it,
+    found by its offset: (whether such a call matches an allow pattern outside quotes; the tool a
+    deny names: the first mention of the first call where a mention is neither allowed, nor a local
+    form, nor in a call whose only matches are quoted, else None)."""
+    starts = [0] + [found.end() for found in INFRA_CALL.finditer(part)]
+    calls: dict[int, tuple[bool, str | None, _Evidence, str]] = {}
+    allowed = False
+    for mention in mentions:
+        index = bisect.bisect_right(starts, mention.start()) - 1
+        end = starts[index + 1] - 1 if index + 1 < len(starts) else len(part)
+        if index not in calls:
+            evidence = _Evidence(part[starts[index]:end])
+            calls[index] = (*_infra_match(evidence, base + starts[index], allow, quoted), evidence, mention.group(1))
+        call_allowed, match, evidence, first = calls[index]
+        allowed = allowed or call_allowed
+        if call_allowed or _infra_local(part, mention, evidence, end):
+            continue
+        if match is None:
+            return allowed, first
+    return allowed, None
+
+
+def _infra_ask(part: str) -> Verdict:
+    """The ask for the first ask verb after a tool's first mention in an allowed part, if any:
+    one search per distinct tool, from its first mention."""
+    seen = set()
+    for mention in INFRA_TOOL.finditer(part):
+        tool = mention.group(1)
+        if tool in seen:
+            continue
+        seen.add(tool)
+        verb = INFRA_ASK_VERBS[tool].search(part, mention.end(1))
+        if verb:
+            return "ask", INFRA_ASK_REASON.format(tool, _infra_value(" ".join(verb.split())))
+        if len(seen) == len(INFRA_TOOLS):
+            break
+    return None
+
+
+def check_infra(cmd: str, cfg: Config) -> Verdict:
+    """The infra rule on the command as given. Without guard.infra: the fixed rule (a deny or None),
+    on the command with every backslash-newline a blank. With it, on the command with only the
+    backslash-newlines bash joins joined, and only when a part names a covered tool: an unusable
+    guard.infra or pattern denies; a production marker anywhere in the command denies; then per
+    part, in order: the part, then the call that holds each tool mention, must match an allow
+    pattern (text after an unquoted ` #` does not count; a match that overlaps a quoted region
+    neither allows nor denies, E22) or hold only local-only forms, else deny; a part where
+    something matched an allow pattern asks on its first ask verb. What would pass then asks,
+    in this order, on the first character outside the safe list, then on the first word that
+    always asks (E23, E24), then on an environment set twice in a part (E24), also under two
+    spellings (E25), then on an environment selector outside every allow match, then on a command
+    that changes a tool's own configuration (E27); so an ask verb keeps its reason, and a deny is
+    never relaxed."""
+    infra = cfg.infra
+    spaced = cmd.replace("\\\n", " ")
+    if infra is None:
+        if LEGACY_INFRA.search(spaced):
+            return "deny", "infrastructure commands (terraform/aws/pulumi/kubectl) are human-only"
+        return None
+    c = _infra_joined(cmd)
+    bounds = [0] + [found.end() for found in INFRA_PART.finditer(c)]
+    ends = [found.start() for found in INFRA_PART.finditer(c)] + [len(c)]
+    parts = [(start, c[start:end]) for start, end in zip(bounds, ends) if INFRA_TOOL.search(c[start:end])]
+    if not parts:
+        return None
+    if infra.problem:
+        return "deny", INFRA_CONFIG_REASON.format(_infra_value(infra.problem), "malformed")
+    allow, failed = _infra_compiled("allow", infra.allow)
+    markers, failed_marker = _infra_compiled("prod_markers", infra.prod_markers)
+    if failed or failed_marker:
+        return failed or failed_marker
+    for pattern in markers:
+        if pattern.search(c) or pattern.search(spaced):
+            return "deny", INFRA_MARKER_REASON.format(_infra_value(pattern.pattern, _printable))
+    verdict: Verdict = None
+    quoted = _Quoted(c)
+    for base, part in parts:
+        mentions = list(INFRA_TOOL.finditer(part))
+        allowed, tool = _infra_unknown(part, base, mentions, allow, quoted)
+        if not tool and INFRA_CALL.search(part):
+            calls_allowed, tool = _infra_calls(part, base, mentions, allow, quoted)
+            allowed = allowed or calls_allowed
+        if tool:
+            return "deny", INFRA_UNKNOWN_REASON.format(tool)
+        if allowed and verdict is None:
+            verdict = _infra_ask(part)
+    if verdict:
+        return verdict
+    char = _infra_unsafe(cmd)
+    if char:
+        return "ask", INFRA_UNSAFE_REASON.format(_infra_value(char))
+    risky = _infra_risky(cmd)
+    if risky:
+        return "ask", risky[0].format(_infra_value(risky[1]))
+    name = _infra_repeated(cmd)
+    if name:
+        return "ask", INFRA_REPEATED_REASON.format(name)
+    selector = _infra_selectors(cmd, allow)
+    if selector:
+        return "ask", INFRA_SELECTOR_REASON.format(_infra_value(selector))
+    config = _infra_config_verb(cmd)
+    if config:
+        return "ask", INFRA_CONFIG_VERB_REASON.format(config[0], _infra_value(config[1]))
+    return None
 
 
 def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
@@ -293,8 +942,16 @@ def check_bash(cmd: str, cfg: Config | None = None) -> Verdict:
         return "deny", f"{host} is in guard.deny_hosts (hub.json); agents do not reach it. Use fixtures or a sandbox endpoint"
     if re.search(r"\bdocker\s+volume\s+(rm|prune)\b|\bdocker\s+compose\b[^;&|\n]*\bdown\b[^;&|\n]*\s-v\b", c):
         return "deny", "removing docker volumes deletes local data (databases, caches); a human does this"
-    if re.search(r"\bterraform\s+(apply|destroy|import)\b|\baws\s+\S+|\bpulumi\s+(up|destroy)\b|\bkubectl\s+(apply|delete)\b", c):
-        return "deny", "infrastructure commands (terraform/aws/pulumi/kubectl) are human-only"
+    infra = check_infra(cmd, cfg)
+    if infra and infra[0] == "deny":
+        return infra
+    return tighten(infra, _after_infra(c, cfg))
+
+
+def _after_infra(c: str, cfg: Config) -> Verdict:
+    """check_bash's rules after the infra rule (secrets, attribution, claude/ branches, .git,
+    deny_paths, guard files, tests, brain, ask_before_edit): an infra ask or allow does not end the
+    check, so a later deny wins and a later ask keeps the infra reason."""
     for seg in re.split(r"&&|\|\||[;|\n]", c):
         words = seg.split()
         if not words or words[0] in SAFE_ON_SECRETS:
