@@ -8,6 +8,8 @@ import {
   aSession,
   aSessionCost,
   aSessionFile,
+  aSessionProblem,
+  aSessionProblems,
   aSessionSummary,
   aTimelineEvent,
   anId,
@@ -85,7 +87,7 @@ describe("SessionDetailScreen", () => {
     expect(await screen.findByText("Ran make check-fast: passed")).toBeInTheDocument();
     expect(await screen.findByText("make check-fast")).toBeInTheDocument();
     expect(screen.getByText("exit 0")).toBeInTheDocument();
-    expect(screen.getByText("Session started")).toBeInTheDocument();
+    expect(screen.getByText("Started the session in")).toBeInTheDocument();
   });
 
   it("shows the long-session banner, collapses middle turns and renders few rows when the session is long", async () => {
@@ -155,9 +157,13 @@ describe("SessionDetailScreen", () => {
     ];
     renderDetail(routes({}, events));
 
-    fireEvent.click(await screen.findByRole("button", { name: "1,240 characters" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Sent a prompt (1,240 characters)" }),
+    );
     expect(screen.getByText("Role user · 1,240 characters · turn 1")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "88 characters" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Recorded a reasoning summary (88 characters)" }),
+    );
     expect(
       screen.getByText("Recorded reasoning summary · 88 characters · turn 1"),
     ).toBeInTheDocument();
@@ -293,5 +299,79 @@ describe("SessionDetailScreen", () => {
     await screen.findByText("make check-fast");
 
     expect(await seriousViolations(container)).toEqual([]);
+  });
+});
+
+describe("SessionDetailScreen what-went-wrong", () => {
+  it("shows the problems panel and opens the failed row at its moment when the session has problems", async () => {
+    const failure = anId(4, "0192aaaa");
+    const { router } = renderDetail(
+      routes({
+        [BASE]: aSession({
+          status: "ended",
+          outcome: "done",
+          ended_at: at(900),
+          problems: { needs_you: 1, open: 0, handled: 0, by_you: 0 },
+        }),
+        [`${BASE}/problems`]: aSessionProblems({
+          summary: [{ event_id: failure, text: "Needs you: make check-fast failed" }],
+          items: [aSessionProblem({ event_id: failure, at: at(4) })],
+        }),
+      }),
+    );
+
+    const panel = await screen.findByRole("region", { name: "What went wrong" });
+    expect(within(panel).getByText("Needs you: make check-fast failed")).toBeInTheDocument();
+    const row = await waitFor(() => {
+      const found = document.getElementById(`ev-${anId(3, "0192aaaa")}`);
+      if (!found) throw new Error("no row");
+      return found;
+    });
+    expect(within(row).getByText("Needs you")).toBeInTheDocument();
+
+    fireEvent.click(within(panel).getByRole("link", { name: /^Open moment: Command failed/ }));
+    await waitFor(() => {
+      expect(router.state.location.search).toContain(failure);
+    });
+    await waitFor(() => {
+      expect(document.getElementById(`ev-${anId(3, "0192aaaa")}`)).toHaveAttribute(
+        "aria-current",
+        "true",
+      );
+    });
+  });
+
+  it("asks for the problems again when a live session's counts change over the stream", async () => {
+    const { requests, stream } = renderDetail(
+      routes({
+        [BASE]: aSession({
+          status: "live",
+          problems: { needs_you: 0, open: 1, handled: 0, by_you: 0 },
+        }),
+        [`${BASE}/problems`]: aSessionProblems({
+          items: [aSessionProblem({ resolution: "open" })],
+        }),
+      }),
+    );
+    expect(await screen.findByRole("region", { name: "What went wrong" })).toBeInTheDocument();
+    const asked = () => requests.filter((request) => request.url.endsWith("/problems")).length;
+    expect(asked()).toBe(1);
+
+    act(() => {
+      const source = stream(`${BASE}/events/stream`);
+      source.open();
+      source.emit("session", { problems: { needs_you: 1, open: 0, handled: 0, by_you: 0 } });
+    });
+    await waitFor(() => {
+      expect(asked()).toBe(2);
+    });
+  });
+
+  it("does not ask for problems when the session has none", async () => {
+    const { requests } = renderDetail(routes());
+    await screen.findByText("make check-fast", { selector: "code" });
+
+    expect(requests.some((request) => request.url.endsWith("/problems"))).toBe(false);
+    expect(screen.queryByRole("region", { name: "What went wrong" })).not.toBeInTheDocument();
   });
 });
