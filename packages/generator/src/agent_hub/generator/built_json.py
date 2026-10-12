@@ -38,11 +38,12 @@ _ONBOARD_PROPOSE_COMMANDS: Final = ("Bash(sha256sum)", "Bash(shasum -a 256)", "B
 _ONBOARD_PROPOSAL_EDIT: Final = "Edit(/brain/_inbox/onboard-proposal*.md)"
 _DENIED_READS: Final = ("Read(**/*.pem)", "Read(**/*.key)")
 _DENIED_FORCE_PUSHES: Final = ("Bash(git push --force*)", "Bash(git push -f *)")
+# AGH-45 D11: denied unless `hub.json` sets `guard.infra`, whose guard classifies them by
+# environment; a project that wants them back lists them in `settings.project.json`.
+_DENIED_INFRA_TOOLS: Final = ("Bash(terraform *)", "Bash(aws *)")
 # Claude Code matches each subcommand of `|`, `&&`, `;` on its own, so a shell fed by a pipe is
 # denied as the bare `sh` or `bash` subcommand (`Bash(* | sh)` would never match).
 _DENIED_COMMANDS: Final = (
-    "Bash(terraform *)",
-    "Bash(aws *)",
     "Bash(security *)",
     "Bash(ssh *)",
     "Bash(sh)",
@@ -127,8 +128,9 @@ def managed_settings(config: HubConfig) -> JsonValue:
 
     The schema, the authorship rule (empty attribution, no co-author line), the hooks block, the
     read-only git allows and those a headless ``/onboard propose`` needs (AGH-114), the base
-    denies (secret reads, force pushes and pushes to a protected branch, infra tools, ``ssh``, a
-    bare ``sh`` or ``bash``), the repos as additional directories (``../<dir>``, in ``hub.json``
+    denies (secret reads, force pushes and pushes to a protected branch, infra tools (``terraform``,
+    ``aws``; left to the guard when ``hub.json`` sets ``guard.infra``), ``ssh``, a bare ``sh`` or
+    ``bash``), the repos as additional directories (``../<dir>``, in ``hub.json``
     order) and the base sandbox (AGH-16 D2, E14). Project settings
     (marketplace, plugins, extra sandbox hosts, ``env``, skill overrides) come from the seeded
     ``settings.project.json``, which may also override the sandbox's scalars.
@@ -149,6 +151,7 @@ def managed_settings(config: HubConfig) -> JsonValue:
                 *_DENIED_READS,
                 *_DENIED_FORCE_PUSHES,
                 *_denied_pushes(config),
+                *_denied_infra_tools(config),
                 *_DENIED_COMMANDS,
             ],
             "additionalDirectories": [f"../{repo.dir}" for repo in config.repos],
@@ -173,6 +176,12 @@ def _onboard_repo_reads(config: HubConfig) -> list[str]:
             f"Bash(git -C ../{repo.dir} symbolic-ref refs/remotes/origin/HEAD)",
         )
     ]
+
+
+def _denied_infra_tools(config: HubConfig) -> tuple[str, ...]:
+    """The ``terraform`` and ``aws`` denies, or none when ``guard.infra`` is set, even ``{}``:
+    its guard then decides each such command (AGH-45 D11)."""
+    return () if config.guard.infra is not None else _DENIED_INFRA_TOOLS
 
 
 def _denied_pushes(config: HubConfig) -> list[str]:
