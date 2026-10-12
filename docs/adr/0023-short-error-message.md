@@ -36,8 +36,9 @@ pattern, URL, MCP tool, skill or repo-relative path of the paired `tool.call`) i
 never stored twice. `error_line` stays, unchanged, so events stored before this ADR keep their message.
 
 Re-ingesting an event that was stored before this key existed would be a conflict under ADR 0019's rule. A release that
-widens the allow-list declares the keys it adds (`ADDED_KEYS_V2` in `agent_hub.core.events.payload_keys`:
-`error_message`, `skill`, `git_branch`, `to`); in core's one append rule (`plan_append`), two events with the same
+widens the allow-list declares the keys it adds per event type (`ADDED_KEYS_V2` in
+`agent_hub.core.events.payload_keys`: `skill` and `to` on `tool.call`, `error_message` on `tool.result`, `git_branch`
+on every type but `session.start`, which already allowed it); in core's one append rule (`plan_append`), two events with the same
 identity that are equal once those keys are removed from both are duplicates, and the stored row is kept. Any other
 difference stays a conflict.
 

@@ -41,7 +41,9 @@ Option 3.
   `project.hub_repo` of `hub.json`. It clones the hub's `origin` into a temporary folder, borrowing the local objects
   (`--reference-if-able`, `--no-checkout`, `--single-branch`), so the user's checkout, its index, its refs and its
   worktree list are never touched; checks that the note is a regular UTF-8 file of at most 256 KiB on
-  `origin/<default_branch>`, and that the destination and the branch are free; builds one commit with plumbing (no
+  `origin/<default_branch>` and that the destination is free; when the branch is already on `origin` (a retry after a
+  half-finished action), adopts its open PR (`gh pr list`, URL checked like below) as the result, or deletes that
+  branch through the push guard when it has none; builds one commit with plumbing (no
   checkout, no hook) that moves the note and sets its frontmatter (accept: `status: accepted`, `last_verified`;
   reject: `status: rejected`, `rejected_reason`, `rejected_at`, into `brain/_inbox/_archive/`), authored and committed
   as the hub's effective identity (ADR 0016) with no trailer; pushes one new branch
