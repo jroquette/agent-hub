@@ -46,9 +46,10 @@ def _refuse_default(branch: str, default_branch: str) -> None:
 
 
 def _refuse_outside_learning(branch: str, prefix: str) -> None:
-    start = f"{prefix}{LEARNING_PART}"
-    if not branch.startswith(start) or len(branch) == len(start):
-        raise RefspecRefusedError(f"Push refused: {branch!r} is not a {start}<name> branch")
+    name = branch.removeprefix(prefix) if branch.startswith(prefix) else ""
+    if not name.startswith(LEARNING_PART) or name == LEARNING_PART:
+        reason = f"Push refused: {branch!r} is not a learning branch of the prefix {prefix!r}"
+        raise RefspecRefusedError(reason)
 
 
 def push_argv(branch: str, *, default_branch: str, prefix: str, delete: bool = False) -> list[str]:
