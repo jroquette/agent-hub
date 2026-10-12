@@ -134,6 +134,20 @@ INFRA_ENV_ALIASES = (
     {"--stack", "-s"},
     {"--stage", "-s"},
 )
+# E27: the environment selectors the guard knows. Each one in a part must lie inside an allow
+# match: a `NAME=` or `NAME+=` word anywhere in any part; a flag word, as `--x v` (with the next
+# word) or `--x=v`, in a part that names a covered tool (pulumi's -C only beside pulumi).
+INFRA_SELECTOR_ENV = re.compile(
+    r"(?:AWS_PROFILE|AWS_DEFAULT_PROFILE|KUBECONFIG|KUBE_CONTEXT|HELM_KUBECONTEXT|TF_WORKSPACE|TF_DATA_DIR"
+    r"|TF_CLI_ARGS(?:_[A-Za-z0-9_]+)?|PULUMI_BACKEND_URL|AWS_CONFIG_FILE|AWS_SHARED_CREDENTIALS_FILE"
+    r"|AWS_ROLE_ARN|CDK_DEFAULT_ACCOUNT)\+?="
+)
+INFRA_SELECTOR_FLAG = re.compile(
+    r"(?:--profile|--aws-profile|--context|--kube-context|--cluster|--server|--user|--kubeconfig"
+    r"|--kube-apiserver|-?-chdir|--cwd|--stack|-s|--stage|--workspace|-?-var-file|-?-backend-config)(=|\Z)"
+)
+INFRA_PULUMI_FLAG = re.compile(r"-C(=|\Z)")
+INFRA_BLANK_WORD = re.compile(r"[^ \t]+")
 INFRA_END = r"(?![\w-])"
 INFRA_WORD = r"(?<![\w-])({})" + INFRA_END
 # Local-only forms, matched at the tool's first argument; kubectl's version needs --client in the
@@ -194,6 +208,17 @@ INFRA_ASK_VERBS = {
     "helm": _Verbs("install|upgrade|uninstall|rollback"),
     "sam": _Verbs("deploy|delete"),
     "serverless": _Verbs("deploy|remove"),
+}
+# E27: the commands that change a tool's own configuration (profiles, contexts, workspaces) ask
+# whatever their environment: a lead word anywhere after the tool's first mention in the part,
+# then one of its verbs anywhere after it.
+INFRA_CONFIG_VERBS = {
+    tool: (re.compile(INFRA_WORD.format(lead)), re.compile(INFRA_WORD.format(verbs)))
+    for tool, lead, verbs in (
+        ("aws", "configure", "set|import"),
+        ("kubectl", "config", "set-context|use-context|set-cluster|set-credentials"),
+        ("terraform", "workspace", "select|new"),
+    )
 }
 BASH_WRITE = re.compile(r">>?|\btee\b|\bsed\s+(-\w*i\w*|--in-place)\b|\b(rm|mv|cp|truncate|ln)\b")
 WORKTREE_SEG = re.compile(r"/\.claude/worktrees/[^/]+(?=/)")
@@ -414,6 +439,11 @@ INFRA_RUNS_REASON = ("`{}` runs text as a command out of guard.infra's sight (pa
                      "sed script file); confirm first")
 INFRA_REPEATED_REASON = ("`{}` is set twice in one call: guard.infra checks the value it sees, the tool may use "
                          "another; confirm first")
+INFRA_SELECTOR_REASON = ("`{}` selects an environment outside every guard.infra.allow match (hub.json): each "
+                         "profile, context, kubeconfig, cluster, stack, stage, workspace, chdir or var-file setting "
+                         "must lie in one; confirm first")
+INFRA_CONFIG_VERB_REASON = ("`{} {}` changes the tool's own configuration (profiles, contexts, workspaces), which "
+                            "later commands use out of guard.infra's sight; confirm first")
 INFRA_VALUE_CAP = 100  # characters of a value from hub.json or the command in an infra reason
 LEGACY_INFRA = re.compile(
     r"\bterraform\s+(apply|destroy|import)\b|\baws\s+\S+|\bpulumi\s+(up|destroy)\b|\bkubectl\s+(apply|delete)\b"
@@ -531,42 +561,67 @@ def _infra_unsafe(cmd: str) -> str | None:
     return None
 
 
-def _infra_sed(sed: str, words: list[str]) -> str | None:
-    """"<sed> <script>" when sed's arguments (words, as GNU sed reads them: options anywhere, short
-    ones clustered, long ones by any unique prefix) give it a script holding an `e` (from -e or
-    --expression, else its first operand) or a script file (-f or --file); else None (E24)."""
-    scripts: list[tuple[str, str, str]] = []
-    operands, take = [], ""
-    for word in words:
+def _infra_sed(words: list[str]) -> dict[int, str]:
+    """{index: "<sed> <script>"} for each sed word of a part's words whose arguments (the words
+    after it, as GNU sed reads them: options anywhere, short ones clustered, long ones by any unique
+    prefix) give it a script holding an `e` (from -e or --expression, else its first operand) or a
+    script file (-f or --file) (E24). One pass over words (E27): a later sed's arguments are a
+    suffix of an earlier one's and read alike after the later sed word, which never takes the next
+    word as a value, so each sed keeps the scripts and operands found after it."""
+    seds: list[tuple[int, str]] = []
+    scripts: list[tuple[int, str, bool]] = []  # (option's index, as shown, whether it runs text)
+    operands: list[tuple[int, str]] = []
+    take, taken_at = "", 0
+    for index, word in enumerate(words):
+        sed = INFRA_SED.match(word.rsplit("/", 1)[-1])
+        if not seds:
+            if sed:
+                seds.append((index, word))
+            continue
+        if sed:
+            seds.append((index, word))
         if take:
-            scripts.append((take[-1:], f"{take[:-1]} {word}", word))
+            if take[-1] in "ef":
+                scripts.append((taken_at, f"{take[:-1]} {word}", take[-1] == "f" or "e" in word))
             take = ""
         elif word.startswith("--") and len(word) > 2:
             name, eq, value = word[2:].partition("=")
             kind = ("e" if "expression".startswith(name) else "f" if len(name) > 1 and "file".startswith(name)
                     else "l" if "line-length".startswith(name) else "")
-            if kind and eq:
-                scripts.append((kind, word, value))
-            elif kind:
-                take = word + kind
+            if kind and eq and kind in "ef":
+                scripts.append((index, word, kind == "f" or "e" in value))
+            elif kind and not eq:
+                take, taken_at = word + kind, index
         elif word.startswith("-") and len(word) > 1:
             for at, char in enumerate(word[1:], 2):
                 if char in "efl":
-                    if word[at:]:
-                        scripts.append((char, word, word[at:]))
-                    else:
-                        take = f"-{char}{char}"
+                    if word[at:] and char in "ef":
+                        scripts.append((index, word, char == "f" or "e" in word[at:]))
+                    elif not word[at:]:
+                        take, taken_at = f"-{char}{char}", index
                     break
                 if char == "i":  # -i[SUFFIX]: the rest is its suffix
                     break
         else:
-            operands.append(word)
-    if not any(kind in "ef" for kind, _, _ in scripts) and operands:
-        scripts.append(("e", operands[0], operands[0]))
-    for kind, shown, value in scripts:
-        if kind == "f" or (kind == "e" and "e" in value):
-            return f"{sed} {shown}"
-    return None
+            operands.append((index, word))
+    runs_from: list[str | None] = [None] * (len(scripts) + 1)
+    for at in range(len(scripts) - 1, -1, -1):
+        runs_from[at] = scripts[at][1] if scripts[at][2] else runs_from[at + 1]
+    found: dict[int, str] = {}
+    script = operand = 0
+    for index, sed_word in seds:
+        while script < len(scripts) and scripts[script][0] <= index:
+            script += 1
+        while operand < len(operands) and operands[operand][0] <= index:
+            operand += 1
+        if script < len(scripts):
+            shown = runs_from[script]
+        else:
+            first = operands[operand][1] if operand < len(operands) else ""
+            shown = first if "e" in first else None
+        if shown:
+            found[index] = f"{sed_word} {shown}"
+    return found
 
 
 def _infra_risky(cmd: str) -> tuple[str, str] | None:
@@ -579,15 +634,15 @@ def _infra_risky(cmd: str) -> tuple[str, str] | None:
     for part in INFRA_PART.split(cmd):
         command, env, value = True, "", False
         words = part.split()
+        seds = _infra_sed(words)
         for index, word in enumerate(words):
             name = word.rsplit("/", 1)[-1]
             if word == "--" or INFRA_RISKY.match(name):
                 return INFRA_RISKY_REASON, word
             if INFRA_RUNS.match(name):
                 return INFRA_RUNS_REASON, word
-            sed = _infra_sed(word, words[index + 1:]) if INFRA_SED.match(name) else None
-            if sed:
-                return INFRA_RUNS_REASON, sed
+            if index in seds:
+                return INFRA_RUNS_REASON, seds[index]
             if env and (value or word.startswith("-")):
                 if not value and INFRA_ENV_CLEAR.match(word):
                     return INFRA_RISKY_REASON, f"{env} {word}"
@@ -621,6 +676,61 @@ def _infra_repeated(cmd: str) -> str | None:
             for earlier in names[:index]:
                 if any(earlier in group and name in group for group in INFRA_ENV_ALIASES):
                     return f"{earlier}`/`{name}"
+    return None
+
+
+def _infra_selectors(cmd: str, allow: list[re.Pattern[str]]) -> str | None:
+    """The first environment selector (E27) in a part of cmd (a command of safe characters only,
+    so a part is one call, with no quote or comment) that lies inside no allow match on that part,
+    as written (a flag with the word after it, blanks collapsed); else None."""
+    for part in INFRA_PART.split(cmd):
+        tools = {mention.group(1) for mention in INFRA_TOOL.finditer(part)}
+        words = [(word.start(), word.end()) for word in INFRA_BLANK_WORD.finditer(part)]
+        selectors = []
+        for index, (start, end) in enumerate(words):
+            if INFRA_SELECTOR_ENV.match(part, start, end):
+                selectors.append((start, end))
+                continue
+            flag = None
+            if tools:
+                flag = INFRA_SELECTOR_FLAG.match(part, start, end)
+                if not flag and "pulumi" in tools:
+                    flag = INFRA_PULUMI_FLAG.match(part, start, end)
+            if flag:
+                with_value = not flag.group(1) and index + 1 < len(words)
+                selectors.append((start, words[index + 1][1] if with_value else end))
+        if not selectors:
+            continue
+        matches = sorted((found.start(), found.end()) for pattern in allow for found in pattern.finditer(part))
+        starts, reach, furthest = [], [], -1
+        for start, end in matches:
+            furthest = max(furthest, end)
+            starts.append(start)
+            reach.append(furthest)
+        for start, end in selectors:
+            index = bisect.bisect_right(starts, start) - 1
+            if index < 0 or reach[index] < end:
+                return " ".join(part[start:end].split())
+    return None
+
+
+def _infra_config_verb(cmd: str) -> tuple[str, str] | None:
+    """(tool, "<lead> <verb>") for the first part of cmd where a command that changes a tool's own
+    configuration follows that tool's first mention (E27), one search per distinct tool; else None."""
+    for part in INFRA_PART.split(cmd):
+        seen = set()
+        for mention in INFRA_TOOL.finditer(part):
+            tool = mention.group(1)
+            if tool in seen or tool not in INFRA_CONFIG_VERBS:
+                continue
+            seen.add(tool)
+            lead, verbs = INFRA_CONFIG_VERBS[tool]
+            first = lead.search(part, mention.end(1))
+            verb = verbs.search(part, first.end()) if first else None
+            if first and verb:
+                return tool, f"{first.group(1)} {verb.group(1)}"
+            if len(seen) == len(INFRA_CONFIG_VERBS):
+                break
     return None
 
 
@@ -751,7 +861,9 @@ def check_infra(cmd: str, cfg: Config) -> Verdict:
     something matched an allow pattern asks on its first ask verb. What would pass then asks,
     in this order, on the first character outside the safe list, then on the first word that
     always asks (E23, E24), then on an environment set twice in a part (E24), also under two
-    spellings (E25); so an ask verb keeps its reason, and a deny is never relaxed."""
+    spellings (E25), then on an environment selector outside every allow match, then on a command
+    that changes a tool's own configuration (E27); so an ask verb keeps its reason, and a deny is
+    never relaxed."""
     infra = cfg.infra
     spaced = cmd.replace("\\\n", " ")
     if infra is None:
@@ -796,6 +908,12 @@ def check_infra(cmd: str, cfg: Config) -> Verdict:
     name = _infra_repeated(cmd)
     if name:
         return "ask", INFRA_REPEATED_REASON.format(name)
+    selector = _infra_selectors(cmd, allow)
+    if selector:
+        return "ask", INFRA_SELECTOR_REASON.format(_infra_value(selector))
+    config = _infra_config_verb(cmd)
+    if config:
+        return "ask", INFRA_CONFIG_VERB_REASON.format(config[0], _infra_value(config[1]))
     return None
 
 

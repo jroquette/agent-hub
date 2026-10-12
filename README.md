@@ -458,8 +458,20 @@ run a command, or change its environment, out of the guard's sight: a shell (`sh
 `fish`), `python*`, `perl`, `node`, `ruby`, `php`, `xargs`, `eval`, `exec`, `source`, `.` as a command, `env -i` or
 `env -u` (any spelling), `sudo`, `su`, `doas`, a lone `--`, `parallel` and a `sed` that runs its text (`sed e`,
 `s/…/…/e`, `-f script`); last, a part that sets the environment twice (`AWS_PROFILE=a AWS_PROFILE=b aws …`,
-`--profile a --profile b`, or under two spellings: `AWS_PROFILE=a aws … --profile b`, `--stack a -s b`). A deploy
-verb's ask keeps its reason. A tool word with
+`--profile a --profile b`, or under two spellings: `AWS_PROFILE=a aws … --profile b`, `--stack a -s b`); then any
+environment selector the guard knows that no `guard.infra.allow` match holds whole, so a pattern must match the setting
+(`--profile demo-dev`, `AWS_PROFILE=demo-dev`), not its value alone. The selectors are the variables `AWS_PROFILE`,
+`AWS_DEFAULT_PROFILE`, `KUBECONFIG`, `KUBE_CONTEXT`, `HELM_KUBECONTEXT`, `TF_WORKSPACE`, `TF_DATA_DIR`,
+`TF_CLI_ARGS[_*]`, `PULUMI_BACKEND_URL`, `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_ROLE_ARN` and
+`CDK_DEFAULT_ACCOUNT` set anywhere in the command, and the flags `--profile`, `--aws-profile`, `--context`,
+`--kube-context`, `--cluster`, `--server`, `--user`, `--kubeconfig`, `--kube-apiserver`, `-chdir`, `--cwd`, `--stack`,
+`-s`, `--stage`, `--workspace`, `-var-file`, `-backend-config` (one dash or two where terraform takes both) and
+pulumi's `-C`, as `--x v` or `--x=v`, in a part that names a tool: `AWS_PROFILE=staging terraform plan
+-var-file=dev.tfvars` is asked about even though `-var-file=dev.tfvars` is allowed. Last, commands that change a
+tool's own configuration are always asked about: `aws configure set|import`, `kubectl config
+set-context|use-context|set-cluster|set-credentials`, `terraform workspace select|new`. A deploy verb's ask keeps its
+reason. Other selectors (`--endpoint-url`, `--region`, `TF_VAR_*`), abbreviated or glued options (`--prof`,
+`-sprod`) and globs are not checked. A tool word with
 nothing after it (`… | xargs aws`), or with a `$`, `,` or `}` glued to it (`aws$x`, `{aws,s3}`), counts as a call
 with no environment. The tool is found behind wrappers, quotes and redirections (`env aws …`, `bash -c "aws …"`,
 `aws>/dev/null …`), but its name is case-sensitive and quoting tricks inside it (`a""ws`) hide it. If `guard.infra` or

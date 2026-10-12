@@ -239,7 +239,18 @@ The command is split into parts at `;`, `&&`, `||`, `|` and newlines, then:
    second `AWS_PROFILE=`, `AWS_DEFAULT_PROFILE=`, `KUBECONFIG=` or `KUBE_CONTEXT=` word, `+=` too, or a second
    `--profile`, `--context`, `--kube-context`, `-chdir`, `--stack`, `--workspace`, `--stage` or `-var-file` flag, or
    one setting under two spellings: `AWS_PROFILE=`, `AWS_DEFAULT_PROFILE=` and `--profile`; `-s` with `--stack` or
-   `--stage`), naming it. An ask verb (5) keeps its reason and comes first; a deny stays a deny,
+   `--stage`), naming it. Then it asks when an environment selector lies outside every `allow` match on its part,
+   naming it as written: a `NAME=` or `NAME+=` word anywhere in any part for `AWS_PROFILE`, `AWS_DEFAULT_PROFILE`,
+   `KUBECONFIG`, `KUBE_CONTEXT`, `HELM_KUBECONTEXT`, `TF_WORKSPACE`, `TF_DATA_DIR`, `TF_CLI_ARGS` and
+   `TF_CLI_ARGS_*`, `PULUMI_BACKEND_URL`, `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_ROLE_ARN`,
+   `CDK_DEFAULT_ACCOUNT`; and, in a part that names a covered tool, the flags `--profile`, `--aws-profile`,
+   `--context`, `--kube-context`, `--cluster`, `--server`, `--user`, `--kubeconfig`, `--kube-apiserver`,
+   `-chdir`/`--chdir`, `--cwd`, `--stack`, `-s` (beside any covered tool: pulumi's stack, serverless's stage, kubectl's server), `--stage`,
+   `--workspace`, `-var-file`/`--var-file`, `-backend-config`/`--backend-config` and, beside `pulumi`, `-C`, each as
+   `--x v` (with the next word) or `--x=v`. So an `allow` pattern must match a whole setting (`--profile demo-dev`,
+   `AWS_PROFILE=demo-dev`), not its value alone. Last, it asks on a command that changes a tool's own configuration:
+   `aws configure set|import`, `kubectl config set-context|use-context|set-cluster|set-credentials`,
+   `terraform workspace select|new`. An ask verb (5) keeps its reason and comes first; a deny stays a deny,
    and a command that names no covered tool is not affected. An `allow` match that overlaps a quoted region (`'…'`,
    `"…"`, `$'…'`) is text, not evidence: it neither allows nor denies, and the quote makes the command ask.
 
@@ -259,10 +270,14 @@ redirection glued to `terraform`, `aws`, `pulumi`, `kubectl` or `cdk`. Until a s
 tool names are matched case-sensitively (`AWS` is not seen); quoting or glob tricks inside a tool's word (`a""ws`,
 `a?s`, `aws*`) hide it (AGH-127); the fixed rule (without `guard.infra`) misses options before the verb
 (`terraform -chdir=x apply`) and a tool word with nothing after it (`xargs aws`), which only infra mode catches
-(AGH-126); abbreviated long options (e.g. `--prof`) are not recognised as environment flags;
-which option takes the next word as its value is not modelled, so an allowed environment can be another option's
-value (`aws s3 ls --query --profile=demo-dev`, `kubectl get pods --field-manager --context=kind-demo`); only the
-names above count as setting the environment twice (`--chdir` and `--var-file` count with `-chdir` and `-var-file`).
+(AGH-126); abbreviated long options (e.g. `--prof`) and short options glued to their value or clustered
+(`-sdemo/prod`, `-ys demo/prod`) are not recognised as environment flags; which option takes the next word as its
+value is not modelled, so an allowed environment can be another option's value (`aws s3 ls --query
+--profile=demo-dev`, `kubectl get pods --field-manager --context=kind-demo`); only the names above count as setting
+the environment twice (`--chdir` and `--var-file` count with `-chdir` and `-var-file`); only the selectors above are
+checked, not others a tool reads (`--endpoint-url`, `--region`, `TF_VAR_*`, a tool's own config files); a command a
+wrapper runs elsewhere (`ssh host aws …`) is checked as text only. The selector flags are not scoped per tool, so
+`aws ecs … --cluster x` asks too.
 
 ## Layer 2: control plane and observability
 
