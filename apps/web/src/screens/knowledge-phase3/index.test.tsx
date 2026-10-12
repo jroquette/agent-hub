@@ -19,13 +19,16 @@ describe("KnowledgePhase3Screen", () => {
     expect(container.querySelectorAll("button, a")).toHaveLength(0);
   });
 
-  it.each([
-    ["brain", "Brain"],
-    ["context", "Context"],
-  ])("titles the %s item %s", (section, title) => {
-    renderWithApi(<KnowledgePhase3Screen />, { path: `/knowledge/${section}`, route });
+  it("titles the context item Context", () => {
+    renderWithApi(<KnowledgePhase3Screen />, { path: "/knowledge/context", route });
 
-    expect(screen.getByRole("heading", { level: 1, name: title })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Context" })).toBeInTheDocument();
+  });
+
+  it("shows the 404 page for brain now that Brain has its own screen", () => {
+    renderWithApi(<KnowledgePhase3Screen />, { path: "/knowledge/brain", route });
+
+    expect(screen.getByRole("heading", { name: "This page does not exist" })).toBeInTheDocument();
   });
 
   it("shows the 404 page when the Knowledge item is unknown", () => {
@@ -36,7 +39,7 @@ describe("KnowledgePhase3Screen", () => {
 
   it("has no serious a11y violations (a11y)", async () => {
     const { container } = renderWithApi(<KnowledgePhase3Screen />, {
-      path: "/knowledge/brain",
+      path: "/knowledge/decisions",
       route,
     });
 

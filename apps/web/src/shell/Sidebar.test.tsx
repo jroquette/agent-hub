@@ -27,8 +27,9 @@ describe("Sidebar", () => {
       "Live sessions",
       "Sessions",
       "Workflow runs",
-      "KnowledgeP3",
+      "Knowledge",
       "Learnings",
+      "Brain",
       "Features",
       "Health",
       "Settings",
@@ -38,14 +39,37 @@ describe("Sidebar", () => {
     }
   });
 
-  it("tags Knowledge P3 and hides Metrics, Bench, Tracker queue and Workflows", () => {
-    renderSidebar();
+  it("has no P3 tag and hides Metrics, Bench, Tracker queue and Workflows", () => {
+    const { container } = renderSidebar();
 
-    const knowledge = screen.getByRole("link", { name: /Knowledge/ });
-    expect(within(knowledge).getByText("P3")).toHaveClass("ah-phase");
-    for (const hidden of ["Metrics", "Bench", "Tracker queue", "Workflows", "Improve", "Brain"]) {
+    expect(container.querySelector(".ah-phase")).toBeNull();
+    expect(screen.getByRole("link", { name: "Learnings" })).toHaveTextContent(/^Learnings$/);
+    for (const hidden of ["Metrics", "Bench", "Tracker queue", "Workflows", "Improve"]) {
       expect(screen.queryByText(hidden)).not.toBeInTheDocument();
     }
+  });
+
+  it("shows Brain under Knowledge for the project in scope", () => {
+    renderSidebar("/sessions?scope=agent-hub");
+
+    expect(screen.getByRole("link", { name: "Brain" })).toHaveAttribute(
+      "href",
+      "/projects/agent-hub/brain",
+    );
+  });
+
+  it("points Brain to the project picker when All projects is in scope", () => {
+    renderSidebar("/sessions");
+
+    expect(screen.getByRole("link", { name: "Brain" })).toHaveAttribute("href", "/knowledge/brain");
+  });
+
+  it("marks Brain as the page when a project's brain note is open", () => {
+    renderSidebar("/projects/other%20hub/brain/decisions/index.md?scope=agent-hub");
+
+    const brain = screen.getByRole("link", { name: "Brain" });
+    expect(brain).toHaveAttribute("href", "/projects/other%20hub/brain");
+    expect(brain).toHaveAttribute("aria-current", "page");
   });
 
   it("marks the current destination as the page when its route is open", () => {
