@@ -2344,6 +2344,45 @@ def test_imports_both_rule_files_when_claude_rendered(demo_config: HubConfig) ->
     assert sum("`./agent` (`make agent`)" in line for line in lines) == 1
 
 
+# AGH-134: the sandbox the settings turn on is explained where Claude Code reads it, and the
+# bare-call rule is in AGENTS.md's Gotchas (the AGENTS.md line cap leaves room for one line).
+def test_explains_sandbox_when_claude_rendered(demo_config: HubConfig) -> None:
+    claude = text_of(demo_config, "CLAUDE.md")
+    section = claude.split("\n## Sandbox\n", 1)[1]
+
+    for text in (
+        "Keep it on",
+        "`$TMPDIR`",
+        "SSH never passes",
+        "`Broken pipe`",
+        "`Operation not permitted`",
+        "`./hub worktree`",
+        "no `cd … &&`, `;`, pipe, redirect, `$(…)` or `git -C`",
+        "`./hub worktree --no-fetch <name>`",
+        "never `make *` or `./hub *`",
+        "`sandbox.workflow`",
+    ):
+        assert text in section, text
+
+
+def test_names_bare_call_rule_in_gotchas_when_agents_rendered(demo_config: HubConfig) -> None:
+    agents = text_of(demo_config, "AGENTS.md")
+    gotchas = agents.split("\n## Gotchas\n", 1)[1].splitlines()
+
+    assert gotchas[1] == (
+        "- Sandbox (`CLAUDE.md`): an excluded command escapes only as the whole Bash call; no"
+        " `cd … &&`, `;`, `|`, `>`, `git -C`."
+    )
+
+
+def test_tells_sandbox_from_access_when_readme_rendered(demo_config: HubConfig) -> None:
+    readme = " ".join(text_of(demo_config, "README.md").split())
+
+    assert "Agents' Bash runs in Claude Code's sandbox, on purpose" in readme
+    assert "is the sandbox, not your access" in readme
+    assert "(rule `sandbox.workflow`)" in readme
+
+
 # AC-3.19 (Q7, O4): the hygiene hooks of the pinned pre-commit-hooks release.
 HYGIENE_HOOKS = ("trailing-whitespace", "end-of-file-fixer", "check-json", "check-yaml")
 PLACEHOLDER = re.compile(r"@@(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)")
@@ -2537,9 +2576,9 @@ def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubCon
 # AGH-59: re-pinned when rule 4 named the script variables.
 # AGH-23: re-pinned when "What lives here" gained the superpowers bullet.
 # AGH-48: re-pinned when "Brain rules" gained the routing list.
-DEMO_AGENTS_SHA256 = "5de85459a09425dfeb75c0156f961131a623732a354902d8182264b7b3e1b05c"
+DEMO_AGENTS_SHA256 = "ecdf8e1bb61d43d68dde3ee146208b750daaf9d03b3ea577c1f48b507c44ac66"
 ALL_MODULES_SHA256 = {
-    "AGENTS.md": "cc2d94cf6842e0c40c7a0d8ef193f5c2a47cebaf74d461ad9a7e313eacb2a939",
+    "AGENTS.md": "bf6e98407e1fb28b30cd7dfbf3ae3e71cbfe23c6ab179843eb05757115bec556",
     ".claude-plugin/marketplace.json": (
         "f7324911e70a0f3255274721636821a9b65a5716f04c5f6e3e470e74dc7b8ac7"
     ),
@@ -3386,7 +3425,8 @@ def settings_deny(config_name: str) -> list[str]:
 
 
 # AGH-16 inventory row S6a (E14): the base sandbox; a project adds its own hosts (row S6b) through
-# `settings.project.json`.
+# `settings.project.json`. AGH-134: the hub worktree spellings run outside it too, never a broad
+# `make *` or `./hub *`; the hosts are unchanged.
 SETTINGS_SANDBOX = {
     "enabled": True,
     "allowUnsandboxedCommands": False,
@@ -3398,6 +3438,10 @@ SETTINGS_SANDBOX = {
         "git pull *",
         "git clone *",
         "git ls-remote *",
+        "./hub worktree *",
+        "hub worktree *",
+        "make worktree *",
+        "make worktree-remove *",
     ],
     "network": {
         "allowLocalBinding": True,

@@ -11,7 +11,7 @@
   <a href="https://github.com/jroquette/agent-hub/actions/workflows/ci.yml"><img alt="CI status" src="https://github.com/jroquette/agent-hub/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python 3.14" src="https://img.shields.io/badge/python-3.14-3776AB?logo=python&logoColor=white">
   <!-- Static badge: bump with each release tag (scripts/check_release.py keeps the package versions in lockstep; follow-up: automate). -->
-  <img alt="Version 0.9.0" src="https://img.shields.io/badge/version-0.9.0-blue">
+  <img alt="Version 0.10.0" src="https://img.shields.io/badge/version-0.10.0-blue">
   <img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-orange">
 </p>
 
@@ -137,14 +137,14 @@ hub's `README.md`, **Join this hub**); the steps below create a new hub.
 little longer.
 
 ```bash
-uvx --from 'git+https://github.com/jroquette/agent-hub@v0.9.0#subdirectory=packages/agent-hub' hub --version
+uvx --from 'git+https://github.com/jroquette/agent-hub@v0.10.0#subdirectory=packages/agent-hub' hub --version
 ```
 
-You should see `0.9.0`.
+You should see `0.10.0`.
 
 > [!TIP]
 > To have `hub` on your `PATH`, install it once with
-> `uv tool install 'git+https://github.com/jroquette/agent-hub@v0.9.0#subdirectory=packages/agent-hub'`.
+> `uv tool install 'git+https://github.com/jroquette/agent-hub@v0.10.0#subdirectory=packages/agent-hub'`.
 > Generated hubs never need this: their `./hub` shim runs the release pinned in `hub.json`.
 
 **2. Create an empty folder for the hub.** It should be a sibling of the project's repos.
@@ -159,7 +159,7 @@ mkdir -p demo-hub && cd demo-hub && git init
 from your git `user.name` and `user.email` unless you pass `--author-name` and `--author-email`.
 
 ```bash
-uvx --from 'git+https://github.com/jroquette/agent-hub@v0.9.0#subdirectory=packages/agent-hub' \
+uvx --from 'git+https://github.com/jroquette/agent-hub@v0.10.0#subdirectory=packages/agent-hub' \
   hub init demo --repos acme/backend,acme/frontend --tracker linear:DEMO --branch-prefix jdoe/ --hub-repo acme/demo-hub
 ```
 
@@ -421,8 +421,9 @@ Hooks are small scripts Claude Code runs on its own at fixed moments; you never 
 - force-pushes and pushes to `main`, `master`, `project.default_branch` or any `repos[].default_branch`, from any
   directory;
 - `curl … | sh`, and network calls to the hosts in `guard.deny_hosts`;
-- deleting Docker volumes (`docker volume rm|prune`, `compose down -v`) and infrastructure commands (`terraform
-  apply|destroy|import`, any `aws` command, `pulumi up|destroy`, `kubectl apply|delete`);
+- deleting Docker volumes (`docker volume rm|prune`, `compose down -v`) and infrastructure commands: without
+  `guard.infra`, `terraform apply|destroy|import`, any `aws` subcommand, `pulumi up|destroy`, `kubectl apply|delete`,
+  `cdk deploy|destroy`; with it, see *Infra commands* below;
 - reading secret files (`.env*` other than `.env.example`, `.env.sample`, `.env.template`, `.env.test`,
   `.env.development` and `.env.staging`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, SSH private keys), from any tool or
   command;
@@ -438,6 +439,49 @@ Hooks are small scripts Claude Code runs on its own at fixed moments; you never 
 - writing in `brain/` outside `now.md`, `journal/`, `_inbox/`, `auto/` and `features/`;
 - editing a path in `guard.ask_before_edit`.
 
+**Infra commands.** Set `guard.infra` in `hub.json` (even `{}`) and the guard classifies commands that run `aws`,
+`cdk`, `terraform`, `pulumi`, `kubectl`, `helm`, `sam` or `serverless` by environment instead. The command is split
+into parts at `;`, `&&`, `||`, `|` and newlines, and each part into its calls (at a single `&`, `$( )`, backticks,
+`<( )`, `( )` and `{ }`). A command with a `guard.infra.prod_markers` match anywhere in it is blocked. Each part
+and each call that names a tool must carry its environment, matched by a `guard.infra.allow` pattern (e.g.
+`--profile demo-dev` or an `AWS_PROFILE=demo-dev ` prefix, whichever your patterns match, on that part: an exported
+or inherited one, or one from an earlier part, does not count; neither does a trailing ` # comment`), or be
+local-only (`version`, `--version`, `help` or `--help` for any tool, `kubectl`'s version only with `--client`;
+`cdk synth|ls|list|init|doctor|context`, `terraform fmt|validate`, `terraform init -backend=false`,
+`helm template|lint`, `sam build|validate`); anything else is blocked. On an allowed environment, deploy, destroy and delete verbs
+(`terraform apply|destroy|import`, `kubectl apply|delete|…`, `aws s3 rm`, `aws … delete-*`, `cdk deploy`, …) are
+asked first. A command that would pass is asked first too unless every character in it is an ASCII letter or digit,
+a space, a tab or one of `_ - . / : = @ , + %`, joined only by `;`, `&&`, `||`, `|` or newlines: a `$`, a quote, a
+brace, `<`, `>`, a backtick, `\`, `#`, `(`, `)`, `*`, `?`, `[`, `]`, `~`, `!`, a single `&`, a carriage return or any
+other character is asked about, by name, since the guard cannot tell what the shell makes of it. So is a word that can
+run a command, or change its environment, out of the guard's sight: a shell (`sh`, `bash`, `zsh`, `dash`, `ksh`,
+`fish`), `python*`, `perl`, `node`, `ruby`, `php`, `xargs`, `eval`, `exec`, `source`, `.` as a command, `env -i` or
+`env -u` (any spelling), `sudo`, `su`, `doas`, a lone `--`, `parallel` and a `sed` that runs its text (`sed e`,
+`s/…/…/e`, `-f script`); last, a part that sets the environment twice (`AWS_PROFILE=a AWS_PROFILE=b aws …`,
+`--profile a --profile b`, or under two spellings: `AWS_PROFILE=a aws … --profile b`, `--stack a -s b`); then any
+environment selector the guard knows that no `guard.infra.allow` match holds whole, so a pattern must match the setting
+(`--profile demo-dev`, `AWS_PROFILE=demo-dev`), not its value alone. The selectors are the variables `AWS_PROFILE`,
+`AWS_DEFAULT_PROFILE`, `KUBECONFIG`, `KUBE_CONTEXT`, `HELM_KUBECONTEXT`, `TF_WORKSPACE`, `TF_DATA_DIR`,
+`TF_CLI_ARGS[_*]`, `PULUMI_BACKEND_URL`, `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_ROLE_ARN` and
+`CDK_DEFAULT_ACCOUNT` named anywhere in the command (any word holding the name as an identifier, so `export AWS_PROFILE`,
+`read AWS_PROFILE` or `printf -v AWS_PROFILE staging` ask too), and the flags `--profile`, `--aws-profile`, `--context`,
+`--kube-context`, `--cluster`, `--server`, `--user`, `--kubeconfig`, `--kube-apiserver`, `-chdir`, `--cwd`, `--stack`,
+`-s`, `--stage`, `--workspace`, `-var-file`, `-backend-config` (one dash or two where terraform takes both) and
+pulumi's `-C`, as `--x v` or `--x=v`, in a part that names a tool: `AWS_PROFILE=staging terraform plan
+-var-file=dev.tfvars` is asked about even though `-var-file=dev.tfvars` is allowed. Last, commands that change a
+tool's own configuration are always asked about: `aws configure set|import`, `kubectl config
+set-context|use-context|set-cluster|set-credentials|use|set|rename-context|delete-context`, `terraform workspace
+select|new`, `pulumi stack select`. A deploy verb's ask keeps its
+reason. Other selectors (`--endpoint-url`, `--region`, `TF_VAR_*`), abbreviated or glued options (`--prof`,
+`-sprod`) and globs are not checked. A tool word with
+nothing after it (`… | xargs aws`), or with a `$`, `,` or `}` glued to it (`aws$x`, `{aws,s3}`), counts as a call
+with no environment. The tool is found behind wrappers, quotes and redirections (`env aws …`, `bash -c "aws …"`,
+`aws>/dev/null …`), but its name is case-sensitive and quoting tricks inside it (`a""ws`) hide it. If `guard.infra` or
+one of its patterns cannot be used (a wrong value, or regex syntax the system Python 3.9 lacks), every infra command
+is blocked until it is fixed. Patterns are Python `re`, searched with no flags on every such command: avoid nested
+quantifiers like `(a+)+`. Until a separate change lands, the generated `.claude/settings.json` still denies every
+`terraform` and `aws` command, whatever the guard decides.
+
 Everything else goes through Claude Code's normal permission rules.
 
 **Configuration.** The lists come from `hub.json`: `guard.ask_before_edit`, `guard.deny_paths` and `guard.deny_hosts`,
@@ -445,6 +489,8 @@ plus `project.default_branch` and each `repos[].default_branch`. The branch hint
 (`hub.local.json`, else `hub.json`, else git config; see [developer-identity](docs/design/developer-identity.md)).
 An entry `@hub/<path>` means
 `<path>` inside the hub. A `hub.json` named by `$HUB_CONFIG` can only add entries to these lists, never remove them.
+Only the hub's own `hub.json` turns `guard.infra` on and sets `guard.infra.allow`: `hub.local.json` cannot set it, and
+a `$HUB_CONFIG` file can only add `guard.infra.prod_markers`.
 
 **Your own rules.** The seeded `plugin/<project>/hooks/project_guard.py` defines `check(event, cfg)`, which returns
 `None`, or `("ask", reason)` or `("deny", reason)`; by default it does nothing. It runs in a separate process with a
@@ -635,7 +681,9 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `guard.ask_before_edit` | no | `[]` | Paths where the guard asks before an edit |
 | `guard.deny_paths` | no | `[]` | Paths the guard never lets the agent read or edit |
 | `guard.deny_hosts` | no | `[]` | Hosts the guard blocks network calls to |
-| `guard.infra.allow`, `guard.infra.prod_markers` | no | `[]` | Python regexes for infra commands (allowed environments, production markers); validated, but the guard does not use them yet |
+| `guard.infra` | no | absent | Present, even `{}`, the guard classifies infra commands by environment (see the guard section); absent, the fixed infra rule |
+| `guard.infra.allow` | no | `[]` | Python `re` patterns for allowed environments, e.g. `(?<![^ \t])--profile[= ]demo-dev(?![^ \t])` and `^[ \t]*AWS_PROFILE=demo-dev(?=[ \t])`; bound each by a space or tab (an `AWS_PROFILE` prefix by the part's start), since `\b` also matches `demo-dev.x` or `>--profile=demo-dev` and `\s` also matches a carriage return the shell does not split on |
+| `guard.infra.prod_markers` | no | `[]` | Python `re` patterns that mark production; a match anywhere in an infra command blocks it |
 | `modules` | no | `{}` | Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`), from 0.6.0: each selected one renders its files and `mk/<id>.mk`; `contract-sync` takes `{"source": <repo dir>, "target": <repo dir>}`, the others `{}` |
 | `doctor.rules` | no | `{}` | Per-rule `hub doctor` settings |
 
@@ -645,7 +693,7 @@ Example (synthetic project):
 {
   "$schema": "./hub.schema.json",
   "schema_version": 1,
-  "platform": { "version": "0.9.0" },          // the release ./hub runs
+  "platform": { "version": "0.10.0" },         // the release ./hub runs
   "project": {
     "name": "demo",
     "hub_repo": "acme/demo-hub",
@@ -802,7 +850,7 @@ reached only from `hub web`. import-linter enforces this in `make check`. Detail
 | `hub sync --adopt [--accept PATH]… [--check]` | Join a hand-made hub to `hub.lock` (from 0.7.0): record what matches, create what is missing, list what differs |
 | `hub doctor [--only RULE]… [--json]` | Check rules, links, dead references, instruction size and template drift |
 | `hub setup [--yes]` | Set up this machine for the hub: tools (uv, git, python3, claude, gh) and the tracker credential, the developer identity (`hub.local.json` proposed from git config and written after asking; `--yes` without asking), each repo cloned or fetched next to the hub, then `hub doctor`; exit 0 when every line is `ok`, else 1, each missing line naming its fix |
-| `hub worktree NAME [--only REPO] [--remove]` | Create (or remove) one task's worktrees in the hub's repos |
+| `hub worktree NAME [--only REPO] [--remove] [--no-fetch]` | Create (or remove) one task's worktrees in the hub's repos; `--no-fetch` starts from the already-fetched base |
 | `hub brief [--no-network]` | Print the session brief: `now.md`, recent journal, repo/PR/CI state |
 | `hub agent [ARGS…]` | Start `claude` with every repo attached; all arguments go to `claude` |
 | `hub next` | Print the tracker's ready issues (`tracker.ready_label`), oldest first: id, repo, title and url |
@@ -932,6 +980,14 @@ of each repo and `gh auth status` in `hub setup`, the push and `gh pr create` of
 PR and CI lines of `hub brief` unless you pass `--no-network`. The generated `make usage` target downloads `ccusage`
 from npm. `hub next`, `hub run` and `hub start` call Linear, with `LINEAR_API_KEY` or, with `tracker.transport`
 `"mcp"`, through your Linear MCP server and `claude -p`. Your agent sessions still talk to their model provider as usual.
+
+**Why does an agent's `git fetch` fail with `Broken pipe`, or `./hub` with `Operation not permitted`?**
+That is Claude Code's sandbox, which every hub's `.claude/settings.json` turns on on purpose: agents' Bash may write only
+in the workspace and `$TMPDIR`, reach only allowlisted HTTP(S) hosts, and never SSH. The hub's own network commands
+(`git fetch`/`push`, `gh`, `./hub worktree`, `make worktree`) are excluded, but only when the Bash call is exactly that
+command: `cd repo && git fetch`, `git -C repo fetch` or a redirect stay sandboxed. A failed fetch in `hub worktree`
+prints the bare `git fetch` to run, then `./hub worktree --no-fetch <name>`. Since 0.10.0 the `./hub` shim moves uv's
+folders into the hub (`.hub-uv/`) when the sandbox denies them, and `./hub doctor` checks it all (`sandbox.workflow`).
 
 **Which trackers and agents are supported?**
 Linear and Claude Code today. The tracker is a port (`TrackerClient`) and the event model is agent-neutral, so other

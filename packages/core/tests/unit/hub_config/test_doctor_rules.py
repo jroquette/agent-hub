@@ -38,6 +38,7 @@ RULE_TABLE_IDS = [
     "repos.agents",
     "config.stop_gate",
     "brain.memory",
+    "sandbox.workflow",
 ]
 CONFIGURABLE_IDS = [rule_id for rule_id in RULE_TABLE_IDS if rule_id != "config.schema"]
 # config.identity's info must read the same for every developer, and config.stop_gate stays a
@@ -159,6 +160,12 @@ def test_rejects_repo_agents_option_when_key_unknown() -> None:
 def test_rejects_brain_memory_option_when_key_unknown() -> None:
     assert error_types({"brain.memory": {"max_files": 1}}) == [
         (("brain.memory", "max_files"), "extra_forbidden")
+    ]
+
+
+def test_rejects_sandbox_workflow_option_when_key_unknown() -> None:
+    assert error_types({"sandbox.workflow": {"probe": False}}) == [
+        (("sandbox.workflow", "probe"), "extra_forbidden")
     ]
 
 

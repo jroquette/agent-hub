@@ -103,19 +103,22 @@ def a_conventions_document() -> dict[str, Any]:
 
 
 def a_guard_infra() -> dict[str, list[str]]:
-    """Build a synthetic ``guard.infra`` value as plain JSON data; a fresh copy per call.
+    r"""Build a synthetic ``guard.infra`` value as plain JSON data; a fresh copy per call.
 
-    ``allow`` names one development environment per covered tool's usual flag; ``prod_markers``
-    names the production environment and a placeholder account id.
+    ``allow`` names one development environment per covered tool's usual flag, each a whole word
+    bounded by a space or tab (``(?<![^ \t])`` ... ``(?![^ \t])``; not ``\b`` or ``\s``, which
+    also match at ``.``, ``,``, ``{`` or a carriage return), and ``AWS_PROFILE`` only as a prefix at
+    the start of the part; ``prod_markers`` names the production environment and a placeholder
+    account id.
     """
     return {
         "allow": [
-            r"--profile[= ]demo-dev\b",
-            r"\bAWS_PROFILE=demo-dev\b",
-            r"--(kube-)?context[= ]kind-demo\b",
-            r"-var-file=dev\.tfvars\b",
-            r"--stack[= ]demo/dev\b",
-            r"--stage[= ]dev\b",
+            r"(?<![^ \t])--profile[= ]demo-dev(?![^ \t])",
+            r"^[ \t]*AWS_PROFILE=demo-dev(?=[ \t])",
+            r"(?<![^ \t])--(kube-)?context[= ]kind-demo(?![^ \t])",
+            r"(?<![^ \t])-var-file=dev\.tfvars(?![^ \t])",
+            r"(?<![^ \t])--stack[= ]demo/dev(?![^ \t])",
+            r"(?<![^ \t])--stage[= ]dev(?![^ \t])",
         ],
         "prod_markers": [r"\bdemo-prod\b", r"\b999999999999\b"],
     }

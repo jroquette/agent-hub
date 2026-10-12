@@ -56,12 +56,16 @@ args = sys.argv[2:]
 data = sys.stdin.buffer.read()
 call = {"args": args, "cwd": os.getcwd(), "root": os.environ.get("AGENT_HUB_ROOT"),
         "stdin": data.decode("utf-8", "replace")}
+if os.environ.get("FAKE_UVX_ENV") == "1":
+    call["uv"] = {name: os.environ.get(name) for name in
+                  ("UV_CACHE_DIR", "UV_TOOL_DIR", "UV_TOOL_BIN_DIR", "UV_PYTHON_DOWNLOADS")}
 with open(sys.argv[1], "a", encoding="utf-8") as log:
     log.write(json.dumps(call) + "\\n")
 if args[-1:] == ["--version"]:
     code = int(os.environ.get("FAKE_UVX_RESOLVE_RC", "0"))
     if code:
-        sys.stderr.write("error: Failed to fetch the release\\n")
+        default = "error: Failed to fetch the release"
+        sys.stderr.write(os.environ.get("FAKE_UVX_RESOLVE_ERR", default) + "\\n")
     else:
         sys.stdout.write("hub " + args[1] + "\\n")
     sys.exit(code)
@@ -159,7 +163,13 @@ def run(tmp_path: Path, bin_dir: Path, shell: list[str]) -> Run:
             capture_output=True,
             check=False,
             cwd=cwd or elsewhere,
-            env={"PATH": str(bin_dir)} | (env or {}),
+            # uv's own folders are writable test folders unless a case says otherwise.
+            env={
+                "PATH": str(bin_dir),
+                "UV_CACHE_DIR": str(tmp_path / "uv-cache"),
+                "UV_TOOL_DIR": str(tmp_path / "uv-tools"),
+            }
+            | (env or {}),
             timeout=TIMEOUT,
         )
 
@@ -448,3 +458,120 @@ def test_names_version_first_when_version_and_repository_bad(
     assert completed.stderr.decode() == "hub: platform.version in hub.json must be X.Y.Z\n"
     assert completed.stdout == b""
     assert calls(log) == []
+
+
+# AGH-134: inside the Claude Code sandbox uv cannot write its own folders; the shim moves them.
+UV_ENV = ("UV_CACHE_DIR", "UV_TOOL_DIR", "UV_TOOL_BIN_DIR", "UV_PYTHON_DOWNLOADS")
+WRITE_ERROR = (
+    "error: Failed to initialize cache at `/home/u/.cache/uv`\n"
+    "  Caused by: failed to create directory `/home/u/.cache/uv`: Operation not permitted"
+    " (os error 1)"
+)
+WRITE_HINT = (
+    f"hub: cannot run agent-hub {VERSION}: uv could not write its cache or tool folder, which is"
+    " not a repository access problem; inside a Claude Code sandbox only the workspace and"
+    " $TMPDIR are writable: set UV_CACHE_DIR and UV_TOOL_DIR to a folder there, or run ./hub"
+    " outside the sandbox"
+)
+NO_PYTHON = "error: No interpreter found for Python >=3.14 in managed installations or search path"
+
+
+def unwritable(tmp_path: Path) -> str:
+    """A folder no one can create: its parent is a regular file."""
+    blocker = tmp_path / "blocker"
+    blocker.write_text("")
+    return str(blocker / "uv")
+
+
+def test_keeps_uv_folders_when_writable(
+    hub: Path, run: Run, *, tools: None, log: Path, tmp_path: Path
+) -> None:
+    completed = run(hub / "hub", "brief", env={"FAKE_UVX_ENV": "1"})
+
+    assert completed.returncode == 0, completed.stderr
+    assert [call["uv"] for call in calls(log)] == [
+        {
+            "UV_CACHE_DIR": str(tmp_path / "uv-cache"),
+            "UV_TOOL_DIR": str(tmp_path / "uv-tools"),
+            "UV_TOOL_BIN_DIR": None,
+            "UV_PYTHON_DOWNLOADS": None,
+        }
+    ] * 2
+    assert not (hub / ".hub-uv").exists()
+
+
+@pytest.mark.parametrize("variable", ["UV_CACHE_DIR", "UV_TOOL_DIR"])
+def test_moves_uv_folders_into_hub_when_one_unwritable(
+    hub: Path, run: Run, *, tools: None, log: Path, tmp_path: Path, variable: str
+) -> None:
+    completed = run(hub / "hub", "brief", env={"FAKE_UVX_ENV": "1", variable: unwritable(tmp_path)})
+
+    assert completed.returncode == 0, completed.stderr
+    own = hub / ".hub-uv"
+    assert [call["uv"] for call in calls(log)] == [
+        {
+            "UV_CACHE_DIR": str(own / "cache"),
+            "UV_TOOL_DIR": str(own / "tools"),
+            "UV_TOOL_BIN_DIR": str(own / "bin"),
+            "UV_PYTHON_DOWNLOADS": "never",
+        }
+    ] * 2
+    # The folder ignores itself, so a hub's own .gitignore needs no line for it.
+    assert (own / ".gitignore").read_text().splitlines()[-1] == "*"
+
+
+def test_keeps_caller_python_downloads_when_uv_folders_moved(
+    hub: Path, run: Run, *, tools: None, log: Path, tmp_path: Path
+) -> None:
+    env = {
+        "FAKE_UVX_ENV": "1",
+        "UV_CACHE_DIR": unwritable(tmp_path),
+        "UV_PYTHON_DOWNLOADS": "automatic",
+    }
+
+    assert run(hub / "hub", "brief", env=env).returncode == 0
+
+    assert {call["uv"]["UV_PYTHON_DOWNLOADS"] for call in calls(log)} == {"automatic"}
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        WRITE_ERROR,
+        "error: Could not create temporary file in `/home/u/.local/share/uv/tools/.tmpAbc`",
+        "error: failed to open file `/x/.lock`: Read-only file system (os error 30)",
+        "error: failed to create directory `/x`: Permission denied (os error 13)",
+    ],
+    ids=["cache-eperm", "tool-temp", "read-only", "eacces"],
+)
+def test_names_uv_folder_not_access_when_uv_cannot_write(
+    hub: Path, run: Run, *, tools: None, log: Path, error: str
+) -> None:
+    env = {"FAKE_UVX_RESOLVE_RC": "2", "FAKE_UVX_RESOLVE_ERR": error}
+
+    completed = run(hub / "hub", "brief", env=env)
+
+    assert completed.returncode == 1
+    assert stderr_lines(completed) == [*error.splitlines(), WRITE_HINT]
+    assert ACCESS_HINT not in completed.stderr.decode()
+    assert len(calls(log)) == 1
+
+
+def test_names_python_install_when_no_interpreter(
+    hub: Path, run: Run, *, tools: None, log: Path, tmp_path: Path
+) -> None:
+    env = {
+        "FAKE_UVX_RESOLVE_RC": "2",
+        "FAKE_UVX_RESOLVE_ERR": NO_PYTHON,
+        "UV_CACHE_DIR": unwritable(tmp_path),
+    }
+
+    completed = run(hub / "hub", "brief", env=env)
+
+    assert completed.returncode == 1
+    assert stderr_lines(completed) == [
+        NO_PYTHON,
+        f"hub: cannot run agent-hub {VERSION}: uv found no Python it may use and downloads none"
+        " here (UV_PYTHON_DOWNLOADS=never); run uv python install 3.14 outside the Claude Code"
+        " sandbox, then retry",
+    ]

@@ -9,6 +9,11 @@ Workspace hub of the @@{project_name} project (`@@{project_hub_repo}`): every ch
 
 `make help` lists the entry points.
 
+Agents' Bash runs in Claude Code's sandbox, on purpose: writes stay in the workspace, the network is an HTTP(S)
+allowlist and SSH never passes. The hub's own network commands (`git fetch`/`push`, `gh`, `./hub worktree`) are
+excluded, but only as a bare Bash call. A `Broken pipe` or `Operation not permitted` from an agent's git or uv is the
+sandbox, not your access; `./hub doctor` checks the setup (rule `sandbox.workflow`).
+
 Repos, checked out next to this hub: @@{repo_dirs}.
 
 Each repo's root `AGENTS.md` (`hub agent` loads it) starts as a copy of `docs/app-repo-AGENTS.md`, filled in.
