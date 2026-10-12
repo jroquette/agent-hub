@@ -807,6 +807,32 @@ def test_merges_settings_when_sibling_given(demo_config: HubConfig) -> None:
     assert rendered.links == render_hub(demo_config).links
 
 
+def test_restores_aws_deny_when_sibling_adds_it_with_guard_infra() -> None:
+    # AGH-45 D11: with `guard.infra` the managed deny list leaves `aws` to the guard; a project
+    # that wants the blanket deny back lists it in its sibling, which the merge appends.
+    document = a_hub_document()
+    plain = managed_settings(HubConfig.model_validate(document))
+    assert isinstance(plain, dict)
+    assert isinstance(plain["permissions"], dict)
+    plain_deny = plain["permissions"]["deny"]
+    assert isinstance(plain_deny, list)
+    document["guard"]["infra"] = builders.a_guard_infra()
+    config = HubConfig.model_validate(document)
+    sibling = b'{"permissions": {"deny": ["Bash(aws *)"]}}'
+    extensions = ExtensionInputs(
+        project_json={".claude/settings.project.json": sibling}, agents=(), skills=()
+    )
+
+    rendered = render_hub(config, extensions)
+
+    files = {file.path: file for file in rendered.files}
+    value = json.loads(files[".claude/settings.json"].content)
+    assert value["permissions"]["deny"] == [
+        *(rule for rule in plain_deny if rule not in ("Bash(terraform *)", "Bash(aws *)")),
+        "Bash(aws *)",
+    ]
+
+
 def test_raises_merge_error_when_sibling_refused(demo_config: HubConfig) -> None:
     extensions = ExtensionInputs(
         project_json={".claude/settings.project.json": b'{"disableAllHooks": true}'},

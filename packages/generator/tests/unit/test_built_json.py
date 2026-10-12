@@ -4,6 +4,7 @@ import json
 import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.testing import builders
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.generator.built_json import (
     HOOK_EVENTS,
@@ -310,6 +311,41 @@ def test_denies_push_to_each_protected_branch_when_default_branch_not_main(
         "Bash(sh)",
         "Bash(bash)",
     ]
+
+
+@pytest.mark.parametrize("infra", [builders.a_guard_infra(), {}], ids=["infra", "empty"])
+def test_omits_infra_denies_when_guard_infra_set(infra: dict[str, list[str]]) -> None:
+    # AGH-45 D11: `guard.infra`, even `{}`, leaves `terraform` and `aws` to the guard hook; every
+    # other deny stays in place, and the hooks and the sandbox do not change.
+    document = a_hub_document()
+    plain = managed_settings(HubConfig.model_validate(document))
+    document["guard"]["infra"] = infra
+    settings = managed_settings(HubConfig.model_validate(document))
+    assert isinstance(plain, dict)
+    assert isinstance(plain["permissions"], dict)
+    assert isinstance(settings, dict)
+    assert isinstance(settings["permissions"], dict)
+    plain_deny = plain["permissions"]["deny"]
+    assert isinstance(plain_deny, list)
+
+    assert settings["permissions"]["deny"] == [
+        rule for rule in plain_deny if rule not in ("Bash(terraform *)", "Bash(aws *)")
+    ]
+    assert len(settings["permissions"]["deny"]) == len(plain_deny) - 2
+    assert settings["permissions"]["deny"][-4:] == [
+        "Bash(security *)",
+        "Bash(ssh *)",
+        "Bash(sh)",
+        "Bash(bash)",
+    ]
+    assert settings["hooks"] == plain["hooks"]
+    assert settings["sandbox"] == plain["sandbox"]
+    assert {key: value for key, value in settings.items() if key != "permissions"} == {
+        key: value for key, value in plain.items() if key != "permissions"
+    }
+    assert {key: value for key, value in settings["permissions"].items() if key != "deny"} == {
+        key: value for key, value in plain["permissions"].items() if key != "deny"
+    }
 
 
 def test_denies_push_to_repo_branch_when_repo_sets_default_branch() -> None:
