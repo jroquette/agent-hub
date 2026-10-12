@@ -279,7 +279,7 @@
     "plugin/hub-workflow/hooks/hubhooks.py": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "5d85646009b1c01adb1dfd34e78a123b32303e1cbe84ba9a82aec5fefc8a2aae"
+      "sha256": "388a2b1ad2a229d280a87a91d050c31a0c96de31232f7bf4807a068654e87e5c"
     },
     "plugin/hub-workflow/hooks/post_edit.py": {
       "executable": true,
