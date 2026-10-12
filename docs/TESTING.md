@@ -46,6 +46,31 @@ writes (`a_seeded_tracker_backend()`, synthetic issues only); the suite asserts 
 API over the same backend (`packages/tracker_linear/tests/conftest.py`), so no socket opens, and against
 `McpTrackerClient`, whose runner is `FakeClaude`, an honest model over the same backend in the same conftest, so no
 `claude` process starts.
+The third is `BrainChangeRequestsContract` (`agent_hub.core.testing.brain_change_requests_contract`), whose tests take a
+`brain_change_requests` fixture and a `brain_origin` that reads what reached the hub's `origin` (its commits and the
+pull requests opened). It runs against `InMemoryBrainChangeRequests` with `FakeBrainOrigin`
+(`packages/core/tests/contract/`) and against `GitBrainChangeRequests` (`packages/hub_git/tests/contract/`), with real
+`git` over a git-backed origin.
+
+`hub_git` is tested at three levels, all without the network and without a real GitHub account:
+
+- **unit** (`packages/hub_git/tests/unit/`): the push guard (`test_refspec_guard.py -k refuses`: the default branch, a
+  `+` or `:` refspec, `--force` and `-f`, an invalid name and a branch outside `<prefix>learning-` raise before git
+  runs), the runner over an injected `Launch` and clock (deadline, argv, environment), the remote parsing, and the
+  adapter's refusals before any git runs;
+- **contract**: the suite above;
+- **integration** (`packages/hub_git/tests/integration/`): the adapter against a real bare repository in `tmp_path` as
+  the hub's `origin`, the user's checkout cloned from it, and a fake `gh` on `PATH` (`packages/hub_git/tests/conftest.py`).
+  The origin's URL stays `https://github.com/acme/demo-hub.git`, as a real hub's is; a global git config under the
+  test's own `HOME` rewrites it to the bare repository (`url.<bare>.insteadOf`), so git never reaches the network. The
+  fake `gh` is a stdlib script that records its calls, answers `gh auth token` unless a `logged-out` switch is set, and
+  for `gh pr create` checks that the head branch is on the origin and prints a PR URL, or fails (`fail`) or prints
+  something else (`garbage`). The tests check the branch's one commit (the hub author, no trailer), that
+  `origin/main` is unchanged, that the user's checkout is unchanged (`HEAD`, `git status`, `git for-each-ref`), that a
+  failed `gh` deletes the pushed branch, and that no temporary folder is left.
+
+The API's integration tests for the learning decisions and the web smoke drive the same kind of synthetic hub (a bare
+`origin` and a fake `gh`) through `hub web`.
 
 A test that runs a rendered hook or script takes the `hook_python` fixture, so it runs on the current Python and on a
 real Python 3.9 (the system `python3` on macOS); without a 3.9 on `PATH` that case skips, and under `CI` it fails. A
