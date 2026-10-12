@@ -3,6 +3,7 @@ import type { RouteObject } from "react-router";
 
 import { useApi } from "./lib/api";
 import { ApprovalsScreen } from "./screens/approvals";
+import { BrainPickerScreen, BrainScreen } from "./screens/brain";
 import { FeatureDetailScreen } from "./screens/feature-detail";
 import { FeaturesScreen } from "./screens/features";
 import { HealthScreen } from "./screens/health";
@@ -33,6 +34,7 @@ export function HubGate() {
 /**
  * The Phase 2 routes (D20, spec 01 sitemap). Screens live in `src/screens/<name>/index.tsx`
  * and export `<Name>Screen`; hidden destinations (Metrics, Bench, Tracker, Workflows) fall to 404.
+ * A project's Brain is `projects/:project/brain/<note path>` (AGH-201 D3).
  */
 export const appRoutes: RouteObject[] = [
   {
@@ -43,6 +45,7 @@ export const appRoutes: RouteObject[] = [
         children: [
           { index: true, element: <PortfolioScreen /> },
           { path: "projects/:project", element: <ProjectOverviewScreen /> },
+          { path: "projects/:project/brain/*", element: <BrainScreen /> },
           { path: "approvals", element: <ApprovalsScreen /> },
           { path: "approvals/:approvalId", element: <ApprovalsScreen /> },
           { path: "live", element: <LiveSessionsScreen /> },
@@ -52,6 +55,8 @@ export const appRoutes: RouteObject[] = [
           { path: "runs/:runId", element: <RunDetailScreen /> },
           { path: "knowledge", element: <Navigate to="/knowledge/learnings" replace /> },
           { path: "knowledge/learnings", element: <LearningsScreen /> },
+          { path: "knowledge/learnings/:learningId", element: <LearningsScreen /> },
+          { path: "knowledge/brain", element: <BrainPickerScreen /> },
           { path: "knowledge/:section", element: <KnowledgePhase3Screen /> },
           { path: "features", element: <FeaturesScreen /> },
           { path: "features/:project/:slug", element: <FeatureDetailScreen /> },
