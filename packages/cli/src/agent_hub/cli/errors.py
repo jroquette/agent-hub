@@ -29,6 +29,10 @@ class WorktreeUsageError(WorktreeError):
     """A worktree task's input is refused: its name, its branch or the repo asked for."""
 
 
+class LaunchError(CliError):
+    """Claude Code could not be launched: its context file or the exec failed."""
+
+
 class RunLogError(CliError):
     """A record or the inbox line of ``hub run`` could not be written."""
 

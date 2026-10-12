@@ -10,7 +10,9 @@ a line that drifts from the CLI fails agent-hub's own build.
 You are an agent asked to set up or run an agent hub for a project that is **not** agent-hub. The rules in
 agent-hub's `AGENTS.md` (authorship, `roquettejh/` branches, `docs/SPEC.md` first) are for changing agent-hub and do
 not apply to your project. Your project's rules come from its own hub once it exists: `hub.json`, the rendered
-`AGENTS.md` and `AGENTS.project.md`.
+`AGENTS.md` and `AGENTS.project.md`. A teammate joining a project whose hub already exists clones that hub into the
+folder that holds (or will hold) the project's repos, so they sit side by side, then runs `./hub setup` in it instead;
+the rest of this guide creates a new hub.
 
 ## Prerequisites and access
 

@@ -1,15 +1,16 @@
-"""The steps of ``hub worktree``, shared with ``hub run``: they raise instead of exiting (E18).
+"""The steps of ``hub worktree``, shared with ``hub run`` and ``hub start``: they raise (E18).
 
-``worktree_task`` checks a task's inputs; ``check_branches`` checks, before anything is
-created, that no touched repo's branch clashes with a worktree; ``create_worktree`` and
-``remove_worktree`` act on one repo. A usage problem raises ``WorktreeUsageError``, any other
-problem ``WorktreeError``, whose text is what ``hub worktree`` prints after its ``hub worktree:``
-prefix. Every git call runs in the caller's process group, with ``git_timeout`` seconds each
-(``None``: no limit, as ``hub worktree`` runs); past it ``ChildTimedOutError`` is raised. The
-repo's setup and teardown scripts run untimed through ``stream_child``, also in the caller's
-group, with the task's environment plus the six ``SCRIPT_VARIABLES`` (``script_env``): the
-task's name and the repo's branch, the repo's main checkout, the hub's, and the task's port slot
-and offset (``worktree_slot``).
+``worktree_task`` checks a task's inputs (all the hub's repos, ``--only``'s one, or
+``hub start``'s ``--repo`` subset); ``check_branches`` checks, before anything is created, that
+no touched repo's branch clashes with a worktree; ``create_worktree`` and ``remove_worktree`` act
+on one repo; ``task_folders`` lists an issue's worktree folders in the given repos. A usage
+problem raises ``WorktreeUsageError``, any other problem ``WorktreeError``, whose text is what
+``hub worktree`` prints after its ``hub worktree:`` prefix. Every git call runs in the caller's
+process group, with ``git_timeout`` seconds each (``None``: no limit, as ``hub worktree``
+runs); past it ``ChildTimedOutError`` is raised. The repo's setup and teardown scripts run
+untimed through ``stream_child``, also in the caller's group, with the task's environment plus
+the six ``SCRIPT_VARIABLES`` (``script_env``): the task's name and the repo's branch, the repo's
+main checkout, the hub's, and the task's port slot and offset (``worktree_slot``).
 """
 
 import os
@@ -23,6 +24,7 @@ from agent_hub.cli.child_process import ChildResult, run_child, stream_child
 from agent_hub.cli.errors import WorktreeError, WorktreeUsageError
 from agent_hub.cli.init_report import shown_path
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.workspace.task_slug import is_task_folder
 from agent_hub.core.workspace.worktree_name import (
     worktree_branch,
     worktree_name_example,
@@ -110,8 +112,9 @@ def worktree_task(
     fetch_env: dict[str, str] | None = None,
     add_options: tuple[str, ...] = (),
     fetch_options: tuple[str, ...] = (),
+    repos: Sequence[str] | None = None,
 ) -> WorktreeTask:
-    """The task named ``name`` in the hub's repos (or ``only``), its inputs checked.
+    """The task named ``name`` in the hub's repos (or ``only``, or the ``repos`` subset), checked.
 
     Each repo's branch is ``name`` rendered with the repo's effective ``conventions.branch``
     (``conventions_for``) and ``branch_prefix``; today's ``<branch_prefix><name>`` when nothing
@@ -121,10 +124,16 @@ def worktree_task(
     ``runner`` runs every git call of the task; ``env`` is the environment of every git call
     but the fetch, which gets ``fetch_env`` (by default ``env``), and, with the six
     ``SCRIPT_VARIABLES``, of the scripts (``script_env``); ``add_options``
-    go before ``worktree add`` and ``fetch_options`` before ``fetch``. Raises
-    ``WorktreeUsageError`` for a name not shaped like the issue, an unknown ``only`` or a
-    branch git refuses.
+    go before ``worktree add`` and ``fetch_options`` before ``fetch``. ``repos`` (``hub start``'s
+    ``--repo`` dirs) touches several repos, kept in ``hub.json`` order with duplicates dropped;
+    ``task.only`` stays None, so ``--remove`` lines are the caller's. Raises
+    ``WorktreeUsageError`` for a name not shaped like the issue, an unknown ``only`` or
+    ``repos`` dir, or a branch git refuses; ``ValueError`` when both ``only`` and ``repos`` are
+    given.
     """
+    if only is not None and repos is not None:
+        msg = "worktree_task takes only or repos, not both"
+        raise ValueError(msg)
     problem = worktree_name_problem(name, teams=config.tracker.team_keys)
     if problem is not None:
         raise WorktreeUsageError(problem)
@@ -133,12 +142,12 @@ def worktree_task(
         raise WorktreeUsageError(
             f"unknown repo in --only: {shown_path(only)}; use one of: {' '.join(dirs)}"
         )
-    repos = dirs if only is None else (only,)
+    touched = _touched(dirs, only=only, repos=repos)
     branches = {
         repo: worktree_branch(
             name, prefix=branch_prefix, pattern=config.conventions_for(repo).branch
         )
-        for repo in repos
+        for repo in touched
     }
     for branch in dict.fromkeys(branches.values()):
         checked = runner(
@@ -156,10 +165,10 @@ def worktree_task(
     return WorktreeTask(
         name=name,
         branches=branches,
-        bases={repo: f"origin/{config.default_branch_for(repo)}" for repo in repos},
+        bases={repo: f"origin/{config.default_branch_for(repo)}" for repo in touched},
         workspace=hub.parent,
         hub=hub,
-        repos=repos,
+        repos=touched,
         only=only,
         git=git,
         env=env,
@@ -169,6 +178,50 @@ def worktree_task(
         add_options=add_options,
         fetch_options=fetch_options,
     )
+
+
+def _touched(
+    dirs: tuple[str, ...], *, only: str | None, repos: Sequence[str] | None
+) -> tuple[str, ...]:
+    """The repos a task touches, in ``hub.json`` order: ``only``, ``repos``, or every one."""
+    if only is not None:
+        return (only,)
+    if repos is None:
+        return dirs
+    unknown = [repo for repo in dict.fromkeys(repos) if repo not in dirs]
+    if unknown:
+        shown = " ".join(shown_path(repo) for repo in unknown)
+        raise WorktreeUsageError(f"unknown repo in --repo: {shown}; use one of: {' '.join(dirs)}")
+    return tuple(repo for repo in dirs if repo in repos)
+
+
+def task_folders(
+    workspace: Path, repos: Sequence[str], issue_id: str
+) -> dict[str, tuple[str, ...]]:
+    """Each repo's worktree folder names that belong to ``issue_id`` (``is_task_folder``), sorted.
+
+    One listing of ``<workspace>/<repo>/.claude/worktrees`` per repo, names only; plain files are
+    skipped. A repo, or its worktrees folder, that does not exist gives ``()``. Any other
+    listing failure raises ``WorktreeError`` naming the folder.
+    """
+    found: dict[str, tuple[str, ...]] = {}
+    for repo in repos:
+        folder = workspace / repo / WORKTREES_FOLDER
+        try:
+            with os.scandir(folder) as entries:
+                names = [
+                    entry.name
+                    for entry in entries
+                    if is_task_folder(entry.name, issue_id) and entry.is_dir()
+                ]
+        except FileNotFoundError, NotADirectoryError:
+            names = []
+        except OSError as error:
+            raise WorktreeError(
+                f"{repo}: cannot list {shown_path(str(folder))}: {error.strerror or error}"
+            ) from None
+        found[repo] = tuple(sorted(names))
+    return found
 
 
 def check_branches(task: WorktreeTask) -> None:

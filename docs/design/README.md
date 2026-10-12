@@ -10,6 +10,7 @@ The product and its phases are in [SPEC.md](../SPEC.md). Phase 1 is designed as 
 | [hub-generator.md](hub-generator.md) | what a hub holds and who owns it, `hub init`, plugin and hooks, commands, releases | generating hub files, a hook, a `hub` command that replaces a script |
 | [hub-sync.md](hub-sync.md) | `hub.lock`, `hub sync`, `--check`, the write path, the `*.project.json` merge, the project-entry links | syncing a hub, reading the lock |
 | [hub-adopt.md](hub-adopt.md) | `hub sync --adopt`: per-path rules, `--accept`, the directory-link migration, listing lines, exit codes, project guards on adoption | adopting a hand-made hub (with [hub-sync.md](hub-sync.md)) |
+| [hub-setup.md](hub-setup.md) | one-command onboarding of a developer's machine: tools, identity, repos, doctor | changing hub setup or what it checks |
 | [hub-doctor.md](hub-doctor.md) | the `hub doctor` rule interface, rule set, output and exit codes | adding or tuning a check |
 | [memory-layers.md](memory-layers.md) | where a learning goes (team brain, personal memory, repo `AGENTS.md`), `/learn personal`, the personal-memory `.gitignore` lines | a change touches `brain/auto/`, `/learn` or the routing list |
 | [domain-model.md](domain-model.md) | the nine entities: identity, attributes, relations, phase (sketch) | modeling an entity in core; for Session, WorkflowRun or Learning read [event-derivations.md](event-derivations.md) too |

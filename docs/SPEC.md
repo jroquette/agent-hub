@@ -66,7 +66,9 @@ hub init --config hub.json   # generates from an existing project config
 hub sync        # reapplies templates without overwriting what the project customized
 hub sync --adopt [--accept PATH]…   # joins a hand-made hub: identical files become managed, differences are listed
 hub doctor      # checks rules, links, dead references and instruction size
+hub setup [--yes]   # onboards this machine: clones or fetches the repos, writes hub.local.json after confirmation, lists what is missing
 hub worktree NAME [--only REPO]   # isolated worktrees for one task (--remove NAME removes them)
+hub start ISSUE [--repo DIR]… [--no-agent]   # issue to worktrees, In Progress and a claude session (resumes)
 hub brief [--no-network]   # session brief: now, journal, repo/PR/CI state
 hub agent [ARGS…]   # claude with every repo attached (./agent)
 hub next   # the tracker's ready issues, one line each
@@ -145,7 +147,8 @@ Design rule: the generated hub is versioned files in a private GitHub repo, acce
 ### Team use and per-repo config
 
 One hub repo serves every developer of a project, so a value that belongs to one developer comes first from that
-developer's gitignored `hub.local.json`; the committed `hub.json` keeps it only for a single-developer hub. Real
+developer's gitignored `hub.local.json`, which `hub setup` writes; the committed `hub.json` keeps it only for a
+single-developer hub. Real
 projects also mix repos that differ in branch, check time and tracker
 team, so these keys are added. Each is optional and additive under `schema_version: 1` (a hub without it behaves as
 today), and the CLI's model and the hooks' stdlib reader accept it in the same change.
