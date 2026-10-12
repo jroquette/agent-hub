@@ -47,7 +47,9 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `guard.ask_before_edit` | list of paths | `[]` | guard: ask before an edit under them |
 | `guard.deny_hosts` | list of host names | `[]` | guard: deny network calls to them |
 | `guard.deny_paths` | list of paths | `[]` | guard: deny any read or edit under them |
-| `guard.infra`, with `allow` and `prod_markers` | object; each key a list of Python `re` patterns (Infra patterns, below); not in `hub.local.json` | absent; each list `[]` | hooks' config reader only (validated): the guard does not read it yet and keeps its fixed infra rule ([SPEC](../SPEC.md), AGH-45); an unknown key under it (other than `_` keys) is reported by the reader as unusable (`InfraSection.problem`; the CLI rejects it) |
+| `guard.infra` | object; not in `hub.local.json` | absent | hooks' config reader (validated); present, even `{}`, it turns on the guard's infra classification (the [SPEC](../SPEC.md)'s infra guard; absent, the guard's fixed infra rule); an unknown key under it (other than `_` keys) is reported by the reader as unusable (`InfraSection.problem`; the CLI rejects it), and the guard then denies every infra command |
+| `guard.infra.allow` | list of Python `re` patterns (Infra patterns, below) | `[]` | hooks' config reader; guard: the allowed environments; a part or call naming a covered tool must match one unless it is a local-only form, and what passes is asked instead when the command holds a character other than ASCII letters, digits, space, tab and `_ - . / : = @ , + %` (joined by `;`, `&&`, `||`, `|`, newline), or a word that always asks (a shell, `python*`, `perl`, `node`, `ruby`, `php`, `xargs`, `eval`, `exec`, `source`, `.` as a command, `env -i`/`-u`, `sudo`, `su`, `doas`, a lone `--`, `parallel`, a `sed` that runs its text: the [SPEC](../SPEC.md)'s infra guard), or a part that sets the environment twice (a second `AWS_PROFILE=` or `--profile`, …, also under two spellings such as `AWS_PROFILE=` and `--profile`), or an environment selector the guard knows (`AWS_PROFILE=`, `AWS_DEFAULT_PROFILE=`, `KUBECONFIG=`, `KUBE_CONTEXT=`, `HELM_KUBECONTEXT=`, `TF_WORKSPACE=`, `TF_DATA_DIR=`, `TF_CLI_ARGS[_*]=`, `PULUMI_BACKEND_URL=`, `AWS_CONFIG_FILE=`, `AWS_SHARED_CREDENTIALS_FILE=`, `AWS_ROLE_ARN=`, `CDK_DEFAULT_ACCOUNT=` anywhere, and any other word holding one of these names as an identifier, such as `export AWS_PROFILE` or `read KUBECONFIG`; `--profile`, `--aws-profile`, `--context`, `--kube-context`, `--cluster`, `--server`, `--user`, `--kubeconfig`, `--kube-apiserver`, `-chdir`, `--cwd`, `--stack`, `-s`, `--stage`, `--workspace`, `-var-file`, `-backend-config`, pulumi's `-C`, as `--x v` or `--x=v`, in a part naming a covered tool) that no match holds whole, so a pattern must match the whole setting, not its value alone, or a command that changes a tool's configuration (`aws configure set|import`, `kubectl config set-context|use-context|set-cluster|set-credentials|use|set|rename-context|delete-context`, `terraform workspace select|new`, `pulumi stack select`); a match that overlaps a quoted region (`'…'`, `"…"`, `$'…'`) neither allows nor denies |
+| `guard.infra.prod_markers` | list of Python `re` patterns (Infra patterns, below) | `[]` | hooks' config reader; guard: the production markers; a match anywhere in a command naming a covered tool denies it |
 | `modules` | object keyed by module id | `{}` | generator, commands, doctor (Modules) |
 | `doctor.rules` | object keyed by rule id | `{}` | `hub doctor`; contract in [hub-doctor.md](hub-doctor.md) |
 
@@ -87,7 +89,11 @@ retype); brain frontmatter lists repo dirs unquoted (no type resolution). A safe
   literal holds no control, format or line-separator character (Unicode Cc, Cf, Zl, Zp), backtick or brace.
 - Infra patterns: non-blank, no control character, compiling with Python's `re` (no repeat count overflow such as
   `a{4294967296}`, no too-deep nesting); searched (`re.search`) with no flags in Python 3.9 `re` syntax (the hooks run
-  on the system `python3`). Avoid nested quantifiers: `(a+)+$` takes over a second on a 25-character input.
+  on the system `python3`). Avoid nested quantifiers: `(a+)+$` takes over a second on a 25-character input. Bound an
+  environment pattern by a space or tab, as a whole word, `(?<![^ \t])--profile[= ]demo-dev(?![^ \t])`, and an
+  `AWS_PROFILE` prefix by the part's start, `^[ \t]*AWS_PROFILE=demo-dev(?=[ \t])`; not `\b` (it also matches
+  `demo-dev.x`, `demo-dev{,-admin}` or a redirection target `>--profile=demo-dev`) or `\s` (it also matches a carriage
+  return, a vertical tab or a no-break space, which the shell does not split on).
 
 ### Versioning
 

@@ -21,6 +21,7 @@ from typing import Any
 import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.testing import builders
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.generator.render_hub import render_hub
 
@@ -931,3 +932,41 @@ def test_stays_under_ceiling_when_guard_runs_with_and_without_stub(
 
     assert all(len(samples) == LATENCY_RUNS for samples in timings.values())
     assert stub_p95 <= LATENCY_CEILING
+
+
+# AC-45.17 (D10): with guard.infra, the extension still only tightens, and never runs on an infra
+# deny.
+INFRA_ASK = (
+    "ask",
+    f"{PREFIX}`cdk deploy` changes infrastructure on an allowed environment; confirm first",
+)
+
+
+def test_only_tightens_infra_verdict_when_extension_answers(
+    hub: Path, guard: Guard, marker: Path
+) -> None:
+    found = document()
+    found["guard"]["infra"] = builders.a_guard_infra()
+    (hub / "hub.json").write_text(json.dumps(found), encoding="utf-8")
+    allowed = (bash("aws s3 ls --profile demo-dev"), hub)
+    asked = (bash("cdk deploy --profile demo-dev"), hub)
+
+    install(hub, marker=marker, body='return ("ask", "x")')
+    [denied] = guard(hub / HOOKS, [(bash("aws s3 ls"), hub)])
+    ran_on_deny = seen(marker)
+    allow_then_ask = guard(hub / HOOKS, [allowed])
+    install(hub, marker=marker, body="return None")
+    on_none = guard(hub / HOOKS, [allowed, asked])
+    install(hub, marker=marker, body='return ("deny", "x")')
+    ask_then_deny = guard(hub / HOOKS, [asked])
+
+    assert denied == (
+        "deny",
+        f"{PREFIX}aws: environment not recognised by guard.infra.allow (hub.json); put the "
+        "environment on this command, e.g. `--profile <env>` or an `AWS_PROFILE=<env> ` prefix "
+        "(an exported or inherited one does not count)",
+    )
+    assert ran_on_deny == []
+    assert allow_then_ask == [("ask", f"{PREFIX}project guard: x")]
+    assert on_none == [None, INFRA_ASK]
+    assert ask_then_deny == [("deny", f"{PREFIX}project guard: x")]
