@@ -15,7 +15,7 @@ import pytest
 
 ROOT = "agent_hub"
 SCRATCH_ROOT = "scratch_hub"
-PACKAGES = ("core", "storage", "collector", "generator", "tracker_linear", "cli", "api")
+PACKAGES = ("core", "storage", "collector", "generator", "tracker_linear", "hub_git", "cli", "api")
 COMPOSITION_ROOT = "cli is the composition root"
 API_THROUGH_WEB = "cli reaches api only through web_command"
 CORE_INDEPENDENT = "core imports nothing internal"
@@ -79,6 +79,10 @@ def lint_imports(
         ("collector", "api"),
         ("generator", "api"),
         ("tracker_linear", "api"),
+        ("hub_git", "cli"),
+        ("hub_git", "storage"),
+        ("hub_git", "api"),
+        ("storage", "hub_git"),
     ],
 )
 def test_breaks_composition_root_contract_when_adapter_imports_upward_or_sideways(
@@ -91,7 +95,7 @@ def test_breaks_composition_root_contract_when_adapter_imports_upward_or_sideway
     assert f"{SCRATCH_ROOT}.{importer} -> {SCRATCH_ROOT}.{imported}" in result.stdout
 
 
-@pytest.mark.parametrize("imported", ["generator", "tracker_linear", "api"])
+@pytest.mark.parametrize("imported", ["generator", "tracker_linear", "hub_git", "api"])
 def test_breaks_core_contract_when_core_imports_adapter(
     lint_imports: Callable[[str, str], CompletedProcess[str]], imported: str
 ) -> None:
@@ -132,7 +136,7 @@ def test_keeps_every_contract_when_web_command_imports_api(
     assert f"{COMPOSITION_ROOT} KEPT" in result.stdout, result.stdout
 
 
-@pytest.mark.parametrize("imported", ["storage", "collector", "generator"])
+@pytest.mark.parametrize("imported", ["storage", "collector", "generator", "hub_git"])
 def test_keeps_every_contract_when_api_wires_adapter(
     lint_imports: Callable[[str, str], CompletedProcess[str]], imported: str
 ) -> None:

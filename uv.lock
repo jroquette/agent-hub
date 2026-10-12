@@ -14,6 +14,7 @@ members = [
     "agent-hub-collector",
     "agent-hub-core",
     "agent-hub-generator",
+    "agent-hub-hub-git",
     "agent-hub-storage",
     "agent-hub-tracker-linear",
 ]
@@ -41,6 +42,7 @@ dependencies = [
     { name = "agent-hub-collector" },
     { name = "agent-hub-core" },
     { name = "agent-hub-generator" },
+    { name = "agent-hub-hub-git" },
     { name = "agent-hub-storage" },
     { name = "agent-hub-tracker-linear" },
 ]
@@ -52,6 +54,7 @@ requires-dist = [
     { name = "agent-hub-collector", editable = "packages/collector" },
     { name = "agent-hub-core", editable = "packages/core" },
     { name = "agent-hub-generator", editable = "packages/generator" },
+    { name = "agent-hub-hub-git", editable = "packages/hub_git" },
     { name = "agent-hub-storage", editable = "packages/storage" },
     { name = "agent-hub-tracker-linear", editable = "packages/tracker_linear" },
 ]
@@ -64,6 +67,7 @@ dependencies = [
     { name = "agent-hub-collector" },
     { name = "agent-hub-core" },
     { name = "agent-hub-generator" },
+    { name = "agent-hub-hub-git" },
     { name = "agent-hub-storage" },
     { name = "fastapi" },
     { name = "starlette" },
@@ -75,6 +79,7 @@ requires-dist = [
     { name = "agent-hub-collector", editable = "packages/collector" },
     { name = "agent-hub-core", editable = "packages/core" },
     { name = "agent-hub-generator", editable = "packages/generator" },
+    { name = "agent-hub-hub-git", editable = "packages/hub_git" },
     { name = "agent-hub-storage", editable = "packages/storage" },
     { name = "fastapi", specifier = "==0.141.1" },
     { name = "starlette", specifier = "==1.7.0" },
@@ -134,6 +139,17 @@ requires-dist = [{ name = "pydantic", specifier = ">=2" }]
 name = "agent-hub-generator"
 version = "0.1.0"
 source = { editable = "packages/generator" }
+dependencies = [
+    { name = "agent-hub-core" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "agent-hub-core", editable = "packages/core" }]
+
+[[package]]
+name = "agent-hub-hub-git"
+version = "0.1.0"
+source = { editable = "packages/hub_git" }
 dependencies = [
     { name = "agent-hub-core" },
 ]

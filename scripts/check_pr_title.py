@@ -17,6 +17,7 @@ SCOPES = (
     "cli",
     "generator",
     "tracker",
+    "hub-git",
     "api",
     "web",
     "repo",
