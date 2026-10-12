@@ -18,6 +18,7 @@ import {
   ProblemError,
   SavedViewMenu,
   SegmentedControl,
+  SessionLabel,
   StatusBadge,
   Tooltip,
   type DataTableColumn,
@@ -48,6 +49,8 @@ import { useProjects, useSessionPages, type Session } from "./queries";
 const COLUMNS_KEY = "ah.sessions.columns";
 const DENSITY_KEY = "ah.sessions.density";
 const short = (id: string) => id.replace(/-/g, "").slice(0, 8);
+/** The session's issue: the label's (S1), else the run's. */
+const issueOf = (s: Session) => s.label?.issue ?? s.issue ?? null;
 
 /** Built-in saved views (spec 14): each is a set of URL filters. */
 const VIEWS: { name: string; params: Record<string, string> }[] = [
@@ -161,26 +164,15 @@ const COLUMN_DEFS: ColumnDef[] = [
     }),
   },
   {
-    id: "agent",
-    label: "Agent",
+    id: "session",
+    label: "Session",
     on: true,
     column: () => ({
-      id: "agent",
-      label: "Agent",
+      id: "session",
+      label: "Session",
       render: (s) => (
-        <span
-          className="ah-mono"
-          style={{
-            fontSize: 12,
-            display: "inline-block",
-            maxWidth: 140,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            verticalAlign: "middle",
-          }}
-          title={s.agent}
-        >
-          {s.agent.replace("hub-workflow:", "hw:")}
+        <span style={{ display: "inline-block", maxWidth: 240, verticalAlign: "middle" }}>
+          <SessionLabel session={s} />
         </span>
       ),
     }),
@@ -194,7 +186,7 @@ const COLUMN_DEFS: ColumnDef[] = [
       label: "Issue / run",
       render: (s) => (
         <span className="ah-row" style={{ gap: 6 }}>
-          {s.issue ? <IssueLink id={s.issue} /> : null}
+          {issueOf(s) ? <IssueLink id={issueOf(s) ?? ""} /> : null}
           {s.run_id ? (
             <Tooltip
               label={`Run ${s.run_id}${s.step ? ` · step ${s.step}` : ""}${s.attempt ? ` #${String(s.attempt)}` : ""}`}
@@ -374,31 +366,20 @@ const COMFORTABLE: ColumnDef[] = [
     }),
   },
   {
-    id: "where",
-    label: "Project › repo",
+    id: "session",
+    label: "Session",
     on: true,
     column: () => ({
-      id: "where",
-      label: "Project › repo",
+      id: "session",
+      label: "Session",
       render: (s) => (
-        <div className="ah-stack" style={{ gap: 0, maxWidth: 200 }}>
-          <span
-            className="ah-small"
-            style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-          >
-            {s.project} › <span className="ah-mono">{s.repo ?? "—"}</span>
-          </span>
-          <span
-            className="ah-mono ah-small ah-muted"
-            style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-            title={s.agent}
-          >
-            {s.agent.replace("hub-workflow:", "hw:")}
-          </span>
+        <div style={{ maxWidth: 260, padding: "4px 0" }}>
+          <SessionLabel session={s} />
         </div>
       ),
     }),
   },
+  ...COLUMN_DEFS.filter((def) => def.id === "project"),
   {
     id: "issue",
     label: "Issue / run",
@@ -408,8 +389,8 @@ const COMFORTABLE: ColumnDef[] = [
       label: "Issue / run",
       render: (s) => (
         <div className="ah-stack" style={{ gap: 0 }}>
-          {s.issue ? (
-            <IssueLink id={s.issue} />
+          {issueOf(s) ? (
+            <IssueLink id={issueOf(s) ?? ""} />
           ) : (
             <span className="ah-small ah-subtle">no issue</span>
           )}
@@ -473,7 +454,8 @@ const COMFORTABLE: ColumnDef[] = [
 
 function storedColumns(): Set<string> {
   const stored = readStored(COLUMNS_KEY);
-  if (stored) return new Set(stored.split(","));
+  // "agent" was the Agent column before AGH-201; the Session column replaces it.
+  if (stored) return new Set(stored.split(",").map((id) => (id === "agent" ? "session" : id)));
   return new Set(COLUMN_DEFS.filter((def) => def.on).map((def) => def.id));
 }
 
@@ -541,8 +523,9 @@ function csvOf(rows: Session[]): string {
     "ended_at",
     "project",
     "repo",
-    "agent",
+    "branch",
     "issue",
+    "workflow",
     "run_id",
     "status",
     "outcome",
@@ -563,8 +546,9 @@ function csvOf(rows: Session[]): string {
       s.ended_at,
       s.project,
       s.repo,
-      s.agent,
-      s.issue,
+      s.label?.branch,
+      issueOf(s),
+      s.label?.workflow,
       s.run_id,
       s.status,
       s.outcome,
@@ -646,7 +630,7 @@ export function SessionsListScreen() {
   const visible =
     density === "compact"
       ? COLUMN_DEFS.filter((def) => columns.has(def.id) && !(def.id === "project" && scope))
-      : COMFORTABLE;
+      : COMFORTABLE.filter((def) => !(def.id === "project" && scope));
   const tableColumns = visible.map((def) => def.column({ now, tz }));
   const sortColumn = visible.find((def) => def.sort === sort.replace("-", ""));
   const projectCount = new Set(rows.map((s) => s.project)).size;
@@ -693,14 +677,14 @@ export function SessionsListScreen() {
     },
     {
       id: "agent",
-      title: "Agent",
+      title: "Agent type",
       input: (
         <div className="ah-search">
-          <Icon name="square-terminal" size="sm" />
+          <Icon name="network" size="sm" />
           <input
             className="ah-input ah-mono"
-            aria-label="Agent"
-            placeholder="main or plugin:name"
+            aria-label="Agent type"
+            placeholder="subagent type, e.g. Explore"
             defaultValue={params.get("agent") ?? ""}
             style={{ height: 28, fontSize: 12 }}
             onBlur={(event) => {

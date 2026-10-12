@@ -9,6 +9,7 @@ import {
   Time,
   Tooltip,
   copyText,
+  sessionIdentity,
   useCopied,
   OutsideLink,
 } from "../../components";
@@ -19,6 +20,20 @@ import type { Session } from "./queries";
 import { durationOf, isOpen, statusOf, tokensText } from "./session-status";
 
 const short = (id: string) => id.replace(/-/g, "").slice(0, 8);
+
+/** "Main agent · 3 subagents: Explore ×2, reviewer"; null when only the main agent acted (S2). */
+export function actorsLine(actors: Session["actors"]): string | null {
+  const types = new Map<string, number>();
+  for (const actor of actors) {
+    if (actor.kind !== "subagent") continue;
+    const type = actor.type ?? "subagent";
+    types.set(type, (types.get(type) ?? 0) + 1);
+  }
+  const total = [...types.values()].reduce((sum, n) => sum + n, 0);
+  if (total === 0) return null;
+  const list = [...types].map(([type, n]) => (n > 1 ? `${type} ×${String(n)}` : type)).join(", ");
+  return `Main agent · ${String(total)} ${total === 1 ? "subagent" : "subagents"}: ${list}`;
+}
 
 export interface HeaderProps {
   session: Session;
@@ -36,6 +51,10 @@ export function Header({ session, now, staleSince }: HeaderProps) {
   const open = isOpen(session);
   const subagent = Boolean(session.parent_session_id);
   const segments = session.segments.length;
+  const { title } = sessionIdentity(session);
+  const label = session.label ?? null;
+  const where = [label?.repo ?? session.repo, label?.branch].filter(Boolean).join(" · ") || "—";
+  const actors = actorsLine(session.actors);
   const crumbs = [
     { label: "Portfolio", href: "/" },
     { label: session.project, href: `/projects/${encodeURIComponent(session.project)}` },
@@ -74,7 +93,7 @@ export function Header({ session, now, staleSince }: HeaderProps) {
           style={{ color: "var(--text-subtle)" }}
         />
         <h1 className="ah-h1 ah-mono" style={{ fontSize: 20 }}>
-          {session.agent}
+          {title}
         </h1>
         <StatusBadge status={status.status} label={status.label} title={status.title} />
         {open && (
@@ -87,7 +106,7 @@ export function Header({ session, now, staleSince }: HeaderProps) {
             <AsOfStamp stale time={fmtClock(staleSince, tz)} />
           </span>
         )}
-        {session.issue && <IssueLink id={session.issue} />}
+        {session.issue && !label?.issue && <IssueLink id={session.issue} />}
         <span className="ah-grow" />
         {runHref && (
           <AppLink className="ah-row ah-small" href={runHref} style={{ gap: 4 }}>
@@ -116,8 +135,16 @@ export function Header({ session, now, staleSince }: HeaderProps) {
       <div className="ah-row ah-wrap ah-small sd-meta">
         <span>
           {session.project} ›{" "}
-          <b style={{ color: "var(--text)", fontWeight: 500 }}>{session.repo ?? "—"}</b>
+          <b className="ah-mono" style={{ color: "var(--text)", fontWeight: 500 }}>
+            {where}
+          </b>
         </span>
+        {actors && (
+          <span className="ah-row" style={{ gap: 4 }}>
+            <Icon name="network" size="sm" />
+            {actors}
+          </span>
+        )}
         <IdChip id={session.id} kind="session " />
         <span>
           <span className="ah-subtle">Started </span>
