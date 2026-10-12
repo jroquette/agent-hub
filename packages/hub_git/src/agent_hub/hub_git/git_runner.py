@@ -2,8 +2,13 @@
 
 Every child gets an argv list (never a shell), an empty stdin, no terminal prompt and the
 caller's environment without git's location variables, so nothing but its cwd says which
-repository it acts on. stderr is discarded; stdout is read back (at most ``OUTPUT_LIMIT`` bytes)
-only for the caller to parse and is never logged or put in an error. A child runs in a session
+repository it acts on. No askpass helper can hold an action until its deadline: ``GIT_ASKPASS``
+and ``SSH_ASKPASS`` are dropped, ssh is told never to ask (``SSH_ASKPASS_REQUIRE=never``) and git
+runs with ``-c core.askPass=`` (an empty value, which git skips, so a configured helper is not
+run either). Commit signing is left as the user set it (the hub's own commits are signed when
+theirs are); a signing key that asks for a passphrase ends at the deadline. stderr is
+discarded; stdout is read back (at most ``OUTPUT_LIMIT`` bytes) only for the caller to parse and
+is never logged or put in an error. A child runs in a session
 of its own, so the deadline kills it and every process it started (a credential helper, ssh).
 """
 
@@ -43,6 +48,10 @@ GIT_LOCATION_VARIABLES: Final = (
     "GIT_SHALLOW_FILE",
     "GIT_COMMON_DIR",
 )
+# Helpers that would open a prompt nobody answers (a credential or ssh passphrase dialog).
+ASKPASS_VARIABLES: Final = ("GIT_ASKPASS", "SSH_ASKPASS")
+# Put before every git command: an empty ``core.askPass`` overrides a configured helper.
+GIT_OPTIONS: Final = ("-c", "core.askPass=")
 # No prompt can wait for an answer that never comes; paths are paths, never patterns.
 _QUIET: Final = {
     "GIT_TERMINAL_PROMPT": "0",
@@ -50,6 +59,7 @@ _QUIET: Final = {
     "GH_PROMPT_DISABLED": "1",
     "GH_NO_UPDATE_NOTIFIER": "1",
     "GIT_LITERAL_PATHSPECS": "1",
+    "SSH_ASKPASS_REQUIRE": "never",
 }
 
 
@@ -78,8 +88,10 @@ class Launch(Protocol):
 
 
 def child_env(environ: Mapping[str, str]) -> dict[str, str]:
-    """``environ`` without git's location variables, with prompts off and literal pathspecs."""
-    env = {name: value for name, value in environ.items() if name not in GIT_LOCATION_VARIABLES}
+    """``environ`` without git's location variables or askpass helpers, with prompts off and
+    literal pathspecs."""
+    dropped = {*GIT_LOCATION_VARIABLES, *ASKPASS_VARIABLES}
+    env = {name: value for name, value in environ.items() if name not in dropped}
     return env | _QUIET
 
 
@@ -156,8 +168,9 @@ class GitSession:
     ) -> ProcessResult:
         """Run ``git <args>``; ``ChangeRequestFailedError(step)`` on a non-zero exit when
         ``check``, ``ChangeRequestTimeoutError`` past the deadline."""
+        argv = [*GIT_OPTIONS, *args]
         return self._run(
-            self._runner.git_name, args, cwd=cwd, step=step, env=extra_env, check=check
+            self._runner.git_name, argv, cwd=cwd, step=step, env=extra_env, check=check
         )
 
     def gh(
