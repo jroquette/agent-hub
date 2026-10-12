@@ -33,6 +33,14 @@ def test_names_operation_issue_cause_and_fix_when_tracker_error_raised() -> None
     )
 
 
+def test_keeps_cause_and_fix_when_tracker_error_built() -> None:
+    error = TrackerError(
+        operation="comment", issue_id="DEM-7", cause="Linear answered HTTP 503", fix="retry later"
+    )
+
+    assert (error.cause, error.fix) == ("Linear answered HTTP 503", "retry later")
+
+
 def test_omits_issue_id_when_tracker_error_has_none() -> None:
     error = TrackerError(
         operation="list_ready",

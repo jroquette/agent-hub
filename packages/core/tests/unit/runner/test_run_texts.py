@@ -16,10 +16,12 @@ from agent_hub.core.runner.run_texts import (
     conventional_pr_title,
     failure_comment,
     inbox_line,
+    is_attribution,
     pr_body,
     pr_title,
     sanitized_summary,
     success_comment,
+    without_workspace,
 )
 from agent_hub.core.testing.builders import a_conventions_document, a_hub_document
 
@@ -191,6 +193,18 @@ def test_strips_file_url_prefix_when_summary_links_workspace() -> None:
     assert sanitized_summary(summary, workspace=WORKSPACE) == (
         f"See demo-api/src/x.py and {WORKSPACE_WORDS}."
     )
+
+
+def test_replaces_workspace_path_when_text_names_it() -> None:
+    text = (
+        f"See file://{WORKSPACE}/demo-api/x.py, {WORKSPACE} and {WORKSPACE}2/y\x1b[2J.\n\U0001f916"
+    )
+
+    assert without_workspace(text, workspace=WORKSPACE) == (
+        f"See demo-api/x.py, {WORKSPACE_WORDS} and {WORKSPACE}2/y\x1b[2J.\n\U0001f916"
+    )
+    assert is_attribution("\U0001f916") and is_attribution(ATTRIBUTION_LINES["co-author"])
+    assert not is_attribution("See demo-api/x.py")
 
 
 def test_cleans_summary_when_commit_summary_built() -> None:

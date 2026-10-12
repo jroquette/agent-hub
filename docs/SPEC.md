@@ -73,6 +73,7 @@ hub brief [--no-network]   # session brief: now, journal, repo/PR/CI state
 hub agent [ARGS…]   # claude with every repo attached (./agent)
 hub next   # the tracker's ready issues, one line each
 hub run ISSUE --repo REPO [--live] [--budget USD] [--from implement|verify] …   # one issue to a PR through the tracker port
+hub ship [ISSUE] [--draft] [--dry-run]   # each changed repo's check, push and PR, PRs linked, the issue to review
 hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …   # configuration benchmark (module bench)
 hub collect [FILE|-] [--db PATH]   # ingests canonical events from JSON Lines (stdin when FILE is omitted or -)
 hub collect --transcript FILE [--project NAME]   # a Claude Code transcript, as metadata-only events
@@ -115,7 +116,8 @@ oldest first within each team. With several teams a failing team gets one `team 
 the others are still listed, and the command exits 1. `hub run` reads
 the issue once (dry run by default: it prints every command and tracker write), then makes the worktree, runs the
 implementing `claude -p` session (no tracker tool: the issue's text is in its prompt), its own gate, the push and
-`gh pr create`, and reports through the port; records go to the hub's `.agent-runs/` and `brain/_inbox/runs/`. Secret
+`gh pr create`, and reports through the port (on success, like `hub ship`, it moves the issue to
+`tracker.states.review`, default `In Review`); records go to the hub's `.agent-runs/` and `brain/_inbox/runs/`. Secret
 scope: no child gets `LINEAR_API_KEY`. What may run the session's code (the session, the gate, git's reads of the
 worktree, `worktree add` and the repo's setup script) gets no GitHub token either. The fetch, the push and `gh` are
 the only calls that hold the tokens, each with git's hooks and fsmonitor off (and the push with signing off). Before
@@ -124,6 +126,28 @@ key such a call would act on, or when `origin` is not the repo's GitHub url from
 session and the gate run as the user, so they can read the user's stored credentials or change the global git config,
 and a process they leave running could change the config between the guard's check and the call; only a sandbox
 closes that (AGH-42).
+
+`hub ship` ships an issue that may span repos (`ISSUE` defaults to the issue of the task worktree the cwd is in). Its
+set is each `hub.json` repo whose task worktree for the issue (`<repo>/.claude/worktrees/<team>-<n>[-<desc>]`, at
+most one per repo, on the task branch) has commits ahead of `origin/<default branch>` as last fetched: `hub ship`
+never fetches. It reads the issue once, prints `ship: <repo>  <branch>` per repo in the set and `skipped: <repo> (no
+commits ahead of origin/<base>)` per repo left out, then runs four phases, each in `hub.json` order. (1) With no
+uncommitted tracked change in any worktree, every repo's `check` runs, before any push; each writes its output tails
+to the owner-only `<hub>/.agent-runs/ship/<ISSUE>-<repo>.log` and prints `check passed: <repo>` when it passes; a
+worktree left dirty, or a HEAD or task branch that moved, during the checks stops the ship before any push. (2) Per
+repo, the push (behind `hub run`'s guard), then `gh pr create` (`--draft` when given; the title is the newest commit's
+subject following the repo's conventions), or the PR already open for the branch: `opened: <repo>  <url>` or
+`found: <repo>  <url>`. (3) With two PRs or more, each PR's Related PRs section is made to list the others, its body
+edited through a file and only when that changes it. (4) The tracker writes: the move to the review state, the failed
+label removed when the issue carries it, then one comment listing the PRs. Once the usage checks pass, every failure
+line starts with `hub ship: `; a failure in a repo names the repo and what failed, and lists the PRs already open; the
+first tracker write that fails is shown as not confirmed (it may have landed) and the later ones as not done, none
+retried. Run again after a success, `hub ship` finds the open PRs, edits no PR body and posts one more comment.
+`--dry-run` reads the issue and prints the set, then per repo the check, push and `gh pr create` it would run, then
+each tracker write it would make, with placeholder PR urls (no link edit: the live one depends on the bodies); it runs
+only git reads, writes no file and does not write to the tracker. Usage errors exit 2 before any tracker call, with no
+child run but `git` reads (the hub's main checkout, the git identity a branch prefix may come from); every other
+failure exits 1. No child gets `LINEAR_API_KEY`, and only the push and `gh` get a GitHub token.
 
 `hub start ISSUE` reads the issue once, then looks for its task worktrees in every repo: a name found there resumes the
 task, else the task is named `<issue lower>-<title slug>`. It checks the branches, creates the missing worktrees of the
