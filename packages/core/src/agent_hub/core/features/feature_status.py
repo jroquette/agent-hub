@@ -3,10 +3,11 @@
 ``features.json`` gives the acceptance criteria: passing ones, and owner steps (a criterion whose
 verification starts with ``manual`` and does not pass yet). ``spec.md``'s frontmatter gives the
 size (``process_size``), ``repos`` and ``linear`` issues; ``eval.md``'s first ``Verdict`` line the
-verdict. The golden path phase comes from the files alone: spec, research, plan, tickets
-(``issues.md``), implement (an AC passes), evaluate (a verdict). Review needs runs and Shipped
-needs GitHub, not connected in Phase 2. A malformed or unreadable record degrades this feature
-only: its ``problem`` says why and its criteria are unknown.
+verdict. The detail's ``records`` name each record file (brain-relative, so the brain note route
+reads it) and whether it is present. The golden path phase comes from the files alone: spec,
+research, plan, tickets (``issues.md``), implement (an AC passes), evaluate (a verdict). Review
+needs runs and Shipped needs GitHub, not connected in Phase 2. A malformed or unreadable record
+degrades this feature only: its ``problem`` says why and its criteria are unknown.
 """
 
 import re
@@ -22,6 +23,8 @@ from agent_hub.core.features.feature_view import (
     AcRow,
     FeatureDetail,
     FeaturePhase,
+    FeatureRecord,
+    FeatureRecordName,
     FeatureView,
     Verdict,
 )
@@ -44,6 +47,15 @@ _SIZES: Final = ("spike", "bounded", "architectural")
 type FeatureSize = Literal["spike", "bounded", "architectural"]
 _VERDICT: Final = re.compile(r"Verdict\W{0,4}(SHIP-WITH-OWNER-STEPS|NO-SHIP|SHIP)\b")
 _MANUAL: Final = re.compile(r"\s*manual\b", re.IGNORECASE)
+# The records a feature detail lists, each with its file (AC-201.32), in the order shown.
+_RECORDS: Final[tuple[tuple[FeatureRecordName, str], ...]] = (
+    ("spec", SPEC),
+    ("research", RESEARCH),
+    ("plan", PLAN),
+    ("eval", EVAL),
+    ("issues", ISSUES),
+)
+FEATURES_FOLDER: Final = "features"
 _FILE_PHASES: Final[tuple[tuple[str, FeaturePhase], ...]] = (
     (SPEC, "spec"),
     (RESEARCH, "research"),
@@ -115,6 +127,19 @@ def feature_detail(folder: FeatureFolder, *, project: str) -> FeatureDetail:
         problem=record if isinstance(record, str) else None,
         sources_missing=(EventSource.GITHUB,),
         ac_rows=rows,
+        records=_records(folder),
+    )
+
+
+def _records(folder: FeatureFolder) -> tuple[FeatureRecord, ...]:
+    """Each record file with its brain-relative path and whether the folder listing had it."""
+    return tuple(
+        FeatureRecord(
+            name=name,
+            path=f"{FEATURES_FOLDER}/{folder.slug}/{file}",
+            present=file in folder.files,
+        )
+        for name, file in _RECORDS
     )
 
 
