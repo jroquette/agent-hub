@@ -1,4 +1,5 @@
 import json
+import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -16,6 +17,12 @@ def _collect(
     args: Sequence[str], *, stdin: str | None = None, env: Mapping[str, str | None] | None = None
 ) -> Result:
     return CliRunner().invoke(app, ["collect", *args], input=stdin, env=env)
+
+
+def _plain(output: str) -> str:
+    # Rich colours and boxes usage errors when CI forces a terminal; keep only the words.
+    without_ansi = re.sub(r"\x1b\[[0-9;]*m", "", output)
+    return " ".join(re.sub(r"[\u2500-\u257f]", " ", without_ansi).split())
 
 
 def _write_jsonl(path: Path, events: Sequence[Event]) -> Path:
@@ -95,9 +102,9 @@ def test_rejects_batch_when_lines_invalid(tmp_path: Path) -> None:
 
 def test_rejects_batch_when_key_conflicts_with_stored_event(tmp_path: Path) -> None:
     db_path = tmp_path / "events.db"
-    stored = an_event(source="github", payload={"state": "open"})
+    stored = an_event(source="github", payload={"command": "open"})
     open_event_store(db_path).append([stored])
-    changed = an_event(source="github", source_id=stored.source_id, payload={"state": "closed"})
+    changed = an_event(source="github", source_id=stored.source_id, payload={"command": "closed"})
     file = _write_jsonl(tmp_path / "events.jsonl", [an_event(), changed])
 
     result = _collect([str(file), "--db", str(db_path)])
@@ -242,9 +249,9 @@ def _has_control_character(text: str) -> bool:
 def test_prints_one_line_when_conflicting_source_id_has_newline(tmp_path: Path) -> None:
     db_path = tmp_path / "events.db"
     source_id = "evt-1\nline 9: forged\x1b[2J"
-    stored = an_event(source_id=source_id, payload={"state": "open"})
+    stored = an_event(source_id=source_id, payload={"command": "open"})
     open_event_store(db_path).append([stored])
-    changed = an_event(source_id=source_id, payload={"state": "closed"})
+    changed = an_event(source_id=source_id, payload={"command": "closed"})
     file = _write_jsonl(tmp_path / "events.jsonl", [changed])
 
     result = _collect([str(file), "--db", str(db_path)])
@@ -287,9 +294,9 @@ def test_fails_without_creating_database_when_home_unresolvable(
 
 def test_reports_conflict_line_when_blank_lines_precede_events(tmp_path: Path) -> None:
     db_path = tmp_path / "events.db"
-    stored = an_event(payload={"state": "open"})
+    stored = an_event(payload={"command": "open"})
     open_event_store(db_path).append([stored])
-    changed = an_event(source_id=stored.source_id, payload={"state": "closed"})
+    changed = an_event(source_id=stored.source_id, payload={"command": "closed"})
     text = f"\n\n{an_event().model_dump_json()}\n\n{changed.model_dump_json()}\n"
 
     result = _collect(["--db", str(db_path)], stdin=text)
@@ -302,8 +309,8 @@ def test_reports_conflict_line_when_blank_lines_precede_events(tmp_path: Path) -
 
 def test_reports_conflict_line_when_batch_conflicts_with_itself(tmp_path: Path) -> None:
     db_path = tmp_path / "events.db"
-    first = an_event(payload={"state": "open"})
-    changed = an_event(source_id=first.source_id, payload={"state": "closed"})
+    first = an_event(payload={"command": "open"})
+    changed = an_event(source_id=first.source_id, payload={"command": "closed"})
     lines = ["", "", first, "", an_event(), first, "", changed]
     text = "\n".join(line if isinstance(line, str) else line.model_dump_json() for line in lines)
 
@@ -336,3 +343,54 @@ def test_prints_one_line_when_database_path_has_newline(tmp_path: Path) -> None:
     [line] = result.stderr.splitlines()
     assert line.startswith("error: ")
     assert not _has_control_character(line)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--transcript", "t.jsonl", "--runs", "runs"],
+        ["--transcript", "t.jsonl", "events.jsonl"],
+        ["--runs", "runs", "events.jsonl"],
+        ["--runs", "runs", "-"],
+    ],
+    ids=["transcript_and_runs", "transcript_and_file", "runs_and_file", "runs_and_stdin"],
+)
+def test_exits_with_usage_line_when_input_options_combined_usage(
+    tmp_path: Path, args: list[str]
+) -> None:
+    db_path = tmp_path / "events.db"
+
+    result = _collect([*args, "--db", str(db_path)])
+
+    assert result.exit_code == 2
+    assert "Usage: " in result.output
+    assert "use only one of FILE, --transcript and --runs" in _plain(result.output)
+    assert not db_path.exists()
+
+
+@pytest.mark.parametrize(
+    "event_type", ["step.start", "step.end", "run.end", "learning.rejected", "session.summary"]
+)
+def test_accepts_event_when_type_is_new_in_phase_two_new_type(
+    tmp_path: Path, event_type: str
+) -> None:
+    event = an_event(type=event_type, payload={"run": "1a2b3c4d"})
+    file = _write_jsonl(tmp_path / "events.jsonl", [event])
+    db_path = tmp_path / "events.db"
+
+    result = _collect([str(file), "--db", str(db_path)])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "appended 1, duplicates 0\n"
+    assert _stored(db_path) == [event]
+
+
+def test_rejects_event_when_type_unknown_new_type(tmp_path: Path) -> None:
+    line = an_event().model_dump(mode="json") | {"type": "step.middle"}
+    file = tmp_path / "events.jsonl"
+    file.write_text(json.dumps(line) + "\n", encoding="utf-8")
+
+    result = _collect([str(file), "--db", str(tmp_path / "events.db")])
+
+    assert result.exit_code == 1
+    assert result.stderr.startswith("line 1: type: Input should be")

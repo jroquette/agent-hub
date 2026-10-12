@@ -1,5 +1,5 @@
-from agent_hub.core.testing.contracts import EventStoreContract
+from agent_hub.core.testing.contracts import EventReaderContract, EventStoreContract
 
 
-class TestSqliteEventStore(EventStoreContract):
-    """The EventStore contract suite, run against the SQLite adapter."""
+class TestSqliteEventStore(EventStoreContract, EventReaderContract):
+    """The EventStore contract suites, run against the SQLite adapter."""

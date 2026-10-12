@@ -1,0 +1,136 @@
+"""The ports the routes depend on, and the FastAPI dependencies that hand them over.
+
+``create_app`` keeps an ``ApiPorts`` on ``app.state``; the composition (``build_app``) fills it
+with the real adapters, tests with fakes. A route whose port is not wired answers the 501 of
+the contract, so a partly wired build still serves every path of the document.
+"""
+
+from dataclasses import dataclass
+from typing import Annotated
+
+from fastapi import Depends, Request
+from pydantic import BaseModel, ValidationError
+
+from agent_hub.api.change_feed import ChangeFeed
+from agent_hub.api.rfc9457 import InvalidParameterError, NotImplementedInBuildError
+from agent_hub.api.settings import ApiSettings
+from agent_hub.core.events.event_reader import EventReader
+from agent_hub.core.ingestion.ingest_hook import IngestHook
+from agent_hub.core.ingestion.ingestion_status import IngestionCounters
+from agent_hub.core.readmodels.read_ports import EventReadModels, HubReadModels
+
+
+@dataclass(frozen=True)
+class ApiPorts:
+    """What the routes read and write through; None is a port this build does not wire."""
+
+    event_read_models: EventReadModels | None = None
+    hub_read_models: HubReadModels | None = None
+    ingest_hook: IngestHook | None = None
+    event_reader: EventReader | None = None
+    change_feed: ChangeFeed | None = None
+    counters: IngestionCounters | None = None
+
+
+def _ports(request: Request) -> ApiPorts:
+    ports: ApiPorts = request.app.state.ports
+    return ports
+
+
+def _unwired(request: Request) -> NotImplementedInBuildError:
+    route = request.scope.get("route")
+    return NotImplementedInBuildError(getattr(route, "name", request.url.path))
+
+
+def event_read_models(request: Request) -> EventReadModels:
+    """The event read models, or 501 when not wired."""
+    port = _ports(request).event_read_models
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+def hub_read_models(request: Request) -> HubReadModels:
+    """The hub read models, or 501 when not wired."""
+    port = _ports(request).hub_read_models
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+def ingest_hook(request: Request) -> IngestHook:
+    """The hook ingestion use case, or 501 when not wired."""
+    port = _ports(request).ingest_hook
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+@dataclass(frozen=True)
+class StreamPorts:
+    """What a stream needs: the reader it replays from, the feed it waits on, the read models."""
+
+    reader: EventReader
+    feed: ChangeFeed
+    models: EventReadModels
+    counters: IngestionCounters | None
+
+
+def stream_ports(request: Request) -> StreamPorts:
+    """Every port of a stream, or 501 when one is not wired."""
+    ports = _ports(request)
+    if ports.event_reader is None or ports.change_feed is None or ports.event_read_models is None:
+        raise _unwired(request)
+    return StreamPorts(
+        reader=ports.event_reader,
+        feed=ports.change_feed,
+        models=ports.event_read_models,
+        counters=ports.counters,
+    )
+
+
+@dataclass(frozen=True)
+class CollectorPorts:
+    """What ``GET /collector/status`` reads: the counters and the store's high-water mark."""
+
+    counters: IngestionCounters
+    reader: EventReader
+
+
+def collector_ports(request: Request) -> CollectorPorts:
+    """The collector's counters and reader, or 501 when not wired."""
+    ports = _ports(request)
+    if ports.counters is None or ports.event_reader is None:
+        raise _unwired(request)
+    return CollectorPorts(counters=ports.counters, reader=ports.event_reader)
+
+
+def api_settings(request: Request) -> ApiSettings:
+    """The settings ``create_app`` was given."""
+    settings: ApiSettings = request.app.state.settings
+    return settings
+
+
+def parse_filter[M: BaseModel](model: type[M], **fields: object) -> M:
+    """``model`` built from query parameters; a rule across parameters failing answers 400.
+
+    FastAPI already checked each parameter; what is left are checks that span several
+    (``cost_min`` above ``cost_max``), named by the first field they mention.
+    """
+    try:
+        return model.model_validate(fields)
+    except ValidationError as error:
+        first = error.errors()[0]
+        location = [str(part) for part in first.get("loc", ())]
+        reason = str(first.get("msg", "invalid"))
+        named = [name for name in fields if name in reason]
+        parameter = location[0] if location else (named[0] if named else "query")
+        raise InvalidParameterError(parameter=parameter, reason=reason) from None
+
+
+EventReadModelsDep = Annotated[EventReadModels, Depends(event_read_models)]
+HubReadModelsDep = Annotated[HubReadModels, Depends(hub_read_models)]
+IngestHookDep = Annotated[IngestHook, Depends(ingest_hook)]
+StreamPortsDep = Annotated[StreamPorts, Depends(stream_ports)]
+CollectorPortsDep = Annotated[CollectorPorts, Depends(collector_ports)]
+SettingsDep = Annotated[ApiSettings, Depends(api_settings)]

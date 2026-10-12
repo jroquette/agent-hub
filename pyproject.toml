@@ -11,6 +11,8 @@ build-constraint-dependencies = ["hatchling==1.32.4"]
 
 [dependency-groups]
 dev = [
+    "httpx==0.28.1",
+    "hypothesis==6.168.1",
     "import-linter>=2.15",
     "mypy>=2.3.1",
     "pytest>=9.1.1",

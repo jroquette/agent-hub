@@ -116,3 +116,27 @@ def test_passes_typecheck_when_skeleton_unchanged(
     result = run(_mypy())
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_runs_web_and_openapi_steps_when_check_fast_dry_run(
+    run: Callable[..., CompletedProcess[str]],
+) -> None:
+    """AC-200.61: check-fast installs and checks the web app and checks the OpenAPI drift."""
+    result = run(["make", "-n", "check-fast"])
+
+    assert result.returncode == 0, result.stderr
+    assert "npm --prefix apps/web ci" in result.stdout
+    assert "npm --prefix apps/web run check" in result.stdout
+    assert "python -m scripts.export_openapi --check" in result.stdout
+    assert "npm --prefix apps/web run gen:api:check" in result.stdout
+
+
+def test_checks_web_dist_drift_when_check_dry_run(
+    run: Callable[..., CompletedProcess[str]],
+) -> None:
+    """AC-200.62: check rebuilds the web app and compares it with the committed web_dist."""
+    result = run(["make", "-n", "check"])
+
+    assert result.returncode == 0, result.stderr
+    assert "packages/api/src/agent_hub/api/web_dist" in result.stdout
+    assert "diff -r" in result.stdout

@@ -31,6 +31,18 @@ def test_blocks_socket_when_test_is_unit_level() -> None:
         socket.socket()
 
 
+def test_allows_local_socket_pair_when_test_is_unit_level() -> None:
+    """pytest.ini passes --allow-unix-socket: asyncio's event loop needs a local socket pair
+    (the API's in-process tests run one), while network sockets stay blocked."""
+    first, second = socket.socketpair()
+    try:
+        first.sendall(b"x")
+        assert second.recv(1) == b"x"
+    finally:
+        first.close()
+        second.close()
+
+
 LIVE_VARIABLES = {
     "LINEAR_API_KEY": "lin_api_secret_value",
     "AGENT_HUB_LIVE": "1",
@@ -225,3 +237,33 @@ def test_rejects_live_marker_when_argument_not_one_string(
     message = str(raised.value)
     assert named in message
     assert "live('mcp')" in message
+
+
+def _claude_live_item() -> _FakeItem:
+    item = _FakeItem("tests/e2e/test_live_agent.py")
+    item.markers.append(pytest.mark.live("claude").mark)
+    return item
+
+
+def test_needs_only_switch_when_claude_live_marked(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A live("claude") test runs a real claude session: no Linear key, issue, label or hub.
+    _set_live_variables(monkeypatch, **dict.fromkeys([*LIVE_VARIABLES, *LIVE_HUB]))
+    monkeypatch.setenv("AGENT_HUB_LIVE", "1")
+    item = _claude_live_item()
+
+    _collect(item)
+
+    assert _skip_reasons(item) == []
+
+
+@pytest.mark.parametrize("switch", [None, "0"], ids=["unset", "off"])
+def test_skips_claude_live_test_naming_switch_when_switch_not_on(
+    monkeypatch: pytest.MonkeyPatch, switch: str | None
+) -> None:
+    _set_live_variables(monkeypatch, AGENT_HUB_LIVE=switch)
+    item = _claude_live_item()
+
+    _collect(item)
+
+    [reason] = _skip_reasons(item)
+    assert _names(reason, "AGENT_HUB_LIVE")

@@ -45,7 +45,11 @@ def an_event(**overrides: object) -> Event:
         "timestamp": datetime(2026, 9, 27, 10, 0, 0, 123456, tzinfo=UTC),
         "source": "claude_code",
         "source_id": f"evt-{uuid4().hex}",
-        "payload": {"tool": "search", "input": {"terms": ["alpha", "beta"], "limit": 3}},
+        "payload": {
+            "tool": "search",
+            "tool_use_id": "toolu_search",
+            "arg_keys": ["limit", "terms"],
+        },
     }
     return Event.model_validate(fields | overrides)
 

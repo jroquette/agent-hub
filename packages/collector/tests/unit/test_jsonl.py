@@ -233,3 +233,22 @@ def test_drops_byte_order_mark_when_stream_starts_with_one() -> None:
     text = events_to_jsonl([an_event()])
 
     assert read_stream(io.BytesIO(b"\xef\xbb\xbf" + text.encode()), name="stdin") == text
+
+
+def test_reports_reason_when_event_id_longer_than_cap() -> None:
+    event = {
+        "project": "demo",
+        "session": "s" * 201,
+        "type": "message",
+        "timestamp": "2026-10-11T10:00:00Z",
+        "source": "claude_code",
+        "source_id": "a",
+    }
+    with_run = event | {"session": "s", "payload": {"run": "r" * 201}}
+
+    batch = parse_events(f"{json.dumps(event)}\n{json.dumps(with_run)}\n")
+
+    assert [error.reason for error in batch.errors] == [
+        "session: String should have at most 200 characters",
+        "event: Value error, run: longer than 200 characters",
+    ]
