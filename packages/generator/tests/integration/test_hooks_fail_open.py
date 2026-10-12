@@ -1,13 +1,15 @@
-"""The six rendered hook entry points fail open: whatever the input or the hub, they exit 0,
-print nothing or one JSON object, and never a traceback (AC-4.11).
+"""The seven rendered hook entry points fail open: whatever the input or the hub, they exit 0,
+print nothing or one JSON object, and never a traceback (AC-4.11, AGH-200 D6).
 
 Each hook runs as Claude Code runs it: a file on ``hook_python`` with the input on stdin, in an
-environment built from scratch (``HOME`` and ``TMPDIR`` under ``tmp_path``).
+environment built from scratch (``HOME`` and ``TMPDIR`` under ``tmp_path``, and the event server's
+URL a loopback port nothing listens on).
 """
 
 import json
 import os
 import shutil
+import socket
 import subprocess
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -20,7 +22,15 @@ from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.generator.render_hub import render_hub
 
 HOOKS = "plugin/hub-workflow/hooks"
-ENTRY_POINTS = ("guard", "post_edit", "stop_gate", "session_start", "session_end", "pre_compact")
+ENTRY_POINTS = (
+    "guard",
+    "post_edit",
+    "stop_gate",
+    "session_start",
+    "session_end",
+    "pre_compact",
+    "event_sensor",
+)
 # Where Claude Code's plugin cache would hold the hooks: no hub.json three folders up.
 PLUGIN_CACHE = "home/.claude/plugins/cache/agent-hub/hub-workflow/0.1.0/hooks"
 # The hub states of AC-4.11.
@@ -86,6 +96,12 @@ def valid_event(name: str, hub: Path) -> dict[str, Any]:
         "session_start": {"source": "compact"},
         "session_end": {"reason": "clear"},
         "pre_compact": {"trigger": "manual"},
+        "event_sensor": {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "ls"},
+            "tool_use_id": "toolu_01",
+        },
     }
     return base | extra[name]
 
@@ -144,9 +160,18 @@ def problems_of(
     return found
 
 
+def closed_port() -> int:
+    """A loopback port nothing listens on (bound, then released)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        port: int = probe.getsockname()[1]
+        return port
+
+
 def scratch_env(tmp_path: Path) -> dict[str, str]:
     """``HOME`` and ``TMPDIR`` under ``tmp_path``; ``PATH`` starts with a stub ``uvx``, so the
-    SessionStart hook never reaches the real one (or the network)."""
+    SessionStart hook never reaches the real one (or the network); the sensor, the guard and the
+    Stop gate send to a loopback port nothing listens on, never to a running ``hub web``."""
     home, temp, bin_dir = tmp_path / "home", tmp_path / "tmp", tmp_path / "bin"
     home.mkdir(exist_ok=True)
     temp.mkdir(exist_ok=True)
@@ -155,7 +180,12 @@ def scratch_env(tmp_path: Path) -> dict[str, str]:
     stub.write_text(STUB_UVX, encoding="utf-8")
     stub.chmod(0o755)
     path = os.pathsep.join([str(bin_dir), os.environ.get("PATH", os.defpath)])
-    return {"HOME": str(home), "TMPDIR": str(temp), "PATH": path}
+    return {
+        "HOME": str(home),
+        "TMPDIR": str(temp),
+        "PATH": path,
+        "AGENT_HUB_WEB_URL": f"http://127.0.0.1:{closed_port()}",
+    }
 
 
 @pytest.fixture

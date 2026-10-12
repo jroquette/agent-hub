@@ -1,5 +1,6 @@
 """The `.importlinter` contracts enforce the dependency rule (ADR 0001, ADR 0008): cli is the
-composition root, nothing imports it, and the adapters stay independent of each other.
+composition root, nothing imports it, api sits below it and imports no cli, cli reaches api only
+from its web command, and the adapters stay independent of each other.
 
 The tests run the real lint-imports with the repo's contracts, renamed onto a scratch root
 package in tmp_path, so a scratch import never touches the real packages."""
@@ -14,21 +15,27 @@ import pytest
 
 ROOT = "agent_hub"
 SCRATCH_ROOT = "scratch_hub"
-PACKAGES = ("core", "storage", "collector", "generator", "tracker_linear", "cli")
+PACKAGES = ("core", "storage", "collector", "generator", "tracker_linear", "cli", "api")
 COMPOSITION_ROOT = "cli is the composition root"
+API_THROUGH_WEB = "cli reaches api only through web_command"
 CORE_INDEPENDENT = "core imports nothing internal"
 LINT_IMPORTS = str(Path(sys.executable).parent / "lint-imports")
 
 
 def _write_scratch_root(tmp_path: Path, *, importer: str, imported: str) -> None:
-    """The scratch root package: every package empty but one, which imports another."""
+    """The scratch root package: every package empty but one module, which imports another.
+
+    ``importer`` is a package (``cli``) or one of its modules (``cli.web_command``).
+    """
     root = tmp_path / SCRATCH_ROOT
     root.mkdir()
     (root / "__init__.py").write_text("")
     for name in PACKAGES:
         (root / name).mkdir()
         (root / name / "__init__.py").write_text("")
-    (root / importer / "__init__.py").write_text(f"import {SCRATCH_ROOT}.{imported}\n")
+    package, _, module = importer.partition(".")
+    source = root / package / (f"{module}.py" if module else "__init__.py")
+    source.write_text(f"import {SCRATCH_ROOT}.{imported}\n")
 
 
 @pytest.fixture
@@ -67,6 +74,11 @@ def lint_imports(
         ("storage", "tracker_linear"),
         ("collector", "tracker_linear"),
         ("generator", "tracker_linear"),
+        ("api", "cli"),
+        ("storage", "api"),
+        ("collector", "api"),
+        ("generator", "api"),
+        ("tracker_linear", "api"),
     ],
 )
 def test_breaks_composition_root_contract_when_adapter_imports_upward_or_sideways(
@@ -79,7 +91,7 @@ def test_breaks_composition_root_contract_when_adapter_imports_upward_or_sideway
     assert f"{SCRATCH_ROOT}.{importer} -> {SCRATCH_ROOT}.{imported}" in result.stdout
 
 
-@pytest.mark.parametrize("imported", ["generator", "tracker_linear"])
+@pytest.mark.parametrize("imported", ["generator", "tracker_linear", "api"])
 def test_breaks_core_contract_when_core_imports_adapter(
     lint_imports: Callable[[str, str], CompletedProcess[str]], imported: str
 ) -> None:
@@ -98,3 +110,32 @@ def test_keeps_every_contract_when_cli_wires_adapter(
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert f"{COMPOSITION_ROOT} KEPT" in result.stdout, result.stdout
+
+
+@pytest.mark.parametrize("importer", ["cli", "cli.run_command"])
+def test_breaks_web_command_contract_when_other_cli_module_imports_api(
+    lint_imports: Callable[[str, str], CompletedProcess[str]], importer: str
+) -> None:
+    result = lint_imports(importer, "api")
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert f"{API_THROUGH_WEB} BROKEN" in result.stdout, result.stdout
+
+
+def test_keeps_every_contract_when_web_command_imports_api(
+    lint_imports: Callable[[str, str], CompletedProcess[str]],
+) -> None:
+    result = lint_imports("cli.web_command", "api")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"{API_THROUGH_WEB} KEPT" in result.stdout, result.stdout
+    assert f"{COMPOSITION_ROOT} KEPT" in result.stdout, result.stdout
+
+
+@pytest.mark.parametrize("imported", ["storage", "collector", "generator"])
+def test_keeps_every_contract_when_api_wires_adapter(
+    lint_imports: Callable[[str, str], CompletedProcess[str]], imported: str
+) -> None:
+    result = lint_imports("api", imported)
+
+    assert result.returncode == 0, result.stdout + result.stderr

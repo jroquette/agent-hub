@@ -89,8 +89,26 @@ class HookEvent(NamedTuple):
     timeout: int
 
 
-# Spec AC-4.7 (Q-5): the base plugin's six hooks, with this hub's timeouts; `hooks.json` wires the
-# same six for a plugin install.
+# AGH-200 D6 and E2: the hook sensor's eleven events. It sends each input to the local control
+# plane within 0.5 s and always exits 0; the tool events match every tool.
+_SENSOR_FILE: Final = "event_sensor.py"
+_SENSOR_TIMEOUT: Final = 5
+_SENSOR_EVENTS: Final = (
+    ("SessionStart", None),
+    ("PreToolUse", "*"),
+    ("PostToolUse", "*"),
+    ("Stop", None),
+    ("PreCompact", None),
+    ("SessionEnd", None),
+    ("UserPromptSubmit", None),
+    ("PostToolUseFailure", "*"),
+    ("Notification", None),
+    ("SubagentStart", None),
+    ("SubagentStop", None),
+)
+
+# Spec AC-4.7 (Q-5): the base plugin's six hooks, with this hub's timeouts, then the sensor's
+# eleven (AGH-200); `hooks.json` wires the same groups for a plugin install.
 HOOK_EVENTS: Final = (
     HookEvent("SessionStart", "startup|resume|clear|compact", "session_start.py", 20),
     HookEvent(
@@ -103,6 +121,10 @@ HOOK_EVENTS: Final = (
     HookEvent("Stop", None, "stop_gate.py", 180),
     HookEvent("PreCompact", None, "pre_compact.py", 20),
     HookEvent("SessionEnd", None, "session_end.py", 10),
+    *(
+        HookEvent(event, matcher, _SENSOR_FILE, _SENSOR_TIMEOUT)
+        for event, matcher in _SENSOR_EVENTS
+    ),
 )
 
 
@@ -177,12 +199,17 @@ def _denied_pushes(config: HubConfig) -> list[str]:
 
 
 def base_hooks_block() -> dict[str, JsonValue]:
-    """The ``hooks`` value of the managed settings: one group per event, in ``HOOK_EVENTS`` order.
+    """The ``hooks`` value of the managed settings: one group per ``HOOK_EVENTS`` row, under its
+    event; events in first-seen order, an event's groups in row order (the base hook, then the
+    sensor).
 
     hub doctor's ``settings.weakening`` rule checks ``settings.json`` against it without a render
     (spec Q-14). Each call builds a new value.
     """
-    return {hook.event: [_hook_group(hook)] for hook in HOOK_EVENTS}
+    block: dict[str, list[JsonValue]] = {}
+    for hook in HOOK_EVENTS:
+        block.setdefault(hook.event, []).append(_hook_group(hook))
+    return {event: groups for event, groups in block.items()}
 
 
 def _hook_group(hook: HookEvent) -> JsonValue:

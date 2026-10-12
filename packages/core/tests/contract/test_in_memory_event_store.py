@@ -1,5 +1,5 @@
-from agent_hub.core.testing.contracts import EventStoreContract
+from agent_hub.core.testing.contracts import EventReaderContract, EventStoreContract
 
 
-class TestInMemoryEventStore(EventStoreContract):
-    """The EventStore contract suite, run against the in-memory fake."""
+class TestInMemoryEventStore(EventStoreContract, EventReaderContract):
+    """The EventStore contract suites, run against the in-memory fake."""

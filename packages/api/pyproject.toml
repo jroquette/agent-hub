@@ -1,0 +1,26 @@
+[project]
+name = "agent-hub-api"
+version = "0.1.0"
+description = "The local REST and SSE API of agent-hub and the built web app it serves."
+requires-python = ">=3.14"
+dependencies = ["agent-hub-core", "agent-hub-storage", "agent-hub-collector", "agent-hub-generator",
+                "fastapi==0.141.1", "starlette==1.7.0", "uvicorn==0.54.0"]
+
+[tool.uv.sources]
+agent-hub-core = { workspace = true }
+agent-hub-storage = { workspace = true }
+agent-hub-collector = { workspace = true }
+agent-hub-generator = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+# The built web app is committed (D26) and shipped as package data, so an install from a git
+# tag needs no Node.
+artifacts = ["src/agent_hub/api/web_dist/**"]
+
+[tool.hatch.build.targets.wheel]
+# agent_hub is an implicit namespace package shared by every distribution.
+packages = ["src/agent_hub"]

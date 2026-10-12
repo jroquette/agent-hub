@@ -1,0 +1,5 @@
+/* Sessions list: tighter cells so the default columns fit at 1440 px (design SessionsList). */
+.sl-table .ah-table td,
+.sl-table .ah-table th {
+  padding: 0 var(--space-2);
+}

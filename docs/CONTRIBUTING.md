@@ -12,7 +12,12 @@ in [TESTING.md](TESTING.md).
    same PR.
 3. **Branch** from a freshly fetched `origin/main`: `roquettejh/agh-<n>-<desc>`, where `<n>` is the issue number and
    `<desc>` a short kebab-case description, e.g. `roquettejh/agh-2-foundation`. Never `claude/…`; never commit on `main`.
-4. **Set up** with `uv sync --all-packages` (uv 0.9.0 or newer; Python 3.14).
+4. **Set up** with `uv sync --all-packages` (uv 0.9.0 or newer; Python 3.14) and, for the web app,
+   `npm --prefix apps/web ci` (Node from `apps/web/.node-version`, `engines.node` in `apps/web/package.json`; npm
+   installs exactly what `package-lock.json` pins). The `make` targets sync both on their own. The web smoke needs a
+   Playwright Chromium (`npm --prefix apps/web exec playwright install chromium` once on a new machine); without one it
+   skips locally and fails under `CI`. A change under `apps/web/src` ends with `make web-build`, and the rebuilt
+   `packages/api/src/agent_hub/api/web_dist/` is committed with it (`make web-dist-check` fails otherwise).
 5. **Test first** ([TESTING.md](TESTING.md)), then implement. Run `make check-fast` while working.
 6. **Before the PR**, run `make check`. Redirect the output and check the exit code:
    `make check > check.log 2>&1; echo $?`.
