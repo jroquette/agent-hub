@@ -4,12 +4,14 @@ import { PhaseTag } from "../../components";
 import { NotFoundBody } from "../not-found";
 
 const TITLES: Readonly<Record<string, string>> = {
-  brain: "Brain",
   decisions: "Decisions",
   context: "Context",
 };
 
-/** The Knowledge items that arrive in Phase 3: the title, "Arrives in Phase 3." and nothing else (D20). */
+/**
+ * The Knowledge items that arrive in Phase 3: the title, "Arrives in Phase 3." and nothing else (D20).
+ * Brain shipped with AGH-201 (`screens/brain`), so it is no longer one of them.
+ */
 export function KnowledgePhase3Screen() {
   const { section = "" } = useParams();
   const title = TITLES[section];

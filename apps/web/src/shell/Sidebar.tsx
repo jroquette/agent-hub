@@ -1,8 +1,9 @@
 import { Fragment } from "react";
-import { NavLink } from "react-router";
+import { NavLink, useMatch } from "react-router";
 
 import { Kbd, PhaseTag, type Phase } from "../components/core";
 import { Icon, type IconName } from "../components/Icon";
+import { useScope } from "../lib/scope";
 
 /** Badge counts from the global stream's `counts` message. */
 export interface SidebarCounts {
@@ -13,6 +14,19 @@ export interface SidebarCounts {
 }
 
 type CountKey = keyof SidebarCounts;
+
+const BRAIN_ID = "brain";
+/** Where Brain goes with All projects in scope: a project picker. */
+const BRAIN_PICKER = "/knowledge/brain";
+
+/**
+ * Brain's destination: the Brain of the project whose brain is open, else of the project in scope,
+ * else the picker.
+ */
+export function brainLink(open: string | null, scope: string | null): string {
+  const project = open ?? scope;
+  return project === null ? BRAIN_PICKER : `/projects/${encodeURIComponent(project)}/brain`;
+}
 
 interface NavItem {
   id: string;
@@ -28,8 +42,8 @@ interface NavItem {
 }
 
 /**
- * The Phase 2 sitemap (D20): Metrics, Bench, Tracker queue and Workflows are not shipped and not
- * shown; Knowledge holds only Learnings, tagged P3 (read-only until Phase 3).
+ * The sitemap (D20, AGH-201 D3): Metrics, Bench, Tracker queue and Workflows are not shipped and not
+ * shown; Knowledge holds Learnings and the selected project's Brain (`BRAIN_ID`, see `brainLink`).
  */
 export const NAV: readonly { group: string; items: NavItem[] }[] = [
   {
@@ -71,7 +85,6 @@ export const NAV: readonly { group: string; items: NavItem[] }[] = [
         label: "Knowledge",
         to: "/knowledge/learnings",
         icon: "library",
-        phase: "P3",
         children: [
           {
             id: "learnings",
@@ -80,6 +93,7 @@ export const NAV: readonly { group: string; items: NavItem[] }[] = [
             countKey: "learnings",
             countNoun: () => "to triage",
           },
+          { id: BRAIN_ID, label: "Brain", to: BRAIN_PICKER },
         ],
       },
       { id: "features", label: "Features", to: "/features", icon: "list-checks" },
@@ -117,6 +131,9 @@ export interface SidebarProps {
 }
 
 export function Sidebar({ counts, onShortcuts }: SidebarProps) {
+  const [scope] = useScope();
+  const openBrain = useMatch("/projects/:project/brain/*");
+  const brainTo = brainLink(openBrain?.params.project ?? null, scope);
   return (
     <nav className="ah-sidebar" aria-label="Main">
       <div className="ah-brand">
@@ -161,7 +178,7 @@ export function Sidebar({ counts, onShortcuts }: SidebarProps) {
                     return (
                       <NavLink
                         key={child.id}
-                        to={child.to}
+                        to={child.id === BRAIN_ID ? brainTo : child.to}
                         className="ah-nav-item ah-nav-sub"
                         aria-label={accessibleName(child, childCount)}
                       >

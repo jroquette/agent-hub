@@ -6,6 +6,8 @@ import { App } from "./App";
 import { appRoutes } from "./routes";
 import { seriousViolations } from "./testing/axe";
 import {
+  aBrainNote,
+  aBrainTree,
   aFeatureDetail,
   aHub,
   aPage,
@@ -20,6 +22,12 @@ const withHub: ApiRoutes = {
   "/api/v1/hubs": aPage([aHub()]),
   "/api/v1/projects": aPage([]),
   "/api/v1/features/agent-hub/control-plane": aFeatureDetail(),
+  "/api/v1/projects/agent-hub/brain": aBrainTree(),
+  "/api/v1/projects/agent-hub/brain/note": (request: Request) =>
+    aBrainNote({
+      path: new URL(request.url).searchParams.get("path") ?? "",
+      markdown: `# Note ${new URL(request.url).searchParams.get("path") ?? ""}\n`,
+    }),
 };
 const noHub: ApiRoutes = { "/api/v1/hubs": aPage([]), "/api/v1/projects": aPage([]) };
 
@@ -48,6 +56,8 @@ describe("routes", () => {
     ["/runs/abc", "Run abc not found"],
     ["/knowledge/learnings", "Knowledge"],
     ["/knowledge/brain", "Brain"],
+    ["/projects/agent-hub/brain", "Note index.md"],
+    ["/projects/agent-hub/brain/decisions/index.md", "Note decisions/index.md"],
     ["/knowledge/decisions", "Decisions"],
     ["/knowledge/context", "Context"],
     ["/features", "Features"],
@@ -70,6 +80,28 @@ describe("routes", () => {
 
     await screen.findByRole("heading", { level: 1 });
     expect(router.state.location.pathname).toBe(to);
+  });
+
+  it("routes a learning's detail to the learnings screen, not the 404 page", async () => {
+    const { router } = renderAt("/knowledge/learnings/abc", withHub);
+
+    await screen.findByRole("heading", { level: 1 });
+    expect(screen.queryByText("This page does not exist")).not.toBeInTheDocument();
+    expect(router.state.matches.at(-1)?.route.path).toBe("knowledge/learnings/:learningId");
+  });
+
+  it("opens the scoped project's brain from Knowledge › Brain", async () => {
+    const { router } = renderAt("/knowledge/brain?scope=agent-hub", withHub);
+
+    await screen.findByRole("heading", { level: 1, name: "Note index.md" });
+    expect(router.state.location.pathname).toBe("/projects/agent-hub/brain");
+  });
+
+  it("has no serious or critical a11y violation on a brain note", async () => {
+    const { container } = renderAt("/projects/agent-hub/brain", withHub);
+    await screen.findByRole("heading", { level: 1, name: "Note index.md" });
+
+    expect(await seriousViolations(container)).toEqual([]);
   });
 
   it("redirects to welcome when no hub is registered", async () => {
