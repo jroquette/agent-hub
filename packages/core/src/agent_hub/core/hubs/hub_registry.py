@@ -143,6 +143,11 @@ class HubFileReader(Protocol):
         """The ``.md`` notes under ``brain/`` (no ``auto/``, no hidden name, no link followed)."""
         ...
 
+    def brain_folders(self, hub_path: str) -> tuple[str, ...]:
+        """The folders directly under ``brain/`` by name (no ``auto/``, no hidden name, no
+        link), bounded: what a learning's accept dialog offers without walking the brain."""
+        ...
+
     def read_brain_file(self, hub_path: str, path: str, *, max_bytes: int) -> bytes | UnreadHubFile:
         """The bytes of ``brain/<path>`` (a path ``brain_relative`` accepted), or why not: no
         link followed anywhere on the way, a regular file of at most ``max_bytes``."""

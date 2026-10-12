@@ -94,7 +94,7 @@ export function resolveBrainLink(
     resolved.length > MAX_SEGMENTS ||
     full.length > MAX_PATH_CHARS ||
     !full.endsWith(".md") ||
-    resolved[0] === "auto" ||
+    resolved[0]?.toLowerCase() === "auto" ||
     resolved.some((segment) => segment.startsWith("."))
   ) {
     return { kind: "text", title: NOT_A_NOTE };

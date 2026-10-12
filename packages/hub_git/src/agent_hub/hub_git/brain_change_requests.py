@@ -5,9 +5,13 @@ An action works in a temporary clone of the hub's ``origin`` that borrows the hu
 worktree list stay as they were. It checks that the note is on ``origin/<default_branch>`` and
 that the destination and the branch are free; builds one commit with plumbing (no checkout, no
 hook) that moves the note and sets its frontmatter, as the change's author; pushes that one new
-branch through the push guard; and opens the pull request with ``gh pr create``. When ``gh``
-fails after the push, the branch is deleted again so a retry starts clean. The temporary folder
-is always removed, and no git or gh output is logged, kept or put in an error.
+branch through the push guard; and opens the pull request with ``gh pr create``. When the push
+or ``gh`` fails (a timeout may come after GitHub accepted the ref), the branch is deleted again
+so a retry starts clean. A retry that still finds the branch on ``origin`` (the action got as far
+as the pull request, or its cleanup failed) adopts the branch's open pull request and returns it;
+with none open it deletes the branch, which can only be this action's (``<prefix>learning-
+<action>-<slug>``), and goes on. The temporary folder is always removed, and no git or gh output
+is logged, kept or put in an error.
 """
 
 import contextlib
@@ -36,7 +40,12 @@ from agent_hub.core.learnings.brain_change_requests import (
     RefspecRefusedError,
 )
 from agent_hub.hub_git.git_runner import GitRunner, GitSession
-from agent_hub.hub_git.github_remote import github_repo, pull_request_url
+from agent_hub.hub_git.github_remote import (
+    UnexpectedOutputError,
+    github_repo,
+    open_pull_request_url,
+    pull_request_url,
+)
 from agent_hub.hub_git.refspec_guard import push_argv
 
 # Why actions are unavailable for a hub (shown to the owner as they are).
@@ -191,22 +200,32 @@ class _Action:
         change = self._change
         self._clone_origin(url, hub)
         base = self._base()
+        if self._branch_on_origin():
+            adopted = self._open_pull_request_of_branch()
+            if adopted is not None:
+                return ChangeRequestResult(pr_url=adopted, branch=change.branch)
+            self._push(delete=True)
         self._refuse_taken(base)
         mode, text = self._note(base)
         commit = self._commit(base, mode, text)
         self._git(["update-ref", f"refs/heads/{change.branch}", commit, ""], step="branch")
-        self._session.push(
-            change.branch,
-            cwd=self._clone,
-            default_branch=change.default_branch,
-            prefix=self._prefix,
-        )
         try:
+            self._push()
             pr_url = self._open_pull_request()
         except ChangeRequestError:
             self._delete_branch()
             raise
         return ChangeRequestResult(pr_url=pr_url, branch=change.branch)
+
+    def _push(self, *, delete: bool = False) -> None:
+        change = self._change
+        self._session.push(
+            change.branch,
+            cwd=self._clone,
+            default_branch=change.default_branch,
+            prefix=self._prefix,
+            delete=delete,
+        )
 
     def _git(self, args: list[str], *, step: str, check: bool = True) -> bytes:
         return self._session.git(args, cwd=self._clone, step=step, check=check).stdout
@@ -239,11 +258,33 @@ class _Action:
         mode, kind, name = entry.split("\t", 1)[0].split(" ")
         return mode, kind, name
 
+    def _branch_on_origin(self) -> bool:
+        heads = ["ls-remote", "--heads", "origin", f"refs/heads/{self._change.branch}"]
+        return bool(_text(self._git(heads, step="branch")))
+
+    def _open_pull_request_of_branch(self) -> str | None:
+        """The url of the open pull request whose head is the change's branch, or None."""
+        change = self._change
+        args = [
+            "pr",
+            "list",
+            "--repo",
+            change.hub_repo,
+            "--head",
+            change.branch,
+            "--state",
+            "open",
+            "--json",
+            "url",
+        ]
+        listed = self._session.gh(args, cwd=self._clone, step="pr")
+        try:
+            return open_pull_request_url(listed.stdout, hub_repo=change.hub_repo)
+        except UnexpectedOutputError:
+            raise ChangeRequestFailedError(step="pr") from None
+
     def _refuse_taken(self, base: str) -> None:
         change = self._change
-        heads = ["ls-remote", "--heads", "origin", f"refs/heads/{change.branch}"]
-        if _text(self._git(heads, step="branch")):
-            raise _conflict(f"Branch exists: {change.branch}")
         if self._entry(base, change.destination) is not None:
             raise _conflict(f"Destination exists: brain/{change.destination}")
 

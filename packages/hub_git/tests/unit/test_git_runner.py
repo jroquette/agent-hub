@@ -77,6 +77,25 @@ def test_drops_git_location_when_env_built() -> None:
     assert env["GIT_LITERAL_PATHSPECS"] == "1"
 
 
+def test_drops_askpass_helpers_when_env_built() -> None:
+    environ = {"PATH": "/usr/bin", "GIT_ASKPASS": "/bin/ask", "SSH_ASKPASS": "/bin/ask"}
+
+    env = child_env(environ)
+
+    assert "GIT_ASKPASS" not in env
+    assert "SSH_ASKPASS" not in env
+    assert env["SSH_ASKPASS_REQUIRE"] == "never"
+
+
+def test_runs_gh_without_git_options_when_gh_called(tmp_path: Path) -> None:
+    launcher = RecordingLauncher(ProcessResult(returncode=0, stdout=b""))
+    runner = GitRunner(environ={"PATH": _tools(tmp_path)}, launch=launcher)
+
+    runner.start().gh(["auth", "status"], cwd=tmp_path, step="auth")
+
+    assert launcher.argv == [[str(tmp_path / "gh"), "auth", "status"]]
+
+
 def test_counts_down_when_deadline_runs() -> None:
     clock = FakeClock()
     deadline = Deadline(60.0, clock=clock)
@@ -101,7 +120,7 @@ def test_runs_git_with_absolute_program_when_found(tmp_path: Path) -> None:
     result = runner.start().git(["status"], cwd=tmp_path, step="status")
 
     assert result.stdout == b"ok\n"
-    assert launcher.argv == [[str(tmp_path / "git"), "status"]]
+    assert launcher.argv == [[str(tmp_path / "git"), "-c", "core.askPass=", "status"]]
     assert "GIT_DIR" not in launcher.envs[0]
     assert 0 < launcher.timeouts[0] <= 60.0
 

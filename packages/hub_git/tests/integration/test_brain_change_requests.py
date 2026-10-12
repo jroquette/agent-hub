@@ -173,6 +173,100 @@ def test_succeeds_when_retried_after_failure(git_world: GitWorld, origin: GitBra
     assert len(origin.pull_requests()) == 1
 
 
+def test_adopts_open_pull_request_when_branch_exists(
+    git_world: GitWorld, origin: GitBrainOrigin
+) -> None:
+    change = _change(git_world)
+    first = git_world.adapter().accept(change)
+    head = git_world.origin_git("rev-parse", f"refs/heads/{change.branch}").stdout
+
+    again = git_world.adapter().accept(change)
+
+    assert again == first
+    assert len(origin.pull_requests()) == 1
+    assert git_world.origin_git("rev-parse", f"refs/heads/{change.branch}").stdout == head
+    listed = [call for call in git_world.gh_calls() if call[:2] == ["pr", "list"]]
+    assert listed[-1] == [
+        "pr",
+        "list",
+        "--repo",
+        HUB_REPO,
+        "--head",
+        change.branch,
+        "--state",
+        "open",
+        "--json",
+        "url",
+    ]
+    assert not list((git_world.root / "temp").iterdir())
+
+
+def test_deletes_branch_when_push_fails_after_origin_accepted_it(
+    git_world: GitWorld, origin: GitBrainOrigin
+) -> None:
+    # A git that really pushes, then fails: as a push whose answer is lost after GitHub took it.
+    wrapper = git_world.root / "git-push-then-fail"
+    wrapper.write_text(
+        '#!/bin/sh\ngit "$@"; status=$?\n'
+        'case " $* " in *" --delete "*) exit $status;; *" push "*) exit 1;; esac\n'
+        "exit $status\n"
+    )
+    wrapper.chmod(0o755)
+    temp = git_world.root / "temp"
+    temp.mkdir(exist_ok=True)
+    runner = GitRunner(git=str(wrapper), environ=git_world.environ)
+    change = _change(git_world)
+
+    with pytest.raises(ChangeRequestFailedError) as failed:
+        GitBrainChangeRequests(runner, temp_root=temp).accept(change)
+
+    assert failed.value.step == "push"
+    assert change.branch not in origin.branch_names()
+    assert origin.pull_requests() == ()
+
+
+def _push_stale_branch(world: GitWorld, branch: str) -> str:
+    """A leftover learning branch on ``origin`` with no pull request: one unrelated commit."""
+    (world.seed / "stale.txt").write_text("left over\n")
+    world.git("checkout", "--quiet", "-b", branch, cwd=world.seed)
+    world.git("add", "stale.txt", cwd=world.seed)
+    world.git("commit", "--quiet", "-m", "chore: stale", cwd=world.seed)
+    world.git("push", "--quiet", "origin", branch, cwd=world.seed)
+    world.git("checkout", "--quiet", "main", cwd=world.seed)
+    return str(world.origin_git("rev-parse", f"refs/heads/{branch}").stdout)
+
+
+def test_replaces_branch_when_it_exists_without_pull_request(
+    git_world: GitWorld, origin: GitBrainOrigin
+) -> None:
+    change = _change(git_world)
+    stale = _push_stale_branch(git_world, change.branch)
+
+    result = git_world.adapter().accept(change)
+
+    assert result.pr_url == f"https://github.com/{HUB_REPO}/pull/1"
+    assert git_world.origin_git("rev-parse", f"refs/heads/{change.branch}").stdout != stale
+    assert origin.file_on(change.branch, "brain/learnings/testing-x.md") is not None
+    assert origin.file_on(change.branch, "stale.txt") is None
+    [pull] = origin.pull_requests()
+    assert pull.head == change.branch
+
+
+def test_fails_when_open_pull_requests_cannot_be_listed(
+    git_world: GitWorld, origin: GitBrainOrigin
+) -> None:
+    change = _change(git_world)
+    stale = _push_stale_branch(git_world, change.branch)
+    git_world.switch("list-fail")
+
+    with pytest.raises(ChangeRequestFailedError) as failed:
+        git_world.adapter().accept(change)
+
+    assert failed.value.step == "pr"
+    assert git_world.origin_git("rev-parse", f"refs/heads/{change.branch}").stdout == stale
+    assert origin.pull_requests() == ()
+
+
 def test_refuses_when_note_absent_from_default_branch(
     git_world: GitWorld, brain_origin: GitBrainOrigin
 ) -> None:

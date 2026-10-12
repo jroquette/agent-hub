@@ -13,19 +13,26 @@ from agent_hub.core.learnings.brain_change_requests import (
 )
 from agent_hub.hub_git.git_runner import OUTPUT_LIMIT, GitRunner
 
+# Each fake git drops the leading ``-c <name>=<value>`` options the runner puts first.
 _SLEEPER = """\
 import os, subprocess, sys, time
+args = sys.argv[1:]
+while args[:1] == ["-c"]:
+    args = args[2:]
 child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
-open(sys.argv[1], "w").write(f"{os.getpid()} {child.pid}")
+open(args[0], "w").write(f"{os.getpid()} {child.pid}")
 time.sleep(60)
 """
 
 _TALKER = """\
 import os, sys
+args = sys.argv[1:]
+while args[:1] == ["-c"]:
+    args = args[2:]
 sys.stdout.write(os.environ.get("GIT_TERMINAL_PROMPT", "unset") + "\\n")
-sys.stdout.write("x" * int(sys.argv[1]))
+sys.stdout.write("x" * int(args[0]))
 sys.stderr.write("token=not-a-real-one\\n")
-sys.exit(int(sys.argv[2]))
+sys.exit(int(args[1]))
 """
 
 

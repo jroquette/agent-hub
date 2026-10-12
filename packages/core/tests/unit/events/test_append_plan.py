@@ -129,6 +129,41 @@ def test_raises_conflict_when_allow_list_upgrade_changes_added_key_value() -> No
         plan_append([changed], stored_by_key(stored))
 
 
+def test_raises_conflict_when_session_start_differs_only_by_git_branch() -> None:
+    # session.start stored git_branch before this release: a copy without it is another event.
+    stored = an_event(type="session.start", payload={"cwd": "/w", "git_branch": "main"})
+    changed = an_event(type="session.start", source_id=stored.source_id, payload={"cwd": "/w"})
+
+    with pytest.raises(EventConflictError):
+        plan_append([changed], stored_by_key(stored))
+
+
+def test_raises_conflict_when_added_key_comes_on_another_type() -> None:
+    # error_message was added for tool.result only, so on tool.call it is not an upgrade.
+    stored = an_event(type="tool.call", payload={"tool": "Bash"})
+    changed = an_event(
+        type="tool.call",
+        source_id=stored.source_id,
+        payload={"tool": "Bash", "error_message": "boom"},
+    )
+
+    with pytest.raises(EventConflictError):
+        plan_append([changed], stored_by_key(stored))
+
+
+def test_counts_duplicate_when_tool_call_upgrade_adds_skill_and_branch() -> None:
+    stored = an_event(type="tool.call", payload={"tool": "Skill"})
+    upgraded = an_event(
+        type="tool.call",
+        source_id=stored.source_id,
+        payload={"tool": "Skill", "skill": "feature", "to": "x", "git_branch": "dev/agh-1"},
+    )
+
+    plan = plan_append([upgraded], stored_by_key(stored))
+
+    assert plan == AppendPlan(new_events=(), duplicates=1)
+
+
 def test_raises_conflict_when_unlisted_key_added() -> None:
     stored = an_event(payload={"tool": "Bash"})
     changed = an_event(source_id=stored.source_id, payload={"tool": "Bash", "command": "ls"})

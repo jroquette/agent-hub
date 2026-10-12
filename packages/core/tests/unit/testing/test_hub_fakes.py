@@ -28,6 +28,24 @@ def test_lists_markdown_when_brain_tree_read() -> None:
     )
 
 
+def test_lists_top_folders_when_brain_folders_read() -> None:
+    hub = FakeHub(
+        brain={
+            "index.md": b"#",
+            "decisions/index.md": b"#",
+            "playbooks/deep/x.md": b"#",
+            "Auto/me.md": b"#",
+            ".obsidian/x.md": b"#",
+            "linked/x.md": b"#",
+        },
+        brain_links=frozenset({"linked/x.md"}),
+    )
+
+    folders = FakeHubFileReader({HUB: hub}).brain_folders(HUB)
+
+    assert folders == ("decisions", "playbooks")
+
+
 def test_reads_note_when_brain_file_regular() -> None:
     assert a_reader().read_brain_file(HUB, "index.md", max_bytes=100) == b"# Index\n"
 

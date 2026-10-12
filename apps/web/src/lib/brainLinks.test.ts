@@ -78,6 +78,8 @@ describe("resolveBrainLink", () => {
   it("renders a relative link as text when it is not a Markdown note or is hidden", () => {
     expect(resolve("diagram.png").kind).toBe("text");
     expect(resolve("../auto/me.md").kind).toBe("text");
+    expect(resolve("../Auto/me.md").kind).toBe("text");
+    expect(resolve("../AUTO/workspace/me.md").kind).toBe("text");
     expect(resolve(".secret.md").kind).toBe("text");
   });
 
