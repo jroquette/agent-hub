@@ -234,7 +234,7 @@ export interface paths {
     };
     /**
      * List Learnings
-     * @description Learnings, newest first.
+     * @description Learnings, newest first, each with its note's summary or why the note is unavailable.
      */
     get: operations["list_learnings_api_v1_learnings_get"];
     put?: never;
@@ -254,11 +254,51 @@ export interface paths {
     };
     /**
      * Get Learning
-     * @description One learning.
+     * @description One learning with its note, the suggested target and the target choices.
      */
     get: operations["get_learning_api_v1_learnings__learning_id__get"];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/learnings/{learning_id}/accept": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Accept Learning
+     * @description Open a hub PR that moves the note into the brain; nothing changes until it is merged.
+     */
+    post: operations["accept_learning_api_v1_learnings__learning_id__accept_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/learnings/{learning_id}/reject": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Reject Learning
+     * @description Open a hub PR that archives the note with the reason.
+     */
+    post: operations["reject_learning_api_v1_learnings__learning_id__reject_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -357,6 +397,46 @@ export interface paths {
      * @description The Project overview header.
      */
     get: operations["get_project_api_v1_projects__project__get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/projects/{project}/brain": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Brain Tree
+     * @description The ``.md`` notes of the project's hub brain (``auto/`` excluded).
+     */
+    get: operations["get_brain_tree_api_v1_projects__project__brain_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/projects/{project}/brain/note": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Brain Note
+     * @description One brain note by its path under ``brain/``: frontmatter, markdown body and size.
+     */
+    get: operations["get_brain_note_api_v1_projects__project__brain_note_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -545,6 +625,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/sessions/{session_id}/problems": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Session Problems
+     * @description The session's problems: 1 to 5 "what went wrong" lines, then each problem by time.
+     */
+    get: operations["get_session_problems_api_v1_sessions__session_id__problems_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/sessions/{session_id}/summary": {
     parameters: {
       query?: never;
@@ -685,6 +785,15 @@ export interface components {
       repo: string | null;
     };
     /**
+     * AcceptLearningBody
+     * @description ``POST /learnings/{learning_id}/accept``: the brain folder (or ``.md`` path) to move the
+     *     note to, relative to ``brain/``.
+     */
+    AcceptLearningBody: {
+      /** Target */
+      target: string;
+    };
+    /**
      * ActivityItem
      * @description A notable event in the activity feed.
      */
@@ -789,6 +898,62 @@ export interface components {
     ApprovalKind: "guard_ask" | "plan" | "spec" | "human_gate" | "permission";
     /** @enum {string} */
     ApprovalStatus: "open" | "approved" | "declined" | "changes_requested" | "rejected";
+    /**
+     * BrainEntry
+     * @description One ``.md`` note of the tree and its size in bytes.
+     */
+    BrainEntry: {
+      /** Path */
+      path: string;
+      /** Size */
+      size: number;
+    };
+    /**
+     * BrainNote
+     * @description One note: its frontmatter fields, its markdown body (without the frontmatter) and size.
+     *
+     *     ``frontmatter_problem`` says why the frontmatter could not be read (then ``frontmatter`` is
+     *     empty and ``markdown`` is the whole text).
+     */
+    BrainNote: {
+      /** Frontmatter */
+      frontmatter: {
+        [key: string]: components["schemas"]["FrontmatterValue"];
+      };
+      /** Frontmatter Problem */
+      frontmatter_problem?: string | null;
+      /** Markdown */
+      markdown: string;
+      /** Path */
+      path: string;
+      /** Project */
+      project: string;
+      /** Size */
+      size: number;
+    };
+    /**
+     * BrainTree
+     * @description The ``.md`` notes of a hub's brain, sorted by path (``auto/`` and hidden names excluded).
+     *
+     *     ``truncated`` says the listing stopped at a cap; ``skipped`` counts what was left out
+     *     (unreadable folders, entries past a cap).
+     */
+    BrainTree: {
+      /** Entries */
+      entries: components["schemas"]["BrainEntry"][];
+      /** Project */
+      project: string;
+      /**
+       * Skipped
+       * @default 0
+       */
+      skipped: number;
+      /**
+       * Truncated
+       * @default false
+       */
+      truncated: boolean;
+    };
     /**
      * CollectorStatus
      * @description ``GET /collector/status``: what ``hub web`` received and stored since it started.
@@ -974,6 +1139,7 @@ export interface components {
       rule: string;
       severity: components["schemas"]["Severity"];
     };
+    FrontmatterValue: string | string[];
     /**
      * HookAccepted
      * @description ``POST /events/hooks``: how many events the envelope added and how many were known.
@@ -1160,6 +1326,81 @@ export interface components {
       summary?: string | null;
       /** @deprecated */
       target: components["schemas"]["LearningTarget"];
+      /** Text */
+      text: string;
+    };
+    /**
+     * LearningActionResult
+     * @description What an accept or reject did: the pull request it opened and its branch.
+     */
+    LearningActionResult: {
+      /** Branch */
+      branch: string;
+      /** Pr Url */
+      pr_url: string;
+      state: components["schemas"]["LearningState"];
+    };
+    /**
+     * LearningDetail
+     * @description A learning with its note (``None`` when unavailable), the destination folder the accept
+     *     dialog suggests and the folders it offers (L9).
+     */
+    LearningDetail: {
+      /** Actions Unavailable */
+      actions_unavailable?: string | null;
+      /** Author */
+      author: string | null;
+      /** Brain Path */
+      brain_path?: string | null;
+      /** Branch */
+      branch?: string | null;
+      /** Commit */
+      commit?: string | null;
+      decided_at?: components["schemas"]["ApiTimestamp"] | null;
+      /** Decided By */
+      decided_by?: string | null;
+      /**
+       * Derived
+       * @default true
+       */
+      derived: boolean;
+      /** Id */
+      id: string;
+      note?: components["schemas"]["BrainNote"] | null;
+      /** Note Path */
+      note_path?: string | null;
+      /** Note Unavailable */
+      note_unavailable?: string | null;
+      /** Pr Url */
+      pr_url?: string | null;
+      /** Project */
+      project: string;
+      proposed_at: components["schemas"]["ApiTimestamp"] | null;
+      /** Provenance */
+      provenance: ("human" | "agent" | "agent-from-code" | "agent-from-external") | null;
+      /** Rejection Reason */
+      rejection_reason?: string | null;
+      source_event_id: components["schemas"]["EventId"] | null;
+      /** Source Session Id */
+      source_session_id: string | null;
+      /**
+       * Sources Missing
+       * @default []
+       */
+      sources_missing: components["schemas"]["EventSource"][];
+      state?: components["schemas"]["LearningState"] | null;
+      status: components["schemas"]["LearningStatus"];
+      /** Suggested Target */
+      suggested_target: string;
+      /** Summary */
+      summary?: string | null;
+      /** @deprecated */
+      target: components["schemas"]["LearningTarget"];
+      /**
+       * Target Choices
+       * @default []
+       */
+      target_choices: string[];
       /** Text */
       text: string;
     };
@@ -1454,6 +1695,33 @@ export interface components {
       total_estimate: number;
     };
     /**
+     * Problem
+     * @description One problem of a session and the event it comes from.
+     *
+     *     ``where`` is the command head, path, pattern, URL, MCP tool or skill of the paired tool
+     *     call (derived on read, at most 120 characters); ``message`` is the stored ``error_message``,
+     *     else ``error_line``, else the rule or the gate's command and exit code.
+     */
+    Problem: {
+      actor: components["schemas"]["Actor"];
+      at: components["schemas"]["ApiTimestamp"];
+      /**
+       * Derived
+       * @default true
+       */
+      derived: boolean;
+      event_id: components["schemas"]["EventId"];
+      kind: components["schemas"]["ProblemKind"];
+      /** Message */
+      message: string | null;
+      resolution: components["schemas"]["Resolution"];
+      resolved_by_event_id?: components["schemas"]["EventId"] | null;
+      /** Tool */
+      tool: string | null;
+      /** Where */
+      where: string | null;
+    };
+    /**
      * ProblemCounts
      * @description A session's problems by owner-facing status (S4, E5); ``handled`` = recovered or
      *     continued by the agent.
@@ -1501,6 +1769,20 @@ export interface components {
     } & {
       [key: string]: unknown;
     };
+    /**
+     * ProblemKind
+     * @description What went wrong (S4 with E4).
+     * @enum {string}
+     */
+    ProblemKind:
+      | "tool_failed"
+      | "command_exit"
+      | "guard_denied"
+      | "guard_ask_open"
+      | "guard_ask_declined"
+      | "interrupted"
+      | "gate_failed"
+      | "hook_failed";
     /**
      * ProjectDetail
      * @description The Project overview header.
@@ -1615,6 +1897,14 @@ export interface components {
       url: string;
     };
     /**
+     * RejectLearningBody
+     * @description ``POST /learnings/{learning_id}/reject``: why, 1 to 300 characters once stripped.
+     */
+    RejectLearningBody: {
+      /** Reason */
+      reason: string;
+    };
+    /**
      * RepoView
      * @description A repo of the project as ``hub.json`` and its checkout describe it.
      */
@@ -1650,6 +1940,15 @@ export interface components {
        */
       sources_missing: components["schemas"]["EventSource"][];
     };
+    /**
+     * Resolution
+     * @description How a problem ended (S4 with E5).
+     *
+     *     ``recovered`` and ``agent_continued`` show as "Handled by the agent", ``open`` as "Agent is
+     *     on it", ``needs_you`` as "Needs you" and ``by_you`` as "You interrupted" or "You declined".
+     * @enum {string}
+     */
+    Resolution: "recovered" | "agent_continued" | "open" | "needs_you" | "by_you";
     /**
      * RunCaps
      * @description The limits a run started with.
@@ -1900,6 +2199,30 @@ export interface components {
       workflows: string[];
       /** Worktree */
       worktree: string | null;
+    };
+    /**
+     * SessionProblems
+     * @description The problems route: up to 5 deterministic summary lines, then every problem by time.
+     *
+     *     ``summary`` is empty when the session has no problem.
+     */
+    SessionProblems: {
+      /**
+       * Derived
+       * @default true
+       */
+      derived: boolean;
+      /** Items */
+      items: components["schemas"]["Problem"][];
+      /** Session Id */
+      session_id: string;
+      /**
+       * Sources Missing
+       * @default []
+       */
+      sources_missing: components["schemas"]["EventSource"][];
+      /** Summary */
+      summary: components["schemas"]["SummaryLine"][];
     };
     /**
      * SessionSegment
@@ -2732,7 +3055,167 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          "application/json": components["schemas"]["Learning"];
+          "application/json": components["schemas"]["LearningDetail"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  accept_learning_api_v1_learnings__learning_id__accept_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        learning_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["AcceptLearningBody"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LearningActionResult"];
+        };
+      };
+      /** @description Already decided, target refused, note not on the default branch, or actions unavailable for this hub */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description The body is not application/json */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Could not open the pull request */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description The action passed its 60 s deadline */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  reject_learning_api_v1_learnings__learning_id__reject_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        learning_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["RejectLearningBody"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LearningActionResult"];
+        };
+      };
+      /** @description Already decided, target refused, note not on the default branch, or actions unavailable for this hub */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description The body is not application/json */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Could not open the pull request */
+      502: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description The action passed its 60 s deadline */
+      504: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */
@@ -2933,6 +3416,88 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ProjectDetail"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_brain_tree_api_v1_projects__project__brain_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["BrainTree"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_brain_note_api_v1_projects__project__brain_note_get: {
+    parameters: {
+      query: {
+        path: string;
+      };
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["BrainNote"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */
@@ -3323,6 +3888,46 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["Page_SessionFileChange_"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_session_problems_api_v1_sessions__session_id__problems_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionProblems"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

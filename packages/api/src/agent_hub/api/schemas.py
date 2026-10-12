@@ -6,7 +6,7 @@ Read models come from core; only what exists for HTTP alone is declared here.
 from typing import Annotated, Any
 
 from fastapi import Header, Query
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from agent_hub.core.readmodels.filters import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT
 from agent_hub.core.readmodels.page import MAX_CURSOR_CHARS
@@ -44,10 +44,45 @@ class HubCreate(BaseModel):
     path: str = Field(min_length=1, max_length=4096)
 
 
+MAX_TARGET_CHARS = 200
+MAX_REASON_CHARS = 300
+
+
+class AcceptLearningBody(BaseModel):
+    """``POST /learnings/{learning_id}/accept``: the brain folder (or ``.md`` path) to move the
+    note to, relative to ``brain/``."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    target: str = Field(min_length=1, max_length=MAX_TARGET_CHARS)
+
+
+class RejectLearningBody(BaseModel):
+    """``POST /learnings/{learning_id}/reject``: why, 1 to 300 characters once stripped."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    reason: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_REASON_CHARS)
+    ]
+
+
 # Every operation may answer a problem; listing the ranges keeps FastAPI's validation schema out.
 PROBLEM_RESPONSES: dict[int | str, dict[str, Any]] = {
     "4XX": {"model": ProblemDetails, "description": "A client error, as an RFC 9457 problem"},
     "5XX": {"model": ProblemDetails, "description": "A server error, as an RFC 9457 problem"},
+}
+
+# The problems a learning decision documents beyond the ranges (ADR 0024).
+LEARNING_ACTION_RESPONSES: dict[int | str, dict[str, Any]] = {
+    409: {
+        "model": ProblemDetails,
+        "description": "Already decided, target refused, note not on the default branch, or "
+        "actions unavailable for this hub",
+    },
+    415: {"model": ProblemDetails, "description": "The body is not application/json"},
+    502: {"model": ProblemDetails, "description": "Could not open the pull request"},
+    504: {"model": ProblemDetails, "description": "The action passed its 60 s deadline"},
 }
 
 ProjectParam = Annotated[str | None, Query(min_length=1, max_length=MAX_QUERY_TEXT)]

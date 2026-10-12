@@ -1,5 +1,7 @@
 from typing import Any
 
+import pytest
+
 from agent_hub.core.projects.project_views import ProjectDetail, ProjectNow, RepoView, TrackerView
 from agent_hub.core.testing.read_model_builders import HUB_ID, a_project_summary
 
@@ -62,3 +64,23 @@ def test_answers_not_found_when_project_unknown(wired: Any) -> None:
 
         assert response.status_code == 404, suffix
         assert response.json()["detail"] == "No project with id 'nope'."
+
+
+@pytest.mark.parametrize(
+    ("path", "params"),
+    [
+        ("/api/v1/projects/demo/brain", None),
+        ("/api/v1/projects/demo/brain/note", {"path": "decisions/index.md"}),
+    ],
+)
+def test_answers_not_implemented_when_brain_requested(
+    wired: Any, path: str, params: dict[str, str] | None
+) -> None:
+    assert wired.client.get(path, params=params).status_code == 501
+
+
+@pytest.mark.parametrize("note_path", ["", "a" * 513])
+def test_rejects_note_path_when_out_of_bounds(wired: Any, note_path: str) -> None:
+    response = wired.client.get("/api/v1/projects/demo/brain/note", params={"path": note_path})
+
+    assert response.status_code == 400

@@ -141,3 +141,10 @@ def test_answers_not_found_when_session_unknown(wired: Any) -> None:
 
         assert response.status_code == 404, suffix
         assert response.json()["detail"] == "No session with id 'nope'."
+
+
+def test_answers_not_implemented_when_problems_requested(wired: Any) -> None:
+    response = wired.client.get("/api/v1/sessions/session-1/problems")
+
+    assert response.status_code == 501
+    assert response.json()["detail"] == "get_session_problems is not implemented in this build"
