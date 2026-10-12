@@ -1,0 +1,45 @@
+/* The safe Markdown renderer (Markdown.tsx): blocks the shared .ah-md rules in bundle.css leave out. */
+.ah-md h4,
+.ah-md h5,
+.ah-md h6 {
+  font-size: 13px;
+  margin: var(--space-3) 0 var(--space-1);
+}
+.ah-md ul ul,
+.ah-md ol ol,
+.ah-md ul ol,
+.ah-md ol ul {
+  margin: var(--space-1) 0 0;
+}
+.ah-md hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: var(--space-4) 0;
+}
+.ah-md-pre {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--code-bg);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  white-space: pre;
+}
+.ah-md-pre code {
+  padding: 0;
+  background: none;
+}
+.ah-md-table {
+  margin: 0 0 var(--space-3);
+  overflow-x: auto;
+}
+.ah-md-text {
+  margin: 0 0 var(--space-3);
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+.ah-md-outside {
+  color: var(--text-muted);
+  text-decoration: underline dotted;
+  cursor: help;
+}
