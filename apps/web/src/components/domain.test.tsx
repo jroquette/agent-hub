@@ -26,7 +26,8 @@ function inRouter(ui: ReactElement) {
 const tile: LiveSession = {
   id: "s1",
   status: "live",
-  agent: "hub-workflow:evaluator",
+  title: "AGH-48 · /feature",
+  detail: "agent-hub · dev/agh-48-live-tiles",
   project: "agent-hub",
   repo: "agent-hub",
   issue: "AGH-48",
@@ -38,7 +39,8 @@ const tile: LiveSession = {
   tokens: 48_200,
   files: 4,
   cost: 1.5,
-  errors: 2,
+  problems: "Needs you: command_exit in make check-fast",
+  needsYou: true,
   denials: 1,
   activity: [0, 1, 2],
 };
@@ -67,18 +69,19 @@ const card: ProjectCardData = {
 };
 
 describe("SessionTile", () => {
-  it("shows status, agent, last action, stats, errors and denials", () => {
+  it("shows the session label, last action, stats, problems and denials when a problem needs you", () => {
     const onOpen = vi.fn();
     render(<SessionTile s={tile} onOpen={onOpen} />);
 
     const article = screen.getByRole("article", {
-      name: "hub-workflow:evaluator in agent-hub, live",
+      name: "AGH-48 · /feature in agent-hub, live",
     });
     expect(article).toHaveAttribute("data-trouble", "true");
     expect(screen.getByText("agent-hub › agent-hub · run step verify")).toBeInTheDocument();
     expect(screen.getByText("48 k")).toBeInTheDocument();
     expect(screen.getByText("$1.50")).toBeInTheDocument();
-    expect(screen.getByText(/2 errors/)).toBeInTheDocument();
+    expect(screen.getByText("agent-hub · dev/agh-48-live-tiles")).toBeInTheDocument();
+    expect(screen.getByText("Needs you: command_exit in make check-fast")).toBeInTheDocument();
     fireEvent.keyDown(article, { key: "Enter" });
     fireEvent.click(article);
     expect(onOpen).toHaveBeenCalledTimes(2);
@@ -92,7 +95,8 @@ describe("SessionTile", () => {
           status: "waiting",
           reason: "Guard asks to edit a migration",
           budget: 5,
-          errors: 0,
+          problems: null,
+          needsYou: false,
         }}
         hoverEvents={[{ time: "14:02", icon: "terminal", text: "make check" }]}
       />,
@@ -107,9 +111,20 @@ describe("SessionTile", () => {
   });
 
   it("labels an ended session by its outcome", () => {
-    render(<SessionTile s={{ ...tile, status: "ended", outcome: "done", errors: 0 }} />);
+    render(<SessionTile s={{ ...tile, status: "ended", outcome: "done", needsYou: false }} />);
 
     expect(screen.getByText("Ended · done")).toBeInTheDocument();
+  });
+
+  it("has no red edge when the agent handled its problems", () => {
+    render(
+      <SessionTile
+        s={{ ...tile, detail: null, problems: "2 problems, handled by the agent", needsYou: false }}
+      />,
+    );
+
+    expect(screen.getByRole("article")).not.toHaveAttribute("data-trouble");
+    expect(screen.getByText("2 problems, handled by the agent")).toBeInTheDocument();
   });
 });
 

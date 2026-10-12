@@ -97,7 +97,7 @@ export function queryOf(
 const LABEL: Record<FilterKey, string> = {
   period: "Period",
   repo: "Repo",
-  agent: "Agent",
+  agent: "Agent type",
   status: "Status",
   outcome: "Outcome",
   workflow: "Workflow",

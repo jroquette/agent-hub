@@ -7,6 +7,7 @@ import {
   aProblem,
   aProjectSummary,
   aSession,
+  aSessionLabel,
   anId,
   at,
   renderWithApi,
@@ -16,17 +17,22 @@ import { SessionsListScreen } from "./index";
 
 const SESSIONS = "/api/v1/sessions";
 
+function named(name: string) {
+  return aSessionLabel({ issue: null, workflow: `/${name}`, workflows: [`/${name}`] });
+}
+
 function sessions() {
   return [
     aSession({
       id: anId(1, "aaaa0001"),
-      agent: "hub-workflow:evaluator",
+      label: named("evaluator"),
       status: "live",
       outcome: null,
     }),
     aSession({
       id: anId(2, "aaaa0002"),
       agent: "main",
+      label: aSessionLabel({ issue: "DEMO-1511", repo: "demo", branch: "main" }),
       status: "ended",
       outcome: "error",
       ended_at: at(1800),
@@ -56,7 +62,7 @@ describe("SessionsListScreen", () => {
   it("lists sessions with outcome, cost, errors and transcript columns", async () => {
     renderList(routes());
 
-    await screen.findByText("hw:evaluator");
+    await screen.findByText("/evaluator");
     const table = screen.getByRole("table", { name: "Sessions" });
     expect(within(table).getByText("Live")).toBeInTheDocument();
     expect(within(table).getByText("Error")).toBeInTheDocument();
@@ -66,9 +72,34 @@ describe("SessionsListScreen", () => {
     expect(screen.getByText(/Showing 2 of ~2 · 7 d · 1 project/)).toBeInTheDocument();
   });
 
+  it("names each session by its label over repo · branch and has no Agent column (label, AC-201.4)", async () => {
+    renderList(routes());
+
+    await screen.findByText("DEMO-1511 · /feature");
+    const table = screen.getByRole("table", { name: "Sessions" });
+    expect(within(table).getByText("demo · main")).toBeInTheDocument();
+    expect(within(table).getByText("agent-hub · dev/agh-48-live-tiles")).toBeInTheDocument();
+    const headers = () =>
+      within(screen.getByRole("table", { name: "Sessions" }))
+        .getAllByRole("columnheader")
+        .map((th) => th.textContent);
+    expect(headers()).toContain("Session");
+    expect(headers()).not.toContain("Agent");
+    expect(
+      within(table)
+        .queryAllByText(/\bmain\b/)
+        .map((node) => node.textContent),
+    ).toEqual(["demo · main"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Compact rows" }));
+    expect(headers()).toContain("Session");
+    expect(headers()).not.toContain("Agent");
+    expect(screen.getByText("DEMO-1511 · /feature")).toBeInTheDocument();
+  });
+
   it("sends filters from the URL and the rail to the API", async () => {
     const { requests, router } = renderList(routes(), "/sessions?outcome=error&period=24 h");
-    await screen.findByText("hw:evaluator");
+    await screen.findByText("/evaluator");
 
     const first = new URL(requests.find((r) => new URL(r.url).pathname === SESSIONS)?.url ?? "");
     expect(first.searchParams.get("outcome")).toBe("error");
@@ -88,7 +119,7 @@ describe("SessionsListScreen", () => {
       routes({
         [SESSIONS]: (request: Request) =>
           new URL(request.url).searchParams.get("cursor") === "c2"
-            ? aPage([aSession({ id: anId(3, "aaaa0003"), agent: "third" })])
+            ? aPage([aSession({ id: anId(3, "aaaa0003"), label: named("third") })])
             : aPage(sessions(), { next_cursor: "c2" }),
       }),
     );
@@ -96,7 +127,7 @@ describe("SessionsListScreen", () => {
     await waitFor(() => {
       expect(requests.map((r) => r.url).join(" ")).toContain("cursor=c2");
     });
-    expect(await screen.findByText("third")).toBeInTheDocument();
+    expect(await screen.findByText("/third")).toBeInTheDocument();
     expect(screen.getByText("Showing all 3")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /^Cost/ }));
@@ -105,13 +136,13 @@ describe("SessionsListScreen", () => {
       expect(requests.some((r) => new URL(r.url).searchParams.get("sort") === "-cost")).toBe(true);
     });
 
-    fireEvent.click(await screen.findByText("hw:evaluator"));
+    fireEvent.click(await screen.findByText("/evaluator"));
     expect(router.state.location.pathname).toBe(`/sessions/${anId(1, "aaaa0001")}`);
   });
 
   it("selects two sessions with Compare disabled for Phase 3, and changes columns and density", async () => {
     renderList(routes());
-    await screen.findByText("hw:evaluator");
+    await screen.findByText("/evaluator");
 
     const boxes = screen.getAllByRole("checkbox", { name: "Select row" });
     boxes.forEach((box) => fireEvent.click(box));
@@ -174,7 +205,7 @@ describe("SessionsListScreen", () => {
 
   it("has no serious or critical a11y violation", async () => {
     const { container } = renderList(routes());
-    await screen.findByText("hw:evaluator");
+    await screen.findByText("/evaluator");
 
     expect(await seriousViolations(container)).toEqual([]);
   });
