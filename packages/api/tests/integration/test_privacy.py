@@ -3,8 +3,10 @@ stored or served, whichever entry point brings it in.
 
 Body text (prompts, assistant text, thinking, tool output, Write content, Edit strings, run
 output) carries ``BODY``; it must be dropped. Commands and error lines are kept short texts, so
-they carry ``LEAK_SAMPLE`` instead, which redaction must replace. Every stored row is scanned (each
-column as SQLite holds it) and every read endpoint's answer is scanned too.
+they carry ``LEAK_SAMPLE`` instead, which redaction must replace. A failed tool's error text
+carries ``ERROR_BODY``, which only its short ``error_message`` (300 characters) may keep (AC-201.8,
+ADR 0023). Every stored row is scanned (each column as SQLite holds it) and every read endpoint's
+answer is scanned too.
 """
 
 import json
@@ -30,6 +32,8 @@ from agent_hub.core.testing.transcript_lines import (
 )
 
 BODY = "BODYSENTINEL-p7q9-content-never-stored"
+ERROR_BODY = "ERRORSENTINEL-k3m5-only-in-error-message"
+ERROR_MESSAGE_LIMIT = 300
 # Synthetic, shaped like an Anthropic key so redaction replaces it; never a real secret.
 LEAK_SAMPLE = "sk-ant-api03-SYNTHETICprivacySENTINEL0123456789"
 HOOKS = "/api/v1/events/hooks"
@@ -68,7 +72,7 @@ def _hook_inputs() -> list[dict[str, Any]]:
         a_hook_input(
             "PostToolUseFailure",
             **write,
-            error=f"failed with {LEAK_SAMPLE}\n{BODY}",
+            error=f"failed with {LEAK_SAMPLE}\n{ERROR_BODY}",
             is_interrupt=False,
         ),
     ]
@@ -88,7 +92,7 @@ def _transcript_lines(session: str) -> list[dict[str, Any]]:
         a_tool_result_line("toolu_tw", content=f"output {BODY}"),
         a_tool_result_line(
             "toolu_te",
-            content=[{"type": "text", "text": f"Exit 1 {LEAK_SAMPLE}\n{BODY}"}],
+            content=[{"type": "text", "text": f"Exit 1 {LEAK_SAMPLE}\n{ERROR_BODY}"}],
             is_error=True,
         ),
     ]
@@ -168,6 +172,37 @@ def _jsonl_payload(db_path: Path) -> dict[str, Any]:
     return loaded
 
 
+def _is_problem(value: dict[str, Any]) -> bool:
+    """A problem of ``/sessions/{id}/problems``: its ``message`` is the stored error message."""
+    return {"kind", "resolution", "message"} <= set(value)
+
+
+def _without_error_messages(value: Any) -> Any:
+    """``value`` with every ``error_message`` key (and each problem's ``message``, which serves
+    it) removed, at any depth."""
+    if isinstance(value, dict):
+        dropped = {"error_message", "message"} if _is_problem(value) else {"error_message"}
+        return {k: _without_error_messages(v) for k, v in value.items() if k not in dropped}
+    if isinstance(value, list):
+        return [_without_error_messages(item) for item in value]
+    return value
+
+
+def _error_messages(value: Any) -> list[Any]:
+    if isinstance(value, dict):
+        found = [value["error_message"]] if "error_message" in value else []
+        return found + [m for v in value.values() for m in _error_messages(v)]
+    if isinstance(value, list):
+        return [m for item in value for m in _error_messages(item)]
+    return []
+
+
+def _stored_payloads(db_path: Path) -> list[Any]:
+    with sqlite3.connect(db_path) as connection:
+        rows = connection.execute("SELECT payload FROM events").fetchall()
+    return [json.loads(payload) for (payload,) in rows]
+
+
 def _stored_text(db_path: Path) -> str:
     with sqlite3.connect(db_path) as connection:
         rows = connection.execute("SELECT * FROM events").fetchall()
@@ -200,7 +235,7 @@ def _paths(composed: Any) -> list[str]:
     for session in sessions:
         base = f"/api/v1/sessions/{session}"
         paths += [base, f"{base}/summary", f"{base}/events?limit=200", f"{base}/files"]
-        paths.append(f"{base}/cost")
+        paths += [f"{base}/cost", f"{base}/problems"]
     paths += [f"/api/v1/workflow-runs/{run}" for run in runs]
     paths += [f"/api/v1/approvals/{approval}" for approval in approvals]
     paths += [f"/api/v1/learnings/{learning}" for learning in learnings]
@@ -216,6 +251,11 @@ def test_stores_and_serves_no_body_or_secret_when_ingested_through_every_entry_p
     stored = _stored_text(composed.settings.db_path)
     assert BODY not in stored
     assert LEAK_SAMPLE not in stored
+    payloads = _stored_payloads(composed.settings.db_path)
+    assert ERROR_BODY not in json.dumps(_without_error_messages(payloads))
+    messages = _error_messages(payloads)
+    assert any(ERROR_BODY in message for message in messages)
+    assert all(len(message) <= ERROR_MESSAGE_LIMIT for message in messages)
     assert "[redacted: anthropic key]" in stored
     assert _jsonl_payload(composed.settings.db_path) == {
         "tool": "Bash",
@@ -226,3 +266,9 @@ def test_stores_and_serves_no_body_or_secret_when_ingested_through_every_entry_p
         assert response.status_code == 200, (path, response.text)
         assert BODY not in response.text, path
         assert LEAK_SAMPLE not in response.text, path
+        assert ERROR_BODY not in json.dumps(_without_error_messages(response.json())), path
+    listed = composed.client.get("/api/v1/sessions?limit=200").json()["items"]
+    served = [composed.client.get(f"/api/v1/sessions/{i['id']}/problems").json() for i in listed]
+    messages = [p["message"] for body in served for p in body["items"]]
+    assert any(ERROR_BODY in message for message in messages)
+    assert all(len(message) <= ERROR_MESSAGE_LIMIT for message in messages)

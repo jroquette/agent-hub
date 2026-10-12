@@ -48,12 +48,17 @@ def a_session_events(
     attempt: int | None = None,
     ended: bool = True,
     model: str = SCENARIO_MODEL,
+    cwd: str = "/work/demo-api",
+    git_branch: str | None = None,
+    slash_commands: Sequence[str] = (),
 ) -> list[Event]:
     """Hook events of one session: start, a prompt, one call and result per tool, an end.
 
     Each event is one minute after the previous. ``failed_tools`` holds the positions in
     ``tools`` whose result is an error. ``run``/``step``/``attempt`` mimic a session started by
-    ``hub run`` (the sensor's ``AGENT_HUB_RUN_*`` variables).
+    ``hub run`` (the sensor's ``AGENT_HUB_RUN_*`` variables). ``slash_commands`` adds one user
+    prompt per command after the first prompt; ``git_branch`` is put on every event, as the
+    transcript mapper writes it on each event of a line.
     """
     common: dict[str, object] = {
         "project": project,
@@ -63,12 +68,16 @@ def a_session_events(
         "agent": "main",
     }
     extra: dict[str, JsonValue] = {}
+    if git_branch is not None:
+        extra["git_branch"] = git_branch
     if run is not None:
         common |= {"workflow": RUN_WORKFLOW, "step": step}
         extra["run"] = run
         if attempt is not None:
             extra["attempt"] = attempt
-    clock = iter(start + timedelta(minutes=n) for n in range(2 * len(tools) + 3))
+    clock = iter(
+        start + timedelta(minutes=n) for n in range(2 * len(tools) + len(slash_commands) + 3)
+    )
     at = next(clock)
     events = [
         _event(
@@ -76,7 +85,7 @@ def a_session_events(
             type="session.start",
             timestamp=at,
             source_id=f"{session}:SessionStart:{_stamp(at)}:0000000000000000",
-            payload={"trigger": "startup", "cwd": "/work/demo-api", "model": model} | extra,
+            payload={"trigger": "startup", "cwd": cwd, "model": model} | extra,
         )
     ]
     at = next(clock)
@@ -89,6 +98,17 @@ def a_session_events(
             payload={"role": "user", "chars": 42} | extra,
         )
     )
+    for command in slash_commands:
+        at = next(clock)
+        events.append(
+            _event(
+                **common,
+                type="message",
+                timestamp=at,
+                source_id=f"{session}:UserPromptSubmit:{_stamp(at)}:0000000000000003",
+                payload={"role": "user", "chars": 42, "slash_command": command} | extra,
+            )
+        )
     for position, (tool, metadata) in enumerate(tools):
         tool_use_id = f"toolu_{session}_{position}"
         at = next(clock)
@@ -130,6 +150,105 @@ def a_session_events(
                 timestamp=at,
                 source_id=f"{session}:SessionEnd:{_stamp(at)}:0000000000000002",
                 payload={"end_reason": "prompt_input_exit", "outcome": "stopped"} | extra,
+            )
+        )
+    return events
+
+
+def an_agent_call(
+    tool_use_id: str,
+    *,
+    session: str = "session-1",
+    subagent_type: str = "Explore",
+    description: str = "Find the session folds",
+    at: datetime = SCENARIO_START,
+    done_at: datetime | None = None,
+) -> list[Event]:
+    """The main agent's Agent tool call (and its result at ``done_at``, when given)."""
+    common: dict[str, object] = {
+        "project": "demo",
+        "session": session,
+        "source": "claude_code",
+        "repo": "demo-api",
+        "agent": "main",
+    }
+    events = [
+        _event(
+            **common,
+            type="tool.call",
+            timestamp=at,
+            source_id=f"{session}:PreToolUse:{tool_use_id}",
+            payload={
+                "tool": "Agent",
+                "tool_use_id": tool_use_id,
+                "subagent_type": subagent_type,
+                "description": description,
+            },
+        )
+    ]
+    if done_at is not None:
+        events.append(
+            _event(
+                **common,
+                type="tool.result",
+                timestamp=done_at,
+                source_id=f"{session}:PostToolUse:{tool_use_id}",
+                payload={"tool": "Agent", "tool_use_id": tool_use_id, "status": "ok"},
+            )
+        )
+    return events
+
+
+def a_subagent_events(
+    agent_id: str,
+    *,
+    session: str = "session-1",
+    subagent_type: str = "Explore",
+    start: datetime = SCENARIO_START,
+    tools: Sequence[ToolUse] = (("Read", {"path": "src/app.py"}),),
+    failed_tools: frozenset[int] = frozenset(),
+) -> list[Event]:
+    """Hook events of one subagent: a call and a result per tool, a minute apart from ``start``.
+
+    The events carry the subagent's type as ``agent`` and its ``agent_id`` in the payload, as
+    the hook mapper writes them.
+    """
+    common: dict[str, object] = {
+        "project": "demo",
+        "session": session,
+        "source": "claude_code",
+        "repo": "demo-api",
+        "agent": subagent_type,
+    }
+    events: list[Event] = []
+    for position, (tool, metadata) in enumerate(tools):
+        tool_use_id = f"toolu_{agent_id}_{position}"
+        call_at = start + timedelta(minutes=2 * position)
+        events.append(
+            _event(
+                **common,
+                type="tool.call",
+                timestamp=call_at,
+                source_id=f"{session}:PreToolUse:{tool_use_id}",
+                payload={"tool": tool, "tool_use_id": tool_use_id, "agent_id": agent_id} | metadata,
+            )
+        )
+        failed = position in failed_tools
+        result: dict[str, JsonValue] = {
+            "tool": tool,
+            "tool_use_id": tool_use_id,
+            "status": "error" if failed else "ok",
+            "agent_id": agent_id,
+        }
+        if failed:
+            result["error_line"] = "exit status 2"
+        events.append(
+            _event(
+                **common,
+                type="tool.result",
+                timestamp=call_at + timedelta(minutes=1),
+                source_id=f"{session}:PostToolUse:{tool_use_id}",
+                payload=result,
             )
         )
     return events

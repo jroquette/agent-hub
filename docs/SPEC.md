@@ -296,18 +296,47 @@ A web app reads the hubs and the agents' events and answers five questions, one 
 
 **Learning with provenance.** Every brain item and every learning keeps its source session, its author (human or agent) and its status. The knowledge view shows the path session → proposal → accepted → rule and measures whether the rule reduced the failure that motivated it (which `mine_transcripts.py` and `retro_metrics.py` already start to do).
 
-**Actions, not just reading (after v1).** Start a workflow on an issue, approve a gate, pause or cancel a session, accept a learning.
+**Actions, not just reading (after v1).** Start a workflow on an issue, approve a gate, pause or cancel a session, accept a learning (built early, through a hub PR: AGH-201 below).
 
-**Phase 2, read-only (built).** `hub web` serves the views above that Phase 2 covers: Portfolio, Project overview,
+**Phase 2 (built).** `hub web` serves the views above that Phase 2 covers: Portfolio, Project overview,
 Approvals (read-only), Live sessions, Sessions and Session detail (Timeline, Files, Cost, Raw events), Workflow runs and
 Run detail, Features and Feature detail, Health (the doctor rules run in process per hub, cached 15 min), Knowledge ›
-Learnings (tagged Phase 3), Settings and Welcome. Session, WorkflowRun, Learning and Approval are pure folds in core,
+Learnings and Knowledge › Brain, Settings and Welcome. Session, WorkflowRun, Learning and Approval are pure folds in core,
 recomputed on read and memoized in process by the store's high-water mark ([event-derivations.md](design/event-derivations.md)).
 Cost is estimated from transcript usage times a dated price table and always labelled so; OpenTelemetry, GitHub and
-Linear are not connected in this version and their cells say so. Actions (approving, starting, retrying, accepting)
-appear only as disabled, phase-tagged buttons. The server is local only: loopback bind, `Host` and `Origin` checks,
-1 MiB request bodies, no CORS, and a CSP that keeps the app on its own origin. The approved UI design and the
-departures from it are in [design/control-plane/](design/control-plane/README.md); the decisions are ADRs 0017 to 0021.
+Linear are not connected in this version and their cells say so. Actions (approving, starting, retrying, snoozing a
+learning) appear only as disabled, phase-tagged buttons; accepting and rejecting a learning are the exception below.
+The server is local only: loopback bind, `Host` and `Origin` checks, 1 MiB request bodies, no CORS, and a CSP that
+keeps the app on its own origin. The approved UI design and the departures from it are in
+[design/control-plane/](design/control-plane/README.md); the decisions are ADRs 0017 to 0024.
+
+**Control-plane clarity (AGH-201, built).** What the owner could not use in the first `hub web` is now derived on read:
+
+- **Session identity.** Each session carries a `label` (issue, workflow, repo, branch): the issue from its git branch,
+  else its task worktree name, matched against the hub's tracker teams and branch prefix (`TIP-1511`; no match gives
+  `null`, never a guess); the workflow is its first slash command or skill that is not a routine one (`/kickoff`,
+  `/handoff`, …). Its `actors` are the main agent and each subagent by type, linked to the Agent call that started it.
+  The stored `agent` value `main` is kept, never shown as a label, and deprecated in the API.
+- **Problems.** A failed tool, a non-zero Bash exit, a guard denial, an open or declined guard ask, an interrupt, a
+  failed gate and a failed hook are typed problems, each with its tool, `where`, message, time and actor, resolved as
+  `recovered` or `agent_continued` ("Handled by the agent"), `open` ("Agent is on it", while the session is live and
+  the agent has not ended its turn since), `needs_you` or `by_you`. Live tiles turn red only for a needs-you problem;
+  the session's "What went wrong" panel lists up to 5 summary lines, each linked to its event. The message is the
+  short `error_message` of [ADR 0023](adr/0023-short-error-message.md) (below).
+- **Learnings.** A learning shows its inbox note, read on request from the registered hub's `brain/_inbox/` and never
+  stored (`note_unavailable` with the reason when it cannot be read), and is accepted or rejected from the app. Each
+  decision opens a pull request in the hub repo through `hub_git` and records one `learning.accepted` or
+  `learning.rejected` event from the `control_plane` source ([ADR 0024](adr/0024-learning-actions-from-the-app.md)):
+  accept moves the note to the brain folder the owner picks (never `_inbox/`, `auto/` or `decisions/`) with `status:
+  accepted`; reject archives it under `brain/_inbox/_archive/` with the reason. Nothing is written to a default
+  branch, nothing is forced, and the user's checkout is never touched. This is the server's one network exception:
+  on that explicit action, `git` and `gh` reach the hub's `origin` and GitHub with the user's own credentials. In the
+  container image every hub is read-only and the actions are disabled with that reason.
+- **Features and Brain.** Feature detail renders the feature's records (spec, research, plan, eval) and its ACs with
+  verification and evidence; a per-project Brain browser lists the hub's `brain/` notes (never `brain/auto/`) and
+  renders any one, with links between notes inside the app. Notes are read on request, at most 256 KiB, through one
+  path rule (no `..`, no absolute path, no link, regular `.md` files under `<hub>/brain` only) and rendered with raw
+  HTML off and a URL allow-list.
 
 ## Data sources and event model
 
@@ -329,14 +358,17 @@ default); `repo`, `agent`, `workflow` and `step` are optional. Unknown fields ar
   `gate.request`, `gate.result`, `learning.proposed`, `learning.accepted`, `learning.rejected`, `step.start`,
   `step.end`, `run.end` and `session.summary` (the last five added in Phase 2 for runs, rejected learnings and stored
   summaries).
-- `source` is a closed list: `claude_code`, `transcript`, `otel`, `executor`, `github` and `linear`. Widening either list
-  later is a compatible change.
+- `source` is a closed list: `claude_code`, `transcript`, `otel`, `executor`, `github`, `linear` and `control_plane`
+  (an action the user took in `hub web`, added by AGH-201: a learning decision). Widening either list later is a
+  compatible change.
 - `timestamp` is an ISO 8601 string with an offset (numbers and naive times are rejected) and is stored in UTC.
 - `project`, `session` and a payload's `run` are at most 200 characters; a longer one is refused at ingestion (the
   line's reason in `hub collect`, 422 on the hook route), so every id fits a detail path and a list cursor.
 - **Identity and idempotency:** `(source, source_id)` identifies an event. Ingesting an identical event again is a
   duplicate and is skipped; a different event with the same key is a conflict and fails the batch. Nothing stored is
-  ever overwritten.
+  ever overwritten. One exception keeps a widened allow-list from failing re-ingestion: two events with the same key
+  that are equal once the keys a release added to their type (`ADDED_KEYS_V2`: `skill` and `to` on `tool.call`,
+  `error_message` on `tool.result`, `git_branch` on every type but `session.start`) are removed from both are duplicates, and the stored row is kept ([ADR 0023](adr/0023-short-error-message.md)).
 - The input format of `hub collect` is JSON Lines, UTF-8, one event per line (records split on `\n`); blank lines are
   skipped and duplicate JSON keys are rejected.
 - The store adds two fields of its own at append: `event_id` (a UUIDv7, the SSE id and the API's event id) and
@@ -355,16 +387,38 @@ before anything is appended, and the data stays on the machine in v1:
   (`scheme://user:pass@`) and `secret` (a `NAME=value` or `"name": "value"` whose name says secret, token, password,
   passwd, api_key, apikey, private_key or credential, with a value of 8+ characters). Redaction is idempotent and runs
   before any truncation; a rule change is a new rule set version and a release note.
-- **Metadata only**: no prompt, message, reasoning, tool output, file content or diff text is stored. Each type keeps
-  only the payload keys of one table in core (`agent_hub.core.events.payload_keys`, the spec's "Payload kept": e.g.
-  `tool.call` keeps tool, tool use id, repo-relative path, line counts, a 500-character Bash command, a Grep/Glob
-  pattern, a WebFetch URL without query, MCP server, tool and argument names; `message` keeps role, size, turn,
-  slash-command name and token usage), plus `run`, `step`, `attempt` and `agent_id` on any type. The source adapters
-  build payloads from that table, and `IngestEvents` drops (never rejects) any other key after redaction. **Change to
+- **Metadata only**: no prompt, message, reasoning, successful tool output, file content or diff text is stored. The
+  one body excerpt is a failed tool's short error message ([ADR 0023](adr/0023-short-error-message.md), partially
+  superseding [ADR 0019](adr/0019-metadata-only-events-and-redaction.md)): `tool.result` with `status: error` keeps
+  `error_message`, the error text redacted with `r1`, whitespace collapsed, redacted again and cut at 300 characters
+  (redact, then truncate); an interrupt keeps none. Each type keeps only the payload keys of one table in core
+  (`agent_hub.core.events.payload_keys`, "Payload kept" below), plus `run`, `step`, `attempt`, `agent_id` and
+  `git_branch` on any type. The source adapters build payloads from that table, and `IngestEvents` drops (never
+  rejects) any other key after redaction. **Change to
   `hub collect FILE` (Phase 2):** a canonical JSON Lines payload is now trimmed to that table too, so a key outside it
   (a Phase 0 payload's `input`, `output`, `prompt`, `content`…) is not stored. Release note: re-collecting a file whose
   events were stored before this change, with keys the table drops, now reports a conflict for those events (the
   trimmed event differs from the stored one), as any changed re-ingest does.
+
+**Payload kept** (every short text is redacted, then truncated; "chars" are characters):
+
+| Type | Keys kept |
+| --- | --- |
+| any type | `run`, `step`, `attempt`; `agent_id` (the subagent that emitted it); `git_branch` (the transcript line's branch, 200 chars) |
+| `session.start` | `trigger`, `cwd`, `git_branch`, `permission_mode`, `model`, `transcript_path` |
+| `session.end` | `end_reason`, `outcome` |
+| `message` | `role`, `chars`, `turn`, `slash_command` (name only, 80 chars), token usage (`message_id`, `model`, input, output, cache read and cache write tokens) |
+| `reasoning` | `chars`, `turn` |
+| `decision` | `text`, `turn` |
+| `tool.call` | `tool`, `tool_use_id`, `turn`, repo-relative `path`, `lines_added`, `lines_removed`, `new_file`, `command` (Bash, 500 chars), `pattern` (Grep/Glob, 200), `url` (WebFetch, no query), `mcp_server`, `mcp_tool`, `arg_keys`, `subagent_type` and `description` (80), `skill` (the Skill tool's skill, 80), `to` (SendMessage's recipient, 80) |
+| `tool.result` | `tool`, `tool_use_id`, `turn`, `status`, `exit_code`, `duration_ms`, `output_bytes`, `error_line` (first line, 200), `error_message` (failed tools only, 300), `rule`, `hook` |
+| `gate.request`, `gate.result` | `gate_id`, `kind`, `name`, `command`, `path`, `rule`, `feature`, `result`, `exit_code`, `duration_ms`, `approver`, `where`, `issue`, `repo`, `mode` |
+| `learning.proposed`, `.accepted`, `.rejected` | `text` (title, 120), `target`, `author`, `proposal`, `brain_path`, `commit`, `reason`, `provenance`; an app decision adds `pr_url`, `branch` and `state` |
+| `step.start`, `step.end`, `run.end` | `issue`, `repo`, `status`, `stage`, `reason`, `caps` (`budget`, `max_turns`, `model`, `transport`), `pr_url`, `cost_usd`, `mode` |
+| `session.summary` | `text`, `lines` |
+
+Note, spec, plan and brain text is read from the hub on request and never stored or logged; a learning's summary
+(its note's first paragraph) is computed on read.
 
 ## Proposed architecture
 
@@ -384,7 +438,7 @@ flowchart LR
 
 The sessions and GitHub/Linear feed the collector, and the web app reads everything through the API. The app's actions go back to the workflow executor. The API also reads the hub repos to show brain, rules and workflows.
 
-- **Stack (decided, ADRs 0001–0004, 0008, 0011, 0014, 0015, 0017 and 0020):** Python 3.14 in a uv workspace with one package per component (`core`, `storage`, `collector`, `generator`, `tracker_linear`, `cli`, `api`) under a lean hexagonal architecture: entities, use cases and ports in `core`, adapters in the other packages. Persistence is SQLAlchemy Core + Alembic on SQLite, moving to Postgres via config when there are multiple users. The API is FastAPI + Pydantic in `packages/api`, a second composition root that `hub web` serves; the front end is React 18 + TypeScript in `apps/web`, whose production build is committed to `packages/api` so a `uvx` install needs no Node.
+- **Stack (decided, ADRs 0001–0004, 0008, 0011, 0014, 0015, 0017, 0020 and 0024):** Python 3.14 in a uv workspace with one package per component (`core`, `storage`, `collector`, `generator`, `tracker_linear`, `hub_git`, `cli`, `api`) under a lean hexagonal architecture: entities, use cases and ports in `core`, adapters in the other packages. Persistence is SQLAlchemy Core + Alembic on SQLite, moving to Postgres via config when there are multiple users. The API is FastAPI + Pydantic in `packages/api`, a second composition root that `hub web` serves; the front end is React 18 + TypeScript in `apps/web`, whose production build is committed to `packages/api` so a `uvx` install needs no Node.
 - **Hooks as sensors** ([ADR 0021](adr/0021-hook-event-sensor.md)): the generated hub registers a stdlib Python 3.9 sensor, `plugin/hub-workflow/hooks/event_sensor.py`, for eleven Claude Code hooks (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PostToolUseFailure, Notification, Stop, SubagentStart, SubagentStop, PreCompact, SessionEnd). It wraps the hook input in a versioned envelope (`v: 1`, project, repo, the `hub run` run, step and attempt) and posts it to `POST /api/v1/events/hooks` with a 0.5 s timeout; it prints nothing and exits 0 on any failure, so without `hub web` the session carries on normally. `AGENT_HUB_WEB_URL` may only name a loopback URL. The guard and the Stop gate send their own decisions (a denial, an ask, a blocked Stop) the same way, after deciding, without changing their output or exit codes. On Stop, SubagentStop and SessionEnd the server reads the session's transcript from its last offset, only under `~/.claude/projects/` and never through a link.
 - **Packaging ([ADR 0022](adr/0022-container-packaging.md)):** besides `uvx`/`uv tool install`, the control plane
   ships as a container image built from the repo (`Dockerfile`, `compose.yaml`): multi-stage (the web app built from
@@ -402,13 +456,14 @@ The MVP goes up to Phase 2: generate hubs from Loki and see the agents' sessions
 | 0 · Foundation (MVP) | New GitHub repo, approved spec, the foundation (stack and standards in [ADRs 0001–0008](adr/), uv workspace, `make check-fast`/`make check` gates, CI), CLI and collector skeleton | Skeleton done: canonical event, `hub collect`, and `hub init`/`sync`/`doctor` as stubs |
 | 1 · Hub generator (MVP) | First, `hub init` generating the platform's own hub; then extract brain, rules, launcher, worktrees, brief and plugin; `hub sync` (with `--adopt`) and `hub doctor` | Loki hub recreated, same `make check` and bench |
 | 2 · Read-only observability (MVP) | Hooks and transcripts collector, session timeline, portfolio and live sessions | Sessions of both projects live and in history |
-| 3 · Knowledge and decisions | Provenance in the brain, inbox triage in the UI, extracted decisions, learning metrics | One learning traced from the session to the rule |
+| 3 · Knowledge and decisions | Provenance in the brain, inbox triage in the UI (accept and reject moved to Phase 2 by AGH-201; snooze stays here), extracted decisions, learning metrics | One learning traced from the session to the rule |
 | 4 · Workflows as data and actions | Generic executor reading the workflow, gates approved from the UI, adapters for other agents | — |
 
 Status (2026-10-12): Phase 0 done. Phase 1 in progress: `init`, `sync` (`--adopt`), `doctor`, `worktree`, `brief`,
 `agent`, `next`, `run` and `bench` shipped in v0.8.0; `setup` and `start` are on `main` (version 0.9.0, not tagged
-yet), with Phase 2's first slice, the read-only control plane `hub web` (AGH-200). The Phase 1 gate (Loki hub
-recreated) is open; pilot: AGH-54.
+yet), with Phase 2's first slice, the control plane `hub web` (AGH-200), and its clarity pass (AGH-201: session
+labels, problems, learning accept and reject through hub PRs, the Brain browser and feature records). The Phase 1
+gate (Loki hub recreated) is open; pilot: AGH-54.
 
 The order follows dogfooding: the first generated hub is the platform's own, and the second replaces `loki-trader-hub`. Editable workflows come later because they depend on observation already showing where the current flow gets stuck.
 

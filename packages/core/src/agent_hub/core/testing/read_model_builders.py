@@ -4,18 +4,29 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from agent_hub.core.approvals.approval import Approval, ApprovalKind
+from agent_hub.core.brain.brain_note import BrainEntry, BrainNote, BrainTree
 from agent_hub.core.features.feature_view import AcCounts, FeatureView
 from agent_hub.core.hub_config.doctor_rules import Severity
 from agent_hub.core.hubs.finding_view import FindingView
 from agent_hub.core.hubs.registered_hub import HubView
-from agent_hub.core.learnings.learning import Learning, LearningStatus, LearningTarget
+from agent_hub.core.learnings.learning import (
+    Learning,
+    LearningDetail,
+    LearningState,
+    LearningStatus,
+    LearningTarget,
+)
 from agent_hub.core.projects.project_views import ProjectSummary
 from agent_hub.core.runner.run_record import Stage
 from agent_hub.core.runs.workflow_run import IssueRef, RunCaps, RunStep, WorkflowRun
+from agent_hub.core.sessions.problem import Problem, ProblemKind, Resolution, SessionProblems
 from agent_hub.core.sessions.session import (
+    Actor,
     Session,
+    SessionLabel,
     SessionSegment,
     SessionStatus,
+    SummaryLine,
     TokenUsage,
 )
 
@@ -199,3 +210,84 @@ def a_finding_view(**overrides: object) -> FindingView:
         "fix": "Keep it a map, not a manual",
     }
     return FindingView.model_validate(fields | overrides)
+
+
+def a_session_label(**overrides: object) -> SessionLabel:
+    """The label of a synthetic ``/feature`` session on issue ``DEM-7``."""
+    fields: dict[str, object] = {
+        "issue": "DEM-7",
+        "workflow": "/feature",
+        "workflows": ("/feature", "/create-plan"),
+        "repo": "demo-api",
+        "branch": "jdoe/dem-7-login",
+        "worktree": "dem-7-login",
+    }
+    return SessionLabel.model_validate(fields | overrides)
+
+
+def a_problem(**overrides: object) -> Problem:
+    """A failed Bash of the main agent that still needs the owner."""
+    fields: dict[str, object] = {
+        "event_id": EVENT_ID,
+        "kind": ProblemKind.COMMAND_EXIT,
+        "tool": "Bash",
+        "where": "make check-fast",
+        "message": "1 failed, 12 passed",
+        "at": LAST_ACTIVITY,
+        "actor": Actor(kind="main"),
+        "resolution": Resolution.NEEDS_YOU,
+    }
+    return Problem.model_validate(fields | overrides)
+
+
+def a_session_problems(**overrides: object) -> SessionProblems:
+    """The problems of ``session-1``: one that needs the owner, with its summary line."""
+    problem = a_problem()
+    fields: dict[str, object] = {
+        "session_id": "session-1",
+        "summary": (
+            SummaryLine(text="Needs you: command_exit in make check-fast", event_id=EVENT_ID),
+        ),
+        "items": (problem,),
+    }
+    return SessionProblems.model_validate(fields | overrides)
+
+
+def a_brain_tree(**overrides: object) -> BrainTree:
+    """The brain of the synthetic project ``demo``."""
+    fields: dict[str, object] = {
+        "project": "demo",
+        "entries": (
+            BrainEntry(path="_inbox/testing-x.md", size=96),
+            BrainEntry(path="decisions/index.md", size=210),
+            BrainEntry(path="index.md", size=180),
+            BrainEntry(path="now.md", size=140),
+        ),
+    }
+    return BrainTree.model_validate(fields | overrides)
+
+
+def a_brain_note(**overrides: object) -> BrainNote:
+    """The synthetic inbox note ``_inbox/testing-x.md``."""
+    fields: dict[str, object] = {
+        "project": "demo",
+        "path": "_inbox/testing-x.md",
+        "frontmatter": {"type": "learning", "provenance": "agent", "tags": ["testing"]},
+        "markdown": "# Run the migrations check\n\nRun `make migrations` before the PR.\n",
+        "size": 96,
+    }
+    return BrainNote.model_validate(fields | overrides)
+
+
+def a_learning_detail(**overrides: object) -> LearningDetail:
+    """A proposed learning read with its inbox note."""
+    fields: dict[str, object] = a_learning().model_dump() | {
+        "target": LearningTarget(kind="team", path="brain/_inbox/testing-x.md"),
+        "note_path": "brain/_inbox/testing-x.md",
+        "state": LearningState.PROPOSED,
+        "summary": "Run `make migrations` before the PR.",
+        "note": a_brain_note(),
+        "suggested_target": "learnings/",
+        "target_choices": ("learnings/", "playbooks/"),
+    }
+    return LearningDetail.model_validate(fields | overrides)

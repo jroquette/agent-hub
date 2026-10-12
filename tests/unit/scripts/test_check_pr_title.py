@@ -90,3 +90,7 @@ def test_exits_with_usage_error_when_title_argument_missing(
 ) -> None:
     assert main([]) == 2
     assert "usage" in capsys.readouterr().err
+
+
+def test_accepts_title_when_scope_is_hub_git() -> None:
+    assert problems("feat(hub-git): open hub pull requests for learnings") == []

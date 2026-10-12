@@ -102,3 +102,22 @@ def test_builds_snapshot_with_file_prefix_when_git_not_injected(hub: Path) -> No
     assert snapshot.branch_prefix is not None
     assert snapshot.branch_prefix.value == "dev/"
     assert [repo.dir for repo in snapshot.repos] == ["demo-api"]
+
+
+def test_reads_brain_note_when_hub_registered(hub: Path) -> None:
+    (hub / "brain" / "auto").mkdir()
+    (hub / "brain" / "auto" / "me.md").write_text("personal\n", encoding="utf-8")
+    reader: HubFileReader = HubFileSystem()
+    hub_path = reader.resolve(str(hub))
+
+    listing = reader.brain_tree(hub_path)
+    note = reader.read_brain_file(hub_path, "now.md", max_bytes=1024)
+    personal = reader.read_brain_file(hub_path, "auto/me.md", max_bytes=1024)
+
+    assert [entry.path for entry in listing.entries] == ["features/demo-feature/spec.md", "now.md"]
+    assert note == b"- **Focus:** demo\n"
+    assert reader.brain_file_size(hub_path, "now.md") == len(b"- **Focus:** demo\n")
+    assert isinstance(personal, UnreadHubFile)
+    assert personal.is_missing
+    assert reader.brain_file_size(hub_path, "auto/me.md") is None
+    assert reader.brain_folders(hub_path) == ("features",)

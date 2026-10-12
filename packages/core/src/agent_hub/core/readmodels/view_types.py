@@ -6,13 +6,19 @@ exactly in the UI; API timestamps are UTC with milliseconds and a ``Z``.
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Final
 
 from pydantic import BaseModel, ConfigDict, PlainSerializer, WithJsonSchema
+from pydantic.config import JsonDict
 
 from agent_hub.core.events.event import EventSource, UtcTimestamp
 
 MONEY_PATTERN = r"^-?[0-9]+\.[0-9]{4}$"
+
+# A deprecated field stays in the API (v1 only grows) and is marked so in the OpenAPI document,
+# as ``Field(json_schema_extra=DEPRECATED_FIELD)``: only the schema says so, reading the
+# attribute raises no warning.
+DEPRECATED_FIELD: Final[JsonDict] = {"deprecated": True}
 
 
 def money_text(value: Decimal) -> str:

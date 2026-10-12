@@ -1,7 +1,8 @@
 """The control plane's ``HubFileReader``: a registered hub's files, read as ``hub doctor`` does.
 
 ``hub.json`` and ``hub.local.json`` go through ``hub_config_files``, the lock and the doctor
-snapshot through ``doctor_snapshot``, feature folders through ``feature_files``. The hub's
+snapshot through ``doctor_snapshot``, feature folders through ``feature_files``, brain notes
+through ``brain_files``. The hub's
 ``hub.local.json`` is the one in the registered folder (``hub doctor`` reads the main
 checkout's, the same folder for a hub registered at its main checkout). The developer's branch
 prefix comes from the files alone unless ``read_git`` is given: git stays with the composition
@@ -25,7 +26,13 @@ from agent_hub.core.hub_config.effective_identity import (
 from agent_hub.core.hub_config.local_config import LOCAL_FILE, LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
-from agent_hub.core.hubs.hub_registry import UnreadHubFile
+from agent_hub.core.hubs.hub_registry import BrainListing, UnreadHubFile
+from agent_hub.generator.brain_files import (
+    brain_file_size,
+    brain_folders,
+    list_brain,
+    read_brain_file,
+)
 from agent_hub.generator.doctor_snapshot import build_doctor_snapshot, read_lock
 from agent_hub.generator.feature_files import read_feature_folders
 from agent_hub.generator.hub_config_files import UnreadFile, read_file_bytes, read_local_json
@@ -124,6 +131,22 @@ class HubFileSystem:
     def feature_folders(self, hub_path: str) -> tuple[FeatureFolder, ...]:
         """The hub's feature folders."""
         return read_feature_folders(Path(hub_path))
+
+    def brain_tree(self, hub_path: str) -> BrainListing:
+        """The ``.md`` notes under the hub's ``brain/``, bounded, no link followed."""
+        return list_brain(Path(hub_path))
+
+    def brain_folders(self, hub_path: str) -> tuple[str, ...]:
+        """The top-level folders of the hub's ``brain/``, bounded, no link followed."""
+        return brain_folders(Path(hub_path))
+
+    def read_brain_file(self, hub_path: str, path: str, *, max_bytes: int) -> bytes | UnreadHubFile:
+        """The bytes of ``brain/<path>``, a regular file of at most ``max_bytes``, or why not."""
+        return read_brain_file(Path(hub_path), path, max_bytes=max_bytes)
+
+    def brain_file_size(self, hub_path: str, path: str) -> int | None:
+        """The size of the regular file ``brain/<path>``; None when absent, a link or unreadable."""
+        return brain_file_size(Path(hub_path), path)
 
 
 def _unread_or_bytes(read: bytes | UnreadFile) -> bytes | UnreadHubFile:

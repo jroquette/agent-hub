@@ -7,6 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from agent_hub.core.events.event import Event
+from agent_hub.core.learnings.brain_change_requests import BrainChange, CommitAuthor
 from agent_hub.core.testing.fakes import FakeTrackerBackend, TrackerState
 from agent_hub.core.tracker.tracker_client import Issue
 
@@ -210,3 +211,22 @@ def a_seeded_tracker_backend() -> FakeTrackerBackend:
             for issue_id, state, labels in _SEEDED_ISSUES
         },
     )
+
+
+def a_brain_change(**overrides: object) -> BrainChange:
+    """A synthetic accept of ``brain/_inbox/testing-x.md`` into ``brain/learnings/``."""
+    fields: dict[str, object] = {
+        "hub_path": "/home/demo/demo-hub",
+        "hub_repo": "acme/demo-hub",
+        "default_branch": "main",
+        "action": "accept",
+        "note": "_inbox/testing-x.md",
+        "destination": "learnings/testing-x.md",
+        "frontmatter": {"status": "accepted", "last_verified": "2026-10-12"},
+        "author": CommitAuthor(name="Demo Owner", email="owner@example.com"),
+        "branch": "demo/learning-accept-testing-x",
+        "title": "Accept learning: Testing x",
+        "body": "Moves brain/_inbox/testing-x.md to brain/learnings/testing-x.md.",
+        "commit_message": "docs(brain): accept learning testing-x",
+    }
+    return BrainChange.model_validate(fields | overrides)

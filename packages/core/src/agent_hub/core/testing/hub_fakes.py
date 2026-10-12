@@ -1,5 +1,6 @@
 """In-memory fakes of the hub ports: ``InMemoryHubRegistry`` (checked by ``HubRegistryContract``)
-and ``FakeHubFileReader``, whose hubs are synthetic files kept in memory.
+and ``FakeHubFileReader``, whose hubs are synthetic files kept in memory (``brain`` holds the
+files under ``brain/``, ``brain_links`` the ones that play links).
 """
 
 import json
@@ -9,6 +10,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from agent_hub.core.brain.brain_note import BrainEntry
+from agent_hub.core.brain.brain_path import NOTE_SUFFIX, is_personal_folder
 from agent_hub.core.doctor.run_rules import Selection
 from agent_hub.core.doctor.snapshot import DoctorSnapshot, HubFiles, LockAbsent, LockState
 from agent_hub.core.features.feature_status import FeatureFolder
@@ -16,7 +19,12 @@ from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.hub_files.tree_snapshot import FileEntry
-from agent_hub.core.hubs.hub_registry import HubConflictError, UnreadHubFile, to_milliseconds
+from agent_hub.core.hubs.hub_registry import (
+    BrainListing,
+    HubConflictError,
+    UnreadHubFile,
+    to_milliseconds,
+)
 from agent_hub.core.hubs.registered_hub import RegisteredHub
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.testing.builders import a_hub_document
@@ -79,6 +87,14 @@ class FakeHub:
     agents_md_lines: dict[str, int] = field(default_factory=dict)
     features: tuple[FeatureFolder, ...] = ()
     mtimes: dict[str, int] = field(default_factory=dict)
+    brain: dict[str, bytes] = field(default_factory=dict)
+    brain_links: frozenset[str] = frozenset()
+
+
+def _listed(path: str) -> bool:
+    segments = path.split("/")
+    hidden = any(segment.startswith(".") for segment in segments)
+    return path.endswith(NOTE_SUFFIX) and not is_personal_folder(segments[0]) and not hidden
 
 
 class FakeHubFileReader:
@@ -153,6 +169,48 @@ class FakeHubFileReader:
     def feature_folders(self, hub_path: str) -> tuple[FeatureFolder, ...]:
         """The hub's feature folders."""
         return self._hub(hub_path).features
+
+    def brain_tree(self, hub_path: str) -> BrainListing:
+        """The hub's ``.md`` brain files by path, without ``auto/``, hidden names or links."""
+        hub = self._hub(hub_path)
+        entries = tuple(
+            BrainEntry(path=path, size=len(content))
+            for path, content in sorted(hub.brain.items())
+            if _listed(path) and path not in hub.brain_links
+        )
+        return BrainListing(entries=entries)
+
+    def brain_folders(self, hub_path: str) -> tuple[str, ...]:
+        """The top-level folders of the hub's listed brain files (a folder holding a link only
+        is left out)."""
+        hub = self._hub(hub_path)
+        folders = {
+            path.split("/", 1)[0]
+            for path in hub.brain
+            if "/" in path and _listed(path) and path not in hub.brain_links
+        }
+        return tuple(sorted(folders))
+
+    def read_brain_file(self, hub_path: str, path: str, *, max_bytes: int) -> bytes | UnreadHubFile:
+        """The brain file's bytes, or why not (missing, a link, over ``max_bytes``)."""
+        hub = self._hub(hub_path)
+        if path in hub.brain_links:
+            return UnreadHubFile(
+                message="cannot read: a link", is_missing=False, kind="not_regular"
+            )
+        content = hub.brain.get(path)
+        if content is None:
+            return UnreadHubFile(message=MISSING.message, is_missing=True, kind="missing")
+        if len(content) > max_bytes:
+            message = f"cannot read: over {max_bytes} bytes"
+            return UnreadHubFile(message=message, is_missing=False, kind="too_large")
+        return content
+
+    def brain_file_size(self, hub_path: str, path: str) -> int | None:
+        """The brain file's size; None when absent or a link."""
+        hub = self._hub(hub_path)
+        content = hub.brain.get(path)
+        return None if content is None or path in hub.brain_links else len(content)
 
     def _hub(self, hub_path: str) -> FakeHub:
         return self.hubs.get(hub_path) or FakeHub()

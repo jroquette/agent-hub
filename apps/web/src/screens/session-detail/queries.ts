@@ -29,6 +29,11 @@ export function useSessionCost(id: string, enabled: boolean) {
   return useApi("/api/v1/sessions/{session_id}/cost", sessionPath(id), { enabled });
 }
 
+/** "What went wrong" (AC-201.15): asked only when the session counts a problem. */
+export function useSessionProblems(id: string, enabled: boolean) {
+  return useApi("/api/v1/sessions/{session_id}/problems", sessionPath(id), { enabled });
+}
+
 export interface SessionEvents {
   events: ApiEvent[];
   /** True until every page has arrived. */

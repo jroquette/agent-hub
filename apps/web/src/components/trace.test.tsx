@@ -141,6 +141,19 @@ describe("TimelineEvent", () => {
     expect(document.getElementById("ev-e1")).toHaveAttribute("aria-current", "true");
   });
 
+  it("names its actor in place of the kind and tool when an actor is given", () => {
+    render(
+      <TimelineEvent
+        ev={{ ...ev, kind: "Tool call", actor: { kind: "subagent", label: "Subagent · Explore" } }}
+      />,
+    );
+
+    const row = document.getElementById("ev-e1");
+    expect(row?.textContent).toContain("Subagent · Explore · make check-fast");
+    expect(screen.getByText("Subagent · Explore")).toHaveAttribute("data-actor", "subagent");
+    expect(screen.queryByText("Tool call")).not.toBeInTheDocument();
+  });
+
   it("expands its detail and its raw JSON", () => {
     const onToggle = vi.fn();
     render(<TimelineEvent ev={ev} onToggle={onToggle} />);

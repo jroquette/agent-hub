@@ -105,6 +105,12 @@ def test_accepts_source_when_listed_in_spec(source: str) -> None:
     assert event.source == EventSource(source)
 
 
+def test_accepts_source_when_source_is_control_plane() -> None:
+    event = Event.model_validate(required_fields() | {"source": "control_plane"})
+
+    assert event.source == EventSource.CONTROL_PLANE
+
+
 @pytest.mark.parametrize(
     ("field", "value"), [("type", "tool.use"), ("source", "slack")], ids=["type", "source"]
 )

@@ -4,7 +4,8 @@ from decimal import Decimal
 from agent_hub.core.events.stored_event import StoredEvent
 from agent_hub.core.readmodels.live_tiles import failing_notice, live_tiles
 from agent_hub.core.sessions.fold_session import fold_sessions, group_by_session
-from agent_hub.core.sessions.session import SessionStatus
+from agent_hub.core.sessions.session import ProblemCounts, SessionStatus
+from agent_hub.core.sessions.session_problems import fold_problems
 from agent_hub.core.testing.builders import an_event
 from agent_hub.core.testing.session_scenarios import (
     SCENARIO_START,
@@ -128,3 +129,62 @@ def test_notices_gate_streak_when_same_gate_fails_twice() -> None:
     notice = failing_notice(as_stored(gates), now=SCENARIO_START)
 
     assert notice == "make check-fast failed 2 times in a row"
+
+
+CHECK_TWICE = (("Bash", {"command": "make check"}), ("Bash", {"command": "make check"}))
+
+
+def test_names_needs_you_problem_when_problem_needs_owner() -> None:
+    events = as_stored(
+        a_session_events(
+            tools=CHECK_TWICE,
+            failed_tools=frozenset({1}),
+            ended=False,
+            git_branch="jdoe/dem-7-login",
+        )
+    )
+    now = events[-1].event.timestamp + timedelta(minutes=10)
+    sessions = fold_sessions(events, now=now)
+
+    [tile] = live_tiles(sessions, group_by_session(events), now=now)
+
+    assert tile.group == "idle"
+    assert tile.problems == ProblemCounts(needs_you=1)
+    assert tile.needs_you_problem == "Needs you: command_exit in make check"
+    assert tile.label == sessions["session-1"].label
+    assert tile.actors == sessions["session-1"].actors
+
+
+def test_leaves_needs_you_empty_when_problems_handled() -> None:
+    events = as_stored(
+        a_session_events(tools=CHECK_TWICE, failed_tools=frozenset({0}), ended=False)
+    )
+    now = events[-1].event.timestamp + timedelta(minutes=10)
+    sessions = fold_sessions(events, now=now)
+
+    [tile] = live_tiles(sessions, group_by_session(events), now=now)
+
+    assert tile.problems == ProblemCounts(handled=1)
+    assert tile.needs_you_problem is None
+
+
+def test_uses_given_problems_when_caller_folded_them() -> None:
+    events = as_stored(
+        a_session_events(tools=CHECK_TWICE, failed_tools=frozenset({1}), ended=False)
+    )
+    now = events[-1].event.timestamp + timedelta(minutes=10)
+    sessions = fold_sessions(events, now=now)
+    given = fold_problems(events, status=SessionStatus.IDLE)
+    renamed = given.model_copy(
+        update={
+            "summary": tuple(
+                line.model_copy(update={"text": f"given {line.text}"}) for line in given.summary
+            )
+        }
+    )
+
+    [tile] = live_tiles(
+        sessions, group_by_session(events), now=now, problems={"session-1": renamed}
+    )
+
+    assert tile.needs_you_problem == "given Needs you: command_exit in make check"

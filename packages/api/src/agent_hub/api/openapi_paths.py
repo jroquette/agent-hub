@@ -1,4 +1,5 @@
-"""The Phase 2 contract's paths, and the paths an app's OpenAPI document lists."""
+"""The Phase 2 contract's paths, the paths control-plane clarity adds, and the paths an app's
+OpenAPI document lists."""
 
 from fastapi import FastAPI
 
@@ -43,6 +44,23 @@ P2_PATHS: frozenset[tuple[str, str]] = frozenset(
         ("get", "/events/stream"),
     )
 )
+
+
+# The paths control-plane clarity adds (AC-201.39): the problems of a session, the two learning
+# decisions (the only P3 writes served, through a hub PR) and the brain browser.
+CLARITY_PATHS: frozenset[tuple[str, str]] = frozenset(
+    (method, f"{API_PREFIX}{path}")
+    for method, path in (
+        ("get", "/sessions/{session_id}/problems"),
+        ("post", "/learnings/{learning_id}/accept"),
+        ("post", "/learnings/{learning_id}/reject"),
+        ("get", "/projects/{project}/brain"),
+        ("get", "/projects/{project}/brain/note"),
+    )
+)
+
+# Every path the document lists.
+SERVED_PATHS: frozenset[tuple[str, str]] = P2_PATHS | CLARITY_PATHS
 
 
 def document_paths(app: FastAPI) -> frozenset[tuple[str, str]]:

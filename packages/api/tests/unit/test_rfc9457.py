@@ -14,6 +14,16 @@ from agent_hub.api.rfc9457 import (
     not_found_problem,
     problem,
 )
+from agent_hub.core.brain.brain_note import BrainNoteNotFoundError, BrainNoteTooLargeError
+from agent_hub.core.brain.brain_path import BrainPathError
+from agent_hub.core.learnings.brain_change_requests import (
+    ChangeRequestConflictError,
+    ChangeRequestError,
+    ChangeRequestFailedError,
+    ChangeRequestTimeoutError,
+    RefspecRefusedError,
+)
+from agent_hub.core.learnings.learning_ports import HubReadOnlyError, LearningConflictError
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 
 
@@ -159,3 +169,102 @@ def test_names_cursor_parameter_when_invalid_cursor_raised(open_client: Any, fak
         {"parameter": "cursor", "message": "not a cursor this server issued"}
     ]
     assert "bad base64" not in response.text
+
+
+def _mapped(error: Exception) -> Any:
+    return PROBLEMS[type(error)](error)
+
+
+def test_answers_bad_request_with_reason_when_brain_path_refused() -> None:
+    found = _mapped(BrainPathError("Path has an empty, hidden or parent segment"))
+
+    assert (found.status, found.title) == (400, "Invalid brain path")
+    assert found.detail == "Path has an empty, hidden or parent segment"
+    assert found.members["errors"] == [
+        {"parameter": "path", "message": "Path has an empty, hidden or parent segment"}
+    ]
+
+
+def test_hides_path_when_brain_note_not_found() -> None:
+    found = _mapped(BrainNoteNotFoundError(project="demo", path="auto/secret-name.md"))
+
+    assert (found.status, found.title) == (404, "Brain note not found")
+    assert "secret-name" not in str(found.detail)
+
+
+def test_names_limit_when_brain_note_too_large() -> None:
+    error = BrainNoteTooLargeError(project="demo", path="a.md", size=300_000, limit=262_144)
+
+    found = _mapped(error)
+
+    assert (found.status, found.title) == (413, "Brain note too large")
+    assert found.detail == "Brain notes are served up to 262144 bytes; this one has 300000."
+
+
+def test_names_reason_and_pull_request_when_learning_conflict_mapped() -> None:
+    error = LearningConflictError(
+        "Learning already accepted, PR open", pr_url="https://github.com/acme/demo-hub/pull/7"
+    )
+
+    found = _mapped(error)
+
+    assert (found.status, found.title) == (409, "Learning cannot be decided")
+    assert found.detail == "Learning already accepted, PR open"
+    assert found.members == {
+        "code": "learning_conflict",
+        "reason": "Learning already accepted, PR open",
+        "pr_url": "https://github.com/acme/demo-hub/pull/7",
+    }
+
+
+def test_leaves_out_pull_request_when_learning_conflict_has_none() -> None:
+    found = _mapped(LearningConflictError("Another learning action is running for this hub"))
+
+    assert "pr_url" not in found.members
+
+
+def test_says_hub_read_only_when_hub_read_only_mapped() -> None:
+    found = _mapped(HubReadOnlyError("Hub is read-only here"))
+
+    assert (found.status, found.title) == (409, "Learning actions unavailable")
+    assert found.members == {"code": "hub_read_only", "reason": "Hub is read-only here"}
+
+
+def test_names_reason_when_change_request_conflict_mapped() -> None:
+    found = _mapped(ChangeRequestConflictError("Destination exists: brain/learnings/x.md"))
+
+    assert (found.status, found.detail) == (409, "Destination exists: brain/learnings/x.md")
+    assert found.members == {
+        "code": "change_request_conflict",
+        "reason": "Destination exists: brain/learnings/x.md",
+    }
+
+
+def test_answers_conflict_when_change_request_push_refused() -> None:
+    found = _mapped(RefspecRefusedError("Push refused: a forced refspec"))
+
+    assert (found.status, found.members["code"]) == (409, "push_refused")
+
+
+def test_keeps_git_output_out_when_change_request_failed() -> None:
+    error = ChangeRequestFailedError(step="push")
+    error.add_note("remote: ghp_secrettoken rejected")
+
+    found = _mapped(error)
+
+    assert (found.status, found.title) == (502, "Could not open the pull request")
+    assert found.members == {"step": "push"}
+    assert "ghp_" not in json.dumps([found.detail, found.members])
+
+
+def test_answers_gateway_timeout_when_change_request_timed_out() -> None:
+    found = _mapped(ChangeRequestTimeoutError())
+
+    assert (found.status, found.title) == (504, "Could not open the pull request in time")
+
+
+def test_answers_bad_gateway_when_other_change_request_error_raised() -> None:
+    found = _mapped(ChangeRequestError("clone exited 128: fatal: secret-host"))
+
+    assert (found.status, found.title) == (502, "Could not open the pull request")
+    assert "secret-host" not in str(found.detail)

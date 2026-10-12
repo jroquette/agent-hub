@@ -14,9 +14,14 @@ from pydantic import BaseModel, ValidationError
 from agent_hub.api.change_feed import ChangeFeed
 from agent_hub.api.rfc9457 import InvalidParameterError, NotImplementedInBuildError
 from agent_hub.api.settings import ApiSettings
+from agent_hub.core.brain.brain_path import DEFAULT_ACCEPT_FOLDER
 from agent_hub.core.events.event_reader import EventReader
 from agent_hub.core.ingestion.ingest_hook import IngestHook
 from agent_hub.core.ingestion.ingestion_status import IngestionCounters
+from agent_hub.core.learnings.learning import Learning, LearningDetail
+from agent_hub.core.learnings.learning_ports import LearningDecisions, LearningReads
+from agent_hub.core.readmodels.filters import LearningFilter
+from agent_hub.core.readmodels.page import Page
 from agent_hub.core.readmodels.read_ports import EventReadModels, HubReadModels
 
 
@@ -30,6 +35,8 @@ class ApiPorts:
     event_reader: EventReader | None = None
     change_feed: ChangeFeed | None = None
     counters: IngestionCounters | None = None
+    learning_reads: LearningReads | None = None
+    learning_decisions: LearningDecisions | None = None
 
 
 def _ports(request: Request) -> ApiPorts:
@@ -53,6 +60,41 @@ def event_read_models(request: Request) -> EventReadModels:
 def hub_read_models(request: Request) -> HubReadModels:
     """The hub read models, or 501 when not wired."""
     port = _ports(request).hub_read_models
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+@dataclass(frozen=True)
+class EventLearningReads:
+    """``LearningReads`` from the folded events alone, for a build that does not wire the hub
+    reads: no note, no summary, the default target folder and no choices."""
+
+    models: EventReadModels
+
+    def list_learnings(self, learning_filter: LearningFilter) -> Page[Learning]:
+        """The folded learnings, as before AGH-201."""
+        return self.models.list_learnings(learning_filter)
+
+    def get_learning(self, learning_id: str) -> LearningDetail:
+        """The folded learning with no note."""
+        learning = self.models.get_learning(learning_id)
+        return LearningDetail.model_validate(
+            learning.model_dump() | {"suggested_target": DEFAULT_ACCEPT_FOLDER}
+        )
+
+
+def learning_reads(request: Request) -> LearningReads:
+    """The learning reads; the folded events alone when not wired, 501 when neither is."""
+    port = _ports(request).learning_reads
+    if port is not None:
+        return port
+    return EventLearningReads(event_read_models(request))
+
+
+def learning_decisions(request: Request) -> LearningDecisions:
+    """The learning decisions, or 501 when not wired."""
+    port = _ports(request).learning_decisions
     if port is None:
         raise _unwired(request)
     return port
@@ -131,6 +173,8 @@ def parse_filter[M: BaseModel](model: type[M], **fields: object) -> M:
 EventReadModelsDep = Annotated[EventReadModels, Depends(event_read_models)]
 HubReadModelsDep = Annotated[HubReadModels, Depends(hub_read_models)]
 IngestHookDep = Annotated[IngestHook, Depends(ingest_hook)]
+LearningReadsDep = Annotated[LearningReads, Depends(learning_reads)]
+LearningDecisionsDep = Annotated[LearningDecisions, Depends(learning_decisions)]
 StreamPortsDep = Annotated[StreamPorts, Depends(stream_ports)]
 CollectorPortsDep = Annotated[CollectorPorts, Depends(collector_ports)]
 SettingsDep = Annotated[ApiSettings, Depends(api_settings)]

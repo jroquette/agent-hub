@@ -16,6 +16,7 @@ forbidden_modules =
     agent_hub.collector
     agent_hub.generator
     agent_hub.tracker_linear
+    agent_hub.hub_git
     agent_hub.cli
     agent_hub.api
     sqlalchemy
@@ -34,7 +35,7 @@ type = layers
 layers =
     agent_hub.cli
     agent_hub.api
-    agent_hub.storage | agent_hub.collector | agent_hub.generator | agent_hub.tracker_linear
+    agent_hub.storage | agent_hub.collector | agent_hub.generator | agent_hub.tracker_linear | agent_hub.hub_git
 
 # `hub web` is the one command that starts the API server; every other cli module stays free of it.
 [importlinter:contract:cli-api-web-command]

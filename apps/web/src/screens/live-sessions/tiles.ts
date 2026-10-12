@@ -1,11 +1,11 @@
 /* Live sessions: tile order and grouping (spec 11), pure so the screen only renders. */
 import type { LiveTile } from "./queries";
 
-export type Grouping = "repo" | "run" | "agent" | "flat";
+export type Grouping = "repo" | "run" | "workflow" | "flat";
 export const GROUPINGS: { id: Grouping; label: string }[] = [
   { id: "repo", label: "Project › repo" },
   { id: "run", label: "Run" },
-  { id: "agent", label: "Agent" },
+  { id: "workflow", label: "Workflow" },
   { id: "flat", label: "Flat" },
 ];
 /** Above this many tiles, each group shows its first GROUP_CAP and a "Show N more" button. */
@@ -16,9 +16,28 @@ export function isGrouping(value: string | null): value is Grouping {
   return GROUPINGS.some((grouping) => grouping.id === value);
 }
 
-/** A red edge: repeated failures (the API's failing notice) or tool errors. */
+/** A red edge only when a problem needs the owner (E11); a failing notice alone stays text. */
 export function troubled(tile: LiveTile): boolean {
-  return Boolean(tile.failing_notice) || tile.errors > 0;
+  return tile.problems.needs_you > 0;
+}
+
+const count = (n: number, one: string, many: string) => `${String(n)} ${n === 1 ? one : many}`;
+
+/**
+ * The tile's problems line (AC-201.14): the first problem that needs the owner, else what the agent
+ * handled, is still on, or the owner interrupted; null without problems.
+ */
+export function problemsLine(tile: LiveTile): string | null {
+  const { needs_you, handled, open, by_you } = tile.problems;
+  if (needs_you > 0) {
+    return tile.needs_you_problem ?? `Needs you: ${count(needs_you, "problem", "problems")}`;
+  }
+  const parts = [
+    handled > 0 ? `${count(handled, "problem", "problems")}, handled by the agent` : "",
+    open > 0 ? `${count(open, "problem", "problems")}, agent is on it` : "",
+    by_you > 0 ? `${String(by_you)} handled by you` : "",
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 /** Inside a group: idle last, troubled first, then the oldest start first. */
@@ -46,14 +65,16 @@ function keyOf(tile: LiveTile, grouping: Grouping): [string, string] {
       return tile.run_id
         ? [tile.run_id, `Run ${tile.issue ?? tile.run_id}${tile.step ? ` · ${tile.step}` : ""}`]
         : ["", "Not in a run"];
-    case "agent":
-      return [tile.agent, tile.agent];
+    case "workflow":
+      return tile.label?.workflow
+        ? [tile.label.workflow, tile.label.workflow]
+        : ["", "No workflow"];
     case "flat":
       return ["flat", "All sessions"];
   }
 }
 
-/** Running tiles (live and idle) by `grouping`; "Not in a run" goes last. */
+/** Running tiles (live and idle) by `grouping`; "Not in a run" and "No workflow" go last. */
 export function groupTiles(tiles: LiveTile[], grouping: Grouping): TileGroup[] {
   const groups = new Map<string, TileGroup>();
   for (const tile of sortTiles(tiles)) {

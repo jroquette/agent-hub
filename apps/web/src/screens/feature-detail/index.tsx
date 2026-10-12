@@ -1,6 +1,6 @@
 import { Fragment, useState } from "react";
 import type { ReactNode } from "react";
-import { useParams, useSearchParams } from "react-router";
+import { Link, useParams, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
 import {
@@ -23,6 +23,7 @@ import {
   useCopied,
   type IconName,
 } from "../../components";
+import { brainRoute } from "../../lib/brainLinks";
 import { fmtClock, middleTruncate } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import { useCollectorState } from "../../shell/GlobalStream";
@@ -34,6 +35,7 @@ import {
   stepStates,
   type StepState,
 } from "../features/parts";
+import { NoteView } from "../brain/NoteView";
 import { NotFoundBody } from "../not-found";
 import { useFeature } from "./queries";
 
@@ -48,17 +50,23 @@ const PASS: Record<Pass, { icon: IconName; tone: string; label: string; title: s
 };
 const passOf = (ac: AcRow): Pass => (ac.passes ? "yes" : ac.manual ? "owner" : "none");
 
-const DOCS: Readonly<Record<string, { file: string; label: string; missing: string }>> = {
-  spec: { file: "spec.md", label: "Spec", missing: "Specs are written by /feature in the hub." },
+type RecordName = components["schemas"]["FeatureRecordName"];
+
+/** The record tabs, in golden-path order, each read from `brain/features/<slug>/<name>.md` (D3). */
+const RECORDS: Readonly<
+  Partial<Record<string, { name: RecordName; label: string; missing: string }>>
+> = {
+  spec: { name: "spec", label: "Spec", missing: "Specs are written by /feature in the hub." },
   research: {
-    file: "research.md",
+    name: "research",
     label: "Research",
     missing: "Allowed for size spike. Research is written by /research in the hub.",
   },
-  plan: {
-    file: "plan.md",
-    label: "Plan",
-    missing: "Plans are written by /create-plan in the hub.",
+  plan: { name: "plan", label: "Plan", missing: "Plans are written by /create-plan in the hub." },
+  eval: {
+    name: "eval",
+    label: "Eval",
+    missing: "The evaluator agent writes eval.md at the end of the golden path.",
   },
 };
 
@@ -96,13 +104,12 @@ function Stepper({ detail }: { detail: Detail }) {
         const state = states[i] ?? "pending";
         const dashed = state === "skipped" || state === "unknown";
         return (
-          <li
-            key={p.id}
-            className="ah-golden-step"
-            data-state={state}
-            style={dashed ? { opacity: 0.7 } : undefined}
-          >
-            <span className="ah-golden-dot" style={dashed ? { borderStyle: "dashed" } : undefined}>
+          <li key={p.id} className="ah-golden-step" data-state={state}>
+            {/* Only the dot fades: faded meta text would fail the contrast check (axe). */}
+            <span
+              className="ah-golden-dot"
+              style={dashed ? { borderStyle: "dashed", opacity: 0.7 } : undefined}
+            >
               {state === "done" && <Icon name="check" />}
             </span>
             <span className="ah-golden-name">{p.label}</span>
@@ -167,6 +174,64 @@ function Gwt({ text }: { text: string }) {
         </Fragment>
       ))}
     </dl>
+  );
+}
+
+/** A copyable verification command, shown whole (the row shows it truncated). */
+function Verification({ ac }: { ac: AcRow }) {
+  const [copied, markCopied] = useCopied();
+  if (!ac.command) {
+    return <span className="ah-subtle">No verification recorded.</span>;
+  }
+  const code = ac.command;
+  return (
+    <span className="ah-row" style={{ gap: 4, alignItems: "flex-start" }}>
+      <code
+        className="ah-mono"
+        style={{
+          fontSize: 12,
+          background: "var(--code-bg)",
+          padding: "2px 6px",
+          borderRadius: "var(--radius-sm)",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-all",
+        }}
+      >
+        {code}
+      </code>
+      <IconButton
+        size="sm"
+        icon={copied ? "check" : "copy"}
+        label={copied ? "Copied" : `Copy the verification of ${ac.id}`}
+        onClick={() => {
+          copyText(code);
+          markCopied();
+        }}
+      />
+    </span>
+  );
+}
+
+/** An expanded AC row (AC-201.37): its text, its verification command (copyable) and evidence. */
+function AcDetail({ ac }: { ac: AcRow }) {
+  return (
+    <div className="ah-stack" style={{ gap: 8 }}>
+      <Gwt text={ac.description} />
+      <dl
+        className="ah-small"
+        style={{ display: "grid", gridTemplateColumns: "88px 1fr", gap: "6px 8px", margin: 0 }}
+      >
+        <dt style={{ fontWeight: 600 }}>Verification</dt>
+        <dd style={{ margin: 0 }}>
+          {ac.manual && <span className="ah-muted">Manual owner step. </span>}
+          <Verification ac={ac} />
+        </dd>
+        <dt style={{ fontWeight: 600 }}>Evidence</dt>
+        <dd style={{ margin: 0 }}>
+          {ac.evidence ?? <span className="ah-subtle">No evidence recorded yet.</span>}
+        </dd>
+      </dl>
+    </div>
   );
 }
 
@@ -390,17 +455,7 @@ function AcTab({ detail }: { detail: Detail }) {
                           background: "var(--surface-sunken)",
                         }}
                       >
-                        <div className="ah-stack" style={{ gap: 6 }}>
-                          <Gwt text={ac.description} />
-                          {ac.evidence && (
-                            <div className="ah-small ah-muted">Evidence: {ac.evidence}</div>
-                          )}
-                          {ac.command && (
-                            <div className="ah-small ah-muted">
-                              Verification: <span className="ah-mono">{ac.command}</span>
-                            </div>
-                          )}
-                        </div>
+                        <AcDetail ac={ac} />
                       </td>
                     </tr>
                   )}
@@ -420,50 +475,11 @@ function AcTab({ detail }: { detail: Detail }) {
   );
 }
 
-function DocTab({ detail, doc }: { detail: Detail; doc: string }) {
-  const meta = DOCS[doc];
-  if (!meta) return null;
-  const path = `brain/features/${detail.slug}/${meta.file}`;
-  if (!detail.files.includes(meta.file)) {
-    return (
-      <div className="ah-card">
-        <EmptyState icon="file-text" title={`No ${meta.file} for this feature.`}>
-          {meta.missing}
-        </EmptyState>
-      </div>
-    );
-  }
+function Verdict({ detail }: { detail: Detail }) {
+  if (!detail.verdict) return null;
   return (
-    <div className="ah-card ah-pad ah-stack" style={{ gap: 8 }}>
-      <div className="ah-row" style={{ gap: 8 }}>
-        <Icon name="file-text" size="sm" />
-        <span className="ah-mono">{path}</span>
-        <span className="ah-subtle ah-small">in the {detail.project} hub</span>
-      </div>
-      <p className="ah-small ah-muted" style={{ margin: 0 }}>
-        This version reads only the record&apos;s frontmatter and verdict. Open the file in the hub
-        to read it.
-      </p>
-    </div>
-  );
-}
-
-function EvalTab({ detail }: { detail: Detail }) {
-  if (!detail.verdict) {
-    return (
-      <div className="ah-card">
-        <EmptyState icon="list-checks" title="Not evaluated yet.">
-          The evaluator agent writes eval.md at the end of the golden path.
-        </EmptyState>
-      </div>
-    );
-  }
-  return (
-    <div className="ah-card ah-pad ah-stack" style={{ gap: 8 }}>
-      <div className="ah-row" style={{ gap: 8 }}>
-        <StatusBadge status={VERDICT_STATUS[detail.verdict]} label={detail.verdict} />
-        <span className="ah-mono ah-small">brain/features/{detail.slug}/eval.md</span>
-      </div>
+    <div className="ah-stack" style={{ gap: 8 }}>
+      <StatusBadge status={VERDICT_STATUS[detail.verdict]} label={detail.verdict} />
       {detail.verdict_line && (
         <blockquote
           className="ah-mono ah-small"
@@ -478,6 +494,43 @@ function EvalTab({ detail }: { detail: Detail }) {
           {detail.verdict_line}
         </blockquote>
       )}
+    </div>
+  );
+}
+
+/** A record tab (Spec, Research, Plan, Eval): the note itself, read through the brain route (D3). */
+function RecordTab({ detail, tab }: { detail: Detail; tab: string }) {
+  const meta = RECORDS[tab];
+  if (!meta) return null;
+  const file = `${meta.name}.md`;
+  const record = detail.records.find((r) => r.name === meta.name);
+  const verdict = meta.name === "eval" ? <Verdict detail={detail} /> : null;
+  if (!record?.present) {
+    return (
+      <div className="ah-card">
+        <EmptyState icon="file-text" title={`No ${file} yet.`}>
+          {meta.missing}
+        </EmptyState>
+      </div>
+    );
+  }
+  return (
+    <div className="ah-card ah-pad ah-stack" style={{ gap: 12 }}>
+      <div className="ah-row ah-wrap" style={{ gap: 8 }}>
+        <Icon name="file-text" size="sm" />
+        <span className="ah-mono ah-small">brain/{record.path}</span>
+        <span className="ah-grow" />
+        <Link className="ah-small" to={brainRoute(detail.project, record.path)}>
+          Open in Brain
+        </Link>
+      </div>
+      {verdict}
+      <NoteView
+        key={record.path}
+        project={detail.project}
+        path={record.path}
+        missing={`No ${file} yet.`}
+      />
     </div>
   );
 }
@@ -569,17 +622,13 @@ export function FeatureDetailScreen() {
     );
   };
   const tabs = [
-    { id: "acs", label: "Acceptance criteria", count: detail.acs?.total },
-    { id: "spec", label: "Spec" },
-    { id: "research", label: "Research" },
-    { id: "plan", label: "Plan" },
-    { id: "eval", label: "Evaluation" },
+    ...Object.entries(RECORDS).map(([id, meta]) => ({ id, label: meta?.label ?? id })),
+    { id: "acs", label: "Criteria", count: detail.acs?.total },
     { id: "issues", label: "Issues", count: detail.issues.length },
   ];
   let body: ReactNode;
-  if (tab === "eval") body = <EvalTab detail={detail} />;
-  else if (tab === "issues") body = <IssuesTab detail={detail} />;
-  else if (DOCS[tab]) body = <DocTab detail={detail} doc={tab} />;
+  if (tab === "issues") body = <IssuesTab detail={detail} />;
+  else if (RECORDS[tab]) body = <RecordTab detail={detail} tab={tab} />;
   else body = <AcTab detail={detail} />;
 
   return (
@@ -647,7 +696,7 @@ export function FeatureDetailScreen() {
       )}
       <Tabs
         tabs={tabs}
-        value={DOCS[tab] || tab === "eval" || tab === "issues" ? tab : "acs"}
+        value={RECORDS[tab] || tab === "issues" ? tab : "acs"}
         onChange={setTab}
         label="Feature record"
       />

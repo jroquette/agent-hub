@@ -4,9 +4,9 @@
 
 A sketch for Phases 2 and 3: how the three derived entities of the [domain model](domain-model.md) are computed from
 canonical events ([SPEC](../SPEC.md#data-sources-and-event-model)). For each one it lists the event types and fields
-that create, change and close it, and the properties any implementation must have. Phase 2 built Session, WorkflowRun,
-Learning and Approval as folds in `agent_hub.core` (`sessions/`, `runs/`, `learnings/`, `approvals/`); the questions it
-decided are under "Phase 2 decisions", and what stays open is under Open questions.
+that create, change and close it, and the properties any implementation must have. Phase 2 built Session (with its
+label, actors and problems, AGH-201), WorkflowRun, Learning and Approval as folds in `agent_hub.core` (`sessions/`,
+`runs/`, `learnings/`, `approvals/`); the questions it decided are under "Phase 2 decisions".
 
 ## Contract
 
@@ -17,8 +17,8 @@ decided are under "Phase 2 decisions", and what stays open is under Open questio
   patterns before an event is written. A stored event is never changed, so a secret that reaches the store stays.
 - Decided in Phase 2: redaction runs once, in core's `IngestEvents`, for every entry point, and events carry no raw
   message, reasoning or tool-output text: each type keeps only the keys of the "Payload kept" table
-  (`agent_hub.core.events.payload_keys`), and `IngestEvents` drops any other key. No transcript blob is stored in
-  Phase 2; the transcript stays in Claude Code's folder.
+  (`agent_hub.core.events.payload_keys`), and `IngestEvents` drops any other key. No transcript blob is stored;
+  the one body excerpt is a failed tool's `error_message` (300 characters, redacted, [ADR 0023](../adr/0023-short-error-message.md)).
 - The post-session extraction writes its results (summary, decisions, proposed learnings) as events, so they survive
   the deletion of the transcript. The Session records where its transcript is and when it is deleted.
 
@@ -53,6 +53,16 @@ result; else `idle`; `ended` on `session.end`. With no event for 30 minutes and 
 session started by `hub run` carries the run, step and attempt in `payload` (the sensor reads them from
 `AGENT_HUB_RUN_ID`, `AGENT_HUB_STEP` and `AGENT_HUB_ATTEMPT`), which is how a Session joins its run.
 
+Derived on read by AGH-201 (pure, order-independent, from stored events only; labels and problems carry `derived: true`):
+
+| Part | Rule |
+|---|---|
+| `label` (S1, `sessions/session_label.py`) | `branch`: the latest non-empty `git_branch`; `repo`: the first event's; `worktree`: the folder after `.claude/worktrees/` in the last `session.start` `cwd`; `workflows`: the user prompts' slash commands and the Skill calls' `skill`, as `/<name>` (a `<plugin>:` prefix dropped), in order, once each; `workflow`: the first not in `ROUTINE_COMMANDS` (`/kickoff`, `/handoff`, `/clear`, `/compact`, `/model`, …), else the first; `issue`: set at read time with the hub's `LabelRules` (tracker teams, branch prefix), outside the memo, as `^(<prefix>)?<team>-<n>\b` on the branch (case-insensitive), else the worktree name, shown `<TEAM>-<n>`, else `null` |
+| `actors` (S2, `sessions/session_actors.py`) | the main agent (no `agent_id`; `agent` empty or `main`), then each subagent by `(agent, agent_id)` in the order it first acted, linked to the main agent's Agent or Task call of the same `subagent_type` that starts before its first event and whose result, if any, comes after its last (its `description`, its event id); two such calls: no link. `parent_session_id` stays `null`: subagents share the session id |
+| problem kinds (S4, `sessions/session_problems.py`) | one per failure fact (its fact-key winner): `tool_failed`; `command_exit` (Bash); `hook_failed` (an error whose `hook` is set and not `guard`); `interrupted` (an error whose text starts "interrupted"); `guard_denied` (`status: denied`); `guard_ask_open`, `guard_ask_declined` (a guard-ask Approval); `gate_failed` (`gate.result` `failed`, the Stop gate included). Each has `tool`, `where` (from the paired `tool.call`: command, pattern, URL, MCP tool, skill or path, 120 chars; a gate's name, path or command), `message` (`error_message`, else `error_line`, else the rule or command and exit code, so events stored before ADR 0023 still read), time and actor |
+| resolutions | in canonical order: `interrupted` and a declined ask are `by_you`; an open ask `needs_you`; a later `ok` result of the same actor, tool and `where`, or a later pass of the same gate, `recovered`; a later tool call of the same actor `agent_continued`; else `open` while the session is `live` and the actor has not replied since, `needs_you` once it replied (ended its turn), waits, idles or ends |
+| summary and counts | a counts line, then needs-you problems first, by time: at most 5 lines, each with its `event_id`; lists and tiles carry `{needs_you, open, handled, by_you}` |
+
 ### WorkflowRun
 
 Created and moved by `executor` events that carry `workflow`, `step` and the run id. A retried step carries its
@@ -80,12 +90,14 @@ A run ends only on its explicit terminal event, `run.end`, never because a step 
 |---|---|---|
 | Create | `learning.proposed` | its `(source, source_id)` is the identity; `payload.text`, `payload.target` (the brain file it would change), `payload.author` (person or agent); `session` → source session, none for a person's proposal |
 | Change | none | nothing changes a learning between proposal and close |
-| Close | `learning.accepted` naming the proposal in `payload.proposal` | status accepted, who and when, `payload.brain_path` and `payload.commit` it became |
-| Close | `learning.rejected` naming the proposal | status rejected, reason |
+| Close | `learning.accepted` naming the proposal in `payload.proposal` | status accepted, who and when, `payload.brain_path` and `payload.commit` it became; from the app also `pr_url`, `branch`, `state` |
+| Close | `learning.rejected` naming the proposal | status rejected, reason; from the app also `pr_url`, `branch`, `state` |
 
 The first terminal event, in its source's own order, wins; a later one stays in the store and the fold ignores it. An
 accept whose proposal is not stored yet waits and is applied once the proposal arrives. A learning stays `proposed`
-until closed. Accepting one records the fact; editing the brain stays a human act.
+until closed. An app decision (source `control_plane`, [ADR 0024](../adr/0024-learning-actions-from-the-app.md)) only
+opens a hub PR; its `state` is `accepted_pr_open` or `rejected_pr_open`, read as `in_brain` or `archived` once the note
+is at its destination in the hub checkout. The note's text and summary are read on request, never folded.
 
 ### Approval
 
@@ -109,12 +121,12 @@ E3); the session's next UserPromptSubmit, Stop or SessionEnd without it decides 
   gate and run state from the executor then `claude_code`. The losers stay in Raw events with a `conflict` flag.
 - **D18, hubs.** The hub registry (`hubs.json`) mints a UUIDv7 per registered hub; Project, Hub and Repo are still read
   from each hub's `hub.json` and `hub.lock`.
-- **E3, tool errors.** From PostToolUseFailure (`status: error`, `error_line` the first line, `interrupted` on an
-  interrupt).
+- **E3, tool errors.** From PostToolUseFailure (`status: error`, `error_line` the first line, `error_message` the
+  short text of ADR 0023, `interrupted` on an interrupt).
 - **E4, triggers and subagents.** `session.start.trigger` is the hook's `source` (startup, resume, clear, compact,
-  fork); `git_branch` comes only from the transcript. Events from inside a subagent carry `agent` = its type and
-  `payload.agent_id`. Stop, SubagentStart, SubagentStop, PreCompact and a Notification that is not a permission prompt
-  yield no event.
+  fork); `git_branch` comes only from the transcript, which writes it on every event of a line naming `gitBranch`.
+  Events from inside a subagent carry `agent` = its type and `payload.agent_id`. Stop, SubagentStart, SubagentStop,
+  PreCompact and a Notification that is not a permission prompt yield no event.
 - **E6, subagent transcripts.** On SubagentStop the server tails `agent_transcript_path`.
 
 ## Invariants
@@ -134,5 +146,5 @@ E3); the session's next UserPromptSubmit, Stop or SessionEnd without it decides 
 
 - Storage and retention of a redacted transcript blob, if one is ever kept; the period is an open question of the SPEC.
 - A person's learning outside an agent session: which `session` value it carries.
-- Subagent lanes beyond `agent`/`agent_id` attribution, and linking a subagent transcript to its Agent tool call.
+- Subagent lanes beyond `agent`/`agent_id` attribution and the Agent-call link of Actors above.
 - Persisted derived tables, when folding on read stops scaling (past about 100,000 events).

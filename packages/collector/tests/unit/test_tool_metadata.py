@@ -1,8 +1,12 @@
 from pathlib import PurePosixPath
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from agent_hub.collector.tool_metadata import (
+    ERROR_MESSAGE_LIMIT,
+    error_message,
     learning_proposal,
     output_bytes,
     repo_root_of,
@@ -187,3 +191,115 @@ def test_proposes_nothing_when_write_outside_brain_inbox() -> None:
         )
         is None
     )
+
+
+def test_keeps_skill_name_when_tool_is_skill() -> None:
+    payload = tool_call_payload(
+        "Skill", {"skill": "hub-workflow:feature", "args": SENTINEL}, repo_root=ROOT
+    )
+
+    assert payload == {"skill": "hub-workflow:feature"}
+
+
+def test_keeps_recipient_when_tool_is_send_message() -> None:
+    payload = tool_call_payload(
+        "SendMessage", {"to": "reviewer-" + "x" * 100, "message": SENTINEL}, repo_root=ROOT
+    )
+
+    assert set(payload) == {"to"}
+    shown = payload["to"]
+    assert isinstance(shown, str)
+    assert shown.startswith("reviewer-")
+    assert len(shown) <= 80
+    assert SENTINEL not in repr(payload)
+
+
+def test_keeps_nothing_when_skill_or_recipient_not_text() -> None:
+    assert tool_call_payload("Skill", {"skill": 3}, repo_root=ROOT) == {}
+    assert tool_call_payload("SendMessage", {"to": ["a"]}, repo_root=ROOT) == {}
+
+
+def test_collapses_whitespace_when_error_spans_lines() -> None:
+    message = error_message("  Exit code 2\n\n\tmake: *** [check]   Error 2\r\n  ")
+
+    assert message == "Exit code 2 make: *** [check] Error 2"
+
+
+def test_returns_none_when_error_blank_or_not_text() -> None:
+    assert error_message(" \n\t ") is None
+    assert error_message({"_omitted_bytes": 70_000}) is None
+    assert error_message(None) is None
+
+
+def test_hides_token_when_token_straddles_error_message_cap() -> None:
+    token = "gh" + "p_" + "Z9y8X7w6" * 5
+    text = "e" * (ERROR_MESSAGE_LIMIT - 10) + " " + token + " tail"
+
+    message = error_message(text)
+
+    assert message is not None
+    assert len(message) <= ERROR_MESSAGE_LIMIT
+    assert message.endswith("…")
+    assert not _survives(token, message)
+
+
+# One synthetic sample of every r1 kind, built from fragments: (text holding it, secret part).
+_ALNUM = "A1b2C3d4E5f6G7h8"
+_PEM_LINES = ["MIIEow" + _ALNUM * 4, _ALNUM * 4 + "Zz", "QwErTy" + _ALNUM]
+_SECRET_SAMPLES: tuple[tuple[str, str], ...] = (
+    ("gh" + "p_" + _ALNUM * 2 + "xyzw", "gh" + "p_" + _ALNUM * 2 + "xyzw"),
+    ("github" + "_pat_" + "11AB" + _ALNUM * 3, "github" + "_pat_" + "11AB" + _ALNUM * 3),
+    ("lin" + "_api_" + _ALNUM * 2 + "Qq", "lin" + "_api_" + _ALNUM * 2 + "Qq"),
+    ("sk" + "-ant-" + "api03-" + _ALNUM * 3, "sk" + "-ant-" + "api03-" + _ALNUM * 3),
+    ("sk" + "-proj-" + _ALNUM * 3, "sk" + "-proj-" + _ALNUM * 3),
+    ("AK" + "IA" + "QWERTY2345ZXCV78", "AK" + "IA" + "QWERTY2345ZXCV78"),
+    (
+        "aws_secret_access_key" + " = " + "wJalr" + "XUtnFEMI/K7MDENG/bPxRfiCY" + "EXAMPLEKEY",
+        "wJalr" + "XUtnFEMI/K7MDENG/bPxRfiCY" + "EXAMPLEKEY",
+    ),
+    (
+        "Authorization: Bearer " + "eyJ" + _ALNUM * 2 + ".payload" + _ALNUM,
+        "eyJ" + _ALNUM * 2 + ".payload" + _ALNUM,
+    ),
+    (
+        "-----BEGIN "
+        + "RSA PRIVATE KEY-----\n"
+        + "\n".join(_PEM_LINES)
+        + "\n-----END RSA PRIVATE KEY-----",
+        "".join(_PEM_LINES),
+    ),
+    (
+        "https://" + "deploy:" + "s3cr3t" + "Passw0rd" + "@git.example.com/acme/repo.git",
+        "deploy:" + "s3cr3t" + "Passw0rd",
+    ),
+    ("DB_PASSWORD=" + "hunter2" + "Hunter2", "hunter2" + "Hunter2"),
+)
+
+
+def _survives(secret: str, text: str, *, window: int = 8) -> bool:
+    """Whether any ``window``-long piece of ``secret`` is still in ``text``."""
+    pieces = {secret[start : start + window] for start in range(len(secret) - window + 1)}
+    return any(piece in text for piece in pieces)
+
+
+@settings(max_examples=300, deadline=None)
+@given(
+    filler=st.text(max_size=400),
+    index=st.integers(min_value=0, max_value=len(_SECRET_SAMPLES) - 1),
+    offset=st.integers(min_value=0, max_value=400),
+    spacing=st.sampled_from([" ", "\n", "\t  ", "\r\n\n"]),
+)
+def test_keeps_no_secret_when_error_message_built_property(
+    *, filler: str, index: int, offset: int, spacing: str
+) -> None:
+    text, secret = _SECRET_SAMPLES[index]
+    cut = min(offset, len(filler))
+    error = f"{filler[:cut]}{spacing}{text}{spacing}{filler[cut:]}"
+
+    message = error_message(error) or ""
+    command = tool_call_payload("Bash", {"command": error}, repo_root=ROOT).get("command", "")
+
+    assert isinstance(command, str)
+    assert len(message) <= ERROR_MESSAGE_LIMIT
+    for shown in (message, command):
+        assert not _survives(secret, shown)

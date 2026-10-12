@@ -98,3 +98,54 @@ def test_reads_ac_rows_when_feature_detail_requested(
         ("AC-7.2", False, False),
         ("AC-7.3", False, True),
     ]
+
+
+def test_lists_records_and_ac_fields_when_records_partly_present(
+    composed: Any, make_hub: Callable[..., Path]
+) -> None:
+    hub = _features_hub(make_hub)
+    files = {"spec.md": SPEC, "plan.md": "# Plan\n", "features.json": _record((True, False))}
+    _feature(hub, "partial", files)
+    composed.client.post("/api/v1/hubs", json={"path": str(hub)})
+
+    response = composed.client.get("/api/v1/features/demo/partial")
+
+    assert response.status_code == 200, response.text
+    detail = response.json()
+    records = {record["name"]: record for record in detail["records"]}
+    assert {name: record["present"] for name, record in records.items()} == {
+        "spec": True,
+        "research": False,
+        "plan": True,
+        "eval": False,
+        "issues": False,
+    }
+    assert records["plan"]["path"] == "features/partial/plan.md"
+    assert detail["ac_rows"] == [
+        {
+            "id": "AC-7.1",
+            "description": "Criterion 1",
+            "repo": "demo-api",
+            "passes": True,
+            "manual": False,
+            "evidence": "test run",
+            "command": "make check",
+        },
+        {
+            "id": "AC-7.2",
+            "description": "Criterion 2",
+            "repo": "demo-api",
+            "passes": False,
+            "manual": True,
+            "evidence": None,
+            "command": "manual",
+        },
+    ]
+    plan = composed.client.get(
+        "/api/v1/projects/demo/brain/note", params={"path": records["plan"]["path"]}
+    )
+    research = composed.client.get(
+        "/api/v1/projects/demo/brain/note", params={"path": records["research"]["path"]}
+    )
+    assert (plan.status_code, plan.json()["markdown"]) == (200, "# Plan\n")
+    assert research.status_code == 404

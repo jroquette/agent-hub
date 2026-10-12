@@ -6,8 +6,44 @@
 import type { components } from "../../api/schema";
 import type { EventCategory, IconName, MinimapMarkKind } from "../../components";
 import { fmtInt } from "../../lib/format";
+import {
+  contentPhrase,
+  gatePhrase,
+  guardAskPhrase,
+  guardDeniedPhrase,
+  learningPhrase,
+  phraseText,
+  sessionEndPhrase,
+  sessionStartPhrase,
+  stepPhrase,
+  stopBlockedPhrase,
+  toolPhrase,
+  type Phrase,
+} from "./verbs";
 
 export type ApiEvent = components["schemas"]["TimelineEvent"];
+export type SessionActor = components["schemas"]["Actor"];
+
+/** Who did a row (S2): the main agent, a subagent of a type, you (a prompt) or a workflow run. */
+export interface RowActor {
+  kind: "main" | "subagent" | "you" | "run";
+  label: string;
+  /** The subagent type. */
+  type?: string | undefined;
+}
+
+export const MAIN_AGENT: RowActor = { kind: "main", label: "Main agent" };
+export const YOU: RowActor = { kind: "you", label: "You" };
+export const WORKFLOW_RUN: RowActor = { kind: "run", label: "Workflow run" };
+
+export function subagentActor(type: string): RowActor {
+  return { kind: "subagent", label: `Subagent · ${type}`, type };
+}
+
+/** The row actor of a session actor (the API's `actor` object). */
+export function rowActorOf(actor: SessionActor): RowActor {
+  return actor.kind === "subagent" ? subagentActor(actor.type ?? "subagent") : MAIN_AGENT;
+}
 
 /** Sessions with at least this many events open with their middle turns collapsed (spec 10). */
 export const LONG_SESSION_EVENTS = 5000;
@@ -35,6 +71,9 @@ export interface TraceEvent {
   tool?: string | undefined;
   /** The collapsed text; it may hold `[redacted: kind]` markers. */
   text: string;
+  /** Who did it, and the plain-verb sentence of what was done (AC-201.16, AC-201.17). */
+  actor: RowActor;
+  phrase: Phrase;
   mono: boolean;
   exit?: number | undefined;
   durationS?: number | undefined;
@@ -63,13 +102,20 @@ export interface TraceGroup {
   items: TraceEvent[];
   turn: number;
   lane: string | null;
+  actor: RowActor;
 }
 
 /** A subagent's events, contiguous, under its header (spec 10, "Subagent lanes"). */
 export interface TraceLane {
   kind: "lane";
   id: string;
+  /** The subagent type. */
   agent: string;
+  actor: RowActor;
+  /** The task of the Agent call that started it, when linked. */
+  description: string | null;
+  /** The row id of the Agent call that started it, when linked (rows nest under it). */
+  startedBy: string | null;
   at: string;
   end: string;
   items: (TraceEvent | TraceGroup)[];
@@ -176,18 +222,21 @@ function base(
   event: ApiEvent,
   fields: Omit<
     TraceEvent,
-    "kind" | "id" | "at" | "turn" | "lane" | "events" | "search" | "facts"
-  > & { facts?: [string, string][] },
+    "kind" | "id" | "at" | "turn" | "lane" | "events" | "search" | "facts" | "actor"
+  > & { facts?: [string, string][]; actor?: RowActor },
 ): TraceEvent {
+  const laneId = lane(event);
   return {
     kind: "event",
     id: event.event_id,
     at: event.timestamp,
     turn: 0,
-    lane: lane(event),
+    lane: laneId,
     events: [event],
     search: "",
     facts: [],
+    // A subagent's type is settled once its lane is linked (buildTrace).
+    actor: laneId === null ? MAIN_AGENT : subagentActor(event.agent ?? "subagent"),
     ...fields,
   };
 }
@@ -217,12 +266,14 @@ function toolText(tool: string, payload: Payload): { text: string; tool: string;
 
 function callRow(call: ApiEvent, result: ApiEvent | undefined): TraceEvent {
   const payload = call.payload;
-  const shown = toolText(str(payload, "tool") ?? "tool", payload);
+  const tool = str(payload, "tool") ?? "tool";
+  const shown = toolText(tool, payload);
   const row = base(call, {
     cat: "tool",
     label: "Tool call",
     tool: shown.tool,
     text: shown.text,
+    phrase: toolPhrase(tool, payload),
     mono: shown.mono,
     plus: num(payload, "lines_added"),
     minus: num(payload, "lines_removed"),
@@ -250,6 +301,7 @@ function applyResult(row: TraceEvent, result: ApiEvent): void {
     row.label = "Denied by guard";
     row.icon = "shield-x";
     const rule = str(payload, "rule");
+    row.phrase = guardDeniedPhrase(row.tool ?? str(payload, "tool"), rule);
     row.note = rule ? `rule: ${rule}` : undefined;
     row.facts.push([
       "Rule",
@@ -267,6 +319,7 @@ function contentRow(event: ApiEvent, isPrompt: boolean): TraceEvent {
       cat: "reasoning",
       label: "Recorded reasoning summary",
       text: size,
+      phrase: contentPhrase("reasoning", chars, undefined),
       mono: false,
       content: { role: "reasoning", chars },
     });
@@ -276,6 +329,8 @@ function contentRow(event: ApiEvent, isPrompt: boolean): TraceEvent {
     cat: isPrompt ? "prompt" : "message",
     label: isPrompt ? `Prompt${command ? ` · ${command}` : ""}` : "Agent message",
     text: size,
+    phrase: contentPhrase(isPrompt ? "prompt" : "message", chars, command),
+    ...(isPrompt ? { actor: YOU } : {}),
     mono: false,
     content: { role: str(payload, "role") ?? "assistant", chars },
   });
@@ -299,7 +354,8 @@ function startRow(event: ApiEvent, segment: number): TraceEvent {
     cat: "lifecycle",
     label: segment > 1 ? `Session resumed · segment ${String(segment)}` : "Session started",
     icon: "play",
-    text: `${event.agent ?? "main"} in ${event.repo ?? event.project}${model ? ` · ${model}` : ""}`,
+    text: `${event.repo ?? event.project}${model ? ` · ${model}` : ""}`,
+    phrase: sessionStartPhrase(segment, event.repo ?? event.project, model),
     mono: false,
     facts,
   });
@@ -313,6 +369,7 @@ function endRow(event: ApiEvent): TraceEvent {
     label: "Session ended",
     icon: "circle-stop",
     text: [outcome, reason].filter(Boolean).join(" · "),
+    phrase: sessionEndPhrase(outcome, reason),
     mono: false,
   });
 }
@@ -346,6 +403,7 @@ function gateRequestRow(event: ApiEvent, index: GateIndex): TraceEvent {
       label: "Guard asks",
       icon: "shield-alert",
       text: `${path ?? "A tool call"} needs approval`,
+      phrase: guardAskPhrase(path),
       mono: false,
       note,
       facts: rule ? [["Rule", rule]] : [],
@@ -356,6 +414,7 @@ function gateRequestRow(event: ApiEvent, index: GateIndex): TraceEvent {
       cat: "gate",
       label: "Permission prompt",
       text: "Claude Code asked for permission",
+      phrase: { verb: "Asked you for permission" },
       mono: false,
       note,
     });
@@ -366,6 +425,7 @@ function gateRequestRow(event: ApiEvent, index: GateIndex): TraceEvent {
     cat: "gate",
     label: "Gate",
     text: `${name} requested${command ? ` · ${command}` : ""}`,
+    phrase: gatePhrase(name, result ? (str(result.payload, "result") ?? "decided") : undefined),
     mono: false,
     note,
   });
@@ -385,6 +445,7 @@ function gateResultRow(event: ApiEvent): TraceEvent {
       label: "Stop blocked",
       icon: "octagon-x",
       text: str(payload, "command") ?? "Stop gate",
+      phrase: stopBlockedPhrase(str(payload, "command")),
       mono: true,
       exit: num(payload, "exit_code"),
       note: "check_fast failing for changed code",
@@ -395,6 +456,7 @@ function gateResultRow(event: ApiEvent): TraceEvent {
     cat: result === "failed" ? "error" : "gate",
     label: "Gate result",
     text: `${str(payload, "name") ?? str(payload, "kind") ?? "gate"} ${result}`,
+    phrase: gatePhrase(str(payload, "name") ?? str(payload, "kind") ?? "gate", result),
     mono: false,
     exit: num(payload, "exit_code"),
   });
@@ -408,6 +470,11 @@ function otherRow(event: ApiEvent): TraceEvent | null {
         cat: "decision",
         label: "Decision",
         text: str(payload, "text") ?? str(payload, "choice") ?? "Decision",
+        phrase: {
+          verb: "Decided:",
+          object: str(payload, "text") ?? str(payload, "choice") ?? "a decision",
+          kind: "text",
+        },
         mono: false,
         derived: "Extracted from transcript",
       });
@@ -420,6 +487,7 @@ function otherRow(event: ApiEvent): TraceEvent | null {
         cat: "learning",
         label: `Learning ${verb}`,
         text: str(payload, "text") ?? "Learning",
+        phrase: learningPhrase(event.type, str(payload, "text")),
         mono: false,
         note: target ? `target ${target}` : undefined,
       });
@@ -430,6 +498,8 @@ function otherRow(event: ApiEvent): TraceEvent | null {
         label: `Step ${event.step ?? str(payload, "stage") ?? ""} started`.replace("  ", " "),
         icon: "route",
         text: str(payload, "stage") ?? str(payload, "run") ?? "step",
+        phrase: stepPhrase("step.start", event.step ?? str(payload, "stage") ?? "step", undefined),
+        actor: WORKFLOW_RUN,
         mono: false,
       });
     case "step.end":
@@ -438,6 +508,8 @@ function otherRow(event: ApiEvent): TraceEvent | null {
         label: `Step ${event.step ?? ""} ended`.replace("  ", " "),
         icon: "route",
         text: str(payload, "status") ?? "ended",
+        phrase: stepPhrase("step.end", event.step ?? "step", str(payload, "status")),
+        actor: WORKFLOW_RUN,
         mono: false,
         note: str(payload, "reason"),
       });
@@ -447,6 +519,8 @@ function otherRow(event: ApiEvent): TraceEvent | null {
         label: "Run ended",
         icon: "route",
         text: str(payload, "status") ?? "ended",
+        phrase: stepPhrase("run.end", "run", str(payload, "status")),
+        actor: WORKFLOW_RUN,
         mono: false,
         note: str(payload, "reason"),
       });
@@ -467,8 +541,15 @@ function isPrompt(event: ApiEvent): boolean {
   return event.type === "message" && str(event.payload, "role") === "user";
 }
 
+/** The row as one line: "Main agent · Ran skill /feature" (AC-201.16). */
+export function lineOf(row: TraceEvent): string {
+  return `${row.actor.label} · ${phraseText(row.phrase)}`;
+}
+
 function withSearch(row: TraceEvent): TraceEvent {
-  row.search = searchable([row.label, row.tool ?? "", row.text, row.note ?? ""].join(" "));
+  row.search = searchable(
+    [row.label, row.tool ?? "", row.text, row.note ?? "", lineOf(row)].join(" "),
+  );
   return row;
 }
 
@@ -514,6 +595,11 @@ function rowsOf(events: ApiEvent[]): TraceEvent[] {
         label: "Tool result",
         tool: str(event.payload, "tool"),
         text: str(event.payload, "tool") ?? "tool",
+        phrase: {
+          verb: "Got a result from",
+          object: str(event.payload, "tool") ?? "a tool",
+          kind: "text",
+        },
         mono: false,
       });
       applyResult(row, event);
@@ -590,6 +676,7 @@ function grouped(rows: TraceEvent[]): (TraceEvent | TraceGroup)[] {
         items: run,
         turn: first.turn,
         lane: first.lane,
+        actor: first.actor,
       });
     } else {
       out.push(...run);
@@ -620,50 +707,142 @@ function toolSummary(rows: TraceEvent[]): string {
     .join(", ");
 }
 
-function turnItems(rows: TraceEvent[]): TraceItem[] {
-  const items: TraceItem[] = [];
+/** How a subagent's lane is named and where it nests (S2). */
+interface LaneLink {
+  type: string;
+  description: string | null;
+  startedBy: string | null;
+}
+
+function isAgentCall(row: TraceEvent): boolean {
+  return row.lane === null && row.tool === "Agent" && row.events[0]?.type === "tool.call";
+}
+
+/**
+ * Links each subagent lane to the Agent call that started it: by the session's actors when
+ * they name the call, else to the one unclaimed Agent call of the same type that starts before
+ * the lane and ends (if it ended) after it. Two candidates give no link, never a guess.
+ */
+function linkLanes(rows: TraceEvent[], actors: readonly SessionActor[]): Map<string, LaneLink> {
   const lanes = new Map<string, TraceEvent[]>();
-  const order: (TraceEvent | string)[] = [];
   for (const row of rows) {
-    if (row.lane === null) {
-      order.push(row);
-    } else {
-      const list = lanes.get(row.lane);
-      if (list) list.push(row);
-      else {
-        lanes.set(row.lane, [row]);
-        order.push(row.lane);
-      }
-    }
+    if (row.lane === null) continue;
+    const list = lanes.get(row.lane);
+    if (list) list.push(row);
+    else lanes.set(row.lane, [row]);
   }
-  let main: TraceEvent[] = [];
-  const flushMain = () => {
-    items.push(...grouped(main));
-    main = [];
-  };
-  for (const entry of order) {
-    if (typeof entry !== "string") {
-      main.push(entry);
-      continue;
-    }
-    flushMain();
-    const laneRows = lanes.get(entry) ?? [];
-    const first = laneRows[0];
-    const last = laneRows[laneRows.length - 1];
-    if (!first || !last) continue;
-    items.push({
-      kind: "lane",
-      id: entry,
-      agent: first.events[0]?.agent ?? "subagent",
-      at: first.at,
-      end: last.at,
-      items: grouped(laneRows),
-      turn: first.turn,
-      eventCount: laneRows.length,
-      errors: laneRows.filter((row) => row.cat === "error").length,
+  const rowOfEvent = new Map<string, TraceEvent>();
+  for (const row of rows) for (const event of row.events) rowOfEvent.set(event.event_id, row);
+  const known = new Map(
+    actors.flatMap((actor) =>
+      actor.kind === "subagent" && actor.agent_id ? [[actor.agent_id, actor] as const] : [],
+    ),
+  );
+  const calls = rows.filter(isAgentCall);
+  const claimed = new Set<string>();
+  const links = new Map<string, LaneLink>();
+  const descriptionOf = (row: TraceEvent | undefined) =>
+    row ? (str(row.events[0]?.payload ?? {}, "description") ?? null) : null;
+
+  for (const [id, laneRows] of lanes) {
+    const actor = known.get(id);
+    const type = actor?.type ?? laneRows[0]?.events[0]?.agent ?? "subagent";
+    const starter = actor?.started_by_event_id
+      ? rowOfEvent.get(actor.started_by_event_id)
+      : undefined;
+    if (starter) claimed.add(starter.id);
+    links.set(id, {
+      type,
+      description: actor?.description ?? descriptionOf(starter),
+      startedBy: starter?.id ?? null,
     });
   }
-  flushMain();
+  for (const [id, laneRows] of lanes) {
+    const link = links.get(id);
+    const first = laneRows[0];
+    const last = laneRows[laneRows.length - 1];
+    if (link?.startedBy !== null || !first || !last) continue;
+    const candidates = calls.filter((call) => {
+      const ended = call.events[1]?.timestamp;
+      return (
+        !claimed.has(call.id) &&
+        str(call.events[0]?.payload ?? {}, "subagent_type") === link.type &&
+        call.at <= first.at &&
+        (ended === undefined || ended >= last.at)
+      );
+    });
+    const [only] = candidates;
+    if (candidates.length !== 1 || !only) continue;
+    claimed.add(only.id);
+    link.startedBy = only.id;
+    link.description ??= descriptionOf(only);
+  }
+  return links;
+}
+
+function laneItem(
+  id: string,
+  laneRows: TraceEvent[],
+  link: LaneLink | undefined,
+): TraceLane | null {
+  const first = laneRows[0];
+  const last = laneRows[laneRows.length - 1];
+  if (!first || !last) return null;
+  const type = link?.type ?? "subagent";
+  return {
+    kind: "lane",
+    id,
+    agent: type,
+    actor: subagentActor(type),
+    description: link?.description ?? null,
+    startedBy: link?.startedBy ?? null,
+    at: first.at,
+    end: last.at,
+    items: grouped(laneRows),
+    turn: first.turn,
+    eventCount: laneRows.length,
+    errors: laneRows.filter((row) => row.cat === "error").length,
+  };
+}
+
+/** A turn's items: main rows (grouped), each lane right after the Agent call that started it. */
+function turnItems(rows: TraceEvent[], links: Map<string, LaneLink>): TraceItem[] {
+  const lanes = new Map<string, TraceEvent[]>();
+  for (const row of rows) {
+    if (row.lane === null) continue;
+    const list = lanes.get(row.lane);
+    if (list) list.push(row);
+    else lanes.set(row.lane, [row]);
+  }
+  const mainIds = new Set(rows.flatMap((row) => (row.lane === null ? [row.id] : [])));
+  const nested = new Map<string, string[]>();
+  for (const id of lanes.keys()) {
+    const starter = links.get(id)?.startedBy;
+    if (starter && mainIds.has(starter)) nested.set(starter, [...(nested.get(starter) ?? []), id]);
+  }
+  const placed = new Set([...nested.values()].flat());
+
+  const items: TraceItem[] = [];
+  let main: TraceEvent[] = [];
+  const pushLanes = (ids: string[]) => {
+    items.push(...grouped(main));
+    main = [];
+    for (const id of ids) {
+      const item = laneItem(id, lanes.get(id) ?? [], links.get(id));
+      if (item) items.push(item);
+    }
+  };
+  for (const row of rows) {
+    if (row.lane === null) {
+      main.push(row);
+      const started = nested.get(row.id);
+      if (started) pushLanes(started);
+    } else if (!placed.has(row.lane)) {
+      placed.add(row.lane);
+      pushLanes([row.lane]);
+    }
+  }
+  items.push(...grouped(main));
   return items;
 }
 
@@ -681,8 +860,14 @@ const FACETS: Facet[] = [
 ];
 
 /** The trace of a session's events: turns of rows, groups and lanes, with facet counts. */
-export function buildTrace(events: ApiEvent[]): Trace {
+export function buildTrace(events: ApiEvent[], actors: readonly SessionActor[] = []): Trace {
   const rows = rowsOf(events);
+  const links = linkLanes(rows, actors);
+  for (const row of rows) {
+    if (row.lane === null) continue;
+    row.actor = subagentActor(links.get(row.lane)?.type ?? "subagent");
+    withSearch(row);
+  }
   let turn = 1;
   let prompted = false;
   for (const row of rows) {
@@ -702,7 +887,7 @@ export function buildTrace(events: ApiEvent[]): Trace {
     n,
     at: list[0]?.at ?? "",
     end: list[list.length - 1]?.at ?? "",
-    items: turnItems(list),
+    items: turnItems(list, links),
     eventCount: list.length,
     tools: toolSummary(list),
   }));
@@ -713,7 +898,7 @@ export function buildTrace(events: ApiEvent[]): Trace {
     counts[row.cat] += 1;
     if (row.tool) tools[row.tool] = (tools[row.tool] ?? 0) + 1;
     if (row.lane !== null && !lanes.has(row.lane)) {
-      lanes.set(row.lane, row.events[0]?.agent ?? "subagent");
+      lanes.set(row.lane, links.get(row.lane)?.type ?? "subagent");
     }
   }
   return {
@@ -744,7 +929,7 @@ export interface TraceView {
   /** Turns opened (long session) by the reader. */
   openTurns?: ReadonlySet<number> | undefined;
   openLanes?: ReadonlySet<string> | undefined;
-  /** Lanes start open (a live session) unless closed by the reader. */
+  /** Lanes start open (the default) unless closed by the reader. */
   lanesOpenByDefault?: boolean | undefined;
   closedLanes?: ReadonlySet<string> | undefined;
   openGroups?: ReadonlySet<string> | undefined;
@@ -757,6 +942,20 @@ export interface TraceView {
 }
 
 const ERRORS_ONLY: ReadonlySet<EventCategory> = new Set(["error", "guard", "decision", "gate"]);
+const PINNED: ReadonlySet<EventCategory> = new Set(["error", "guard", "gate", "learning"]);
+const PINNED_TOOLS: ReadonlySet<string> = new Set(["Skill", "Agent"]);
+
+/**
+ * Rows no collapsing ever hides (AC-201.18): errors, gates, guard events, skills, subagent
+ * starts and learnings stay on show under a collapsed turn or a closed lane.
+ */
+export function isPinned(row: TraceEvent): boolean {
+  return PINNED.has(row.cat) || (row.cat === "tool" && PINNED_TOOLS.has(row.tool ?? ""));
+}
+
+function laneRows(lane: TraceLane): TraceEvent[] {
+  return lane.items.flatMap((entry) => (entry.kind === "group" ? entry.items : [entry]));
+}
 
 function keep(row: TraceEvent, view: TraceView): boolean {
   if (view.errorsOnly) {
@@ -829,6 +1028,16 @@ export function flattenTrace(trace: Trace, view: TraceView): FlatRow[] {
     const edge = index < OPEN_EDGE_TURNS || index >= trace.turns.length - OPEN_EDGE_TURNS;
     if (view.long && !filtered && !edge && !view.openTurns?.has(turn.n)) {
       out.push({ t: "turnSummary", key: `turn-${String(turn.n)}`, turn });
+      for (const item of turn.items) {
+        if (item.kind === "event" && isPinned(item)) {
+          out.push({ t: "event", key: item.id, row: item, depth: 0 });
+        } else if (item.kind === "lane") {
+          out.push({ t: "lane", key: `lane-${item.id}`, lane: item, open: false });
+          for (const row of laneRows(item).filter(isPinned)) {
+            out.push({ t: "event", key: row.id, row, depth: 1 });
+          }
+        }
+      }
       lastAt = Date.parse(turn.end);
       return;
     }
@@ -838,9 +1047,7 @@ export function flattenTrace(trace: Trace, view: TraceView): FlatRow[] {
         emitRows([item], 0);
         continue;
       }
-      const matches = item.items.flatMap((entry) =>
-        entry.kind === "group" ? entry.items : [entry],
-      );
+      const matches = laneRows(item);
       const shown = matches.filter((row) => keep(row, view)).length;
       if (filtered && shown === 0) {
         hidden += matches.length;
@@ -850,15 +1057,28 @@ export function flattenTrace(trace: Trace, view: TraceView): FlatRow[] {
       gapBefore(item.at, item.id);
       const open = view.closedLanes?.has(item.id)
         ? false
-        : Boolean(view.lanesOpenByDefault) || Boolean(view.openLanes?.has(item.id)) || filtered;
+        : (view.lanesOpenByDefault ?? true) || Boolean(view.openLanes?.has(item.id)) || filtered;
       out.push({ t: "lane", key: `lane-${item.id}`, lane: item, open });
       if (open) emitRows(item.items, 1);
-      else lastAt = Date.parse(item.end);
+      else {
+        for (const row of matches.filter((entry) => isPinned(entry) && keep(entry, view))) {
+          out.push({ t: "event", key: row.id, row, depth: 1 });
+        }
+        lastAt = Date.parse(item.end);
+      }
     }
     flushHidden(`end-${String(turn.n)}`);
   });
   flushHidden("end");
   return out;
+}
+
+/** The id of the row that shows `eventId` (a result folds into its call's row), if any. */
+export function rowIdOf(trace: Trace, eventId: string): string | null {
+  for (const row of allRows(trace)) {
+    if (row.events.some((event) => event.event_id === eventId)) return row.id;
+  }
+  return null;
 }
 
 /* ---------- minimap ---------- */
@@ -910,7 +1130,7 @@ export function minimapOf(trace: Trace, axis: "time" | "turn", binCount: number)
     const kind = MARK_OF[row.cat];
     if (kind) {
       const clock = new Date(row.at).toISOString().slice(11, 19);
-      marks.push({ at, kind, label: `${clock} · ${row.label} · ${row.text}`, id: row.id });
+      marks.push({ at, kind, label: `${clock} · ${lineOf(row)}`, id: row.id });
     }
   }
   const bins = tallies.map((tally) => {

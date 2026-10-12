@@ -1,5 +1,5 @@
-"""The web app against an installed ``hub web`` (AC-200.63, AC-200.57), and its bundle's hosts
-(AC-200.56).
+"""The web app against an installed ``hub web`` (AC-200.63, AC-200.57, AC-201.41), and its
+bundle's hosts (AC-200.56).
 
 The smoke starts ``hub web`` on a temp database and registry, registers two synthetic hubs,
 ingests a synthetic scenario (two projects, one live session, one failed run, one guard denial,
@@ -7,6 +7,17 @@ one open guard ask, one 5,000-event session) through ``POST /events/hooks`` and 
 then runs ``apps/web/e2e/smoke.spec.ts`` with Playwright: nine pages, no console error, no
 request to another host, axe without serious or critical violations, and Session detail of the
 long session complete in under 2 s. Without Chromium the smoke is skipped, and fails under CI.
+
+AGH-201 adds the control-plane clarity screens: the ``demo`` hub is a git checkout of
+``acme/demo-hub``, whose ``origin`` a git config in the server's environment maps to a local
+bare repository, with a fake ``gh`` on the server's ``PATH`` (as ``packages/hub_git/tests``
+does), and a brain (an index linking a note, a feature folder with spec, plan, eval and
+``features.json``, an inbox note an agent proposed). The live session runs ``/feature`` through
+a Skill call, starts an ``Explore`` subagent through an Agent call, recovers from a failed
+``make check-fast`` and proposes the inbox note; an idle session's failed ``make test`` needs
+the owner. The pages then check Live (red only for needs-you), Session detail (actors, verbs,
+"What went wrong"), Knowledge (read a proposal, accept it: a pull request link), Feature detail
+(Spec and Plan tabs) and Brain (tree, note, an in-app link). Everything is synthetic.
 """
 
 import json
@@ -14,7 +25,8 @@ import os
 import re
 import shutil
 import subprocess
-from collections.abc import Callable
+import sys
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -35,6 +47,7 @@ REQUEST_SECONDS = 10
 LONG_SESSION_EVENTS = 5_000
 LIVE_SESSION = "live-7f3a"
 ASK_SESSION = "ask-2c9e"
+STUCK_SESSION = "stuck-4b1d"
 LONG_SESSION = "long-81d0"
 FAILED_RUN = "5e6f7a8b"
 # The hub-init spec's flags, so git is never asked; one hub per project.
@@ -49,6 +62,49 @@ HUB_FLAGS = (
     "jane@example.com",
 )
 FEATURE_SPEC = "---\ntype: spec\nprocess_size: bounded\nrepos: [demo-api]\nlinear: [DEM-7]\n---\n"
+# The demo hub's GitHub remote, mapped to a local bare repository by the git config the server
+# runs with (``url.<bare>.insteadOf``), so nothing reaches the network.
+DEMO_HUB_URL = "https://github.com/acme/demo-hub.git"
+# The live session works in a worktree named after the issue (label "DEM-7 · /feature").
+LIVE_CWD = "/work/demo-api/.claude/worktrees/dem-7-export-button"
+INBOX_NOTE = "brain/_inbox/rerun-flaky-tests.md"
+INBOX_TEXT = (
+    "---\nkind: team\nprovenance: agent\n---\n"
+    "# Rerun a flaky test once before calling it a failure\n\n"
+    "The CSV export test failed once on a slow runner and passed when run again. Rerun a test "
+    "that fails without a code change once before reporting it.\n"
+)
+BRAIN_INDEX = (
+    "# Demo brain\n\n"
+    "Start with [what we focus on now](now.md), then the "
+    "[export button spec](features/export-button/spec.md).\n"
+)
+BRAIN_NOW = "# Now\n\nShip the CSV export button (DEM-7).\n"
+# A fake ``gh``: ``auth token`` succeeds; ``pr create`` checks the head branch is on the bare
+# ``origin`` and prints the next pull request url of ``--repo``. Synthetic: no account, no token.
+FAKE_GH = """\
+import os, subprocess, sys
+
+args = sys.argv[1:]
+if args[:2] == ["auth", "token"]:
+    print("gho_not-a-real-token")
+    sys.exit(0)
+if args[:2] != ["pr", "create"]:
+    sys.exit(2)
+opts = dict(arg[2:].split("=", 1) for arg in args[2:] if arg.startswith("--") and "=" in arg)
+head = subprocess.run(
+    ["git", "--git-dir", os.environ["FAKE_GH_ORIGIN"], "rev-parse", "--verify", "--quiet",
+     "refs/heads/" + opts["head"]],
+    stdout=subprocess.DEVNULL,
+)
+if head.returncode != 0:
+    sys.exit(1)
+pulls = os.path.join(os.environ["FAKE_GH_DIR"], "pulls")
+with open(pulls, "a") as out:
+    out.write(opts["head"] + "\\n")
+count = sum(1 for _ in open(pulls))
+print("https://github.com/" + opts["repo"] + "/pull/" + str(count))
+"""
 
 # Absolute URLs the built bundle may contain, each exact. None is ever requested: React's and
 # React Router's error texts name their docs, the XML namespaces are identifiers, and
@@ -113,6 +169,7 @@ class Scenario:
     """What the smoke pages open: ids the synthetic scenario stored."""
 
     live_session: str
+    stuck_session: str
     long_session: str
     run_id: str
     project: str
@@ -151,6 +208,65 @@ def _headless_shells(root: Path, revision: str) -> list[Path]:
             *root.glob(f"{folder}/chrome-headless-shell-*/chrome-headless-shell"),
         ]
     )
+
+
+@dataclass(frozen=True)
+class HubOrigin:
+    """The demo hub's bare ``origin``, the fake ``gh`` and the environment git and gh run in."""
+
+    bare: Path
+    env: Mapping[str, str]
+
+    def git(self, *args: str, cwd: Path) -> None:
+        """Run git in ``cwd`` with the origin's environment; fails the test when git fails."""
+        result = subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            env={**os.environ, **self.env},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, f"git {' '.join(args)}: {result.stderr}"
+
+
+@pytest.fixture
+def hub_origin(tmp_path: Path) -> HubOrigin:
+    """A bare ``origin`` for ``acme/demo-hub``, a git config mapping its GitHub url to it, and
+    a fake ``gh`` in a folder for ``PATH``."""
+    root = tmp_path / "hub-origin"
+    bin_dir, gh_state = root / "bin", root / "gh"
+    for folder in (bin_dir, gh_state):
+        folder.mkdir(parents=True)
+    bare = root / "origin.git"
+    config = root / "gitconfig"
+    config.write_text(
+        "[user]\n\tname = Jane Doe\n\temail = jane@example.com\n"
+        "[init]\n\tdefaultBranch = main\n"
+        f'[url "{bare}"]\n\tinsteadOf = {DEMO_HUB_URL}\n',
+        encoding="utf-8",
+    )
+    source = bin_dir / "fake_gh.py"
+    source.write_text(FAKE_GH, encoding="utf-8")
+    gh = bin_dir / "gh"
+    gh.write_text(f'#!/bin/sh\nexec "{sys.executable}" -I "{source}" "$@"\n', encoding="utf-8")
+    gh.chmod(0o755)
+    env = {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "GIT_CONFIG_GLOBAL": str(config),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "FAKE_GH_DIR": str(gh_state),
+        "FAKE_GH_ORIGIN": str(bare),
+    }
+    origin = HubOrigin(bare=bare, env=env)
+    origin.git("init", "--quiet", "--bare", "--initial-branch=main", str(bare), cwd=root)
+    return origin
+
+
+@pytest.fixture
+def web_extra_env(hub_origin: HubOrigin) -> Mapping[str, str]:
+    """``hub web`` runs git and gh against the bare origin and the fake gh."""
+    return hub_origin.env
 
 
 def _make_hub(installed_hub: InstalledHub, root: Path, *, project: str, repo: str) -> Path:
@@ -194,7 +310,31 @@ def _write_feature(hub: Path) -> None:
     (folder / "spec.md").write_text(
         f"{FEATURE_SPEC}# Export button\n\n{criteria}", encoding="utf-8"
     )
-    (folder / "plan.md").write_text("# Plan\n", encoding="utf-8")
+    (folder / "plan.md").write_text(
+        "# Plan\n\n1. Add the export route.\n2. Add the button.\n", encoding="utf-8"
+    )
+    (folder / "eval.md").write_text(
+        "# Eval\n\n**Verdict: SHIP**\n\nAll criteria verified.\n", encoding="utf-8"
+    )
+
+
+def _write_brain(hub: Path) -> None:
+    """The brain's index (linking two notes), ``now.md`` and an inbox note an agent proposed."""
+    brain = hub / "brain"
+    (brain / "index.md").write_text(BRAIN_INDEX, encoding="utf-8")
+    (brain / "now.md").write_text(BRAIN_NOW, encoding="utf-8")
+    note = hub / INBOX_NOTE
+    note.parent.mkdir(parents=True, exist_ok=True)
+    note.write_text(INBOX_TEXT, encoding="utf-8")
+
+
+def _publish_hub(hub: Path, origin: HubOrigin) -> None:
+    """Make ``hub`` a checkout of ``acme/demo-hub`` whose ``main`` is on the bare origin."""
+    origin.git("init", "--quiet", "--initial-branch=main", cwd=hub)
+    origin.git("remote", "add", "origin", DEMO_HUB_URL, cwd=hub)
+    origin.git("add", "--all", cwd=hub)
+    origin.git("commit", "--quiet", "--no-verify", "-m", "chore: start the hub", cwd=hub)
+    origin.git("push", "--quiet", "--set-upstream", "origin", "main", cwd=hub)
 
 
 def _envelope(
@@ -212,15 +352,62 @@ def _envelope(
     } | extra
 
 
+def _tool(name: str, tool_input: dict[str, Any], tool_use_id: str) -> dict[str, Any]:
+    return {"tool_name": name, "tool_input": tool_input, "tool_use_id": tool_use_id}
+
+
+def _live_hooks() -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+    """The live session, in order: ``/feature`` through a Skill call, an ``Explore`` subagent
+    started by an Agent call, a failed ``make check-fast`` the agent recovered from, an inbox
+    note proposed, then a push the guard denied (the agent is still on it)."""
+    explore = {"agent_id": "agent-7", "agent_type": "Explore"}
+    skill = _tool("Skill", {"skill": "feature"}, "toolu_skill")
+    agent = _tool(
+        "Agent",
+        {
+            "subagent_type": "Explore",
+            "description": "Find the export code",
+            "prompt": "Where is the export route?",
+        },
+        "toolu_agent",
+    )
+    grep = _tool("Grep", {"pattern": "def export", "path": "src"}, "toolu_grep")
+    check = {"command": "make check-fast", "description": "Run the fast gate"}
+    failed = _tool("Bash", check, "toolu_check_1")
+    passed = _tool("Bash", check, "toolu_check_2")
+    note = _tool(
+        "Write", {"file_path": f"/work/demo-hub/{INBOX_NOTE}", "content": INBOX_TEXT}, "toolu_note"
+    )
+    push = _tool("Bash", {"command": "git push origin main"}, "toolu_push")
+    error = "Exit code 2\nFAILED tests/test_export.py::test_csv_header - KeyError: 'name'"
+    deny = {"by": "guard", "kind": "deny", "rule": "push-to-main"}
+    return [
+        ("SessionStart", {}, {}),
+        ("UserPromptSubmit", {}, {}),
+        ("PreToolUse", skill, {}),
+        ("PostToolUse", skill, {}),
+        ("PreToolUse", agent, {}),
+        ("SubagentStart", explore, {}),
+        ("PreToolUse", grep | explore, {}),
+        ("PostToolUse", grep | explore, {}),
+        ("SubagentStop", explore, {}),
+        ("PostToolUse", agent, {}),
+        ("PreToolUse", failed, {}),
+        ("PostToolUseFailure", failed | {"error": error}, {}),
+        ("PreToolUse", passed, {}),
+        ("PostToolUse", passed, {}),
+        ("PreToolUse", note, {}),
+        ("PostToolUse", note, {}),
+        ("PreToolUse", push, {"decision": deny}),
+    ]
+
+
 def _hooks(now: datetime) -> list[dict[str, Any]]:
-    """A live session in ``demo`` with a guard denial, and one in ``ops`` waiting on a guard ask."""
-    live = {"session_id": LIVE_SESSION, "cwd": "/work/demo-api"}
+    """The live ``demo`` session, an idle one whose failed ``make test`` needs the owner, and
+    one in ``ops`` waiting on a guard ask."""
+    live = {"session_id": LIVE_SESSION, "cwd": LIVE_CWD}
+    stuck = {"session_id": STUCK_SESSION, "cwd": "/work/demo-api"}
     ask = {"session_id": ASK_SESSION, "cwd": "/work/ops-api"}
-    push = {
-        "tool_name": "Bash",
-        "tool_input": {"command": "git push origin main"},
-        "tool_use_id": "toolu_push",
-    }
     edit = {
         "tool_name": "Edit",
         "tool_input": {
@@ -230,23 +417,47 @@ def _hooks(now: datetime) -> list[dict[str, Any]]:
         },
         "tool_use_id": "toolu_adr",
     }
-    deny = {"by": "guard", "kind": "deny", "rule": "push-to-main"}
     ask_decision = {"by": "guard", "kind": "ask", "rule": "ask_before_edit"}
-    at = [now - timedelta(seconds=seconds) for seconds in (90, 80, 70, 60, 50, 40)]
-    return [
-        _envelope("demo", "demo-api", a_hook_input("SessionStart") | live, at=at[0]),
-        _envelope("demo", "demo-api", a_hook_input("UserPromptSubmit") | live, at=at[1]),
-        _envelope("demo", "demo-api", a_hook_input("PreToolUse") | live, at=at[2]),
-        _envelope("demo", "demo-api", a_hook_input("PostToolUse") | live, at=at[3]),
+    steps = _live_hooks()
+    live_envelopes = [
         _envelope(
-            "demo", "demo-api", a_hook_input("PreToolUse", **push) | live, at=at[4], decision=deny
+            "demo",
+            "demo-api",
+            a_hook_input(name, **fields) | live,
+            at=now - timedelta(seconds=5 * (len(steps) - index)),
+            **extra,
+        )
+        for index, (name, fields, extra) in enumerate(steps)
+    ]
+    test = _tool("Bash", {"command": "make test"}, "toolu_test")
+    error = "Exit code 1\nAssertionError: expected 3 rows, got 2"
+    stuck_envelopes = [
+        _envelope(
+            "demo", "demo-api", a_hook_input("SessionStart") | stuck, at=now - timedelta(minutes=12)
         ),
-        _envelope("ops", "ops-api", a_hook_input("SessionStart") | ask, at=at[3]),
+        _envelope(
+            "demo",
+            "demo-api",
+            a_hook_input("PreToolUse", **test) | stuck,
+            at=now - timedelta(minutes=11),
+        ),
+        _envelope(
+            "demo",
+            "demo-api",
+            a_hook_input("PostToolUseFailure", **test, error=error) | stuck,
+            at=now - timedelta(minutes=10),
+        ),
+    ]
+    at = now - timedelta(seconds=60)
+    return [
+        *live_envelopes,
+        *stuck_envelopes,
+        _envelope("ops", "ops-api", a_hook_input("SessionStart") | ask, at=at),
         _envelope(
             "ops",
             "ops-api",
             a_hook_input("PreToolUse", **edit) | ask,
-            at=at[5],
+            at=now - timedelta(seconds=40),
             decision=ask_decision,
         ),
     ]
@@ -282,11 +493,15 @@ def _long_session(now: datetime) -> list[Any]:
     return events
 
 
-def ingest_scenario(web: RunningWeb, installed_hub: InstalledHub, root: Path) -> Scenario:
+def ingest_scenario(
+    web: RunningWeb, installed_hub: InstalledHub, root: Path, *, origin: HubOrigin
+) -> Scenario:
     """Registers the two hubs and stores the scenario in ``web``'s database."""
     demo = _make_hub(installed_hub, root, project="demo", repo="demo-api")
     ops = _make_hub(installed_hub, root, project="ops", repo="ops-api")
     _write_feature(demo)
+    _write_brain(demo)
+    _publish_hub(demo, origin)
     now = datetime.now(UTC)
     with httpx.Client(base_url=web.url, timeout=REQUEST_SECONDS) as client:
         for hub in (demo, ops):
@@ -314,14 +529,19 @@ def ingest_scenario(web: RunningWeb, installed_hub: InstalledHub, root: Path) ->
         runs_page = client.get("/api/v1/workflow-runs").json()["items"]
     [run_id] = [item["id"] for item in runs_page]
     return Scenario(
-        live_session=LIVE_SESSION, long_session=LONG_SESSION, run_id=run_id, project="demo"
+        live_session=LIVE_SESSION,
+        stuck_session=STUCK_SESSION,
+        long_session=LONG_SESSION,
+        run_id=run_id,
+        project="demo",
     )
 
 
-def test_loads_nine_pages_without_console_error_or_axe_violation_when_scenario_ingested(
+def test_loads_pages_without_console_error_or_axe_violation_when_scenario_ingested(
     hub_web: RunningWeb,
     *,
     installed_hub: InstalledHub,
+    hub_origin: HubOrigin,
     tmp_path: Path,
     run: Callable[..., subprocess.CompletedProcess[str]],
 ) -> None:
@@ -332,12 +552,13 @@ def test_loads_nine_pages_without_console_error_or_axe_violation_when_scenario_i
         if os.environ.get("CI"):
             pytest.fail(reason)
         pytest.skip(reason)
-    scenario = ingest_scenario(hub_web, installed_hub, tmp_path)
+    scenario = ingest_scenario(hub_web, installed_hub, tmp_path, origin=hub_origin)
     env = {
         **os.environ,
         "AGENT_HUB_WEB_URL": hub_web.url,
         "AGENT_HUB_CHROMIUM": executable,
         "SMOKE_LIVE_SESSION": scenario.live_session,
+        "SMOKE_STUCK_SESSION": scenario.stuck_session,
         "SMOKE_LONG_SESSION": scenario.long_session,
         "SMOKE_RUN": scenario.run_id,
     }
@@ -360,6 +581,6 @@ def test_loads_nine_pages_without_console_error_or_axe_violation_when_scenario_i
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    # Nine pages and the long-session timing, none skipped.
-    assert re.search(r"\b10 passed\b", result.stdout), result.stdout
+    # Nine pages, the long-session timing and six control-plane clarity checks, none skipped.
+    assert re.search(r"\b16 passed\b", result.stdout), result.stdout
     assert "skipped" not in result.stdout, result.stdout

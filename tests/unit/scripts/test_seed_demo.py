@@ -12,8 +12,11 @@ from agent_hub.core.testing.transcript_lines import TRANSCRIPT_MODEL
 from scripts.seed_demo import (
     ASK_SESSION,
     BACKFILL_SESSION,
+    DEMO_BRANCH,
     DEMO_PROJECT,
+    INBOX_NOTE,
     LIVE_SESSION,
+    STUCK_SESSION,
     ComposeTarget,
     LocalTarget,
     choose_target,
@@ -66,19 +69,53 @@ class FakeServer:
         return httpx.Response(404, json={})
 
 
-def test_sends_live_session_with_denial_and_open_ask_when_envelopes_built() -> None:
+def test_sends_live_idle_and_waiting_sessions_when_envelopes_built() -> None:
     envelopes = demo_envelopes(NOW)
 
-    sessions = {envelope["hook"]["session_id"] for envelope in envelopes}
+    by_session: dict[str, list[datetime]] = {}
+    for envelope in envelopes:
+        sent = datetime.fromisoformat(envelope["sent_at"])
+        by_session.setdefault(envelope["hook"]["session_id"], []).append(sent)
     decisions = [envelope.get("decision") for envelope in envelopes]
-    assert sessions == {f"{LIVE_SESSION}-20261011120000", f"{ASK_SESSION}-20261011120000"}
+    suffix = "20261011120000"
+    assert set(by_session) == {
+        f"{LIVE_SESSION}-{suffix}",
+        f"{ASK_SESSION}-{suffix}",
+        f"{STUCK_SESSION}-{suffix}",
+    }
     assert {"by": "guard", "kind": "deny", "rule": "push-to-main"} in decisions
     assert {"by": "guard", "kind": "ask", "rule": "ask_before_edit"} in decisions
     assert all(envelope["project"] == DEMO_PROJECT for envelope in envelopes)
-    assert all(
-        NOW - timedelta(minutes=5) < datetime.fromisoformat(envelope["sent_at"]) <= NOW
-        for envelope in envelopes
-    )
+    # Live and waiting: active in the last 5 minutes; idle: quiet for 5 to 30 minutes.
+    for session, times in by_session.items():
+        oldest = (
+            timedelta(minutes=30) if session.startswith(STUCK_SESSION) else timedelta(minutes=5)
+        )
+        newest = timedelta(minutes=5) if session.startswith(STUCK_SESSION) else timedelta(0)
+        assert all(NOW - oldest < sent <= NOW - newest for sent in times), session
+
+
+def test_runs_feature_skill_subagent_and_recovered_check_when_live_session_built() -> None:
+    live = [
+        envelope["hook"]
+        for envelope in demo_envelopes(NOW)
+        if envelope["hook"]["session_id"].startswith(LIVE_SESSION)
+    ]
+
+    names = [hook["hook_event_name"] for hook in live]
+    tools = [hook.get("tool_name") for hook in live if hook["hook_event_name"] == "PreToolUse"]
+    assert live[1]["prompt"].startswith("/feature ")
+    assert tools[:3] == ["Skill", "Agent", "Grep"]
+    assert {"SubagentStart", "SubagentStop", "PostToolUseFailure"} <= set(names)
+    assert all(hook["cwd"].endswith("/.claude/worktrees/agh-7-demo-feature") for hook in live)
+    [failure] = [hook for hook in live if hook["hook_event_name"] == "PostToolUseFailure"]
+    retried = [hook for hook in live if hook.get("tool_input") == failure["tool_input"]]
+    assert [hook["hook_event_name"] for hook in retried] == [
+        "PreToolUse",
+        "PostToolUseFailure",
+        "PreToolUse",
+        "PostToolUse",
+    ]
 
 
 def test_keeps_priced_usage_and_recent_times_when_transcript_built() -> None:
@@ -96,7 +133,9 @@ def test_keeps_priced_usage_and_recent_times_when_transcript_built() -> None:
         for block in line["message"]["content"]
         if block["type"] == "tool_use"
     ]
-    assert tools == ["Read", "Edit", "Bash"]
+    assert tools == ["Read", "Edit", "Bash", "Write"]
+    assert {line["gitBranch"] for line in lines} == {DEMO_BRANCH}
+    assert lines[0]["message"]["content"].startswith("/feature ")
 
 
 def test_loads_every_screen_input_when_run_against_target(
@@ -111,7 +150,10 @@ def test_loads_every_screen_input_when_run_against_target(
     hub = "/data/demo/demo-hub"
     assert target.commands[0][:2] == ["init", DEMO_PROJECT]
     assert target.commands[0][-2:] == ["--dir", hub]
-    assert f"{hub}/brain/features/export-button/features.json" in target.files
+    folder = f"{hub}/brain/features/export-button"
+    for name in ("features.json", "spec.md", "plan.md", "eval.md"):
+        assert f"{folder}/{name}" in target.files
+    assert target.files[f"{hub}/{INBOX_NOTE}"].startswith("---\nkind: team\n")
     assert server.hubs == [{"path": hub}]
     assert len(server.envelopes) == len(demo_envelopes(NOW))
     runs, transcript = target.commands[1], target.commands[2]

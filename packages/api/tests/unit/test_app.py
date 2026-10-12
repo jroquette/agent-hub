@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from agent_hub.api.app import create_app
 from agent_hub.api.change_feed import ChangeFeed
 from agent_hub.api.dependencies import ApiPorts
-from agent_hub.api.openapi_paths import P2_PATHS
+from agent_hub.api.openapi_paths import SERVED_PATHS
 from agent_hub.api.settings import ApiSettings
 
 # Valid bodies, so validation passes and the stub itself answers.
@@ -19,8 +19,14 @@ BODIES: dict[tuple[str, str], object] = {
         "hook": {"hook_event_name": "Stop"},
     },
     ("post", "/api/v1/hubs"): {"path": "/home/demo/demo-hub"},
+    ("post", "/api/v1/learnings/{learning_id}/accept"): {"target": "learnings/"},
+    ("post", "/api/v1/learnings/{learning_id}/reject"): {"reason": "Duplicate of another note"},
 }
-QUERIES = {"/api/v1/search": {"q": "make"}}
+OWN_ORIGIN = {"Origin": "http://127.0.0.1:7420"}
+QUERIES = {
+    "/api/v1/search": {"q": "make"},
+    "/api/v1/projects/{project}/brain/note": {"path": "index.md"},
+}
 
 
 def _concrete(path: str) -> str:
@@ -29,14 +35,18 @@ def _concrete(path: str) -> str:
     return path
 
 
-@pytest.mark.parametrize(("method", "path"), sorted(P2_PATHS))
+@pytest.mark.parametrize(("method", "path"), sorted(SERVED_PATHS))
 def test_answers_not_implemented_problem_when_route_is_a_stub(
     client: TestClient, method: str, path: str
 ) -> None:
     url = _concrete(path)
 
     response = client.request(
-        method, url, json=BODIES.get((method, path)), params=QUERIES.get(path)
+        method,
+        url,
+        json=BODIES.get((method, path)),
+        params=QUERIES.get(path),
+        headers=OWN_ORIGIN,  # the learning actions need it (S7); the other routes ignore it
     )
 
     assert response.status_code == 501, response.text

@@ -4457,6 +4457,7 @@ ADAPTER_MODULES = frozenset(
         "doctor_snapshot.py",
         "hub_config_files.py",
         "feature_files.py",
+        "brain_files.py",
         "registered_hub_files.py",
     }
 )

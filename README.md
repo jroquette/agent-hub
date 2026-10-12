@@ -779,11 +779,18 @@ flowchart BT
   collector["collector<br/>event ingestion"] --> core
   generator["generator<br/>hub templates, renderer, file adapter"] --> core
   tracker["tracker_linear<br/>Linear GraphQL or MCP"] --> core
+  hubgit["hub_git<br/>hub PRs for learning decisions"] --> core
   cli["cli<br/>the hub command (Typer)"] --> core
   cli --> storage
   cli --> collector
   cli --> generator
   cli --> tracker
+  api["api<br/>hub web: REST, SSE, web app"] --> core
+  api --> storage
+  api --> collector
+  api --> generator
+  api --> hubgit
+  cli -. "hub web" .-> api
 ```
 
 | Package | Distribution | Role |
@@ -793,11 +800,13 @@ flowchart BT
 | `packages/collector` | `agent-hub-collector` | Event collector adapter |
 | `packages/generator` | `agent-hub-generator` | Hub templates as package data, the `@@` renderer, the managed/seeded registry, the file adapter |
 | `packages/tracker_linear` | `agent-hub-tracker-linear` | `TrackerClient` over Linear's GraphQL API (stdlib only), and `McpTrackerClient` over the Linear MCP server through `claude -p` ([ADR 0015](docs/adr/0015-linear-mcp-tracker-transport.md)) |
+| `packages/hub_git` | `agent-hub-hub-git` | Opens a hub pull request for a learning accepted or rejected in `hub web`, with `git` and `gh` from a temporary clone ([ADR 0024](docs/adr/0024-learning-actions-from-the-app.md)) |
 | `packages/cli` | `agent-hub-cli` | The `hub` command |
+| `packages/api` | `agent-hub-api` | `hub web`: the local REST and SSE API and the built web app ([ADR 0017](docs/adr/0017-api-second-composition-root.md)) |
 | `packages/agent-hub` | `agent-hub` | Meta-package that installs all of the above |
 
-`core` imports nothing internal; the four adapters never import each other; nothing imports `cli`. import-linter
-enforces this in `make check`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+`core` imports nothing internal; the five adapters never import each other; nothing imports `cli`, and `api` is
+reached only from `hub web`. import-linter enforces this in `make check`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 </details>
 

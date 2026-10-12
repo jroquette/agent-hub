@@ -17,6 +17,7 @@ Conventions: JSON snake_case; ids UUIDv7 (displayed as 8-character `IdChip`, ful
 | `github` | PR url, state, CI checks per commit, review rounds, merge time | Polling every 60 s (webhook when configured) | 60 s polling, < 5 s webhook |
 | `linear` | Issue title, state, labels (agent-ready, agent-failed), comments written by runs | Polling every 60 s | ≤ 60 s |
 | hub files | hub.json, hub.lock, brain/, features/, doctor findings, AGENTS.md | File watcher on registered hub paths | < 2 s after save; doctor on demand or every 15 min |
+| `control_plane` (AGH-201) | learning.accepted, learning.rejected for a decision taken in the app, with the hub PR it opened | Written by `hub web` itself after the PR opens | immediate |
 
 ## Entity reference
 
@@ -68,10 +69,13 @@ Field lists are the API shapes. "Source" names who writes the field; "Latency" i
 
 | Field | Type | Source | Latency |
 |---|---|---|---|
-| `id`, `project`, `repo`, `agent` | | hooks session.start | < 1 s |
-| `parent_session_id` | uuid or null (set for subagent sessions) | hooks (Agent tool call ↔ child start) | < 1 s |
+| `id`, `project`, `repo`, `agent` | `agent` is deprecated (AGH-201): read `label` and `actors` | hooks session.start | < 1 s |
+| `parent_session_id` | always null: subagents share their session's id (AGH-201) | — | — |
 | `run_id`, `step`, `attempt` | | executor | < 1 s |
 | `issue` | `AGH-48` | executor, or branch name parse (derived, labelled) | < 1 s |
+| `label` (AGH-201) | `{ issue: "TIP-1511" \| null, workflow: "/feature", workflows: ["/feature","/fix"], repo, branch, worktree, derived: true }` | derived (transcript `git_branch`, `cwd`, slash commands, Skill calls; the hub's tracker teams) | 2–10 s |
+| `actors` (AGH-201) | `[{ kind: "main" \| "subagent", type, agent_id, description, started_by_event_id }]` | derived (hooks `agent_id`, Agent tool calls) | < 1 s |
+| `problems` (AGH-201) | `{ needs_you, open, handled, by_you }`; the items via `/problems` | derived (tool results, guard asks, gates) | < 1 s |
 | `started_at`, `ended_at`, `last_activity_at` | | hooks | < 1 s |
 | `segments[]` | `[{ started_at, ended_at, end_reason }]` resumed segments | hooks | < 1 s |
 | `status` | `live \| waiting \| idle \| ended` | derived (see rules below) | < 1 s |
@@ -120,6 +124,8 @@ Keyed `(step, attempt)`: `{ key: "verify", attempt: 2, max_attempts: 2, status: 
 ### Learning
 
 `{ id, text, target: { kind: "team \| repo \| personal", path: "brain/learnings/gotchas/testing.md" }, author: { kind: "agent \| person", id }, provenance: "agent \| agent-from-code \| agent-from-external \| human", source_session_id, source_event_id, status: "proposed \| accepted \| rejected \| snoozed", decided_by, decided_at, brain_path, commit, rejection_reason }`. Proposal events from transcript (2–10 s); inbox files from hub files (< 2 s); decisions P3.
+
+As built (AGH-201): `status` is `proposed | accepted | rejected` (no `snoozed`; snooze stays P3). `target` is deprecated in favour of `note_path` (the inbox note, `brain/_inbox/<name>.md`). Added: `state` (`proposed | accepted_pr_open | rejected_pr_open | in_brain | archived`; the last two inferred from the hub checkout), `summary` (the note's first paragraph, 200 chars, read on request), `note_unavailable` and `actions_unavailable` (a reason, e.g. "Note not in the hub checkout", "Hub is read-only here"), `pr_url`, `branch`. `GET /learnings/{id}` adds `note` (frontmatter and markdown, read on request, never stored), `suggested_target` and `target_choices`. Decisions are taken in the app through a hub PR (ADR 0024).
 
 ### Decision
 
@@ -171,11 +177,12 @@ Icons are Lucide names; colour tokens from `tokens.json`. "Collapsed" is the one
 | `tool.call` Read/Glob/Grep | claude_code | `file-text` / `folder-search` / `search` | `ev-tool` | Read / Glob / Grep | "Read `{path}`"; grouped: "Read {n} files in `{common prefix}`" (`ToolGroup`) | list of paths, sizes, line ranges |
 | `tool.call` Edit/Write | claude_code | `file-pen` / `file-plus` | `ev-tool` | Edit / Write | "Edit `{path}` · +{added} −{removed}" | inline `DiffViewer` (unified, 3 lines context) |
 | `tool.call` Bash | claude_code | `terminal` | `ev-tool` | Bash | mono "`{command}`" + result chip "exit {code} · {duration}" | `CodeBlock` command, output excerpt (first 40 + last 40 lines) |
-| `tool.call` Agent | claude_code | `bot` | `ev-tool` | Subagent | "Started {subagent id}" | opens `SubagentLane` |
+| `tool.call` Agent | claude_code | `bot` | `ev-tool` | Subagent | "Started {subagent id}"; as built: "Main agent · Started subagent {type}: {description}", its rows nested under it | opens `SubagentLane` |
+| `tool.call` Skill (AGH-201) | claude_code | the tool icon | `ev-tool` | Skill | "Main agent · Ran skill /{skill}" | skill name |
 | `tool.call` WebFetch | claude_code | `globe` | `ev-tool` | WebFetch | "Fetched {host}{path}" + `ExternalLabel` | URL, bytes, status |
 | `tool.call` MCP | claude_code | `plug` | `ev-tool` | MCP · {server} | "{server}.{tool}" | args (redacted), result size |
 | `tool.result` ok | claude_code | (merged into its call row as a status chip `check`) | `ev-tool` | Result | chip "ok" | output metadata; content blob |
-| `tool.result` error | claude_code | `circle-x` | `failed` | Tool error | "{tool} failed · {error first line}" | error text, exit code |
+| `tool.result` error | claude_code | `circle-x` | `failed` | Tool error | "{tool} failed · {error first line}" | error text (as built: `error_message`, 300 chars, redacted, else `error_line`), exit code, problem status |
 | `tool.result` denied | claude_code | `shield-x` | `guard` on `guard-soft` | Denied by guard | "Push to main denied" / "Force-push blocked" | rule id, hook, matched command, hub.json path |
 | `gate.request` (command) | executor | `flag` | `ev-gate` | Gate | "Gate {name} requested · `{command}`" | requester, step |
 | `gate.request` (human) | claude_code / executor | `stamp` | `ev-gate` | Approval requested | "Waiting for plan approval for {issue}" | material link (Approvals) |
@@ -183,8 +190,8 @@ Icons are Lucide names; colour tokens from `tokens.json`. "Collapsed" is the one
 | `gate.result` | executor / claude_code | `flag` (passed `check`, failed `x`) | `done` / `failed` / `ev-gate` | Gate result | "`{command}` passed · exit 0 · 3 min 12 s" / "failed · exit 2" | log excerpt, approver |
 | `decision` | transcript | `git-commit-vertical` | `ev-decision` | Decision | "{choice}" + `DerivedLabel` "Extracted from transcript" or "Recorded with /decide" | alternatives struck through, rationale, evidence |
 | `learning.proposed` | transcript | `lightbulb` | `ev-learning` | Learning proposed | "Proposed: {text}" · target path | target, provenance, status link |
-| `learning.accepted` | hub files / P3 action | `lightbulb` (check overlay) | `ev-learning` | Learning accepted | "Accepted: {text}" | brain path, commit |
-| `learning.rejected` **Proposal** | P3 action | `lightbulb-off` | `ev-lifecycle` | Learning rejected | "Rejected: {text} · {reason}" | reason, who |
+| `learning.accepted` | hub files / app action (`control_plane`) | `lightbulb` (check overlay) | `ev-learning` | Learning accepted | "Accepted: {text}" | brain path, commit or PR link |
+| `learning.rejected` | app action (`control_plane`) | `lightbulb-off` | `ev-lifecycle` | Learning rejected | "Rejected: {text} · {reason}" | reason, who, PR link |
 | `step.start` / `step.end` **Proposal** | executor | `circle-dot` / `circle-check` | `ev-lifecycle` | Step | "Step {key} attempt {n} started / ended {status}" | step caps, gate link |
 | `run.end` **Proposal** | executor | `flag-triangle-right` | `ev-lifecycle` | Run ended | "Run {issue} reported / failed at {stage}" | failure reason |
 | `session.summary` **Proposal** | collector (derived) | `text-quote` | `ev-lifecycle` | Summary | not a row: feeds the summary card | n/a |
@@ -209,6 +216,7 @@ All paths under `/api/v1`. Shapes are trimmed sketches; lists are paginated.
 | `GET /sessions` | `project, repo, agent, outcome, workflow, from, to, cost_min, cost_max, file, tool, guard_denial, has_decisions, sort, cursor` | `{"items":[{"id":"…","started_at":"…","duration_ms":4210000,"agent":"hub-workflow:evaluator","issue":"AGH-48","outcome":"done","turns":38,"tokens":{"input":412330},"cost_usd":"1.2734","transcript":{"state":"available","expires_on":"2026-11-10"}}],"next_cursor":"…","total_estimate":1240}` | Sessions list, Project overview |
 | `GET /sessions/{id}` | | full Session entity (above) | Session detail header |
 | `GET /sessions/{id}/summary` | | `{"lines":[{"text":"Ran make check-fast: passed in 3 min 12 s","event_id":"…"}],"generated_at":"…","derived":true}` | Session detail summary card |
+| `GET /sessions/{session_id}/problems` (AGH-201) | | `{"session_id":"…","summary":[{"text":"2 problems: 1 needs you, 1 handled by the agent","event_id":"…"}],"items":[{"event_id":"…","kind":"command_exit","tool":"Bash","where":"make check","message":"…","at":"…","actor":{"kind":"main"},"resolution":"recovered","resolved_by_event_id":"…","derived":true}]}` | What went wrong, Live tiles |
 | `GET /sessions/{id}/events` | `cursor, types, around` (event id), `limit` (default 200), `include_children` | `{"items":[Event],"next_cursor":"…","prev_cursor":"…"}` | Timeline, Raw events |
 | `GET /sessions/{id}/events/stream` | header `Last-Event-ID` | SSE (below) | Timeline live |
 | `GET /sessions/{id}/files` | | `{"items":[{"repo":"agent-hub","path":"brain/features/layered-memory/eval.md","ops":["edited"],"added":64,"removed":0,"event_ids":["…"]}]}` | Files and diffs |
@@ -226,8 +234,10 @@ All paths under `/api/v1`. Shapes are trimmed sketches; lists are paginated.
 | `GET /approvals` / `GET /approvals/{id}` | `scope` | `{"items":[{"id":"…","kind":"plan","issue":"AGH-48","requested_by":"hub-workflow:planner","waiting_since":"…"}]}` | Approvals, badge |
 | `POST /approvals/{id}/decision` P4 | `{"decision":"approve","comment":""}` | `200 {"status":"approved"}` | Approvals |
 | `GET /brain/notes`, `/brain/notes/backlinks` P3 | `project, path` | `{"path":"brain/now.md","frontmatter":{…},"markdown":"…"}` | Brain browser, Now |
+| As built (AGH-201): `GET /projects/{project}/brain`, `GET /projects/{project}/brain/note` | `path` (under `brain/`) | tree `{"project","entries":[{"path","size"}],"truncated","skipped"}`; note `{"project","path","frontmatter","frontmatter_problem","markdown","size"}`; 400 / 404 / 413 problems | Brain browser, Feature detail tabs |
 | `GET /learnings`, `/learnings/{id}`, `/learnings/{id}/trace` | `status` | Learning; trace `{"nodes":[…],"edges":[…]}` | Learnings, Portfolio |
 | `POST /learnings/{id}/accept\|reject\|snooze` P3 | reject `{"reason"}` | Learning | Learnings |
+| As built (AGH-201): `POST /learnings/{learning_id}/accept`, `/reject` (snooze and trace stay P3) | accept `{"target"}`, reject `{"reason"}` | `201 {"state":"accepted_pr_open","pr_url":"…","branch":"…"}`; 409 / 415 / 502 / 504 problems ([API.md](../../../API.md)) | Learning detail |
 | `GET /decisions` P3 | `project, repo` | list of Decision | Decisions log |
 | `GET /features`, `/features/{project}/{slug}` | `project` | Feature | Features |
 | `GET /workflows…` P4 | | catalog, revisions, stats | Workflows |
