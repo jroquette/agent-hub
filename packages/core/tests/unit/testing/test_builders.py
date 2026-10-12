@@ -3,6 +3,7 @@ from pydantic import ValidationError
 
 from agent_hub.core.events.event import Event, EventType
 from agent_hub.core.testing.builders import (
+    a_brain_change,
     a_hub_document,
     a_seeded_tracker_backend,
     an_event,
@@ -143,3 +144,9 @@ def test_returns_fresh_backend_when_tracker_backend_built_twice() -> None:
 
     assert second.comments == []
     assert "DEM-1" in second.issues
+
+
+def test_builds_accept_when_brain_change_defaults_used() -> None:
+    change = a_brain_change(branch="demo/learning-accept-y")
+
+    assert (change.action, change.branch) == ("accept", "demo/learning-accept-y")
