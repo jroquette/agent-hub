@@ -1987,6 +1987,77 @@ def test_reads_sed_arguments_once_when_part_has_many_sed_words(
     ]
 
 
+# E28: a listed selector name as an identifier anywhere in a word (not only a leading `NAME=`)
+# makes the whole word a selector that must lie inside an allow match, so a variable set without
+# a `NAME=` word (printf -v, a for loop, a nameref, env's split string, read) asks, naming that
+# word; an exported name alone asks too (a false ask the owner accepted).
+def test_asks_when_selector_set_without_assignment_word(infra_evaluate: Evaluate) -> None:
+    plan = "terraform plan -var-file=dev.tfvars"
+    pods = "kubectl get pods --context kind-demo"
+    expected = {
+        f"printf -v AWS_PROFILE demo-staging; export AWS_PROFILE; {plan}": selector("AWS_PROFILE"),
+        f"export AWS_PROFILE; printf -v AWS_PROFILE demo-staging; {plan}": selector("AWS_PROFILE"),
+        f"for AWS_PROFILE in demo-staging; do export AWS_PROFILE; {plan}; done": selector(
+            "AWS_PROFILE"
+        ),
+        f"export KUBECONFIG; for KUBECONFIG in /home/u/.kube/staging; do {pods}; done": selector(
+            "KUBECONFIG"
+        ),
+        f"declare -n P=AWS_PROFILE; P=demo-staging; export AWS_PROFILE; {plan}": selector(
+            "P=AWS_PROFILE"
+        ),
+        f"declare -n P=KUBECONFIG; export KUBECONFIG; P=/tmp/stg; {pods}": selector("P=KUBECONFIG"),
+        f"env --split-string=AWS_PROFILE=demo-staging {plan}": selector(
+            "--split-string=AWS_PROFILE=demo-staging"
+        ),
+        f"env --split-string=KUBECONFIG=/home/u/.kube/staging {pods}": selector(
+            "--split-string=KUBECONFIG=/home/u/.kube/staging"
+        ),
+        f"env -SAWS_PROFILE=demo-staging {plan}": selector("-SAWS_PROFILE=demo-staging"),
+        f"read AWS_PROFILE; {plan}": selector("AWS_PROFILE"),
+        f"read TF_CLI_ARGS_plan; {plan}": selector("TF_CLI_ARGS_plan"),
+        f"AWS_PROFILE=demo-dev {plan}": None,
+        pods: None,
+        f"{plan} --profile demo-dev": None,
+        f"{plan} -out=MY_AWS_PROFILE_x": None,
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
+# E28: kubectl `config use` (an alias of use-context), `config set` (current-context, contexts.…),
+# `config rename-context` and `config delete-context`, and pulumi `stack select` change the tool's
+# stored configuration, so they ask like E27's configuration commands; reading it passes.
+def test_asks_when_config_alias_changes_tool_configuration(infra_evaluate: Evaluate) -> None:
+    expected = {
+        "kubectl config use kind-staging --context kind-demo": config_verb("kubectl", "config use"),
+        "kubectl config set current-context kind-staging --context kind-demo": config_verb(
+            "kubectl", "config set"
+        ),
+        "kubectl config set contexts.kind-demo.cluster eks-staging --context kind-demo": (
+            config_verb("kubectl", "config set")
+        ),
+        "kubectl config rename-context kind-demo old --context kind-demo": config_verb(
+            "kubectl", "config rename-context"
+        ),
+        "kubectl config delete-context kind-demo --context kind-demo": config_verb(
+            "kubectl", "config delete-context"
+        ),
+        "pulumi stack select demo/staging --stack demo/dev": config_verb("pulumi", "stack select"),
+        "kubectl get pods --context kind-demo": None,
+        "kubectl config view --context kind-demo": None,
+        "kubectl config get-contexts --context kind-demo": None,
+        "pulumi preview --stack demo/dev": None,
+        "pulumi stack ls --stack demo/dev": None,
+    }
+
+    verdicts = bash_verdicts(infra_evaluate, list(expected))
+
+    assert verdicts == expected
+
+
 # AGH-113: a short-flag cluster holding ``f`` and ``--mirror`` force-update remote refs, so they
 # take the force-push reason; long options that only contain an ``f`` do not.
 def test_denies_force_push_when_flag_is_clustered_or_mirror(evaluate: Evaluate) -> None:
