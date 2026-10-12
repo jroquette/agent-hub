@@ -4,6 +4,7 @@ import pytest
 
 from agent_hub.core.events.event import EventSource
 from agent_hub.core.features.feature_status import FeatureFolder, feature_detail, feature_view
+from agent_hub.core.features.feature_view import FeatureRecord
 
 SPEC = b"""---
 type: spec
@@ -82,6 +83,36 @@ def test_lists_ac_rows_when_detail_read() -> None:
     last = detail.ac_rows[-1]
     assert (last.manual, last.passes, last.command, last.evidence) == (True, False, "manual", None)
     assert detail.ac_rows[0].command == "make check"
+
+
+def test_lists_records_when_research_and_eval_missing() -> None:
+    folder = FeatureFolder(
+        slug="demo-feature",
+        files=("spec.md", "plan.md", "features.json"),
+        features_json=a_record(),
+        spec_head=SPEC,
+    )
+
+    detail = feature_detail(folder, project="demo")
+
+    base = "features/demo-feature"
+    assert detail.records == (
+        FeatureRecord(name="spec", path=f"{base}/spec.md", present=True),
+        FeatureRecord(name="research", path=f"{base}/research.md", present=False),
+        FeatureRecord(name="plan", path=f"{base}/plan.md", present=True),
+        FeatureRecord(name="eval", path=f"{base}/eval.md", present=False),
+        FeatureRecord(name="issues", path=f"{base}/issues.md", present=False),
+    )
+    row = detail.ac_rows[0]
+    assert (row.id, row.description, row.passes, row.command, row.evidence, row.manual) == (
+        "AC-7.1",
+        "Criterion 1",
+        True,
+        "make check",
+        "test run",
+        False,
+    )
+    assert "records" not in feature_view(folder, project="demo").model_dump()
 
 
 def test_stops_at_plan_phase_when_no_eval() -> None:
