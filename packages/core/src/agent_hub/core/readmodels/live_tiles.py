@@ -6,6 +6,9 @@ the last 2 minutes, newest end first. Older ended sessions have no tile.
 
 The failing notice (the tile's red edge) appears when the same gate or command failed 2 or
 more times in a row, or when 3 or more tool calls failed in the last 5 minutes.
+
+A tile carries its session's label, actors and problem counts (AGH-201), and
+``needs_you_problem``: the "what went wrong" line of the first problem that needs the owner.
 """
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -18,7 +21,9 @@ from agent_hub.core.events.event import EventType
 from agent_hub.core.events.stored_event import StoredEvent
 from agent_hub.core.projects.project_views import LiveTile, TileGroup
 from agent_hub.core.readmodels.fact_keys import resolve_facts
+from agent_hub.core.sessions.problem import Resolution, SessionProblems
 from agent_hub.core.sessions.session import Session, SessionStatus
+from agent_hub.core.sessions.session_problems import fold_problems
 
 ENDED_RECENTLY = timedelta(minutes=2)
 ERROR_WINDOW = timedelta(minutes=5)
@@ -122,11 +127,27 @@ def _group(session: Session, now: datetime) -> TileGroup | None:
     return None
 
 
+def has_tile(session: Session, *, now: datetime) -> bool:
+    """Whether ``session`` has a tile at ``now`` (waiting, live, idle or ended recently)."""
+    return _group(session, now) is not None
+
+
 def _open_approvals(events: Sequence[StoredEvent]) -> list[Approval]:
     approvals = fold_approvals(events).values()
     return sorted(
         (approval for approval in approvals if not approval.decided),
         key=lambda approval: approval.requested_at,
+    )
+
+
+def needs_you_line(problems: SessionProblems) -> str | None:
+    """The summary line of the first problem that needs the owner, or None when none does."""
+    first = next((item for item in problems.items if item.resolution == Resolution.NEEDS_YOU), None)
+    if first is None:
+        return None
+    # The summary puts a counts line first (same event id), then needs-you problems by time.
+    return next(
+        (line.text for line in problems.summary[1:] if line.event_id == first.event_id), None
     )
 
 
@@ -136,11 +157,17 @@ def live_tile(
     *,
     now: datetime,
     budget_usd: Decimal | None = None,
+    problems: SessionProblems | None = None,
 ) -> LiveTile | None:
-    """The tile of ``session`` (whose events are ``events``), or None when it has none."""
+    """The tile of ``session`` (whose events are ``events``), or None when it has none.
+
+    ``problems`` are the session's problems at its status; they are folded when not given.
+    """
     group = _group(session, now)
     if group is None:
         return None
+    if problems is None:
+        problems = fold_problems(events, status=session.status)
     winners = resolve_facts(events).winners
     last_action, last_tool = _last_action(winners)
     waiting = _open_approvals(events) if group == "waiting" else []
@@ -175,6 +202,10 @@ def live_tile(
         budget_usd=budget_usd,
         failing_notice=failing_notice(events, now=now),
         sources_missing=session.sources_missing,
+        label=session.label,
+        actors=session.actors,
+        problems=session.problems,
+        needs_you_problem=needs_you_line(problems),
     )
 
 
@@ -199,13 +230,23 @@ def live_tiles(
     *,
     now: datetime,
     budgets: Mapping[str, Decimal] | None = None,
+    problems: Mapping[str, SessionProblems] | None = None,
 ) -> tuple[LiveTile, ...]:
-    """The tiles of ``sessions`` that have one, in the Live sessions order."""
+    """The tiles of ``sessions`` that have one, in the Live sessions order.
+
+    ``problems`` holds the sessions' problems already folded; any other session's are folded.
+    """
     tiles: list[LiveTile] = []
     for session_id, session in sessions.items():
         events = events_by_session.get(session_id, ())
         budget = None if session.run_id is None else (budgets or {}).get(session.run_id)
-        tile = live_tile(session, events, now=now, budget_usd=budget)
+        tile = live_tile(
+            session,
+            events,
+            now=now,
+            budget_usd=budget,
+            problems=(problems or {}).get(session_id),
+        )
         if tile is not None:
             tiles.append(tile)
     return tuple(

@@ -2,8 +2,20 @@ from datetime import timedelta
 from decimal import Decimal
 
 from agent_hub.core.readmodels.fact_keys import canonical_events
-from agent_hub.core.sessions.fold_session import fold_sessions, group_by_session
-from agent_hub.core.sessions.session import Actor, Outcome, SessionLabel, SessionStatus
+from agent_hub.core.sessions.fold_session import (
+    fold_session,
+    fold_session_with_problems,
+    fold_sessions,
+    group_by_session,
+)
+from agent_hub.core.sessions.session import (
+    Actor,
+    Outcome,
+    ProblemCounts,
+    SessionLabel,
+    SessionStatus,
+)
+from agent_hub.core.sessions.session_problems import fold_problems, problem_counts
 from agent_hub.core.testing.builders import an_event
 from agent_hub.core.testing.session_scenarios import (
     SCENARIO_START,
@@ -214,3 +226,39 @@ def test_sets_label_and_actors_when_session_folded() -> None:
         ("subagent", "Explore", "Find the session folds"),
     ]
     assert session.actors[0] == Actor(kind="main")
+
+
+def test_counts_problems_when_session_folded() -> None:
+    # make check-fast fails and the agent moves on; make check fails last, then the session ends.
+    events = as_stored(a_session_events(tools=TOOLS, failed_tools=frozenset({2, 3})))
+
+    session = fold_sessions(events, now=NOW)["session-1"]
+
+    assert session.problems == ProblemCounts(needs_you=1, handled=1)
+
+
+def test_counts_problem_open_when_session_live_and_failure_last() -> None:
+    events = as_stored(a_session_events(tools=TOOLS, failed_tools=frozenset({3}), ended=False))
+
+    session = fold_sessions(events, now=events[-1].event.timestamp)["session-1"]
+
+    assert session.status == SessionStatus.LIVE
+    assert session.problems == ProblemCounts(open=1)
+
+
+def test_folds_same_problems_as_problems_fold_when_session_folded_with_problems() -> None:
+    events = as_stored(
+        [
+            *a_session_events(tools=TOOLS, failed_tools=frozenset({0, 2}), ended=False),
+            *an_agent_call("toolu_agent", at=SCENARIO_START + timedelta(seconds=30)),
+            *a_subagent_events(
+                "agent-a", start=SCENARIO_START + timedelta(minutes=1), failed_tools=frozenset({0})
+            ),
+        ]
+    )
+
+    folded = fold_session_with_problems(events, now=NOW)
+
+    assert folded.problems == fold_problems(events, status=folded.session.status)
+    assert folded.session.problems == problem_counts(folded.problems.items)
+    assert folded.session == fold_session(events, now=NOW)
