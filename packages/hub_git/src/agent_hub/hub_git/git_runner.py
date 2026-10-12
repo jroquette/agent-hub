@@ -161,11 +161,18 @@ class GitSession:
         )
 
     def gh(
-        self, args: Sequence[str], *, cwd: Path, step: str, keep_stdout: bool = True
+        self,
+        args: Sequence[str],
+        *,
+        cwd: Path,
+        step: str,
+        keep_stdout: bool = True,
+        check: bool = True,
     ) -> ProcessResult:
         """Run ``gh <args>`` as ``git`` runs; with ``keep_stdout=False`` its stdout is never read
         (``gh auth token`` prints a secret)."""
-        return self._run(self._runner.gh_name, args, cwd=cwd, step=step, keep=keep_stdout)
+        tool = self._runner.gh_name
+        return self._run(tool, args, cwd=cwd, step=step, check=check, keep=keep_stdout)
 
     def push(
         self, branch: str, *, cwd: Path, default_branch: str, prefix: str, delete: bool = False
