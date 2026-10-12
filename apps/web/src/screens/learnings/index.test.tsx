@@ -6,9 +6,12 @@ import { GlobalStreamProvider } from "../../shell/GlobalStream";
 import { seriousViolations } from "../../testing/axe";
 import {
   aLearning,
+  aLearningActionResult,
+  aLearningDetail,
   anId,
   aPage,
   aProblem,
+  aProjectDetail,
   aStreamCounts,
   at,
   renderWithApi,
@@ -16,24 +19,32 @@ import {
 } from "../../testing/builders";
 import { LearningsScreen } from "./index";
 
-const learnings = [
-  aLearning({
-    id: "l-new",
-    text: "Order book snapshot before diff replay",
-    proposed_at: at(900),
-    provenance: "agent-from-code",
-    target: { kind: "repo", path: "tradeSentinel/AGENTS.md" },
-    project: "loki-trader",
-  }),
-  aLearning({
-    id: "l-old",
-    text: "Retry flaky CI before calling a run failed",
-    proposed_at: at(100),
-    provenance: "agent-from-external",
-    target: { kind: "team", path: "brain/learnings/ci.md" },
-  }),
-];
-const routes: ApiRoutes = { "/api/v1/learnings": aPage(learnings) };
+const newer = aLearning({
+  id: "l-new",
+  text: "Order book snapshot before diff replay",
+  proposed_at: at(900),
+  provenance: "agent-from-code",
+  project: "loki-trader",
+  summary: null,
+  note_unavailable: "Note not in the hub checkout",
+});
+const older = aLearning({
+  id: "l-old",
+  text: "Retry flaky CI before calling a run failed",
+  proposed_at: at(100),
+  provenance: "agent-from-external",
+  summary: "Rerun once; a second failure is real.",
+});
+const learnings = [newer, older];
+const detailOf = (l: typeof newer) =>
+  aLearningDetail({ ...l, note: null, note_unavailable: l.note_unavailable ?? null });
+const routes: ApiRoutes = {
+  "/api/v1/learnings": aPage(learnings),
+  "/api/v1/learnings/l-new": detailOf(newer),
+  "/api/v1/learnings/l-old": detailOf(older),
+  "/api/v1/projects/agent-hub": aProjectDetail({ hub_repo: "agent-hub-hub" }),
+  "/api/v1/projects/loki-trader": aProjectDetail({ hub_repo: "loki-trader-hub" }),
+};
 
 function open(extra: ApiRoutes = {}, path = "/knowledge/learnings", connected = true) {
   const ui = connected ? (
@@ -47,11 +58,10 @@ function open(extra: ApiRoutes = {}, path = "/knowledge/learnings", connected = 
 }
 
 describe("LearningsScreen", () => {
-  it("tags Knowledge P3 and lists proposals oldest first", async () => {
+  it("lists proposals oldest first with their summaries", async () => {
     open();
 
     expect(screen.getByRole("heading", { level: 1, name: "Knowledge" })).toBeInTheDocument();
-    expect(screen.getAllByText("P3")[0]).toHaveClass("ah-phase");
     const table = await screen.findByRole("table", { name: "Proposed learnings" });
     await within(table).findByText("Retry flaky CI before calling a run failed");
     const titles = within(table)
@@ -59,10 +69,12 @@ describe("LearningsScreen", () => {
       .slice(1)
       .map((row) => row.textContent);
     expect(titles[0]).toContain("Retry flaky CI");
+    expect(titles[0]).toContain("Rerun once; a second failure is real.");
     expect(titles[1]).toContain("Order book snapshot");
+    expect(titles[1]).toContain("Note not in the hub checkout");
   });
 
-  it("shows the oldest proposal with its provenance, target and evidence", async () => {
+  it("shows the oldest proposal with its provenance, note and source", async () => {
     open();
 
     const detail = await screen.findByRole("region", { name: "Proposal" });
@@ -70,23 +82,65 @@ describe("LearningsScreen", () => {
       within(detail).getByRole("heading", { name: "Retry flaky CI before calling a run failed" }),
     ).toBeInTheDocument();
     expect(within(detail).getByText(/External/)).toBeInTheDocument();
-    expect(within(detail).getByTitle("brain/learnings/ci.md")).toBeInTheDocument();
-    expect(within(detail).getByText(/team brain · via hub PR/)).toBeInTheDocument();
+    expect(within(detail).getByText("Proposed")).toBeInTheDocument();
     expect(within(detail).getByRole("link", { name: /Open at that moment/ })).toHaveAttribute(
       "href",
       `/sessions/${anId(1, "5091b986")}?tab=timeline&event=${anId(10, "0192aaaa")}`,
     );
   });
 
-  it("keeps accept, reject and snooze disabled with the Phase 3 tooltip", async () => {
+  it("lets accept and reject act and keeps only snooze in Phase 3", async () => {
     open();
 
-    await screen.findByRole("region", { name: "Proposal" });
-    for (const name of [/^Accept a/, /^Reject r/, /^Snooze/]) {
-      const button = screen.getByRole("button", { name });
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+    expect(await within(detail).findByRole("button", { name: "Accept" })).toBeEnabled();
+    expect(within(detail).getByRole("button", { name: "Reject" })).toBeEnabled();
+    const snooze = within(detail).getByRole("button", { name: /^Snooze/ });
+    expect(snooze).toBeDisabled();
+    expect(snooze).toHaveAttribute("title", "Available in Phase 3. This version is read-only.");
+  });
+
+  it("disables accept and reject on a read-only hub (read-only)", async () => {
+    open({
+      "/api/v1/learnings/l-old": aLearningDetail({
+        ...older,
+        actions_unavailable: "Hub is read-only here",
+      }),
+    });
+
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+    await within(detail).findByText("Hub is read-only here");
+    for (const name of ["Accept", "Reject"]) {
+      const button = within(detail).getByRole("button", { name });
       expect(button).toBeDisabled();
-      expect(button).toHaveAttribute("title", "Available in Phase 3. This version is read-only.");
+      expect(button).toHaveAttribute("title", "Hub is read-only here");
     }
+  });
+
+  it("keeps the decided learning open with its pull request after the list moves on", async () => {
+    let decided = false;
+    const { router } = open({
+      "/api/v1/learnings": () => aPage(decided ? [newer] : learnings),
+      "POST /api/v1/learnings/l-old/accept": () => {
+        decided = true;
+        return aLearningActionResult();
+      },
+    });
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+
+    await userEvent.click(await within(detail).findByRole("button", { name: "Accept" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open pull request" }));
+
+    expect(await screen.findByText("Pull request opened")).toBeInTheDocument();
+    expect(router.state.location.search).toBe("?learning=l-old");
+    await waitFor(() => {
+      expect(screen.getAllByRole("row")).toHaveLength(2);
+    });
+    expect(
+      within(screen.getByRole("region", { name: "Proposal" })).getByRole("heading", {
+        name: "Retry flaky CI before calling a run failed",
+      }),
+    ).toBeInTheDocument();
   });
 
   it("selects another proposal from the queue and keeps it in the URL", async () => {
@@ -95,7 +149,10 @@ describe("LearningsScreen", () => {
     await userEvent.click(await screen.findByText("Order book snapshot before diff replay"));
 
     const detail = screen.getByRole("region", { name: "Proposal" });
-    expect(within(detail).getByText(/repo AGENTS.md · via that repo's PR/)).toBeInTheDocument();
+    expect(
+      within(detail).getByRole("heading", { name: "Order book snapshot before diff replay" }),
+    ).toBeInTheDocument();
+    expect(await within(detail).findByText("Note not in the hub checkout")).toBeInTheDocument();
     expect(router.state.location.search).toBe("?learning=l-new");
   });
 
@@ -166,7 +223,8 @@ describe("LearningsScreen", () => {
 
   it("has no serious a11y violations (a11y)", async () => {
     const { container } = open();
-    await screen.findByRole("region", { name: "Proposal" });
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+    await within(detail).findByRole("button", { name: "Accept" });
 
     expect(await seriousViolations(container)).toEqual([]);
   });
