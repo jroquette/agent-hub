@@ -13,9 +13,11 @@ when a rule reads the listing), the release's base hooks block when a rule reads
 from the installed generator, never by a render), each repo checkout at ``../<dir>`` when a
 rule reads the repos (its real path, taken once; inside it nothing is followed), and the
 developer's branch prefix when a rule reads it and the local file is valid (``git config`` runs
-in the main checkout only when no file sets the prefix). The findings
-go to stdout as lines and totals, or as one JSON object with ``--json``; the exit is 1 when one
-is an error, else 0. ``check_hub`` is the same check on a given root, for ``hub setup``.
+in the main checkout only when no file sets the prefix), and, from a Claude Code session only
+(``CLAUDECODE=1``), each repo checkout's ``git ls-remote origin`` when a rule reads the remotes
+(AGH-134: run inside the session's sandbox, it shows whether a sandboxed fetch can work). The
+findings go to stdout as lines and totals, or as one JSON object with ``--json``; the exit is 1
+when one is an error, else 0. ``check_hub`` is the same check on a given root, for ``hub setup``.
 """
 
 import os
@@ -26,9 +28,11 @@ from typing import Annotated, Final, NamedTuple
 
 import typer
 
+from agent_hub.cli.child_process import git_env, run_child
 from agent_hub.cli.command_exits import root_or_exit
 from agent_hub.cli.doctor_report import report_json, report_lines
 from agent_hub.cli.effective_config import git_identity_reader
+from agent_hub.cli.errors import ChildTimedOutError
 from agent_hub.cli.hub_config_reader import (
     DISTRIBUTION,
     FILE_LABEL,
@@ -47,7 +51,7 @@ from agent_hub.core.doctor.run_rules import (
     run_rules,
     select_rules,
 )
-from agent_hub.core.doctor.snapshot import ConfigFailure, DoctorSnapshot, HubFiles
+from agent_hub.core.doctor.snapshot import ConfigFailure, DoctorSnapshot, HubFiles, RemoteProbe
 from agent_hub.core.hub_config.doctor_rules import RULE_IDS
 from agent_hub.core.hub_config.effective_identity import (
     IdentityValues,
@@ -57,7 +61,11 @@ from agent_hub.core.hub_config.effective_identity import (
 from agent_hub.core.hub_config.local_config import LOCAL_FILE, LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
-from agent_hub.generator.doctor_snapshot import BranchPrefixReader, build_doctor_snapshot
+from agent_hub.generator.doctor_snapshot import (
+    BranchPrefixReader,
+    RemoteProber,
+    build_doctor_snapshot,
+)
 
 # A usage error, an unknown or unrunnable ``--only`` id, or a folder that is not a hub.
 NOT_A_HUB_EXIT: Final = 2
@@ -68,6 +76,9 @@ NOT_A_HUB: Final = (
 FINDINGS_FAILED: Final = 1
 # A failed config reads no file: only the config rules run, and they read hub.json alone.
 _NO_FILES: Final = HubFiles(entries={}, listed=(), problem=None, paths_read=True)
+# Claude Code sets it in its Bash tool's environment; the probe is about that session's sandbox.
+CLAUDE_CODE_VARIABLE: Final = "CLAUDECODE"
+PROBE_TIMEOUT: Final = 20
 
 
 def doctor(
@@ -143,6 +154,7 @@ def check_hub(root: str, *, only: Sequence[str] = ()) -> DoctorRun | UsageProble
             selection=selection,
             local=local,
             branch_prefix=_prefix_reader(config, local=local, home=home),
+            remote_probes=_remote_prober(root, config),
         )
     return DoctorRun(findings=run_rules(selection, snapshot), notes=selection.notes)
 
@@ -181,3 +193,44 @@ def _prefix_reader(
         )
 
     return read
+
+
+def _remote_prober(root: str, config: HubConfig) -> RemoteProber | None:
+    """Each repo checkout's ``git ls-remote origin``, only from a Claude Code session.
+
+    A ``../<dir>`` that is no git checkout is left out (``repos.agents`` names it). Git gets no
+    terminal prompt and ``PROBE_TIMEOUT`` seconds; a git that cannot run is a probe problem.
+    """
+    if os.environ.get(CLAUDE_CODE_VARIABLE) != "1":
+        return None
+
+    def probe() -> tuple[RemoteProbe, ...]:
+        env = git_env(os.environ, optional_locks=False) | {"GIT_TERMINAL_PROMPT": "0"}
+        found = []
+        for repo in config.repos:
+            checkout = os.path.join(root, os.pardir, repo.dir)
+            if not os.path.lexists(os.path.join(checkout, ".git")):
+                continue
+            found.append(RemoteProbe(dir=repo.dir, problem=_ls_remote(checkout, env=env)))
+        return tuple(found)
+
+    return probe
+
+
+def _ls_remote(checkout: str, *, env: dict[str, str]) -> str | None:
+    """Why ``git ls-remote origin HEAD`` failed in ``checkout``, or ``None`` when it answered."""
+    try:
+        result = run_child(
+            ["git", "ls-remote", "-q", "origin", "HEAD"],
+            cwd=checkout,
+            env=env,
+            timeout=PROBE_TIMEOUT,
+        )
+    except ChildTimedOutError:
+        return f"timed out after {PROBE_TIMEOUT} s"
+    except OSError as error:
+        return f"git could not run: {error.strerror or error}"
+    if result.returncode == 0:
+        return None
+    lines = [line.strip() for line in result.stderr.decode(errors="replace").splitlines()]
+    return next((line for line in lines if line), f"git exited {result.returncode}")
