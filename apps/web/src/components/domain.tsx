@@ -1,8 +1,7 @@
-import { createElement, Fragment, useState } from "react";
+import { Fragment, useState } from "react";
 import type { ReactNode } from "react";
 
 import { fmtDuration, fmtMoney, fmtTokens } from "../lib/format";
-import { safeHref } from "../lib/safeHref";
 import { AppLink, IconButton, IdChip, IssueLink, Tooltip, Button, type Phase } from "./core";
 import { Sparkline } from "./data";
 import { Icon, type IconName } from "./Icon";
@@ -489,42 +488,7 @@ export function ActivityFeed({ items }: { items: ActivityEntry[] }) {
   );
 }
 
-/* ---------- Mini Markdown renderer with frontmatter chips and AC tables ---------- */
-function inline(text: string): ReactNode[] {
-  const out: ReactNode[] = [];
-  const re = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\))/g;
-  let last = 0;
-  let key = 0;
-  for (let m = re.exec(text); m !== null; m = re.exec(text)) {
-    if (m.index > last) out.push(text.slice(last, m.index));
-    const token = m[0];
-    if (token.startsWith("`")) out.push(<code key={key++}>{token.slice(1, -1)}</code>);
-    else if (token.startsWith("*")) out.push(<b key={key++}>{token.slice(2, -2)}</b>);
-    else {
-      const link = /\[([^\]]+)\]\(([^)]+)\)/.exec(token);
-      const label = link?.[1] ?? token;
-      const href = link?.[2] ?? "";
-      const safe = safeHref(href);
-      out.push(
-        safe !== null ? (
-          <a key={key++} href={safe} rel="noreferrer">
-            {label}
-          </a>
-        ) : (
-          <span key={key++} title="Link removed: only http(s) and relative links are rendered">
-            {label}
-          </span>
-        ),
-      );
-    }
-    last = m.index + token.length;
-  }
-  if (last < text.length) out.push(text.slice(last));
-  return out;
-}
-
-const BLOCK_START = /^(#|[-*] |\d+\. |> )/;
-
+/* ---------- Frontmatter chips and AC tables (notes render through Markdown.tsx) ---------- */
 export interface Frontmatter {
   type?: string | undefined;
   status?: string | undefined;
@@ -532,75 +496,6 @@ export interface Frontmatter {
   last_verified?: string | undefined;
   daysSinceVerified?: number | undefined;
   provenance?: Provenance | undefined;
-}
-
-export function Markdown({
-  source,
-  frontmatter,
-  children,
-}: {
-  source: string;
-  frontmatter?: Frontmatter | undefined;
-  children?: ReactNode;
-}) {
-  const lines = source.split("\n");
-  const blocks: ReactNode[] = [];
-  let i = 0;
-  let key = 0;
-  const at = (n: number) => lines[n] ?? "";
-  while (i < lines.length) {
-    const line = at(i);
-    if (!line.trim()) {
-      i++;
-      continue;
-    }
-    const heading = /^(#{1,3}) (.*)/.exec(line);
-    if (heading) {
-      const level = heading[1]?.length ?? 1;
-      blocks.push(createElement(`h${String(level)}`, { key: key++ }, inline(heading[2] ?? "")));
-      i++;
-      continue;
-    }
-    if (/^[-*] /.test(line)) {
-      const items: string[] = [];
-      while (i < lines.length && /^[-*] /.test(at(i))) items.push(at(i++).slice(2));
-      blocks.push(
-        <ul key={key++}>
-          {items.map((t, j) => (
-            <li key={j}>{inline(t)}</li>
-          ))}
-        </ul>,
-      );
-      continue;
-    }
-    if (/^\d+\. /.test(line)) {
-      const items: string[] = [];
-      while (i < lines.length && /^\d+\. /.test(at(i))) items.push(at(i++).replace(/^\d+\. /, ""));
-      blocks.push(
-        <ol key={key++}>
-          {items.map((t, j) => (
-            <li key={j}>{inline(t)}</li>
-          ))}
-        </ol>,
-      );
-      continue;
-    }
-    if (line.startsWith("> ")) {
-      blocks.push(<blockquote key={key++}>{inline(line.slice(2))}</blockquote>);
-      i++;
-      continue;
-    }
-    const para: string[] = [];
-    while (i < lines.length && at(i).trim() && !BLOCK_START.test(at(i))) para.push(at(i++));
-    blocks.push(<p key={key++}>{inline(para.join(" "))}</p>);
-  }
-  return (
-    <div className="ah-md">
-      {frontmatter && <FrontmatterChips fm={frontmatter} />}
-      {blocks}
-      {children}
-    </div>
-  );
 }
 
 export function FrontmatterChips({ fm }: { fm: Frontmatter }) {

@@ -11,7 +11,6 @@ import {
   FindingRow,
   FrontmatterChips,
   GoldenPathStepper,
-  Markdown,
   NeedsYouList,
   ProjectCard,
   SessionTile,
@@ -197,21 +196,11 @@ describe("ProjectCard and ActivityFeed", () => {
   });
 });
 
-describe("Markdown", () => {
-  it("renders headings, lists, quotes, code, bold and safe links only", () => {
-    const { container } = render(
-      <Markdown
-        source={[
-          "# Title",
-          "Some `code` and **bold** and [a link](https://example.com) and [bad](javascript:alert(1)) and [blob](data:text/html,x) and [proto](//evil.example).",
-          "- one",
-          "- two",
-          "1. first",
-          "> quoted",
-          "",
-          "### Small",
-        ].join("\n")}
-        frontmatter={{
+describe("FrontmatterChips", () => {
+  it("shows every chip and the stale tone when the note was verified over 60 days ago", () => {
+    render(
+      <FrontmatterChips
+        fm={{
           type: "spec",
           status: "draft",
           repos: ["agent-hub"],
@@ -222,18 +211,9 @@ describe("Markdown", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { level: 1, name: "Title" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 3, name: "Small" })).toBeInTheDocument();
-    expect(container.querySelector("code")).toHaveTextContent("code");
-    expect(screen.getByRole("link", { name: "a link" })).toHaveAttribute(
-      "href",
-      "https://example.com",
-    );
-    expect(screen.queryByRole("link", { name: "bad" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "blob" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "proto" })).not.toBeInTheDocument();
-    expect(screen.getAllByRole("listitem")).toHaveLength(3);
-    expect(container.querySelector("blockquote")).toHaveTextContent("quoted");
+    expect(screen.getByText("spec")).toBeInTheDocument();
+    expect(screen.getByText("draft")).toBeInTheDocument();
+    expect(screen.getByText("agent-hub")).toBeInTheDocument();
     expect(screen.getByText("last verified").parentElement).toHaveAttribute("data-tone", "stale");
   });
 
