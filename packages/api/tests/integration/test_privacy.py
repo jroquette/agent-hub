@@ -172,10 +172,17 @@ def _jsonl_payload(db_path: Path) -> dict[str, Any]:
     return loaded
 
 
+def _is_problem(value: dict[str, Any]) -> bool:
+    """A problem of ``/sessions/{id}/problems``: its ``message`` is the stored error message."""
+    return {"kind", "resolution", "message"} <= set(value)
+
+
 def _without_error_messages(value: Any) -> Any:
-    """``value`` with every ``error_message`` key removed, at any depth."""
+    """``value`` with every ``error_message`` key (and each problem's ``message``, which serves
+    it) removed, at any depth."""
     if isinstance(value, dict):
-        return {k: _without_error_messages(v) for k, v in value.items() if k != "error_message"}
+        dropped = {"error_message", "message"} if _is_problem(value) else {"error_message"}
+        return {k: _without_error_messages(v) for k, v in value.items() if k not in dropped}
     if isinstance(value, list):
         return [_without_error_messages(item) for item in value]
     return value
@@ -228,7 +235,7 @@ def _paths(composed: Any) -> list[str]:
     for session in sessions:
         base = f"/api/v1/sessions/{session}"
         paths += [base, f"{base}/summary", f"{base}/events?limit=200", f"{base}/files"]
-        paths.append(f"{base}/cost")
+        paths += [f"{base}/cost", f"{base}/problems"]
     paths += [f"/api/v1/workflow-runs/{run}" for run in runs]
     paths += [f"/api/v1/approvals/{approval}" for approval in approvals]
     paths += [f"/api/v1/learnings/{learning}" for learning in learnings]
@@ -260,3 +267,8 @@ def test_stores_and_serves_no_body_or_secret_when_ingested_through_every_entry_p
         assert BODY not in response.text, path
         assert LEAK_SAMPLE not in response.text, path
         assert ERROR_BODY not in json.dumps(_without_error_messages(response.json())), path
+    listed = composed.client.get("/api/v1/sessions?limit=200").json()["items"]
+    served = [composed.client.get(f"/api/v1/sessions/{i['id']}/problems").json() for i in listed]
+    messages = [p["message"] for body in served for p in body["items"]]
+    assert any(ERROR_BODY in message for message in messages)
+    assert all(len(message) <= ERROR_MESSAGE_LIMIT for message in messages)
