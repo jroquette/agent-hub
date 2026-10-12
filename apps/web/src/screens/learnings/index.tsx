@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { useSearchParams } from "react-router";
+import { useParams, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
 import {
@@ -110,7 +110,9 @@ export function LearningsScreen() {
   const rows = [...(learnings.data?.items ?? [])].sort((a, b) =>
     (a.proposed_at ?? "").localeCompare(b.proposed_at ?? ""),
   );
-  const chosen = params.get("learning");
+  const { learningId } = useParams();
+  // `/knowledge/learnings/:learningId` (a link to one proposal) and `?learning=` both pick it.
+  const chosen = params.get("learning") ?? learningId ?? null;
   // A learning pinned in the URL stays open after a decision moves it out of this status's list.
   const selectedId = chosen ?? rows[0]?.id ?? null;
   const select = (id: string) => {
