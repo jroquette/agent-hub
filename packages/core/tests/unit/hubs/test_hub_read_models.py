@@ -3,13 +3,24 @@ from decimal import Decimal
 
 import pytest
 
+from agent_hub.core.brain.brain_note import (
+    BrainEntry,
+    BrainNoteNotFoundError,
+    BrainNoteTooLargeError,
+)
+from agent_hub.core.brain.brain_path import MAX_NOTE_BYTES, BrainPathError
 from agent_hub.core.doctor.snapshot import LockAbsent
 from agent_hub.core.events.event import EventSource
 from agent_hub.core.features.feature_status import FeatureFolder
 from agent_hub.core.hub_config.doctor_rules import LOCK_DRIFT_RULE, Severity
 from agent_hub.core.hub_files.hub_lock import HubLock, ManagedFileEntry
 from agent_hub.core.hubs.hub_read_models import HubFilesReadModels
-from agent_hub.core.hubs.hub_registry import HubConflictError, HubInvalidError, UnreadHubFile
+from agent_hub.core.hubs.hub_registry import (
+    BrainListing,
+    HubConflictError,
+    HubInvalidError,
+    UnreadHubFile,
+)
 from agent_hub.core.projects.project_views import ProjectActivity
 from agent_hub.core.readmodels.filters import Scope
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError, HubReadModels
@@ -36,6 +47,7 @@ SETTINGS = SettingsView(
 )
 SPEC = b"---\nprocess_size: bounded\nlinear: [DEM-7]\n---\n"
 NOW_NOTE = b"---\nlast_verified: 2026-10-09\n---\n- **Focus:** Ship it.\n"
+DECISIONS = b"---\ntype: decision-log\ntags: [a, b]\n---\n# Decisions\n"
 
 
 class FakeActivity:
@@ -289,3 +301,136 @@ def test_raises_not_found_when_scoped_project_has_no_readable_hub() -> None:
         models.doctor_findings(Scope(project="other"))
 
     assert raised.value.entity_id == "other"
+
+
+class ListingReader(FakeHubFileReader):
+    """A reader whose listing holds what an adapter must never list, unsorted."""
+
+    def brain_tree(self, hub_path: str) -> BrainListing:
+        del hub_path
+        return BrainListing(
+            entries=(
+                BrainEntry(path="playbooks/x.md", size=3),
+                BrainEntry(path="auto/workspace/me.md", size=1),
+                BrainEntry(path=".hidden/x.md", size=1),
+                BrainEntry(path="notes.txt", size=1),
+                BrainEntry(path="index.md", size=5),
+            ),
+            truncated=True,
+            skipped=2,
+        )
+
+
+def a_brain_hub() -> FakeHub:
+    hub = a_demo_hub()
+    hub.brain = {
+        "index.md": b"# Brain\n",
+        "decisions/index.md": DECISIONS,
+        "auto/workspace/me.md": b"personal",
+        "linked.md": b"# elsewhere\n",
+        "big.md": b"x" * (MAX_NOTE_BYTES + 1),
+    }
+    hub.brain_links = frozenset({"linked.md"})
+    return hub
+
+
+def test_lists_brain_when_hub_registered() -> None:
+    models, _, _ = read_models({DEMO: a_brain_hub()}, DEMO)
+
+    tree = models.brain_tree("demo")
+
+    assert tree.project == "demo"
+    assert [entry.path for entry in tree.entries] == ["big.md", "decisions/index.md", "index.md"]
+    assert (tree.truncated, tree.skipped) == (False, 0)
+
+
+def test_excludes_auto_and_sorts_when_reader_lists_them() -> None:
+    registry = InMemoryHubRegistry(clock=lambda: NOW)
+    registry.add(DEMO)
+    models = HubFilesReadModels(
+        registry=registry,
+        reader=ListingReader({DEMO: a_demo_hub()}),
+        activity=FakeActivity(),
+        running_version=RUNNING,
+        settings=SETTINGS,
+        clock=lambda: NOW,
+    )
+
+    tree = models.brain_tree("demo")
+
+    assert [entry.path for entry in tree.entries] == ["index.md", "playbooks/x.md"]
+    assert (tree.truncated, tree.skipped) == (True, 2)
+
+
+def test_raises_not_found_when_brain_project_unknown() -> None:
+    models, _, _ = read_models({DEMO: a_brain_hub()}, DEMO)
+
+    with pytest.raises(EntityNotFoundError):
+        models.brain_tree("nope")
+    with pytest.raises(EntityNotFoundError):
+        models.brain_note("nope", "index.md")
+
+
+def test_returns_note_when_path_valid() -> None:
+    models, _, _ = read_models({DEMO: a_brain_hub()}, DEMO)
+
+    note = models.brain_note("demo", "decisions/index.md")
+
+    assert (note.project, note.path, note.size) == ("demo", "decisions/index.md", len(DECISIONS))
+    assert note.frontmatter == {"type": "decision-log", "tags": ["a", "b"]}
+    assert note.frontmatter_problem is None
+    assert note.markdown == "# Decisions\n"
+
+
+def test_reports_frontmatter_problem_when_note_frontmatter_unclosed() -> None:
+    hub = a_brain_hub()
+    hub.brain["open.md"] = b"---\ntype: x\n# no fence\n\xff"
+    models, _, _ = read_models({DEMO: hub}, DEMO)
+
+    note = models.brain_note("demo", "open.md")
+
+    assert note.frontmatter == {}
+    assert note.frontmatter_problem is not None
+    assert note.markdown.startswith("---\ntype: x")
+    assert note.markdown.endswith("\ufffd")
+
+
+@pytest.mark.parametrize("path", ["linked.md", "absent.md", "auto/workspace/me.md", "auto/x.txt"])
+def test_raises_not_found_when_note_is_link(path: str) -> None:
+    models, _, _ = read_models({DEMO: a_brain_hub()}, DEMO)
+
+    with pytest.raises(BrainNoteNotFoundError) as raised:
+        models.brain_note("demo", path)
+
+    assert (raised.value.project, raised.value.path) == ("demo", path)
+
+
+def test_raises_too_large_when_note_over_cap() -> None:
+    models, _, _ = read_models({DEMO: a_brain_hub()}, DEMO)
+
+    with pytest.raises(BrainNoteTooLargeError) as raised:
+        models.brain_note("demo", "big.md")
+
+    assert (raised.value.size, raised.value.limit) == (MAX_NOTE_BYTES + 1, MAX_NOTE_BYTES)
+
+
+@pytest.mark.parametrize("path", ["../hub.json", "/etc/passwd", "x.txt", "a/../../x.md"])
+def test_refuses_note_when_path_outside_brain_rules(path: str) -> None:
+    models, _, _ = read_models({DEMO: a_brain_hub()}, DEMO)
+
+    with pytest.raises(BrainPathError):
+        models.brain_note("demo", path)
+
+
+def test_lists_records_when_feature_detail_read() -> None:
+    models, _, _ = read_models({DEMO: a_demo_hub()}, DEMO)
+
+    detail = models.get_feature("demo", "demo-feature")
+
+    assert [(record.name, record.present) for record in detail.records] == [
+        ("spec", True),
+        ("research", False),
+        ("plan", False),
+        ("eval", False),
+        ("issues", False),
+    ]
