@@ -15,6 +15,7 @@ import {
   aRepo,
   aRun,
   aSession,
+  aSessionLabel,
   at,
   renderWithApi,
   type ApiRoutes,
@@ -104,8 +105,14 @@ const routes: ApiRoutes = {
       started_at: at(-9000),
       ended_at: at(-6000),
       agent: "main",
+      label: aSessionLabel({ issue: "DEMO-1511", repo: "demo", branch: "main" }),
     }),
-    aSession({ id: anId(2), status: "live", agent: "hub-workflow:planner", started_at: at(-100) }),
+    aSession({
+      id: anId(2),
+      status: "live",
+      label: aSessionLabel({ issue: null, workflow: "/create-plan", branch: "dev/agh-9-x" }),
+      started_at: at(-100),
+    }),
   ]),
   "/api/v1/doctor/findings": aPage([
     aFinding({
@@ -215,12 +222,28 @@ describe("ProjectOverviewScreen", () => {
     const { router } = renderProject();
 
     const table = await screen.findByRole("table", { name: "Recent sessions" });
-    await within(table).findByText("main");
+    await within(table).findByText("DEMO-1511 · /feature");
     const rows = within(table).getAllByRole("row").slice(1);
-    expect(rows[0]).toHaveTextContent("hub-workflow:planner");
+    expect(rows[0]).toHaveTextContent("/create-plan");
     expect(rows[1]).toHaveTextContent("Error");
-    await user.click(within(table).getByText("main"));
+    await user.click(within(table).getByText("DEMO-1511 · /feature"));
     expect(router.state.location.pathname).toBe(`/sessions/${anId(1)}`);
+  });
+
+  it("names each recent session by its label, never by its agent (label, AC-201.4)", async () => {
+    renderProject();
+
+    const table = await screen.findByRole("table", { name: "Recent sessions" });
+    await within(table).findByText("DEMO-1511 · /feature");
+    const headers = within(table)
+      .getAllByRole("columnheader")
+      .map((th) => th.textContent);
+    expect(headers).not.toContain("Agent");
+    expect(headers).toContain("Session");
+    expect(within(table).getByText("demo · main")).toBeInTheDocument();
+    expect(within(table).getByText("agent-hub · dev/agh-9-x")).toBeInTheDocument();
+    const mains = within(table).queryAllByText(/\bmain\b/);
+    expect(mains.map((node) => node.textContent)).toEqual(["demo · main"]);
   });
 
   it("summarises health and cost with the estimated label", async () => {
@@ -335,7 +358,7 @@ describe("ProjectOverviewScreen", () => {
     const { container } = renderProject();
 
     await screen.findByText("Cap the tracker team list");
-    await screen.findByText("hub-workflow:planner");
+    await screen.findByText("/create-plan");
     expect(await seriousViolations(container)).toEqual([]);
   });
 });

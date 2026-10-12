@@ -3,11 +3,16 @@
 Against the app at ``--url`` (``make run`` or ``make up``), it:
 
 1. reads the server's database path (``/api/v1/collector/status``);
-2. makes a demo hub (``hub init demo``) with one feature folder, next to that database
+2. makes a demo hub (``hub init demo``, tracker team ``AGH``) with a feature folder (spec, plan,
+   eval, ``features.json``) and an inbox note, next to that database
    (``<database folder>/demo``), and registers it (``POST /api/v1/hubs``);
-3. posts hook envelopes: a live session with a guard denial, and one waiting on a guard ask;
+3. posts hook envelopes: a live ``/feature`` session for AGH-7 (its worktree names the issue)
+   that runs a Skill, starts an ``Explore`` subagent, recovers from a failed check (a problem
+   the agent handled) and has a push denied; an idle session whose failed ``make test`` needs
+   you; and one waiting on a guard ask;
 4. collects a failed ``hub run`` (``hub collect --runs``) and an ended session's transcript
-   (``hub collect --transcript``) into the same database.
+   (``hub collect --transcript``, on branch ``demo/agh-7-demo-feature``, proposing the inbox
+   note) into the same database.
 
 Everything is synthetic, built from ``agent_hub.core.testing``; nothing is read from
 ``~/.claude``. ``--via compose`` runs ``hub`` and writes the files inside the Compose service
@@ -52,16 +57,33 @@ DEMO_CWD = "/work/demo-api"
 # tool use, or transcript line), so a second run's fresh events must not reuse the first's keys.
 LIVE_SESSION = "demo-live"
 ASK_SESSION = "demo-ask"
+STUCK_SESSION = "demo-stuck"
 BACKFILL_SESSION = "demo-ended"
 FAILED_RUN = "5e6f7a8b"
 FEATURE = "export-button"
+ISSUE = "AGH-7"
+# The feature's branch and worktree name the issue, so sessions read "AGH-7 · /feature".
+DEMO_BRANCH = "demo/agh-7-demo-feature"
+WORKTREE_CWD = f"{DEMO_CWD}/.claude/worktrees/agh-7-demo-feature"
+INBOX_NOTE = "brain/_inbox/csv-header-order.md"
+INBOX_TEXT = """\
+---
+kind: team
+provenance: agent
+---
+# Keep the CSV header in the order of the table columns
+
+The export test failed because the CSV header listed the columns alphabetically while the rows
+followed the table's order. Build the header from the same column list as the rows, so both
+always agree.
+"""
 ALREADY_A_HUB = "already a hub"
 # The hub-init flags, so git is never asked; all values are made up.
 HUB_FLAGS = (
     "--repos",
     f"acme/{DEMO_REPO}",
     "--tracker",
-    "linear:DEM",
+    "linear:AGH",
     "--branch-prefix",
     "demo/",
     "--hub-repo",
@@ -166,54 +188,114 @@ def _envelope(hook: dict[str, Any], *, repo: str, at: datetime, **extra: Any) ->
     } | extra
 
 
-def session_ids(now: datetime) -> tuple[str, str, str]:
-    """The live, the waiting and the ended (backfilled) session of a run at ``now``."""
+def session_ids(now: datetime) -> tuple[str, str, str, str]:
+    """The live, the waiting, the ended (backfilled) and the idle session of a run at ``now``."""
     suffix = f"{now:%Y%m%d%H%M%S}"
-    return f"{LIVE_SESSION}-{suffix}", f"{ASK_SESSION}-{suffix}", f"{BACKFILL_SESSION}-{suffix}"
+    return (
+        f"{LIVE_SESSION}-{suffix}",
+        f"{ASK_SESSION}-{suffix}",
+        f"{BACKFILL_SESSION}-{suffix}",
+        f"{STUCK_SESSION}-{suffix}",
+    )
 
 
-def demo_envelopes(now: datetime) -> list[dict[str, Any]]:
-    """A live session that ran tools and had a push denied, and one waiting on a guard ask."""
-    live_id, ask_id, _ = session_ids(now)
-    live = {"session_id": live_id, "cwd": DEMO_CWD}
-    ask = {"session_id": ask_id, "cwd": DEMO_CWD}
-    edit = {
-        "tool_name": "Edit",
-        "tool_input": {
-            "file_path": f"{DEMO_CWD}/src/export.py",
+def _tool(name: str, tool_input: dict[str, Any], tool_use_id: str) -> dict[str, Any]:
+    return {"tool_name": name, "tool_input": tool_input, "tool_use_id": tool_use_id}
+
+
+def _live_steps() -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+    """The live session's hooks in order: ``/feature`` (a Skill call), an ``Explore`` subagent
+    started by an Agent call, a failed check the agent fixed, an edit, a push the guard denied."""
+    explore = {"agent_id": "agent-demo-1", "agent_type": "Explore"}
+    skill = _tool("Skill", {"skill": "feature"}, "toolu_demo_skill")
+    agent = _tool(
+        "Agent",
+        {
+            "subagent_type": "Explore",
+            "description": "Find the CSV export code",
+            "prompt": "Where is the CSV export built?",
+        },
+        "toolu_demo_agent",
+    )
+    grep = _tool("Grep", {"pattern": "def export_csv", "path": "src"}, "toolu_demo_grep")
+    check = {"command": "make check-fast", "description": "Run the fast gate"}
+    failed = _tool("Bash", check, "toolu_demo_check_1")
+    passed = _tool("Bash", check, "toolu_demo_check_2")
+    error = "Exit code 2\nFAILED tests/test_export.py::test_csv_header - columns out of order"
+    edit = _tool(
+        "Edit",
+        {
+            "file_path": f"{WORKTREE_CWD}/src/export.py",
             "old_string_lines": 2,
             "new_string_lines": 9,
         },
-        "tool_use_id": "toolu_demo_edit",
-    }
-    push = {
-        "tool_name": "Bash",
-        "tool_input": {"command": "git push origin main"},
-        "tool_use_id": "toolu_demo_push",
-    }
+        "toolu_demo_edit",
+    )
+    push = _tool("Bash", {"command": "git push origin main"}, "toolu_demo_push")
+    deny = {"by": "guard", "kind": "deny", "rule": "push-to-main"}
+    return [
+        ("SessionStart", {}, {}),
+        ("UserPromptSubmit", {"prompt": "/feature add the CSV export button"}, {}),
+        ("PreToolUse", skill, {}),
+        ("PostToolUse", skill, {}),
+        ("PreToolUse", agent, {}),
+        ("SubagentStart", explore, {}),
+        ("PreToolUse", grep | explore, {}),
+        ("PostToolUse", grep | explore, {}),
+        ("SubagentStop", explore, {}),
+        ("PostToolUse", agent, {}),
+        ("PreToolUse", edit, {}),
+        ("PostToolUse", edit, {}),
+        ("PreToolUse", failed, {}),
+        ("PostToolUseFailure", failed | {"error": error}, {}),
+        ("PreToolUse", passed, {}),
+        ("PostToolUse", passed, {}),
+        ("PreToolUse", push, {"decision": deny}),
+    ]
+
+
+def demo_envelopes(now: datetime) -> list[dict[str, Any]]:
+    """The live AGH-7 session, an idle one whose failed test needs you, and one waiting on a
+    guard ask."""
+    live_id, ask_id, _, stuck_id = session_ids(now)
+    live = {"session_id": live_id, "cwd": WORKTREE_CWD}
+    ask = {"session_id": ask_id, "cwd": DEMO_CWD}
+    stuck = {"session_id": stuck_id, "cwd": DEMO_CWD}
     adr = {
         "tool_name": "Edit",
         "tool_input": {"file_path": f"{DEMO_CWD}/docs/adr/0009-export.md"},
         "tool_use_id": "toolu_demo_adr",
     }
-    deny = {"by": "guard", "kind": "deny", "rule": "push-to-main"}
+    test = _tool("Bash", {"command": "make test"}, "toolu_demo_test")
+    test_error = "Exit code 1\nAssertionError: expected 3 rows, got 2"
     ask_decision = {"by": "guard", "kind": "ask", "rule": "ask_before_edit"}
-    at = [now - timedelta(seconds=seconds) for seconds in (150, 140, 120, 110, 90, 80, 60, 30)]
-    return [
-        _envelope(a_hook_input("SessionStart") | live, repo=DEMO_REPO, at=at[0]),
-        _envelope(a_hook_input("UserPromptSubmit") | live, repo=DEMO_REPO, at=at[1]),
-        _envelope(a_hook_input("PreToolUse") | live, repo=DEMO_REPO, at=at[2]),
-        _envelope(a_hook_input("PostToolUse") | live, repo=DEMO_REPO, at=at[3]),
-        _envelope(a_hook_input("PreToolUse", **edit) | live, repo=DEMO_REPO, at=at[4]),
-        _envelope(a_hook_input("PostToolUse", **edit) | live, repo=DEMO_REPO, at=at[5]),
+    steps = _live_steps()
+    live_envelopes = [
         _envelope(
-            a_hook_input("PreToolUse", **push) | live, repo=DEMO_REPO, at=at[6], decision=deny
+            a_hook_input(name, **fields) | live,
+            repo=DEMO_REPO,
+            at=now - timedelta(seconds=8 * (len(steps) - index)),
+            **extra,
+        )
+        for index, (name, fields, extra) in enumerate(steps)
+    ]
+    minutes = [now - timedelta(minutes=minutes) for minutes in (12, 11, 10)]
+    return [
+        *live_envelopes,
+        _envelope(a_hook_input("SessionStart") | stuck, repo=DEMO_REPO, at=minutes[0]),
+        _envelope(a_hook_input("PreToolUse", **test) | stuck, repo=DEMO_REPO, at=minutes[1]),
+        _envelope(
+            a_hook_input("PostToolUseFailure", **test, error=test_error) | stuck,
+            repo=DEMO_REPO,
+            at=minutes[2],
         ),
-        _envelope(a_hook_input("SessionStart") | ask, repo=DEMO_REPO, at=at[3]),
+        _envelope(
+            a_hook_input("SessionStart") | ask, repo=DEMO_REPO, at=now - timedelta(seconds=110)
+        ),
         _envelope(
             a_hook_input("PreToolUse", **adr) | ask,
             repo=DEMO_REPO,
-            at=at[7],
+            at=now - timedelta(seconds=30),
             decision=ask_decision,
         ),
     ]
@@ -228,14 +310,23 @@ def demo_transcript(now: datetime) -> str:
     def at() -> dict[str, Any]:
         number = next(numbers)
         stamp = (start + timedelta(seconds=20 * number)).isoformat().replace("+00:00", "Z")
-        return {"timestamp": stamp, "sessionId": session, "uuid": f"{session}-{number:02d}"}
+        return {
+            "timestamp": stamp,
+            "sessionId": session,
+            "uuid": f"{session}-{number:02d}",
+            "cwd": DEMO_CWD,
+            "gitBranch": DEMO_BRANCH,
+        }
 
+    note = {"file_path": f"/work/demo-hub/{INBOX_NOTE}", "content": INBOX_TEXT}
     calls = [
         ("toolu_demo_read", "Read", {"file_path": f"{DEMO_CWD}/src/export.py"}),
         ("toolu_demo_write", "Edit", {"file_path": f"{DEMO_CWD}/src/export.py"}),
         ("toolu_demo_test", "Bash", {"command": "make check-fast"}),
+        # The same tool use id every run, so a second run proposes the same learning.
+        ("toolu_demo_note", "Write", note),
     ]
-    lines = [a_user_line("add the CSV export button", **at())]
+    lines = [a_user_line("/feature add the CSV export button", **at())]
     for number, (tool_use_id, name, tool_input) in enumerate(calls, start=1):
         block = a_tool_use_block(tool_use_id, name, tool_input)
         usage = a_usage(2400 * number, 310, cache_read=18_000, cache_write=1_200)
@@ -244,32 +335,53 @@ def demo_transcript(now: datetime) -> str:
     final = an_assistant_line(
         [a_text_block("Done: the button exports CSV.")],
         a_usage(9000, 120, cache_read=20_000),
-        message_id="msg_demo_4",
+        message_id="msg_demo_5",
         **at(),
     )
     lines.append(final)
     return transcript_text(lines)
 
 
-def _feature_files(hub: PurePosixPath) -> dict[PurePosixPath, str]:
+def _hub_files(hub: PurePosixPath) -> dict[PurePosixPath, str]:
+    """The feature folder (spec, plan, eval, ``features.json``) and the proposed inbox note."""
     folder = hub / "brain" / "features" / FEATURE
     acs = [
         {
             "id": f"AC-7.{index}",
-            "description": f"Criterion {index}",
+            "description": description,
             "repo": DEMO_REPO,
             "verification": "make check",
             "passes": index < 3,
             "evidence": "test run" if index < 3 else None,
         }
-        for index in (1, 2, 3)
+        for index, description in enumerate(
+            (
+                "The sessions list has an Export CSV button",
+                "The CSV header follows the table's column order",
+                "An export of 10,000 rows finishes in under 2 s",
+            ),
+            start=1,
+        )
     ]
-    criteria = "".join(f"- AC-7.{index} Criterion {index}\n" for index in (1, 2, 3))
-    spec = "---\ntype: spec\nprocess_size: bounded\nrepos: [demo-api]\nlinear: [DEM-7]\n---\n"
+    criteria = "".join(f"- {ac['id']} {ac['description']}\n" for ac in acs)
+    spec = f"---\ntype: spec\nprocess_size: bounded\nrepos: [{DEMO_REPO}]\nlinear: [{ISSUE}]\n---\n"
+    record = {"feature": FEATURE, "linear": [ISSUE], "acs": acs}
     return {
-        folder / "features.json": json.dumps({"feature": FEATURE, "linear": ["DEM-7"], "acs": acs}),
-        folder / "spec.md": f"{spec}# Export button\n\n{criteria}",
-        folder / "plan.md": "# Plan\n",
+        folder / "features.json": json.dumps(record, indent=2) + "\n",
+        folder / "spec.md": (
+            f"{spec}# Export button\n\nLet the owner export the sessions list as CSV.\n\n"
+            f"## Acceptance criteria\n\n{criteria}"
+        ),
+        folder / "plan.md": (
+            "# Plan\n\n1. Add the export route (`GET /sessions.csv`).\n"
+            "2. Build the header and the rows from one column list.\n"
+            "3. Add the button to the sessions list.\n"
+        ),
+        folder / "eval.md": (
+            "# Eval\n\n**Verdict: SHIP-WITH-OWNER-STEPS**\n\n"
+            "AC-7.1 and AC-7.2 pass by command; AC-7.3 needs a timing on the owner's machine.\n"
+        ),
+        hub / INBOX_NOTE: INBOX_TEXT,
     }
 
 
@@ -285,7 +397,7 @@ def seed(client: httpx.Client, target: Target, *, db_path: str, now: datetime) -
     _checked_hub(
         target, ["init", DEMO_PROJECT, *HUB_FLAGS, "--dir", str(hub)], tolerate=ALREADY_A_HUB
     )
-    for path, text in _feature_files(hub).items():
+    for path, text in _hub_files(hub).items():
         target.write(path, text)
     registered = client.post("/api/v1/hubs", json={"path": str(hub)})
     if registered.status_code not in {httpx.codes.CREATED, httpx.codes.CONFLICT}:

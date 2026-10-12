@@ -14,9 +14,10 @@ from typing import Final
 from agent_hub.core.events.event import EventType
 from agent_hub.core.json_form import JsonValue
 
-# Any type may say which ``hub run`` run, step and attempt it belongs to (D6), and which
-# subagent emitted it (E4).
-COMMON_PAYLOAD_KEYS: Final = frozenset({"run", "step", "attempt", "agent_id"})
+# Any type may say which ``hub run`` run, step and attempt it belongs to (D6), which subagent
+# emitted it (E4), and the git branch its transcript line names (AGH-201).
+COMMON_PAYLOAD_KEYS: Final = frozenset({"run", "step", "attempt", "agent_id", "git_branch"})
+
 
 _USAGE: Final = frozenset(
     {
@@ -52,7 +53,20 @@ _EXECUTOR: Final = frozenset(
     {"issue", "repo", "status", "stage", "reason", "caps", "pr_url", "cost_usd", "mode"}
 )
 _LEARNING: Final = frozenset(
-    {"text", "target", "author", "proposal", "brain_path", "commit", "reason", "provenance"}
+    {
+        "text",
+        "target",
+        "author",
+        "proposal",
+        "brain_path",
+        "commit",
+        "reason",
+        "provenance",
+        # A decision taken in the app records the pull request it opened (ADR 0024).
+        "pr_url",
+        "branch",
+        "state",
+    }
 )
 
 _BY_TYPE: Final[dict[EventType, frozenset[str]]] = {
@@ -80,6 +94,9 @@ _BY_TYPE: Final[dict[EventType, frozenset[str]]] = {
             "arg_keys",
             "subagent_type",
             "description",
+            # The Skill tool's skill name and SendMessage's recipient (80 chars, ADR 0023).
+            "skill",
+            "to",
         }
     ),
     EventType.TOOL_RESULT: frozenset(
@@ -92,6 +109,8 @@ _BY_TYPE: Final[dict[EventType, frozenset[str]]] = {
             "duration_ms",
             "output_bytes",
             "error_line",
+            # A failed tool's error text: redacted, whitespace collapsed, 300 chars (ADR 0023).
+            "error_message",
             "rule",
             "hook",
         }
@@ -110,6 +129,22 @@ _BY_TYPE: Final[dict[EventType, frozenset[str]]] = {
 
 PAYLOAD_KEYS: Final[Mapping[EventType, frozenset[str]]] = MappingProxyType(
     {event_type: keys | COMMON_PAYLOAD_KEYS for event_type, keys in _BY_TYPE.items()}
+)
+
+# The (event type, key) pairs this release added to the allow-list (ADR 0023): ``git_branch`` on
+# every type but ``session.start`` (which stored it before), ``skill`` and ``to`` on
+# ``tool.call``, ``error_message`` on ``tool.result``. An event stored before them that is
+# re-ingested with them is the same event: equal once its type's added keys are removed.
+_ADDED_BY_TYPE_V2: Final[dict[EventType, frozenset[str]]] = {
+    EventType.TOOL_CALL: frozenset({"skill", "to"}),
+    EventType.TOOL_RESULT: frozenset({"error_message"}),
+}
+ADDED_KEYS_V2: Final[Mapping[EventType, frozenset[str]]] = MappingProxyType(
+    {
+        event_type: _ADDED_BY_TYPE_V2.get(event_type, frozenset())
+        | (frozenset() if event_type == EventType.SESSION_START else frozenset({"git_branch"}))
+        for event_type in _BY_TYPE
+    }
 )
 
 # The executor's caps (budget, max turns, model, transport) are an object of these keys only.

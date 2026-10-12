@@ -3,8 +3,13 @@
 A learning exists once its proposal is stored. Its first terminal event in source order
 (timestamp, then identity) decides it, whatever order the events arrived in; a decision stored
 before its proposal applies as soon as the proposal arrives. Events name the learning by
-``proposal``; a proposal that comes from a Write under ``brain/_inbox/`` has no proposal id and
-is named by its path, which a decision may name instead (``brain_path`` or ``target``).
+``proposal``: a Write under ``brain/_inbox/`` proposes with its tool use id as ``proposal`` and
+the note's path as ``target`` (its ``note_path``). A proposal without a ``proposal`` id is named
+by its path, which a decision may name instead (``brain_path`` or ``target``).
+
+A decision taken in the app (source ``control_plane``, ADR 0024) also records the pull request
+it opened: ``pr_url``, ``branch`` and ``state`` (``accepted_pr_open`` or ``rejected_pr_open``).
+Whether the PR was merged is not an event: the reads infer it from the hub checkout (L11).
 """
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -12,9 +17,14 @@ from typing import Literal
 
 from pydantic import JsonValue
 
-from agent_hub.core.events.event import EventType
+from agent_hub.core.events.event import EventSource, EventType
 from agent_hub.core.events.stored_event import StoredEvent
-from agent_hub.core.learnings.learning import Learning, LearningStatus, LearningTarget
+from agent_hub.core.learnings.learning import (
+    Learning,
+    LearningState,
+    LearningStatus,
+    LearningTarget,
+)
 from agent_hub.core.readmodels.fact_keys import canonical_events
 
 type TargetKind = Literal["team", "repo", "personal"]
@@ -24,6 +34,12 @@ _TERMINAL: Mapping[EventType, LearningStatus] = {
     EventType.LEARNING_ACCEPTED: LearningStatus.ACCEPTED,
     EventType.LEARNING_REJECTED: LearningStatus.REJECTED,
 }
+# The state an app decision of each type leaves the learning in until its PR is merged.
+_PR_OPEN: Mapping[EventType, LearningState] = {
+    EventType.LEARNING_ACCEPTED: LearningState.ACCEPTED_PR_OPEN,
+    EventType.LEARNING_REJECTED: LearningState.REJECTED_PR_OPEN,
+}
+_INBOX_PREFIX = "brain/_inbox/"
 _TARGET_KINDS: Mapping[str, TargetKind] = {"team": "team", "repo": "repo", "personal": "personal"}
 _PROVENANCES: Mapping[str, Provenance] = {
     "human": "human",
@@ -68,15 +84,29 @@ def _target(payload: Mapping[str, JsonValue]) -> LearningTarget:
     return LearningTarget(kind=declared or _kind_of_path(path), path=path)
 
 
+def _note_path(path: str | None) -> str | None:
+    return path if path is not None and path.startswith(_INBOX_PREFIX) else None
+
+
+def _app_decision(decision: StoredEvent | None) -> StoredEvent | None:
+    """The decision when the app took it (it records its pull request), else None."""
+    if decision is None or decision.event.source != EventSource.CONTROL_PLANE:
+        return None
+    return decision
+
+
 def _learning(proposal: StoredEvent, decision: StoredEvent | None) -> Learning:
     payload = proposal.event.payload
     decided = {} if decision is None else decision.event.payload
     status = LearningStatus.PROPOSED if decision is None else _TERMINAL[decision.event.type]
+    target = _target(payload)
+    app = _app_decision(decision)
+    opened = {} if app is None else app.event.payload
     return Learning(
         id=(_references(payload) or [proposal.event_id])[0],
         project=proposal.event.project,
         text=_text(payload.get("text")) or "",
-        target=_target(payload),
+        target=target,
         author=_text(payload.get("author")),
         provenance=_PROVENANCES.get(str(payload.get("provenance"))),
         status=status,
@@ -90,6 +120,10 @@ def _learning(proposal: StoredEvent, decision: StoredEvent | None) -> Learning:
         rejection_reason=_text(decided.get("reason"))
         if status == LearningStatus.REJECTED
         else None,
+        note_path=_note_path(target.path),
+        state=None if app is None else _PR_OPEN[app.event.type],
+        pr_url=_text(opened.get("pr_url")),
+        branch=_text(opened.get("branch")),
     )
 
 

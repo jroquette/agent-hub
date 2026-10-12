@@ -24,6 +24,7 @@ from agent_hub.core.readmodels.filters import (
     SessionSort,
 )
 from agent_hub.core.readmodels.page import Page
+from agent_hub.core.sessions.problem import SessionProblems
 from agent_hub.core.sessions.session import (
     Outcome,
     Session,
@@ -125,3 +126,9 @@ def list_session_files(
 def get_session_cost(session_id: SessionPath, models: EventReadModelsDep) -> SessionCost:
     """The session's estimated cost."""
     return models.session_cost(session_id)
+
+
+@router.get("/sessions/{session_id}/problems")
+def get_session_problems(session_id: SessionPath, models: EventReadModelsDep) -> SessionProblems:
+    """The session's problems: up to 5 summary lines (none if all went well), then each by time."""
+    return models.session_problems(session_id)

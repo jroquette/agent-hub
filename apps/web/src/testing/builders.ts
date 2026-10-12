@@ -26,6 +26,15 @@ export type FindingView = Schemas["FindingView"];
 export type HubView = Schemas["HubView"];
 export type CollectorStatus = Schemas["CollectorStatus"];
 export type ProblemDetails = Schemas["ProblemDetails"];
+export type SessionLabel = Schemas["SessionLabel"];
+export type Actor = Schemas["Actor"];
+export type SessionProblem = Schemas["Problem"];
+export type SessionProblems = Schemas["SessionProblems"];
+export type LearningDetail = Schemas["LearningDetail"];
+export type LearningActionResult = Schemas["LearningActionResult"];
+export type BrainTree = Schemas["BrainTree"];
+export type BrainNote = Schemas["BrainNote"];
+export type FeatureRecord = Schemas["FeatureRecord"];
 
 /** The synthetic clock every builder uses. */
 export const T0 = "2026-10-11T14:00:00.000Z";
@@ -44,8 +53,35 @@ export function aPage<T>(items: T[], extra: { next_cursor?: string | null } = {}
   return { items, next_cursor: extra.next_cursor ?? null, total_estimate: items.length };
 }
 
+/** What session `anId(1, "5091b986")` is about: AGH-48 in /feature (a derived label). */
+export function aSessionLabel(overrides: Partial<SessionLabel> = {}): SessionLabel {
+  return {
+    branch: "dev/agh-48-live-tiles",
+    derived: true,
+    issue: "AGH-48",
+    repo: "agent-hub",
+    workflow: "/feature",
+    workflows: ["/feature", "/create-plan"],
+    worktree: "agh-48-live-tiles",
+    ...overrides,
+  };
+}
+
+/** The main agent; a subagent with `{ kind: "subagent", type, agent_id, description }`. */
+export function anActor(overrides: Partial<Actor> = {}): Actor {
+  return {
+    agent_id: null,
+    description: null,
+    kind: "main",
+    started_by_event_id: null,
+    type: null,
+    ...overrides,
+  };
+}
+
 export function aSession(overrides: Partial<Session> = {}): Session {
   return {
+    actors: [anActor()],
     agent: "claude",
     cost_usd: "1.2500",
     derived: true,
@@ -59,12 +95,14 @@ export function aSession(overrides: Partial<Session> = {}): Session {
     has_transcript: true,
     id: anId(1, "5091b986"),
     issue: "AGH-48",
+    label: aSessionLabel(),
     last_activity_at: at(600),
     learnings_proposed: 0,
     model: "claude-model-a",
     outcome: null,
     parent_session_id: null,
     pr: null,
+    problems: { by_you: 0, handled: 0, needs_you: 0, open: 0 },
     project: "agent-hub",
     repo: "agent-hub",
     run_id: null,
@@ -199,13 +237,18 @@ export function anApproval(overrides: Partial<Approval> = {}): Approval {
 
 export function aLearning(overrides: Partial<Learning> = {}): Learning {
   return {
+    actions_unavailable: null,
     author: "claude",
     brain_path: null,
+    branch: null,
     commit: null,
     decided_at: null,
     decided_by: null,
     derived: true,
     id: anId(9, "0192cccc"),
+    note_path: "brain/_inbox/web-gates.md",
+    note_unavailable: null,
+    pr_url: null,
     project: "agent-hub",
     proposed_at: at(500),
     provenance: "agent",
@@ -213,15 +256,107 @@ export function aLearning(overrides: Partial<Learning> = {}): Learning {
     source_event_id: anId(10, "0192aaaa"),
     source_session_id: anId(1, "5091b986"),
     sources_missing: [],
+    state: "proposed",
     status: "proposed",
+    summary: "Run `npm ci` in apps/web before the web gates.",
     target: { kind: "repo", path: "agent-hub/AGENTS.md" },
     text: "Run the web gates with npm ci first",
     ...overrides,
   };
 }
 
+/** A learning read with its inbox note (GET /learnings/{learning_id}). */
+export function aLearningDetail(overrides: Partial<LearningDetail> = {}): LearningDetail {
+  return {
+    ...aLearning(),
+    note: aBrainNote({
+      frontmatter: { provenance: "agent", type: "learning" },
+      markdown:
+        "# Run the web gates with npm ci first\n\nRun `npm ci` in apps/web before the web gates.\n",
+      path: "_inbox/web-gates.md",
+      size: 84,
+    }),
+    suggested_target: "learnings/",
+    target_choices: ["learnings/", "playbooks/"],
+    ...overrides,
+  };
+}
+
+/** What an accept or reject answered (201). */
+export function aLearningActionResult(
+  overrides: Partial<LearningActionResult> = {},
+): LearningActionResult {
+  return {
+    branch: "dev/learning-accept-web-gates",
+    pr_url: "https://github.com/acme/agent-hub-hub/pull/12",
+    state: "accepted_pr_open",
+    ...overrides,
+  };
+}
+
+/** One problem of session `anId(1, "5091b986")`: a failed `make check-fast` that needs you. */
+export function aSessionProblem(overrides: Partial<SessionProblem> = {}): SessionProblem {
+  return {
+    actor: anActor(),
+    at: at(420),
+    derived: true,
+    event_id: anId(7, "0192aaaa"),
+    kind: "command_exit",
+    message: "1 failed, 12 passed",
+    resolution: "needs_you",
+    resolved_by_event_id: null,
+    tool: "Bash",
+    where: "make check-fast",
+    ...overrides,
+  };
+}
+
+/** The problems route's body: its summary lines link to the problems' events. */
+export function aSessionProblems(overrides: Partial<SessionProblems> = {}): SessionProblems {
+  const problem = aSessionProblem();
+  return {
+    derived: true,
+    items: [problem],
+    session_id: anId(1, "5091b986"),
+    sources_missing: [],
+    summary: [{ event_id: problem.event_id, text: "Needs you: command_exit in make check-fast" }],
+    ...overrides,
+  };
+}
+
+/** The brain tree of project `agent-hub`. */
+export function aBrainTree(overrides: Partial<BrainTree> = {}): BrainTree {
+  return {
+    entries: [
+      { path: "_inbox/web-gates.md", size: 84 },
+      { path: "decisions/index.md", size: 210 },
+      { path: "features/control-plane/plan.md", size: 4096 },
+      { path: "index.md", size: 180 },
+      { path: "now.md", size: 140 },
+    ],
+    project: "agent-hub",
+    skipped: 0,
+    truncated: false,
+    ...overrides,
+  };
+}
+
+/** A brain note of project `agent-hub` (index.md by default). */
+export function aBrainNote(overrides: Partial<BrainNote> = {}): BrainNote {
+  return {
+    frontmatter: { last_verified: "2026-10-11", type: "index" },
+    frontmatter_problem: null,
+    markdown: "# Brain\n\nStart at [now](now.md) and [decisions](decisions/index.md).\n",
+    path: "index.md",
+    project: "agent-hub",
+    size: 180,
+    ...overrides,
+  };
+}
+
 export function aLiveTile(overrides: Partial<LiveTile> = {}): LiveTile {
   return {
+    actors: [anActor()],
     agent: "claude",
     attempt: null,
     budget_usd: null,
@@ -236,10 +371,13 @@ export function aLiveTile(overrides: Partial<LiveTile> = {}): LiveTile {
     id: anId(1, "5091b986"),
     is_subagent: false,
     issue: "AGH-48",
+    label: aSessionLabel(),
     last_action: "make check-fast",
     last_activity_at: at(590),
     last_tool: "Bash",
+    needs_you_problem: null,
     outcome: null,
+    problems: { by_you: 0, handled: 0, needs_you: 0, open: 0 },
     project: "agent-hub",
     repo: "agent-hub",
     run_id: null,
@@ -354,6 +492,17 @@ export function aFeature(overrides: Partial<FeatureView> = {}): FeatureView {
   };
 }
 
+/** A record of feature `control-plane`, read through the brain note route. */
+export function aFeatureRecord(overrides: Partial<FeatureRecord> = {}): FeatureRecord {
+  const name = overrides.name ?? "spec";
+  return {
+    name,
+    path: `features/control-plane/${name}.md`,
+    present: true,
+    ...overrides,
+  };
+}
+
 export function aFeatureDetail(
   overrides: Partial<Schemas["FeatureDetail"]> = {},
 ): Schemas["FeatureDetail"] {
@@ -369,6 +518,13 @@ export function aFeatureDetail(
         passes: true,
         repo: "agent-hub",
       },
+    ],
+    records: [
+      aFeatureRecord({ name: "spec" }),
+      aFeatureRecord({ name: "research" }),
+      aFeatureRecord({ name: "plan" }),
+      aFeatureRecord({ name: "eval", present: false }),
+      aFeatureRecord({ name: "issues", present: false }),
     ],
     ...overrides,
   };

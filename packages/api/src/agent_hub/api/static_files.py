@@ -2,10 +2,12 @@
 
 The app routes in the browser (``/sessions/abc``), so a GET of any path outside ``/api`` that
 names no file answers ``index.html``. A missing file with an extension (``/missing.js``) is a
-404, so a broken asset fails visibly; anything under ``/api/v1`` no route matched is a 404
+404, so a broken asset fails visibly, except under a Brain route (``/projects/<p>/brain/...``),
+whose paths are notes (``index.md``); anything under ``/api/v1`` no route matched is a 404
 problem, never the app.
 """
 
+import re
 import stat
 from pathlib import Path, PurePosixPath
 
@@ -19,6 +21,8 @@ from agent_hub.api.rfc9457 import problem
 WEB_DIST = Path(__file__).parent / "web_dist"
 INDEX = "index.html"
 READ_METHODS = frozenset({"GET", "HEAD"})
+# The Brain screen's routes end with a note's path, extension included.
+_BRAIN_ROUTE = re.compile(r"^/projects/[^/]+/brain/")
 
 
 class WebApp:
@@ -41,7 +45,7 @@ class WebApp:
         elif self._names_file(path):
             await self._files(scope, receive, send)
             return
-        elif PurePosixPath(path).suffix:
+        elif PurePosixPath(path).suffix and not _BRAIN_ROUTE.match(path):
             response = problem(
                 404, title="Not Found", detail="No file has this path.", instance=path
             )

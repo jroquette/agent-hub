@@ -157,3 +157,28 @@ def test_keeps_part_canonical_when_part_of_canonical_events_marked() -> None:
 
     assert canonical_events(part) is part
     assert part == ordered[::2]
+
+
+def test_keeps_control_plane_event_when_learning_decided_from_app() -> None:
+    proposal = an_event(
+        type="learning.proposed", source="claude_code", payload={"proposal": "toolu_9"}
+    )
+    app_copy = an_event(
+        type="learning.proposed",
+        source="control_plane",
+        session="control-plane",
+        timestamp=proposal.timestamp - timedelta(seconds=1),
+        payload={"proposal": "toolu_9"},
+    )
+    decision = an_event(
+        type="learning.accepted",
+        source="control_plane",
+        session="control-plane",
+        source_id="learning:toolu_9:accepted",
+        payload={"proposal": "toolu_9", "state": "accepted_pr_open"},
+    )
+
+    resolution = resolve_facts(as_stored([proposal, app_copy, decision]))
+
+    winners = {item.event.source_id for item in resolution.winners}
+    assert winners == {proposal.source_id, decision.source_id}

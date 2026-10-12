@@ -93,6 +93,23 @@
         "title": "AcRow",
         "type": "object"
       },
+      "AcceptLearningBody": {
+        "additionalProperties": false,
+        "description": "``POST /learnings/{learning_id}/accept``: the brain folder (or ``.md`` path) to move the\nnote to, relative to ``brain/``.",
+        "properties": {
+          "target": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "title": "AcceptLearningBody",
+        "type": "object"
+      },
       "ActivityItem": {
         "additionalProperties": false,
         "description": "A notable event in the activity feed.",
@@ -150,6 +167,70 @@
           "learning",
           "doctor",
           "approval"
+        ],
+        "type": "string"
+      },
+      "Actor": {
+        "additionalProperties": false,
+        "description": "Who acted in a session (S2): the main agent, or a subagent of a type.\n\nA subagent carries its ``agent_id`` and, when its start is linked to the main agent's\nAgent tool call, that call's ``description`` and ``started_by_event_id``.",
+        "properties": {
+          "agent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Id"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ActorKind"
+          },
+          "started_by_event_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "Actor",
+        "type": "object"
+      },
+      "ActorKind": {
+        "enum": [
+          "main",
+          "subagent"
         ],
         "type": "string"
       },
@@ -363,6 +444,111 @@
         ],
         "type": "string"
       },
+      "BrainEntry": {
+        "additionalProperties": false,
+        "description": "One ``.md`` note of the tree and its size in bytes.",
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "size": {
+            "minimum": 0.0,
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "size"
+        ],
+        "title": "BrainEntry",
+        "type": "object"
+      },
+      "BrainNote": {
+        "additionalProperties": false,
+        "description": "One note: its frontmatter fields, its markdown body (without the frontmatter) and size.\n\n``frontmatter_problem`` says why the frontmatter could not be read (then ``frontmatter`` is\nempty and ``markdown`` is the whole text).",
+        "properties": {
+          "frontmatter": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FrontmatterValue"
+            },
+            "title": "Frontmatter",
+            "type": "object"
+          },
+          "frontmatter_problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frontmatter Problem"
+          },
+          "markdown": {
+            "title": "Markdown",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "size": {
+            "minimum": 0.0,
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project",
+          "path",
+          "frontmatter",
+          "markdown",
+          "size"
+        ],
+        "title": "BrainNote",
+        "type": "object"
+      },
+      "BrainTree": {
+        "additionalProperties": false,
+        "description": "The ``.md`` notes of a hub's brain, sorted by path (``auto/`` and hidden names excluded).\n\n``truncated`` says the listing stopped at a cap; ``skipped`` counts what was left out\n(unreadable folders, entries past a cap).",
+        "properties": {
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/BrainEntry"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "skipped": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Skipped",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "project",
+          "entries"
+        ],
+        "title": "BrainTree",
+        "type": "object"
+      },
       "CollectorStatus": {
         "additionalProperties": false,
         "description": "``GET /collector/status``: what ``hub web`` received and stored since it started.",
@@ -465,7 +651,8 @@
           "otel",
           "executor",
           "github",
-          "linear"
+          "linear",
+          "control_plane"
         ],
         "title": "EventSource",
         "type": "string"
@@ -495,7 +682,7 @@
       },
       "FeatureDetail": {
         "additionalProperties": false,
-        "description": "A feature with its acceptance criteria rows.",
+        "description": "A feature with its acceptance criteria rows and its records (D3).",
         "properties": {
           "ac_rows": {
             "default": [],
@@ -551,6 +738,14 @@
           "project": {
             "title": "Project",
             "type": "string"
+          },
+          "records": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/FeatureRecord"
+            },
+            "title": "Records",
+            "type": "array"
           },
           "repos": {
             "items": {
@@ -634,6 +829,40 @@
           "review",
           "evaluate",
           "shipped"
+        ],
+        "type": "string"
+      },
+      "FeatureRecord": {
+        "additionalProperties": false,
+        "description": "One record file of a feature folder; ``path`` is relative to the hub's ``brain/``, so the\nbrain note route reads it.",
+        "properties": {
+          "name": {
+            "$ref": "#/components/schemas/FeatureRecordName"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "present": {
+            "title": "Present",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "path",
+          "present"
+        ],
+        "title": "FeatureRecord",
+        "type": "object"
+      },
+      "FeatureRecordName": {
+        "enum": [
+          "spec",
+          "research",
+          "plan",
+          "eval",
+          "issues"
         ],
         "type": "string"
       },
@@ -826,6 +1055,19 @@
         ],
         "title": "FindingView",
         "type": "object"
+      },
+      "FrontmatterValue": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        ]
       },
       "HookAccepted": {
         "additionalProperties": false,
@@ -1185,8 +1427,19 @@
       "JsonValue": {},
       "Learning": {
         "additionalProperties": false,
-        "description": "A learning; ``text`` is its title (120 characters at most, redacted).",
+        "description": "A learning; ``text`` is its title (120 characters at most, redacted).\n\n``target`` is deprecated (it names the inbox note); ``note_path`` says so explicitly (L12).\n``state`` is ``None`` until read with the hub. ``summary`` is the note's first paragraph,\nread on request; ``note_unavailable`` and ``actions_unavailable`` give the reason the note\ncannot be read or the learning cannot be accepted or rejected here.",
         "properties": {
+          "actions_unavailable": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actions Unavailable"
+          },
           "author": {
             "anyOf": [
               {
@@ -1208,6 +1461,17 @@
               }
             ],
             "title": "Brain Path"
+          },
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
           },
           "commit": {
             "anyOf": [
@@ -1249,6 +1513,39 @@
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "note_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note Path"
+          },
+          "note_unavailable": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note Unavailable"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
           },
           "project": {
             "title": "Project",
@@ -1321,11 +1618,33 @@
             "title": "Sources Missing",
             "type": "array"
           },
+          "state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LearningState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "status": {
             "$ref": "#/components/schemas/LearningStatus"
           },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
           "target": {
-            "$ref": "#/components/schemas/LearningTarget"
+            "$ref": "#/components/schemas/LearningTarget",
+            "deprecated": true
           },
           "text": {
             "title": "Text",
@@ -1346,6 +1665,306 @@
         ],
         "title": "Learning",
         "type": "object"
+      },
+      "LearningActionResult": {
+        "additionalProperties": false,
+        "description": "What an accept or reject did: the pull request it opened and its branch.",
+        "properties": {
+          "branch": {
+            "title": "Branch",
+            "type": "string"
+          },
+          "pr_url": {
+            "title": "Pr Url",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/LearningState"
+          }
+        },
+        "required": [
+          "state",
+          "pr_url",
+          "branch"
+        ],
+        "title": "LearningActionResult",
+        "type": "object"
+      },
+      "LearningDetail": {
+        "additionalProperties": false,
+        "description": "A learning with its note (``None`` when unavailable), the destination folder the accept\ndialog suggests and the folders it offers (L9).",
+        "properties": {
+          "actions_unavailable": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actions Unavailable"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author"
+          },
+          "brain_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brain Path"
+          },
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decided_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By"
+          },
+          "derived": {
+            "default": true,
+            "title": "Derived",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BrainNote"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note Path"
+          },
+          "note_unavailable": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note Unavailable"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "proposed_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "enum": [
+                  "human",
+                  "agent",
+                  "agent-from-code",
+                  "agent-from-external"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provenance"
+          },
+          "rejection_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejection Reason"
+          },
+          "source_event_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Session Id"
+          },
+          "sources_missing": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EventSource"
+            },
+            "title": "Sources Missing",
+            "type": "array"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LearningState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/LearningStatus"
+          },
+          "suggested_target": {
+            "title": "Suggested Target",
+            "type": "string"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "target": {
+            "$ref": "#/components/schemas/LearningTarget",
+            "deprecated": true
+          },
+          "target_choices": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Target Choices",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project",
+          "text",
+          "target",
+          "author",
+          "provenance",
+          "status",
+          "source_session_id",
+          "source_event_id",
+          "proposed_at",
+          "suggested_target"
+        ],
+        "title": "LearningDetail",
+        "type": "object"
+      },
+      "LearningState": {
+        "description": "Where the learning's note is (L11): in the inbox, in an open PR, or moved by a merge.\n\n``in_brain`` and ``archived`` are inferred from the hub checkout (the note sits at its\ndestination), since GitHub is not connected.",
+        "enum": [
+          "proposed",
+          "accepted_pr_open",
+          "rejected_pr_open",
+          "in_brain",
+          "archived"
+        ],
+        "title": "LearningState",
+        "type": "string"
       },
       "LearningStatus": {
         "description": "Where a learning is: proposed until a terminal event in source order decides it.",
@@ -1398,9 +2017,18 @@
       },
       "LiveTile": {
         "additionalProperties": false,
-        "description": "A session tile of the Live sessions screen.",
+        "description": "A session tile of the Live sessions screen.\n\n``agent`` is deprecated (``label`` and ``actors``); ``needs_you_problem`` is the owner-facing\nline of the first problem that needs the owner (\"Needs you: <kind> in <where>\").",
         "properties": {
+          "actors": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Actor"
+            },
+            "title": "Actors",
+            "type": "array"
+          },
           "agent": {
+            "deprecated": true,
             "title": "Agent",
             "type": "string"
           },
@@ -1499,6 +2127,16 @@
             ],
             "title": "Issue"
           },
+          "label": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionLabel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "last_action": {
             "anyOf": [
               {
@@ -1524,6 +2162,17 @@
             ],
             "title": "Last Tool"
           },
+          "needs_you_problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Needs You Problem"
+          },
           "outcome": {
             "anyOf": [
               {
@@ -1533,6 +2182,15 @@
                 "type": "null"
               }
             ]
+          },
+          "problems": {
+            "$ref": "#/components/schemas/ProblemCounts",
+            "default": {
+              "by_you": 0,
+              "handled": 0,
+              "needs_you": 0,
+              "open": 0
+            }
           },
           "project": {
             "title": "Project",
@@ -2278,6 +2936,119 @@
         "title": "Page[WorkflowRun]",
         "type": "object"
       },
+      "Problem": {
+        "additionalProperties": false,
+        "description": "One problem of a session and the event it comes from.\n\n``where`` is the command head, path, pattern, URL, MCP tool or skill of the paired tool\ncall (derived on read, at most 120 characters); ``message`` is the stored ``error_message``,\nelse ``error_line``, else the rule or the gate's command and exit code.",
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/Actor"
+          },
+          "at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "derived": {
+            "default": true,
+            "title": "Derived",
+            "type": "boolean"
+          },
+          "event_id": {
+            "$ref": "#/components/schemas/EventId"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ProblemKind"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "resolution": {
+            "$ref": "#/components/schemas/Resolution"
+          },
+          "resolved_by_event_id": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool"
+          },
+          "where": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Where"
+          }
+        },
+        "required": [
+          "event_id",
+          "kind",
+          "tool",
+          "where",
+          "message",
+          "at",
+          "actor",
+          "resolution"
+        ],
+        "title": "Problem",
+        "type": "object"
+      },
+      "ProblemCounts": {
+        "additionalProperties": false,
+        "description": "A session's problems by owner-facing status (S4, E5); ``handled`` = recovered or\ncontinued by the agent.",
+        "properties": {
+          "by_you": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "By You",
+            "type": "integer"
+          },
+          "handled": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Handled",
+            "type": "integer"
+          },
+          "needs_you": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Needs You",
+            "type": "integer"
+          },
+          "open": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Open",
+            "type": "integer"
+          }
+        },
+        "title": "ProblemCounts",
+        "type": "object"
+      },
       "ProblemDetails": {
         "additionalProperties": true,
         "description": "An RFC 9457 problem; extension members (``errors``) are allowed.",
@@ -2324,6 +3095,21 @@
         ],
         "title": "ProblemDetails",
         "type": "object"
+      },
+      "ProblemKind": {
+        "description": "What went wrong (S4 with E4).",
+        "enum": [
+          "tool_failed",
+          "command_exit",
+          "guard_denied",
+          "guard_ask_open",
+          "guard_ask_declined",
+          "interrupted",
+          "gate_failed",
+          "hook_failed"
+        ],
+        "title": "ProblemKind",
+        "type": "string"
       },
       "ProjectDetail": {
         "additionalProperties": false,
@@ -2682,6 +3468,23 @@
         "title": "PullRequestRef",
         "type": "object"
       },
+      "RejectLearningBody": {
+        "additionalProperties": false,
+        "description": "``POST /learnings/{learning_id}/reject``: why, 1 to 300 characters once stripped.",
+        "properties": {
+          "reason": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "RejectLearningBody",
+        "type": "object"
+      },
       "RepoView": {
         "additionalProperties": false,
         "description": "A repo of the project as ``hub.json`` and its checkout describe it.",
@@ -2781,6 +3584,18 @@
         ],
         "title": "RepoView",
         "type": "object"
+      },
+      "Resolution": {
+        "description": "How a problem ended (S4 with E5).\n\n``recovered`` and ``agent_continued`` show as \"Handled by the agent\", ``open`` as \"Agent is\non it\", ``needs_you`` as \"Needs you\" and ``by_you`` as \"You interrupted\" or \"You declined\".",
+        "enum": [
+          "recovered",
+          "agent_continued",
+          "open",
+          "needs_you",
+          "by_you"
+        ],
+        "title": "Resolution",
+        "type": "string"
       },
       "RunCaps": {
         "additionalProperties": false,
@@ -3080,9 +3895,18 @@
       },
       "Session": {
         "additionalProperties": false,
-        "description": "A session folded from its events (status, counts, tokens, estimated cost).",
+        "description": "A session folded from its events (status, counts, tokens, estimated cost).\n\n``agent`` is deprecated: ``actors`` and ``label`` say who acted and what the session is about.",
         "properties": {
+          "actors": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Actor"
+            },
+            "title": "Actors",
+            "type": "array"
+          },
           "agent": {
+            "deprecated": true,
             "title": "Agent",
             "type": "string"
           },
@@ -3188,6 +4012,16 @@
             ],
             "title": "Issue"
           },
+          "label": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionLabel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "last_activity_at": {
             "$ref": "#/components/schemas/ApiTimestamp"
           },
@@ -3237,6 +4071,15 @@
                 "type": "null"
               }
             ]
+          },
+          "problems": {
+            "$ref": "#/components/schemas/ProblemCounts",
+            "default": {
+              "by_you": 0,
+              "handled": 0,
+              "needs_you": 0,
+              "open": 0
+            }
           },
           "project": {
             "title": "Project",
@@ -3502,6 +4345,134 @@
           "event_ids"
         ],
         "title": "SessionFileChange",
+        "type": "object"
+      },
+      "SessionLabel": {
+        "additionalProperties": false,
+        "description": "What a session is about, derived on read (S1): issue, workflow, repo and branch.\n\n``issue`` is ``<TEAM>-<n>`` found in ``branch`` or ``worktree`` with the hub's tracker teams,\nelse ``None``, never a guess. ``workflow`` is the session's main slash command or skill\n(``/feature``); ``workflows`` lists every one in order. ``worktree`` is the folder name under\n``.claude/worktrees/`` in the session's ``cwd``.",
+        "properties": {
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "derived": {
+            "default": true,
+            "title": "Derived",
+            "type": "boolean"
+          },
+          "issue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          },
+          "workflow": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow"
+          },
+          "workflows": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Workflows",
+            "type": "array"
+          },
+          "worktree": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worktree"
+          }
+        },
+        "required": [
+          "issue",
+          "workflow",
+          "workflows",
+          "repo",
+          "branch",
+          "worktree"
+        ],
+        "title": "SessionLabel",
+        "type": "object"
+      },
+      "SessionProblems": {
+        "additionalProperties": false,
+        "description": "The problems route: up to 5 deterministic summary lines, then every problem by time.\n\n``summary`` is empty when the session has no problem.",
+        "properties": {
+          "derived": {
+            "default": true,
+            "title": "Derived",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "sources_missing": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EventSource"
+            },
+            "title": "Sources Missing",
+            "type": "array"
+          },
+          "summary": {
+            "items": {
+              "$ref": "#/components/schemas/SummaryLine"
+            },
+            "maxItems": 5,
+            "title": "Summary",
+            "type": "array"
+          }
+        },
+        "required": [
+          "session_id",
+          "summary",
+          "items"
+        ],
+        "title": "SessionProblems",
         "type": "object"
       },
       "SessionSegment": {
@@ -5052,7 +6023,7 @@
     },
     "/api/v1/learnings": {
       "get": {
-        "description": "Learnings, newest first.",
+        "description": "Learnings, newest first, each with its note's summary or why the note is unavailable.",
         "operationId": "list_learnings_api_v1_learnings_get",
         "parameters": [
           {
@@ -5159,7 +6130,7 @@
     },
     "/api/v1/learnings/{learning_id}": {
       "get": {
-        "description": "One learning.",
+        "description": "One learning with its note, the suggested target and the target choices.",
         "operationId": "get_learning_api_v1_learnings__learning_id__get",
         "parameters": [
           {
@@ -5179,7 +6150,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Learning"
+                  "$ref": "#/components/schemas/LearningDetail"
                 }
               }
             },
@@ -5207,6 +6178,216 @@
           }
         },
         "summary": "Get Learning",
+        "tags": [
+          "learnings"
+        ]
+      }
+    },
+    "/api/v1/learnings/{learning_id}/accept": {
+      "post": {
+        "description": "Open a hub PR that moves the note into the brain; nothing changes until it is merged.",
+        "operationId": "accept_learning_api_v1_learnings__learning_id__accept_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "learning_id",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Learning Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptLearningBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningActionResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Already decided, target refused, note not on the default branch, or actions unavailable for this hub"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The body is not application/json"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Could not open the pull request"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The action passed its 60 s deadline"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Accept Learning",
+        "tags": [
+          "learnings"
+        ]
+      }
+    },
+    "/api/v1/learnings/{learning_id}/reject": {
+      "post": {
+        "description": "Open a hub PR that archives the note with the reason.",
+        "operationId": "reject_learning_api_v1_learnings__learning_id__reject_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "learning_id",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Learning Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectLearningBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningActionResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Already decided, target refused, note not on the default branch, or actions unavailable for this hub"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The body is not application/json"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Could not open the pull request"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The action passed its 60 s deadline"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Reject Learning",
         "tags": [
           "learnings"
         ]
@@ -5507,6 +6688,127 @@
           }
         },
         "summary": "Get Project",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/brain": {
+      "get": {
+        "description": "The ``.md`` notes of the project's hub brain (``auto/`` excluded).",
+        "operationId": "get_brain_tree_api_v1_projects__project__brain_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrainTree"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Brain Tree",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/brain/note": {
+      "get": {
+        "description": "One brain note by its path under ``brain/``: frontmatter, markdown body and size.",
+        "operationId": "get_brain_note_api_v1_projects__project__brain_note_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrainNote"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Brain Note",
         "tags": [
           "projects"
         ]
@@ -6384,6 +7686,61 @@
           }
         },
         "summary": "List Session Files",
+        "tags": [
+          "sessions"
+        ]
+      }
+    },
+    "/api/v1/sessions/{session_id}/problems": {
+      "get": {
+        "description": "The session's problems: up to 5 summary lines (none if all went well), then each by time.",
+        "operationId": "get_session_problems_api_v1_sessions__session_id__problems_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionProblems"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Session Problems",
         "tags": [
           "sessions"
         ]

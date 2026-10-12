@@ -6,9 +6,21 @@ from typing import Literal
 from pydantic import Field
 
 from agent_hub.core.events.stored_event import EventId
-from agent_hub.core.readmodels.view_types import ApiTimestamp, DerivedView, Money, ViewModel
+from agent_hub.core.readmodels.view_types import (
+    DEPRECATED_FIELD,
+    ApiTimestamp,
+    DerivedView,
+    Money,
+    ViewModel,
+)
 from agent_hub.core.runner.run_record import Stage
-from agent_hub.core.sessions.session import Outcome, SessionStatus
+from agent_hub.core.sessions.session import (
+    Actor,
+    Outcome,
+    ProblemCounts,
+    SessionLabel,
+    SessionStatus,
+)
 
 type HubHealth = Literal["ok", "warning", "error"]
 type LockState = Literal["in_sync", "drift", "sync_pending", "not_adopted"]
@@ -158,12 +170,16 @@ type TileGroup = Literal["waiting", "live", "idle", "ended_recently"]
 
 
 class LiveTile(DerivedView):
-    """A session tile of the Live sessions screen."""
+    """A session tile of the Live sessions screen.
+
+    ``agent`` is deprecated (``label`` and ``actors``); ``needs_you_problem`` is the owner-facing
+    line of the first problem that needs the owner ("Needs you: <kind> in <where>").
+    """
 
     id: str
     project: str
     repo: str | None
-    agent: str
+    agent: str = Field(json_schema_extra=DEPRECATED_FIELD)
     is_subagent: bool = False
     status: SessionStatus
     group: TileGroup
@@ -187,6 +203,10 @@ class LiveTile(DerivedView):
     budget_usd: Money | None = None
     failing_notice: str | None = None
     sparkline_60s: tuple[int, ...] = ()
+    label: SessionLabel | None = None
+    actors: tuple[Actor, ...] = ()
+    problems: ProblemCounts = ProblemCounts()
+    needs_you_problem: str | None = None
 
 
 class StreamCounts(ViewModel):

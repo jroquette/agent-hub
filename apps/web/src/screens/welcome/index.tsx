@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 
 import type { components } from "../../api/schema";
-import { Button, CodeBlock, Icon, StatusBadge, Tooltip } from "../../components";
+import { Button, CodeBlock, Icon, StatusBadge, Tooltip, sessionLabelText } from "../../components";
 import { useNow } from "../../lib/clock";
 import { fmtAgo } from "../../lib/format";
 import { RegisterHubForm } from "../settings/RegisterHubForm";
@@ -232,7 +232,7 @@ export function WelcomeScreen() {
                       {session.id.replace(/-/g, "").slice(0, 8)}
                     </Link>{" "}
                     started {fmtAgo(Math.max(1, (now - Date.parse(session.started_at)) / 1000))} in{" "}
-                    {session.project} ({session.agent})
+                    {session.project} ({sessionLabelText(session)})
                   </span>
                 </span>
               )

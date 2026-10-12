@@ -19,7 +19,17 @@ from pydantic import JsonValue
 from starlette.exceptions import HTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from agent_hub.core.brain.brain_note import BrainNoteNotFoundError, BrainNoteTooLargeError
+from agent_hub.core.brain.brain_path import BrainPathError
 from agent_hub.core.errors import AgentHubError, EventConflictError
+from agent_hub.core.learnings.brain_change_requests import (
+    ChangeRequestConflictError,
+    ChangeRequestError,
+    ChangeRequestFailedError,
+    ChangeRequestTimeoutError,
+    RefspecRefusedError,
+)
+from agent_hub.core.learnings.learning_ports import HubReadOnlyError, LearningConflictError
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.storage.errors import DatabaseAccessError
 
@@ -174,6 +184,82 @@ def body_too_large_problem(error: BodyTooLargeError) -> Problem:
     )
 
 
+def _brain_path_problem(error: BrainPathError) -> Problem:
+    # The reasons are the brain rules' own words; none quotes the path.
+    return Problem(
+        400,
+        "Invalid brain path",
+        error.reason,
+        {"errors": [{"parameter": "path", "message": error.reason}]},
+    )
+
+
+def _brain_note_not_found_problem(_: BrainNoteNotFoundError) -> Problem:
+    # One answer for missing, linked, personal and non-regular paths: existence is not revealed.
+    return Problem(404, "Brain note not found", "No note at this path in the project's brain.")
+
+
+def _brain_note_too_large_problem(error: BrainNoteTooLargeError) -> Problem:
+    return Problem(
+        413,
+        "Brain note too large",
+        f"Brain notes are served up to {error.limit} bytes; this one has {error.size}.",
+    )
+
+
+def _learning_conflict(*, code: str, reason: str, pr_url: str | None = None) -> Problem:
+    members: dict[str, JsonValue] = {"code": code, "reason": reason}
+    if pr_url is not None:
+        members["pr_url"] = pr_url
+    return Problem(409, "Learning cannot be decided", reason, members)
+
+
+def _learning_conflict_problem(error: LearningConflictError) -> Problem:
+    return _learning_conflict(code="learning_conflict", reason=error.reason, pr_url=error.pr_url)
+
+
+def _change_request_conflict_problem(error: ChangeRequestConflictError) -> Problem:
+    return _learning_conflict(code="change_request_conflict", reason=error.reason)
+
+
+def _push_refused_problem(error: RefspecRefusedError) -> Problem:
+    return _learning_conflict(code="push_refused", reason=error.reason)
+
+
+def _hub_read_only_problem(error: HubReadOnlyError) -> Problem:
+    return Problem(
+        409,
+        "Learning actions unavailable",
+        error.reason,
+        {"code": "hub_read_only", "reason": error.reason},
+    )
+
+
+_PULL_REQUEST_FAILED = "Could not open the pull request"
+
+
+def _change_request_failed_problem(error: ChangeRequestFailedError) -> Problem:
+    # The step's name only: git and gh output can quote remotes, paths and tokens (ADR 0024).
+    return Problem(
+        502,
+        _PULL_REQUEST_FAILED,
+        f"The {error.step} step failed; nothing was merged.",
+        {"step": error.step},
+    )
+
+
+def _change_request_error_problem(_: ChangeRequestError) -> Problem:
+    return Problem(502, _PULL_REQUEST_FAILED, "A git or gh step failed; nothing was merged.")
+
+
+def _change_request_timeout_problem(_: ChangeRequestTimeoutError) -> Problem:
+    return Problem(
+        504,
+        "Could not open the pull request in time",
+        "The action passed its deadline; nothing was merged.",
+    )
+
+
 def _not_implemented_problem(error: NotImplementedInBuildError) -> Problem:
     return Problem(501, "Not implemented in this build", str(error))
 
@@ -187,6 +273,16 @@ PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     InvalidParameterError: _invalid_parameter_problem,
     BodyTooLargeError: body_too_large_problem,
     NotImplementedInBuildError: _not_implemented_problem,
+    BrainPathError: _brain_path_problem,
+    BrainNoteNotFoundError: _brain_note_not_found_problem,
+    BrainNoteTooLargeError: _brain_note_too_large_problem,
+    LearningConflictError: _learning_conflict_problem,
+    HubReadOnlyError: _hub_read_only_problem,
+    ChangeRequestError: _change_request_error_problem,
+    ChangeRequestConflictError: _change_request_conflict_problem,
+    RefspecRefusedError: _push_refused_problem,
+    ChangeRequestFailedError: _change_request_failed_problem,
+    ChangeRequestTimeoutError: _change_request_timeout_problem,
 }
 
 

@@ -38,7 +38,8 @@ PR titles follow [Conventional Commits](https://www.conventionalcommits.org/): `
 the PR title the commit on `main`, so the title is what the history and the future changelogs read.
 
 - **Types:** `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`, `build`, `perf`, `revert`.
-- **Scopes:** `core`, `storage`, `collector`, `cli`, `generator`, `tracker`, `api`, `web`, `repo`, `deps`, `ci`, `docs`.
+- **Scopes:** `core`, `storage`, `collector`, `cli`, `generator`, `tracker`, `hub-git`, `api`, `web`, `repo`, `deps`, `ci`,
+  `docs`.
 - The scope is required. `!` before the colon marks a breaking change: `fix(cli)!: rename flag`.
 - The whole title is at most 72 characters, has no trailing period and no trailing whitespace.
 - Examples: `feat(collector): ingest hook events`, `chore(repo): foundation workspace, gates, ADRs and English docs`.

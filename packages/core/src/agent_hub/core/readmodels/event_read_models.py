@@ -15,6 +15,11 @@ at once share one fold), and a session's sorted timeline for the same mark, so i
 found by bisection. A cursor from before
 later appends folds its own events apart. Search reads only ids, paths, commands and tool
 names, never payload bodies.
+
+A session is folded with its problems (AGH-201), so ``session_problems`` reads the snapshot of
+the current mark and agrees with the session's ``problems`` counts. A session's label gets its
+issue at read time from the hub's ``LabelRules`` (``label_rules_of``), outside every memo, so a
+``hub.json`` change shows on the next read without a refold.
 """
 
 import bisect
@@ -60,14 +65,20 @@ from agent_hub.core.readmodels.filters import (
     SessionFilter,
 )
 from agent_hub.core.readmodels.fold_memo import FoldMemo
-from agent_hub.core.readmodels.live_tiles import live_tiles
+from agent_hub.core.readmodels.live_tiles import has_tile, live_tiles
 from agent_hub.core.readmodels.page import Page
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.runner.run_record import Stage
 from agent_hub.core.runs.fold_run import fold_run, run_id_of
 from agent_hub.core.runs.workflow_run import WorkflowRun
-from agent_hub.core.sessions.fold_session import SESSION_SOURCES, fold_session, run_issues
+from agent_hub.core.sessions.fold_session import (
+    SESSION_SOURCES,
+    FoldedSession,
+    fold_session_with_problems,
+    run_issues,
+)
 from agent_hub.core.sessions.pricing import PRICES, PerMillion
+from agent_hub.core.sessions.problem import SessionProblems
 from agent_hub.core.sessions.session import (
     Session,
     SessionCost,
@@ -78,6 +89,7 @@ from agent_hub.core.sessions.session import (
 )
 from agent_hub.core.sessions.session_cost import fold_session_cost
 from agent_hub.core.sessions.session_files import fold_session_files
+from agent_hub.core.sessions.session_label import LabelRules, with_issue
 from agent_hub.core.sessions.session_summary import summarize_session
 
 type SortKey = tuple[CursorKeyPart, ...]
@@ -185,7 +197,7 @@ class _EventIndex:
 class _FoldMemos:
     """The last fold of each key and the group it was folded from (compared by identity)."""
 
-    sessions: dict[str, tuple[_Group, datetime, str | None, Session]]
+    sessions: dict[str, tuple[_Group, datetime, str | None, FoldedSession]]
     runs: dict[str, tuple[_Group, tuple[_RunLink, ...], WorkflowRun]]
     approvals: dict[
         str, tuple[_Group, frozenset[tuple[str, str]], dict[str, tuple[_CanonicalKey, Approval]]]
@@ -206,6 +218,7 @@ class _Snapshot:
     by_session: Mapping[str, Sequence[StoredEvent]]
     last_activity: Mapping[str, datetime]
     sessions: Mapping[str, Session]
+    problems: Mapping[str, SessionProblems]
     runs: Mapping[str, WorkflowRun]
     approvals: Mapping[str, Approval]
     learnings: Mapping[str, Learning]
@@ -329,7 +342,9 @@ class FoldedEventReadModels:
     """The ``EventReadModels`` port, folding the events an ``EventReader`` returns.
 
     ``now`` is the clock (folds never read one themselves); ``hub_path_of`` names a project's
-    hub path for "How to decide", when the caller knows it.
+    hub path for "How to decide", when the caller knows it; ``label_rules_of`` gives a
+    project's ``LabelRules`` (tracker teams, branch prefix), or None when its hub is unknown,
+    and is asked on every read that returns a session or a tile.
     """
 
     def __init__(
@@ -339,10 +354,12 @@ class FoldedEventReadModels:
         now: Callable[[], datetime],
         hub_path_of: Callable[[str], str | None] | None = None,
         prices: Mapping[str, PerMillion] = PRICES,
+        label_rules_of: Callable[[str], LabelRules | None] | None = None,
     ) -> None:
         self._reader = reader
         self._now = now
         self._hub_path_of = hub_path_of
+        self._label_rules_of = label_rules_of
         self._prices = prices
         # The events read so far, grouped, and the mark they were read up to: the store only
         # grows, so a later read takes only what was appended since.
@@ -386,7 +403,8 @@ class FoldedEventReadModels:
             # Sessions in the order their first events come in.
             live = sorted(index.live_sessions, key=lambda s: _canonical_key(index.by_session[s][0]))
             by_session = {session_id: index.by_session[session_id] for session_id in live}
-            sessions = self._fold_sessions(by_session, now=now, issues=index.issues, memos=memos)
+            folded = self._fold_sessions(by_session, now=now, issues=index.issues, memos=memos)
+            sessions = {session_id: item.session for session_id, item in folded.items()}
             hub_paths = self._hub_paths(index.last_activity)
             return _Snapshot(
                 hwm=hwm,
@@ -394,6 +412,7 @@ class FoldedEventReadModels:
                 by_session=by_session,
                 last_activity=dict(index.last_activity),
                 sessions=sessions,
+                problems={session_id: item.problems for session_id, item in folded.items()},
                 runs=_fold_runs(index, sessions, memos),
                 approvals=_fold_approvals(index, hub_paths, memos),
                 learnings=_fold_learnings(index, memos),
@@ -406,23 +425,24 @@ class FoldedEventReadModels:
         now: datetime,
         issues: Mapping[str, str],
         memos: _FoldMemos,
-    ) -> dict[str, Session]:
+    ) -> dict[str, FoldedSession]:
         # A session whose events, ``now`` and run issue are unchanged is not folded again; its
-        # run comes from its own events, so the same events name the same run.
-        folded: dict[str, Session] = {}
+        # run comes from its own events, so the same events name the same run. Its problems
+        # are folded with it, at the same status.
+        folded: dict[str, FoldedSession] = {}
         for session_id, group in by_session.items():
             found = memos.sessions.get(session_id)
             if (
                 found is not None
                 and found[0] is group
                 and found[1] == now
-                and found[2] == _run_issue(found[3], issues)
+                and found[2] == _run_issue(found[3].session, issues)
             ):
                 folded[session_id] = found[3]
                 continue
-            session = fold_session(group, now=now, issues=issues, prices=self._prices)
-            memos.sessions[session_id] = (group, now, _run_issue(session, issues), session)
-            folded[session_id] = session
+            item = fold_session_with_problems(group, now=now, issues=issues, prices=self._prices)
+            memos.sessions[session_id] = (group, now, _run_issue(item.session, issues), item)
+            folded[session_id] = item
         return folded
 
     def _hub_paths(self, projects: Iterable[str]) -> dict[str, str]:
@@ -443,6 +463,17 @@ class FoldedEventReadModels:
             raise EntityNotFoundError(entity="session", entity_id=session_id)
         return session
 
+    def _with_issues(self, sessions: Iterable[Session]) -> list[Session]:
+        """``sessions`` with the issue each label names under its hub's current rules."""
+        rules: dict[str, LabelRules | None] = {}
+        labelled: list[Session] = []
+        for session in sessions:
+            if session.project not in rules:
+                found = self._label_rules_of
+                rules[session.project] = None if found is None else found(session.project)
+            labelled.append(_with_issue(session, rules[session.project]))
+        return labelled
+
     # Sessions
 
     def list_sessions(self, session_filter: SessionFilter) -> Page[Session]:
@@ -455,7 +486,7 @@ class FoldedEventReadModels:
         ]
         sort = session_filter.sort
         descending = sort.startswith("-")
-        return _paginate(
+        page = _paginate(
             matching,
             key=_session_sort_key(sort.removeprefix("-"), descending=descending),
             item_id=lambda session: session.id,
@@ -463,10 +494,11 @@ class FoldedEventReadModels:
             request=session_filter,
             hwm=snapshot.hwm,
         )
+        return page.model_copy(update={"items": tuple(self._with_issues(page.items))})
 
     def get_session(self, session_id: str) -> Session:
         """One session."""
-        return self._session(self._snapshot(), session_id)
+        return self._with_issues([self._session(self._snapshot(), session_id)])[0]
 
     def session_summary(self, session_id: str) -> SessionSummary:
         """The session's summary lines (D17)."""
@@ -503,6 +535,12 @@ class FoldedEventReadModels:
         self._session(snapshot, session_id)
         return _whole(fold_session_files(snapshot.by_session[session_id]))
 
+    def session_problems(self, session_id: str) -> SessionProblems:
+        """The session's problems and "what went wrong" lines, folded with the session."""
+        snapshot = self._snapshot()
+        self._session(snapshot, session_id)
+        return snapshot.problems[session_id]
+
     def session_cost(self, session_id: str) -> SessionCost:
         """The session's estimated cost per turn and in total, with its run's total and budget."""
         snapshot = self._snapshot()
@@ -517,17 +555,25 @@ class FoldedEventReadModels:
     def list_live_sessions(self, scope: Scope) -> Page[LiveTile]:
         """Live session tiles grouped waiting, live, idle, ended recently."""
         snapshot = self._snapshot()
-        sessions = {
-            session_id: session
-            for session_id, session in snapshot.sessions.items()
-            if _in_scope(session.project, scope)
-        }
+        scoped = [
+            session
+            for session in snapshot.sessions.values()
+            if _in_scope(session.project, scope) and has_tile(session, now=snapshot.now)
+        ]
+        sessions = {session.id: session for session in self._with_issues(scoped)}
         budgets = {
             run_id: run.caps.budget_usd
             for run_id, run in snapshot.runs.items()
             if run.caps is not None and run.caps.budget_usd is not None
         }
-        return _whole(live_tiles(sessions, snapshot.by_session, now=snapshot.now, budgets=budgets))
+        tiles = live_tiles(
+            sessions,
+            snapshot.by_session,
+            now=snapshot.now,
+            budgets=budgets,
+            problems=snapshot.problems,
+        )
+        return _whole(tiles)
 
     # Runs, approvals, learnings
 
@@ -695,6 +741,16 @@ class FoldedEventReadModels:
                 if learning.status == LearningStatus.PROPOSED
             ),
         )
+
+
+# Labels at read time
+
+
+def _with_issue(session: Session, rules: LabelRules | None) -> Session:
+    if rules is None or session.label is None:
+        return session
+    label = with_issue(session.label, rules)
+    return session if label == session.label else session.model_copy(update={"label": label})
 
 
 # Folds by key over the index

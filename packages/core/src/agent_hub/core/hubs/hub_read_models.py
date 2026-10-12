@@ -12,6 +12,21 @@ from collections.abc import Callable, Iterator
 from datetime import datetime
 from typing import Final, Protocol
 
+from agent_hub.core.brain.brain_note import (
+    BrainEntry,
+    BrainNote,
+    BrainNoteNotFoundError,
+    BrainNoteTooLargeError,
+    BrainTree,
+)
+from agent_hub.core.brain.brain_path import (
+    MAX_NOTE_BYTES,
+    NOTE_SUFFIX,
+    BrainPathError,
+    brain_relative,
+    is_personal_folder,
+)
+from agent_hub.core.brain.frontmatter import split_frontmatter
 from agent_hub.core.doctor.finding import Finding
 from agent_hub.core.doctor.lock_rules import NOT_ADOPTED
 from agent_hub.core.events.event import EventSource
@@ -198,6 +213,60 @@ class HubFilesReadModels:
         """The running server's settings."""
         return self._settings
 
+    def brain_tree(self, project: str) -> BrainTree:
+        """The ``.md`` notes of the project's hub brain, sorted by path.
+
+        ``auto/`` and hidden names are dropped here too, whatever the reader listed (L7).
+        """
+        found = self._project(project)
+        listing = self._reader.brain_tree(found.path)
+        entries = sorted(
+            (entry for entry in listing.entries if _listable(entry)), key=lambda e: e.path
+        )
+        return BrainTree(
+            project=found.name,
+            entries=tuple(entries),
+            truncated=listing.truncated,
+            skipped=listing.skipped,
+        )
+
+    def brain_note(self, project: str, path: str) -> BrainNote:
+        """One note of the project's hub brain, its frontmatter split from its body.
+
+        The path is checked before any read (``BrainPathError``); a path under ``auto/`` is
+        ``BrainNoteNotFoundError`` like a missing note, a link or a non-regular file, so a
+        response never tells whether it exists (L7); a note over ``MAX_NOTE_BYTES`` is
+        ``BrainNoteTooLargeError``. Bytes are decoded as UTF-8, invalid ones replaced.
+        """
+        missing = BrainNoteNotFoundError(project=project, path=path)
+        try:
+            relative = str(brain_relative(path))
+        except BrainPathError:
+            if is_personal_folder(path.split("/", 1)[0]):
+                raise missing from None
+            raise
+        found = self._project(project)
+        read = self._reader.read_brain_file(found.path, relative, max_bytes=MAX_NOTE_BYTES)
+        if isinstance(read, UnreadHubFile):
+            if read.kind == "too_large":
+                size = self._reader.brain_file_size(found.path, relative)
+                raise BrainNoteTooLargeError(
+                    project=project,
+                    path=path,
+                    size=MAX_NOTE_BYTES + 1 if size is None else size,
+                    limit=MAX_NOTE_BYTES,
+                )
+            raise missing
+        split = split_frontmatter(read.decode("utf-8", "replace"))
+        return BrainNote(
+            project=found.name,
+            path=relative,
+            frontmatter=split.fields,
+            frontmatter_problem=split.problem,
+            markdown=split.body,
+            size=len(read),
+        )
+
     def _has_drift(self, hub_path: str, document: HubDocument) -> bool:
         del document
         return any(
@@ -270,6 +339,15 @@ class HubFilesReadModels:
             agents_md_lines=lines,
             sources_missing=(EventSource.GITHUB,),
         )
+
+
+def _listable(entry: BrainEntry) -> bool:
+    segments = entry.path.split("/")
+    return (
+        entry.path.endswith(NOTE_SUFFIX)
+        and not is_personal_folder(segments[0])
+        and not any(segment.startswith(".") or not segment for segment in segments)
+    )
 
 
 def _health(findings: tuple[Finding, ...]) -> HubHealth:

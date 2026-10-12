@@ -145,7 +145,16 @@ def _first_line(process: subprocess.Popen[str]) -> str:
 
 
 @pytest.fixture
-def hub_web(installed_hub: InstalledHub, tmp_path: Path) -> Iterator[RunningWeb]:
+def web_extra_env() -> Mapping[str, str]:
+    """Variables added to ``hub web``'s environment; a test module overrides this fixture (the
+    web smoke puts a fake ``gh`` on ``PATH`` and a git config that maps the hub's remote)."""
+    return {}
+
+
+@pytest.fixture
+def hub_web(
+    installed_hub: InstalledHub, tmp_path: Path, web_extra_env: Mapping[str, str]
+) -> Iterator[RunningWeb]:
     """``hub web --port <free> --db <tmp>``, with HOME and the XDG folders under ``tmp_path``.
 
     Stopped with SIGINT after the test, as Ctrl+C stops it; its log goes to a file.
@@ -157,6 +166,7 @@ def hub_web(installed_hub: InstalledHub, tmp_path: Path) -> Iterator[RunningWeb]
         "HOME": str(tmp_path / "home"),
         "XDG_DATA_HOME": str(tmp_path / "xdg-data"),
         "XDG_CONFIG_HOME": str(tmp_path / "xdg-config"),
+        **web_extra_env,
     }
     command = [str(installed_hub.executable), "web", "--port", str(port), "--db", str(db_path)]
     with (tmp_path / "web.log").open("w", encoding="utf-8") as log:
