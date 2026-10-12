@@ -212,7 +212,7 @@ def fold_session_with_problems(
         has_open_gate=bool(open_gate_ids(ordered)),
         has_open_tool_call=_has_open_tool_call(winners, ordered),
     )
-    actors = fold_actors(ordered)
+    actors = fold_actors(ordered, winners=winners)
     problems = fold_problems(ordered, status=status, winners=winners, actors=actors)
     session = Session(
         id=first.session,
@@ -233,7 +233,7 @@ def fold_session_with_problems(
         end_inferred=segments[-1].end_inferred,
         turns=_turns(ordered),
         tool_counts=_tool_counts(winners),
-        files_touched=len(fold_session_files(winners)),
+        files_touched=len(fold_session_files(winners, resolved=True)),
         errors=_count_results(winners, "error"),
         guard_denials=_count_results(winners, "denied"),
         gates=_gates(winners),

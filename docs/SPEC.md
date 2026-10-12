@@ -239,10 +239,10 @@ keeps the app on its own origin. The approved UI design and the departures from 
   The stored `agent` value `main` is kept, never shown as a label, and deprecated in the API.
 - **Problems.** A failed tool, a non-zero Bash exit, a guard denial, an open or declined guard ask, an interrupt, a
   failed gate and a failed hook are typed problems, each with its tool, `where`, message, time and actor, resolved as
-  `recovered` or `agent_continued` ("Handled by the agent"), `open` ("Agent is on it", while the session is live),
-  `needs_you` or `by_you`. Live tiles turn red only for a needs-you problem; the session's "What went wrong" panel
-  lists 1 to 5 summary lines, each linked to its event. The message is the short `error_message` of
-  [ADR 0023](adr/0023-short-error-message.md) (below).
+  `recovered` or `agent_continued` ("Handled by the agent"), `open` ("Agent is on it", while the session is live and
+  the agent has not ended its turn since), `needs_you` or `by_you`. Live tiles turn red only for a needs-you problem;
+  the session's "What went wrong" panel lists up to 5 summary lines, each linked to its event. The message is the
+  short `error_message` of [ADR 0023](adr/0023-short-error-message.md) (below).
 - **Learnings.** A learning shows its inbox note, read on request from the registered hub's `brain/_inbox/` and never
   stored (`note_unavailable` with the reason when it cannot be read), and is accepted or rejected from the app. Each
   decision opens a pull request in the hub repo through `hub_git` and records one `learning.accepted` or

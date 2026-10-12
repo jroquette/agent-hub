@@ -94,10 +94,16 @@ def _actor(
     )
 
 
-def fold_actors(events: Iterable[StoredEvent]) -> tuple[Actor, ...]:
-    """The main agent, then each subagent of one session in the order it first acted."""
+def fold_actors(
+    events: Iterable[StoredEvent], *, winners: Sequence[StoredEvent] | None = None
+) -> tuple[Actor, ...]:
+    """The main agent, then each subagent of one session in the order it first acted.
+
+    ``winners``, when the caller already resolved them, saves resolving the facts again.
+    """
     ordered = canonical_events(events)
-    winners = resolve_facts(ordered).winners
+    if winners is None:
+        winners = resolve_facts(ordered).winners
     times: dict[tuple[str, str | None], list[datetime]] = {}
     for stored in ordered:
         if not is_main(stored):

@@ -155,6 +155,7 @@ class _Session:
         # candidates (a session with many failures stays linear, not quadratic).
         self.ok_results: dict[tuple[str, str | None, str | None], list[_Later]] = {}
         self.tool_calls: dict[str, list[_Later]] = {}
+        self.replies: dict[str, list[_Later]] = {}
         self.gate_passes: dict[tuple[object, ...], list[_Later]] = {}
         for position, stored in enumerate(self.winners):
             self._index(position, stored)
@@ -167,6 +168,8 @@ class _Session:
             self.ok_results.setdefault(key, []).append((position, agent_id, stored))
         elif event.type == EventType.TOOL_CALL:
             self.tool_calls.setdefault(kind, []).append((position, agent_id, stored))
+        elif event.type == EventType.MESSAGE and event.payload.get("role") == "assistant":
+            self.replies.setdefault(kind, []).append((position, agent_id, stored))
         elif event.type == EventType.GATE_RESULT and event.payload.get("result") in _GATE_PASSED:
             gate = _gate_key(event.payload)
             self.gate_passes.setdefault(gate, []).append((position, agent_id, stored))
@@ -284,7 +287,9 @@ def _resolve(session: _Session, found: _Found) -> tuple[Resolution, str | None]:
     continuation = _continuation(session, found)
     if continuation is not None:
         return Resolution.AGENT_CONTINUED, continuation.event_id
-    if session.status == SessionStatus.LIVE:
+    # A reply with no later call means the actor ended its turn with the problem unsolved.
+    ended_turn = _first_after(session.replies.get(found.actor[0], []), found) is not None
+    if session.status == SessionStatus.LIVE and not ended_turn:
         return Resolution.OPEN, None
     return Resolution.NEEDS_YOU, None
 

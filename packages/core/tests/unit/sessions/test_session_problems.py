@@ -404,6 +404,47 @@ def test_marks_open_when_error_is_last_event_of_live_session() -> None:
     assert idle.resolution == Resolution.NEEDS_YOU
 
 
+def _reply(minute: int) -> Event:
+    return an_event(
+        type="message",
+        timestamp=_at(minute),
+        source_id=f"session-1:reply-{minute}",
+        agent="main",
+        payload={"role": "assistant", "chars": 120},
+    )
+
+
+def test_marks_needs_you_when_agent_ends_turn_after_error_of_live_session() -> None:
+    stored = as_stored(
+        [
+            _start(),
+            _call(1, "t1", "Bash", command="make check"),
+            _result(2, "t1", "Bash", status="error", error_line="exit status 2"),
+            _reply(3),
+        ]
+    )
+
+    [problem] = fold_problems(stored, status=SessionStatus.LIVE).items
+
+    assert problem.resolution == Resolution.NEEDS_YOU
+
+
+def test_keeps_agent_continued_when_agent_replies_then_calls_again() -> None:
+    stored = as_stored(
+        [
+            _start(),
+            _call(1, "t1", "Bash", command="make check"),
+            _result(2, "t1", "Bash", status="error", error_line="exit status 2"),
+            _reply(3),
+            _call(4, "t2", "Read", path="src/app.py"),
+        ]
+    )
+
+    [problem] = fold_problems(stored, status=SessionStatus.LIVE).items
+
+    assert problem.resolution == Resolution.AGENT_CONTINUED
+
+
 def test_writes_summary_lines_when_problems_exist() -> None:
     stored = as_stored(
         [

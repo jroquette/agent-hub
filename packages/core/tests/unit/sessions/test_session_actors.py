@@ -1,5 +1,6 @@
 from datetime import timedelta
 
+from agent_hub.core.readmodels.fact_keys import canonical_events, resolve_facts
 from agent_hub.core.sessions.session import Actor
 from agent_hub.core.sessions.session_actors import fold_actors
 from agent_hub.core.testing.session_scenarios import (
@@ -79,3 +80,13 @@ def test_leaves_description_empty_when_two_calls_overlap() -> None:
 
 def test_lists_only_main_actor_when_no_subagent_ran() -> None:
     assert fold_actors(as_stored(a_session_events())) == (Actor(kind="main"),)
+
+
+def test_folds_same_actors_when_winners_given_already_resolved() -> None:
+    main = a_session_events(tools=(), ended=False)
+    call = an_agent_call("toolu_agent_1", at=SCENARIO_START + 5 * MINUTE)
+    explore = a_subagent_events("agent-a", start=SCENARIO_START + 6 * MINUTE)
+    events = as_stored([*main, *call, *explore])
+    winners = resolve_facts(canonical_events(events)).winners
+
+    assert fold_actors(events, winners=winners) == fold_actors(events)
