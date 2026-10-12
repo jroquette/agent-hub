@@ -25,6 +25,8 @@ PERSONAL_FOLDER: Final = "auto"
 # which are superseded and never edited.
 REFUSED_DESTINATIONS: Final = frozenset({INBOX_FOLDER, PERSONAL_FOLDER, "decisions"})
 MAX_SLUG_CHARS: Final = 50
+# The folder the accept dialog suggests when the note's frontmatter names no ``target`` (L9).
+DEFAULT_ACCEPT_FOLDER: Final = "learnings/"
 
 type LearningAction = Literal["accept", "reject"]
 

@@ -1,5 +1,5 @@
 from agent_hub.api.app import create_app
-from agent_hub.api.openapi_paths import P2_PATHS, document_paths
+from agent_hub.api.openapi_paths import CLARITY_PATHS, P2_PATHS, SERVED_PATHS, document_paths
 from agent_hub.api.settings import ApiSettings
 
 # The spec's "API surface in P2", with the path parameters named.
@@ -40,9 +40,42 @@ SPEC_PATHS = {
 }
 
 
+# The five paths control-plane clarity adds (AC-201.39), with the path parameters named.
+CLARITY_SPEC_PATHS = {
+    ("get", "/api/v1/sessions/{session_id}/problems"),
+    ("post", "/api/v1/learnings/{learning_id}/accept"),
+    ("post", "/api/v1/learnings/{learning_id}/reject"),
+    ("get", "/api/v1/projects/{project}/brain"),
+    ("get", "/api/v1/projects/{project}/brain/note"),
+}
+
+
 def test_lists_exactly_phase_two_paths_when_document_built(api_settings: ApiSettings) -> None:
     assert P2_PATHS == SPEC_PATHS
-    assert document_paths(create_app(api_settings)) == P2_PATHS
+    assert document_paths(create_app(api_settings)) >= P2_PATHS
+
+
+def test_lists_exactly_clarity_paths_when_document_built(api_settings: ApiSettings) -> None:
+    assert CLARITY_PATHS == CLARITY_SPEC_PATHS
+    assert SERVED_PATHS == P2_PATHS | CLARITY_PATHS
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
+def test_marks_agent_deprecated_when_document_built(api_settings: ApiSettings) -> None:
+    schemas = create_app(api_settings).openapi()["components"]["schemas"]
+
+    assert schemas["Session"]["properties"]["agent"]["deprecated"] is True
+    assert schemas["LiveTile"]["properties"]["agent"]["deprecated"] is True
+    assert schemas["Learning"]["properties"]["target"]["deprecated"] is True
+    assert "deprecated" not in schemas["Session"]["properties"]["label"]
+
+
+def test_documents_action_problems_when_document_built(api_settings: ApiSettings) -> None:
+    paths = create_app(api_settings).openapi()["paths"]
+
+    for action in ("accept", "reject"):
+        operation = paths[f"/api/v1/learnings/{{learning_id}}/{action}"]["post"]
+        assert {"201", "409", "415", "502", "504"} <= set(operation["responses"]), action
 
 
 def test_documents_problem_responses_when_document_built(api_settings: ApiSettings) -> None:

@@ -5,7 +5,7 @@ import hashlib
 import json
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,6 +20,7 @@ from agent_hub.api.change_feed import ChangeFeed
 from agent_hub.api.dependencies import ApiPorts
 from agent_hub.api.settings import ApiSettings
 from agent_hub.core.approvals.approval import Approval
+from agent_hub.core.brain.brain_note import BrainNote, BrainTree
 from agent_hub.core.events.event import Event, EventType
 from agent_hub.core.events.event_query import EventPage, EventQuery
 from agent_hub.core.events.stored_event import StoredEvent
@@ -29,7 +30,12 @@ from agent_hub.core.hubs.registered_hub import HubView
 from agent_hub.core.ingestion.hook_envelope import HookEnvelope
 from agent_hub.core.ingestion.ingestion_ports import HookMapping
 from agent_hub.core.ingestion.ingestion_status import IngestionCounters
-from agent_hub.core.learnings.learning import Learning
+from agent_hub.core.learnings.learning import (
+    Learning,
+    LearningActionResult,
+    LearningDetail,
+    LearningState,
+)
 from agent_hub.core.projects.project_views import (
     ActivityItem,
     LiveTile,
@@ -54,6 +60,7 @@ from agent_hub.core.readmodels.page import Page
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.readmodels.settings_view import SettingsView
 from agent_hub.core.runs.workflow_run import WorkflowRun
+from agent_hub.core.sessions.problem import SessionProblems
 from agent_hub.core.sessions.session import (
     Session,
     SessionCost,
@@ -118,6 +125,7 @@ class FakeEventReadModels:
     summaries: dict[str, SessionSummary] = field(default_factory=dict)
     files: dict[str, list[SessionFileChange]] = field(default_factory=dict)
     costs: dict[str, SessionCost] = field(default_factory=dict)
+    problems: dict[str, SessionProblems] = field(default_factory=dict)
     needs: list[NeedsYouItem] = field(default_factory=list)
     activity_items: list[ActivityItem] = field(default_factory=list)
     hits: list[SearchHit] = field(default_factory=list)
@@ -160,6 +168,10 @@ class FakeEventReadModels:
     def session_cost(self, session_id: str) -> SessionCost:
         self._call("session_cost", session_id)
         return _found(self.costs, "session", session_id)
+
+    def session_problems(self, session_id: str) -> SessionProblems:
+        self._call("session_problems", session_id)
+        return _found(self.problems, "session", session_id)
 
     def list_live_sessions(self, scope: Scope) -> Page[LiveTile]:
         self._call("list_live_sessions", scope)
@@ -230,6 +242,8 @@ class FakeHubReadModels:
     features: list[FeatureDetail] = field(default_factory=list)
     findings: list[FindingView] = field(default_factory=list)
     settings_view: SettingsView | None = None
+    brains: dict[str, BrainTree] = field(default_factory=dict)
+    notes: dict[tuple[str, str], BrainNote] = field(default_factory=dict)
     calls: list[tuple[str, object]] = field(default_factory=list)
     failure: Exception | None = None
 
@@ -287,6 +301,62 @@ class FakeHubReadModels:
         if self.settings_view is None:
             raise EntityNotFoundError(entity="settings", entity_id="settings")
         return self.settings_view
+
+    def brain_tree(self, project: str) -> BrainTree:
+        self._call("brain_tree", project)
+        return _found(self.brains, "project", project)
+
+    def brain_note(self, project: str, path: str) -> BrainNote:
+        self._call("brain_note", (project, path))
+        if (project, path) not in self.notes:
+            raise EntityNotFoundError(entity="brain note", entity_id=path)
+        return self.notes[(project, path)]
+
+
+@dataclass
+class FakeLearningReads:
+    """``LearningReads`` over built learning details; records the calls."""
+
+    details: list[LearningDetail] = field(default_factory=list)
+    calls: list[tuple[str, object]] = field(default_factory=list)
+
+    def list_learnings(self, learning_filter: LearningFilter) -> Page[Learning]:
+        self.calls.append(("list_learnings", learning_filter))
+        return _page([Learning.model_validate(_learning_fields(item)) for item in self.details])
+
+    def get_learning(self, learning_id: str) -> LearningDetail:
+        self.calls.append(("get_learning", learning_id))
+        return _found({item.id: item for item in self.details}, "learning", learning_id)
+
+
+def _learning_fields(detail: LearningDetail) -> dict[str, object]:
+    return detail.model_dump(include=set(Learning.model_fields))
+
+
+@dataclass
+class FakeLearningDecisions:
+    """``LearningDecisions`` that answers a fixed PR; records ``(action, id, target or reason)``."""
+
+    calls: list[tuple[str, str, str]] = field(default_factory=list)
+    failure: Exception | None = None
+
+    def accept(self, learning_id: str, *, target: str) -> LearningActionResult:
+        return self._decide("accept", learning_id, target, state=LearningState.ACCEPTED_PR_OPEN)
+
+    def reject(self, learning_id: str, *, reason: str) -> LearningActionResult:
+        return self._decide("reject", learning_id, reason, state=LearningState.REJECTED_PR_OPEN)
+
+    def _decide(
+        self, action: str, learning_id: str, value: str, *, state: LearningState
+    ) -> LearningActionResult:
+        self.calls.append((action, learning_id, value))
+        if self.failure is not None:
+            raise self.failure
+        return LearningActionResult(
+            state=state,
+            pr_url="https://github.com/acme/demo-hub/pull/1",
+            branch=f"demo/learning-{action}-testing-x",
+        )
 
 
 def _view_fields(detail: FeatureDetail) -> dict[str, object]:
@@ -406,6 +476,13 @@ class Wired:
     clock: FakeClock
     feed: ChangeFeed
     counters: IngestionCounters
+    learning_reads: FakeLearningReads = field(default_factory=FakeLearningReads)
+    decisions: FakeLearningDecisions = field(default_factory=FakeLearningDecisions)
+
+    def wire(self, **ports: object) -> None:
+        """Replace some of the app's ports (``learning_reads=...``) for the rest of the test."""
+        state = self.client.app.state  # type: ignore[attr-defined]
+        state.ports = replace(state.ports, **ports)
 
 
 @pytest.fixture
