@@ -1,11 +1,13 @@
 """Claude Code transcript lines to canonical events, metadata only (D8, D11, E5).
 
 A user prompt line becomes a ``message`` (size and turn, never its text); each ``tool_result``
-block a ``tool.result``; an assistant ``text`` block a ``message``, ``thinking`` a ``reasoning``
-and ``tool_use`` a ``tool.call`` (``tool_metadata``). ``turn`` counts the user prompt lines in
-file order. Token usage is kept once per ``message.id`` (several lines repeat it): on that
-id's first ``message`` event, or on a size-0 ``message`` added before its first block when the
-response starts with another block. ``source_id``: ``<sessionId>:<uuid>[:<block index>]``.
+block a ``tool.result`` (a failed one keeps its short ``error_message``, ADR 0023); an assistant
+``text`` block a ``message``, ``thinking`` a ``reasoning`` and ``tool_use`` a ``tool.call``
+(``tool_metadata``). ``turn`` counts the user prompt lines in file order. Token usage is kept
+once per ``message.id`` (several lines repeat it): on that id's first ``message`` event, or on
+a size-0 ``message`` added before its first block when the response starts with another block.
+Every event of a line naming a ``gitBranch`` keeps it as ``git_branch`` (redacted,
+``BRANCH_LIMIT`` characters). ``source_id``: ``<sessionId>:<uuid>[:<block index>]``.
 
 A line that is not a JSON object, is too long, has no valid timestamp or names a session id
 longer than ``MAX_ID_CHARS`` is a problem reported with its line number; a line of another type,
@@ -25,7 +27,9 @@ from agent_hub.collector import transcript_fields as fields
 from agent_hub.collector.hook_fields import mapping, text, whole_number
 from agent_hub.collector.jsonl import LineError
 from agent_hub.collector.tool_metadata import (
+    BRANCH_LIMIT,
     NAME_LIMIT,
+    error_message,
     first_line,
     learning_proposal,
     output_bytes,
@@ -87,6 +91,7 @@ class _Line:
     uuid: str
     timestamp: datetime
     repo_root: PurePosixPath | None
+    git_branch: str | None = None
 
     def source_id(self, index: int | str | None = None) -> str:
         suffix = "" if index is None else f":{index}"
@@ -100,7 +105,9 @@ class _Line:
             timestamp=self.timestamp,
             source=EventSource.TRANSCRIPT,
             source_id=source_id,
-            payload=payload,
+            payload=payload
+            if self.git_branch is None
+            else payload | {"git_branch": self.git_branch},
             repo=self.origin.repo,
             agent=self.origin.agent,
         )
@@ -170,11 +177,17 @@ def _line_events(record: Record, origin: TranscriptOrigin, state: _State) -> Ite
         uuid=uuid,
         timestamp=_timestamp(record),
         repo_root=repo_root_of(text(record, fields.CWD), origin.repo),
+        git_branch=_git_branch(record),
     )
     if kind == fields.USER:
         yield from _user_events(line, message.get(fields.CONTENT), state)
     else:
         yield from _assistant_events(line, message, state)
+
+
+def _git_branch(record: Record) -> str | None:
+    branch = text(record, fields.GIT_BRANCH)
+    return None if branch is None else short_text(branch, BRANCH_LIMIT)
 
 
 def _timestamp(record: Record) -> datetime:
@@ -228,7 +241,11 @@ def _result(block: Mapping[str, JsonValue], state: _State) -> Payload:
     if size is not None:
         payload["output_bytes"] = size
     if is_error:
-        payload["error_line"] = first_line(_result_text(content))
+        error = _result_text(content)
+        payload["error_line"] = first_line(error)
+        message = error_message(error)
+        if message is not None:
+            payload["error_message"] = message
     payload["turn"] = state.turn
     return payload
 
