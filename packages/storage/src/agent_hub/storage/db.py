@@ -12,6 +12,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     Dialect,
+    Index,
     Integer,
     MetaData,
     String,
@@ -52,7 +53,10 @@ metadata = MetaData()
 
 # One row per canonical event. Filtered fields get columns (ADR 0003); the rest is the JSON
 # payload. ``id`` gives the insertion order; ``(source, source_id)`` is the event's identity,
-# and the constraint is named so batch-mode migrations can address it.
+# and the constraints are named so batch-mode migrations can address them. ``event_id`` (a
+# UUIDv7) and ``received_at`` are minted by the store at append; rows appended before they
+# existed got an ``event_id`` from the migration and keep ``received_at`` NULL. The indexes serve
+# the read models' queries by project and session, type and time.
 events = Table(
     "events",
     metadata,
@@ -68,5 +72,11 @@ events = Table(
     Column("agent", String, nullable=True),
     Column("workflow", String, nullable=True),
     Column("step", String, nullable=True),
+    Column("event_id", String(36), nullable=False),
+    Column("received_at", UtcDateTime, nullable=True),
     UniqueConstraint("source", "source_id", name="uq_events_source_source_id"),
+    UniqueConstraint("event_id", name="uq_events_event_id"),
+    Index("ix_events_project_session_id", "project", "session", "id"),
+    Index("ix_events_project_type_timestamp", "project", "type", "timestamp"),
+    Index("ix_events_project_timestamp", "project", "timestamp"),
 )

@@ -38,3 +38,10 @@ class RunLogError(CliError):
 
     def __init__(self, error: OSError) -> None:
         super().__init__(f"could not write the run's records: {error.strerror or error}")
+
+
+class ProjectsRootError(CliError):
+    """``AGENT_HUB_CLAUDE_PROJECTS`` names a relative path."""
+
+    def __init__(self) -> None:
+        super().__init__("AGENT_HUB_CLAUDE_PROJECTS must be an absolute path")
