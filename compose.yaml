@@ -52,4 +52,6 @@ volumes:
 secrets:
   # Optional: the CA of a TLS-intercepting proxy, for the build's npm and uv downloads only.
   build_ca:
-    file: ${AGENT_HUB_BUILD_CA:-/dev/null}
+    # Without AGENT_HUB_BUILD_CA, an empty file inside the project (Bake only reads files under
+    # the project without an extra --allow).
+    file: ${AGENT_HUB_BUILD_CA:-./docker/no-build-ca.pem}

@@ -16,7 +16,8 @@ WEB := npm --prefix apps/web
 WEB_DIST := packages/api/src/agent_hub/api/web_dist
 # Running the control plane (docs/USING.md "Run the control plane", ADR 0022). Compose reads
 # these from the environment or .env; the hubs root defaults to the folder holding this repo.
-COMPOSE := docker compose
+# COMPOSE_BAKE=false: the classic builder, so a build CA outside the project needs no Bake --allow.
+COMPOSE := COMPOSE_BAKE=false docker compose
 AGENT_HUB_PORT ?= 7420
 AGENT_HUB_HUBS_ROOT ?= $(abspath $(CURDIR)/..)
 export AGENT_HUB_PORT AGENT_HUB_HUBS_ROOT
