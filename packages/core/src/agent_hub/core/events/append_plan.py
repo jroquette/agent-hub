@@ -24,16 +24,17 @@ class AppendPlan(BaseModel):
 
 
 def _same_content(first: Event, second: Event) -> bool:
-    """Equal events, or equal once a key this release added is kept by only one of them (L2).
+    """Equal events, or equal once a key this release added to their type is kept by only one
+    of them (L2).
 
     An event stored before ``ADDED_KEYS_V2`` existed and re-ingested with them is the same event:
-    each added key must be missing from one side or hold the same value on both.
+    each key added for its type must be missing from one side or hold the same value on both.
     """
     first_json, second_json = _as_json(first), _as_json(second)
     if first_json == second_json:
         return True
     shared = first.payload.keys() & second.payload.keys()
-    upgrade_only = ADDED_KEYS_V2 - shared
+    upgrade_only = ADDED_KEYS_V2.get(first.type, frozenset()) - shared
     return _as_json(first, without=upgrade_only) == _as_json(second, without=upgrade_only)
 
 
@@ -51,7 +52,7 @@ def plan_append(batch: Sequence[Event], stored: Mapping[EventKey, Event]) -> App
     """Classify each event of ``batch`` against ``stored`` and the events before it.
 
     An event equal to a stored one, or to an earlier one in the batch with the same key, is a
-    duplicate; so is one that differs only by keys of ``ADDED_KEYS_V2`` the other lacks (the
+    duplicate; so is one that differs only by its type's ``ADDED_KEYS_V2`` the other lacks (the
     stored or earlier copy is kept). A different event with the same key raises
     ``EventConflictError`` naming its position in the batch.
     """
