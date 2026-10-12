@@ -143,6 +143,21 @@ describe("LearningsScreen", () => {
     ).toBeInTheDocument();
   });
 
+  it("opens the proposal named in the path when a link points at one", async () => {
+    renderWithApi(<LearningsScreen />, {
+      routes,
+      path: "/knowledge/learnings/l-new",
+      route: "/knowledge/learnings/:learningId",
+    });
+
+    const detail = await screen.findByRole("region", { name: "Proposal" });
+    expect(
+      await within(detail).findByRole("heading", {
+        name: "Order book snapshot before diff replay",
+      }),
+    ).toBeInTheDocument();
+  });
+
   it("selects another proposal from the queue and keeps it in the URL", async () => {
     const { router } = open();
 
