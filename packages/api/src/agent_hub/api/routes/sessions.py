@@ -130,5 +130,5 @@ def get_session_cost(session_id: SessionPath, models: EventReadModelsDep) -> Ses
 
 @router.get("/sessions/{session_id}/problems")
 def get_session_problems(session_id: SessionPath, models: EventReadModelsDep) -> SessionProblems:
-    """The session's problems: 1 to 5 "what went wrong" lines, then each problem by time."""
+    """The session's problems: up to 5 summary lines (none if all went well), then each by time."""
     return models.session_problems(session_id)

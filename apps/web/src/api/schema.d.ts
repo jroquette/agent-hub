@@ -634,7 +634,7 @@ export interface paths {
     };
     /**
      * Get Session Problems
-     * @description The session's problems: 1 to 5 "what went wrong" lines, then each problem by time.
+     * @description The session's problems: up to 5 summary lines (none if all went well), then each by time.
      */
     get: operations["get_session_problems_api_v1_sessions__session_id__problems_get"];
     put?: never;
