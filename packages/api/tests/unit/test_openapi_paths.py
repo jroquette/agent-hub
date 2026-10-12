@@ -1,0 +1,54 @@
+from agent_hub.api.app import create_app
+from agent_hub.api.openapi_paths import P2_PATHS, document_paths
+from agent_hub.api.settings import ApiSettings
+
+# The spec's "API surface in P2", with the path parameters named.
+SPEC_PATHS = {
+    ("post", "/api/v1/events/hooks"),
+    ("get", "/api/v1/hubs"),
+    ("post", "/api/v1/hubs"),
+    ("delete", "/api/v1/hubs/{hub_id}"),
+    ("get", "/api/v1/projects"),
+    ("get", "/api/v1/projects/{project}"),
+    ("get", "/api/v1/projects/{project}/now"),
+    ("get", "/api/v1/projects/{project}/repos"),
+    ("get", "/api/v1/needs-you"),
+    ("get", "/api/v1/activity"),
+    ("get", "/api/v1/search"),
+    ("get", "/api/v1/sessions"),
+    ("get", "/api/v1/sessions/{session_id}"),
+    ("get", "/api/v1/sessions/{session_id}/summary"),
+    ("get", "/api/v1/sessions/{session_id}/events"),
+    ("get", "/api/v1/sessions/{session_id}/events/stream"),
+    ("get", "/api/v1/sessions/{session_id}/files"),
+    ("get", "/api/v1/sessions/{session_id}/cost"),
+    ("get", "/api/v1/live-sessions"),
+    ("get", "/api/v1/live-sessions/stream"),
+    ("get", "/api/v1/workflow-runs"),
+    ("get", "/api/v1/workflow-runs/{run_id}"),
+    ("get", "/api/v1/workflow-runs/{run_id}/stream"),
+    ("get", "/api/v1/approvals"),
+    ("get", "/api/v1/approvals/{approval_id}"),
+    ("get", "/api/v1/learnings"),
+    ("get", "/api/v1/learnings/{learning_id}"),
+    ("get", "/api/v1/features"),
+    ("get", "/api/v1/features/{project}/{slug}"),
+    ("get", "/api/v1/doctor/findings"),
+    ("get", "/api/v1/collector/status"),
+    ("get", "/api/v1/settings"),
+    ("get", "/api/v1/events/stream"),
+}
+
+
+def test_lists_exactly_phase_two_paths_when_document_built(api_settings: ApiSettings) -> None:
+    assert P2_PATHS == SPEC_PATHS
+    assert document_paths(create_app(api_settings)) == P2_PATHS
+
+
+def test_documents_problem_responses_when_document_built(api_settings: ApiSettings) -> None:
+    document = create_app(api_settings).openapi()
+
+    for path_item in document["paths"].values():
+        for operation in path_item.values():
+            assert {"4XX", "5XX"} <= set(operation["responses"]), operation["operationId"]
+            assert "422" not in operation["responses"], operation["operationId"]

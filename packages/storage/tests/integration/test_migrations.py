@@ -1,6 +1,7 @@
 import io
 import runpy
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,17 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.types import TypeEngine
 
 from agent_hub.storage.migration import alembic_config
+
+PHASE_ZERO_INSERT = (
+    "INSERT INTO events (project, session, type, source, source_id, timestamp, payload) "
+    "VALUES ('demo', 'session-1', 'tool.call', 'claude_code', ?, "
+    "'2026-09-27 08:00:00.000000', '{}')"
+)
+INDEXES = {
+    "ix_events_project_session_id": ["project", "session", "id"],
+    "ix_events_project_type_timestamp": ["project", "type", "timestamp"],
+    "ix_events_project_timestamp": ["project", "timestamp"],
+}
 
 
 def _table_names(db_path: Path) -> set[str]:
@@ -48,14 +60,15 @@ def test_creates_and_drops_events_table_when_upgraded_and_downgraded(tmp_path: P
     config = alembic_config(f"sqlite:///{db_path}")
 
     upgrade(config, "head")
-    assert _current_revision(db_path) == "0002"
+    assert _current_revision(db_path) == "0003"
     assert _table_names(db_path) == {"alembic_version", "events"}
     columns, unique_constraints = _events_schema(db_path)
     filtered = {"project", "session", "type", "timestamp", "source", "source_id"}
     assert filtered <= set(columns)
     assert isinstance(columns["payload"], JSON)
-    assert [constraint["column_names"] for constraint in unique_constraints] == [
-        ["source", "source_id"]
+    assert sorted(constraint["column_names"] for constraint in unique_constraints) == [
+        ["event_id"],
+        ["source", "source_id"],
     ]
 
     downgrade(config, "base")
@@ -67,16 +80,17 @@ def test_rejects_duplicate_key_when_inserted_with_raw_sql(tmp_path: Path) -> Non
     db_path = tmp_path / "agent-hub.db"
     upgrade(alembic_config(f"sqlite:///{db_path}"), "head")
     insert = (
-        "INSERT INTO events (project, session, type, source, source_id, timestamp, payload) "
+        "INSERT INTO events "
+        "(project, session, type, source, source_id, timestamp, payload, event_id) "
         "VALUES ('demo', 'session-1', 'tool.call', 'claude_code', 'evt-1', "
-        "'2026-09-27 08:00:00.000000', ?)"
+        "'2026-09-27 08:00:00.000000', ?, ?)"
     )
     engine = create_engine(f"sqlite:///{db_path}")
     try:
         with engine.begin() as connection:
-            connection.exec_driver_sql(insert, ('{"version": 1}',))
+            connection.exec_driver_sql(insert, ('{"version": 1}', str(uuid.uuid7())))
         with pytest.raises(IntegrityError), engine.begin() as connection:
-            connection.exec_driver_sql(insert, ('{"version": 2}',))
+            connection.exec_driver_sql(insert, ('{"version": 2}', str(uuid.uuid7())))
     finally:
         engine.dispose()
 
@@ -111,4 +125,95 @@ def test_upgrades_to_head_when_run_as_module(
 
     runpy.run_module("agent_hub.storage.migration", run_name="__main__")
 
+    assert _current_revision(db_path) == "0003"
+
+
+def _rows(db_path: Path) -> list[tuple[Any, ...]]:
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as connection:
+            query = "SELECT source_id, event_id, received_at FROM events ORDER BY id"
+            return [tuple(row) for row in connection.exec_driver_sql(query)]
+    finally:
+        engine.dispose()
+
+
+def _indexes(db_path: Path) -> dict[str, list[str]]:
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        return {
+            str(index["name"]): [str(column) for column in index["column_names"]]
+            for index in inspect(engine).get_indexes("events")
+        }
+    finally:
+        engine.dispose()
+
+
+def _insert_phase_zero_rows(db_path: Path, count: int) -> None:
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            for number in range(count):
+                connection.exec_driver_sql(PHASE_ZERO_INSERT, (f"evt-{number}",))
+    finally:
+        engine.dispose()
+
+
+def test_keeps_rows_when_phase_zero_database_upgrades(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0002")
+    _insert_phase_zero_rows(db_path, 3)
+
+    upgrade(config, "head")
+
+    rows = _rows(db_path)
+    assert [row[0] for row in rows] == ["evt-0", "evt-1", "evt-2"]
+    event_ids = [uuid.UUID(row[1]) for row in rows]
+    assert len(set(event_ids)) == 3
+    assert {event_id.version for event_id in event_ids} == {7}
+    assert [str(event_id) for event_id in event_ids] == [row[1] for row in rows]
+    assert [row[2] for row in rows] == [None, None, None]
+    assert _indexes(db_path) == INDEXES
+    columns, _ = _events_schema(db_path)
+    assert {"event_id", "received_at"} <= set(columns)
+
+
+def test_rejects_null_event_id_when_inserted_after_upgrade(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    upgrade(alembic_config(f"sqlite:///{db_path}"), "head")
+
+    with pytest.raises(IntegrityError):
+        _insert_phase_zero_rows(db_path, 1)
+
+
+def test_keeps_rows_when_downgraded_to_phase_zero(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0002")
+    _insert_phase_zero_rows(db_path, 2)
+    upgrade(config, "head")
+
+    downgrade(config, "0002")
+
     assert _current_revision(db_path) == "0002"
+    columns, unique_constraints = _events_schema(db_path)
+    assert {"event_id", "received_at"}.isdisjoint(columns)
+    assert [constraint["column_names"] for constraint in unique_constraints] == [
+        ["source", "source_id"]
+    ]
+    assert _indexes(db_path) == {}
+    _insert_phase_zero_rows_after(db_path, ["evt-2"])
+
+
+def _insert_phase_zero_rows_after(db_path: Path, source_ids: list[str]) -> None:
+    """A Phase 0 insert (no event_id) works again after the downgrade, and old rows remain."""
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            for source_id in source_ids:
+                connection.exec_driver_sql(PHASE_ZERO_INSERT, (source_id,))
+            count = connection.exec_driver_sql("SELECT count(*) FROM events").scalar_one()
+    finally:
+        engine.dispose()
+    assert count == 3

@@ -607,6 +607,8 @@ PROJECT_BRANCH_READERS = {
     "core/src/agent_hub/core/hub_config/model.py": 2,
     # the project branch AGENTS.md names, which the doctor's refs rule skips as not a path
     "core/src/agent_hub/core/doctor/instruction_rules.py": 1,
+    # the project's branch in the control plane's Project overview header
+    "core/src/agent_hub/core/hubs/hub_read_models.py": 1,
     # the hub checkout's branch in the brief
     "cli/src/agent_hub/cli/brief_command.py": 1,
     # project_default_branch for ci.yml, and the project branch in AGENTS.md's mentions

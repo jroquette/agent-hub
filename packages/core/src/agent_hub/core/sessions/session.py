@@ -1,0 +1,173 @@
+"""The Session read model and the views of one session: summary, files, cost, timeline."""
+
+from datetime import date
+from enum import StrEnum
+from typing import Literal
+
+from pydantic import Field, JsonValue
+
+from agent_hub.core.events.event import EventSource, EventType
+from agent_hub.core.events.stored_event import EventId
+from agent_hub.core.readmodels.view_types import ApiTimestamp, DerivedView, Money, ViewModel
+
+
+class SessionStatus(StrEnum):
+    """Where a session is now (D14): waiting wins over live; ended is final until reopened."""
+
+    LIVE = "live"
+    WAITING = "waiting"
+    IDLE = "idle"
+    ENDED = "ended"
+
+
+class Outcome(StrEnum):
+    """How an ended session ended; ``None`` when no source says."""
+
+    DONE = "done"
+    STOPPED = "stopped"
+    BLOCKED = "blocked"
+    ERROR = "error"
+
+
+class TokenUsage(ViewModel):
+    """Tokens counted from transcript usage, once per message id."""
+
+    input: int = Field(ge=0)
+    output: int = Field(ge=0)
+    cache_read: int = Field(ge=0)
+    cache_write: int = Field(ge=0)
+
+
+class SessionSegment(ViewModel):
+    """One stretch of a session; a later event after an end reopens it as a new segment."""
+
+    index: int = Field(ge=1)
+    started_at: ApiTimestamp
+    ended_at: ApiTimestamp | None
+    end_reason: str | None
+    end_inferred: bool = False
+
+
+class PullRequestRef(ViewModel):
+    """A pull request; GitHub is not connected in Phase 2, so sessions carry ``null``."""
+
+    number: int
+    url: str
+    state: str
+
+
+class Session(DerivedView):
+    """A session folded from its events (status, counts, tokens, estimated cost)."""
+
+    id: str
+    project: str
+    repo: str | None
+    agent: str
+    parent_session_id: str | None = None
+    run_id: str | None = None
+    step: str | None = None
+    attempt: int | None = None
+    issue: str | None = None
+    started_at: ApiTimestamp
+    ended_at: ApiTimestamp | None
+    last_activity_at: ApiTimestamp
+    segments: tuple[SessionSegment, ...]
+    status: SessionStatus
+    outcome: Outcome | None
+    end_reason: str | None
+    end_inferred: bool = False
+    turns: int = Field(ge=0)
+    tool_counts: dict[str, int]
+    files_touched: int = Field(ge=0)
+    errors: int = Field(ge=0)
+    guard_denials: int = Field(ge=0)
+    gates: int = Field(ge=0)
+    learnings_proposed: int = Field(ge=0)
+    model: str | None
+    tokens: TokenUsage | None
+    cost_usd: Money | None
+    cost_unknown_reason: str | None = None
+    has_transcript: bool
+    pr: PullRequestRef | None = None
+
+
+class SummaryLine(ViewModel):
+    """One line of a session summary and the event it comes from."""
+
+    text: str
+    event_id: EventId
+
+
+class SessionSummary(DerivedView):
+    """3 to 5 deterministic lines (D17); a stored ``session.summary`` event wins (``stored``)."""
+
+    session_id: str
+    lines: tuple[SummaryLine, ...]
+    generated_at: ApiTimestamp
+    stored: bool = False
+
+
+type FileOperation = Literal["read", "edited", "created", "written"]
+
+
+class SessionFileChange(ViewModel):
+    """A path a session touched, its operations and line counts (no content is stored)."""
+
+    repo: str | None
+    path: str
+    ops: tuple[FileOperation, ...]
+    added: int = Field(ge=0)
+    removed: int = Field(ge=0)
+    event_ids: tuple[EventId, ...]
+
+
+class TurnCost(ViewModel):
+    """Tokens and estimated cost of one turn."""
+
+    turn: int = Field(ge=0)
+    input: int = Field(ge=0)
+    output: int = Field(ge=0)
+    cache_read: int = Field(ge=0)
+    cache_write: int = Field(ge=0)
+    cost_usd: Money | None
+
+
+class SessionCost(DerivedView):
+    """The Cost tab: per-turn series and totals, always "Estimated from transcript" (D15)."""
+
+    session_id: str
+    model: str | None
+    series: tuple[TurnCost, ...]
+    total_usd: Money | None
+    run_total_usd: Money | None = None
+    budget_usd: Money | None = None
+    unknown_reason: str | None = None
+    prices_as_of: date | None
+
+
+class TimelineEvent(ViewModel):
+    """One stored event as the timeline and Raw events show it.
+
+    ``fact_key`` groups copies of the same fact from several sources; ``merged_sources`` lists
+    them on the winner; a loser has ``conflict`` set (D16). ``latency_ms`` is ``received_at``
+    minus ``timestamp`` when both exist.
+    """
+
+    event_id: EventId
+    seq: int = Field(ge=1)
+    project: str
+    session: str
+    type: EventType
+    timestamp: ApiTimestamp
+    received_at: ApiTimestamp | None
+    latency_ms: int | None
+    source: EventSource
+    source_id: str
+    repo: str | None
+    agent: str | None
+    workflow: str | None
+    step: str | None
+    payload: dict[str, JsonValue]
+    fact_key: str | None = None
+    merged_sources: tuple[EventSource, ...] = ()
+    conflict: bool = False

@@ -1,0 +1,208 @@
+"""A feature folder's state (D23), from the files the generator read: pure, no I/O.
+
+``features.json`` gives the acceptance criteria: passing ones, and owner steps (a criterion whose
+verification starts with ``manual`` and does not pass yet). ``spec.md``'s frontmatter gives the
+size (``process_size``), ``repos`` and ``linear`` issues; ``eval.md``'s first ``Verdict`` line the
+verdict. The golden path phase comes from the files alone: spec, research, plan, tickets
+(``issues.md``), implement (an AC passes), evaluate (a verdict). Review needs runs and Shipped
+needs GitHub, not connected in Phase 2. A malformed or unreadable record degrades this feature
+only: its ``problem`` says why and its criteria are unknown.
+"""
+
+import re
+from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import Final, Literal, cast
+
+from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr, ValidationError
+
+from agent_hub.core.events.event import EventSource
+from agent_hub.core.features.feature_view import (
+    AcCounts,
+    AcRow,
+    FeatureDetail,
+    FeaturePhase,
+    FeatureView,
+    Verdict,
+)
+from agent_hub.core.hub_config.problems import one_line
+from agent_hub.core.json_form import InvalidJsonError, load_json_bytes
+
+SPEC: Final = "spec.md"
+RESEARCH: Final = "research.md"
+PLAN: Final = "plan.md"
+ISSUES: Final = "issues.md"
+RECORD: Final = "features.json"
+EVAL: Final = "eval.md"
+# The record files of a feature folder, in the order a feature is built.
+RECORD_FILES: Final = (SPEC, RESEARCH, PLAN, ISSUES, RECORD, EVAL)
+# How much of ``spec.md`` and ``eval.md`` is read for the frontmatter and the verdict.
+HEAD_BYTES: Final = 65_536
+_VERDICT_LINE_CHARS: Final = 200
+_SIZES: Final = ("spike", "bounded", "architectural")
+
+type FeatureSize = Literal["spike", "bounded", "architectural"]
+_VERDICT: Final = re.compile(r"Verdict\W{0,4}(SHIP-WITH-OWNER-STEPS|NO-SHIP|SHIP)\b")
+_MANUAL: Final = re.compile(r"\s*manual\b", re.IGNORECASE)
+_FILE_PHASES: Final[tuple[tuple[str, FeaturePhase], ...]] = (
+    (SPEC, "spec"),
+    (RESEARCH, "research"),
+    (PLAN, "plan"),
+    (ISSUES, "tickets"),
+)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class FeatureFolder:
+    """What was read of ``brain/features/<slug>/``.
+
+    ``files`` names the record files present as regular files. ``features_json`` holds the
+    record's bytes, a one-line problem when it could not be read, or None when absent;
+    ``spec_head`` and ``eval_head`` are the first ``HEAD_BYTES`` of ``spec.md`` and ``eval.md``.
+    """
+
+    slug: str
+    files: tuple[str, ...]
+    features_json: bytes | str | None = None
+    spec_head: bytes | None = None
+    eval_head: bytes | None = None
+
+
+class _Ac(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: StrictStr
+    description: StrictStr
+    repo: StrictStr | None = None
+    verification: StrictStr | None = None
+    passes: StrictBool
+    evidence: StrictStr | None = None
+
+
+class _Record(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    linear: tuple[StrictStr, ...] = ()
+    acs: tuple[_Ac, ...]
+
+
+def feature_view(folder: FeatureFolder, *, project: str) -> FeatureView:
+    """The feature as the Features list shows it."""
+    detail = feature_detail(folder, project=project)
+    return FeatureView.model_validate(detail.model_dump(exclude={"ac_rows"}))
+
+
+def feature_detail(folder: FeatureFolder, *, project: str) -> FeatureDetail:
+    """The feature with its acceptance criteria rows."""
+    front = _frontmatter(folder.spec_head)
+    record = _record(folder.features_json)
+    rows = () if not isinstance(record, _Record) else tuple(_row(ac) for ac in record.acs)
+    verdict, verdict_line = _verdict(folder.eval_head)
+    spec_repos = _listed(front.get("repos"))
+    return FeatureDetail(
+        project=project,
+        slug=folder.slug,
+        issues=_unique(
+            (*_listed(front.get("linear")), *(record.linear if isinstance(record, _Record) else ()))
+        ),
+        size=_size(front.get("process_size")),
+        phase=_phase(folder.files, rows=rows, verdict=verdict),
+        files=tuple(name for name in RECORD_FILES if name in folder.files),
+        acs=None if not isinstance(record, _Record) else _counts(rows),
+        verdict=verdict,
+        verdict_line=verdict_line,
+        repos=spec_repos or _unique(row.repo for row in rows if row.repo),
+        problem=record if isinstance(record, str) else None,
+        sources_missing=(EventSource.GITHUB,),
+        ac_rows=rows,
+    )
+
+
+def _record(read: bytes | str | None) -> _Record | str | None:
+    if read is None:
+        return None
+    if isinstance(read, str):
+        return one_line(f"{RECORD} could not be read ({read})")
+    try:
+        return _Record.model_validate(load_json_bytes(read))
+    except InvalidJsonError as error:
+        return one_line(f"{RECORD} could not be parsed ({error.message})")
+    except ValidationError as error:
+        first = error.errors()[0]
+        where = ".".join(str(part) for part in first["loc"])
+        return one_line(f"{RECORD} could not be parsed ({where}: {first['msg']})")
+
+
+def _row(ac: _Ac) -> AcRow:
+    return AcRow(
+        id=ac.id,
+        description=ac.description,
+        repo=ac.repo,
+        passes=ac.passes,
+        manual=ac.verification is not None and _MANUAL.match(ac.verification) is not None,
+        evidence=ac.evidence,
+        command=ac.verification,
+    )
+
+
+def _counts(rows: tuple[AcRow, ...]) -> AcCounts:
+    return AcCounts(
+        passing=sum(row.passes for row in rows),
+        total=len(rows),
+        owner_steps=sum(row.manual and not row.passes for row in rows),
+    )
+
+
+def _phase(
+    files: tuple[str, ...], *, rows: tuple[AcRow, ...], verdict: Verdict | None
+) -> FeaturePhase:
+    if verdict is not None:
+        return "evaluate"
+    if any(row.passes for row in rows):
+        return "implement"
+    reached = [phase for name, phase in _FILE_PHASES if name in files]
+    return reached[-1] if reached else "spec"
+
+
+def _verdict(head: bytes | None) -> tuple[Verdict | None, str | None]:
+    if head is None:
+        return None, None
+    for line in head.decode("utf-8", "replace").splitlines():
+        found = _VERDICT.search(line)
+        if found is not None:
+            shown = one_line(line.strip())[:_VERDICT_LINE_CHARS]
+            return cast("Verdict", found.group(1)), shown
+    return None, None
+
+
+def _frontmatter(head: bytes | None) -> dict[str, str]:
+    """The ``key: value`` lines between the leading ``---`` lines; nothing without them."""
+    if head is None:
+        return {}
+    lines = head.decode("utf-8", "replace").splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}
+    found: dict[str, str] = {}
+    for line in lines[1:]:
+        if line.strip() == "---":
+            return found
+        key, colon, value = line.partition(":")
+        if colon and key and not key.startswith((" ", "\t")):
+            found[key.strip()] = value.strip()
+    return {}
+
+
+def _listed(value: str | None) -> tuple[str, ...]:
+    """``[a, b]`` or a single ``a`` as a tuple; quotes around items are dropped."""
+    if not value:
+        return ()
+    inner = value[1:-1] if value.startswith("[") and value.endswith("]") else value
+    return _unique(item.strip().strip("'\"") for item in inner.split(","))
+
+
+def _size(value: str | None) -> FeatureSize | None:
+    return cast("FeatureSize", value) if value in _SIZES else None
+
+
+def _unique(items: Iterable[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(item for item in items if item))

@@ -89,6 +89,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/agents/requirements-analyst.md",
     "plugin/hub-workflow/agents/researcher.md",
     "plugin/hub-workflow/agents/spec-reviewer.md",
+    "plugin/hub-workflow/hooks/event_sensor.py",
     "plugin/hub-workflow/hooks/guard.py",
     "plugin/hub-workflow/hooks/hooks.json",
     "plugin/hub-workflow/hooks/hubhooks.py",
@@ -2092,7 +2093,8 @@ def test_names_rendered_script_when_hooks_json_command_read(
         hook["command"] for groups in hooks.values() for group in groups for hook in group["hooks"]
     ]
 
-    assert len(commands) == len(hooks) == 6
+    # The six base hooks, then the event sensor on eleven events (AGH-200 E2).
+    assert (len(commands), len(hooks)) == (17, 11)
     for command in commands:
         match = HOOK_COMMAND.fullmatch(command)
         assert match, command
@@ -3421,17 +3423,23 @@ PROJECT_ONLY_SETTINGS = (
     "skillOverrides",
 )
 # Event → (matcher, hook file, timeout in seconds); `None`: the group has no matcher.
+# Each event's groups: its base hook, then the event sensor (AGH-200 D6, E2: eleven events).
+SENSOR = "event_sensor.py"
 SETTINGS_HOOKS = {
-    "SessionStart": ("startup|resume|clear|compact", "session_start.py", 20),
-    "PreToolUse": (
-        "Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetch",
-        "guard.py",
-        10,
-    ),
-    "PostToolUse": ("Edit|Write|MultiEdit", "post_edit.py", 60),
-    "Stop": (None, "stop_gate.py", 180),
-    "PreCompact": (None, "pre_compact.py", 20),
-    "SessionEnd": (None, "session_end.py", 10),
+    "SessionStart": [("startup|resume|clear|compact", "session_start.py", 20), (None, SENSOR, 5)],
+    "PreToolUse": [
+        ("Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetch", "guard.py", 10),
+        ("*", SENSOR, 5),
+    ],
+    "PostToolUse": [("Edit|Write|MultiEdit", "post_edit.py", 60), ("*", SENSOR, 5)],
+    "Stop": [(None, "stop_gate.py", 180), (None, SENSOR, 5)],
+    "PreCompact": [(None, "pre_compact.py", 20), (None, SENSOR, 5)],
+    "SessionEnd": [(None, "session_end.py", 10), (None, SENSOR, 5)],
+    "UserPromptSubmit": [(None, SENSOR, 5)],
+    "PostToolUseFailure": [("*", SENSOR, 5)],
+    "Notification": [(None, SENSOR, 5)],
+    "SubagentStart": [(None, SENSOR, 5)],
+    "SubagentStop": [(None, SENSOR, 5)],
 }
 SETTINGS_COMMAND = re.compile(
     r'python3 "\$CLAUDE_PROJECT_DIR/(plugin/hub-workflow/hooks/[^"/]+\.py)"'
@@ -3450,15 +3458,17 @@ def strict_json(content: bytes) -> Any:
     return json.loads(content.decode("utf-8"), parse_constant=reject_constant)
 
 
-def hook_groups(hooks: Mapping[str, Any]) -> dict[str, tuple[str | None, str, int]]:
-    """Each event's single group as (matcher, hook file name, timeout)."""
-    rows = {}
+def hook_groups(hooks: Mapping[str, Any]) -> dict[str, list[tuple[str | None, str, int]]]:
+    """Each event's groups, each one hook, as (matcher, command, timeout)."""
+    rows: dict[str, list[tuple[str | None, str, int]]] = {}
     for event, groups in hooks.items():
-        assert len(groups) == 1, event
-        assert len(groups[0]["hooks"]) == 1, event
-        hook = groups[0]["hooks"][0]
-        assert hook["type"] == "command", event
-        rows[event] = (groups[0].get("matcher"), hook["command"], hook["timeout"])
+        for group in groups:
+            assert len(group["hooks"]) == 1, event
+            hook = group["hooks"][0]
+            assert hook["type"] == "command", event
+            rows.setdefault(event, []).append(
+                (group.get("matcher"), hook["command"], hook["timeout"])
+            )
     return rows
 
 
@@ -3490,15 +3500,17 @@ def test_holds_rules_base_only_when_settings_rendered(
         "additionalDirectories": [f"../{repo_dir}" for repo_dir in REPO_DIRS[config_name]],
     }
     assert set(settings["hooks"]) == set(SETTINGS_HOOKS)
-    for event, (matcher, command, timeout) in hook_groups(settings["hooks"]).items():
-        expected_matcher, file, expected_timeout = SETTINGS_HOOKS[event]
-        assert (matcher, timeout) == (expected_matcher, expected_timeout), event
-        match = SETTINGS_COMMAND.fullmatch(command)
-        assert match, command
-        assert match[1] == f"plugin/hub-workflow/hooks/{file}", command
-        # A missing hook file makes `python3` exit 2, which blocks on PreToolUse and Stop.
-        assert match[1] in rendered, command
-        assert rendered[match[1]].executable, command
+    for event, rows in hook_groups(settings["hooks"]).items():
+        assert len(rows) == len(SETTINGS_HOOKS[event]), event
+        for (matcher, command, timeout), expected in zip(rows, SETTINGS_HOOKS[event], strict=True):
+            expected_matcher, file, expected_timeout = expected
+            assert (matcher, timeout) == (expected_matcher, expected_timeout), event
+            match = SETTINGS_COMMAND.fullmatch(command)
+            assert match, command
+            assert match[1] == f"plugin/hub-workflow/hooks/{file}", command
+            # A missing hook file makes `python3` exit 2, which blocks on PreToolUse and Stop.
+            assert match[1] in rendered, command
+            assert rendered[match[1]].executable, command
     assert "matcher" not in settings["hooks"]["Stop"][0]
     for key in PROJECT_ONLY_SETTINGS:
         assert not key_anywhere(settings, key), key
@@ -3564,12 +3576,14 @@ def test_matches_plugin_hooks_when_settings_compared(demo_render: dict[str, Rend
     # The same hooks, wired two ways: the settings block for cloud sessions (which do not install
     # repo plugins), `hooks.json` for a plugin install. Only the command's root differs.
     assert set(in_settings) == set(in_plugin)
-    for event, (matcher, command, timeout) in in_settings.items():
-        plugin_matcher, plugin_command, plugin_timeout = in_plugin[event]
-        assert (matcher, timeout) == (plugin_matcher, plugin_timeout), event
-        assert command == plugin_command.replace(
-            "${CLAUDE_PLUGIN_ROOT}", "$CLAUDE_PROJECT_DIR/plugin/hub-workflow"
-        ), event
+    for event, rows in in_settings.items():
+        assert len(rows) == len(in_plugin[event]), event
+        for (matcher, command, timeout), plugin_row in zip(rows, in_plugin[event], strict=True):
+            plugin_matcher, plugin_command, plugin_timeout = plugin_row
+            assert (matcher, timeout) == (plugin_matcher, plugin_timeout), event
+            assert command == plugin_command.replace(
+                "${CLAUDE_PLUGIN_ROOT}", "$CLAUDE_PROJECT_DIR/plugin/hub-workflow"
+            ), event
 
 
 # Spec AC-4.8 (Q-9): the files the generator builds from the config.
@@ -4391,7 +4405,17 @@ PURITY = re.compile(
     r"symlink|walk|scandir|lstat|environ)|shutil|Path\.cwd|\bPath\(|"
     r"^\s*(import|from) (datetime|time|random|uuid|getpass|socket)\b"
 )
-ADAPTER_MODULES = frozenset({"hub_tree.py", "file_adapter.py", "doctor_tree.py"})
+ADAPTER_MODULES = frozenset(
+    {
+        "hub_tree.py",
+        "file_adapter.py",
+        "doctor_tree.py",
+        "doctor_snapshot.py",
+        "hub_config_files.py",
+        "feature_files.py",
+        "registered_hub_files.py",
+    }
+)
 RENDERING_MODULES = frozenset(
     {
         "__init__.py",

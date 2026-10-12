@@ -16,6 +16,7 @@ from agent_hub.cli.run_command import run
 from agent_hub.cli.setup_command import setup
 from agent_hub.cli.start_command import start
 from agent_hub.cli.sync_command import sync
+from agent_hub.cli.web_command import web
 from agent_hub.cli.worktree_command import worktree
 
 app = typer.Typer(name="hub", no_args_is_help=True)
@@ -55,3 +56,4 @@ app.command("next")(next_command)
 app.command("run")(run)
 app.command("bench")(bench)
 app.command("start")(start)
+app.command("web")(web)

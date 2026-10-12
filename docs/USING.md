@@ -229,3 +229,28 @@ A human then reads the proposal and sets its `status` to `approved`, and `/onboa
 `/onboard`: raise `platform.version` in `hub.json` to the version of § Find the version and check the CLI, run
 `./hub sync`, and commit that change through a PR. If the newest release has no `.claude/skills/onboard` either, stop
 and tell the user; do not try other versions.
+
+### Run the control plane
+
+The control plane (`hub web`: an API and a web app) shows the hub's live sessions, runs, approvals and health. It
+serves on `127.0.0.1` only, port 7420 by default. Run it one of two ways, on the same machine as the sessions:
+
+- **Locally:** `./hub web` from the hub folder (the pinned release, through the shim). It prints the URL to open,
+  `http://127.0.0.1:7420`. Ctrl C stops it.
+- **In Docker:** in a clone of agent-hub at the hub's release (`git clone --branch v<version>` into the workspace),
+  `make up` builds the image and starts it, published on `127.0.0.1:7420` only; the workspace folder is mounted
+  read-only so the server can read the hubs in it, and `~/.claude/projects` for the transcripts. `make down` stops
+  it (its data volume stays); `make logs` and `make ps` show it. The variables are in that clone's `.env.example`.
+
+Register the hub once, with its absolute path: in the app under Settings › Hubs, or, from the agent-hub clone,
+`make connect HUB=<workspace>/<hub>`, which also checks that the hub has the event sensor and says what to do when it
+does not. The hub's hooks then send each session's events as they happen; without the control plane running they do
+nothing and the session is unaffected. Older work can be added once: `./hub collect --transcript <file>` for a
+transcript under `~/.claude/projects/`, and `./hub collect --runs .agent-runs` for `hub run` records. Only metadata
+is stored (sizes, tools, repo-relative paths, short commands with secrets redacted), never prompt, output or file
+text.
+
+Release note for a hub that moves to a release with the control plane: `./hub sync` adds
+`plugin/hub-workflow/hooks/event_sensor.py` and rewrites `hooks.json`, `.claude/settings.json` (the sensor joins
+eleven hook events), `guard.py`, `stop_gate.py` and `hubhooks.py` once. Review that diff in the sync PR as usual; the
+guard's and the Stop gate's decisions do not change.
