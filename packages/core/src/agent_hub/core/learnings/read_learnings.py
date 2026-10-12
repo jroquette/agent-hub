@@ -268,8 +268,7 @@ class ReadLearnings:
         """The brain's top folders a learning may go to, plus ``learnings/`` (L9)."""
         folders = {DEFAULT_ACCEPT_FOLDER}
         if hub_path is not None:
-            for entry in self._files.brain_tree(hub_path).entries:
-                parts = PurePosixPath(entry.path).parts
-                if len(parts) > 1 and not is_refused_destination(parts[0]):
-                    folders.add(f"{parts[0]}/")
+            for folder in self._files.brain_folders(hub_path):
+                if not is_refused_destination(folder):
+                    folders.add(f"{folder}/")
         return tuple(sorted(folders))

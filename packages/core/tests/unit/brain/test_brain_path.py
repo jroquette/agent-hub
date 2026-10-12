@@ -127,9 +127,7 @@ def test_refuses_destination_when_folder_is_decisions_or_inbox(target: str) -> N
         pytest.param("_Inbox/", "_Inbox", id="inbox"),
     ],
 )
-def test_refuses_destination_when_reserved_folder_differs_in_case(
-    target: str, folder: str
-) -> None:
+def test_refuses_destination_when_reserved_folder_differs_in_case(target: str, folder: str) -> None:
     with pytest.raises(BrainPathError) as refused:
         accept_destination(target, PurePosixPath("_inbox/testing-x.md"))
 

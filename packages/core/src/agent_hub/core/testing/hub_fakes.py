@@ -180,6 +180,17 @@ class FakeHubFileReader:
         )
         return BrainListing(entries=entries)
 
+    def brain_folders(self, hub_path: str) -> tuple[str, ...]:
+        """The top-level folders of the hub's listed brain files (a folder holding a link only
+        is left out)."""
+        hub = self._hub(hub_path)
+        folders = {
+            path.split("/", 1)[0]
+            for path in hub.brain
+            if "/" in path and _listed(path) and path not in hub.brain_links
+        }
+        return tuple(sorted(folders))
+
     def read_brain_file(self, hub_path: str, path: str, *, max_bytes: int) -> bytes | UnreadHubFile:
         """The brain file's bytes, or why not (missing, a link, over ``max_bytes``)."""
         hub = self._hub(hub_path)
