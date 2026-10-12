@@ -12,6 +12,7 @@ from pydantic import TypeAdapter, ValidationError
 from agent_hub.core.hub_config.model import (
     MAX_CHECK_FAST_TIMEOUT,
     MODULE_IDS,
+    REVIEW_STATE,
     BranchName,
     BranchPrefix,
     GitHubRepo,
@@ -19,8 +20,10 @@ from agent_hub.core.hub_config.model import (
     HubConfig,
     RepoDir,
     Tracker,
+    TrackerStates,
 )
 from agent_hub.core.hub_config.platform_repository import PLATFORM_REPOSITORY_MESSAGE
+from agent_hub.core.hub_config.schema import read_shipped_schema
 from agent_hub.core.testing.builders import (
     a_conventions_document,
     a_guard_infra,
@@ -140,6 +143,15 @@ def test_keeps_default_review_when_tracker_states_sets_started() -> None:
 
     assert config.tracker.states.started == "Doing"
     assert config.tracker.states.review == "In Review"
+
+
+def test_defaults_review_to_review_state_when_schema_shipped() -> None:
+    shipped = read_shipped_schema()["$defs"]["TrackerStates"]["properties"]["review"]
+
+    # One source, owned by hub_config: the model's default and the shipped schema's agree.
+    assert REVIEW_STATE == "In Review"
+    assert TrackerStates.model_fields["review"].default is REVIEW_STATE
+    assert shipped["default"] == REVIEW_STATE
 
 
 @pytest.mark.parametrize(

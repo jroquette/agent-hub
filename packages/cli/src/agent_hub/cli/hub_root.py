@@ -14,7 +14,7 @@ from typing import Final
 import typer
 
 from agent_hub.cli.child_process import git_env, run_child
-from agent_hub.cli.command_exits import root_or_exit
+from agent_hub.cli.command_exits import fail, root_or_exit
 from agent_hub.cli.hub_config_reader import FILE_LABEL
 from agent_hub.cli.init_report import shown_path
 
@@ -69,6 +69,22 @@ def main_checkout(root: Path, *, git: str, environ: Mapping[str, str]) -> Path:
     if common.name != _GIT_FOLDER or not _is_same_folder(top, root):
         return root
     return Path(os.path.realpath(common.parent))
+
+
+def hub_checkout(root: Path, *, command: str, environ: Mapping[str, str]) -> Path:
+    """The hub's main checkout for ``hub <command>``; exit 1 with one line when git cannot run.
+
+    Git runs only when ``root`` is a worktree (its ``.git`` a file), with ``environ``.
+    """
+    if not os.path.isfile(root / _GIT_FOLDER):
+        return root
+    git = shutil.which("git", path=environ.get("PATH", os.defpath))
+    if git is None:
+        fail(f"hub {command}: git is not on PATH; install git")
+    try:
+        return main_checkout(root, git=os.path.abspath(git), environ=environ)
+    except OSError as error:
+        fail(f"hub {command}: git could not run: {error.strerror or error}")
 
 
 def local_home(root: Path, *, environ: Mapping[str, str]) -> Path:

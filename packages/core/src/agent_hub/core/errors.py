@@ -28,7 +28,8 @@ class TrackerError(AgentHubError):
 
     The message is one line, ``"<operation> <issue_id>: <cause>; <fix>"`` (no issue id for an
     operation without one). Control characters are escaped, because the cause may quote
-    untrusted text such as an issue title or a tracker reply.
+    untrusted text such as an issue title or a tracker reply. Each part is also kept as an
+    attribute, so a caller can show the cause without the adapter's fix.
     """
 
     def __init__(
@@ -36,5 +37,7 @@ class TrackerError(AgentHubError):
     ) -> None:
         self.operation = operation
         self.issue_id = issue_id
+        self.cause = cause
+        self.fix = fix
         subject = operation if issue_id is None else f"{operation} {issue_id}"
         super().__init__(one_line(f"{subject}: {cause}; {fix}"))

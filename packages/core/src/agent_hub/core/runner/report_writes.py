@@ -1,18 +1,17 @@
 """The tracker writes that report a run, in the order ``hub run`` makes them (spec D8).
 
-Success: move to ``REVIEW_STATE``, remove the failed label when the issue read at ``PICKED``
-carries it (E10: a label the tracker lacks would fail the write), then the comment. Failure:
-add the failed label, then the comment. ``hub run`` stops at the first write that fails and
-never retries one; a dry run prints each write's ``call_line``.
+Success: move to the caller's review state (``tracker.states.review``), remove the failed label
+when the issue read at ``PICKED`` carries it (E10: a label the tracker lacks would fail the
+write), then the comment. Failure: add the failed label, then the comment. ``hub run`` stops at
+the first write that fails and never retries one; a dry run prints each write's ``call_line``.
 """
 
-from typing import Final, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from agent_hub.core.hub_config.model import REVIEW_STATE as REVIEW_STATE
 from agent_hub.core.tracker.tracker_client import Issue
-
-REVIEW_STATE: Final = "In Review"
 
 type WriteOperation = Literal["move_state", "add_label", "remove_label", "comment"]
 

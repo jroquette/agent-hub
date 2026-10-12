@@ -48,6 +48,8 @@ _SPACES = r"\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000"
 _NOT_BLANK_COMMAND = rf"^[^\x00-\x1f\x7f]*[^\x00-\x1f\x7f{_SPACES}][^\x00-\x1f\x7f]*$"
 # The Stop hook's total budget (stop_gate.py.tmpl ``BUDGET``): no repo may ask for more.
 MAX_CHECK_FAST_TIMEOUT: Final = 160
+# ``tracker.states.review``'s default: the state ``hub run`` and ``hub ship`` move an issue to.
+REVIEW_STATE: Final = "In Review"
 
 # Rendered values (project-config.md): values that land in shell, Make or YAML text. Pydantic's
 # Rust regex has no look-around, and ``[0-9]`` is spelled out because ``\d`` takes any digit.
@@ -226,7 +228,7 @@ class TrackerStates(ConfigObject):
     """The workflow state names the CLI moves issues to; `review` is for the review step."""
 
     started: FreeString = "In Progress"
-    review: FreeString = "In Review"
+    review: FreeString = REVIEW_STATE
 
 
 class Tracker(ConfigObject):

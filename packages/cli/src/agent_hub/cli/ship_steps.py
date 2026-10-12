@@ -1,0 +1,474 @@
+"""The live phases of ``hub ship``, in order, each stopping the ship at its first failure.
+
+1. Every target's worktree holds no uncommitted tracked change, then every target's ``check``
+   runs, in ``hub.json`` order, before any push (spec D-order). After the checks, each
+   worktree is clean again and its HEAD and task branch are where the check found them, so
+   what is pushed is what was checked.
+2. Per target: the push (after the push guard), then the PR opened or found. A failure lists
+   the PRs already open; no PR is linked and the tracker is not written.
+3. With two PRs or more, per PR in ``hub.json`` order: its body read back, its Related PRs
+   section made to list the other PRs (``with_related``), and the body edited only when that
+   changed it, so a re-run edits nothing. A failure lists the PRs; the tracker is not written.
+4. The tracker writes of ``success_writes``: the move to the review state, the failed label
+   removed when the issue read carries it, then one comment listing the PRs. The first write
+   that fails stops them; none is retried. The failure is named without the adapter's advice
+   (spec E5), then the PRs open, the failed write as not confirmed (it may have landed), and
+   each later write as not done.
+
+Each child runs through ``ship_child``: in the caller's process group, with ``pr_steps``'
+environments, timeouts read from ``run_steps``' constants at call time (PD-2). A failure names
+the repo and the step, and what is already open; every stderr line starts with ``hub ship:``.
+"""
+
+import contextlib
+import json
+import os
+import shutil
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Final
+
+import typer
+
+from agent_hub.cli import run_steps
+from agent_hub.cli.child_process import ChildResult, run_child
+from agent_hub.cli.command_exits import fail
+from agent_hub.cli.errors import ChildTimedOutError, PrStepError
+from agent_hub.cli.init_report import shown_path, shown_text
+from agent_hub.cli.pr_steps import (
+    ChildCall,
+    PrTarget,
+    StepTimeouts,
+    error_tail,
+    git_output,
+    open_or_find_pr,
+    push_branch,
+    refuse_uncommitted,
+    run_gate,
+    titled_pr,
+    unmatched_warning,
+)
+from agent_hub.cli.run_children import pr_body_command, pr_edit_command, push_env
+from agent_hub.cli.run_report import apply_writes
+from agent_hub.cli.ship_set import ShipTarget
+from agent_hub.core.errors import TrackerError
+from agent_hub.core.runner.report_writes import TrackerWrite, call_line, success_writes
+from agent_hub.core.runner.ship_texts import ship_body, ship_comment, with_related
+from agent_hub.core.tracker.tracker_client import Issue, TrackerClient
+
+PREFIX: Final = "hub ship"
+NOTHING_CHECKED: Final = f"{PREFIX}: nothing was checked or pushed"
+NOTHING_PUSHED: Final = f"{PREFIX}: nothing was pushed"
+NOT_LINKED: Final = f"{PREFIX}: no PR was linked and the issue was not moved"
+NOT_MOVED: Final = f"{PREFIX}: the issue was not moved"
+# The check logs: <hub>/.agent-runs/ship/<ISSUE>-<repo>.log, owner-only (spec Q-2, PD-8).
+LOG_FOLDERS: Final = (".agent-runs", "ship")
+_LOG_FLAGS: Final = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC
+_FOLDER_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
+_PRIVATE_FILE: Final = 0o600
+_PRIVATE_FOLDER: Final = 0o700
+PUSH_STEP: Final = "push"
+PR_STEP: Final = "pull request"
+LINK_STEP: Final = "link"
+UNCONFIRMED_HINT: Final = "(check the issue in the tracker)"
+# The most of a PR body read back that is parsed (gh prints it as JSON); more is refused.
+PR_BODY_OUTPUT_LIMIT: Final = 1 << 20
+
+
+class _StepError(Exception):
+    """A phase 2 step failed for a target: the step and why."""
+
+    def __init__(self, step: str, reason: str) -> None:
+        super().__init__(reason)
+        self.step = step
+        # One line: a child's message may span several. The step is named once, so a step's
+        # own "push failed: " is dropped.
+        shown = " ".join(reason.split())
+        self.reason = shown.removeprefix(f"{step} failed: ")
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ShipRun:
+    """What a live ship works on: the targets, the issue read, the options, the hub, and the
+    tracker with the review state and failed label its writes use."""
+
+    targets: tuple[ShipTarget, ...]
+    issue: Issue
+    draft: bool
+    hub: Path
+    environ: Mapping[str, str]
+    client: TrackerClient
+    review_state: str
+    failed_label: str
+
+
+def ship_issue(run: ShipRun) -> int:
+    """Run the phases; 0 when every one passed. A failure prints its lines and exits 1."""
+    _refuse_uncommitted(run, after=NOTHING_CHECKED)
+    checked = tuple(_check(run, target) for target in run.targets)
+    # What was checked is what is pushed: no change left beside the commits, no commit added.
+    _refuse_uncommitted(run, after=NOTHING_PUSHED)
+    for target, heads in zip(run.targets, checked, strict=True):
+        if _heads(run, target) != heads:
+            fail(f"{PREFIX}: {target.repo}: the branch moved during the check; nothing was pushed")
+    urls = _open_prs(run)
+    if len(urls) > 1:
+        _link_prs(run, urls)
+    _report(run, urls)
+    return 0
+
+
+def step_timeouts() -> StepTimeouts:
+    """The shared steps' timeouts, read from ``run_steps``' constants at call time (the tests
+    patch them there, for ``hub run`` and ``hub ship`` alike)."""
+    return StepTimeouts(
+        gate=run_steps.GATE_TIMEOUT,
+        push=run_steps.PUSH_TIMEOUT,
+        gh=run_steps.GH_TIMEOUT,
+        git=run_steps.GIT_TIMEOUT,
+    )
+
+
+def ship_child(worktree: Path) -> ChildCall:
+    """``pr_steps``' child runner for ``worktree``: the program found on the environment's
+    ``PATH``, run in the caller's group; a child that cannot start or times out is a
+    ``PrStepError``."""
+
+    def child(
+        argv: Sequence[str],
+        *,
+        env: dict[str, str],
+        timeout: float,
+        output_limit: int = run_steps.CHILD_OUTPUT_LIMIT,
+        cwd: Path | None = None,
+    ) -> ChildResult:
+        name = argv[0]
+        program = shutil.which(name, path=env.get("PATH", ""))
+        if program is None:
+            raise PrStepError(f"{name} is not on PATH")
+        try:
+            return run_child(
+                [os.path.abspath(program), *argv[1:]],
+                cwd=worktree if cwd is None else cwd,
+                env=env,
+                timeout=timeout,
+                own_session=False,
+                output_limit=output_limit,
+            )
+        except ChildTimedOutError:
+            raise PrStepError(f"{name} timed out after {timeout:g} s") from None
+        except OSError as error:
+            raise PrStepError(f"{name} could not run: {error.strerror or error}") from None
+
+    return child
+
+
+def _refuse_uncommitted(run: ShipRun, *, after: str) -> None:
+    # As hub run's gate: the PR holds the commits only, so no tracked change may sit beside them.
+    timeout = step_timeouts().git
+    for target in run.targets:
+        try:
+            refuse_uncommitted(ship_child(target.worktree), environ=run.environ, timeout=timeout)
+        except PrStepError as error:
+            fail(f"{PREFIX}: {target.repo}: {error.reason}", after)
+
+
+def _heads(run: ShipRun, target: ShipTarget) -> str:
+    """The worktree's HEAD and its task branch's commit, as git prints them."""
+    try:
+        return git_output(
+            ship_child(target.worktree),
+            *("rev-parse", "HEAD", f"refs/heads/{target.branch}"),
+            environ=run.environ,
+            timeout=step_timeouts().git,
+        )
+    except PrStepError as error:
+        fail(f"{PREFIX}: {target.repo}: {error.reason}", NOTHING_PUSHED)
+
+
+def check_log_path(hub: Path, *, issue_id: str, repo: str) -> Path:
+    """Where the check of ``repo`` for ``issue_id`` writes its output."""
+    return hub.joinpath(*LOG_FOLDERS, f"{issue_id}-{repo}.log")
+
+
+def _check(run: ShipRun, target: ShipTarget) -> str:
+    """Run the target's check with its log opened first: a log that cannot be opened stops the
+    ship before the check runs. The log gets the stdout tail, then the stderr tail (E7). Returns
+    the heads the check ran on (``_heads``)."""
+    path = check_log_path(run.hub, issue_id=run.issue.id, repo=target.repo)
+    shown_log = shown_path(str(path))
+    descriptor = _opened_log(run.hub, path.name, repo=target.repo, shown_log=shown_log)
+    with os.fdopen(descriptor, "wb") as log:
+        heads = _heads(run, target)
+        output, failure = _run_check(run, target)
+        try:
+            log.write(output)
+            log.flush()
+        except OSError as error:
+            fail(
+                f"{PREFIX}: {target.repo}: cannot write the check log {shown_log}:"
+                f" {error.strerror or error}",
+                NOTHING_PUSHED,
+            )
+    if failure is not None:
+        fail(f"{PREFIX}: {target.repo}: {failure}; output in {shown_log}", NOTHING_PUSHED)
+    typer.echo(f"check passed: {target.repo}")
+    return heads
+
+
+def _run_check(run: ShipRun, target: ShipTarget) -> tuple[bytes, str | None]:
+    """The check's log text, and why it failed (None when it passed)."""
+    shown = target.check[: run_steps.MAX_GATE_SHOWN_CHARS]
+    try:
+        result = run_gate(
+            ship_child(target.worktree),
+            gate=target.check,
+            environ=run.environ,
+            timeout=step_timeouts().gate,
+        )
+    except PrStepError as error:
+        return f"--- {error.reason} ---\n".encode(errors="replace"), (
+            f"check failed ({shown}): {error.reason}"
+        )
+    failure = None if result.returncode == 0 else f"check failed ({shown})"
+    return _log_text(result), failure
+
+
+def _opened_log(hub: Path, name: str, *, repo: str, shown_log: str) -> int:
+    """The log ``name`` opened in ``<hub>/.agent-runs/ship`` (``_private_file``)."""
+    try:
+        folder = _private_folder(hub)
+        try:
+            return _private_file(folder, name)
+        finally:
+            os.close(folder)
+    except OSError as error:
+        fail(
+            f"{PREFIX}: {repo}: cannot open the check log {shown_log}: {error.strerror or error}",
+            NOTHING_PUSHED,
+        )
+
+
+def _private_folder(hub: Path) -> int:
+    """``<hub>/.agent-runs/ship`` opened, walked by folder descriptor: each folder made
+    owner-only when absent and never followed through a link."""
+    opened = [os.open(hub, _FOLDER_FLAGS)]
+    try:
+        for folder in LOG_FOLDERS:
+            with contextlib.suppress(FileExistsError):
+                os.mkdir(folder, _PRIVATE_FOLDER, dir_fd=opened[-1])
+            opened.append(os.open(folder, _FOLDER_FLAGS | os.O_NOFOLLOW, dir_fd=opened[-1]))
+    except OSError:
+        for descriptor in opened:
+            os.close(descriptor)
+        raise
+    for descriptor in opened[:-1]:
+        os.close(descriptor)
+    return opened[-1]
+
+
+def _private_file(folder: int, name: str) -> int:
+    """The file ``name`` in ``folder`` opened for writing, owner-only, never through a link
+    (emptied when it exists)."""
+    descriptor = os.open(name, _LOG_FLAGS, _PRIVATE_FILE, dir_fd=folder)
+    try:
+        os.fchmod(descriptor, _PRIVATE_FILE)
+    except OSError:
+        os.close(descriptor)
+        raise
+    return descriptor
+
+
+def _log_text(result: ChildResult) -> bytes:
+    stdout = result.stdout
+    if stdout and not stdout.endswith(b"\n"):
+        stdout += b"\n"
+    return b"--- stdout ---\n" + stdout + b"--- stderr ---\n" + result.stderr
+
+
+def _open_prs(run: ShipRun) -> tuple[str, ...]:
+    """Per target, in order: push, then open or find its PR; the PRs' urls."""
+    urls: list[str] = []
+    for target in run.targets:
+        try:
+            urls.append(_push_and_open(run, target))
+        except _StepError as error:
+            fail(
+                f"{PREFIX}: {target.repo}: {error.step} failed: {error.reason}",
+                *(f"{PREFIX}: PR open: {url}" for url in urls),
+                NOT_LINKED,
+            )
+    return tuple(urls)
+
+
+def _push_and_open(run: ShipRun, target: ShipTarget) -> str:
+    child = ship_child(target.worktree)
+    timeouts = step_timeouts()
+    pr_target = PrTarget(github=target.github, base_branch=target.base, branch=target.branch)
+    try:
+        push_branch(child, target=pr_target, environ=run.environ, timeouts=timeouts)
+    except PrStepError as error:
+        raise _StepError(PUSH_STEP, error.reason) from None
+    try:
+        opened = open_or_find_pr(
+            child,
+            target=pr_target,
+            title=pr_title(run, target, child),
+            body=ship_body(issue_id=run.issue.id, issue_url=run.issue.url),
+            draft=run.draft,
+            environ=run.environ,
+            timeout=timeouts.gh,
+        )
+    except PrStepError as error:
+        raise _StepError(PR_STEP, error.reason) from None
+    typer.echo(f"{'found' if opened.found else 'opened'}: {target.repo}  {opened.url}")
+    return opened.url
+
+
+def pr_title(run: ShipRun, target: ShipTarget, child: ChildCall) -> str:
+    """The PR title: the newest commit's subject (as hub run's, spec Q-1, read with ``git log``)
+    following the repo's conventions; one warning when ``commit_title`` does not match it (as
+    hub run's E12). A failed read is a ``PrStepError``."""
+    subject = git_output(
+        child, "log", "-1", "--format=%s", environ=run.environ, timeout=step_timeouts().git
+    )
+    conventions = target.conventions
+    titled = titled_pr(
+        subject, conventions=conventions, issue_id=run.issue.id, workspace=str(run.hub.parent)
+    )
+    if titled.unmatched is not None:
+        warning = unmatched_warning(
+            PREFIX, line=titled.unmatched, commit_title=conventions.commit_title
+        )
+        typer.echo(warning, err=True)
+    return titled.title
+
+
+def _link_prs(run: ShipRun, urls: Sequence[str]) -> None:
+    """Per PR, in order: its Related PRs section made to list the other PRs."""
+    for target, url in zip(run.targets, urls, strict=True):
+        others = [other for other in urls if other != url]
+        try:
+            _link(run, target, url=url, others=others)
+        except _StepError as error:
+            fail(
+                f"{PREFIX}: {target.repo}: {error.step} failed: {error.reason}",
+                *(f"{PREFIX}: PR open: {shown}" for shown in urls),
+                NOT_MOVED,
+            )
+
+
+def _link(run: ShipRun, target: ShipTarget, *, url: str, others: Sequence[str]) -> None:
+    child = ship_child(target.worktree)
+    env = push_env(run.environ)
+    timeout = step_timeouts().gh
+    try:
+        read = child(
+            pr_body_command(url), env=env, timeout=timeout, output_limit=PR_BODY_OUTPUT_LIMIT
+        )
+        body = _body_of(read, url=url)
+        linked = with_related(body, urls=others, workspace=str(run.hub.parent))
+        if linked == body:
+            return
+        with _body_file(run, target, linked) as path:
+            edited = child(pr_edit_command(url, path), env=env, timeout=timeout)
+    except PrStepError as error:
+        raise _StepError(LINK_STEP, error.reason) from None
+    if edited.returncode != 0:
+        raise _StepError(LINK_STEP, f"gh pr edit failed: {error_tail(edited.stderr)}")
+
+
+@contextlib.contextmanager
+def _body_file(run: ShipRun, target: ShipTarget, body: str) -> Iterator[Path]:
+    """``body`` in ``<hub>/.agent-runs/ship/<ISSUE>-<repo>.body``, owner-only, for ``gh pr edit
+    --body-file``: one argv string of 128 KiB or more fails with E2BIG on Linux, and a body
+    can be longer. The file is removed when the block ends, however it ends."""
+    path = body_file_path(run, target)
+    try:
+        folder = _private_folder(run.hub)
+    except OSError as error:
+        raise _body_file_error(path, error) from None
+    try:
+        try:
+            with os.fdopen(_private_file(folder, path.name), "wb") as file:
+                file.write(body.encode(errors="surrogatepass"))
+        except OSError as error:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(path.name, dir_fd=folder)
+            raise _body_file_error(path, error) from None
+        try:
+            yield path
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(path.name, dir_fd=folder)
+    finally:
+        os.close(folder)
+
+
+def body_file_path(run: ShipRun, target: ShipTarget) -> Path:
+    """Where the link phase writes the body ``gh pr edit --body-file`` reads for ``target``."""
+    return check_log_path(run.hub, issue_id=run.issue.id, repo=target.repo).with_suffix(".body")
+
+
+def _body_file_error(path: Path, error: OSError) -> _StepError:
+    shown = shown_path(str(path))
+    return _StepError(LINK_STEP, f"cannot write the body file {shown}: {error.strerror or error}")
+
+
+def _body_of(read: ChildResult, *, url: str) -> str:
+    """The body ``gh pr view <url> --json body`` printed: a JSON object whose ``body`` is a
+    string, in less than ``PR_BODY_OUTPUT_LIMIT`` bytes (a longer output was cut)."""
+    unreadable = f"could not read the body of {url}"
+    if read.returncode != 0:
+        raise _StepError(LINK_STEP, f"{unreadable}: {error_tail(read.stderr)}")
+    if len(read.stdout) >= PR_BODY_OUTPUT_LIMIT:
+        raise _StepError(LINK_STEP, unreadable)
+    try:
+        found = json.loads(read.stdout)
+    except ValueError:
+        raise _StepError(LINK_STEP, unreadable) from None
+    body = found.get("body") if isinstance(found, dict) else None
+    if not isinstance(body, str):
+        raise _StepError(LINK_STEP, unreadable)
+    return body
+
+
+def _report(run: ShipRun, urls: Sequence[str]) -> None:
+    """The tracker writes of a shipped issue, in order, stopping at the first that fails."""
+    writes = tracker_writes(run, urls)
+    outcome = apply_writes(run.client, writes)
+    if outcome.error is None:
+        return
+    # The write that raised may still have landed (an MCP write, a timed-out mutation): it is
+    # named as not confirmed; the writes after it were not made.
+    failed, *later = writes[outcome.done :]
+    not_moved = (
+        [f"{PREFIX}: the issue may not have been moved to {shown_text(run.review_state)}"]
+        if failed.operation == "move_state"
+        else []
+    )
+    fail(
+        tracker_failure_line(outcome.error),
+        *(f"{PREFIX}: PR open: {url}" for url in urls),
+        *not_moved,
+        f"{PREFIX}: not confirmed: {shown_text(call_line(failed))} {UNCONFIRMED_HINT}",
+        *(f"{PREFIX}: not done: {shown_text(call_line(write))}" for write in later),
+    )
+
+
+def tracker_writes(run: ShipRun, urls: Sequence[str]) -> tuple[TrackerWrite, ...]:
+    """The writes of a ship that opened ``urls``: the move to the review state, the failed
+    label removed when the issue read carries it, the comment listing the PRs."""
+    return success_writes(
+        run.issue,
+        review_state=run.review_state,
+        failed_label=run.failed_label,
+        comment=ship_comment(urls=urls, workspace=str(run.hub.parent)),
+    )
+
+
+def tracker_failure_line(error: TrackerError) -> str:
+    """``hub ship: <operation> <issue>: <cause>``, without the adapter's fix (spec E5)."""
+    subject = error.operation if error.issue_id is None else f"{error.operation} {error.issue_id}"
+    return f"{PREFIX}: {subject}: {error.cause}"

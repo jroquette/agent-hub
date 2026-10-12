@@ -187,24 +187,63 @@ class RunChildren:
         return self.workspace / self.repo
 
     def gate_argv(self) -> list[str]:
-        return ["bash", "-c", self.gate]
+        return gate_command(self.gate)
 
     def push_argv(self) -> list[str]:
-        """The push with ``PUSH_OVERRIDES`` as its own ``-c`` options (hooks, fsmonitor and
-        signing off): a caller's ``GIT_CONFIG_PARAMETERS`` outranks ``push_env``'s
-        ``GIT_CONFIG_COUNT``, and these come after it."""
-        overrides = [part for key, value in PUSH_OVERRIDES for part in ("-c", f"{key}={value}")]
-        return ["git", *overrides, "push", "--no-verify", "-u", "origin", self.branch]
+        return push_command(self.branch)
 
     def pr_argv(self, *, title: str, body: str) -> list[str]:
-        return [
-            *("gh", "pr", "create", "--repo", self.github, "--base", self.default_branch),
-            *("--head", self.branch, "--title", title, "--body", body),
-        ]
+        return pr_create_command(
+            github=self.github,
+            base=self.default_branch,
+            branch=self.branch,
+            title=title,
+            body=body,
+            draft=False,
+        )
 
     def pr_view_argv(self) -> list[str]:
-        """The lookup of the branch's PR, by its repo from ``hub.json``, not the worktree's."""
-        return ["gh", "pr", "view", self.branch, "--repo", self.github, "--json", "url,state"]
+        return pr_view_command(github=self.github, branch=self.branch)
+
+
+def gate_command(gate: str) -> list[str]:
+    """The gate (a repo's ``check``), run by bash."""
+    return ["bash", "-c", gate]
+
+
+def push_command(branch: str) -> list[str]:
+    """The push of ``branch`` with ``PUSH_OVERRIDES`` as its own ``-c`` options (hooks,
+    fsmonitor and signing off): a caller's ``GIT_CONFIG_PARAMETERS`` outranks ``push_env``'s
+    ``GIT_CONFIG_COUNT``, and these come after it."""
+    overrides = [part for key, value in PUSH_OVERRIDES for part in ("-c", f"{key}={value}")]
+    return ["git", *overrides, "push", "--no-verify", "-u", "origin", branch]
+
+
+def pr_create_command(
+    *, github: str, base: str, branch: str, title: str, body: str, draft: bool
+) -> list[str]:
+    """``gh pr create`` of ``branch`` into ``base`` on ``github``; ``--draft`` last when asked."""
+    argv = [
+        *("gh", "pr", "create", "--repo", github, "--base", base),
+        *("--head", branch, "--title", title, "--body", body),
+    ]
+    return [*argv, "--draft"] if draft else argv
+
+
+def pr_view_command(*, github: str, branch: str) -> list[str]:
+    """The lookup of ``branch``'s PR, by its repo from ``hub.json``, not the worktree's."""
+    return ["gh", "pr", "view", branch, "--repo", github, "--json", "url,state"]
+
+
+def pr_body_command(url: str) -> list[str]:
+    """The read of the body of the PR at ``url`` (the url names its repo)."""
+    return ["gh", "pr", "view", url, "--json", "body"]
+
+
+def pr_edit_command(url: str, body_file: Path) -> list[str]:
+    """The edit of the PR at ``url``: its body replaced by the text of ``body_file`` (a body
+    can be longer than one argv string may be)."""
+    return ["gh", "pr", "edit", url, "--body-file", str(body_file)]
 
 
 def without(environ: Mapping[str, str], names: Iterable[str]) -> dict[str, str]:

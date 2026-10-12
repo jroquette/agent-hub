@@ -14,7 +14,9 @@ workspace with a fake ``claude`` (``bench_workspace``); for a rendered ``./hub``
 runs this workspace's ``hub`` (``fake_uvx_bin``). In the ``DEMO`` workspace, ``traced_git``
 logs each git call and runs the real git; ``env_traced_git`` logs the environment of each call
 too, and can hang on a clone or fetch. For ``hub setup``, a byte-exact text golden harness
-(``compare_text_golden``).
+(``compare_text_golden``). For ``hub ship`` a scripted ``gh`` (``ship_workspace``), its tracker
+(``ship_tracker``), task worktrees (``make_task_worktree``) and a ``run_child`` spy
+(``child_calls``).
 """
 
 import builtins
@@ -1810,6 +1812,265 @@ def logged_git(run_workspace: RunWorkspace) -> RunWorkspace:
     (run_workspace.bin / "git").unlink()
     _write_fake(run_workspace.bin, "git", _FAKE_GIT.replace("REAL_GIT", repr(real)))
     return run_workspace
+
+
+# hub ship's fakes (AGH-63). Its ``gh`` keeps the PRs it opened in ``FAKE_GH_STATE``, a JSON list
+# of ``{repo, head, base, title, url, state, body, draft}``, and answers only the calls hub ship
+# makes: ``pr create``, ``pr view <branch> --repo R --json …``, ``pr view <url> --json …`` and
+# ``pr edit <url> --body B`` or ``--body-file F``. It serves only the ``--json`` fields asked
+# for and exits 2 on any other argv. ``FAKE_GH_FAIL`` (``<step>:<repo>,…``, steps ``create``,
+# ``view``, ``body``, ``edit``, repo as its dir) makes that call exit 1; step ``nourl`` makes
+# ``pr create`` exit 0 without printing a url or opening a PR. Every call is logged as the run
+# fakes log.
+_SHIP_FAKE_GH = (
+    _FAKE_LOG
+    + """import re
+argv = sys.argv[1:]
+log("gh")
+STATE = os.environ["FAKE_GH_STATE"]
+FIELDS = ("url", "state", "body")
+FAILS = {tuple(entry.split(":", 1)) for entry in os.environ.get("FAKE_GH_FAIL", "").split(",")}
+def refuse():
+    print("gh (fake): unknown call: " + " ".join(argv), file=sys.stderr)
+    sys.exit(2)
+def load():
+    if not os.path.exists(STATE):
+        return []
+    with open(STATE) as file:
+        return json.load(file)
+def save(prs):
+    with open(STATE, "w") as file:
+        json.dump(prs, file)
+def options(arguments, names, switches=()):
+    # The options of one call: each of ``names`` takes a value, each of ``switches`` none.
+    found, index = {}, 0
+    while index < len(arguments):
+        name = arguments[index]
+        if name in switches:
+            found[name] = True
+            index += 1
+        elif name in names and index + 1 < len(arguments) and name not in found:
+            found[name] = arguments[index + 1]
+            index += 2
+        else:
+            refuse()
+    if any(name not in found for name in names):
+        refuse()
+    return found
+def fails(step, repo):
+    if (step, repo.rsplit("/", 1)[-1]) in FAILS:
+        print("gh (fake): synthetic " + step + " failure", file=sys.stderr)
+        sys.exit(1)
+def fields(given):
+    asked = given.split(",")
+    if not asked or any(field not in FIELDS for field in asked):
+        refuse()
+    return asked
+def show(pr, asked):
+    print(json.dumps({field: pr[field] for field in asked}))
+    sys.exit(0)
+def repo_of(url):
+    match = re.fullmatch(r"https://github[.]com/([^/]+/[^/]+)/pull/[0-9]+", url)
+    return match.group(1) if match else refuse()
+def by_url(prs, url):
+    found = [pr for pr in prs if pr["url"] == url]
+    if not found:
+        print("gh (fake): no pull request " + url, file=sys.stderr)
+        sys.exit(1)
+    return found[0]
+prs = load()
+if argv[:2] == ["pr", "create"]:
+    given = options(argv[2:], ("--repo", "--base", "--head", "--title", "--body"), ("--draft",))
+    repo, head = given["--repo"], given["--head"]
+    fails("create", repo)
+    if ("nourl", repo.rsplit("/", 1)[-1]) in FAILS:
+        print("Creating pull request for " + head)
+        sys.exit(0)
+    for pr in prs:
+        if (pr["repo"], pr["head"], pr["state"]) == (repo, head, "OPEN"):
+            print("a pull request for branch " + head + " already exists:\\n" + pr["url"],
+                  file=sys.stderr)
+            sys.exit(1)
+    url = "https://github.com/" + repo + "/pull/" + str(101 + len(prs))
+    prs.append({"repo": repo, "head": head, "base": given["--base"], "title": given["--title"],
+                "url": url, "state": "OPEN", "body": given["--body"],
+                "draft": "--draft" in given})
+    save(prs)
+    print(url)
+elif argv[:2] == ["pr", "view"] and len(argv) > 2 and "--repo" in argv:
+    given = options(argv[3:], ("--repo", "--json"))
+    fails("view", given["--repo"])
+    asked = fields(given["--json"])
+    found = [pr for pr in prs if (pr["repo"], pr["head"]) == (given["--repo"], argv[2])]
+    if not found:
+        print("no pull requests found for branch " + argv[2], file=sys.stderr)
+        sys.exit(1)
+    show(found[-1], asked)
+elif argv[:2] == ["pr", "view"] and len(argv) > 2:
+    given = options(argv[3:], ("--json",))
+    fails("body", repo_of(argv[2]))
+    show(by_url(prs, argv[2]), fields(given["--json"]))
+elif argv[:2] == ["pr", "edit"] and len(argv) > 2 and "--body-file" in argv:
+    given = options(argv[3:], ("--body-file",))
+    fails("edit", repo_of(argv[2]))
+    with open(given["--body-file"], encoding="utf-8") as file:
+        by_url(prs, argv[2])["body"] = file.read()
+    save(prs)
+    print(argv[2])
+elif argv[:2] == ["pr", "edit"] and len(argv) > 2:
+    given = options(argv[3:], ("--body",))
+    fails("edit", repo_of(argv[2]))
+    by_url(prs, argv[2])["body"] = given["--body"]
+    save(prs)
+    print(argv[2])
+else:
+    refuse()
+"""
+)
+
+
+class ShipWorkspace(RunWorkspace):
+    """The run workspace for ``hub ship``: its ``gh`` is the scripted fake, whose PRs are
+    ``prs()``."""
+
+    def __init__(self, run_workspace: RunWorkspace, state: Path) -> None:
+        super().__init__(run_workspace.workspace, run_workspace.bin, run_workspace.logs)
+        self.state = state
+
+    def prs(self) -> list[dict[str, Any]]:
+        """The fake ``gh``'s PRs, in the order they were opened."""
+        if not self.state.exists():
+            return []
+        prs: list[dict[str, Any]] = json.loads(self.state.read_text())
+        return prs
+
+    def write_prs(self, prs: list[dict[str, Any]]) -> None:
+        """Replace the fake ``gh``'s PRs (a PR opened by hand, a body edited on GitHub)."""
+        self.state.write_text(json.dumps(prs))
+
+
+@pytest.fixture
+def ship_workspace(
+    run_workspace: RunWorkspace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> ShipWorkspace:
+    """``run_workspace`` with ``gh`` replaced by ``hub ship``'s scripted fake, no PR open."""
+    (run_workspace.bin / "gh").unlink()
+    _write_fake(run_workspace.bin, "gh", _SHIP_FAKE_GH)
+    state = tmp_path / "gh-state.json"
+    monkeypatch.setenv("FAKE_GH_STATE", str(state))
+    monkeypatch.delenv("FAKE_GH_FAIL", raising=False)
+    return ShipWorkspace(run_workspace, state)
+
+
+SHIP_STATES = ("Todo", "In Progress", "In Review", "Done")
+_SHIP_STATE_TYPES = {"Todo": "unstarted", "Done": "completed"}
+
+
+def _tracker_backend_for_ship(
+    *, failed: bool = False, states: tuple[str, ...] = SHIP_STATES
+) -> FakeTrackerBackend:
+    """DEM-7 open with its url, labelled ``demo-api`` and ``demo-web`` (and ``agent-failed`` when
+    ``failed``); the team's states are ``states``, ``Done`` closed."""
+    labels = ("demo-api", "demo-web", *(("agent-failed",) if failed else ()))
+    issue = an_issue(id="DEM-7", title="Synthetic ship issue", state="In Progress", labels=labels)
+    return FakeTrackerBackend(
+        states={
+            "DEM": tuple(
+                TrackerState(name=name, type=_SHIP_STATE_TYPES.get(name, "started"))
+                for name in states
+            )
+        },
+        team_labels={"DEM": ("demo-api", "demo-web")},
+        workspace_labels=("agent-ready", "agent-failed"),
+        issues={issue.id: issue},
+    )
+
+
+@pytest.fixture
+def tracker_backend_for_ship() -> Callable[..., FakeTrackerBackend]:
+    """Build ``hub ship``'s tracker backend: ``(*, failed=False, states=SHIP_STATES)``."""
+    return _tracker_backend_for_ship
+
+
+@pytest.fixture
+def ship_tracker() -> RecordingTracker:
+    """A recording tracker over ``hub ship``'s backend: DEM-7, no failed label."""
+    return RecordingTracker(_tracker_backend_for_ship())
+
+
+@pytest.fixture
+def make_task_worktree(
+    ship_workspace: ShipWorkspace, monkeypatch: pytest.MonkeyPatch
+) -> Callable[[str, str, list[str]], Path]:
+    """Make ``<repo>/.claude/worktrees/<name>`` with ``hub worktree <name> --only <repo>``, then
+    one empty commit per subject (oldest first); its path."""
+    workspace = ship_workspace.workspace
+
+    def make(repo: str, name: str, subjects: list[str]) -> Path:
+        monkeypatch.chdir(workspace.hub)
+        result = CliRunner().invoke(app, ["worktree", name, "--only", repo])
+        assert result.exit_code == 0, result.output
+        worktree: Path = workspace.worktree(repo, name)
+        for subject in subjects:
+            workspace.git(worktree, "commit", "--allow-empty", "-q", "-m", subject)
+        return worktree
+
+    return make
+
+
+class SpiedChild(NamedTuple):
+    """One ``run_child`` call: the program's basename and its arguments, then its options."""
+
+    argv: list[str]
+    cwd: Path
+    env: dict[str, str]
+    timeout: float | None
+    own_session: bool | None
+    output_limit: int | None
+
+
+class ChildCalls:
+    """Every ``run_child`` call any ``agent_hub.cli`` module makes, in order (defined here, not
+    imported from ``test_run_command.py``)."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.calls: list[SpiedChild] = []
+        for module_name, module in list(sys.modules.items()):
+            real = getattr(module, "run_child", None)
+            if module_name.startswith("agent_hub.cli") and callable(real):
+                monkeypatch.setattr(module, "run_child", self._wrap(real))
+
+    def _wrap(self, real: Callable[..., Any]) -> Callable[..., Any]:
+        def spy(argv: list[str], **options: Any) -> Any:
+            self.calls.append(
+                SpiedChild(
+                    argv=[os.path.basename(argv[0]), *argv[1:]],
+                    cwd=Path(options["cwd"]),
+                    env=dict(options["env"]),
+                    timeout=options.get("timeout"),
+                    own_session=options.get("own_session"),
+                    output_limit=options.get("output_limit"),
+                )
+            )
+            return real(argv, **options)
+
+        return spy
+
+    def clear(self) -> None:
+        """Forget the calls so far (a test's setup, such as ``make_task_worktree``)."""
+        self.calls.clear()
+
+    def programs(self) -> list[str]:
+        return [call.argv[0] for call in self.calls]
+
+
+@pytest.fixture
+def child_calls(monkeypatch: pytest.MonkeyPatch) -> ChildCalls:
+    """Spy on ``run_child`` in every loaded ``agent_hub.cli`` module (each import holds its own
+    reference); a ``hub ship`` run's children are its calls."""
+    import agent_hub.cli.main  # noqa: F401 - loads every command module before patching
+
+    return ChildCalls(monkeypatch)
 
 
 # hub bench's workspace (AGH-17 PR 3): hub ``tests/characterization/test_bench.py`` at hub commit

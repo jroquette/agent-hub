@@ -52,13 +52,21 @@ def plain_text(text: str) -> str:
 def sanitized_summary(text: str, *, workspace: str) -> str:
     """``text`` made plain, ``[file://]<workspace>/`` removed (paths become workspace-relative),
     the workspace itself named in words, and every attribution or robot line dropped."""
+    named = without_workspace(plain_text(text), workspace=workspace)
+    return "\n".join(line for line in named.split("\n") if not is_attribution(line))
+
+
+def without_workspace(text: str, *, workspace: str) -> str:
+    """``text`` with ``[file://]<workspace>/`` removed (paths become workspace-relative) and the
+    workspace itself named in words; nothing else changed."""
     root = rf"(?<!{_PATH_CHARACTER})(?:file://)?{re.escape(workspace.rstrip('/'))}"
-    relative = re.sub(rf"{root}/", "", plain_text(text))
-    named = re.sub(rf"{root}(?![\w-])", WORKSPACE_WORDS, relative)
-    return "\n".join(line for line in named.split("\n") if not _is_attribution(line))
+    relative = re.sub(rf"{root}/", "", text)
+    return re.sub(rf"{root}(?![\w-])", WORKSPACE_WORDS, relative)
 
 
-def _is_attribution(line: str) -> bool:
+def is_attribution(line: str) -> bool:
+    """Whether ``line`` holds the robot emoji or a shape ``hub doctor``'s ``attribution.ai``
+    rule flags."""
     return ROBOT in line or any(shape.matches(line) for shape in ATTRIBUTIONS)
 
 

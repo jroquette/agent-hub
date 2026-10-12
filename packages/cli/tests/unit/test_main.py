@@ -30,6 +30,7 @@ def test_lists_commands_when_help_requested() -> None:
         "agent",
         "next",
         "run",
+        "ship",
         "bench",
         "start",
     ):

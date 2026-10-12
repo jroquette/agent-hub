@@ -14,6 +14,7 @@ from agent_hub.cli.generator import init
 from agent_hub.cli.next_command import next_command
 from agent_hub.cli.run_command import run
 from agent_hub.cli.setup_command import setup
+from agent_hub.cli.ship_command import ship
 from agent_hub.cli.start_command import start
 from agent_hub.cli.sync_command import sync
 from agent_hub.cli.web_command import web
@@ -54,6 +55,7 @@ app.command("brief")(brief)
 app.command("agent", cls=PassThroughCommand, add_help_option=False)(agent)
 app.command("next")(next_command)
 app.command("run")(run)
+app.command("ship")(ship)
 app.command("bench")(bench)
 app.command("start")(start)
 app.command("web")(web)

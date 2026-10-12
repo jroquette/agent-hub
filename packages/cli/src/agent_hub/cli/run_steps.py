@@ -31,9 +31,22 @@ import typer
 
 from agent_hub.cli.child_process import ChildResult, run_child
 from agent_hub.cli.command_exits import FAILURE
-from agent_hub.cli.errors import ChildTimedOutError, RunLogError, WorktreeError
+from agent_hub.cli.errors import ChildTimedOutError, PrStepError, RunLogError, WorktreeError
 from agent_hub.cli.init_report import shown_text
-from agent_hub.cli.push_guard import REMOTE_URL, names_github_repo, parse_scoped_list, risky_keys
+from agent_hub.cli.pr_steps import MAX_ERROR_TAIL_CHARS as MAX_ERROR_TAIL_CHARS
+from agent_hub.cli.pr_steps import MAX_PR_URL_CHARS as MAX_PR_URL_CHARS
+from agent_hub.cli.pr_steps import (
+    PrTarget,
+    StepTimeouts,
+    git_output,
+    open_or_find_pr,
+    push_branch,
+    refuse_risky_config,
+    refuse_uncommitted,
+    run_gate,
+    titled_pr,
+    unmatched_warning,
+)
 from agent_hub.cli.run_children import (
     RunChildren,
     RunOptions,
@@ -46,7 +59,6 @@ from agent_hub.cli.run_report import apply_writes
 from agent_hub.cli.worktree_steps import check_branches, create_worktree, worktree_task
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.runner.report_writes import (
-    REVIEW_STATE,
     TrackerWrite,
     call_line,
     failure_writes,
@@ -55,11 +67,9 @@ from agent_hub.core.runner.report_writes import (
 from agent_hub.core.runner.run_record import Stage, reported_data
 from agent_hub.core.runner.run_texts import (
     commit_summary,
-    conventional_pr_title,
     failure_comment,
     inbox_line,
     pr_body,
-    pr_title,
     success_comment,
 )
 from agent_hub.core.runner.verdict import (
@@ -78,13 +88,10 @@ GH_TIMEOUT: Final = 120.0
 GIT_TIMEOUT: Final = 120.0
 MAX_LOGGED_REASON_CHARS: Final = 1_500
 MAX_GATE_SHOWN_CHARS: Final = 200
-MAX_ERROR_TAIL_CHARS: Final = 500
-MAX_PR_URL_CHARS: Final = 2_048
 # The most of a child's output kept (its last bytes): the gate's and git's, and the session's,
 # whose whole JSON result must fit.
 CHILD_OUTPUT_LIMIT: Final = 64 * 1024
 SESSION_OUTPUT_LIMIT: Final = 1 << 20
-_URL_SCHEME = "https://"
 _PREFIX = "hub run"
 # Given to the token-bearing fetch as its own -c, like the push's.
 _HOOKS_OFF = ("-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false")
@@ -230,14 +237,13 @@ class LiveRun:
 
     def _verify(self) -> None:
         self._enter(Stage.VERIFYING)
-        # The gate checks what the PR will hold: the commits, no tracked change beside them
-        # (untracked files never reach the PR; owner decision, 2026-10-02).
-        if self._git_output("status", "--porcelain", "--untracked-files=no").strip():
-            raise StageFailure(Stage.VERIFYING, "uncommitted changes in the worktree")
+        timeouts = self._timeouts()
+        try:
+            refuse_uncommitted(self._child, environ=self.environ, timeout=timeouts.git)
+        except PrStepError as error:
+            raise StageFailure(Stage.VERIFYING, error.reason) from None
         gate = self.children.gate
-        result = self._child(
-            self.children.gate_argv(), env=untrusted_env(self.environ), timeout=GATE_TIMEOUT
-        )
+        result = run_gate(self._child, gate=gate, environ=self.environ, timeout=timeouts.gate)
         if result.returncode != 0:
             output = (result.stdout + result.stderr).decode(errors="replace")
             # The output's end says why; with the header the reason fits the logged length.
@@ -248,40 +254,37 @@ class LiveRun:
 
     def _open_pr(self) -> None:
         self._enter(Stage.PR_OPEN)
-        self._refuse_risky_config(
-            stage=Stage.PR_OPEN,
-            cwd=self.worktree,
-            use="a push would use",
-            outcome="the branch was not pushed",
+        timeouts = self._timeouts()
+        target = PrTarget(
+            github=self.children.github,
+            base_branch=self.children.default_branch,
+            branch=self.children.branch,
         )
-        env = push_env(self.environ)
-        pushed = self._child(self.children.push_argv(), env=env, timeout=PUSH_TIMEOUT)
-        if pushed.returncode != 0:
-            raise StageFailure(Stage.PR_OPEN, f"push failed: {_tail(pushed.stderr)}")
-        title = self._pr_title(self._git_output("log", "-1", "--format=%s"))
-        body = pr_body(
-            issue_id=self.issue.id,
-            summary=self.summary,
-            gate=self.children.gate,
-            workspace=self._workspace,
-        )
-        created = self._child(
-            self.children.pr_argv(title=title, body=body), env=env, timeout=GH_TIMEOUT
-        )
-        if created.returncode != 0:
-            # A rerun: the branch's PR is already open, and the push updated it.
-            existing = self._open_pr_url(env)
-            if existing is None:
-                reason = f"gh pr create failed: {_tail(created.stderr)}"
-                raise StageFailure(Stage.PR_OPEN, reason)
-            self.pr_url = existing
-            self.log.record("pr_exists", {"url": existing})
-            return
-        url = _pr_url(created.stdout)
-        if url is None:
-            raise StageFailure(Stage.PR_OPEN, "gh printed no PR url")
-        self.pr_url = url
-        self.log.record("pr_open", {"url": url})
+        try:
+            push_branch(self._child, target=target, environ=self.environ, timeouts=timeouts)
+            subject = git_output(
+                self._child, "log", "-1", "--format=%s", environ=self.environ, timeout=timeouts.git
+            )
+            body = pr_body(
+                issue_id=self.issue.id,
+                summary=self.summary,
+                gate=self.children.gate,
+                workspace=self._workspace,
+            )
+            opened = open_or_find_pr(
+                self._child,
+                target=target,
+                title=self._pr_title(subject),
+                body=body,
+                draft=False,
+                environ=self.environ,
+                timeout=timeouts.gh,
+            )
+        except PrStepError as error:
+            raise StageFailure(Stage.PR_OPEN, error.reason) from None
+        self.pr_url = opened.url
+        # A rerun finds the branch's PR already open, and the push updated it.
+        self.log.record("pr_exists" if opened.found else "pr_open", {"url": opened.url})
 
     def _pr_title(self, subject: str) -> str:
         """The PR title of the newest commit ``subject``, following the repo's conventions.
@@ -291,50 +294,33 @@ class LiveRun:
         empty when nothing is left, E20) and warns once on stderr (E12).
         """
         conventions = self.children.conventions
-        titled = conventional_pr_title(
+        titled = titled_pr(
             subject, conventions=conventions, issue_id=self.issue.id, workspace=self._workspace
         )
-        if titled.unmatched:
-            line = pr_title(subject, workspace=self._workspace, fallback="")
+        if titled.unmatched is not None:
+            line = titled.unmatched
             self.log.record(
                 "title_unmatched", {"subject": line, "pattern": conventions.commit_title}
             )
-            shown = "the subject" if line else "the issue id"
-            typer.echo(
-                f"{_PREFIX}: warning: the commit subject `{shown_text(line)}` does not match"
-                f" commit_title `{conventions.commit_title}`; the PR title is {shown}",
-                err=True,
-            )
+            warning = unmatched_warning(_PREFIX, line=line, commit_title=conventions.commit_title)
+            typer.echo(warning, err=True)
         return titled.title
 
     def _refuse_risky_config(self, *, stage: Stage, cwd: Path, use: str, outcome: str) -> None:
         """No token-bearing call (the fetch, the push) when the repo's config in ``cwd`` holds
         a key it would act on, or origin is not the repo's GitHub url (push_guard)."""
-        listed = self._git_output("config", "--list", "--show-scope", "--includes", "-z", cwd=cwd)
-        held = risky_keys(parse_scoped_list(listed))
-        if held:
-            reason = f"git config holds keys {use} ({', '.join(held)})"
-            raise StageFailure(stage, f"{reason}; {outcome}")
-        urls = self._git_output(
-            "config", "--get-all", REMOTE_URL, accept=(0, 1), cwd=cwd
-        ).splitlines()
-        github = self.children.github
-        if not names_github_repo(urls, github=github):
-            raise StageFailure(stage, f"{REMOTE_URL} is not the GitHub url of {github}; {outcome}")
-
-    def _open_pr_url(self, env: dict[str, str]) -> str | None:
-        """The url of the branch's open PR, from ``gh pr view``; None when there is none."""
-        viewed = self._child(self.children.pr_view_argv(), env=env, timeout=GH_TIMEOUT)
-        if viewed.returncode != 0:
-            return None
         try:
-            found = json.loads(viewed.stdout)
-        except ValueError:
-            return None
-        if not isinstance(found, dict) or found.get("state") != "OPEN":
-            return None
-        url = found.get("url")
-        return _pr_url(url.encode()) if isinstance(url, str) else None
+            refuse_risky_config(
+                self._child,
+                github=self.children.github,
+                environ=self.environ,
+                timeout=self._timeouts().git,
+                use=use,
+                outcome=outcome,
+                cwd=cwd,
+            )
+        except PrStepError as error:
+            raise StageFailure(stage, error.reason) from None
 
     # report
 
@@ -347,7 +333,7 @@ class LiveRun:
         )
         return success_writes(
             self.issue,
-            review_state=REVIEW_STATE,
+            review_state=self.children.config.tracker.states.review,
             failed_label=self.children.config.tracker.failed_label,
             comment=comment,
         )
@@ -428,13 +414,22 @@ class LiveRun:
     ) -> str:
         """git's stdout in the worktree (or ``cwd``), with the untrusted environment; an exit
         code outside ``accept`` fails the stage."""
-        result = self._child(
-            ["git", *arguments], env=untrusted_env(self.environ), timeout=GIT_TIMEOUT, cwd=cwd
-        )
-        if result.returncode not in accept:
-            reason = f"git {arguments[0]} failed: {_tail(result.stderr).strip()}"
-            raise StageFailure(self.log.state, reason)
-        return result.stdout.decode(errors="replace")
+        try:
+            return git_output(
+                self._child,
+                *arguments,
+                environ=self.environ,
+                timeout=self._timeouts().git,
+                accept=accept,
+                cwd=cwd,
+            )
+        except PrStepError as error:
+            raise StageFailure(self.log.state, error.reason) from None
+
+    def _timeouts(self) -> StepTimeouts:
+        """The shared steps' timeouts, read from this module's constants at call time (the
+        tests patch them here)."""
+        return StepTimeouts(gate=GATE_TIMEOUT, push=PUSH_TIMEOUT, gh=GH_TIMEOUT, git=GIT_TIMEOUT)
 
     def _stop_on_log_error(self, error: RunLogError) -> int:
         """Name the open PR and the report's writes not made; the tracker is left as it is."""
@@ -500,16 +495,3 @@ def _bounded_child(
         own_session=own_session,
         output_limit=CHILD_OUTPUT_LIMIT,
     )
-
-
-def _tail(data: bytes) -> str:
-    return data.decode(errors="replace")[-MAX_ERROR_TAIL_CHARS:]
-
-
-def _pr_url(stdout: bytes) -> str | None:
-    """The last line of ``gh``'s output when it is one printable ``https://`` url (E21)."""
-    lines = stdout.decode(errors="replace").strip().splitlines()
-    last = lines[-1].strip() if lines else ""
-    if last.startswith(_URL_SCHEME) and last.isprintable() and " " not in last:
-        return last if len(last) <= MAX_PR_URL_CHARS else None
-    return None

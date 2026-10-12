@@ -12,9 +12,7 @@ import contextlib
 import math
 import os
 import re
-import shutil
 from enum import StrEnum
-from pathlib import Path
 from typing import Annotated, Final
 
 import typer
@@ -23,7 +21,7 @@ from agent_hub.cli.command_exits import fail
 from agent_hub.cli.effective_config import effective_with_prefix_or_fail
 from agent_hub.cli.errors import RunLogError
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
-from agent_hub.cli.hub_root import hub_root_or_exit, main_checkout
+from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit
 from agent_hub.cli.init_report import shown_path, shown_text
 from agent_hub.cli.run_children import (
     CHILD_HIDDEN,
@@ -39,7 +37,7 @@ from agent_hub.cli.tracker_client import missing_key_line, resolve_tracker_clien
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.team_keys import team_of, teams_text
-from agent_hub.core.runner.report_writes import REVIEW_STATE, call_line, success_writes
+from agent_hub.core.runner.report_writes import call_line, success_writes
 from agent_hub.core.runner.run_record import Stage, picked_data
 from agent_hub.core.runner.run_texts import pr_body, success_comment
 from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, Issue, TrackerClient
@@ -120,7 +118,7 @@ def run(
 ) -> None:
     """Take one tracker issue to a PR: worktree, implementing session, gate, PR, report."""
     root = hub_root_or_exit(os.environ, command=COMMAND)
-    hub = _hub_checkout(root)
+    hub = hub_checkout(root, command=COMMAND, environ=without(os.environ, CHILD_HIDDEN))
     hub_config = load_hub_config_or_exit(hub / FILE_LABEL)
     _refuse_usage(context, hub_config, issue=issue, repo=repo)
     effective, prefix = effective_with_prefix_or_fail(context, hub_config, home=hub)
@@ -200,25 +198,14 @@ def _print_dry_run(
         summary=DRY_RUN_TEXT,
         workspace=str(children.workspace),
     )
-    failed_label = children.config.tracker.failed_label
+    tracker = children.config.tracker
     for write in success_writes(
-        issue, review_state=REVIEW_STATE, failed_label=failed_label, comment=comment
+        issue,
+        review_state=tracker.states.review,
+        failed_label=tracker.failed_label,
+        comment=comment,
     ):
         typer.echo(f"would call: {shown_text(call_line(write))}")
-
-
-def _hub_checkout(root: Path) -> Path:
-    """The hub's main checkout; git runs only when ``root`` is a worktree (its ``.git`` a file)."""
-    if not os.path.isfile(root / ".git"):
-        return root
-    git = shutil.which("git")
-    if git is None:
-        fail(f"{_PREFIX}: git is not on PATH; install git")
-    try:
-        environ = without(os.environ, CHILD_HIDDEN)
-        return main_checkout(root, git=os.path.abspath(git), environ=environ)
-    except OSError as error:
-        fail(f"{_PREFIX}: git could not run: {error.strerror or error}")
 
 
 def _refuse_usage(context: typer.Context, config: HubConfig, *, issue: str, repo: str) -> None:

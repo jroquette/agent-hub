@@ -92,6 +92,7 @@ CORE_MODULES = (
     "runner/title_pattern.py",
     "runner/verdict.py",
     "runner/run_texts.py",
+    "runner/ship_texts.py",
     "runner/run_record.py",
     "runner/report_writes.py",
     "bench/__init__.py",

@@ -120,6 +120,7 @@ def test_names_only_command_modules_when_sources_scanned() -> None:
     assert naming == [
         "next_command.py",
         "run_command.py",
+        "ship_command.py",
         "start_command.py",
         "tracker_client.py",
     ]
