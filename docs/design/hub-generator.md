@@ -85,7 +85,18 @@ asks before edits to `plugin/hub-workflow/hooks/`, `plugin/<project>/hooks/`, `.
 a sandbox: it matches tool input and Bash text by pattern, so a determined agent can get round it. The real limits are
 OS permissions and Claude Code's permission rules; the extension's trust boundary is the ask on hooks folder edits. The
 settings' denies and sandbox are defense in depth (sandboxed Bash runs without a prompt; excluded commands take the
-normal permission flow). The stop gate checks the checkouts holding cwd or a file the session or its subagents edited,
+normal permission flow). The sandbox keeps writes in the workspace and `$TMPDIR` and the network to the HTTP(S)
+allowlist; SSH never passes it. So the hub's own network commands are `excludedCommands` (AGH-134,
+`WORKFLOW_EXCLUDED_COMMANDS`): `gh`, git's `push`/`fetch`/`pull`/`clone`/`ls-remote`, and `hub worktree` by its three
+spellings (`./hub worktree *`, `hub worktree *`, `make worktree *`, plus `make worktree-remove *`), since its own
+`git fetch` never matches; never `make *` or `./hub *`, which would let any Makefile target out. Claude Code matches an
+entry against the literal Bash text, so only a call that is exactly the command escapes (no `cd … &&`, `;`, pipe,
+redirect or `git -C`). `hub worktree --no-fetch` is the escape hatch after a bare `git fetch`. The `hub` shim moves
+uv's cache and tool folders to `<hub>/.hub-uv/` (which ignores itself) only when they cannot be written, and then sets
+`UV_PYTHON_DOWNLOADS=never`; settings `env` cannot do it (no expansion, a committed file cannot name a per-machine
+path, and it would change every repo's uv), and `sandbox.filesystem.allowWrite` on `~/.cache/uv` or
+`~/.local/share/uv` would let a sandboxed agent plant code that later runs unsandboxed (uv tools on `PATH`).
+`hub doctor`'s `sandbox.workflow` checks the exclusions. The stop gate checks the checkouts holding cwd or a file the session or its subagents edited,
 changed since the transcript's first timestamp (else its birth time, else 12 h ago); in one 160 s budget each run gets
 `repos[].check_fast_timeout` (default 150 s), then its group is killed; a cut run says `not run`.
 The event sensor `event_sensor.py` (AGH-200) is registered beside them on eleven events (SessionStart,
