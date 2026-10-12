@@ -110,6 +110,23 @@ class EventStoreContract:
         assert result == AppendResult(appended=0, duplicates=1)
         assert event_store.read_all() == [stored]
 
+    def test_keeps_stored_row_when_allow_list_upgrade_reingested(
+        self, event_store: EventStore
+    ) -> None:
+        # L2: an event stored before this release's keys, sent again with them, is the same event.
+        stored = an_event(type="tool.result", payload={"tool": "Bash", "status": "error"})
+        event_store.append([stored])
+        upgraded = an_event(
+            type="tool.result",
+            source_id=stored.source_id,
+            payload={"tool": "Bash", "status": "error", "error_message": "exit 2: no such file"},
+        )
+
+        result = event_store.append([upgraded])
+
+        assert result == AppendResult(appended=0, duplicates=1)
+        assert event_store.read_all() == [stored]
+
     def test_appends_both_when_source_id_repeats_under_other_source(
         self, event_store: EventStore
     ) -> None:

@@ -29,6 +29,7 @@ from agent_hub.collector.tool_metadata import (
     COMMAND_LIMIT,
     FILE_PATH,
     NAME_LIMIT,
+    error_message,
     first_line,
     learning_proposal,
     output_bytes,
@@ -210,6 +211,9 @@ def _post_tool_use_failure(hook: _Hook) -> tuple[Event, ...]:
         payload["error_line"] = INTERRUPTED
     elif error is not None:
         payload["error_line"] = first_line(error)
+        message = error_message(error)
+        if message is not None:
+            payload["error_message"] = message
     return (hook.event(EventType.TOOL_RESULT, hook.tool_id(hook.name), payload),)
 
 

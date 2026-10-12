@@ -13,6 +13,7 @@ from agent_hub.collector.transcript import (
 from agent_hub.core.events.event import Event
 from agent_hub.core.events.payload_keys import PAYLOAD_KEYS, kept_payload
 from agent_hub.core.testing.transcript_lines import (
+    TRANSCRIPT_BRANCH,
     TRANSCRIPT_MODEL,
     TRANSCRIPT_SESSION,
     a_text_block,
@@ -41,7 +42,12 @@ def test_maps_prompt_to_message_when_user_line_has_text() -> None:
     assert event.type == "message"
     assert event.source == "transcript"
     assert event.source_id == f"{TRANSCRIPT_SESSION}:{line['uuid']}"
-    assert event.payload == {"role": "user", "chars": 4 + len(SENTINEL), "turn": 1}
+    assert event.payload == {
+        "role": "user",
+        "chars": 4 + len(SENTINEL),
+        "turn": 1,
+        "git_branch": TRANSCRIPT_BRANCH,
+    }
     assert (event.project, event.repo, event.agent) == ("demo", "demo-api", "main")
     assert event.timestamp.isoformat().startswith("2026-10-11T10:")
     assert SENTINEL not in event.model_dump_json()
@@ -94,6 +100,7 @@ def test_maps_blocks_with_index_when_assistant_line_has_several() -> None:
     assert events[0].payload == {
         "chars": len(f"think {SENTINEL}"),
         "turn": 1,
+        "git_branch": TRANSCRIPT_BRANCH,
     }
     assert events[2].payload == {
         "tool": "Write",
@@ -101,6 +108,7 @@ def test_maps_blocks_with_index_when_assistant_line_has_several() -> None:
         "turn": 1,
         "path": "a.py",
         "lines_added": 1,
+        "git_branch": TRANSCRIPT_BRANCH,
     }
     assert all(SENTINEL not in event.model_dump_json() for event in events)
 
@@ -122,8 +130,14 @@ def test_puts_usage_on_first_message_once_when_message_id_repeats_usage_once() -
         "output_tokens": 200,
         "cache_read_tokens": 30,
         "cache_write_tokens": 40,
+        "git_branch": TRANSCRIPT_BRANCH,
     }
-    assert events[1].payload == {"role": "assistant", "chars": 1, "turn": 0}
+    assert events[1].payload == {
+        "role": "assistant",
+        "chars": 1,
+        "turn": 0,
+        "git_branch": TRANSCRIPT_BRANCH,
+    }
 
 
 def test_adds_usage_message_when_message_id_starts_without_text_usage_once() -> None:
@@ -153,8 +167,9 @@ def test_skips_usage_when_message_id_seen_in_earlier_read_usage_once() -> None:
 
 
 def test_maps_tool_result_status_and_error_line_when_user_line_has_results() -> None:
+    error = "exit 1\nmake: *** [check] Error 1"
     ok = a_tool_result_line("toolu_1", content=[{"type": "text", "text": SENTINEL}])
-    failed = a_tool_result_line("toolu_2", content=f"exit 1\n{SENTINEL}", is_error=True)
+    failed = a_tool_result_line("toolu_2", content=error, is_error=True)
 
     events = _parse([ok, failed])
 
@@ -167,13 +182,16 @@ def test_maps_tool_result_status_and_error_line_when_user_line_has_results() -> 
             json.dumps([{"type": "text", "text": SENTINEL}], separators=(",", ":"))
         ),
         "turn": 0,
+        "git_branch": TRANSCRIPT_BRANCH,
     }
     assert events[1].payload == {
         "tool_use_id": "toolu_2",
         "status": "error",
-        "output_bytes": len(f"exit 1\n{SENTINEL}"),
+        "output_bytes": len(error),
         "error_line": "exit 1",
+        "error_message": "exit 1 make: *** [check] Error 1",
         "turn": 0,
+        "git_branch": TRANSCRIPT_BRANCH,
     }
     assert all(SENTINEL not in event.model_dump_json() for event in events)
 
@@ -197,7 +215,53 @@ def test_proposes_learning_when_tool_use_writes_brain_inbox_note() -> None:
         "text": "T",
         "target": "brain/_inbox/n.md",
         "author": "main",
+        "git_branch": TRANSCRIPT_BRANCH,
     }
+
+
+def test_keeps_git_branch_when_line_has_git_branch() -> None:
+    token = "gh" + "p_" + "Z9y8X7w6" * 5
+    lines = [
+        a_user_line("prompt", gitBranch="jdoe/dem-9-" + "b" * 300),
+        an_assistant_line(
+            [a_text_block(), a_tool_use_block("toolu_s", "Skill", {"skill": "feature"})],
+            gitBranch=f"leak-{token}",
+        ),
+        a_tool_result_line("toolu_s", gitBranch=""),
+        a_user_line("no branch", gitBranch=...),
+    ]
+
+    events = _parse(lines)
+
+    branches = [event.payload.get("git_branch") for event in events]
+    first = branches[0]
+    assert isinstance(first, str)
+    assert first.startswith("jdoe/dem-9-")
+    assert len(first) <= 200
+    assert branches[1:3] == ["leak-[redacted: github token]"] * 2
+    assert events[2].payload["skill"] == "feature"
+    assert branches[3:] == [None, None]
+
+
+def test_keeps_error_message_when_tool_result_is_error() -> None:
+    token = "gh" + "p_" + "Z9y8X7w6" * 5
+    content = [
+        {"type": "text", "text": "Exit code 1\n\n  error: " + token},
+        {"type": "text", "text": "x" * 400},
+    ]
+
+    [failed, ok] = _parse(
+        [
+            a_tool_result_line("toolu_e", content=content, is_error=True),
+            a_tool_result_line("toolu_o", content="fine\nmore"),
+        ]
+    )
+
+    message = failed.payload["error_message"]
+    assert isinstance(message, str)
+    assert message.startswith("Exit code 1 error: [redacted: github token] xxx")
+    assert len(message) <= 300
+    assert "error_message" not in ok.payload
 
 
 def test_ignores_line_when_type_is_not_mapped() -> None:
@@ -260,7 +324,10 @@ _BLOCK = st.fixed_dictionaries(
         "text": _JSON,
         "thinking": _JSON,
         "id": _JSON,
-        "name": st.sampled_from(["Bash", "Edit", "Write", "mcp__a__b", "Agent"]) | _JSON,
+        "name": st.sampled_from(
+            ["Bash", "Edit", "Write", "mcp__a__b", "Agent", "Skill", "SendMessage"]
+        )
+        | _JSON,
         "input": _JSON,
         "tool_use_id": _JSON,
         "is_error": _JSON,
