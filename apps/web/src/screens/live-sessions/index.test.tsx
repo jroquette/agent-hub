@@ -267,7 +267,7 @@ describe("LiveSessionsScreen", () => {
     const busy = screen.getByRole("article", { name: /^\/busy/ });
     expect(busy).not.toHaveAttribute("data-trouble");
     expect(
-      within(busy).getByText("1 problem, agent is on it · 1 interrupted by you"),
+      within(busy).getByText("1 problem, agent is on it · 1 handled by you"),
     ).toBeInTheDocument();
   });
 
