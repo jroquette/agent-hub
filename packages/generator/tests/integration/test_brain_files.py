@@ -75,6 +75,12 @@ def test_skips_auto_and_hidden_when_listing(tmp_path: Path) -> None:
     assert paths_of(list_brain(tmp_path)) == ["index.md", "notes/auto/kept.md"]
 
 
+def test_skips_auto_when_name_differs_in_case(tmp_path: Path) -> None:
+    a_brain(tmp_path, {"index.md": b"#", "Auto/me.md": b"personal", "AUTO/x/me.md": b"p"})
+
+    assert paths_of(list_brain(tmp_path)) == ["index.md"]
+
+
 def test_skips_brain_when_brain_is_link(tmp_path: Path) -> None:
     elsewhere = a_brain(tmp_path / "elsewhere", {"index.md": b"#"})
     hub = tmp_path / "hub"

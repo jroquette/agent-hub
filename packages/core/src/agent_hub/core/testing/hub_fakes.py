@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from agent_hub.core.brain.brain_note import BrainEntry
-from agent_hub.core.brain.brain_path import NOTE_SUFFIX, PERSONAL_FOLDER
+from agent_hub.core.brain.brain_path import NOTE_SUFFIX, is_personal_folder
 from agent_hub.core.doctor.run_rules import Selection
 from agent_hub.core.doctor.snapshot import DoctorSnapshot, HubFiles, LockAbsent, LockState
 from agent_hub.core.features.feature_status import FeatureFolder
@@ -94,7 +94,7 @@ class FakeHub:
 def _listed(path: str) -> bool:
     segments = path.split("/")
     hidden = any(segment.startswith(".") for segment in segments)
-    return path.endswith(NOTE_SUFFIX) and segments[0] != PERSONAL_FOLDER and not hidden
+    return path.endswith(NOTE_SUFFIX) and not is_personal_folder(segments[0]) and not hidden
 
 
 class FakeHubFileReader:

@@ -9,8 +9,8 @@ never told apart from an absent note.
 
 The listing is bounded: at most ``MAX_BRAIN_FILES`` notes, ``MAX_BRAIN_FOLDERS`` folders and
 ``MAX_BRAIN_DEPTH`` folder levels below ``brain/``, walked in name order; hidden names and the
-top-level ``auto/`` are skipped. An unreadable folder, or a note or folder left out by a cap, is
-counted in ``skipped``; a cap also sets ``truncated``.
+top-level ``auto/`` (in any case) are skipped. An unreadable folder, or a note or folder left out
+by a cap, is counted in ``skipped``; a cap also sets ``truncated``.
 """
 
 import contextlib
@@ -26,9 +26,9 @@ from agent_hub.core.brain.brain_note import BrainEntry
 from agent_hub.core.brain.brain_path import (
     BRAIN_FOLDER,
     NOTE_SUFFIX,
-    PERSONAL_FOLDER,
     BrainPathError,
     brain_relative,
+    is_personal_folder,
 )
 from agent_hub.core.hubs.hub_registry import BrainListing, UnreadHubFile
 
@@ -146,7 +146,7 @@ def _open_folder(name: str, parent: int) -> int:
 def _walk(folder: int, at: tuple[str, ...], walk: _Walk) -> None:
     subfolders: list[str] = []
     for name in sorted(os.listdir(folder)):
-        if name.startswith(".") or (not at and name == PERSONAL_FOLDER):
+        if name.startswith(".") or (not at and is_personal_folder(name)):
             continue
         try:
             status = os.stat(name, dir_fd=folder, follow_symlinks=False)
