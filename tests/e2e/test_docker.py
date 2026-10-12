@@ -112,6 +112,8 @@ def stack() -> Iterator[Stack]:
         "AGENT_HUB_PORT": str(port),
         "AGENT_HUB_HUBS_ROOT": str(hubs_root),
         "AGENT_HUB_CLAUDE_PROJECTS": str(projects),
+        # The classic builder, as `make up` uses (Bake asks --allow for files outside the project).
+        "COMPOSE_BAKE": "false",
     }
     compose = [docker, "compose", "-f", str(COMPOSE_FILE), "-p", project]
     try:
