@@ -5,22 +5,27 @@ any order of the events and any repeats of them. Only Claude Code sources create
 (hooks, transcript, OpenTelemetry); executor, GitHub and Linear events never do (AC-200.24),
 though an executor run lends its issue to the sessions it started. A session started by
 ``hub run`` carries ``run``, ``step`` and ``attempt`` from its own events (AC-200.16). Each
-session has its ``label`` (issue left for the read models' hub rules) and ``actors`` (AGH-201).
+session has its ``label`` (issue left for the read models' hub rules), ``actors`` and the counts
+of its ``problems`` (AGH-201); ``fold_session_with_problems`` also returns the problems
+themselves, folded at the same status, so a read model needs no second fold for them.
 """
 
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
+from typing import NamedTuple
 
 from agent_hub.core.approvals.fold_approvals import open_gate_ids
 from agent_hub.core.events.event import EventSource, EventType
 from agent_hub.core.events.stored_event import StoredEvent
 from agent_hub.core.readmodels.fact_keys import canonical_events, canonical_part, resolve_facts
 from agent_hub.core.sessions.pricing import PRICES, PerMillion
+from agent_hub.core.sessions.problem import SessionProblems
 from agent_hub.core.sessions.session import Outcome, Session, SessionSegment
 from agent_hub.core.sessions.session_actors import fold_actors
 from agent_hub.core.sessions.session_cost import fold_session_cost, usage_records, usage_tokens
 from agent_hub.core.sessions.session_files import fold_session_files
 from agent_hub.core.sessions.session_label import label_signals, session_label
+from agent_hub.core.sessions.session_problems import fold_problems, problem_counts
 from agent_hub.core.sessions.session_status import Activity, session_segments, session_status
 
 SESSION_SOURCES = frozenset({EventSource.CLAUDE_CODE, EventSource.TRANSCRIPT, EventSource.OTEL})
@@ -165,6 +170,13 @@ def _model(events: Sequence[StoredEvent]) -> str | None:
     return None
 
 
+class FoldedSession(NamedTuple):
+    """A session and its problems, folded from the same events at the same ``now``."""
+
+    session: Session
+    problems: SessionProblems
+
+
 def fold_session(
     events: Sequence[StoredEvent],
     *,
@@ -173,6 +185,17 @@ def fold_session(
     prices: Mapping[str, PerMillion] = PRICES,
 ) -> Session:
     """One session from its own events (all with the same ``session``; at least one)."""
+    return fold_session_with_problems(events, now=now, issues=issues, prices=prices).session
+
+
+def fold_session_with_problems(
+    events: Sequence[StoredEvent],
+    *,
+    now: datetime,
+    issues: Mapping[str, str] | None = None,
+    prices: Mapping[str, PerMillion] = PRICES,
+) -> FoldedSession:
+    """One session and its problems from its own events (same ``session``; at least one)."""
     ordered = canonical_events(events)
     winners = resolve_facts(ordered).winners
     first = ordered[0].event
@@ -189,7 +212,9 @@ def fold_session(
         has_open_gate=bool(open_gate_ids(ordered)),
         has_open_tool_call=_has_open_tool_call(winners, ordered),
     )
-    return Session(
+    actors = fold_actors(ordered)
+    problems = fold_problems(ordered, status=status, winners=winners, actors=actors)
+    session = Session(
         id=first.session,
         project=first.project,
         repo=next((stored.event.repo for stored in ordered if stored.event.repo), None),
@@ -221,9 +246,11 @@ def fold_session(
         cost_unknown_reason=cost.unknown_reason,
         has_transcript=any(stored.event.source == EventSource.TRANSCRIPT for stored in ordered),
         label=session_label(label_signals(ordered)),
-        actors=fold_actors(ordered),
+        actors=actors,
+        problems=problem_counts(problems.items),
         sources_missing=SESSION_SOURCES_MISSING,
     )
+    return FoldedSession(session=session, problems=problems)
 
 
 def group_by_session(events: Iterable[StoredEvent]) -> dict[str, list[StoredEvent]]:

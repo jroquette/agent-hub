@@ -21,7 +21,10 @@ from agent_hub.core.readmodels.filters import (
 )
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError, EventReadModels
 from agent_hub.core.runner.run_record import Stage
-from agent_hub.core.sessions.session import Session, SessionStatus
+from agent_hub.core.sessions.fold_session import FoldedSession
+from agent_hub.core.sessions.problem import ProblemKind, Resolution
+from agent_hub.core.sessions.session import ProblemCounts, SessionStatus
+from agent_hub.core.sessions.session_label import LabelRules
 from agent_hub.core.testing.builders import an_event
 from agent_hub.core.testing.fakes import InMemoryEventStore
 from agent_hub.core.testing.session_scenarios import (
@@ -129,6 +132,7 @@ def test_raises_not_found_naming_entity_when_id_unknown(store: InMemoryEventStor
         lambda: service.session_events("nope", types=frozenset(), page=PageRequest()),
         lambda: service.session_files("nope"),
         lambda: service.session_cost("nope"),
+        lambda: service.session_problems("nope"),
     ):
         with pytest.raises(EntityNotFoundError):
             call()
@@ -390,13 +394,13 @@ def test_refolds_only_changed_session_when_store_grows(
     store: InMemoryEventStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     folded: list[str] = []
-    fold = event_read_models.fold_session
+    fold = event_read_models.fold_session_with_problems
 
-    def counting_fold(events: Sequence[StoredEvent], **options: Any) -> Session:
+    def counting_fold(events: Sequence[StoredEvent], **options: Any) -> FoldedSession:
         folded.append(events[0].event.session)
         return fold(events, **options)
 
-    monkeypatch.setattr(event_read_models, "fold_session", counting_fold)
+    monkeypatch.setattr(event_read_models, "fold_session_with_problems", counting_fold)
     service = _service(store, NOW)[0]
     before = service.get_session("s-a")
     folded.clear()
@@ -610,3 +614,83 @@ def test_folds_same_views_as_a_fresh_read_when_events_arrive_in_shuffled_batches
     ):
         assert read(service) == read(fresh)
     assert service.get_approval("toolu_ask_s-b").session_id == "s-b"
+
+
+def test_returns_problems_when_session_has_failures(store: InMemoryEventStore) -> None:
+    service = _service(store, NOW)[0]
+
+    problems = service.session_problems("s-a")
+
+    assert problems.session_id == "s-a"
+    assert [(p.kind, p.where, p.resolution) for p in problems.items] == [
+        (ProblemKind.COMMAND_EXIT, "make check", Resolution.NEEDS_YOU)
+    ]
+    assert problems.summary[0].text == "1 problem: 1 needs you"
+    assert service.get_session("s-a").problems == ProblemCounts(needs_you=1)
+    assert service.session_problems("s-a") is problems
+    assert [p.kind for p in service.session_problems("s-b").items] == [ProblemKind.GUARD_ASK_OPEN]
+    assert service.session_problems("s-c").items == ()
+
+
+def test_refolds_problems_when_store_grows(store: InMemoryEventStore) -> None:
+    service = _service(store, NOW)[0]
+    before = service.session_problems("s-a")
+
+    store.append([an_event(session="s-a", timestamp=SCENARIO_START + timedelta(seconds=30))])
+    after = service.session_problems("s-a")
+
+    assert after is not before
+    assert after == before
+
+
+def _labelled_store() -> InMemoryEventStore:
+    store = InMemoryEventStore()
+    store.append(
+        [
+            *a_session_events("s-dem", ended=False, git_branch="jdoe/dem-7-login"),
+            *a_session_events(
+                "s-other",
+                project="other",
+                ended=False,
+                cwd="/work/other/.claude/worktrees/oth-3-fix",
+            ),
+        ]
+    )
+    return store
+
+
+def test_applies_issue_when_hub_rules_known() -> None:
+    rules = {"demo": LabelRules(teams=("DEM",), branch_prefix="jdoe/")}
+    service = FoldedEventReadModels(
+        _labelled_store(),
+        now=Clock(SCENARIO_START + timedelta(minutes=8)),
+        label_rules_of=rules.get,
+    )
+
+    listed = {s.id: s for s in service.list_sessions(SessionFilter()).items}
+    tiles = {tile.id: tile for tile in service.list_live_sessions(Scope()).items}
+    one = service.get_session("s-dem")
+
+    for labelled in (listed["s-dem"].label, tiles["s-dem"].label, one.label):
+        assert labelled is not None
+        assert labelled.issue == "DEM-7"
+    assert listed["s-other"].label is not None
+    assert listed["s-other"].label.issue is None
+    rules["other"] = LabelRules(teams=("OTH",))
+    rules["demo"] = LabelRules(teams=("XYZ",))
+    again = {s.id: s for s in service.list_sessions(SessionFilter()).items}
+    assert again["s-other"].label is not None
+    assert again["s-other"].label.issue == "OTH-3"
+    assert again["s-dem"].label is not None
+    assert again["s-dem"].label.issue is None
+
+
+def test_leaves_issue_empty_when_no_hub_rules() -> None:
+    service = FoldedEventReadModels(
+        _labelled_store(), now=Clock(SCENARIO_START + timedelta(minutes=8))
+    )
+
+    label = service.get_session("s-dem").label
+
+    assert label is not None
+    assert label.issue is None
