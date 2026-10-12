@@ -115,3 +115,22 @@ def test_drops_redacted_key_when_key_held_secret() -> None:
 
     [stored] = event_store.read_all()
     assert stored.payload == {"role": "user"}
+
+
+def test_stores_one_row_when_error_event_ingested_twice() -> None:
+    event_store = InMemoryEventStore()
+    ingest = IngestEvents(event_store)
+    before_upgrade = an_event(
+        type="tool.result", payload={"tool": "Bash", "tool_use_id": "toolu_1", "status": "error"}
+    )
+    ingest.execute([before_upgrade])
+    after_upgrade = an_event(
+        type="tool.result",
+        source_id=before_upgrade.source_id,
+        payload=before_upgrade.payload | {"error_message": f"denied {_token()}"},
+    )
+
+    result = ingest.execute([after_upgrade])
+
+    assert result == AppendResult(appended=0, duplicates=1)
+    assert event_store.read_all() == [before_upgrade]
