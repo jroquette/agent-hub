@@ -841,7 +841,7 @@ enforces this in `make check`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE
 | `hub sync --adopt [--accept PATH]… [--check]` | Join a hand-made hub to `hub.lock` (from 0.7.0): record what matches, create what is missing, list what differs |
 | `hub doctor [--only RULE]… [--json]` | Check rules, links, dead references, instruction size and template drift |
 | `hub setup [--yes]` | Set up this machine for the hub: tools (uv, git, python3, claude, gh) and the tracker credential, the developer identity (`hub.local.json` proposed from git config and written after asking; `--yes` without asking), each repo cloned or fetched next to the hub, then `hub doctor`; exit 0 when every line is `ok`, else 1, each missing line naming its fix |
-| `hub worktree NAME [--only REPO] [--remove]` | Create (or remove) one task's worktrees in the hub's repos |
+| `hub worktree NAME [--only REPO] [--remove] [--no-fetch]` | Create (or remove) one task's worktrees in the hub's repos; `--no-fetch` starts from the already-fetched base |
 | `hub brief [--no-network]` | Print the session brief: `now.md`, recent journal, repo/PR/CI state |
 | `hub agent [ARGS…]` | Start `claude` with every repo attached; all arguments go to `claude` |
 | `hub next` | Print the tracker's ready issues (`tracker.ready_label`), oldest first: id, repo, title and url |
@@ -971,6 +971,14 @@ of each repo and `gh auth status` in `hub setup`, the push and `gh pr create` of
 PR and CI lines of `hub brief` unless you pass `--no-network`. The generated `make usage` target downloads `ccusage`
 from npm. `hub next`, `hub run` and `hub start` call Linear, with `LINEAR_API_KEY` or, with `tracker.transport`
 `"mcp"`, through your Linear MCP server and `claude -p`. Your agent sessions still talk to their model provider as usual.
+
+**Why does an agent's `git fetch` fail with `Broken pipe`, or `./hub` with `Operation not permitted`?**
+That is Claude Code's sandbox, which every hub's `.claude/settings.json` turns on on purpose: agents' Bash may write only
+in the workspace and `$TMPDIR`, reach only allowlisted HTTP(S) hosts, and never SSH. The hub's own network commands
+(`git fetch`/`push`, `gh`, `./hub worktree`, `make worktree`) are excluded, but only when the Bash call is exactly that
+command: `cd repo && git fetch`, `git -C repo fetch` or a redirect stay sandboxed. A failed fetch in `hub worktree`
+prints the bare `git fetch` to run, then `./hub worktree --no-fetch <name>`. Since 0.10.0 the `./hub` shim moves uv's
+folders into the hub (`.hub-uv/`) when the sandbox denies them, and `./hub doctor` checks it all (`sandbox.workflow`).
 
 **Which trackers and agents are supported?**
 Linear and Claude Code today. The tracker is a port (`TrackerClient`) and the event model is agent-neutral, so other
