@@ -858,7 +858,7 @@ export interface components {
       | "session.summary";
     /**
      * FeatureDetail
-     * @description A feature with its acceptance criteria rows.
+     * @description A feature with its acceptance criteria rows and its records (D3).
      */
     FeatureDetail: {
       /**
@@ -881,6 +881,11 @@ export interface components {
       problem?: string | null;
       /** Project */
       project: string;
+      /**
+       * Records
+       * @default []
+       */
+      records: components["schemas"]["FeatureRecord"][];
       /** Repos */
       repos: string[];
       /** Size */
@@ -899,6 +904,20 @@ export interface components {
     /** @enum {string} */
     FeaturePhase:
       "spec" | "research" | "plan" | "tickets" | "implement" | "review" | "evaluate" | "shipped";
+    /**
+     * FeatureRecord
+     * @description One record file of a feature folder; ``path`` is relative to the hub's ``brain/``, so the
+     *     brain note route reads it.
+     */
+    FeatureRecord: {
+      name: components["schemas"]["FeatureRecordName"];
+      /** Path */
+      path: string;
+      /** Present */
+      present: boolean;
+    };
+    /** @enum {string} */
+    FeatureRecordName: "spec" | "research" | "plan" | "eval" | "issues";
     /**
      * FeatureView
      * @description A feature as the Features list shows it; ``problem`` when a file of it is malformed.
@@ -1087,12 +1106,21 @@ export interface components {
     /**
      * Learning
      * @description A learning; ``text`` is its title (120 characters at most, redacted).
+     *
+     *     ``target`` is deprecated (it names the inbox note); ``note_path`` says so explicitly (L12).
+     *     ``state`` is ``None`` until read with the hub. ``summary`` is the note's first paragraph,
+     *     read on request; ``note_unavailable`` and ``actions_unavailable`` give the reason the note
+     *     cannot be read or the learning cannot be accepted or rejected here.
      */
     Learning: {
+      /** Actions Unavailable */
+      actions_unavailable?: string | null;
       /** Author */
       author: string | null;
       /** Brain Path */
       brain_path?: string | null;
+      /** Branch */
+      branch?: string | null;
       /** Commit */
       commit?: string | null;
       decided_at?: components["schemas"]["ApiTimestamp"] | null;
@@ -1105,6 +1133,12 @@ export interface components {
       derived: boolean;
       /** Id */
       id: string;
+      /** Note Path */
+      note_path?: string | null;
+      /** Note Unavailable */
+      note_unavailable?: string | null;
+      /** Pr Url */
+      pr_url?: string | null;
       /** Project */
       project: string;
       proposed_at: components["schemas"]["ApiTimestamp"] | null;
@@ -1120,11 +1154,24 @@ export interface components {
        * @default []
        */
       sources_missing: components["schemas"]["EventSource"][];
+      state?: components["schemas"]["LearningState"] | null;
       status: components["schemas"]["LearningStatus"];
+      /** Summary */
+      summary?: string | null;
+      /** @deprecated */
       target: components["schemas"]["LearningTarget"];
       /** Text */
       text: string;
     };
+    /**
+     * LearningState
+     * @description Where the learning's note is (L11): in the inbox, in an open PR, or moved by a merge.
+     *
+     *     ``in_brain`` and ``archived`` are inferred from the hub checkout (the note sits at its
+     *     destination), since GitHub is not connected.
+     * @enum {string}
+     */
+    LearningState: "proposed" | "accepted_pr_open" | "rejected_pr_open" | "in_brain" | "archived";
     /**
      * LearningStatus
      * @description Where a learning is: proposed until a terminal event in source order decides it.

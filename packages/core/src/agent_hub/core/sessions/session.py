@@ -2,13 +2,19 @@
 
 from datetime import date
 from enum import StrEnum
-from typing import Final, Literal
+from typing import Literal
 
 from pydantic import Field, JsonValue
 
 from agent_hub.core.events.event import EventSource, EventType
 from agent_hub.core.events.stored_event import EventId
-from agent_hub.core.readmodels.view_types import ApiTimestamp, DerivedView, Money, ViewModel
+from agent_hub.core.readmodels.view_types import (
+    DEPRECATED_FIELD,
+    ApiTimestamp,
+    DerivedView,
+    Money,
+    ViewModel,
+)
 
 
 class SessionStatus(StrEnum):
@@ -54,11 +60,6 @@ class PullRequestRef(ViewModel):
     number: int
     url: str
     state: str
-
-
-# Deprecated fields stay in the API (v1 is additive) but are marked so in the OpenAPI document;
-# only the schema says so, reading the attribute raises no warning.
-DEPRECATED_FIELD: Final = {"deprecated": True}
 
 
 class SessionLabel(ViewModel):
