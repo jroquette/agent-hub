@@ -37,10 +37,15 @@ def file_operation(stored: StoredEvent) -> FileOperation | None:
     return operation
 
 
-def fold_session_files(events: Iterable[StoredEvent]) -> tuple[SessionFileChange, ...]:
-    """One entry per (repo, path) a session's file tools touched, sorted by path."""
+def fold_session_files(
+    events: Iterable[StoredEvent], *, resolved: bool = False
+) -> tuple[SessionFileChange, ...]:
+    """One entry per (repo, path) a session's file tools touched, sorted by path.
+
+    ``resolved`` says ``events`` are already the fact winners, so they are not resolved again.
+    """
     changes: dict[tuple[str | None, str], SessionFileChange] = {}
-    for stored in resolve_facts(events).winners:
+    for stored in events if resolved else resolve_facts(events).winners:
         operation = file_operation(stored)
         if operation is None:
             continue

@@ -1,6 +1,7 @@
 from datetime import timedelta
 from itertools import count
 
+from agent_hub.core.readmodels.fact_keys import canonical_events, resolve_facts
 from agent_hub.core.sessions.session_files import fold_session_files
 from agent_hub.core.testing.builders import an_event
 from agent_hub.core.testing.session_scenarios import (
@@ -62,3 +63,10 @@ def test_lists_nothing_when_no_file_tool_ran() -> None:
     assert (
         fold_session_files(as_stored(a_session_events(tools=[("Bash", {"command": "ls"})]))) == ()
     )
+
+
+def test_lists_same_files_when_winners_given_already_resolved() -> None:
+    copied = as_stored(with_transcript_copies(a_session_events()))
+    winners = resolve_facts(canonical_events(copied)).winners
+
+    assert fold_session_files(winners, resolved=True) == fold_session_files(copied)
