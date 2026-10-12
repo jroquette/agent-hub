@@ -33,6 +33,7 @@ from agent_hub.core.doctor.brain_memory_rule import FIX as MEMORY_FIX
 from agent_hub.core.doctor.brain_memory_rule import GITIGNORE, IGNORE_MESSAGE
 from agent_hub.core.hub_files.hub_lock import ADOPT_POINTER
 from agent_hub.core.json_form import dump_json
+from agent_hub.core.testing import builders
 from agent_hub.core.testing.builders import a_second_repo
 from agent_hub.core.testing.platform_repository_cases import CUSTOM_REPOSITORY
 
@@ -821,6 +822,65 @@ def test_applies_pending_changes_when_not_checking(
     assert (result.exit_code, result.stderr) == (0, ""), result.output
     assert result.stdout == "restored AGENTS.md\nremoved 1 leftover temporary files\n"
     assert tree_digest(demo_hub) == tree_digest(demo_hub_template)
+
+
+INFRA_DENIES = ("Bash(terraform *)", "Bash(aws *)")
+SETTINGS = ".claude/settings.json"
+
+
+def settings_denies(root: Path) -> list[str]:
+    """The ``permissions.deny`` list of the hub's ``.claude/settings.json``."""
+    denies: list[str] = json.loads((root / SETTINGS).read_bytes())["permissions"]["deny"]
+    return denies
+
+
+def test_rewrites_settings_when_guard_infra_toggled(
+    demo_hub: Path,
+    run_sync: SyncRunner,
+    run_doctor: DoctorRunner,
+    *,
+    tree_digest: TreeDigest,
+) -> None:
+    # AGH-45 D11: `guard.infra` drops the `terraform` and `aws` denies at the next sync, which
+    # rewrites only the settings and the lock; removing it brings them back.
+    before = (demo_hub / SETTINGS).read_bytes()
+    document = json.loads((demo_hub / "hub.json").read_bytes())
+    document["guard"]["infra"] = builders.a_guard_infra()
+    (demo_hub / "hub.json").write_bytes(dump_json(document))
+
+    # Before the sync the settings on disk still match the lock (E12).
+    drift = run_doctor(demo_hub, "--only", "lock.drift")
+    assert drift.exit_code == 0, drift.output
+    assert "lock.drift" not in drift.stdout, drift.stdout
+    assert set(INFRA_DENIES) <= set(settings_denies(demo_hub))
+
+    synced = run_sync(demo_hub)
+
+    assert (synced.exit_code, synced.stderr) == (0, ""), synced.output
+    assert f"updated {SETTINGS}" in synced.stdout.splitlines()
+    assert "updated hub.lock" in synced.stdout.splitlines()
+    assert not set(INFRA_DENIES) & set(settings_denies(demo_hub))
+    lock = json.loads((demo_hub / "hub.lock").read_bytes())
+    assert (
+        lock["files"][SETTINGS]["sha256"]
+        == hashlib.sha256((demo_hub / SETTINGS).read_bytes()).hexdigest()
+    )
+
+    synced_tree = tree_digest(demo_hub)
+    again = run_sync(demo_hub)
+
+    # A second sync writes nothing.
+    assert (again.exit_code, again.stdout, again.stderr) == (0, "up to date\n", ""), again.output
+    assert tree_digest(demo_hub) == synced_tree
+
+    del document["guard"]["infra"]
+    (demo_hub / "hub.json").write_bytes(dump_json(document))
+    restored = run_sync(demo_hub)
+
+    assert (restored.exit_code, restored.stderr) == (0, ""), restored.output
+    assert f"updated {SETTINGS}" in restored.stdout.splitlines()
+    assert set(INFRA_DENIES) <= set(settings_denies(demo_hub))
+    assert (demo_hub / SETTINGS).read_bytes() == before
 
 
 LOCAL_IDENTITY = (
