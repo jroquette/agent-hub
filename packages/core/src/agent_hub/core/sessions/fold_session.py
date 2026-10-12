@@ -4,7 +4,8 @@
 any order of the events and any repeats of them. Only Claude Code sources create a session
 (hooks, transcript, OpenTelemetry); executor, GitHub and Linear events never do (AC-200.24),
 though an executor run lends its issue to the sessions it started. A session started by
-``hub run`` carries ``run``, ``step`` and ``attempt`` from its own events (AC-200.16).
+``hub run`` carries ``run``, ``step`` and ``attempt`` from its own events (AC-200.16). Each
+session has its ``label`` (issue left for the read models' hub rules) and ``actors`` (AGH-201).
 """
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -16,8 +17,10 @@ from agent_hub.core.events.stored_event import StoredEvent
 from agent_hub.core.readmodels.fact_keys import canonical_events, canonical_part, resolve_facts
 from agent_hub.core.sessions.pricing import PRICES, PerMillion
 from agent_hub.core.sessions.session import Outcome, Session, SessionSegment
+from agent_hub.core.sessions.session_actors import fold_actors
 from agent_hub.core.sessions.session_cost import fold_session_cost, usage_records, usage_tokens
 from agent_hub.core.sessions.session_files import fold_session_files
+from agent_hub.core.sessions.session_label import label_signals, session_label
 from agent_hub.core.sessions.session_status import Activity, session_segments, session_status
 
 SESSION_SOURCES = frozenset({EventSource.CLAUDE_CODE, EventSource.TRANSCRIPT, EventSource.OTEL})
@@ -217,6 +220,8 @@ def fold_session(
         cost_usd=cost.total_usd,
         cost_unknown_reason=cost.unknown_reason,
         has_transcript=any(stored.event.source == EventSource.TRANSCRIPT for stored in ordered),
+        label=session_label(label_signals(ordered)),
+        actors=fold_actors(ordered),
         sources_missing=SESSION_SOURCES_MISSING,
     )
 
