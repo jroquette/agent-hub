@@ -338,6 +338,8 @@ export interface TimelineEv {
   iso?: string | undefined;
   cat: EventCategory;
   kind?: string | undefined;
+  /** Who did it ("Main agent", "Subagent · Explore"); shown in place of the kind and tool. */
+  actor?: { kind: string; label: string } | undefined;
   icon?: IconName | undefined;
   tool?: string | undefined;
   text: ReactNode;
@@ -413,15 +415,24 @@ export function TimelineEvent({
       </div>
       <div className="ah-ev-body">
         <div className="ah-ev-line">
-          <span className="ah-ev-kind">
-            {ev.kind ?? category.kind}
-            {ev.tool && (
-              <span className="ah-tool">
-                <Icon name={toolIcon(ev.tool) ?? "plug"} />
-                {ev.tool}
+          {ev.actor ? (
+            <span className="ah-ev-kind">
+              <span className="ah-actor" data-actor={ev.actor.kind} title={ev.actor.label}>
+                {ev.actor.label}
               </span>
-            )}
-          </span>
+              <span className="ah-sr"> · </span>
+            </span>
+          ) : (
+            <span className="ah-ev-kind">
+              {ev.kind ?? category.kind}
+              {ev.tool && (
+                <span className="ah-tool">
+                  <Icon name={toolIcon(ev.tool) ?? "plug"} />
+                  {ev.tool}
+                </span>
+              )}
+            </span>
+          )}
           <div className="ah-ev-main">
             {hasDetail ? (
               <button
