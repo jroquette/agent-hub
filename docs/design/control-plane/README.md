@@ -7,7 +7,8 @@ and 4 screens (Knowledge beyond Learnings, Metrics, Workflows, Bench and Tracker
 
 ## Departures
 
-Phase 2 builds this design with the changes below; where a spec file says otherwise, this list wins.
+Phase 2 builds this design with the changes below, and the control-plane clarity pass (AGH-201) adds its own at the
+end; where a spec file says otherwise, this list wins.
 
 - **`hub web`, not `hub app` or `hub collector`.** One local process, `hub web [--port N] [--db PATH]`, serves
   `/api/v1` and the built app on `127.0.0.1:7420` only (no host option). Every "Start it with `hub collector start`"
@@ -16,9 +17,11 @@ Phase 2 builds this design with the changes below; where a spec file says otherw
 - **Event types.** Phase 2 adds `step.start`, `step.end`, `run.end`, `learning.rejected` and `session.summary`. The
   proposed `hook.blocked` type is dropped: a blocked Stop is a `gate.result` with `kind: stop_gate` and
   `result: failed`, and guard-denial counts read only `tool.result` events with `status: denied`.
-- **Metadata only.** No prompt, message, reasoning, tool output, file content or diff is stored. Short texts are
-  kept redacted and truncated: a Bash command (500 characters), a Grep or Glob pattern (200), the first line of a tool
-  error (200), a subagent type and description (80), a slash-command name and a learning title (120). WebFetch keeps
+- **Metadata only.** No prompt, message, reasoning, successful tool output, file content or diff is stored. Short
+  texts are kept redacted and truncated: a Bash command (500 characters), a Grep or Glob pattern (200), the first line
+  of a tool error (200) and, since AGH-201, a failed tool's error message (300, [ADR
+  0023](../../adr/0023-short-error-message.md)), a subagent type and description (80), a skill name and a SendMessage
+  recipient (80), a git branch (200), a slash-command name and a learning title (120). WebFetch keeps
   scheme, host and path; MCP keeps server, tool and argument key names. Expandable message rows say "Content not
   stored. agent-hub keeps metadata only; the transcript stays in Claude Code's folder on this machine." and the diff
   pane says "Diff content is not stored in this version."
@@ -28,13 +31,13 @@ Phase 2 builds this design with the changes below; where a spec file says otherw
   an unknown model gives "Cost unknown: model <id> has no price".
 - **Screens in Phase 2.** Portfolio, Project overview, Approvals (read-only), Live sessions, Sessions list, Session
   detail (Timeline, Files, Cost and Raw events tabs; no Decisions or Context tab), Workflow runs, Run detail,
-  Features, Feature detail, Health, Knowledge › Learnings (read-only, tagged P3), Settings (Hubs, Collector, Privacy,
-  Appearance, About), Welcome and 404. Metrics, Bench, Tracker queue, Workflows, Brain, Decisions and Context are
-  hidden; the other Knowledge items show only their title and "Arrives in Phase 3.".
+  Features, Feature detail, Health, Knowledge › Learnings and Knowledge › Brain (both since AGH-201, no `P3` tag),
+  Settings (Hubs, Collector, Privacy, Appearance, About), Welcome and 404. Metrics, Bench, Tracker queue, Workflows,
+  Decisions and Context are hidden; the other Knowledge items show only their title and "Arrives in Phase 3.".
 - **Phase 3 and 4 actions.** Where the design puts an action in a screen body (the Approvals action bar, Run detail
-  "Retry from verify", Runs list "Start run on an issue", Learnings accept and reject), it renders disabled with a
-  `PhaseTag` and the tooltip "Available in Phase 3/4. This version is read-only.". Overflow menus keep only Phase 2
-  items. No Phase 3 or 4 endpoint exists in the OpenAPI document.
+  "Retry from verify", Runs list "Start run on an issue", Learnings snooze), it renders disabled with a `PhaseTag` and
+  the tooltip "Available in Phase 3/4. This version is read-only.". Overflow menus keep only Phase 2 items. No Phase
+  3 or 4 endpoint exists in the OpenAPI document, except the two learning decisions AGH-201 moved to Phase 2.
 - **Copy.** "Proposed CLI" chips are dropped for `hub web`, `hub collect --transcript` and `hub collect --runs`, and
   kept for `./hub run <issue> --dry-run`. Welcome step 2 "Start the collector" becomes "Keep hub web running", checked
   as "agent-hub is running at 127.0.0.1:7420 · db <path>". Empty states that name OpenTelemetry say "Cost is estimated
@@ -42,12 +45,38 @@ Phase 2 builds this design with the changes below; where a spec file says otherw
   "—".
 - **Hook events.** The hook sensor is registered for eleven events: SessionStart, UserPromptSubmit, PreToolUse,
   PostToolUse, PostToolUseFailure, Notification, Stop, SubagentStart, SubagentStop, PreCompact and SessionEnd. A
-  failed tool is reported by PostToolUseFailure (status `error`, the first line of the error, or "interrupted"), not
-  PostToolUse, and a guard ask also resolves `approved` on a PostToolUseFailure with its tool use id.
+  failed tool is reported by PostToolUseFailure (status `error`, the first line of the error and the short error
+  message, or "interrupted"), not PostToolUse, and a guard ask also resolves `approved` on a PostToolUseFailure with
+  its tool use id.
 - **Session fields from hooks.** `session.start` takes its trigger from the hook's `source` (adding the value `fork`);
-  the git branch comes only from the transcript. Events from inside a subagent carry `agent` = its agent type and the
-  payload key `agent_id`. Stop, SubagentStart, SubagentStop, PreCompact and Notification hooks other than permission
-  prompts produce no event of their own.
+  the git branch comes only from the transcript, whose mapper writes `git_branch` on every event of a line that names
+  one. Events from inside a subagent carry `agent` = its agent type and the payload key `agent_id`. Stop,
+  SubagentStart, SubagentStop, PreCompact and Notification hooks other than permission prompts produce no event of
+  their own. `Session.parent_session_id` is always `null`: subagents share their session's id, and are told apart as
+  its `actors` instead.
+
+AGH-201 (control-plane clarity) changes the design further
+([event-derivations.md](../event-derivations.md), [API.md](../../API.md), ADRs 0023 and 0024):
+
+- **Session identity.** Lists, tiles and the header show the session's `label` (`TIP-1511 · /feature`, then `repo ·
+  branch`, then the short id), never the stored agent `main`; the Agent column is gone and `agent` is deprecated.
+- **Problems, not error counts.** `GET /sessions/{session_id}/problems` and the "What went wrong" panel; problem
+  kinds add `guard_ask_open` (an unanswered guard ask) and `guard_ask_declined` resolves "You declined" (E4);
+  resolution `open` ("Agent is on it") covers a problem while the session is live, so it becomes `needs_you` only once
+  the session waits, idles or ends (E5). A live tile's red edge means a needs-you problem only; `failing_notice` keeps
+  its text without the edge (E11).
+- **Timeline.** Rows name the actor ("Main agent", "Subagent · <type>") and a plain verb ("Ran skill /feature",
+  "Started subagent Explore: …"); runs of Reads collapse, with a legend.
+- **Learnings.** `status` has no `snoozed` value: snooze stays a disabled P3 button. A learning adds `note_path`,
+  `state` (`proposed`, `accepted_pr_open`, `rejected_pr_open`, `in_brain`, `archived`), `summary`,
+  `note_unavailable`, `actions_unavailable`, `pr_url` and `branch`; `target` is deprecated. Accept and reject answer
+  201 `{state, pr_url, branch}`, not a Learning, and work in a temporary clone of the hub's `origin`, never a worktree
+  of the user's checkout (E8). There is no `/learnings/{id}/trace`.
+- **Brain.** `GET /projects/{project}/brain` and `GET /projects/{project}/brain/note?path=` replace the design's
+  `/brain/notes` (no backlinks); `brain/auto/` is never listed or served. Feature detail adds Spec, Research, Plan,
+  Eval and Criteria tabs over the same note route.
+- **Security.** Only the two learning POSTs need the server's own `Origin`, a same-origin fetch and a JSON body
+  (E9); the CSP is unchanged.
 
 ## Design system
 
