@@ -12,6 +12,7 @@ from collections.abc import Callable, Iterator
 from datetime import datetime
 from typing import Final, Protocol
 
+from agent_hub.core.brain.brain_note import BrainNote, BrainTree
 from agent_hub.core.doctor.finding import Finding
 from agent_hub.core.doctor.lock_rules import NOT_ADOPTED
 from agent_hub.core.events.event import EventSource
@@ -197,6 +198,14 @@ class HubFilesReadModels:
     def settings(self) -> SettingsView:
         """The running server's settings."""
         return self._settings
+
+    def brain_tree(self, project: str) -> BrainTree:
+        """The project's brain notes; the read lands with AGH-201's brain stream."""
+        raise NotImplementedError(f"brain_tree({project!r}) is not read yet")
+
+    def brain_note(self, project: str, path: str) -> BrainNote:
+        """One brain note; the read lands with AGH-201's brain stream."""
+        raise NotImplementedError(f"brain_note({project!r}, {path!r}) is not read yet")
 
     def _has_drift(self, hub_path: str, document: HubDocument) -> bool:
         del document
