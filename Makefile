@@ -8,7 +8,7 @@ RUN := uv run --locked --all-packages
 # never match, so their directory is a source of its own.
 COV := --cov=agent_hub.core --cov=agent_hub.storage --cov=agent_hub.collector \
        --cov=agent_hub.generator --cov=agent_hub.tracker_linear --cov=agent_hub.cli \
-       --cov=agent_hub.api \
+       --cov=agent_hub.hub_git --cov=agent_hub.api \
        --cov=packages/storage/src/agent_hub/storage/migrations --cov-branch --cov-report=
 ALEMBIC := $(RUN) python -m agent_hub.storage.migration
 # The web app (apps/web): Node from apps/web/.node-version, dependencies from its package-lock.json.
