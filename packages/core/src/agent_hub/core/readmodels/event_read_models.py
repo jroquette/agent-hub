@@ -68,6 +68,7 @@ from agent_hub.core.runs.fold_run import fold_run, run_id_of
 from agent_hub.core.runs.workflow_run import WorkflowRun
 from agent_hub.core.sessions.fold_session import SESSION_SOURCES, fold_session, run_issues
 from agent_hub.core.sessions.pricing import PRICES, PerMillion
+from agent_hub.core.sessions.problem import SessionProblems
 from agent_hub.core.sessions.session import (
     Session,
     SessionCost,
@@ -502,6 +503,10 @@ class FoldedEventReadModels:
         snapshot = self._snapshot()
         self._session(snapshot, session_id)
         return _whole(fold_session_files(snapshot.by_session[session_id]))
+
+    def session_problems(self, session_id: str) -> SessionProblems:
+        """The session's problems; the fold lands with AGH-201's problems stream."""
+        raise NotImplementedError(f"session_problems({session_id!r}) is not folded yet")
 
     def session_cost(self, session_id: str) -> SessionCost:
         """The session's estimated cost per turn and in total, with its run's total and budget."""

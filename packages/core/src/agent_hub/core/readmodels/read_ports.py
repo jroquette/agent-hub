@@ -9,6 +9,7 @@ the implementations and the routes are built and tested apart. A missing entity 
 from typing import Protocol
 
 from agent_hub.core.approvals.approval import Approval
+from agent_hub.core.brain.brain_note import BrainNote, BrainTree
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.events.event import EventType
 from agent_hub.core.features.feature_view import FeatureDetail, FeatureView
@@ -38,6 +39,7 @@ from agent_hub.core.readmodels.filters import (
 from agent_hub.core.readmodels.page import Page
 from agent_hub.core.readmodels.settings_view import SettingsView
 from agent_hub.core.runs.workflow_run import WorkflowRun
+from agent_hub.core.sessions.problem import SessionProblems
 from agent_hub.core.sessions.session import (
     Session,
     SessionCost,
@@ -83,6 +85,10 @@ class EventReadModels(Protocol):
 
     def session_cost(self, session_id: str) -> SessionCost:
         """The session's estimated cost per turn and in total."""
+        ...
+
+    def session_problems(self, session_id: str) -> SessionProblems:
+        """The session's problems with their resolutions and the "what went wrong" lines."""
         ...
 
     def list_live_sessions(self, scope: Scope) -> Page[LiveTile]:
@@ -179,4 +185,13 @@ class HubReadModels(Protocol):
 
     def settings(self) -> SettingsView:
         """The running server's settings."""
+        ...
+
+    def brain_tree(self, project: str) -> BrainTree:
+        """The ``.md`` notes of the project's hub brain."""
+        ...
+
+    def brain_note(self, project: str, path: str) -> BrainNote:
+        """One note of the project's hub brain; ``BrainPathError`` for a refused path,
+        ``BrainNoteNotFoundError`` or ``BrainNoteTooLargeError`` when it cannot be served."""
         ...

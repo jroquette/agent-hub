@@ -25,7 +25,7 @@ from agent_hub.core.hub_config.effective_identity import (
 from agent_hub.core.hub_config.local_config import LOCAL_FILE, LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
-from agent_hub.core.hubs.hub_registry import UnreadHubFile
+from agent_hub.core.hubs.hub_registry import BrainListing, UnreadHubFile
 from agent_hub.generator.doctor_snapshot import build_doctor_snapshot, read_lock
 from agent_hub.generator.feature_files import read_feature_folders
 from agent_hub.generator.hub_config_files import UnreadFile, read_file_bytes, read_local_json
@@ -124,6 +124,20 @@ class HubFileSystem:
     def feature_folders(self, hub_path: str) -> tuple[FeatureFolder, ...]:
         """The hub's feature folders."""
         return read_feature_folders(Path(hub_path))
+
+    def brain_tree(self, hub_path: str) -> BrainListing:
+        """The brain's notes; the bounded walk lands with AGH-201's brain files stream."""
+        raise NotImplementedError(f"brain_tree({hub_path!r}) is not read yet")
+
+    def read_brain_file(self, hub_path: str, path: str, *, max_bytes: int) -> bytes | UnreadHubFile:
+        """A brain note's bytes; the guarded read lands with AGH-201's brain files stream."""
+        raise NotImplementedError(
+            f"read_brain_file({hub_path!r}, {path!r}, {max_bytes}) is not read yet"
+        )
+
+    def brain_file_size(self, hub_path: str, path: str) -> int | None:
+        """A brain file's size; the guarded read lands with AGH-201's brain files stream."""
+        raise NotImplementedError(f"brain_file_size({hub_path!r}, {path!r}) is not read yet")
 
 
 def _unread_or_bytes(read: bytes | UnreadFile) -> bytes | UnreadHubFile:
