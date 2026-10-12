@@ -296,6 +296,10 @@ code.sd-object {
   flex-direction: column;
   gap: 3px;
 }
+.sd-problems-summary a {
+  /* A link inside a line of text is told apart by more than its colour (axe link-in-text-block). */
+  text-decoration: underline;
+}
 .sd-problems-list {
   margin: 0;
   padding: 0;
