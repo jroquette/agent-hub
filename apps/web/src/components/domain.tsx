@@ -26,7 +26,10 @@ export interface LiveSession {
   outcomeLabel?: string | undefined;
   reason?: string | undefined;
   reasonIcon?: IconName | undefined;
-  agent: string;
+  /** What the session is about: "TIP-1511 · /feature" (never the agent; see SessionLabel). */
+  title: string;
+  /** "repo · branch" or the short id, under the title. */
+  detail?: string | null | undefined;
   subagent?: boolean | undefined;
   project: string;
   repo: string | null;
@@ -46,9 +49,11 @@ export interface LiveSession {
   cost: number | null;
   budget?: number | null | undefined;
   projection?: string | undefined;
-  errors: number;
+  /** The owner-facing problems line: "2 problems, handled by the agent" or "Needs you: …". */
+  problems?: string | null | undefined;
+  /** A problem needs the owner: the only case that edges the tile in red (AC-201.14). */
+  needsYou?: boolean | undefined;
   denials?: number | undefined;
-  failingGate?: boolean | undefined;
   /** Events per 5 s over the last 60 s. */
   activity?: number[] | undefined;
 }
@@ -60,7 +65,6 @@ export interface SessionTileProps {
 }
 export function SessionTile({ s, onOpen, hoverEvents }: SessionTileProps) {
   const [hover, setHover] = useState(false);
-  const trouble = s.errors > 0 || Boolean(s.failingGate);
   const badgeStatus: Status = s.status === "ended" ? (s.outcome ?? "ended") : s.status;
   return (
     // Tiles open on click or Enter; the screen adds arrow-key grid navigation (spec 01).
@@ -68,7 +72,7 @@ export function SessionTile({ s, onOpen, hoverEvents }: SessionTileProps) {
     <article
       className="ah-tile"
       data-status={s.status}
-      data-trouble={trouble && s.status !== "waiting" ? "true" : undefined}
+      data-trouble={s.needsYou ? "true" : undefined}
       // Tiles are a keyboard grid (spec 01): Enter opens the focused tile.
       // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
       tabIndex={0}
@@ -82,7 +86,7 @@ export function SessionTile({ s, onOpen, hoverEvents }: SessionTileProps) {
       onMouseLeave={() => {
         setHover(false);
       }}
-      aria-label={`${s.agent} in ${s.repo ?? s.project}, ${s.status}`}
+      aria-label={`${s.title} in ${s.project}, ${s.status}`}
     >
       <div className="ah-tile-head">
         <StatusBadge
@@ -101,10 +105,15 @@ export function SessionTile({ s, onOpen, hoverEvents }: SessionTileProps) {
           size="sm"
           style={{ color: "var(--text-subtle)" }}
         />
-        <span className="ah-tile-agent" title={s.agent}>
-          {s.agent}
+        <span className="ah-tile-agent" title={s.title}>
+          {s.title}
         </span>
       </div>
+      {s.detail && (
+        <div className="ah-mono ah-small ah-subtle ah-tile-detail" title={s.detail}>
+          {s.detail}
+        </div>
+      )}
       <div className="ah-tile-proj">
         {s.project} › {s.repo ?? "—"}
         {s.step ? ` · run step ${s.step}` : ""}
@@ -126,6 +135,22 @@ export function SessionTile({ s, onOpen, hoverEvents }: SessionTileProps) {
           {s.lastAgo}
         </span>
       </div>
+      {s.problems && (
+        <div
+          className="ah-row ah-small"
+          style={{ gap: 4, minWidth: 0, color: s.needsYou ? "var(--failed)" : "var(--text-muted)" }}
+          title={s.problems}
+        >
+          <Icon
+            name={s.needsYou ? "circle-x" : "circle-check"}
+            size="sm"
+            style={{ flex: "none" }}
+          />
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {s.problems}
+          </span>
+        </div>
+      )}
       <div className="ah-tile-stats">
         <span>
           Elapsed<b>{fmtDuration(s.elapsed)}</b>
@@ -163,12 +188,6 @@ export function SessionTile({ s, onOpen, hoverEvents }: SessionTileProps) {
         />
         <span className="ah-subtle ah-small">events · 60 s</span>
         <span className="ah-grow" />
-        {s.errors > 0 && (
-          <span className="ah-row ah-small" style={{ gap: 4, color: "var(--failed)" }}>
-            <Icon name="circle-x" size="sm" />
-            {s.errors} {s.errors === 1 ? "error" : "errors"}
-          </span>
-        )}
         {s.denials !== undefined && s.denials > 0 && (
           <span
             className="ah-row ah-small"

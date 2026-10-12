@@ -7,5 +7,6 @@ export * from "./domain";
 export * from "./feedback";
 export * from "./Icon";
 export * from "./Markdown";
+export * from "./SessionLabel";
 export * from "./status";
 export * from "./trace";

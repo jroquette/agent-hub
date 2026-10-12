@@ -80,7 +80,7 @@ describe("SessionDetailScreen", () => {
   it("renders the header, summary and merged rows of an ended session", async () => {
     renderDetail(routes());
 
-    expect(await screen.findByRole("heading", { name: "claude" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "AGH-48 · /feature" })).toBeInTheDocument();
     expect(screen.getByText("Done")).toBeInTheDocument();
     expect(await screen.findByText("Ran make check-fast: passed")).toBeInTheDocument();
     expect(await screen.findByText("make check-fast")).toBeInTheDocument();
