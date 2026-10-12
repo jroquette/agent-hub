@@ -14,6 +14,7 @@ its fact key), resolved in canonical order (timestamp, then ``(source, source_id
 ``where`` is derived on read from the paired ``tool.call`` (L1), never stored.
 """
 
+import bisect
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final
@@ -44,6 +45,8 @@ _GATE_PASSED: Final = frozenset({"passed", "approved"})
 _HANDLED: Final = frozenset({Resolution.RECOVERED, Resolution.AGENT_CONTINUED})
 
 type ActorKey = tuple[str, str | None]
+# A later event a problem may be resolved by: its position among the winners, its actor's id.
+type _Later = tuple[int, str | None, StoredEvent]
 
 
 def _text(value: object) -> str | None:
@@ -120,9 +123,18 @@ class _Found:
 class _Session:
     """One session's events, as the problems fold reads them."""
 
-    def __init__(self, events: Iterable[StoredEvent], status: SessionStatus) -> None:
+    def __init__(
+        self,
+        events: Iterable[StoredEvent],
+        status: SessionStatus,
+        *,
+        winners: Sequence[StoredEvent] | None = None,
+        actors: Sequence[Actor] | None = None,
+    ) -> None:
         self.ordered = canonical_events(events)
-        self.winners: Sequence[StoredEvent] = resolve_facts(self.ordered).winners
+        self.winners: Sequence[StoredEvent] = (
+            resolve_facts(self.ordered).winners if winners is None else winners
+        )
         self.status = status
         self.calls = {
             use: stored
@@ -136,8 +148,28 @@ class _Session:
             if approval.kind == ApprovalKind.GUARD_ASK
         }
         self.actors = {
-            (actor.type or "main", actor.agent_id): actor for actor in fold_actors(self.ordered)
+            (actor.type or "main", actor.agent_id): actor
+            for actor in (fold_actors(self.ordered) if actors is None else actors)
         }
+        # What may resolve a problem, indexed once so each problem looks only at its own
+        # candidates (a session with many failures stays linear, not quadratic).
+        self.ok_results: dict[tuple[str, str | None, str | None], list[_Later]] = {}
+        self.tool_calls: dict[str, list[_Later]] = {}
+        self.gate_passes: dict[tuple[object, ...], list[_Later]] = {}
+        for position, stored in enumerate(self.winners):
+            self._index(position, stored)
+
+    def _index(self, position: int, stored: StoredEvent) -> None:
+        event = stored.event
+        kind, agent_id = actor_key(stored)
+        if event.type == EventType.TOOL_RESULT and event.payload.get("status") == "ok":
+            key = (kind, self.tool(stored), self.where(stored))
+            self.ok_results.setdefault(key, []).append((position, agent_id, stored))
+        elif event.type == EventType.TOOL_CALL:
+            self.tool_calls.setdefault(kind, []).append((position, agent_id, stored))
+        elif event.type == EventType.GATE_RESULT and event.payload.get("result") in _GATE_PASSED:
+            gate = _gate_key(event.payload)
+            self.gate_passes.setdefault(gate, []).append((position, agent_id, stored))
 
     def call_of(self, stored: StoredEvent) -> StoredEvent | None:
         use = _text(stored.event.payload.get("tool_use_id")) or _text(
@@ -211,44 +243,31 @@ def _gate_key(payload: Mapping[str, JsonValue]) -> tuple[object, ...]:
     return tuple(payload.get(key) for key in ("kind", "name", "command", "path"))
 
 
-def _recovery(session: _Session, found: _Found) -> StoredEvent | None:
-    later = session.winners[found.position + 1 :]
-    if found.kind == ProblemKind.GATE_FAILED:
-        wanted = _gate_key(found.stored.event.payload)
-        return next(
-            (
-                stored
-                for stored in later
-                if stored.event.type == EventType.GATE_RESULT
-                and stored.event.payload.get("result") in _GATE_PASSED
-                and _gate_key(stored.event.payload) == wanted
-            ),
-            None,
-        )
+def _first_after(
+    candidates: Sequence[_Later], found: _Found, *, any_actor: bool = False
+) -> StoredEvent | None:
+    """The first of ``candidates`` (in position order) after ``found``, of its actor."""
+    start = bisect.bisect_right(candidates, found.position, key=lambda later: later[0])
     return next(
         (
             stored
-            for stored in later
-            if stored.event.type == EventType.TOOL_RESULT
-            and stored.event.payload.get("status") == "ok"
-            and _same_actor(actor_key(stored), found.actor)
-            and session.tool(stored) == found.tool
-            and session.where(stored) == found.where
+            for _, agent_id, stored in candidates[start:]
+            if any_actor or _same_actor((found.actor[0], agent_id), found.actor)
         ),
         None,
     )
+
+
+def _recovery(session: _Session, found: _Found) -> StoredEvent | None:
+    if found.kind == ProblemKind.GATE_FAILED:
+        passes = session.gate_passes.get(_gate_key(found.stored.event.payload), [])
+        return _first_after(passes, found, any_actor=True)
+    oks = session.ok_results.get((found.actor[0], found.tool, found.where), [])
+    return _first_after(oks, found)
 
 
 def _continuation(session: _Session, found: _Found) -> StoredEvent | None:
-    return next(
-        (
-            stored
-            for stored in session.winners[found.position + 1 :]
-            if stored.event.type == EventType.TOOL_CALL
-            and _same_actor(actor_key(stored), found.actor)
-        ),
-        None,
-    )
+    return _first_after(session.tool_calls.get(found.actor[0], []), found)
 
 
 def _resolve(session: _Session, found: _Found) -> tuple[Resolution, str | None]:
@@ -345,9 +364,19 @@ def summary_lines(problems: Sequence[Problem]) -> tuple[SummaryLine, ...]:
     return (counts, *(_line(problem) for problem in ranked[: MAX_SUMMARY_LINES - 1]))
 
 
-def fold_problems(events: Iterable[StoredEvent], *, status: SessionStatus) -> SessionProblems:
-    """The problems of one session (its events, any order) whose status is ``status``."""
-    session = _Session(events, status)
+def fold_problems(
+    events: Iterable[StoredEvent],
+    *,
+    status: SessionStatus,
+    winners: Sequence[StoredEvent] | None = None,
+    actors: Sequence[Actor] | None = None,
+) -> SessionProblems:
+    """The problems of one session (its events, any order) whose status is ``status``.
+
+    A caller that already resolved the events' facts (``winners``) or folded their ``actors``
+    passes them, so they are not computed twice.
+    """
+    session = _Session(events, status, winners=winners, actors=actors)
     found = [
         problem
         for position, stored in enumerate(session.winners)
