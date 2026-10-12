@@ -1,4 +1,5 @@
 import json
+import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -16,6 +17,12 @@ def _collect(
     args: Sequence[str], *, stdin: str | None = None, env: Mapping[str, str | None] | None = None
 ) -> Result:
     return CliRunner().invoke(app, ["collect", *args], input=stdin, env=env)
+
+
+def _plain(output: str) -> str:
+    # Rich colours and boxes usage errors when CI forces a terminal; keep only the words.
+    without_ansi = re.sub(r"\x1b\[[0-9;]*m", "", output)
+    return " ".join(re.sub(r"[\u2500-\u257f]", " ", without_ansi).split())
 
 
 def _write_jsonl(path: Path, events: Sequence[Event]) -> Path:
@@ -357,7 +364,7 @@ def test_exits_with_usage_line_when_input_options_combined_usage(
 
     assert result.exit_code == 2
     assert "Usage: " in result.output
-    assert "use only one of FILE, --transcript and --runs" in result.output
+    assert "use only one of FILE, --transcript and --runs" in _plain(result.output)
     assert not db_path.exists()
 
 
