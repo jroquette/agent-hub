@@ -14,6 +14,16 @@ def test_serves_index_when_spa_route_requested(client: Any, path: str) -> None:
     assert response.headers["content-type"].startswith("text/html")
 
 
+@pytest.mark.parametrize(
+    "path", ["/projects/demo/brain/index.md", "/projects/demo/brain/features/export/spec.md"]
+)
+def test_serves_index_when_brain_note_route_names_a_markdown_file(client: Any, path: str) -> None:
+    response = client.get(path)
+
+    assert response.status_code == 200
+    assert response.text == "<!doctype html><title>agent-hub</title>"
+
+
 def test_serves_asset_when_file_exists(client: Any) -> None:
     response = client.get("/assets/app.js")
 
