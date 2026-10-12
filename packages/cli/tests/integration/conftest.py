@@ -78,11 +78,15 @@ GIT_VARIABLE_PREFIX = "GIT_"
 def no_git_location(monkeypatch: pytest.MonkeyPatch) -> None:
     """Run every test as if git found the repo from the folder: every ``GIT_*`` variable unset.
 
-    ``AGENT_HUB_ROOT`` is unset too, so a command takes the hub from the folder it runs in.
+    ``AGENT_HUB_ROOT`` is unset too, so a command takes the hub from the folder it runs in, and
+    ``CLAUDECODE``, so no run acts as if inside a Claude Code session.
     """
     for variable in [name for name in os.environ if name.startswith(GIT_VARIABLE_PREFIX)]:
         monkeypatch.delenv(variable)
     monkeypatch.delenv(HUB_ROOT_VARIABLE, raising=False)
+    # Set when the suite runs from a Claude Code session; hub doctor would probe the remotes then
+    # (AGH-134). A test that wants a session sets it.
+    monkeypatch.delenv("CLAUDECODE", raising=False)
 
 
 class FakeGit(NamedTuple):

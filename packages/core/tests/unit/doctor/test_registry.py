@@ -27,6 +27,7 @@ RELEASED_IDS = (
     "repos.agents",
     "config.stop_gate",
     "brain.memory",
+    "sandbox.workflow",
 )
 
 # The "Default" column of docs/design/hub-doctor.md § Rules.
@@ -54,6 +55,7 @@ DESIGN_SEVERITIES = {
     "repos.agents": Severity.WARNING,
     "config.stop_gate": Severity.WARNING,
     "brain.memory": Severity.WARNING,
+    "sandbox.workflow": Severity.ERROR,
 }
 
 
