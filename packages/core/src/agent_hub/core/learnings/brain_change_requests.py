@@ -70,7 +70,7 @@ class ChangeRequestError(AgentHubError):
 
 class ChangeRequestConflictError(ChangeRequestError):
     """The change cannot be made as asked (note absent from the default branch, destination
-    taken, branch exists); ``reason`` names it. Nothing was pushed."""
+    taken, hub unusable); ``reason`` names it. Nothing was pushed."""
 
     def __init__(self, reason: str) -> None:
         self.reason = reason
@@ -102,7 +102,11 @@ class RefspecRefusedError(ChangeRequestError):
 
 
 class BrainChangeRequests(Protocol):
-    """Opens hub pull requests for learning decisions."""
+    """Opens hub pull requests for learning decisions.
+
+    A retry may find the change's branch already on ``origin`` (an earlier action stopped after
+    the push or the pull request): its open pull request is adopted and returned; with none open
+    the branch is replaced."""
 
     def availability(self, hub_path: str) -> str | None:
         """Why actions are unavailable for this hub ("Hub is read-only here", "Hub remote is

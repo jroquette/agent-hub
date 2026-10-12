@@ -131,7 +131,8 @@ def _refused(action: Callable[[], ChangeRequestResult], origin: BrainOrigin) -> 
 
 
 class BrainChangeRequestsContract:
-    """Accept and reject open one PR from one new branch and never touch the default branch."""
+    """Accept and reject open one PR from one new branch and never touch the default branch; a
+    retry adopts the open PR of a branch already pushed."""
 
     def test_reports_available_when_hub_ready(
         self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
@@ -232,14 +233,19 @@ class BrainChangeRequestsContract:
 
         _refused(lambda: brain_change_requests.accept(change), brain_origin)
 
-    def test_refuses_branch_when_it_exists(
+    def test_adopts_open_pull_request_when_branch_exists(
         self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
     ) -> None:
         brain_origin.put_on_default(_in_brain(NOTE), NOTE_TEXT)
         change = _change(brain_origin)
-        brain_change_requests.accept(change)
+        first = brain_change_requests.accept(change)
+        head = brain_origin.head_commit(change.branch)
 
-        _refused(lambda: brain_change_requests.accept(change), brain_origin)
+        again = brain_change_requests.accept(change)
+
+        _check(again == first, "a retry returns the pull request already open for the branch")
+        _check(len(brain_origin.pull_requests()) == 1, "a retry opens no second pull request")
+        _check(brain_origin.head_commit(change.branch) == head, "the branch is kept as it was")
 
     def test_refuses_destination_when_under_decisions(
         self, brain_change_requests: BrainChangeRequests, brain_origin: BrainOrigin
