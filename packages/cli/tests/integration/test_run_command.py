@@ -566,6 +566,24 @@ def set_team(hub: Any, team: str) -> None:
     (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
 
 
+BLOCKED_LABEL = "agent-blocked"
+
+
+def use_blocked_label(hub: Any, run_tracker: Any, *, carried: bool) -> None:
+    """``tracker.blocked_label`` set to ``agent-blocked`` in ``hub.json``, the label known to the
+    tracker's workspace, and carried by DEM-1 when ``carried``."""
+    document = json.loads((hub / "hub.json").read_text())
+    document["tracker"]["blocked_label"] = BLOCKED_LABEL
+    (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+    backend = run_tracker.backend
+    backend.workspace_labels = (*backend.workspace_labels, BLOCKED_LABEL)
+    if carried:
+        issue = backend.issues["DEM-1"]
+        backend.issues["DEM-1"] = issue.model_copy(
+            update={"labels": (*issue.labels, BLOCKED_LABEL)}
+        )
+
+
 def claude_line(result: Result) -> str:
     (line,) = [line for line in dry_lines(result) if line.startswith("would run: claude ")]
     return line
@@ -993,6 +1011,32 @@ class TestLiveSuccess:
             "remove_label",
             "comment",
         ]
+
+    def test_removes_blocked_label_when_delivered(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        use_blocked_label(workspace.hub, run_tracker, carried=True)
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        assert [call[:3] for call in run_tracker.calls] == [
+            ("get_issue", "DEM-1"),
+            ("move_state", "DEM-1", "In Review"),
+            ("remove_label", "DEM-1", "agent-failed"),
+            ("remove_label", "DEM-1", BLOCKED_LABEL),
+            ("comment", "DEM-1", run_tracker.backend.comments[0][1]),
+        ]
+        labels = run_tracker.backend.issues["DEM-1"].labels
+        assert BLOCKED_LABEL not in labels
+        assert "agent-failed" not in labels
 
     def test_reads_commits_and_opens_pr_on_repo_branch_when_live(
         self,

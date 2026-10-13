@@ -219,6 +219,7 @@ def _print_dry_run(
         issue,
         review_state=tracker.states.review,
         failed_label=tracker.failed_label,
+        blocked_label=tracker.effective_blocked_label,
         comment=comment,
     ):
         typer.echo(f"would call: {shown_text(call_line(write))}")
