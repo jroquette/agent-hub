@@ -26,6 +26,7 @@ from agent_hub.api.routes import (
     runs,
     sessions,
     settings,
+    skills,
     streams,
 )
 from agent_hub.api.settings import ApiSettings
@@ -38,6 +39,7 @@ ROUTERS = (
     hooks,
     hubs,
     projects,
+    skills,
     overview,
     sessions,
     live,
