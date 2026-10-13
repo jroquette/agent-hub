@@ -7,9 +7,9 @@ import {
   AsOfStamp,
   Banner,
   Button,
-  DataTable,
   DerivedLabel,
   EmptyState,
+  GoldenPathStepper,
   Icon,
   IconButton,
   IssueLink,
@@ -26,21 +26,18 @@ import {
 import { brainRoute } from "../../lib/brainLinks";
 import { fmtClock, middleTruncate } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
+import { linearHref } from "../../lib/safeHref";
 import { useCollectorState } from "../../shell/GlobalStream";
-import {
-  AcBar,
-  FilterMenu,
-  PHASES,
-  VERDICT_STATUS,
-  stepStates,
-  type StepState,
-} from "../features/parts";
+import { AcBar, FilterMenu, PHASES, VERDICT_STATUS } from "../features/parts";
 import { NoteView } from "../brain/NoteView";
 import { NotFoundBody } from "../not-found";
-import { useFeature } from "./queries";
+import { EvalTab } from "./EvalTab";
+import { TicketsTab } from "./TicketsTab";
+import { useFeature, useFeatureTickets } from "./queries";
 
 type Detail = components["schemas"]["FeatureDetail"];
 type AcRow = components["schemas"]["AcRow"];
+type TicketRow = components["schemas"]["TicketRow"];
 
 type Pass = "yes" | "owner" | "none";
 const PASS: Record<Pass, { icon: IconName; tone: string; label: string; title: string }> = {
@@ -52,7 +49,7 @@ const passOf = (ac: AcRow): Pass => (ac.passes ? "yes" : ac.manual ? "owner" : "
 
 type RecordName = components["schemas"]["FeatureRecordName"];
 
-/** The record tabs, in golden-path order, each read from `brain/features/<slug>/<name>.md` (D3). */
+/** The record tabs read from `brain/features/<slug>/<name>.md` (D3), in golden-path order. */
 const RECORDS: Readonly<
   Partial<Record<string, { name: RecordName; label: string; missing: string }>>
 > = {
@@ -63,12 +60,14 @@ const RECORDS: Readonly<
     missing: "Allowed for size spike. Research is written by /research in the hub.",
   },
   plan: { name: "plan", label: "Plan", missing: "Plans are written by /create-plan in the hub." },
-  eval: {
-    name: "eval",
-    label: "Eval",
-    missing: "The evaluator agent writes eval.md at the end of the golden path.",
-  },
 };
+
+/** The tab of `?doc=`: a record, `eval`, `tickets` or Criteria (`acs`, the default). */
+function tabOf(doc: string | null): string {
+  if (doc === "issues") return "tickets"; // the old Issues tab's deep links (AC-136.28)
+  if (doc === "eval" || doc === "tickets" || (doc !== null && RECORDS[doc])) return doc;
+  return "acs";
+}
 
 /** An AC description as a sentence, so the callout's next sentence reads on. */
 function ownerLine(text: string | undefined): string {
@@ -79,49 +78,6 @@ function ownerLine(text: string | undefined): string {
 /** Rows shown before "Show all": the first seven and the last two (spec 17). */
 const HEAD_ROWS = 7;
 const TAIL_ROWS = 2;
-
-const STEP_META: Record<string, (d: Detail, state: StepState) => string> = {
-  spec: (_, s) => (s === "skipped" ? "skipped · no spec.md" : "spec.md"),
-  research: (_, s) => (s === "skipped" ? "skipped · no research.md" : "research.md"),
-  plan: (_, s) => (s === "skipped" ? "skipped · no plan.md" : "plan.md"),
-  tickets: (d, s) =>
-    s === "skipped" ? "skipped · no issues.md" : `${String(d.issues.length)} issues`,
-  implement: (d) => (d.acs ? `${String(d.acs.passing)} ACs passing` : "no features.json"),
-  review: () => "needs runs; not tracked in this version",
-  evaluate: (d) => d.verdict ?? "no eval.md",
-  shipped: () => "GitHub not connected",
-};
-
-function Stepper({ detail }: { detail: Detail }) {
-  const states = stepStates(detail);
-  return (
-    <ol
-      className="ah-golden"
-      style={{ listStyle: "none", margin: 0, padding: 0 }}
-      aria-label="Golden path"
-    >
-      {PHASES.map((p, i) => {
-        const state = states[i] ?? "pending";
-        const dashed = state === "skipped" || state === "unknown";
-        return (
-          <li key={p.id} className="ah-golden-step" data-state={state}>
-            {/* Only the dot fades: faded meta text would fail the contrast check (axe). */}
-            <span
-              className="ah-golden-dot"
-              style={dashed ? { borderStyle: "dashed", opacity: 0.7 } : undefined}
-            >
-              {state === "done" && <Icon name="check" />}
-            </span>
-            <span className="ah-golden-name">{p.label}</span>
-            <span className="ah-golden-meta" style={{ fontSize: 11 }}>
-              {STEP_META[p.id]?.(detail, state)}
-            </span>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
 
 function Cmd({ code }: { code: string }) {
   const [copied, markCopied] = useCopied();
@@ -475,36 +431,12 @@ function AcTab({ detail }: { detail: Detail }) {
   );
 }
 
-function Verdict({ detail }: { detail: Detail }) {
-  if (!detail.verdict) return null;
-  return (
-    <div className="ah-stack" style={{ gap: 8 }}>
-      <StatusBadge status={VERDICT_STATUS[detail.verdict]} label={detail.verdict} />
-      {detail.verdict_line && (
-        <blockquote
-          className="ah-mono ah-small"
-          style={{
-            margin: 0,
-            background: "var(--surface-sunken)",
-            borderLeft: "2px solid var(--border-strong)",
-            padding: "6px 12px",
-            borderRadius: "var(--radius-sm)",
-          }}
-        >
-          {detail.verdict_line}
-        </blockquote>
-      )}
-    </div>
-  );
-}
-
-/** A record tab (Spec, Research, Plan, Eval): the note itself, read through the brain route (D3). */
+/** A record tab (Spec, Research, Plan): the note itself, read through the brain route (D3). */
 function RecordTab({ detail, tab }: { detail: Detail; tab: string }) {
   const meta = RECORDS[tab];
   if (!meta) return null;
   const file = `${meta.name}.md`;
   const record = detail.records.find((r) => r.name === meta.name);
-  const verdict = meta.name === "eval" ? <Verdict detail={detail} /> : null;
   if (!record?.present) {
     return (
       <div className="ah-card">
@@ -524,7 +456,6 @@ function RecordTab({ detail, tab }: { detail: Detail; tab: string }) {
           Open in Brain
         </Link>
       </div>
-      {verdict}
       <NoteView
         key={record.path}
         project={detail.project}
@@ -535,27 +466,32 @@ function RecordTab({ detail, tab }: { detail: Detail; tab: string }) {
   );
 }
 
-function IssuesTab({ detail }: { detail: Detail }) {
+/**
+ * The feature's tickets as header chips: each id links to Linear and carries its title once the
+ * tickets route answered (its cached answer); until then the ids alone.
+ */
+function TicketChips({ ids, rows }: { ids: readonly string[]; rows: readonly TicketRow[] }) {
+  if (ids.length === 0) return null;
   return (
-    <DataTable
-      caption="Issues"
-      rowKey={(key) => key}
-      rows={detail.issues}
-      empty={<EmptyState icon="list-todo" title="No issues listed for this feature." />}
-      columns={[
-        { id: "issue", label: "Issue", render: (key) => <IssueLink id={key} /> },
-        {
-          id: "title",
-          label: "Title",
-          render: () => (
-            <Tooltip label="Linear is not connected in this version.">
-              <span className="ah-subtle">—</span>
-            </Tooltip>
-          ),
-        },
-      ]}
-      footer="From spec.md and features.json · Linear and GitHub are not connected in this version"
-    />
+    <span
+      className="ah-row ah-wrap"
+      style={{ gap: 12 }}
+      role="group"
+      aria-label="Tickets of this feature"
+    >
+      {ids.map((id) => {
+        const row = rows.find((r) => r.id === id || r.ref === id);
+        return (
+          <IssueLink
+            key={id}
+            id={id}
+            title={row?.title}
+            href={linearHref(row?.url)}
+            showTitle={Boolean(row?.title)}
+          />
+        );
+      })}
+    </span>
   );
 }
 
@@ -586,7 +522,8 @@ export function FeatureDetailScreen() {
   const [params, setParams] = useSearchParams();
   const { state, asOf } = useCollectorState();
   const { tz } = usePreferences();
-  const tab = params.get("doc") ?? "acs";
+  const tab = tabOf(params.get("doc"));
+  const tickets = useFeatureTickets(project, slug, tab === "tickets" && feature.isSuccess);
 
   if (feature.isError) {
     if (feature.error.status === 404) {
@@ -623,11 +560,25 @@ export function FeatureDetailScreen() {
   };
   const tabs = [
     ...Object.entries(RECORDS).map(([id, meta]) => ({ id, label: meta?.label ?? id })),
+    { id: "eval", label: "Eval" },
     { id: "acs", label: "Criteria", count: detail.acs?.total },
-    { id: "issues", label: "Issues", count: detail.issues.length },
+    {
+      id: "tickets",
+      label: "Tickets",
+      count: tickets.data?.tickets.length ?? detail.issues.length,
+    },
   ];
   let body: ReactNode;
-  if (tab === "issues") body = <IssuesTab detail={detail} />;
+  if (tab === "tickets") {
+    body = (
+      <TicketsTab
+        data={tickets.data}
+        error={tickets.isError ? tickets.error : null}
+        onRefresh={() => void tickets.refetch()}
+        refreshing={tickets.isFetching}
+      />
+    );
+  } else if (tab === "eval") body = <EvalTab project={detail.project} evals={detail.evals} />;
   else if (RECORDS[tab]) body = <RecordTab detail={detail} tab={tab} />;
   else body = <AcTab detail={detail} />;
 
@@ -654,13 +605,7 @@ export function FeatureDetailScreen() {
           {state === "offline" && <AsOfStamp stale time={fmtClock(asOf, tz)} />}
         </div>
         <div className="ah-row ah-wrap ah-small" style={{ gap: 14 }}>
-          {detail.issues.length > 0 && (
-            <span className="ah-row" style={{ gap: 8 }}>
-              {detail.issues.map((key) => (
-                <IssueLink key={key} id={key} />
-              ))}
-            </span>
-          )}
+          <TicketChips ids={detail.issues} rows={tickets.data?.tickets ?? []} />
           <Tooltip label="GitHub is not connected in this version.">
             <span className="ah-row ah-subtle" style={{ gap: 4 }}>
               <Icon name="git-pull-request" size="sm" />
@@ -678,11 +623,11 @@ export function FeatureDetailScreen() {
       <div className="ah-card" style={{ padding: "16px 20px 14px" }}>
         <div className="ah-row" style={{ marginBottom: 10 }}>
           <b className="ah-small">Golden path</b>
-          <DerivedLabel how="Each step is derived from the record's files; review needs runs and shipped needs GitHub, not connected in this version.">
-            Phase · derived from the record files
+          <DerivedLabel how="Each step is derived from the record files, the tickets' status in Linear when it was read, and the review and eval records; Shipped needs GitHub, not connected in this version.">
+            Phase · derived from the record and the tickets
           </DerivedLabel>
         </div>
-        <Stepper detail={detail} />
+        <GoldenPathStepper steps={detail.golden_path.steps} />
       </div>
       {owners.length > 0 && (
         <Banner tone="warning" boxed icon="hand">
@@ -694,12 +639,7 @@ export function FeatureDetailScreen() {
           owner step).
         </Banner>
       )}
-      <Tabs
-        tabs={tabs}
-        value={RECORDS[tab] || tab === "issues" ? tab : "acs"}
-        onChange={setTab}
-        label="Feature record"
-      />
+      <Tabs tabs={tabs} value={tab} onChange={setTab} label="Feature record" />
       <div style={{ paddingTop: 4 }}>{body}</div>
     </div>
   );

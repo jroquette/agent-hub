@@ -8,13 +8,19 @@ import {
   aBrainNote,
   aFeatureDetail,
   aFeatureRecord,
+  aFeatureTickets,
+  aGoldenPath,
+  aGoldenStep,
   aProblem,
+  aTicketRow,
+  anEvalRecord,
   renderWithApi,
   type ApiRoutes,
 } from "../../testing/builders";
 import { FeatureDetailScreen } from "./index";
 
 const API = "/api/v1/features/agent-hub/layered-memory";
+const TICKETS = `${API}/tickets`;
 const NOTE = "/api/v1/projects/agent-hub/brain/note";
 
 /** Answers each record with a note naming its path and linking the brain index. */
@@ -54,6 +60,44 @@ const detail = aFeatureDetail({
   verdict: "SHIP-WITH-OWNER-STEPS",
   verdict_line: "Verdict: **SHIP-WITH-OWNER-STEPS**",
   issues: ["AGH-48", "AGH-49"],
+  golden_path: aGoldenPath({
+    phase: "evaluate",
+    steps: [
+      aGoldenStep({ name: "spec", state: "done", meta: null, progress: null }),
+      aGoldenStep({ name: "research", state: "skipped", meta: null, progress: null }),
+      aGoldenStep({ name: "plan", state: "done", meta: null, progress: null }),
+      aGoldenStep({ name: "tickets", state: "done", meta: "2 of 2 created", progress: null }),
+      aGoldenStep({ name: "implement", state: "done", meta: "2/2 tickets", progress: null }),
+      aGoldenStep({
+        name: "review",
+        state: "unknown",
+        meta: null,
+        reason: "Linear not connected",
+        progress: null,
+      }),
+      aGoldenStep({
+        name: "evaluate",
+        state: "partial",
+        meta: "partial: covers 3 of 13 ACs",
+        reason: "Review is not done",
+        progress: { done: 3, total: 13 },
+      }),
+      aGoldenStep({ name: "shipped", state: "done", meta: null, reason: null, progress: null }),
+    ],
+  }),
+  evals: [
+    anEvalRecord({
+      delivery: "agh-48",
+      path: "features/layered-memory/evals/agh-48.md",
+      tickets: ["AGH-48"],
+    }),
+    anEvalRecord({
+      delivery: "agh-49",
+      path: "features/layered-memory/evals/agh-49.md",
+      verdict: "NO-SHIP",
+      tickets: ["AGH-49"],
+    }),
+  ],
   acs: { owner_steps: 1, passing: 10, total: 13 },
   ac_rows: rows,
   records: (["spec", "research", "plan", "eval", "issues"] as const).map((name) =>
@@ -92,7 +136,7 @@ describe("FeatureDetailScreen", () => {
     expect(screen.getByText("11/13").parentElement).toHaveTextContent("11/13 · 1 owner step");
   });
 
-  it("derives the golden path from the record files", async () => {
+  it("draws the server's golden path with partial, blocked and unknown as text (golden)", async () => {
     open();
 
     const path = await screen.findByRole("list", { name: "Golden path" });
@@ -104,10 +148,15 @@ describe("FeatureDetailScreen", () => {
       "done",
       "done",
       "unknown",
-      "done",
-      "unknown",
+      "partial",
+      "blocked",
     ]);
-    expect(steps[7]).toHaveTextContent("GitHub not connected");
+    expect(steps[5]).toHaveTextContent("Unknown");
+    expect(steps[5]).toHaveTextContent("Linear not connected");
+    expect(steps[6]).toHaveTextContent("Partial");
+    expect(steps[6]).toHaveTextContent("partial: covers 3 of 13 ACs");
+    expect(steps[7]).toHaveTextContent("Blocked");
+    expect(steps[7]).toHaveTextContent("Review is not done");
   });
 
   it("calls out the owner steps left", async () => {
@@ -188,7 +237,7 @@ describe("FeatureDetailScreen", () => {
         "Plan",
         "Eval",
         "Criteria13",
-        "Issues2",
+        "Tickets2",
       ]);
       expect(tabs.getByRole("tab", { name: /Criteria/ })).toHaveAttribute("aria-selected", "true");
     });
@@ -247,18 +296,21 @@ describe("FeatureDetailScreen", () => {
       expect(router.state.location.pathname).toBe("/projects/agent-hub/brain/index.md");
     });
 
-    it("shows the verdict above the eval record on the Eval tab (records)", async () => {
+    it("lists every delivery's eval on the Eval tab (golden)", async () => {
       open();
 
       await userEvent.click(await screen.findByRole("tab", { name: "Eval" }));
 
-      expect(screen.getByText("Verdict: **SHIP-WITH-OWNER-STEPS**")).toBeInTheDocument();
+      const table = screen.getByRole("table", { name: "Evals" });
+      expect(table).toHaveTextContent("agh-48");
+      expect(table).toHaveTextContent("agh-49");
+      expect(table).toHaveTextContent("NO-SHIP");
       expect(
-        await screen.findByRole("heading", {
-          level: 1,
-          name: "Record features/layered-memory/eval.md",
-        }),
-      ).toBeInTheDocument();
+        within(table).getByRole("link", { name: "agh-49.md, the eval of agh-49" }),
+      ).toHaveAttribute(
+        "href",
+        "/projects/agent-hub/brain/features/layered-memory/evals/agh-49.md",
+      );
     });
 
     it("expands an AC into its verification command and evidence (records)", async () => {
@@ -322,11 +374,187 @@ describe("FeatureDetailScreen", () => {
     });
   });
 
-  it("lists the issues on the Issues tab", async () => {
-    open();
+  describe("tickets", () => {
+    const tickets = aFeatureTickets({
+      slug: "layered-memory",
+      tickets: [
+        aTicketRow({
+          ref: "AGH-48",
+          id: "AGH-48",
+          key: "T1",
+          title: "Load the memory layers",
+          url: "https://linear.app/demo/issue/AGH-48",
+          blocked_by: [],
+          blocks: ["AGH-49"],
+          readiness: "can_start",
+        }),
+        aTicketRow({
+          ref: "AGH-49",
+          id: "AGH-49",
+          key: "T2",
+          title: "Show the layers",
+          url: "https://evil.example/AGH-49",
+          blocked_by: [{ ref: "AGH-48", source: "plan" }],
+          blocks: [],
+          readiness: "waiting",
+          waiting_on: ["AGH-48"],
+        }),
+      ],
+      planning: {
+        layers: [["AGH-48"], ["AGH-49"]],
+        can_start: ["AGH-48"],
+        order: ["AGH-48", "AGH-49"],
+        waiting: ["AGH-49"],
+        cycles: [],
+        external_blockers: [],
+        critical_path: ["AGH-48", "AGH-49"],
+        warnings: [],
+      },
+    });
+    const asked = (requests: Request[], path: string) =>
+      requests.filter((r) => new URL(r.url).pathname === path).length;
 
-    await userEvent.click(await screen.findByRole("tab", { name: /Issues/ }));
-    expect(screen.getByRole("table", { name: "Issues" })).toHaveTextContent("AGH-48");
+    it("does not ask the tickets route before the Tickets tab opens (tickets)", async () => {
+      const { requests } = open({ [TICKETS]: tickets });
+
+      await screen.findByRole("table", { name: "Acceptance criteria" });
+
+      expect(asked(requests, TICKETS)).toBe(0);
+    });
+
+    it("shows the tickets and the planning view on the Tickets tab (tickets)", async () => {
+      const { requests, router } = open({ [TICKETS]: tickets });
+
+      await userEvent.click(await screen.findByRole("tab", { name: /Tickets/ }));
+
+      const table = await screen.findByRole("table", { name: "Tickets" });
+      expect(table).toHaveTextContent("Load the memory layers");
+      expect(within(table).getByText("Can start now")).toBeInTheDocument();
+      expect(within(table).getByText(/Waiting on/)).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: /Tickets/ })).toHaveAttribute("aria-selected", "true");
+      expect(router.state.location.search).toBe("?doc=tickets");
+      expect(asked(requests, TICKETS)).toBe(1);
+    });
+
+    it("opens the Tickets tab from an old ?doc=issues link (tickets)", async () => {
+      open({ [TICKETS]: tickets }, "/features/agent-hub/layered-memory?doc=issues");
+
+      expect(await screen.findByRole("table", { name: "Tickets" })).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: /Tickets/ })).toHaveAttribute("aria-selected", "true");
+    });
+
+    it("names the header chips with ticket titles once the tickets load, linking to Linear (tickets)", async () => {
+      open({ [TICKETS]: tickets }, "/features/agent-hub/layered-memory?doc=tickets");
+
+      await screen.findByRole("table", { name: "Tickets" });
+
+      const header = screen.getByRole("group", { name: "Tickets of this feature" });
+      expect(header).toHaveTextContent("AGH-48Load the memory layers");
+      expect(header).toHaveTextContent("AGH-49Show the layers");
+      expect(within(header).getByRole("link", { name: /AGH-48/ })).toHaveAttribute(
+        "href",
+        "https://linear.app/demo/issue/AGH-48",
+      );
+      expect(within(header).queryByRole("link", { name: /AGH-49/ })).toBeNull();
+    });
+
+    it("shows the ticket ids in the header until the tickets load (tickets)", async () => {
+      open();
+
+      await screen.findByRole("heading", { level: 1, name: "layered-memory" });
+
+      const header = screen.getByRole("group", { name: "Tickets of this feature" });
+      expect(header).toHaveTextContent("AGH-48AGH-49");
+      expect(within(header).queryByRole("link")).toBeNull();
+    });
+
+    it("refetches the tickets route on Refresh (notice)", async () => {
+      const { requests } = open(
+        { [TICKETS]: { ...tickets, source: "plan", notice: "Linear not connected." } },
+        "/features/agent-hub/layered-memory?doc=tickets",
+      );
+
+      expect(await screen.findByText("Linear not connected.")).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+
+      await waitFor(() => {
+        expect(asked(requests, TICKETS)).toBe(2);
+      });
+    });
+
+    it("refetches the golden path after the tickets load (notice)", async () => {
+      let reads = 0;
+      const loaded = aGoldenPath({
+        phase: "evaluate",
+        steps: detail.golden_path.steps.map((step) =>
+          step.name === "review"
+            ? { ...step, state: "done", reason: null, meta: "2/2 reviewed" }
+            : step,
+        ),
+      });
+      const { requests } = open(
+        {
+          [API]: () => {
+            reads += 1;
+            return reads === 1 ? detail : { ...detail, golden_path: loaded };
+          },
+          [TICKETS]: tickets,
+        },
+        "/features/agent-hub/layered-memory?doc=tickets",
+      );
+
+      await screen.findByRole("table", { name: "Tickets" });
+
+      await waitFor(() => {
+        const path = screen.getByRole("list", { name: "Golden path" });
+        expect(within(path).getAllByRole("listitem")[5]).toHaveAttribute("data-state", "done");
+      });
+      expect(asked(requests, API)).toBe(2);
+    });
+
+    it("shows a skeleton while the tickets load (states)", async () => {
+      const { container } = open(
+        { [TICKETS]: "pending" },
+        "/features/agent-hub/layered-memory?doc=tickets",
+      );
+
+      await screen.findByRole("tab", { name: /Tickets/ });
+      await waitFor(() => {
+        expect(container.querySelector('[aria-busy="true"] .ah-skel')).not.toBeNull();
+      });
+    });
+
+    it("shows the tickets problem with a retry that asks again (states)", async () => {
+      const { requests } = open(
+        { [TICKETS]: aProblem({ status: 400, title: "Bad slug", detail: "Too long." }) },
+        "/features/agent-hub/layered-memory?doc=tickets",
+      );
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent("Bad slug");
+      await userEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+
+      await waitFor(() => {
+        expect(asked(requests, TICKETS)).toBe(2);
+      });
+    });
+
+    it("has no serious a11y violations on the Tickets tab (a11y)", async () => {
+      const { container } = open(
+        { [TICKETS]: tickets },
+        "/features/agent-hub/layered-memory?doc=tickets",
+      );
+      await screen.findByRole("table", { name: "Tickets" });
+
+      expect(await seriousViolations(container)).toEqual([]);
+    });
+
+    it("has no serious a11y violations on the Eval tab (a11y)", async () => {
+      const { container } = open({}, "/features/agent-hub/layered-memory?doc=eval");
+      await screen.findByRole("table", { name: "Evals" });
+
+      expect(await seriousViolations(container)).toEqual([]);
+    });
   });
 
   it("shows the parse problem in the AC tab only", async () => {
