@@ -1,14 +1,19 @@
 """``CachedTicketSnapshots``: the in-memory ``TicketSnapshots`` cache of ``hub web`` (AGH-136 S2).
 
 One entry per ``SnapshotRequest`` (the project and a feature's sorted ids, E8), at most
-``MAX_ENTRIES``, the least recently used dropped first. ``fetch`` reads the tracker only when
-the entry holds no snapshot younger than ``TTL`` and no 429 cool-down runs (E3); concurrent
-fetches of one key share a single read (single flight) and the others get its result. After a
-failure the last good snapshot is served as ``stale`` while it is at most ``STALE_LIMIT`` old,
-else the plan, both with the failure. ``cached`` never reads the tracker (Q6).
+``MAX_ENTRIES``, the least recently used dropped first (never one in flight). ``fetch`` reads
+the tracker only when the entry holds no snapshot younger than ``TTL`` and no failure hold runs,
+so a key costs at most one tracker request per ``TTL``, failures included (E3): every failure the
+reader raises holds the key for ``FAILURE_HOLD``, a 429 for ``RATE_LIMIT_COOLDOWN`` if longer.
+Concurrent fetches of one key share a single read (single flight) and the others get its result,
+waiting at most ``wait_limit_seconds``. After a failure the last good snapshot is served as
+``stale`` while it is at most ``STALE_LIMIT`` old, else the plan, both with the failure. An error
+that is not a ``TrackerError`` only ends the read in flight: the next fetch reads again.
+``cached`` never reads the tracker (Q6).
 
 The reader comes from ``reader_of`` on every call (None: not connected, no key or the MCP
-transport), so a key set while ``hub web`` runs takes effect at once. ``REQUEST_TIMEOUT_SECONDS``
+transport, never a tracker request nor held), so a key set while ``hub web`` runs takes effect
+at once. ``REQUEST_TIMEOUT_SECONDS``
 and ``READ_BUDGET_SECONDS`` are the bounds the composition gives the reader (Q5).
 """
 
@@ -26,11 +31,12 @@ from agent_hub.core.tracker.tracker_reader import TicketSnapshot, TrackerReader
 TTL: Final = timedelta(seconds=60)
 STALE_LIMIT: Final = timedelta(minutes=15)
 RATE_LIMIT_COOLDOWN: Final = timedelta(seconds=60)
+FAILURE_HOLD: Final = TTL
 MAX_ENTRIES: Final = 256
 REQUEST_TIMEOUT_SECONDS: Final = 10.0
 READ_BUDGET_SECONDS: Final = 20.0
 # A read checks its budget between pages, so it may overrun it by one request.
-_WAIT_LIMIT_SECONDS: Final = READ_BUDGET_SECONDS + REQUEST_TIMEOUT_SECONDS
+WAIT_LIMIT_SECONDS: Final = READ_BUDGET_SECONDS + REQUEST_TIMEOUT_SECONDS
 NOT_CONNECTED_DETAIL: Final = "Linear is not connected for hub web"
 
 type ReaderOf = Callable[[SnapshotRequest], TrackerReader | None]
@@ -52,18 +58,33 @@ class _Entry:
     snapshot: TicketSnapshot | None = None
     read_at: datetime | None = None
     failure: _Failure | None = None
-    cooldown_until: datetime | None = None
+    held_until: datetime | None = None
     reading: bool = False
 
 
 class CachedTicketSnapshots:
-    """A thread-safe ``TicketSnapshots`` over the reader ``reader_of`` gives, timed by ``clock``."""
+    """A thread-safe ``TicketSnapshots`` over the reader ``reader_of`` gives, timed by ``clock``;
+    a fetch waits at most ``wait_limit_seconds`` for a read of its key in flight."""
 
-    def __init__(self, reader_of: ReaderOf, *, clock: Callable[[], datetime] = _utc_now) -> None:
+    def __init__(
+        self,
+        reader_of: ReaderOf,
+        *,
+        clock: Callable[[], datetime] = _utc_now,
+        wait_limit_seconds: float = WAIT_LIMIT_SECONDS,
+    ) -> None:
         self._reader_of = reader_of
         self._clock = clock
+        self._wait_limit = wait_limit_seconds
         self._condition = threading.Condition()
         self._entries: OrderedDict[SnapshotRequest, _Entry] = OrderedDict()
+        self._waiting = 0
+
+    @property
+    def waiting(self) -> int:
+        """How many fetches are waiting now on a read in flight."""
+        with self._condition:
+            return self._waiting
 
     def fetch(self, request: SnapshotRequest) -> SnapshotRead:
         """The fresh snapshot, read from the tracker unless cached, in a cool-down or in flight."""
@@ -73,10 +94,14 @@ class CachedTicketSnapshots:
         with self._condition:
             entry = self._touch(request)
             if entry.reading:
-                self._condition.wait_for(lambda: not entry.reading, timeout=_WAIT_LIMIT_SECONDS)
+                self._waiting += 1
+                try:
+                    self._condition.wait_for(lambda: not entry.reading, timeout=self._wait_limit)
+                finally:
+                    self._waiting -= 1
                 return self._view(entry)
             now = self._clock()
-            if _is_fresh(entry, now) or _cooling(entry, now):
+            if _is_fresh(entry, now) or _held(entry, now):
                 return self._view(entry)
             entry.reading = True
         try:
@@ -125,11 +150,10 @@ class CachedTicketSnapshots:
             now = self._clock()
             if snapshot is not None:
                 entry.snapshot, entry.read_at = snapshot, now
-                entry.failure = entry.cooldown_until = None
+                entry.failure = entry.held_until = None
             elif failure is not None:
                 entry.failure = _Failure(failure.kind, failure.cause, failure.http_status)
-                if failure.kind == "rate_limited":
-                    entry.cooldown_until = now + RATE_LIMIT_COOLDOWN
+                entry.held_until = now + _hold(failure.kind)
             entry.reading = False
             self._condition.notify_all()
             return self._view(entry)
@@ -157,8 +181,18 @@ def _is_fresh(entry: _Entry, now: datetime) -> bool:
     return entry.read_at is not None and entry.failure is None and now - entry.read_at < TTL
 
 
-def _cooling(entry: _Entry, now: datetime) -> bool:
-    return entry.cooldown_until is not None and now < entry.cooldown_until
+def _held(entry: _Entry, now: datetime) -> bool:
+    return entry.held_until is not None and now < entry.held_until
+
+
+def _hold(kind: TrackerFailure) -> timedelta:
+    """How long a failure of ``kind`` holds its key: a reader that says it is not connected
+    made no tracker request, so it is not held."""
+    if kind == "not_connected":
+        return timedelta(0)
+    if kind == "rate_limited":
+        return max(FAILURE_HOLD, RATE_LIMIT_COOLDOWN)
+    return FAILURE_HOLD
 
 
 def _plan(failure: _Failure | None) -> SnapshotRead:
