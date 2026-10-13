@@ -100,7 +100,7 @@ def test_passes_after_and_limit_when_events_page_read(agent_session_app: Any) ->
 
 
 @pytest.mark.parametrize("limit", ["0", "501", "x"])
-def test_answers_400_when_events_page_limit_out_of_range(
+def test_refuses_limit_when_events_page_limit_out_of_range(
     agent_session_app: Any, limit: str
 ) -> None:
     response = agent_session_app.client.get(f"{ONE}/events", params={"limit": limit})
@@ -191,7 +191,7 @@ def test_answers_409_log_full_naming_resume_when_caps_reached(agent_session_app:
     assert SENTINEL not in response.text
 
 
-def test_answers_409_when_permission_answer_repeated(agent_session_app: Any) -> None:
+def test_answers_conflict_when_permission_answer_repeated(agent_session_app: Any) -> None:
     agent_session_app.control.failures["answer"] = PermissionAnsweredError("req-1")
 
     response = agent_session_app.client.post(f"{ONE}/permissions/req-1", json={"decision": "allow"})
@@ -200,7 +200,9 @@ def test_answers_409_when_permission_answer_repeated(agent_session_app: Any) -> 
     assert document["request_id"] == "req-1"
 
 
-def test_answers_404_when_permission_answer_names_unknown_request(agent_session_app: Any) -> None:
+def test_answers_not_found_when_permission_answer_names_unknown_request(
+    agent_session_app: Any,
+) -> None:
     agent_session_app.control.failures["answer"] = UnknownPermissionError("req-9")
 
     response = agent_session_app.client.post(
@@ -212,7 +214,9 @@ def test_answers_404_when_permission_answer_names_unknown_request(agent_session_
     assert SENTINEL not in response.text
 
 
-def test_answers_422_when_permission_answer_does_not_fit_request(agent_session_app: Any) -> None:
+def test_answers_invalid_decision_when_permission_answer_does_not_fit_request(
+    agent_session_app: Any,
+) -> None:
     reason = "the suggestion is not a localSettings rule"
     agent_session_app.control.failures["answer"] = InvalidDecisionError(reason)
 
