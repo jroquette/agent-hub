@@ -119,14 +119,16 @@ def is_json_media_type(content_type: str | None) -> bool:
     return content_type.split(";", 1)[0].strip().lower() == JSON_MEDIA_TYPE
 
 
-def _strict_refusal(headers: Headers) -> tuple[int, str, str] | None:
-    # The Host was checked first, so the server's own origin is the one the request names.
+def strict_refusal(headers: Headers, *, needs_json: bool = True) -> tuple[int, str, str] | None:
+    """Why a strict write is refused (status, title, detail), or None: its ``Origin`` must be
+    this server's own (the ``Host`` was checked first), ``Sec-Fetch-Site`` same-origin when
+    sent, and, when ``needs_json``, its body ``application/json`` (else 415)."""
     if headers.get("origin") != f"http://{headers.get('host')}":
         return 403, "Forbidden origin", "This change is accepted only from this server's pages."
     site = headers.get("sec-fetch-site")
     if site is not None and site != "same-origin":
         return 403, "Forbidden fetch site", "This change is accepted only from this server's pages."
-    if not is_json_media_type(headers.get("content-type")):
+    if needs_json and not is_json_media_type(headers.get("content-type")):
         return 415, "Unsupported media type", f"The body must be {JSON_MEDIA_TYPE}."
     return None
 
@@ -174,7 +176,7 @@ class LocalSecurityMiddleware:
         ):
             return 403, "Forbidden origin", "Changes are accepted only from this server's pages."
         if is_strict_write(scope["method"], scope["path"]):
-            strict = _strict_refusal(headers)
+            strict = strict_refusal(headers)
             if strict is not None:
                 return strict
         length = headers.get("content-length")

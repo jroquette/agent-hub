@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from agent_hub.api.app import create_app
 from agent_hub.api.change_feed import ChangeFeed
 from agent_hub.api.dependencies import ApiPorts
+from agent_hub.api.session_token import cookie_name
 from agent_hub.api.settings import ApiSettings
 from agent_hub.core.approvals.approval import Approval
 from agent_hub.core.brain.brain_note import BrainNote, BrainTree
@@ -73,6 +74,9 @@ from agent_hub.core.sessions.session import (
 FIXED_NOW = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
 PORT = 7420
 BASE_URL = f"http://127.0.0.1:{PORT}"
+# The launch token of the test apps (synthetic); their clients carry its cookie, so the
+# agent-session routes are reachable as from a signed-in page.
+SESSION_TOKEN = "synthetic-session-token-0123456789abcdefghijk"  # noqa: S105 -- synthetic
 
 
 @pytest.fixture
@@ -83,6 +87,7 @@ def api_settings(tmp_path: Path) -> ApiSettings:
         port=PORT,
         running_version="0.8.0",
         clock=lambda: FIXED_NOW,
+        session_token=SESSION_TOKEN,
     )
 
 
@@ -100,6 +105,7 @@ def web_dist(tmp_path: Path) -> Path:
 def client(api_settings: ApiSettings, web_dist: Path) -> Iterator[TestClient]:
     app = create_app(api_settings, web_dist=web_dist)
     with TestClient(app, base_url=BASE_URL, raise_server_exceptions=False) as test_client:
+        test_client.cookies.set(cookie_name(PORT), SESSION_TOKEN)
         yield test_client
 
 
@@ -508,6 +514,7 @@ def wired(api_settings: ApiSettings, web_dist: Path) -> Iterator[Wired]:
     )
     app = create_app(api_settings, ports=ports, web_dist=web_dist)
     with TestClient(app, base_url=BASE_URL, raise_server_exceptions=False) as test_client:
+        test_client.cookies.set(cookie_name(PORT), SESSION_TOKEN)
         yield Wired(test_client, events, hubs, reader, clock, feed, counters)
 
 

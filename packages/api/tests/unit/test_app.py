@@ -33,6 +33,9 @@ BODIES: dict[tuple[str, str], object] = {
         "decision": "allow"
     },
     ("post", "/api/v1/agent-sessions/{agent_session_id}/settings"): {"mode": "plan"},
+    # Bodiless agent-session writes still send JSON (the access rules want it).
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/interrupt"): {},
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/close"): {},
 }
 OWN_ORIGIN = {"Origin": "http://127.0.0.1:7420"}
 QUERIES = {
