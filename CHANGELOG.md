@@ -11,6 +11,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-13
+
 ### Added
 
 - `hub run` keeps the run's status apart from what it delivered: a session that left no commit (`no_changes`) or
@@ -29,6 +31,14 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   under `guard.ask_before_edit` alone no longer makes a feature *architectural*; hostile-input scale, bounds and budget
   checks apply only to code that parses untrusted or unbounded input; reviewers flag what is extra and the main session
   weighs their findings. Bump `platform.version` and run `./hub sync` (AGH-147).
+
+### Fixed
+
+- A feature's tracker issue ids now reach `features.json` → `linear`, where `hub web` reads them: `/feature` step 4
+  writes the ids of the issues it creates there and runs `./hub doctor --only features.tracker`, and the planner
+  writes `"linear": []`. `features.tracker` warns on a feature folder with `issues.md` but no tracker id in
+  `features.json` or in the spec's frontmatter. After `./hub sync`, fill `linear` for existing features; the warning
+  names any left (AGH-143).
 
 ## [0.11.0] - 2026-10-13
 
@@ -132,7 +142,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/jroquette/agent-hub/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/jroquette/agent-hub/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/jroquette/agent-hub/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/jroquette/agent-hub/compare/v0.8.0...v0.9.0
