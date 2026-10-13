@@ -1,4 +1,5 @@
-"""An in-process fake of Linear's GraphQL API over a ``FakeTrackerBackend``, and its fixtures.
+"""An in-process fake of Linear's GraphQL API over a ``FakeTrackerBackend`` and a
+``FakeIssueBoard``, and its fixtures.
 
 ``FakeLinearApi`` is the adapter's ``post`` transport: it serves the backend the contract suite
 asserts on, reading it on every request (never a snapshot), so a write made through the
@@ -8,9 +9,16 @@ the query selects and fails the test on anything else. Issues, states and labels
 synthetic UUIDs; a mutation given anything but a UUID fails the test (D-c). An unknown issue is
 answered as GraphQL answers a failed non-null root field: an ``errors`` array and ``data: null``
 (Linear's exact error text and HTTP status for it are unverified; the live smoke confirms).
+``ReadIssueSummaries`` (the read-only reader, ADR 0025) is served from the ``FakeIssueBoard``,
+with Linear's field names: ``relations``/``inverseRelations`` of type ``blocks``, a float
+``priority``, ``assignee { displayName }``; each related issue is served without relations
+(the query selects only its identifier, title, url and state).
+``SYNTHETIC_SUMMARIES_ANSWER`` is a hand-written answer of that query in the shape of Linear's
+public schema (Q7), so the adapter's strict shape check is proven against more than the fake.
 Every value here is synthetic: no recorded Linear response, no real key.
 """
 
+import copy
 import json
 import re
 import uuid
@@ -23,16 +31,21 @@ import pytest
 
 from agent_hub.core.testing.builders import a_seeded_tracker_backend
 from agent_hub.core.testing.fakes import FakeTrackerBackend, TrackerState
+from agent_hub.core.testing.tracker_reader_fakes import FakeIssueBoard, a_seeded_issue_board
 from agent_hub.core.tracker.tracker_client import Issue
+from agent_hub.core.tracker.tracker_reader import IssueSummary
 from agent_hub.tracker_linear.claude_process import ClaudeOutput
 from agent_hub.tracker_linear.mcp_protocol import LINEAR_TOOLS, TOOLS, CallKind
 
 # Pinned here as literals, not imported from the adapter, so a wrong adapter constant fails.
 LINEAR_ENDPOINT = "https://api.linear.app/graphql"
 DEFAULT_TIMEOUT_S = 30.0
+READER_TIMEOUT_S = 10.0
+READER_PAGE_SIZE = 50
 FAKE_PAGE_SIZE = 2
 
 _FILTER_KEYS = frozenset({"team", "labels", "state"})
+_SUMMARIES_FILTER_KEYS = frozenset({"team", "number"})
 
 _STATE_FILTER_KEYS = frozenset({"team", "name"})
 _LABEL_FILTER_KEYS = frozenset({"name", "team"})
@@ -45,6 +58,7 @@ NOT_FOUND_MESSAGE = "Entity not found: Issue"
 # their schema types.
 _OPERATIONS = {
     "ListReadyIssues": ("query", "issues"),
+    "ReadIssueSummaries": ("query", "issues"),
     "GetIssue": ("query", "issue"),
     "IssueRef": ("query", "issue"),
     "FindStates": ("query", "workflowStates"),
@@ -86,13 +100,20 @@ class FakeLinearApi:
     (``responses`` holds each answer's ``data``). ``mutation_success = False`` answers every
     mutation with ``success: false`` and changes nothing. ``issue_teams`` maps an identifier to
     the team the issue belongs to now (after a move between teams); the identifier's prefix
-    otherwise.
+    otherwise. ``ReadIssueSummaries`` reads ``board`` (an empty one when none is given), and
+    answers the issues of a page newest number first, so a reader cannot rely on Linear's order.
     """
 
     def __init__(
-        self, backend: FakeTrackerBackend, *, key: str, page_size: int = FAKE_PAGE_SIZE
+        self,
+        backend: FakeTrackerBackend | None = None,
+        *,
+        key: str,
+        page_size: int = FAKE_PAGE_SIZE,
+        board: FakeIssueBoard | None = None,
     ) -> None:
-        self._backend = backend
+        self._backend = FakeTrackerBackend() if backend is None else backend
+        self._board = FakeIssueBoard() if board is None else board
         self._key = key
         self.page_size = page_size
         self.expected_timeout_s = DEFAULT_TIMEOUT_S
@@ -116,6 +137,7 @@ class FakeLinearApi:
         root, selection = _checked_document(request)
         handlers: dict[str, Callable[[Json], Json]] = {
             "ListReadyIssues": self._issues,
+            "ReadIssueSummaries": self._summaries,
             "GetIssue": self._issue,
             "IssueRef": self._issue,
             "FindStates": self._states,
@@ -149,6 +171,59 @@ class FakeLinearApi:
                     "endCursor": str(end) if has_next_page else None,
                 },
             }
+        }
+
+    def _summaries(self, variables: Json) -> Json:
+        # The IssueFilter the reader sends: exactly {team: {key: {eq}}, number: {in: [...]}}.
+        assert variables["first"] >= 1
+        issue_filter: Json = variables["filter"]
+        assert set(issue_filter) == _SUMMARIES_FILTER_KEYS, issue_filter
+        assert set(issue_filter["team"]) == {"key"}, issue_filter
+        team = _eq(issue_filter["team"]["key"])
+        assert set(issue_filter["number"]) == {"in"}, issue_filter
+        numbers = issue_filter["number"]["in"]
+        assert isinstance(numbers, list), issue_filter
+        assert all(type(number) is int for number in numbers), numbers
+        matches = sorted(
+            (
+                issue_id
+                for issue_id in self._board.issues
+                if issue_id.partition("-")[0] == team and int(issue_id.partition("-")[2]) in numbers
+            ),
+            key=lambda issue_id: -int(issue_id.partition("-")[2]),
+        )
+        start = int(variables["after"]) if variables.get("after") is not None else 0
+        end = start + min(variables["first"], self.page_size)
+        has_next_page = end < len(matches)
+        return {
+            "issues": {
+                "nodes": [self._summary_node(issue_id) for issue_id in matches[start:end]],
+                "pageInfo": {
+                    "hasNextPage": has_next_page,
+                    "endCursor": str(end) if has_next_page else None,
+                },
+            }
+        }
+
+    def _summary_node(self, issue_id: str) -> Json:
+        # Every relation, in the board's sorted order; _project serves the first N of them.
+        blocks = sorted(blocked for blocker, blocked in self._board.edges if blocker == issue_id)
+        blocked_by = sorted(
+            blocker for blocker, blocked in self._board.edges if blocked == issue_id
+        )
+        return _summary_fields(self._board.bare(issue_id)) | {
+            "relations": {
+                "nodes": [
+                    {"type": "blocks", "relatedIssue": _summary_fields(self._board.bare(other))}
+                    for other in blocks
+                ]
+            },
+            "inverseRelations": {
+                "nodes": [
+                    {"type": "blocks", "issue": _summary_fields(self._board.bare(other))}
+                    for other in blocked_by
+                ]
+            },
         }
 
     def _issue(self, variables: Json) -> Json:
@@ -350,6 +425,8 @@ def _project(value: Any, selection: Selection | None) -> Any:
     """Keep only the selected fields of ``value``; a field the fake does not serve fails."""
     if isinstance(value, list):
         return [_project(item, selection) for item in value]
+    if value is None:
+        return None  # a nullable object field, such as an unassigned issue's assignee
     if selection is None:
         assert not isinstance(value, dict), "an object field needs a selection"
         return value
@@ -368,6 +445,62 @@ def _first_page(connection: Any, arguments: str) -> Json:
     assert match is not None, f"unsupported arguments {arguments!r}"
     first, nodes = int(match.group(1)), connection["nodes"]
     return {"nodes": nodes[:first], "pageInfo": {"hasNextPage": len(nodes) > first}}
+
+
+# Linear's query complexity (linear.app/developers/rate-limiting), in tenths of a point: a
+# property 0.1, an object 1; a connection (a field selecting ``nodes``) costs nothing itself and
+# multiplies each node's cost (1 plus its fields) by its ``first`` (default 50); its other fields
+# (``pageInfo``) count once. The total is rounded up; over 10,000 Linear rejects the query.
+_PROPERTY_TENTHS = 1
+_OBJECT_TENTHS = 10
+_DEFAULT_FIRST = 50
+_FIRST = re.compile(r"\bfirst\s*:\s*(\$?\w+)")
+
+
+def linear_complexity(query: str, variables: Mapping[str, int]) -> int:
+    """The points Linear charges for ``query`` with ``variables`` (each ``$first`` at its value)."""
+    selection = _parse_selection(_TOKEN.findall(query[query.index("{") :]))
+    tenths = _selection_tenths(selection, variables)
+    return -(-tenths // 10)
+
+
+def _selection_tenths(selection: Selection, variables: Mapping[str, int]) -> int:
+    return sum(
+        _field_tenths(arguments, child, variables) for arguments, child in selection.values()
+    )
+
+
+def _field_tenths(arguments: str, child: Selection | None, variables: Mapping[str, int]) -> int:
+    if child is None:
+        return _PROPERTY_TENTHS
+    if "nodes" not in child:
+        return _OBJECT_TENTHS + _selection_tenths(child, variables)
+    _, nodes = child["nodes"]
+    node = _OBJECT_TENTHS + (0 if nodes is None else _selection_tenths(nodes, variables))
+    rest = {name: field for name, field in child.items() if name != "nodes"}
+    return _first(arguments, variables) * node + _selection_tenths(rest, variables)
+
+
+def _first(arguments: str, variables: Mapping[str, int]) -> int:
+    match = _FIRST.search(arguments)
+    if match is None:
+        return _DEFAULT_FIRST
+    value = match.group(1)
+    return variables[value[1:]] if value.startswith("$") else int(value)
+
+
+def _summary_fields(summary: IssueSummary) -> Json:
+    """An issue's scalar fields as Linear answers them (priority is a float, never null)."""
+    assert summary.priority is not None, "Linear's priority is never null (0 = none)"
+    return {
+        "identifier": summary.id,
+        "title": summary.title,
+        "url": summary.url,
+        "priority": float(summary.priority),
+        "estimate": summary.estimate,
+        "state": {"name": summary.state.name, "type": summary.state.type},
+        "assignee": None if summary.assignee is None else {"displayName": summary.assignee},
+    }
 
 
 def _team_of(issue: Issue) -> str:
@@ -415,6 +548,122 @@ def _assert_uuid(value: object, where: str) -> str:
 def synthetic_key() -> str:
     """A fake key shaped like a Linear one, assembled so no key-like literal is committed."""
     return "_".join(("lin", "api", "synthetic" + "0" * 31))
+
+
+@pytest.fixture
+def complexity_of() -> Callable[[str, Mapping[str, int]], int]:
+    """Linear's complexity score of a query text with its variables (``linear_complexity``)."""
+    return linear_complexity
+
+
+@pytest.fixture
+def issue_board() -> FakeIssueBoard:
+    return a_seeded_issue_board()
+
+
+@pytest.fixture
+def fake_linear_reader_api(issue_board: FakeIssueBoard, synthetic_key: str) -> FakeLinearApi:
+    """The fake API over ``issue_board``, paging as Linear does (50) at the reader's timeout."""
+    api = FakeLinearApi(key=synthetic_key, page_size=READER_PAGE_SIZE, board=issue_board)
+    api.expected_timeout_s = READER_TIMEOUT_S
+    return api
+
+
+# A hand-written answer to ReadIssueSummaries for DEM-11 and DEM-12, in the shape of Linear's
+# public schema (synthetic values). DEM-11 blocks DEM-12 and relates to OPS-5 (not a "blocks"
+# relation, so ignored); OPS-4, not asked, blocks DEM-12; DEM-13 duplicates DEM-12 (ignored).
+# Priorities come as JSON integers and floats alike; DEM-12 has no assignee or estimate. A
+# related issue carries only the fields an external blocker shows.
+SYNTHETIC_SUMMARIES_ANSWER: Json = {
+    "data": {
+        "issues": {
+            "nodes": [
+                {
+                    "identifier": "DEM-12",
+                    "title": "Synthetic issue twelve",
+                    "url": "https://linear.app/demo/issue/DEM-12/synthetic-issue-twelve",
+                    "priority": 0,
+                    "estimate": None,
+                    "state": {"name": "Todo", "type": "unstarted"},
+                    "assignee": None,
+                    "relations": {"nodes": [], "pageInfo": {"hasNextPage": False}},
+                    "inverseRelations": {
+                        "nodes": [
+                            {
+                                "type": "blocks",
+                                "issue": {
+                                    "identifier": "DEM-11",
+                                    "title": "Synthetic issue eleven",
+                                    "url": "https://linear.app/demo/issue/DEM-11/synthetic-issue-eleven",
+                                    "state": {"name": "In Progress", "type": "started"},
+                                },
+                            },
+                            {
+                                "type": "blocks",
+                                "issue": {
+                                    "identifier": "OPS-4",
+                                    "title": "Synthetic ops issue",
+                                    "url": "https://linear.app/demo/issue/OPS-4/synthetic-ops-issue",
+                                    "state": {"name": "In Review", "type": "started"},
+                                },
+                            },
+                            {
+                                "type": "duplicate",
+                                "issue": {
+                                    "identifier": "DEM-13",
+                                    "title": "Synthetic duplicate",
+                                    "url": "https://linear.app/demo/issue/DEM-13/synthetic-duplicate",
+                                    "state": {"name": "Duplicate", "type": "duplicate"},
+                                },
+                            },
+                        ],
+                        "pageInfo": {"hasNextPage": False},
+                    },
+                },
+                {
+                    "identifier": "DEM-11",
+                    "title": "Synthetic issue eleven",
+                    "url": "https://linear.app/demo/issue/DEM-11/synthetic-issue-eleven",
+                    "priority": 2.0,
+                    "estimate": 3,
+                    "state": {"name": "In Progress", "type": "started"},
+                    "assignee": {"displayName": "ada.example"},
+                    "relations": {
+                        "nodes": [
+                            {
+                                "type": "blocks",
+                                "relatedIssue": {
+                                    "identifier": "DEM-12",
+                                    "title": "Synthetic issue twelve",
+                                    "url": "https://linear.app/demo/issue/DEM-12/synthetic-issue-twelve",
+                                    "state": {"name": "Todo", "type": "unstarted"},
+                                },
+                            },
+                            {
+                                "type": "related",
+                                "relatedIssue": {
+                                    "identifier": "OPS-5",
+                                    "title": "Synthetic related issue",
+                                    "url": "https://linear.app/demo/issue/OPS-5/synthetic-related-issue",
+                                    "state": {"name": "Backlog", "type": "backlog"},
+                                },
+                            },
+                        ],
+                        "pageInfo": {"hasNextPage": False},
+                    },
+                    "inverseRelations": {"nodes": [], "pageInfo": {"hasNextPage": False}},
+                },
+            ],
+            "pageInfo": {"hasNextPage": False, "endCursor": None},
+        }
+    }
+}
+
+
+@pytest.fixture
+def synthetic_summaries_answer() -> Json:
+    """A fresh copy of ``SYNTHETIC_SUMMARIES_ANSWER`` (tests import fixtures, not this module)."""
+    return copy.deepcopy(SYNTHETIC_SUMMARIES_ANSWER)
 
 
 @pytest.fixture

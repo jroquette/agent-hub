@@ -72,7 +72,7 @@ hub start ISSUE [--repo DIR]… [--no-agent]   # issue to worktrees, In Progress
 hub brief [--no-network]   # session brief: now, journal, repo/PR/CI state
 hub agent [ARGS…]   # claude with every repo attached (./agent)
 hub next   # the tracker's ready issues, one line each
-hub run ISSUE --repo REPO [--live] [--budget USD] [--from implement|verify] …   # one issue to a PR through the tracker port
+hub run ISSUE --repo REPO [--live] [--budget USD] [--from implement|verify] …   # one issue with a complete brief to a PR through the tracker port
 hub ship [ISSUE] [--draft] [--dry-run]   # each changed repo's check, push and PR, PRs linked, the issue to review
 hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …   # configuration benchmark (module bench)
 hub collect [FILE|-] [--db PATH]   # ingests canonical events from JSON Lines (stdin when FILE is omitted or -)
@@ -114,8 +114,11 @@ server), `make demo` (synthetic data) and `make connect HUB=<path>` (register a 
 `hub next` reads `list_ready` once per team, in `hub.json` order, and prints `<id>  <repo>  <title>  <url>` per issue,
 oldest first within each team. With several teams a failing team gets one `team <KEY>: <reason>` line on stderr while
 the others are still listed, and the command exits 1. `hub run` reads
-the issue once (dry run by default: it prints every command and tracker write), then makes the worktree, runs the
-implementing `claude -p` session (no tracker tool: the issue's text is in its prompt), its own gate, the push and
+the issue once and refuses it, dry or live and with `--from verify` too, when its description lacks a section of the
+input brief (`Problem`, `Why`, `Why now`, `Outcome`, `Invariants`, `Acceptance criteria`, as Markdown headings,
+[ADR 0026](adr/0026-input-brief-contract.md)): exit 1 with one line naming the missing sections, nothing created, and
+a live run's `failed` record at stage `PICKED`; otherwise (dry run by default: it prints every command and tracker
+write) it makes the worktree, runs the implementing `claude -p` session (no tracker tool: the issue's text is in its prompt), its own gate, the push and
 `gh pr create`, and reports through the port (on success, like `hub ship`, it moves the issue to
 `tracker.states.review`, default `In Review`); records go to the hub's `.agent-runs/` and `brain/_inbox/runs/`. Secret
 scope: no child gets `LINEAR_API_KEY`. What may run the session's code (the session, the gate, git's reads of the
@@ -308,12 +311,16 @@ Approvals (read-only), Live sessions, Sessions and Session detail (Timeline, Fil
 Run detail, Features and Feature detail, Health (the doctor rules run in process per hub, cached 15 min), Knowledge ›
 Learnings and Knowledge › Brain, Settings and Welcome. Session, WorkflowRun, Learning and Approval are pure folds in core,
 recomputed on read and memoized in process by the store's high-water mark ([event-derivations.md](design/event-derivations.md)).
-Cost is estimated from transcript usage times a dated price table and always labelled so; OpenTelemetry, GitHub and
-Linear are not connected in this version and their cells say so. Actions (approving, starting, retrying, snoozing a
-learning) appear only as disabled, phase-tagged buttons; accepting and rejecting a learning are the exception below.
+Cost is estimated from transcript usage times a dated price table and always labelled so; OpenTelemetry and GitHub
+are not connected in this version and their cells say so, and Linear is read only for a feature's tickets (AGH-136
+below). Actions (approving, starting, retrying, snoozing a learning) appear only as disabled, phase-tagged buttons;
+accepting and rejecting a learning are the exception below.
 The server is local only: loopback bind, `Host` and `Origin` checks, 1 MiB request bodies, no CORS, and a CSP that
-keeps the app on its own origin. The approved UI design and the departures from it are in
-[design/control-plane/](design/control-plane/README.md); the decisions are ADRs 0017 to 0024.
+keeps the app on its own origin. It reaches the network in two documented cases only: the learning decisions' explicit
+pull request ([ADR 0024](adr/0024-learning-actions-from-the-app.md)), and a read-only, server-side read of Linear's
+GraphQL API for a feature's tickets, only when `LINEAR_API_KEY` is set where `hub web` runs
+([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md)). The browser never contacts Linear. The approved UI design and the departures from it are in
+[design/control-plane/](design/control-plane/README.md); the decisions are ADRs 0017 to 0025.
 
 **Control-plane clarity (AGH-201, built).** What the owner could not use in the first `hub web` is now derived on read:
 
@@ -334,7 +341,7 @@ keeps the app on its own origin. The approved UI design and the departures from 
   `learning.rejected` event from the `control_plane` source ([ADR 0024](adr/0024-learning-actions-from-the-app.md)):
   accept moves the note to the brain folder the owner picks (never `_inbox/`, `auto/` or `decisions/`) with `status:
   accepted`; reject archives it under `brain/_inbox/_archive/` with the reason. Nothing is written to a default
-  branch, nothing is forced, and the user's checkout is never touched. This is the server's one network exception:
+  branch, nothing is forced, and the user's checkout is never touched. This is the server's first network exception:
   on that explicit action, `git` and `gh` reach the hub's `origin` and GitHub with the user's own credentials. In the
   container image every hub is read-only and the actions are disabled with that reason.
 - **Features and Brain.** Feature detail renders the feature's records (spec, research, plan, eval) and its ACs with
@@ -343,6 +350,38 @@ keeps the app on its own origin. The approved UI design and the departures from 
   renders any one, with links between notes inside the app. Notes are read on request, at most 256 KiB, through one
   path rule (no `..`, no absolute path, no link, regular `.md` files under `<hub>/brain` only) and rendered with raw
   HTML off and a URL allow-list.
+
+**Ticket planning (AGH-136, built).** A feature's phases now match what was delivered, and its tickets show their
+Linear status ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md), records in
+[design/feature-records.md](design/feature-records.md)):
+
+- **Tickets from Linear.** `GET /api/v1/features/{project}/{slug}/tickets` serves each ticket of the feature (the
+  plan's `tickets` in `features.json` plus the record's `linear` ids) with title, status (name and type), assignee,
+  priority, estimate, a Linear link and its "blocked by" edges. `hub web` reads them through a read-only core port,
+  `TrackerReader`, whose GraphQL adapter is the app's only Linear access: metadata only (never a description,
+  comment or attachment), the key from `LINEAR_API_KEY` at call time, an in-memory cache (60 s, single flight, the
+  last snapshot served as stale for up to 15 minutes after a failed read), nothing stored. Only this route calls
+  Linear; the Features list and detail use a warm cache entry, else the plan. Without a key, with
+  `tracker.transport: "mcp"` (the app never spends tokens) or when Linear fails, the route still answers with the
+  plan, a notice and a `tracker_problem` naming the cause. Titles and names are redacted; a link outside
+  `https://linear.app/` is dropped.
+- **Planning.** A pure core fold over the plan's `blocked_by` and Linear's relations: what can start now, parallel
+  groups (dependency layers), a recommended order (topological, then priority, then plan order), waiting tickets with
+  their blockers, cycles, blockers outside the feature and the critical path. It is a recommendation; the runner still
+  decides (ADR 0014). A canceled ticket no longer blocks and is left out of every count.
+- **Golden path.** Computed once in core and served on the list and the detail: Spec, Research, Plan, Tickets,
+  Implement, Review, Evaluate, Shipped, each `done`, `current`, `partial`, `pending`, `skipped`, `blocked` or
+  `unknown`, with progress and a reason. A step is done only when the whole feature satisfies it (every ticket
+  created; every ticket Done and every AC passing; every ticket reviewed, that is Done in Linear or with an approved
+  review record; the latest eval of every AC a SHIP, none waiting on owner steps; every ticket Done), and never while an earlier step is not. Without
+  Linear, the ticket-based steps are `unknown`, never done.
+- **Evals per delivery.** Each evaluation is its own file, `brain/features/<slug>/evals/<delivery>.md`, with its
+  scope in frontmatter (tickets, ACs, PRs, commit); none is overwritten. For each AC the latest eval naming it
+  decides. A legacy `eval.md` is read as one delivery, `legacy`. The Eval tab lists every delivery.
+- **Spec amendments.** An approved spec is never rewritten: changes go in its `## Amendments` section, new ACs take
+  the next free number, a withdrawn AC stays listed (`withdrawn: true` in `features.json`) and no id is renumbered.
+  The planner, evaluator and requirements-analyst templates and `/feature` say so, and `hub doctor`'s
+  `features.tracker` rule checks the new records.
 
 ## Data sources and event model
 
@@ -465,12 +504,13 @@ The MVP goes up to Phase 2: generate hubs from Loki and see the agents' sessions
 | 3 · Knowledge and decisions | Provenance in the brain, inbox triage in the UI (accept and reject moved to Phase 2 by AGH-201; snooze stays here), extracted decisions, learning metrics | One learning traced from the session to the rule |
 | 4 · Workflows as data and actions | Generic executor reading the workflow, gates approved from the UI, adapters for other agents | — |
 
-Status (2026-10-13, latest release v0.11.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
+Status (2026-10-13, latest release v0.13.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
 Phase 1 in progress: `init`, `sync` (`--adopt`), `doctor`, `worktree`, `brief`, `agent`, `next`, `run` and `bench`
 shipped in v0.8.0, and `setup`, `start` and `ship` in v0.9.0. Phase 2's first slice is shipped too: the control plane
 `hub web` (AGH-200) in v0.9.0 and its clarity pass (AGH-201: session labels, problems, learning accept and reject
-through hub PRs, the Brain browser and feature records) in v0.11.0. The Phase 1 gate (Loki hub recreated) is open;
-pilot: AGH-54.
+through hub PRs, the Brain browser and feature records) in v0.11.0, and ticket planning (AGH-136: tickets read
+from Linear, the golden path per feature, evals per delivery) in v0.13.0. The Phase 1 gate (Loki hub
+recreated) is open; pilot: AGH-54.
 
 The order follows dogfooding: the first generated hub is the platform's own, and the second replaces `loki-trader-hub`. Editable workflows come later because they depend on observation already showing where the current flow gets stuck.
 
@@ -484,7 +524,7 @@ The recommendations are a starting point.
 | Agent scope | Only Claude Code, or several from the start | Only Claude Code in v1, with the canonical event ready for adapters |
 | Where it runs | Local-first or hosted service | Local-first in v1, shared by a team through the hub repo. Hosted only when there is a second organization |
 | Stack | **Decided:** see [ADR 0001](adr/0001-uv-workspace-with-namespace-packages.md), [ADR 0002](adr/0002-lean-hexagonal-architecture.md), [ADR 0003](adr/0003-persistence-sqlalchemy-core-and-alembic.md), [ADR 0004](adr/0004-rest-api-standard.md) and [ADR 0008](adr/0008-cli-as-composition-root.md) | — |
-| Task tracker | **Decided:** a generic core port (`TrackerClient`) with Linear as the first adapter, selected by `tracker.kind` in `hub.json` ([project-config.md](design/project-config.md)): the Linear GraphQL adapter in `tracker_linear`, keyed by the `LINEAR_API_KEY` environment variable, never by `hub.json` ([ADR 0014](adr/0014-tracker-port-linear-graphql.md)); `tracker.transport: "mcp"` selects the Linear MCP adapter instead, short headless `claude -p` calls to the user's Linear MCP server, each allowed the Linear tools it needs and denied every other Linear tool, with hooks off ([ADR 0015](adr/0015-linear-mcp-tracker-transport.md)) | — |
+| Task tracker | **Decided:** a generic core port (`TrackerClient`) with Linear as the first adapter, selected by `tracker.kind` in `hub.json` ([project-config.md](design/project-config.md)): the Linear GraphQL adapter in `tracker_linear`, keyed by the `LINEAR_API_KEY` environment variable, never by `hub.json` ([ADR 0014](adr/0014-tracker-port-linear-graphql.md)); `tracker.transport: "mcp"` selects the Linear MCP adapter instead, short headless `claude -p` calls to the user's Linear MCP server, each allowed the Linear tools it needs and denied every other Linear tool, with hooks off ([ADR 0015](adr/0015-linear-mcp-tracker-transport.md)); `hub web` reads ticket metadata through a separate read-only port, `TrackerReader`, over GraphQL only ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md)) | — |
 
 ## Defined directions (2026-09-27)
 

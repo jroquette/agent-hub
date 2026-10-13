@@ -1,6 +1,25 @@
 """Root of the agent-hub exception hierarchy; each package defines its own subclasses."""
 
+from typing import Literal
+
 from agent_hub.core.hub_config.problems import one_line
+
+# Why a tracker read failed (ADR 0025), so a caller can say so without parsing the message:
+# no key or the MCP transport (``not_connected``), a 401/403 (``unauthorized``), the deadline
+# (``timeout``), a 429 (``rate_limited``), a 5xx (``unavailable``), an answer of another shape
+# (``unexpected``), no answer at all (``unreachable``), more ids than one read takes
+# (``too_many``); ``other`` for everything else, the default of every older raise site.
+type TrackerFailure = Literal[
+    "not_connected",
+    "unauthorized",
+    "timeout",
+    "rate_limited",
+    "unavailable",
+    "unexpected",
+    "unreachable",
+    "too_many",
+    "other",
+]
 
 
 class AgentHubError(Exception):
@@ -29,13 +48,24 @@ class TrackerError(AgentHubError):
     The message is one line, ``"<operation> <issue_id>: <cause>; <fix>"`` (no issue id for an
     operation without one). Control characters are escaped, because the cause may quote
     untrusted text such as an issue title or a tracker reply. Each part is also kept as an
-    attribute, so a caller can show the cause without the adapter's fix.
+    attribute, so a caller can show the cause without the adapter's fix. ``kind`` says why it
+    failed (``TrackerFailure``, ``"other"`` unless the raise site knows better) and
+    ``http_status`` is the tracker's HTTP status when it answered with one.
     """
 
     def __init__(
-        self, *, operation: str, issue_id: str | None = None, cause: str, fix: str
+        self,
+        *,
+        operation: str,
+        issue_id: str | None = None,
+        cause: str,
+        fix: str,
+        kind: TrackerFailure = "other",
+        http_status: int | None = None,
     ) -> None:
         self.operation = operation
+        self.kind: TrackerFailure = kind
+        self.http_status = http_status
         self.issue_id = issue_id
         self.cause = cause
         self.fix = fix

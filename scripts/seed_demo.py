@@ -4,7 +4,8 @@ Against the app at ``--url`` (``make run`` or ``make up``), it:
 
 1. reads the server's database path (``/api/v1/collector/status``);
 2. makes a demo hub (``hub init demo``, tracker team ``AGH``) with a feature folder (spec, plan,
-   eval, ``features.json``) and an inbox note, next to that database
+   a legacy ``eval.md``, ``features.json`` with a ticket plan whose tickets block each other, an
+   ``evals/<delivery>.md`` and a ``reviews/<ticket>.md``) and an inbox note, next to that database
    (``<database folder>/demo``), and registers it (``POST /api/v1/hubs``);
 3. posts hook envelopes: a live ``/feature`` session for AGH-7 (its worktree names the issue)
    that runs a Skill, starts an ``Explore`` subagent, recovers from a failed check (a problem
@@ -342,8 +343,33 @@ def demo_transcript(now: datetime) -> str:
     return transcript_text(lines)
 
 
-def _hub_files(hub: PurePosixPath) -> dict[PurePosixPath, str]:
-    """The feature folder (spec, plan, eval, ``features.json``) and the proposed inbox note."""
+# The ticket plan (``features.json`` ``tickets``): T1 is AGH-7 in Linear, T2 and T3 are not
+# created yet; each waits on the one before, and each AC names the ticket that delivers it.
+TICKETS = (
+    {"key": "T1", "id": ISSUE, "title": "Add the export route", "repo": DEMO_REPO, "order": 1},
+    {
+        "key": "T2",
+        "title": "Build the CSV header and rows from one column list",
+        "repo": DEMO_REPO,
+        "blocked_by": ["T1"],
+        "order": 2,
+    },
+    {
+        "key": "T3",
+        "title": "Add the Export CSV button to the sessions list",
+        "repo": DEMO_REPO,
+        "blocked_by": ["T2"],
+        "order": 3,
+    },
+)
+AC_TICKETS = ("T3", "T2", "T1")
+EVALUATED_AT = "2026-10-10T16:30:00Z"
+REVIEWED_AT = "2026-10-10"
+
+
+def hub_files(hub: PurePosixPath) -> dict[PurePosixPath, str]:
+    """The feature folder (spec, plan, eval, ``features.json`` with its ticket plan, an eval per
+    delivery, a review record) and the proposed inbox note, each by its path under ``hub``."""
     folder = hub / "brain" / "features" / FEATURE
     acs = [
         {
@@ -353,6 +379,7 @@ def _hub_files(hub: PurePosixPath) -> dict[PurePosixPath, str]:
             "verification": "make check",
             "passes": index < 3,
             "evidence": "test run" if index < 3 else None,
+            "ticket": AC_TICKETS[index - 1],
         }
         for index, description in enumerate(
             (
@@ -365,7 +392,8 @@ def _hub_files(hub: PurePosixPath) -> dict[PurePosixPath, str]:
     ]
     criteria = "".join(f"- {ac['id']} {ac['description']}\n" for ac in acs)
     spec = f"---\ntype: spec\nprocess_size: bounded\nrepos: [{DEMO_REPO}]\nlinear: [{ISSUE}]\n---\n"
-    record = {"feature": FEATURE, "linear": [ISSUE], "acs": acs}
+    record = {"feature": FEATURE, "linear": [ISSUE], "tickets": list(TICKETS), "acs": acs}
+    delivery = ISSUE.lower()
     return {
         folder / "features.json": json.dumps(record, indent=2) + "\n",
         folder / "spec.md": (
@@ -377,9 +405,24 @@ def _hub_files(hub: PurePosixPath) -> dict[PurePosixPath, str]:
             "2. Build the header and the rows from one column list.\n"
             "3. Add the button to the sessions list.\n"
         ),
+        # The legacy eval names its scope, so it counts for the two ACs it checked by command.
         folder / "eval.md": (
+            "---\ntype: eval\nacs: [AC-7.1, AC-7.2]\nevaluated_at: 2026-10-09T11:00:00Z\n---\n"
             "# Eval\n\n**Verdict: SHIP-WITH-OWNER-STEPS**\n\n"
             "AC-7.1 and AC-7.2 pass by command; AC-7.3 needs a timing on the owner's machine.\n"
+        ),
+        folder / "evals" / f"{delivery}.md": (
+            f"---\ntype: eval\ndelivery: {delivery}\nverdict: SHIP-WITH-OWNER-STEPS\n"
+            f"tickets: [{ISSUE}]\nacs: [AC-7.3]\nprs: [{DEMO_REPO}#12]\ncommit: 4f2a9c1\n"
+            f"evaluated_at: {EVALUATED_AT}\n---\n"
+            f"# Eval {ISSUE}\n\n| AC | Command | Result |\n| --- | --- | --- |\n"
+            "| AC-7.3 | owner: export 10,000 rows | NOT RUN: needs the owner's machine |\n\n"
+            "Owner step: time an export of 10,000 rows.\n"
+        ),
+        folder / "reviews" / f"{ISSUE}.md": (
+            f"---\ntype: review\nticket: {ISSUE}\noutcome: approved\npr: {DEMO_REPO}#12\n"
+            f"reviewed_at: {REVIEWED_AT}\n---\n"
+            f"# Review {ISSUE}\n\nspec-reviewer: matches the plan. quality-reviewer: no finding.\n"
         ),
         hub / INBOX_NOTE: INBOX_TEXT,
     }
@@ -397,7 +440,7 @@ def seed(client: httpx.Client, target: Target, *, db_path: str, now: datetime) -
     _checked_hub(
         target, ["init", DEMO_PROJECT, *HUB_FLAGS, "--dir", str(hub)], tolerate=ALREADY_A_HUB
     )
-    for path, text in _hub_files(hub).items():
+    for path, text in hub_files(hub).items():
         target.write(path, text)
     registered = client.post("/api/v1/hubs", json={"path": str(hub)})
     if registered.status_code not in {httpx.codes.CREATED, httpx.codes.CONFLICT}:

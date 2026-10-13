@@ -34,7 +34,7 @@ dev = [
 
 [[package]]
 name = "agent-hub"
-version = "0.12.0"
+version = "0.13.0"
 source = { editable = "packages/agent-hub" }
 dependencies = [
     { name = "agent-hub-api" },
@@ -69,6 +69,7 @@ dependencies = [
     { name = "agent-hub-generator" },
     { name = "agent-hub-hub-git" },
     { name = "agent-hub-storage" },
+    { name = "agent-hub-tracker-linear" },
     { name = "fastapi" },
     { name = "starlette" },
     { name = "uvicorn" },
@@ -81,6 +82,7 @@ requires-dist = [
     { name = "agent-hub-generator", editable = "packages/generator" },
     { name = "agent-hub-hub-git", editable = "packages/hub_git" },
     { name = "agent-hub-storage", editable = "packages/storage" },
+    { name = "agent-hub-tracker-linear", editable = "packages/tracker_linear" },
     { name = "fastapi", specifier = "==0.141.1" },
     { name = "starlette", specifier = "==1.7.0" },
     { name = "uvicorn", specifier = "==0.54.0" },
@@ -88,7 +90,7 @@ requires-dist = [
 
 [[package]]
 name = "agent-hub-cli"
-version = "0.12.0"
+version = "0.13.0"
 source = { editable = "packages/cli" }
 dependencies = [
     { name = "agent-hub-collector" },

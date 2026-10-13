@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isInAppPath, safeHref } from "./safeHref";
+import { isInAppPath, linearHref, safeHref } from "./safeHref";
 
 describe("safeHref", () => {
   it.each([
@@ -49,5 +49,29 @@ describe("isInAppPath", () => {
     expect(isInAppPath("//evil.example")).toBe(false);
     expect(isInAppPath("https://example.com")).toBe(false);
     expect(isInAppPath("javascript:alert(1)")).toBe(false);
+  });
+});
+
+describe("linearHref", () => {
+  it("keeps only an https URL on linear.app when given issue urls (linear-link)", () => {
+    expect(linearHref("https://linear.app/acme/issue/TIP-1")).toBe(
+      "https://linear.app/acme/issue/TIP-1",
+    );
+    expect(linearHref("https://evil.example/x")).toBeNull();
+    expect(linearHref("javascript:x")).toBeNull();
+    expect(linearHref("http://linear.app/x")).toBeNull();
+  });
+
+  it.each([
+    "https://linear.app.evil.example/x",
+    "https://user@linear.app/x",
+    "https://linear.app:444/x",
+    "https://evil.example/https://linear.app/x",
+    "https://linear.app",
+    "/acme/issue/TIP-1",
+    null,
+    undefined,
+  ])("returns null when given the look-alike %j (linear-link)", (value) => {
+    expect(linearHref(value)).toBeNull();
   });
 });

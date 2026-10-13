@@ -16,19 +16,32 @@ UTF-8, a link: links are never followed, or a failed read), which names the spec
 checked without the cross-check.
 
 A record whose folder lists ``issues.md`` while no tracker id is recorded, neither in its
-``linear`` (absent or ``[]``) nor in the spec's frontmatter ``linear:`` (read as ``hub web``
-reads it, its first 64 KiB; only ids of a team key count, so a placeholder does not), gets a
+``linear`` (absent or ``[]``), nor as a planned ticket's ``id``, nor in the spec's frontmatter
+``linear:`` (read as ``hub web`` reads it, its first 64 KiB; only ids of a team key count, so a
+placeholder does not), gets a
 warning on the record: the issues were drafted, likely created, and their ids never written back,
 so ``hub web`` shows the feature with none (AGH-143). A record that is not an object, a malformed
 ``linear`` or a spec that cannot be read already has its error, and no warning.
+
+AGH-136 (``feature_plan_checks``): the record's optional ticket plan (``tickets``, each AC's
+``ticket`` and ``withdrawn``) and the folder's ``evals/<delivery>.md`` files are checked too, each
+eval finding naming the eval. A cycle of ``blocked_by`` is a warning. A withdrawn AC stays in the
+cross-check (the spec keeps naming it, under ``## Amendments``) and skips the pending-command check.
 """
 
 import re
 import unicodedata
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
-from typing import Final, NamedTuple
+from typing import Final
 
+from agent_hub.core.doctor.feature_plan_checks import (
+    RECORD_FIX,
+    ac_plan_problems,
+    eval_problems,
+    ticket_plan,
+)
+from agent_hub.core.doctor.feature_plan_checks import Problem as _Problem
 from agent_hub.core.doctor.finding import Finding, Read, Rule
 from agent_hub.core.doctor.snapshot import DoctorSnapshot
 from agent_hub.core.features.feature_status import HEAD_BYTES, spec_linear
@@ -43,9 +56,8 @@ from agent_hub.core.json_form import InvalidJsonError, JsonValue, load_json_byte
 FEATURES_FOLDER: Final = ("brain", "features")
 RECORD_NAME: Final = "features.json"
 SPEC_NAME: Final = "spec.md"
+EVALS_FOLDER: Final = "evals"
 ISSUES_NAME: Final = "issues.md"
-
-RECORD_FIX: Final = "fix the record in features.json"
 MASKED_FIX: Final = "end the verification with the check itself, so a failure exits non-zero"
 EVIDENCE_FIX: Final = "record the command run and its result in evidence"
 SPEC_FIX: Final = "give spec.md and features.json the same AC ids"
@@ -72,13 +84,6 @@ _MASKED_EXIT: Final = re.compile(
 _TEXT_FIELDS: Final = ("id", "description", "repo", "verification")
 
 
-class _Problem(NamedTuple):
-    """A finding's message and fix, before it is placed on a file."""
-
-    message: str
-    fix: str
-
-
 @dataclass(frozen=True, kw_only=True, slots=True)
 class _Project:
     """What the records are checked against: the repo names and the tracker's team keys."""
@@ -91,12 +96,32 @@ def _features_tracker(snapshot: DoctorSnapshot) -> Iterable[Finding]:
     project = _project_of(snapshot.hub_config)
     listed = frozenset(snapshot.hub.listed)
     entries = snapshot.hub.entries
+    evals = _evals_by_folder(snapshot.hub.listed)
     return tuple(
         finding
         for path in snapshot.hub.listed
         if _is_record(path)
-        for finding in _record_findings(path, entries=entries, listed=listed, project=project)
+        for finding in _record_findings(
+            path, entries=entries, listed=listed, project=project, evals=evals
+        )
     )
+
+
+def _evals_by_folder(listed: Iterable[str]) -> dict[str, list[str]]:
+    """The listed ``evals/<name>.md`` (not hidden) of each feature folder, by folder path."""
+    found: dict[str, list[str]] = {}
+    depth = len(FEATURES_FOLDER) + 3
+    for path in listed:
+        parts = tuple(path.split("/"))
+        if (
+            len(parts) == depth
+            and parts[: len(FEATURES_FOLDER)] == FEATURES_FOLDER
+            and parts[-2] == EVALS_FOLDER
+            and parts[-1].endswith(".md")
+            and not parts[-1].startswith(".")
+        ):
+            found.setdefault("/".join(parts[:-2]) + "/", []).append(path)
+    return found
 
 
 def _project_of(config: HubConfig) -> _Project:
@@ -116,17 +141,25 @@ def _is_record(path: str) -> bool:
 
 
 def _record_findings(
-    path: str, *, entries: Mapping[str, TreeEntry], listed: frozenset[str], project: _Project
+    path: str,
+    *,
+    entries: Mapping[str, TreeEntry],
+    listed: frozenset[str],
+    project: _Project,
+    evals: Mapping[str, list[str]],
 ) -> tuple[Finding, ...]:
-    spec_path = path.removesuffix(RECORD_NAME) + SPEC_NAME
+    folder = path.removesuffix(RECORD_NAME)
+    spec_path = folder + SPEC_NAME
     spec = _spec_text(entries.get(spec_path)) if spec_path in listed else None
     document = _document(entries.get(path))
+    ac_ids: frozenset[str] | None = None
     if isinstance(document, _Problem):
         problems: tuple[_Problem, ...] = (document,)
     else:
         problems = _record_problems(
             document, spec=spec if isinstance(spec, str) else None, project=project
         )
+        ac_ids = _ac_ids(document)
     spec_problems = (spec,) if isinstance(spec, _Problem) else ()
     issues_path = path.removesuffix(RECORD_NAME) + ISSUES_NAME
     unlinked = (
@@ -141,8 +174,32 @@ def _record_findings(
     return (
         *(_finding(spec_path, problem) for problem in spec_problems),
         *(_finding(path, problem) for problem in problems),
+        *(
+            _finding(eval_path, problem)
+            for eval_path in evals.get(folder, ())
+            for problem in _eval_file_problems(eval_path, entries.get(eval_path), ac_ids=ac_ids)
+        ),
         *((_no_ids_warning(path),) if unlinked else ()),
     )
+
+
+def _ac_ids(document: JsonValue) -> frozenset[str] | None:
+    """The record's AC ids, ``None`` when it holds no list of ACs."""
+    acs = document.get("acs") if isinstance(document, dict) else None
+    if not isinstance(acs, list):
+        return None
+    return frozenset(
+        ac_id for ac in acs if isinstance(ac, dict) and isinstance(ac_id := ac.get("id"), str)
+    )
+
+
+def _eval_file_problems(
+    path: str, entry: TreeEntry | None, *, ac_ids: frozenset[str] | None
+) -> tuple[_Problem, ...]:
+    text = _spec_text(entry)
+    if isinstance(text, _Problem):
+        return (text,)
+    return eval_problems(path.rsplit("/", 1)[-1], text, ac_ids=ac_ids)
 
 
 def _spec_head(entry: TreeEntry | None, spec: str | _Problem | None) -> bytes | None:
@@ -153,8 +210,16 @@ def _spec_head(entry: TreeEntry | None, spec: str | _Problem | None) -> bytes | 
 
 
 def _linear_empty(document: JsonValue | _Problem) -> bool:
-    """A record object whose ``linear`` is absent or ``[]``; any other value has ids or an error."""
-    return isinstance(document, dict) and document.get("linear", []) == []
+    """A record object whose ``linear`` is absent or ``[]`` and none of whose planned ``tickets``
+    holds an ``id`` yet; any other value has ids or an error (AGH-136: a ticket's ``id`` is a
+    recorded tracker id too)."""
+    if not isinstance(document, dict) or document.get("linear", []) != []:
+        return False
+    tickets = document.get("tickets", [])
+    return not (
+        isinstance(tickets, list)
+        and any(isinstance(ticket, dict) and ticket.get("id") is not None for ticket in tickets)
+    )
 
 
 def _no_ids_warning(path: str) -> Finding:
@@ -163,7 +228,8 @@ def _no_ids_warning(path: str) -> Finding:
 
 
 def _finding(path: str, problem: _Problem) -> Finding:
-    return FEATURES_TRACKER.finding(path=path, message=problem.message, fix=problem.fix)
+    finding = FEATURES_TRACKER.finding(path=path, message=problem.message, fix=problem.fix)
+    return replace(finding, severity=Severity.WARNING) if problem.warning else finding
 
 
 def _content(entry: TreeEntry | None) -> bytes | _Problem:
@@ -202,13 +268,15 @@ def _record_problems(
     if not isinstance(data, dict):
         return (_Problem("top level must be an object", RECORD_FIX),)
     problems = list(_header_problems(data, project=project))
+    plan_problems, refs = ticket_plan(data, names=project.names)
+    problems.extend(plan_problems)
     acs = data.get("acs")
     if not isinstance(acs, list) or not acs:
         return (*problems, _Problem("`acs` must be a non-empty list", RECORD_FIX))
     # Every id read, malformed ones too, in order: a duplicate is one seen before.
     seen: dict[str, None] = {}
     for index, ac in enumerate(acs):
-        problems.extend(_ac_problems(index, ac, project=project, seen=seen))
+        problems.extend(_ac_problems(index, ac, project=project, seen=seen, refs=refs))
     if spec is not None:
         problems.extend(_cross_check(spec, seen))
     return tuple(problems)
@@ -240,7 +308,12 @@ def _linear_message(teams: tuple[str, ...]) -> str:
 
 
 def _ac_problems(
-    index: int, ac: JsonValue, *, project: _Project, seen: dict[str, None]
+    index: int,
+    ac: JsonValue,
+    *,
+    project: _Project,
+    seen: dict[str, None],
+    refs: frozenset[str] | None,
 ) -> list[_Problem]:
     where = f"acs[{index}]"
     if not isinstance(ac, dict):
@@ -258,6 +331,7 @@ def _ac_problems(
         where = cut_echo(ac_id)
         problems.extend(_id_problems(ac_id, seen))
     problems.extend(_value_problems(where, ac, project=project))
+    problems.extend(ac_plan_problems(where, ac, refs=refs))
     return problems
 
 
@@ -285,7 +359,9 @@ def _value_problems(
         yield _Problem(f"{where}: repo must be one of {names}", RECORD_FIX)
     verification = ac.get("verification")
     passes = ac.get("passes")
-    if passes is False and isinstance(verification, str) and _MASKED_EXIT.search(verification):
+    # A withdrawn AC keeps the command it had: it is never run again.
+    pending = passes is False and ac.get("withdrawn") is not True
+    if pending and isinstance(verification, str) and _MASKED_EXIT.search(verification):
         yield _Problem(f"{where}: {MASKED}", MASKED_FIX)
     evidence = ac.get("evidence")
     if evidence is not None and not isinstance(evidence, str):
