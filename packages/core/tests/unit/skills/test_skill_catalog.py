@@ -8,7 +8,12 @@ from hypothesis import strategies as st
 
 from agent_hub.core.doctor.snapshot import LockAbsent
 from agent_hub.core.skills.skill_catalog import build_catalog, catalog_reads
-from agent_hub.core.skills.skill_sources import CatalogInputs, SkillSources
+from agent_hub.core.skills.skill_sources import (
+    CatalogInputs,
+    FoldedCatalog,
+    SkillSources,
+    file_id,
+)
 from agent_hub.core.skills.skill_view import (
     CatalogItem,
     DiagnosticCode,
@@ -273,3 +278,138 @@ def test_gives_same_catalog_when_sources_shuffled_property(rng: random.Random) -
     )
 
     assert build_catalog(shuffled) == build_catalog(inputs)
+
+
+def _codes(folded: FoldedCatalog, item: str) -> list[DiagnosticCode]:
+    return [diagnostic.code for diagnostic in folded.details[item].diagnostics]
+
+
+def test_links_uses_and_used_by_when_body_names_items() -> None:
+    folded = build_catalog(_inputs(a_skills_fixture_tree()))
+
+    alpha = folded.details["skill/hub-workflow/alpha"]
+    evaluator = folded.details["agent/hub-workflow/evaluator"]
+    beta = folded.details["skill/hub-workflow/beta"]
+    assert [(r.kind, r.source, r.name) for r in alpha.uses] == [
+        (ItemKind.AGENT, "hub-workflow", "evaluator"),
+        (ItemKind.SKILL, "hub-workflow", "beta"),
+    ]
+    assert [r.id for r in evaluator.used_by] == ["skill/hub-workflow/alpha"]
+    assert [r.id for r in beta.used_by] == ["skill/hub-workflow/alpha"]
+    assert alpha.structure is not None
+    assert [step.title for step in alpha.structure.steps] == ["Review", "Next"]
+    assert [entry.text for entry in alpha.toc] == ["Alpha", "Steps"]
+    assert alpha.context_cost is not None
+    assert alpha.context_cost.on_invoke_tokens > 0
+    assert evaluator.tools == ("Read", "Grep")
+    assert evaluator.model == "sonnet"
+
+
+def test_lists_bundled_files_when_skill_folder_holds_them() -> None:
+    tree = a_skills_fixture_tree()
+    tree["plugin/hub-workflow/skills/alpha/assets/out"] = Link("../../../../../../etc")
+    tree["plugin/hub-workflow/skills/alpha/assets/pipe"] = Fifo()
+    folded = build_catalog(_inputs(tree))
+
+    alpha = folded.details["skill/hub-workflow/alpha"]
+    assert [(f.path, f.role, f.link) for f in alpha.files] == [
+        ("assets/out", "assets", True),
+        ("references/r.md", "references", False),
+        ("scripts/s.sh", "scripts", False),
+    ]
+    reference = alpha.files[1]
+    assert reference.id == file_id("plugin/hub-workflow/skills/alpha/references/r.md")
+    assert folded.files[alpha.id][reference.id] == (
+        "plugin/hub-workflow/skills/alpha/references/r.md"
+    )
+    assert DiagnosticCode.LINK_OUTSIDE_HUB in _codes(folded, alpha.id)
+    assert DiagnosticCode.NOT_REGULAR in _codes(folded, alpha.id)
+    assert "etc" not in " ".join(d.message for d in alpha.diagnostics)
+    assert folded.files.get("skill/hub-workflow/beta", {}) == {}
+
+
+def test_reports_not_linked_when_project_skill_unlinked() -> None:
+    folded = build_catalog(_inputs(a_skills_fixture_tree()))
+    tree = a_skills_fixture_tree()
+    tree[".claude/skills/gamma"] = Link("../../plugin/demo/skills/gamma")
+    linked = build_catalog(_inputs(tree))
+
+    assert DiagnosticCode.NOT_LINKED in _codes(folded, "skill/demo/gamma")
+    assert DiagnosticCode.NOT_LINKED in _codes(folded, "agent/demo/scout")
+    not_linked = folded.details["skill/demo/gamma"].diagnostics[-1]
+    assert not_linked.message == "not linked yet: run hub sync"
+    assert DiagnosticCode.NOT_LINKED not in _codes(folded, "skill/extra/delta")
+    assert DiagnosticCode.NOT_LINKED not in _codes(linked, "skill/demo/gamma")
+    assert linked.details["skill/demo/gamma"].linked_from == (".claude/skills/gamma",)
+
+
+def test_reports_modified_when_sha_differs_from_lock() -> None:
+    tree = a_skills_fixture_tree()
+    tree["plugin/hub-workflow/skills/alpha/SKILL.md"] += b"\nEdited by hand.\n"
+    tree["plugin/hub-workflow/hooks/hooks.json"] = b'{"hooks": {}}\n'
+    folded = build_catalog(_inputs(tree))
+
+    assert DiagnosticCode.MODIFIED_SINCE_SYNC in _codes(folded, "skill/hub-workflow/alpha")
+    assert DiagnosticCode.MODIFIED_SINCE_SYNC not in _codes(folded, "skill/hub-workflow/beta")
+    unchanged = build_catalog(_inputs(a_skills_fixture_tree()))
+    assert all(
+        DiagnosticCode.MODIFIED_SINCE_SYNC not in _codes(unchanged, item)
+        for item in unchanged.details
+    )
+    alpha = folded.details["skill/hub-workflow/alpha"]
+    assert alpha.lock is not None
+    assert alpha.lock.ownership == "managed"
+
+
+def test_reports_modified_hooks_when_hooks_json_differs_from_lock() -> None:
+    tree = a_skills_fixture_tree()
+    tree["plugin/hub-workflow/hooks/hooks.json"] += b"\n"
+    folded = build_catalog(_inputs(tree))
+
+    assert _codes(folded, "hook/hub-workflow/hub-workflow-stop-1") == [
+        DiagnosticCode.MODIFIED_SINCE_SYNC
+    ]
+
+
+def test_lists_every_source_when_names_collide() -> None:
+    tree = a_skills_fixture_tree()
+    tree["plugin/demo/skills/alpha/SKILL.md"] = b"---\nname: alpha\ndescription: Again.\n---\n"
+    folded = build_catalog(_inputs(tree))
+
+    ours = folded.details["skill/hub-workflow/alpha"]
+    theirs = folded.details["skill/demo/alpha"]
+    duplicate = [d for d in ours.diagnostics if d.code is DiagnosticCode.DUPLICATE_NAME]
+    assert len(duplicate) == 1
+    assert "skill/demo/alpha" in duplicate[0].message
+    assert DiagnosticCode.DUPLICATE_NAME in _codes(folded, theirs.id)
+    assert DiagnosticCode.NOT_LINKED not in _codes(folded, theirs.id)
+    beta = folded.details["skill/hub-workflow/beta"]
+    assert sorted(r.id for r in beta.used_by) == ["skill/hub-workflow/alpha"]
+    evaluator = folded.details["agent/hub-workflow/evaluator"]
+    assert [r.id for r in evaluator.used_by] == ["skill/hub-workflow/alpha"]
+
+
+def test_diagnoses_document_when_frontmatter_breaks_rules() -> None:
+    tree: dict[str, TreeEntry] = {
+        "plugin/extra/skills/named/SKILL.md": (
+            b"---\nname: other-name\ncolour: red\n---\nAsk the `ghost` agent, then `/missing`.\n"
+        ),
+        "plugin/extra/skills/broken/SKILL.md": b"---\nname: &anchor broken\n---\n",
+    }
+    folded = build_catalog(_inputs(tree))
+
+    assert _codes(folded, "skill/extra/named") == [
+        DiagnosticCode.NAME_MISMATCH,
+        DiagnosticCode.DESCRIPTION_MISSING,
+        DiagnosticCode.REFERENCE_NOT_FOUND,
+        DiagnosticCode.REFERENCE_NOT_FOUND,
+        DiagnosticCode.UNKNOWN_KEY,
+    ]
+    assert _codes(folded, "skill/extra/broken") == [DiagnosticCode.FRONTMATTER_UNPARSEABLE]
+    assert folded.details["skill/extra/broken"].uses == ()
+    named = folded.details["skill/extra/named"]
+    assert [(pair.key, pair.known) for pair in named.frontmatter] == [
+        ("name", True),
+        ("colour", False),
+    ]
+    assert _item(folded.catalog, named.id).diagnostics_count == len(named.diagnostics)
