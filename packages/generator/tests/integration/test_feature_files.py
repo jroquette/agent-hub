@@ -5,10 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from agent_hub.core.features.feature_status import HEAD_BYTES, FeatureFolder
+from agent_hub.core.features.feature_evals import EVAL_HEAD_BYTES
+from agent_hub.core.features.feature_reviews import REVIEW_HEAD_BYTES
+from agent_hub.core.features.feature_status import HEAD_BYTES, FeatureFolder, RecordHead
 from agent_hub.generator.feature_files import (
+    MAX_EVAL_FILES,
     MAX_FEATURE_FOLDERS,
     MAX_RECORD_BYTES,
+    MAX_REVIEW_FILES,
     read_feature_folders,
 )
 
@@ -144,3 +148,108 @@ def test_stops_at_bound_when_folders_too_many(
         "feature-2",
     ]
     assert MAX_FEATURE_FOLDERS == 500
+
+
+def test_reads_eval_heads_when_evals_folder_present_evals(tmp_path: Path) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    (folder / "evals").mkdir()
+    (folder / "evals" / "demo-1521.md").write_bytes(b"---\nverdict: NO-SHIP\n---\n")
+    (folder / "evals" / "demo-1520.md").write_bytes(b"x" * (EVAL_HEAD_BYTES + 10))
+    (folder / "evals" / ".draft.md").write_bytes(b"hidden\n")
+    (folder / "evals" / "notes.txt").write_bytes(b"not an eval\n")
+
+    [read] = read_feature_folders(tmp_path)
+
+    assert read.evals == (
+        RecordHead(name="demo-1520.md", head=b"x" * EVAL_HEAD_BYTES, problem=None),
+        RecordHead(name="demo-1521.md", head=b"---\nverdict: NO-SHIP\n---\n", problem=None),
+    )
+    assert (read.evals_skipped, read.reviews, read.reviews_skipped) == (0, (), 0)
+    assert read.files == ()
+
+
+def test_counts_skipped_when_evals_over_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    (folder / "evals").mkdir()
+    for index in range(5):
+        (folder / "evals" / f"dem-{index}.md").write_bytes(b"---\n---\n")
+    monkeypatch.setattr("agent_hub.generator.feature_files.MAX_EVAL_FILES", 3)
+
+    [read] = read_feature_folders(tmp_path)
+
+    assert [head.name for head in read.evals] == ["dem-0.md", "dem-1.md", "dem-2.md"]
+    assert read.evals_skipped == 2
+    assert MAX_EVAL_FILES == 200
+
+
+def test_counts_skipped_when_eval_name_not_utf8(tmp_path: Path) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    (folder / "evals").mkdir()
+    (folder / "evals" / "dem-1.md").write_bytes(b"---\n---\n")
+    os.close(os.open(os.fsencode(folder / "evals") + b"/dem-\xff.md", os.O_CREAT | os.O_WRONLY))
+
+    [read] = read_feature_folders(tmp_path)
+
+    assert [head.name for head in read.evals] == ["dem-1.md"]
+    assert read.evals_skipped == 1
+
+
+def test_refuses_link_when_eval_is_symlink(tmp_path: Path) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    (folder / "evals").mkdir()
+    secret = tmp_path / "secret.md"
+    secret.write_bytes(b"---\nverdict: SHIP\n---\n")
+    (folder / "evals" / "dem-1.md").symlink_to(secret)
+    (folder / "evals" / "dem-2.md").mkdir()
+    os.mkfifo(folder / "evals" / "dem-3.md")
+
+    [read] = read_feature_folders(tmp_path)
+
+    assert read.evals == tuple(
+        RecordHead(name=name, head=None, problem="not a regular file")
+        for name in ("dem-1.md", "dem-2.md", "dem-3.md")
+    )
+
+
+def test_reads_nothing_when_evals_folder_is_link(tmp_path: Path) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "dem-1.md").write_bytes(b"---\nverdict: SHIP\n---\n")
+    (folder / "evals").symlink_to(outside)
+    (folder / "reviews").write_bytes(b"a file, not a folder\n")
+
+    [read] = read_feature_folders(tmp_path)
+
+    assert (read.evals, read.evals_skipped, read.reviews, read.reviews_skipped) == ((), 0, (), 0)
+
+
+def test_reads_review_heads_when_reviews_present_reviews(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    (folder / "reviews").mkdir()
+    (folder / "reviews" / "demo-1520.md").write_bytes(b"y" * (REVIEW_HEAD_BYTES + 1))
+    (folder / "reviews" / "demo-1521.md").write_bytes(b"---\noutcome: approved\n---\n")
+    (folder / "reviews" / "demo-1522.md").write_bytes(b"---\n---\n")
+    monkeypatch.setattr("agent_hub.generator.feature_files.MAX_REVIEW_FILES", 2)
+
+    [read] = read_feature_folders(tmp_path)
+
+    assert read.reviews == (
+        RecordHead(name="demo-1520.md", head=b"y" * REVIEW_HEAD_BYTES, problem=None),
+        RecordHead(name="demo-1521.md", head=b"---\noutcome: approved\n---\n", problem=None),
+    )
+    assert read.reviews_skipped == 1
+    assert MAX_REVIEW_FILES == 500
+
+
+def test_reports_problem_when_record_is_folder(tmp_path: Path) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    (folder / "features.json").mkdir()
+
+    [read] = read_feature_folders(tmp_path)
+
+    assert (read.features_json, read.files) == ("not a regular file", ())
