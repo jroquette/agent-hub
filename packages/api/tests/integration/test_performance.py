@@ -1,7 +1,8 @@
 """Run budgets of the control plane (spec NFRs) on the composed app, at 10,000 events in 200
 sessions built in ``tmp_path``: a hook POST p95 under 50 ms, a read endpoint p95 under 300 ms;
 and AGH-201's: a session's problems p95 under 150 ms at 5,000 events, a brain note under 100 ms
-and the brain tree under 150 ms in a hub of 2,000 notes.
+and the brain tree under 150 ms in a hub of 2,000 notes; AGH-136's: a feature's tickets under
+100 ms on a warm snapshot cache with 50 tickets.
 
 Each read follows an append, so it folds again (the memo is keyed by the high-water mark): the
 budget holds while sessions are live, not only on a warm memo. The first read after start-up,
@@ -179,3 +180,45 @@ def test_answers_brain_tree_within_budget_when_hub_brain_holds_two_thousand_note
         samples.append(elapsed)
 
     assert _p95(samples) < BRAIN_TREE_P95_MS, samples
+
+
+# AGH-136 budget (AC-136.37): a feature's tickets route on a warm snapshot cache, 50 tickets
+# chained by "blocked by" in the plan and Linear.
+TICKETS = 50
+TICKETS_P95_MS = 100
+
+
+def test_answers_tickets_within_budget_when_cache_warm_with_fifty_tickets(
+    open_tickets: Any, tickets_kit: Any
+) -> None:
+    planned = [
+        {
+            "key": f"t{number}",
+            "id": f"DEM-{number}",
+            "title": f"Ticket {number}",
+            "repo": "demo-api",
+            "order": number,
+            "blocked_by": [f"t{number - 1}"] if number > 1 else [],
+        }
+        for number in range(1, TICKETS + 1)
+    ]
+    issues = {
+        f"DEM-{number}": tickets_kit.LinearIssue(
+            f"Ticket {number}",
+            state=("Done", "completed") if number <= 10 else ("Todo", "unstarted"),
+            blocked_by=(f"DEM-{number - 1}",) if number > 1 else (),
+        )
+        for number in range(1, TICKETS + 1)
+    }
+    world = open_tickets(record=tickets_kit.a_ticket_record(planned), issues=issues)
+    warm = world.tickets()
+    assert warm.status_code == 200, warm.text
+    assert (warm.json()["source"], len(warm.json()["tickets"])) == ("linear", TICKETS)
+    samples: list[float] = []
+    for _ in range(SAMPLES):
+        elapsed, response = _timed(world.tickets)
+        assert response.status_code == 200, response.text
+        samples.append(elapsed)
+
+    assert world.linear.count == 1
+    assert _p95(samples) < TICKETS_P95_MS, samples
