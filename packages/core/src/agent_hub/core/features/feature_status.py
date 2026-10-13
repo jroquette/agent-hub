@@ -15,9 +15,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Final, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr, ValidationError
+from pydantic import ValidationError
 
 from agent_hub.core.events.event import EventSource
+from agent_hub.core.features.feature_record import FeatureRecordFile, RecordAc
 from agent_hub.core.features.feature_view import (
     AcCounts,
     AcRow,
@@ -26,6 +27,9 @@ from agent_hub.core.features.feature_view import (
     FeatureRecord,
     FeatureRecordName,
     FeatureView,
+    GoldenPath,
+    GoldenStep,
+    StepState,
     Verdict,
 )
 from agent_hub.core.hub_config.problems import one_line
@@ -62,6 +66,27 @@ _FILE_PHASES: Final[tuple[tuple[str, FeaturePhase], ...]] = (
     (PLAN, "plan"),
     (ISSUES, "tickets"),
 )
+# The golden path's steps in order, with the record file a step reads, if any.
+_STEPS: Final[tuple[tuple[FeaturePhase, str | None], ...]] = (
+    ("spec", SPEC),
+    ("research", RESEARCH),
+    ("plan", PLAN),
+    ("tickets", ISSUES),
+    ("implement", None),
+    ("review", None),
+    ("evaluate", EVAL),
+    ("shipped", None),
+)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class RecordHead:
+    """The start of one file of ``evals/`` or ``reviews/``: its ``name`` and ``head`` bytes, or
+    the one-line ``problem`` that kept it from being read (a link, not a regular file)."""
+
+    name: str
+    head: bytes | None
+    problem: str | None
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -71,6 +96,8 @@ class FeatureFolder:
     ``files`` names the record files present as regular files. ``features_json`` holds the
     record's bytes, a one-line problem when it could not be read, or None when absent;
     ``spec_head`` and ``eval_head`` are the first ``HEAD_BYTES`` of ``spec.md`` and ``eval.md``.
+    ``evals`` and ``reviews`` hold the heads of ``evals/*.md`` and ``reviews/*.md`` sorted by
+    name; ``evals_skipped`` and ``reviews_skipped`` count the files left unread over the cap.
     """
 
     slug: str
@@ -78,24 +105,10 @@ class FeatureFolder:
     features_json: bytes | str | None = None
     spec_head: bytes | None = None
     eval_head: bytes | None = None
-
-
-class _Ac(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    id: StrictStr
-    description: StrictStr
-    repo: StrictStr | None = None
-    verification: StrictStr | None = None
-    passes: StrictBool
-    evidence: StrictStr | None = None
-
-
-class _Record(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    linear: tuple[StrictStr, ...] = ()
-    acs: tuple[_Ac, ...]
+    evals: tuple[RecordHead, ...] = ()
+    reviews: tuple[RecordHead, ...] = ()
+    evals_skipped: int = 0
+    reviews_skipped: int = 0
 
 
 def feature_view(folder: FeatureFolder, *, project: str) -> FeatureView:
@@ -108,22 +121,28 @@ def feature_detail(folder: FeatureFolder, *, project: str) -> FeatureDetail:
     """The feature with its acceptance criteria rows."""
     front = _frontmatter(folder.spec_head)
     record = _record(folder.features_json)
-    rows = () if not isinstance(record, _Record) else tuple(_row(ac) for ac in record.acs)
+    rows = () if not isinstance(record, FeatureRecordFile) else tuple(_row(ac) for ac in record.acs)
     verdict, verdict_line = _verdict(folder.eval_head)
     spec_repos = _listed(front.get("repos"))
+    phase = _phase(folder.files, rows=rows, verdict=verdict)
     return FeatureDetail(
         project=project,
         slug=folder.slug,
         issues=_unique(
-            (*_listed(front.get("linear")), *(record.linear if isinstance(record, _Record) else ()))
+            (
+                *_listed(front.get("linear")),
+                *(record.linear if isinstance(record, FeatureRecordFile) else ()),
+            )
         ),
         size=_size(front.get("process_size")),
-        phase=_phase(folder.files, rows=rows, verdict=verdict),
+        phase=phase,
         files=tuple(name for name in RECORD_FILES if name in folder.files),
-        acs=None if not isinstance(record, _Record) else _counts(rows),
+        acs=None if not isinstance(record, FeatureRecordFile) else _counts(rows),
         verdict=verdict,
         verdict_line=verdict_line,
         repos=spec_repos or _unique(row.repo for row in rows if row.repo),
+        golden_path=_interim_path(phase, files=folder.files, verdict=verdict),
+        tickets_source="plan",
         problem=record if isinstance(record, str) else None,
         sources_missing=(EventSource.GITHUB,),
         ac_rows=rows,
@@ -143,13 +162,13 @@ def _records(folder: FeatureFolder) -> tuple[FeatureRecord, ...]:
     )
 
 
-def _record(read: bytes | str | None) -> _Record | str | None:
+def _record(read: bytes | str | None) -> FeatureRecordFile | str | None:
     if read is None:
         return None
     if isinstance(read, str):
         return one_line(f"{RECORD} could not be read ({read})")
     try:
-        return _Record.model_validate(load_json_bytes(read))
+        return FeatureRecordFile.model_validate(load_json_bytes(read))
     except InvalidJsonError as error:
         return one_line(f"{RECORD} could not be parsed ({error.message})")
     except ValidationError as error:
@@ -158,7 +177,7 @@ def _record(read: bytes | str | None) -> _Record | str | None:
         return one_line(f"{RECORD} could not be parsed ({where}: {first['msg']})")
 
 
-def _row(ac: _Ac) -> AcRow:
+def _row(ac: RecordAc) -> AcRow:
     return AcRow(
         id=ac.id,
         description=ac.description,
@@ -187,6 +206,37 @@ def _phase(
         return "implement"
     reached = [phase for name, phase in _FILE_PHASES if name in files]
     return reached[-1] if reached else "spec"
+
+
+def _interim_path(
+    phase: FeaturePhase, *, files: tuple[str, ...], verdict: Verdict | None
+) -> GoldenPath:
+    """Today's step states, as the web drew them from ``phase`` (removed by AGH-136 C.1)."""
+    current = [name for name, _ in _STEPS].index(phase)
+    steps = tuple(
+        GoldenStep(
+            name=name,
+            state=_interim_state(index, current, file=file, files=files, verdict=verdict),
+            meta=None,
+            reason="not tracked in this version" if name in ("review", "shipped") else None,
+            progress=None,
+        )
+        for index, (name, file) in enumerate(_STEPS)
+    )
+    return GoldenPath(steps=steps, phase=phase)
+
+
+def _interim_state(
+    index: int, current: int, *, file: str | None, files: tuple[str, ...], verdict: Verdict | None
+) -> StepState:
+    name = _STEPS[index][0]
+    if name in ("review", "shipped"):
+        return "unknown"
+    if index < current:
+        return "skipped" if file is not None and file not in files else "done"
+    if index == current:
+        return "done" if name == "evaluate" and verdict is not None else "current"
+    return "pending"
 
 
 def _verdict(head: bytes | None) -> tuple[Verdict | None, str | None]:
