@@ -13,6 +13,7 @@ text, over the catalog's byte budget) leaves its item listed with a diagnostic a
 budget is spent.
 """
 
+import hashlib
 import posixpath
 import re
 from collections.abc import Iterable, Iterator, Mapping
@@ -28,6 +29,7 @@ from agent_hub.core.skills.external_plugins import (
     external_plugins,
     marketplace_name,
 )
+from agent_hub.core.skills.skill_diagnostics import context_cost, diagnose
 from agent_hub.core.skills.skill_frontmatter import read_skill_document
 from agent_hub.core.skills.skill_hooks import HookRecord, HubJsonContent, hook_records
 from agent_hub.core.skills.skill_sources import (
@@ -51,13 +53,22 @@ from agent_hub.core.skills.skill_sources import (
     FoldedCatalog,
     SkillSources,
     SourceFile,
+    file_id,
+    role_of,
+)
+from agent_hub.core.skills.skill_structure import (
+    derive_structure,
+    references,
+    table_of_contents,
 )
 from agent_hub.core.skills.skill_view import (
     ITEM_NAME,
     KNOWN_AGENT_KEYS,
     KNOWN_SKILL_KEYS,
     SEVERITY,
+    BundledFile,
     CatalogItem,
+    ContextCost,
     Diagnostic,
     DiagnosticCode,
     ExternalPlugin,
@@ -65,16 +76,21 @@ from agent_hub.core.skills.skill_view import (
     LockFacts,
     Mode,
     Origin,
+    Relation,
     SkillCatalog,
     SkillDetail,
     SkillDocument,
     SkillFrontmatterValue,
+    SkillStructure,
+    TocEntry,
     Usage,
     item_id,
 )
 
 EMPTY_NOTICE: Final = "No skills found in this hub; it may not be synced yet."
 LOCK_UNREAD_NOTICE: Final = "hub.lock not read: origins from folder names"
+NOT_LINKED_MESSAGE: Final = "not linked yet: run hub sync"
+MODIFIED_MESSAGE: Final = "modified since sync: differs from its hub.lock entry"
 MAX_CARD_DESCRIPTION_CHARS: Final = 200
 # The JSON files the fold reads besides the items' own files, in budget order.
 JSON_FILES: Final = (SETTINGS_PATH, PROJECT_SETTINGS_PATH, MARKETPLACE_PATH)
@@ -375,6 +391,13 @@ class _Item:
     linked_from: list[str] = field(default_factory=list)
     diagnostics: list[Diagnostic] = field(default_factory=list)
     hook: HookRecord | None = None
+    structure: SkillStructure | None = None
+    toc: tuple[TocEntry, ...] = ()
+    cost: ContextCost | None = None
+    uses: list[_Item] = field(default_factory=list)
+    used_by: list[_Item] = field(default_factory=list)
+    files: list[BundledFile] = field(default_factory=list)
+    file_paths: dict[str, str] = field(default_factory=dict)
 
     @property
     def id(self) -> str:
@@ -552,6 +575,134 @@ class _Fold:
         return notices
 
 
+# Diagnostics, relations and bundled files
+
+
+def _order_of(item: _Item) -> tuple[int, str, str]:
+    return (_KIND_ORDER[item.kind], item.name, item.source)
+
+
+def _relation(item: _Item) -> Relation:
+    return Relation(id=item.id, kind=item.kind, source=item.source, name=item.name)
+
+
+class _Enrich:
+    """What the fold adds once every item is known: the document's diagnostics, structure
+    and cost (D), relations by name (S), bundled files (S7), and the catalog-wide diagnostics
+    ``duplicate_name``, ``not_linked`` (L3) and ``modified_since_sync`` (L4)."""
+
+    def __init__(self, fold: _Fold) -> None:
+        self.fold = fold
+        self.items = sorted(fold.items.values(), key=_order_of)
+        self.by_name: dict[tuple[ItemKind, str], list[_Item]] = {}
+        for item in self.items:
+            self.by_name.setdefault((item.kind, item.name), []).append(item)
+        self.agents = frozenset(i.name for i in self.items if i.kind is ItemKind.AGENT)
+        self.skills = frozenset(i.name for i in self.items if i.kind is ItemKind.SKILL)
+
+    def run(self) -> None:
+        for item in self.items:
+            self._document(item)
+            self._files(item)
+        for item in self.items:
+            self._duplicate(item)
+            self._not_linked(item)
+            self._modified(item)
+
+    def _named(self, item: _Item, kind: ItemKind, names: Iterable[str]) -> None:
+        for name in names:
+            for target in self.by_name.get((kind, name), ()):
+                if target is not item:
+                    item.uses.append(target)
+                    target.used_by.append(item)
+
+    def _document(self, item: _Item) -> None:
+        document = item.document
+        if document is None:
+            return
+        unresolved: tuple[str, ...] = ()
+        if document.problem is None:
+            found = references(document.body, agents=self.agents, skills=self.skills)
+            unresolved = found.unresolved
+            self._named(item, ItemKind.AGENT, found.agents)
+            self._named(item, ItemKind.SKILL, found.skills)
+        known = KNOWN_SKILL_KEYS if item.kind is ItemKind.SKILL else KNOWN_AGENT_KEYS
+        item.diagnostics.extend(
+            diagnose(
+                document,
+                kind=item.kind,
+                file_name=item.name,
+                known_keys=known,
+                unresolved=unresolved,
+            )
+        )
+        item.cost = context_cost(document, kind=item.kind)
+        if item.kind is ItemKind.SKILL:
+            item.structure = derive_structure(document.body, agents=self.agents, skills=self.skills)
+            item.toc = table_of_contents(document.body)
+
+    def _files(self, item: _Item) -> None:
+        folder = item.folder
+        if folder is None:
+            return
+        for entry in folder.files:
+            relative = entry.path[len(folder.root) + 1 :]
+            link = entry.link_target is not None
+            if not link and not entry.regular:
+                message = f"bundled file {relative} not listed: not a regular file"
+                item.diagnostics.append(_diagnostic(DiagnosticCode.NOT_REGULAR, message))
+                continue
+            if link and resolve_link(entry.path, entry.link_target or "") is None:
+                message = f"bundled file {relative} is a link outside the hub; not followed"
+                item.diagnostics.append(_diagnostic(DiagnosticCode.LINK_OUTSIDE_HUB, message))
+            issued = file_id(entry.path)
+            item.files.append(
+                BundledFile(
+                    id=issued,
+                    path=relative,
+                    role=role_of(relative),
+                    size=entry.size,
+                    link=link,
+                    too_large=entry.regular and entry.size > MAX_SKILL_FILE_BYTES,
+                )
+            )
+            item.file_paths[issued] = entry.path
+
+    def _duplicate(self, item: _Item) -> None:
+        if item.kind is ItemKind.HOOK:
+            return
+        others = [other.id for other in self.by_name[(item.kind, item.name)] if other is not item]
+        if others:
+            message = f"name also used by {', '.join(others)}"
+            item.diagnostics.append(_diagnostic(DiagnosticCode.DUPLICATE_NAME, message))
+
+    def _not_linked(self, item: _Item) -> None:
+        project = self.fold.inputs.project_plugin
+        if item.source != project or project == BASE_PLUGIN or item.kind is ItemKind.HOOK:
+            return
+        if any(other.source == BASE_PLUGIN for other in self.by_name[(item.kind, item.name)]):
+            return
+        listing = self.fold.listing
+        entries = listing.folders if item.kind is ItemKind.SKILL else listing.agents
+        if (CLAUDE_SOURCE, item.name) not in entries:
+            item.diagnostics.append(_diagnostic(DiagnosticCode.NOT_LINKED, NOT_LINKED_MESSAGE))
+
+    def _modified(self, item: _Item) -> None:
+        lock = self.fold.lock.lock
+        entry = None if lock is None else lock.files.get(item.source_path)
+        if not isinstance(entry, ManagedFileEntry):
+            return
+        raw = item.read.raw
+        if item.hook is not None:
+            content = self.fold.inputs.texts.get(item.source_path)
+            in_plugin = item.source in self.fold.listing.hooks
+            raw = content if in_plugin and isinstance(content, bytes) else None
+        if raw is not None and hashlib.sha256(raw).hexdigest() != entry.sha256:
+            item.diagnostics.append(
+                _diagnostic(DiagnosticCode.MODIFIED_SINCE_SYNC, MODIFIED_MESSAGE)
+            )
+
+
 # Views
 
 
@@ -591,7 +742,13 @@ def _detail(item: _Item) -> SkillDetail:
         frontmatter=() if document is None else document.pairs,
         body=None if document is None else document.body,
         raw=item.read.text,
+        toc=item.toc,
+        structure=item.structure,
+        uses=tuple(_relation(used) for used in item.uses),
+        used_by=tuple(_relation(user) for user in sorted(item.used_by, key=_order_of)),
+        files=tuple(item.files),
         diagnostics=tuple(item.diagnostics),
+        context_cost=item.cost,
         hook=None if item.hook is None else item.hook.facts,
     )
 
@@ -622,6 +779,7 @@ def build_catalog(inputs: CatalogInputs) -> FoldedCatalog:
     each item's detail by id, and each skill's bundled files by file id."""
     fold = _Fold(inputs)
     fold.run()
+    _Enrich(fold).run()
     details = _sorted(_detail(item) for item in fold.items.values())
     notices = fold.catalog_notices()
     catalog = SkillCatalog(
@@ -631,4 +789,9 @@ def build_catalog(inputs: CatalogInputs) -> FoldedCatalog:
         truncated=fold.truncated,
         notice="; ".join(notices) if notices else None,
     )
-    return FoldedCatalog(catalog=catalog, details={detail.id: detail for detail in details})
+    files = {item.id: dict(item.file_paths) for item in fold.items.values() if item.file_paths}
+    return FoldedCatalog(
+        catalog=catalog,
+        details={detail.id: detail for detail in details},
+        files=dict(sorted(files.items())),
+    )
