@@ -35,6 +35,12 @@ export type LearningActionResult = Schemas["LearningActionResult"];
 export type BrainTree = Schemas["BrainTree"];
 export type BrainNote = Schemas["BrainNote"];
 export type FeatureRecord = Schemas["FeatureRecord"];
+export type GoldenStep = Schemas["GoldenStep"];
+export type GoldenPath = Schemas["GoldenPath"];
+export type EvalRecord = Schemas["EvalRecord"];
+export type TicketRow = Schemas["TicketRow"];
+export type TicketPlan = Schemas["TicketPlan"];
+export type FeatureTickets = Schemas["FeatureTickets"];
 
 /** The synthetic clock every builder uses. */
 export const T0 = "2026-10-11T14:00:00.000Z";
@@ -488,6 +494,164 @@ export function aFeature(overrides: Partial<FeatureView> = {}): FeatureView {
     sources_missing: ["github"],
     verdict: null,
     verdict_line: null,
+    golden_path: aGoldenPath(),
+    tickets_source: "plan",
+    ...overrides,
+  };
+}
+
+/** One golden-path step: Implement, current, with its progress. */
+export function aGoldenStep(overrides: Partial<GoldenStep> = {}): GoldenStep {
+  return {
+    name: "implement",
+    state: "current",
+    meta: "1/3 tickets · 40/66 ACs",
+    reason: null,
+    progress: { done: 1, total: 3 },
+    ...overrides,
+  };
+}
+
+/** The golden path of feature `control-plane`: in Implement, 1 of 3 tickets done. */
+export function aGoldenPath(overrides: Partial<GoldenPath> = {}): GoldenPath {
+  const gate = "Implement is not done";
+  return {
+    phase: "implement",
+    steps: [
+      aGoldenStep({ name: "spec", state: "done", meta: null, progress: null }),
+      aGoldenStep({ name: "research", state: "done", meta: null, progress: null }),
+      aGoldenStep({ name: "plan", state: "done", meta: null, progress: null }),
+      aGoldenStep({
+        name: "tickets",
+        state: "done",
+        meta: "3 of 3 created",
+        progress: { done: 3, total: 3 },
+      }),
+      aGoldenStep(),
+      aGoldenStep({
+        name: "review",
+        state: "pending",
+        meta: "1/3 reviewed",
+        reason: gate,
+        progress: { done: 1, total: 3 },
+      }),
+      aGoldenStep({
+        name: "evaluate",
+        state: "partial",
+        meta: "partial: covers 3 of 66 ACs",
+        reason: gate,
+        progress: { done: 3, total: 66 },
+      }),
+      aGoldenStep({ name: "shipped", state: "pending", meta: null, reason: gate, progress: null }),
+    ],
+    ...overrides,
+  };
+}
+
+/** The SHIP eval of the first delivery of feature `control-plane`. */
+export function anEvalRecord(overrides: Partial<EvalRecord> = {}): EvalRecord {
+  return {
+    delivery: "agh-201",
+    path: "features/control-plane/evals/agh-201.md",
+    verdict: "SHIP",
+    tickets: ["AGH-201"],
+    acs: ["AC-200.1", "AC-200.2", "AC-200.3"],
+    prs: ["agent-hub#80"],
+    commit: "0a1b2c3",
+    evaluated_at: "2026-10-11",
+    legacy: false,
+    problem: null,
+    ...overrides,
+  };
+}
+
+/** Ticket `T2` (`AGH-202`) of feature `control-plane`: in progress, its blocker done. */
+export function aTicketRow(overrides: Partial<TicketRow> = {}): TicketRow {
+  return {
+    ref: "AGH-202",
+    key: "T2",
+    id: "AGH-202",
+    title: "Serve the ticket summaries",
+    state: { name: "In Progress", type: "started" },
+    assignee: "Ada Example",
+    url: "https://linear.app/demo/issue/AGH-202",
+    priority: 2,
+    estimate: 3,
+    repo: "agent-hub",
+    order: 2,
+    acs: ["AC-200.4"],
+    blocked_by: [{ ref: "AGH-201", source: "both" }],
+    blocks: ["AGH-203"],
+    readiness: "can_start",
+    waiting_on: [],
+    reviewed: false,
+    ...overrides,
+  };
+}
+
+/** The planning of the three tickets of feature `control-plane` (`AGH-201` done). */
+export function aTicketPlan(overrides: Partial<TicketPlan> = {}): TicketPlan {
+  return {
+    layers: [["AGH-202"], ["AGH-203"]],
+    can_start: ["AGH-202"],
+    order: ["AGH-202", "AGH-203"],
+    waiting: ["AGH-203"],
+    cycles: [],
+    external_blockers: [],
+    critical_path: ["AGH-202", "AGH-203"],
+    warnings: [],
+    ...overrides,
+  };
+}
+
+/** The tickets of feature `control-plane` as Linear answered: done, can start, waiting. */
+export function aFeatureTickets(overrides: Partial<FeatureTickets> = {}): FeatureTickets {
+  return {
+    project: "agent-hub",
+    slug: "control-plane",
+    source: "linear",
+    stale: false,
+    as_of: T0,
+    notice: null,
+    tracker_problem: null,
+    tickets: [
+      aTicketRow({
+        ref: "AGH-201",
+        key: "T1",
+        id: "AGH-201",
+        title: "Collect the events",
+        state: { name: "Done", type: "completed" },
+        url: "https://linear.app/demo/issue/AGH-201",
+        order: 1,
+        acs: ["AC-200.1", "AC-200.2", "AC-200.3"],
+        blocked_by: [],
+        blocks: ["AGH-202"],
+        readiness: "done",
+        reviewed: true,
+      }),
+      aTicketRow(),
+      aTicketRow({
+        ref: "AGH-203",
+        key: "T3",
+        id: "AGH-203",
+        title: "Show the planning view",
+        state: { name: "Todo", type: "unstarted" },
+        assignee: null,
+        url: "https://linear.app/demo/issue/AGH-203",
+        priority: 0,
+        estimate: null,
+        order: 3,
+        acs: ["AC-200.5"],
+        blocked_by: [{ ref: "AGH-202", source: "plan" }],
+        blocks: [],
+        readiness: "waiting",
+        waiting_on: ["AGH-202"],
+      }),
+    ],
+    planning: aTicketPlan(),
+    golden_path: aGoldenPath(),
+    derived: true,
+    sources_missing: ["github"],
     ...overrides,
   };
 }
@@ -526,6 +690,7 @@ export function aFeatureDetail(
       aFeatureRecord({ name: "eval", present: false }),
       aFeatureRecord({ name: "issues", present: false }),
     ],
+    evals: [anEvalRecord()],
     ...overrides,
   };
 }
