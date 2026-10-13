@@ -8,13 +8,20 @@ from typing import Any
 import httpx
 import pytest
 
+from agent_hub.core.features.feature_evals import eval_coverage, eval_records
+from agent_hub.core.features.feature_record import FeatureRecordFile
+from agent_hub.core.features.feature_reviews import approved_tickets, review_records
+from agent_hub.core.features.feature_status import RecordHead
+from agent_hub.core.features.ticket_planning import ticket_board
 from agent_hub.core.testing.transcript_lines import TRANSCRIPT_MODEL
 from scripts.seed_demo import (
     ASK_SESSION,
     BACKFILL_SESSION,
     DEMO_BRANCH,
     DEMO_PROJECT,
+    FEATURE,
     INBOX_NOTE,
+    ISSUE,
     LIVE_SESSION,
     STUCK_SESSION,
     ComposeTarget,
@@ -22,11 +29,14 @@ from scripts.seed_demo import (
     choose_target,
     demo_envelopes,
     demo_transcript,
+    hub_files,
     main,
 )
 
 NOW = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
 URL = "http://127.0.0.1:7420"
+HUB = PurePosixPath("/data/demo/demo-hub")
+FOLDER = HUB / "brain" / "features" / FEATURE
 
 
 class FakeTarget:
@@ -151,8 +161,9 @@ def test_loads_every_screen_input_when_run_against_target(
     assert target.commands[0][:2] == ["init", DEMO_PROJECT]
     assert target.commands[0][-2:] == ["--dir", hub]
     folder = f"{hub}/brain/features/export-button"
-    for name in ("features.json", "spec.md", "plan.md", "eval.md"):
+    for name in ("features.json", "spec.md", "plan.md", "eval.md", "evals/agh-7.md"):
         assert f"{folder}/{name}" in target.files
+    assert f"{folder}/reviews/{ISSUE}.md" in target.files
     assert target.files[f"{hub}/{INBOX_NOTE}"].startswith("---\nkind: team\n")
     assert server.hubs == [{"path": hub}]
     assert len(server.envelopes) == len(demo_envelopes(NOW))
@@ -164,6 +175,41 @@ def test_loads_every_screen_input_when_run_against_target(
     for command in (runs, transcript):
         assert command[-4:] == ["--project", DEMO_PROJECT, "--db", "/data/agent-hub.db"]
     assert f"demo data loaded: open {URL}" in capsys.readouterr().out
+
+
+def _heads(files: dict[PurePosixPath, str], folder: str) -> list[RecordHead]:
+    return [
+        RecordHead(name=path.name, head=text.encode(), problem=None)
+        for path, text in sorted(files.items())
+        if path.parent == FOLDER / folder
+    ]
+
+
+def test_plans_blocked_tickets_with_evals_and_reviews_when_feature_files_built() -> None:
+    files = hub_files(HUB)
+    record = FeatureRecordFile.model_validate_json(files[FOLDER / "features.json"])
+    evals = eval_records(_heads(files, "evals"), files[FOLDER / "eval.md"].encode(), slug=FEATURE)
+    reviews = review_records(_heads(files, "reviews"), slug=FEATURE)
+
+    board = ticket_board(
+        record.tickets, record.acs, None, linear=record.linear, approved=approved_tickets(reviews)
+    )
+    coverage = eval_coverage(evals, record.acs, tickets=record.tickets)
+
+    assert record.linear == (ISSUE,)
+    assert [(t.key, t.id) for t in record.tickets] == [("T1", ISSUE), ("T2", None), ("T3", None)]
+    assert [t.blocked_by for t in record.tickets] == [(), ("T1",), ("T2",)]
+    assert all(ac.ticket is not None for ac in record.acs)
+    assert [row.ref for row in board.rows] == [ISSUE, "T2", "T3"]
+    assert board.plan.layers == ((ISSUE,), ("T2",), ("T3",))
+    assert board.plan.cycles == ()
+    assert [(e.delivery, e.verdict, e.problem) for e in evals] == [
+        ("legacy", "SHIP-WITH-OWNER-STEPS", None),
+        ("agh-7", "SHIP-WITH-OWNER-STEPS", None),
+    ]
+    assert coverage.unscoped is False
+    assert coverage.covered == ("AC-7.1", "AC-7.2", "AC-7.3")
+    assert [(r.ticket, r.outcome, r.problem) for r in reviews] == [(ISSUE, "approved", None)]
 
 
 def test_keeps_going_when_hub_exists_and_is_registered(capsys: pytest.CaptureFixture[str]) -> None:
