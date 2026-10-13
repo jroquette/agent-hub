@@ -50,7 +50,7 @@ _GATE: Final = frozenset(
     }
 )
 _EXECUTOR: Final = frozenset(
-    {"issue", "repo", "status", "stage", "reason", "caps", "pr_url", "cost_usd", "mode"}
+    {"issue", "repo", "status", "stage", "reason", "caps", "pr_url", "cost_usd", "mode", "outcome"}
 )
 _LEARNING: Final = frozenset(
     {

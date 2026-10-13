@@ -2,6 +2,7 @@
 name = "agent-hub-core"
 version = "0.1.0"
 description = "Domain, canonical event, schemas and ports of agent-hub."
+license = "Apache-2.0"
 requires-python = ">=3.14"
 dependencies = ["pydantic>=2"]
 

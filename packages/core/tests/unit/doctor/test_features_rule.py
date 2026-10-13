@@ -935,3 +935,127 @@ def test_reports_withdrawn_ac_when_dropped_from_spec_or_not_bool(
         (RECORD, "AC-3: `withdrawn` must be true or false", RECORD_FIX),
         (RECORD, "AC-2: in features.json but not in spec.md", SPEC_FIX),
     ]
+
+
+ISSUES = "brain/features/demo/issues.md"
+NO_IDS = "issues.md exists but `linear` holds no tracker id, here or in spec.md"
+NO_IDS_FIX = "write the created issue ids into features.json → linear"
+SPEC_NO_IDS = b"---\nlinear: []\n---\n# Demo\n\n- AC-1: Given x\n"
+
+
+def found_with_issues(
+    snapshot_of: SnapshotFactory, record: dict[str, Any], *, spec: bytes | None = None
+) -> list[tuple[Severity, str | None, str, str]]:
+    """Every finding, with its level, on a feature folder that also lists ``issues.md``."""
+    files = {RECORD: json.dumps(record).encode(), ISSUES: b"# Issues\n\n## T1: x\n"}
+    if spec is not None:
+        files[SPEC] = spec
+    snapshot = snapshot_of(config=a_config(), files=files)
+    return [
+        (finding.severity, finding.path, finding.message, finding.fix)
+        for finding in FEATURES_TRACKER.check(snapshot)
+    ]
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        pytest.param(None, id="no-spec"),
+        pytest.param(SPEC_NO_IDS, id="spec-linear-empty"),
+        pytest.param(b"---\nprocess_size: bounded\n---\nAC-1\n", id="spec-linear-absent"),
+        pytest.param(b"# Demo\n\nlinear: [TST-4]\n\nAC-1\n", id="spec-without-frontmatter"),
+        pytest.param(b"---\nlinear: [<TEAM>-N]\n---\nAC-1\n", id="spec-placeholder"),
+        pytest.param(b"---\nlinear: [OPS-4, tst-5]\n---\nAC-1\n", id="spec-other-team"),
+        pytest.param(
+            b"---\n" + b"x: y\n" * 13_200 + b"linear: [TST-4]\n---\nAC-1\n",
+            id="spec-ids-past-head",
+        ),
+    ],
+)
+@pytest.mark.parametrize("absent", [False, True], ids=["linear-empty", "linear-absent"])
+def test_warns_on_record_when_issues_drafted_without_ids(
+    snapshot_of: SnapshotFactory, spec: bytes | None, *, absent: bool
+) -> None:
+    record = a_record(an_ac(1), linear=[])
+    if absent:
+        del record["linear"]
+
+    assert found_with_issues(snapshot_of, record, spec=spec) == [
+        (Severity.WARNING, RECORD, NO_IDS, NO_IDS_FIX)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("linear", "spec"),
+    [
+        pytest.param(["TST-1"], SPEC_NO_IDS, id="ids-in-record"),
+        pytest.param([], b"---\nlinear: [TST-4, TST-5]\n---\nAC-1\n", id="ids-in-spec"),
+        pytest.param([], b"---\nlinear: TST-4\n---\nAC-1\n", id="one-id-in-spec"),
+    ],
+)
+def test_accepts_record_when_issue_ids_recorded(
+    snapshot_of: SnapshotFactory, linear: list[str], spec: bytes
+) -> None:
+    record = a_record(an_ac(1), linear=linear)
+
+    assert found_with_issues(snapshot_of, record, spec=spec) == []
+
+
+# AGH-136 + AGH-143: a planned ticket's ``id`` is a recorded tracker id too; drafts are not.
+def test_warns_on_record_unless_ticket_id_recorded_when_issues_drafted(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    drafts = a_planned_record(a_ticket("T1"), a_ticket("T2"), linear=[])
+    created = a_planned_record(a_ticket("T1", id="TST-7"), a_ticket("T2"), linear=[])
+    spec = b"---\nlinear: []\n---\nAC-1 AC-2\n"
+
+    assert found_with_issues(snapshot_of, drafts, spec=spec) == [
+        (Severity.WARNING, RECORD, NO_IDS, NO_IDS_FIX)
+    ]
+    assert found_with_issues(snapshot_of, created, spec=spec) == []
+
+
+def test_accepts_empty_linear_when_no_issues_drafted(snapshot_of: SnapshotFactory) -> None:
+    assert checked(snapshot_of, a_record(an_ac(1), linear=[]), spec=SPEC_NO_IDS) == []
+
+
+def test_keeps_warning_when_record_has_other_errors(snapshot_of: SnapshotFactory) -> None:
+    record = a_record(an_ac(1, repo="other"), linear=[])
+
+    assert found_with_issues(snapshot_of, record) == [
+        (Severity.ERROR, RECORD, f"AC-1: {REPOS}", RECORD_FIX),
+        (Severity.WARNING, RECORD, NO_IDS, NO_IDS_FIX),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("record", "spec", "expected"),
+    [
+        pytest.param(
+            a_record(an_ac(1), linear="TST-1"),
+            None,
+            [(RECORD, "`linear` must be a list of TST-<n> ids", RECORD_FIX)],
+            id="linear-malformed",
+        ),
+        pytest.param(
+            ["not", "an", "object"],
+            None,
+            [(RECORD, "top level must be an object", RECORD_FIX)],
+            id="record-not-object",
+        ),
+        pytest.param(
+            a_record(an_ac(1), linear=[]),
+            b"\xff---\n",
+            [(SPEC, "not UTF-8 text: byte 0 cannot be decoded", TEXT_FIX)],
+            id="spec-unreadable",
+        ),
+    ],
+)
+def test_adds_no_warning_when_record_or_spec_already_fails(
+    snapshot_of: SnapshotFactory, record: object, *, spec: bytes | None, expected: list[Shown]
+) -> None:
+    files = {RECORD: json.dumps(record).encode(), ISSUES: b"# Issues\n"}
+    if spec is not None:
+        files[SPEC] = spec
+
+    assert findings_of(snapshot_of(config=a_config(), files=files)) == expected
