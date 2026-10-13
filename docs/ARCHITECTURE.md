@@ -198,6 +198,12 @@ Phase 2 adds the read side and the live ingestion, all in core, with no I/O:
   `control_plane` event. The path rules of every brain read are pure (`brain/brain_path.py`). Session labels, actors
   and problems are folds beside the Session fold (`sessions/session_label.py`, `session_actors.py`,
   `session_problems.py`).
+- **Skills tab (AGH-164).** `SkillReads` (`skills/skill_reads.py`) serves the catalog, an item's detail and a
+  bundled file through two more `HubFileReader` reads: `skill_sources` (a stat-only listing of the skill roots) and
+  `read_skill_file` (one bounded file, never through a link), implemented in `generator/skill_files.py`. Everything
+  else is pure core in `core/skills/`: the path rule and limits (`skill_sources.py`), frontmatter, structure,
+  diagnostics, hooks and external plugins, the catalog fold (`skill_catalog.py`) and the usage fold over the event
+  snapshot (`skill_usage.py`, `EventReadModels.skill_usage`), which `HubFilesReadModels` joins (`usage=`).
 - **Doctor snapshot.** The doctor tree reader moved from `cli` to `generator` (`doctor_snapshot.py`,
   `build_doctor_snapshot`; `hub_config_files.py` for `hub.json`, `hub.lock` and `hub.local.json`), so `hub doctor` and
   the Health screen run the same rules on the same snapshot; git stays in the composition roots and is injected.

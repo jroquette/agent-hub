@@ -309,7 +309,7 @@ A web app reads the hubs and the agents' events and answers five questions, one 
 **Phase 2 (built).** `hub web` serves the views above that Phase 2 covers: Portfolio, Project overview,
 Approvals (read-only), Live sessions, Sessions and Session detail (Timeline, Files, Cost, Raw events), Workflow runs and
 Run detail, Features and Feature detail, Health (the doctor rules run in process per hub, cached 15 min), Knowledge ›
-Learnings and Knowledge › Brain, Settings and Welcome. Session, WorkflowRun, Learning and Approval are pure folds in core,
+Learnings, Knowledge › Brain and Knowledge › Skills, Settings and Welcome. Session, WorkflowRun, Learning and Approval are pure folds in core,
 recomputed on read and memoized in process by the store's high-water mark ([event-derivations.md](design/event-derivations.md)).
 Cost is estimated from transcript usage times a dated price table and always labelled so; OpenTelemetry and GitHub
 are not connected in this version and their cells say so, and Linear is read only for a feature's tickets (AGH-136
@@ -382,6 +382,32 @@ Linear status ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md), records
   the next free number, a withdrawn AC stays listed (`withdrawn: true` in `features.json`) and no id is renumbered.
   The planner, evaluator and requirements-analyst templates and `/feature` say so, and `hub doctor`'s
   `features.tracker` rule checks the new records.
+
+**Skills tab (AGH-164, built).** Knowledge › Skills shows what a hub's agents can do, read from its files on request
+and never stored:
+
+- **Catalog.** `GET /api/v1/projects/{project}/skills` lists the hub's skills, agents and hooks: the base plugin
+  `plugin/hub-workflow/`, the project and other plugins under `plugin/`, real entries in `.claude/skills/` and
+  `.claude/agents/`, and the hooks of `.claude/settings.json`, `.claude/settings.project.json` and each plugin's
+  `hooks/hooks.json` (never `settings.local.json`). Each item has an origin (`managed` per `hub.lock`,
+  `project-owned`, `local`), an invocation mode (`user-only`, `model-only`, `both`, or `neither`, shown as "Hidden"),
+  its invocation line and its use in the last 30 days (a fold over the stored events: a typed `/name` and a `Skill`
+  call, an `Agent` call by type; signals of one invocation within 5 s count once). Third-party plugins named by the
+  marketplace or `enabledPlugins` are listed with their pin and "not in this hub": nothing is fetched. Search and
+  facets (kind, origin, mode, has diagnostics) live in the URL query.
+- **Detail.** An item is addressed by `kind/source/name`, `source` being the folder it comes from (`claude` for
+  `.claude/`, `settings` / `settings-project` for those files' hooks); every source of a duplicate name is listed.
+  The detail shows the frontmatter (unknown keys flagged "not understood by Claude Code"), the body rendered (raw HTML
+  off, a URL allow-list, `!` dynamic context shown as text) or raw, its table of contents, a structure derived from
+  the text and labelled so (numbered steps, agents, skills, commands, gates), uses and used-by links, bundled files by
+  role (text served inert by a server-issued id), an approximate context cost (characters / 4), and diagnostics
+  (`name_invalid`, `description_missing`, `reference_not_found`, `not_linked`, `modified_since_sync`, …). A hook shows
+  its event, matcher, command, source file and active / not-synced state. Nothing is run.
+- **Bounds.** The tree is listed stat-only through `HubFileReader.skill_sources` and read through
+  `read_skill_file`, never through a link (a link that leaves the hub is `link_outside_hub`); at most 500 items per
+  kind, 200 bundled files per skill, 2,000 hooks, 256 KiB per file and 16 MiB per catalog. Past a bound the catalog
+  says `truncated` with a notice; an over-cap file is listed with `too_large` and no text. The catalog is memoized per
+  hub by its listing's fingerprint.
 
 ## Data sources and event model
 
