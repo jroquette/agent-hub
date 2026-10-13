@@ -94,3 +94,7 @@ def test_exits_with_usage_error_when_title_argument_missing(
 
 def test_accepts_title_when_scope_is_hub_git() -> None:
     assert problems("feat(hub-git): open hub pull requests for learnings") == []
+
+
+def test_accepts_title_when_scope_is_claude_sessions() -> None:
+    assert problems("feat(claude-sessions): drive claude through the agent sdk") == []
