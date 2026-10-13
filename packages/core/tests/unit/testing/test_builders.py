@@ -1,9 +1,14 @@
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 
 from agent_hub.core.events.event import Event, EventType
+from agent_hub.core.runner.brief import check_brief
 from agent_hub.core.testing.builders import (
+    RUN_DESCRIPTION,
     a_brain_change,
+    a_brief,
     a_hub_document,
     a_seeded_tracker_backend,
     an_event,
@@ -150,3 +155,48 @@ def test_builds_accept_when_brain_change_defaults_used() -> None:
     change = a_brain_change(branch="demo/learning-accept-y")
 
     assert (change.action, change.branch) == ("accept", "demo/learning-accept-y")
+
+
+def test_builds_six_headed_sections_in_order_when_brief_built() -> None:
+    assert a_brief() == (
+        "## Problem\nSynthetic problem.\n"
+        "## Why\nSynthetic why.\n"
+        "## Why now\nSynthetic why now.\n"
+        "## Outcome\nSynthetic outcome.\n"
+        "## Invariants\nSynthetic invariants.\n"
+        "## Acceptance criteria\nSynthetic acceptance criteria.\n"
+    )
+
+
+def test_omits_sections_when_brief_omit_given() -> None:
+    text = a_brief(omit=("Why now", "Acceptance criteria"))
+
+    assert [line for line in text.splitlines() if line.startswith("## ")] == [
+        "## Problem",
+        "## Why",
+        "## Outcome",
+        "## Invariants",
+    ]
+
+
+def test_applies_body_when_brief_section_overridden() -> None:
+    text = a_brief(why_now="Before the release.", acceptance_criteria="- one\n- two")
+
+    assert "## Why now\nBefore the release.\n" in text
+    assert "## Acceptance criteria\n- one\n- two\n" in text
+    assert "## Problem\nSynthetic problem.\n" in text
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [{"why_later": "x"}, {"omit": ("Why later",)}],
+    ids=["body", "omit"],
+)
+def test_raises_when_brief_override_names_unknown_section(arguments: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match="Why later|why_later"):
+        a_brief(**arguments)
+
+
+def test_passes_brief_check_when_run_description_read() -> None:
+    assert check_brief(RUN_DESCRIPTION) == ()
+    assert "## Problem\nAdd a synthetic change.\n" in RUN_DESCRIPTION
