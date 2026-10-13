@@ -98,7 +98,7 @@ def test_writes_new_eval_file_when_evaluator_rendered(texts: dict[str, str]) -> 
     assert "`legacy`" in text
 
 
-def test_keeps_approved_spec_when_analyst_and_feature_rendered(texts: dict[str, str]) -> None:
+def test_keeps_approved_spec_amendments_when_analyst_and_feature_rendered(texts: dict[str, str]) -> None:
     for path in (ANALYST, FEATURE):
         text = flat(texts[path])
         for rule in AMENDMENT_RULES:

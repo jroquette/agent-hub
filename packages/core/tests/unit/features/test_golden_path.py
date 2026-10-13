@@ -161,7 +161,7 @@ def _all_done(**fields: object) -> GoldenInputs:
     return _inputs(**(values | fields))
 
 
-def test_ships_when_every_gate_holds() -> None:
+def test_shipped_when_every_gate_holds() -> None:
     path = golden_path(_all_done())
 
     assert path.phase == "shipped"
@@ -170,7 +170,7 @@ def test_ships_when_every_gate_holds() -> None:
 
 
 @pytest.mark.parametrize("approved", [False, True])
-def test_never_ships_when_plan_fallback(*, approved: bool) -> None:
+def test_never_shipped_when_plan_fallback(*, approved: bool) -> None:
     rows = tuple(
         _ticket(number, state=None, reviewed=True if approved else None) for number in range(1, 5)
     )

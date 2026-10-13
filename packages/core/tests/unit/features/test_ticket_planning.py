@@ -149,7 +149,7 @@ def test_orders_topologically_when_dag_generated_property(
     assert again == board
 
 
-def test_flags_cycles_and_external_blockers_when_present() -> None:
+def test_flags_cycles_external_blockers_when_present() -> None:
     planned = (
         _planned(1, blocked_by=(2,)),
         _planned(2, blocked_by=(1,)),
@@ -185,7 +185,7 @@ def test_flags_cycles_and_external_blockers_when_present() -> None:
     assert board.plan.can_start == ("DEM-4",)
 
 
-def test_tags_edges_and_finds_critical_path_when_sources_differ() -> None:
+def test_tags_edges_critical_path_when_sources_differ() -> None:
     planned = (
         _planned(1),
         _planned(2, blocked_by=(1,)),
