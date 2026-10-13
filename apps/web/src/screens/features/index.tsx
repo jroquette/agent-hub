@@ -17,7 +17,8 @@ import { fmtClock } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import { useScope } from "../../lib/scope";
 import { useCollectorState } from "../../shell/GlobalStream";
-import { AcBar, FilterMenu, PHASES, PhaseBar, VERDICT_STATUS, phaseIndex } from "./parts";
+import { GoldenPathBar } from "./GoldenPathBar";
+import { AcBar, FilterMenu, PHASES, VERDICT_STATUS, phaseIndex } from "./parts";
 import { useFeatures } from "./queries";
 
 type Feature = components["schemas"]["FeatureView"];
@@ -249,12 +250,12 @@ export function FeaturesScreen() {
                 label: (
                   <span className="ah-row" style={{ gap: 4 }}>
                     Golden path
-                    <DerivedLabel how="Derived from the feature record files; review needs runs and shipped needs GitHub, not connected in this version.">
+                    <DerivedLabel how="Derived from the record files, the tickets' status last read from Linear, and the review and eval records; Shipped needs GitHub, not connected in this version.">
                       derived
                     </DerivedLabel>
                   </span>
                 ),
-                render: (f) => <PhaseBar phase={f.phase} files={f.files} verdict={f.verdict} />,
+                render: (f) => <GoldenPathBar path={f.golden_path} />,
               },
               { id: "acs", label: "ACs", render: (f) => <AcCell f={f} /> },
               {

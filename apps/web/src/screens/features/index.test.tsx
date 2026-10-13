@@ -4,7 +4,15 @@ import { describe, expect, it } from "vitest";
 
 import { GlobalStreamProvider } from "../../shell/GlobalStream";
 import { seriousViolations } from "../../testing/axe";
-import { aFeature, aPage, aProblem, renderWithApi, type ApiRoutes } from "../../testing/builders";
+import {
+  aFeature,
+  aGoldenPath,
+  aGoldenStep,
+  aPage,
+  aProblem,
+  renderWithApi,
+  type ApiRoutes,
+} from "../../testing/builders";
 import { FeaturesScreen } from "./index";
 
 const features = [
@@ -15,6 +23,31 @@ const features = [
     acs: { owner_steps: 0, passing: 0, total: 9 },
     size: "bounded",
     issues: ["AGH-112"],
+    golden_path: aGoldenPath({
+      phase: "plan",
+      steps: [
+        aGoldenStep({ name: "spec", state: "done", meta: null, progress: null }),
+        aGoldenStep({ name: "research", state: "skipped", meta: null, progress: null }),
+        aGoldenStep({ name: "plan", state: "current", meta: "plan.md", progress: null }),
+        aGoldenStep({ name: "tickets", state: "pending", meta: null, progress: null }),
+        aGoldenStep({ name: "implement", state: "pending", meta: null, progress: null }),
+        aGoldenStep({
+          name: "review",
+          state: "unknown",
+          meta: null,
+          reason: "Linear not connected",
+          progress: null,
+        }),
+        aGoldenStep({
+          name: "evaluate",
+          state: "partial",
+          meta: "partial: covers 2 of 9 ACs",
+          reason: "Plan is not done",
+          progress: { done: 2, total: 9 },
+        }),
+        aGoldenStep({ name: "shipped", state: "done", meta: null, progress: null }),
+      ],
+    }),
   }),
   aFeature(),
   aFeature({
@@ -86,14 +119,30 @@ describe("FeaturesScreen", () => {
     expect(within(row).getByText("SHIP-WITH-OWNER-STEPS")).toBeInTheDocument();
   });
 
-  it("shows the golden path phase and '--' without a verdict", async () => {
+  it("draws the server's golden path with each state's text and reason (golden)", async () => {
     open();
 
     await screen.findByRole("link", { name: "tracker-team-cap" });
     const row = rowOf("tracker-team-cap");
-    expect(within(row).getByRole("img", { name: "Golden path: Plan" })).toBeInTheDocument();
+    const bar = within(row).getByRole("img", { name: /^Golden path: Plan\./ });
+    const name = bar.getAttribute("aria-label") ?? "";
+    expect(name).toContain("Review: unknown (Linear not connected)");
+    expect(name).toContain("Evaluate: partial · partial: covers 2 of 9 ACs (Plan is not done)");
+    expect(name).toContain("Shipped: blocked (Plan is not done)");
+    expect(
+      [...bar.querySelectorAll("[data-state]")].map((s) => s.getAttribute("data-state")),
+    ).toEqual([
+      "done",
+      "skipped",
+      "current",
+      "pending",
+      "pending",
+      "unknown",
+      "partial",
+      "blocked",
+    ]);
+    expect(within(row).getByText("plan.md")).toBeInTheDocument();
     expect(within(row).getByText("--")).toBeInTheDocument();
-    expect(row.querySelector('[data-state="skipped"]')).not.toBeNull();
   });
 
   it("degrades only the malformed feature's ACs", async () => {

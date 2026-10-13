@@ -2,8 +2,10 @@ from agent_hub.core.sessions.session import ProblemCounts
 from agent_hub.core.testing.read_model_builders import (
     a_brain_note,
     a_brain_tree,
+    a_feature_tickets,
     a_feature_view,
     a_finding_view,
+    a_golden_path,
     a_hub_view,
     a_learning,
     a_learning_detail,
@@ -13,7 +15,10 @@ from agent_hub.core.testing.read_model_builders import (
     a_session,
     a_session_label,
     a_session_problems,
+    a_ticket_snapshot,
     an_approval,
+    an_eval_record,
+    an_issue_summary,
 )
 
 
@@ -56,3 +61,26 @@ def test_links_summary_to_problem_when_clarity_problems_built() -> None:
     problems = a_session_problems()
 
     assert problems.summary[0].event_id == problems.items[0].event_id
+
+
+def test_serializes_tickets_builders_when_defaults_used() -> None:
+    views = [
+        an_issue_summary(),
+        a_ticket_snapshot(),
+        a_golden_path(),
+        a_feature_tickets(),
+        an_eval_record(),
+    ]
+
+    for view in views:
+        assert type(view).model_validate_json(view.model_dump_json()) == view
+
+
+def test_keeps_rows_and_planning_consistent_when_tickets_built() -> None:
+    tickets = a_feature_tickets()
+    refs = {row.ref for row in tickets.tickets}
+
+    assert set(tickets.planning.order) <= refs
+    assert {ref for layer in tickets.planning.layers for ref in layer} <= refs
+    assert tickets.golden_path.phase == "implement"
+    assert a_ticket_snapshot().summaries[0].id == an_issue_summary().id

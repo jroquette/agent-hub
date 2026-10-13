@@ -34,7 +34,7 @@ from agent_hub.generator.brain_files import (
     read_brain_file,
 )
 from agent_hub.generator.doctor_snapshot import build_doctor_snapshot, read_lock
-from agent_hub.generator.feature_files import read_feature_folders
+from agent_hub.generator.feature_files import read_feature_folder, read_feature_folders
 from agent_hub.generator.hub_config_files import UnreadFile, read_file_bytes, read_local_json
 
 HUB_JSON: Final = "hub.json"
@@ -131,6 +131,10 @@ class HubFileSystem:
     def feature_folders(self, hub_path: str) -> tuple[FeatureFolder, ...]:
         """The hub's feature folders."""
         return read_feature_folders(Path(hub_path))
+
+    def feature_folder(self, hub_path: str, slug: str) -> FeatureFolder | None:
+        """The hub's feature folder ``slug``; None when there is no such folder."""
+        return read_feature_folder(Path(hub_path), slug)
 
     def brain_tree(self, hub_path: str) -> BrainListing:
         """The ``.md`` notes under the hub's ``brain/``, bounded, no link followed."""

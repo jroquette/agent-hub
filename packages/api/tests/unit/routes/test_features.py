@@ -2,7 +2,7 @@ from typing import Any
 
 from agent_hub.core.features.feature_view import AcRow, FeatureDetail
 from agent_hub.core.readmodels.filters import Scope
-from agent_hub.core.testing.read_model_builders import a_feature_view
+from agent_hub.core.testing.read_model_builders import a_feature_tickets, a_feature_view
 
 
 def _detail() -> FeatureDetail:
@@ -32,3 +32,27 @@ def test_answers_not_found_when_feature_unknown(wired: Any) -> None:
 
     assert response.status_code == 404
     assert response.json()["detail"] == "No feature with id 'demo/nope'."
+
+
+def test_returns_tickets_when_port_answers(wired: Any) -> None:
+    wired.hubs.tickets["demo/demo-feature"] = a_feature_tickets()
+
+    response = wired.client.get("/api/v1/features/demo/demo-feature/tickets")
+
+    assert response.status_code == 200
+    assert response.json() == a_feature_tickets().model_dump(mode="json")
+    assert wired.hubs.calls == [("feature_tickets", ("demo", "demo-feature"))]
+
+
+def test_answers_not_found_when_tickets_feature_unknown(wired: Any) -> None:
+    response = wired.client.get("/api/v1/features/demo/nope/tickets")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "No feature with id 'demo/nope'."
+
+
+def test_refuses_slug_when_tickets_path_too_long(wired: Any) -> None:
+    response = wired.client.get(f"/api/v1/features/demo/{'x' * 201}/tickets")
+
+    assert response.status_code == 400
+    assert wired.hubs.calls == []

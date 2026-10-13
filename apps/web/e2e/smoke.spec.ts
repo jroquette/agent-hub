@@ -209,3 +209,37 @@ test("Brain shows the tree and a note, and follows an in-app link", async ({ pag
     await expect(page.getByText("Ship the CSV export button (DEM-7).")).toBeVisible();
   });
 });
+
+// AGH-136 (AC-136.35, E4): `hub web` runs without LINEAR_API_KEY, so the Tickets tab shows the
+// plan's tickets (T1 is DEM-7; T2, not created yet, waits on it), the planning view and the
+// "not connected" notice. Run alone by test_shows_plan_notice_when_feature_tickets_opened.
+test("Feature detail Tickets tab shows the plan's tickets, planning and the not-connected notice", async ({
+  page,
+  baseURL,
+}) => {
+  await visit(page, baseURL, `/features/demo/export-button`, async () => {
+    await expect(page.getByRole("heading", { level: 1, name: "export-button" })).toBeVisible();
+    const answered = page.waitForResponse((response) =>
+      response.url().endsWith("/api/v1/features/demo/export-button/tickets"),
+    );
+    await page.getByRole("tab", { name: /Tickets/ }).click();
+    const response = await answered;
+    expect(response.status()).toBe(200);
+    expect(response.headers()["content-security-policy"]).toContain("connect-src 'self'");
+    await expect(page).toHaveURL(/[?&]doc=tickets\b/);
+    await expect(
+      page.getByText(/^From the plan \(features\.json\); Linear is not connected/),
+    ).toBeVisible();
+    await expect(page.getByText("No status read from Linear yet.")).toBeVisible();
+    const table = page.getByRole("table", { name: "Tickets" });
+    await expect(table.getByRole("row")).toHaveCount(3);
+    await expect(table.getByText("Add the export route")).toBeVisible();
+    await expect(table.getByText("Add the button")).toBeVisible();
+    await expect(table.getByText("not created")).toBeVisible();
+    await expect(page.getByText(/2 tickets · from the plan \(features\.json\)/)).toBeVisible();
+    const planning = page.getByRole("region", { name: "Planning" });
+    await expect(planning.getByRole("heading", { name: "Parallel groups" })).toBeVisible();
+    await expect(planning.getByText("Layer 2")).toBeVisible();
+    await expect(planning.getByRole("heading", { name: "Recommended order" })).toBeVisible();
+  });
+});

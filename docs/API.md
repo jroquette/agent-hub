@@ -26,7 +26,9 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
 - The document lists only routes this build serves: no route for a later phase exists in it. Its paths are Phase 2's
   (`P2_PATHS` in `agent_hub/api/openapi_paths.py`) plus the five AGH-201 added (`CLARITY_PATHS`):
   `GET /sessions/{session_id}/problems`, `POST /learnings/{learning_id}/accept`, `POST /learnings/{learning_id}/reject`,
-  `GET /projects/{project}/brain` and `GET /projects/{project}/brain/note?path=…`. A test fails on any other path.
+  `GET /projects/{project}/brain` and `GET /projects/{project}/brain/note?path=…`, and the one AGH-136 added
+  (`TICKET_PATHS`): `GET /features/{project}/{slug}/tickets` ([Feature tickets](#feature-tickets)). A test fails on
+  any other path.
 - A field kept only for compatibility is marked `deprecated` in the document and stays until `/api/v2`: a session's
   and a live tile's `agent` (read `label` and `actors`) and a learning's `target` (read `note_path`).
 
@@ -76,6 +78,8 @@ Errors are RFC 9457 Problem Details, with media type `application/problem+json`:
   member `step` (`clone`, `read`, `branch`, `commit`, `push`, `pr`, …) and never the tools' output; the 60 s deadline
   → 504 "Could not open the pull request in time". A body that is not JSON → 415 (Local security). The routes answer
   501 only in a build where the decisions are not wired.
+- The feature tickets route ([Feature tickets](#feature-tickets)) never answers an error for a failed Linear read:
+  the failure is the `tracker_problem` member of its 200 answer.
 
 ## Pagination
 
@@ -138,12 +142,49 @@ They are actions, not resources, a deliberate exception to "resources are nouns"
   authored as the hub's author (ADR 0016) with no trailer.
 - A decision is idempotent by the learning's state: a second call answers 409 with the PR already open.
 
+## Feature tickets
+
+`GET /api/v1/features/{project}/{slug}/tickets` serves one feature's tickets, their planning and its golden path
+([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md); the records are in
+[design/feature-records.md](design/feature-records.md)). It is the only route that may call Linear. An unknown
+project or slug is a 404 and a parameter over 200 characters a 400, as for the feature detail; for a known feature it
+always answers 200 with a `FeatureTickets`:
+
+- `source`: `linear` when the ticket data comes from a Linear snapshot, `plan` when it comes from `features.json`
+  only; `stale` (`true` when Linear's last good snapshot is served after a failed read, at most 15 minutes old) and
+  `as_of` (when that snapshot was read; `null` with the plan).
+- `notice`: why the data may be out of date, `null` for a fresh Linear read. Without a connection (no
+  `LINEAR_API_KEY` where `hub web` runs, or `tracker.transport: "mcp"`, which the app never uses): "From the plan
+  (features.json); Linear is not connected for hub web, so status may be stale. Set LINEAR_API_KEY where hub web
+  runs." A failed read names its cause ("Linear could not be read (it timed out) …").
+- `tracker_problem`: `null`, or the failed read as RFC 9457 members `type`, `title`, `status` and `detail` (redacted,
+  never the key). `type` is `urn:agent-hub:problem:tracker-<kind>`, `<kind>` one of `not_connected`, `unauthorized`,
+  `timeout`, `rate_limited`, `unavailable`, `unexpected`, `unreachable`, `too_many` or `other`. `status` is Linear's
+  HTTP status when it answered a 4xx or 5xx; else 504 for a timeout, 502 for an answer of an unexpected shape, and
+  503 for every other kind (no answer, not connected).
+- `tickets`: one row per ticket (the plan's `tickets` and the record's `linear` ids), each with its `ref` (the tracker
+  id, else the plan key), `key`, `id`, `title`, `state` (`name`, `type`), `assignee`, `url` (only under
+  `https://linear.app/`), `priority`, `estimate`, `repo`, `order`, the `acs` it covers, `blocked_by` edges tagged
+  `plan`, `linear` or `both`, `blocks`, `readiness` (`can_start`, `waiting`, `done`, `canceled`, `in_cycle`,
+  `unknown`), `waiting_on` and `reviewed`. Without Linear the statuses are `null`.
+- `planning`: `layers` (tickets that can run in parallel, in turn), `can_start`, the recommended `order`, `waiting`,
+  `cycles`, `external_blockers` (with their Linear status), `critical_path` and `warnings`.
+- `golden_path`: the same steps the feature list and detail carry, recomputed with this read.
+
+The read goes through an in-memory cache keyed by the project and the feature's ids: a snapshot younger than 60 s is
+served without a call, concurrent reads of one key share one call (a read waits at most 30 s for one in flight), and any Linear failure
+(401/403, 429, 5xx, timeout, unreachable, unexpected answer) holds that key for 60 s, serving the stale snapshot
+(under 15 min old) or the plan. Not connected (no key, or `"mcp"`) makes no Linear call and is never held. A Refresh in
+the app refetches the route; the cache still applies (`as_of` shows its age). `GET /features` and
+`GET /features/{project}/{slug}` never call Linear: they use a warm cache entry, else the plan, and say so in their
+`golden_path` and `tickets_source`.
+
 ## Local security
 
 `hub web` binds `127.0.0.1` only. It refuses a `Host` header other than `127.0.0.1:<port>`, `localhost:<port>` or
 `[::1]:<port>` (403, against DNS rebinding) and a `POST` or `DELETE` whose `Origin` is not its own (403); it sends no
 CORS headers, `Cache-Control: no-store` on `/api`, and a CSP that limits scripts, styles, fonts and connections to
-`'self'`. The web app requests no other host.
+`'self'`. The web app requests no other host; Linear is read by the server only ([Feature tickets](#feature-tickets)).
 
 The two learning decisions, which reach the network, take a strict rule on top (`STRICT_WRITES` in
 `agent_hub/api/local_security.py`), checked before the route runs, so a refused request pushes and stores nothing:

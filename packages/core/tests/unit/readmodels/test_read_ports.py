@@ -29,3 +29,8 @@ def test_declares_clarity_methods_when_protocols_inspected() -> None:
     assert callable(LearningDecisions.accept)
     assert callable(LearningDecisions.reject)
     assert callable(BrainChangeRequests.availability)
+
+
+def test_declares_feature_tickets_when_protocol_inspected() -> None:
+    assert callable(HubReadModels.feature_tickets)
+    assert "feature_tickets" in vars(HubReadModels)

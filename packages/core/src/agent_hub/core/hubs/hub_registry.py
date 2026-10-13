@@ -139,6 +139,11 @@ class HubFileReader(Protocol):
         """The folders under ``brain/features/``, bounded, no link followed."""
         ...
 
+    def feature_folder(self, hub_path: str, slug: str) -> FeatureFolder | None:
+        """The one folder ``brain/features/<slug>/``, read as ``feature_folders`` reads it and
+        nothing else; None when there is no such folder (absent, hidden, a link)."""
+        ...
+
     def brain_tree(self, hub_path: str) -> BrainListing:
         """The ``.md`` notes under ``brain/`` (no ``auto/``, no hidden name, no link followed)."""
         ...

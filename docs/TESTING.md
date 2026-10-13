@@ -51,6 +51,19 @@ The third is `BrainChangeRequestsContract` (`agent_hub.core.testing.brain_change
 pull requests opened). It runs against `InMemoryBrainChangeRequests` with `FakeBrainOrigin`
 (`packages/core/tests/contract/`) and against `GitBrainChangeRequests` (`packages/hub_git/tests/contract/`), with real
 `git` over a git-backed origin.
+The fourth is `TrackerReaderContract` (`agent_hub.core.testing.tracker_reader_contract`, ADR 0025), whose tests take a
+`tracker_reader` fixture and the `issue_board` it reads (`a_seeded_issue_board()`, synthetic issues with "blocks"
+relations; `FakeIssueBoard` in `agent_hub.core.testing.tracker_reader_fakes`). It runs against `InMemoryTrackerReader`
+(`packages/core/tests/contract/`) and against `LinearGraphqlTrackerReader` (`packages/tracker_linear/tests/contract/`)
+over `FakeLinearApi`, which serves the board with Linear's field names (`relations` and `inverseRelations` of type
+`blocks`, a float `priority`, `assignee { displayName }`). Because the fake is written from the same reading of the
+schema as the adapter, the reader's strict shape check is also run against `SYNTHETIC_SUMMARIES_ANSWER`, a
+hand-written answer in the shape of Linear's public schema (in the same conftest; no recorded Linear data). The real
+schema is checked only by the by-hand `live` test (`test_linear_live.py -k summaries`, with a real key; never in a gate).
+The same fakes module holds what the app's tests use instead of Linear: `CountingTrackerReader` (counts reads, for the
+cache), `FailingTrackerReader(kind, http_status=)` (each failure kind) and `InMemoryTicketSnapshots`. The API's tests
+reach the GraphQL reader end to end through `build_app(linear_post=…)`, an injected transport, with a synthetic key in
+the injected environment: no socket opens and no real key is read.
 
 `hub_git` is tested at three levels, all without the network and without a real GitHub account:
 

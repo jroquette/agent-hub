@@ -65,3 +65,18 @@ def test_stays_on_one_line_when_tracker_error_cause_has_control_characters() -> 
         "get_issue DEM-2: unexpected title 'first\\nmove_state DEM-3: forged\\r\\tline"
         "\\x1b[2J\\u2028\\u202eend'; report it"
     )
+
+
+def test_keeps_kind_when_tracker_error_raised() -> None:
+    error = TrackerError(
+        operation="issue_summaries",
+        cause="Linear answered HTTP 429",
+        fix="wait a minute",
+        kind="rate_limited",
+        http_status=429,
+    )
+    default = TrackerError(operation="get_issue", issue_id="DEM-1", cause="x", fix="y")
+
+    assert (error.kind, error.http_status) == ("rate_limited", 429)
+    assert (default.kind, default.http_status) == ("other", None)
+    assert str(error) == "issue_summaries: Linear answered HTTP 429; wait a minute"
