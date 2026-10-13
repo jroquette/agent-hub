@@ -1,0 +1,9 @@
+agent-hub
+Copyright 2026 José Henrique Roquette
+
+Licensed under the Apache License, Version 2.0 (LICENSE).
+
+The hub-workflow plugin templates under
+packages/generator/src/agent_hub/generator/templates/plugin/hub-workflow/ include portions adapted from third-party
+projects; their notices and license texts are in that folder's NOTICE.tmpl and LICENSES/, and every generated hub
+ships them as plugin/hub-workflow/NOTICE and plugin/hub-workflow/LICENSES/.
