@@ -1,3 +1,4 @@
+import asyncio
 import re
 import socket
 
@@ -267,3 +268,12 @@ def test_skips_claude_live_test_naming_switch_when_switch_not_on(
 
     [reason] = _skip_reasons(item)
     assert _names(reason, "AGENT_HUB_LIVE")
+
+
+@pytest.mark.anyio
+async def test_runs_anyio_test_when_marked(anyio_backend: str) -> None:
+    """Async tests use anyio's plugin on asyncio only (the root conftest's ``anyio_backend``)."""
+    await asyncio.sleep(0)
+
+    assert anyio_backend == "asyncio"
+    assert asyncio.get_running_loop().is_running()
