@@ -9,6 +9,7 @@ budget holds while sessions are live, not only on a warm memo. The first read af
 which loads every event once, is left out.
 """
 
+import math
 import statistics
 import time
 from collections.abc import Callable
@@ -21,6 +22,7 @@ import pytest
 from agent_hub.core.events.event import Event
 from agent_hub.core.testing.builders import an_event
 from agent_hub.core.testing.hook_inputs import a_hook_input, an_envelope
+from agent_hub.tracker_linear.graphql_reader import BATCH_SIZE
 from agent_hub.core.testing.session_scenarios import SCENARIO_START, a_session_events
 
 SESSIONS = 200
@@ -220,5 +222,6 @@ def test_answers_tickets_within_budget_when_cache_warm_with_fifty_tickets(
         assert response.status_code == 200, response.text
         samples.append(elapsed)
 
-    assert world.linear.count == 1
+    # One snapshot read, sent as batches of BATCH_SIZE ids: the warm samples call Linear no more.
+    assert world.linear.count == math.ceil(TICKETS / BATCH_SIZE)
     assert _p95(samples) < TICKETS_P95_MS, samples
