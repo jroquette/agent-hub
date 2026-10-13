@@ -20,7 +20,7 @@ from agent_hub.core.errors import TrackerError
 from agent_hub.core.testing.builders import an_issue
 from agent_hub.core.testing.fakes import FakeTrackerBackend
 from agent_hub.core.tracker.tracker_client import Issue
-from agent_hub.tracker_linear import graphql as graphql_module
+from agent_hub.tracker_linear import graphql_transport as graphql_module
 from agent_hub.tracker_linear.graphql import (
     DEFAULT_TIMEOUT_S,
     DONE_STATE_TYPES,
