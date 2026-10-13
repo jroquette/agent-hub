@@ -1,5 +1,5 @@
-"""The Phase 2 contract's paths, the paths control-plane clarity adds, and the paths an app's
-OpenAPI document lists."""
+"""The Phase 2 contract's paths, the paths control-plane clarity and ticket planning add, and the
+paths an app's OpenAPI document lists."""
 
 from fastapi import FastAPI
 
@@ -59,8 +59,14 @@ CLARITY_PATHS: frozenset[tuple[str, str]] = frozenset(
     )
 )
 
+# The path ticket planning adds (AC-136.33): a feature's tickets, the only read that may call
+# the tracker (ADR 0025).
+TICKET_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {("get", f"{API_PREFIX}/features/{{project}}/{{slug}}/tickets")}
+)
+
 # Every path the document lists.
-SERVED_PATHS: frozenset[tuple[str, str]] = P2_PATHS | CLARITY_PATHS
+SERVED_PATHS: frozenset[tuple[str, str]] = P2_PATHS | CLARITY_PATHS | TICKET_PATHS
 
 
 def document_paths(app: FastAPI) -> frozenset[tuple[str, str]]:

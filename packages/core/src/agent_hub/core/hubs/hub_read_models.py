@@ -6,6 +6,11 @@ whose ``hub.json`` is valid (any pin, Q4), named by ``project.name``; when two h
 project the first registered wins. A project's event-derived numbers come from ``activity``
 (``EventReadModels.project_activity``). An unknown project or feature raises
 ``EntityNotFoundError``; a list scoped to an unknown project is empty.
+
+A feature's tickets come from ``ticket_snapshots`` (AGH-136): only ``feature_tickets`` fetches
+(the one read that may call the tracker); the Features list and the detail use what the cache
+holds (Q6), so the list, the detail and the Tickets view fold the same snapshot. Without
+``ticket_snapshots`` every feature is served from the plan, not connected.
 """
 
 from collections.abc import Callable, Iterator
@@ -30,8 +35,20 @@ from agent_hub.core.brain.frontmatter import split_frontmatter
 from agent_hub.core.doctor.finding import Finding
 from agent_hub.core.doctor.lock_rules import NOT_ADOPTED
 from agent_hub.core.events.event import EventSource
-from agent_hub.core.features.feature_status import feature_detail, feature_view
+from agent_hub.core.features.feature_status import (
+    FeatureFolder,
+    feature_detail,
+    feature_view,
+    ticket_ids,
+)
+from agent_hub.core.features.feature_tickets import NOT_CONNECTED_READ, feature_tickets
 from agent_hub.core.features.feature_view import FeatureDetail, FeatureView
+from agent_hub.core.features.ticket_snapshots import (
+    SnapshotRead,
+    SnapshotRequest,
+    TicketSnapshots,
+)
+from agent_hub.core.features.ticket_view import FeatureTickets
 from agent_hub.core.hub_config.doctor_rules import LOCK_DRIFT_RULE, Severity
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hubs.doctor_cache import DoctorCache
@@ -98,8 +115,10 @@ class HubFilesReadModels:
         running_version: str,
         settings: SettingsView,
         clock: Callable[[], datetime],
+        ticket_snapshots: TicketSnapshots | None = None,
     ) -> None:
         self._reader = reader
+        self._snapshots = ticket_snapshots
         self._activity = activity
         self._settings = settings
         self._doctor = DoctorCache(reader, running_version=running_version, clock=clock)
@@ -174,7 +193,7 @@ class HubFilesReadModels:
         """Feature folders of every scoped project."""
         return _page(
             tuple(
-                feature_view(folder, project=found.name)
+                feature_view(folder, project=found.name, read=self._cached(found, folder))
                 for found in self._scoped(scope)
                 for folder in self._reader.feature_folders(found.path)
             )
@@ -182,15 +201,18 @@ class HubFilesReadModels:
 
     def get_feature(self, project: str, slug: str) -> FeatureDetail:
         """One feature with its acceptance criteria; an unknown project is an unknown feature."""
-        missing = EntityNotFoundError(entity="feature", entity_id=f"{project}/{slug}")
-        try:
-            found = self._project(project)
-        except EntityNotFoundError:
-            raise missing from None
-        for folder in self._reader.feature_folders(found.path):
-            if folder.slug == slug:
-                return feature_detail(folder, project=found.name)
-        raise missing
+        found, folder = self._feature(project, slug)
+        return feature_detail(folder, project=found.name, read=self._cached(found, folder))
+
+    def feature_tickets(self, project: str, slug: str) -> FeatureTickets:
+        """One feature's tickets, planning and golden path: the only read that may call the
+        tracker (through ``ticket_snapshots.fetch``, cached)."""
+        found, folder = self._feature(project, slug)
+        tracker = found.config.tracker
+        read = NOT_CONNECTED_READ
+        if self._snapshots is not None:
+            read = self._snapshots.fetch(_ticket_request(found, folder))
+        return feature_tickets(folder, read, project=found.name, tracker=tracker)
 
     def doctor_findings(self, scope: Scope) -> Page[FindingView]:
         """Doctor findings of every scoped hub that names its project, in ``hub doctor`` order.
@@ -267,6 +289,23 @@ class HubFilesReadModels:
             size=len(read),
         )
 
+    def _feature(self, project: str, slug: str) -> tuple[_Project, FeatureFolder]:
+        missing = EntityNotFoundError(entity="feature", entity_id=f"{project}/{slug}")
+        try:
+            found = self._project(project)
+        except EntityNotFoundError:
+            raise missing from None
+        folder = self._reader.feature_folder(found.path, slug)
+        if folder is None:
+            raise missing
+        return found, folder
+
+    def _cached(self, found: _Project, folder: FeatureFolder) -> SnapshotRead | None:
+        """What the snapshot cache holds for the feature's tickets; never reads the tracker."""
+        if self._snapshots is None:
+            return None
+        return self._snapshots.cached(_ticket_request(found, folder))
+
     def _has_drift(self, hub_path: str, document: HubDocument) -> bool:
         del document
         return any(
@@ -339,6 +378,12 @@ class HubFilesReadModels:
             agents_md_lines=lines,
             sources_missing=(EventSource.GITHUB,),
         )
+
+
+def _ticket_request(found: _Project, folder: FeatureFolder) -> SnapshotRequest:
+    return SnapshotRequest.of(
+        project=found.name, transport=found.config.tracker.transport, ids=ticket_ids(folder)
+    )
 
 
 def _listable(entry: BrainEntry) -> bool:

@@ -4,6 +4,7 @@ import { createMemoryRouter, RouterProvider } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../testing/axe";
+import { aGoldenPath, aGoldenStep } from "../testing/builders";
 import {
   AcTable,
   ActivityFeed,
@@ -11,6 +12,8 @@ import {
   FindingRow,
   FrontmatterChips,
   GoldenPathStepper,
+  goldenStepSummary,
+  shownGoldenSteps,
   NeedsYouList,
   ProjectCard,
   SessionTile,
@@ -239,7 +242,7 @@ describe("FrontmatterChips", () => {
   });
 });
 
-describe("AcTable, ApprovalPanel, GoldenPathStepper, FindingRow", () => {
+describe("AcTable, ApprovalPanel, FindingRow", () => {
   it("shows passing, failing and owner-step criteria", () => {
     render(
       <AcTable
@@ -285,21 +288,6 @@ describe("AcTable, ApprovalPanel, GoldenPathStepper, FindingRow", () => {
     expect(screen.getByRole("button", { name: /Reject/ })).toBeDisabled();
   });
 
-  it("marks golden path steps", () => {
-    render(
-      <GoldenPathStepper
-        steps={[
-          { name: "Spec", state: "done", date: "2026-10-01", by: "owner" },
-          { name: "Plan", state: "current" },
-          { name: "Ship", state: "pending" },
-        ]}
-      />,
-    );
-
-    expect(screen.getByText("In progress")).toBeInTheDocument();
-    expect(screen.getByText("—")).toBeInTheDocument();
-  });
-
   it("shows a finding with its location and how to fix it", () => {
     inRouter(
       <>
@@ -337,6 +325,133 @@ describe("AcTable, ApprovalPanel, GoldenPathStepper, FindingRow", () => {
         <AcTable acs={[{ id: "AC-1", description: "a", repo: null, passes: true }]} />
       </div>,
     );
+
+    expect(await seriousViolations(container)).toEqual([]);
+  });
+});
+
+/** The owner's case (AC-136.14): 17 tickets, 1 done, 3/36 ACs, one SHIP eval over 3 ACs. */
+const ownerCase = aGoldenPath({
+  phase: "implement",
+  steps: [
+    aGoldenStep({ name: "spec", state: "done", meta: null, progress: null }),
+    aGoldenStep({ name: "research", state: "skipped", meta: "no research.md", progress: null }),
+    aGoldenStep({ name: "plan", state: "done", meta: null, progress: null }),
+    aGoldenStep({
+      name: "tickets",
+      state: "done",
+      meta: "17 of 17 created",
+      progress: { done: 17, total: 17 },
+    }),
+    aGoldenStep({
+      name: "implement",
+      state: "current",
+      meta: "1/17 tickets · 3/36 ACs",
+      progress: { done: 1, total: 17 },
+    }),
+    aGoldenStep({
+      name: "review",
+      state: "unknown",
+      meta: "Linear not connected",
+      reason: "Ticket status from Linear not loaded yet; open the Tickets tab.",
+      progress: null,
+    }),
+    aGoldenStep({
+      name: "evaluate",
+      state: "partial",
+      meta: "partial: covers 3 of 36 ACs",
+      reason: "Implement is not done",
+      progress: { done: 3, total: 36 },
+    }),
+    aGoldenStep({
+      name: "shipped",
+      state: "blocked",
+      meta: null,
+      reason: "Review is unknown",
+      progress: null,
+    }),
+  ],
+});
+
+describe("GoldenPathStepper", () => {
+  it("shows each step's state as text with its meta and reason (golden)", () => {
+    render(<GoldenPathStepper steps={ownerCase.steps} />);
+
+    const steps = screen.getAllByRole("listitem");
+    expect(steps.map((li) => li.dataset.state)).toEqual([
+      "done",
+      "skipped",
+      "done",
+      "done",
+      "current",
+      "unknown",
+      "partial",
+      "blocked",
+    ]);
+    expect(steps[4]).toHaveTextContent("ImplementIn progress1/17 tickets · 3/36 ACs");
+    expect(steps[5]).toHaveTextContent(
+      "ReviewUnknownLinear not connectedTicket status from Linear not loaded yet",
+    );
+    expect(steps[6]).toHaveTextContent(
+      "EvaluatePartialpartial: covers 3 of 36 ACsImplement is not done",
+    );
+    expect(steps[7]).toHaveTextContent("ShippedBlockedReview is unknown");
+    expect(steps[1]).toHaveTextContent("ResearchSkippedno research.md");
+  });
+
+  it("draws progress and shows the count when there is no meta (golden)", () => {
+    render(
+      <GoldenPathStepper
+        steps={[aGoldenStep({ name: "implement", meta: null, progress: { done: 2, total: 8 } })]}
+      />,
+    );
+
+    const step = screen.getByRole("listitem");
+    expect(step).toHaveTextContent("2/8");
+    expect(step.querySelector("[data-progress]")).toHaveAttribute("data-progress", "25");
+  });
+
+  it("never shows a step done after a gate that is not done (golden)", () => {
+    const steps = [
+      aGoldenStep({ name: "implement", state: "current", reason: null }),
+      aGoldenStep({ name: "review", state: "done", meta: "3/3 reviewed", reason: null }),
+      aGoldenStep({ name: "evaluate", state: "done", meta: null, reason: null }),
+    ];
+
+    expect(shownGoldenSteps(steps).map((s) => [s.state, s.reason])).toEqual([
+      ["current", null],
+      ["blocked", "Implement is not done"],
+      ["blocked", "Implement is not done"],
+    ]);
+    render(<GoldenPathStepper steps={steps} />);
+    expect(screen.getAllByRole("listitem").map((li) => li.dataset.state)).toEqual([
+      "current",
+      "blocked",
+      "blocked",
+    ]);
+  });
+
+  it("keeps done after skipped and done steps (golden)", () => {
+    const steps = [
+      aGoldenStep({ name: "spec", state: "done" }),
+      aGoldenStep({ name: "research", state: "skipped" }),
+      aGoldenStep({ name: "plan", state: "done" }),
+    ];
+
+    expect(shownGoldenSteps(steps).map((s) => s.state)).toEqual(["done", "skipped", "done"]);
+  });
+
+  it("summarises a step in one line (golden)", () => {
+    expect(goldenStepSummary(ownerCase.steps[6] ?? aGoldenStep())).toBe(
+      "Evaluate: partial · partial: covers 3 of 36 ACs (Implement is not done)",
+    );
+    expect(
+      goldenStepSummary(aGoldenStep({ name: "spec", state: "done", meta: null, progress: null })),
+    ).toBe("Spec: done");
+  });
+
+  it("has no serious axe violation (golden a11y)", async () => {
+    const { container } = render(<GoldenPathStepper steps={ownerCase.steps} />);
 
     expect(await seriousViolations(container)).toEqual([]);
   });

@@ -2,6 +2,7 @@
 # Variables (see .env.example): AGENT_HUB_HUBS_ROOT (required; `make up` sets it to the folder
 # that holds this repo), AGENT_HUB_PORT (host port, default 7420), AGENT_HUB_CLAUDE_PROJECTS
 # (default ~/.claude/projects), AGENT_HUB_BUILD_CA and AGENT_HUB_INSTALL_GIT (build only).
+# LINEAR_API_KEY is passed through from the host environment only (docs/USING.md).
 name: agent-hub
 
 services:
@@ -21,6 +22,9 @@ services:
       AGENT_HUB_CLAUDE_PROJECTS: ${AGENT_HUB_CLAUDE_PROJECTS:-${HOME}/.claude/projects}
       # The browser's Host is the published port's, which may differ from 7420.
       AGENT_HUB_ALLOWED_HOSTS: "127.0.0.1:${AGENT_HUB_PORT:-7420},localhost:${AGENT_HUB_PORT:-7420}"
+      # Optional: the Linear key from the shell that runs `make up`, for the feature tickets'
+      # read-only status (ADR 0025). No value here; empty means not connected.
+      LINEAR_API_KEY: ${LINEAR_API_KEY:-}
     volumes:
       - agent-hub-data:/data
       # Registered hubs keep their host paths, so the hubs root is mounted at the same path.

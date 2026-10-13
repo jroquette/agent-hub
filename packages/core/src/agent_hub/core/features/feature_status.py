@@ -1,13 +1,15 @@
-"""A feature folder's state (D23), from the files the generator read: pure, no I/O.
+"""A feature folder's state (D23, AGH-136), from the files the generator read: pure, no I/O.
 
-``features.json`` gives the acceptance criteria: passing ones, and owner steps (a criterion whose
-verification starts with ``manual`` and does not pass yet). ``spec.md``'s frontmatter gives the
-size (``process_size``), ``repos`` and ``linear`` issues; ``eval.md``'s first ``Verdict`` line the
-verdict. The detail's ``records`` name each record file (brain-relative, so the brain note route
-reads it) and whether it is present. The golden path phase comes from the files alone: spec,
-research, plan, tickets (``issues.md``), implement (an AC passes), evaluate (a verdict). Review
-needs runs and Shipped needs GitHub, not connected in Phase 2. A malformed or unreadable record
-degrades this feature only: its ``problem`` says why and its criteria are unknown.
+``features.json`` (``feature_record.py``) gives the acceptance criteria and the ticket plan:
+passing ACs, owner steps (a criterion whose verification starts with ``manual`` and does not pass
+yet), the planned tickets and the Linear ids. ``spec.md``'s frontmatter gives the size
+(``process_size``), ``repos`` and ``linear`` issues; ``eval.md``'s first ``Verdict`` line the
+verdict. ``evals/*.md`` and ``reviews/*.md`` are the evals per delivery and the review records.
+The golden path (``golden_path.py``) folds all of it with the ticket board (``ticket_planning.py``)
+over a tracker snapshot when one is given (the warm cache), else the plan; ``phase`` is its
+phase. The detail's ``records`` name each record file (brain-relative, so the brain note route
+reads it) and whether it is present. A malformed or unreadable record degrades this feature
+only: its ``problem`` says why and its criteria are unknown.
 """
 
 import re
@@ -15,21 +17,31 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Final, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, StrictBool, StrictStr, ValidationError
+from pydantic import ValidationError
 
 from agent_hub.core.events.event import EventSource
+from agent_hub.core.features.feature_evals import eval_coverage, eval_records
+from agent_hub.core.features.feature_record import FeatureRecordFile, RecordAc
+from agent_hub.core.features.feature_reviews import approved_tickets, review_records
 from agent_hub.core.features.feature_view import (
     AcCounts,
     AcRow,
+    EvalRecord,
     FeatureDetail,
-    FeaturePhase,
     FeatureRecord,
     FeatureRecordName,
     FeatureView,
+    GoldenPath,
+    TicketsSource,
     Verdict,
 )
+from agent_hub.core.features.golden_path import EvalGate, GoldenInputs, golden_path
+from agent_hub.core.features.ticket_planning import TicketBoard, ticket_board
+from agent_hub.core.features.ticket_snapshots import SnapshotRead
 from agent_hub.core.hub_config.problems import one_line
 from agent_hub.core.json_form import InvalidJsonError, load_json_bytes
+from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN
+from agent_hub.core.tracker.tracker_reader import MAX_READ_IDS
 
 SPEC: Final = "spec.md"
 RESEARCH: Final = "research.md"
@@ -56,12 +68,16 @@ _RECORDS: Final[tuple[tuple[FeatureRecordName, str], ...]] = (
     ("issues", ISSUES),
 )
 FEATURES_FOLDER: Final = "features"
-_FILE_PHASES: Final[tuple[tuple[str, FeaturePhase], ...]] = (
-    (SPEC, "spec"),
-    (RESEARCH, "research"),
-    (PLAN, "plan"),
-    (ISSUES, "tickets"),
-)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class RecordHead:
+    """The start of one file of ``evals/`` or ``reviews/``: its ``name`` and ``head`` bytes, or
+    the one-line ``problem`` that kept it from being read (a link, not a regular file)."""
+
+    name: str
+    head: bytes | None
+    problem: str | None
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -71,6 +87,8 @@ class FeatureFolder:
     ``files`` names the record files present as regular files. ``features_json`` holds the
     record's bytes, a one-line problem when it could not be read, or None when absent;
     ``spec_head`` and ``eval_head`` are the first ``HEAD_BYTES`` of ``spec.md`` and ``eval.md``.
+    ``evals`` and ``reviews`` hold the heads of ``evals/*.md`` and ``reviews/*.md`` sorted by
+    name; ``evals_skipped`` and ``reviews_skipped`` count the files left unread over the cap.
     """
 
     slug: str
@@ -78,57 +96,150 @@ class FeatureFolder:
     features_json: bytes | str | None = None
     spec_head: bytes | None = None
     eval_head: bytes | None = None
+    evals: tuple[RecordHead, ...] = ()
+    reviews: tuple[RecordHead, ...] = ()
+    evals_skipped: int = 0
+    reviews_skipped: int = 0
 
 
-class _Ac(BaseModel):
-    model_config = ConfigDict(frozen=True)
+@dataclass(frozen=True, kw_only=True, slots=True)
+class FeatureParts:
+    """What the feature views share: the parsed ``record`` (its one-line problem, or None when
+    absent), every eval, the ticket ``board``, the ``golden_path`` and the tickets' ``source``."""
 
-    id: StrictStr
-    description: StrictStr
-    repo: StrictStr | None = None
-    verification: StrictStr | None = None
-    passes: StrictBool
-    evidence: StrictStr | None = None
-
-
-class _Record(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    linear: tuple[StrictStr, ...] = ()
-    acs: tuple[_Ac, ...]
+    record: FeatureRecordFile | str | None
+    evals: tuple[EvalRecord, ...]
+    board: TicketBoard
+    golden_path: GoldenPath
+    source: TicketsSource
 
 
-def feature_view(folder: FeatureFolder, *, project: str) -> FeatureView:
-    """The feature as the Features list shows it."""
-    detail = feature_detail(folder, project=project)
+def ticket_ids(folder: FeatureFolder) -> tuple[str, ...]:
+    """The tracker ids a snapshot of the feature reads, sorted and unique: its tickets' (planned
+    ones created, and ``linear``), then the tracker ids the plan's ``blocked_by`` names outside
+    the feature, so a blocker known only to the plan gets its status (AC-136.10). The feature's
+    own ids always fit (``MAX_TICKETS`` is ``MAX_READ_IDS``); outside blockers fill what room is
+    left under ``MAX_READ_IDS``, lowest ids first, and any over it stay unread (status unknown).
+    Empty for a record that is absent or malformed."""
+    record = _record(folder.features_json)
+    if not isinstance(record, FeatureRecordFile):
+        return ()
+    own = {
+        *(ticket.id for ticket in record.tickets if ticket.id is not None),
+        *(issue for issue in record.linear if _is_issue_id(issue)),
+    }
+    keys = {ticket.key for ticket in record.tickets}
+    outside = sorted(
+        {
+            name
+            for ticket in record.tickets
+            for name in ticket.blocked_by
+            if _is_issue_id(name) and name not in own and name not in keys
+        },
+        key=_id_order,
+    )
+    room = max(MAX_READ_IDS - len(own), 0)
+    return tuple(sorted(own | set(outside[:room])))
+
+
+def _is_issue_id(text: str) -> bool:
+    return ISSUE_ID_PATTERN.fullmatch(text) is not None
+
+
+def _id_order(issue: str) -> tuple[str, int]:
+    """``OPS-9`` before ``OPS-10``: an issue id by team, then number."""
+    team, _, number = issue.rpartition("-")
+    return team, int(number)
+
+
+def feature_parts(folder: FeatureFolder, read: SnapshotRead | None = None) -> FeatureParts:
+    """The feature's evals, ticket board and golden path, over ``read``'s snapshot when it holds
+    one (else the plan; ``read`` None is a hub web with no tracker reader: not connected)."""
+    record = _record(folder.features_json)
+    parsed = record if isinstance(record, FeatureRecordFile) else None
+    acs = () if parsed is None else parsed.acs
+    tickets = () if parsed is None else parsed.tickets
+    evals = eval_records(folder.evals, folder.eval_head, slug=folder.slug)
+    coverage = eval_coverage(evals, acs, tickets=tickets)
+    approved = approved_tickets(review_records(folder.reviews, slug=folder.slug))
+    snapshot = None if read is None else read.snapshot
+    board = ticket_board(
+        tickets,
+        acs,
+        snapshot,
+        linear=() if parsed is None else parsed.linear,
+        approved=approved,
+    )
+    source: TicketsSource = "plan" if snapshot is None else "linear"
+    gate = EvalGate(
+        evals=len(evals),
+        covered=len(coverage.covered),
+        owner_steps=len(coverage.owner_steps),
+        scope_recorded=not coverage.unscoped or len(coverage.covered) == coverage.total > 0,
+        skipped=folder.evals_skipped,
+    )
+    path = golden_path(
+        GoldenInputs(
+            files=folder.files,
+            rows=board.rows,
+            acs=acs,
+            coverage=gate,
+            approved_reviews=sum(_approved(row.key, row.id, approved) for row in board.rows),
+            reviews_skipped=folder.reviews_skipped,
+            source=source,
+            not_loaded=read is not None and snapshot is None and read.failure is None,
+        )
+    )
+    return FeatureParts(record=record, evals=evals, board=board, golden_path=path, source=source)
+
+
+def feature_view(
+    folder: FeatureFolder, *, project: str, read: SnapshotRead | None = None
+) -> FeatureView:
+    """The feature as the Features list shows it (``read``: the warm snapshot, as the detail)."""
+    detail = feature_detail(folder, project=project, read=read)
     return FeatureView.model_validate(detail.model_dump(include=set(FeatureView.model_fields)))
 
 
-def feature_detail(folder: FeatureFolder, *, project: str) -> FeatureDetail:
-    """The feature with its acceptance criteria rows."""
+def feature_detail(
+    folder: FeatureFolder, *, project: str, read: SnapshotRead | None = None
+) -> FeatureDetail:
+    """The feature with its acceptance criteria rows and every eval; ``read`` is what the
+    snapshot cache holds for its tickets (never a tracker read), None when hub web has none."""
     front = _frontmatter(folder.spec_head)
-    record = _record(folder.features_json)
-    rows = () if not isinstance(record, _Record) else tuple(_row(ac) for ac in record.acs)
+    parts = feature_parts(folder, read)
+    record = parts.record
+    rows = () if not isinstance(record, FeatureRecordFile) else tuple(_row(ac) for ac in record.acs)
     verdict, verdict_line = _verdict(folder.eval_head)
     spec_repos = _listed(front.get("repos"))
     return FeatureDetail(
         project=project,
         slug=folder.slug,
         issues=_unique(
-            (*_listed(front.get("linear")), *(record.linear if isinstance(record, _Record) else ()))
+            (
+                *_listed(front.get("linear")),
+                *(record.linear if isinstance(record, FeatureRecordFile) else ()),
+            )
         ),
         size=_size(front.get("process_size")),
-        phase=_phase(folder.files, rows=rows, verdict=verdict),
+        phase=parts.golden_path.phase,
         files=tuple(name for name in RECORD_FILES if name in folder.files),
-        acs=None if not isinstance(record, _Record) else _counts(rows),
+        acs=None if not isinstance(record, FeatureRecordFile) else _counts(rows),
         verdict=verdict,
         verdict_line=verdict_line,
         repos=spec_repos or _unique(row.repo for row in rows if row.repo),
+        golden_path=parts.golden_path,
+        tickets_source=parts.source,
         problem=record if isinstance(record, str) else None,
         sources_missing=(EventSource.GITHUB,),
         ac_rows=rows,
         records=_records(folder),
+        evals=parts.evals,
     )
+
+
+def _approved(key: str | None, issue_id: str | None, approved: frozenset[str]) -> bool:
+    return any(name is not None and name.upper() in approved for name in (key, issue_id))
 
 
 def _records(folder: FeatureFolder) -> tuple[FeatureRecord, ...]:
@@ -143,13 +254,13 @@ def _records(folder: FeatureFolder) -> tuple[FeatureRecord, ...]:
     )
 
 
-def _record(read: bytes | str | None) -> _Record | str | None:
+def _record(read: bytes | str | None) -> FeatureRecordFile | str | None:
     if read is None:
         return None
     if isinstance(read, str):
         return one_line(f"{RECORD} could not be read ({read})")
     try:
-        return _Record.model_validate(load_json_bytes(read))
+        return FeatureRecordFile.model_validate(load_json_bytes(read))
     except InvalidJsonError as error:
         return one_line(f"{RECORD} could not be parsed ({error.message})")
     except ValidationError as error:
@@ -158,7 +269,7 @@ def _record(read: bytes | str | None) -> _Record | str | None:
         return one_line(f"{RECORD} could not be parsed ({where}: {first['msg']})")
 
 
-def _row(ac: _Ac) -> AcRow:
+def _row(ac: RecordAc) -> AcRow:
     return AcRow(
         id=ac.id,
         description=ac.description,
@@ -176,17 +287,6 @@ def _counts(rows: tuple[AcRow, ...]) -> AcCounts:
         total=len(rows),
         owner_steps=sum(row.manual and not row.passes for row in rows),
     )
-
-
-def _phase(
-    files: tuple[str, ...], *, rows: tuple[AcRow, ...], verdict: Verdict | None
-) -> FeaturePhase:
-    if verdict is not None:
-        return "evaluate"
-    if any(row.passes for row in rows):
-        return "implement"
-    reached = [phase for name, phase in _FILE_PHASES if name in files]
-    return reached[-1] if reached else "spec"
 
 
 def _verdict(head: bytes | None) -> tuple[Verdict | None, str | None]:

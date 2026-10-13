@@ -9,6 +9,9 @@ import {
   aFeature,
   aFeatureDetail,
   aFeatureRecord,
+  aFeatureTickets,
+  aGoldenPath,
+  aGoldenStep,
   aFinding,
   aHub,
   aLearning,
@@ -19,6 +22,7 @@ import {
   aNeedsYouItem,
   anActivityItem,
   anApproval,
+  anEvalRecord,
   anId,
   aPage,
   aProblem,
@@ -37,6 +41,8 @@ import {
   aSessionSummary,
   aSettings,
   aStreamCounts,
+  aTicketPlan,
+  aTicketRow,
   aTimelineEvent,
   at,
   manyEvents,
@@ -104,6 +110,36 @@ describe("builders", () => {
       "eval",
       "issues",
     ]);
+  });
+
+  it("builds the tickets, golden path and eval schemas consistently", () => {
+    const tickets = aFeatureTickets();
+    const refs = tickets.tickets.map((row) => row.ref);
+
+    expect(tickets.source).toBe("linear");
+    expect(tickets.planning.order.every((ref) => refs.includes(ref))).toBe(true);
+    expect(tickets.planning.layers.flat().every((ref) => refs.includes(ref))).toBe(true);
+    expect(tickets.golden_path.phase).toBe(aFeature().phase);
+    expect(aGoldenPath().steps.map((step) => step.name)).toEqual([
+      "spec",
+      "research",
+      "plan",
+      "tickets",
+      "implement",
+      "review",
+      "evaluate",
+      "shipped",
+    ]);
+    expect(aGoldenStep({ state: "blocked" }).state).toBe("blocked");
+    expect(aTicketRow({ readiness: "waiting" }).readiness).toBe("waiting");
+    expect(aTicketPlan().can_start).toEqual(["AGH-202"]);
+    expect(anEvalRecord({ acs: "all" }).acs).toBe("all");
+    expect(aFeature().golden_path).toEqual(aGoldenPath());
+    expect(aFeature().tickets_source).toBe("plan");
+    expect(aFeatureDetail().evals).toEqual([anEvalRecord()]);
+    expect(aFeatureTickets({ source: "plan", notice: "From the plan" }).notice).toBe(
+      "From the plan",
+    );
   });
 
   it("makes n ordered synthetic events of one session", () => {

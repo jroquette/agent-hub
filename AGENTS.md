@@ -24,8 +24,9 @@ The spec is in `docs/SPEC.md`: read it before any task. The directions already s
 
 - Everything depends on `core`; `core` depends on nothing internal. `cli` is the composition root (ADR 0008): it may
   import `storage`, `collector`, `generator` and `tracker_linear`, and nothing imports `cli`. `api` is a second
-  composition root (ADR 0017) that may also import `hub_git`; `cli` reaches `api` only through `web_command`. The
-  adapters (`storage`, `collector`, `generator`, `tracker_linear`, `hub_git`) never import each other (import-linter).
+  composition root (ADR 0017) that may also import `hub_git` and `tracker_linear` (ADR 0025); `cli` reaches `api`
+  only through `web_command`. The adapters (`storage`, `collector`, `generator`, `tracker_linear`, `hub_git`) never
+  import each other (import-linter).
 - `apps/web` is the React app; its production build is committed in `packages/api/.../web_dist` (`make web-build`).
 
 ## Gates

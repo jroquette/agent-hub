@@ -136,7 +136,9 @@ def test_keeps_every_contract_when_web_command_imports_api(
     assert f"{COMPOSITION_ROOT} KEPT" in result.stdout, result.stdout
 
 
-@pytest.mark.parametrize("imported", ["storage", "collector", "generator", "hub_git"])
+@pytest.mark.parametrize(
+    "imported", ["storage", "collector", "generator", "hub_git", "tracker_linear"]
+)
 def test_keeps_every_contract_when_api_wires_adapter(
     lint_imports: Callable[[str, str], CompletedProcess[str]], imported: str
 ) -> None:
