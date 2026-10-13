@@ -3,10 +3,12 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from agent_hub.api.app import create_app
 from agent_hub.api.local_security import (
     CONTENT_SECURITY_POLICY,
+    WEBSOCKET_POLICY_VIOLATION,
     allowed_hosts,
     allowed_origins,
     is_json_media_type,
@@ -158,3 +160,18 @@ def test_reads_json_when_media_type_is_application_json(value: str) -> None:
 )
 def test_refuses_json_when_media_type_is_other(value: str | None) -> None:
     assert not is_json_media_type(value)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/",
+        "/api/v1/events/stream",
+        "/api/v1/agent-sessions/01929a4e-7a11-7c00-8a00-00000000a001/stream",
+    ],
+)
+def test_closes_websocket_when_any_path_upgraded(client: TestClient, path: str) -> None:
+    with pytest.raises(WebSocketDisconnect) as closed, client.websocket_connect(path):
+        pass
+
+    assert closed.value.code == WEBSOCKET_POLICY_VIOLATION

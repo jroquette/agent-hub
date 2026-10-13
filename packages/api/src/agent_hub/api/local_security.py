@@ -5,7 +5,8 @@ request. So: the ``Host`` must name the loopback at this port (DNS rebinding), a
 ``DELETE`` carrying an ``Origin`` must come from this origin (cross-site writes), the learning
 actions also need that ``Origin``, a same-origin fetch and a JSON body (S7), bodies stop at
 1 MiB, API answers are never cached, a CSP keeps the app to its own origin, and no CORS header
-is ever sent.
+is ever sent. No route speaks WebSocket (ADR 0027, D3): any ``websocket`` scope is closed with
+1008 before it is accepted, so an upgrade never skips these checks (P7, AC-165.54).
 
 ``AGENT_HUB_ALLOWED_HOSTS`` (read by ``hub web``, parsed here) may add exact ``host[:port]``
 names, for example the host port a container publishes; never a wildcard.
@@ -50,6 +51,9 @@ SECURITY_HEADERS = {
     "Referrer-Policy": "no-referrer",
 }
 
+
+# The close code of a refused WebSocket upgrade (RFC 6455, "policy violation").
+WEBSOCKET_POLICY_VIOLATION = 1008
 
 ALLOWED_HOSTS_VARIABLE = "AGENT_HUB_ALLOWED_HOSTS"
 # A DNS name (letters, digits, hyphens, dots; no label starts with a hyphen) or a bracketed
@@ -144,6 +148,9 @@ class LocalSecurityMiddleware:
         self._max_body_bytes = max_body_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": WEBSOCKET_POLICY_VIOLATION})
+            return
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
