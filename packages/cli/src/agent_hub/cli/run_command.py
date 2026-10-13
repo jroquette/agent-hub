@@ -5,7 +5,8 @@ is the hub (its ``hub.json``, Q-23). Usage problems exit 2 before any tracker ca
 process: an option out of range, an issue not shaped ``<team>-<n>`` for a team of ``hub.json``, a
 ``--repo`` that is not a repo ``dir`` of ``hub.json``, a folder that is not a hub (D15), a malformed
 ``hub.local.json`` in the main checkout, or no branch prefix for the developer. The local file's
-``tracker.transport`` replaces ``hub.json``'s.
+``tracker.transport`` replaces ``hub.json``'s. An issue whose description lacks a section of the
+input brief (ADR 0026) is refused with exit 1 right after the read, before anything is created.
 """
 
 import contextlib
@@ -37,6 +38,7 @@ from agent_hub.cli.tracker_client import missing_key_line, resolve_tracker_clien
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.team_keys import team_of, teams_text
+from agent_hub.core.runner.brief import check_brief, missing_brief_reason
 from agent_hub.core.runner.report_writes import call_line, success_writes
 from agent_hub.core.runner.run_record import Stage, picked_data
 from agent_hub.core.runner.run_texts import pr_body, success_comment
@@ -135,6 +137,7 @@ def run(
     children = RunChildren(config=config, hub=hub, repo=repo, issue_id=issue, branch_prefix=prefix)
     if not options.live:
         picked = _read_issue_or_exit(client, issue, log=None)
+        _refuse_incomplete_brief(picked, issue, log=None)
         _print_dry_run(children, picked, options=options, run_id=new_run_id())
         return
     if os.environ.get(NESTED_VARIABLE):
@@ -142,6 +145,7 @@ def run(
     # A live run records from the read on, so a failed read leaves its "failed" record.
     log = RunLog(hub=hub, run_id=new_run_id(), issue_id=issue, repo=repo)
     picked = _read_issue_or_exit(client, issue, log=log)
+    _refuse_incomplete_brief(picked, issue, log=log)
     try:
         data = picked_data(
             budget=options.budget,
@@ -173,6 +177,18 @@ def _read_issue_or_exit(client: TrackerClient, issue_id: str, *, log: RunLog | N
             with contextlib.suppress(RunLogError):
                 log.record("failed", {"stage": Stage.PICKED.value, "reason": str(error)})
         fail(str(error))
+
+
+def _refuse_incomplete_brief(issue: Issue, issue_id: str, *, log: RunLog | None) -> None:
+    # The input brief (ADR 0026): a section missing ends the run before anything is created.
+    missing = check_brief(issue.description)
+    if not missing:
+        return
+    reason = missing_brief_reason(issue_id, missing)
+    if log is not None:
+        with contextlib.suppress(RunLogError):
+            log.record("failed", {"stage": Stage.PICKED.value, "reason": reason})
+    fail(f"{_PREFIX}: {reason}")
 
 
 def _print_dry_run(

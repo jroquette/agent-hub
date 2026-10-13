@@ -46,7 +46,12 @@ from agent_hub.core.errors import TrackerError
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
 from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
 from agent_hub.core.json_form import dump_json
-from agent_hub.core.testing.builders import a_hub_document, a_second_repo, an_issue
+from agent_hub.core.testing.builders import (
+    RUN_DESCRIPTION,
+    a_hub_document,
+    a_second_repo,
+    an_issue,
+)
 from agent_hub.core.testing.fakes import FakeTrackerBackend, InMemoryTrackerClient, TrackerState
 from agent_hub.core.tracker.tracker_client import Issue
 
@@ -1702,9 +1707,6 @@ def run_workspace(
     monkeypatch.setenv("FAKE_RUN_LOGS", str(logs))
     monkeypatch.delenv("CLAUDECODE", raising=False)
     return RunWorkspace(demo_workspace, bin_dir, logs)
-
-
-RUN_DESCRIPTION = "Add a synthetic change.\n\n- touch one file\n- keep the gate green\n"
 
 
 def tracker_backend_for_run(*, failed: bool = True) -> FakeTrackerBackend:
