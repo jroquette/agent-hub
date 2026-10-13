@@ -71,12 +71,19 @@ def read_event() -> dict:
 STATE_VERSION = 1
 NOTE = "[hub readonly-gate] not checked ({})"
 SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+COMMENT = re.compile(r"\s#.*$")
 BASE_PLUGIN = "hub-workflow"
+
+
+def uncomment(value: str) -> str:
+    """value without a trailing ` # comment`, stripped. One blank before the `#` is enough to
+    find it, so the pattern stays linear on a long run of blanks (`\\s+#` backtracks on it)."""
+    return COMMENT.sub("", value).strip()
 
 
 def unquote(value: str) -> str:
     """A frontmatter value without a trailing ` # comment` or its surrounding quotes."""
-    value = re.sub(r"\s+#.*$", "", value).strip()
+    value = uncomment(value)
     if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
         return value[1:-1]
     return value
@@ -151,7 +158,7 @@ def declared(cfg: Config, agent_type: str) -> bool:
             fields = frontmatter(path)
             if fields is None or unquote(fields.get("name", "")) != bare:
                 continue
-            value = re.sub(r"\s+#.*$", "", fields.get("mutates_checkout", "")).strip()
+            value = uncomment(fields.get("mutates_checkout", ""))
             return value.lower() == "false"
     return False
 
