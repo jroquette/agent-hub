@@ -5,10 +5,22 @@
 caller decides how many to show.
 """
 
+from collections.abc import Iterator
+
 from pydantic import ValidationError
 
-from agent_hub.core.features.output_models import OutputProblem, ReviewOutput
-from agent_hub.core.features.output_shape import parse_document, shape_problems
+from agent_hub.core.features.output_models import (
+    MAX_FINDING_ACS,
+    MAX_FINDINGS,
+    OutputProblem,
+    ReviewOutput,
+)
+from agent_hub.core.features.output_shape import (
+    output_path,
+    overlong_problem,
+    parse_document,
+    shape_problems,
+)
 
 
 def review_problems(
@@ -25,5 +37,17 @@ def review_problems(
     try:
         ReviewOutput.model_validate(document)
     except ValidationError as error:
-        return shape_problems(error)
+        shape = shape_problems(error)
+        reported = {problem.path for problem in shape}
+        overlong = (found for found in _overlong_lists(document) if found.path not in reported)
+        return (*shape, *overlong)
     return ()
+
+
+def _overlong_lists(document: dict[str, object]) -> Iterator[OutputProblem]:
+    findings = document.get("findings")
+    yield from overlong_problem("findings", findings, MAX_FINDINGS)
+    for index, finding in enumerate(findings if isinstance(findings, list) else ()):
+        if isinstance(finding, dict):
+            path = output_path(("findings", index, "acs"))
+            yield from overlong_problem(path, finding.get("acs"), MAX_FINDING_ACS)
