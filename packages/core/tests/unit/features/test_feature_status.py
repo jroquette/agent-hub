@@ -3,7 +3,12 @@ import json
 import pytest
 
 from agent_hub.core.events.event import EventSource
-from agent_hub.core.features.feature_status import FeatureFolder, feature_detail, feature_view
+from agent_hub.core.features.feature_status import (
+    FeatureFolder,
+    feature_detail,
+    feature_view,
+    spec_linear,
+)
 from agent_hub.core.features.feature_view import FeatureRecord
 
 SPEC = b"""---
@@ -205,3 +210,19 @@ def test_reads_verdict_when_eval_names_one(line: bytes, verdict: str) -> None:
     folder = FeatureFolder(slug="done", files=("eval.md",), eval_head=b"# Eval\n\n" + line + b"\n")
 
     assert feature_view(folder, project="demo").verdict == verdict
+
+
+@pytest.mark.parametrize(
+    ("head", "ids"),
+    [
+        pytest.param(SPEC, ("DEM-7",), id="listed"),
+        pytest.param(b"---\nlinear: DEM-3\n---\n", ("DEM-3",), id="single"),
+        pytest.param(b"---\nlinear: []\n---\n", (), id="empty"),
+        pytest.param(b"# Spec\nlinear: [DEM-3]\n", (), id="no-frontmatter"),
+        pytest.param(None, (), id="no-spec"),
+    ],
+)
+def test_reads_linear_ids_when_spec_frontmatter_read(
+    head: bytes | None, ids: tuple[str, ...]
+) -> None:
+    assert spec_linear(head) == ids
