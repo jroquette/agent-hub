@@ -24,6 +24,24 @@ def test_serves_index_when_brain_note_route_names_a_markdown_file(client: Any, p
     assert response.text == "<!doctype html><title>agent-hub</title>"
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/projects/demo/skills",
+        "/projects/demo/skills?q=plan&kind=skill&mode=user-only",
+        "/projects/demo/skills/skill/hub-workflow/alpha",
+        "/projects/demo/skills/hook/settings/settings-pretooluse-1",
+        "/knowledge/skills",
+    ],
+)
+def test_serves_index_when_skills_route_requested(client: Any, path: str) -> None:
+    response = client.get(path)
+
+    assert response.status_code == 200
+    assert response.text == "<!doctype html><title>agent-hub</title>"
+    assert response.headers["content-type"].startswith("text/html")
+
+
 def test_serves_asset_when_file_exists(client: Any) -> None:
     response = client.get("/assets/app.js")
 
