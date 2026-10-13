@@ -134,6 +134,20 @@ def failure_comment(*, run_id: str, stage: str, reason: str, workspace: str) -> 
     return f"Run {run_id} failed at {stage}. Diagnosis: {shown}"
 
 
+def no_changes_comment(*, run_id: str, stage: str, reason: str, workspace: str) -> str:
+    """The tracker comment of a run that ended at ``stage`` with no commit, which is not a
+    failure (ADR 0030); the reason cleaned and cut."""
+    shown = sanitized_summary(reason, workspace=workspace)[:MAX_DIAGNOSIS_CHARS]
+    return f"Run {run_id} ended with no changes at {stage}: {shown}"
+
+
+def blocked_comment(*, run_id: str, stage: str, question: str, workspace: str) -> str:
+    """The tracker comment of a run whose session stopped at ``stage`` for a human (ADR 0030):
+    what it asked, cleaned and cut."""
+    shown = sanitized_summary(question, workspace=workspace)[:MAX_DIAGNOSIS_CHARS]
+    return f"Run {run_id} stopped at {stage} and needs a human. The session asked: {shown}"
+
+
 def inbox_line(*, issue_id: str, repo: str, run_id: str, outcome: str, cost_usd: float) -> str:
     """The run's line in ``brain/_inbox/runs/<date>.md`` (``outcome``: ``PR <url>`` or
     ``FAILED at <STAGE>``)."""
