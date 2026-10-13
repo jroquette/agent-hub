@@ -17,6 +17,7 @@ forbidden_modules =
     agent_hub.generator
     agent_hub.tracker_linear
     agent_hub.hub_git
+    agent_hub.claude_sessions
     agent_hub.cli
     agent_hub.api
     sqlalchemy
@@ -35,7 +36,7 @@ type = layers
 layers =
     agent_hub.cli
     agent_hub.api
-    agent_hub.storage | agent_hub.collector | agent_hub.generator | agent_hub.tracker_linear | agent_hub.hub_git
+    agent_hub.storage | agent_hub.collector | agent_hub.generator | agent_hub.tracker_linear | agent_hub.hub_git | agent_hub.claude_sessions
 
 # `hub web` is the one command that starts the API server; every other cli module stays free of it.
 [importlinter:contract:cli-api-web-command]
@@ -50,3 +51,29 @@ ignore_imports =
     agent_hub.cli.web_command -> agent_hub.api.**
 # web_command may import the package or its modules, so one of the two lines can stay unmatched.
 unmatched_ignore_imports_alerting = none
+
+# The Claude Agent SDK stays inside the claude_sessions adapter (ADR 0027): api wires that adapter, and
+# no other package, api and cli included, imports the SDK itself.
+[importlinter:contract:claude-agent-sdk-confined]
+name = only claude_sessions imports the Claude Agent SDK
+type = forbidden
+source_modules =
+    agent_hub.core
+    agent_hub.storage
+    agent_hub.collector
+    agent_hub.generator
+    agent_hub.tracker_linear
+    agent_hub.hub_git
+    agent_hub.cli
+    agent_hub.api
+forbidden_modules =
+    claude_agent_sdk
+
+# Driving sessions belongs to hub web (api); every cli module stays free of the session adapter.
+[importlinter:contract:cli-no-claude-sessions]
+name = cli never imports claude_sessions
+type = forbidden
+source_modules =
+    agent_hub.cli
+forbidden_modules =
+    agent_hub.claude_sessions
