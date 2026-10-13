@@ -243,3 +243,25 @@ test("Feature detail Tickets tab shows the plan's tickets, planning and the not-
     await expect(planning.getByRole("heading", { name: "Recommended order" })).toBeVisible();
   });
 });
+
+// AGH-164 (AC-164.30): the demo hub's Skills catalog (hub init's managed skills plus the
+// project's `demo-check`) and the managed `/feature` detail. Run alone by
+// test_shows_skills_catalog_and_detail_when_skills_opened.
+test("Skills catalog and a skill detail load from the hub's files", async ({ page, baseURL }) => {
+  await visit(page, baseURL, "/projects/demo/skills", async () => {
+    await expect(page.getByRole("heading", { level: 1, name: "Skills" })).toBeVisible();
+    await expect(page.getByRole("article", { name: "demo-check", exact: true })).toBeVisible();
+    const feature = page.getByRole("article", { name: "feature", exact: true });
+    await expect(feature).toBeVisible();
+    await expect(feature.getByText(/1 use in 30 days/)).toBeVisible();
+  });
+  await visit(page, baseURL, "/projects/demo/skills/skill/hub-workflow/feature", async () => {
+    await expect(
+      page.getByRole("heading", { level: 1, name: "feature", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText("Derived from the text")).toBeVisible();
+    await expect(page.getByRole("region", { name: /^Text/ })).toBeVisible();
+    await page.getByRole("button", { name: "Raw" }).click();
+    await expect(page.locator("pre.ah-skill-raw")).toContainText("name: feature");
+  });
+});
