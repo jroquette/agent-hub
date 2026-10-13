@@ -36,16 +36,20 @@ Option 4.
   200 ids per call. An `IssueSummary` holds `id`, `title`, `state {name, type}`, `assignee` (display name or null),
   `url`, `priority` (0 to 4 or null), `estimate` (or null), `blocks`, `blocked_by` and `relations_truncated`; the
   snapshot adds `missing` (ids Linear did not return, and malformed ids, never sent) and `external` (blockers outside
-  the ids, read from the same relation nodes). No description, comment or attachment is ever requested. Failures are
-  `TrackerError` with a `kind` (`not_connected`, `unauthorized`, `timeout`, `rate_limited`, `unavailable`,
-  `unexpected`, `unreachable`, `too_many`, `other`) and, when Linear answered, its `http_status`. A fake,
-  `InMemoryTrackerReader`, and the suite `TrackerReaderContract` live in core; `TrackerClient` is unchanged.
+  the ids, read from the same relation nodes, with only `id`, `title`, `state` and `url`: no assignee, priority or
+  estimate). Each direction keeps at most 25 relations; more sets `relations_truncated`. No description, comment or
+  attachment is ever requested. Failures are `TrackerError` with a `kind` (`not_connected`, `unauthorized`, `timeout`,
+  `rate_limited`, `unavailable`, `unexpected`, `unreachable`, `too_many`, `other`) and, when Linear answered, its
+  `http_status`. A fake, `InMemoryTrackerReader`, and the suite `TrackerReaderContract` live in core; `TrackerClient` is
+  unchanged.
 - **Adapter.** `LinearGraphqlTrackerReader` (`agent_hub.tracker_linear.graphql_reader`) shares ADR 0014's transport,
   moved to `graphql_transport.py`: `urllib`, the fixed endpoint, no redirects, the key from `LINEAR_API_KEY` at call
-  time and never in a message, answers of at most 4 MiB checked field by field. One query per team and page of 50
-  (`team.key` and `number in`), 10 s per request and 20 s per read. "Blocked by" is an inverse relation of type
-  `blocks`. It never uses the MCP transport: a hub with `tracker.transport: "mcp"` reads as not connected
-  ([SPEC.md](../SPEC.md) "Defined directions" 1).
+  time and never in a message, answers of at most 4 MiB checked field by field. One query per team and batch of 25 ids
+  (`team.key` and `number in`), 10 s per request and 20 s per read (200 ids are 8 batches). Linear rejects a query over
+  10,000 complexity points (a property 0.1, an object 1, a connection multiplying its nodes by `first`, 50 by default);
+  with 25 issues of 25 relations each way it scores 4,652, which the adapter's tests compute from the query text and
+  hold under 5,000. "Blocked by" is an inverse relation of type `blocks`. It never uses the MCP transport: a hub with
+  `tracker.transport: "mcp"` reads as not connected ([SPEC.md](../SPEC.md) "Defined directions" 1).
 - **Composition.** `api` depends on `agent-hub-tracker-linear` and builds the reader in `build_app` only; `cli` keeps
   its own `resolve_tracker_client`. Whether the app is connected is decided on every read, without a request: not
   connected when `LINEAR_API_KEY` is unset or empty where `hub web` runs, or when the hub's `tracker.transport` is

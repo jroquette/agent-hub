@@ -11,7 +11,8 @@ answered as GraphQL answers a failed non-null root field: an ``errors`` array an
 (Linear's exact error text and HTTP status for it are unverified; the live smoke confirms).
 ``ReadIssueSummaries`` (the read-only reader, ADR 0025) is served from the ``FakeIssueBoard``,
 with Linear's field names: ``relations``/``inverseRelations`` of type ``blocks``, a float
-``priority``, ``assignee { displayName }``; each related issue is served without relations.
+``priority``, ``assignee { displayName }``; each related issue is served without relations
+(the query selects only its identifier, title, url and state).
 ``SYNTHETIC_SUMMARIES_ANSWER`` is a hand-written answer of that query in the shape of Linear's
 public schema (Q7), so the adapter's strict shape check is proven against more than the fake.
 Every value here is synthetic: no recorded Linear response, no real key.
@@ -446,6 +447,48 @@ def _first_page(connection: Any, arguments: str) -> Json:
     return {"nodes": nodes[:first], "pageInfo": {"hasNextPage": len(nodes) > first}}
 
 
+# Linear's query complexity (linear.app/developers/rate-limiting), in tenths of a point: a
+# property 0.1, an object 1; a connection (a field selecting ``nodes``) costs nothing itself and
+# multiplies each node's cost (1 plus its fields) by its ``first`` (default 50); its other fields
+# (``pageInfo``) count once. The total is rounded up; over 10,000 Linear rejects the query.
+_PROPERTY_TENTHS = 1
+_OBJECT_TENTHS = 10
+_DEFAULT_FIRST = 50
+_FIRST = re.compile(r"\bfirst\s*:\s*(\$?\w+)")
+
+
+def linear_complexity(query: str, variables: Mapping[str, int]) -> int:
+    """The points Linear charges for ``query`` with ``variables`` (each ``$first`` at its value)."""
+    selection = _parse_selection(_TOKEN.findall(query[query.index("{") :]))
+    tenths = _selection_tenths(selection, variables)
+    return -(-tenths // 10)
+
+
+def _selection_tenths(selection: Selection, variables: Mapping[str, int]) -> int:
+    return sum(
+        _field_tenths(arguments, child, variables) for arguments, child in selection.values()
+    )
+
+
+def _field_tenths(arguments: str, child: Selection | None, variables: Mapping[str, int]) -> int:
+    if child is None:
+        return _PROPERTY_TENTHS
+    if "nodes" not in child:
+        return _OBJECT_TENTHS + _selection_tenths(child, variables)
+    _, nodes = child["nodes"]
+    node = _OBJECT_TENTHS + (0 if nodes is None else _selection_tenths(nodes, variables))
+    rest = {name: field for name, field in child.items() if name != "nodes"}
+    return _first(arguments, variables) * node + _selection_tenths(rest, variables)
+
+
+def _first(arguments: str, variables: Mapping[str, int]) -> int:
+    match = _FIRST.search(arguments)
+    if match is None:
+        return _DEFAULT_FIRST
+    value = match.group(1)
+    return variables[value[1:]] if value.startswith("$") else int(value)
+
+
 def _summary_fields(summary: IssueSummary) -> Json:
     """An issue's scalar fields as Linear answers them (priority is a float, never null)."""
     assert summary.priority is not None, "Linear's priority is never null (0 = none)"
@@ -508,6 +551,12 @@ def synthetic_key() -> str:
 
 
 @pytest.fixture
+def complexity_of() -> Callable[[str, Mapping[str, int]], int]:
+    """Linear's complexity score of a query text with its variables (``linear_complexity``)."""
+    return linear_complexity
+
+
+@pytest.fixture
 def issue_board() -> FakeIssueBoard:
     return a_seeded_issue_board()
 
@@ -523,7 +572,8 @@ def fake_linear_reader_api(issue_board: FakeIssueBoard, synthetic_key: str) -> F
 # A hand-written answer to ReadIssueSummaries for DEM-11 and DEM-12, in the shape of Linear's
 # public schema (synthetic values). DEM-11 blocks DEM-12 and relates to OPS-5 (not a "blocks"
 # relation, so ignored); OPS-4, not asked, blocks DEM-12; DEM-13 duplicates DEM-12 (ignored).
-# Priorities come as JSON integers and floats alike; DEM-12 has no assignee or estimate.
+# Priorities come as JSON integers and floats alike; DEM-12 has no assignee or estimate. A
+# related issue carries only the fields an external blocker shows.
 SYNTHETIC_SUMMARIES_ANSWER: Json = {
     "data": {
         "issues": {
@@ -545,10 +595,7 @@ SYNTHETIC_SUMMARIES_ANSWER: Json = {
                                     "identifier": "DEM-11",
                                     "title": "Synthetic issue eleven",
                                     "url": "https://linear.app/demo/issue/DEM-11/synthetic-issue-eleven",
-                                    "priority": 2,
-                                    "estimate": 3,
                                     "state": {"name": "In Progress", "type": "started"},
-                                    "assignee": {"displayName": "ada.example"},
                                 },
                             },
                             {
@@ -557,10 +604,7 @@ SYNTHETIC_SUMMARIES_ANSWER: Json = {
                                     "identifier": "OPS-4",
                                     "title": "Synthetic ops issue",
                                     "url": "https://linear.app/demo/issue/OPS-4/synthetic-ops-issue",
-                                    "priority": 1.0,
-                                    "estimate": 0.5,
                                     "state": {"name": "In Review", "type": "started"},
-                                    "assignee": {"displayName": "grace.example"},
                                 },
                             },
                             {
@@ -569,10 +613,7 @@ SYNTHETIC_SUMMARIES_ANSWER: Json = {
                                     "identifier": "DEM-13",
                                     "title": "Synthetic duplicate",
                                     "url": "https://linear.app/demo/issue/DEM-13/synthetic-duplicate",
-                                    "priority": 4,
-                                    "estimate": None,
                                     "state": {"name": "Duplicate", "type": "duplicate"},
-                                    "assignee": None,
                                 },
                             },
                         ],
@@ -583,7 +624,7 @@ SYNTHETIC_SUMMARIES_ANSWER: Json = {
                     "identifier": "DEM-11",
                     "title": "Synthetic issue eleven",
                     "url": "https://linear.app/demo/issue/DEM-11/synthetic-issue-eleven",
-                    "priority": 2,
+                    "priority": 2.0,
                     "estimate": 3,
                     "state": {"name": "In Progress", "type": "started"},
                     "assignee": {"displayName": "ada.example"},
@@ -595,10 +636,7 @@ SYNTHETIC_SUMMARIES_ANSWER: Json = {
                                     "identifier": "DEM-12",
                                     "title": "Synthetic issue twelve",
                                     "url": "https://linear.app/demo/issue/DEM-12/synthetic-issue-twelve",
-                                    "priority": 0,
-                                    "estimate": None,
                                     "state": {"name": "Todo", "type": "unstarted"},
-                                    "assignee": None,
                                 },
                             },
                             {
@@ -607,10 +645,7 @@ SYNTHETIC_SUMMARIES_ANSWER: Json = {
                                     "identifier": "OPS-5",
                                     "title": "Synthetic related issue",
                                     "url": "https://linear.app/demo/issue/OPS-5/synthetic-related-issue",
-                                    "priority": 3,
-                                    "estimate": 1,
                                     "state": {"name": "Backlog", "type": "backlog"},
-                                    "assignee": None,
                                 },
                             },
                         ],

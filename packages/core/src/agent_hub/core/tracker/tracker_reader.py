@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # The most ids one ``issue_summaries`` call takes; more raise ``TrackerError(kind="too_many")``.
 MAX_READ_IDS: Final = 200
 # The most relations a summary keeps per direction; beyond, ``relations_truncated`` is True.
-MAX_RELATIONS: Final = 50
+MAX_RELATIONS: Final = 25
 
 # Linear's ``WorkflowState.type`` values (``tracker_client.STATE_TYPES``), as a type.
 type IssueStateType = Literal[
@@ -60,7 +60,9 @@ class TicketSnapshot(BaseModel):
     ``summaries`` holds the ids found, in the order first asked; ``missing`` the ids the tracker
     does not know, in the same order; ``external`` the blockers of those issues that were not
     asked for, sorted by id, read from the same relations (so they carry no relations of their
-    own: ``blocks`` and ``blocked_by`` are empty).
+    own: ``blocks`` and ``blocked_by`` are empty). An external blocker carries only its id,
+    title, state and url: its ``assignee``, ``priority`` and ``estimate`` are None, so the read
+    stays within the tracker's query cost limit.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

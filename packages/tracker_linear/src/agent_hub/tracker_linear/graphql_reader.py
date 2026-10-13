@@ -9,8 +9,14 @@ The ids are grouped by team key and read with ``team.key`` plus ``number in`` (E
 ``BATCH_SIZE`` numbers per request, following a page cursor if Linear pages a batch. Ids Linear
 does not return, and malformed ids (never sent), are ``missing``. "Blocks" are the issue's
 ``relations`` of type ``blocks``; "blocked by" its ``inverseRelations`` of that type. Blockers
-that were not asked are ``external``, read from the same relation nodes (no second query). Each
-direction reads at most ``MAX_RELATIONS``; more marks the summary ``relations_truncated`` (E10).
+that were not asked are ``external``, read from the same relation nodes (no second query), which
+select only what a blocker shows: id, title, url and state (no assignee, priority or estimate).
+Each direction reads at most ``MAX_RELATIONS``; more marks the summary ``relations_truncated``
+(E10).
+
+Linear rejects a query over 10,000 complexity points (a property 0.1, an object 1, a connection
+multiplying its nodes by ``first``). ``BATCH_SIZE`` and ``MAX_RELATIONS`` keep this one at 4,652
+(half the cap, with a margin), checked by the tests from the query text itself.
 
 Each request waits at most ``timeout_s`` per blocking step; between requests, a read that has
 taken ``deadline_s`` or more raises ``timeout``. Every failure is a ``TrackerError`` with its
@@ -46,22 +52,29 @@ from agent_hub.tracker_linear.graphql_transport import (
 READ_OPERATION: Final = "issue_summaries"
 DEFAULT_TIMEOUT_S: Final = 10.0
 DEFAULT_DEADLINE_S: Final = 20.0
-# Issue numbers per request (one team), and the page size asked for.
-BATCH_SIZE: Final = 50
+# Issue numbers per request (one team), and the page size asked for. With MAX_RELATIONS = 25
+# the query scores 4,652 of Linear's 10,000 complexity points (see READ_ISSUE_SUMMARIES).
+BATCH_SIZE: Final = 25
 # The relation type that orders work: the relation's issue blocks its related issue.
 BLOCKS: Final = "blocks"
 
 _SUMMARY_FIELDS = (
     "identifier title url priority estimate state { name type } assignee { displayName }"
 )
+# A related issue is read only for what an external blocker shows.
+_RELATED_FIELDS = "identifier title url state { name type }"
 _RELATIONS = (
-    f"relations(first: {MAX_RELATIONS}) {{ nodes {{ type relatedIssue {{ {_SUMMARY_FIELDS} }} }}"
+    f"relations(first: {MAX_RELATIONS}) {{ nodes {{ type relatedIssue {{ {_RELATED_FIELDS} }} }}"
     " pageInfo { hasNextPage } }"
 )
 _INVERSE_RELATIONS = (
-    f"inverseRelations(first: {MAX_RELATIONS}) {{ nodes {{ type issue {{ {_SUMMARY_FIELDS} }} }}"
+    f"inverseRelations(first: {MAX_RELATIONS}) {{ nodes {{ type issue {{ {_RELATED_FIELDS} }} }}"
     " pageInfo { hasNextPage } }"
 )
+# Linear's complexity, with first = BATCH_SIZE = 25 and MAX_RELATIONS = 25: an issue node is
+# 3.8 points (1 + 5 properties + state 1.2 + assignee 1.1), a relation node 3.6 (1 + type +
+# related issue 1 + 3 properties + state 1.2), each direction 25 x 3.6 + pageInfo 1.1, so
+# 25 x (3.8 + 2 x 91.1) + pageInfo 1.2 = 4,651.2, rounded up to 4,652 (the cap is 10,000).
 READ_ISSUE_SUMMARIES: Final = (
     "query ReadIssueSummaries($filter: IssueFilter!, $first: Int!, $after: String) {"
     " issues(filter: $filter, first: $first, after: $after) {"
@@ -70,13 +83,20 @@ READ_ISSUE_SUMMARIES: Final = (
 )
 
 _NUMBER = (int, float)
+_STATE_SHAPE: dict[str, Shape] = {"name": str, "type": str}
+_RELATED_SHAPE: dict[str, Shape] = {
+    "identifier": str,
+    "title": str,
+    "url": str,
+    "state": _STATE_SHAPE,
+}
 _SUMMARY_SHAPE: dict[str, Shape] = {
     "identifier": str,
     "title": str,
     "url": str,
     "priority": _NUMBER,
     "estimate": (int, float, type(None)),
-    "state": {"name": str, "type": str},
+    "state": _STATE_SHAPE,
     "assignee": Nullable({"displayName": str}),
 }
 
@@ -84,7 +104,7 @@ _SUMMARY_SHAPE: dict[str, Shape] = {
 def _relations_shape(related: str) -> Shape:
     # A related issue the key cannot see may come back null: it is skipped, not an error.
     return {
-        "nodes": [{"type": str, related: Nullable(_SUMMARY_SHAPE)}],
+        "nodes": [{"type": str, related: Nullable(_RELATED_SHAPE)}],
         "pageInfo": {"hasNextPage": bool},
     }
 
@@ -146,7 +166,7 @@ class LinearGraphqlTrackerReader:
             if issue_id in nodes:
                 for blocker in _related(nodes[issue_id], "inverseRelations", "issue"):
                     if blocker["identifier"] not in found:
-                        external.setdefault(blocker["identifier"], _bare_summary(blocker))
+                        external.setdefault(blocker["identifier"], _related_summary(blocker))
         return TicketSnapshot(
             summaries=summaries,
             missing=tuple(issue_id for issue_id in unique if issue_id not in found),
@@ -258,15 +278,37 @@ def _bare_summary(node: Any) -> IssueSummary:
         or isinstance(estimate, bool)
     ):
         raise unexpected(READ_OPERATION, None, f"issue {identifier} has a number out of range")
+    return _built(
+        identifier,
+        node,
+        assignee=None if node["assignee"] is None else node["assignee"]["displayName"],
+        priority=int(priority),
+        estimate=None if estimate is None else float(estimate),
+    )
+
+
+def _related_summary(node: Any) -> IssueSummary:
+    """A related issue as an external blocker: its assignee, priority and estimate are not read."""
+    return _built(_check_identifier(node["identifier"]), node)
+
+
+def _built(
+    identifier: str,
+    node: Any,
+    *,
+    assignee: str | None = None,
+    priority: int | None = None,
+    estimate: float | None = None,
+) -> IssueSummary:
     try:
         return IssueSummary(
             id=identifier,
             title=node["title"],
             state=IssueState.model_validate(node["state"]),
-            assignee=None if node["assignee"] is None else node["assignee"]["displayName"],
+            assignee=assignee,
             url=node["url"],
-            priority=int(priority),
-            estimate=None if estimate is None else float(estimate),
+            priority=priority,
+            estimate=estimate,
             blocks=(),
             blocked_by=(),
         )
