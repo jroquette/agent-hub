@@ -258,6 +258,16 @@ it needs you. To read the brain, open Knowledge › Brain (or a project's Brain)
 Criteria tabs show its records. The app reads the registered hub's checkout as it is on disk, so pull the hub to see
 merged changes.
 
+A feature's Tickets tab shows each ticket's title, status, assignee, Linear link and blockers, what can start now and
+in which order, and its golden path says which step the whole feature has reached. For live status, `hub web` reads
+Linear's API itself, read-only, with the `LINEAR_API_KEY` of the environment it runs in (the same key `hub next` and
+`hub run` use; never in `hub.json`), and only when the Tickets tab is opened. Locally, export the key in the shell that
+runs `./hub web`. In Docker, export it in the shell that runs `make up`: `compose.yaml` passes `LINEAR_API_KEY` from
+that environment into the container and holds no value itself (keep it out of `.env`). Without a key, or for a hub
+whose `tracker.transport` is `"mcp"` (the app never reads Linear through MCP), the tab shows the plan from
+`features.json` with a notice that status may be stale; when a read fails, it says why and shows Linear's last good
+read for up to 15 minutes.
+
 Knowledge › Learnings shows each inbox note and can accept or reject it. Neither changes the brain or the user's
 checkout: each opens a pull request in the hub repo (branch `<branch_prefix>learning-<accept|reject>-<note>`,
 authored as the hub's author), and nothing changes until the user merges it. That needs, on the machine running
