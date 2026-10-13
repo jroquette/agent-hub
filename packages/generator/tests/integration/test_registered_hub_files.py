@@ -60,6 +60,8 @@ def test_reads_hub_files_when_present(hub: Path) -> None:
     assert reader.agents_md_lines(path, "demo-web") is None
     [folder] = reader.feature_folders(path)
     assert (folder.slug, folder.files) == ("demo-feature", ("spec.md",))
+    assert reader.feature_folder(path, "demo-feature") == folder
+    assert reader.feature_folder(path, "nope") is None
 
 
 def test_reports_missing_when_hub_json_absent(tmp_path: Path) -> None:

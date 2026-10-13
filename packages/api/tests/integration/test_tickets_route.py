@@ -200,6 +200,7 @@ def test_leaves_key_never_exposed_when_linear_echoes_it(
     answers.append(world.tickets())
     paths = _get_paths(world.app.client.app, tickets_kit.slug)
     assert tickets_kit.path in paths
+    world.clock.advance(61)  # past the 401's hold, so the sweep's tickets route asks Linear
 
     answers += [world.app.client.get(path) for path in paths]
 
