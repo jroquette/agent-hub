@@ -89,7 +89,10 @@ implementing session left no commit) and `blocked` (the session stopped and aske
 `not_delivered` record instead of `failed`: their stage ends `ok`, the `run.end` is `done` with the reason in
 `payload.reason`, and the run is `REPORTED` with no `failure`, its `delivery` and `delivery_reason` set. A `run.end`
 stored before `outcome` existed reads `delivered` when it names a PR and did not fail, else `failed`. The tracker
-still gets the failure's label and comment for `no_changes` and `blocked`, and `hub run` still exits 1. Approvals anywhere in a run are a `gate.request` (waiting) and a `gate.result`
+report follows the outcome ([ADR 0030](../adr/0030-run-outcomes-in-the-tracker.md)): `no_changes` gets its own comment
+and no label, and exits 0; `blocked` gets the blocked label (`tracker.blocked_label`, else `tracker.failed_label`) and a
+comment carrying the session's question, and exits 3; only `failed` gets the failed label and the diagnosis, and exits
+1. Every outcome but `failed` removes the failed and blocked labels the issue carries. Approvals anywhere in a run are a `gate.request` (waiting) and a `gate.result`
 (approver, decision), paired by `payload.gate_id`, never by adjacency.
 
 ### Learning

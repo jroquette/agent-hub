@@ -41,3 +41,4 @@ The product and its phases are in [SPEC.md](../SPEC.md). Phase 1 is designed as 
 - [ADR 0023](../adr/0023-short-error-message.md): a failed tool keeps a short, redacted `error_message` (300 chars).
 - [ADR 0024](../adr/0024-learning-actions-from-the-app.md): learning accept and reject open hub PRs through `hub_git`.
 - [ADR 0025](../adr/0025-reading-the-tracker-from-the-app.md): `hub web` reads ticket metadata through a read-only `TrackerReader`.
+- [ADR 0030](../adr/0030-run-outcomes-in-the-tracker.md): `no_changes` and `blocked` runs get their own tracker report and exit (0, 3).
