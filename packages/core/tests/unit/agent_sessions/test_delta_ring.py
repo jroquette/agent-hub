@@ -63,3 +63,8 @@ def test_refuses_push_when_seq_goes_back() -> None:
 
     with pytest.raises(ValueError, match="after_seq"):
         ring.push(4, 0, "b")
+
+
+def test_refuses_ring_when_capacity_zero() -> None:
+    with pytest.raises(ValueError, match="at least one"):
+        DeltaRing(0)

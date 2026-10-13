@@ -11,6 +11,7 @@ from agent_hub.core.agent_sessions.records import LogRecord, RecordKind
 from agent_hub.core.sessions.session import TokenUsage
 from agent_hub.core.testing.read_model_builders import a_log_record, an_agent_session
 from agent_hub.storage.agent_session_store import open_agent_session_store
+from agent_hub.storage.errors import DatabaseAccessError
 
 T0 = datetime(2026, 10, 13, 9, 0, tzinfo=UTC)
 FIRST = "01929a4e-7a11-7c00-8a00-00000000e001"
@@ -121,3 +122,33 @@ def test_purges_only_ended_sessions_when_cutoff_passes(tmp_path: Path) -> None:
     assert _rows(path, "agent_session_records", FIRST) == 0
     for kept in (SECOND, THIRD):
         assert _rows(path, "agent_session_records", kept) == 2
+
+
+def test_refuses_create_when_last_seq_not_zero(tmp_path: Path) -> None:
+    store = open_agent_session_store(tmp_path / "events.db")
+
+    with pytest.raises(ValueError, match="last_seq 0"):
+        store.create(an_agent_session(id=FIRST, last_seq=3))
+
+
+def test_raises_access_error_without_text_when_table_missing(tmp_path: Path) -> None:
+    path = tmp_path / "events.db"
+    store = open_agent_session_store(path)
+    store.create(an_agent_session(id=FIRST, last_seq=0))
+    with sqlite3.connect(path) as connection:
+        connection.execute("DROP TABLE agent_session_records")
+
+    with pytest.raises(DatabaseAccessError, match="agent session database") as raised:
+        store.append(FIRST, _records(1))
+    with pytest.raises(DatabaseAccessError, match="cannot read"):
+        store.records(FIRST)
+
+    assert "Run the tests" not in str(raised.value)
+
+
+def test_raises_access_error_when_directory_cannot_be_made(tmp_path: Path) -> None:
+    blocker = tmp_path / "file"
+    blocker.write_text("not a folder")
+
+    with pytest.raises(DatabaseAccessError, match="cannot create the directory"):
+        open_agent_session_store(blocker / "events.db")
