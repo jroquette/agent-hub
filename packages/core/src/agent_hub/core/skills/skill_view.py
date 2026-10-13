@@ -154,7 +154,7 @@ type FileRole = Literal["scripts", "references", "assets", "other"]
 # What a step of a skill's body does (S6).
 type StepTag = Literal["gate", "agent", "command", "script", "human"]
 # A frontmatter value: a scalar, a list, or a one-level map of strings (L1, A4).
-type FrontmatterValue = str | tuple[str, ...] | dict[str, str]
+type SkillFrontmatterValue = str | tuple[str, ...] | dict[str, str]
 
 
 def item_id(kind: ItemKind, source: str, name: str) -> str:
@@ -256,7 +256,7 @@ class FrontmatterPair(ViewModel):
     """One frontmatter key in file order; ``known`` when Claude Code understands the key."""
 
     key: str
-    value: FrontmatterValue
+    value: SkillFrontmatterValue
     known: bool = False
 
 
