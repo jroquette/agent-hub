@@ -336,3 +336,73 @@ def test_warns_when_blocker_unknown_or_duplicate_key() -> None:
     assert [row.ref for row in board.rows] == ["DEM-1", "DEM-2"]
     assert any("T9" in warning for warning in board.plan.warnings)
     assert any("T1" in warning and "twice" in warning for warning in board.plan.warnings)
+
+
+def _external_plan_board(ops: IssueSummary | None, *, as_external: bool = False) -> TicketBoard:
+    planned = (PlannedTicket(key="T1", id="DEM-1", blocked_by=("OPS-7",)),)
+    read = () if ops is None else (ops,)
+    summaries = (_summary(1), *(() if as_external else read))
+    snapshot = a_ticket_snapshot(
+        summaries=summaries, missing=(), external=read if as_external else ()
+    )
+    return ticket_board(planned, (), snapshot)
+
+
+def _ops(state: IssueState) -> IssueSummary:
+    return _summary(
+        7, id="OPS-7", title="Outside", state=state, url="https://linear.app/demo/issue/OPS-7"
+    )
+
+
+def test_starts_dependent_when_plan_only_external_blocker_completed() -> None:
+    for as_external in (False, True):
+        board = _external_plan_board(_ops(_DONE), as_external=as_external)
+
+        row = _row(board, "DEM-1")
+        assert (row.readiness, row.waiting_on) == ("can_start", ())
+        assert board.plan.can_start == ("DEM-1",)
+        (blocker,) = board.plan.external_blockers
+        assert (blocker.id, blocker.state, blocker.url, blocker.done) == (
+            "OPS-7",
+            _DONE,
+            "https://linear.app/demo/issue/OPS-7",
+            True,
+        )
+
+
+def test_waits_on_plan_only_external_blocker_when_not_completed() -> None:
+    board = _external_plan_board(_ops(_STARTED))
+
+    row = _row(board, "DEM-1")
+    assert (row.readiness, row.waiting_on) == ("waiting", ("OPS-7",))
+    (blocker,) = board.plan.external_blockers
+    assert (blocker.state, blocker.done) == (_STARTED, False)
+
+
+def test_keeps_plan_only_external_blocker_unknown_when_not_read() -> None:
+    planned = (PlannedTicket(key="T1", id="DEM-1", blocked_by=("OPS-7",)),)
+
+    unread = _external_plan_board(None)
+    plan_only = ticket_board(planned, (), None)
+
+    for board in (unread, plan_only):
+        assert _row(board, "DEM-1").waiting_on == ("OPS-7",)
+        (blocker,) = board.plan.external_blockers
+        assert (blocker.state, blocker.url, blocker.done) == (None, None, False)
+
+
+def test_redacts_state_name_when_state_holds_secret() -> None:
+    secret = "lin_api_" + "Z9y8X7w6V5u4T3s2"
+    leaky = IssueState(name=f"Blocked {secret}", type="started")
+    planned = (_planned(1),)
+    summaries = (_summary(1, state=leaky, blocked_by=("DEM-9",)),)
+    external = (_summary(9, state=leaky),)
+
+    board = _board(planned, summaries, external=external)
+
+    states = (_row(board, "DEM-1").state, board.plan.external_blockers[0].state)
+    for state in states:
+        assert state is not None
+        assert secret not in state.name
+        assert state.name == "Blocked [redacted: linear key]"
+        assert state.type == "started"
