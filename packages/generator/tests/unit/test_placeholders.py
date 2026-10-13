@@ -32,6 +32,7 @@ from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_m
 # The branch rule, kickoff's branch and the Conventions block show the conventions (AGH-57).
 # The runtime readers check platform.repository against core's pattern and name its form (AGH-49).
 # The README's tracker credential line, cloud subsection and the hub's clone folder (AGH-51).
+# The input brief's names and placeholders, from core (AGH-138).
 RENDERED_KEYS = {
     "project_name",
     "project_hub_repo",
@@ -65,7 +66,13 @@ RENDERED_KEYS = {
     "conventions_section",
     "join_tracker_credential",
     "join_cloud",
+    "brief_sections",
+    "brief_placeholders",
 }
+
+# AGH-138: /feature step 0 names core's brief sections and placeholders as code spans, in order.
+BRIEF_SECTIONS_TEXT = "`Problem`, `Why`, `Why now`, `Outcome`, `Invariants`, `Acceptance criteria`"
+BRIEF_PLACEHOLDERS_TEXT = "`TBD`, `N/A`, `-`, `TODO`"
 
 # AGH-51: the README's Join section texts, word for word (§ Draft section of the plan).
 JOIN_TRACKER_API = (
@@ -144,7 +151,16 @@ def test_takes_values_from_model_when_demo_mapped(demo_config: HubConfig) -> Non
         "conventions_section": "",
         "join_tracker_credential": JOIN_TRACKER_API,
         "join_cloud": JOIN_CLOUD,
+        "brief_sections": BRIEF_SECTIONS_TEXT,
+        "brief_placeholders": BRIEF_PLACEHOLDERS_TEXT,
     }
+
+
+def test_renders_core_brief_lists_when_mapping_built(demo_config: HubConfig) -> None:
+    mapping = substitution_mapping(demo_config)
+
+    assert mapping["brief_sections"] == BRIEF_SECTIONS_TEXT
+    assert mapping["brief_placeholders"] == BRIEF_PLACEHOLDERS_TEXT
 
 
 # AGH-51: the tracker credential line names the transport hub.json sets and the other one by its

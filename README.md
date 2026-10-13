@@ -289,8 +289,8 @@ flowchart TD
 
 The size decides the ceremony:
 
-- **Spike**: throwaway learning. No spec, no tickets and no plan gate; it is timeboxed, the findings go to
-  `research.md`, and nothing is merged.
+- **Spike**: throwaway learning. Step 0 (Brief) still applies; no spec, no tickets and no plan gate; it is timeboxed,
+  the findings go to `research.md`, and nothing is merged.
 - **Bounded** (the default): a few pull requests at most, with a known design. You may approve the spec and the plan
   together.
 - **Architectural**: a new contract between repos or services, or a decision that warrants an ADR. Both gates apply.
@@ -299,6 +299,9 @@ The size decides the ceremony:
 <details>
 <summary><strong>What happens at each step</strong></summary>
 
+0. **Brief.** The issue's description holds the six brief headings (Problem, Why, Why now, Outcome, Invariants,
+   Acceptance criteria); the session drafts the missing ones with you, one question at a time, and writes them to the
+   tracker issue.
 1. **Size it.** The session asks if the size is unclear.
 2. **Spec.** The `brainstorming` skill asks you questions one at a time in the main session, then
    `requirements-analyst` writes `brain/features/<slug>/spec.md` with acceptance criteria (Given/When/Then).
@@ -865,7 +868,7 @@ reached only from `hub web`. import-linter enforces this in `make check`. Detail
 | `hub brief [--no-network]` | Print the session brief: `now.md`, recent journal, repo/PR/CI state |
 | `hub agent [ARGS…]` | Start `claude` with every repo attached; all arguments go to `claude` |
 | `hub next` | Print the tracker's ready issues (`tracker.ready_label`), oldest first: id, repo, title and url |
-| `hub run ISSUE --repo REPO [--live] [--max-turns N] [--budget USD] [--model M] [--effort low\|medium\|high] [--from implement\|verify]` | Take one issue to a PR: worktree, a headless implementing session, the repo's gate, PR, tracker report. A dry run unless `--live`; defaults `--max-turns 40`, `--budget 3.0`, `--model sonnet`, `--effort medium`; `--from verify` runs the gate, PR and report on the commits already made |
+| `hub run ISSUE --repo REPO [--live] [--max-turns N] [--budget USD] [--model M] [--effort low\|medium\|high] [--from implement\|verify]` | Take one issue to a PR: worktree, a headless implementing session, the repo's gate, PR, tracker report. Refuses (exit 1) an issue whose description lacks a brief section. A dry run unless `--live`; defaults `--max-turns 40`, `--budget 3.0`, `--model sonnet`, `--effort medium`; `--from verify` runs the gate, PR and report on the commits already made |
 | `hub start ISSUE [--repo DIR]… [--no-agent]` | Start an issue: its worktrees (named `<issue>-<title slug>`), the issue moved to `tracker.states.started`, then `claude` from the hub with those worktrees attached and the issue as first prompt; a rerun resumes the task; `--no-agent` prints how to launch it |
 | `hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …` | Benchmark the `hub-workflow` plugin on closed issues (module `bench`); `--validate` checks the graders |
 | `hub web [--host HOST] [--port N] [--db PATH]` | Serve the control plane (REST API and web app) on `127.0.0.1:7420` until interrupted; another address only inside the agent-hub container (`AGENT_HUB_IN_CONTAINER=1`) |

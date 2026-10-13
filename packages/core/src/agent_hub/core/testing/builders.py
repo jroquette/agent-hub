@@ -3,11 +3,12 @@
 import copy
 from collections.abc import Iterable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Final
 from uuid import uuid4
 
 from agent_hub.core.events.event import Event
 from agent_hub.core.learnings.brain_change_requests import BrainChange, CommitAuthor
+from agent_hub.core.runner.brief import BRIEF_SECTIONS
 from agent_hub.core.testing.fakes import FakeTrackerBackend, TrackerState
 from agent_hub.core.tracker.tracker_client import Issue
 
@@ -136,6 +137,32 @@ def an_issue(**overrides: object) -> Issue:
     fields.setdefault("url", f"https://linear.app/demo/issue/{fields['id']}")
     return Issue.model_validate(fields)
 
+
+def a_brief(*, omit: Iterable[str] = (), **bodies: str) -> str:
+    """Build a synthetic input brief: one ``## <Name>`` section per ``BRIEF_SECTIONS`` name.
+
+    The sections follow the canonical order.
+
+    A body is given by the name in snake case (``why_now="..."``); the default is
+    ``Synthetic <name in lower case>.``. ``omit`` drops sections by name. An unknown body key or
+    ``omit`` name raises ``ValueError``.
+    """
+    keys = {name.lower().replace(" ", "_"): name for name in BRIEF_SECTIONS}
+    omitted = set(omit)
+    unknown = sorted((set(bodies) - set(keys)) | (omitted - set(BRIEF_SECTIONS)))
+    if unknown:
+        raise ValueError(f"unknown brief sections: {', '.join(unknown)}")
+    return "".join(
+        f"## {name}\n{bodies.get(key, f'Synthetic {name.lower()}.')}\n"
+        for key, name in keys.items()
+        if name not in omitted
+    )
+
+
+# The one full brief every ``hub run`` test reads as its issue's description.
+RUN_DESCRIPTION: Final = a_brief(
+    problem="Add a synthetic change.", outcome="- touch one file\n- keep the gate green"
+)
 
 _OPEN_STATES = (
     TrackerState(name="Todo", type="unstarted"),
