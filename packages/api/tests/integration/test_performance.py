@@ -22,8 +22,8 @@ import pytest
 from agent_hub.core.events.event import Event
 from agent_hub.core.testing.builders import an_event
 from agent_hub.core.testing.hook_inputs import a_hook_input, an_envelope
-from agent_hub.tracker_linear.graphql_reader import BATCH_SIZE
 from agent_hub.core.testing.session_scenarios import SCENARIO_START, a_session_events
+from agent_hub.tracker_linear.graphql_reader import BATCH_SIZE
 
 SESSIONS = 200
 EVENTS = 10_000
