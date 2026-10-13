@@ -3,9 +3,11 @@ from pydantic import ValidationError
 
 from agent_hub.core.features.feature_record import (
     MAX_BLOCKED_BY,
+    MAX_RECORD_BYTES,
     MAX_TICKETS,
     FeatureRecordFile,
     PlannedTicket,
+    record_from_bytes,
 )
 
 _AC = {"id": "AC-7.1", "description": "Given x, when y, then z", "passes": False}
@@ -91,3 +93,32 @@ def test_refuses_tickets_when_over_bounds_in_count() -> None:
 def test_refuses_withdrawn_when_not_bool() -> None:
     with pytest.raises(ValidationError, match="withdrawn"):
         FeatureRecordFile.model_validate({"acs": [_AC | {"withdrawn": "yes"}]})
+
+
+def test_parses_record_when_record_from_bytes_given_valid_json() -> None:
+    record = record_from_bytes(
+        b'{"linear": ["DEM-7"], "acs": [{"id": "AC-7.1", '
+        b'"description": "Given x, when y, then z", "passes": false}]}'
+    )
+
+    assert record == FeatureRecordFile.model_validate({"linear": ["DEM-7"], "acs": [_AC]})
+
+
+@pytest.mark.parametrize(
+    ("content", "problem"),
+    [
+        (b'{"acs": [}', "not valid JSON: Expecting value at line 1 column 10"),
+        (b"\xff", "not UTF-8 text: byte 0 cannot be decoded"),
+        (b'{"acs": "none"}', "acs: Input should be a valid tuple"),
+        (b'{"acs": [{"id": 3}]}', "acs.0.id: Input should be a valid string"),
+        (b"[1]", ": Input should be a valid dictionary or instance of FeatureRecordFile"),
+    ],
+)
+def test_names_features_json_when_record_from_bytes_given_bad_json(
+    content: bytes, problem: str
+) -> None:
+    assert record_from_bytes(content) == f"features.json could not be parsed ({problem})"
+
+
+def test_states_record_bound_when_constant_read() -> None:
+    assert MAX_RECORD_BYTES == 1_048_576

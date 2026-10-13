@@ -4,14 +4,28 @@
 ``id`` once the issue is created, ``blocked_by`` (keys or ids) and a plan ``order``. Each AC may
 name its ``ticket`` (a key or id) and be ``withdrawn`` by a spec amendment. Older records, with
 neither, parse unchanged; unknown keys are ignored. Bounds keep one record from flooding a view.
+``record_from_bytes`` parses the file's bytes, read whole up to ``MAX_RECORD_BYTES``.
 """
 
 from typing import Annotated, Final
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    ValidationError,
+)
 
+from agent_hub.core.hub_config.problems import one_line
+from agent_hub.core.json_form import InvalidJsonError, load_json_bytes
 from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN
 
+RECORD_FILE: Final = "features.json"
+# A ``features.json`` larger than this is not read.
+MAX_RECORD_BYTES: Final = 1_048_576
 MAX_TICKETS: Final = 200
 MAX_BLOCKED_BY: Final = 50
 MAX_TITLE_CHARS: Final = 200
@@ -58,3 +72,15 @@ class FeatureRecordFile(BaseModel):
     linear: tuple[StrictStr, ...] = ()
     tickets: Annotated[tuple[PlannedTicket, ...], Field(max_length=MAX_TICKETS)] = ()
     acs: tuple[RecordAc, ...]
+
+
+def record_from_bytes(content: bytes) -> FeatureRecordFile | str:
+    """``content`` parsed as ``features.json``, or a one-line problem naming the file."""
+    try:
+        return FeatureRecordFile.model_validate(load_json_bytes(content))
+    except InvalidJsonError as error:
+        return one_line(f"{RECORD_FILE} could not be parsed ({error.message})")
+    except ValidationError as error:
+        first = error.errors()[0]
+        where = ".".join(str(part) for part in first["loc"])
+        return one_line(f"{RECORD_FILE} could not be parsed ({where}: {first['msg']})")
