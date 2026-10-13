@@ -12,9 +12,11 @@ from sqlalchemy import (
     Column,
     DateTime,
     Dialect,
+    ForeignKey,
     Index,
     Integer,
     MetaData,
+    PrimaryKeyConstraint,
     String,
     Table,
     TypeDecorator,
@@ -79,4 +81,60 @@ events = Table(
     Index("ix_events_project_session_id", "project", "session", "id"),
     Index("ix_events_project_type_timestamp", "project", "type", "timestamp"),
     Index("ix_events_project_timestamp", "project", "timestamp"),
+)
+
+# One row per agent session (AGH-165, P3): a Claude Code session hub web started, or a cloud
+# start (``kind = "cloud"``). ``last_seq`` is its log's last record; ``stored_bytes`` the text the
+# log holds (the caps count it). ``cost_usd`` is the estimate as exact decimal text; ``usage``
+# the token counts. Indexed for the Session link, the live list and retention.
+agent_sessions = Table(
+    "agent_sessions",
+    metadata,
+    Column("id", String(36), primary_key=True),
+    Column("kind", String, nullable=False),
+    Column("project", String, nullable=False),
+    Column("workdir_id", String, nullable=False),
+    Column("workdir_label", String, nullable=False),
+    Column("claude_session_id", String, nullable=True),
+    Column("cloud_id", String, nullable=True),
+    Column("url", String, nullable=True),
+    Column("status", String, nullable=False),
+    Column("mode", String, nullable=False),
+    Column("model", String, nullable=True),
+    Column("title", String, nullable=True),
+    Column("created_at", UtcDateTime, nullable=False),
+    Column("updated_at", UtcDateTime, nullable=False),
+    Column("ended_at", UtcDateTime, nullable=True),
+    Column("end_reason", String, nullable=True),
+    Column("cost_usd", String, nullable=True),
+    Column("usage", JSON, nullable=True),
+    Column("last_seq", Integer, nullable=False),
+    Column("stored_bytes", Integer, nullable=False),
+    Index("ix_agent_sessions_project_claude_session_id", "project", "claude_session_id"),
+    Index("ix_agent_sessions_status", "status"),
+    Index("ix_agent_sessions_ended_at", "ended_at"),
+)
+
+# One row per log record of an agent session; ``seq`` is gap-free per session (S4). Its text is
+# redacted before it is stored (ADR 0027). Deleting a session deletes its records.
+agent_session_records = Table(
+    "agent_session_records",
+    metadata,
+    Column(
+        "agent_session_id",
+        String(36),
+        ForeignKey(
+            "agent_sessions.id",
+            name="fk_agent_session_records_agent_session_id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    ),
+    Column("seq", Integer, nullable=False),
+    Column("at", UtcDateTime, nullable=False),
+    Column("kind", String, nullable=False),
+    Column("by", String, nullable=True),
+    Column("body", JSON, nullable=False),
+    Column("text_bytes", Integer, nullable=False),
+    PrimaryKeyConstraint("agent_session_id", "seq", name="pk_agent_session_records"),
 )
