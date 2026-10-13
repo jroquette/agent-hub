@@ -39,3 +39,21 @@ export function isInAppPath(value: string | null | undefined): boolean {
   const safe = safeHref(value);
   return safe?.startsWith("/") ?? false;
 }
+
+const LINEAR_PREFIX = "https://linear.app/";
+
+/**
+ * A Linear issue link (AC-136.29): a `safeHref` URL that is `https://linear.app/…` exactly (no
+ * other scheme, host, port or user), else `null`, so the caller shows the id as plain text.
+ */
+export function linearHref(value: string | null | undefined): string | null {
+  const safe = safeHref(value);
+  if (safe === null || !safe.startsWith(LINEAR_PREFIX) || safe === LINEAR_PREFIX) return null;
+  try {
+    const url = new URL(safe);
+    if (url.origin !== "https://linear.app" || url.username || url.password) return null;
+  } catch {
+    return null;
+  }
+  return safe;
+}
