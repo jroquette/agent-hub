@@ -8,9 +8,10 @@ and is left out of the planning. Over the tickets neither done nor canceled: dep
 (strongly connected components) are flagged and left out; the rest are layered by Kahn's
 algorithm (each layer can run in parallel), and the recommended order is the layers in turn,
 each by priority (1 urgent first, 0 none last), then plan ``order``, then ref. Blockers outside
-the feature are listed with the status Linear returned for them. Without a snapshot the
-readiness comes from the plan's edges alone and every status is unknown. Linear's text is
-untrusted: titles and assignees are redacted (r1) and clipped, and a url is kept only under
+the feature (named by Linear's relations, or only by the plan's ``blocked_by``) are listed with
+the status Linear returned for them. Without a snapshot the readiness comes from the plan's edges
+alone and every status is unknown. Linear's text is untrusted: titles, assignees and state names
+are redacted (r1) and clipped, and a url is kept only under
 ``https://linear.app/``. Same input, same output, whatever the order of the input.
 """
 
@@ -40,6 +41,7 @@ from agent_hub.core.tracker.tracker_reader import (
 
 TITLE_CHARS: Final = 200
 ASSIGNEE_CHARS: Final = 80
+STATE_CHARS: Final = 80
 LINEAR_HOST: Final = "linear.app"
 DONE_TYPES: Final = frozenset({"completed"})
 CANCELED_TYPES: Final = frozenset({"canceled", "duplicate"})
@@ -103,7 +105,7 @@ def ticket_board(
     nodes = _nodes(planned, linear, summaries=summaries, warnings=warnings)
     by_ref = {node.ref: node for node in nodes}
     resolve = _resolver(nodes)
-    externals = {} if snapshot is None else {item.id: item for item in snapshot.external}
+    externals = _outside(nodes, summaries, () if snapshot is None else snapshot.external)
     _link(nodes, resolve=resolve, warnings=warnings)
     if snapshot is not None:
         warnings.extend(
@@ -180,6 +182,17 @@ def _natural(text: str) -> tuple[str | int, ...]:
 
 def _is_issue_id(text: str) -> bool:
     return ISSUE_ID_PATTERN.fullmatch(text) is not None
+
+
+def _outside(
+    nodes: Sequence[_Node], summaries: dict[str, IssueSummary], external: Iterable[IssueSummary]
+) -> dict[str, IssueSummary]:
+    """Linear's summaries of issues that are no row: the blockers outside the feature, whether
+    the snapshot asked for them (a plan-only ``blocked_by``) or Linear's relations named them."""
+    rows = {node.id for node in nodes if node.id is not None}
+    outside = {item.id: item for item in external}
+    outside.update((issue, item) for issue, item in summaries.items() if issue not in rows)
+    return outside
 
 
 def _nodes(
@@ -400,6 +413,13 @@ def _text(text: str | None, limit: int) -> str | None:
     return None if text is None else clip(redact_text(text), limit)
 
 
+def _state(state: IssueState | None) -> IssueState | None:
+    """Linear's state with its name redacted and clipped like a title; the type is a closed set."""
+    if state is None:
+        return None
+    return IssueState(name=_text(state.name, STATE_CHARS) or "", type=state.type)
+
+
 def _row(
     node: _Node,
     *,
@@ -417,7 +437,7 @@ def _row(
         key=node.key,
         id=node.id,
         title=_text(title, TITLE_CHARS),
-        state=node.state,
+        state=_state(node.state),
         assignee=None if summary is None else _text(summary.assignee, ASSIGNEE_CHARS),
         url=None if summary is None else safe_linear_url(summary.url),
         priority=None if summary is None else summary.priority,
@@ -447,7 +467,7 @@ def _external_blockers(
             ExternalBlocker(
                 id=issue,
                 title=None if summary is None else _text(summary.title, TITLE_CHARS),
-                state=None if summary is None else summary.state,
+                state=None if summary is None else _state(summary.state),
                 url=None if summary is None else safe_linear_url(summary.url),
                 done=summary is not None and summary.state.type in DONE_TYPES,
             )
