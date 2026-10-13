@@ -26,6 +26,7 @@ carry conversation text outside the log itself.
 """
 
 import asyncio
+import contextlib
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from datetime import datetime
@@ -69,15 +70,23 @@ from agent_hub.core.agent_sessions.errors import (
     LiveLimitError,
     LogFullError,
     MessageTooLargeError,
+    PermissionAnsweredError,
     SessionLiveError,
     SessionsUnavailableError,
     SessionTerminalError,
+    UnknownPermissionError,
     UnknownResumeError,
 )
 from agent_hub.core.agent_sessions.limits import SessionLimits
 from agent_hub.core.agent_sessions.live_session import LiveSession, OpenRequest
 from agent_hub.core.agent_sessions.log_caps import Full, Truncated
-from agent_hub.core.agent_sessions.permission_policy import closed_answer, deadline
+from agent_hub.core.agent_sessions.permission_policy import (
+    closed_answer,
+    deadline,
+    expired,
+    timeout_answer,
+    validate,
+)
 from agent_hub.core.agent_sessions.records import (
     LogRecord,
     LogRecordPage,
@@ -93,6 +102,7 @@ from agent_hub.core.agent_sessions.records import (
     UserMessageBody,
 )
 from agent_hub.core.agent_sessions.session_state import (
+    Answer,
     ChangeSettings,
     Close,
     End,
@@ -417,6 +427,42 @@ class AgentSessionControl:
             await self._driver.interrupt(live.handle)
         return live.view()
 
+    async def answer(
+        self, agent_session_id: str, request_id: str, decision: PermissionDecision
+    ) -> AgentSession:
+        """Answer an open permission request once (E7): the decision is logged ``by: web``,
+        then the driver gets it; a plan approval's ``mode`` follows as ``settings`` (E6)."""
+        live = await self._commandable(agent_session_id)
+        async with live.commands:
+            if request_id in live.answered:
+                raise PermissionAnsweredError(request_id)
+            self._refuse(live, Answer(request_id=request_id))
+            answer = validate(live.requests[request_id].request, decision)
+            live.requests.pop(request_id)
+            live.answered.add(request_id)
+            live.state = apply(live.state, Answer(request_id=request_id))
+            body = PermissionDecisionBody(
+                request_id=request_id,
+                decision=decision.decision,
+                message=decision.message,
+                answers=decision.answers,
+                suggestion=decision.suggestion,
+                mode=decision.mode,
+            ).as_body()
+            seq = await self._emit(live, "permission.decision", body, by="web")
+            await self._driver.answer_permission(live.handle, request_id, answer)
+            if seq is None:
+                raise await self._log_full(live)
+            fields: AgentSessionFields = {}
+            if decision.mode is not None:
+                await self._driver.set_mode(live.handle, decision.mode)
+                await self._emit(
+                    live, "settings", SettingsBody(mode=decision.mode).as_body(), by="web"
+                )
+                fields["mode"] = decision.mode
+            await self._sync(live, fields)
+        return live.view()
+
     async def change_settings(
         self, agent_session_id: str, settings: SessionSettings
     ) -> AgentSession:
@@ -445,6 +491,23 @@ class AgentSessionControl:
         await asyncio.shield(self._ending(live, EndReason.CLOSED, by="web"))
         await self._drain(live)
         return await asyncio.to_thread(self._store.get, agent_session_id)
+
+    async def sweep(self, now: datetime | None = None, *, purge: bool = True) -> None:
+        """Apply time (P9): deny requests past their deadline (``by: timeout``), end sessions
+        idle past the idle timeout (``idle_timeout``) and, with ``purge``, remove sessions that
+        ended more than the retention ago (AC-165.53)."""
+        now = now or self._clock()
+        for live in list(self._live.values()):
+            for request_id, open_request in list(live.requests.items()):
+                if expired(open_request.view, now):
+                    await self._time_out(live, request_id)
+            idle_since = live.idle_since
+            idle = live.state.status == AgentSessionStatus.IDLE
+            if idle and idle_since is not None and now - idle_since >= self._limits.idle:
+                await asyncio.shield(self._ending(live, EndReason.IDLE_TIMEOUT, by="timeout"))
+        if purge:
+            cutoff = now - self._limits.retention
+            await asyncio.to_thread(self._store.purge_ended_before, cutoff)
 
     async def shutdown(self) -> None:
         """End every live session ``server_stopped`` (P12), in parallel; no session starts
@@ -613,6 +676,24 @@ class AgentSessionControl:
         body = PermissionDecisionBody(request_id=request_id, decision="deny").as_body()
         body["message"] = closed_answer().message
         await self._emit(live, "permission.decision", body, by="closed", reserved=True)
+
+    async def _time_out(self, live: LiveSession, request_id: str) -> None:
+        """Deny a request nobody answered before its deadline (AC-165.28)."""
+        async with live.commands:
+            if live.ended or request_id not in live.requests:
+                return
+            live.requests.pop(request_id)
+            live.answered.add(request_id)
+            live.state = apply(live.state, Answer(request_id=request_id))
+            answer = timeout_answer()
+            body = PermissionDecisionBody(
+                request_id=request_id, decision="deny", message=answer.message
+            ).as_body()
+            await self._emit(live, "permission.decision", body, by="timeout", reserved=True)
+            # The driver may have ended the request itself meanwhile.
+            with contextlib.suppress(PermissionAnsweredError, UnknownPermissionError):
+                await self._driver.answer_permission(live.handle, request_id, answer)
+            await self._sync(live)
 
     # Ending
 
