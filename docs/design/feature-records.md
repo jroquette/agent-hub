@@ -50,7 +50,10 @@ line, its scope its frontmatter when it has one.
 ### `reviews/<ticket>.md`
 
 Written by `/feature` step 7 once both reviewers pass: `type: review`, `ticket`, `outcome` (`approved` or
-`changes-requested`), `pr`, `reviewed_at`. At most 500 are read, heads of 8 KiB. A malformed record counts for
+`changes-requested`), `pr`, `reviewed_at`. At most 500 are read (first by name), heads of 8 KiB.
+
+The feature list reads at most about 32 MiB of records per call (it may go over by one folder); folders past that are
+listed unread with a record problem. The detail and the tickets route read only their own folder. A malformed record counts for
 nothing and carries its problem.
 
 ### Golden path
@@ -82,8 +85,10 @@ plan's `blocked_by` and Linear's "blocks" relations, each tagged `plan`, `linear
 state type is `completed`; a canceled one no longer blocks. Over the tickets neither done nor canceled: cycles
 (strongly connected components) are flagged and left out; the rest form layers (Kahn's algorithm) that can run in
 parallel; the order is the layers in turn, each by priority (1 urgent first, 0 none last), then plan `order`, then id.
-Blockers outside the feature are listed with their Linear status; the critical path is the longest chain of not-done
-tickets.
+Blockers outside the feature (from Linear relations or named only in the plan's `blocked_by`) are read with the
+feature's ids, up to 200 in total, and listed with their Linear status. A ticket behind an outside blocker that is open
+or unread gets no layer: it is listed under `waiting` and left out of the order, so the first layer is `can_start`.
+The critical path is the longest chain of not-done tickets. Linear titles, assignees and state names are redacted.
 
 ## Invariants
 
@@ -103,8 +108,9 @@ tickets.
 
 - Evals per file, not sections of `eval.md`: parallel worktrees add distinct files without a merge conflict, and
   "never overwrite" is a file-level rule a doctor can check.
-- For each AC the latest eval naming it decides: "latest" is `evaluated_at`, then the `-rN` suffix, then the file
-  name. An eval naming only `tickets` covers the ACs whose `ticket` is one of them.
+- For each AC the latest eval naming it decides. Dated evals compare as UTC instants; when a date is missing or
+  equal, a re-run (`-rN`, higher N) is newer than what it re-runs and any `evals/` file is newer than `eval.md`.
+  Evals with no known order that disagree give the conservative verdict (NO-SHIP, then SHIP-WITH-OWNER-STEPS). An eval naming only `tickets` covers the ACs whose `ticket` is one of them.
 - A legacy `eval.md` without scope covers every AC only when every non-withdrawn AC passes; otherwise Evaluate reads
   "partial: scope not recorded".
 - The planner records `blocked_by` and never calls the tracker; `/feature` step 4 creates the issues, fills each `id`
