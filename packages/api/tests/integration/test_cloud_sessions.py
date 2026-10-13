@@ -80,7 +80,7 @@ def test_answers_502_naming_step_when_start_output_unreadable(agent_session_app:
     assert TASK["task"] not in response.text
 
 
-def test_answers_504_when_start_passes_deadline(agent_session_app: Any) -> None:
+def test_answers_timeout_when_start_passes_deadline(agent_session_app: Any) -> None:
     agent_session_app.cloud.failures["start"] = CloudTimeoutError(seconds=60)
 
     response = agent_session_app.client.post(CLOUD, json=TASK)
@@ -90,7 +90,7 @@ def test_answers_504_when_start_passes_deadline(agent_session_app: Any) -> None:
     assert response.json()["seconds"] == 60
 
 
-def test_answers_422_when_start_workdir_unknown(agent_session_app: Any) -> None:
+def test_answers_invalid_workdir_when_start_workdir_unknown(agent_session_app: Any) -> None:
     agent_session_app.cloud.failures["start"] = InvalidWorkdirError(WORKDIR_ID)
 
     response = agent_session_app.client.post(CLOUD, json=TASK)
