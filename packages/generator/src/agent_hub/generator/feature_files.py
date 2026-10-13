@@ -6,6 +6,13 @@ with ``.`` is skipped, as a shell glob does, and at most ``MAX_FEATURE_FOLDERS``
 order. In each folder only the record files are looked at, as regular files: ``features.json``
 whole up to ``MAX_RECORD_BYTES`` (else a one-line problem), ``spec.md`` and ``eval.md`` up to
 ``HEAD_BYTES``. What the files mean is core's (``feature_status``).
+
+The record folders ``evals/`` and ``reviews/`` are opened the same way, relative to the slug's
+folder: in each, the ``.md`` names not hidden are read in name order, at most ``MAX_EVAL_FILES``
+and ``MAX_REVIEW_FILES``, as the first ``EVAL_HEAD_BYTES`` / ``REVIEW_HEAD_BYTES``. A link, a
+folder or another non-regular file is listed with its problem, never read; the files left out by
+the cap, and the names that are not UTF-8, are counted in ``evals_skipped`` / ``reviews_skipped``.
+A linked or missing record folder reads as empty.
 """
 
 import contextlib
@@ -16,6 +23,17 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Final
 
+from agent_hub.core.features.feature_evals import (
+    EVAL_HEAD_BYTES,
+    EVALS_FOLDER,
+    MAX_EVAL_FILES,
+    NOTE_SUFFIX,
+)
+from agent_hub.core.features.feature_reviews import (
+    MAX_REVIEW_FILES,
+    REVIEW_HEAD_BYTES,
+    REVIEWS_FOLDER,
+)
 from agent_hub.core.features.feature_status import (
     EVAL,
     HEAD_BYTES,
@@ -23,6 +41,7 @@ from agent_hub.core.features.feature_status import (
     RECORD_FILES,
     SPEC,
     FeatureFolder,
+    RecordHead,
 )
 
 MAX_FEATURE_FOLDERS: Final = 500
@@ -79,6 +98,12 @@ def _read_folder(parent: int, slug: str) -> FeatureFolder:
         return FeatureFolder(slug=slug, files=())
     try:
         reads = {name: _read(folder, name) for name in RECORD_FILES}
+        evals, evals_skipped = _heads(
+            folder, EVALS_FOLDER, cap=MAX_EVAL_FILES, size=EVAL_HEAD_BYTES
+        )
+        reviews, reviews_skipped = _heads(
+            folder, REVIEWS_FOLDER, cap=MAX_REVIEW_FILES, size=REVIEW_HEAD_BYTES
+        )
     finally:
         os.close(folder)
     record = reads[RECORD]
@@ -88,7 +113,52 @@ def _read_folder(parent: int, slug: str) -> FeatureFolder:
         features_json=_record(record),
         spec_head=_head(reads[SPEC]),
         eval_head=_head(reads[EVAL]),
+        evals=evals,
+        reviews=reviews,
+        evals_skipped=evals_skipped,
+        reviews_skipped=reviews_skipped,
     )
+
+
+def _heads(parent: int, name: str, *, cap: int, size: int) -> tuple[tuple[RecordHead, ...], int]:
+    """The heads of the record folder ``name``'s ``.md`` files, and how many were skipped."""
+    try:
+        folder = os.open(name, _FOLDER_FLAGS, dir_fd=parent)
+    except OSError:
+        return (), 0
+    try:
+        names, skipped = _record_names(folder)
+        heads = tuple(_record_head(folder, note, size) for note in names[:cap])
+    except OSError:
+        return (), 0
+    finally:
+        os.close(folder)
+    return heads, skipped + max(len(names) - cap, 0)
+
+
+def _record_names(folder: int) -> tuple[list[str], int]:
+    """The ``.md`` names of ``folder`` not hidden, sorted, and how many are not UTF-8."""
+    names: list[str] = []
+    not_utf8 = 0
+    with os.scandir(folder) as found:
+        for entry in found:
+            note = entry.name
+            if note.startswith(".") or not note.endswith(NOTE_SUFFIX):
+                continue
+            try:
+                note.encode()
+            except UnicodeEncodeError:
+                not_utf8 += 1
+                continue
+            names.append(note)
+    return sorted(names), not_utf8
+
+
+def _record_head(folder: int, name: str, size: int) -> RecordHead:
+    read = _read(folder, name, limit=size)
+    if isinstance(read, bytes):
+        return RecordHead(name=name, head=read, problem=None)
+    return RecordHead(name=name, head=None, problem=read or "could not be read")
 
 
 def _record(read: bytes | str | None) -> bytes | str | None:
@@ -101,8 +171,9 @@ def _head(read: bytes | str | None) -> bytes | None:
     return read[:HEAD_BYTES] if isinstance(read, bytes) else None
 
 
-def _read(folder: int, name: str) -> bytes | str | None:
-    """The file's first bytes (one more than any bound), its problem, or None when absent."""
+def _read(folder: int, name: str, *, limit: int | None = None) -> bytes | str | None:
+    """The file's first ``limit`` bytes (by default one more than any record bound), its
+    problem, or None when absent."""
     try:
         descriptor = os.open(name, _FILE_FLAGS, dir_fd=folder)
     except FileNotFoundError:
@@ -112,7 +183,25 @@ def _read(folder: int, name: str) -> bytes | str | None:
         return (
             NOT_REGULAR if error.errno == errno.ELOOP else (error.strerror or type(error).__name__)
         )
-    with open(descriptor, "rb") as opened:
-        if not stat.S_ISREG(os.fstat(opened.fileno()).st_mode):
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             return NOT_REGULAR
-        return opened.read(max(MAX_RECORD_BYTES, HEAD_BYTES) + 1)
+        return _read_at_most(
+            descriptor, max(MAX_RECORD_BYTES, HEAD_BYTES) + 1 if limit is None else limit
+        )
+    except OSError as error:
+        return error.strerror or type(error).__name__
+    finally:
+        os.close(descriptor)
+
+
+def _read_at_most(descriptor: int, limit: int) -> bytes:
+    chunks: list[bytes] = []
+    left = limit
+    while left > 0:
+        chunk = os.read(descriptor, left)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        left -= len(chunk)
+    return b"".join(chunks)
