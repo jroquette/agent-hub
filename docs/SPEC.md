@@ -72,7 +72,7 @@ hub start ISSUE [--repo DIR]… [--no-agent]   # issue to worktrees, In Progress
 hub brief [--no-network]   # session brief: now, journal, repo/PR/CI state
 hub agent [ARGS…]   # claude with every repo attached (./agent)
 hub next   # the tracker's ready issues, one line each
-hub run ISSUE --repo REPO [--live] [--budget USD] [--from implement|verify] …   # one issue to a PR through the tracker port
+hub run ISSUE --repo REPO [--live] [--budget USD] [--from implement|verify] …   # one issue with a complete brief to a PR through the tracker port
 hub ship [ISSUE] [--draft] [--dry-run]   # each changed repo's check, push and PR, PRs linked, the issue to review
 hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …   # configuration benchmark (module bench)
 hub collect [FILE|-] [--db PATH]   # ingests canonical events from JSON Lines (stdin when FILE is omitted or -)
@@ -114,8 +114,11 @@ server), `make demo` (synthetic data) and `make connect HUB=<path>` (register a 
 `hub next` reads `list_ready` once per team, in `hub.json` order, and prints `<id>  <repo>  <title>  <url>` per issue,
 oldest first within each team. With several teams a failing team gets one `team <KEY>: <reason>` line on stderr while
 the others are still listed, and the command exits 1. `hub run` reads
-the issue once (dry run by default: it prints every command and tracker write), then makes the worktree, runs the
-implementing `claude -p` session (no tracker tool: the issue's text is in its prompt), its own gate, the push and
+the issue once and refuses it, dry or live and with `--from verify` too, when its description lacks a section of the
+input brief (`Problem`, `Why`, `Why now`, `Outcome`, `Invariants`, `Acceptance criteria`, as Markdown headings,
+[ADR 0026](adr/0026-input-brief-contract.md)): exit 1 with one line naming the missing sections, nothing created, and
+a live run's `failed` record at stage `PICKED`; otherwise (dry run by default: it prints every command and tracker
+write) it makes the worktree, runs the implementing `claude -p` session (no tracker tool: the issue's text is in its prompt), its own gate, the push and
 `gh pr create`, and reports through the port (on success, like `hub ship`, it moves the issue to
 `tracker.states.review`, default `In Review`); records go to the hub's `.agent-runs/` and `brain/_inbox/runs/`. Secret
 scope: no child gets `LINEAR_API_KEY`. What may run the session's code (the session, the gate, git's reads of the
