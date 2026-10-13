@@ -16,13 +16,18 @@ block. Python 3.9, stdlib only; it sends nothing over the network."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import sys
+import tempfile
+import time
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
-    from hubhooks import Config, load_config, run_hook
+    from hubhooks import Config, emit, load_config, run_hook
 except Exception as error:  # a partial install: skip, never error the session
     print(f"[hub {os.path.splitext(os.path.basename(sys.argv[0] or 'hook'))[0]}] skipped: {type(error).__name__}", file=sys.stderr)
     sys.exit(0)
@@ -63,8 +68,182 @@ def read_event() -> dict:
     return data if isinstance(data, dict) else {}
 
 
+STATE_VERSION = 1
+NOTE = "[hub readonly-gate] not checked ({})"
+SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+BASE_PLUGIN = "hub-workflow"
+
+
+def unquote(value: str) -> str:
+    """A frontmatter value without a trailing ` # comment` or its surrounding quotes."""
+    value = re.sub(r"\s+#.*$", "", value).strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        return value[1:-1]
+    return value
+
+
+def frontmatter(path: Path) -> dict | None:
+    """The `key: value` lines between a first line `---` and the next `---`, within
+    MAX_FRONTMATTER_BYTES of a regular file (a link to one counts); None otherwise. Values are
+    raw (comments and quotes kept)."""
+    try:
+        if not os.path.isfile(path):
+            return None
+        with open(path, "rb") as stream:
+            head = stream.read(MAX_FRONTMATTER_BYTES)
+        lines = head.decode("utf-8", "replace").splitlines()
+    except (OSError, ValueError):
+        return None
+    if not lines or lines[0].rstrip() != "---":
+        return None
+    fields = {}
+    for line in lines[1:]:
+        if line.rstrip() == "---":
+            return fields
+        key, colon, value = line.partition(":")
+        if colon and key.strip() and not key[:1].isspace():
+            fields.setdefault(key.strip(), value.strip())
+    return None  # no closing line within the cap
+
+
+def agent_folders(cfg: Config, prefix: str | None) -> list[Path]:
+    """Where a type's definition is looked up, in order (O-1): the hub's .claude/agents, the
+    project plugin's agents, the base plugin's own agents (beside these hooks). A prefix
+    hub-workflow keeps only the last, the project's name only the second, any other none."""
+    root = cfg.root or cfg.hub
+    project = cfg.root_project
+    own = Path(os.path.abspath(__file__)).parent.parent / "agents"
+    has_project = bool(project) and "/" not in project and project not in (".", "..")
+    hub_agents = root / ".claude" / "agents" if root else None
+    project_agents = root / "plugin" / project / "agents" if root and has_project else None
+    if prefix is None:
+        folders = [hub_agents, project_agents, own]
+    elif prefix == BASE_PLUGIN:
+        folders = [own]
+    elif has_project and prefix == project:
+        folders = [project_agents]
+    else:
+        folders = []
+    return [folder for folder in folders if folder is not None]
+
+
+def definitions(folder: Path, name: str) -> list[Path]:
+    """`<name>.md` first, then the folder's other `*.md`, sorted; at most MAX_AGENT_FILES."""
+    try:
+        names = sorted(entry for entry in os.listdir(folder) if entry.endswith(".md"))
+    except OSError:
+        return []
+    own = name + ".md"
+    if own in names:
+        names.remove(own)
+        names.insert(0, own)
+    return [folder / entry for entry in names[:MAX_AGENT_FILES]]
+
+
+def declared(cfg: Config, agent_type: str) -> bool:
+    """Whether the type's definition says `mutates_checkout: false` (unquoted, any case). The
+    first file whose frontmatter `name` is the bare type wins, with the key or without it."""
+    prefix, colon, bare = agent_type.rpartition(":")
+    if not bare:
+        return False
+    for folder in agent_folders(cfg, prefix if colon else None):
+        for path in definitions(folder, bare):
+            fields = frontmatter(path)
+            if fields is None or unquote(fields.get("name", "")) != bare:
+                continue
+            value = re.sub(r"\s+#.*$", "", fields.get("mutates_checkout", "")).strip()
+            return value.lower() == "false"
+    return False
+
+
+def safe_id(value: object) -> str:
+    """value when it is a plain id; else `h` and 16 hex digits of its sha256."""
+    text = value if isinstance(value, str) else ""
+    if SAFE_ID.fullmatch(text):
+        return text
+    return "h" + hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()[:16]
+
+
+def state_path(session_id: object, agent_id: object) -> Path:
+    return Path(tempfile.gettempdir()) / f"hub-readonly-{safe_id(session_id)}-{safe_id(agent_id)}.json"
+
+
+def save_state(path: Path, state: dict) -> bool:
+    """Write state to a temp file beside path, then move it in place; False on any error."""
+    temp = None
+    try:
+        handle, temp = tempfile.mkstemp(prefix=".hub-readonly-", suffix=".tmp", dir=str(path.parent))
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            json.dump(state, stream)
+        os.replace(temp, path)
+        return True
+    except (OSError, ValueError, TypeError):
+        if temp is not None:
+            try:
+                os.unlink(temp)
+            except OSError:
+                pass
+        return False
+
+
+def load_state(path: Path) -> dict | None:
+    """The state at path: a JSON object of this version within MAX_STATE_BYTES; None otherwise."""
+    try:
+        with open(path, "rb") as stream:
+            raw = stream.read(MAX_STATE_BYTES + 1)
+        if len(raw) > MAX_STATE_BYTES:
+            return None
+        state = json.loads(raw.decode("utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return None
+    if isinstance(state, dict) and state.get("v") == STATE_VERSION:
+        return state
+    return None
+
+
+def is_fresh(path: Path) -> bool:
+    """A valid state younger than STALE_SECONDS: the baseline of a resumed agent (E-1)."""
+    try:
+        age = time.time() - os.stat(path).st_mtime
+    except OSError:
+        return False
+    return age < STALE_SECONDS and load_state(path) is not None
+
+
+def main_transcript(event: dict) -> tuple:
+    """(the main transcript's path, its size now), or (None, None) when it cannot be read."""
+    path = event.get("transcript_path")
+    if not isinstance(path, str) or not os.path.isabs(path):
+        return None, None
+    try:
+        if os.path.isfile(path):
+            return path, os.stat(path).st_size
+    except (OSError, ValueError):
+        pass
+    return None, None
+
+
 def start(event: dict, cfg: Config) -> None:
-    """SubagentStart: nothing yet."""
+    """SubagentStart: save the declared agent's baseline, unless a fresh one exists (E-1)."""
+    agent_type, agent_id = event["agent_type"], event["agent_id"]
+    if not declared(cfg, agent_type):
+        return
+    session_id = event.get("session_id")
+    path = state_path(session_id, agent_id)
+    if is_fresh(path):
+        return
+    transcript, offset = main_transcript(event)
+    state = {
+        "v": STATE_VERSION,
+        "agent_type": agent_type,
+        "agent_id": agent_id,
+        "session_id": session_id if isinstance(session_id, str) else "",
+        "main_transcript": transcript,
+        "main_offset": offset,
+        "checkouts": [],
+    }
+    if not save_state(path, state):
+        emit({"systemMessage": NOTE.format("state not saved")})
 
 
 def stop(event: dict, cfg: Config) -> None:
