@@ -350,6 +350,7 @@ class LiveRun:
             self.issue,
             review_state=self.children.config.tracker.states.review,
             failed_label=self.children.config.tracker.failed_label,
+            blocked_label=self.children.config.tracker.effective_blocked_label,
             comment=comment,
         )
 
