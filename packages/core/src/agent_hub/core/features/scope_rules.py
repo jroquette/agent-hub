@@ -15,7 +15,7 @@ AC_ID_PATTERN: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 COMMIT_PATTERN: Final = re.compile(r"[0-9a-f]{7,40}")
 # A re-run of a delivery ends in ``-r2``, ``-r3``...; ``group(1)`` is its number.
 RERUN_PATTERN: Final = re.compile(r"-r([1-9][0-9]{0,3})$")
-_ALL: Final = "all"
+ALL_ACS: Final = "all"
 
 
 def ticket_aliases(tickets: Iterable[PlannedTicket]) -> dict[str, frozenset[str]]:
@@ -37,7 +37,7 @@ def named_scope(
 ) -> tuple[str, ...] | None:
     """The AC ids a scope names: ``all`` is every ``live`` AC, a list of ``acs`` is as named,
     else the ``live`` ACs of the ``tickets`` (through ``aliases``); None when it names nothing."""
-    if acs == _ALL:
+    if acs == ALL_ACS:
         return tuple(ac.id for ac in live)
     if acs:
         return acs
