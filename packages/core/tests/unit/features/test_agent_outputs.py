@@ -144,12 +144,45 @@ def test_reports_one_problem_when_review_shape_broken(
     assert all("\n" not in problem.message for problem in problems)
 
 
-def test_cuts_long_key_when_review_shape_has_unknown_key() -> None:
-    problems = problems_of(a_review_document(**{"k" * 200: 1}))
+@pytest.mark.parametrize(
+    ("key", "path"),
+    [
+        ("k" * 200, '["' + "k" * 79 + '…"]'),
+        ("k" * 80, "k" * 80),
+        ("a\n\x1b[31m", '["a\\n\\u001b[31m"]'),
+        ("é" * 80, '["' + "\\u00e9" * 13 + '…"]'),
+    ],
+    ids=["plain key over the limit", "plain key at the limit", "control characters", "80 accents"],
+)
+def test_cuts_long_key_when_review_shape_has_unknown_key(key: str, path: str) -> None:
+    problems = problems_of(a_review_document(**{key: 1}))
 
-    assert problems == (
-        OutputProblem('["' + "k" * 79 + '\\u2026"]', "Extra inputs are not permitted"),
-    )
+    assert problems == (OutputProblem(path, "Extra inputs are not permitted"),)
+
+
+def test_escapes_key_once_within_limit_when_review_shape_has_unknown_key() -> None:
+    (problem,) = problems_of(a_review_document(**{"é" * 80: 1}))
+
+    inner = problem.path.removeprefix('["').removesuffix('"]')
+    assert len(inner) <= 80
+    assert "\\\\" not in inner
+
+
+@pytest.mark.parametrize(
+    ("document", "path"),
+    [
+        (a_review_document(findings=[0] * 101), "findings"),
+        (a_review_document(findings=[a_finding(acs=["a b"] * 51)]), "findings[0].acs"),
+    ],
+    ids=["101 bad findings", "51 bad acs"],
+)
+def test_reports_overlong_list_when_review_shape_has_bad_items(
+    document: dict[str, object], path: str
+) -> None:
+    paths = [problem.path for problem in problems_of(document)]
+
+    assert paths.count(path) == 1
+    assert len(paths) > 1
 
 
 def test_reports_every_unknown_key_when_review_shape_has_many_extra_keys() -> None:
