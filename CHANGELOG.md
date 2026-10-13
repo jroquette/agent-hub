@@ -13,9 +13,22 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub run` keeps the run's status apart from what it delivered: a session that left no commit (`no_changes`) or
+  stopped to ask for a human (`blocked`) records `not_delivered` instead of `failed`, and `reported` names the
+  `outcome`. The control plane shows those runs as "No changes" or "Blocked" (not failed), with the reason, the
+  workflow-run API adds `delivery` and `delivery_reason`, and `retro_metrics.py` counts them apart. The tracker
+  still gets the failed label for them, and the command still exits 1 (AGH-140).
 - Apache License 2.0 (`LICENSE`, `NOTICE`, and `license` in every package), `SECURITY.md`, this changelog, a Renovate
   configuration, and `llms.txt` / `llms-full.txt` for AI agents, generated from the docs and checked by
   `make check-fast` (AGH-137).
+
+### Changed
+
+- The generated hub-workflow asks for the minimum: `/feature` states a minimum-sufficient rule that the
+  requirements-analyst, architect, implement step and both reviewers cite; *bounded* is the default size and a path
+  under `guard.ask_before_edit` alone no longer makes a feature *architectural*; hostile-input scale, bounds and budget
+  checks apply only to code that parses untrusted or unbounded input; reviewers flag what is extra and the main session
+  weighs their findings. Bump `platform.version` and run `./hub sync` (AGH-147).
 
 ## [0.11.0] - 2026-10-13
 

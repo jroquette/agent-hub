@@ -8,16 +8,18 @@ there; otherwise the run is at the stage of its latest step. Pure and order-inde
 
 from collections.abc import Iterable, Mapping, Sequence
 from decimal import Decimal, InvalidOperation
-from typing import Literal
+from typing import Final, Literal, get_args
 from urllib.parse import urlsplit
 
 from agent_hub.core.events.event import EventSource, EventType
 from agent_hub.core.events.stored_event import StoredEvent
+from agent_hub.core.json_form import JsonValue
 from agent_hub.core.readmodels.fact_keys import canonical_events, resolve_facts
 from agent_hub.core.runner.run_record import Stage
 from agent_hub.core.runs.workflow_run import (
     IssueRef,
     RunCaps,
+    RunDelivery,
     RunFailure,
     RunGateResult,
     RunStep,
@@ -38,6 +40,8 @@ STEP_STAGES: Mapping[StepKey, Stage] = {
 }
 RUN_SOURCES_MISSING = (EventSource.LINEAR, EventSource.GITHUB)
 _STEP_TYPES = frozenset({EventType.STEP_START, EventType.STEP_END})
+_DELIVERIES: Final[tuple[RunDelivery, ...]] = get_args(RunDelivery.__value__)
+_NOT_DELIVERED: Final = frozenset({"no_changes", "blocked"})
 _STAGES = frozenset(stage.value for stage in Stage)
 
 
@@ -193,6 +197,16 @@ def _failure(winners: Sequence[StoredEvent], run_end: StoredEvent | None) -> Run
     return RunFailure(stage=stage, reason=reason, failing_event_id=failing.event_id)
 
 
+def _delivery(payload: Mapping[str, JsonValue], *, failure: RunFailure | None) -> RunDelivery:
+    """The ``run.end``'s ``outcome``; for one stored before it (AGH-140), ``delivered`` when it
+    names a PR and did not fail, else ``failed``."""
+    outcome = payload.get("outcome")
+    for known in _DELIVERIES:
+        if outcome == known:
+            return known
+    return "delivered" if failure is None and _https_url(payload.get("pr_url")) else "failed"
+
+
 def _current_stage(winners: Sequence[StoredEvent], run_end: StoredEvent | None) -> Stage:
     if run_end is not None:
         return Stage.REPORTED
@@ -233,6 +247,7 @@ def fold_run(
     run_end = run_ends[0] if run_ends else None
     failure = _failure(winners, run_end)
     payload_of_end = {} if run_end is None else run_end.event.payload
+    delivery = None if run_end is None else _delivery(payload_of_end, failure=failure)
     issue = next((_text(item.event.payload.get("issue")) for item in ordered), None)
     linked = sorted((s for s in sessions if s.run_id == run_id), key=lambda s: s.started_at)
     cost, cost_source = run_cost(
@@ -260,6 +275,8 @@ def fold_run(
         session_ids=tuple(session.id for session in linked),
         gate_results=_gate_results(winners),
         pr_url=_https_url(payload_of_end.get("pr_url")),
+        delivery=delivery,
+        delivery_reason=_text(payload_of_end.get("reason")) if delivery in _NOT_DELIVERED else None,
         sources_missing=RUN_SOURCES_MISSING,
     )
 

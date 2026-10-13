@@ -3,6 +3,11 @@
     PICKED -> WORKTREE -> IMPLEMENTING -> VERIFYING -> PR_OPEN -> REPORTED
     any stage can end in FAILED(stage, reason) -> REPORTED (failed label and diagnosis)
 
+A run's outcome (AGH-140) is ``delivered`` with its PR, ``failed``, or one of two ends that are
+not failures: ``no_changes`` (no commit on the branch) and ``blocked`` (the session stopped and
+asked for a human). Those record ``not_delivered`` instead of ``failed``; the tracker still gets
+the failure's label and diagnosis, and the command still exits 1.
+
 Each stage raises ``StageFailure`` naming itself and the reason; the report then runs through
 the tracker port. The worktree is made in process with ``hub worktree``'s steps (D7, E18), each
 git call capped at ``WORKTREE_GIT_TIMEOUT``. Every child runs in the caller's process group
@@ -64,7 +69,13 @@ from agent_hub.core.runner.report_writes import (
     failure_writes,
     success_writes,
 )
-from agent_hub.core.runner.run_record import Stage, reported_data
+from agent_hub.core.runner.run_record import (
+    NOT_DELIVERED,
+    RunOutcome,
+    Stage,
+    not_delivered_data,
+    reported_data,
+)
 from agent_hub.core.runner.run_texts import (
     commit_summary,
     failure_comment,
@@ -98,12 +109,14 @@ _HOOKS_OFF = ("-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false"
 
 
 class StageFailure(Exception):  # noqa: N818 - a stage's outcome, read as "the stage failed"
-    """A stage ended the run: the stage and why."""
+    """A stage ended the run: the stage, why, and the run's outcome (``failed`` unless the run
+    ended without a PR yet without failing)."""
 
-    def __init__(self, stage: Stage, reason: str) -> None:
+    def __init__(self, stage: Stage, reason: str, outcome: RunOutcome = RunOutcome.FAILED) -> None:
         super().__init__(reason)
         self.stage = stage
         self.reason = reason
+        self.outcome = outcome
 
 
 @dataclass(kw_only=True, slots=True)
@@ -200,7 +213,7 @@ class LiveRun:
         subjects = [line for line in commits.splitlines() if line]
         if not subjects:
             reason = "no commit on the branch (the session reported done or gave no verdict)"
-            raise StageFailure(Stage.IMPLEMENTING, reason)
+            raise StageFailure(Stage.IMPLEMENTING, reason, RunOutcome.NO_CHANGES)
         if not self.summary:
             messages = self._git_output("log", "--format=%B", f"{self.children.base}..HEAD")
             self.summary = commit_summary(messages, workspace=self._workspace)
@@ -231,6 +244,8 @@ class LiveRun:
                 "verdict": verdict,
             },
         )
+        if outcome.kind is OutcomeKind.STOPPED:
+            raise StageFailure(Stage.IMPLEMENTING, outcome.text, RunOutcome.BLOCKED)
         if outcome.kind is not OutcomeKind.DONE:
             raise StageFailure(Stage.IMPLEMENTING, outcome.text)
         self.summary = outcome.text
@@ -339,18 +354,25 @@ class LiveRun:
         )
 
     def _report_success(self) -> int:
-        made = self._report(self._success_writes(), failed_stage=None)
+        made = self._report(
+            self._success_writes(), failed_stage=None, run_outcome=RunOutcome.DELIVERED
+        )
         outcome = f"PR {self.pr_url}" if made else f"PR {self.pr_url}; report failed"
         self._inbox(outcome)
         return 0 if made else FAILURE
 
     def _report_failure(self, failure: StageFailure) -> int:
         self.log.state = failure.stage
-        self.log.record(
-            "failed",
-            {"stage": failure.stage.value, "reason": failure.reason[:MAX_LOGGED_REASON_CHARS]},
-        )
-        typer.echo(f"FAILED at {failure.stage}: {shown_text(failure.reason)}", err=True)
+        reason = failure.reason[:MAX_LOGGED_REASON_CHARS]
+        is_failed = failure.outcome not in NOT_DELIVERED
+        if is_failed:
+            self.log.record("failed", {"stage": failure.stage.value, "reason": reason})
+            ended = "FAILED"
+        else:
+            data = not_delivered_data(outcome=failure.outcome, stage=failure.stage, reason=reason)
+            self.log.record("not_delivered", data)
+            ended = f"NOT DELIVERED ({failure.outcome})"
+        typer.echo(f"{ended} at {failure.stage}: {shown_text(failure.reason)}", err=True)
         comment = failure_comment(
             run_id=self.log.run_id,
             stage=failure.stage.value,
@@ -362,12 +384,19 @@ class LiveRun:
             failed_label=self.children.config.tracker.failed_label,
             comment=comment,
         )
-        self.log.state = Stage.FAILED
-        self._report(writes, failed_stage=failure.stage)
-        self._inbox(f"FAILED at {failure.stage}")
+        if is_failed:
+            self.log.state = Stage.FAILED
+        self._report(
+            writes,
+            failed_stage=failure.stage if is_failed else None,
+            run_outcome=failure.outcome,
+        )
+        self._inbox(f"{ended} at {failure.stage}")
         return FAILURE
 
-    def _report(self, writes: Sequence[TrackerWrite], *, failed_stage: Stage | None) -> bool:
+    def _report(
+        self, writes: Sequence[TrackerWrite], *, failed_stage: Stage | None, run_outcome: RunOutcome
+    ) -> bool:
         """Make the writes; on a tracker failure name the PR and the writes not made."""
         self.pending = tuple(writes)
         outcome = apply_writes(self.client, writes)
@@ -385,6 +414,7 @@ class LiveRun:
             failed_stage=failed_stage,
             total_cost_usd=round(self.cost_usd, 4),
             pr=self.pr_url,
+            outcome=run_outcome,
         )
         self.log.record("reported", data)
         return outcome.error is None

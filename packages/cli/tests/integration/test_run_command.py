@@ -1783,6 +1783,19 @@ def assert_failed_at(result: Result, run_tracker: Any, stage: str) -> str:
     return found.group(2)
 
 
+def assert_outcome(workspace: Any, outcome: str, *, reason: str | None = None) -> None:
+    """The run's last records: ``not_delivered`` with ``reason`` (no ``failed``) when ``reason`` is
+    given, then ``reported`` with ``outcome`` (AGH-140)."""
+    written = records(workspace)
+    reported = written[-1]
+    assert (reported["event"], reported["outcome"]) == ("reported", outcome)
+    if reason is not None:
+        assert reported["failed_stage"] is None
+        assert [r["event"] for r in written].count("failed") == 0
+        (ended,) = [r for r in written if r["event"] == "not_delivered"]
+        assert ended == ended | {"outcome": outcome, "stage": "IMPLEMENTING", "reason": reason}
+
+
 def assert_never_pushed(run_workspace: Any) -> None:
     workspace = run_workspace.workspace
     branches = workspace.git(workspace.origin("demo-api"), "branch", "--list", "jdoe/dem-1")
@@ -1833,6 +1846,8 @@ class TestVerdict:
         result = live(run_command, run_workspace.workspace)
 
         assert assert_failed_at(result, run_tracker, "IMPLEMENTING") == diagnosis
+        assert_outcome(run_workspace.workspace, "blocked", reason=diagnosis)
+        assert "NOT DELIVERED (blocked) at IMPLEMENTING" in result.stderr
         assert_never_pushed(run_workspace)
         assert run_workspace.calls("make") == []
 
@@ -1851,6 +1866,8 @@ class TestVerdict:
 
         diagnosis = assert_failed_at(result, run_tracker, "IMPLEMENTING")
         assert diagnosis == "the implementing session errored (success): ran out of turns"
+        assert_outcome(run_workspace.workspace, "failed")
+        assert "FAILED at IMPLEMENTING" in result.stderr
         assert_never_pushed(run_workspace)
 
     def test_opens_pr_from_commits_when_no_verdict(
@@ -1874,6 +1891,7 @@ class TestVerdict:
         assert body == f"DEM-1\n\n{COMMIT_SUBJECT}\n\n## Verification\nGates green: `make check`."
         (comment,) = [body for _, body in run_tracker.backend.comments]
         assert comment.endswith(f"opened {PR_URL}. {COMMIT_SUBJECT}")
+        assert_outcome(run_workspace.workspace, "delivered")
 
     @pytest.mark.parametrize("mode", ["silent", "done-no-commit"], ids=["no-verdict", "done"])
     def test_fails_when_session_leaves_no_commit(
@@ -1894,6 +1912,7 @@ class TestVerdict:
         assert diagnosis == (
             "no commit on the branch (the session reported done or gave no verdict)"
         )
+        assert_outcome(run_workspace.workspace, "no_changes", reason=diagnosis)
         assert_never_pushed(run_workspace)
 
     def test_never_pushes_when_gate_fails(
@@ -1911,6 +1930,7 @@ class TestVerdict:
 
         diagnosis = assert_failed_at(result, run_tracker, "VERIFYING")
         assert diagnosis == "gate failed: make check\nsynthetic gate output\n"
+        assert_outcome(run_workspace.workspace, "failed")
         assert_never_pushed(run_workspace)
 
     def test_skips_session_when_from_verify(
@@ -2150,6 +2170,7 @@ class TestRecords:
             "total_cost_usd": round(0.42 + operations * TRACKER_COST, 4),
             "pr": PR_URL,
             "failed_stage": None,
+            "outcome": "delivered",
         }
 
     def test_appends_inbox_line_when_run_ends(

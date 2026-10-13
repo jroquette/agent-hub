@@ -3654,6 +3654,15 @@
         "title": "RunCaps",
         "type": "object"
       },
+      "RunDelivery": {
+        "enum": [
+          "delivered",
+          "no_changes",
+          "blocked",
+          "failed"
+        ],
+        "type": "string"
+      },
       "RunFailure": {
         "additionalProperties": false,
         "description": "Where and why a run failed, and the event to open (\"Open failing moment\").",
@@ -5097,6 +5106,27 @@
                 "type": "null"
               }
             ]
+          },
+          "delivery": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunDelivery"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "delivery_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivery Reason"
           },
           "derived": {
             "default": true,
