@@ -21,16 +21,34 @@ BODIES: dict[tuple[str, str], object] = {
     ("post", "/api/v1/hubs"): {"path": "/home/demo/demo-hub"},
     ("post", "/api/v1/learnings/{learning_id}/accept"): {"target": "learnings/"},
     ("post", "/api/v1/learnings/{learning_id}/reject"): {"reason": "Duplicate of another note"},
+    ("post", "/api/v1/agent-sessions"): {"project": "demo", "workdir_id": "0123456789abcdef"},
+    ("post", "/api/v1/agent-sessions/cloud"): {
+        "project": "demo",
+        "workdir_id": "0123456789abcdef",
+        "task": "Upgrade the linter",
+    },
+    ("post", "/api/v1/agent-sessions/cloud/{cloud_id}/messages"): {"text": "Also the docs"},
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/messages"): {"text": "Run the tests."},
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/permissions/{request_id}"): {
+        "decision": "allow"
+    },
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/settings"): {"mode": "plan"},
 }
 OWN_ORIGIN = {"Origin": "http://127.0.0.1:7420"}
 QUERIES = {
     "/api/v1/search": {"q": "make"},
     "/api/v1/projects/{project}/brain/note": {"path": "index.md"},
+    "/api/v1/agent-sessions/workdirs": {"project": "demo"},
+    "/api/v1/agent-sessions/resumable": {"project": "demo", "workdir_id": "0123456789abcdef"},
 }
+# Agent session ids are UUIDs (the route's convertor); the other ids take any text.
+AGENT_SESSION_ID = "01929a4e-7a11-7c00-8a00-00000000a001"
 
 
 def _concrete(path: str) -> str:
-    for name in ("hub_id", "project", "session_id", "run_id", "approval_id", "learning_id", "slug"):
+    path = path.replace("{agent_session_id}", AGENT_SESSION_ID)
+    names = ("hub_id", "project", "session_id", "run_id", "approval_id", "learning_id", "slug")
+    for name in (*names, "request_id", "cloud_id"):
         path = path.replace(f"{{{name}}}", f"{name}-1")
     return path
 
