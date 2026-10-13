@@ -14,7 +14,7 @@ from agent_hub.core.features.feature_view import FeatureRecord, GoldenPath
 from agent_hub.core.features.golden_path import LINEAR_NOT_CONNECTED, LINEAR_NOT_LOADED
 from agent_hub.core.features.ticket_snapshots import SnapshotRead
 from agent_hub.core.testing.tracker_reader_fakes import SNAPSHOT_TIME
-from agent_hub.core.tracker.tracker_reader import IssueSummary, TicketSnapshot
+from agent_hub.core.tracker.tracker_reader import MAX_READ_IDS, IssueSummary, TicketSnapshot
 
 SPEC = b"""---
 type: spec
@@ -321,6 +321,37 @@ def test_reads_ticket_ids_when_record_plans_tickets() -> None:
     assert ticket_ids(folder) == ("DEM-7",)
     assert ticket_ids(FeatureFolder(slug="none", files=())) == ()
     assert ticket_ids(FeatureFolder(slug="bad", files=(), features_json=b"{")) == ()
+
+
+def test_reads_plan_external_blockers_when_plan_names_tracker_ids() -> None:
+    record = json.dumps(
+        {
+            "linear": ["DEM-7"],
+            "tickets": [
+                {"key": "T1", "id": "DEM-1", "blocked_by": ["OPS-7", "T2", "DEM-7"]},
+                {"key": "T2", "blocked_by": ["OPS-3", "draft-key"]},
+                {"key": "AB-1", "id": "DEM-2", "blocked_by": ["AB-1"]},
+            ],
+            "acs": [],
+        }
+    ).encode()
+    folder = FeatureFolder(slug="planned", files=("features.json",), features_json=record)
+
+    assert ticket_ids(folder) == ("DEM-1", "DEM-2", "DEM-7", "OPS-3", "OPS-7")
+
+
+def test_keeps_own_ids_within_read_bound_when_external_blockers_overflow() -> None:
+    tickets = [
+        {"key": f"T{n}", "id": f"DEM-{n}", "blocked_by": [f"OPS-{n}"]}
+        for n in range(1, MAX_READ_IDS)
+    ]
+    record = json.dumps({"tickets": tickets, "acs": []}).encode()
+    folder = FeatureFolder(slug="big", files=("features.json",), features_json=record)
+
+    ids = ticket_ids(folder)
+
+    assert len(ids) == MAX_READ_IDS
+    assert set(ids) == {f"DEM-{n}" for n in range(1, MAX_READ_IDS)} | {"OPS-1"}
 
 
 def test_uses_warm_snapshot_when_read_from_linear() -> None:
