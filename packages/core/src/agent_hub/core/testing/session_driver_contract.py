@@ -32,6 +32,7 @@ from agent_hub.core.agent_sessions.driver import (
     StartSpec,
     TextBlock,
     TextDelta,
+    ToolCall,
     TurnResult,
 )
 from agent_hub.core.agent_sessions.errors import SessionTerminalError
@@ -235,8 +236,9 @@ class SessionDriverContract:
     ) -> None:
         async with _session(session_driver, scenario) as (handle, pump):
             await session_driver.send(handle, scenario.ask)
+            # A real CLI announces the tool use (init, tool.call) before it asks.
             request = await pump.next()
-            if isinstance(request, InitEvent):
+            while isinstance(request, InitEvent | ToolCall):
                 request = await pump.next()
             _check(isinstance(request, PermissionRequest), f"a request comes, got {request}")
             _check(await pump.quiet(), "the turn waits while the request is unanswered")
