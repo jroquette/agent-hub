@@ -38,6 +38,10 @@ Every screen carries its phase. A screen tagged P3 or P4 is not shown in the sid
 
 /knowledge                          Knowledge (redirects to /knowledge/brain)        P3
 ├ /knowledge/brain?project=&path=   Brain browser                                    P3
+├ /knowledge/skills                 Skills: project picker (AGH-164)                 P2
+│ └ /projects/:project/skills       Skills catalog                                   P2
+│     ?q=&kind=&origin=&mode=&diag=1   (comma lists; replace, not push)
+│   └ /projects/:project/skills/:kind/:source/:name   Skill, agent or hook detail   P2
 ├ /knowledge/learnings              Learnings triage                                 P3 (accept/reject/snooze P3)
 │   ?status=proposed|accepted|rejected|snoozed&target=team|repo|personal&learning=:id
 │ └ /knowledge/learnings/:id/trace  Provenance trace                                 P3
@@ -133,6 +137,12 @@ Groups appear in this order with `caption` style group labels in `text-subtle`. 
 | Hub | Settings | `settings` | `/settings` | Dot only when a hub fails validation | `hubs_invalid` from `counts` | P2 |
 
 Knowledge expands into sub-items when its route is active: Brain (`book-open`), Learnings (`lightbulb`), Decisions (`git-commit-vertical`), Context (`layers`).
+
+As built (AGH-201, AGH-164), Knowledge shows Learnings, Brain and Skills, in that order. Skills sits right after
+Brain and links to the catalog of the project whose skills are open, else of the project in scope
+(`/projects/<p>/skills`), else to the picker `/knowledge/skills`, which lists the registered projects as Brain's
+picker does (the route is declared before `/knowledge/:section`, so it is not the Phase 3 placeholder). A skill
+detail's breadcrumb is Portfolio › project › Skills › name.
 
 Badge rules:
 - At most one number per item, max "99+". Numbers are tabular (`figure` style). Badges never animate except the Live pulse dot, which stops under `prefers-reduced-motion` (static dot).
@@ -236,6 +246,8 @@ Every entity, tab, filter and selected item is addressable. The URL is the sourc
 | Approval | `/approvals/:id` | opens panel over inbox |
 | Learning | `/knowledge/learnings?learning=:id`, trace `/knowledge/learnings/:id/trace` | |
 | Brain note | `/knowledge/brain?project=agent-hub&path=brain/now.md` | |
+| Skills catalog | `/projects/agent-hub/skills?q=plan&kind=skill&mode=user-only` | search and facets in the query, updated with `replace` (a departure from the push rule below: typing must not fill the history); unknown values ignored |
+| Skill detail | `/projects/agent-hub/skills/skill/hub-workflow/feature` | `kind/source/name`; `source` is the folder (`claude` for `.claude/`, `settings` / `settings-project` for hooks) |
 | Feature AC | `/features/agent-hub/layered-memory?ac=AC-48.21` | |
 | Metrics chart | `/metrics?metric=failure-stage&period=30d&group_by=step` | |
 | Health finding | `/health?project=agent-hub&finding=:id` | |
