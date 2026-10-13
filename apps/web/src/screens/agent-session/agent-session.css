@@ -315,3 +315,71 @@
   background: var(--surface-sunken);
   color: var(--text-muted);
 }
+/* New session dialog, cloud panel and agent session list (sessions screen). */
+.as-new-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  overflow: auto;
+}
+.as-fieldset {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.as-fieldset legend {
+  padding: 0;
+  margin-bottom: 4px;
+}
+.as-radio {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+.as-cloud {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.as-cloud-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.as-limited {
+  font: 500 11px/16px var(--font-mono);
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
+.as-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.as-list-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.as-list-waiting {
+  border-left: 3px solid var(--waiting);
+  background: var(--waiting-soft);
+}
+.as-list-title {
+  font-weight: 600;
+}
