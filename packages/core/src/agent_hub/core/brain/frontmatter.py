@@ -19,7 +19,8 @@ MAX_FRONTMATTER_LINES: Final = 64
 MAX_FRONTMATTER_BYTES: Final = 8 * 1024
 SUMMARY_CHARS: Final = 200
 
-_FIELD: Final = re.compile(r"^([A-Za-z0-9_][A-Za-z0-9_.-]*):(?:[ \t]+(.*))?$")
+# A ``key: value`` line (or ``key:`` alone): group 1 the key, group 2 the value.
+FIELD_LINE: Final = re.compile(r"^([A-Za-z0-9_][A-Za-z0-9_.-]*):(?:[ \t]+(.*))?$")
 _PLAIN: Final = re.compile(r"[A-Za-z0-9_./][A-Za-z0-9_./ -]*")
 
 
@@ -52,7 +53,8 @@ def _closing_fence(lines: list[str]) -> int | None:
     return None
 
 
-def _unquote(value: str) -> str:
+def unquote(value: str) -> str:
+    """``value`` without its surrounding double or single quotes, escapes undone."""
     if len(value) >= 2 and value[0] == value[-1] == '"':
         return value[1:-1].replace('\\"', '"').replace("\\\\", "\\")
     if len(value) >= 2 and value[0] == value[-1] == "'":
@@ -60,12 +62,13 @@ def _unquote(value: str) -> str:
     return value
 
 
-def _value(raw: str) -> FrontmatterValue:
+def field_value(raw: str) -> FrontmatterValue:
+    """A field's value: a ``[a, b]`` list or a scalar, unquoted."""
     value = raw.strip()
     if value.startswith("[") and value.endswith("]"):
         inner = value[1:-1].strip()
-        return [_unquote(item.strip()) for item in inner.split(",")] if inner else []
-    return _unquote(value)
+        return [unquote(item.strip()) for item in inner.split(",")] if inner else []
+    return unquote(value)
 
 
 def _block_fields(block: list[str]) -> dict[str, FrontmatterValue]:
@@ -78,13 +81,13 @@ def _block_fields(block: list[str]) -> dict[str, FrontmatterValue]:
             continue
         if text[0] in " \t" and stripped.startswith("- ") and current is not None:
             items = fields[current]
-            fields[current] = [*(items if isinstance(items, list) else []), _unquote(stripped[2:])]
+            fields[current] = [*(items if isinstance(items, list) else []), unquote(stripped[2:])]
             continue
-        found = _FIELD.match(text)
+        found = FIELD_LINE.match(text)
         if found is None:
             raise _Malformed(f"Line {number} of the frontmatter is not 'key: value'")
         current = found.group(1)
-        fields[current] = _value(found.group(2) or "")
+        fields[current] = field_value(found.group(2) or "")
     return fields
 
 
@@ -126,7 +129,7 @@ def _scalar(value: str) -> str:
 
 
 def _field_name(line: str) -> str | None:
-    found = _FIELD.match(line.rstrip("\r\n"))
+    found = FIELD_LINE.match(line.rstrip("\r\n"))
     return None if found is None else found.group(1)
 
 
