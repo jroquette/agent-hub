@@ -61,8 +61,15 @@ class FakeIssueBoard:
         )
 
     def bare(self, issue_id: str) -> IssueSummary:
-        """The issue without relations, as a related issue is read (``external``)."""
+        """The issue without relations."""
         return self.issues[issue_id]
+
+    def external(self, issue_id: str) -> IssueSummary:
+        """The issue as a blocker not asked is read (``external``): no relations, assignee,
+        priority or estimate."""
+        return self.issues[issue_id].model_copy(
+            update={"assignee": None, "priority": None, "estimate": None}
+        )
 
 
 def _bare(summary: IssueSummary) -> IssueSummary:
@@ -147,7 +154,7 @@ class InMemoryTrackerReader:
         return TicketSnapshot(
             summaries=summaries,
             missing=tuple(issue_id for issue_id in unique if issue_id not in found),
-            external=tuple(self._board.bare(issue_id) for issue_id in external),
+            external=tuple(self._board.external(issue_id) for issue_id in external),
         )
 
 
