@@ -323,3 +323,16 @@ def test_reuses_last_turn_when_messages_outnumber_turns(tmp_path: Path) -> None:
     )
 
     assert len(_of(out, "result")) == 2
+
+
+def test_plays_reply_of_exact_text_when_replies_scripted(tmp_path: Path) -> None:
+    scenario = Scenario(
+        turns=[simple_turn("fallback")],
+        replies={"second": simple_turn("by text"), "first": simple_turn("first one")},
+    )
+
+    _, out = _run(
+        tmp_path, STREAM, [_user("second"), _user("other"), _user("first")], scenario=scenario
+    )
+
+    assert [m["result"] for m in _of(out, "result")] == ["by text", "fallback", "first one"]

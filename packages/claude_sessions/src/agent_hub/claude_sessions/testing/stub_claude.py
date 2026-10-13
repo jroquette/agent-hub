@@ -166,9 +166,11 @@ class StubSession:
     def _start_next(self) -> None:
         if self.turn is not None or not self.queued:
             return
-        self.queued.pop(0)
-        index = min(self.turns_played, len(self.scenario.turns) - 1)
-        steps = self.scenario.turns[index] if self.scenario.turns else []
+        text = self.queued.pop(0)
+        steps = self.scenario.replies.get(text)
+        if steps is None:
+            index = min(self.turns_played, len(self.scenario.turns) - 1)
+            steps = self.scenario.turns[index] if self.scenario.turns else []
         self.turns_played += 1
         self.turn = _Turn(steps=iter(steps))
         self._emit(self._init())
