@@ -32,6 +32,7 @@ from agent_hub.core.features.feature_record import KEY_PATTERN, PlannedTicket, R
 from agent_hub.core.features.feature_view import EvalRecord, Verdict
 from agent_hub.core.features.scope_rules import (
     AC_ID_PATTERN,
+    ALL_ACS,
     COMMIT_PATTERN,
     RERUN_PATTERN,
     named_scope,
@@ -61,7 +62,6 @@ _PR: Final = re.compile(r"[A-Za-z0-9._/#:-]{1,200}")
 _SHIPPED: Final = ("SHIP", "SHIP-WITH-OWNER-STEPS")
 # When the latest evals of an AC disagree, the first of these among them decides.
 _CONSERVATIVE: Final[tuple[Verdict, ...]] = ("NO-SHIP", "SHIP-WITH-OWNER-STEPS", "SHIP")
-_ALL: Final = "all"
 _VERDICTS: Final[tuple[str, ...]] = get_args(Verdict.__value__)
 
 
@@ -285,7 +285,7 @@ def _items(
 
 
 def _acs(fields: dict[str, FrontmatterValue]) -> tuple[str, ...] | Literal["all"]:
-    return "all" if fields.get("acs") == _ALL else _items(fields, "acs", AC_ID_PATTERN)
+    return "all" if fields.get("acs") == ALL_ACS else _items(fields, "acs", AC_ID_PATTERN)
 
 
 @dataclass(frozen=True, slots=True)
