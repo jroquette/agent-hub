@@ -1,13 +1,15 @@
-"""A feature folder's state (D23), from the files the generator read: pure, no I/O.
+"""A feature folder's state (D23, AGH-136), from the files the generator read: pure, no I/O.
 
-``features.json`` gives the acceptance criteria: passing ones, and owner steps (a criterion whose
-verification starts with ``manual`` and does not pass yet). ``spec.md``'s frontmatter gives the
-size (``process_size``), ``repos`` and ``linear`` issues; ``eval.md``'s first ``Verdict`` line the
-verdict. The detail's ``records`` name each record file (brain-relative, so the brain note route
-reads it) and whether it is present. The golden path phase comes from the files alone: spec,
-research, plan, tickets (``issues.md``), implement (an AC passes), evaluate (a verdict). Review
-needs runs and Shipped needs GitHub, not connected in Phase 2. A malformed or unreadable record
-degrades this feature only: its ``problem`` says why and its criteria are unknown.
+``features.json`` (``feature_record.py``) gives the acceptance criteria and the ticket plan:
+passing ACs, owner steps (a criterion whose verification starts with ``manual`` and does not pass
+yet), the planned tickets and the Linear ids. ``spec.md``'s frontmatter gives the size
+(``process_size``), ``repos`` and ``linear`` issues; ``eval.md``'s first ``Verdict`` line the
+verdict. ``evals/*.md`` and ``reviews/*.md`` are the evals per delivery and the review records.
+The golden path (``golden_path.py``) folds all of it with the ticket board (``ticket_planning.py``)
+over a tracker snapshot when one is given (the warm cache), else the plan; ``phase`` is its
+phase. The detail's ``records`` name each record file (brain-relative, so the brain note route
+reads it) and whether it is present. A malformed or unreadable record degrades this feature
+only: its ``problem`` says why and its criteria are unknown.
 """
 
 import re
@@ -18,22 +20,27 @@ from typing import Final, Literal, cast
 from pydantic import ValidationError
 
 from agent_hub.core.events.event import EventSource
+from agent_hub.core.features.feature_evals import eval_coverage, eval_records
 from agent_hub.core.features.feature_record import FeatureRecordFile, RecordAc
+from agent_hub.core.features.feature_reviews import approved_tickets, review_records
 from agent_hub.core.features.feature_view import (
     AcCounts,
     AcRow,
+    EvalRecord,
     FeatureDetail,
-    FeaturePhase,
     FeatureRecord,
     FeatureRecordName,
     FeatureView,
     GoldenPath,
-    GoldenStep,
-    StepState,
+    TicketsSource,
     Verdict,
 )
+from agent_hub.core.features.golden_path import EvalGate, GoldenInputs, golden_path
+from agent_hub.core.features.ticket_planning import TicketBoard, ticket_board
+from agent_hub.core.features.ticket_snapshots import SnapshotRead
 from agent_hub.core.hub_config.problems import one_line
 from agent_hub.core.json_form import InvalidJsonError, load_json_bytes
+from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN
 
 SPEC: Final = "spec.md"
 RESEARCH: Final = "research.md"
@@ -60,23 +67,6 @@ _RECORDS: Final[tuple[tuple[FeatureRecordName, str], ...]] = (
     ("issues", ISSUES),
 )
 FEATURES_FOLDER: Final = "features"
-_FILE_PHASES: Final[tuple[tuple[str, FeaturePhase], ...]] = (
-    (SPEC, "spec"),
-    (RESEARCH, "research"),
-    (PLAN, "plan"),
-    (ISSUES, "tickets"),
-)
-# The golden path's steps in order, with the record file a step reads, if any.
-_STEPS: Final[tuple[tuple[FeaturePhase, str | None], ...]] = (
-    ("spec", SPEC),
-    ("research", RESEARCH),
-    ("plan", PLAN),
-    ("tickets", ISSUES),
-    ("implement", None),
-    ("review", None),
-    ("evaluate", EVAL),
-    ("shipped", None),
-)
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -111,20 +101,91 @@ class FeatureFolder:
     reviews_skipped: int = 0
 
 
-def feature_view(folder: FeatureFolder, *, project: str) -> FeatureView:
-    """The feature as the Features list shows it."""
-    detail = feature_detail(folder, project=project)
+@dataclass(frozen=True, kw_only=True, slots=True)
+class FeatureParts:
+    """What the feature views share: the parsed ``record`` (its one-line problem, or None when
+    absent), every eval, the ticket ``board``, the ``golden_path`` and the tickets' ``source``."""
+
+    record: FeatureRecordFile | str | None
+    evals: tuple[EvalRecord, ...]
+    board: TicketBoard
+    golden_path: GoldenPath
+    source: TicketsSource
+
+
+def ticket_ids(folder: FeatureFolder) -> tuple[str, ...]:
+    """The tracker ids of the feature's tickets (planned ones created, and ``linear``), sorted
+    and unique: what a snapshot of it reads. None for a record that is absent or malformed."""
+    record = _record(folder.features_json)
+    if not isinstance(record, FeatureRecordFile):
+        return ()
+    ids = (
+        *(ticket.id for ticket in record.tickets if ticket.id is not None),
+        *(issue for issue in record.linear if ISSUE_ID_PATTERN.fullmatch(issue) is not None),
+    )
+    return tuple(sorted(set(ids)))
+
+
+def feature_parts(folder: FeatureFolder, read: SnapshotRead | None = None) -> FeatureParts:
+    """The feature's evals, ticket board and golden path, over ``read``'s snapshot when it holds
+    one (else the plan; ``read`` None is a hub web with no tracker reader: not connected)."""
+    record = _record(folder.features_json)
+    parsed = record if isinstance(record, FeatureRecordFile) else None
+    acs = () if parsed is None else parsed.acs
+    tickets = () if parsed is None else parsed.tickets
+    evals = eval_records(folder.evals, folder.eval_head, slug=folder.slug)
+    coverage = eval_coverage(evals, acs, tickets=tickets)
+    approved = approved_tickets(review_records(folder.reviews, slug=folder.slug))
+    snapshot = None if read is None else read.snapshot
+    board = ticket_board(
+        tickets,
+        acs,
+        snapshot,
+        linear=() if parsed is None else parsed.linear,
+        approved=approved,
+    )
+    source: TicketsSource = "plan" if snapshot is None else "linear"
+    gate = EvalGate(
+        evals=len(evals),
+        covered=len(coverage.covered),
+        owner_steps=len(coverage.owner_steps),
+        scope_recorded=not coverage.unscoped or len(coverage.covered) == coverage.total > 0,
+        skipped=folder.evals_skipped,
+    )
+    path = golden_path(
+        GoldenInputs(
+            files=folder.files,
+            rows=board.rows,
+            acs=acs,
+            coverage=gate,
+            approved_reviews=sum(_approved(row.key, row.id, approved) for row in board.rows),
+            reviews_skipped=folder.reviews_skipped,
+            source=source,
+            not_loaded=read is not None and snapshot is None and read.failure is None,
+        )
+    )
+    return FeatureParts(record=record, evals=evals, board=board, golden_path=path, source=source)
+
+
+def feature_view(
+    folder: FeatureFolder, *, project: str, read: SnapshotRead | None = None
+) -> FeatureView:
+    """The feature as the Features list shows it (``read``: the warm snapshot, as the detail)."""
+    detail = feature_detail(folder, project=project, read=read)
     return FeatureView.model_validate(detail.model_dump(include=set(FeatureView.model_fields)))
 
 
-def feature_detail(folder: FeatureFolder, *, project: str) -> FeatureDetail:
-    """The feature with its acceptance criteria rows."""
+def feature_detail(
+    folder: FeatureFolder, *, project: str, read: SnapshotRead | None = None
+) -> FeatureDetail:
+    """The feature with its acceptance criteria rows and every eval; ``read`` is what the
+    snapshot cache holds for its tickets (never a tracker read), None when hub web has none."""
     front = _frontmatter(folder.spec_head)
-    record = _record(folder.features_json)
+    parts = feature_parts(folder, read)
+    record = parts.record
     rows = () if not isinstance(record, FeatureRecordFile) else tuple(_row(ac) for ac in record.acs)
     verdict, verdict_line = _verdict(folder.eval_head)
     spec_repos = _listed(front.get("repos"))
-    phase = _phase(folder.files, rows=rows, verdict=verdict)
     return FeatureDetail(
         project=project,
         slug=folder.slug,
@@ -135,19 +196,24 @@ def feature_detail(folder: FeatureFolder, *, project: str) -> FeatureDetail:
             )
         ),
         size=_size(front.get("process_size")),
-        phase=phase,
+        phase=parts.golden_path.phase,
         files=tuple(name for name in RECORD_FILES if name in folder.files),
         acs=None if not isinstance(record, FeatureRecordFile) else _counts(rows),
         verdict=verdict,
         verdict_line=verdict_line,
         repos=spec_repos or _unique(row.repo for row in rows if row.repo),
-        golden_path=_interim_path(phase, files=folder.files, verdict=verdict),
-        tickets_source="plan",
+        golden_path=parts.golden_path,
+        tickets_source=parts.source,
         problem=record if isinstance(record, str) else None,
         sources_missing=(EventSource.GITHUB,),
         ac_rows=rows,
         records=_records(folder),
+        evals=parts.evals,
     )
+
+
+def _approved(key: str | None, issue_id: str | None, approved: frozenset[str]) -> bool:
+    return any(name is not None and name.upper() in approved for name in (key, issue_id))
 
 
 def _records(folder: FeatureFolder) -> tuple[FeatureRecord, ...]:
@@ -195,48 +261,6 @@ def _counts(rows: tuple[AcRow, ...]) -> AcCounts:
         total=len(rows),
         owner_steps=sum(row.manual and not row.passes for row in rows),
     )
-
-
-def _phase(
-    files: tuple[str, ...], *, rows: tuple[AcRow, ...], verdict: Verdict | None
-) -> FeaturePhase:
-    if verdict is not None:
-        return "evaluate"
-    if any(row.passes for row in rows):
-        return "implement"
-    reached = [phase for name, phase in _FILE_PHASES if name in files]
-    return reached[-1] if reached else "spec"
-
-
-def _interim_path(
-    phase: FeaturePhase, *, files: tuple[str, ...], verdict: Verdict | None
-) -> GoldenPath:
-    """Today's step states, as the web drew them from ``phase`` (removed by AGH-136 C.1)."""
-    current = [name for name, _ in _STEPS].index(phase)
-    steps = tuple(
-        GoldenStep(
-            name=name,
-            state=_interim_state(index, current, file=file, files=files, verdict=verdict),
-            meta=None,
-            reason="not tracked in this version" if name in ("review", "shipped") else None,
-            progress=None,
-        )
-        for index, (name, file) in enumerate(_STEPS)
-    )
-    return GoldenPath(steps=steps, phase=phase)
-
-
-def _interim_state(
-    index: int, current: int, *, file: str | None, files: tuple[str, ...], verdict: Verdict | None
-) -> StepState:
-    name = _STEPS[index][0]
-    if name in ("review", "shipped"):
-        return "unknown"
-    if index < current:
-        return "skipped" if file is not None and file not in files else "done"
-    if index == current:
-        return "done" if name == "evaluate" and verdict is not None else "current"
-    return "pending"
 
 
 def _verdict(head: bytes | None) -> tuple[Verdict | None, str | None]:
