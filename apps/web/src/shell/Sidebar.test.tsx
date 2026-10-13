@@ -30,6 +30,7 @@ describe("Sidebar", () => {
       "Knowledge",
       "Learnings",
       "Brain",
+      "Skills",
       "Features",
       "Health",
       "Settings",
@@ -70,6 +71,41 @@ describe("Sidebar", () => {
     const brain = screen.getByRole("link", { name: "Brain" });
     expect(brain).toHaveAttribute("href", "/projects/other%20hub/brain");
     expect(brain).toHaveAttribute("aria-current", "page");
+  });
+
+  it("shows Skills right after Brain for the project in scope (nav, AC-164.13)", () => {
+    renderSidebar("/sessions?scope=agent-hub");
+
+    const nav = screen.getByRole("navigation", { name: "Main" });
+    const names = within(nav)
+      .getAllByRole("link")
+      .map((link) => link.textContent);
+    expect(names.indexOf("Skills")).toBe(names.indexOf("Brain") + 1);
+    expect(screen.getByRole("link", { name: "Skills" })).toHaveAttribute(
+      "href",
+      "/projects/agent-hub/skills",
+    );
+  });
+
+  it("points Skills to the project picker when All projects is in scope (nav)", () => {
+    renderSidebar("/sessions");
+
+    expect(screen.getByRole("link", { name: "Skills" })).toHaveAttribute(
+      "href",
+      "/knowledge/skills",
+    );
+  });
+
+  it("marks Skills as the page when a project's skill detail is open (nav)", () => {
+    renderSidebar("/projects/other%20hub/skills/skill/hub-workflow/feature?scope=agent-hub");
+
+    const skills = screen.getByRole("link", { name: "Skills" });
+    expect(skills).toHaveAttribute("href", "/projects/other%20hub/skills");
+    expect(skills).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "Brain" })).toHaveAttribute(
+      "href",
+      "/projects/agent-hub/brain",
+    );
   });
 
   it("marks the current destination as the page when its route is open", () => {
