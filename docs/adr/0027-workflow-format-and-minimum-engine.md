@@ -45,8 +45,8 @@ version and show, and an engine that can see every step.
   implement and verify loop. A DAG, conditions or loops come only when a workaround audit shows a real need.
 - **D-3 Step types.** The format keeps all four types (`agent`, `script`, `gate`, `human`). The minimum engine runs
   `agent`, `script` and `gate`, which reproduce `hub run`. It refuses a `human` step at load until UI approvals exist.
-- **D-4 Ending without delivering.** A reserved output, `end: {outcome: no_changes | blocked, reason}`, that any step may
-  return. It ends the run with status `done` and that outcome, through a fixed mapping with no expression (the shape
+- **D-4 Ending without delivering.** A reserved output, `end: {outcome: no_changes | blocked, reason}`, that any step
+  may return. It ends the run with status `done` and that outcome, through a fixed mapping with no expression (the shape
   of Archon's `outcome_field`). `delivers` names the output recorded as the delivery. `on_not_delivered` replaces
   `on_failure`: it runs on any end without a delivery, as today's report does.
 - **D-5 Failure classes belong to the engine.** AGH-179's classes (`auth`, `quota`, `misconfigured`, `transient`,
@@ -55,7 +55,8 @@ version and show, and an engine that can see every step.
   per-step policy is schema width.
 - **D-6 Outputs.** Each output is declared with a JSON Schema, and the producer owns it (Archon's producer ownership;
   no caller-side restatement). An agent step returns its outputs as one JSON object in its final message. A script
-  step writes one JSON object to `$HUB_STEP_OUTPUT`. A missing or invalid output fails the step as `unknown`.
+  step writes one JSON object to `$HUB_STEP_OUTPUT`. The engine reads at most a fixed size (set in Phase 4). A
+  missing, oversized or invalid output fails the step as `unknown`.
   AGH-139's evaluator verdict and reviewer findings are the first shared schemas.
 - **D-7 Fixtures from day one.** `hub workflow test <name>` runs each fixture in `workflows/<name>.fixtures/`, in
   memory and with no side effects. Coverage is strict: a reachable step with no result fails the test. `make check`

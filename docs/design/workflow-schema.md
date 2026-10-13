@@ -45,10 +45,10 @@ each attempt is recorded with its number. An agent's model and tools belong to i
 
 ### Outputs
 
-`outputs` maps each name to a JSON Schema, inline or `{$ref: <file beside the workflow>}`; the step that produces a
-value owns its schema, and consumers never restate it. An `agent` step returns its outputs as one JSON object in its
-final message; a `script` step writes one JSON object to the file named by `HUB_STEP_OUTPUT`. The engine validates it
-before any later step reads it: a missing or invalid output fails the step with class `unknown`. The first shared
+`outputs` maps each name to a JSON Schema, inline or `{$ref: <file beside the workflow>}`; the producing step owns its
+schema, and consumers never restate it. An `agent` step returns one JSON object in its final message; a `script` step
+writes one to the file named by `HUB_STEP_OUTPUT`. The engine reads it up to a fixed size cap and validates it before
+any later step reads it: a missing, oversized or invalid output fails the step with class `unknown`. The first shared
 schemas are those of [AGH-139](https://linear.app/loki-trader/issue/AGH-139): the evaluator's verdict and the
 reviewers' findings. The key `end` is reserved with a fixed schema, `{outcome: no_changes | blocked, reason}`: any step
 may return it to end the run cleanly without delivering, with no later step run.
