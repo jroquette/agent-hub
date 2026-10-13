@@ -118,12 +118,13 @@ def _features(draw: st.DrawFn) -> _Feature:
             else set()
         )
         outside = draw(st.sets(st.sampled_from(_OUTSIDE), max_size=2))
+        ticket = _planned(
+            number,
+            blocked_by=tuple(sorted(blockers)),
+            order=draw(st.integers(min_value=0, max_value=5)),
+        )
         planned.append(
-            _planned(
-                number,
-                blocked_by=(*(f"T{b}" for b in sorted(blockers)), *sorted(outside)),
-                order=draw(st.integers(min_value=0, max_value=5)),
-            )
+            ticket.model_copy(update={"blocked_by": (*ticket.blocked_by, *sorted(outside))})
         )
         summaries.append(
             _summary(
