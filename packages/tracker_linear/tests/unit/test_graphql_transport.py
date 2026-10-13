@@ -111,6 +111,28 @@ def test_sets_kind_before_any_request_when_key_missing_or_malformed(
     assert (raised.value.kind, raised.value.http_status) == (kind, None)
 
 
+_UNSHAPED_KEY = "sentinel-" + "k7" * 16
+
+
+@pytest.mark.parametrize(
+    "echo",
+    [
+        pytest.param(
+            lambda key: _answer(200, {"errors": [{"message": f"bad key {key}"}]}), id="graphql"
+        ),
+        pytest.param(lambda key: _raising(ConnectionResetError(f"reset {key}")), id="os-error"),
+        pytest.param(
+            lambda key: _answer(200, {"errors": [{"message": "x" * 190 + key}]}), id="cut"
+        ),
+    ],
+)
+def test_hides_key_when_linear_echoes_it_without_its_shape(echo: Callable[[str], Reply]) -> None:
+    with pytest.raises(TrackerError) as raised:
+        _request(echo(_UNSHAPED_KEY), {LINEAR_API_KEY_VARIABLE: _UNSHAPED_KEY})
+
+    assert _UNSHAPED_KEY[:10] not in str(raised.value)
+
+
 def test_returns_data_when_answer_fits(synthetic_key: str) -> None:
     data = _request(
         _answer(200, {"data": {"viewer": {"id": "u1"}}}), {LINEAR_API_KEY_VARIABLE: synthetic_key}
