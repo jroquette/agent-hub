@@ -118,9 +118,9 @@ on_not_delivered:
 - Deterministic: the same document and the same step results always lead to the same next step.
 - A run pins the `revision` and content hash it started with; editing the document never changes a running run.
 - **Admission rule:** the document coordinates, scripts compute, agents judge. A new key or step type passes three
-  questions: does the engine need to see it to govern the run; is it data with fixed meaning, not evaluation; and
-  could a `script` step with today's keys already do it (then the key must earn its place by governance value:
-  visibility, resumability, audit, never by convenience)?
+  questions: must the engine see it to steer or record a run; is it data with a fixed meaning, not evaluation; and
+  could a `script` step with today's keys already do it (then it is admitted only for what it adds to oversight, what
+  a run shows, resumes or audits, never for convenience)?
 - **Five smells** and their levers: *expression creep*, no expressions beyond whole references (if conditions are
   ever needed, a specified language adopted whole in one version, never one operator at a time); *composition
   metastasis*, no includes or sub-runs until a workflow needs one, then resolved at load; *workaround pressure*, audit
