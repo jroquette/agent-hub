@@ -11,13 +11,16 @@ token is synthetic.
 
 import json
 import os
+import re
 import subprocess
 import sys
-from collections.abc import Callable, Iterator
-from dataclasses import dataclass
-from datetime import UTC, datetime
+import threading
+from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from importlib.metadata import version
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -417,3 +420,235 @@ def propose(hub_world: HubWorld) -> Propose:
         return tool_use_id
 
     return proposed
+
+
+# AGH-136: the tickets route end to end, Linear faked at the HTTP transport (``linear_post``).
+# A synthetic key, built at run time so no key-shaped literal sits in the source.
+SYNTHETIC_LINEAR_KEY = "lin_api_" + "x" * 40
+LINEAR_URL = "https://api.linear.app/graphql"
+TICKETS_SLUG = "ticket-planning"
+TICKETS_PATH = f"/api/v1/features/demo/{TICKETS_SLUG}/tickets"
+_ISSUE_ID = re.compile(r"^([A-Z][A-Z0-9]*)-([1-9][0-9]*)$")
+
+
+class MovableClock:
+    """The composed app's clock (``ApiSettings.clock``), moved by the test."""
+
+    def __init__(self, now: datetime = COMPOSED_NOW) -> None:
+        self.now = now
+
+    def __call__(self) -> datetime:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += timedelta(seconds=seconds)
+
+
+@dataclass
+class LinearIssue:
+    """One synthetic Linear issue the fake serves; ``blocked_by`` are issue ids."""
+
+    title: str
+    state: tuple[str, str] = ("Todo", "unstarted")
+    assignee: str | None = None
+    priority: int = 0
+    estimate: float | None = None
+    blocked_by: tuple[str, ...] = ()
+
+
+class FakeLinear:
+    """A ``Post`` answering ``ReadIssueSummaries`` from ``issues`` in Linear's public shape.
+
+    ``fail`` replaces the answer: an HTTP status (with ``fail_body``), ``"timeout"`` (raises
+    ``TimeoutError`` as ``urllib_post`` does) or ``"malformed"`` (200, not JSON). ``gate``,
+    when set, holds each request until it is set. Every request is recorded in ``requests``.
+    """
+
+    def __init__(self, issues: dict[str, LinearIssue] | None = None) -> None:
+        self.issues: dict[str, LinearIssue] = dict(issues or {})
+        self.fail: int | str | None = None
+        self.fail_body: bytes = b'{"errors": [{"message": "failed"}]}'
+        self.gate: threading.Event | None = None
+        self.entered = threading.Event()
+        self.requests: list[tuple[str, dict[str, str], dict[str, Any]]] = []
+        self.timeouts: list[float] = []
+        self._lock = threading.Lock()
+
+    @property
+    def count(self) -> int:
+        return len(self.requests)
+
+    def __call__(
+        self, url: str, headers: Mapping[str, str], body: bytes, *, timeout_s: float
+    ) -> tuple[int, bytes]:
+        document = json.loads(body)
+        with self._lock:
+            self.requests.append((url, dict(headers), document))
+            self.timeouts.append(timeout_s)
+        self.entered.set()
+        if self.gate is not None:
+            assert self.gate.wait(timeout=10), "the test never released the fake Linear"
+        assert url == LINEAR_URL
+        assert document["operationName"] == "ReadIssueSummaries"
+        if self.fail == "timeout":
+            raise TimeoutError(f"no answer within {timeout_s:g} s")
+        if self.fail == "malformed":
+            return 200, b"<html>not json</html>"
+        if isinstance(self.fail, int):
+            return self.fail, self.fail_body
+        return 200, json.dumps({"data": self._answer(document["variables"])}).encode()
+
+    def _answer(self, variables: dict[str, Any]) -> dict[str, Any]:
+        team = variables["filter"]["team"]["key"]["eq"]
+        asked = [f"{team}-{number}" for number in variables["filter"]["number"]["in"]]
+        nodes = [self._node(issue_id) for issue_id in asked if issue_id in self.issues]
+        return {"issues": {"nodes": nodes, "pageInfo": {"hasNextPage": False, "endCursor": None}}}
+
+    def _summary(self, issue_id: str) -> dict[str, Any]:
+        issue = self.issues[issue_id]
+        match = _ISSUE_ID.fullmatch(issue_id)
+        assert match is not None
+        return {
+            "identifier": issue_id,
+            "title": issue.title,
+            "url": f"https://linear.app/demo/issue/{issue_id}",
+            "priority": float(issue.priority),
+            "estimate": issue.estimate,
+            "state": {"name": issue.state[0], "type": issue.state[1]},
+            "assignee": None if issue.assignee is None else {"displayName": issue.assignee},
+        }
+
+    def _node(self, issue_id: str) -> dict[str, Any]:
+        blocks = [other for other, issue in self.issues.items() if issue_id in issue.blocked_by]
+        return self._summary(issue_id) | {
+            "relations": {
+                "nodes": [{"type": "blocks", "relatedIssue": self._summary(o)} for o in blocks],
+                "pageInfo": {"hasNextPage": False},
+            },
+            "inverseRelations": {
+                "nodes": [
+                    {"type": "blocks", "issue": self._summary(blocker)}
+                    for blocker in self.issues[issue_id].blocked_by
+                ],
+                "pageInfo": {"hasNextPage": False},
+            },
+        }
+
+
+def a_ticket_record(tickets: list[dict[str, Any]], acs: list[dict[str, Any]] | None = None) -> str:
+    """A ``features.json`` with the ticket plan ``tickets`` and ``acs`` (default: one each)."""
+    default_acs = [
+        {
+            "id": f"AC-9.{index}",
+            "description": f"Criterion {index}",
+            "repo": "demo-api",
+            "verification": "make check",
+            "passes": False,
+            "evidence": None,
+            "ticket": ticket["key"],
+        }
+        for index, ticket in enumerate(tickets, start=1)
+    ]
+    record = {
+        "feature": TICKETS_SLUG,
+        "tickets": tickets,
+        "acs": default_acs if acs is None else acs,
+    }
+    return json.dumps(record, indent=2)
+
+
+def write_feature(hub: Path, record: str, *, slug: str = TICKETS_SLUG) -> Path:
+    """A feature folder with a spec, research, plan and ``features.json`` ``record``."""
+    folder = hub / "brain" / "features" / slug
+    folder.mkdir(parents=True)
+    spec = "---\ntype: spec\nprocess_size: bounded\nrepos: [demo-api]\n---\n# Spec\n"
+    files = {"spec.md": spec, "research.md": "# Research\n", "plan.md": "# Plan\n"}
+    for name, text in (files | {"features.json": record}).items():
+        (folder / name).write_text(text, encoding="utf-8")
+    return folder
+
+
+# The default plan: DEM-2 waits on DEM-1 (plan and Linear) and on OPS-9 (Linear only, outside
+# the feature); "docs" is not created in Linear yet.
+PLANNED_TICKETS: list[dict[str, Any]] = [
+    {"key": "api", "id": "DEM-1", "title": "Planned api work", "repo": "demo-api", "order": 1},
+    {"key": "web", "id": "DEM-2", "title": "Planned web work", "blocked_by": ["api"], "order": 2},
+    {"key": "docs", "title": "Planned docs", "blocked_by": ["web"], "order": 3},
+]
+
+
+def linear_issues() -> dict[str, LinearIssue]:
+    """The Linear side of ``PLANNED_TICKETS``."""
+    return {
+        "DEM-1": LinearIssue("Build the api", state=("In Progress", "started"), assignee="Ada"),
+        "DEM-2": LinearIssue(
+            "Build the web", priority=2, estimate=3, blocked_by=("DEM-1", "OPS-9")
+        ),
+        "OPS-9": LinearIssue("Open the firewall", state=("Done", "completed")),
+    }
+
+
+@dataclass
+class TicketsWorld:
+    """The composed app over a registered hub with one planned feature, and its fake Linear."""
+
+    app: Composed
+    hub: Path
+    linear: FakeLinear
+    clock: MovableClock
+    environ: dict[str, str]
+
+    def tickets(self) -> Any:
+        return self.app.client.get(TICKETS_PATH)
+
+
+type TicketsOpener = Callable[..., TicketsWorld]
+
+
+@pytest.fixture
+def open_tickets(
+    open_composed: Callable[..., Composed], composed_settings: ApiSettings, make_hub: HubFactory
+) -> TicketsOpener:
+    """Opens ``TicketsWorld``: ``record`` (default ``PLANNED_TICKETS``), ``issues`` (default
+    ``linear_issues()``) and ``environ`` (default the synthetic key) may be overridden."""
+
+    def opened(
+        *,
+        record: str | None = None,
+        issues: dict[str, LinearIssue] | None = None,
+        environ: dict[str, str] | None = None,
+    ) -> TicketsWorld:
+        hub = make_hub()
+        write_feature(hub, a_ticket_record(PLANNED_TICKETS) if record is None else record)
+        clock = MovableClock()
+        linear = FakeLinear(linear_issues() if issues is None else issues)
+        env = {"LINEAR_API_KEY": SYNTHETIC_LINEAR_KEY} if environ is None else environ
+        app = open_composed(
+            replace(composed_settings, clock=clock), environ=env, linear_post=linear
+        )
+        registered = app.client.post("/api/v1/hubs", json={"path": str(hub)})
+        assert registered.status_code == 201, registered.text
+        return TicketsWorld(app=app, hub=hub, linear=linear, clock=clock, environ=env)
+
+    return opened
+
+
+@pytest.fixture
+def tickets_world(open_tickets: TicketsOpener) -> TicketsWorld:
+    """``open_tickets`` with every default."""
+    return open_tickets()
+
+
+@pytest.fixture
+def tickets_kit() -> SimpleNamespace:
+    """The tickets helpers, for test modules (which cannot import this conftest)."""
+    return SimpleNamespace(
+        LinearIssue=LinearIssue,
+        a_ticket_record=a_ticket_record,
+        write_feature=write_feature,
+        linear_issues=linear_issues,
+        planned=PLANNED_TICKETS,
+        key=SYNTHETIC_LINEAR_KEY,
+        path=TICKETS_PATH,
+        slug=TICKETS_SLUG,
+    )
