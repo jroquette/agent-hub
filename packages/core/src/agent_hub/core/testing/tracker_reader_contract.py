@@ -97,8 +97,9 @@ class TrackerReaderContract:
             "DEM-3 is blocked by DEM-2 and OPS-1",
         )
         _check(
-            snapshot.external == (issue_board.bare("DEM-2"), issue_board.bare("OPS-1")),
-            f"blockers not asked are external, sorted, without relations: {snapshot.external}",
+            snapshot.external == (issue_board.external("DEM-2"), issue_board.external("OPS-1")),
+            "blockers not asked are external, sorted, without relations, assignee, priority or"
+            f" estimate: {snapshot.external}",
         )
 
     def test_reads_every_id_when_hundred_twenty_asked(

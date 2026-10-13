@@ -18,12 +18,17 @@ from agent_hub.tracker_linear.graphql_reader import (
     BATCH_SIZE,
     DEFAULT_DEADLINE_S,
     DEFAULT_TIMEOUT_S,
+    READ_ISSUE_SUMMARIES,
     READ_OPERATION,
     LinearGraphqlTrackerReader,
 )
 from agent_hub.tracker_linear.graphql_transport import LINEAR_API_KEY_VARIABLE
 
 type Post = Callable[..., tuple[int, bytes]]
+type Complexity = Callable[[str, Mapping[str, int]], int]
+
+# Half of Linear's 10,000-point cap on one query, so the read keeps a margin.
+COMPLEXITY_BUDGET = 5_000
 
 
 def _reader(
@@ -66,8 +71,33 @@ def _altered(api: Any, alter: Callable[[Any], None]) -> Post:
 
 
 def test_pins_constants_when_module_loaded() -> None:
-    assert (DEFAULT_TIMEOUT_S, DEFAULT_DEADLINE_S, BATCH_SIZE) == (10.0, 20.0, 50)
+    assert (DEFAULT_TIMEOUT_S, DEFAULT_DEADLINE_S, BATCH_SIZE) == (10.0, 20.0, 25)
     assert READ_OPERATION == "issue_summaries"
+
+
+@pytest.mark.parametrize(
+    ("query", "points"),
+    [
+        ('{ user(id: "u") { name } }', 2),
+        ('{ user(id: "u") { createdIssues { nodes { id title url } } } }', 66),
+        ('{ user(id: "u") { createdIssues(first: 10) { nodes { id title url } } } }', 14),
+    ],
+)
+def test_scores_linear_examples_when_complexity_computed(
+    complexity_of: Complexity, query: str, points: int
+) -> None:
+    # The worked examples of linear.app/developers/rate-limiting.
+    assert complexity_of(query, {}) == points
+
+
+def test_keeps_query_within_linear_complexity_when_batch_is_full(
+    complexity_of: Complexity,
+) -> None:
+    # Linear rejects any query over 10,000 points; ``$first`` is at its largest, BATCH_SIZE.
+    points = complexity_of(READ_ISSUE_SUMMARIES, {"first": BATCH_SIZE})
+
+    assert points <= COMPLEXITY_BUDGET
+    assert points == 4_652  # noqa: PLR2004 - the score stated next to the query
 
 
 def test_reads_summaries_when_three_issues_and_one_unknown(
@@ -124,7 +154,7 @@ def test_groups_ids_by_team_when_teams_mixed(
     )
 
 
-def test_sends_three_pages_when_reading_hundred_twenty_ids(
+def test_sends_five_batches_when_reading_hundred_twenty_ids(
     fake_linear_reader_api: Any, issue_board: FakeIssueBoard, synthetic_key: str
 ) -> None:
     asked = [f"DEM-{number}" for number in range(100, 220)]
@@ -133,7 +163,7 @@ def test_sends_three_pages_when_reading_hundred_twenty_ids(
 
     snapshot = _reader(fake_linear_reader_api, synthetic_key).issue_summaries(asked)
 
-    assert [len(numbers) for numbers in _numbers(fake_linear_reader_api)] == [50, 50, 20]
+    assert [len(numbers) for numbers in _numbers(fake_linear_reader_api)] == [25, 25, 25, 25, 20]
     assert sorted(number for numbers in _numbers(fake_linear_reader_api) for number in numbers) == (
         list(range(100, 220))
     )
@@ -177,7 +207,7 @@ def test_lists_external_blockers_when_blocker_not_asked(
 ) -> None:
     snapshot = _reader(fake_linear_reader_api, synthetic_key).issue_summaries(["DEM-3", "DEM-1"])
 
-    assert snapshot.external == (issue_board.bare("DEM-2"), issue_board.bare("OPS-1"))
+    assert snapshot.external == (issue_board.external("DEM-2"), issue_board.external("OPS-1"))
     # DEM-1 blocks DEM-2, which is not asked either: only blockers are external.
     assert _sorted(snapshot.summaries[1]).blocks == ("DEM-2",)
 
@@ -215,9 +245,19 @@ def test_accepts_recorded_answer_when_shape_checked(
     assert (twelve.assignee, twelve.priority, twelve.estimate) == (None, 0, None)
     assert twelve.blocked_by == ("DEM-11", "OPS-4")
     assert snapshot.missing == ()
-    assert [external.id for external in snapshot.external] == ["OPS-4"]
-    assert snapshot.external[0].priority == 1
-    assert snapshot.external[0].estimate == 0.5  # noqa: PLR2004 - the recorded estimate
+    assert snapshot.external == (
+        IssueSummary(
+            id="OPS-4",
+            title="Synthetic ops issue",
+            state=IssueState(name="In Review", type="started"),
+            assignee=None,
+            url="https://linear.app/demo/issue/OPS-4/synthetic-ops-issue",
+            priority=None,
+            estimate=None,
+            blocks=(),
+            blocked_by=(),
+        ),
+    )
 
 
 def _drop_estimate(data: Any) -> None:
@@ -308,7 +348,7 @@ def test_raises_unexpected_when_next_page_brings_nothing(
     assert len(fake_linear_reader_api.requests) == 1
 
 
-def test_marks_truncated_when_relations_over_fifty(
+def test_marks_truncated_when_relations_over_limit(
     fake_linear_reader_api: Any, issue_board: FakeIssueBoard, synthetic_key: str
 ) -> None:
     blockers = [f"OPS-{number}" for number in range(100, 100 + MAX_RELATIONS + 1)]
@@ -353,6 +393,19 @@ def test_reads_every_page_when_within_deadline(
     snapshot = reader.issue_summaries(["DEM-1", "OPS-1"])
 
     assert [summary.id for summary in snapshot.summaries] == ["DEM-1", "OPS-1"]
+
+
+def test_reads_two_hundred_ids_when_each_batch_takes_two_seconds(
+    fake_linear_reader_api: Any, synthetic_key: str
+) -> None:
+    # 200 ids of one team are 8 batches of 25: 7 deadline checks, the last at 14 s of 20.
+    clock = _ticking([2.0 * tick for tick in range(MAX_READ_IDS // BATCH_SIZE)])
+    asked = [f"DEM-{number}" for number in range(1, MAX_READ_IDS + 1)]
+
+    snapshot = _reader(fake_linear_reader_api, synthetic_key, clock=clock).issue_summaries(asked)
+
+    assert len(fake_linear_reader_api.requests) == MAX_READ_IDS // BATCH_SIZE == 8  # noqa: PLR2004
+    assert len(snapshot.summaries) + len(snapshot.missing) == MAX_READ_IDS
 
 
 def test_raises_too_many_when_ids_over_limit(

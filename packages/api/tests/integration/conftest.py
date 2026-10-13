@@ -518,16 +518,21 @@ class FakeLinear:
             "assignee": None if issue.assignee is None else {"displayName": issue.assignee},
         }
 
+    def _related(self, issue_id: str) -> dict[str, Any]:
+        # A related issue is selected only for what an external blocker shows.
+        summary = self._summary(issue_id)
+        return {name: summary[name] for name in ("identifier", "title", "url", "state")}
+
     def _node(self, issue_id: str) -> dict[str, Any]:
         blocks = [other for other, issue in self.issues.items() if issue_id in issue.blocked_by]
         return self._summary(issue_id) | {
             "relations": {
-                "nodes": [{"type": "blocks", "relatedIssue": self._summary(o)} for o in blocks],
+                "nodes": [{"type": "blocks", "relatedIssue": self._related(o)} for o in blocks],
                 "pageInfo": {"hasNextPage": False},
             },
             "inverseRelations": {
                 "nodes": [
-                    {"type": "blocks", "issue": self._summary(blocker)}
+                    {"type": "blocks", "issue": self._related(blocker)}
                     for blocker in self.issues[issue_id].blocked_by
                 ],
                 "pageInfo": {"hasNextPage": False},

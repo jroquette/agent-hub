@@ -38,6 +38,17 @@ def test_truncates_relations_when_board_over_limit() -> None:
     assert summary.relations_truncated is True
 
 
+def test_reads_external_blockers_without_people_or_numbers_when_not_asked() -> None:
+    board = a_seeded_issue_board()
+
+    snapshot = InMemoryTrackerReader(board).issue_summaries(["DEM-3"])
+
+    assert snapshot.external == (board.external("DEM-2"), board.external("OPS-1"))
+    ops_1 = snapshot.external[1]
+    assert (ops_1.title, ops_1.state.type) == ("Synthetic issue OPS-1", "completed")
+    assert (ops_1.assignee, ops_1.priority, ops_1.estimate) == (None, None, None)
+
+
 def test_counts_calls_when_reader_wrapped() -> None:
     gate = threading.Event()
     gate.set()

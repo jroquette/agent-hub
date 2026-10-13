@@ -26,18 +26,19 @@ def tracker_reader(fake_linear_reader_api: Any, synthetic_key: str) -> TrackerRe
 class TestGraphqlTrackerReader(TrackerReaderContract):
     """The TrackerReader contract suite, run against the GraphQL reader over the fake API."""
 
-    def test_sends_pages_of_fifty_when_hundred_twenty_read(
+    def test_sends_full_batches_when_hundred_twenty_read(
         self,
         tracker_reader: TrackerReader,
         issue_board: FakeIssueBoard,
         fake_linear_reader_api: Any,
     ) -> None:
         # AC-136.2: the fake API serves this test's issue_board, so the suite's wide read
-        # reaches it in three requests.
+        # reaches it in batches of BATCH_SIZE (five requests of 25, 25, 25, 25 and 20).
         self.test_reads_every_id_when_hundred_twenty_asked(tracker_reader, issue_board)
 
         sizes = [
             len(request["variables"]["filter"]["number"]["in"])
             for request in fake_linear_reader_api.requests
         ]
-        assert sizes == [BATCH_SIZE, BATCH_SIZE, WIDE_READ - 2 * BATCH_SIZE]
+        full, rest = divmod(WIDE_READ, BATCH_SIZE)
+        assert sizes == [BATCH_SIZE] * full + [rest]
