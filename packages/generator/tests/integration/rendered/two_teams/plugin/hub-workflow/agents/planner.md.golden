@@ -11,10 +11,11 @@ Paths: `brain/` and `scripts/` live in the hub (the directory with `hub.json`). 
 
 1. Write `brain/features/<slug>/features.json`:
    ```json
-   {"feature": "<slug>", "linear": ["<TEAM>-N"], "acs": [
+   {"feature": "<slug>", "linear": [], "acs": [
      {"id": "AC-1", "description": "...", "repo": "<repo dir from hub.json>", "verification": "<exact test command>", "passes": false, "evidence": null}
    ]}
    ```
+   `linear` stays `[]`: the issues do not exist yet, and the main session fills it with their ids once it creates them.
    One entry per AC in the spec, `passes: false`, `evidence: null`. `verification` is the exact command from the plan,
    and its own exit status is the verdict: drop the plan's `; echo rc=$?` idiom and never end in `|| true` or `| tail`
    (redirecting output to a file is fine). `./hub doctor --only features.tracker` rejects a pending AC whose command
