@@ -10,6 +10,9 @@ case, naming the first missing variable, unless ``LINEAR_API_KEY``, ``AGENT_HUB_
 workspace that is not the runner's ready label (not ``agent-ready``): the round trip adds and
 removes it. It writes to that issue only: the label ends as it was found, and one comment is
 added. Assertions compare flags, not issue data, so a failure prints none.
+
+``test_reads_summaries_when_live`` checks the read-only reader's query (ADR 0025) against
+Linear's real schema: it only reads.
 """
 
 import os
@@ -18,6 +21,7 @@ from collections.abc import Iterator
 import pytest
 
 from agent_hub.tracker_linear.graphql import LinearGraphqlTrackerClient
+from agent_hub.tracker_linear.graphql_reader import LinearGraphqlTrackerReader
 
 pytestmark = pytest.mark.live
 
@@ -97,3 +101,23 @@ def test_round_trips_label_when_live(
 
 def test_comments_when_live(client: LinearGraphqlTrackerClient, issue_id: str) -> None:
     client.comment(issue_id, _COMMENT)
+
+
+def test_reads_summaries_when_live(issue_id: str) -> None:
+    reader = LinearGraphqlTrackerReader(environ=os.environ)
+    team = issue_id.partition("-")[0]
+    unknown = f"{team}-999999999"
+
+    snapshot = reader.issue_summaries([issue_id, unknown])
+
+    read_once = [summary.id for summary in snapshot.summaries] == [issue_id]
+    assert read_once
+    unknown_missing = snapshot.missing == (unknown,)
+    assert unknown_missing
+    summary = snapshot.summaries[0]
+    has_text = bool(summary.title) and summary.url.startswith("https://linear.app/")
+    assert has_text
+    relations_named = all(other != issue_id for other in (*summary.blocks, *summary.blocked_by))
+    assert relations_named
+    externals_bare = all(not (e.blocks or e.blocked_by) for e in snapshot.external)
+    assert externals_bare
