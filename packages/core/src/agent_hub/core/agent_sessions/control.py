@@ -78,6 +78,7 @@ from agent_hub.core.agent_sessions.errors import (
     UnknownResumeError,
 )
 from agent_hub.core.agent_sessions.limits import SessionLimits
+from agent_hub.core.agent_sessions.links import AgentSessionLink
 from agent_hub.core.agent_sessions.live_session import LiveSession, OpenRequest
 from agent_hub.core.agent_sessions.log_caps import Full, Truncated
 from agent_hub.core.agent_sessions.permission_policy import (
@@ -339,6 +340,16 @@ class AgentSessionControl:
         if agent_session_id in self._live:
             raise SessionLiveError(agent_session_id)
         await asyncio.to_thread(self._store.delete, agent_session_id)
+
+    def live_link(self, project: str, claude_session_id: str) -> AgentSessionLink | None:
+        """The live session driving ``claude_session_id`` in ``project`` and whether it waits
+        on a permission (``AgentSessionLinks``' first look); safe to call from a thread."""
+        for live in list(self._live.values()):
+            session = live.session
+            if session.project == project and session.claude_session_id == claude_session_id:
+                waiting = live.state.status == AgentSessionStatus.WAITING_PERMISSION
+                return AgentSessionLink(agent_session_id=session.id, waiting=waiting)
+        return None
 
     # Commands
 
