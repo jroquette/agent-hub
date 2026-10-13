@@ -76,9 +76,9 @@ version and show, and an engine that can see every step.
   typing for which [ADR 0010](0010-hub-json-config-contract.md) chose JSON for `hub.json`; multi-line instructions are
   why workflows still prefer YAML.
 
-**The admission rule** (adapted from Archon's admissibility test) applies to every future key or step type. Does the
-engine need to see it to govern the run? Is it data with a fixed meaning, not evaluation? Could a `script` step with
-today's keys already do it? If a script could, the key must earn its place by governance value. The five smells
+**The admission rule** (adapted from Archon's admissibility test) applies to every future key or step type. Must the
+engine see it to steer or record a run? Is it data with a fixed meaning, not evaluation? Could a `script` step with
+today's keys already do it? If a script could, the key is admitted only for what it adds to oversight. The five smells
 (expression creep, composition metastasis, workaround pressure, schema width, implicit magic) and agent-hub's lever for
 each are listed in the design file's Invariants.
 
