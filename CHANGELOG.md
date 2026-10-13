@@ -17,6 +17,14 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   configuration, and `llms.txt` / `llms-full.txt` for AI agents, generated from the docs and checked by
   `make check-fast` (AGH-137).
 
+### Changed
+
+- The generated hub-workflow asks for the minimum: `/feature` states a minimum-sufficient rule that the
+  requirements-analyst, architect, implement step and both reviewers cite; *bounded* is the default size and a path
+  under `guard.ask_before_edit` alone no longer makes a feature *architectural*; hostile-input scale, bounds and budget
+  checks apply only to code that parses untrusted or unbounded input; reviewers flag what is extra and the main session
+  weighs their findings. Bump `platform.version` and run `./hub sync` (AGH-147).
+
 ## [0.11.0] - 2026-10-13
 
 ### Added
