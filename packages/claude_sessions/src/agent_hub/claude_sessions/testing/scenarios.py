@@ -1,8 +1,8 @@
 """Synthetic scenarios for the stub ``claude`` CLI (P17), and the files a test hands it.
 
-A scenario scripts what the stub does: one list of steps per user message (a turn), the
-session id it reports, and its process behaviour (a grandchild to reap, lingering after stdin
-closes). The shapes mirror what the local Claude Code CLI writes in stream-json mode, observed by
+A scenario scripts what the stub does: one list of steps per user message (a turn: the one
+``replies`` holds for the message's exact text, else the next of ``turns``), the session id it
+reports, and its process behaviour (a grandchild to reap, lingering after stdin closes). The shapes mirror what the local Claude Code CLI writes in stream-json mode, observed by
 the Wave 0 spike against a fake Messages API (no model call); every value here is synthetic.
 
 A test writes the scenario with ``write_scenario``, a ``claude`` shim with ``write_shim`` and points
@@ -84,6 +84,8 @@ class Scenario(_Frozen):
     model: str = "claude-stub-model"
     slash_commands: list[str] = Field(default_factory=lambda: ["compact", "review"])
     turns: list[list[Step]] = Field(default_factory=list)
+    # The turn played for a user message of exactly this text; other messages play ``turns``.
+    replies: dict[str, list[Step]] = Field(default_factory=dict)
     # A sleeping grandchild in its own session, as the CLI runs its Bash tools.
     grandchild: bool = False
     # The CLI ends its tool processes when it exits; False leaves the grandchild behind.
