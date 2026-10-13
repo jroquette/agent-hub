@@ -11,6 +11,25 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- Feature Tickets tab in `hub web`: each ticket with its Linear status, assignee and link, the parallel groups
+  (layers), a recommended order, what blocks each ticket (from the plan's `blocked_by` and Linear's relations), cycles,
+  outside blockers and the critical path. `hub web` reads Linear server-side and read-only when `LINEAR_API_KEY` is
+  set (cached 60 s; ADR 0025); without it the tab shows the plan from `features.json` with a notice. New route
+  `GET /api/v1/features/{project}/{slug}/tickets` (AGH-136).
+- Feature records: `features.json` gains `tickets` (with `blocked_by`) and a `ticket` per AC; the evaluator writes
+  one `evals/<delivery>.md` per delivery instead of overwriting `eval.md`; reviews are recorded in
+  `reviews/<ticket>.md`; approved specs change only through an Amendments section. `hub doctor` checks them
+  (AGH-136).
+
+### Changed
+
+- The golden path reflects the whole feature: Evaluate is done only when the latest evals cover every AC, Review
+  only when every ticket is reviewed (Linear `completed` or an approved review record), Implement counts tickets and
+  ACs; a canceled ticket no longer blocks. Run `hub sync` after bumping `platform.version` to get the updated
+  planner, evaluator, requirements-analyst and `/feature` templates (AGH-136).
+
 ## [0.12.0] - 2026-10-13
 
 ### Added
