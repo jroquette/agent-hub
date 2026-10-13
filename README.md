@@ -696,6 +696,8 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `guard.infra.prod_markers` | no | `[]` | Python `re` patterns that mark production; a match anywhere in an infra command blocks it |
 | `modules` | no | `{}` | Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`), from 0.6.0: each selected one renders its files and `mk/<id>.mk`; `contract-sync` takes `{"source": <repo dir>, "target": <repo dir>}`, the others `{}` |
 | `doctor.rules` | no | `{}` | Per-rule `hub doctor` settings |
+| `models.tiers.small`, `.medium`, `.large` | no | `haiku`, `sonnet`, `opus` | The model each tier names (`^[A-Za-z0-9._-]{1,64}$`, e.g. `claude-opus-4-1-20250805`); each plugin agent renders its tier's model in its `model:` line after `./hub sync`, and `hub run` uses `medium` |
+| `models.agents.<agent>` | no | the agent's own tier | Moves one of the 7 plugin agents to another tier, e.g. `{"researcher": "large"}` |
 
 Example (synthetic project):
 

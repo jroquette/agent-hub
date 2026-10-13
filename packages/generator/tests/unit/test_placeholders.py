@@ -21,7 +21,12 @@ from agent_hub.core.testing.builders import (
 )
 from agent_hub.core.testing.platform_repository_cases import CUSTOM_REPOSITORY
 from agent_hub.generator import placeholders
-from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_mapping
+from agent_hub.generator.placeholders import (
+    AGENTS_FOLDER,
+    PLATFORM_REPOSITORY,
+    agent_model_overlay,
+    substitution_mapping,
+)
 
 # AC-3.9: the Rendered values of project-config.md, the platform repository (erratum E3), the
 # derived module includes (erratum E2), contract-sync's two repo dirs (AGH-17 G8) and the module
@@ -30,6 +35,7 @@ from agent_hub.generator.placeholders import PLATFORM_REPOSITORY, substitution_m
 # run time or quoted per format, never placeholders; author_email is per developer and no template
 # names it (AGH-65). The team mentions of AGENTS.md and the plugin name every tracker team (AGH-56).
 # The branch rule, kickoff's branch and the Conventions block show the conventions (AGH-57).
+# Each tier's model, which the plugin agents' `model:` lines name (AGH-180).
 # The runtime readers check platform.repository against core's pattern and name its form (AGH-49).
 # The README's tracker credential line, cloud subsection and the hub's clone folder (AGH-51).
 # The input brief's names and placeholders, from core (AGH-138).
@@ -68,6 +74,9 @@ RENDERED_KEYS = {
     "join_cloud",
     "brief_sections",
     "brief_placeholders",
+    "model_small",
+    "model_medium",
+    "model_large",
 }
 
 # AGH-138: /feature step 0 names core's brief sections and placeholders as code spans, in order.
@@ -153,6 +162,9 @@ def test_takes_values_from_model_when_demo_mapped(demo_config: HubConfig) -> Non
         "join_cloud": JOIN_CLOUD,
         "brief_sections": BRIEF_SECTIONS_TEXT,
         "brief_placeholders": BRIEF_PLACEHOLDERS_TEXT,
+        "model_small": "haiku",
+        "model_medium": "sonnet",
+        "model_large": "opus",
     }
 
 
@@ -718,3 +730,42 @@ def test_keeps_label_and_example_with_their_spans_when_patterns_longest() -> Non
     assert [line for line in lines if line.strip() in ("e.g.", "-", "- Branch:")] == []
     assert [item.splitlines()[1].startswith("  e.g. `") for item in items] == [True] * 3
     assert sum(line.startswith("  e.g. `") for line in lines) == 3
+
+
+# AGH-180 (spec D3): every tier key of an overridden agent's file maps to its tier's model.
+def test_maps_every_tier_key_when_agent_tier_set() -> None:
+    config = config_with(models={"tiers": {"small": "inherit"}, "agents": {"architect": "small"}})
+
+    overlay = agent_model_overlay(config, f"{AGENTS_FOLDER}architect.md")
+
+    assert overlay == {
+        "model_small": "inherit",
+        "model_medium": "inherit",
+        "model_large": "inherit",
+    }
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        f"{AGENTS_FOLDER}planner.md",
+        f"{AGENTS_FOLDER}architect.md.bak",
+        "plugin/demo/agents/architect.md",
+        "AGENTS.md",
+    ],
+    ids=["agent-not-overridden", "other-suffix", "project-agent", "other-file"],
+)
+def test_returns_no_overlay_when_file_not_overridden_agent(path: str) -> None:
+    config = config_with(models={"agents": {"architect": "small"}})
+
+    assert agent_model_overlay(config, path) == {}
+
+
+def test_resolves_tier_models_when_tiers_set() -> None:
+    mapping = substitution_mapping(config_with(models={"tiers": {"large": "claude-opus-4-1"}}))
+
+    assert (mapping["model_small"], mapping["model_medium"], mapping["model_large"]) == (
+        "haiku",
+        "sonnet",
+        "claude-opus-4-1",
+    )
