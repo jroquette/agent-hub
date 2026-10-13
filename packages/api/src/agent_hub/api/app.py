@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from importlib.metadata import version
 from pathlib import Path
+from typing import Protocol
 
 from fastapi import FastAPI
 
@@ -60,12 +61,60 @@ ROUTERS = (
 )
 
 
+class AppLifecycle(Protocol):
+    """What runs beside the routes while the app serves (the agent sessions' sweep and
+    shutdown, ``SessionRuntime``)."""
+
+    async def start(self) -> None:
+        """Called once the app starts, before the first request."""
+        ...
+
+    def begin_exit(self) -> None:
+        """Called from the server's signal handler, before its graceful wait; must not block."""
+        ...
+
+    async def stop(self) -> None:
+        """Called when the app shuts down; returns once everything it started has ended."""
+        ...
+
+
+class _Serving:
+    """The app's start, signal hook and stop: the change feed and the lifecycle."""
+
+    def __init__(self, ports: ApiPorts, lifecycle: AppLifecycle | None) -> None:
+        self._ports = ports
+        self._lifecycle = lifecycle
+
+    def _close_feed(self) -> None:
+        if self._ports.change_feed is not None:
+            self._ports.change_feed.close()
+
+    def on_exit(self) -> None:
+        """Close the change feed and begin the lifecycle's exit (the server's signal hook)."""
+        self._close_feed()
+        if self._lifecycle is not None:
+            self._lifecycle.begin_exit()
+
+    @asynccontextmanager
+    async def lifespan(self, _app: FastAPI) -> AsyncIterator[None]:
+        """Start the lifecycle; on shutdown close the feed and wait for the lifecycle."""
+        if self._lifecycle is not None:
+            await self._lifecycle.start()
+        try:
+            yield
+        finally:
+            self._close_feed()
+            if self._lifecycle is not None:
+                await self._lifecycle.stop()
+
+
 def create_app(
     api_settings: ApiSettings,
     *,
     ports: ApiPorts | None = None,
     problems: Mapping[type[Exception], ProblemFactory] | None = None,
     web_dist: Path = WEB_DIST,
+    lifecycle: AppLifecycle | None = None,
 ) -> FastAPI:
     """The app with every Phase 2 route under ``/api/v1`` and the web app at ``/``.
 
@@ -73,17 +122,12 @@ def create_app(
     ``problems`` adds error mappings for exceptions of the wired adapters. No docs pages are
     served. Requests pass, outermost first: the request log, the 500 guard, the local
     security checks, the agent-session access checks (token exchange, cookie), then the
-    routes. On shutdown the change feed is closed, so open streams end.
+    routes. ``lifecycle`` starts with the app and stops with it. On shutdown the change feed
+    is closed, so open streams end; ``app.state.on_exit`` (the server's signal hook) closes it
+    and begins the lifecycle's exit at once, before the server's graceful wait.
     """
     ports = ports or ApiPorts()
-
-    @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        try:
-            yield
-        finally:
-            if ports.change_feed is not None:
-                ports.change_feed.close()
+    serving = _Serving(ports, lifecycle)
 
     app = FastAPI(
         title="agent-hub",
@@ -91,10 +135,11 @@ def create_app(
         openapi_url=f"{API_PREFIX}/openapi.json",
         docs_url=None,
         redoc_url=None,
-        lifespan=lifespan,
+        lifespan=serving.lifespan,
     )
     app.state.settings = api_settings
     app.state.ports = ports
+    app.state.on_exit = serving.on_exit
     install_problem_handlers(app, extra=problems)
     for module in ROUTERS:
         app.include_router(module.router, prefix=API_PREFIX)
