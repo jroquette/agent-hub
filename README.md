@@ -291,8 +291,10 @@ The size decides the ceremony:
 
 - **Spike**: throwaway learning. No spec, no tickets and no plan gate; it is timeboxed, the findings go to
   `research.md`, and nothing is merged.
-- **Bounded**: a few pull requests at most, with a known design. You may approve the spec and the plan together.
-- **Architectural**: new contracts, paths under `guard.ask_before_edit`, or a design across repos. Both gates apply.
+- **Bounded** (the default): a few pull requests at most, with a known design. You may approve the spec and the plan
+  together.
+- **Architectural**: a new contract between repos or services, or a decision that warrants an ADR. Both gates apply.
+  A path under `guard.ask_before_edit` alone does not make a feature architectural.
 
 <details>
 <summary><strong>What happens at each step</strong></summary>
@@ -308,7 +310,8 @@ The size decides the ceremony:
 6. **Implement.** One fresh subagent per task, failing test first, the repo's `check_fast` green after each task.
    Existing assertions are never weakened.
 7. **Review.** `spec-reviewer` checks the diff matches the spec and plan, nothing missing and nothing extra; then
-   `quality-reviewer` checks domain rules, security and idempotency. Fixes go back to the implementer.
+   `quality-reviewer` checks domain rules, security, idempotency and what is extra. The session weighs each finding
+   and sends back only the ones it accepts.
 8. **Verify and finish.** `evaluator` re-runs every check and writes `eval.md`; it must say `SHIP`. The pull request is
    opened on a `project.branch_prefix` branch, authored by you.
 9. **Compound.** You go through the agents' learning proposals in `brain/_inbox/` and decide where each lands;
