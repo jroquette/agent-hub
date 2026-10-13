@@ -90,6 +90,11 @@ class LiveSession:
         return self.session.id
 
     @property
+    def published(self) -> int:
+        """The number of the last frame published."""
+        return self._number
+
+    @property
     def finished(self) -> bool:
         """Whether no frame will come any more (the driver's events ended)."""
         return self._finished
