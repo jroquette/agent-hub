@@ -1,0 +1,60 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Dependency updates for agent-hub. Every setting and rule says why it is here; one without a reason is removed.",
+  "extends": ["config:recommended"],
+  "semanticCommits": "enabled",
+  "semanticCommitType": "chore",
+  "semanticCommitScope": "deps",
+  "labels": ["dependencies"],
+  "prConcurrentLimit": 5,
+  "schedule": ["before 6am on monday"],
+  "timezone": "America/Sao_Paulo",
+  "lockFileMaintenance": {
+    "description": "uv.lock and package-lock.json also pin transitive packages, which no manifest names: refresh them weekly so their fixes arrive.",
+    "enabled": true,
+    "schedule": ["before 6am on monday"]
+  },
+  "vulnerabilityAlerts": {
+    "description": "A security fix is opened right away, outside the weekly schedule.",
+    "labels": ["dependencies", "security"],
+    "schedule": ["at any time"]
+  },
+  "osvVulnerabilityAlerts": true,
+  "packageRules": [
+    {
+      "description": "Python 3.14 is the project floor (uuid.uuid7, ADR 0001): never propose a change to requires-python.",
+      "matchDepNames": ["python"],
+      "matchManagers": ["pep621"],
+      "enabled": false
+    },
+    {
+      "description": "The dev tools in pyproject.toml move together: one PR and one make check run instead of eight.",
+      "matchManagers": ["pep621"],
+      "matchPackageNames": ["ruff", "mypy", "pytest", "pytest-cov", "pytest-socket", "hypothesis", "import-linter", "httpx"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "python dev tools"
+    },
+    {
+      "description": "The web app's dev tooling (Vite, ESLint, Prettier, Vitest, TypeScript) moves together; the PR must also rebuild the committed web_dist (make web-build), which make check verifies.",
+      "matchManagers": ["npm"],
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "web dev tools"
+    },
+    {
+      "description": "The workflows' actions are few and move together.",
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions"
+    },
+    {
+      "description": "The Dockerfile pins its base images by digest (ADR 0022): keep the digest on every bump.",
+      "matchManagers": ["dockerfile"],
+      "pinDigests": true
+    },
+    {
+      "description": "A major update changes behaviour: its own PR, labelled for a closer review.",
+      "matchUpdateTypes": ["major"],
+      "labels": ["dependencies", "major"]
+    }
+  ]
+}

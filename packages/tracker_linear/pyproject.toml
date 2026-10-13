@@ -2,6 +2,7 @@
 name = "agent-hub-tracker-linear"
 version = "0.1.0"
 description = "Linear tracker adapter of agent-hub: the TrackerClient port over Linear's GraphQL API."
+license = "Apache-2.0"
 requires-python = ">=3.14"
 dependencies = ["agent-hub-core"]
 

@@ -13,5 +13,6 @@ Tracker issue: AGH-___
 - [ ] check green in CI
 - [ ] every AC has a test
 - [ ] docs/ADR/SPEC updated if scope changed
+- [ ] CHANGELOG.md `[Unreleased]` updated if users see the change
 - [ ] PR reviewed and merged by the owner
 - [ ] issue Done
