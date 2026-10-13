@@ -172,7 +172,9 @@ always answers 200 with a `FeatureTickets`:
 - `golden_path`: the same steps the feature list and detail carry, recomputed with this read.
 
 The read goes through an in-memory cache keyed by the project and the feature's ids: a snapshot younger than 60 s is
-served without a call, concurrent reads of one key share one call, and a 429 pauses that key for 60 s. A Refresh in
+served without a call, concurrent reads of one key share one call (a read waits at most 30 s for one in flight), and any Linear failure
+(401/403, 429, 5xx, timeout, unreachable, unexpected answer) holds that key for 60 s, serving the stale snapshot
+(under 15 min old) or the plan. Not connected (no key, or `"mcp"`) makes no Linear call and is never held. A Refresh in
 the app refetches the route; the cache still applies (`as_of` shows its age). `GET /features` and
 `GET /features/{project}/{slug}` never call Linear: they use a warm cache entry, else the plan, and say so in their
 `golden_path` and `tickets_source`.
