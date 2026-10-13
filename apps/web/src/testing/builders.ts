@@ -41,6 +41,15 @@ export type EvalRecord = Schemas["EvalRecord"];
 export type TicketRow = Schemas["TicketRow"];
 export type TicketPlan = Schemas["TicketPlan"];
 export type FeatureTickets = Schemas["FeatureTickets"];
+export type AgentSession = Schemas["AgentSession"];
+export type LogRecord = Schemas["LogRecord"];
+export type RecordKind = Schemas["RecordKind"];
+export type OpenPermission = Schemas["OpenPermission"];
+export type PermissionSuggestion = Schemas["PermissionSuggestion"];
+export type Workdir = Schemas["Workdir"];
+export type DriverCapabilities = Schemas["DriverCapabilities"];
+export type CloudSession = Schemas["CloudSession"];
+export type PastSession = Schemas["PastSession"];
 
 /** The synthetic clock every builder uses. */
 export const T0 = "2026-10-11T14:00:00.000Z";
@@ -89,6 +98,7 @@ export function aSession(overrides: Partial<Session> = {}): Session {
   return {
     actors: [anActor()],
     agent: "claude",
+    agent_session_id: null,
     cost_usd: "1.2500",
     derived: true,
     end_inferred: false,
@@ -875,6 +885,201 @@ export function aStreamCounts(overrides: Partial<StreamCounts> = {}): StreamCoun
     ready_issues: null,
     ...overrides,
   };
+}
+
+/* ---------- Agent sessions (AGH-165) ---------- */
+
+const AGENT_SESSION_WORKDIR = "3f2a9c1d4b5e6f70";
+const CLOUD_ID = "cse_01synthetic";
+
+/** Claude's two suggestions for "always allow": one `localSettings` rule, one `session` mode. */
+export function aSuggestions(): PermissionSuggestion[] {
+  return [
+    {
+      destination: "localSettings",
+      index: 0,
+      rule: {
+        behavior: "allow",
+        destination: "localSettings",
+        rules: [{ ruleContent: "git status", toolName: "Bash" }],
+        type: "addRules",
+      },
+    },
+    {
+      destination: "session",
+      index: 1,
+      rule: { destination: "session", mode: "acceptEdits", type: "setMode" },
+    },
+  ];
+}
+
+/** An idle local agent session in the hub's workdir, linked to Claude session `anId(1, "5091b986")`. */
+export function anAgentSession(overrides: Partial<AgentSession> = {}): AgentSession {
+  return {
+    claude_session_id: anId(1, "5091b986"),
+    cloud_id: null,
+    cost_usd: "0.0012",
+    created_at: T0,
+    end_reason: null,
+    ended_at: null,
+    id: anId(1, "0192a5e5"),
+    kind: "local",
+    last_seq: 4,
+    mode: "default",
+    model: "sonnet",
+    open_permission: null,
+    project: "agent-hub",
+    status: "idle",
+    title: "Run the tests",
+    updated_at: at(60),
+    url: null,
+    usage: { cache_read: 0, cache_write: 0, input: 12, output: 5 },
+    workdir_id: AGENT_SESSION_WORKDIR,
+    workdir_label: "agent-hub-hub",
+    ...overrides,
+  };
+}
+
+/** A pending `Bash` permission request, as `GET /agent-sessions/{id}` shows it. */
+export function aPermissionRequest(overrides: Partial<OpenPermission> = {}): OpenPermission {
+  return {
+    asked_at: at(30),
+    deadline_at: at(630),
+    input: null,
+    request_id: "req-1",
+    request_kind: "tool",
+    suggestions: aSuggestions(),
+    summary: "git status",
+    tool: "Bash",
+    ...overrides,
+  };
+}
+
+/** The body of a record of each kind, as core writes it (synthetic text only). */
+const RECORD_BODIES: Record<RecordKind, LogRecord["body"]> = {
+  init: { model: "sonnet", session_id: anId(1, "5091b986"), slash_commands: ["/feature"] },
+  text: { block: 0, text: "The tests pass." },
+  thinking: { text: "Check the failing test first." },
+  "tool.call": {
+    input: { file_path: "src/app.py", new_string: "a = 2", old_string: "a = 1" },
+    name: "Edit",
+    parent_tool_use_id: null,
+    tool_use_id: "toolu_01",
+  },
+  "tool.result": { content: "edited", is_error: false, tool_use_id: "toolu_01" },
+  todos: { items: [{ active_form: null, content: "Fix the test", status: "in_progress" }] },
+  "permission.request": {
+    request_id: "req-1",
+    request_kind: "tool",
+    suggestions: aSuggestions(),
+    summary: "git status",
+    tool: "Bash",
+  },
+  result: {
+    cost_usd: "0.0012",
+    duration_ms: 40,
+    model_usage: null,
+    num_turns: 1,
+    subtype: "success",
+    terminal_reason: "completed",
+    usage: { cache_read: 0, cache_write: 0, input: 12, output: 5 },
+  },
+  error: { message: "claude exited with code 1" },
+  exited: { code: 0 },
+  "user.message": { text: "Run the tests." },
+  "permission.decision": { decision: "allow", request_id: "req-1" },
+  interrupt: {},
+  settings: { mode: "plan" },
+  close: {},
+  "log.truncated": { cap: "records", limit: 50000 },
+  "cloud.start": { cloud_id: CLOUD_ID },
+  "cloud.followup": { cloud_id: CLOUD_ID },
+};
+const SERVER_RECORDS: RecordKind[] = ["log.truncated"];
+const WEB_RECORDS: RecordKind[] = [
+  "user.message",
+  "permission.decision",
+  "interrupt",
+  "settings",
+  "close",
+  "cloud.start",
+  "cloud.followup",
+];
+
+/** A persisted record of `kind` with that kind's body; `by` is who caused it. */
+export function aLogRecord(
+  kind: RecordKind = "text",
+  overrides: Partial<LogRecord> = {},
+): LogRecord {
+  const by = WEB_RECORDS.includes(kind)
+    ? "web"
+    : SERVER_RECORDS.includes(kind)
+      ? "server"
+      : "driver";
+  const body = overrides.body ?? RECORD_BODIES[kind];
+  return {
+    at: at(overrides.seq ?? 1),
+    body,
+    by,
+    kind,
+    seq: 1,
+    text_bytes: JSON.stringify(body).length,
+    ...overrides,
+  };
+}
+
+/** The hub's own folder, with one skill. */
+export function aWorkdir(overrides: Partial<Workdir> = {}): Workdir {
+  return {
+    kind: "hub",
+    label: "agent-hub-hub",
+    repo: null,
+    skills: ["feature"],
+    workdir_id: AGENT_SESSION_WORKDIR,
+    worktree: null,
+    ...overrides,
+  };
+}
+
+/** A machine that can drive sessions and start cloud ones. */
+export function aCapabilities(overrides: Partial<DriverCapabilities> = {}): DriverCapabilities {
+  return {
+    available: true,
+    cli_version: "2.1.296",
+    cloud: true,
+    cloud_followup: true,
+    engine: "sdk",
+    models: ["default", "opus", "sonnet", "haiku"],
+    reason: null,
+    ...overrides,
+  };
+}
+
+/** A cloud start with its claude.ai/code link and teleport command. */
+export function aCloudSession(overrides: Partial<CloudSession> = {}): CloudSession {
+  return {
+    cloud_id: CLOUD_ID,
+    created_at: T0,
+    followups: 0,
+    id: anId(2, "0192a5e5"),
+    project: "agent-hub",
+    teleport_command: `claude --teleport ${CLOUD_ID}`,
+    title: "Upgrade the linter",
+    url: `https://claude.ai/code/${CLOUD_ID}`,
+    workdir_id: AGENT_SESSION_WORKDIR,
+    ...overrides,
+  };
+}
+
+/** A text delta on the agent-session stream (`event: delta`, id `<after_seq>.<index>`, E8). */
+export interface DeltaFrame {
+  after_seq: number;
+  block: number;
+  index: number;
+  text: string;
+}
+export function aDeltaFrame(overrides: Partial<DeltaFrame> = {}): DeltaFrame {
+  return { after_seq: 3, block: 0, index: 0, text: "Hel", ...overrides };
 }
 
 /* ---------- Stubbed API ---------- */
