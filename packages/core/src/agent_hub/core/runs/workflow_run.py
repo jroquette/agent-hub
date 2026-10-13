@@ -10,6 +10,8 @@ from agent_hub.core.runner.run_record import Stage
 
 type StepKey = Literal["pick", "worktree", "implement", "verify", "pr"]
 type StepStatus = Literal["running", "ok", "failed"]
+# What an ended run delivered (AGH-140), apart from whether it failed (``failure``).
+type RunDelivery = Literal["delivered", "no_changes", "blocked", "failed"]
 
 
 class RunStep(ViewModel):
@@ -82,3 +84,5 @@ class WorkflowRun(DerivedView):
     session_ids: tuple[str, ...] = ()
     gate_results: tuple[RunGateResult, ...] = ()
     pr_url: str | None = None
+    delivery: RunDelivery | None = None
+    delivery_reason: str | None = None

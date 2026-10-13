@@ -31,7 +31,7 @@ import {
   durationSeconds,
   finishedCosts,
   median,
-  OUTCOME_BADGE,
+  runBadge,
   runOutcome,
   stageLabel,
 } from "./model";
@@ -293,10 +293,14 @@ function columns(now: number): DataTableColumn<WorkflowRun>[] {
       label: "Outcome · PR",
       width: 120,
       render: (run) => {
-        const badge = OUTCOME_BADGE[runOutcome(run)];
+        const badge = runBadge(run);
         return (
           <div className="ah-stack" style={{ gap: 2, alignItems: "flex-start" }}>
-            <StatusBadge status={badge.status} label={badge.label} />
+            <StatusBadge
+              status={badge.status}
+              label={badge.label}
+              title={run.delivery_reason ?? undefined}
+            />
             {run.pr_url ? (
               <OutsideLink className="ah-mono ah-small" href={run.pr_url} title="Opens GitHub">
                 PR

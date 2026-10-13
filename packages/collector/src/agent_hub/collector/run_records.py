@@ -7,6 +7,11 @@ caps, ``gate_ok`` is a passed ``gate.result``, ``failed`` ends its stage ``faile
 line of the reason, and ``reported`` is the ``run.end``: ``done`` only when the run did not fail
 and its report was made. Every event has session ``run:<run id>`` and workflow ``issue-to-pr``.
 
+The ``run.end`` also carries the run's ``outcome`` (AGH-140), apart from its status: the
+``reported`` record's own, or for a record written before it, ``delivered`` when it names a PR
+and ``failed`` otherwise. ``not_delivered`` (no commit, or the session stopped) is no failure:
+its stage still ends ``ok`` and the ``run.end`` keeps its reason.
+
 ``source_id`` (E7): ``<run>:<state>:<event>:<ts>:<type>``, and for step events ``:<stage>`` after
 it, since one record can end one stage, start another and fail it. Records are mapped in file
 order, one run's state kept per run id, so the live ``hub run`` and a later
@@ -24,7 +29,7 @@ from agent_hub.collector.tool_metadata import COMMAND_LIMIT, first_line, short_t
 from agent_hub.core.events.event import MAX_ID_CHARS, Event, EventSource, EventType
 from agent_hub.core.events.payload_keys import CAPS_KEYS
 from agent_hub.core.json_form import JsonValue
-from agent_hub.core.runner.run_record import Stage
+from agent_hub.core.runner.run_record import NOT_DELIVERED, RunOutcome, Stage
 
 RUN_WORKFLOW: Final = "issue-to-pr"
 # A run's events are the session ``run:<run>``, which must fit the id cap.
@@ -81,6 +86,8 @@ class _RunProgress:
     open_stage: str | None = None
     attempts: dict[str, int] = field(default_factory=dict)
     failure: tuple[str, str] | None = None
+    # The outcome and reason of a run that ended without a PR yet did not fail.
+    not_delivered: tuple[RunOutcome, str] | None = None
 
 
 class RunEventMapper:
@@ -120,6 +127,12 @@ class RunEventMapper:
             return [self._gate_passed(record, progress)]
         if record.event == "failed":
             return self._failed(record, progress)
+        if record.event == "not_delivered":
+            outcome = _outcome(record.raw)
+            if outcome in NOT_DELIVERED:
+                reason = first_line(text(record.raw, "reason") or "")
+                progress.not_delivered = (outcome, reason)
+            return []
         if record.event == "reported":
             return [self._run_end(record, progress)]
         return []
@@ -176,6 +189,13 @@ class RunEventMapper:
             payload |= {"stage": progress.failure[0], "reason": progress.failure[1]}
         elif failed_stage is not None:
             payload["stage"] = failed_stage
+        outcome = _outcome(record.raw)
+        if outcome is None:
+            failed = progress.failure is not None or failed_stage is not None
+            outcome = RunOutcome.DELIVERED if pr_url and not failed else RunOutcome.FAILED
+        payload["outcome"] = outcome.value
+        if outcome in NOT_DELIVERED and progress.not_delivered is not None:
+            payload["reason"] = progress.not_delivered[1]
         return self._event(record, EventType.RUN_END, payload, step=None)
 
     def _event(
@@ -238,3 +258,12 @@ def _moment(ts: str | None) -> datetime | None:
 
 def _caps(raw: Record) -> Payload:
     return {key: raw[key] for key in CAPS if isinstance(raw.get(key), str | int | float)}
+
+
+def _outcome(raw: Record) -> RunOutcome | None:
+    """The record's ``outcome`` when it names one, else None."""
+    value = text(raw, "outcome")
+    try:
+        return None if value is None else RunOutcome(value)
+    except ValueError:
+        return None

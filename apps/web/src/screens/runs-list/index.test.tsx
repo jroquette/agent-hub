@@ -100,6 +100,26 @@ describe("RunsListScreen", () => {
     },
   );
 
+  it.each([
+    ["no_changes", "No changes", "no commit on the branch"],
+    ["blocked", "Blocked", "the implementing session stopped: needs a plan"],
+  ] as const)(
+    "labels a reported run that opened no PR by its delivery (%s)",
+    async (delivery, label, reason) => {
+      const ended = { ...done, pr_url: null, delivery, delivery_reason: reason };
+      renderWithApi(<RunsListScreen />, {
+        routes: { "/api/v1/workflow-runs": aPage([ended]) },
+        path: "/runs",
+      });
+
+      await screen.findByText("Layered memory");
+      const table = screen.getByRole("table", { name: /Workflow runs/ });
+      expect(within(table).getByText(label)).toBeInTheDocument();
+      expect(within(table).queryByText("Done")).not.toBeInTheDocument();
+      expect(within(table).getByText("no PR")).toBeInTheDocument();
+    },
+  );
+
   it("disables Start run on an issue with the P4 tag", async () => {
     renderWithApi(<RunsListScreen />, { routes, path: "/runs" });
 
