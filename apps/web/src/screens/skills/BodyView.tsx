@@ -17,15 +17,17 @@ export function scrollToAnchor(id: string): void {
   document.getElementById(id)?.scrollIntoView({ block: "start" });
 }
 
-/** A same-page link to an anchor that scrolls to it on a plain click. */
+/** A same-page link to an anchor: a plain click scrolls to it (or hands it to `onGo`). */
 export function AnchorLink({
   anchor,
   children,
   className,
+  onGo,
 }: {
   anchor: string;
   children: ReactNode;
   className?: string | undefined;
+  onGo?: ((anchor: string) => void) | undefined;
 }) {
   return (
     <a
@@ -34,7 +36,7 @@ export function AnchorLink({
       onClick={(event: MouseEvent<HTMLAnchorElement>) => {
         if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
         event.preventDefault();
-        scrollToAnchor(anchor);
+        (onGo ?? scrollToAnchor)(anchor);
       }}
     >
       {children}
