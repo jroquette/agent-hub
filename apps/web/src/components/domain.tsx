@@ -1,5 +1,7 @@
 import { Fragment, useState } from "react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
+
+import type { components } from "../api/schema";
 
 import { fmtDuration, fmtMoney, fmtTokens } from "../lib/format";
 import { AppLink, IconButton, IdChip, IssueLink, Tooltip, Button, type Phase } from "./core";
@@ -714,29 +716,141 @@ export function ApprovalPanel({ a, phase = "P2", children }: ApprovalPanelProps)
 }
 
 /* ---------- Golden path stepper (Features) ---------- */
-export interface GoldenStep {
-  name: string;
-  state: "done" | "current" | "pending";
-  date?: string | null | undefined;
-  by?: string | undefined;
+export type GoldenStep = components["schemas"]["GoldenStep"];
+type GoldenStepState = components["schemas"]["StepState"];
+type FeaturePhase = components["schemas"]["FeaturePhase"];
+
+export const GOLDEN_STEP_LABEL: Record<FeaturePhase, string> = {
+  spec: "Spec",
+  research: "Research",
+  plan: "Plan",
+  tickets: "Tickets",
+  implement: "Implement",
+  review: "Review",
+  evaluate: "Evaluate",
+  shipped: "Shipped",
+};
+
+/** Each state as text, so no state is told by color alone (AC-136.32). */
+export const GOLDEN_STATE_TEXT: Record<GoldenStepState, string> = {
+  done: "Done",
+  partial: "Partial",
+  current: "In progress",
+  pending: "Not reached",
+  skipped: "Skipped",
+  unknown: "Unknown",
+  blocked: "Blocked",
+};
+
+const GOLDEN_STATE_ICON: Partial<Record<GoldenStepState, IconName>> = {
+  done: "check",
+  blocked: "octagon-x",
+  unknown: "circle-dashed",
+};
+
+/**
+ * The steps as shown: a step the server marks done after a gate that is neither done nor skipped
+ * is shown `blocked`, naming that gate, so the stepper never claims a step done after an
+ * incomplete one (S8, AC-136.17).
+ */
+export function shownGoldenSteps(steps: readonly GoldenStep[]): GoldenStep[] {
+  let gate: GoldenStep | null = null;
+  return steps.map((step) => {
+    if (gate && step.state === "done") {
+      return { ...step, state: "blocked", reason: `${GOLDEN_STEP_LABEL[gate.name]} is not done` };
+    }
+    if (!gate && step.state !== "done" && step.state !== "skipped") gate = step;
+    return step;
+  });
 }
-export function GoldenPathStepper({ steps }: { steps: GoldenStep[] }) {
+
+/** "Evaluate: partial · partial: covers 3 of 36 ACs (Implement is not done)". */
+export function goldenStepSummary(step: GoldenStep): string {
+  const progress = step.progress
+    ? `${String(step.progress.done)}/${String(step.progress.total)}`
+    : null;
+  const meta = step.meta ?? progress;
+  const head = `${GOLDEN_STEP_LABEL[step.name]}: ${GOLDEN_STATE_TEXT[step.state].toLowerCase()}`;
+  const reason = step.state !== "done" && step.reason ? ` (${step.reason})` : "";
+  return `${head}${meta ? ` · ${meta}` : ""}${reason}`;
+}
+
+function progressPercent(step: GoldenStep): number | null {
+  if (!step.progress || step.progress.total <= 0) return null;
+  return Math.round(
+    (100 * Math.min(step.progress.done, step.progress.total)) / step.progress.total,
+  );
+}
+
+const DOT_STYLE: Partial<Record<GoldenStepState, CSSProperties>> = {
+  partial: {
+    background: "linear-gradient(90deg, var(--done) 50%, var(--surface) 50%)",
+    borderColor: "var(--done)",
+  },
+  blocked: { borderColor: "var(--blocked)", color: "var(--blocked)" },
+  skipped: { borderStyle: "dashed", opacity: 0.7 },
+  unknown: { borderStyle: "dashed", opacity: 0.7 },
+};
+
+/**
+ * The golden path of a feature as the server computes it (S8): each step's name, its state as
+ * text, its meta, its progress and the reason it is not done.
+ */
+export function GoldenPathStepper({
+  steps,
+  label = "Golden path",
+}: {
+  steps: readonly GoldenStep[];
+  label?: string | undefined;
+}) {
   return (
-    <ol className="ah-golden" style={{ listStyle: "none", margin: 0, padding: 0 }}>
-      {steps.map((step) => (
-        <li key={step.name} className="ah-golden-step" data-state={step.state}>
-          <span className="ah-golden-dot">{step.state === "done" && <Icon name="check" />}</span>
-          <span className="ah-golden-name">{step.name}</span>
-          <span className="ah-golden-meta">
-            {step.date ?? (step.state === "current" ? "In progress" : "—")}
-          </span>
-          {step.by && (
-            <span className="ah-golden-meta ah-mono" style={{ fontSize: 11 }}>
-              {step.by}
+    <ol
+      className="ah-golden"
+      style={{ listStyle: "none", margin: 0, padding: 0 }}
+      aria-label={label}
+    >
+      {shownGoldenSteps(steps).map((step) => {
+        const icon = GOLDEN_STATE_ICON[step.state];
+        const percent = progressPercent(step);
+        const count = step.progress
+          ? `${String(step.progress.done)}/${String(step.progress.total)}`
+          : null;
+        return (
+          <li key={step.name} className="ah-golden-step" data-state={step.state}>
+            {/* Only the dot fades: faded text would fail the contrast check (axe). */}
+            <span className="ah-golden-dot" style={DOT_STYLE[step.state]} aria-hidden="true">
+              {icon && <Icon name={icon} />}
             </span>
-          )}
-        </li>
-      ))}
+            <span className="ah-golden-name">{GOLDEN_STEP_LABEL[step.name]}</span>
+            <span className="ah-golden-meta" style={{ fontSize: 11, fontWeight: 500 }}>
+              {GOLDEN_STATE_TEXT[step.state]}
+            </span>
+            {(step.meta ?? count) && (
+              <span className="ah-golden-meta" style={{ fontSize: 11 }}>
+                {step.meta ?? count}
+              </span>
+            )}
+            {percent !== null && step.state !== "done" && (
+              <span
+                aria-hidden="true"
+                data-progress={percent}
+                style={{
+                  display: "block",
+                  height: 3,
+                  marginRight: 8,
+                  borderRadius: 2,
+                  background: `linear-gradient(90deg, var(--done) ${String(percent)}%, var(--surface-sunken) ${String(percent)}%)`,
+                }}
+              />
+            )}
+            {step.reason && step.state !== "done" && (
+              <span className="ah-golden-meta" style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                {step.reason}
+              </span>
+            )}
+          </li>
+        );
+      })}
     </ol>
   );
 }
