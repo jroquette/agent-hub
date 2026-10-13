@@ -11,7 +11,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -36,7 +36,7 @@ from agent_hub.core.agent_sessions.agent_session import (
 from agent_hub.core.agent_sessions.cloud import CloudSessionCommands
 from agent_hub.core.agent_sessions.control import AgentSessionCommands
 from agent_hub.core.agent_sessions.driver import DriverCapabilities
-from agent_hub.core.agent_sessions.records import LogRecordPage
+from agent_hub.core.agent_sessions.records import LogRecordPage, StreamItem
 from agent_hub.core.testing.read_model_builders import (
     AGENT_SESSION_ID,
     WORKDIR_ID,
@@ -110,6 +110,12 @@ def _control() -> Mock:
     for method in ("interrupt", "answer", "change_settings", "close"):
         getattr(control, method).return_value = session
     return control
+
+
+async def _no_items() -> AsyncIterator[StreamItem]:
+    # A subscription that ends at once, so the stream's response completes.
+    for item in ():
+        yield item
 
 
 def _cloud() -> Mock:
@@ -316,10 +322,13 @@ def test_refuses_stream_when_origin_foreign_or_cross_site(
 def test_streams_when_origin_missing_and_cookie_valid(
     signed_in: Guarded, headers: dict[str, str]
 ) -> None:
-    # The stream itself arrives with RT; until then the route's 501 shows access was granted.
+    signed_in.control.subscribe.return_value = _no_items()
+
     response = signed_in.client.get(STREAM, headers=headers)
 
-    assert response.status_code not in {401, 403, 404}, response.text
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("text/event-stream")
+    signed_in.control.subscribe.assert_awaited_once()
 
 
 def test_refuses_read_when_origin_foreign(signed_in: Guarded) -> None:
