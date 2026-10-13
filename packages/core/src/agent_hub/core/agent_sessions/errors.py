@@ -32,6 +32,16 @@ class SessionBusyError(AgentHubError):
         super().__init__(f"agent session {agent_session_id} is ending its turn; try again")
 
 
+class SessionLiveError(SessionBusyError):
+    """The session is live: close it before deleting it (409, as a busy session)."""
+
+    def __init__(self, agent_session_id: str) -> None:
+        self.agent_session_id = agent_session_id
+        AgentHubError.__init__(
+            self, f"agent session {agent_session_id} is live; close it before deleting it"
+        )
+
+
 class LiveLimitError(AgentHubError):
     """As many sessions as allowed are live; close one first (429)."""
 
