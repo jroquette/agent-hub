@@ -244,6 +244,7 @@ STATUS_ARGS = [
     "--porcelain=v2",
     "-z",
     "--branch",
+    "--no-ahead-behind",
     "--untracked-files=all",
     "--ignore-submodules=all",
 ]
@@ -341,8 +342,11 @@ def run_git(args: list, cwd: str) -> tuple:
 
 
 def parse_status(text: str) -> tuple:
-    """(HEAD's oid, the branch, [(path, XY)]) from `git status --porcelain=v2 -z --branch`. A
-    rename (`2`) names its new path, then its original path in the next NUL-separated field."""
+    """(HEAD's oid, the branch, [(path, state)]) from `git status --porcelain=v2 -z --branch`.
+    A state is `XY mW hI` (`XY mW h1 h2 h3` for an unmerged entry, `??` for an untracked one):
+    the status, the worktree's mode and the index's blobs, so a mode or index change on a path
+    already dirty is a change (E-7); never HEAD's blob, which the HEAD line covers. A rename
+    (`2`) names its new path, then its original path in the next NUL-separated field."""
     oid, branch, found = "", "", []
     records = text.split("\0")
     index = 0
@@ -356,19 +360,20 @@ def parse_status(text: str) -> tuple:
         elif record.startswith("1 "):
             parts = record.split(" ", 8)
             if len(parts) == 9:
-                found.append((parts[8], parts[1]))
+                found.append((parts[8], " ".join((parts[1], parts[5], parts[7]))))
         elif record.startswith("2 "):
             parts = record.split(" ", 9)
             original = records[index] if index < len(records) else ""
             index += 1
             if len(parts) == 10:
-                found.append((parts[9], parts[1]))
+                state = " ".join((parts[1], parts[5], parts[7]))
+                found.append((parts[9], state))
                 if original:
-                    found.append((original, parts[1]))
+                    found.append((original, state))
         elif record.startswith("u "):
             parts = record.split(" ", 10)
             if len(parts) == 11:
-                found.append((parts[10], parts[1]))
+                found.append((parts[10], " ".join((parts[1], parts[6], parts[7], parts[8], parts[9]))))
         elif record.startswith("? "):
             found.append((record[2:], "??"))
     return oid, branch, found
@@ -449,7 +454,7 @@ def digest(top: str, path: str) -> str:
 
 
 def snapshot_one(label: str, top: str, hub: bool) -> dict:
-    """One checkout: HEAD, branch and `path: XY:digest` per counted entry; `cut` names why it was
+    """One checkout: HEAD, branch and `path: state:digest` per counted entry; `cut` names why it was
     not read (git's cause, or `caps` over MAX_ENTRIES), and then holds no entry."""
     item = {"label": label, "path": top, "hub": hub, "head": "", "branch": "", "entries": {}, "cut": ""}
     text, cause = run_git(STATUS_ARGS, top)
@@ -458,12 +463,12 @@ def snapshot_one(label: str, top: str, hub: bool) -> dict:
         return item
     oid, branch, found = parse_status(text)
     tmp = tmp_inside(top)
-    kept = [(path, xy) for path, xy in found if not dropped(path, hub, tmp)]
+    kept = [(path, state) for path, state in found if not dropped(path, hub, tmp)]
     if len(kept) > MAX_ENTRIES:
         item["cut"] = "caps"
         return item
     item["head"], item["branch"] = oid, branch
-    item["entries"] = {path: xy + ":" + digest(top, path) for path, xy in kept}
+    item["entries"] = {path: state + ":" + digest(top, path) for path, state in kept}
     return item
 
 
@@ -504,7 +509,8 @@ def short(oid: str) -> str:
 
 
 def kind(value: str) -> str:
-    """The digest part of an entry value `XY:digest`."""
+    """The digest part of an entry value `state:digest`: all after the first `:` (a state holds
+    none; a digest may, as in `link:<sha256>`)."""
     return value.split(":", 1)[1] if ":" in value else value
 
 
