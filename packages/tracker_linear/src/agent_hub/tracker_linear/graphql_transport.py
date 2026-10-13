@@ -367,7 +367,7 @@ def _first_message(errors: Any, key: str) -> str:
 
 
 def without_key(text: str, key: str) -> str:
-    """``text`` with every copy of ``key`` replaced, before any cut (an echo must not leak a prefix)."""
+    """``text`` with every copy of ``key`` replaced, before any cut (no prefix may leak)."""
     return text.replace(key, "[the API key]") if key else text
 
 
