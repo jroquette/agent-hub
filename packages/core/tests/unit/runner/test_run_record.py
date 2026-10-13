@@ -1,6 +1,13 @@
 import pytest
 
-from agent_hub.core.runner.run_record import Stage, picked_data, reported_data, run_record
+from agent_hub.core.runner.run_record import (
+    RunOutcome,
+    Stage,
+    not_delivered_data,
+    picked_data,
+    reported_data,
+    run_record,
+)
 
 TS = "2026-10-02T09:30:00+00:00"
 
@@ -97,8 +104,16 @@ def test_holds_retro_fields_when_reported_record_built() -> None:
     # scripts/retro_metrics.py (hub) reads event, failed_stage, issue and total_cost_usd.
     url = "https://github.com/acme/demo-api/pull/99"
 
-    success = reported(ok=True, failed_stage=None, total_cost_usd=1.2345, pr=url)
-    failure = reported(ok=False, failed_stage=Stage.VERIFYING, total_cost_usd=0.5, pr="")
+    success = reported(
+        ok=True, failed_stage=None, total_cost_usd=1.2345, pr=url, outcome=RunOutcome.DELIVERED
+    )
+    failure = reported(
+        ok=False,
+        failed_stage=Stage.VERIFYING,
+        total_cost_usd=0.5,
+        pr="",
+        outcome=RunOutcome.FAILED,
+    )
 
     assert success == {
         "ts": TS,
@@ -112,7 +127,21 @@ def test_holds_retro_fields_when_reported_record_built() -> None:
         "total_cost_usd": 1.2345,
         "pr": url,
         "failed_stage": None,
+        "outcome": "delivered",
     }
-    assert list(success)[-4:] == ["ok", "total_cost_usd", "pr", "failed_stage"]
+    assert list(success)[-5:] == ["ok", "total_cost_usd", "pr", "failed_stage", "outcome"]
     assert failure["failed_stage"] == "VERIFYING"
     assert type(failure["failed_stage"]) is str
+
+
+@pytest.mark.parametrize("outcome", [RunOutcome.NO_CHANGES, RunOutcome.BLOCKED])
+def test_names_outcome_stage_and_reason_when_run_not_delivered(outcome: RunOutcome) -> None:
+    data = not_delivered_data(outcome=outcome, stage=Stage.IMPLEMENTING, reason="no commit")
+
+    assert data == {"outcome": outcome.value, "stage": "IMPLEMENTING", "reason": "no commit"}
+
+
+@pytest.mark.parametrize("outcome", [RunOutcome.DELIVERED, RunOutcome.FAILED])
+def test_raises_when_not_delivered_data_given_other_outcome(outcome: RunOutcome) -> None:
+    with pytest.raises(ValueError, match=outcome.value):
+        not_delivered_data(outcome=outcome, stage=Stage.IMPLEMENTING, reason="x")

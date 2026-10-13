@@ -156,3 +156,49 @@ def test_folds_same_run_when_events_shuffled_with_duplicates() -> None:
 
 def test_never_creates_run_when_only_session_events_exist() -> None:
     assert fold_runs(as_stored([an_event()])) == {}
+
+
+@pytest.mark.parametrize(
+    ("fails", "delivery"), [(False, "delivered"), (True, "failed")], ids=["pr", "failure"]
+)
+def test_derives_delivery_when_run_end_has_no_outcome(*, fails: bool, delivery: str) -> None:
+    run = fold_runs(as_stored(a_run_events(fails=fails)))["1a2b3c4d"]
+
+    assert run.delivery == delivery
+    assert run.delivery_reason is None
+
+
+def test_takes_delivery_from_outcome_when_run_end_names_one() -> None:
+    events = a_run_events()
+    end = events[-1].model_copy(
+        update={"payload": dict(events[-1].payload) | {"status": "failed", "outcome": "delivered"}}
+    )
+
+    run = fold_runs(as_stored([*events[:-1], end]))["1a2b3c4d"]
+
+    assert run.delivery == "delivered"
+    assert run.failure is not None
+
+
+@pytest.mark.parametrize("outcome", ["no_changes", "blocked"])
+def test_ends_reported_without_failure_when_run_not_delivered(outcome: str) -> None:
+    events = a_run_events()
+    payload = {key: value for key, value in events[-1].payload.items() if key != "pr_url"} | {
+        "status": "done",
+        "outcome": outcome,
+        "reason": "no commit on the branch",
+    }
+    end = events[-1].model_copy(update={"payload": payload})
+
+    run = fold_runs(as_stored([*events[:-1], end]))["1a2b3c4d"]
+
+    assert run.stage == Stage.REPORTED
+    assert run.failure is None
+    assert run.pr_url is None
+    assert (run.delivery, run.delivery_reason) == (outcome, "no commit on the branch")
+
+
+def test_leaves_delivery_unset_when_run_in_flight() -> None:
+    run = fold_runs(as_stored(a_run_events()[:5]))["1a2b3c4d"]
+
+    assert run.delivery is None

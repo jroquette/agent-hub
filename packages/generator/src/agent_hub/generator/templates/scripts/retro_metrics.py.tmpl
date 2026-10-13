@@ -3,7 +3,7 @@
 
   - merged PRs per repo and cycle time (opened → merged, median);
   - agent-runner PRs merged without human edits (no commits after the PR was opened);
-  - agent runs by outcome and failure stage, cost per issue (.agent-runs/*.jsonl);
+  - agent runs by outcome (PR, failure stage, no changes, blocked), cost per issue (.agent-runs/*.jsonl);
   - CI health: workflow runs on each repo's default branch, and how many failed;
   - memory: learning proposals waiting in brain/_inbox vs learnings merged into brain/learnings.
 
@@ -67,6 +67,14 @@ def pr_metrics(since: dt.date) -> dict[str, dict[str, object]]:
     return out
 
 
+def run_outcome(rec: dict[str, object]) -> str:
+    """``pr_opened``, ``failed:<stage>``, or a run that ended without a PR yet did not fail:
+    ``no_changes`` or ``blocked`` (newer records name their ``outcome``)."""
+    if rec.get("outcome") in ("no_changes", "blocked"):
+        return str(rec["outcome"])
+    return f"failed:{rec['failed_stage']}" if rec.get("failed_stage") else "pr_opened"
+
+
 def run_metrics(since: dt.date) -> dict[str, object]:
     outcomes: collections.Counter[str] = collections.Counter()
     cost: collections.defaultdict[str, float] = collections.defaultdict(float)
@@ -76,7 +84,7 @@ def run_metrics(since: dt.date) -> dict[str, object]:
         for line in f.read_text().splitlines():
             rec = json.loads(line)
             if rec.get("event") == "reported":
-                outcomes[f"failed:{rec['failed_stage']}" if rec.get("failed_stage") else "pr_opened"] += 1
+                outcomes[run_outcome(rec)] += 1
                 cost[rec["issue"]] += float(rec.get("total_cost_usd") or 0)
     return {"outcomes": dict(outcomes), "cost_per_issue": {k: round(v, 2) for k, v in cost.items()}}
 
