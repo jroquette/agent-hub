@@ -478,3 +478,160 @@ def test_hashes_id_when_start_reads_unsafe_id(
 
     assert sorted(os.listdir(gate_ws.tmp)) == [f"{STATE_PREFIX}{expected}.json"]
     assert outside_tmpdir(tmp_path, gate_ws) - before == set()
+
+
+BLOCK_HEAD = (
+    "[hub readonly-gate] researcher (agent a1) is read-only (mutates_checkout: false) but changed:"
+)
+REVERT = "Revert these changes, or explain in your final report why each one was needed."
+
+
+def git_output(ws: GateWorkspace, *args: str, cwd: Path) -> str:
+    """git's stdout in ``cwd``, run in the workspace's environment, without its last newline."""
+    git = shutil.which("git")
+    assert git is not None
+    completed = subprocess.run(  # noqa: S603 - git found on PATH, fixed arguments
+        [git, *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        env={"PATH": os.environ.get("PATH", os.defpath), **ws.env},
+    )
+    return completed.stdout.decode("utf-8").rstrip("\n")
+
+
+def run_researcher(gate: Gate, change: Callable[[], object]) -> dict[str, Any] | None:
+    """Start the researcher ``a1`` (empty readable transcripts), run ``change``, stop it.
+
+    The start must be silent and save the state; the stop's output is returned.
+    """
+    main, agent = transcripts(gate.ws, agent_id="a1")
+    assert gate.start("researcher", agent_id="a1", transcript_path=main) is None
+    assert state_files(gate.ws) == [state_name("a1")]
+    change()
+    return gate.stop("researcher", agent_id="a1", transcript_path=main, agent_transcript_path=agent)
+
+
+def block_lines(output: dict[str, Any] | None) -> list[str]:
+    """The reason's lines of a block (asserting it is one, with its header and its ask)."""
+    assert output is not None
+    assert output["decision"] == "block"
+    lines: list[str] = output["reason"].splitlines()
+    assert lines[0] == BLOCK_HEAD
+    assert REVERT in lines
+    return lines
+
+
+def move_tmpdir_into_app(gate: Gate) -> None:
+    """Point the gate's TMPDIR at ``app/gate-tmp``: inside the watched repo, not gitignored."""
+    ws = gate.ws
+    tmp = ws.app / "gate-tmp"
+    tmp.mkdir()
+    gate.ws = GateWorkspace(
+        root=ws.root,
+        hub=ws.hub,
+        app=ws.app,
+        tmp=tmp,
+        home=ws.home,
+        env={**ws.env, "TMPDIR": str(tmp)},
+    )
+
+
+@pytest.mark.parametrize(
+    "case", ["nothing", "hub_brain", "hub_inbox", "gitignored", "state_dir_in_app"]
+)
+def test_stays_silent_when_run_clean(gate: Gate, gate_ws: GateWorkspace, case: str) -> None:
+    """AC-141.5, E-11: nothing changed, or only the hub's ``brain/`` (tracked or new), a
+    gitignored file, or the gate's own state in a TMPDIR inside the repo: silent, state deleted."""
+    if case == "state_dir_in_app":
+        move_tmpdir_into_app(gate)
+    changes: dict[str, Callable[[], object]] = {
+        "nothing": lambda: None,
+        "hub_brain": lambda: (gate_ws.hub / "brain" / "now.md").write_text(
+            "# Now\n\nEdited by the agent.\n", encoding="utf-8"
+        ),
+        "hub_inbox": lambda: (gate_ws.hub / "brain" / "_inbox" / "note.md").write_text(
+            "A note.\n", encoding="utf-8"
+        ),
+        "gitignored": lambda: (gate_ws.app / "run.log").write_text("log\n", encoding="utf-8"),
+        "state_dir_in_app": lambda: None,
+    }
+
+    def change() -> None:
+        changes[case]()
+        if case == "state_dir_in_app":  # control: git does see the state as a new file
+            status = git_output(gate_ws, "status", "--porcelain", "-uall", cwd=gate_ws.app)
+            assert f"?? gate-tmp/{state_name('a1')}" in status.splitlines()
+
+    assert run_researcher(gate, change) is None
+
+    assert state_files(gate.ws) == []
+
+
+def test_deletes_state_when_run_clean(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """AC-141.5: a clean stop removes the start state and prints nothing."""
+    assert run_researcher(gate, lambda: None) is None
+
+    assert state_files(gate_ws) == []
+    assert not (gate_ws.tmp / state_name("a1")).exists()
+
+
+def test_blocks_when_dirty_before_file_changed_again(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """AC-141.8: a file already dirty at start and changed again is a changed path."""
+    change_app(gate_ws)
+
+    lines = block_lines(
+        run_researcher(gate, lambda: (gate_ws.app / "a.py").write_text("A = 3\n", encoding="utf-8"))
+    )
+
+    assert "- app/a.py" in lines
+
+
+def test_stays_silent_when_dirty_before_file_untouched(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """AC-141.8: a file dirty before the start and left alone is not named."""
+    change_app(gate_ws)
+    status = git_output(gate_ws, "status", "--porcelain", cwd=gate_ws.app)
+    assert status.splitlines() == [" M a.py"]  # control: dirty at start
+
+    assert run_researcher(gate, lambda: None) is None
+
+    assert state_files(gate_ws) == []
+
+
+def test_names_head_moved_when_agent_commits(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """AC-141.8: a commit is named as the repo's HEAD change."""
+    old = git_output(gate_ws, "rev-parse", "HEAD", cwd=gate_ws.app)
+
+    def commit() -> None:
+        change_app(gate_ws)
+        gate_ws.commit_all(gate_ws.app)
+
+    lines = block_lines(run_researcher(gate, commit))
+
+    new = git_output(gate_ws, "rev-parse", "HEAD", cwd=gate_ws.app)
+    assert new != old
+    assert f"- app: HEAD {old[:7]} (main) -> {new[:7]} (main)" in lines
+    assert "- app/a.py" not in lines  # committed: the tree is clean again
+
+
+def test_names_head_moved_when_agent_switches_branch(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """AC-141.8: a branch switch is named, even when HEAD's commit stays the same."""
+    old = git_output(gate_ws, "rev-parse", "HEAD", cwd=gate_ws.app)
+
+    lines = block_lines(
+        run_researcher(gate, lambda: gate_ws.git("checkout", "-q", "-b", "side", cwd=gate_ws.app))
+    )
+
+    assert f"- app: HEAD {old[:7]} (main) -> {old[:7]} (side)" in lines
+
+
+def test_blocks_when_no_overlap_block_index_only_change(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """E-7: staging a file already dirty changes no content, but the index counts."""
+    change_app(gate_ws)
+    content = (gate_ws.app / "a.py").read_bytes()
+
+    lines = block_lines(run_researcher(gate, lambda: gate_ws.git("add", "a.py", cwd=gate_ws.app)))
+
+    assert (gate_ws.app / "a.py").read_bytes() == content
+    assert git_output(gate_ws, "status", "--porcelain", cwd=gate_ws.app).splitlines() == ["M  a.py"]
+    assert "- app/a.py" in lines
