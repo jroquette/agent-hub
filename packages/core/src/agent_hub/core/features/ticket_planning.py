@@ -5,8 +5,10 @@ row, named by its ``ref`` (its tracker id once created, else its draft key). A "
 comes from the plan's ``blocked_by``, from Linear's relations, or both, and says so. A ticket is
 done when its Linear state type is ``completed``; a canceled (or duplicate) ticket never blocks
 and is left out of the planning. Over the tickets neither done nor canceled: dependency cycles
-(strongly connected components) are flagged and left out; the rest are layered by Kahn's
-algorithm (each layer can run in parallel), and the recommended order is the layers in turn,
+(strongly connected components) are flagged and left out, and so is a ticket waiting on a
+blocker outside the feature that is not done, canceled or known (it is listed under ``waiting``);
+the rest are layered by Kahn's algorithm (each layer can run in parallel, the first is
+``can_start``), and the recommended order is the layers in turn,
 each by priority (1 urgent first, 0 none last), then plan ``order``, then ref. Blockers outside
 the feature (named by Linear's relations, or only by the plan's ``blocked_by``) are listed with
 the status Linear returned for them. Without a snapshot the readiness comes from the plan's edges
@@ -124,7 +126,12 @@ def ticket_board(
     graph = {ref: sorted(b for b in by_ref[ref].edges if b in active) for ref in sorted(active)}
     cycles = _cycles(graph, by_ref)
     in_cycle = {ref for cycle in cycles for ref in cycle}
-    layers = _layers(graph, in_cycle, by_ref)
+    # A ticket behind an open (or unread) blocker outside the feature cannot start: it and the
+    # tickets after it get no layer, so every layer's blockers are in earlier layers or settled.
+    held = {
+        ref for ref in active if any(b not in by_ref and not settled(b) for b in by_ref[ref].edges)
+    }
+    layers = _layers(graph, in_cycle | held, by_ref)
     order = tuple(ref for layer in layers for ref in layer)
     readiness: dict[str, Readiness] = {}
     waiting_on: dict[str, tuple[str, ...]] = {}
@@ -342,10 +349,11 @@ def _reachable(graph: dict[str, list[str]], start: str) -> set[str]:
 
 
 def _layers(
-    graph: dict[str, list[str]], in_cycle: set[str], by_ref: dict[str, _Node]
+    graph: dict[str, list[str]], held: set[str], by_ref: dict[str, _Node]
 ) -> tuple[tuple[str, ...], ...]:
-    """Kahn's layers over the tickets not in a cycle; a ticket after a cycle never gets one."""
-    pending = {ref: set(blockers) for ref, blockers in graph.items() if ref not in in_cycle}
+    """Kahn's layers over the tickets not ``held`` (in a cycle, or behind an open blocker outside
+    the feature); a ticket after a held one never gets one."""
+    pending = {ref: set(blockers) for ref, blockers in graph.items() if ref not in held}
     layers: list[tuple[str, ...]] = []
     while True:
         layer = sorted(
