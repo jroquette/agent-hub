@@ -13,7 +13,10 @@ from agent_hub.api.local_security import LocalSecurityMiddleware
 from agent_hub.api.openapi_paths import API_PREFIX
 from agent_hub.api.rfc9457 import ProblemFactory, UnhandledErrorMiddleware, install_problem_handlers
 from agent_hub.api.routes import (
+    agent_session_stream,
+    agent_sessions,
     approvals,
+    cloud_sessions,
     collector,
     doctor,
     features,
@@ -49,6 +52,10 @@ ROUTERS = (
     collector,
     settings,
     streams,
+    # Cloud first, then the static agent-session paths before the id ones (P5).
+    cloud_sessions,
+    agent_sessions,
+    agent_session_stream,
 )
 
 
