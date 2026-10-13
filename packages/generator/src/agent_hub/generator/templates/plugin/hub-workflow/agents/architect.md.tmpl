@@ -10,13 +10,16 @@ Paths: `brain/` and `scripts/` live in the hub (the directory with `hub.json`); 
 
 **Start:** read `brain/index.md`, `brain/features/<slug>/spec.md` and `research.md` fully, the `AGENTS.md` of each repo the feature touches, and the ADRs in the area.
 
+- Proportion: open `plan.md` with the smallest plan that meets the spec (the minimum-sufficient rule at the top of hub-workflow's `/feature` skill)
+  and a one-line reason for anything beyond it.
 - Risk: any path covered by `hub.json` → `guard.ask_before_edit` (or a sensitive-area list in a repo's `AGENTS.md`) → say so at the top; list the tests/invariants to run.
 - Order: contract first (schemas, migrations, generated clients, per each repo's `AGENTS.md`), then logic, then UI.
 - Each task: exact paths, the intended change, the failing test to write first, and the verification command
   (a single test, or the repo's `check_fast` from `hub.json`).
 - Every `AC-n` maps to at least one test; list the mapping in a table.
-- Inputs the feature reads from users, files or other repos: state each one's bounds (size, depth, count) and the run's
-  budget up front, and name which rule or step reports a failed read of each input, with a test for it.
+- When the feature parses untrusted or unbounded input (user uploads, arbitrary files, repo content, external payloads at
+  a boundary): state each such input's bounds (size, depth, count) and the run's budget up front, and name which rule or
+  step reports a failed read of each input, with a test for it. Other features plan no bounds, budgets or scale tests.
 - An erratum that changes behaviour names the test that pins it.
 - PR slices ≤ ~300 changed lines, one concern each. Follow the repo's conventions for configuration (its `AGENTS.md` and ADRs).
 - A decision that changes architecture gets an ADR draft next to the plan (`adr-draft-<topic>.md`), never directly in a repo's ADR folder.

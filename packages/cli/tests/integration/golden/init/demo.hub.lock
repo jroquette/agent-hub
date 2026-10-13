@@ -234,7 +234,7 @@
     "plugin/hub-workflow/agents/architect.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "b417ed82fc64f5ce1e48cd5c3a2ea613d9352868a8cb1c2a588da5196d9cd594"
+      "sha256": "65f87843553ecc602d854a6c7f2f9389b188ced0ceff5cc5ef03c9d43f2b616f"
     },
     "plugin/hub-workflow/agents/evaluator.md": {
       "executable": false,
@@ -249,12 +249,12 @@
     "plugin/hub-workflow/agents/quality-reviewer.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "fd267809d50da2df878ce62da65aa7d2f75509d39b5401aa38f081b15b81f716"
+      "sha256": "3fa7c48d0ad30d8c3ebf1d04aafc68322410e9f6016ac7790e8cb8157136aa24"
     },
     "plugin/hub-workflow/agents/requirements-analyst.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "ab751abfcef8e53f5f9b6cb2a07698bc6f1fd5fda30be944d298f756a457b643"
+      "sha256": "438d59a8fac0e7b37a20f5d76f88353be1251b5b7397e90ab95dd3258f3f9011"
     },
     "plugin/hub-workflow/agents/researcher.md": {
       "executable": false,
@@ -264,7 +264,7 @@
     "plugin/hub-workflow/agents/spec-reviewer.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "5c2ea69603034913f43b8dd45c084bd71db815154a1a63000ec74fb328f3a703"
+      "sha256": "c85d1974eb74ef4a7251c5929c4bba29b1431101998ab2f03d8886cfef132062"
     },
     "plugin/hub-workflow/hooks/event_sensor.py": {
       "executable": true,
@@ -339,7 +339,7 @@
     "plugin/hub-workflow/skills/feature/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "632eecfccb30d345032e66eaa7bb8620b889f886bd40b5c904d1b395484c9bca"
+      "sha256": "321e1d70d4d2024e1c5d7a08093d2d74587ecebec066f2ebc787443ae2bf53eb"
     },
     "plugin/hub-workflow/skills/fix/SKILL.md": {
       "executable": false,
