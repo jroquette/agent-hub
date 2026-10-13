@@ -639,6 +639,118 @@
         "title": "CollectorStatus",
         "type": "object"
       },
+      "EdgeSource": {
+        "enum": [
+          "plan",
+          "linear",
+          "both"
+        ],
+        "type": "string"
+      },
+      "EvalRecord": {
+        "additionalProperties": false,
+        "description": "One evaluation of a delivery: ``evals/<delivery>.md``, or the legacy ``eval.md``.\n\n``path`` is relative to the hub's ``brain/``. ``acs`` is the AC ids evaluated or ``\"all\"``;\n``evaluated_at`` is the frontmatter's text (an ISO date or time). ``problem`` says why the\nfile could not be read or parsed; its other fields are then empty.",
+        "properties": {
+          "acs": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "const": "all",
+                "type": "string"
+              }
+            ],
+            "title": "Acs"
+          },
+          "commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit"
+          },
+          "delivery": {
+            "title": "Delivery",
+            "type": "string"
+          },
+          "evaluated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evaluated At"
+          },
+          "legacy": {
+            "title": "Legacy",
+            "type": "boolean"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Problem"
+          },
+          "prs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Prs",
+            "type": "array"
+          },
+          "tickets": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tickets",
+            "type": "array"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Verdict"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "delivery",
+          "path",
+          "verdict",
+          "tickets",
+          "acs",
+          "prs",
+          "commit",
+          "evaluated_at",
+          "legacy",
+          "problem"
+        ],
+        "title": "EvalRecord",
+        "type": "object"
+      },
       "EventId": {
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
         "type": "string"
@@ -680,9 +792,64 @@
         "title": "EventType",
         "type": "string"
       },
+      "ExternalBlocker": {
+        "additionalProperties": false,
+        "description": "A blocker outside the feature's tickets, with its status when Linear returned it.",
+        "properties": {
+          "done": {
+            "title": "Done",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IssueState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "state",
+          "url",
+          "done"
+        ],
+        "title": "ExternalBlocker",
+        "type": "object"
+      },
       "FeatureDetail": {
         "additionalProperties": false,
-        "description": "A feature with its acceptance criteria rows and its records (D3).",
+        "description": "A feature with its acceptance criteria rows, its records (D3) and every eval.",
         "properties": {
           "ac_rows": {
             "default": [],
@@ -707,12 +874,23 @@
             "title": "Derived",
             "type": "boolean"
           },
+          "evals": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EvalRecord"
+            },
+            "title": "Evals",
+            "type": "array"
+          },
           "files": {
             "items": {
               "type": "string"
             },
             "title": "Files",
             "type": "array"
+          },
+          "golden_path": {
+            "$ref": "#/components/schemas/GoldenPath"
           },
           "issues": {
             "items": {
@@ -782,6 +960,9 @@
             "title": "Sources Missing",
             "type": "array"
           },
+          "tickets_source": {
+            "$ref": "#/components/schemas/TicketsSource"
+          },
           "verdict": {
             "anyOf": [
               {
@@ -814,7 +995,9 @@
           "acs",
           "verdict",
           "verdict_line",
-          "repos"
+          "repos",
+          "golden_path",
+          "tickets_source"
         ],
         "title": "FeatureDetail",
         "type": "object"
@@ -866,9 +1049,101 @@
         ],
         "type": "string"
       },
+      "FeatureTickets": {
+        "additionalProperties": false,
+        "description": "``GET /features/{project}/{slug}/tickets``: the tickets, their planning and the golden\npath computed with them.\n\n``source`` is ``linear`` when a snapshot was used (``stale`` when it is the last good one\nafter a failure; ``as_of`` is when it was read), else ``plan``, with a ``notice`` and the\n``tracker_problem`` naming the cause.",
+        "properties": {
+          "as_of": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "derived": {
+            "default": true,
+            "title": "Derived",
+            "type": "boolean"
+          },
+          "golden_path": {
+            "$ref": "#/components/schemas/GoldenPath"
+          },
+          "notice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notice"
+          },
+          "planning": {
+            "$ref": "#/components/schemas/TicketPlan"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/TicketsSource"
+          },
+          "sources_missing": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EventSource"
+            },
+            "title": "Sources Missing",
+            "type": "array"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "tickets": {
+            "items": {
+              "$ref": "#/components/schemas/TicketRow"
+            },
+            "title": "Tickets",
+            "type": "array"
+          },
+          "tracker_problem": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TrackerProblem"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "project",
+          "slug",
+          "source",
+          "stale",
+          "as_of",
+          "notice",
+          "tracker_problem",
+          "tickets",
+          "planning",
+          "golden_path"
+        ],
+        "title": "FeatureTickets",
+        "type": "object"
+      },
       "FeatureView": {
         "additionalProperties": false,
-        "description": "A feature as the Features list shows it; ``problem`` when a file of it is malformed.",
+        "description": "A feature as the Features list shows it; ``problem`` when a file of it is malformed.\n\n``phase`` equals ``golden_path.phase``; ``tickets_source`` says whether the ticket counts\nbehind the golden path came from Linear or from the plan.",
         "properties": {
           "acs": {
             "anyOf": [
@@ -891,6 +1166,9 @@
             },
             "title": "Files",
             "type": "array"
+          },
+          "golden_path": {
+            "$ref": "#/components/schemas/GoldenPath"
           },
           "issues": {
             "items": {
@@ -952,6 +1230,9 @@
             "title": "Sources Missing",
             "type": "array"
           },
+          "tickets_source": {
+            "$ref": "#/components/schemas/TicketsSource"
+          },
           "verdict": {
             "anyOf": [
               {
@@ -984,7 +1265,9 @@
           "acs",
           "verdict",
           "verdict_line",
-          "repos"
+          "repos",
+          "golden_path",
+          "tickets_source"
         ],
         "title": "FeatureView",
         "type": "object"
@@ -1068,6 +1351,81 @@
             "type": "array"
           }
         ]
+      },
+      "GoldenPath": {
+        "additionalProperties": false,
+        "description": "The feature's steps in their fixed order; ``phase`` is the first step neither done nor\nskipped (``shipped`` when all are).",
+        "properties": {
+          "phase": {
+            "$ref": "#/components/schemas/FeaturePhase"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/GoldenStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "steps",
+          "phase"
+        ],
+        "title": "GoldenPath",
+        "type": "object"
+      },
+      "GoldenStep": {
+        "additionalProperties": false,
+        "description": "One step of the golden path: its state, a short ``meta`` text and the ``reason`` it is\nnot done (naming the failing gate), and its ``progress`` when it counts something.",
+        "properties": {
+          "meta": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Meta"
+          },
+          "name": {
+            "$ref": "#/components/schemas/FeaturePhase"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StepProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "state": {
+            "$ref": "#/components/schemas/StepState"
+          }
+        },
+        "required": [
+          "name",
+          "state",
+          "meta",
+          "reason",
+          "progress"
+        ],
+        "title": "GoldenStep",
+        "type": "object"
       },
       "HookAccepted": {
         "additionalProperties": false,
@@ -1423,6 +1781,37 @@
         ],
         "title": "IssueRef",
         "type": "object"
+      },
+      "IssueState": {
+        "additionalProperties": false,
+        "description": "An issue's workflow state: its ``name`` in the team and Linear's state ``type``.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/IssueStateType"
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ],
+        "title": "IssueState",
+        "type": "object"
+      },
+      "IssueStateType": {
+        "enum": [
+          "triage",
+          "backlog",
+          "unstarted",
+          "started",
+          "completed",
+          "canceled",
+          "duplicate"
+        ],
+        "type": "string"
       },
       "JsonValue": {},
       "Learning": {
@@ -3468,6 +3857,17 @@
         "title": "PullRequestRef",
         "type": "object"
       },
+      "Readiness": {
+        "enum": [
+          "can_start",
+          "waiting",
+          "done",
+          "canceled",
+          "in_cycle",
+          "unknown"
+        ],
+        "type": "string"
+      },
       "RejectLearningBody": {
         "additionalProperties": false,
         "description": "``POST /learnings/{learning_id}/reject``: why, 1 to 300 characters once stripped.",
@@ -4709,6 +5109,40 @@
         ],
         "type": "string"
       },
+      "StepProgress": {
+        "additionalProperties": false,
+        "description": "How much of a step is done: ``done`` of ``total`` (tickets, ACs, reviews).",
+        "properties": {
+          "done": {
+            "minimum": 0.0,
+            "title": "Done",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "done",
+          "total"
+        ],
+        "title": "StepProgress",
+        "type": "object"
+      },
+      "StepState": {
+        "enum": [
+          "done",
+          "partial",
+          "current",
+          "pending",
+          "skipped",
+          "unknown",
+          "blocked"
+        ],
+        "type": "string"
+      },
       "StepStatus": {
         "enum": [
           "running",
@@ -4735,6 +5169,294 @@
         ],
         "title": "SummaryLine",
         "type": "object"
+      },
+      "TicketEdge": {
+        "additionalProperties": false,
+        "description": "A \"blocked by\" edge to the ticket ``ref`` (a row's ``ref`` or an external issue id).",
+        "properties": {
+          "ref": {
+            "title": "Ref",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/EdgeSource"
+          }
+        },
+        "required": [
+          "ref",
+          "source"
+        ],
+        "title": "TicketEdge",
+        "type": "object"
+      },
+      "TicketPlan": {
+        "additionalProperties": false,
+        "description": "The planning of the feature's tickets, every ticket named by its row's ``ref``.\n\n``layers`` are the parallel groups (Kahn's layers over tickets not done or canceled);\n``can_start`` the first layer's tickets that wait on nothing; ``order`` the recommended\norder; ``waiting`` the tickets with a blocker not done; ``cycles`` each dependency cycle\n(left out of the layers); ``critical_path`` the longest chain of tickets not done.",
+        "properties": {
+          "can_start": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Can Start",
+            "type": "array"
+          },
+          "critical_path": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Critical Path",
+            "type": "array"
+          },
+          "cycles": {
+            "items": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": "Cycles",
+            "type": "array"
+          },
+          "external_blockers": {
+            "items": {
+              "$ref": "#/components/schemas/ExternalBlocker"
+            },
+            "title": "External Blockers",
+            "type": "array"
+          },
+          "layers": {
+            "items": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": "Layers",
+            "type": "array"
+          },
+          "order": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Order",
+            "type": "array"
+          },
+          "waiting": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Waiting",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "layers",
+          "can_start",
+          "order",
+          "waiting",
+          "cycles",
+          "external_blockers",
+          "critical_path",
+          "warnings"
+        ],
+        "title": "TicketPlan",
+        "type": "object"
+      },
+      "TicketRow": {
+        "additionalProperties": false,
+        "description": "One ticket of the feature.\n\n``key`` is the plan's draft key (None for a ticket only Linear or ``linear`` lists), ``id``\nthe tracker identifier (None until created). ``title``, ``state``, ``assignee`` and ``url``\ncome from Linear when read, else ``title`` from the plan and the others None. ``acs`` are the\nAC ids whose ``ticket`` names it; ``blocks`` the refs it blocks; ``waiting_on`` the refs of\nits blockers not done yet. ``reviewed`` is None when unknown (no snapshot and no record).",
+        "properties": {
+          "acs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Acs",
+            "type": "array"
+          },
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee"
+          },
+          "blocked_by": {
+            "items": {
+              "$ref": "#/components/schemas/TicketEdge"
+            },
+            "title": "Blocked By",
+            "type": "array"
+          },
+          "blocks": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Blocks",
+            "type": "array"
+          },
+          "estimate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimate"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key"
+          },
+          "order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order"
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority"
+          },
+          "readiness": {
+            "$ref": "#/components/schemas/Readiness"
+          },
+          "ref": {
+            "title": "Ref",
+            "type": "string"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          },
+          "reviewed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IssueState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "waiting_on": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Waiting On",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ref",
+          "key",
+          "id",
+          "title",
+          "state",
+          "assignee",
+          "url",
+          "priority",
+          "estimate",
+          "repo",
+          "order",
+          "acs",
+          "blocked_by",
+          "blocks",
+          "readiness",
+          "waiting_on",
+          "reviewed"
+        ],
+        "title": "TicketRow",
+        "type": "object"
+      },
+      "TicketsSource": {
+        "enum": [
+          "linear",
+          "plan"
+        ],
+        "type": "string"
       },
       "TileGroup": {
         "enum": [
@@ -4927,6 +5649,36 @@
           "cache_write"
         ],
         "title": "TokenUsage",
+        "type": "object"
+      },
+      "TrackerProblem": {
+        "additionalProperties": false,
+        "description": "Why Linear was not read, as RFC 9457 members: ``type`` is\n``urn:agent-hub:problem:tracker-<kind>``, ``status`` Linear's HTTP status (or 503 when it did\nnot answer, 504 on a timeout).",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "status",
+          "detail"
+        ],
+        "title": "TrackerProblem",
         "type": "object"
       },
       "TrackerView": {
@@ -5876,6 +6628,72 @@
           }
         },
         "summary": "Get Feature",
+        "tags": [
+          "features"
+        ]
+      }
+    },
+    "/api/v1/features/{project}/{slug}/tickets": {
+      "get": {
+        "description": "One feature's tickets with their planning and golden path; Linear when connected, else\nthe plan with a notice (always 200 for a known feature).",
+        "operationId": "get_feature_tickets_api_v1_features__project___slug__tickets_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeatureTickets"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Feature Tickets",
         "tags": [
           "features"
         ]
