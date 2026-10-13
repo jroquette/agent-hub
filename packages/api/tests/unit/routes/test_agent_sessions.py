@@ -96,10 +96,10 @@ def test_answers_not_implemented_when_control_not_wired(wired: Any) -> None:
         ("delete", ONE, None, 204, "delete"),
         ("get", f"{ONE}/events?after=2&limit=50", None, 200, "events"),
         ("post", f"{ONE}/messages", {"text": "Run the tests."}, 202, "send"),
-        ("post", f"{ONE}/interrupt", None, 202, "interrupt"),
+        ("post", f"{ONE}/interrupt", {}, 202, "interrupt"),
         ("post", f"{ONE}/permissions/req-1", {"decision": "allow"}, 200, "answer"),
         ("post", f"{ONE}/settings", {"mode": "plan"}, 200, "change_settings"),
-        ("post", f"{ONE}/close", None, 200, "close"),
+        ("post", f"{ONE}/close", {}, 200, "close"),
     ],
 )
 def test_calls_one_control_method_when_route_requested(

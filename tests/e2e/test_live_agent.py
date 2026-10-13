@@ -115,7 +115,10 @@ def _hub_web(root: Path, *, projects: Path) -> Iterator[str]:
         try:
             assert process.stdout is not None
             line = process.stdout.readline()
-            assert line == f"agent-hub at http://127.0.0.1:{port}\n", (root / "web.log").read_text()
+            # The URL carries this start's session token (AGH-165, P6).
+            assert line.startswith(f"agent-hub at http://127.0.0.1:{port}/?token="), (
+                root / "web.log"
+            ).read_text()
             yield f"http://127.0.0.1:{port}"
         finally:
             process.send_signal(signal.SIGINT)
