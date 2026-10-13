@@ -1,0 +1,228 @@
+/* A skill, agent or hook detail (D4): header card, then sections. */
+.ah-skill-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+}
+.ah-skill-header-top {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.ah-skill-title {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.ah-skill-lede {
+  margin: 0;
+  max-width: 72ch;
+  color: var(--text-muted);
+}
+.ah-skill-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-3) var(--space-6);
+  margin: 0;
+}
+.ah-skill-fact {
+  min-width: 0;
+}
+.ah-skill-fact dt,
+.ah-skill-cost dt {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+}
+.ah-skill-fact dd,
+.ah-skill-cost dd {
+  margin: 2px 0 0;
+  font-size: 13px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+.ah-skill-section {
+  min-width: 0;
+}
+.ah-skill-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.ah-skill-fm td {
+  vertical-align: top;
+}
+.ah-skill-fm-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.ah-skill-fm-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.ah-skill-fm-map {
+  margin: 0;
+}
+.ah-skill-fm-map dt,
+.ah-skill-fm-map dd {
+  display: inline;
+  margin: 0;
+}
+.ah-skill-body {
+  display: flex;
+  gap: var(--space-6);
+  align-items: flex-start;
+}
+.ah-skill-toc {
+  position: sticky;
+  top: var(--space-4);
+  flex: none;
+  width: 200px;
+  font-size: 13px;
+}
+.ah-skill-toc ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ah-skill-toc li {
+  padding: 2px 0;
+}
+.ah-skill-toc li[data-level="2"] {
+  padding-left: 8px;
+}
+.ah-skill-toc li[data-level="3"],
+.ah-skill-toc li[data-level="4"],
+.ah-skill-toc li[data-level="5"],
+.ah-skill-toc li[data-level="6"] {
+  padding-left: 16px;
+}
+@media (max-width: 900px) {
+  .ah-skill-body {
+    flex-direction: column;
+  }
+  .ah-skill-toc {
+    position: static;
+    width: auto;
+  }
+}
+.ah-skill-body [id^="step-"]:target,
+.ah-skill-body :target {
+  scroll-margin-top: var(--space-4);
+}
+.ah-skill-raw {
+  margin: 0;
+  padding: var(--space-3);
+  max-height: 70vh;
+  overflow: auto;
+  background: var(--code-bg);
+  border-radius: var(--radius-md);
+  font: 400 12.5px/18px var(--font-mono);
+  white-space: pre;
+}
+.ah-skill-costs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4) var(--space-8);
+  margin: 0;
+}
+.ah-skill-cost-value {
+  font-size: 16px;
+  font-weight: 600;
+}
+.ah-skill-cost-source {
+  display: block;
+}
+.ah-skill-diags {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ah-skill-diags li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+}
+.ah-skill-diags li[data-sev="warning"] .ah-icon {
+  color: var(--waiting);
+}
+.ah-skill-diags li[data-sev="info"] .ah-icon {
+  color: var(--live);
+}
+.ah-skill-diag-msg {
+  flex-basis: 100%;
+  padding-left: 22px;
+  font-size: 13px;
+}
+.ah-skill-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ah-skill-steps li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-2) var(--space-3);
+  border-left: 2px solid var(--border-strong);
+}
+.ah-skill-step-title {
+  font-weight: 500;
+}
+.ah-skill-step-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.ah-skill-relations-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-4);
+}
+.ah-skill-relations,
+.ah-skill-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ah-skill-relations li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.ah-skill-role {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 var(--space-2);
+  font-size: 13px;
+  font-weight: 600;
+}
+.ah-skill-files li {
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--border);
+  scroll-margin-top: var(--space-4);
+}
+.ah-skill-file-text {
+  padding: var(--space-2) 0;
+}

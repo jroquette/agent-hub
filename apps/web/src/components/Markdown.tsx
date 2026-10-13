@@ -6,12 +6,22 @@
  * notes of the same brain route inside the app (handed to `onBrainLink` when given), http(s) URLs
  * open in a new tab, paths leaving the brain and anything else render as plain text. Images render
  * as links, never as `<img>`. Inputs over the bounds render as text.
+ *
+ * A skill body (AGH-164) passes `localLink`, asked first for every relative link (a bundled file of
+ * the skill opens in the page; null falls back to the rules above, so text without a note), and
+ * `stepAnchors`, which gives each top-level numbered item the id `step-<n>` (P5).
  */
 import "./Markdown.css";
 
 import type { MouseEvent, ReactNode } from "react";
 
-import { anchorId, headingSlug, resolveBrainLink, type BrainLink } from "../lib/brainLinks";
+import {
+  isRelativeHref,
+  resolveBrainLink,
+  stepAnchor,
+  uniqueAnchor,
+  type BrainLink,
+} from "../lib/brainLinks";
 import { cx } from "../lib/cx";
 
 /** The largest note formatted; a larger one shows as plain text (the API's 256 KiB note bound). */
@@ -414,6 +424,11 @@ function plainText(nodes: Inline[]): string {
     .join("");
 }
 
+/** The text a heading's source shows once rendered (inline marks and link targets dropped). */
+export function plainHeadingText(text: string): string {
+  return plainText(parseInline(text, 0));
+}
+
 /* ---------- Rendering ---------- */
 
 /** Where the note lives: its relative links resolve against this brain-relative path. */
@@ -427,18 +442,51 @@ export interface MarkdownProps {
   note?: NotePlace | undefined;
   /** Opens a note of the same brain in the app; without it the link is a plain in-app href. */
   onBrainLink?: ((link: Extract<BrainLink, { kind: "brain" }>) => void) | undefined;
+  /** Asked first for each relative link: a link opened in the page, or null for the usual rules. */
+  localLink?: ((href: string) => LocalLink | null) | undefined;
+  /** Gives each top-level numbered list item the id `step-<n>`, counted through the body (P5). */
+  stepAnchors?: boolean | undefined;
   className?: string | undefined;
+}
+
+/** A relative link resolved by the page: where it points (an in-page `#id`) and what opens it. */
+export interface LocalLink {
+  href: string;
+  open: () => void;
 }
 
 interface Ctx {
   note: NotePlace | undefined;
   onBrainLink: MarkdownProps["onBrainLink"];
+  localLink: MarkdownProps["localLink"];
   ids: Map<string, number>;
+  /** The last step number given, or null when steps are not anchored. */
+  steps: number | null;
 }
+
+/** True for a plain left click, which the page handles; other clicks keep the browser's default. */
+const plainClick = (event: MouseEvent<HTMLAnchorElement>) =>
+  event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
 
 const NEW_TAB = "(opens in a new tab)";
 
 function linkNode(href: string, children: ReactNode, key: number, ctx: Ctx): ReactNode {
+  const local = ctx.localLink && isRelativeHref(href) ? ctx.localLink(href) : null;
+  if (local) {
+    return (
+      <a
+        key={key}
+        href={local.href}
+        onClick={(event: MouseEvent<HTMLAnchorElement>) => {
+          if (!plainClick(event)) return;
+          event.preventDefault();
+          local.open();
+        }}
+      >
+        {children}
+      </a>
+    );
+  }
   const link = resolveBrainLink(href, ctx.note?.path ?? null, ctx.note?.project ?? null);
   switch (link.kind) {
     case "external":
@@ -454,15 +502,7 @@ function linkNode(href: string, children: ReactNode, key: number, ctx: Ctx): Rea
           key={key}
           href={link.route}
           onClick={(event: MouseEvent<HTMLAnchorElement>) => {
-            if (
-              !open ||
-              event.button !== 0 ||
-              event.metaKey ||
-              event.ctrlKey ||
-              event.shiftKey ||
-              event.altKey
-            )
-              return;
+            if (!open || !plainClick(event)) return;
             event.preventDefault();
             open(link);
           }}
@@ -508,16 +548,19 @@ function renderInline(nodes: Inline[], ctx: Ctx): ReactNode[] {
 }
 
 function headingId(text: string, ctx: Ctx): string | undefined {
-  const slug = headingSlug(text);
-  if (!slug) return undefined;
-  const seen = ctx.ids.get(slug) ?? 0;
-  ctx.ids.set(slug, seen + 1);
-  return anchorId(seen === 0 ? slug : `${slug}-${String(seen)}`);
+  return uniqueAnchor(ctx.ids, text) ?? undefined;
+}
+
+/** The id of a list item: `step-<n>` for an item of a top-level ordered list when steps are on. */
+function itemId(block: Extract<Block, { t: "list" }>, top: boolean, ctx: Ctx): string | undefined {
+  if (!top || !block.ordered || ctx.steps === null) return undefined;
+  ctx.steps += 1;
+  return stepAnchor(ctx.steps);
 }
 
 const HEADINGS = { 1: "h1", 2: "h2", 3: "h3", 4: "h4", 5: "h5", 6: "h6" } as const;
 
-function renderBlock(block: Block, key: number, ctx: Ctx, tight = false): ReactNode {
+function renderBlock(block: Block, key: number, ctx: Ctx, tight = false, top = false): ReactNode {
   switch (block.t) {
     case "heading": {
       const Tag = HEADINGS[block.level];
@@ -548,7 +591,9 @@ function renderBlock(block: Block, key: number, ctx: Ctx, tight = false): ReactN
       );
     case "list": {
       const items = block.items.map((item, i) => (
-        <li key={i}>{item.map((inner, j) => renderBlock(inner, j, ctx, j === 0))}</li>
+        <li key={i} id={itemId(block, top, ctx)}>
+          {item.map((inner, j) => renderBlock(inner, j, ctx, j === 0))}
+        </li>
       ));
       return block.ordered ? (
         <ol key={key} start={block.start === 1 ? undefined : block.start}>
@@ -597,7 +642,14 @@ function renderBlock(block: Block, key: number, ctx: Ctx, tight = false): ReactN
 }
 
 /** Renders a Markdown note safely; see the module comment for what is and is not rendered. */
-export function Markdown({ source, note, onBrainLink, className }: MarkdownProps) {
+export function Markdown({
+  source,
+  note,
+  onBrainLink,
+  localLink,
+  stepAnchors,
+  className,
+}: MarkdownProps) {
   if (new TextEncoder().encode(source).length > MAX_MARKDOWN_BYTES) {
     return (
       <div className={cx("ah-md", className)}>
@@ -609,10 +661,12 @@ export function Markdown({ source, note, onBrainLink, className }: MarkdownProps
     );
   }
   const lines = source.replace(/\r\n?/g, "\n").replace(/\t/g, "    ").split("\n");
-  const ctx: Ctx = { note, onBrainLink, ids: new Map() };
+  const ctx: Ctx = { note, onBrainLink, localLink, ids: new Map(), steps: stepAnchors ? 0 : null };
   return (
     <div className={cx("ah-md", className)}>
-      {parseBlocks(lines, { list: 0, quote: 0 }).map((block, key) => renderBlock(block, key, ctx))}
+      {parseBlocks(lines, { list: 0, quote: 0 }).map((block, key) =>
+        renderBlock(block, key, ctx, false, true),
+      )}
     </div>
   );
 }
