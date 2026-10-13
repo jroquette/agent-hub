@@ -4,6 +4,7 @@ streams see events another process appends (AC-200.41)."""
 import contextlib
 import json
 import queue
+import re
 import socket
 import subprocess
 import threading
@@ -40,7 +41,10 @@ def _non_loopback_addresses() -> set[str]:
 
 
 def test_serves_api_app_and_problems_only_on_loopback_when_started(hub_web: Any) -> None:
-    assert hub_web.first_line == f"agent-hub at {hub_web.url}\n"
+    # Each start prints its own session token in the URL (AGH-165, P6).
+    assert re.fullmatch(
+        rf"agent-hub at {re.escape(hub_web.url)}/\?token=[\w-]{{43,}}\n", hub_web.first_line
+    )
     with httpx.Client(base_url=hub_web.url, timeout=REQUEST_SECONDS) as client:
         status = client.get("/api/v1/collector/status")
         root = client.get("/")
