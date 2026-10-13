@@ -1356,6 +1356,8 @@ def test_names_no_hubconfig_when_templates_read() -> None:
 HUB_SCRIPT_NAMES = ("brief.py", "features_check.py", "worktree.sh", "hubconfig")
 FEATURE_CHECK_COMMAND = "./hub doctor --only features.tracker"
 AGENT_FRONTMATTER_KEYS = ["name", "description", "tools", "model"]
+# AGH-141 (AC-141.1): the read-only agents declare `mutates_checkout: false` after `model`.
+READ_ONLY_AGENTS = ("quality-reviewer", "researcher", "spec-reviewer")
 
 
 def plugin_markdown(config: HubConfig) -> dict[str, str]:
@@ -1410,12 +1412,31 @@ def test_keeps_frontmatter_when_agents_rendered(demo_render: dict[str, RenderedF
 
         lines = frontmatter_lines(text)
 
-        assert [line.split(":", 1)[0] for line in lines] == AGENT_FRONTMATTER_KEYS, name
+        expected_keys = AGENT_FRONTMATTER_KEYS + ["mutates_checkout"] * (name in READ_ONLY_AGENTS)
+        assert [line.split(":", 1)[0] for line in lines] == expected_keys, name
         fields = dict(line.split(": ", 1) for line in lines)
         assert fields["name"] == name
         assert fields["description"].strip(), name
         # The body follows the frontmatter.
         assert text.split("\n---\n", 1)[1].strip(), name
+
+
+# AC-141.1: the three read-only agents declare the key, no other base agent has it, and the
+# quality-reviewer keeps its check's output out of the checkout.
+def test_declares_mutates_checkout_when_base_agents_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    for name in BASE_AGENTS:
+        text = demo_render[f"plugin/hub-workflow/agents/{name}.md"].content.decode("utf-8")
+
+        declared = [line for line in frontmatter_lines(text) if line.startswith("mutates_checkout")]
+
+        expected = ["mutates_checkout: false"] if name in READ_ONLY_AGENTS else []
+        assert declared == expected, name
+        assert "mutates_checkout" not in text.split("\n---\n", 1)[1], name
+    reviewer = demo_render["plugin/hub-workflow/agents/quality-reviewer.md"].content.decode("utf-8")
+    body = reviewer.split("\n---\n", 1)[1]
+    assert "Send the check's output to a file under `$TMPDIR`, never into the checkout" in body
 
 
 # AC-4.19 (Q-15, plan design 7): the `hub` command and the make target that runs it through the
