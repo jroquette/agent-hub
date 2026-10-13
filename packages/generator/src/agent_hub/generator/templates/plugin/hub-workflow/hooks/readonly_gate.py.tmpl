@@ -1,0 +1,687 @@
+#!/usr/bin/env python3
+"""SubagentStart and SubagentStop: hold a read-only agent that changed the checkout.
+
+An agent is read-only when its definition's frontmatter says `mutates_checkout: false` (the
+researcher, the spec-reviewer and the quality-reviewer of the base plugin). At its SubagentStart
+the gate snapshots every watched checkout: each repo of hub.json and the hub, with their task
+worktrees under `.claude/worktrees/`; the hub's `brain/`, gitignored files and $TMPDIR never
+count. At its SubagentStop it snapshots them again and compares. A changed path the agent's own
+Write, Edit, MultiEdit or NotebookEdit touched, or any change when nothing else ran meanwhile,
+holds the stop once (`decision: block`, naming the paths and the agent's Bash commands); any
+other change is reported to the main session. Every outcome is appended to a local record in
+$TMPDIR. Each run fits in its budget (START_BUDGET, STOP_BUDGET seconds) and in the caps below.
+Any failure of the gate's own ends in exit 0: an undeclared agent or an unreadable event prints
+nothing, and a declared agent that could not be checked gets a `not checked` note, never a
+block. Python 3.9, stdlib only; it sends nothing over the network."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import signal
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from hubhooks import GIT_LOCATION_VARIABLES, Config, checkouts, emit, load_config, run_hook
+except Exception as error:  # a partial install: skip, never error the session
+    print(f"[hub {os.path.splitext(os.path.basename(sys.argv[0] or 'hook'))[0]}] skipped: {type(error).__name__}", file=sys.stderr)
+    sys.exit(0)
+
+HOOK_START = time.monotonic()
+
+# Seconds from the hook's start; Claude Code gives SubagentStart 10 s and SubagentStop 30 s.
+START_BUDGET = 5
+STOP_BUDGET = 15
+GIT_TIMEOUT = 4  # one git call, always within the budget left
+MAX_CHECKOUTS = 24  # per event: main checkouts first, then worktrees newest first
+MAX_STATUS_BYTES = 4 * 1024 * 1024  # of `git status` output per checkout
+MAX_ENTRIES = 2000  # status entries per checkout
+MAX_FILE_BYTES = 8 * 1024 * 1024  # hashed per file
+MAX_HASH_BYTES = 128 * 1024 * 1024  # hashed per event
+MAX_STDIN = 1024 * 1024
+MAX_TRANSCRIPT_BYTES = 16 * 1024 * 1024  # of the agent's transcript
+MAX_WINDOW_BYTES = 8 * 1024 * 1024  # of the main transcript, after its size at start
+MAX_LINE_BYTES = 1024 * 1024  # per transcript line
+MAX_AGENT_FILES = 256  # agent definitions read per folder
+MAX_FRONTMATTER_BYTES = 16 * 1024
+MAX_SUBAGENT_FILES = 256  # subagent transcripts listed
+MAX_STATE_BYTES = 16 * 1024 * 1024
+STALE_SECONDS = 12 * 60 * 60  # a start state older than this is replaced
+MAX_BLOCKS = 1  # per agent_id
+
+
+def read_event() -> dict:
+    """The event on stdin; {} when it is over MAX_STDIN, not UTF-8 JSON, or not an object."""
+    try:
+        raw = sys.stdin.buffer.read(MAX_STDIN + 1)
+    except (OSError, ValueError):
+        return {}
+    if len(raw) > MAX_STDIN:
+        return {}
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (ValueError, RecursionError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+STATE_VERSION = 1
+NOTE = "[hub readonly-gate] not checked ({})"
+SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+COMMENT = re.compile(r"\s#.*$")
+BASE_PLUGIN = "hub-workflow"
+
+
+def uncomment(value: str) -> str:
+    """value without a trailing ` # comment`, stripped. One blank before the `#` is enough to
+    find it, so the pattern stays linear on a long run of blanks (`\\s+#` backtracks on it)."""
+    return COMMENT.sub("", value).strip()
+
+
+def unquote(value: str) -> str:
+    """A frontmatter value without a trailing ` # comment` or its surrounding quotes."""
+    value = uncomment(value)
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        return value[1:-1]
+    return value
+
+
+def frontmatter(path: Path) -> dict | None:
+    """The `key: value` lines between a first line `---` and the next `---`, within
+    MAX_FRONTMATTER_BYTES of a regular file (a link to one counts); None otherwise. Values are
+    raw (comments and quotes kept)."""
+    try:
+        if not os.path.isfile(path):
+            return None
+        with open(path, "rb") as stream:
+            head = stream.read(MAX_FRONTMATTER_BYTES)
+        lines = head.decode("utf-8", "replace").splitlines()
+    except (OSError, ValueError):
+        return None
+    if not lines or lines[0].rstrip() != "---":
+        return None
+    fields = {}
+    for line in lines[1:]:
+        if line.rstrip() == "---":
+            return fields
+        key, colon, value = line.partition(":")
+        if colon and key.strip() and not key[:1].isspace():
+            fields.setdefault(key.strip(), value.strip())
+    return None  # no closing line within the cap
+
+
+def agent_folders(cfg: Config, prefix: str | None) -> list[Path]:
+    """Where a type's definition is looked up, in order (O-1): the hub's .claude/agents, the
+    project plugin's agents, the base plugin's own agents (beside these hooks). A prefix
+    hub-workflow keeps only the last, the project's name only the second, any other none."""
+    root = cfg.root or cfg.hub
+    project = cfg.root_project
+    own = Path(os.path.abspath(__file__)).parent.parent / "agents"
+    has_project = bool(project) and "/" not in project and project not in (".", "..")
+    hub_agents = root / ".claude" / "agents" if root else None
+    project_agents = root / "plugin" / project / "agents" if root and has_project else None
+    if prefix is None:
+        folders = [hub_agents, project_agents, own]
+    elif prefix == BASE_PLUGIN:
+        folders = [own]
+    elif has_project and prefix == project:
+        folders = [project_agents]
+    else:
+        folders = []
+    return [folder for folder in folders if folder is not None]
+
+
+def definitions(folder: Path, name: str) -> list[Path]:
+    """`<name>.md` first, then the folder's other `*.md`, sorted; at most MAX_AGENT_FILES."""
+    try:
+        names = sorted(entry for entry in os.listdir(folder) if entry.endswith(".md"))
+    except OSError:
+        return []
+    own = name + ".md"
+    if own in names:
+        names.remove(own)
+        names.insert(0, own)
+    return [folder / entry for entry in names[:MAX_AGENT_FILES]]
+
+
+def declared(cfg: Config, agent_type: str) -> bool:
+    """Whether the type's definition says `mutates_checkout: false` (unquoted, any case). The
+    first file whose frontmatter `name` is the bare type wins, with the key or without it."""
+    prefix, colon, bare = agent_type.rpartition(":")
+    if not bare:
+        return False
+    for folder in agent_folders(cfg, prefix if colon else None):
+        for path in definitions(folder, bare):
+            fields = frontmatter(path)
+            if fields is None or unquote(fields.get("name", "")) != bare:
+                continue
+            value = uncomment(fields.get("mutates_checkout", ""))
+            return value.lower() == "false"
+    return False
+
+
+def safe_id(value: object) -> str:
+    """value when it is a plain id; else `h` and 16 hex digits of its sha256."""
+    text = value if isinstance(value, str) else ""
+    if SAFE_ID.fullmatch(text):
+        return text
+    return "h" + hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()[:16]
+
+
+def state_path(session_id: object, agent_id: object) -> Path:
+    return Path(tempfile.gettempdir()) / f"hub-readonly-{safe_id(session_id)}-{safe_id(agent_id)}.json"
+
+
+def save_state(path: Path, state: dict) -> bool:
+    """Write state to a temp file beside path, then move it in place; False on any error."""
+    temp = None
+    try:
+        handle, temp = tempfile.mkstemp(prefix=".hub-readonly-", suffix=".tmp", dir=str(path.parent))
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            json.dump(state, stream)
+        os.replace(temp, path)
+        return True
+    except (OSError, ValueError, TypeError):
+        if temp is not None:
+            try:
+                os.unlink(temp)
+            except OSError:
+                pass
+        return False
+
+
+def load_state(path: Path) -> dict | None:
+    """The state at path: a JSON object of this version within MAX_STATE_BYTES; None otherwise."""
+    try:
+        with open(path, "rb") as stream:
+            raw = stream.read(MAX_STATE_BYTES + 1)
+        if len(raw) > MAX_STATE_BYTES:
+            return None
+        state = json.loads(raw.decode("utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return None
+    if isinstance(state, dict) and state.get("v") == STATE_VERSION:
+        return state
+    return None
+
+
+def is_fresh(path: Path) -> bool:
+    """A valid state younger than STALE_SECONDS: the baseline of a resumed agent (E-1)."""
+    try:
+        age = time.time() - os.stat(path).st_mtime
+    except OSError:
+        return False
+    return age < STALE_SECONDS and load_state(path) is not None
+
+
+def main_transcript(event: dict) -> tuple:
+    """(the main transcript's path, its size now), or (None, None) when it cannot be read."""
+    path = event.get("transcript_path")
+    if not isinstance(path, str) or not os.path.isabs(path):
+        return None, None
+    try:
+        if os.path.isfile(path):
+            return path, os.stat(path).st_size
+    except (OSError, ValueError):
+        pass
+    return None, None
+
+
+# One status call gives HEAD, the branch and every entry (E-7); never a lock or an fsmonitor.
+STATUS_ARGS = [
+    "--no-optional-locks",
+    "-c",
+    "core.fsmonitor=false",
+    "status",
+    "--porcelain=v2",
+    "-z",
+    "--branch",
+    "--no-ahead-behind",
+    "--untracked-files=all",
+    "--ignore-submodules=all",
+]
+GIT_DROPPED = tuple(GIT_LOCATION_VARIABLES) + ("GIT_INDEX_FILE",)
+KILL_WAIT = 1
+CHUNK = 64 * 1024
+MAX_LISTED = 40  # paths named in one message
+# Digests that cannot be compared, and how a note names them.
+NOT_COMPARABLE = {"big": "too large", "unreadable": "unreadable", "caps": "caps", "budget": "budget"}
+WORKTREES = ".claude/worktrees/"
+
+run = {"deadline": HOOK_START + STOP_BUDGET, "hashed": 0}
+
+
+def left() -> float:
+    """Seconds of this event's budget still left."""
+    return run["deadline"] - time.monotonic()
+
+
+def cancelled(signum: int, frame: object) -> None:
+    raise SystemExit(0)  # unwinds through run_git's finally, past run_hook's `except Exception`
+
+
+def exit_on_cancel() -> None:
+    """Make SIGTERM and SIGHUP (Claude Code cancelling the hook) exit 0, killing git's group."""
+    for name in ("SIGTERM", "SIGHUP"):
+        try:
+            signal.signal(getattr(signal, name), cancelled)
+        except (AttributeError, OSError, ValueError):  # no such signal here, or not the main thread
+            pass
+
+
+def kill(proc: subprocess.Popen) -> None:
+    """Kill git's whole process group: a hook or helper it started may outlive it."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except OSError:  # the group is already empty
+        pass
+    try:
+        proc.wait(timeout=KILL_WAIT)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
+def run_git(args: list, cwd: str) -> tuple:
+    """(git's stdout, "") or ("", cause): `git not found`, `git failed`, `budget` (no time left, or
+    killed after min(GIT_TIMEOUT, the budget left)) or `caps` (over MAX_STATUS_BYTES). The output
+    goes to an unnamed temp file; git runs in a session of its own, killed as a group after."""
+    limit = min(GIT_TIMEOUT, left())
+    if limit <= 0:
+        return "", "budget"
+    if not os.path.isdir(cwd):
+        return "", "git failed"
+    env = {name: value for name, value in os.environ.items() if name not in GIT_DROPPED}
+    env["LC_ALL"] = "C"
+    try:
+        out = tempfile.TemporaryFile()
+    except OSError:
+        return "", "git failed"
+    with out:
+        exit_on_cancel()
+        try:
+            proc = subprocess.Popen(
+                ["git", *args],
+                cwd=cwd,
+                stdin=subprocess.DEVNULL,
+                stdout=out,
+                stderr=subprocess.DEVNULL,
+                env=env,
+                start_new_session=True,
+            )
+        except FileNotFoundError:
+            return "", "git not found"
+        except OSError:
+            return "", "git failed"
+        code = None
+        try:
+            code = proc.wait(timeout=limit)
+        except subprocess.TimeoutExpired:
+            pass
+        finally:  # an exception kills the group too
+            kill(proc)
+        if code is None:
+            return "", "budget"
+        if code != 0:
+            return "", "git failed"
+        try:
+            out.seek(0)
+            raw = out.read(MAX_STATUS_BYTES + 1)
+        except OSError:
+            return "", "git failed"
+    if len(raw) > MAX_STATUS_BYTES:
+        return "", "caps"
+    return raw.decode("utf-8", "surrogateescape"), ""
+
+
+def parse_status(text: str) -> tuple:
+    """(HEAD's oid, the branch, [(path, state)]) from `git status --porcelain=v2 -z --branch`.
+    A state is `XY mW hI` (`XY mW h1 h2 h3` for an unmerged entry, `??` for an untracked one):
+    the status, the worktree's mode and the index's blobs, so a mode or index change on a path
+    already dirty is a change (E-7); never HEAD's blob, which the HEAD line covers. A rename
+    (`2`) names its new path, then its original path in the next NUL-separated field."""
+    oid, branch, found = "", "", []
+    records = text.split("\0")
+    index = 0
+    while index < len(records):
+        record = records[index]
+        index += 1
+        if record.startswith("# branch.oid "):
+            oid = record[len("# branch.oid "):]
+        elif record.startswith("# branch.head "):
+            branch = record[len("# branch.head "):]
+        elif record.startswith("1 "):
+            parts = record.split(" ", 8)
+            if len(parts) == 9:
+                found.append((parts[8], " ".join((parts[1], parts[5], parts[7]))))
+        elif record.startswith("2 "):
+            parts = record.split(" ", 9)
+            original = records[index] if index < len(records) else ""
+            index += 1
+            if len(parts) == 10:
+                state = " ".join((parts[1], parts[5], parts[7]))
+                found.append((parts[9], state))
+                if original:
+                    found.append((original, state))
+        elif record.startswith("u "):
+            parts = record.split(" ", 10)
+            if len(parts) == 11:
+                found.append((parts[10], " ".join((parts[1], parts[6], parts[7], parts[8], parts[9]))))
+        elif record.startswith("? "):
+            found.append((record[2:], "??"))
+    return oid, branch, found
+
+
+def tmp_inside(top: str) -> str | None:
+    """$TMPDIR relative to the checkout, when it is inside it (E-11); None otherwise."""
+    try:
+        tmp = os.path.realpath(tempfile.gettempdir())
+        real = os.path.realpath(top)
+    except (OSError, ValueError):
+        return None
+    if tmp.startswith(real.rstrip(os.sep) + os.sep):
+        return tmp[len(real.rstrip(os.sep)) + 1:].replace(os.sep, "/")
+    return None
+
+
+def dropped(path: str, hub: bool, tmp: str | None) -> bool:
+    """Whether a status entry never counts: the hub's brain/, any task worktree, $TMPDIR."""
+    if hub and (path == "brain" or path.startswith("brain/")):
+        return True
+    if path.startswith(WORKTREES):
+        return True
+    return tmp is not None and (path == tmp or path.startswith(tmp + "/"))
+
+
+def digest(top: str, path: str) -> str:
+    """The sha256 of a regular file (not followed through a link), `link:` + the sha256 of a
+    link's target, `dir`, `other`, `absent`; or one of NOT_COMPARABLE: `big` over MAX_FILE_BYTES,
+    `caps` over MAX_HASH_BYTES for the event, `budget` with no time left, `unreadable`."""
+    full = os.path.join(top, path)
+    try:
+        info = os.lstat(full)
+    except (FileNotFoundError, NotADirectoryError):
+        return "absent"
+    except (OSError, ValueError):
+        return "unreadable"
+    if stat.S_ISLNK(info.st_mode):
+        try:
+            target = os.readlink(full)
+        except (OSError, ValueError):
+            return "unreadable"
+        return "link:" + hashlib.sha256(os.fsencode(target)).hexdigest()
+    if stat.S_ISDIR(info.st_mode):
+        return "dir"
+    if not stat.S_ISREG(info.st_mode):
+        return "other"
+    if info.st_size > MAX_FILE_BYTES:
+        return "big"
+    if run["hashed"] + info.st_size > MAX_HASH_BYTES:
+        return "caps"
+    if left() <= 0:
+        return "budget"
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        handle = os.open(full, flags)
+    except (OSError, ValueError):
+        return "unreadable"
+    try:
+        if not stat.S_ISREG(os.fstat(handle).st_mode):
+            return "unreadable"
+        sha, size = hashlib.sha256(), 0
+        while True:
+            chunk = os.read(handle, CHUNK)
+            if not chunk:
+                return sha.hexdigest()
+            size += len(chunk)
+            run["hashed"] += len(chunk)
+            if size > MAX_FILE_BYTES:
+                return "big"
+            if run["hashed"] > MAX_HASH_BYTES:
+                return "caps"
+            sha.update(chunk)
+    except OSError:
+        return "unreadable"
+    finally:
+        os.close(handle)
+
+
+def snapshot_one(label: str, top: str, hub: bool) -> dict:
+    """One checkout: HEAD, branch and `path: state:digest` per counted entry; `cut` names why it was
+    not read (git's cause, or `caps` over MAX_ENTRIES), and then holds no entry."""
+    item = {"label": label, "path": top, "hub": hub, "head": "", "branch": "", "entries": {}, "cut": ""}
+    text, cause = run_git(STATUS_ARGS, top)
+    if cause:
+        item["cut"] = cause
+        return item
+    oid, branch, found = parse_status(text)
+    tmp = tmp_inside(top)
+    kept = [(path, state) for path, state in found if not dropped(path, hub, tmp)]
+    if len(kept) > MAX_ENTRIES:
+        item["cut"] = "caps"
+        return item
+    item["head"], item["branch"] = oid, branch
+    item["entries"] = {path: state + ":" + digest(top, path) for path, state in kept}
+    return item
+
+
+def watched(cfg: Config) -> tuple:
+    """([(label, path, is the hub)] of the main checkouts: each repo of hub.json with a plain
+    folder name, then the hub; at most MAX_CHECKOUTS), and how many were over that cap."""
+    names = [name for name in cfg.repo_dirs if name and "/" not in name and name not in (".", "..")]
+    hub = cfg.hub.name if cfg.hub else None
+    if hub and hub not in names:
+        names.append(hub)
+    found = []
+    for name, top in checkouts(cfg, names):
+        if cfg.workspace is not None and top == cfg.workspace / name:
+            found.append((name, str(top), name == hub))
+    return found[:MAX_CHECKOUTS], max(0, len(found) - MAX_CHECKOUTS)
+
+
+def saved_checkouts(state: dict | None) -> list | None:
+    """The state's checkouts when each has the shape snapshot_one gives; None otherwise."""
+    items = state.get("checkouts") if state is not None else None
+    if not isinstance(items, list):
+        return None
+    for item in items:
+        if not isinstance(item, dict):
+            return None
+        texts = ("label", "path", "head", "branch", "cut")
+        if not all(isinstance(item.get(key), str) for key in texts) or not isinstance(item.get("hub"), bool):
+            return None
+        entries = item.get("entries")
+        if not isinstance(entries, dict) or not all(isinstance(value, str) for value in entries.values()):
+            return None
+    return items
+
+
+def short(oid: str) -> str:
+    """An oid's first 7 hex digits; any other value (`(initial)`) as it is."""
+    return oid[:7] if len(oid) >= 7 and all(c in "0123456789abcdef" for c in oid) else oid
+
+
+def kind(value: str) -> str:
+    """The digest part of an entry value `state:digest`: all after the first `:` (a state holds
+    none; a digest may, as in `link:<sha256>`)."""
+    return value.split(":", 1)[1] if ":" in value else value
+
+
+def changes(before: list, after: list) -> tuple:
+    """(changed labels, notes) between two snapshots of the same checkouts: `<label>/<path>` for
+    an entry that differs (or is in one snapshot only), `<label>: HEAD old (branch) -> new
+    (branch)` when either moved; a checkout cut on either side, or an entry that cannot be
+    compared, is a note."""
+    changed, notes = [], []
+    for old, new in zip(before, after):
+        label = old["label"]
+        cause = old["cut"] or new["cut"]
+        if cause:
+            notes.append(f"{label}: {cause}")
+            continue
+        if (old["head"], old["branch"]) != (new["head"], new["branch"]):
+            changed.append(
+                f"{label}: HEAD {short(old['head'])} ({old['branch']}) -> {short(new['head'])} ({new['branch']})"
+            )
+        was, now = old["entries"], new["entries"]
+        for path in sorted(set(was) | set(now)):
+            first, second = was.get(path), now.get(path)
+            if first is not None and second is not None:
+                blind = [kind(v) for v in (first, second) if kind(v) in NOT_COMPARABLE]
+                if blind:
+                    notes.append(f"{label}/{path}: {NOT_COMPARABLE[blind[0]]}")
+                    continue
+            if first != second:
+                changed.append(f"{label}/{path}")
+    return changed, notes
+
+
+def agent_transcript(event: dict) -> str | None:
+    """The agent's transcript: `agent_transcript_path` when it is an absolute path to a regular
+    file, else `<main transcript minus .jsonl>/subagents/agent-<id>.jsonl`; None when neither is."""
+    path = event.get("agent_transcript_path")
+    candidates = [path] if isinstance(path, str) and path and os.path.isabs(path) else []
+    main = event.get("transcript_path")
+    agent_id = event.get("agent_id")
+    if isinstance(main, str) and os.path.isabs(main) and isinstance(agent_id, str) and SAFE_ID.fullmatch(agent_id):
+        stem = main[: -len(".jsonl")] if main.endswith(".jsonl") else main
+        candidates.append(os.path.join(stem, "subagents", f"agent-{agent_id}.jsonl"))
+    for candidate in candidates:
+        try:
+            if stat.S_ISREG(os.stat(candidate).st_mode):
+                return candidate
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def listing(paths: list) -> list:
+    """One `- <path>` line each, at most MAX_LISTED, then `- … and N more`."""
+    lines = [f"- {path}" for path in paths[:MAX_LISTED]]
+    if len(paths) > MAX_LISTED:
+        lines.append(f"- \u2026 and {len(paths) - MAX_LISTED} more")
+    return lines
+
+
+def noted(notes: list) -> str:
+    return "\n".join(NOTE.format(cause) for cause in notes)
+
+
+def emit_result(agent_type: str, agent_id: str, block: list, report: list, signals: list, notes: list) -> None:
+    """One JSON object: a block (`decision`, `reason`) with the report and the notes as its
+    `systemMessage`; else the `systemMessage` alone; nothing when there is nothing to say."""
+    parts = []
+    if report:
+        head = f"[hub readonly-gate] changed while {agent_type} (agent {agent_id}) ran, not attributed to it"
+        parts.append("\n".join([f"{head} ({', '.join(signals)}):", *listing(report)]))
+    if notes:
+        parts.append(noted(notes))
+    output = {}
+    if block:
+        head = f"[hub readonly-gate] {agent_type} (agent {agent_id}) is read-only (mutates_checkout: false) but changed:"
+        ask = "Revert these changes, or explain in your final report why each one was needed."
+        output["decision"] = "block"
+        output["reason"] = "\n".join([head, *listing(block), ask])
+    if parts:
+        output["systemMessage"] = "\n".join(parts)
+    if output:
+        emit(output)
+
+
+def forget(path: Path) -> None:
+    """Delete a state file; one already gone is fine."""
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def start(event: dict, cfg: Config) -> None:
+    """SubagentStart: save the declared agent's baseline, unless a fresh one exists (E-1)."""
+    agent_type, agent_id = event["agent_type"], event["agent_id"]
+    if not declared(cfg, agent_type):
+        return
+    session_id = event.get("session_id")
+    path = state_path(session_id, agent_id)
+    if is_fresh(path):
+        return
+    transcript, offset = main_transcript(event)
+    found, over = watched(cfg)
+    notes = [f"{over} checkouts over the cap"] if over else []
+    items = [snapshot_one(label, top, hub) for label, top, hub in found]
+    notes.extend(f"{item['label']}: {item['cut']}" for item in items if item["cut"])
+    state = {
+        "v": STATE_VERSION,
+        "agent_type": agent_type,
+        "agent_id": agent_id,
+        "session_id": session_id if isinstance(session_id, str) else "",
+        "main_transcript": transcript,
+        "main_offset": offset,
+        "checkouts": items,
+    }
+    if not save_state(path, state):
+        notes.append("state not saved")
+    if notes:
+        emit({"systemMessage": noted(notes)})
+
+
+def stop(event: dict, cfg: Config) -> None:
+    """SubagentStop: snapshot the checkouts the start saw again, compare, and hold the stop when
+    something changed. For now every change is the agent's when its transcript is readable (a
+    provisional rule: attribution and overlap replace it)."""
+    agent_type, agent_id = event["agent_type"], event["agent_id"]
+    if not declared(cfg, agent_type):
+        return
+    path = state_path(event.get("session_id"), agent_id)
+    if not os.path.lexists(path):
+        emit({"systemMessage": NOTE.format("no start snapshot")})
+        return
+    state = load_state(path)
+    before = saved_checkouts(state)
+    if before is None:
+        forget(path)
+        emit({"systemMessage": NOTE.format("start snapshot unreadable")})
+        return
+    # a checkout cut at start stays a note: it is not read again
+    after = [item if item["cut"] else snapshot_one(item["label"], item["path"], item["hub"]) for item in before]
+    changed, notes = changes(before, after)
+    if not changed:
+        forget(path)
+        if notes:
+            emit({"systemMessage": noted(notes)})
+        return
+    if agent_transcript(event) is not None:  # provisional rule: no overlap signal yet
+        emit_result(agent_type, agent_id, changed, [], [], notes)  # the state stays for the retry
+        return
+    forget(path)
+    notes.append("agent transcript unreadable")
+    emit_result(agent_type, agent_id, [], changed, ["agent transcript unreadable"], notes)
+
+
+def main() -> None:
+    event = read_event()
+    name = event.get("hook_event_name")
+    handler = {"SubagentStart": start, "SubagentStop": stop}.get(name) if isinstance(name, str) else None
+    if handler is None:
+        return
+    for key in ("agent_type", "agent_id"):
+        value = event.get(key)
+        if not isinstance(value, str) or not value:  # Claude Code's internal agents send ""
+            return
+    cwd = event.get("cwd")
+    cfg = load_config(cwd if isinstance(cwd, str) and cwd else None)
+    if not cfg.workspace:
+        return
+    run["deadline"] = HOOK_START + (START_BUDGET if name == "SubagentStart" else STOP_BUDGET)
+    handler(event, cfg)
+
+
+if __name__ == "__main__":
+    run_hook(main)
