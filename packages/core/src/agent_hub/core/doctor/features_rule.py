@@ -14,16 +14,24 @@ reported in numeric order (compared as digit strings, so an id of any length ord
 echoed cut to 80 characters. Every finding names the record, except a spec that cannot be read (not
 UTF-8, a link: links are never followed, or a failed read), which names the spec; the record is then
 checked without the cross-check.
+
+A record whose folder lists ``issues.md`` while no tracker id is recorded, neither in its
+``linear`` (absent or ``[]``) nor in the spec's frontmatter ``linear:`` (read as ``hub web``
+reads it, its first 64 KiB; only ids of a team key count, so a placeholder does not), gets a
+warning on the record: the issues were drafted, likely created, and their ids never written back,
+so ``hub web`` shows the feature with none (AGH-143). A record that is not an object, a malformed
+``linear`` or a spec that cannot be read already has its error, and no warning.
 """
 
 import re
 import unicodedata
 from collections.abc import Iterable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Final, NamedTuple
 
 from agent_hub.core.doctor.finding import Finding, Read, Rule
 from agent_hub.core.doctor.snapshot import DoctorSnapshot
+from agent_hub.core.features.feature_status import HEAD_BYTES, spec_linear
 from agent_hub.core.hub_config.doctor_rules import FEATURES_TRACKER_RULE, RULE_MODULES, Severity
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ROOT_PATH
@@ -35,6 +43,7 @@ from agent_hub.core.json_form import InvalidJsonError, JsonValue, load_json_byte
 FEATURES_FOLDER: Final = ("brain", "features")
 RECORD_NAME: Final = "features.json"
 SPEC_NAME: Final = "spec.md"
+ISSUES_NAME: Final = "issues.md"
 
 RECORD_FIX: Final = "fix the record in features.json"
 MASKED_FIX: Final = "end the verification with the check itself, so a failure exits non-zero"
@@ -46,6 +55,8 @@ TEXT_FIX: Final = "save it as UTF-8 text"
 NOT_READ: Final = "not read as a regular file (links are never followed)"
 UNREAD: Final = "could not be read"
 UNREAD_FIX: Final = "run hub doctor again"
+NO_IDS: Final = "issues.md exists but `linear` holds no tracker id, here or in spec.md"
+NO_IDS_FIX: Final = "write the created issue ids into features.json → linear"
 MASKED: Final = (
     "`verification` must keep its exit code (no trailing `echo $?`, `|| true` or `| tail`)"
 )
@@ -117,10 +128,38 @@ def _record_findings(
             document, spec=spec if isinstance(spec, str) else None, project=project
         )
     spec_problems = (spec,) if isinstance(spec, _Problem) else ()
+    issues_path = path.removesuffix(RECORD_NAME) + ISSUES_NAME
+    unlinked = (
+        issues_path in listed
+        and _linear_empty(document)
+        and not spec_problems
+        and not any(
+            _team_id(project).fullmatch(item)
+            for item in spec_linear(_spec_head(entries.get(spec_path), spec))
+        )
+    )
     return (
         *(_finding(spec_path, problem) for problem in spec_problems),
         *(_finding(path, problem) for problem in problems),
+        *((_no_ids_warning(path),) if unlinked else ()),
     )
+
+
+def _spec_head(entry: TreeEntry | None, spec: str | _Problem | None) -> bytes | None:
+    """The spec's head ``hub web`` reads, when it was read as text; else ``None``."""
+    if not isinstance(spec, str) or not isinstance(entry, FileEntry) or entry.content is None:
+        return None
+    return entry.content[:HEAD_BYTES]
+
+
+def _linear_empty(document: JsonValue | _Problem) -> bool:
+    """A record object whose ``linear`` is absent or ``[]``; any other value has ids or an error."""
+    return isinstance(document, dict) and document.get("linear", []) == []
+
+
+def _no_ids_warning(path: str) -> Finding:
+    finding = FEATURES_TRACKER.finding(path=path, message=NO_IDS, fix=NO_IDS_FIX)
+    return replace(finding, severity=Severity.WARNING)
 
 
 def _finding(path: str, problem: _Problem) -> Finding:
@@ -180,12 +219,17 @@ def _header_problems(data: Mapping[str, JsonValue], *, project: _Project) -> Ite
     if not isinstance(feature, str) or not feature:
         yield _Problem("`feature` must be a non-empty string", RECORD_FIX)
     linear = data.get("linear", [])
-    keys = "|".join(re.escape(team) for team in project.teams)
-    team_id = re.compile(rf"(?:{keys})-\d+")
+    team_id = _team_id(project)
     if not isinstance(linear, list) or not all(
         isinstance(item, str) and team_id.fullmatch(item) for item in linear
     ):
         yield _Problem(_linear_message(project.teams), RECORD_FIX)
+
+
+def _team_id(project: _Project) -> re.Pattern[str]:
+    """A tracker id of one of the project's team keys (exact case)."""
+    keys = "|".join(re.escape(team) for team in project.teams)
+    return re.compile(rf"(?:{keys})-\d+")
 
 
 def _linear_message(teams: tuple[str, ...]) -> str:

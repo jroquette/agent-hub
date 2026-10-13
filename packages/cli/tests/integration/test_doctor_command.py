@@ -1100,6 +1100,26 @@ def test_checks_features_when_only_features_tracker(
     ]
 
 
+def test_warns_and_passes_when_drafted_issues_have_no_ids(
+    demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    folder = demo_hub / "brain/features/unlinked"
+    folder.mkdir()
+    record = {"feature": "unlinked", "linear": [], "acs": [a_demo_ac(1, repo="demo-api")]}
+    (folder / "features.json").write_bytes(dump_json(record))
+    (folder / "spec.md").write_bytes(b"---\nlinear: []\n---\n# Unlinked\n\n- **AC-1** x\n")
+    (folder / "issues.md").write_bytes(b"# Issues\n\n## T1: x\n")
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "features.tracker"), exit_code=0)
+
+    assert lines == [
+        "warning features.tracker brain/features/unlinked/features.json: issues.md exists but"
+        " `linear` holds no tracker id, here or in spec.md"
+        " Fix: write the created issue ids into features.json → linear",
+        "0 errors, 1 warning, 0 infos",
+    ]
+
+
 def test_lists_files_when_rule_reads_instruction_files(
     demo_hub: Path, run_doctor: DoctorRunner, monkeypatch: pytest.MonkeyPatch
 ) -> None:

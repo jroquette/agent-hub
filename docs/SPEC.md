@@ -338,7 +338,8 @@ keeps the app on its own origin. The approved UI design and the departures from 
   on that explicit action, `git` and `gh` reach the hub's `origin` and GitHub with the user's own credentials. In the
   container image every hub is read-only and the actions are disabled with that reason.
 - **Features and Brain.** Feature detail renders the feature's records (spec, research, plan, eval) and its ACs with
-  verification and evidence; a per-project Brain browser lists the hub's `brain/` notes (never `brain/auto/`) and
+  verification and evidence, and its tracker issues from `features.json` → `linear` (the source of truth, which `/feature`
+  fills once it creates the issues) and the spec's frontmatter `linear:`; a per-project Brain browser lists the hub's `brain/` notes (never `brain/auto/`) and
   renders any one, with links between notes inside the app. Notes are read on request, at most 256 KiB, through one
   path rule (no `..`, no absolute path, no link, regular `.md` files under `<hub>/brain` only) and rendered with raw
   HTML off and a URL allow-list.

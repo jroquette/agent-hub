@@ -244,7 +244,7 @@
     "plugin/hub-workflow/agents/planner.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "275e0f863d6528442644d4c4db9e6ed03e92ecfb942504f48abfe9c5121ae631"
+      "sha256": "5be3dbf91e8e73ee9ca4f4f472f80369435b242a988dc85c82b8bff484db8c60"
     },
     "plugin/hub-workflow/agents/quality-reviewer.md": {
       "executable": false,
@@ -339,7 +339,7 @@
     "plugin/hub-workflow/skills/feature/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "632eecfccb30d345032e66eaa7bb8620b889f886bd40b5c904d1b395484c9bca"
+      "sha256": "8d4479fb84498f6386d3cc38bec2328b47fe86be8f7368d4c50e07ef88fca91b"
     },
     "plugin/hub-workflow/skills/fix/SKILL.md": {
       "executable": false,
