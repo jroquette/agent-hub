@@ -13,14 +13,13 @@ gives its reader per request, None (not connected) when ``LINEAR_API_KEY`` is un
 logged or shown.
 """
 
-import inspect
 import os
 import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final
+from typing import Final
 
 from fastapi import FastAPI
 
@@ -343,13 +342,6 @@ def ticket_snapshots(
     return CachedTicketSnapshots(TicketReaders(facts, environ=env, reader=reader))
 
 
-def _ticket_keyword(snapshots: CachedTicketSnapshots) -> dict[str, Any]:
-    """``ticket_snapshots=`` for ``HubFilesReadModels`` once it takes it (AGH-136 stream C)."""
-    if "ticket_snapshots" in inspect.signature(HubFilesReadModels).parameters:
-        return {"ticket_snapshots": snapshots}
-    return {}
-
-
 def default_brain_changes() -> BrainChangeRequests:
     """The ``hub_git`` adapter with this process's environment (``AGENT_HUB_IN_CONTAINER=1``
     makes every hub read-only)."""
@@ -425,7 +417,7 @@ def build_app(
             prices_as_of=PRICES_AS_OF if PRICES else None,
         ),
         clock=settings.clock,
-        **_ticket_keyword(snapshots),
+        ticket_snapshots=snapshots,
     )
     hub_paths.hubs = hubs
     changes = default_brain_changes() if brain_changes is None else brain_changes

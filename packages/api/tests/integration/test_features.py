@@ -66,9 +66,10 @@ def test_reads_counts_verdict_and_phase_from_files_when_features_listed(
     assert set(views) == {"complete", "no-eval", "malformed"}
     complete, no_eval, malformed = views["complete"], views["no-eval"], views["malformed"]
     assert complete["acs"] == {"passing": 2, "total": 2, "owner_steps": 0}
+    # Its tickets are Linear ids and no Linear is connected: Implement is unknown, so the phase stays there.
     assert (complete["verdict"], complete["phase"], complete["problem"]) == (
         "SHIP",
-        "evaluate",
+        "implement",
         None,
     )
     assert no_eval["acs"] == {"passing": 1, "total": 3, "owner_steps": 1}
