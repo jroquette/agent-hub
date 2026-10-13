@@ -1,19 +1,20 @@
 """An agent output's bytes to a document, and pydantic's errors to problems (AGH-139 S2, P6).
 
 Pure: bytes in, a parsed object or one root problem out. Each shape error becomes one problem
-at its JSON path; a key echoed in a path is escaped and cut to ``ECHO_LIMIT``, so a document of
-long unknown keys cannot make a line of unbounded length.
+at its JSON path. A key echoed in a path is escaped once and cut to ``ECHO_LIMIT``, never inside
+an escape sequence, so a document of long or unprintable keys cannot make a long line.
 """
 
-from collections.abc import Sequence
+import json
+from collections.abc import Iterator, Sequence
 
 from pydantic import ValidationError
 
 from agent_hub.core.features.output_models import MAX_OUTPUT_BYTES, OutputProblem
 from agent_hub.core.hub_config.problems import (
     NOT_AN_OBJECT_MESSAGE,
+    PLAIN_KEY,
     ROOT_PATH,
-    json_path,
     one_line,
 )
 from agent_hub.core.hub_config.versions import ECHO_LIMIT, cut_echo
@@ -38,16 +39,37 @@ def parse_document(content: bytes) -> dict[str, object] | OutputProblem:
 def shape_problems(error: ValidationError) -> tuple[OutputProblem, ...]:
     """One problem per error of a model's validation, in pydantic's order, at its JSON path."""
     return tuple(
-        OutputProblem(json_path(_shown_location(detail["loc"])), one_line(detail["msg"]))
-        for detail in error.errors()
+        OutputProblem(output_path(detail["loc"]), one_line(detail["msg"]))
+        for detail in error.errors(include_url=False, include_input=False)
     )
 
 
-def _shown_location(loc: Sequence[int | str]) -> tuple[int | str, ...]:
-    return tuple(_shown_segment(segment) for segment in loc)
+def output_path(loc: Sequence[int | str]) -> str:
+    """The JSON path of a location, each key escaped once: ``findings[0].acs``, ``["a\\n"]``.
+
+    A plain key of at most ``ECHO_LIMIT`` characters follows a dot; any other key is written as
+    an escaped JSON string cut to ``ECHO_LIMIT``. ``hub_config.problems.json_path`` is not used:
+    it escapes the whole key, unbounded.
+    """
+    return "".join(_path_parts(loc)) or ROOT_PATH
 
 
-def _shown_segment(segment: int | str) -> int | str:
-    if isinstance(segment, str) and len(segment) > ECHO_LIMIT:
-        return cut_echo(one_line(segment))
-    return segment
+def overlong_problem(path: str, items: object, limit: int) -> Iterator[OutputProblem]:
+    """The too-long problem of the list ``items`` at ``path``, worded as pydantic's.
+
+    pydantic drops a list's length error when the list's items fail too, so a caller reports
+    it again from the raw document unless the shape problems already hold it.
+    """
+    if isinstance(items, list) and len(items) > limit:
+        message = f"Tuple should have at most {limit} items after validation, not {len(items)}"
+        yield OutputProblem(path, message)
+
+
+def _path_parts(loc: Sequence[int | str]) -> Iterator[str]:
+    for index, segment in enumerate(loc):
+        if isinstance(segment, int):
+            yield f"[{segment}]"
+        elif PLAIN_KEY.fullmatch(segment) and len(segment) <= ECHO_LIMIT:
+            yield f".{segment}" if index else segment
+        else:
+            yield '["' + cut_echo(json.dumps(segment)[1:-1]) + '"]'

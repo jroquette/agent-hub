@@ -16,6 +16,8 @@ from agent_hub.core.features.scope_rules import AC_ID_PATTERN, COMMIT_PATTERN
 REVIEW_SCHEMA_ID: Final = "agent-hub/review/1"
 # An output over this size is refused before it is parsed.
 MAX_OUTPUT_BYTES: Final = 524_288
+MAX_FINDINGS: Final = 100
+MAX_FINDING_ACS: Final = 50
 # Text an agent writes on one line: no control character, line breaks included.
 _ONE_LINE: Final = r"^[^\x00-\x1f\x7f-\x9f]*$"
 
@@ -58,7 +60,7 @@ class ReviewFinding(BaseModel):
     severity: Literal["blocking", "minor"]
     path: PathText
     line: LineNumber | None
-    acs: Annotated[tuple[AcId, ...], Field(max_length=50)]
+    acs: Annotated[tuple[AcId, ...], Field(max_length=MAX_FINDING_ACS)]
     what: OneLine1000
     expected: OneLine1000
 
@@ -75,4 +77,4 @@ class ReviewOutput(BaseModel):
     round: ReviewRound
     commit: Commit
     verdict: Literal["PASS", "FAIL"]
-    findings: Annotated[tuple[ReviewFinding, ...], Field(max_length=100)]
+    findings: Annotated[tuple[ReviewFinding, ...], Field(max_length=MAX_FINDINGS)]
