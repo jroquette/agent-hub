@@ -635,3 +635,55 @@ def test_blocks_when_no_overlap_block_index_only_change(gate: Gate, gate_ws: Gat
     assert (gate_ws.app / "a.py").read_bytes() == content
     assert git_output(gate_ws, "status", "--porcelain", cwd=gate_ws.app).splitlines() == ["M  a.py"]
     assert "- app/a.py" in lines
+
+
+def test_blocks_when_dirty_before_file_mode_changed(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """E-7: ``chmod +x`` on a file already dirty changes no content, but its mode counts."""
+    change_app(gate_ws)
+    content = (gate_ws.app / "a.py").read_bytes()
+
+    lines = block_lines(run_researcher(gate, lambda: (gate_ws.app / "a.py").chmod(0o755)))
+
+    assert (gate_ws.app / "a.py").read_bytes() == content
+    assert git_output(gate_ws, "status", "--porcelain", cwd=gate_ws.app).splitlines() == [" M a.py"]
+    assert "- app/a.py" in lines
+
+
+def test_blocks_when_dirty_before_file_staged_other_blob(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """E-7: on a file staged and dirty (``MM``), staging another blob keeps its status and its
+    content, but the index counts."""
+    target = gate_ws.app / "a.py"
+    target.write_text("A = 2\n", encoding="utf-8")
+    gate_ws.git("add", "a.py", cwd=gate_ws.app)
+    change_app(gate_ws)
+    target.write_text("A = 3\n", encoding="utf-8")
+    assert git_output(gate_ws, "status", "--porcelain", cwd=gate_ws.app).splitlines() == ["MM a.py"]
+    staged = git_output(gate_ws, "rev-parse", ":a.py", cwd=gate_ws.app)
+
+    def stage_other() -> None:
+        target.write_text("A = 4\n", encoding="utf-8")
+        gate_ws.git("add", "a.py", cwd=gate_ws.app)
+        target.write_text("A = 3\n", encoding="utf-8")
+
+    lines = block_lines(run_researcher(gate, stage_other))
+
+    assert target.read_text(encoding="utf-8") == "A = 3\n"
+    assert git_output(gate_ws, "status", "--porcelain", cwd=gate_ws.app).splitlines() == ["MM a.py"]
+    assert git_output(gate_ws, "rev-parse", ":a.py", cwd=gate_ws.app) != staged
+    assert "- app/a.py" in lines
+
+
+def test_blocks_when_new_file_at_hub_root(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """AC-141.5 control: the hub is watched, so a new file at its root (outside ``brain/``) is
+    a changed path; the silent ``hub_brain`` and ``hub_inbox`` runs are drops, not blind spots."""
+    lines = block_lines(
+        run_researcher(
+            gate, lambda: (gate_ws.hub / "notes.txt").write_text("x\n", encoding="utf-8")
+        )
+    )
+
+    status = git_output(gate_ws, "status", "--porcelain", "-uall", cwd=gate_ws.hub)
+    assert "?? notes.txt" in status.splitlines()  # control: not gitignored
+    assert f"- {gate_ws.hub.name}/notes.txt" in lines
