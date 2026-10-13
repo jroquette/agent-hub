@@ -96,6 +96,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/hooks/post_edit.py",
     "plugin/hub-workflow/hooks/pre_compact.py",
     "plugin/hub-workflow/hooks/project_guard_runner.py",
+    "plugin/hub-workflow/hooks/readonly_gate.py",
     "plugin/hub-workflow/hooks/session_end.py",
     "plugin/hub-workflow/hooks/session_start.py",
     "plugin/hub-workflow/hooks/stdlib_reader.py",
@@ -2157,7 +2158,8 @@ def test_names_rendered_script_when_hooks_json_command_read(
     ]
 
     # The six base hooks, then the event sensor on eleven events (AGH-200 E2).
-    assert (len(commands), len(hooks)) == (17, 11)
+    # AGH-141: the read-only gate on SubagentStart and SubagentStop, after the sensor.
+    assert (len(commands), len(hooks)) == (19, 11)
     for command in commands:
         match = HOOK_COMMAND.fullmatch(command)
         assert match, command
@@ -3532,6 +3534,8 @@ PROJECT_ONLY_SETTINGS = (
 # Event → (matcher, hook file, timeout in seconds); `None`: the group has no matcher.
 # Each event's groups: its base hook, then the event sensor (AGH-200 D6, E2: eleven events).
 SENSOR = "event_sensor.py"
+# AGH-141 (E-4): the read-only gate on the two subagent events, after the sensor's group.
+GATE = "readonly_gate.py"
 SETTINGS_HOOKS = {
     "SessionStart": [("startup|resume|clear|compact", "session_start.py", 20), (None, SENSOR, 5)],
     "PreToolUse": [
@@ -3545,8 +3549,8 @@ SETTINGS_HOOKS = {
     "UserPromptSubmit": [(None, SENSOR, 5)],
     "PostToolUseFailure": [("*", SENSOR, 5)],
     "Notification": [(None, SENSOR, 5)],
-    "SubagentStart": [(None, SENSOR, 5)],
-    "SubagentStop": [(None, SENSOR, 5)],
+    "SubagentStart": [(None, SENSOR, 5), (None, GATE, 10)],
+    "SubagentStop": [(None, SENSOR, 5), (None, GATE, 30)],
 }
 SETTINGS_COMMAND = re.compile(
     r'python3 "\$CLAUDE_PROJECT_DIR/(plugin/hub-workflow/hooks/[^"/]+\.py)"'

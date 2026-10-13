@@ -1,4 +1,4 @@
-"""The seven rendered hook entry points fail open: whatever the input or the hub, they exit 0,
+"""The eight rendered hook entry points fail open: whatever the input or the hub, they exit 0,
 print nothing or one JSON object, and never a traceback (AC-4.11, AGH-200 D6).
 
 Each hook runs as Claude Code runs it: a file on ``hook_python`` with the input on stdin, in an
@@ -30,6 +30,7 @@ ENTRY_POINTS = (
     "session_end",
     "pre_compact",
     "event_sensor",
+    "readonly_gate",
 )
 # Where Claude Code's plugin cache would hold the hooks: no hub.json three folders up.
 PLUGIN_CACHE = "home/.claude/plugins/cache/agent-hub/hub-workflow/0.1.0/hooks"
@@ -101,6 +102,11 @@ def valid_event(name: str, hub: Path) -> dict[str, Any]:
             "tool_name": "Bash",
             "tool_input": {"command": "ls"},
             "tool_use_id": "toolu_01",
+        },
+        "readonly_gate": {
+            "hook_event_name": "SubagentStart",
+            "agent_id": "a1",
+            "agent_type": "researcher",
         },
     }
     return base | extra[name]
