@@ -9,6 +9,7 @@ server's URL on a port nothing listens on. Agent definitions are written by the 
 are synthetic JSON lines.
 """
 
+import hashlib
 import json
 import os
 import shutil
@@ -31,6 +32,8 @@ STATE_PREFIX = "hub-readonly-"
 HUB_AGENTS = ".claude/agents"
 PROJECT_AGENTS = "plugin/demo/agents"
 BASE_AGENTS = "plugin/hub-workflow/agents"
+# A run of blanks inside a frontmatter value, well within the gate's 16 KiB of frontmatter.
+BLANK_RUN = " " * 6000
 # A state older than the gate's 12 h is stale.
 STALE_AGE = 13 * 60 * 60
 
@@ -268,6 +271,7 @@ def change_app(ws: GateWorkspace) -> None:
         pytest.param("ghost", HUB_AGENTS, "false", True, id="not_found"),
         pytest.param("scout", BASE_AGENTS, "false", False, id="unclosed_frontmatter"),
         pytest.param("", HUB_AGENTS, "false", True, id="empty_type"),
+        pytest.param("scout", HUB_AGENTS, "false" + BLANK_RUN + "x", True, id="long_blank_run"),
     ],
 )
 def test_writes_no_state_when_agent_undeclared(
@@ -419,3 +423,58 @@ def test_replaces_snapshot_when_start_state_unreadable(gate: Gate, gate_ws: Gate
     state = read_state(gate_ws, "a1")
     assert (state["v"], state["agent_type"], state["agent_id"]) == (1, "researcher", "a1")
     assert state_files(gate_ws) == [state_name("a1")]
+
+
+def test_snapshots_when_resolve_reads_comment_after_long_blank_run(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """A long run of blanks before a ``# comment`` is dropped with it, in ``name`` and the key."""
+    name, value = "scout" + BLANK_RUN + "# the scout", "false" + BLANK_RUN + "# why"
+    declare_agent(gate_ws.hub / HUB_AGENTS, name, value, file="scout")
+
+    assert gate.start("scout", agent_id="a1") is None
+
+    assert state_files(gate_ws) == [state_name("a1")]
+
+
+def outside_tmpdir(tmp_path: Path, ws: GateWorkspace) -> set[Path]:
+    """Every path under ``tmp_path`` but the gate's TMPDIR and the hooks' bytecode caches."""
+    return {
+        path
+        for path in tmp_path.rglob("*")
+        if ws.tmp not in path.parents and "__pycache__" not in path.parts
+    }
+
+
+def hashed(value: str) -> str:
+    """The gate's file name part for an id that is not plain: ``h`` + 16 hex of its sha256."""
+    return "h" + hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
+@pytest.mark.parametrize(
+    ("session_id", "agent_id", "expected"),
+    [
+        pytest.param(
+            SESSION, "../../escape", f"{SESSION}-{hashed('../../escape')}", id="traversal"
+        ),
+        pytest.param("s/1", "a1", f"{hashed('s/1')}-a1", id="slash"),
+        pytest.param(SESSION, "x" * 65, f"{SESSION}-{hashed('x' * 65)}", id="too_long"),
+        pytest.param(7, "a1", f"{hashed('')}-a1", id="non_str_session"),
+    ],
+)
+def test_hashes_id_when_start_reads_unsafe_id(
+    gate: Gate,
+    gate_ws: GateWorkspace,
+    tmp_path: Path,
+    *,
+    session_id: object,
+    agent_id: str,
+    expected: str,
+) -> None:
+    """An id that is not ``[A-Za-z0-9_-]{1,64}`` names the state by its hash, inside TMPDIR."""
+    before = outside_tmpdir(tmp_path, gate_ws)
+
+    assert gate.start("researcher", agent_id=agent_id, session_id=session_id) is None
+
+    assert sorted(os.listdir(gate_ws.tmp)) == [f"{STATE_PREFIX}{expected}.json"]
+    assert outside_tmpdir(tmp_path, gate_ws) - before == set()
