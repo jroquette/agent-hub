@@ -11,7 +11,7 @@ from agent_hub.api.session_token import (
     mint_token,
 )
 
-TOKEN = "synthetic-token-0123456789abcdefghijklmnopqrstuv"
+TOKEN = "synthetic-token-0123456789abcdefghijklmnopqrstuv"  # noqa: S105 -- synthetic
 URL_SAFE = frozenset(string.ascii_letters + string.digits + "-_")
 
 
