@@ -184,7 +184,8 @@ The hub's `/release` skill walks these steps: it proposes the version, checks th
 
 1. The release PR sets `version` in `packages/cli/pyproject.toml` and `packages/agent-hub/pyproject.toml` to `X.Y.Z`,
    runs `uv lock` and commits `uv.lock`. `make lockstep` (in `make check-fast`) fails while the two versions differ.
-   The other packages keep their versions.
+   The other packages keep their versions. The same PR renames `CHANGELOG.md`'s `[Unreleased]` section to
+   `[X.Y.Z] - <date>`, opens an empty `[Unreleased]` above it and updates the compare links at the bottom.
 2. After the merge, wait for the `main` CI run to be green, then tag that commit and push that one tag (never `--tags`):
 
    ```bash
