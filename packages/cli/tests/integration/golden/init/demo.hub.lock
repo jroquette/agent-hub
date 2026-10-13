@@ -239,12 +239,12 @@
     "plugin/hub-workflow/agents/evaluator.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "df7d155ff75030c52f52d576d68a37b24fc0bb57311c9fa04780823ab284413d"
+      "sha256": "dd5ff73ca988d3f42f3700fa941439cf5b9e685051d713c042424df918dc5197"
     },
     "plugin/hub-workflow/agents/planner.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "275e0f863d6528442644d4c4db9e6ed03e92ecfb942504f48abfe9c5121ae631"
+      "sha256": "79aba5ea432584074cc4798be8668a3da1e6a55d58d2b9450dd3f033fb8ce001"
     },
     "plugin/hub-workflow/agents/quality-reviewer.md": {
       "executable": false,
@@ -254,7 +254,7 @@
     "plugin/hub-workflow/agents/requirements-analyst.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "ab751abfcef8e53f5f9b6cb2a07698bc6f1fd5fda30be944d298f756a457b643"
+      "sha256": "eb023686de0779c0a9d8cbf6f4ca5a08cfa61459cd82f7666ee3aeb2f1607286"
     },
     "plugin/hub-workflow/agents/researcher.md": {
       "executable": false,
@@ -339,7 +339,7 @@
     "plugin/hub-workflow/skills/feature/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "632eecfccb30d345032e66eaa7bb8620b889f886bd40b5c904d1b395484c9bca"
+      "sha256": "eaced8504ceaba88da2c7bc6c00cf58d40681450773687903e53fc77f5e60224"
     },
     "plugin/hub-workflow/skills/fix/SKILL.md": {
       "executable": false,

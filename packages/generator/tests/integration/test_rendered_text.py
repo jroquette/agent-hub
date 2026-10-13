@@ -41,6 +41,7 @@ CASES = (
         a_two_team_document,
         (
             "AGENTS.md",
+            "plugin/hub-workflow/agents/evaluator.md",
             "plugin/hub-workflow/agents/planner.md",
             "plugin/hub-workflow/agents/requirements-analyst.md",
             "plugin/hub-workflow/skills/feature/SKILL.md",
