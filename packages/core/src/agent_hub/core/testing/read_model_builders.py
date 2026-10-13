@@ -5,7 +5,12 @@ from decimal import Decimal
 
 from agent_hub.core.approvals.approval import Approval, ApprovalKind
 from agent_hub.core.brain.brain_note import BrainEntry, BrainNote, BrainTree
-from agent_hub.core.features.feature_view import AcCounts, FeatureView
+from agent_hub.core.features.feature_view import (
+    AcCounts,
+    FeatureView,
+    GoldenPath,
+    GoldenStep,
+)
 from agent_hub.core.hub_config.doctor_rules import Severity
 from agent_hub.core.hubs.finding_view import FindingView
 from agent_hub.core.hubs.registered_hub import HubView
@@ -174,9 +179,46 @@ def a_feature_view(**overrides: object) -> FeatureView:
         "verdict": None,
         "verdict_line": None,
         "repos": ("demo-api",),
+        "golden_path": a_golden_path(),
+        "tickets_source": "plan",
         "sources_missing": ("github",),
     }
     return FeatureView.model_validate(fields | overrides)
+
+
+def a_golden_path(**overrides: object) -> GoldenPath:
+    """The golden path of a synthetic feature in implementation: 1 of 3 tickets, 2 of 5 ACs."""
+    states = (
+        ("spec", "done", None, None),
+        ("research", "skipped", None, None),
+        ("plan", "done", None, None),
+        ("tickets", "done", "3 of 3 created", None),
+        ("implement", "current", "1/3 tickets · 2/5 ACs", None),
+        ("review", "pending", "0/3 reviewed", "Implement is not done"),
+        ("evaluate", "pending", None, "Implement is not done"),
+        ("shipped", "pending", None, "Implement is not done"),
+    )
+    progress = {
+        "tickets": {"done": 3, "total": 3},
+        "implement": {"done": 1, "total": 3},
+        "review": {"done": 0, "total": 3},
+    }
+    fields: dict[str, object] = {
+        "steps": tuple(
+            GoldenStep.model_validate(
+                {
+                    "name": name,
+                    "state": state,
+                    "meta": meta,
+                    "reason": reason,
+                    "progress": progress.get(name),
+                }
+            )
+            for name, state, meta, reason in states
+        ),
+        "phase": "implement",
+    }
+    return GoldenPath.model_validate(fields | overrides)
 
 
 def a_hub_view(**overrides: object) -> HubView:

@@ -3,7 +3,12 @@ import json
 import pytest
 
 from agent_hub.core.events.event import EventSource
-from agent_hub.core.features.feature_status import FeatureFolder, feature_detail, feature_view
+from agent_hub.core.features.feature_status import (
+    FeatureFolder,
+    RecordHead,
+    feature_detail,
+    feature_view,
+)
 from agent_hub.core.features.feature_view import FeatureRecord
 
 SPEC = b"""---
@@ -205,3 +210,15 @@ def test_reads_verdict_when_eval_names_one(line: bytes, verdict: str) -> None:
     folder = FeatureFolder(slug="done", files=("eval.md",), eval_head=b"# Eval\n\n" + line + b"\n")
 
     assert feature_view(folder, project="demo").verdict == verdict
+
+
+def test_keeps_eval_and_review_heads_when_folder_built() -> None:
+    head = RecordHead(name="tip-1520.md", head=b"---\ntype: eval\n---\n", problem=None)
+    folder = FeatureFolder(slug="demo", files=(), evals=(head,), evals_skipped=2)
+
+    assert (folder.evals, folder.reviews, folder.evals_skipped, folder.reviews_skipped) == (
+        (head,),
+        (),
+        2,
+        0,
+    )
