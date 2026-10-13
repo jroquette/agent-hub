@@ -20,7 +20,7 @@ SECRET = "ghp_" + "a" * 36
 
 def _info(session_id: str, modified_ms: int, **fields: object) -> SDKSessionInfo:
     values: dict[str, object] = {"summary": "Fix the build", "cwd": CWD} | fields
-    return SDKSessionInfo(session_id=session_id, last_modified=modified_ms, **values)  # type: ignore[arg-type]
+    return SDKSessionInfo(session_id=session_id, last_modified=modified_ms, **values)
 
 
 async def test_lists_newest_first_when_sessions_present() -> None:
