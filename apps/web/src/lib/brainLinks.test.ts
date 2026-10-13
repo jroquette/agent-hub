@@ -5,7 +5,11 @@ import {
   anchorId,
   brainRoute,
   headingSlug,
+  isRelativeHref,
   resolveBrainLink,
+  stepAnchor,
+  tocAnchors,
+  uniqueAnchor,
   type BrainLink,
 } from "./brainLinks";
 
@@ -110,5 +114,68 @@ describe("headingSlug", () => {
 
   it("prefixes ids so a note cannot clobber page globals when building anchor ids", () => {
     expect(anchorId("D3")).toBe("md-d3");
+  });
+});
+
+describe("uniqueAnchor", () => {
+  it("numbers a repeated slug and skips an empty one when headings share text", () => {
+    const ids = new Map<string, number>();
+
+    expect(uniqueAnchor(ids, "Steps")).toBe("md-steps");
+    expect(uniqueAnchor(ids, "!!!")).toBeNull();
+    expect(uniqueAnchor(ids, "Steps")).toBe("md-steps-1");
+    expect(uniqueAnchor(ids, "steps")).toBe("md-steps-2");
+  });
+});
+
+describe("tocAnchors", () => {
+  it("gives each entry the id Markdown gives its heading when the toc repeats a title", () => {
+    const toc = [
+      { level: 1, text: "Feature" },
+      { level: 2, text: "Notes" },
+      { level: 2, text: "Notes" },
+      { level: 3, text: "???" },
+    ];
+
+    expect(tocAnchors(toc).map((entry) => entry.anchor)).toEqual([
+      "md-feature",
+      "md-notes",
+      "md-notes-1",
+      null,
+    ]);
+  });
+
+  it("slugs the plain text when given a text function", () => {
+    const [entry] = tocAnchors([{ level: 2, text: "__init__ notes" }], (text) =>
+      text.replaceAll("_", ""),
+    );
+
+    expect(entry).toEqual({ level: 2, text: "__init__ notes", anchor: "md-init-notes" });
+  });
+});
+
+describe("isRelativeHref", () => {
+  it("accepts a path relative to the note and refuses schemes, roots and tricks", () => {
+    expect(isRelativeHref("references/r.md")).toBe(true);
+    expect(isRelativeHref("./a.md#x")).toBe(true);
+    expect(isRelativeHref("#steps")).toBe(true);
+    for (const href of [
+      "",
+      " a.md",
+      "/etc/passwd",
+      "//evil.example/x",
+      "https://example.com",
+      "javascript:alert(1)",
+      "a\\b",
+      "a\u0000b",
+    ]) {
+      expect(isRelativeHref(href)).toBe(false);
+    }
+  });
+});
+
+describe("stepAnchor", () => {
+  it("names the element of a numbered step", () => {
+    expect(stepAnchor(3)).toBe("step-3");
   });
 });
