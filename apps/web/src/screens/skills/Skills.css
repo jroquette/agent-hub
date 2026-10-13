@@ -168,3 +168,18 @@
   border-radius: var(--radius-md);
   font-size: 13px;
 }
+
+/* Knowledge › Skills picker: one row per project. */
+.ah-skills-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.ah-skills-pick:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
