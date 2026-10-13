@@ -11,6 +11,8 @@ build-constraint-dependencies = ["hatchling==1.32.4"]
 
 [dependency-groups]
 dev = [
+    # anyio's pytest plugin runs the async tests (@pytest.mark.anyio); Starlette locks it too.
+    "anyio==4.15.1",
     "httpx==0.28.1",
     "hypothesis==6.168.1",
     "import-linter>=2.15",

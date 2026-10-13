@@ -22,6 +22,7 @@ build-constraints = [{ name = "hatchling", specifier = "==1.32.4" }]
 
 [manifest.dependency-groups]
 dev = [
+    { name = "anyio", specifier = "==4.15.1" },
     { name = "httpx", specifier = "==0.28.1" },
     { name = "hypothesis", specifier = "==6.168.1" },
     { name = "import-linter", specifier = ">=2.15" },
