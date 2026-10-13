@@ -1,5 +1,6 @@
 """``hub run`` records to executor events (D8, D9, E7): stages, loops, ids and the run's end."""
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -11,9 +12,11 @@ from agent_hub.collector.run_records import (
 )
 from agent_hub.core.events.event import Event
 from agent_hub.core.events.payload_keys import kept_payload
+from agent_hub.core.runner.run_record import RunOutcome
 from agent_hub.core.testing.run_lines import (
     RUN_PR_URL,
     run_lines_failed_in_verify,
+    run_lines_not_delivered,
     run_lines_picked_to_reported,
 )
 
@@ -101,6 +104,7 @@ def test_ends_run_done_with_pr_and_cost_when_reported() -> None:
         "pr_url": RUN_PR_URL,
         "cost_usd": 1.75,
         "mode": "live",
+        "outcome": "delivered",
     }
 
 
@@ -112,6 +116,7 @@ def test_ends_run_failed_with_stage_and_reason_when_reported_after_failure() -> 
     assert end.payload["status"] == "failed"
     assert end.payload["stage"] == "VERIFYING"
     assert end.payload["reason"] == "gate failed: make check"
+    assert end.payload["outcome"] == "failed"
     assert "pr_url" not in end.payload
 
 
@@ -122,6 +127,43 @@ def test_ends_run_failed_when_tracker_report_failed_reported() -> None:
     [end] = [e for e in map_run_records(records, project="d") if e.type == "run.end"]
 
     assert end.payload["status"] == "failed"
+    assert end.payload["outcome"] == "delivered"
+
+
+@pytest.mark.parametrize("outcome", [RunOutcome.NO_CHANGES, RunOutcome.BLOCKED])
+def test_ends_run_done_with_outcome_and_reason_when_not_delivered(outcome: RunOutcome) -> None:
+    events = list(map_run_records(run_lines_not_delivered(outcome), project="d"))
+    [end] = [e for e in events if e.type == "run.end"]
+
+    assert end.payload["status"] == "done"
+    assert end.payload["outcome"] == outcome.value
+    assert end.payload["reason"].startswith(("no commit", "the implementing session stopped"))
+    assert "stage" not in end.payload
+    assert ("step.end", "implement", 1, "ok") in _steps(events)
+
+
+@pytest.mark.parametrize(
+    ("lines", "outcome"),
+    [(run_lines_picked_to_reported, "delivered"), (run_lines_failed_in_verify, "failed")],
+)
+def test_derives_outcome_when_reported_record_predates_it(
+    lines: Callable[[], list[dict[str, Any]]], outcome: str
+) -> None:
+    records = lines()
+    del records[-1]["outcome"]
+
+    [end] = [e for e in map_run_records(records, project="d") if e.type == "run.end"]
+
+    assert end.payload["outcome"] == outcome
+
+
+def test_derives_outcome_when_reported_outcome_unknown() -> None:
+    records = run_lines_picked_to_reported()
+    records[-1]["outcome"] = "shipped"
+
+    [end] = [e for e in map_run_records(records, project="d") if e.type == "run.end"]
+
+    assert end.payload["outcome"] == "delivered"
 
 
 def test_counts_attempts_when_run_loops_through_verify_loop() -> None:

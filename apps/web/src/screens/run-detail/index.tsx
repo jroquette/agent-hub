@@ -29,7 +29,7 @@ import { StaleStamp } from "../portfolio/StaleStamp";
 import {
   budgetOf,
   durationSeconds,
-  OUTCOME_BADGE,
+  runBadge,
   runOutcome,
   shortRunId,
   stageLabel,
@@ -486,7 +486,7 @@ function OutcomeLine({ run }: { run: WorkflowRun }) {
 
 function Header({ run, now }: { run: WorkflowRun; now: number }) {
   const outcome = runOutcome(run);
-  const badge = OUTCOME_BADGE[outcome];
+  const badge = runBadge(run);
   const budget = budgetOf(run);
   const cost = toNumber(run.cost_usd);
   const retryFrom = run.failure
@@ -513,7 +513,11 @@ function Header({ run, now }: { run: WorkflowRun; now: number }) {
       <div className="ah-row ah-wrap" style={{ gap: 12, marginTop: 8 }}>
         {run.issue && <IssueLink id={run.issue.key} href={run.issue.url} />}
         <h1 className="ah-h2">{run.issue?.title ?? `Run ${shortRunId(run.id)}`}</h1>
-        <StatusBadge status={badge.status} label={outcome === "done" ? "Reported" : badge.label} />
+        <StatusBadge
+          status={badge.status}
+          label={badge.label === "Done" ? "Reported" : badge.label}
+          title={run.delivery_reason ?? undefined}
+        />
         {run.mode === "dry_run" && <StatusBadge status="idle" label="Dry run" />}
         <StaleStamp />
         <span className="ah-grow" />
