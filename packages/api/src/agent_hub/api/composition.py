@@ -18,6 +18,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Final
 
@@ -34,7 +35,7 @@ from agent_hub.api.rfc9457 import (
     hub_registry_problem,
     invalid_cursor_problem,
 )
-from agent_hub.api.settings import ApiSettings
+from agent_hub.api.settings import ApiSettings, utc_now
 from agent_hub.api.static_files import WEB_DIST
 from agent_hub.api.ticket_snapshots import (
     READ_BUDGET_SECONDS,
@@ -322,11 +323,12 @@ def ticket_snapshots(
     environ: Mapping[str, str] | None = None,
     linear_post: Post | None = None,
     tracker_reader: TrackerReader | None = None,
+    clock: Callable[[], datetime] = utc_now,
 ) -> CachedTicketSnapshots:
     """The feature tickets' cache over Linear's GraphQL reader (``tracker_reader`` in tests).
 
     ``environ`` defaults to this process's environment, read at call time; ``linear_post`` is
-    the reader's HTTP transport (default ``urllib``).
+    the reader's HTTP transport (default ``urllib``); ``clock`` times the cache (the app's).
     """
     env: Mapping[str, str] = os.environ if environ is None else environ
     reader = (
@@ -339,7 +341,7 @@ def ticket_snapshots(
         if tracker_reader is None
         else tracker_reader
     )
-    return CachedTicketSnapshots(TicketReaders(facts, environ=env, reader=reader))
+    return CachedTicketSnapshots(TicketReaders(facts, environ=env, reader=reader), clock=clock)
 
 
 def default_brain_changes() -> BrainChangeRequests:
@@ -401,7 +403,11 @@ def build_app(
         store, settings, hub_paths=hub_paths, label_rules_of=facts.label_rules_of
     )
     snapshots = ticket_snapshots(
-        facts, environ=environ, linear_post=linear_post, tracker_reader=tracker_reader
+        facts,
+        environ=environ,
+        linear_post=linear_post,
+        tracker_reader=tracker_reader,
+        clock=settings.clock,
     )
     hubs = HubFilesReadModels(
         registry=registry,
