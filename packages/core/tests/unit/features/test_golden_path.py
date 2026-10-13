@@ -2,7 +2,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from agent_hub.core.features.feature_record import RecordAc
+from agent_hub.core.features.feature_record import PlannedTicket, RecordAc
 from agent_hub.core.features.feature_view import GoldenPath, GoldenStep, TicketsSource
 from agent_hub.core.features.golden_path import (
     LINEAR_NOT_CONNECTED,
@@ -13,8 +13,13 @@ from agent_hub.core.features.golden_path import (
     golden_path,
     own_conditions,
 )
+from agent_hub.core.features.ticket_planning import ticket_board
 from agent_hub.core.features.ticket_view import TicketRow
-from agent_hub.core.testing.read_model_builders import a_ticket_row
+from agent_hub.core.testing.read_model_builders import (
+    a_ticket_row,
+    a_ticket_snapshot,
+    an_issue_summary,
+)
 from agent_hub.core.tracker.tracker_reader import IssueState, IssueStateType
 
 _FILES = ("spec.md", "research.md", "plan.md", "features.json")
@@ -142,6 +147,28 @@ def test_counts_reviewed_when_done_or_approved_record() -> None:
     assert _step(path, "tickets").meta == "3 of 3 created"
 
 
+def test_keeps_review_pending_when_in_review_without_approved_record() -> None:
+    planned = (PlannedTicket(key="T1", id="TIP-1520", order=1),)
+    summary = an_issue_summary(
+        id="TIP-1520",
+        state=_IN_REVIEW,
+        url="https://linear.app/demo/issue/TIP-1520",
+        blocks=(),
+        blocked_by=(),
+    )
+    snapshot = a_ticket_snapshot(summaries=(summary,), missing=(), external=())
+    acs = _acs(1, passing=1)
+
+    board = ticket_board(planned, acs, snapshot, approved=("TIP-1519", "T9"))
+    path = golden_path(_inputs(rows=board.rows, acs=acs, approved_reviews=0))
+
+    (row,) = board.rows
+    assert (row.state, row.reviewed) == (_IN_REVIEW, False)
+    review = _step(path, "review")
+    assert review.state == "pending"
+    assert review.meta == "0/1 reviewed"
+
+
 def test_marks_review_unknown_when_records_over_cap() -> None:
     rows = (_ticket(1, state=_DONE, reviewed=True),)
 
@@ -161,7 +188,7 @@ def _all_done(**fields: object) -> GoldenInputs:
     return _inputs(**(values | fields))
 
 
-def test_ships_when_every_gate_holds() -> None:
+def test_shipped_when_every_gate_holds() -> None:
     path = golden_path(_all_done())
 
     assert path.phase == "shipped"
@@ -170,7 +197,7 @@ def test_ships_when_every_gate_holds() -> None:
 
 
 @pytest.mark.parametrize("approved", [False, True])
-def test_never_ships_when_plan_fallback(*, approved: bool) -> None:
+def test_never_shipped_when_plan_fallback(*, approved: bool) -> None:
     rows = tuple(
         _ticket(number, state=None, reviewed=True if approved else None) for number in range(1, 5)
     )

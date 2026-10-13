@@ -6,8 +6,15 @@ holds its scope: ``type: eval``, ``delivery``, ``verdict``, ``tickets``, ``acs``
 verdict is its first ``Verdict`` line and whose scope is its frontmatter, when it has one.
 
 For each AC the latest eval whose scope names it decides (S7): it is covered when that verdict is
-SHIP or SHIP-WITH-OWNER-STEPS. "Latest" is ``evaluated_at`` (ISO text, compared as text), then the
-re-run suffix ``-rN``, then the file name. An eval naming only ``tickets`` covers the ACs whose
+SHIP or SHIP-WITH-OWNER-STEPS. "Latest" is a partial order. Two evals that both have a usable
+``evaluated_at`` compare as instants in UTC (``+02:00`` and ``Z`` order correctly; a time without
+an offset, or a date alone, is read as UTC). When either has no usable date, or both name the same
+instant, a re-run of the same delivery is newer than what it re-runs (``dem-1-r2`` over ``dem-1``,
+a higher ``-rN`` over a lower), and any ``evals/`` file is newer than the legacy ``eval.md``.
+Otherwise the two have no order, and the latest evals naming an AC are all those no other one is
+newer than: when they disagree the conservative verdict decides (NO-SHIP over
+SHIP-WITH-OWNER-STEPS over SHIP), so an undated eval never lets an older SHIP cover an AC that a
+NO-SHIP may have reopened. An eval naming only ``tickets`` covers the ACs whose
 ``ticket`` is one of them (a plan key and its tracker id are the same ticket). A legacy eval
 without scope covers every AC only when every AC passes in ``features.json``; otherwise it covers
 none and the coverage is ``unscoped``. Withdrawn ACs are left out of every count.
@@ -16,6 +23,7 @@ none and the coverage is ``unscoped``. Withdrawn ACs are left out of every count
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final, Literal, cast, get_args
 
 from agent_hub.core.brain.brain_note import FrontmatterValue
@@ -47,6 +55,8 @@ _PR: Final = re.compile(r"[A-Za-z0-9._/#:-]{1,200}")
 _COMMIT: Final = re.compile(r"[0-9a-f]{7,40}")
 _RERUN: Final = re.compile(r"-r([1-9][0-9]{0,3})$")
 _SHIPPED: Final = ("SHIP", "SHIP-WITH-OWNER-STEPS")
+# When the latest evals of an AC disagree, the first of these among them decides.
+_CONSERVATIVE: Final[tuple[Verdict, ...]] = ("NO-SHIP", "SHIP-WITH-OWNER-STEPS", "SHIP")
 _ALL: Final = "all"
 _VERDICTS: Final[tuple[str, ...]] = get_args(Verdict.__value__)
 
@@ -76,7 +86,9 @@ def eval_records(
     heads: Sequence[RecordHead], legacy_head: bytes | None, *, slug: str
 ) -> tuple[EvalRecord, ...]:
     """Each eval of the feature ``slug``: the heads of ``evals/*.md`` and the legacy ``eval.md``
-    (``legacy_head``, None when absent), oldest first (the order "latest" uses).
+    (``legacy_head``, None when absent). Listed oldest first as far as the order is known: the
+    legacy eval, then the dated evals by instant, then the undated ones by delivery and re-run
+    (the listing only; ``eval_coverage`` uses the partial order of the module docstring).
 
     A file that cannot be read or whose frontmatter is malformed is listed with its ``problem``
     and empty fields; it covers nothing.
@@ -84,7 +96,7 @@ def eval_records(
     records = [_eval(head, slug=slug) for head in heads]
     if legacy_head is not None:
         records.append(_legacy(legacy_head, slug=slug))
-    return tuple(sorted(records, key=_recency))
+    return tuple(sorted(records, key=_listing_key))
 
 
 def eval_coverage(
@@ -96,7 +108,8 @@ def eval_coverage(
     """What ``records`` cover of ``acs`` (S7); ``tickets`` tie a plan key to its tracker id."""
     live = tuple(ac for ac in acs if not ac.withdrawn)
     aliases = _aliases(tickets)
-    deciding: dict[str, tuple[tuple[str, int, str], Verdict]] = {}
+    naming: dict[str, list[int]] = {}
+    scoped: list[EvalRecord] = []
     unscoped = False
     for record in records:
         if record.problem is not None or record.verdict is None:
@@ -105,11 +118,17 @@ def eval_coverage(
         if named is None:
             unscoped = True
             continue
-        rank = _recency(record)
-        for ac_id in named:
-            if ac_id not in deciding or deciding[ac_id][0] <= rank:
-                deciding[ac_id] = (rank, record.verdict)
-    verdicts = {ac_id: verdict for ac_id, (_, verdict) in deciding.items()}
+        for ac_id in dict.fromkeys(named):
+            naming.setdefault(ac_id, []).append(len(scoped))
+        scoped.append(record)
+    keys = [_order_key(record) for record in scoped]
+    decided: dict[tuple[int, ...], Verdict] = {}
+    verdicts: dict[str, Verdict] = {}
+    for ac_id, indexes in naming.items():
+        group = tuple(indexes)
+        if group not in decided:
+            decided[group] = _latest_verdict(group, scoped, keys)
+        verdicts[ac_id] = decided[group]
     covered = tuple(ac.id for ac in live if verdicts.get(ac.id) in _SHIPPED)
     return EvalCoverage(
         covered=covered,
@@ -265,9 +284,64 @@ def _acs(fields: dict[str, FrontmatterValue]) -> tuple[str, ...] | Literal["all"
     return "all" if fields.get("acs") == _ALL else _items(fields, "acs", _AC_ID)
 
 
-def _recency(record: EvalRecord) -> tuple[str, int, str]:
+@dataclass(frozen=True, slots=True)
+class _OrderKey:
+    instant: datetime | None
+    legacy: bool
+    stem: str
+    rerun: int
+
+
+def _order_key(record: EvalRecord) -> _OrderKey:
     found = _RERUN.search(record.delivery)
-    return (record.evaluated_at or "", int(found.group(1)) if found else 1, record.path)
+    stem = record.delivery[: found.start()] if found else record.delivery
+    return _OrderKey(
+        instant=_instant(record.evaluated_at),
+        legacy=record.legacy,
+        stem=stem,
+        rerun=int(found.group(1)) if found else 1,
+    )
+
+
+def _instant(text: str | None) -> datetime | None:
+    """``evaluated_at`` as an instant in UTC (no offset: UTC); None when absent or unusable."""
+    if text is None:
+        return None
+    try:
+        moment = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return moment.replace(tzinfo=UTC) if moment.tzinfo is None else moment.astimezone(UTC)
+
+
+def _newer(first: _OrderKey, second: _OrderKey) -> bool:
+    """True when ``first`` is known to be newer than ``second`` (the module's partial order)."""
+    left, right = first.instant, second.instant
+    if left is not None and right is not None and left != right:
+        return left > right
+    if first.legacy != second.legacy:
+        return second.legacy
+    return first.stem == second.stem and first.rerun > second.rerun
+
+
+def _latest_verdict(
+    group: tuple[int, ...], records: Sequence[EvalRecord], keys: Sequence[_OrderKey]
+) -> Verdict:
+    """The verdict of the latest evals in ``group``: those no other is newer than (all of them
+    if the order loops), the conservative one when they disagree."""
+    latest = [
+        index
+        for index in group
+        if not any(_newer(keys[other], keys[index]) for other in group if other != index)
+    ] or list(group)
+    verdicts = {records[index].verdict for index in latest}
+    return next(verdict for verdict in _CONSERVATIVE if verdict in verdicts)
+
+
+def _listing_key(record: EvalRecord) -> tuple[bool, bool, datetime, str, int, str]:
+    key = _order_key(record)
+    instant = key.instant or datetime.min.replace(tzinfo=UTC)
+    return (not key.legacy, key.instant is None, instant, key.stem, key.rerun, record.path)
 
 
 def _aliases(tickets: Iterable[PlannedTicket]) -> dict[str, frozenset[str]]:

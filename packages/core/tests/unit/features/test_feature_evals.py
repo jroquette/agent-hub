@@ -109,6 +109,92 @@ def test_orders_by_date_before_rerun_when_dates_differ_latest_wins() -> None:
     assert coverage.covered == ("AC-7.1",)
 
 
+def test_lets_undated_rerun_decide_when_bare_file_dated_latest_wins() -> None:
+    heads = (
+        an_eval("dem-1.md", verdict="SHIP", acs="[AC-1]", evaluated_at="2026-10-01T10:00:00Z"),
+        an_eval("dem-1-r2.md", verdict="NO-SHIP", acs="[AC-1]"),
+    )
+
+    records = eval_records(heads, None, slug=SLUG)
+    coverage = eval_coverage(records, (an_ac("AC-1"),))
+
+    assert [r.delivery for r in records] == ["dem-1", "dem-1-r2"]
+    assert (coverage.covered, coverage.uncovered) == ((), ("AC-1",))
+
+
+@pytest.mark.parametrize(
+    ("earlier", "later", "covered"),
+    [("SHIP", "NO-SHIP", ()), ("NO-SHIP", "SHIP", ("AC-7.1",))],
+)
+def test_compares_instants_when_offsets_differ_latest_wins(
+    earlier: str, later: str, covered: tuple[str, ...]
+) -> None:
+    # 10:00+02:00 is 08:00Z: earlier than 09:00Z, though it sorts later as text.
+    heads = (
+        an_eval("a.md", verdict=earlier, acs="all", evaluated_at="2026-10-01T10:00:00+02:00"),
+        an_eval("b.md", verdict=later, acs="all", evaluated_at="2026-10-01T09:00:00Z"),
+    )
+
+    records = eval_records(heads, None, slug=SLUG)
+
+    assert [r.delivery for r in records] == ["a", "b"]
+    assert eval_coverage(records, acs_named(1)).covered == covered
+
+
+def test_orders_by_rerun_suffix_when_dates_missing_latest_wins() -> None:
+    heads = (
+        an_eval("dem-1-r3.md", verdict="SHIP", acs="[AC-7.1]"),
+        an_eval("dem-1-r2.md", verdict="NO-SHIP", acs="[AC-7.1]", evaluated_at="2026-10-11"),
+        an_eval("dem-1.md", verdict="NO-SHIP", acs="[AC-7.1, AC-7.2]"),
+        an_eval("dem-2-r2.md", verdict="SHIP", acs="[AC-7.2]"),
+    )
+
+    coverage = eval_coverage(eval_records(heads, None, slug=SLUG), acs_named(2))
+
+    # dem-1-r3 is newer than dem-1-r2 and dem-1; dem-2-r2 and dem-1 have no order: not covered.
+    assert (coverage.covered, coverage.uncovered) == (("AC-7.1",), ("AC-7.2",))
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "expected"),
+    [
+        (("SHIP", None), ("NO-SHIP", "2026-10-01"), ((), ())),
+        (("NO-SHIP", "2026-10-01"), ("SHIP", None), ((), ())),
+        (("SHIP", None), ("SHIP", "2026-10-01"), (("AC-7.1",), ())),
+        (("SHIP", None), ("SHIP-WITH-OWNER-STEPS", None), (("AC-7.1",), ("AC-7.1",))),
+    ],
+    ids=["ship-undated", "ship-dated-later-unknown", "both-ship", "owner-steps"],
+)
+def test_takes_conservative_verdict_when_no_order_known_latest_wins(
+    first: tuple[str, str | None],
+    second: tuple[str, str | None],
+    expected: tuple[tuple[str, ...], tuple[str, ...]],
+) -> None:
+    heads = tuple(
+        an_eval(
+            name,
+            verdict=verdict,
+            acs="all",
+            **({} if date is None else {"evaluated_at": date}),
+        )
+        for name, (verdict, date) in (("x.md", first), ("y.md", second))
+    )
+
+    coverage = eval_coverage(eval_records(heads, None, slug=SLUG), acs_named(1))
+
+    assert (coverage.covered, coverage.owner_steps) == expected
+
+
+def test_lets_undated_eval_beat_legacy_when_neither_dated_legacy() -> None:
+    heads = (an_eval("feature.md", verdict="SHIP", acs="all"),)
+
+    records = eval_records(heads, b"Verdict: NO-SHIP\n", slug=SLUG)
+    coverage = eval_coverage(records, acs_named(2))
+
+    assert [r.delivery for r in records] == [LEGACY_DELIVERY, "feature"]
+    assert coverage.covered == ("AC-7.1", "AC-7.2")
+
+
 def test_lists_records_oldest_first_when_dates_differ() -> None:
     heads = (
         an_eval("a.md", verdict="SHIP", acs="all", evaluated_at="2026-10-12T09:00:00Z"),

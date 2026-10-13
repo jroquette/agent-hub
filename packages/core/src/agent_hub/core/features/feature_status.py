@@ -41,6 +41,7 @@ from agent_hub.core.features.ticket_snapshots import SnapshotRead
 from agent_hub.core.hub_config.problems import one_line
 from agent_hub.core.json_form import InvalidJsonError, load_json_bytes
 from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN
+from agent_hub.core.tracker.tracker_reader import MAX_READ_IDS
 
 SPEC: Final = "spec.md"
 RESEARCH: Final = "research.md"
@@ -114,16 +115,41 @@ class FeatureParts:
 
 
 def ticket_ids(folder: FeatureFolder) -> tuple[str, ...]:
-    """The tracker ids of the feature's tickets (planned ones created, and ``linear``), sorted
-    and unique: what a snapshot of it reads. None for a record that is absent or malformed."""
+    """The tracker ids a snapshot of the feature reads, sorted and unique: its tickets' (planned
+    ones created, and ``linear``), then the tracker ids the plan's ``blocked_by`` names outside
+    the feature, so a blocker known only to the plan gets its status (AC-136.10). The feature's
+    own ids always fit (``MAX_TICKETS`` is ``MAX_READ_IDS``); outside blockers fill what room is
+    left under ``MAX_READ_IDS``, lowest ids first, and any over it stay unread (status unknown).
+    Empty for a record that is absent or malformed."""
     record = _record(folder.features_json)
     if not isinstance(record, FeatureRecordFile):
         return ()
-    ids = (
+    own = {
         *(ticket.id for ticket in record.tickets if ticket.id is not None),
-        *(issue for issue in record.linear if ISSUE_ID_PATTERN.fullmatch(issue) is not None),
+        *(issue for issue in record.linear if _is_issue_id(issue)),
+    }
+    keys = {ticket.key for ticket in record.tickets}
+    outside = sorted(
+        {
+            name
+            for ticket in record.tickets
+            for name in ticket.blocked_by
+            if _is_issue_id(name) and name not in own and name not in keys
+        },
+        key=_id_order,
     )
-    return tuple(sorted(set(ids)))
+    room = max(MAX_READ_IDS - len(own), 0)
+    return tuple(sorted(own | set(outside[:room])))
+
+
+def _is_issue_id(text: str) -> bool:
+    return ISSUE_ID_PATTERN.fullmatch(text) is not None
+
+
+def _id_order(issue: str) -> tuple[str, int]:
+    """``OPS-9`` before ``OPS-10``: an issue id by team, then number."""
+    team, _, number = issue.rpartition("-")
+    return team, int(number)
 
 
 def feature_parts(folder: FeatureFolder, read: SnapshotRead | None = None) -> FeatureParts:

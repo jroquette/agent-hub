@@ -869,7 +869,7 @@ def test_accepts_evals_when_scope_recorded(snapshot_of: SnapshotFactory) -> None
         ),
     ],
 )
-def test_reports_eval_when_frontmatter_invalid(
+def test_reports_evals_when_frontmatter_invalid(
     snapshot_of: SnapshotFactory, content: bytes, expected: tuple[str, str]
 ) -> None:
     message, fix = expected
