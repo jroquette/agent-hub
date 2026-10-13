@@ -73,6 +73,12 @@ from agent_hub.core.readmodels.filters import Scope
 from agent_hub.core.readmodels.page import Page
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.readmodels.settings_view import SettingsView
+from agent_hub.core.skills.skill_view import (
+    BundledFileText,
+    ItemKind,
+    SkillCatalog,
+    SkillDetail,
+)
 
 NOW_PATH: Final = "brain/now.md"
 # Portfolio cards and repos need sources not connected in Phase 2.
@@ -288,6 +294,20 @@ class HubFilesReadModels:
             markdown=split.body,
             size=len(read),
         )
+
+    def skill_catalog(self, project: str) -> SkillCatalog:
+        """The project's skills, agents and hooks (filled by stream C2)."""
+        raise NotImplementedError(project)
+
+    def skill_detail(self, project: str, *, kind: ItemKind, source: str, name: str) -> SkillDetail:
+        """One item of the catalog (filled by stream C2)."""
+        raise NotImplementedError(project, kind, source, name)
+
+    def skill_file(
+        self, project: str, *, kind: ItemKind, source: str, name: str, file_id: str
+    ) -> BundledFileText:
+        """One bundled file of a skill (filled by stream C2)."""
+        raise NotImplementedError(project, kind, source, name, file_id)
 
     def _feature(self, project: str, slug: str) -> tuple[_Project, FeatureFolder]:
         missing = EntityNotFoundError(entity="feature", entity_id=f"{project}/{slug}")
