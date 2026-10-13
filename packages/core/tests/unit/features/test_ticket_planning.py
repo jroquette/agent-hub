@@ -94,58 +94,96 @@ def test_puts_no_priority_last_when_layer_ties() -> None:
     assert board.plan.order == ("DEM-2", "DEM-1", "DEM-3")
 
 
+type _Feature = tuple[tuple[PlannedTicket, ...], tuple[IssueSummary, ...], tuple[IssueSummary, ...]]
+_STATE_TYPES: tuple[IssueStateType, ...] = ("unstarted", "started", "completed", "canceled")
+_OUTSIDE = ("OPS-1", "OPS-2", "OPS-3")
+
+
+def _state_of(kind: IssueStateType) -> IssueState:
+    return IssueState(name=kind, type=kind)
+
+
 @st.composite
-def _features(draw: st.DrawFn) -> tuple[tuple[PlannedTicket, ...], tuple[IssueSummary, ...]]:
+def _features(draw: st.DrawFn) -> _Feature:
+    """A DAG of up to 40 tickets, some also blocked by outside issues ``OPS-1..3``: Linear
+    returns each outside one as asked, as an external relation, or not at all."""
     size = draw(st.integers(min_value=1, max_value=40))
     planned: list[PlannedTicket] = []
     summaries: list[IssueSummary] = []
-    states: tuple[IssueStateType, ...] = ("unstarted", "started", "completed", "canceled")
+    external: list[IssueSummary] = []
     for number in range(1, size + 1):
         blockers = (
             draw(st.sets(st.integers(min_value=1, max_value=number - 1), max_size=4))
             if number > 1
             else set()
         )
+        outside = draw(st.sets(st.sampled_from(_OUTSIDE), max_size=2))
         planned.append(
             _planned(
                 number,
-                blocked_by=tuple(sorted(blockers)),
+                blocked_by=(*(f"T{b}" for b in sorted(blockers)), *sorted(outside)),
                 order=draw(st.integers(min_value=0, max_value=5)),
             )
         )
-        kind = draw(st.sampled_from(states))
         summaries.append(
             _summary(
                 number,
-                state=IssueState(name=kind, type=kind),
+                state=_state_of(draw(st.sampled_from(_STATE_TYPES))),
                 priority=draw(st.sampled_from((0, 1, 2, 3, 4, None))),
             )
         )
-    return tuple(planned), tuple(summaries)
+    for issue in _OUTSIDE:
+        read = draw(st.sampled_from(("asked", "external", "unread")))
+        if read != "unread":
+            item = _summary(0, id=issue, state=_state_of(draw(st.sampled_from(_STATE_TYPES))))
+            (summaries if read == "asked" else external).append(item)
+    return tuple(planned), tuple(summaries), tuple(external)
 
 
 @settings(max_examples=150, deadline=None)
 @given(feature=_features(), data=st.data())
 def test_orders_topologically_when_dag_generated_property(
-    feature: tuple[tuple[PlannedTicket, ...], tuple[IssueSummary, ...]], data: st.DataObject
+    feature: _Feature, data: st.DataObject
 ) -> None:
-    planned, summaries = feature
+    planned, summaries, external = feature
 
-    board = _board(planned, summaries)
+    board = _board(planned, summaries, external=external)
 
-    active = {row.ref for row in board.rows if row.readiness not in ("done", "canceled")}
+    rows = {row.ref: row for row in board.rows}
+    open_outside = {item.id for item in board.plan.external_blockers if item.state is None} | {
+        item.id
+        for item in board.plan.external_blockers
+        if item.state is not None and item.state.type not in ("completed", "canceled")
+    }
+    active = {ref for ref, row in rows.items() if row.readiness not in ("done", "canceled")}
     position = {ref: index for index, ref in enumerate(board.plan.order)}
-    assert set(position) == active
-    assert board.plan.cycles == ()
     layer_of = {ref: index for index, layer in enumerate(board.plan.layers) for ref in layer}
-    assert set(layer_of) == active
-    for row in board.rows:
-        for edge in row.blocked_by:
-            if row.ref in active and edge.ref in active:
-                assert position[edge.ref] < position[row.ref]
-                assert layer_of[edge.ref] < layer_of[row.ref]
+    assert board.plan.cycles == ()
+    assert board.plan.order == tuple(ref for layer in board.plan.layers for ref in layer)
+    assert set(layer_of) <= active
+    for ref in active:
+        blockers = [edge.ref for edge in rows[ref].blocked_by]
+        live = [b for b in blockers if b in active or b in open_outside]
+        if ref in layer_of:
+            # Every blocker of a layered ticket is in an earlier layer or settled.
+            assert all(b in layer_of and layer_of[b] < layer_of[ref] for b in live)
+        else:
+            # A ticket is left out of the layers only behind an open (or unread) outside blocker.
+            assert rows[ref].readiness == "waiting"
+            assert ref in board.plan.waiting
+            assert any(b not in layer_of for b in live)
+        for b in live:
+            if b in position and ref in position:
+                assert position[b] < position[ref]
+    first = board.plan.layers[0] if board.plan.layers else ()
+    assert board.plan.can_start == first
+    assert all(rows[ref].readiness == "can_start" for ref in first)
     shuffled = data.draw(st.permutations(planned))
-    again = _board(tuple(shuffled), tuple(data.draw(st.permutations(summaries))))
+    again = _board(
+        tuple(shuffled),
+        tuple(data.draw(st.permutations(summaries))),
+        external=tuple(data.draw(st.permutations(external))),
+    )
     assert again == board
 
 
@@ -406,3 +444,17 @@ def test_redacts_state_name_when_state_holds_secret() -> None:
         assert secret not in state.name
         assert state.name == "Blocked [redacted: linear key]"
         assert state.type == "started"
+
+
+def test_keeps_ticket_out_of_layers_when_outside_blocker_open() -> None:
+    planned = (_planned(1), _planned(2, blocked_by=(1,)), _planned(3))
+    summaries = (_summary(1, blocked_by=("OPS-9",)), _summary(2), _summary(3))
+    external = (_summary(9, id="OPS-9", state=_STARTED),)
+
+    board = _board(planned, summaries, external=external)
+
+    assert board.plan.layers == (("DEM-3",),)
+    assert board.plan.order == board.plan.can_start == ("DEM-3",)
+    assert board.plan.waiting == ("DEM-1", "DEM-2")
+    assert _row(board, "DEM-1").waiting_on == ("OPS-9",)
+    assert board.plan.critical_path == ("DEM-3",)
