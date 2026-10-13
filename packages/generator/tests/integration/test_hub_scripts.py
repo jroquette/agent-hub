@@ -319,8 +319,14 @@ def test_runs_mine_and_retro_when_make_targets_run(
     today = datetime.date.today()
     run_log = f"{today.isoformat()}.jsonl"
     reported = {"event": "reported", "issue": "DEM-1", "total_cost_usd": 0.5}
+    not_delivered = [
+        {"event": "reported", "issue": f"DEM-{n}", "outcome": outcome, "failed_stage": None}
+        for n, outcome in ((2, "no_changes"), (3, "blocked"))
+    ]
     (scripts_hub / ".agent-runs").mkdir()
-    (scripts_hub / ".agent-runs" / run_log).write_text(json.dumps(reported) + "\n")
+    (scripts_hub / ".agent-runs" / run_log).write_text(
+        "".join(json.dumps(record) + "\n" for record in [reported, *not_delivered])
+    )
 
     mine = run(["make", "mine", "DAYS=7"])
     retro = run(["make", "retro", "DAYS=14"])
@@ -342,7 +348,10 @@ def test_runs_mine_and_retro_when_make_targets_run(
     metrics = json.loads(body)
     assert set(metrics) == RETRO_KEYS
     assert sorted(metrics["prs"]) == GITHUB_REPOS
-    assert metrics["agent_runs"] == {"outcomes": {"pr_opened": 1}, "cost_per_issue": {"DEM-1": 0.5}}
+    assert metrics["agent_runs"] == {
+        "outcomes": {"pr_opened": 1, "no_changes": 1, "blocked": 1},
+        "cost_per_issue": {"DEM-1": 0.5, "DEM-2": 0.0, "DEM-3": 0.0},
+    }
     calls = (tmp_path / "gh.log").read_text(encoding="utf-8").splitlines()
     assert [call.split()[:4] for call in calls] == [
         [kind, "list", "-R", repo] for kind in ("pr", "run") for repo in GITHUB_REPOS
