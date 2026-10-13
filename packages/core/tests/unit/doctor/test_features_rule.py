@@ -640,3 +640,298 @@ def test_reads_only_feature_records_when_listing_searched(
     snapshot = snapshot_of(config=a_config(), files=files, listed=(path,))
 
     assert findings_of(snapshot) == []
+
+
+# AGH-136: the ticket plan (``tickets``, AC ``ticket``), evals per delivery and withdrawn ACs.
+TICKET_FIX = "name a key or id of `tickets` (or add that ticket)"
+CYCLE_FIX = "remove one blocked_by edge of the cycle"
+AC_TICKET_FIX = "name the ticket that delivers the AC: a key or id of `tickets`, or a `linear` id"
+EVAL_FIX = "write the eval's frontmatter: type: eval, delivery, verdict, and acs or tickets"
+EVAL_ACS_FIX = "name only AC ids of features.json in the eval's acs"
+DELIVERY_FIX = "make `delivery` the file name; a re-run is a new file <delivery>-r2.md"
+RENAME_FIX = "rename the eval to <delivery>.md: lower-case letters, digits and -"
+EVALS = "brain/features/demo/evals"
+
+
+def a_ticket(key: str, **changes: object) -> dict[str, Any]:
+    return {"key": key, "id": None, "title": f"Ticket {key}", "repo": "api", "blocked_by": []} | (
+        changes
+    )
+
+
+def a_planned_record(*tickets: object, **changes: object) -> dict[str, Any]:
+    acs = [an_ac(1, ticket="T1"), an_ac(2, ticket="T2")]
+    return a_record(*acs, tickets=list(tickets)) | changes
+
+
+def shown_with_level(snapshot: DoctorSnapshot) -> list[tuple[Severity, str | None, str, str]]:
+    found = list(FEATURES_TRACKER.check(snapshot))
+    return [(finding.severity, finding.path, finding.message, finding.fix) for finding in found]
+
+
+def test_accepts_tickets_when_plan_well_formed(snapshot_of: SnapshotFactory) -> None:
+    record = a_planned_record(
+        a_ticket("T1", id="TST-7", order=0),
+        a_ticket("T2", blocked_by=["T1"], order=1),
+        a_ticket("T3", blocked_by=["TST-7", "T2"], repo="web", title=None),
+    )
+    record["acs"].append(an_ac(3, ticket="TST-1"))
+
+    assert checked(snapshot_of, record, spec=b"AC-1 AC-2 AC-3\n") == []
+
+
+@pytest.mark.parametrize(
+    ("tickets", "expected"),
+    [
+        pytest.param(
+            [a_ticket("T1"), a_ticket("T2"), a_ticket("T1")],
+            [("T1: duplicate key", RECORD_FIX)],
+            id="duplicate-key",
+        ),
+        pytest.param(
+            [a_ticket("T1"), a_ticket("T2", blocked_by=["T9"])],
+            [("T2: blocked_by T9 is not a key or id of `tickets`", TICKET_FIX)],
+            id="unknown-blocked-by",
+        ),
+        pytest.param(
+            [a_ticket("T1", blocked_by=["T1"]), a_ticket("T2")],
+            [("T1: blocked by itself", "remove it from blocked_by")],
+            id="self",
+        ),
+        pytest.param(
+            [a_ticket("T1"), a_ticket("T2"), a_ticket("1x")],
+            [
+                (
+                    "tickets[2]: `key` must be a draft key such as T1 (a letter, then up to 31"
+                    " letters, digits, - or _)",
+                    RECORD_FIX,
+                )
+            ],
+            id="malformed-key",
+        ),
+        pytest.param(
+            [a_ticket("T1", id="tst-7"), a_ticket("T2")],
+            [("T1: `id` must be null or a tracker id such as TST-12", RECORD_FIX)],
+            id="malformed-id",
+        ),
+        pytest.param(
+            [a_ticket("T1", title="x" * 201, repo="other"), a_ticket("T2", order=-1)],
+            [
+                ("T1: `title` must be null or at most 200 characters", RECORD_FIX),
+                ("T1: repo must be one of api, demo-hub, web", RECORD_FIX),
+                ("T2: `order` must be null or a whole number, 0 or more", RECORD_FIX),
+            ],
+            id="field-bounds",
+        ),
+        pytest.param(
+            [a_ticket("T1", blocked_by=[f"T{n}" for n in range(51)]), a_ticket("T2")],
+            [("T1: `blocked_by` must be a list of at most 50 keys or ids", RECORD_FIX)],
+            id="too-many-blockers",
+        ),
+        pytest.param(
+            [a_ticket("T1"), a_ticket("T2"), "T3"],
+            [("tickets[2]: must be an object", RECORD_FIX)],
+            id="not-object",
+        ),
+    ],
+)
+def test_reports_ticket_plan_when_tickets_malformed(
+    snapshot_of: SnapshotFactory, tickets: list[object], expected: list[tuple[str, str]]
+) -> None:
+    findings = checked(snapshot_of, a_planned_record(*tickets))
+
+    assert findings == [(RECORD, message, fix) for message, fix in expected]
+
+
+def test_reports_tickets_when_not_a_list_or_over_cap(snapshot_of: SnapshotFactory) -> None:
+    over = a_record(an_ac(1), tickets=[a_ticket(f"T{n}") for n in range(201)])
+    not_list = a_record(an_ac(1), tickets={"T1": {}})
+    message = "`tickets` must be a list of at most 200 tickets"
+
+    assert checked(snapshot_of, over) == on_record(message)
+    assert checked(snapshot_of, not_list) == on_record(message)
+
+
+def test_reports_ac_ticket_when_not_in_tickets_or_linear(snapshot_of: SnapshotFactory) -> None:
+    record = a_planned_record(a_ticket("T1"), a_ticket("T2"))
+    record["acs"] += [an_ac(3, ticket="T7"), an_ac(4, ticket=3)]
+
+    assert checked(snapshot_of, record) == [
+        (RECORD, "AC-3: ticket T7 is not a key or id of `tickets` or `linear`", AC_TICKET_FIX),
+        (RECORD, "AC-4: `ticket` must be null or a string", RECORD_FIX),
+    ]
+
+
+def test_accepts_ac_ticket_when_named_by_linear_without_tickets(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    # A record without a ticket plan parses as before; its AC may name a ``linear`` id.
+    assert checked(snapshot_of, a_record(an_ac(1, ticket="TST-1"))) == []
+
+
+def test_warns_cycle_when_tickets_block_each_other(snapshot_of: SnapshotFactory) -> None:
+    record = a_planned_record(
+        a_ticket("T1", blocked_by=["T3"]),
+        a_ticket("T2", id="TST-8", blocked_by=["T1"]),
+        a_ticket("T3", blocked_by=["TST-8"]),
+        a_ticket("T4", blocked_by=["T1"]),
+    )
+    files = {RECORD: json.dumps(record).encode()}
+
+    assert shown_with_level(snapshot_of(config=a_config(), files=files)) == [
+        (Severity.WARNING, RECORD, "T1, T2, T3: a cycle of blocked_by", CYCLE_FIX)
+    ]
+
+
+def an_eval(**fields: str) -> bytes:
+    lines = "".join(f"{name}: {value}\n" for name, value in fields.items())
+    return f"---\n{lines}---\n# Eval\n".encode()
+
+
+def a_good_eval(delivery: str = "tst-7", **changes: str) -> bytes:
+    fields = {"type": "eval", "delivery": delivery, "verdict": "SHIP", "acs": "[AC-1, AC-2]"}
+    return an_eval(**(fields | changes))
+
+
+def evals_checked(snapshot_of: SnapshotFactory, evals: Mapping[str, bytes]) -> list[Shown]:
+    files = {RECORD: json.dumps(a_record(an_ac(1), an_ac(2))).encode()} | {
+        f"{EVALS}/{name}": content for name, content in evals.items()
+    }
+    return findings_of(snapshot_of(config=a_config(), files=files))
+
+
+def test_accepts_evals_when_scope_recorded(snapshot_of: SnapshotFactory) -> None:
+    evals = {
+        "tst-7.md": a_good_eval(),
+        "tst-7-r2.md": a_good_eval("tst-7-r2", verdict="NO-SHIP", acs="all"),
+        "feature.md": a_good_eval(
+            "feature", verdict="SHIP-WITH-OWNER-STEPS", tickets="[TST-1]"
+        ).replace(b"acs: [AC-1, AC-2]\n", b""),
+        ".draft.md": b"not an eval",
+        "notes.txt": b"not an eval",
+    }
+
+    assert evals_checked(snapshot_of, evals) == []
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        pytest.param(
+            an_eval(type="eval", delivery="tst-7", acs="[AC-1]"),
+            ("`verdict` must be SHIP, SHIP-WITH-OWNER-STEPS or NO-SHIP", EVAL_FIX),
+            id="no-verdict",
+        ),
+        pytest.param(
+            a_good_eval(verdict="MAYBE"),
+            ("`verdict` must be SHIP, SHIP-WITH-OWNER-STEPS or NO-SHIP", EVAL_FIX),
+            id="bad-verdict",
+        ),
+        pytest.param(
+            an_eval(type="eval", delivery="tst-7", verdict="SHIP"),
+            ("no scope: give `acs` (a list of AC ids, or all) or `tickets`", EVAL_FIX),
+            id="no-scope",
+        ),
+        pytest.param(
+            a_good_eval(acs="[AC-1, AC-9]"),
+            ("AC-9: in the eval's acs but not in features.json", EVAL_ACS_FIX),
+            id="unknown-ac",
+        ),
+        pytest.param(
+            a_good_eval(acs="some"),
+            ("`acs` must be a list of AC ids, or all", EVAL_FIX),
+            id="bad-acs",
+        ),
+        pytest.param(
+            a_good_eval(tickets="TST-1"),
+            ("`tickets` must be a list of ticket keys or ids", EVAL_FIX),
+            id="bad-tickets",
+        ),
+        pytest.param(
+            a_good_eval("tst-8"),
+            ("`delivery` must be the file name, tst-7", DELIVERY_FIX),
+            id="delivery-differs",
+        ),
+        pytest.param(
+            b"# Eval\nVerdict: SHIP\n",
+            ("no frontmatter: an eval starts with a --- block", EVAL_FIX),
+            id="no-frontmatter",
+        ),
+        pytest.param(
+            b"---\nverdict SHIP\n---\n",
+            ("frontmatter: Line 2 of the frontmatter is not 'key: value'", EVAL_FIX),
+            id="malformed-frontmatter",
+        ),
+        pytest.param(
+            b"---\nverdict: SHIP \xff\n---\n",
+            ("not UTF-8 text: byte 18 cannot be decoded", TEXT_FIX),
+            id="not-utf8",
+        ),
+    ],
+)
+def test_reports_eval_when_frontmatter_invalid(
+    snapshot_of: SnapshotFactory, content: bytes, expected: tuple[str, str]
+) -> None:
+    message, fix = expected
+
+    assert evals_checked(snapshot_of, {"tst-7.md": content}) == [
+        (f"{EVALS}/tst-7.md", message, fix)
+    ]
+
+
+def test_reports_eval_when_file_name_not_a_delivery(snapshot_of: SnapshotFactory) -> None:
+    findings = evals_checked(snapshot_of, {"TST 7.md": a_good_eval("TST 7")})
+
+    assert findings == [(f"{EVALS}/TST 7.md", "the file name is not a delivery name", RENAME_FIX)]
+
+
+def test_reports_eval_when_link_or_unread(snapshot_of: SnapshotFactory) -> None:
+    record = json.dumps(a_record(an_ac(1))).encode()
+    snapshot = snapshot_of(
+        config=a_config(),
+        files={RECORD: record},
+        entries={
+            f"{EVALS}/a.md": LinkEntry(target="../eval.md", outside=False),
+            f"{EVALS}/b.md": FileEntry(executable=False, content=None),
+        },
+    )
+
+    assert findings_of(snapshot) == [
+        (f"{EVALS}/a.md", NOT_READ, LINK_FIX),
+        (f"{EVALS}/b.md", UNREAD, UNREAD_FIX),
+    ]
+
+
+def test_checks_evals_without_ac_ids_when_record_invalid(snapshot_of: SnapshotFactory) -> None:
+    files = {RECORD: b"{not json", f"{EVALS}/tst-7.md": a_good_eval(acs="[AC-9]")}
+
+    findings = findings_of(snapshot_of(config=a_config(), files=files))
+
+    assert [path for path, _, _ in findings] == [RECORD]
+
+
+def test_accepts_withdrawn_ac_when_spec_amended(snapshot_of: SnapshotFactory) -> None:
+    spec = (
+        b"---\nstatus: approved\n---\n- AC-1: Given ...\n- AC-2: (withdrawn, A1)\n\n"
+        b"## Amendments\n\n- A1 (2026-10-13, owner): AC-2 withdrawn.\n"
+    )
+    # A withdrawn AC keeps its old command: the pending-command check skips it.
+    withdrawn = an_ac(2, withdrawn=True, verification="make check | tail -5")
+    files = {
+        RECORD: json.dumps(a_record(an_ac(1), withdrawn)).encode(),
+        SPEC: spec,
+        f"{EVALS}/feature.md": a_good_eval("feature"),
+    }
+
+    assert findings_of(snapshot_of(config=a_config(), files=files)) == []
+
+
+def test_reports_withdrawn_ac_when_dropped_from_spec_or_not_bool(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    record = a_record(an_ac(1), an_ac(2, withdrawn=True), an_ac(3, withdrawn="yes"))
+
+    assert checked(snapshot_of, record, spec=b"AC-1 AC-3\n") == [
+        (RECORD, "AC-3: `withdrawn` must be true or false", RECORD_FIX),
+        (RECORD, "AC-2: in features.json but not in spec.md", SPEC_FIX),
+    ]
