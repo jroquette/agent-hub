@@ -57,3 +57,24 @@ export function linearHref(value: string | null | undefined): string | null {
   }
   return safe;
 }
+
+/** The only links a cloud session may open (D8, AC-165.40); the server checks the same prefix. */
+export const CLAUDE_CODE_PREFIX = "https://claude.ai/code/";
+
+/**
+ * A cloud session link: a `safeHref` URL under `https://claude.ai/code/` (no other scheme, host,
+ * port or user, and no dot segment leaving `/code/`), else `null`, so the caller shows plain text.
+ */
+export function claudeCodeHref(value: string | null | undefined): string | null {
+  const safe = safeHref(value);
+  if (safe === null || !safe.startsWith(CLAUDE_CODE_PREFIX) || safe === CLAUDE_CODE_PREFIX)
+    return null;
+  try {
+    const url = new URL(safe);
+    if (url.origin !== "https://claude.ai" || url.username || url.password) return null;
+    if (!url.pathname.startsWith("/code/") || url.pathname === "/code/") return null;
+  } catch {
+    return null;
+  }
+  return safe;
+}
