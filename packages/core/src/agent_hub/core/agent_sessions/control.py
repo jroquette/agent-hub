@@ -35,7 +35,7 @@ from typing import Final, Protocol
 
 from pydantic import JsonValue
 
-from agent_hub.core.agent_sessions import record_text
+from agent_hub.core.agent_sessions import record_text, subscription
 from agent_hub.core.agent_sessions.agent_session import (
     AgentSession,
     AgentSessionList,
@@ -395,6 +395,26 @@ class AgentSessionControl:
             if prompt is not None:
                 await self._driver.send(live.handle, prompt)
         return live.view()
+
+    async def subscribe(
+        self, agent_session_id: str, after: StreamPosition | None
+    ) -> AsyncIterator[StreamItem]:
+        """The stream from ``after`` (``subscription.frames``; None: live frames only). The
+        session is checked here, before any byte is sent; past the subscriber cap the oldest
+        stream of the session ends with a reset."""
+        live = self._live.get(agent_session_id)
+        session = (
+            live.view()
+            if live is not None
+            else await asyncio.to_thread(self._store.get, agent_session_id)
+        )
+
+        async def read(after_seq: int, limit: int) -> tuple[LogRecord, ...]:
+            return await asyncio.to_thread(
+                lambda: self._store.records(agent_session_id, after=after_seq, limit=limit)
+            )
+
+        return subscription.frames(session, after, live=live, read=read)
 
     async def send(self, agent_session_id: str, message: SendMessage) -> MessageAccepted:
         """Log a user message, then pass it on: it plays after the running turn."""
