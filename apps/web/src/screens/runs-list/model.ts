@@ -18,6 +18,21 @@ export const OUTCOME_BADGE: Record<RunOutcome, { status: Status; label: string }
   done: { status: "done", label: "Done" },
 };
 
+/** A run that ended without a PR yet did not fail (AGH-140): what it delivered instead. */
+const NOT_DELIVERED_BADGE = {
+  no_changes: { status: "ended", label: "No changes" },
+  blocked: { status: "blocked", label: "Blocked" },
+} as const satisfies Record<string, { status: Status; label: string }>;
+
+/** The run's badge: its outcome, or for a done run that opened no PR, why not. */
+export function runBadge(run: WorkflowRun): { status: Status; label: string } {
+  const outcome = runOutcome(run);
+  if (outcome === "done" && (run.delivery === "no_changes" || run.delivery === "blocked")) {
+    return NOT_DELIVERED_BADGE[run.delivery];
+  }
+  return OUTCOME_BADGE[outcome];
+}
+
 const ATTENTION: Record<RunOutcome, number> = { failed: 0, running: 1, done: 2 };
 
 /** Failed and in-progress runs first, then the latest started (spec 13, `sort=attention`). */

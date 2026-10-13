@@ -1,7 +1,8 @@
 [project]
 name = "agent-hub"
-version = "0.11.0"
+version = "0.12.0"
 description = "Installs every agent-hub package and the hub command."
+license = "Apache-2.0"
 requires-python = ">=3.14"
 dependencies = ["agent-hub-core", "agent-hub-storage", "agent-hub-collector", "agent-hub-generator",
                 "agent-hub-tracker-linear", "agent-hub-hub-git", "agent-hub-cli", "agent-hub-api"]

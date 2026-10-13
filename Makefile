@@ -24,7 +24,7 @@ export AGENT_HUB_PORT AGENT_HUB_HUBS_ROOT
 URL := http://127.0.0.1:$(AGENT_HUB_PORT)
 
 .PHONY: help format lint typecheck layout lockstep test-fast check-fast test-integration test-e2e \
-        imports migrations coverage check hub-schema web-install web-fast web-build web-dist-check \
+        imports migrations coverage check llms-txt hub-schema web-install web-fast web-build web-dist-check \
         openapi openapi-check test-docker test-live run up down logs ps dev demo connect
 
 help: ## List the targets
@@ -78,6 +78,10 @@ migrations: ## upgrade a scratch SQLite database to head, then alembic check (no
 # so run it after them, as `make check` does; on its own it checks stale or missing data.
 coverage: ## per-package floors (core 90%, others 80%) over the collected coverage data
 	$(RUN) coverage json -q -o coverage.json && $(RUN) python -m scripts.check_coverage coverage.json
+
+# Not part of check: test_build_llms_txt.py (in test-fast) fails while either file is stale.
+llms-txt: ## regenerate llms.txt and llms-full.txt from the docs
+	$(RUN) python -m scripts.build_llms_txt
 
 # Not part of check: the drift tests in test-fast fail while the shipped file is stale.
 hub-schema: ## regenerate the shipped hub.json schema from HubConfig

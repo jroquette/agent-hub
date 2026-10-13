@@ -2115,6 +2115,8 @@ export interface components {
       /** Tracker Transport */
       tracker_transport: string | null;
     };
+    /** @enum {string} */
+    RunDelivery: "delivered" | "no_changes" | "blocked" | "failed";
     /**
      * RunFailure
      * @description Where and why a run failed, and the event to open ("Open failing moment").
@@ -2721,6 +2723,9 @@ export interface components {
       /** Cost Source */
       cost_source?: ("sessions" | "executor") | null;
       cost_usd: components["schemas"]["Money"] | null;
+      delivery?: components["schemas"]["RunDelivery"] | null;
+      /** Delivery Reason */
+      delivery_reason?: string | null;
       /**
        * Derived
        * @default true

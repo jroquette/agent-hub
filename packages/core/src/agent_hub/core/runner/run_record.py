@@ -24,6 +24,21 @@ class Stage(StrEnum):
     FAILED = "FAILED"
 
 
+class RunOutcome(StrEnum):
+    """What a run delivered, apart from whether its machinery worked (AGH-140).
+
+    ``no_changes`` (the session left no commit) and ``blocked`` (the session stopped and asked
+    for a human) end the run without a PR but are not failures: the run's status stays ``done``.
+    """
+
+    DELIVERED = "delivered"
+    NO_CHANGES = "no_changes"
+    BLOCKED = "blocked"
+    FAILED = "failed"
+
+
+# The outcomes of a run that ended cleanly without a PR.
+NOT_DELIVERED: Final = frozenset({RunOutcome.NO_CHANGES, RunOutcome.BLOCKED})
 RECORD_FIELDS: Final = ("ts", "run", "issue", "repo", "state", "event", "live")
 
 
@@ -64,12 +79,27 @@ def picked_data(
 
 
 def reported_data(
-    *, ok: bool, failed_stage: Stage | None, total_cost_usd: float, pr: str
+    *,
+    ok: bool,
+    failed_stage: Stage | None,
+    total_cost_usd: float,
+    pr: str,
+    outcome: RunOutcome,
 ) -> dict[str, JsonValue]:
-    """The ``reported`` event's data, as the retro reads it: ``failed_stage`` None on success."""
+    """The ``reported`` event's data, as the retro reads it: ``failed_stage`` None unless the
+    run failed, then ``outcome`` (added by AGH-140, so older records lack it)."""
     return {
         "ok": ok,
         "total_cost_usd": total_cost_usd,
         "pr": pr,
         "failed_stage": None if failed_stage is None else failed_stage.value,
+        "outcome": outcome.value,
     }
+
+
+def not_delivered_data(*, outcome: RunOutcome, stage: Stage, reason: str) -> dict[str, JsonValue]:
+    """The ``not_delivered`` event's data: why a run that did not fail opened no PR."""
+    if outcome not in NOT_DELIVERED:
+        msg = f"not a not-delivered outcome: {outcome.value!r}"
+        raise ValueError(msg)
+    return {"outcome": outcome.value, "stage": stage.value, "reason": reason}

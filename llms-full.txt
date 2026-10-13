@@ -1,0 +1,2657 @@
+# agent-hub
+
+> A home base for AI coding agents, for developers who run Claude Code across several repos. One command gives each project shared rules, memory and workflow, pinned to a version and kept up to date.
+
+agent-hub is a Python CLI, `hub`, installed from a git tag with uv (no PyPI package):
+`uvx --from 'git+https://github.com/jroquette/agent-hub@vX.Y.Z#subdirectory=packages/agent-hub' hub --help`.
+`hub init` creates a hub: a repo next to the project's code repos that holds `hub.json` (the
+project config), a brain (curated project memory), the hub-workflow Claude Code plugin (skills,
+agents and guard hooks) and per-task worktrees. `hub sync` keeps a hub up to date with its pinned
+release, and `hub web` serves a local control plane of the agents' sessions.
+
+If you are an agent setting up a hub for a project, read the usage guide first. The repo's own
+AGENTS.md is for agents changing agent-hub itself, not for users of it.
+License: Apache-2.0.
+
+---
+
+Source: `docs/USING.md` (https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/USING.md)
+
+# Using agent-hub for another project
+
+A runbook for an agent: from nothing to a verified hub, committed and pushed once, then into a session and `/onboard`.
+Run the steps in order. Every command sits in an `sh` block, one command per line; replace each `<…>` placeholder with
+its value before you run the line. `make check` runs these lines against the CLI (`tests/e2e/test_using_guide.py`), so
+a line that drifts from the CLI fails agent-hub's own build.
+
+## Who this is for
+
+You are an agent asked to set up or run an agent hub for a project that is **not** agent-hub. The rules in
+agent-hub's `AGENTS.md` (authorship, `roquettejh/` branches, `docs/SPEC.md` first) are for changing agent-hub and do
+not apply to your project. Your project's rules come from its own hub once it exists: `hub.json`, the rendered
+`AGENTS.md` and `AGENTS.project.md`. A teammate joining a project whose hub already exists clones that hub into the
+folder that holds (or will hold) the project's repos, so they sit side by side, then runs `./hub setup` in it instead
+(it exits 0 when every line is `ok`; each `missing` line names its fix); the rest of this guide creates a new hub.
+
+## Prerequisites and access
+
+- uv 0.9.0 or newer, git 2.28 or newer (for `git init -b`), `python3` 3.9 or newer and `claude` (Claude Code).
+- `gh` (GitHub CLI), logged in, is optional: it creates the hub's repo and checks that it is private. Without it, the
+  user does those two things (§ Commit and push once).
+- agent-hub is public: its `uvx` lines need no credential (unless the hub's `hub.json` → `platform.repository` names
+  another source). The hub's repo and the app repos need the user's git credentials through a credential helper, for
+  example the one `gh auth setup-git` sets up:
+
+  ```sh
+  gh auth setup-git
+  ```
+
+  or work in a cloud session that has those repos attached. Either way, never put a token in the URL, in a file or in
+  a command line.
+
+## Find the version and check the CLI
+
+Every command below names the release as `v<version>`. Find it first, before any `uvx` line:
+
+```sh
+git ls-remote --tags --refs https://github.com/jroquette/agent-hub 'v*'
+```
+
+Take the highest semver tag it lists (compare numbers, not text: `v0.10.0` is above `v0.9.0`) and use it without its
+`v` as `<version>`. When the project already has a hub, use that hub's `platform.version` from its `hub.json` instead.
+Never copy a version from this guide or from memory.
+
+Then check that the CLI runs at that version; it prints `<version>`:
+
+```sh
+uvx --from 'git+https://github.com/jroquette/agent-hub@v<version>#subdirectory=packages/agent-hub' hub --version
+```
+
+## Make the workspace and an empty hub folder
+
+The workspace is one folder holding the hub and a checkout of each app repo next to it: the hub finds the repos at
+`../<dir>`, where `<dir>` is the repo's name. Make the workspace, clone each app repo into it (one `git clone` per repo
+of `--repos`; `<repo-url>` is the repo's clone URL), then make a **new, empty** folder for the hub and start git in it:
+
+```sh
+mkdir -p <workspace>
+cd <workspace>
+git clone <repo-url>
+mkdir <workspace>/<hub>
+cd <workspace>/<hub>
+git init -b main
+```
+
+`<hub>` is the hub folder's name, usually `<project>-hub`. The folder must not exist before: `hub init` refuses a
+folder that holds files it does not know (§ When init refuses).
+
+## Create the hub
+
+Run init once, from the hub folder, with the values you know. Ask the user for the ones you do not know, one question
+at a time, and never guess them:
+
+- `<project>`: the project's name.
+- `<org>/<repo>`: the app repos, comma-separated (`acme/api,acme/web`).
+- `<tracker>`: the task tracker and its team key(s), for example `linear:APP` or `linear:APP,OPS`.
+- `<prefix>`: the prefix of every branch, for example `jdoe/`. Ask the user.
+- `<owner>/<name>`: the hub's own GitHub repo, for example `acme/acme-hub`. Ask the user.
+- `<author_name>` and `<author_email>`: who authors commits and PRs, the user and never you. Ask the user.
+
+```sh
+uvx --from 'git+https://github.com/jroquette/agent-hub@v<version>#subdirectory=packages/agent-hub' hub init <project> \
+  --repos <org>/<repo> \
+  --tracker <tracker> \
+  --branch-prefix <prefix> \
+  --hub-repo <owner>/<name> \
+  --author-name "<author_name>" \
+  --author-email <author_email> \
+  --dir <workspace>/<hub>
+```
+
+It exits 0, and its first line starts `created ` and counts the files and links it wrote. Init then prints its own
+`Next steps:`; ignore them (their commit would use your identity) and follow this guide (§ Commit and push once).
+When the user gives you a `hub.json` for a new hub, pass `--config <path to hub.json>` instead of the project name and
+the value flags. When the project already has a hub (on another machine, or on GitHub), do not init: see § When init
+refuses. Init writes only what is needed to start: project rules, gates and onboarding come later, from `/onboard`
+(§ Open a session and run /onboard).
+
+## When init refuses
+
+Init exits 1 and changes nothing when the folder is not new. Read its stderr line.
+
+The folder is already a hub:
+
+```text
+hub.lock: this folder is already a hub; run hub sync
+```
+
+Do not init again. If this is the folder you made in § Make the workspace and an empty hub folder (init ran there
+already), run `./hub sync`, then go on to § Verify the hub. It prints `up to date` when there is nothing to do:
+
+```sh
+./hub sync
+```
+
+Otherwise the hub existed before this run, here or on another machine or on GitHub: clone the hub repo next to the app
+repos and work in that clone, where `./hub sync` brings it up to date. § Commit and push once does not apply to such a
+hub. Commit any changes `./hub sync` makes on a new branch named with the hub's branch prefix (`hub.json` →
+`project.branch_prefix`) and land them through a PR the user merges. Never commit on `main`, and never run
+`git add -A` over files you do not know: add only the paths `./hub sync` printed.
+
+The folder holds a file the hub does not know, and no `hub.json`:
+
+```text
+<path>: not part of the hub; run hub sync --adopt
+```
+
+Here, start again in a new, empty folder (§ Make the workspace and an empty hub folder). Do **not** run
+`hub sync --adopt` there: with no `hub.json` it exits 1, and its last stderr line is
+
+```text
+hub.json: run hub sync in the hub folder
+```
+
+`--adopt` is only for a hand-made hub that already holds a `hub.json` (a hub made before agent-hub, or one whose
+`hub.lock` was lost). From that hub's folder:
+
+```sh
+uvx --from 'git+https://github.com/jroquette/agent-hub@v<version>#subdirectory=packages/agent-hub' hub sync --adopt
+```
+
+`hub sync --adopt` exits `0` (every file settled: its last line is `updated hub.lock`, or `up to date` on a second run), `1` (an error in `hub.json`, `hub.lock` or a file it reads: fix the named input), `2` (a usage error) or `3` (it lists files that differ from the templates, or conflicts: show the user the list; never pass `--accept` without the user's agreement).
+
+## Verify the hub
+
+From the hub folder, run the doctor and the sync check. Both write nothing:
+
+```sh
+./hub doctor --json
+./hub sync --check
+```
+
+`./hub doctor --json` exits `0` (no error finding: go on), `1` (at least one error finding: fix each one its `message` names, then run it again) or `2` (a usage error, or the folder is not a hub: run it from the hub folder).
+
+`./hub sync --check` exits `0` (up to date: go on), `4` (changes pending: run `./hub sync`, then check again), `3` (a conflict: show the user the listed paths and the way out it prints) or `1` (an error: fix the named input, such as `hub.json` or `hub.lock`).
+
+Go on only when both exit 0.
+
+## Commit and push once
+
+This section is only for a hub created in this run, in a new, empty folder; any other hub changes through a PR (§ When
+init refuses). Commit the new hub as the user. The author is `hub.json` → `project.author_name` and
+`project.author_email`; when `hub.json` holds no author, ask the user. Never use your own identity, and add no AI
+trailer (no `Co-Authored-By`, no "Generated with"):
+
+```sh
+git add -A
+git -c user.name="<author_name>" -c user.email=<author_email> commit -m 'Create the hub'
+```
+
+Then push this commit once. This is a narrow exception to "no push to the default branch": it covers only the very
+first commit of a hub repo that is empty on the remote, on a private repo, never forced. Do it before any session in
+the hub: the hub's guard denies pushes to the default branch, and the guard is not changed for this. Everything after
+goes through PRs.
+
+`<remote>` is the hub repo's URL, `https://github.com/<owner>/<name>.git`. Pick the case that holds:
+
+- No remote yet and `gh` works: create it private. If `gh repo create` fails (for example, the name already exists,
+  maybe public), stop and tell the user.
+
+  ```sh
+  gh repo create <owner>/<name> --private
+  ```
+
+- No remote yet and no `gh` (or no `gh` login): stop and ask the user to create an empty private repo `<owner>/<name>`,
+  then go on with the privacy check and the emptiness check.
+- The user made the remote: go on with the privacy check and the emptiness check.
+
+Privacy check, always. It must print `PRIVATE`, else stop and tell the user. Without `gh`, ask the user to confirm that
+the repo is private:
+
+```sh
+gh repo view <owner>/<name> --json visibility --jq .visibility
+```
+
+Emptiness check, always. It must exit 0 and print nothing (no branches, no tags). Any output means stop and tell the
+user: never push over an existing history. Any other exit (`128`: no access, or no such repo) means stop too:
+
+```sh
+git ls-remote <remote>
+```
+
+Then push, with no `--force`:
+
+```sh
+git remote add origin <remote>
+git push -u origin main
+```
+
+## Open a session and run /onboard
+
+Open a Claude Code session in the hub, with every app repo attached:
+
+```sh
+./agent
+```
+
+Then type `/onboard` in that session. It reads each repo read-only, proposes the project rules (`AGENTS.project.md`)
+and the `hub.json` values (gates and more) with the evidence for each, and applies them only after the user approves.
+
+With no human present, run it headless. It only writes its proposal to `brain/_inbox/onboard-proposal.md` and stops:
+
+```sh
+./agent -p "/onboard propose"
+```
+
+A human then reads the proposal and sets its `status` to `approved`, and `/onboard apply` runs in a session (`./agent`).
+
+`/onboard` needs a hub whose `.claude/skills/onboard` exists. If it does not, the hub's release is older than
+`/onboard`: raise `platform.version` in `hub.json` to the version of § Find the version and check the CLI, run
+`./hub sync`, and commit that change through a PR. If the newest release has no `.claude/skills/onboard` either, stop
+and tell the user; do not try other versions.
+
+### Run the control plane
+
+The control plane (`hub web`: an API and a web app) shows the hub's live sessions, runs, approvals and health. It
+serves on `127.0.0.1` only, port 7420 by default. Run it one of two ways, on the same machine as the sessions:
+
+- **Locally:** `./hub web` from the hub folder (the pinned release, through the shim). It prints the URL to open,
+  `http://127.0.0.1:7420`. Ctrl C stops it.
+- **In Docker:** in a clone of agent-hub at the hub's release (`git clone --branch v<version>` into the workspace),
+  `make up` builds the image and starts it, published on `127.0.0.1:7420` only; the workspace folder is mounted
+  read-only so the server can read the hubs in it, and `~/.claude/projects` for the transcripts. `make down` stops
+  it (its data volume stays); `make logs` and `make ps` show it. The variables are in that clone's `.env.example`.
+
+Register the hub once, with its absolute path: in the app under Settings › Hubs, or, from the agent-hub clone,
+`make connect HUB=<workspace>/<hub>`, which also checks that the hub has the event sensor and says what to do when it
+does not. The hub's hooks then send each session's events as they happen; without the control plane running they do
+nothing and the session is unaffected. Older work can be added once: `./hub collect --transcript <file>` for a
+transcript under `~/.claude/projects/`, and `./hub collect --runs .agent-runs` for `hub run` records. Only metadata
+is stored (sizes, tools, repo-relative paths, short commands with secrets redacted, and for a failed tool its error
+text, redacted and cut at 300 characters), never prompt, output or file text.
+
+Each session is shown by its issue and workflow (`TIP-1511 · /feature`), read from its branch or task worktree name
+and the hub's tracker team; each failure says what failed, where, which agent, and whether the agent handled it or
+it needs you. To read the brain, open Knowledge › Brain (or a project's Brain): it lists the hub's `brain/` notes
+(never `brain/auto/`) and renders any one, with links between notes; a feature's Spec, Research, Plan, Eval and
+Criteria tabs show its records. The app reads the registered hub's checkout as it is on disk, so pull the hub to see
+merged changes.
+
+A feature's Tickets tab shows each ticket's title, status, assignee, Linear link and blockers, what can start now and
+in which order, and its golden path says which step the whole feature has reached. For live status, `hub web` reads
+Linear's API itself, read-only, with the `LINEAR_API_KEY` of the environment it runs in (the same key `hub next` and
+`hub run` use; never in `hub.json`), and only when the Tickets tab is opened. Locally, export the key in the shell that
+runs `./hub web`. In Docker, export it in the shell that runs `make up`: `compose.yaml` passes `LINEAR_API_KEY` from
+that environment into the container and holds no value itself (keep it out of `.env`). Without a key, or for a hub
+whose `tracker.transport` is `"mcp"` (the app never reads Linear through MCP), the tab shows the plan from
+`features.json` with a notice that status may be stale; when a read fails, it says why and shows Linear's last good
+read for up to 15 minutes.
+
+Knowledge › Learnings shows each inbox note and can accept or reject it. Neither changes the brain or the user's
+checkout: each opens a pull request in the hub repo (branch `<branch_prefix>learning-<accept|reject>-<note>`,
+authored as the hub's author), and nothing changes until the user merges it. That needs, on the machine running
+`hub web`, a writable hub checkout whose `origin` is the hub's GitHub repo, `git`, and `gh` signed in to GitHub (the
+PR is opened as that `gh` account). Under Docker the hubs are mounted read-only, so both actions are disabled with
+"Hub is read-only here"; run `./hub web` locally to decide learnings.
+
+Release note for a hub that moves to a release with the control plane: `./hub sync` adds
+`plugin/hub-workflow/hooks/event_sensor.py` and rewrites `hooks.json`, `.claude/settings.json` (the sensor joins
+eleven hook events), `guard.py`, `stop_gate.py` and `hubhooks.py` once. Review that diff in the sync PR as usual; the
+guard's and the Stop gate's decisions do not change.
+
+---
+
+Source: `README.md` (https://raw.githubusercontent.com/jroquette/agent-hub/main/README.md)
+
+<!-- TODO: add a logo at docs/assets/logo.svg (and logo-dark.svg for a <picture> light/dark pair) -->
+
+<h1 align="center">agent-hub</h1>
+
+<p align="center">
+  <strong>A home base for AI coding agents, for developers who run Claude Code across several repos.<br>
+  One command gives each project shared rules, memory and workflow, pinned to a version and kept up to date.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/jroquette/agent-hub/actions/workflows/ci.yml"><img alt="CI status" src="https://github.com/jroquette/agent-hub/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Python 3.14" src="https://img.shields.io/badge/python-3.14-3776AB?logo=python&logoColor=white">
+  <!-- Static badge: bump with each release tag (scripts/check_release.py keeps the package versions in lockstep; follow-up: automate). -->
+  <img alt="Version 0.12.0" src="https://img.shields.io/badge/version-0.12.0-blue">
+  <img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-orange">
+</p>
+
+<p align="center">
+  <a href="docs/SPEC.md">Spec</a> ·
+  <a href="#-quick-start">Quick Start</a> ·
+  <a href="#-usage-guide">Usage guide</a> ·
+  <a href="#-roadmap">Roadmap</a> ·
+  <a href="#-contributing">Contributing</a>
+</p>
+
+<!-- TODO: record a demo GIF (hub init → ./agent) and put it here -->
+
+```bash
+hub init demo --repos acme/backend,acme/frontend --tracker linear:DEMO \
+  --branch-prefix jdoe/ --hub-repo acme/demo-hub
+```
+
+```text
+created 74 files (52 managed, 22 seeded) and 25 links in /home/jdoe/work/demo-hub
+
+Next steps:
+  1. cd /home/jdoe/work/demo-hub
+  2. review hub.json, AGENTS.project.md and README.md
+  3. git add -A && git commit -m "Create the hub"
+  4. start Claude Code with every repo attached: ./agent
+  5. to upgrade later: edit platform.version in hub.json, then run hub sync
+```
+
+This output is for a folder where `git init` already ran; in a folder without `.git`, a `git init` step follows `cd`.
+
+> [!IMPORTANT]
+> agent-hub is **experimental** (0.x, Phase 2 of 4 in the [spec](docs/SPEC.md)). The hub generator and its commands
+> work and are tested; the web control plane is read-only (it watches, it does not act yet). The repository is
+> public: installing needs no credential.
+
+## Contents
+
+- [What is this?](#-what-is-this)
+- [Why use it?](#-why-use-it)
+- [How it works](#-how-it-works)
+- [Quick Start](#-quick-start)
+- [Run the control plane](#-run-the-control-plane)
+- [Daily workflow](#-daily-workflow)
+- [Usage guide](#-usage-guide)
+- [Configuration](#-configuration)
+- [Technical reference](#-technical-reference)
+- [Roadmap](#-roadmap)
+- [FAQ](#-faq)
+- [Contributing](#-contributing)
+- [License and credits](#-license-and-credits)
+
+## 💡 What is this?
+
+AI coding agents such as Claude Code can now write, test and open pull requests on their own. To do that well, they
+need the same things a new teammate needs: the project's rules, its memory of past decisions, and a clear way of
+working. Today that setup is written by hand, one project at a time, and it drifts as soon as a second project copies
+it.
+
+agent-hub turns that setup into a product. For each project it creates a **hub**: a small private git repository that
+sits next to the project's code repositories (the *repos*) and holds everything the agents should know and follow.
+Think of it as the project's operations room: the code lives in the repos, while the hub keeps the rulebook, the
+notebook and the checklists that every agent session starts from.
+
+The hub is generated by the `hub` command-line tool (CLI, a program you run in the terminal). The same tool later
+updates the hub to a newer template without overwriting what your project changed, checks that the hub is healthy,
+and starts agent sessions with every repo attached.
+
+The longer-term goal, described in the [spec](docs/SPEC.md), is to also *observe* the agents: see on one screen what
+each session did, decided and learned.
+
+## ✨ Why use it?
+
+- 🚀 **Start a new project in minutes, not days.** `hub init` writes the rules, the memory folder, the workflow plugin,
+  the safety hooks and the launcher in one go.
+- 🔁 **Upgrade without losing your changes.** `hub sync` updates the files the platform owns and leaves the ones your
+  project owns alone; a lock file tells them apart.
+- 📌 **Same behavior on every machine.** Each hub pins one release of the tool, so your laptop, CI and cloud sessions
+  run exactly the same version, with no global install.
+- 🛡️ **Guardrails built in.** The generated hooks block secrets, pushes to `main`, force-pushes and AI attribution, and
+  keep a session from finishing while the repo's fast checks fail on the code it changed.
+- 🩺 **Catch problems early.** `hub doctor` finds broken links, missing files, oversized instruction files and drift
+  from the template, each with a one-line fix.
+- 🧠 **Memory you control.** Agents propose what they learned into an inbox; only a human promotes it into the brain.
+
+| Without agent-hub | With agent-hub |
+| --- | --- |
+| Rules, launcher and hooks copied by hand from another project | Generated from `hub.json` in one command |
+| Project names hard-coded in scripts | Every project value lives in one validated file |
+| Template fixes copied project by project | `hub sync` brings them in and keeps your edits |
+| Each machine runs whatever version it has | The release is pinned per hub and fetched on demand |
+
+## 🧭 How it works
+
+```mermaid
+flowchart LR
+  config["hub.json<br/>project, repos, tracker, rules"] --> cli["hub CLI<br/>(pinned release)"]
+  cli -->|hub init / hub sync| hub["Hub repo<br/>rules, brain, plugin, hooks"]
+  hub -->|./agent| claude["Claude Code session<br/>every repo attached"]
+  claude -->|works in| repos["Code repos<br/>isolated worktrees"]
+  repos -->|pull requests| human["You review and merge"]
+  cli -->|hub doctor| report["Health report"]
+```
+
+You describe the project once in `hub.json`: its name, its repos, its task tracker and a few rules. The `hub` CLI turns
+that file into a hub repository full of ready-to-use files. When you run `./agent` from the hub, Claude Code starts
+with every repo attached and the hub's rules, memory and workflow already loaded. The agent works in isolated copies of
+the repos (git worktrees), and every change reaches `main` only through a pull request that you merge.
+
+## 🚀 Quick Start
+
+**Prerequisites**
+
+- What everyone on a hub needs (uv, git, Claude Code, Python 3.9 or newer, optional `gh` and tracker credential, with
+  the known traps): the Requirements table of the **Join this hub** section that every generated hub's `README.md`
+  carries; its source is [`README.md.tmpl`](packages/generator/src/agent_hub/generator/templates/README.md.tmpl).
+- To create a hub: a GitHub repository for it (`--hub-repo`) and a Linear team for its tracker.
+
+To join a hub that already exists instead, clone it next to the project's repos and run `./hub setup` in it (see the
+hub's `README.md`, **Join this hub**); the steps below create a new hub.
+
+**1. Check that you can run the CLI.** `uvx` builds the tagged release from git and caches it; the first run takes a
+little longer.
+
+```bash
+uvx --from 'git+https://github.com/jroquette/agent-hub@v0.12.0#subdirectory=packages/agent-hub' hub --version
+```
+
+You should see `0.12.0`.
+
+> [!TIP]
+> To have `hub` on your `PATH`, install it once with
+> `uv tool install 'git+https://github.com/jroquette/agent-hub@v0.12.0#subdirectory=packages/agent-hub'`.
+> Generated hubs never need this: their `./hub` shim runs the release pinned in `hub.json`.
+
+**2. Create an empty folder for the hub.** It should be a sibling of the project's repos.
+
+```bash
+mkdir -p demo-hub && cd demo-hub && git init
+```
+
+**3. Generate the hub.** Replace the project name, repos, tracker team, branch prefix and hub repo with yours
+(`--hub-repo` is needed until the folder has a GitHub `origin`; for several tracker teams, list them, e.g.
+`--tracker linear:APP,OPS`, the first the default). The author comes
+from your git `user.name` and `user.email` unless you pass `--author-name` and `--author-email`.
+
+```bash
+uvx --from 'git+https://github.com/jroquette/agent-hub@v0.12.0#subdirectory=packages/agent-hub' \
+  hub init demo --repos acme/backend,acme/frontend --tracker linear:DEMO --branch-prefix jdoe/ --hub-repo acme/demo-hub
+```
+
+You should see `created 74 files (52 managed, 22 seeded) and 25 links` followed by the next steps.
+
+> [!NOTE]
+> `hub init` writes only into an empty folder (a `.git` is fine). Run it again in the same folder and it refuses with
+> `already a hub; run hub sync`, writing nothing. In a folder holding other files it refuses and suggests
+> `hub sync --adopt`, which joins a hand-made hub from 0.7.0 on; with an older release, use a new empty folder instead.
+
+**4. Check the new hub.** From now on, use the hub's own `./hub` shim.
+
+```bash
+./hub doctor
+```
+
+Expected output (the infos only say that the repos are not cloned next to the hub yet):
+
+```text
+info brain.leak ../backend: repo backend is not checked out next to the hub; its repo checks are skipped Fix: clone the repo next to the hub
+info brain.leak ../frontend: repo frontend is not checked out next to the hub; its repo checks are skipped Fix: clone the repo next to the hub
+0 errors, 0 warnings, 2 infos
+```
+
+**5. Check that the hub matches its release.** `--check` only plans and writes nothing.
+
+```bash
+./hub sync --check
+```
+
+You should see `up to date`.
+
+**6. Commit it and start an agent session.**
+
+```bash
+git add -A && git commit -m "Create the hub"
+./agent
+```
+
+> [!NOTE]
+> `./agent` (and `hub agent`) attaches the repos listed in `hub.json` that are cloned next to the hub (`../backend`,
+> `../frontend` in this example), prints a `not attached` warning for each one it cannot find, and passes every
+> other argument to `claude`.
+
+## 📡 Run the control plane
+
+The control plane is `hub web`: a REST API and a web app that show your hubs' live sessions, workflow runs, approvals,
+features and health as they happen. It listens on `127.0.0.1` only (port 7420) and stores metadata only: never
+prompts, outputs or file contents. The commands below run from a clone of this repo.
+
+**In Docker (three commands).** The image runs as a non-root user on a read-only file system, and the port is
+published on the host's loopback only. The folder that holds this clone (your workspace with the hubs) is mounted
+read-only; set `AGENT_HUB_HUBS_ROOT` to use another one (see `.env.example`).
+
+```bash
+make up                              # build and start; prints http://127.0.0.1:7420
+make connect HUB=../my-project-hub   # register a hub and check that it sends events
+make down                            # stop (the data volume is kept); make logs, make ps
+```
+
+**Locally (one command).** No Docker; the database is `~/.local/share/agent-hub/agent-hub.db` unless `AGENT_HUB_DB`
+says otherwise.
+
+```bash
+make run                             # the same as uv run hub web
+```
+
+**See it with sample data.** With the app running (either way), `make demo` loads a synthetic demo hub, a live session
+with a guard denial, a session waiting on a guard ask, a failed run and an ended session with its cost, so every
+screen has content. It never reads your real transcripts.
+
+**Work on the web app.** `make dev` starts the API on 7420 and the Vite dev server with hot reload on
+`http://127.0.0.1:5173`, which forwards `/api` to the API; Ctrl C stops both.
+
+A hub sends events once its release has the sensor (`plugin/hub-workflow/hooks/event_sensor.py`, from 0.9.0): move
+`platform.version` in its `hub.json` and run `./hub sync`. `make connect` tells you when a hub needs it. The design
+and its safety rules: [ADR 0022](docs/adr/0022-container-packaging.md); the guide for other projects:
+[docs/USING.md](docs/USING.md).
+
+## 🔄 Daily workflow
+
+Once the hub exists, you work inside Claude Code. The hub gives it a set of slash commands (*skills*) and helper agents
+(*subagents*), shipped in the generated `plugin/hub-workflow/` plugin. You type the commands, for example `/kickoff`, in
+a session started with `./agent` from the hub. The commands hand parts of the work to the agents.
+
+You stay in charge of the decisions: you approve the spec and the plan, and you merge the pull request. The agents do
+the rest, and the hooks keep them inside the project's rules.
+
+### Your session routine
+
+1. **Start with `/kickoff`** (or after `/clear`). It shows the session brief (`./hub brief`), reads `brain/now.md` and
+   the newest journal day, runs `check_fast` in each repo that has local changes, and proposes the next item. It asks
+   before starting and never edits anything.
+2. **Pick up an issue with `./hub start <ISSUE>`** (optional, from the hub's terminal). It creates the issue's
+   worktrees in the repos (or finds them: run it again to resume), moves the issue to `tracker.states.started`, then
+   opens Claude Code from the hub with those worktrees attached and the issue as the first prompt. `--repo DIR` limits
+   it to some repos; `--no-agent` stops before the session and prints the command that launches it. The hub's
+   `Makefile` has no target for it: call `./hub`.
+3. **Do the work.** Use `/feature` for a change, `/research` or `/recall` for questions (see
+   [Skills and agents](#skills-and-agents)).
+4. **End with `/handoff`.** It rewrites `brain/now.md` (focus, work in flight, the exact next step, risks to watch)
+   and appends what was done, verified and learned to the day's journal, `brain/journal/YYYY/MM/DD.md`. The next
+   session picks up from there without you explaining it again.
+
+### From idea to merged change: `/feature`
+
+`/feature <idea or issue id>` is the golden path. It sizes the work first, then chains the agents below. The hexagons
+are where it stops and waits for you.
+
+```mermaid
+flowchart TD
+  size["/feature: size the work"] --> spec["Spec<br/>requirements-analyst"]
+  spec --> gate1{{"You approve the spec"}}
+  gate1 --> plan["Research and plan<br/>researcher, architect"]
+  plan --> gate2{{"You approve the plan"}}
+  gate2 --> tickets["Tickets<br/>planner"]
+  tickets --> wt["Isolated worktrees<br/>./hub worktree"]
+  wt --> impl["Implement, test first<br/>one fresh subagent per task"]
+  impl --> review["Review each task<br/>spec-reviewer, then quality-reviewer"]
+  review -->|fixes| impl
+  review --> eval["Final check<br/>evaluator, SHIP required"]
+  eval --> pr["Pull request, authored by you"]
+  pr --> merge{{"You merge"}}
+  classDef you stroke-width:3px
+  class gate1,gate2,merge you
+```
+
+The size decides the ceremony:
+
+- **Spike**: throwaway learning. No spec, no tickets and no plan gate; it is timeboxed, the findings go to
+  `research.md`, and nothing is merged.
+- **Bounded** (the default): a few pull requests at most, with a known design. You may approve the spec and the plan
+  together.
+- **Architectural**: a new contract between repos or services, or a decision that warrants an ADR. Both gates apply.
+  A path under `guard.ask_before_edit` alone does not make a feature architectural.
+
+<details>
+<summary><strong>What happens at each step</strong></summary>
+
+1. **Size it.** The session asks if the size is unclear.
+2. **Spec.** The `brainstorming` skill asks you questions one at a time in the main session, then
+   `requirements-analyst` writes `brain/features/<slug>/spec.md` with acceptance criteria (Given/When/Then).
+3. **Research and plan.** `researcher` writes `research.md` (or `/research` runs inline for small questions);
+   `architect` writes `plan.md`, small tasks each with a verification command.
+4. **Tickets.** `planner` writes `features.json` (checked by `./hub doctor --only features.tracker`) and `issues.md`;
+   the session then creates the issues in the tracker team from `hub.json`.
+5. **Workspace.** `./hub worktree <team>-<n>-<slug>` creates the worktrees, named after the issue.
+6. **Implement.** One fresh subagent per task, failing test first, the repo's `check_fast` green after each task.
+   Existing assertions are never weakened.
+7. **Review.** `spec-reviewer` checks the diff matches the spec and plan, nothing missing and nothing extra; then
+   `quality-reviewer` checks domain rules, security, idempotency and what is extra. The session weighs each finding
+   and sends back only the ones it accepts.
+8. **Verify and finish.** `evaluator` re-runs every check and writes `eval.md`; it must say `SHIP`. The pull request is
+   opened on a `project.branch_prefix` branch, authored by you.
+9. **Compound.** You go through the agents' learning proposals in `brain/_inbox/` and decide where each lands;
+   `/handoff` if the work spans sessions.
+
+</details>
+
+> [!IMPORTANT]
+> `/feature` uses two things the hub does not install:
+>
+> - the [superpowers](https://github.com/obra/superpowers) plugin, optional: its `brainstorming`,
+>   `subagent-driven-development`, `test-driven-development` and `finishing-a-development-branch` skills are used
+>   when it is enabled, and each step has a one-line fallback otherwise. To enable it, add
+>   `"enabledPlugins": {"superpowers@claude-plugins-official": true}` to `.claude/settings.project.json`, run
+>   `hub sync`; each developer also runs `claude plugin install superpowers@claude-plugins-official --scope local`
+>   once. Cloud sessions do not install repo-declared plugins: there, enable it on the claude.ai account;
+> - a tracker connector in Claude Code (for example Linear), so the session can create the issues. The `hub` CLI's
+>   tracker commands, `hub next` and `hub run`, list ready issues and take one to a PR but create none.
+>
+> Set up the connector, and superpowers if you want it, in Claude Code before your first `/feature`.
+
+### Skills and agents
+
+| Command | What it does | When to use it |
+| --- | --- | --- |
+| `/kickoff` | Shows the brief, runs the fast checks in repos with changes, proposes the next item | At the start of a session, or after `/clear` |
+| `/feature <idea or issue>` | Takes an idea to a merged, verified change (above) | For any change to the repos |
+| `/fix <issue>` | Takes a bug or a small task to a PR: a failing test committed first (RED), the smallest fix, the repo's gates and one `quality-reviewer` pass; no spec, plan or `brain/features/` folder | For a bug or a small task in one repo, at most 5 changed non-test files, no new contract and no guarded path; anything bigger goes to `/feature` |
+| `/handoff [title]` | Updates `brain/now.md` and the day's journal | At the end of a session |
+| `/research <question or issue>` | Documents how the code works today, with `path:line` references and no critique; writes `research.md` | Before planning, or for a question that spans many files |
+| `/create-plan <issue or slug>` | Turns a spec and its research into `plan.md`: small tasks, contracts first, each with a verification command; waits for your approval before any code | When a spec is ready and needs a plan |
+| `/recall <topic>` | Answers "what do we know about X, why was Y decided" from the brain, ADRs and past session transcripts, with sources | Before deciding something again |
+| `/learn [personal] <one sentence>` | Proposes one verified, non-obvious learning to `brain/_inbox/`; you decide whether and where it lands. With `personal`, writes your own preference or machine detail to `brain/auto/workspace/` (gitignored, never committed) | When the next session should know something |
+| `/triage <issue \| --backlog \| --hygiene> [--limit N]` | Brings a tracker issue to Definition of Ready (ACs, size, repos, dependencies, a verification command), then labels it ready or `needs-human`; `--backlog` takes the unlabeled open issues one by one, `--hygiene` reports orphan, stale and duplicate issues (at most 50 read per run, or `--limit N`) | Before an issue goes to `/fix`, `/feature` or `hub run` |
+| `/deliver <PR or issue>` | Drives an open PR to merged: conflicts, red CI and review threads, the gates before each push, the default branch's CI after the merge, then the tracker | After the PR is open |
+| `/review <PR>` | Reviews someone else's PR against its ticket, the ADRs and the brain; posts only what you approve | For a teammate's PR or one `hub run` opened |
+| `/release [version]` | Cuts a platform release: merged PRs, the bump, the check on the exact commit, notes with what `hub sync` rewrites, then the hub's pin bump | When `main` holds what the next version ships |
+| `/incident <symptom or issue>` | Investigates a problem with no known reproduction: evidence, ranked hypotheses, a gated mitigation, then `/fix` and a postmortem | When `/fix` cannot start because nothing reproduces yet |
+| `/refactor <issue>` | Makes a behaviour-preserving change: characterization tests first, then batched PRs that each pass `check` alone | When a refactor is too big for `/fix` and needs no spec |
+| `/upgrade [package or tool]` | Bumps a dependency, toolchain or plugin pin after reading its changelog, adapting to breaking changes | For dependency and toolchain bumps |
+| `/adr <question or issue>` | Records an architectural decision: options and trade-offs, your pick, a new ADR that supersedes and never edits | For a decision outside a `/feature` |
+| `/onboard [propose \| apply]` | Reads each repo read-only and proposes `hub.json` values, gates and `AGENTS.project.md` with `path:line` evidence; applies them only after your approval (`propose` only writes the proposal, for a headless run) | The first session in a new hub, or after adding a repo |
+| `/retro [period]` | Turns the period's run metrics into at most five evidence-backed changes to the workflows, filed as issues | Weekly, or after a rough stretch |
+
+An AI agent that sets up agent-hub for another project follows [docs/USING.md](docs/USING.md), a runbook that ends in `/onboard`.
+
+Claude runs `/research`, `/create-plan` and `/recall` on its own when they fit; every other command runs only when
+you type it.
+
+<details>
+<summary><strong>The agents behind the commands</strong></summary>
+
+`/feature` starts these agents, each in a fresh context. Each one reads the brain first and ends with a compound step:
+at most one learning proposal for `brain/_inbox/` (the `spec-reviewer` reports plan ambiguities instead).
+
+| Agent | Role | Writes | Read-only? |
+| --- | --- | --- | --- |
+| `requirements-analyst` | Drafts the spec: acceptance criteria in Given/When/Then, non-functional requirements, invariants, open questions | `spec.md` | Writes only the spec |
+| `researcher` | Documents how the code works today across the repos, with `path:line` evidence | `research.md` | Yes, apart from `research.md` |
+| `architect` | Turns the approved spec and research into a plan, with ADR drafts for architectural decisions | `plan.md`, `adr-draft-<topic>.md` | No code or tests |
+| `planner` | Turns the approved plan into one entry per acceptance criterion and tracker issue drafts; does not call the tracker | `features.json`, `issues.md` | Writes only those two files |
+| `spec-reviewer` | After each task: does the diff match the spec and plan, nothing missing and nothing extra | PASS or FAIL | Yes (no write tool) |
+| `quality-reviewer` | After `spec-reviewer` passes: domain invariants, security and secrets, idempotency | APPROVE or CHANGES | Yes (no write tool) |
+| `evaluator` | Final verdict: re-runs every verification, `check_fast`, `check` and `hub doctor` | `eval.md` (SHIP or NO-SHIP), `features.json` | Writes only those two files |
+
+</details>
+
+**Add your own.** Put a skill in `plugin/<project>/skills/<name>/SKILL.md` or an agent in
+`plugin/<project>/agents/<name>.md`, then run `./hub sync`: it links them into `.claude/`, where every session in the
+hub finds them. Pick a name `hub-workflow` does not use: on a clash `hub sync` stops with a conflict (exit 3) and writes
+nothing until you rename yours.
+
+### What the hooks do for you
+
+Hooks are small scripts Claude Code runs on its own at fixed moments; you never call them. The hub has six:
+
+- **When a session starts** (`SessionStart`), the brief from `./hub brief` is put in the agent's context. If the pinned
+  release cannot run, a shorter brief with `brain/now.md` and the names of the newest journal files takes its place,
+  and its header says why.
+- **Before the agent runs a command or opens or changes a file** (`PreToolUse`), the *guard* blocks dangerous actions
+  (force-pushes, pushes to the default branch, reading secret files, AI attribution) and asks you before risky ones
+  (removing test assertions, editing the hooks or `hub.json`, paths in `guard.ask_before_edit`).
+- **After each edit** (`PostToolUse`) of a file in a repo, the repo's own formatter and linter run on it (they tidy the
+  code and point out mistakes: ruff for Python, prettier and eslint for JavaScript and TypeScript, when the repo has
+  them installed), and any problem left over goes back to the agent.
+- **When the agent wants to finish** (`Stop`), the *stop gate* runs `check_fast` in each repo checkout whose code
+  changed during the session: the checkout holding the session's folder, then each one holding a file that the session
+  or one of its subagents edited (read from the session's transcripts; never the hub). The session starts at the
+  transcript's first timestamp; when none can be read (or it lies in the future), at the transcript file's creation
+  time, else 12 hours ago, and then, if the session's folder is in no checkout, the gate checks nothing and says so when
+  a repo changed. While a check fails, it blocks the finish and sends the failures back to the agent. After 3 blocks in
+  a row it lets go with a warning, so a session never loops forever. When the checks pass, it reminds the agent to run
+  `/handoff`. Everything fits in one 160 s budget (Claude Code stops the hook at 180 s): each check gets the repo's
+  `check_fast_timeout` (150 s if unset), capped by the time left, and is stopped together with everything it started. A
+  repo whose check timed out or did not get to run prints a `not run` line instead: it never blocks, and it is never
+  silently counted as passing; transcripts read only in part (out of time, or past the newest 1,024 subagent files) add
+  a note. A repo without `check_fast` has no Stop gate: when it changed, the gate names it (`no check_fast configured`)
+  and never blocks; `hub doctor` warns.
+- **Before Claude Code shortens a long conversation to free memory** (`PreCompact`), a snapshot (your last request, and
+  the branch and changed files of each checkout) is saved to `brain/auto/workspace/session-snapshot.md` (your personal
+  memory folder, gitignored) and put back in the context afterwards.
+- **When the session ends** (`SessionEnd`), a short log entry is appended to `brain/_inbox/sessions/YYYY-MM-DD.md` for
+  you to review.
+
+<details>
+<summary><strong>What the guard blocks and asks, and how to configure it</strong></summary>
+
+**Blocked, always:**
+
+- force-pushes and pushes to `main`, `master`, `project.default_branch` or any `repos[].default_branch`, from any
+  directory;
+- `curl … | sh`, and network calls to the hosts in `guard.deny_hosts`;
+- deleting Docker volumes (`docker volume rm|prune`, `compose down -v`) and infrastructure commands: without
+  `guard.infra`, `terraform apply|destroy|import`, any `aws` subcommand, `pulumi up|destroy`, `kubectl apply|delete`,
+  `cdk deploy|destroy`; with it, see *Infra commands* below;
+- reading secret files (`.env*` other than `.env.example`, `.env.sample`, `.env.template`, `.env.test`,
+  `.env.development` and `.env.staging`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, SSH private keys), from any tool or
+  command;
+- AI attribution in commits, tags and pull requests, and `claude/…` branches;
+- touching the `.git` internals, and reading or changing any path in `guard.deny_paths`.
+
+**Asked first:**
+
+- editing the guard's own files (`plugin/hub-workflow/hooks/`, `plugin/<project>/hooks/`, `.claude/settings*.json`,
+  `hub.json`, `hub.lock`), or removing or moving their folders;
+- removing assertions from a test, or adding skip, xfail, quarantine or fixme markers;
+- deleting or `sed`-editing test files from the shell;
+- writing in `brain/` outside `now.md`, `journal/`, `_inbox/`, `auto/` and `features/`;
+- editing a path in `guard.ask_before_edit`.
+
+**Infra commands.** Set `guard.infra` in `hub.json` (even `{}`) and the guard classifies commands that run `aws`,
+`cdk`, `terraform`, `pulumi`, `kubectl`, `helm`, `sam` or `serverless` by environment instead. The command is split
+into parts at `;`, `&&`, `||`, `|` and newlines, and each part into its calls (at a single `&`, `$( )`, backticks,
+`<( )`, `( )` and `{ }`). A command with a `guard.infra.prod_markers` match anywhere in it is blocked. Each part
+and each call that names a tool must carry its environment, matched by a `guard.infra.allow` pattern (e.g.
+`--profile demo-dev` or an `AWS_PROFILE=demo-dev ` prefix, whichever your patterns match, on that part: an exported
+or inherited one, or one from an earlier part, does not count; neither does a trailing ` # comment`), or be
+local-only (`version`, `--version`, `help` or `--help` for any tool, `kubectl`'s version only with `--client`;
+`cdk synth|ls|list|init|doctor|context`, `terraform fmt|validate`, `terraform init -backend=false`,
+`helm template|lint`, `sam build|validate`); anything else is blocked. On an allowed environment, deploy, destroy and delete verbs
+(`terraform apply|destroy|import`, `kubectl apply|delete|…`, `aws s3 rm`, `aws … delete-*`, `cdk deploy`, …) are
+asked first. A command that would pass is asked first too unless every character in it is an ASCII letter or digit,
+a space, a tab or one of `_ - . / : = @ , + %`, joined only by `;`, `&&`, `||`, `|` or newlines: a `$`, a quote, a
+brace, `<`, `>`, a backtick, `\`, `#`, `(`, `)`, `*`, `?`, `[`, `]`, `~`, `!`, a single `&`, a carriage return or any
+other character is asked about, by name, since the guard cannot tell what the shell makes of it. So is a word that can
+run a command, or change its environment, out of the guard's sight: a shell (`sh`, `bash`, `zsh`, `dash`, `ksh`,
+`fish`), `python*`, `perl`, `node`, `ruby`, `php`, `xargs`, `eval`, `exec`, `source`, `.` as a command, `env -i` or
+`env -u` (any spelling), `sudo`, `su`, `doas`, a lone `--`, `parallel` and a `sed` that runs its text (`sed e`,
+`s/…/…/e`, `-f script`); last, a part that sets the environment twice (`AWS_PROFILE=a AWS_PROFILE=b aws …`,
+`--profile a --profile b`, or under two spellings: `AWS_PROFILE=a aws … --profile b`, `--stack a -s b`); then any
+environment selector the guard knows that no `guard.infra.allow` match holds whole, so a pattern must match the setting
+(`--profile demo-dev`, `AWS_PROFILE=demo-dev`), not its value alone. The selectors are the variables `AWS_PROFILE`,
+`AWS_DEFAULT_PROFILE`, `KUBECONFIG`, `KUBE_CONTEXT`, `HELM_KUBECONTEXT`, `TF_WORKSPACE`, `TF_DATA_DIR`,
+`TF_CLI_ARGS[_*]`, `PULUMI_BACKEND_URL`, `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_ROLE_ARN` and
+`CDK_DEFAULT_ACCOUNT` named anywhere in the command (any word holding the name as an identifier, so `export AWS_PROFILE`,
+`read AWS_PROFILE` or `printf -v AWS_PROFILE staging` ask too), and the flags `--profile`, `--aws-profile`, `--context`,
+`--kube-context`, `--cluster`, `--server`, `--user`, `--kubeconfig`, `--kube-apiserver`, `-chdir`, `--cwd`, `--stack`,
+`-s`, `--stage`, `--workspace`, `-var-file`, `-backend-config` (one dash or two where terraform takes both) and
+pulumi's `-C`, as `--x v` or `--x=v`, in a part that names a tool: `AWS_PROFILE=staging terraform plan
+-var-file=dev.tfvars` is asked about even though `-var-file=dev.tfvars` is allowed. Last, commands that change a
+tool's own configuration are always asked about: `aws configure set|import`, `kubectl config
+set-context|use-context|set-cluster|set-credentials|use|set|rename-context|delete-context`, `terraform workspace
+select|new`, `pulumi stack select`. A deploy verb's ask keeps its
+reason. Other selectors (`--endpoint-url`, `--region`, `TF_VAR_*`), abbreviated or glued options (`--prof`,
+`-sprod`) and globs are not checked. A tool word with
+nothing after it (`… | xargs aws`), or with a `$`, `,` or `}` glued to it (`aws$x`, `{aws,s3}`), counts as a call
+with no environment. The tool is found behind wrappers, quotes and redirections (`env aws …`, `bash -c "aws …"`,
+`aws>/dev/null …`), but its name is case-sensitive and quoting tricks inside it (`a""ws`) hide it. If `guard.infra` or
+one of its patterns cannot be used (a wrong value, or regex syntax the system Python 3.9 lacks), every infra command
+is blocked until it is fixed. Patterns are Python `re`, searched with no flags on every such command: avoid nested
+quantifiers like `(a+)+`. With `guard.infra`, the generated `.claude/settings.json` no longer denies `terraform *`
+and `aws *`, so the guard decides those commands (every other deny stays); run `./hub sync` after adding or removing
+`guard.infra`, and add `Bash(terraform *)` or `Bash(aws *)` to `permissions.deny` in `.claude/settings.project.json`
+to keep a blanket deny. The sandbox still limits the network: add your cloud API hosts to
+`sandbox.network.allowedDomains` in `.claude/settings.project.json`, then run `./hub sync`. Listing the tools in
+`sandbox.excludedCommands` instead runs them outside the sandbox with the host's credentials and network.
+
+Everything else goes through Claude Code's normal permission rules.
+
+**Configuration.** The lists come from `hub.json`: `guard.ask_before_edit`, `guard.deny_paths` and `guard.deny_hosts`,
+plus `project.default_branch` and each `repos[].default_branch`. The branch hint's prefix is the developer's
+(`hub.local.json`, else `hub.json`, else git config; see [developer-identity](docs/design/developer-identity.md)).
+An entry `@hub/<path>` means
+`<path>` inside the hub. A `hub.json` named by `$HUB_CONFIG` can only add entries to these lists, never remove them.
+Only the hub's own `hub.json` turns `guard.infra` on and sets `guard.infra.allow`: `hub.local.json` cannot set it, and
+a `$HUB_CONFIG` file can only add `guard.infra.prod_markers`.
+
+**Your own rules.** The seeded `plugin/<project>/hooks/project_guard.py` defines `check(event, cfg)`, which returns
+`None`, or `("ask", reason)` or `("deny", reason)`; by default it does nothing. It runs in a separate process with a
+3-second timeout, only when the base guard did not already deny, and it can only make the verdict stricter. A crash, a
+timeout or an unexpected answer becomes an ask that names the cause. `hub doctor` (rule `hooks.guard-extension`)
+checks that the file parses and defines `check`.
+
+**When something goes wrong.** If the guard itself fails, it asks you; it never lets a call through unchecked. The
+other hooks fail open: on an error they print one line and let the session continue. All hooks are Python 3.9
+standard-library scripts run by the system `python3`.
+
+**Where they are wired.** The hub's `.claude/settings.json` runs the hooks from `plugin/hub-workflow/hooks/`, so they
+also work in cloud sessions, which do not install plugins. Do not also enable `hub-workflow` from a plugin
+marketplace: the hooks would run twice.
+
+</details>
+
+> [!TIP]
+> **This README was built this way.** Issue AGH-33 went through `/feature`: sized *bounded*, spec and plan approved,
+> tickets, a worktree, the implementation, then a real run of the Quick Start and the spec and quality reviews, which
+> caught real gaps (a wrong expected output, missing credential and install caveats) before the evaluator and
+> [pull request #24](https://github.com/jroquette/agent-hub/pull/24). The workflow docs it lacked became AGH-40, this
+> section.
+
+## 📖 Usage guide
+
+### Tutorial: from an empty folder to a working session
+
+This is the most common path: a project with two repos tracked in Linear.
+
+1. **Lay out the workspace.** The hub and the repos are siblings, because every repo is found at `../<dir>` from the
+   hub:
+
+   ```text
+   work/
+   ├── demo-hub/   # the hub (this is where you run ./agent)
+   ├── backend/    # repos[0].dir in hub.json
+   └── frontend/   # repos[1].dir in hub.json
+   ```
+
+2. **Generate the hub** with `hub init` (Quick Start, step 3). It writes three kinds of things:
+   - **managed** files, owned by the platform and rewritten by `hub sync` (base rules in `AGENTS.md`, the
+     `plugin/hub-workflow/` plugin, `.claude/settings.json`, the `./hub` and `./agent` shims, the `Makefile`, whose `next` and `run-issue` targets call `hub next` and
+     `hub run`);
+   - **seeded** files, written once and then yours (`hub.json`, `AGENTS.project.md`, `Makefile.project`, the `brain/`
+     skeleton, the project plugin `plugin/<project>/`);
+   - **links** from `.claude/agents/` and `.claude/skills/` into the plugins.
+
+   `hub.lock` records which is which, so later syncs never touch your files.
+
+3. **Make it yours.** Put project rules in `AGENTS.project.md`, project make targets in `Makefile.project`, and the
+   current focus in `brain/now.md`. Set each repo's `check_fast` and `check` commands in `hub.json`.
+
+4. **Start each session from the hub.** `./hub brief` prints what the agent should know first: `brain/now.md`, the
+   last journal days and each repo's git, PR and CI state. The SessionStart hook injects the same brief.
+
+5. **Work in isolated worktrees.** For issue `DEMO-7`, `./hub worktree demo-7-login` creates
+   `<repo>/.claude/worktrees/demo-7-login` on branch `jdoe/demo-7-login` in every repo, from a freshly fetched
+   `origin/main`. Remove them with `./hub worktree --remove demo-7-login` (branches are kept).
+
+6. **Keep the hub healthy.** Run `./hub doctor` in CI or before a release of your hub, and upgrade with the recipe
+   below. Your hub's CI needs no secret for this public repository; only when `platform.repository` names a private
+   source does `./hub` need the Actions secret `AGENT_HUB_READ_TOKEN`, a token with read-only Contents on that
+   repository only ([the hub's CI](docs/design/hub-adopt.md#in-the-hubs-ci)).
+
+### Recipes
+
+<details>
+<summary><strong>Upgrade a hub to a newer release</strong></summary>
+
+Edit `platform.version` in `hub.json`, then sync through the shim, which already runs the new release:
+
+```bash
+./hub sync --check   # plan only: exit 4 when changes are pending, 3 on a conflict
+./hub sync           # apply: managed files are rewritten, seeded files are left alone
+```
+
+`./hub sync` prints `up to date` when nothing changed. A `hub` whose version differs from the pin refuses to sync and
+prints the pinned `uvx` command to use instead.
+
+</details>
+
+<details>
+<summary><strong>Create a hub from an existing <code>hub.json</code></strong></summary>
+
+The recipes that call a bare `hub` assume it is installed (Quick Start tip), or prefixed with the `uvx --from …` of
+step 1.
+
+```bash
+hub init --config path/to/hub.json --dir path/to/new-hub
+```
+
+The file's `platform.version` must equal the running CLI's version.
+
+</details>
+
+<details>
+<summary><strong>Run only some <code>hub doctor</code> rules, or get JSON</strong></summary>
+
+```bash
+./hub doctor --only links.dead --only instructions.size
+./hub doctor --json
+```
+
+Exit codes: `0` no errors, `1` at least one error, `2` usage error. Rules and their meaning are in
+[docs/design/hub-doctor.md](docs/design/hub-doctor.md).
+
+</details>
+
+<details>
+<summary><strong>Create worktrees in one repo only</strong></summary>
+
+```bash
+./hub worktree demo-7-login --only backend
+```
+
+A repo can ship executable `scripts/worktree-setup.sh` and `scripts/worktree-teardown.sh`; `hub worktree` (and
+`hub run`, setup only) runs them with the worktree path and `HUB_WORKTREE_NAME`, `HUB_WORKTREE_BRANCH`, `HUB_REPO_DIR`,
+`HUB_HUB_DIR`, `HUB_WORKTREE_SLOT` and `HUB_PORT_OFFSET`, for env files, databases or ports. `HUB_REPO_DIR` and
+`HUB_HUB_DIR` are the repo's and the hub's main checkouts; `HUB_PORT_OFFSET` is the slot × 100, to add to the repo's
+ports, and two tasks can share a slot. See [docs/design/worktree-environment.md](docs/design/worktree-environment.md).
+
+</details>
+
+<details>
+<summary><strong>Store agent events (synthetic data only, for now)</strong></summary>
+
+`hub collect` ingests canonical events (the [event model](docs/SPEC.md#data-sources-and-event-model)) from JSON Lines,
+all or nothing:
+
+```bash
+cat > events.jsonl <<'EOF'
+{"project":"demo","session":"s-1","type":"session.start","timestamp":"2026-10-01T09:00:00+00:00","source":"claude_code","source_id":"evt-1"}
+{"project":"demo","session":"s-1","type":"tool.call","timestamp":"2026-10-01T09:00:05+00:00","source":"claude_code","source_id":"evt-2","payload":{"tool":"Read"},"repo":"backend"}
+EOF
+hub collect events.jsonl --db ./events.db
+```
+
+```text
+appended 2, duplicates 0
+```
+
+Running it again prints `appended 0, duplicates 2`: an identical event is skipped, never written twice.
+
+> [!WARNING]
+> Redaction of secrets is not built yet. Until it ships, feed `hub collect` synthetic events only, never real
+> transcripts or hook payloads.
+
+</details>
+
+## 🧾 Configuration
+
+### `hub.json`
+
+`hub.json` is the only place with project values. It is plain JSON, validated by the `HubConfig` model, with a JSON
+Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting with `_` are ignored. Full contract:
+[docs/design/project-config.md](docs/design/project-config.md).
+
+| Key | Required | Default | Description |
+| --- | --- | --- | --- |
+| `schema_version` | yes | | Always `1` for now |
+| `platform.version` | yes | | The agent-hub release the hub runs (`X.Y.Z`) |
+| `platform.repository` | no | `git+https://github.com/jroquette/agent-hub` | The platform's git source, `git+https://<host>/<path>`, e.g. a private fork; the hub runs `<repository>@v<platform.version>#subdirectory=packages/agent-hub` |
+| `project.name` | yes | | Kebab-case project name |
+| `project.hub_repo` | yes | | GitHub `owner/name` of the hub |
+| `project.branch_prefix` | no | per developer | Prefix of every branch, e.g. `jdoe/`; leave it out on a team hub (see `hub.local.json` below) |
+| `project.default_branch` | no | `main` | Base of worktrees unless a repo sets its own; the guard blocks pushes to it |
+| `project.author_name`, `project.author_email` | no | per developer | Author of commits and PRs; leave them out on a team hub (see `hub.local.json` below) |
+| `project.conventions.branch` | no | `{prefix}{issue_lower}-{slug}` | Branch pattern; placeholders `{prefix}`, `{ISSUE}`, `{issue_lower}`, `{slug}`, and it needs `{ISSUE}` or `{issue_lower}` |
+| `project.conventions.commit_title` | no | `{type}({scope}): {summary} ({ISSUE})` | Commit title pattern; placeholders `{ISSUE}`, `{type}`, `{scope}`, `{summary}`, and it needs `{summary}` |
+| `project.conventions.pr_title` | no | the effective `commit_title` | PR title pattern, with `commit_title`'s placeholders |
+| `tracker.kind` | yes | | Task tracker; only `linear` today |
+| `tracker.team` | one of the two | | Tracker team key, e.g. `DEMO` |
+| `tracker.teams` | one of the two | | Several team keys, the first the default, e.g. `["APP", "OPS"]` |
+| `tracker.transport` | no | `api` | How the CLI reaches Linear: `api` (GraphQL with `LINEAR_API_KEY`) or `mcp` (the Linear MCP server through `claude -p`, [ADR 0015](docs/adr/0015-linear-mcp-tracker-transport.md)); `hub.local.json` may set it per developer |
+| `tracker.ready_label` | no | `agent-ready` | Label of issues an agent may pick up |
+| `tracker.failed_label` | no | `agent-failed` | Label set when an agent run fails |
+| `tracker.states.started` | no | `In Progress` | State `hub start` moves an issue to: on a fresh start, or on a resume while the issue is unstarted |
+| `tracker.states.review` | no | `In Review` | Reserved for the review step; not read yet |
+| `repos[].dir` | yes | | Folder name of the repo, next to the hub |
+| `repos[].github` | yes | | GitHub `owner/name` |
+| `repos[].role` | no | `app` | Free string; `app` is the only known value |
+| `repos[].check_fast` | no | | The repo's fast gate command, run by the Stop hook; unset or blank, the repo has no Stop gate |
+| `repos[].check_fast_timeout` | no | `150` | Seconds the Stop hook gives `check_fast` (1–160, within its 160 s budget) |
+| `repos[].check` | yes | | The repo's full gate command (not blank), run before a PR |
+| `repos[].default_branch` | no | `project.default_branch` | Base of the repo's worktrees and PRs; the guard blocks pushes to it |
+| `repos[].conventions` | no | | Overrides `project.conventions` for this repo, key by key |
+| `guard.ask_before_edit` | no | `[]` | Paths where the guard asks before an edit |
+| `guard.deny_paths` | no | `[]` | Paths the guard never lets the agent read or edit |
+| `guard.deny_hosts` | no | `[]` | Hosts the guard blocks network calls to |
+| `guard.infra` | no | absent | Present, even `{}`, the guard classifies infra commands by environment (see the guard section) and `.claude/settings.json` drops its `terraform *` and `aws *` denies (after `./hub sync`); absent, the fixed infra rule |
+| `guard.infra.allow` | no | `[]` | Python `re` patterns for allowed environments, e.g. `(?<![^ \t])--profile[= ]demo-dev(?![^ \t])` and `^[ \t]*AWS_PROFILE=demo-dev(?=[ \t])`; bound each by a space or tab (an `AWS_PROFILE` prefix by the part's start), since `\b` also matches `demo-dev.x` or `>--profile=demo-dev` and `\s` also matches a carriage return the shell does not split on |
+| `guard.infra.prod_markers` | no | `[]` | Python `re` patterns that mark production; a match anywhere in an infra command blocks it |
+| `modules` | no | `{}` | Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`), from 0.6.0: each selected one renders its files and `mk/<id>.mk`; `contract-sync` takes `{"source": <repo dir>, "target": <repo dir>}`, the others `{}` |
+| `doctor.rules` | no | `{}` | Per-rule `hub doctor` settings |
+
+Example (synthetic project):
+
+```jsonc
+{
+  "$schema": "./hub.schema.json",
+  "schema_version": 1,
+  "platform": { "version": "0.12.0" },         // the release ./hub runs
+  "project": {
+    "name": "demo",
+    "hub_repo": "acme/demo-hub",
+    "branch_prefix": "jdoe/",                   // branches: jdoe/<team>-<n>-<desc>
+    "author_name": "Jane Doe",
+    "author_email": "jane@example.com"
+  },
+  "tracker": { "kind": "linear", "team": "DEMO" },
+  "repos": [
+    {
+      "dir": "backend",                         // cloned at ../backend
+      "github": "acme/backend",
+      "check_fast": "make check-fast",          // the Stop hook runs this
+      "check_fast_timeout": 120,                // seconds the Stop hook gives it (1–160)
+      "check": "make check"                     // the full gate before a PR
+    }
+  ],
+  "guard": { "ask_before_edit": ["backend/docs/adr"] }
+}
+```
+
+> [!NOTE]
+> The comments above are for reading only: `hub.json` is plain JSON and must not contain comments.
+
+### `hub.local.json`
+
+On a hub shared by a team, leave the identity out of `hub.json`: each developer sets their own in a `hub.local.json`
+at the root of the hub's main checkout. It is never committed, and only the CLI and the hooks read it, never `hub sync`.
+`./hub setup` proposes it from the hub's git config and writes it after asking (`--yes`: without asking); it never
+rewrites an existing one.
+
+```json
+{"project": {"branch_prefix": "jane/", "author_name": "Jane Roe", "author_email": "jane@example.com"},
+ "tracker": {"transport": "mcp"}}
+```
+
+- **Keys:** only `project.branch_prefix`, `project.author_name`, `project.author_email` and `tracker.transport`, with
+  `hub.json`'s rules, plus `_` comment keys; at most 64 KiB. Any other key is an error (`hub doctor` reports it).
+- **Precedence, per key:** `hub.local.json`, else `hub.json`, else the hub repo's `git config user.name`/`user.email`.
+  With no prefix in either file, the prefix is your email's local part plus `/` (`jane@example.com` gives `jane/`).
+  With none at all, `hub worktree`, `hub run` and `hub start` refuse and name the three sources; `hub setup` reports
+  the identity as missing.
+- **Existing hubs:** `hub init` writes `hub.local.json` into `.gitignore`, but `.gitignore` is seeded, so `hub sync`
+  never adds it. Add the line by hand: `echo hub.local.json >> .gitignore`.
+- Nothing in it relaxes the guard: it cannot add or remove a guarded path, host, protected branch or repo.
+- **Personal memory (existing hubs):** `hub sync` creates `brain/auto/workspace/.gitkeep` but never rewrites
+  `.gitignore`; add both lines: `printf 'brain/auto/workspace/*\n!brain/auto/workspace/.gitkeep\n' >> .gitignore`.
+  If a memory file was committed, `git ls-files brain/auto/workspace` lists it; run `git rm --cached -- <file>` for
+  each one except `.gitkeep`. It stays on your disk and in history, but teammates who pull that commit lose their
+  copy: tell them to copy it out first (or restore it with `git show <commit>~1:<file> > <file>`). `hub doctor`
+  warns (`brain.memory`) until both lines are in `.gitignore` and no memory file is tracked.
+
+Contract: [docs/design/developer-identity.md](docs/design/developer-identity.md).
+
+### Environment variables
+
+| Name | Required | Default | Description |
+| --- | --- | --- | --- |
+| `LINEAR_API_KEY` | for `hub next`, `hub run` and `hub start` with `tracker.transport` `"api"` (the default) | | Linear API key, read at call time; never stored in `hub.json`; `hub setup` reports it when missing |
+| `AGENT_HUB_DB` | no | `$XDG_DATA_HOME/agent-hub/agent-hub.db`, else `~/.local/share/agent-hub/agent-hub.db` | Event database of `hub collect`; `--db` overrides it |
+| `XDG_DATA_HOME` | no | | Used for the default database path when it is absolute |
+| `HUB_AUTHOR_NAME`, `HUB_AUTHOR_EMAIL` | no | | Module `cloud`: your commit author in a cloud session, read by `scripts/cloud-setup.sh` only when `hub.json` names no author; written to the repo-local git config of the hub and each repo, never the global one (unset: a `WARN`, and commits carry the container's identity) |
+| `AGENT_HUB_CLAUDE_PROJECTS` | no | `~/.claude/projects` | The only folder `hub web` reads transcripts from (absolute path) |
+| `AGENT_HUB_ALLOWED_HOSTS` | no | | Extra exact `host[:port]` names `hub web` answers besides its loopback ones (comma list, never `*`) |
+| `AGENT_HUB_IN_CONTAINER` | no | | Set to `1` by the agent-hub image only: lets `hub web --host` bind outside loopback inside the container |
+| `AGENT_HUB_WEB_URL` | no | `http://127.0.0.1:7420` | Where a hub's event sensor sends events (loopback URLs only) |
+| `AGENT_HUB_HUBS_ROOT`, `AGENT_HUB_PORT` | no | the folder holding this clone, `7420` | `make up`: the hubs folder mounted read-only, the host port (on 127.0.0.1) |
+| `AGENT_HUB_ROOT` | no | the current folder | The hub folder for `hub setup`, `hub worktree`, `hub brief`, `hub agent`, `hub start`, `hub next`, `hub run` and `hub bench` (`hub sync` and `hub doctor` use the current folder); the `./hub` shim sets it for you |
+| `BENCH_EFFORT` | no | `medium` | Module `bench`: the `effortLevel` of `hub bench`'s sessions, `low`, `medium` or `high` |
+
+## 🧱 Technical reference
+
+<details>
+<summary><strong>Architecture</strong></summary>
+
+agent-hub is a [uv](https://docs.astral.sh/uv/) workspace with one package per component, all in the implicit
+namespace `agent_hub`, organized as a lean hexagonal architecture (ports and adapters): the domain and use cases live
+in `core`, and every other package is an adapter around it. The CLI is the composition root that wires them together.
+
+```mermaid
+flowchart BT
+  storage["storage<br/>SQLAlchemy Core + Alembic, SQLite"] --> core["core<br/>entities, use cases, ports"]
+  collector["collector<br/>event ingestion"] --> core
+  generator["generator<br/>hub templates, renderer, file adapter"] --> core
+  tracker["tracker_linear<br/>Linear GraphQL or MCP"] --> core
+  hubgit["hub_git<br/>hub PRs for learning decisions"] --> core
+  cli["cli<br/>the hub command (Typer)"] --> core
+  cli --> storage
+  cli --> collector
+  cli --> generator
+  cli --> tracker
+  api["api<br/>hub web: REST, SSE, web app"] --> core
+  api --> storage
+  api --> collector
+  api --> generator
+  api --> hubgit
+  cli -. "hub web" .-> api
+```
+
+| Package | Distribution | Role |
+| --- | --- | --- |
+| `packages/core` | `agent-hub-core` | Entities, the canonical event, `HubConfig`, the init and sync planners, the doctor rules, ports (`EventStore`, `TrackerClient`), test fakes and contract suites |
+| `packages/storage` | `agent-hub-storage` | SQLite event store and the Alembic migrations, shipped in the package |
+| `packages/collector` | `agent-hub-collector` | Event collector adapter |
+| `packages/generator` | `agent-hub-generator` | Hub templates as package data, the `@@` renderer, the managed/seeded registry, the file adapter |
+| `packages/tracker_linear` | `agent-hub-tracker-linear` | `TrackerClient` over Linear's GraphQL API (stdlib only), and `McpTrackerClient` over the Linear MCP server through `claude -p` ([ADR 0015](docs/adr/0015-linear-mcp-tracker-transport.md)) |
+| `packages/hub_git` | `agent-hub-hub-git` | Opens a hub pull request for a learning accepted or rejected in `hub web`, with `git` and `gh` from a temporary clone ([ADR 0024](docs/adr/0024-learning-actions-from-the-app.md)) |
+| `packages/cli` | `agent-hub-cli` | The `hub` command |
+| `packages/api` | `agent-hub-api` | `hub web`: the local REST and SSE API and the built web app ([ADR 0017](docs/adr/0017-api-second-composition-root.md)) |
+| `packages/agent-hub` | `agent-hub` | Meta-package that installs all of the above |
+
+`core` imports nothing internal; the five adapters never import each other; nothing imports `cli`, and `api` is
+reached only from `hub web`. import-linter enforces this in `make check`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+</details>
+
+<details>
+<summary><strong>Folder structure</strong></summary>
+
+```text
+.
+├── packages/                # one uv workspace member per component (see Architecture)
+│   └── <pkg>/
+│       ├── src/agent_hub/<pkg>/
+│       └── tests/{unit,contract,integration}/
+├── tests/
+│   ├── unit/scripts/        # tests of the repo scripts
+│   └── e2e/                 # installed hub + gate self-tests
+├── scripts/                 # repo tooling: test layout, pytest levels, coverage floors, PR title, release, schema export
+├── docs/
+│   ├── SPEC.md              # product spec: vision, layers, event model, phases
+│   ├── ARCHITECTURE.md      # packages, dependency rule, where code goes
+│   ├── CONVENTIONS.md       # code rules and the tool that enforces each
+│   ├── TESTING.md           # test levels, layout, fixtures, coverage floors
+│   ├── CONTRIBUTING.md      # task workflow, branches, PRs, releases
+│   ├── API.md               # REST API standard (Phase 2)
+│   ├── design/              # one design doc per subject (config, generator, sync, doctor, …)
+│   └── adr/                 # architecture decision records
+├── .github/workflows/       # ci (make check), pr-title, release (tag check)
+├── llms.txt, llms-full.txt  # the docs for AI agents, generated by scripts/build_llms_txt.py
+├── CHANGELOG.md             # notable changes per release (Keep a Changelog)
+├── SECURITY.md              # how to report a vulnerability
+├── LICENSE, NOTICE          # Apache License 2.0 and attribution
+├── Makefile                 # the gates: check-fast and check
+└── pyproject.toml           # virtual workspace root, ruff config, dev tools
+```
+
+</details>
+
+<details>
+<summary><strong>CLI reference</strong></summary>
+
+| Command | What it does |
+| --- | --- |
+| `hub init [PROJECT] --repos … --tracker kind:TEAM[,TEAM…] …` | Create a hub from flags (all flags: Quick Start step 3 and `hub init --help`) |
+| `hub init --config hub.json [--dir …]` | Create a hub from an existing `hub.json` |
+| `hub sync [--check]` | Reapply the templates without overwriting what the project customized |
+| `hub sync --adopt [--accept PATH]… [--check]` | Join a hand-made hub to `hub.lock` (from 0.7.0): record what matches, create what is missing, list what differs |
+| `hub doctor [--only RULE]… [--json]` | Check rules, links, dead references, instruction size and template drift |
+| `hub setup [--yes]` | Set up this machine for the hub: tools (uv, git, python3, claude, gh) and the tracker credential, the developer identity (`hub.local.json` proposed from git config and written after asking; `--yes` without asking), each repo cloned or fetched next to the hub, then `hub doctor`; exit 0 when every line is `ok`, else 1, each missing line naming its fix |
+| `hub worktree NAME [--only REPO] [--remove] [--no-fetch]` | Create (or remove) one task's worktrees in the hub's repos; `--no-fetch` starts from the already-fetched base |
+| `hub brief [--no-network]` | Print the session brief: `now.md`, recent journal, repo/PR/CI state |
+| `hub agent [ARGS…]` | Start `claude` with every repo attached; all arguments go to `claude` |
+| `hub next` | Print the tracker's ready issues (`tracker.ready_label`), oldest first: id, repo, title and url |
+| `hub run ISSUE --repo REPO [--live] [--max-turns N] [--budget USD] [--model M] [--effort low\|medium\|high] [--from implement\|verify]` | Take one issue to a PR: worktree, a headless implementing session, the repo's gate, PR, tracker report. A dry run unless `--live`; defaults `--max-turns 40`, `--budget 3.0`, `--model sonnet`, `--effort medium`; `--from verify` runs the gate, PR and report on the commits already made |
+| `hub start ISSUE [--repo DIR]… [--no-agent]` | Start an issue: its worktrees (named `<issue>-<title slug>`), the issue moved to `tracker.states.started`, then `claude` from the hub with those worktrees attached and the issue as first prompt; a rerun resumes the task; `--no-agent` prints how to launch it |
+| `hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …` | Benchmark the `hub-workflow` plugin on closed issues (module `bench`); `--validate` checks the graders |
+| `hub web [--host HOST] [--port N] [--db PATH]` | Serve the control plane (REST API and web app) on `127.0.0.1:7420` until interrupted; another address only inside the agent-hub container (`AGENT_HUB_IN_CONTAINER=1`) |
+| `hub collect [FILE\|-] [--db PATH]` | Ingest canonical events from JSON Lines, all or nothing |
+| `hub --version` | Print the version |
+
+Command contracts: [docs/design/hub-generator.md](docs/design/hub-generator.md), [hub-sync.md](docs/design/hub-sync.md),
+[hub-adopt.md](docs/design/hub-adopt.md), [hub-doctor.md](docs/design/hub-doctor.md),
+[hub-setup.md](docs/design/hub-setup.md), [hub-start.md](docs/design/hub-start.md).
+
+</details>
+
+<details>
+<summary><strong>Stack and technical decisions</strong></summary>
+
+| Choice | Why | Decision |
+| --- | --- | --- |
+| Python 3.14, uv workspace, one package per component | Clear boundaries, one lockfile, `uv tool install` gets everything | [ADR 0001](docs/adr/0001-uv-workspace-with-namespace-packages.md) |
+| Lean hexagonal architecture | Domain logic testable with in-memory fakes; adapters swappable | [ADR 0002](docs/adr/0002-lean-hexagonal-architecture.md) |
+| SQLAlchemy Core + Alembic on SQLite | Local-first now, Postgres by config later | [ADR 0003](docs/adr/0003-persistence-sqlalchemy-core-and-alembic.md) |
+| CLI as the composition root | Only one place wires adapters to use cases | [ADR 0008](docs/adr/0008-cli-as-composition-root.md) |
+| Managed vs seeded files, guarded by `hub.lock` | Sync can upgrade a hub without touching project edits | [ADR 0009](docs/adr/0009-hub-sync-by-file-ownership.md) |
+| `hub.json` stays JSON with a Pydantic model | Hooks read it with the Python 3.9 standard library | [ADR 0010](docs/adr/0010-hub-json-config-contract.md) |
+| Templates as package data; hub logic in the CLI | Hubs hold files and thin shims; logic is versioned and tested here | [ADR 0011](docs/adr/0011-templates-as-package-data.md), [ADR 0012](docs/adr/0012-cli-subsumes-hub-scripts.md) |
+| Releases are git tags run through `uvx` | No package index; each hub pins its own release | [ADR 0013](docs/adr/0013-release-by-git-tags.md) |
+| Tracker behind a core port; Linear over GraphQL | Swappable tracker; no SDK dependency | [ADR 0014](docs/adr/0014-tracker-port-linear-graphql.md) |
+| A Linear MCP transport, chosen by `tracker.transport` | Machines without a Linear API key reach the tracker; each `claude -p` call gets only the Linear tools it needs | [ADR 0015](docs/adr/0015-linear-mcp-tracker-transport.md) |
+| Identity from `hub.local.json`, then `hub.json`, then git config | A team shares one hub; each developer keeps their own branch prefix and author | [ADR 0016](docs/adr/0016-per-developer-identity.md) |
+
+Generated hooks are the exception to "logic lives in the CLI": they stay Python 3.9 standard-library scripts that never
+need the CLI. All but the guard fail open (the guard asks instead), so a session never breaks because of the
+platform. Details: [What the hooks do for you](#what-the-hooks-do-for-you).
+
+</details>
+
+<details>
+<summary><strong>Development setup</strong></summary>
+
+Requirements: uv 0.9.0 or newer (CI pins 0.12.19) and a final Python 3.14 build. For the generator's hook tests, a
+`python3.9` on `PATH` runs the rendered hooks on 3.9 as well (they are skipped locally without it).
+
+```bash
+uv sync --all-packages          # once per clone or worktree
+uv run hub --help               # run the CLI from your checkout
+make help                       # list the targets
+```
+
+The two gates:
+
+- `make check-fast`, while working: format, lint, mypy `--strict`, test layout, version lockstep, unit and contract tests.
+- `make check`, before a PR and in CI: `check-fast` plus integration and e2e tests, import contracts, migrations and
+  coverage floors.
+
+```bash
+make check-fast > check-fast.log 2>&1; echo $?
+make check > check.log 2>&1; echo $?
+```
+
+> [!TIP]
+> Redirect the output and check the exit code: `make check | tail` hides it. Never run the gates with `-j`.
+
+Coverage floors: `core` 90%, every other package 80%. Test levels and rules: [docs/TESTING.md](docs/TESTING.md).
+Code rules: [docs/CONVENTIONS.md](docs/CONVENTIONS.md). Database migrations and the `hub.json` schema export:
+[docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
+
+</details>
+
+## 📍 Roadmap
+
+From the phases in [docs/SPEC.md](docs/SPEC.md#mvp-and-phases). Each phase starts when the previous one's gate passes.
+
+**Done**
+
+- [x] Phase 0, foundation: uv workspace, ADRs, `check-fast`/`check` gates, CI, the canonical event and `hub collect`
+- [x] `hub init` with managed and seeded files, `hub.lock` and the `hub.json` schema
+- [x] `hub sync` and `hub sync --check`
+- [x] `hub doctor` with its rule set
+- [x] `hub worktree`, `hub brief`, `hub agent`, and the `./hub` and `./agent` shims pinned per hub (release 0.4.0)
+- [x] Tracker port with a Linear GraphQL adapter
+- [x] `hub next` and `hub run`: take an `agent-ready` issue to a PR through the tracker port
+- [x] Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`), their files and `hub bench` (release 0.6.0)
+- [x] `hub sync --adopt [--accept PATH]…`: join a hand-made hub (release 0.7.0)
+- [x] Dogfooding: the platform's own hub adopted with `hub sync --adopt` at 0.8.0
+- [x] `hub start`, `hub setup` and `hub ship` (release 0.9.0)
+- [x] The guard's infra rules and a hub workflow that works inside Claude Code's sandbox (release 0.10.0)
+- [x] Phase 2's first slice: the control plane `hub web` with the hook sensor, transcript collector and redaction
+  (release 0.9.0), then readable sessions, problems, learnings and the Brain browser (release 0.11.0)
+
+**Now: Phase 1 gate and Phase 2**
+
+- [ ] Phase 1 gate: an existing project's hand-made hub recreated with the same `make check` and bench
+- [ ] Phase 2 gate: sessions of both projects live and in history
+
+**Next**
+
+- [ ] Phase 3, knowledge and decisions: provenance in the brain, inbox triage in the UI, extracted decisions, learning
+  metrics
+- [ ] Phase 4, workflows as data: a Python engine running declarative workflow documents, gates approved from the UI,
+  adapters for other agents
+
+## ❓ FAQ
+
+**Do I need to know how to program to use it?**
+You need to be comfortable in a terminal and with git: you run a few commands and edit one JSON file. The agents do
+the programming; you review and merge their pull requests.
+
+**Is it free? Can I use it in my company?**
+Yes. agent-hub is open source under the [Apache License 2.0](LICENSE): you may use, change and redistribute it,
+commercially too, as long as you keep the license and [NOTICE](NOTICE). It is experimental, and comes with no
+warranty.
+
+**Does it replace Claude Code?**
+No. agent-hub prepares and launches Claude Code sessions (and will observe them); it is not an agent or a model
+runtime.
+
+**Will `hub sync` overwrite my changes?**
+Not the files your project owns. `hub.lock` records which files are managed by the platform and which were seeded for
+you. A managed file you edited by hand shows up as a conflict instead of being overwritten silently; run
+`hub sync --check` first to see the plan.
+
+**Does it send my code or transcripts anywhere?**
+agent-hub itself runs on your machine and has no server: `hub collect` writes to a local SQLite file. Its network calls
+go to GitHub: fetching the pinned release, `git fetch` in `hub worktree` and `hub start`, `git clone` or `git fetch`
+of each repo and `gh auth status` in `hub setup`, the push and `gh pr create` of `hub run --live`, and `gh` for the
+PR and CI lines of `hub brief` unless you pass `--no-network`. The generated `make usage` target downloads `ccusage`
+from npm. `hub next`, `hub run` and `hub start` call Linear, with `LINEAR_API_KEY` or, with `tracker.transport`
+`"mcp"`, through your Linear MCP server and `claude -p`. Your agent sessions still talk to their model provider as usual.
+
+**Why does an agent's `git fetch` fail with `Broken pipe`, or `./hub` with `Operation not permitted`?**
+That is Claude Code's sandbox, which every hub's `.claude/settings.json` turns on on purpose: agents' Bash may write only
+in the workspace and `$TMPDIR`, reach only allowlisted HTTP(S) hosts, and never SSH. The hub's own network commands
+(`git fetch`/`push`, `gh`, `./hub worktree`, `make worktree`) are excluded, but only when the Bash call is exactly that
+command: `cd repo && git fetch`, `git -C repo fetch` or a redirect stay sandboxed. A failed fetch in `hub worktree`
+prints the bare `git fetch` to run, then `./hub worktree --no-fetch <name>`. Since 0.10.0 the `./hub` shim moves uv's
+folders into the hub (`.hub-uv/`) when the sandbox denies them, and `./hub doctor` checks it all (`sandbox.workflow`).
+
+**Which trackers and agents are supported?**
+Linear and Claude Code today. The tracker is a port (`TrackerClient`) and the event model is agent-neutral, so other
+trackers and agents can come in as adapters.
+
+## 🤝 Contributing
+
+The full process is in [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md). In short:
+
+1. Start from a Linear issue in team AGH that meets the Definition of Ready.
+2. Branch from a freshly fetched `origin/main` as `roquettejh/agh-<n>-<desc>`, run `uv sync --all-packages`, write the
+   failing test first, and run `make check-fast` while you work.
+3. Run `make check` before opening the PR. A change of scope or architecture updates
+   [docs/SPEC.md](docs/SPEC.md) in the same PR.
+4. Open the PR against `main` with a Conventional Commit title (`type(scope): subject`) and the
+   [PR template](.github/pull_request_template.md). The owner reviews and squash-merges.
+
+Instructions for AI agents working in this repo are in [AGENTS.md](AGENTS.md).
+
+## 📄 License and credits
+
+agent-hub is licensed under the [Apache License, Version 2.0](LICENSE); see [NOTICE](NOTICE).
+
+Built on [uv](https://github.com/astral-sh/uv), [Typer](https://github.com/fastapi/typer),
+[Pydantic](https://github.com/pydantic/pydantic), [SQLAlchemy](https://github.com/sqlalchemy/sqlalchemy) and
+[Alembic](https://github.com/sqlalchemy/alembic), and made for [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
+The generated workflow plugin ships its own third-party notices
+(`plugin/hub-workflow/NOTICE` in each hub).
+
+<p align="right"><a href="#contents">Back to top ↑</a></p>
+
+---
+
+Source: `docs/design/project-config.md` (https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/project-config.md)
+
+# Project config: `hub.json`
+
+## Purpose
+
+`hub.json` names a project: repos, tracker, authorship and branch rules, guard paths and the platform release. Every
+generated file and `hub` command takes project values from it and nowhere else. This is its Phase 1 contract.
+
+## Contract
+
+### File
+
+- Location: the hub root. Format: plain JSON (no comments, no trailing commas), UTF-8, readable by `json` on the Python
+  3.9 standard library, so hooks and shell tools keep reading it with no dependency.
+- Ownership: `seeded` ([hub-generator.md](hub-generator.md)). `hub init` writes it once; `hub sync` never writes it.
+- Source of truth: the frozen Pydantic model `HubConfig` (core, `agent_hub.core.hub_config`), proved by unit tests.
+- JSON Schema: `HubConfig.model_json_schema()`, a managed `hub.schema.json` that the generator writes to the hub. It
+  stays core package data (`agent_hub/core/hub_config/hub.schema.json`); the generator copies those bytes verbatim. A
+  unit test fails on drift from a fresh export. Consumers: editors (`$schema`), [`config.schema`](hub-doctor.md), hooks.
+
+### Fields
+
+| Key | Type | "req." or default | Read by |
+|---|---|---|---|
+| `schema_version` | integer, `1` | req. | every reader; see Versioning |
+| `$schema` | string, e.g. `./hub.schema.json`; a declared root key | optional | editors only |
+| `platform.version` | `^[0-9]+\.[0-9]+\.[0-9]+$` | req. | shims (the release they run), `hub sync`, `hub doctor`, cloud setup |
+| `platform.repository` | `git+https://` repository root (Rendered values) | `git+https://github.com/jroquette/agent-hub` | shims, SessionStart, cloud setup, CI credential step (at run time); pin-mismatch command. Tokens only on exactly `https://github.com/`: CI maps `AGENT_HUB_READ_TOKEN` there alone, and cloud setup's `GH_TOKEN` helper answers for `github.com` alone; another host needs the repository attached or its own credential (follow-up) |
+| `project.name` | kebab-case (Rendered values) | req. | templates (plugin, marketplace names), `hub brief` |
+| `project.hub_repo` | `owner/name` | req. | `hub run` (PR links), marketplace |
+| `project.branch_prefix` | e.g. `jdoe/` (Rendered values) | optional, per developer ([developer-identity.md](developer-identity.md)); `hub setup` writes it to `hub.local.json` | `hub worktree`, `hub run`, `hub start`, guard branch hint, `AGENTS.md` |
+| `project.default_branch` | `^S(?:/S)*$` (Rendered values) | `main` | the hub's own branch (CI, brief hub line, retro), default of `repos[].default_branch`, guard |
+| `project.author_name`, `project.author_email` | strings | optional, per developer ([developer-identity.md](developer-identity.md)) | cloud setup (git identity), `attribution.ai` rule, marketplace owner, `AGENTS.md` |
+| `project.conventions` | object of optional patterns `branch`, `commit_title`, `pr_title` (Rendered values); not in `hub.local.json` | `branch` `{prefix}{issue_lower}-{slug}`, `commit_title` `{type}({scope}): {summary} ({ISSUE})`; `pr_title` the effective `commit_title` | `hub worktree`, `hub run` and `hub start` (branch per repo; refused, before anything is created, when its branch is checked out in another worktree, when the existing task worktree is on another branch, or when the task folder is not a worktree); the run prompt; the PR title: a repo whose titles are configured (either layer sets `commit_title` or `pr_title`) parses its newest commit subject with `commit_title` and renders `pr_title`, and no match keeps today's title, records `title_unmatched` and warns; `AGENTS.md`: the project's shapes and examples, then, when a repo sets `repos[].conventions`, one line naming at most three such repos and how many more (their patterns stay in `hub.json`) and saying that a `pr_title` neither layer sets follows the repo's own `commit_title`; kickoff: the branch shape only; doctor `instructions.refs`: skips, as valid references whether rendered or not, the project's shapes and examples, each repo's own shapes, and each repo's effective branch shape and example |
+| `tracker.kind` | closed list: `linear` | req. | selects the tracker adapter (Tracker, below) |
+| `tracker.team`, `tracker.teams` | a team key; or a list of them (≥ 1, unique ignoring case), the first the default; `hub run`/`hub worktree` match keys ignoring case, `features.tracker` exactly | exactly one of the two | `hub next` (each team, in order), `hub run`, `hub start` (exact upper-case `<TEAM>-<n>`), worktree names, `features.tracker`, branch hints, `AGENTS.md` |
+| `tracker.ready_label`, `tracker.failed_label` | strings | `agent-ready`, `agent-failed` | `hub next` (ready), `hub run` on failure (failed) |
+| `tracker.states.started`, `tracker.states.review` | strings; an object with only these keys; not in `hub.local.json` | `In Progress`, `In Review` | `hub start` reads `started`: the state a fresh start, or a resume of an unstarted issue, moves to; `review`: the state `hub run` (success report and dry run) and `hub ship` move the issue to |
+| `tracker.transport` | closed list: `api`, `mcp`; `hub.local.json` may override it | `api` | `hub next`, `hub run`, `hub start` (adapter; Tracker, below), `hub setup` (its `tracker` item) |
+| `repos[]` | list, at least one item | req. | launcher, worktrees, `hub setup` (clone or fetch each), `hub start`, hooks, cloud setup |
+| `repos[].dir` | one path segment (Rendered values), unique across `repos` ignoring case | req. | the sibling directory next to the hub |
+| `repos[].github` | `owner/name` | req. | cloud setup, `hub run`, `hub setup` (clone URL over the scheme of the hub's `origin`) |
+| `repos[].role` | free string; `app` is the only known value | `app` | templates may branch on known roles |
+| `repos[].check_fast`, `repos[].check` | shell commands; `check_fast` may be absent, empty or blank (no Stop gate: `config.stop_gate` warns); `check` holds a non-space character | `check` req. | stop gate (`check_fast`), `hub run` (`check`, also step 3 when there is no `check_fast`), `hub doctor` (`repos.agents` fix, escaped) |
+| `repos[].check_fast_timeout` | strict integer 1–160 (seconds), within the stop gate's 160 s budget | 150 | stop gate |
+| `repos[].conventions` | like `project.conventions`; a project `pr_title` its `commit_title` cannot fill is reported at `project.conventions.pr_title`, naming each such `repos[<i>].conventions.commit_title` | per key the project's, else today's shape; `pr_title`, else the repo's effective `commit_title` | as `project.conventions`, for the repo; `AGENTS.md` names the repo, not its patterns |
+| `repos[].default_branch` | like `project.default_branch` | `project.default_branch` | `hub worktree`, `hub run` (base, `--base`), `hub start`, `hub brief`, retro CI, guard (union of `main`, `master` and every configured default branch, plus the root `hub.json`'s when `$HUB_CONFIG` points elsewhere, from any cwd); `AGENTS.md` names it only when set |
+| `guard.ask_before_edit` | list of paths | `[]` | guard: ask before an edit under them |
+| `guard.deny_hosts` | list of host names | `[]` | guard: deny network calls to them |
+| `guard.deny_paths` | list of paths | `[]` | guard: deny any read or edit under them |
+| `guard.infra` | object; not in `hub.local.json` | absent | hooks' config reader (validated); present, even `{}`, it turns on the guard's infra classification (the [SPEC](../SPEC.md)'s infra guard; absent, the guard's fixed infra rule); generator: `.claude/settings.json` leaves out its `Bash(terraform *)` and `Bash(aws *)` denies while it is present (applied by `hub sync`); an unknown key under it (other than `_` keys) is reported by the reader as unusable (`InfraSection.problem`; the CLI rejects it), and the guard then denies every infra command |
+| `guard.infra.allow` | list of Python `re` patterns (Infra patterns, below) | `[]` | hooks' config reader; guard: the allowed environments; a part or call naming a covered tool must match one unless it is a local-only form, and what passes is asked instead when the command holds a character other than ASCII letters, digits, space, tab and `_ - . / : = @ , + %` (joined by `;`, `&&`, `||`, `|`, newline), or a word that always asks (a shell, `python*`, `perl`, `node`, `ruby`, `php`, `xargs`, `eval`, `exec`, `source`, `.` as a command, `env -i`/`-u`, `sudo`, `su`, `doas`, a lone `--`, `parallel`, a `sed` that runs its text: the [SPEC](../SPEC.md)'s infra guard), or a part that sets the environment twice (a second `AWS_PROFILE=` or `--profile`, …, also under two spellings such as `AWS_PROFILE=` and `--profile`), or an environment selector the guard knows (`AWS_PROFILE=`, `AWS_DEFAULT_PROFILE=`, `KUBECONFIG=`, `KUBE_CONTEXT=`, `HELM_KUBECONTEXT=`, `TF_WORKSPACE=`, `TF_DATA_DIR=`, `TF_CLI_ARGS[_*]=`, `PULUMI_BACKEND_URL=`, `AWS_CONFIG_FILE=`, `AWS_SHARED_CREDENTIALS_FILE=`, `AWS_ROLE_ARN=`, `CDK_DEFAULT_ACCOUNT=` anywhere, and any other word holding one of these names as an identifier, such as `export AWS_PROFILE` or `read KUBECONFIG`; `--profile`, `--aws-profile`, `--context`, `--kube-context`, `--cluster`, `--server`, `--user`, `--kubeconfig`, `--kube-apiserver`, `-chdir`, `--cwd`, `--stack`, `-s`, `--stage`, `--workspace`, `-var-file`, `-backend-config`, pulumi's `-C`, as `--x v` or `--x=v`, in a part naming a covered tool) that no match holds whole, so a pattern must match the whole setting, not its value alone, or a command that changes a tool's configuration (`aws configure set|import`, `kubectl config set-context|use-context|set-cluster|set-credentials|use|set|rename-context|delete-context`, `terraform workspace select|new`, `pulumi stack select`); a match that overlaps a quoted region (`'…'`, `"…"`, `$'…'`) neither allows nor denies |
+| `guard.infra.prod_markers` | list of Python `re` patterns (Infra patterns, below) | `[]` | hooks' config reader; guard: the production markers; a match anywhere in a command naming a covered tool denies it |
+| `modules` | object keyed by module id | `{}` | generator, commands, doctor (Modules) |
+| `doctor.rules` | object keyed by rule id | `{}` | `hub doctor`; contract in [hub-doctor.md](hub-doctor.md) |
+
+Unknown keys are an error at every object level; `_` keys (such as `_comment`) are accepted and ignored at every level,
+and the exported schema says the same ([ADR 0010](../adr/0010-hub-json-config-contract.md)). Cross-field checks are
+model validators JSON Schema cannot express, so an editor accepts what the CLI rejects: unique `repos[].dir`, team keys
+unique ignoring case, guard path roots, `doctor.rules` entries of an unselected module, `contract-sync` repos, a
+`pr_title` part (not `{ISSUE}`) the repo's effective `commit_title` lacks, `guard.infra` patterns that compile.
+
+### Rendered values
+
+Rendered values are safe unquoted in shell, Make and Markdown; YAML templates double-quote them (`on`, `NO` would
+retype); brain frontmatter lists repo dirs unquoted (no type resolution). A safe segment `S` is
+`[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*`: no leading `-`/`.`, `..`, trailing punctuation or `_` separator (backtracking).
+
+- `project.name`: kebab-case `^[a-z0-9]+(-[a-z0-9]+)*$`. `repos[].dir`: `^S$`, unique ignoring case (`tradeSentinel`).
+  `project.hub_repo`, `repos[].github`: `^S/S$`. `project.branch_prefix`: `^S/$`. `guard.deny_hosts`: `.`-joined DNS
+  labels `[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?`. `project.default_branch`, `repos[].default_branch`: `^S(?:/S)*$`.
+  `tracker.team` and each `tracker.teams` item: `^[A-Za-z0-9]+$`. `project.author_email`:
+  `^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$`. Other free text has no control character (`\x00-\x1f`, `\x7f`); `author_name`
+  is rendered only with format quoting (`shlex.quote`, JSON encoder, escaped YAML scalar), never into a Makefile;
+  `check_fast` and `check` are read at run time, never rendered.
+- `platform.version` matches `^[0-9]+\.[0-9]+\.[0-9]+$` in the CLI and the hooks' stdlib reader (a bad value counts as
+  absent). `platform.repository` matches `^git\+https://H(?:/S)+$` (`H` as `guard.deny_hosts`), ≤ 200 characters, as
+  written: no credential, port, query, fragment, `@ref` or trailing `/`. Read at run time, never baked in; a bad one
+  stops each reader (SessionStart: mini brief), never echoed.
+- Guard paths: relative to the workspace (the directory holding the hub and its repos), normalized, `/`-separated, not
+  absolute; segments are printable ASCII without space or `\`, never `.` or `..`. The first is a `repos[].dir` or `@hub`
+  (the hub, whatever its checkout is called; `@` cannot start a `dir`); `guard.deny_paths` may also start with another
+  workspace directory (Loki's `_archive`). Hooks resolve `@hub` to the hub root holding the hook file. Loki's guards on
+  adoption: [hub-adopt.md](hub-adopt.md#project-guards).
+- Conventions: each pattern ≤ 120 characters, each placeholder at most once. `branch`: `{prefix}` (the developer's
+  effective branch prefix: `project.branch_prefix`, or `hub.local.json`), `{ISSUE}` (the issue id, e.g. `DEM-7`) or
+  `{issue_lower}` (the same lowercased; one of the two needed), `{slug}` (the worktree name's description; empty, it
+  drops one `-`, `_`, `.` or `/` before it), literals `[A-Za-z0-9._/-]`; it must render to a valid branch. Titles:
+  `{ISSUE}`, the commit's parts `{type}`, `{scope}`, `{summary}` (needed), placeholders separated by a literal; a
+  literal holds no control, format or line-separator character (Unicode Cc, Cf, Zl, Zp), backtick or brace.
+- Infra patterns: non-blank, no control character, compiling with Python's `re` (no repeat count overflow such as
+  `a{4294967296}`, no too-deep nesting); searched (`re.search`) with no flags in Python 3.9 `re` syntax (the hooks run
+  on the system `python3`). Avoid nested quantifiers: `(a+)+$` takes over a second on a 25-character input. Bound an
+  environment pattern by a space or tab, as a whole word, `(?<![^ \t])--profile[= ]demo-dev(?![^ \t])`, and an
+  `AWS_PROFILE` prefix by the part's start, `^[ \t]*AWS_PROFILE=demo-dev(?=[ \t])`; not `\b` (it also matches
+  `demo-dev.x`, `demo-dev{,-admin}` or a redirection target `>--profile=demo-dev`) or `\s` (it also matches a carriage
+  return, a vertical tab or a no-break space, which the shell does not split on).
+
+### Versioning
+
+`schema_version` changes only on a breaking change (a key removed, renamed or retyped, or an optional key made
+required); adding an optional key keeps it. The CLI reads `platform.version` and `schema_version` leniently (plain JSON,
+no model), in that order, before validating the file, so an older CLI facing a newer file reports the pin mismatch
+(whose fix settles both), not an unknown key. On another schema version, `hub sync` writes nothing and exits 1
+([hub-sync.md](hub-sync.md)) and `config.schema` errors, both naming the fix (update the file, or use the shim).
+
+### Modules
+
+Each entry's value is that module's settings object; an unknown id is an error. A module adds files, commands or doctor
+rules only when selected ([hub-generator.md](hub-generator.md)). `cloud` (cloud-session setup), `bench` (configuration
+benchmark) and `marketplace` (plugin marketplace) take `{}` only; `contract-sync` (cross-repo contract recipe) takes
+`{"source": "<repo dir>", "target": "<repo dir>"}`, two different `repos[].dir` (at `modules.contract-sync.<key>`).
+
+### Readers
+
+- **CLI**: validates with `HubConfig` and fails fast: exit 1 and one line per error, `hub.json: <json path>: <message>`;
+  `hub.local.json: <json path>: <message>` for the developer's file ([developer-identity.md](developer-identity.md)).
+- **Hooks**: a defensive stdlib reader that never raises (`plugin/hub-workflow/hooks/stdlib_reader.py`; its defaults on
+  a minimal `hub.json` match `HubConfig`'s in `test_hub_json_reader.py`): a missing file, bad JSON or a wrong type gives
+  the defaults; the hook fails open. It ignores unknown and `_` keys, except under `guard.infra` (a wrong type, an
+  unusable item or an unknown key sets `InfraSection.problem`). A bad `repos[].default_branch` inherits; a bad
+  `tracker.teams` (not a non-empty list of non-empty strings) counts as absent. No hook reads `conventions`.
+
+### Tracker
+
+`tracker.kind` and `tracker.transport` pick the `TrackerClient` adapter: `api` is `LinearGraphqlTrackerClient` (key only
+from `LINEAR_API_KEY`, at call time, never `hub.json`); `mcp` is `McpTrackerClient`, short `claude -p` calls to the user's
+Linear MCP server ([ADR 0015](../adr/0015-linear-mcp-tracker-transport.md)). Both pass `TrackerClientContract`. `hub
+next` calls `list_ready` once per team, in order; `hub start` calls `get_issue`, then `move_state` (`only_if_unstarted`
+on a resume; [hub-start.md](hub-start.md)).
+
+### Example (synthetic project)
+
+```json
+{"$schema": "./hub.schema.json", "schema_version": 1, "platform": {"version": "0.2.0"}, "tracker": {"kind": "linear", "team": "DEM"},
+ "project": {"name": "demo", "hub_repo": "acme/demo-hub", "branch_prefix": "jdoe/", "author_name": "Jane Doe", "author_email": "jane@example.com"},
+ "repos": [{"dir": "demo-api", "github": "acme/demo-api", "check_fast": "make check-fast", "check_fast_timeout": 120, "check": "make check"}],
+ "guard": {"ask_before_edit": ["demo-api/docs/adr"]}, "modules": {"cloud": {}, "bench": {}}}
+```
+
+## Invariants
+
+- `hub.json` is the only committed file of project values; no template or command hard-codes one; no field is a secret.
+  It stays readable by Python 3.9's `json`, nothing writes it after `hub init`, and a hook never fails because of it.
+- The CLI and `hub doctor` validate with the same model; the exported schema never drifts from it.
+
+## Decisions
+
+- [ADR 0010](../adr/0010-hub-json-config-contract.md): JSON, a Pydantic model and an exported schema; not TOML (no 3.9
+  stdlib reader) nor YAML (a dependency, implicit typing). [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md):
+  `hub.json` is seeded. [ADR 0013](../adr/0013-release-by-git-tags.md): `platform.version` pins the CLI release.
+- [ADR 0002](../adr/0002-lean-hexagonal-architecture.md): the model lives in core; `TrackerClient` is a port because a
+  swap is expected ([SPEC](../SPEC.md)); [ADR 0014](../adr/0014-tracker-port-linear-graphql.md): the GraphQL adapter.
+
+## Open questions
+
+- Schema migration: a `hub config migrate` command or a documented manual edit, decided when version 2 is needed.
+
+---
+
+Source: `docs/design/developer-identity.md` (https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/developer-identity.md)
+
+# Developer identity: `hub.local.json`, then `hub.json`, then git config
+
+## Purpose
+
+One hub repo serves every developer of a project, but a branch prefix and a commit author belong to one developer.
+This is the contract for where each developer's `project.branch_prefix`, `project.author_name` and
+`project.author_email` (and their own `tracker.transport`) come from, in the CLI, the hooks, rendering, doctor and
+cloud setup. The `hub.json` fields themselves are in [project-config.md](project-config.md); reasons in
+[ADR 0016](../adr/0016-per-developer-identity.md).
+
+## Contract
+
+### Precedence
+
+- Per key, the first source that sets it wins: the gitignored `hub.local.json`, else `hub.json`, else the hub repo's
+  `git config user.name`/`user.email`. A hub that sets the identity in `hub.json` behaves as before.
+- `branch_prefix` has no git key. When no file sets it, it is derived: the local part of the effective `author_email`
+  plus `/`. A derived value that fails the `branch_prefix` pattern (`^S/$`) is no prefix; it is never normalized.
+- Git is read only for a key no file sets, only when a consumer needs it, at most once per key.
+- A git value loses one trailing newline (never stripped otherwise), must be valid UTF-8 and must match `hub.json`'s
+  pattern for the key (`author_name`: no control character; `author_email`: the email pattern), else it counts as unset.
+
+### `hub.local.json`
+
+- **Location: the identity home**, the root of the hub's main checkout. From a hub worktree the main checkout's file
+  is read (the CLI falls back to the worktree only when git cannot run). It is never read beside a `$HUB_CONFIG` file.
+- **Format.** `hub.json`'s nesting, plain JSON, a regular file of at most 65,536 bytes. It accepts only
+  `project.branch_prefix`, `project.author_name`, `project.author_email` and `tracker.transport` (`api` or `mcp`),
+  each with `hub.json`'s rule, plus `_` comment keys at `$`, `project` and `tracker`. `null` is refused.
+- **Example:** `{"project": {"branch_prefix": "jane/", "author_name": "Jane Roe", "author_email": "jane@example.com"}}`.
+- **Problems** (CLI and doctor), one per error, `hub.local.json: <json path>: <message>`. A `hub.json` key that is not
+  local: `set only in hub.json; hub.local.json holds project.branch_prefix, author_name, author_email and
+  tracker.transport`. Any other key: `Extra inputs are not permitted`. Not an object: `$: must be a JSON object`. Too
+  big: `$: cannot read "<path>": larger than 65536 bytes`. An absent file sets nothing.
+- **Ignored by git.** `hub init` seeds `.gitignore` with `hub.local.json`. `.gitignore` is seeded, so `hub sync` never
+  adds the line: an existing hub adds it by hand (README, `hub.local.json`).
+- **Nothing in it relaxes a guard**: it cannot add or remove a guard path, host, protected branch or repo.
+- **One writer:** `hub setup` ([hub-setup.md](hub-setup.md)) writes it, as a new file only, never overwritten.
+
+### CLI
+
+- `hub.json` is read from the hub root as before. `hub.local.json` is read from `hub_root.local_home(root)`: the root,
+  or its main checkout when `root/.git` is a file and git runs.
+- The git read (`effective_config.git_identity_reader`, through `read_git_defaults`) runs `git config --get` in the
+  identity home, 10 s each, with `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR` and the session's tokens dropped.
+- `hub next`, `hub brief`, `hub agent` and `hub bench` use `hub.json` with the local values over it
+  (`load_effective_config_or_exit`). A bad `hub.local.json` exits 1 with its problem lines. A local
+  `tracker.transport` picks the adapter of `hub next`, `hub run` and `hub start`.
+- `hub worktree` (create and `--remove`), `hub run` and `hub start` resolve the prefix before any git write
+  (`effective_with_prefix_or_fail`). A bad local file, or no prefix, is a usage error, exit 2:
+  ```
+  no branch prefix for this developer; set one of:
+    hub.local.json → project.branch_prefix
+    hub.json → project.branch_prefix
+    git config user.email in the hub (its local part plus /)
+  ```
+  One more line says why when it can: `  <source>'s project.author_email gives "<local>", not a valid prefix` (or
+  `git's user.email gives …`), `  git's user.email is not an email address`, or `  git: <problem>`.
+- `hub init` and `hub sync` never read `hub.local.json`. `hub init` still fills the identity into `hub.json` from flags
+  or git, and `--config` copies a `hub.json` without identity keys.
+
+### Hooks
+
+- The stdlib reader (`stdlib_reader.py`, `EffectiveValues`) applies the same precedence and never raises. The local
+  file counts only as a regular file (opened `O_NONBLOCK`, `S_ISREG` on `fstat`) of at most 65,536 bytes holding a
+  JSON object; otherwise it sets nothing. A local value counts only when it is a non-empty string with the model's
+  shape (pattern, or `api`/`mcp`) that encodes as UTF-8; otherwise that key falls through to `hub.json`, then git
+  (`tracker.transport` has no git source). `hub.json`'s own non-empty prefix is used unchecked, as before.
+- **Identity home** (`hubhooks._identity_home`): the hook root's main checkout; with no hook root (plugin cache), the
+  walked hub, unless `$HUB_CONFIG` names a file, in which case there is none: no local file and no git.
+- **Git** (`Config._git_value`): `git config --get <key>` in the identity home, 2 s (`IDENTITY_GIT_TIMEOUT`), without
+  `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`; raw bytes decoded strictly; any failure, timeout or non-zero exit is
+  `""`. It runs only for a guard deny whose reason holds the branch hint, never when a file sets the prefix.
+- The guard's branch hint is `<prefix><team>-<N>-<desc>`; with no prefix, it starts at the team.
+
+### Rendering
+
+`hub init`, `hub sync` and `render_hub` render from `hub.json` only, never `hub.local.json` or git config (`hub init`
+reads git config only to fill missing flags into `hub.json`), so rendered files
+and `hub.lock` are the same for every developer. With both author keys and the prefix in `hub.json`, `AGENTS.md` and
+`marketplace.json` are byte-identical to before. Otherwise:
+
+- `AGENTS.md` rule 1: when `hub.json` lacks either author key, commits are authored by the developer running the
+  session (`hub.local.json`, else their git config); when it lacks the prefix, branches read `<prefix>…`, with a note
+  that `<prefix>` is `hub.local.json` → `project.branch_prefix`, else the local part of the author email plus `/`.
+- `marketplace.json`'s owner is `{"name": author_name or project.name}`, with `email` only when `hub.json` sets it.
+
+### Doctor
+
+- `config.schema` reports each `hub.local.json` problem as an error at path `hub.local.json`, fix
+  `fix hub.local.json (docs/design/developer-identity.md)`. On a `platform.version` mismatch it reports none.
+- `config.identity` (info; can be disabled, cannot be retuned) reports a derived prefix:
+  ``branch prefix `jane/` is derived from git config user.email (hub.local.json and hub.json set none)``, fix `set
+  project.branch_prefix in hub.local.json to choose another`. It is the only rule that reads git for identity.
+- File rules use `hub.json` values only; `instructions.refs` never checks the exact reference `hub.local.json`.
+
+### Cloud setup
+
+With `project.author_name` and `project.author_email` in `hub.json`, `scripts/cloud-setup.sh` is unchanged (global and
+repo-local). Otherwise it reads `HUB_AUTHOR_NAME` and `HUB_AUTHOR_EMAIL` (set per developer in their cloud
+environment). When both are non-empty, valid UTF-8 and free of control characters, it writes them repo-local in the
+hub and each repo, never global, and prints `cloud-setup: git identity (repo-local, from
+HUB_AUTHOR_NAME/HUB_AUTHOR_EMAIL) = <name> <email>`. Else it prints `cloud-setup: WARN no commit author in hub.json or
+HUB_AUTHOR_NAME/HUB_AUTHOR_EMAIL; commits carry the container's identity`, writes nothing and goes on (exit 0).
+
+## Invariants
+
+- One rule, two readers: core `effective_identity.resolve_identity` (git behind a `GitReader` the CLI supplies) and the
+  hooks' `EffectiveValues`. The shared cases in `agent_hub.core.testing.identity_cases` run against both
+  (`test_identity_parity.py`, the hooks on the current Python and on 3.9).
+- Committed files never depend on who runs `hub sync`; `hub.local.json` is never rendered, locked or committed.
+- A hub that keeps the identity in `hub.json` runs no `git config user.*` call in the CLI and keeps its rendered bytes.
+- A hook never fails because of `hub.local.json` or git.
+
+## Decisions
+
+- [ADR 0016](../adr/0016-per-developer-identity.md): `hub.local.json`, then `hub.json`, then git config; rendering
+  reads `hub.json` only; cloud setup writes an env identity repo-local.
+- [ADR 0010](../adr/0010-hub-json-config-contract.md): the `hub.json` contract; optional keys are additive under
+  `schema_version: 1`.
+
+## Open questions
+
+- A team mode for `hub init` (no identity in `hub.json`): open, a later issue; `hub setup` writes the developer's file.
+- Whether doctor should also report no prefix at all (`hub worktree`, `hub run` and `hub start` would refuse).
+
+---
+
+Source: `docs/design/hub-setup.md` (https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/hub-setup.md)
+
+# Hub setup: one-command onboarding of a developer's machine
+
+## Purpose
+
+A developer (or an agent) joining a project clones the hub into the folder that holds (or will hold) the project's
+repos, so they sit side by side, then runs `./hub setup` in it. It checks the tools and the tracker credential, writes
+`hub.local.json` when the hub needs one, clones the missing repos, fetches the present ones, runs `hub doctor` and lists
+what is still missing, each with its fix. Its contract: options, output, writes, git environment, exit codes (AGH-71).
+
+## Contract
+
+### Command
+
+- `hub setup [--yes]`, run as `./hub setup` from the hub. `--yes` (write a new `hub.local.json` without asking) is the
+  only option, besides `--help`; no `--json`, `--only` or `--no-fetch`.
+- Root: `AGENT_HUB_ROOT` when `./hub` exports it, else the cwd. No `hub.json` there: exit 2 with `<root>: not a hub: no
+  hub.json in this folder (hub setup runs in the hub folder or through ./hub)`. `hub.json` is read once; any problem,
+  a `platform.version` pin other than the running release included, prints the reader's lines and exits 1 before any
+  git call. Repos are cloned next to the root (`<root>/../<dir>`); `hub.local.json` is read and written in the identity
+  home, the main checkout ([developer-identity.md](developer-identity.md)).
+- Sections run and print in this order, each whatever failed before: tools, identity (then `gitignore`), repos, `hub
+  doctor`. The only prompt comes before the network step, so the rest runs unattended.
+
+### Output
+
+Stdout holds only the checklist, each item printed as soon as it is decided: `<state> <item>: <detail>[ Fix: <fix>]`,
+`<state>` being `ok` or `missing` padded to 7 columns plus one space. Sub-lines (doctor findings, `hub.local.json`
+problems, no-prefix reasons, git's problem) follow their item, indented 8 spaces. The last line is `setup: <n> ok`, or
+`setup: <m> missing, <n> ok` (items, not sub-lines). Stderr holds the identity proposal (`hub setup: proposed
+hub.local.json in <home>: <values> (<sources>)`), the prompt (`Write <home>/hub.local.json? [y/N] `) and the usage,
+not-a-hub and config errors. A team hub, `demo-web` missing, an SSH origin, `--yes`, `gh` not logged in, no key:
+
+```text
+ok      uv: 0.9.5
+ok      git: on PATH
+ok      python3: 3.12.4
+ok      claude: on PATH
+missing gh: gh auth status exited 1 Fix: gh auth login
+missing tracker: LINEAR_API_KEY is not set (transport api) Fix: export LINEAR_API_KEY=<your Linear API key>, or set tracker.transport "mcp" in hub.local.json
+ok      identity: wrote hub.local.json: jane/, Jane Roe <jane@example.com> (git config)
+ok      repo demo-api: present, fetched
+ok      repo demo-web: cloned acme/demo-web into ../demo-web (ssh)
+ok      hub doctor: 0 errors, 1 warning, 0 infos
+        warning makefile.override Makefile.project:3: redefines target 'check' Fix: rename the project target
+setup: 2 missing, 8 ok
+```
+
+| Item | `ok` detail | `missing` detail → Fix |
+|---|---|---|
+| `uv` | `<X.Y.Z>` | `not on PATH` → `curl -LsSf https://astral.sh/uv/install.sh \| sh`; `<X.Y.Z>, need 0.9.0 or newer` → `uv self update`; `cannot read its version` / `timed out after 10 s` → `uv --version` |
+| `git` | `on PATH` | `not on PATH` → `install git 2.28 or newer (https://git-scm.com/downloads)` |
+| `python3` | `<X.Y.Z>` | `not on PATH` / `<X.Y.Z>, need 3.9 or newer` → `install Python 3.9 or newer as python3 (https://www.python.org/downloads/)`; unreadable / timed out as `uv` → `python3 --version` |
+| `claude` | `on PATH` | `not on PATH` → `install Claude Code (https://docs.anthropic.com/en/docs/claude-code/setup)` |
+| `gh` | `logged in` | `not on PATH` → `install the GitHub CLI (https://cli.github.com), then gh auth login`; `gh auth status exited <n>` / `timed out after 10 s` / `cannot run gh auth status` → `gh auth login` |
+| `tracker` | `LINEAR_API_KEY set (transport api)`; `transport mcp: Linear through claude -p (its Linear MCP server is not checked)` | `LINEAR_API_KEY is not set (transport api)` → as the sample; `transport mcp needs claude on PATH` → the `claude` fix |
+| `identity` | `wrote hub.local.json: <values> (<sources>)` (the written keys only); `<values> (<sources>)`, sources distinct in key order | below |
+| `gitignore` | no line | `hub.local.json is not ignored by git` → `add the line hub.local.json to .gitignore and commit it; if git tracks it, also git rm --cached hub.local.json` |
+| `repo <dir>` | `present, fetched`; `cloned <owner/name> into ../<dir> (<ssh\|https>)` | below |
+| `hub doctor` | its totals line | its totals line → `fix each error below, then ./hub doctor`; its finding lines as sub-lines in both states |
+
+`<values>` is the prefix, then `<name> <<email>>`, each escaped by `one_line`. Identity gaps, with their Fix:
+
+- `hub.local.json not written (declined)` / `(stdin is not a terminal)` → `./hub setup --yes, or write hub.local.json
+  yourself (docs/design/developer-identity.md)`; `could not write hub.local.json: <strerror>` → the same.
+- `hub.local.json not written (larger than 65536 bytes)` → `shorten git's user.name or user.email in the hub, then
+  ./hub setup`; `hub.local.json appeared while writing; left as is` → `./hub setup`.
+- `git config in the hub has no user.name` (`user.email`, or `user.name or user.email`), `git's user.email is not an
+  email address`, `git's user.name holds a control character` (joined by `; `) → the matching `git config user.name
+  "<Your Name>"` and/or `git config user.email <you@example.com>`, joined by ` and `, then `, then ./hub setup`; when
+  git gave no answer, a sub-line `git: git not found` / `git: git timed out`.
+- `<giver> gives "<local part>", not a valid branch prefix`, where `<giver>` is `git's user.email`, `hub.json's
+  project.author_email` or `hub.local.json's project.author_email`, and `no branch prefix` (with the `no_prefix_lines`
+  sub-lines) → `write hub.local.json with project.branch_prefix (docs/design/developer-identity.md)`.
+- `hub.local.json is invalid` (one sub-line per problem) → `fix hub.local.json (docs/design/developer-identity.md)`.
+
+Repo gaps, with their Fix:
+
+- `clone failed (git exit <n>)` / `clone timed out after 600 s` → `check that your git credentials can read
+  github.com/<owner/name> (e.g. gh auth setup-git), then ./hub setup`.
+- `fetch failed (git exit <n>)` / `fetch timed out after 600 s` → `git -C ../<dir> fetch origin`.
+- `../<dir> exists but is not a git repository; left untouched` and `../<dir> has no commit (an interrupted clone?)` →
+  `move ../<dir> away, then ./hub setup`.
+- `git cannot read ../<dir> (git exit <n>); left untouched` / `checking ../<dir> timed out after 10 s` → `git -C
+  ../<dir> status, then ./hub setup`.
+- `git not found` / `git could not run` → the `git` fix.
+
+### Steps and what they write
+
+- **Tools.** `uv --version` (≥ 0.9.0), `python3 --version` (≥ 3.9), `gh auth status` (exit 0), each at most 10 s with
+  4,096 bytes of stdout kept; `git` and `claude` on `PATH`. A version is the first `X.Y.Z` with 1 to 6 digits per part.
+  The tracker item reads the effective `tracker.transport` (`hub.local.json` over `hub.json`) and only whether
+  `LINEAR_API_KEY` is set and non-empty.
+- **Identity.** An existing `hub.local.json` (valid or not), or a `hub.json` setting all three identity keys, is never
+  written: the item resolves the identity (git read only for keys no file sets). Else the keys `hub.json` leaves unset
+  are proposed from the hub's git config; with every one valid, `--yes`, or `y`/`yes` at the prompt on a terminal,
+  writes `{"project": {…}}` (keys in the order `branch_prefix`, `author_name`, `author_email`, indent 2, UTF-8, mode
+  0644) through a temporary file linked to `hub.local.json`, which fails if a file appeared. An answer cut at 64 bytes
+  or not UTF-8 is a no. Then, when the file exists, `git -C <home> check-ignore -q hub.local.json` exiting 1
+  gives the `gitignore` item; any other outcome gives no line.
+- **Repos.** Per `repos` entry, in `hub.json` order, at `<root>/../<dir>`: no entry → `git clone --quiet <url>`, the
+  url over the hub origin's scheme (`git@github.com:<owner/name>.git` when `origin` is a GitHub SSH remote, else
+  `https://github.com/<owner/name>.git`); a folder, or a link to one, holding `.git` → `git -C ../<dir> rev-parse
+  --verify -q HEAD`, then, on exit 0, `git -C ../<dir> fetch --quiet origin`; anything else is reported, never touched.
+  The commit check's exit 1 is `has no commit`; any other failing exit (dubious ownership, a bad config, an unreadable
+  `.git`) is `git cannot read`, and its timeout (10 s, a local read) `checking ../<dir> timed out`: no fetch runs
+  after either. Clones and fetches are cut at 600 s, their process group killed. Only git's exit code is read.
+- **Doctor.** `hub doctor`'s check runs in process on the root, whatever the cwd, with its own reads and rules.
+- Setup writes only the clones into absent entries and a new `hub.local.json`; it deletes nothing.
+
+### Git environment
+
+Setup's own git calls (scheme read, check-ignore, clone, commit check, fetch) run with stdin from `/dev/null`,
+`GIT_TERMINAL_PROMPT=0`, no git location variable (`GIT_DIR` and the like) and no `LINEAR_API_KEY`; nothing else is
+added, so the developer's own config and credentials answer. The commit check and the fetch (not the clone) also set
+`GIT_CEILING_DIRECTORIES` to the workspace (the root's parent) and the parent of `../<dir>`'s real path (git compares
+it with its resolved cwd), so even through a link git never runs in a repo above `../<dir>`. The scheme read runs only
+when `<home>/.git` exists, with the ceiling at the home's parent.
+
+### Exit codes and seams
+
+0 when every item is `ok`; 1 after the full checklist when any is `missing`, or for an invalid `hub.json`; 2 for a
+usage error or not a hub. Tests replace module-level seams, none a flag or a variable and none public:
+`setup_tools.tool_probe` (the tool probe factory), `setup_identity.stdin_is_tty` and the timeouts
+`setup_repos.NETWORK_TIMEOUT_SECONDS`, `setup_repos.CHECK_TIMEOUT_SECONDS` and `setup_identity.PROBE_TIMEOUT_SECONDS`.
+
+## Invariants
+
+- Never overwrites: `hub.local.json`, `.gitignore`, `hub.json`, git config, a working tree and any existing
+  `../<dir>` entry stay as they are; a re-run after a clean run clones nothing and writes nothing.
+- No credential is read beyond `LINEAR_API_KEY`'s presence, asked for or shown; no remote URL, built URL or git output
+  is printed (lines name `<owner/name>` and the scheme only).
+- `hub doctor` is unchanged and stays read-only and network-free; setup calls its check.
+- Rendered files are unchanged: setup and the generator's repo lists (`repo_dirs`, `repo_githubs`) share
+  `workspace_repos`.
+
+## Decisions
+
+- [ADR 0016](../adr/0016-per-developer-identity.md) and [developer-identity.md](developer-identity.md): the precedence
+  and the `hub.local.json` format setup writes.
+- [ADR 0002](../adr/0002-lean-hexagonal-architecture.md), [ADR 0008](../adr/0008-cli-as-composition-root.md): the
+  checklist texts, version rule and exit rule are pure core (`workspace/setup_checklist.py`); subprocesses, the
+  prompt and the write are in `cli`; the tool probe is a cli Protocol, not a port.
+- AGH-71's spec: the section order, git's output never shown, the scheme from the hub's `origin`, `hub.local.json`
+  never overwritten, doctor in process, one repo list (`workspace_repos`) shared with the generator.
+
+## Open questions
+
+- SSH prompts: `GIT_TERMINAL_PROMPT=0` does not stop `ssh` asking for a passphrase or host key; the 600 s timeout does.
+- Whether to report a present repo whose `origin` is not `repos[].github` (a missing `origin` fails the fetch).
+- Machine checks in `hub doctor` (AGH-66) and a team mode for `hub init` (a later issue).
+
+---
+
+Source: `docs/design/hub-start.md` (https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/hub-start.md)
+
+# Hub start: from a tracker issue to its worktrees and a session
+
+## Purpose
+
+A developer starting work on an issue needs its worktrees in the repos it touches, the issue moved to the team's
+started state and a Claude Code session launched from the hub with those worktrees attached. `./hub start ISSUE` does
+all three in one command, and resumes the task when its worktrees already exist. Its contract: options, order, task
+name, launch, output, exit codes (AGH-62).
+
+## Contract
+
+### Command
+
+- `hub start ISSUE [--repo DIR]… [--no-agent]`, run as `./hub start` from the hub. `ISSUE` is `<TEAM>-<n>` in upper
+  case (`DEM-7`) for a team of `hub.json`. `--repo` (repeatable) names a repo `dir` of `hub.json` to work in; without
+  it, every repo is touched. Touched repos follow `hub.json` order, whatever the flags' order. `--no-agent` stops
+  before the session and prints how to launch it.
+- Root: `AGENT_HUB_ROOT` when `./hub` exports it, else the cwd; no `hub.json` there exits 2. Run from a worktree of
+  the hub repo (its `.git` a file), the hub's main checkout is the hub: its `hub.json`, its workspace, the session's
+  cwd. Finding it needs git: no git, or git cannot run, exits 1.
+- Usage errors exit 2 before any tracker call or git call in a repo: an issue not shaped `<TEAM>-<n>` for a configured
+  team (the message names the shape, and the teams when there are several), a `--repo` that is not a `dir` (all
+  unknown ones named, with the valid list), a malformed `hub.local.json` or no branch prefix
+  ([developer-identity.md](developer-identity.md)).
+- Preconditions exit 1 before any request: without `--no-agent`, `claude` must be on `PATH`; transport `api` needs
+  `LINEAR_API_KEY`. Then one stderr line names the transport, as in `hub next` and `hub run`.
+
+### Order (D-order)
+
+1. Read the issue once (`TrackerClient.get_issue`).
+2. List the task folders of every hub repo, touched or not, and decide the task name (D-resume, below).
+3. Check the touched repos' branches for that name before any create (`hub worktree`'s checks: a branch checked out
+   in another worktree, an existing worktree on another branch, a task folder that is not a worktree).
+4. Create each touched repo's missing worktree with `hub worktree`'s steps: a fresh fetch, `git worktree add` from
+   `origin/<repos[].default_branch>` on the branch `conventions` gives, then the repo's setup script
+   ([worktree-environment.md](worktree-environment.md)). An existing one prints `exists` and is kept.
+5. Move the issue to `tracker.states.started` (default `In Progress`). This is the last write, so no failure leaves
+   the issue started without its worktrees.
+6. Launch (below).
+
+### Task name (D-resume)
+
+- A folder under `<repo>/.claude/worktrees/` belongs to the issue when it is the issue id in lower case, or that id
+  followed by `-` (`dem-7`, `dem-7-x` for `DEM-7`; not `dem-70-x`).
+- No such folder in any hub repo: a fresh start, named `<issue lower>-<title slug>`. The slug is the title with only
+  `A`-`Z` lowercased and each run of other characters outside `[a-z0-9]` turned into one `-` (non-ASCII letters drop:
+  `Café` gives `caf`), trimmed of `-`, at most 40 characters cut at a word end (the first 40 when the first word is
+  longer). An empty slug leaves the lowercase id alone.
+- One name found, in one or more repos: a resume; the name is kept and only the touched repos get a worktree. A name
+  read from disk must be a valid task name, `<issue lower>[-<desc>]` with `<desc>` in `[a-z0-9._-]`, else exit 1
+  naming it. Two names in one repo, or different names across repos, exit 1 listing every match, before any fetch.
+- A fresh start moves the issue unconditionally; a resume moves it only while its state type is unstarted (triage,
+  backlog, unstarted: `move_state(..., only_if_unstarted=True)`), so an issue already started, in review or closed is
+  left as it is and the summary says `<state> (already started, not moved)`.
+
+### Launch
+
+- Stdout holds the `created`/`exists` lines and setup script output, then a blank line and the summary: `task     :`
+  (name and branch; one `branch   :` line per repo when branches differ), `repos    :`, one `worktree :` per touched
+  repo, `state    :`, and a `remove   :` line per created worktree (below).
+- The session: `claude` exec'd (`os.execvp`) from the hub's main checkout, with `--add-dir` for each touched repo's
+  worktree, the per-task context file `brain/auto/agent-context-<issue lower>.md` (each worktree's `AGENTS.md` under a
+  header naming it, written through a temporary file) as `--append-system-prompt-file`, the `--settings` that keep
+  auto memory in `brain/auto/workspace/` ([memory-layers.md](memory-layers.md)), and the issue as the first prompt.
+  `hub agent` shares this launch (`claude_launch.py`); the context file is per task so two tasks never overwrite it.
+- The first prompt names the issue and the task, says the worktrees are attached and every change goes there, holds
+  the issue in `hub run`'s fenced block of untrusted data (`issue_block`, bounded to one argument), and ends handing
+  control back to the hub's workflow (plan before code, ask before acting beyond the task).
+- `--no-agent`: the summary ends with `next     : ./hub start <ISSUE> [--repo DIR]…`, the same `--repo`s, which
+  resumes the task and launches its session. Exit 0.
+- Lines are built from the `ISSUE` argument, not the tracker's answer; the tracker's state text is escaped.
+
+### Failures
+
+A failure after the usage checks prints `hub start: <reason>` on stderr, then one `created  : <path>` per worktree
+this run created and the lines that remove them, and exits 1. The worktrees are kept. A remove line is
+`./hub worktree --remove <name>` when every hub repo was created, else one `./hub worktree --remove <name> --only
+<repo>` per created repo. A setup script that fails after `git worktree add` counts as created. A launch failure
+(context file not written, `claude` cannot start, hub not entered) also prints `state    : <ISSUE> was moved to
+<started>; ./hub start … resumes the task` when this run moved it. An unknown issue, or a started state the team
+lacks, writes nothing to the tracker.
+
+### Environment
+
+Setup scripts and git get the caller's environment minus `LINEAR_API_KEY` (the scripts are the repo's) and git's
+location variables (`GIT_DIR`, …); GitHub tokens are kept, as in `hub worktree`. The session gets the caller's whole
+environment plus `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1`, so each attached worktree's `CLAUDE.md` loads.
+
+### Gitignore
+
+The seeded `.gitignore` lists `brain/auto/agent-context-*.md`. A hub generated before it must add that line by hand:
+seeded files are never rewritten by `hub sync`.
+
+## Invariants
+
+- The issue is read once (`get_issue`) and moved at most once, last; no issue is moved before its worktrees exist.
+- No worktree is removed, and no branch deleted; a rerun after a failure resumes under the same name.
+- The same issue title and worktrees on disk give the same task name and branches on every machine.
+- No text from the tracker or from disk reaches a line, a branch or the prompt unescaped or unvalidated.
+
+## Decisions
+
+- AGH-62's spec: the order with the move last (D-order), resume from any repo's worktree with a move only from an
+  unstarted state (D-resume), exec from the hub's main checkout with a per-task context file (D-launch).
+- [ADR 0014](../adr/0014-tracker-port-linear-graphql.md), [ADR 0015](../adr/0015-linear-mcp-tracker-transport.md):
+  the tracker port and its two transports; `hub start` uses the adapter `tracker.transport` picks.
+- [ADR 0016](../adr/0016-per-developer-identity.md): the branch prefix comes from `hub.local.json`, `hub.json`, git.
+- [ADR 0002](../adr/0002-lean-hexagonal-architecture.md), [ADR 0008](../adr/0008-cli-as-composition-root.md): the
+  use case `start_task` and its ports `TaskWorktrees` and `SessionLauncher` are core; git, the prints and the exec
+  are `cli` (`GitTaskWorktrees`, `ClaudeSession`, `PrintedSession`).
+
+## Open questions
+
+- `tracker.states.review` is read by nothing yet: the review step (AGH-63) decides who moves an issue there.
+- An existing hub gets `brain/auto/agent-context-*.md` in its `.gitignore` only by hand; nothing reports it missing.
+
+---
+
+Source: `docs/design/hub-sync.md` (https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/hub-sync.md)
+
+# Hub sync: hub.lock, hub sync and --check
+
+## Purpose
+
+Phase 1 contract for `hub.lock`, `hub sync [--check]`, the write path `hub init` shares, the `*.project.json` merge
+and the project-entry links; `--adopt`: [hub-adopt.md](hub-adopt.md). Rendering, ownership, `hub init`, hooks, commands:
+[hub-generator.md](hub-generator.md). Config: [project-config.md](project-config.md); reasons: the ADRs.
+
+## Contract
+
+### hub.lock
+
+`hub.lock` (JSON, in the one JSON form): `lock_version` (1), `platform_version`, `schema_version`, `modules` (sorted)
+and `files` by path: a managed file (SHA-256 of the LF bytes written, executable bit), a managed link (relative target)
+or seeded (no hash). "Equal": same bytes and executable bit, or same link target. It never lists itself or `.git`, and
+`hub.json` is always recorded seeded: it is the project's, never compared, written or deleted. The lock is a function of
+the render and `hub.json` only, never `hub.local.json` (`build_hub_lock`), written by `init` and `sync`, last.
+
+### hub sync
+
+1. **Root:** the real path of the cwd, taken once; no `--dir`, no walk-up (a worktree syncs itself).
+2. **Load**, each step exiting 1 before anything after it is read: `hub.json` (none: the reader's `cannot read` line,
+   then `hub.json: run hub sync in the hub folder`); running CLI = `platform.version` (else only the pinned `uvx`
+   command), `schema_version`, the model (`hub.json: <json path>: <message>`); then `hub.lock`, read once and never
+   through a link. Absent: `hub.lock: not found; run hub sync --adopt to join this hub to the lock`. A link, folder,
+   FIFO or other non-regular file is never opened: `hub.lock: not a regular file`. Malformed: one line per problem,
+   `hub.lock: <json path>: <message>` (JSON errors worded as for `hub.json`; the model's messages without class names;
+   `lock_version` other than 1; a `hub.json` entry that is not seeded: `must be seeded: hub.json is the project's`; a
+   key or string holding a lone surrogate: `not UTF-8 text: holds a lone surrogate`, reported alone). Both end with
+   `hub.lock: restore it from git, or run hub sync --adopt`.
+3. **Read** after the render, only what is planned: every rendered path and every lock path but `hub.json` and
+   `hub.lock`, each ancestor looked at without following it and the descent stopped at the first that is not a folder;
+   content only for the files compared (rendered managed, managed file entries); the listing of each folder holding a
+   planned path (the root too), for leftovers; and of `plugin/<project>/{agents,skills}`, each name it links looked at in
+   `.claude/<folder>/`, never listed. Unknown entries (run output, FIFOs, unreadable folders, extra `.claude/skills/`
+   entries) are never read or touched. An I/O error exits 1 naming the path.
+4. **Plan** in memory (core `plan_sync`), each path in this order: (a) an ancestor that is a link or not a folder:
+   conflict; (b) a link on disk resolving outside the hub: conflict; (c) equal to the render: clean, recorded, whatever
+   the lock says (so a file an interrupted sync wrote is never a conflict); (d) the type rule; (e) ownership. (a) and
+   (b) apply to the paths sync writes, deletes or compares; a seeded path with a lock entry is never looked at.
+   - **Rendered managed.** Managed entry: absent → write, `restored`; disk equal to the entry → write, `updated`;
+     else conflict. No entry or a seeded one: absent → write, `created` (never `restored`); present → conflict.
+   - **Rendered seeded.** No entry: absent → write, `created`; a regular file → recorded; a link, folder or other →
+     conflict. Seeded entry: nothing, whatever is on disk (deleted stays deleted). Managed entry (managed → seeded):
+     the file, or its absence, stays; recorded seeded.
+   - **In the lock, not rendered.** Seeded → entry dropped. Managed: gone → dropped; equal to the entry → deleted,
+     `deleted`; else conflict. A rename is a delete plus a create.
+   - **Type.** A file or folder where a link is rendered, or the reverse, is a conflict even when equal to its entry
+     (delete it and re-run); so is a rendered path whose ancestor is a file, even one planned for deletion.
+   - **Lock.** The new lock is always `build_hub_lock` of the render, written when its bytes differ from the bytes read:
+     a header change, a dropped entry, a missing `hub.json` entry or a reformatted lock rewrite only `hub.lock`.
+   - **Leftovers:** a file or link named `.<name>.hub-tmp-<8 hex>` in a listed folder, never a planned path.
+
+### Output and exit codes
+
+- **Changes** (stdout): one line per changed path, sorted by path, files and links alike: `created P`, `restored P`,
+  `updated P`, `deleted P`; then `removed N leftover temporary files`; then `updated hub.lock` last whenever the lock is
+  written (a lock-only change prints only that). Nothing pending (no file action, lock bytes identical): exactly
+  `up to date`, and the adapter is not called.
+- **`--check`** writes nothing and prints the same lines with `would ` before the verb (`would create P`,
+  `would remove N leftover temporary files`, `would update hub.lock`): exit 4 when anything is pending, creations and
+  leftovers included; else `up to date`, exit 0.
+- **Conflicts** win, with or without `--check`: stdout empty; on stderr each conflicted path in path order, then the
+  way out `move the change to an extension file (hub.json, a *.project.* file, Makefile.project), restore or delete
+  the file, then re-run hub sync`; nothing written; exit 3. A text file gives a unified diff of disk against render,
+  labels `--- P (on disk)` and `+++ P (render)`, 3 lines of context, at most 200 lines per path (labels, `@@` headers
+  and `\ No newline at end of file` counted), then `… N more lines`. Lines split on `\n` only, so a `\r` shows; a line
+  holding an unprintable character (a tab aside) is shown as a JSON string. Not UTF-8 or holding a NUL:
+  `P: binary content differs (on disk sha256 <12 hex>, render <12 hex>)`. Other causes, one line `P: <cause>`:
+  `executable bit differs (on disk +x, render -x)`, `link target differs (on disk -> X, render -> Y)`,
+  `differs from its hub.lock entry and is no longer rendered` (bytes, bit or target), `symlinked ancestor A`,
+  `a file where a folder belongs: A`, `resolves outside the hub`, or `init`'s type wording (`a link where a file
+  belongs`, `not a regular file`, …). A name clash: below.
+- **Exits:** 0 done or up to date; 1 error (config, lock, extension inputs, I/O; one escaped line each, stderr); 2
+  usage; 3 conflict; 4 `--check` with changes pending.
+
+### Apply
+
+The writer opens the root once per apply, checked against its real path by device and inode, after checking every path
+it is given (plain, relative) and before touching any. Order: leftovers, deletes, missing folders (parents first),
+files, links (each in path order), `hub.lock` last. Each path is written through `.<name>.hub-tmp-<8 random hex>` in its
+folder (`O_CREAT|O_EXCL|O_NOFOLLOW`, 0o600; a link: `os.symlink`), given its final mode, then `os.replace`d; on an error
+the adapter removes its own temp entry. A delete unlinks a regular file or a link, never a folder, never recursively;
+another type is an error; a gone entry is fine, a gone parent is an error. Folders emptied by a delete stay. `init` uses
+the same writer (leftovers: the whole tree but `.git`). Reader and writer descend by `O_DIRECTORY|O_NOFOLLOW`
+descriptors, so neither follows a symlinked ancestor of a path it touches, nor opens a non-regular file; a link
+resolving outside the hub is refused (accepted risk: both resolve it by path, so a folder swapped meanwhile can escape;
+the writer's root check narrows that). Found only by the writer (a race), a symlinked ancestor or an I/O error exits 1
+naming the path and cause. An interrupted sync leaves the old `hub.lock`; the next run ends where a clean one would.
+
+### --adopt
+
+`hub sync --adopt [--accept PATH]…` joins a hand-made hub to the lock: [hub-adopt.md](hub-adopt.md).
+
+### Project JSON and project entries
+
+A seeded built `X.project.json` pairs with a managed built `X.json` (`.claude/settings.project.json`; module
+`marketplace`: `.claude-plugin/marketplace.project.json`); `sync` and `init` read a present sibling and deep-merge it
+into `X.json` (absent or deleted: the template's). Objects merge by key, the project wins on scalars, arrays are the
+template's items then the project's, a repeat dropped keeping the first (equal: the same `dump_json` bytes, so `true` ≠
+`1`, `1` ≠ `1.0`); a rerun gives the same bytes. The merge only adds. A bad sibling exits 1, nothing written, with one
+line `P: <key path>: <message>` (`permissions.allow`, `hooks[0]`, `$` the root): a refused key first, else the first
+problem in the sibling's key order. At `$`: the parser's words (not UTF-8, a BOM, bad JSON, over 4300 digits, nested too
+deeply) and, strictly, `not valid JSON here: ` then `the key "<k>" appears more than once`, `NaN|Infinity|-Infinity is
+not a JSON number`, `a number is too large for this reader` or `a string holds a lone surrogate escape` (a key too).
+Refused by presence in `.claude/settings.project.json`: `disableAllHooks` and `permissions.defaultMode`, `refused: a
+project cannot set this key (it weakens the harness)`. Refused in the marketplace sibling: `name`, `owner` (`refused:
+the managed marketplace.json owns this key`), a plugin named `hub-workflow` or `<project>` (`… entry`), a repeated
+plugin name, an entry not an object with a string `name`; its other keys are the project's. An object or array against
+another type, the root included: `<an object|an array|a string|a boolean|a number|null> where the template has <…>`. A
+`null` at any depth, in new keys and items too: `null is refused: the merge never deletes a key`. A link, folder or
+other non-regular sibling: `P: not a regular file`.
+
+`sync` links each regular file in `plugin/<project>/agents` and each real folder in `skills`, whatever it holds:
+`.claude/<folder>/<name>` → `../../plugin/<project>/<folder>/<name>`, managed and locked like a base link. Names
+starting with `.`, links, other types and nested paths are left alone; a file already at a link path is a conflict,
+never replaced. A name the lock cannot hold exits 1 (nothing written): `plugin/<project>/<folder>/<name>: cannot be
+linked: <reason>`, first of `not UTF-8`, `holds a backslash`, `not printable`. Names equal after NFC and `casefold()`
+are one (one entry on APFS); a clash is a conflict, exit 3, the base link kept: `.claude/<folder>/<name>: in both
+plugins (<base entry> and plugin/<project>/<folder>/<name>)`, or at each of two project names `named twice in
+plugin/<project>, ignoring case and Unicode form (<other> and <own>)`. A case-only rename deletes and creates the link
+on Linux; on APFS it finds the old link: `link target differs`, exit 3, until that link is deleted. `init` merges a kept
+sibling but links no entry: an unlinkable name exits 1, others are unknown (`hub sync --adopt`).
+
+## Invariants
+
+- Sync plans every path before its first write; a load error or a conflict writes, creates and deletes nothing.
+- It deletes only a managed path equal to its entry and leftovers in listed folders; it never writes `hub.json`, never
+  removes a folder, and never reads or touches a path neither rendered nor in the lock, bar listing project entries.
+- Same `hub.json`, release and extension inputs, same tree and `hub.lock` bytes; after any successful sync the lock is
+  `build_hub_lock` of the render, and a second sync prints `up to date` and writes nothing, not even `hub.lock`.
+- The planner is pure core code; reads and writes go through the generator's adapter from the held root.
+
+## Decisions
+
+- [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md): ownership, lock, sync, adopt; no 3-way merge or marker blocks.
+- [ADR 0011](../adr/0011-templates-as-package-data.md): the planner in core, the file adapter in the generator, no port.
+- [ADR 0013](../adr/0013-release-by-git-tags.md): a CLI other than the pin refuses sync and prints the pinned command.
+
+## Open questions
+
+- Harness-weakening keys beyond ADR 0009's two (`disableAllHooks`, `permissions.defaultMode`): a new ADR if wanted.
+
+---
+
+Source: `docs/design/hub-adopt.md` (https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/hub-adopt.md)
+
+# Hub adopt: hub sync --adopt, --accept and the link migration
+
+## Purpose
+
+Phase 1 contract for `hub sync --adopt [--accept PATH]… [--check]`: how a hub made by hand, or one that lost its
+`hub.lock`, joins the lock without overwriting what the project changed. The lock, plain sync, the read, the write
+path and the conflict wording: [hub-sync.md](hub-sync.md). What is rendered and who owns it:
+[hub-generator.md](hub-generator.md).
+
+## Contract
+
+### Load and read
+
+Root, `hub.json` (pin, `schema_version`, model) and the one tree read are plain sync's, with the same exit-1 lines.
+`hub.lock` may be absent; then no path has an entry. A lock that is a link, folder or other non-regular file, or is
+malformed, exits 1 with sync's `hub.lock: …` lines, the last one `hub.lock: restore it from git, or delete it and re-run
+hub sync --adopt`. Nothing is written before the plan (core `plan_adopt`) is whole. Before adopting, the owner edits
+`hub.json` by hand: adds `schema_version`, `platform` and, if used, `modules`; guard paths rooted at a repo stay,
+and one rooted at the hub's directory name becomes `@hub/…` (adopt rewrites no path).
+
+### Per path
+
+- **A path with a lock entry** follows plain sync's rule, rendered or not.
+- **A rendered path with no entry:** managed and equal to its render (bytes and executable bit, or link target) →
+  `recorded`; managed and absent → written, `created`; seeded and absent → written, `created` (an empty
+  `plugin/<project>/` gets its `.gitkeep`); seeded and a regular file, whatever its bytes → `recorded`.
+- **Listed:** a managed path with no entry, in its rendered place and of its rendered type, whose bytes, executable bit
+  or link target differ. It stays as it is and out of the new lock.
+- **Conflict:** any other path sync would refuse: a type misfit, a symlinked ancestor that is not a migration, a link
+  resolving outside the hub, a name in both plugins, or sync's rule failing on a locked path. A conflict wins: a path
+  that both differs and clashes is a conflict, never listed.
+
+### Migration
+
+A migration is a directory link on disk with no lock entry whose rendered descendants are all direct-child links (in
+practice `.claude/agents` and `.claude/skills` from an older hand-made layout). It is listed once; the rendered paths
+under it get no verdict and no lock entry, and its target is never opened or listed (only resolved, to tell whether it
+leaves the hub). Resolving outside the hub, it is the conflict `resolves outside the hub`. Any other directory link,
+or one under another linked ancestor, keeps sync's `symlinked ancestor A` per path; one with a lock entry follows
+sync. A migration with a conflict under it (e.g. a name in both plugins) is not listed: it is listed only once that
+conflict is fixed and adopt is re-run.
+
+### Project guards
+
+Where each project guard of the Loki hub goes on adoption. "Extension file" is the seeded
+`plugin/<project>/hooks/project_guard.py` ([hub-generator.md](hub-generator.md), Hooks).
+
+| Guard today | Covered by |
+|---|---|
+| Exchange-host denylist | `guard.deny_hosts` |
+| `app_db` destructive-SQL check | extension file (needs command parsing specific to the project) |
+| Docker / service check | extension file; the base guard keeps its generic docker-volume rule |
+| `_archive/` denial | `guard.deny_paths` |
+| `tests/invariants/` ask-before-edit | `guard.ask_before_edit` |
+| Brain write roles (curator vs implementer) | extension file (role logic is project policy) |
+
+### --accept
+
+`--accept PATH` (repeatable) takes the render at a path this run lists, written exactly as listed (relative POSIX, no
+`./`, no trailing `/`). A difference is overwritten with the template, `updated`. A migration's link is deleted (never
+its target) and remade as a real folder holding one managed link per agent or skill entry of both plugins: `migrated`
+for the link, `created` for each link under it. An accepted path leaves the listing and joins the lock.
+
+Every other value refuses the whole run before anything is planned for writing: stderr gets one line per refused path,
+in path order, `--accept <path>: <reason>`, with nothing written and exit 2. The reasons: `not listed by this run`
+(including a path outside the render); `a conflict; --accept takes only listed differences and migrations`;
+`not listed by this run: a conflict under it (<paths>)` for a migration a conflict holds back. Without `--adopt`,
+`--accept` is a usage error (`needs --adopt`), exit 2, before anything is read.
+
+### Apply and lock
+
+Conflicts and listings do not stop the run: every settled path is applied, through sync's writer and in its order
+(leftovers, deletes including a migrated link, folders, files, links), `hub.lock` last. The new lock is
+`build_hub_lock` of the render minus every listed, conflicting or under-migration path, each of those keeping its
+previous entry when it had one. It is written when there was no lock or its bytes differ. A run stopped by an I/O error
+keeps the old `hub.lock` (absent or its prior bytes); a plain `--adopt` then ends where an uninterrupted run would (an
+`--accept` of a link already migrated is refused, as it is no longer listed).
+
+### Output and exit codes
+
+- **stdout:** the change lines, sorted by path: sync's verbs plus `recorded P` and `migrated P`, then
+  `removed N leftover temporary files`, then `updated hub.lock` last (also when there was no lock). With nothing to
+  write, it is `up to date` only when the run is settled (nothing listed, nothing conflicting), and empty otherwise.
+- **stderr**, when not settled: each listed path, sorted, one line with no digests:
+  - text: `P: +a -b lines` (counted as sync's diff counts them), then
+    `, executable bit differs (on disk +x, render -x)` when the bit differs too;
+  - executable bit only: `P: +0 -0 lines, executable bit differs (on disk +x, render -x)`;
+  - binary (not UTF-8, or a NUL): `P: binary content differs`, plus the same bit clause when it differs too;
+  - link: `P: link target differs (on disk -> X, render -> Y)`;
+  - migration: `P: migration: directory link -> T, rendered as N links`.
+
+  Then each conflict as plain sync prints it (diff, binary line with digests, or cause), then one way out. Listings
+  only: `take the template with --accept <path>, or move the change to an extension file, then re-run`. Any conflict:
+  `move the change to an extension file (hub.json, a *.project.* file, Makefile.project), restore or delete the
+  conflicting file, or take the template of a listed path with --accept <path>, then re-run hub sync --adopt`.
+- **`--check`** writes nothing and prints the same lines with `would ` (`would record P`, `would migrate P`); with
+  `--accept`, it previews the accepted writes.
+- **Exits:** 0 settled (written or up to date); 1 error (config, lock, extension inputs, I/O), as sync; 2 usage or a
+  refused `--accept`; 3 anything listed or conflicting (the settled paths applied unless `--check`); 4 `--check`,
+  settled, with writes pending.
+
+### In the hub's CI
+
+Every hub's rendered `.github/workflows/ci.yml` (`init` and sync render the same file) has one job, `check`, run on
+pull requests to and pushes on the default branch with read-only `contents`; each action is pinned by commit SHA, its
+release in a comment (`# vX.Y.Z`). Steps: checkout (credentials not kept), setup-uv, credential, golden, `make check`.
+
+- **Credential step** (`Platform read credential`): reads `AGENT_HUB_READ_TOKEN`, a secret of the hub repository
+  (Settings → Secrets and variables → Actions): a fine-grained personal access token or a GitHub App token with
+  read-only Contents on the platform repository only. It reaches the step through `env`, the only `secrets.`
+  expression in the file. Empty or unset, the step does nothing: a public platform needs no secret. On a private
+  platform the shim then cannot fetch the pin, the golden step exits 1 and the job fails; so do fork pull requests and
+  Dependabot pull requests, which get no Actions secrets (Dependabot needs the same name under Dependabot secrets).
+  A token holding anything outside `[A-Za-z0-9_]` exits 1 with `AGENT_HUB_READ_TOKEN: unexpected characters`, before
+  anything is written. Otherwise it appends `GIT_CONFIG_COUNT=2` and two `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` pairs
+  to `$GITHUB_ENV`, so every later step of the job has them: an `insteadOf` that rewrites the platform repository's URL
+  to one carrying the token, and the hub's own GitHub URL mapped to itself (`insteadOf` takes the longest matching
+  prefix, so the hub's own fetches never carry the token). The token is never written to a file in the repo: not in a
+  URL, `hub.json` or `hub.lock`.
+- **Golden step** (`Golden (hub sync --check)`): `./hub sync --check` through the pinned shim, before `make check`;
+  it writes nothing, and any non-zero exit fails the job before `make check`. Exits (`--check`'s) and their fixes:
+  - 0 up to date: the job goes on.
+  - 4 changes pending (e.g. a commit missed `hub sync`, as after a pin bump): run `hub sync` locally and commit.
+  - 3 a conflict (e.g. a managed file edited in the change, or a name in both plugins): take sync's way out
+    ([hub-sync.md](hub-sync.md#output-and-exit-codes)): move the change to an extension file, or restore or delete
+    the file, then re-run.
+  - 1 a load error (e.g. `hub.json`, a missing or malformed `hub.lock`, extension inputs, I/O, or a pin the shim
+    cannot fetch): fix the named input; for an unfetchable pin, check `AGENT_HUB_READ_TOKEN`.
+
+## Invariants
+
+- Adopt plans every path, and decides every `--accept`, before its first write; it never writes `hub.json`, never
+  runs `git` or commits, and never reads or touches an entry neither rendered nor in the lock (sync's read), bar
+  removing leftover temporary files in listed folders and listing the project's agent and skill entries.
+- A listed or conflicting path is left byte-, mode- and target-identical; only `--accept` replaces it.
+- Same `hub.json`, release, extension inputs and tree, same output, tree and `hub.lock` bytes. After a settled adopt
+  the lock is `build_hub_lock` of the render, and the next `hub sync` or `--adopt` prints `up to date`.
+- The planner is pure core code beside `plan_sync`; the generator's adapter reads and writes; `cli` composes.
+
+## Decisions
+
+- [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md): adopt joins by ownership; a difference is listed, never merged.
+- [ADR 0011](../adr/0011-templates-as-package-data.md): the planner in core, the file adapter in the generator, no port.
+- [ADR 0013](../adr/0013-release-by-git-tags.md): a CLI other than the pin refuses, as for sync.
+- Unlike plain sync, a conflict does not stop the settled writes: adopt is run on hubs that are known to differ, and
+  each re-run narrows what is left. No new ADR: the ownership rule is unchanged.
+
+## Open questions
+
+- None.
+
+---
+
+Source: `docs/design/hub-doctor.md` (https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/hub-doctor.md)
+
+# Hub doctor: pluggable rules
+
+## Purpose
+
+`hub doctor` checks that a hub and the repos it lists are healthy: the config is valid, the generated files match the
+lock, links resolve, agent instructions stay short, true and safe, and nothing from the brain leaks into a code repo.
+It will replace the hub's config lint and feature-tracker check. This file is the Phase 1 contract for the rule
+interface, the rule set, the output, the exit codes and the per-project configuration.
+
+## Contract
+
+### Rule interface
+
+A rule is a pure function in core with metadata. The CLI builds a read-only snapshot through an adapter and passes it
+to every enabled rule; no rule touches the disk, the network or git itself.
+
+| Field | Meaning |
+|---|---|
+| `id` | dotted `<area>.<name>`, unique, stable across releases (a rename is a breaking change) |
+| `severity` | default level of its findings: `error`, `warning` or `info` |
+| `summary` | one line: what it checks |
+| `module` | the module that owns it, or none for a base rule |
+| `check(snapshot) -> findings` | the check itself |
+
+A finding has `rule`, `severity`, `path`, `line` (optional), `message` and `fix` (one line saying how to repair it).
+The snapshot is read from the cwd's real path (no walk-up) and holds the validated config (or the validation errors),
+the files of the hub and the fixed set of paths the rules read by name. Two inputs are read only when a selected rule
+needs them: the parsed `hub.lock` and its managed paths, looked at by path (`lock.drift`), and the release's base hooks
+block, built by the templates package installed with the running CLI, so doctor still renders no file
+(`settings.weakening`). A third, read only when a repo rule (`brain.leak`, `links.dead`, `repos.agents`) is selected, is
+the files of each `repos[].dir` checkout at `../<dir>`: a missing or non-folder `../<dir>` gives one `info`, a checkout
+that cannot be listed one `error` (its cause), both at `../<dir>` on the first selected repo rule by id, never retuned;
+the repo rules skip both. A linked `../<dir>` is resolved once to its real path. A root with no `.git` entry, a hub
+inside a larger repository included, is walked, skipping `.git` and nested repositories. A root with a `.git` entry is
+listed with `git ls-files -z --cached --others --exclude-standard`, and git must name the root as the work-tree top;
+`HubFiles.listed_by_git` says whether git made the listing. Git missing, failing, timing out or naming another top is a
+tree problem, never a walk. No link is followed, and git runs only when a selected rule needs a listing. A tree problem
+(a failed listing or read of the hub) is one `error` finding at path `.` on the first selected rule, by id, that reads
+the listing, else the first by id other than `config.schema` and `platform.version` (none when only those run), never
+retuned; its message is the cause (`could not list the files: …` or `could not read the files: <path>: …`), its fix one
+line. Fixed paths are read one by one before the listing, so a failed listing keeps them; after a failed read no rule
+calls an absent path missing. A rule whose check raises gives one `error` of that rule at `.` (`rule crashed: <type>:
+<message>`), never retuned, and the other rules keep running. An instruction or plugin file that is not UTF-8 text (a
+NUL included) is one `error` at its path (`not UTF-8 text: …`), never retuned, from the first selected rule in registry
+order that reads it; the other rules skip it. Proof: one unit test per rule on an in-memory snapshot, plus one e2e test
+of the command on a synthetic hub. A rule's `module` comes from core's `RULE_MODULES`; a module's rules are core
+functions registered when the module ships.
+
+### Rules
+
+| Rule id | Default | Checks | Origin |
+|---|---|---|---|
+| `config.schema` | error | `hub.json` against `HubConfig`, including `schema_version` and `doctor.rules` ids, and `hub.local.json`; cannot be disabled or retuned | [ADR 0010](../adr/0010-hub-json-config-contract.md) |
+| `platform.version` | error | the running CLI equals `platform.version` (a shim always runs the pin; a direct `hub` may not); one finding only; its `doctor.rules` entry has no effect on findings | [ADR 0013](../adr/0013-release-by-git-tags.md) |
+| `lock.drift` | error | each managed file (bytes and executable bit) and link (target, not followed) matches its `hub.lock` entry (a missing one: `hub sync` restores it); a lock `platform_version` older than the pin, compared as numbers: warning "sync pending"; newer: warning "downgrade"; no `hub.lock`: warning "not adopted" | [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md), [hub-sync.md](hub-sync.md) |
+| `links.dead` | error | in each listed UTF-8 `.md` file of the hub and the repos, inline links, images and reference definitions (CommonMark: a definition only when nothing or a title follows it) resolve from the file's folder, `#fragment`/`?query` cut, to a listed file or folder; skipped: any URI scheme, absolute and fragment-only links, code spans, fenced blocks and HTML comments; a hub link into `../<dir>` is checked against that repo's listing (skipped when the checkout is missing or cannot be listed); any other link leaving the hub or a repo is skipped | new |
+| `instructions.size` | error | line limits of the listed regular instruction files (root `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `GEMINI.md`; `.github/copilot-instructions.md` and every `.md` under `.claude/{rules,agents,skills,commands}` or `.github/instructions`): root `AGENTS.md` 100, `CLAUDE.md` 150, `CLAUDE.local.md` 50, every nested one 80, `GEMINI.md` none; `max_lines` merges over them (exact key before glob, then the longest glob). A link is not an instruction file, so a plugin agent linked into `.claude/agents/` gets no `instructions.*` check (it keeps `rules.frontmatter`, `secrets.config` and `attribution.ai` as a plugin file) | config lint |
+| `instructions.refs` | error | paths, `make` targets and `pnpm` scripts an instruction file names below its frontmatter exist: a path resolves against the listed paths and the fixed paths present, and their folders, from the file's folder or the root, then by name or ending (a reference of at most 32 segments); nothing out of the hub or under a link resolves; targets are `Makefile`'s, `Makefile.project`'s and those of `mk/<id>.mk` of selected modules, scripts `package.json`'s (not read when linked or not text); `hub.lock` is ignored by design (its absence is `lock.drift`'s), and so is exactly `hub.local.json` (each developer's, gitignored); links are not instruction files | config lint |
+| `instructions.duplicates` | error | the same normalized instruction line (60 or more characters; not a table, fence or heading line) in two instruction files, flagged on the later path naming the first; repeats within a file are not; links are not instruction files | config lint |
+| `rules.frontmatter` | error | at line 1 of each listed regular instruction or plugin (`plugin/…/{agents,skills}/…/*.md`) file: a `---` frontmatter is terminated; a `.claude/rules` file with frontmatter has a non-empty `paths:` list whose globs (braces expanded) each match a file or folder in the hub (listed or a fixed path present); an agent or skill file has a `name` and a `description`. A glob over 256 characters or expanding to more than 64 globs is its own finding and not matched; the globs past a run budget of 64,000,000 path characters get `was not checked` | config lint |
+| `settings.valid` | error | `.claude/settings.json` (strict, as `settings.weakening` reads it) and `.mcp.json` (lenient, as the old lint) parse to a JSON object; settings hold no deprecated key (`allowedTools`, `ignorePatterns`); a linked file gives no finding | config lint |
+| `settings.weakening` | error | neither `.claude/settings.project.json` nor `.claude/settings.json` sets `disableAllHooks` or `permissions.defaultMode`; both parse as strict JSON; `settings.json` holds every group of the release's base hooks block, compared by JSON form | [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md) |
+| `permissions.bypass` | error | no `bypassPermissions` default mode in `.claude/settings.json`; no skip-permissions flag in a key or string of it or `.mcp.json` (both read leniently, so a `settings.valid` error never hides one), nor in a line of a hub file (listed, or a fixed path present) under `scripts/` or `.github/workflows/`, `Makefile` or `package.json` | config lint |
+| `secrets.config` | error | no secret shape (eight kinds: JWT, AWS access key, private key, API key, GitHub token, Linear API key, credential assignment, Fernet-like key) in the instruction and plugin files, `.mcp.json`, `.claude/settings.json`, `CONTRIBUTING.md` or the PR template; once per kind per line, naming the kind, never the text | config lint |
+| `mcp.pinned` | error | each `.mcp.json` server is not `@latest` and, run by `npx`, names a version (`@<digit>`); a server whose `args` are not all strings is skipped; settings' `mcpServers` are not checked | config lint |
+| `attribution.ai` | error | no AI co-author trailer, "Generated with Claude Code" line or `claude/` branch prefix in the files `secrets.config` reads | config lint |
+| `brain.leak` | error | no trimmed line of `min_line_length` (default 60, 1–10000) or more characters of a listed UTF-8 file under `brain/` (frontmatter, an unterminated one read as text, fenced blocks and table rows skipped) is a trimmed line of a listed text file in a repo; reported at the repo `path:line`, naming the brain `path:line`, never the leaked line | [SPEC](../SPEC.md) direction 2 |
+| `hooks.guard-extension` | error | static, never imported or run: the extension (at most 1 MiB, UTF-8) parses from its raw bytes as Python 3.9 (BOM and coding cookie as the runner reads them; best-effort: newer f-string syntax passes), and the last top-level binding of `check` is a `def` that `check(event, cfg)` can call; no file: no finding | [hub-generator.md](hub-generator.md) |
+| `makefile.override` | warning | `Makefile.project` does not redefine a target parsed from the managed `Makefile` (and the targets of `mk/<id>.mk` of selected modules; grouped `&:` rules read; `$(T):` targets not expanded; no other included file is followed) | [hub-generator.md](hub-generator.md) |
+| `features.tracker` | error | each listed `brain/features/*/features.json`: shape, AC ids, evidence, and the cross-check with a listed sibling `spec.md`; links are not followed. A warning on the record when a sibling `issues.md` is listed but no tracker id is recorded, neither in its `linear` (absent or `[]`), nor as a planned ticket's `id` (AGH-136), nor in the spec's frontmatter `linear:` (read as `hub web` reads it, in its first 64 KiB; only ids of a team key count, so a placeholder does not): "issues.md exists but `linear` holds no tracker id, here or in spec.md", fix "write the created issue ids into features.json → linear"; none when the record is not an object, its `linear` is malformed or the spec cannot be read (each already an error). A `doctor.rules` severity retunes it with the rule's errors | feature check, AGH-143 |
+| `bench.tasks` | error | module `bench`, snapshot only (no git, no process): listed `brain/workflow/bench/tasks.json` is a strict JSON list (at most 1 MiB, 200 cases; absent or `[]` is clean); each case an object with `id` (`[A-Za-z0-9._-]{1,64}`, unique ignoring case), `repo` (a `repos[].dir` unless `excluded`), `merge` (a 7–40 hex sha), `prompt` (1–20 000 characters, not starting with `-`), `hidden_tests` (1–100 literal relative paths of at most 1 024 characters: no glob or `\`, no leading `/`, `-` or `:` (pathspec magic), no empty, `.`, `..` or `.git` segment in any case, no control, format or surrogate character), `test_cmd` (1–32 non-empty strings of at most 1 024 characters); optional `setup_cmd` (at most 4 096 characters), `env` (at most 32 keys `[A-Za-z_][A-Za-z0-9_]*`, values string, number or boolean), `excluded` (boolean); no NUL in a string a process gets; one finding per problem | module `bench` |
+| `config.identity` | info | the branch prefix this developer gets when no file sets one: derived from the effective email (named with its source); can be disabled, cannot be retuned (a `severity` is a `config.schema` error), so every developer's run exits alike | AGH-65 |
+| `repos.agents` | warning | each checked-out repo's root holds `AGENTS.md` as the repo rules list it (a file or a link, not followed; empty passes; a gitignored or deleted file does not count, an unreadable one does; `CLAUDE.md`, a nested or differently cased name do not count); the fix names the hub's seeded `docs/app-repo-AGENTS.md` and the repo's `check_fast` (unless absent or blank) and `check` (escaped, cut); missing or unlistable checkouts are the runner's | AGH-76 |
+| `config.stop_gate` | warning | each repo whose `check_fast` is absent, empty or blank: `no Stop gate for <dir>` at `repos[<i>].check_fast`; can be disabled, cannot be retuned (a `severity` is a `config.schema` error) | AGH-52 |
+| `brain.memory` | warning | personal memory in `brain/auto/workspace/` stays out of git: (a) on a git listing only (`listed_by_git`), each tracked or not-ignored path under the folder but its `.gitkeep` (at most 10, then one `N more` at the folder); (b) the root `.gitignore` has no line ignoring the folder (a line match, not git's matcher: a nested `.gitignore` and a later `!` line are not evaluated). Paths and counts only. Details, messages, fix and limits: [memory-layers.md](memory-layers.md#doctor-rule-brainmemory) | AGH-48 |
+| `sandbox.workflow` | error | the hub's own commands work inside the Claude Code sandbox the managed settings turn on: with `.claude/settings.json` → `sandbox.enabled` not `true`, one info (nothing to check); with it on, one error naming each command of `WORKFLOW_EXCLUDED_COMMANDS` (`gh *`, `git push/fetch/pull/clone/ls-remote *`, `./hub worktree *`, `hub worktree *`, `make worktree *`, `make worktree-remove *`) missing from `sandbox.excludedCommands`; run from a Claude Code session (`CLAUDECODE=1`, so `hub doctor` itself runs sandboxed), each git checkout of `repos` gets `git ls-remote -q origin HEAD` (20 s, no prompt) and a failure is a warning at `../<dir>` whose fix names the bare `./hub worktree` call and the `git fetch` + `--no-fetch` path. A missing or invalid `settings.json` is `settings.weakening`'s. `uv`'s folders are the `hub` shim's (it moves them to `.hub-uv/` when they cannot be written), not a settings key | AGH-134 |
+
+"config lint" and "feature check" are the hub scripts these rules replace ([hub-generator.md](hub-generator.md),
+Commands). Each ported rule keeps the old check's behavior, pinned first by characterization tests, but for what its
+row states. This release registers every rule.
+
+### Output
+
+One line per finding, sorted by rule id, path (a finding without one first) and line:
+
+```text
+error instructions.size AGENTS.md: 132 lines, limit 100 Fix: keep it a map, not a manual: move details to docs or the brain
+warning makefile.override Makefile.project:12: redefines target 'check' Fix: rename the project target
+1 error, 1 warning, 0 infos
+```
+
+The format is `<severity> <rule> <path>[:<line>]: <message> Fix: <fix>`, or `<severity> <rule>: <message> Fix: <fix>`
+without a path, then the totals: three counts, singular at 1; with no finding: `0 errors, 0 warnings, 0 infos`.
+`--only RULE` (repeatable) runs just those rules, plus `config.schema` always; skills use
+`hub doctor --only features.tracker`. `--json` prints one object with a `findings` list (the finding fields above)
+and the totals (keys `errors`, `warnings`, `infos` with integer counts), for scripts and the Layer 2 control plane.
+
+### Exit codes
+
+0 when no finding has severity `error`; 1 when at least one does; 2 on a usage error, an unknown rule id in `--only`,
+a rule in `--only` whose module is not selected or that is not in this release, or a directory that is not a hub (no
+`hub.json` entry in the cwd; the message says so). An unusable `hub.json` is a `config.schema` error. A rule in
+`--only` that `doctor.rules` disables does not run; stderr notes it. The pin is checked before `schema_version`, as in
+`hub sync` ([hub-sync.md](hub-sync.md)): on a pin mismatch the `platform.version` error is reported and `config.schema`
+reports no `schema_version` mismatch (the pinned release, which fixes both, judges it). On an invalid config only the
+two config rules run: `config.schema` reports the config problems, `platform.version` a pin mismatch; `--only` names
+are then only checked to be known ids (an unshipped id does not exit 2). A missing `hub.lock` does not stop the other
+rules.
+
+### Configuration
+
+A project tunes rules in `hub.json` → `doctor.rules.<id>` ([project-config.md](project-config.md)):
+
+```json
+{"doctor": {"rules": {"instructions.duplicates": {"enabled": false},
+                      "makefile.override": {"severity": "error"},
+                      "instructions.size": {"max_lines": {"AGENTS.md": 120}}}}}
+```
+
+`enabled` (default `true`), `severity` (overrides the default; not for `config.schema`, `config.identity` or
+`config.stop_gate`) and rule options, validated per rule. An unknown rule id or option is a `config.schema` error.
+Options in Phase 1: `instructions.size.max_lines` (file or glob to limit, merged over the defaults; keys of 1 to 1024
+characters, at most 256 of them, `_` comment keys aside) and `brain.leak.min_line_length` (1 to 10000). A rule
+declares its `module`; the rules of a module that is not selected in `modules` never run and cannot be configured (a
+cross-field check of the model, not of the JSON Schema: [project-config.md](project-config.md)).
+
+## Invariants
+
+- Read-only: `hub doctor` never writes a file, never commits and never calls the network.
+- Deterministic: the same snapshot gives the same findings in the same order.
+- The rule list and the tuned settings come only from the release and `hub.json`; there is no per-machine state.
+- `config.schema` always runs, so a broken config is never silently skipped.
+
+## Decisions
+
+- [ADR 0010](../adr/0010-hub-json-config-contract.md): config validity comes from the same model the CLI uses.
+- [ADR 0012](../adr/0012-cli-subsumes-hub-scripts.md): the config lint and the feature-tracker check become rules.
+- [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md): `lock.drift` reads the same lock that `hub sync` writes.
+- [ADR 0002](../adr/0002-lean-hexagonal-architecture.md): rules are pure core functions over a snapshot, so no port.
+
+## Open questions
+
+- Whether each code repo's own CI also runs the repo-scoped rules (it needs the hub checkout for `brain.leak`).
+
+---
+
+Source: `docs/design/worktree-environment.md` (https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/worktree-environment.md)
+
+# Worktree environment: what a repo's setup and teardown scripts get
+
+## Purpose
+
+A task worktree of a repo that runs services (an API, a database, a web UI) collides with the main checkout and with
+other task worktrees on ports, compose projects and `.env` values. A repo can ship executable
+`scripts/worktree-setup.sh` and `scripts/worktree-teardown.sh` to give each worktree its own. This is the contract for
+how `hub worktree`, `hub run` and `hub start` run them and what they get, so a script needs no scheme of its own to tell
+which task it serves, where the main checkout and the hub are, and which ports to use. The commands themselves are in
+the [README](../../README.md) and [SPEC.md](../SPEC.md); the steps are `agent_hub.cli.worktree_steps`.
+
+## Contract
+
+### When the scripts run
+
+- **Setup** runs once, right after `git worktree add` creates the repo's worktree, in `hub worktree <name>`, in
+  `hub run` (which makes the worktree of its issue) and in `hub start` (each touched repo's missing worktree). It never
+  runs on a worktree that already exists: a rerun prints `exists` and leaves it alone.
+- **Teardown** runs in `hub worktree --remove <name>` only, before `git worktree remove`, and only on a clean worktree:
+  one with modified or untracked files is refused before the teardown runs. `hub run` and `hub start` never remove one.
+- A script runs only when it is an executable regular file in the new worktree (the repo's committed copy); otherwise
+  it is skipped without a word. Its argv is `[<worktree>]` (`$1`), its cwd is the worktree, it has no timeout and runs
+  in the caller's process group (Ctrl-C reaches it). Each line it prints on stdout is shown as `  <repo>: <line>`;
+  its stderr passes through unprefixed.
+- A setup that fails (non-zero exit, a signal, or it cannot start) stops the command with exit 1 and keeps the
+  worktree, with a hint to run the script again or remove the worktree. A failed teardown keeps that repo's worktree
+  (repos handled before it are already removed).
+
+### Environment
+
+The caller's environment, minus git's location variables (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, …), plus
+six variables set last, so a caller's value of any of them is overridden:
+
+| Variable | Value | `dem-7-x`, repo `demo-api` |
+|---|---|---|
+| `HUB_WORKTREE_NAME` | the task's worktree name (`hub run`: its slug; `hub start`: `<issue lower>-<title slug>`, or the name it resumes) | `dem-7-x` |
+| `HUB_WORKTREE_BRANCH` | this repo's task branch (it can differ per repo through `conventions`) | `jdoe/dem-7-x` |
+| `HUB_REPO_DIR` | the repo's main checkout `<workspace>/<repo>`, not the worktree (that is `$1`) | `/ws/demo-api` |
+| `HUB_HUB_DIR` | the hub's main checkout, also when the command runs from a hub worktree | `/ws/hub` |
+| `HUB_WORKTREE_SLOT` | the task's port slot, `0` to `49`, in decimal | `34` |
+| `HUB_PORT_OFFSET` | slot × 100, `0` to `4900`, in decimal: add it to each of the repo's ports | `3400` |
+
+- `HUB_REPO_DIR` and `HUB_HUB_DIR` are absolute and built on the hub's real path (its links resolved).
+- **Slot:** `int(sha256(name).hexdigest(), 16) % 50`, the SHA-256 of the name's UTF-8 bytes read as one big-endian
+  integer, from the whole worktree name (`core.workspace.worktree_slot`). **Offset:** `slot * 100`.
+- In `hub worktree` every other variable is the developer's shell environment, tokens included. In `hub start` the
+  setup script gets no `LINEAR_API_KEY`; the GitHub tokens are kept. In `hub run` it gets no `LINEAR_API_KEY`,
+  `GH_TOKEN` or `GITHUB_TOKEN` (SPEC, secret scope of `hub run`).
+
+### Collisions and overrides
+
+Nothing allocates or locks a slot. Two names share one with probability 1/50, and the slot comes from the whole name,
+so `dem-7-x` and `dem-7-y`, or `hub worktree dem-1-x` and `hub run`'s `dem-1`, get different slots, while the same
+name always gets the same one. On a collision, edit the worktree's `.env`: it is the script's own copy, and setup never
+reruns on an existing worktree, so the edit stays. Ports stay below 65536 for any base port up to 60535.
+
+### Example scripts
+
+A repo that keeps a gitignored `.env` in its main checkout and runs its services with `docker compose`. Both scripts
+are POSIX `sh` and name the compose project `<repo>-<name>`. **The repo's `.gitignore` must list `.env`**: the copy
+would otherwise be an untracked file, and `--remove` refuses a dirty worktree before the teardown runs.
+
+`scripts/worktree-setup.sh` copies `$HUB_REPO_DIR/.env` into the worktree, every `<NAME>_PORT=<number>` line shifted by
+`$HUB_PORT_OFFSET`, and sets `COMPOSE_PROJECT_NAME` (dropping a copied `COMPOSE_PROJECT_NAME=…` line). Only a line of
+the exact form `<NAME>_PORT=<digits>`, `<NAME>` in upper case, is shifted: a quoted value, spaces around `=`, an inline
+comment, `export`, a CRLF ending or a bare `PORT` is copied unshifted, so write the ports in that form:
+
+```sh
+#!/bin/sh
+# worktree-setup.sh <worktree>: hub worktree runs it once, in the new worktree.
+set -eu
+project="$(basename "$HUB_REPO_DIR")-$HUB_WORKTREE_NAME"
+if [ -f "$HUB_REPO_DIR/.env" ]; then
+  awk -v offset="$HUB_PORT_OFFSET" '
+    /^COMPOSE_PROJECT_NAME=/ { next }
+    /^[A-Z0-9_]*_PORT=[0-9]+$/ { i = index($0, "="); print substr($0, 1, i) (substr($0, i + 1) + offset); next }
+    { print }
+  ' "$HUB_REPO_DIR/.env" > .env
+else
+  : > .env
+fi
+printf 'COMPOSE_PROJECT_NAME=%s\n' "$project" >> .env
+```
+
+`scripts/worktree-teardown.sh` runs `docker compose down` under the same project name, and does nothing without
+`docker`. It fails closed: if `docker` is installed but `docker compose down` fails (daemon stopped, no compose plugin),
+it exits non-zero and `--remove` keeps that repo's worktree; fix docker and rerun, or remove the worktree by hand with
+`git worktree remove`:
+
+```sh
+#!/bin/sh
+# worktree-teardown.sh <worktree>: hub worktree --remove runs it before git worktree remove.
+# Runs docker compose down for the worktree's compose project; without docker it does nothing.
+set -eu
+command -v docker >/dev/null 2>&1 || exit 0
+docker compose -p "$(basename "$HUB_REPO_DIR")-$HUB_WORKTREE_NAME" down
+```
+
+With `API_PORT=8000` and `WEB_PORT=5173` in the main checkout's `.env`, task `dem-7-x` of `demo-api` gets
+`API_PORT=11400`, `WEB_PORT=8573` and `COMPOSE_PROJECT_NAME=demo-api-dem-7-x`.
+`test_worktree_command.py::TestScriptEnvironment` runs these two blocks as written, with and without a main
+checkout `.env` and `docker`.
+
+## Invariants
+
+- Deterministic and stateless: the six depend on the name, the repo's branch and the two checkouts only. No file,
+  lock or tracker write; a rerun computes the same values in every process, machine and Python hash seed (never
+  `hash()`).
+- One slot per task: every repo of a task gets the same slot and offset; only `HUB_WORKTREE_BRANCH` and
+  `HUB_REPO_DIR` differ per repo.
+- No secret among the six: they are names, paths and numbers. `hub run`'s script env keeps its secret scope.
+- No extra git call or child process; a script that ignores the six behaves as before (argv, cwd, output, failures).
+
+## Decisions
+
+- **Slot from a hash of the name** (D-slot), not an allocation file or lock: stateless, and collisions are accepted.
+- **The six variables** (D-vars), for both scripts in both commands; `HUB_WORKTREE_SLOT`, not an index, because it
+  promises no uniqueness.
+- **`HUB_REPO_DIR` is the main checkout** (D-repodir): the worktree is already `$1` and the cwd, and the main checkout
+  is where the gitignored `.env` to copy lives.
+- **Set last** (D-override): a caller's `HUB_PORT_OFFSET` never wins. After a collision a person edits the worktree's
+  `.env` (setup never reruns on an existing worktree); no script does.
+- **No new secret scope** (D-secrets): `hub run` keeps its untrusted environment; `hub worktree` keeps the developer's;
+  `hub start` keeps the developer's minus the tracker key ([hub-start.md](hub-start.md)).
+- No ADR: no architecture change. The scope was already in [SPEC.md](../SPEC.md) (isolated worktrees with their own
+  ports and `.env`; the secret scope of `hub run`).
+
+## Open questions
+
+- Allocation (unique slots across concurrent tasks), if collisions ever matter: AGH-60.
+- A configurable slot count or port step (a `hub.json` key); none is planned.
+
+---
+
+Source: `docs/design/memory-layers.md` (https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/memory-layers.md)
+
+# Memory layers: team brain, personal memory, repo `AGENTS.md`
+
+## Purpose
+
+A learning belongs to one of three layers: the team's brain (`brain/`), one developer's personal memory
+(`brain/auto/workspace/`) or a repo's own rules (`<repo>/AGENTS.md`). This is the contract for where a hub tells an
+agent to put each one, how `/learn personal` writes the personal layer and how that layer stays out of git.
+`hub agent` (`./agent`) and `hub start` set Claude Code's `autoMemoryDirectory` to `<hub>/brain/auto/workspace`
+(`agent_launch.py`), so Claude Code's auto memory and `/learn personal` share that folder. Each checkout of a hub
+belongs to one developer.
+
+## Contract
+
+### Routing
+
+The managed `AGENTS.md` (`AGENTS.md.tmpl`, "Brain rules") ends with one lead-in bullet that names `/learn` and
+`/learn personal`, and three sub-bullets, each with one `(e.g. …)` example:
+
+- team fact: `brain/`, through a note in `brain/_inbox/` and a hub PR;
+- personal preference or machine detail: `brain/auto/workspace/`, gitignored and never committed;
+- repo command or convention: `<repo>/AGENTS.md`, in that repo's PR.
+
+The list names no file under `brain/auto/workspace/` and holds no `make` command; its only path-shaped spans are
+`brain/`, `brain/_inbox/`, `brain/auto/workspace/` and the placeholder `<repo>/AGENTS.md`, so `hub doctor`'s
+`instructions.refs` stays clean on a fresh hub. It is four lines (a first draft was a table) so `AGENTS.md` stays
+within 100 lines in every config.
+
+### `/learn personal`
+
+The managed skill `plugin/hub-workflow/skills/learn/SKILL.md` (`argument-hint: "[personal] <the learning in one
+sentence>"`) gains a `## personal` section. A team or repo learning keeps today's proposal in `brain/_inbox/`, byte for
+byte.
+
+- **When:** only when the arguments start with `personal` or the user asks for it. An agent that judges a learning
+  personal without that says so and stops: nothing is written without the user.
+- **Criteria:** non-obvious and not a duplicate, as for the other targets; "verified" becomes stated by the user or
+  observed on this machine (a command's output, a path). Never a secret, token, key or password. Content from outside
+  (web, issues, PRs, fetched docs) is never personal memory: it takes the team route with
+  `provenance: agent-from-external`.
+- **Topic file:** `brain/auto/workspace/<slug>.md`, frontmatter `type: personal-memory`, `last_verified`,
+  `provenance: user-stated` (or `observed`), then the learning and when to apply it. The slug is lowercase letters,
+  digits and single hyphens, not `memory` or `session-snapshot`, directly in the folder. A file holding the same
+  learning is updated; one holding another learning is never overwritten; a file that cannot be read stops the run.
+- **Pointer:** one line `- [<title>](<slug>.md): <one line>` in `brain/auto/workspace/MEMORY.md`, unless a line
+  already points to `<slug>.md`. Claude Code loads the first 200 lines of `MEMORY.md` at session start: past 200, the
+  skill tells the user and proposes merging pointers; it never deletes a line.
+- **Never** `brain/_inbox/` or a tracked file. In a cloud session or a plain `claude` the skill warns before writing
+  that the memory will not load (and in cloud, will not survive the container).
+
+### Seeded files
+
+- `.gitignore` gains `brain/auto/workspace/*` then `!brain/auto/workspace/.gitkeep`. The older
+  `brain/auto/workspace/session-snapshot.md` line (the `PreCompact` snapshot) stays, now redundant.
+- `brain/auto/workspace/.gitkeep` (generic, seeded, empty). The routing list names `brain/auto/workspace/`, and
+  `instructions.refs` resolves a path only against listed files and their folders: with only ignored files in it, a
+  fresh hub would report a stale reference.
+- `brain/index.md` gains the row "Your own preferences and machine details (gitignored, never committed)" →
+  `auto/workspace/`.
+
+### Existing hubs
+
+The next `hub sync` rewrites `AGENTS.md` and the learn skill (managed) and creates `brain/auto/workspace/.gitkeep`
+(seeded, absent). It never rewrites `.gitignore` (seeded): the developer appends the two lines by hand and, for a
+memory file already committed, follows the README section "Personal memory (existing hubs)" (`git rm --cached`
+deletes teammates' copies when they pull, so they copy theirs out first). `hub doctor` warns until both lines are in
+`.gitignore` and no memory file is tracked.
+
+### Doctor rule `brain.memory`
+
+`brain.memory` ([hub-doctor.md](hub-doctor.md), § Rules) warns when personal memory can reach git:
+
+- **(a) Listed memory.** Only when git made the hub listing (`HubFiles.listed_by_git`: the files tracked or not ignored
+  by this developer's git). Each listed path under `brain/auto/workspace/` but its `.gitkeep` is one warning at the
+  path, `personal memory file is tracked or not ignored by git`, in listing order, at most 10; past 10, one more at
+  `brain/auto/workspace/`, `N more personal memory files are tracked or not ignored by git besides the 10 shown`,
+  which the report sorts before the paths. A walked listing (no `.git`) holds ignored files too, so (a) is skipped.
+- **(b) The ignore line.** The root `.gitignore` needs one line ignoring the folder: `brain/auto/workspace`,
+  `brain/auto` or `brain`, with or without one leading `/` and one trailing `/`, `/*` or `/**`; trailing spaces and
+  one leading UTF-8 BOM are dropped, and a `#` or `!` line never covers. Else one warning at `.gitignore` (at `.` when
+  it is absent and every fixed path was read): `.gitignore has no line ignoring brain/auto/workspace/ (personal
+  memory)`. A link or a `.gitignore` that is not UTF-8 text (a NUL included) gives none; an untracked `.gitignore`
+  that ignores itself reads as absent.
+- **Fix** (both): `add brain/auto/workspace/* and !brain/auto/workspace/.gitkeep to .gitignore; if a memory file was
+  committed, see "Personal memory (existing hubs)" in the agent-hub README first`.
+- **Limits.** (b) matches lines; it is not git's matcher. A nested `.gitignore` (`brain/.gitignore`) is not read, so
+  it still warns, and a later `!` line is not evaluated (a file it lets through is listed, so (a) reports it).
+- **Never content.** Only paths and counts are shown; the rule never looks at a memory file's content, and
+  `.gitignore` lines are only compared.
+- **Severity.** `warning` by default, so `hub doctor` still exits 0. `doctor.rules."brain.memory"` takes
+  `{"enabled": false}` to turn it off or `{"severity": "error"}` to fail the run on it.
+
+## Invariants
+
+- Personal memory is never committed: `brain/auto/workspace/.gitkeep` is the only tracked file in the folder
+  (`brain.memory` warns otherwise).
+- Team knowledge reaches `brain/` only through `brain/_inbox/` and a human; `/learn personal` never writes there.
+- No secret is written to any layer.
+- The routing list names no file under `brain/auto/workspace/`; its only path-shaped spans are `brain/`,
+  `brain/_inbox/`, `brain/auto/workspace/` and the placeholder `<repo>/AGENTS.md`.
+- The guard is unchanged: agents may already write `brain/auto/`. `agent_launch.py` and the folder's location are
+  unchanged.
+
+## Decisions
+
+Decided in AGH-48 and recorded in [SPEC.md](../SPEC.md) and here. `docs/design/README.md` puts reasons in ADRs; for
+this subject the owner chose a design doc (an ADR edits the guarded `docs/adr`). An ADR may follow with the owner's
+approval of that path.
+
+- **Location kept (D1).** `autoMemoryDirectory` stays `<hub>/brain/auto/workspace`, ignored but its `.gitkeep`: each
+  checkout belongs to one developer, so memory stays local. Rejected: a folder outside the hub.
+- **Direct write (D2).** `/learn personal` writes the topic file and the pointer itself, with no proposal and no human
+  gate; the other targets keep the `brain/_inbox/` flow. Rejected: a personal proposal in `brain/_inbox/`.
+- **Existing hubs (D3).** One README line names the two `.gitignore` lines; sync never rewrites `.gitignore`, and
+  `brain.memory` warns until the lines are there. Rejected: rewriting `.gitignore` on sync.
+- **Routing in the managed `AGENTS.md` (D4).** Every hub gets it at its next sync. Rejected: `AGENTS.project.md`, a
+  separate file. A four-line list replaced the first draft's table to keep `AGENTS.md` within its 100-line cap.
+
+## Open questions
+
+- `autoMemoryDirectory` in the managed `.claude/settings.json` would load personal memory in a plain `claude` too;
+  whether Claude Code accepts it from project settings is unchecked.
+- Cloud sessions and a plain `claude` do not load `MEMORY.md`, and a cloud container loses the folder when it ends.
+- Duplicates across layers (AGH-53); `/learn` opening PRs for a team learning (AGH-67).
+
+---
+
+Source: `SECURITY.md` (https://raw.githubusercontent.com/jroquette/agent-hub/main/SECURITY.md)
+
+# Security policy
+
+agent-hub is experimental (0.x). It runs on your machine, steers Claude Code sessions through hooks and a guard, and
+serves its control plane on loopback only. A flaw in any of those can reach real repos and credentials, so please
+report it privately.
+
+## Supported versions
+
+Only the latest release (the newest `vX.Y.Z` tag) gets security fixes. A hub pins its release in `hub.json` →
+`platform.version`; upgrade by bumping it and running `./hub sync`.
+
+## Reporting a vulnerability
+
+Do not open a public issue. Use GitHub's private vulnerability reporting: the repository's **Security** tab →
+**Report a vulnerability**. Include the version, what you ran, what happened and, if you can, a minimal reproduction.
+
+You get an acknowledgement within 7 days. A confirmed issue is fixed in a patch release, and the advisory credits you
+unless you ask otherwise.
+
+## In scope
+
+- The `hub` CLI and the files it generates: shims, `.claude/settings.json`, the hooks (`guard.py`, `stop_gate.py`,
+  `event_sensor.py`, …) and the `hub-workflow` plugin.
+- A way around the guard or the sandbox settings a hub enables, beyond the limits the spec already documents
+  ([docs/SPEC.md](docs/SPEC.md)).
+- The control plane (`hub web`, the API and the web app) and the container image.
+- Redaction: a secret, prompt or tool output that reaches the event store despite
+  [ADR 0019](docs/adr/0019-metadata-only-events-and-redaction.md).
+- Credential handling in `hub run`, `hub ship` and `hub start` (`LINEAR_API_KEY`, `GH_TOKEN`).
+
+## Out of scope
+
+- Claude Code, the model provider, Linear, GitHub and `uv` themselves: report those to their vendors.
+- What an agent does with the permissions you granted it outside the guard's rules.

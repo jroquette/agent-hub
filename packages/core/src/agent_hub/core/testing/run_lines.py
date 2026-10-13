@@ -8,7 +8,14 @@ from datetime import UTC, datetime, timedelta
 from typing import Final
 
 from agent_hub.core.json_form import JsonValue
-from agent_hub.core.runner.run_record import Stage, picked_data, reported_data, run_record
+from agent_hub.core.runner.run_record import (
+    RunOutcome,
+    Stage,
+    not_delivered_data,
+    picked_data,
+    reported_data,
+    run_record,
+)
 
 RUN_START: Final = datetime(2026, 10, 11, 9, 0, 0, tzinfo=UTC)
 RUN_PR_URL: Final = "https://github.com/acme/demo-api/pull/7"
@@ -67,7 +74,13 @@ def run_lines_picked_to_reported(
     writer.add(
         Stage.REPORTED,
         "reported",
-        reported_data(ok=True, failed_stage=None, total_cost_usd=1.75, pr=RUN_PR_URL),
+        reported_data(
+            ok=True,
+            failed_stage=None,
+            total_cost_usd=1.75,
+            pr=RUN_PR_URL,
+            outcome=RunOutcome.DELIVERED,
+        ),
     )
     return writer.records
 
@@ -85,6 +98,45 @@ def run_lines_failed_in_verify(
     writer.add(
         Stage.REPORTED,
         "reported",
-        reported_data(ok=True, failed_stage=Stage.VERIFYING, total_cost_usd=3.0, pr=""),
+        reported_data(
+            ok=True,
+            failed_stage=Stage.VERIFYING,
+            total_cost_usd=3.0,
+            pr="",
+            outcome=RunOutcome.FAILED,
+        ),
+    )
+    return writer.records
+
+
+def run_lines_not_delivered(
+    outcome: RunOutcome = RunOutcome.NO_CHANGES,
+    run_id: str = "9c0d1e2f",
+    *,
+    issue: str = "DEM-9",
+    repo: str = "demo-api",
+) -> list[Record]:
+    """A run whose session ends without a PR yet without failing: ``no_changes`` or ``blocked``."""
+    writer = _RunWriter(run_id, issue=issue, repo=repo)
+    writer.start()
+    writer.add(
+        Stage.IMPLEMENTING,
+        "agent_finished",
+        {"cost_usd": 0.5, "turns": 4, "subtype": "success", "verdict": None},
+    )
+    reason = (
+        "no commit on the branch (the session reported done or gave no verdict)"
+        if outcome is RunOutcome.NO_CHANGES
+        else "the implementing session stopped: the issue needs a product decision"
+    )
+    writer.add(
+        Stage.IMPLEMENTING,
+        "not_delivered",
+        not_delivered_data(outcome=outcome, stage=Stage.IMPLEMENTING, reason=reason),
+    )
+    writer.add(
+        Stage.REPORTED,
+        "reported",
+        reported_data(ok=True, failed_stage=None, total_cost_usd=0.5, pr="", outcome=outcome),
     )
     return writer.records

@@ -12,9 +12,9 @@ Paths: `brain/` lives in the hub (the directory with `hub.json`); the repos are 
 
 **Write** `brain/features/<slug>/spec.md`:
 - frontmatter: `type: spec`, `status: draft`, `repos: [...]`, `process_size: spike | bounded | architectural`, `linear: [<TEAM>-N]` if known (the issue's team: a key of `tracker.teams` in `hub.json`, the first being the default);
-- Problem · Goals · **Non-goals**;
-- Acceptance criteria, one per line, ids `AC-1`, `AC-2`, … in **Given/When/Then** (or EARS). Each must be testable by a command;
-- NFRs (latency, precision, idempotency, auditability — whatever applies);
+- Problem · Goals · **Non-goals** (goals solve today's problem, per the minimum-sufficient rule at the top of hub-workflow's `/feature` skill; anything beyond it is a non-goal);
+- Acceptance criteria, one per line, ids `AC-1`, `AC-2`, … in **Given/When/Then** (or EARS). Each must be testable by a command; ACs cover the user-visible behaviour and the invariants it touches, not every internal branch;
+- NFRs (latency, precision, idempotency, auditability) only where they apply; none is a valid answer;
 - Invariants touched (as documented in the repos' `AGENTS.md`/tests) and any path under `hub.json` → `guard.ask_before_edit`;
 - Contract impact (API paths/schemas) and repos affected;
 - **Open questions** — anything you had to assume. Never invent an answer the user did not give.
@@ -25,6 +25,6 @@ Read it, keep every line, and add the change to a `## Amendments` section at its
 withdrawn (`AC-3 (withdrawn, A1)`), and keeps its entry in `features.json` with `withdrawn: true`. AC ids are never
 renumbered or reused. Return the amendment for the user's approval.
 
-Size: *spike* = throwaway learning; *bounded* = known design, ≤ a few PRs; *architectural* = new contracts, sensitive paths or cross-repo design.
+Size: *bounded* is the default (known design, ≤ a few PRs); *architectural* = a new contract between repos or services, or a decision that warrants an ADR (a guarded path alone does not make it architectural); *spike* = throwaway learning.
 
 **End:** return the path, the AC list and the open questions. **Compound step:** if you found something non-obvious and verified, add a proposal to `brain/_inbox/` following the `/learn` criteria; otherwise say "no learning".

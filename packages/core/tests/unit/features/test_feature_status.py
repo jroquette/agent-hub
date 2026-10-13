@@ -8,6 +8,7 @@ from agent_hub.core.features.feature_status import (
     RecordHead,
     feature_detail,
     feature_view,
+    spec_linear,
     ticket_ids,
 )
 from agent_hub.core.features.feature_view import FeatureRecord, GoldenPath
@@ -467,3 +468,19 @@ def test_never_marks_evaluate_done_when_ship_covers_part() -> None:
     assert _meta(path, "evaluate") == "partial: covers 3 of 36 ACs"
     assert [record.delivery for record in detail.evals] == ["tip-1520"]
     assert feature_view(folder, project="demo", read=a_linear_read(*summaries)).golden_path == path
+
+
+@pytest.mark.parametrize(
+    ("head", "ids"),
+    [
+        pytest.param(SPEC, ("DEM-7",), id="listed"),
+        pytest.param(b"---\nlinear: DEM-3\n---\n", ("DEM-3",), id="single"),
+        pytest.param(b"---\nlinear: []\n---\n", (), id="empty"),
+        pytest.param(b"# Spec\nlinear: [DEM-3]\n", (), id="no-frontmatter"),
+        pytest.param(None, (), id="no-spec"),
+    ],
+)
+def test_reads_linear_ids_when_spec_frontmatter_read(
+    head: bytes | None, ids: tuple[str, ...]
+) -> None:
+    assert spec_linear(head) == ids

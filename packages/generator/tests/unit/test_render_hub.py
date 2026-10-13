@@ -1388,6 +1388,22 @@ def test_names_hub_doctor_when_planner_or_evaluator_rendered(
     assert "features_check" not in text
 
 
+# AGH-143: the planner leaves `linear` empty; /feature writes the created ids into it, then checks.
+def test_writes_issue_ids_back_when_feature_skill_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    skill = demo_render["plugin/hub-workflow/skills/feature/SKILL.md"].content.decode("utf-8")
+    planner = demo_render["plugin/hub-workflow/agents/planner.md"].content.decode("utf-8")
+
+    tickets = next(line for line in skill.splitlines() if line.startswith("4. **Tickets**"))
+    write_back = tickets.split("then write their ids into", 1)[1]
+    assert write_back.startswith(" `brain/features/<slug>/features.json` → `linear`")
+    assert f"run `{FEATURE_CHECK_COMMAND}`" in write_back
+    assert '"linear": [], "acs"' in planner
+    assert "<TEAM>-N" not in planner
+    assert "the main session fills it with their ids" in planner
+
+
 def test_keeps_frontmatter_when_agents_rendered(demo_render: dict[str, RenderedFile]) -> None:
     for name in BASE_AGENTS:
         text = demo_render[f"plugin/hub-workflow/agents/{name}.md"].content.decode("utf-8")

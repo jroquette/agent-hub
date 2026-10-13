@@ -234,7 +234,7 @@
     "plugin/hub-workflow/agents/architect.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "b417ed82fc64f5ce1e48cd5c3a2ea613d9352868a8cb1c2a588da5196d9cd594"
+      "sha256": "65f87843553ecc602d854a6c7f2f9389b188ced0ceff5cc5ef03c9d43f2b616f"
     },
     "plugin/hub-workflow/agents/evaluator.md": {
       "executable": false,
@@ -244,17 +244,17 @@
     "plugin/hub-workflow/agents/planner.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "79aba5ea432584074cc4798be8668a3da1e6a55d58d2b9450dd3f033fb8ce001"
+      "sha256": "703db29e7407541e9895e66b1868f7615335c0599db68d57a5dfb7916811c00e"
     },
     "plugin/hub-workflow/agents/quality-reviewer.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "fd267809d50da2df878ce62da65aa7d2f75509d39b5401aa38f081b15b81f716"
+      "sha256": "3fa7c48d0ad30d8c3ebf1d04aafc68322410e9f6016ac7790e8cb8157136aa24"
     },
     "plugin/hub-workflow/agents/requirements-analyst.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "eb023686de0779c0a9d8cbf6f4ca5a08cfa61459cd82f7666ee3aeb2f1607286"
+      "sha256": "d5702ea0391a96d356ebd9e1b83195cd1828efb509dfb56cfcc611560484d063"
     },
     "plugin/hub-workflow/agents/researcher.md": {
       "executable": false,
@@ -264,7 +264,7 @@
     "plugin/hub-workflow/agents/spec-reviewer.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "5c2ea69603034913f43b8dd45c084bd71db815154a1a63000ec74fb328f3a703"
+      "sha256": "c85d1974eb74ef4a7251c5929c4bba29b1431101998ab2f03d8886cfef132062"
     },
     "plugin/hub-workflow/hooks/event_sensor.py": {
       "executable": true,
@@ -339,7 +339,7 @@
     "plugin/hub-workflow/skills/feature/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "eaced8504ceaba88da2c7bc6c00cf58d40681450773687903e53fc77f5e60224"
+      "sha256": "6a9c80c130a5b6f1d5cd2b30298283a4f233caf33787d417284e6b9efa1128f1"
     },
     "plugin/hub-workflow/skills/fix/SKILL.md": {
       "executable": false,
@@ -429,7 +429,7 @@
     "scripts/retro_metrics.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "c15a5925181394ca2c9adf4784ae249aedc7ca5707cc7c8dae903c2b43088ea1"
+      "sha256": "fdac169d0ebd59302540f442f0592e39239ede6ca87fc367184c16806f9eff21"
     }
   },
   "lock_version": 1,

@@ -342,7 +342,8 @@ GraphQL API for a feature's tickets, only when `LINEAR_API_KEY` is set where `hu
   on that explicit action, `git` and `gh` reach the hub's `origin` and GitHub with the user's own credentials. In the
   container image every hub is read-only and the actions are disabled with that reason.
 - **Features and Brain.** Feature detail renders the feature's records (spec, research, plan, eval) and its ACs with
-  verification and evidence; a per-project Brain browser lists the hub's `brain/` notes (never `brain/auto/`) and
+  verification and evidence, and its tracker issues from `features.json` → `linear` (the source of truth, which `/feature`
+  fills once it creates the issues) and the spec's frontmatter `linear:`; a per-project Brain browser lists the hub's `brain/` notes (never `brain/auto/`) and
   renders any one, with links between notes inside the app. Notes are read on request, at most 256 KiB, through one
   path rule (no `..`, no absolute path, no link, regular `.md` files under `<hub>/brain` only) and rendered with raw
   HTML off and a URL allow-list.
@@ -455,7 +456,7 @@ before anything is appended, and the data stays on the machine in v1:
 | `tool.result` | `tool`, `tool_use_id`, `turn`, `status`, `exit_code`, `duration_ms`, `output_bytes`, `error_line` (first line, 200), `error_message` (failed tools only, 300), `rule`, `hook` |
 | `gate.request`, `gate.result` | `gate_id`, `kind`, `name`, `command`, `path`, `rule`, `feature`, `result`, `exit_code`, `duration_ms`, `approver`, `where`, `issue`, `repo`, `mode` |
 | `learning.proposed`, `.accepted`, `.rejected` | `text` (title, 120), `target`, `author`, `proposal`, `brain_path`, `commit`, `reason`, `provenance`; an app decision adds `pr_url`, `branch` and `state` |
-| `step.start`, `step.end`, `run.end` | `issue`, `repo`, `status`, `stage`, `reason`, `caps` (`budget`, `max_turns`, `model`, `transport`), `pr_url`, `cost_usd`, `mode` |
+| `step.start`, `step.end`, `run.end` | `issue`, `repo`, `status`, `stage`, `reason`, `caps` (`budget`, `max_turns`, `model`, `transport`), `pr_url`, `cost_usd`, `mode`, `outcome` (`run.end`: `delivered`, `no_changes`, `blocked` or `failed`, AGH-140) |
 | `session.summary` | `text`, `lines` |
 
 Note, spec, plan and brain text is read from the hub on request and never stored or logged; a learning's summary
@@ -500,12 +501,13 @@ The MVP goes up to Phase 2: generate hubs from Loki and see the agents' sessions
 | 3 · Knowledge and decisions | Provenance in the brain, inbox triage in the UI (accept and reject moved to Phase 2 by AGH-201; snooze stays here), extracted decisions, learning metrics | One learning traced from the session to the rule |
 | 4 · Workflows as data and actions | Generic executor reading the workflow, gates approved from the UI, adapters for other agents | — |
 
-Status (2026-10-12): Phase 0 done. Phase 1 in progress: `init`, `sync` (`--adopt`), `doctor`, `worktree`, `brief`,
-`agent`, `next`, `run` and `bench` shipped in v0.8.0; `setup` and `start` are on `main` (version 0.9.0, not tagged
-yet), with Phase 2's first slice, the control plane `hub web` (AGH-200), and its clarity pass (AGH-201: session
-labels, problems, learning accept and reject through hub PRs, the Brain browser and feature records), then ticket
-planning (AGH-136: tickets read from Linear, the golden path per feature, evals per delivery). The Phase 1
-gate (Loki hub recreated) is open; pilot: AGH-54.
+Status (2026-10-13, latest release v0.11.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
+Phase 1 in progress: `init`, `sync` (`--adopt`), `doctor`, `worktree`, `brief`, `agent`, `next`, `run` and `bench`
+shipped in v0.8.0, and `setup`, `start` and `ship` in v0.9.0. Phase 2's first slice is shipped too: the control plane
+`hub web` (AGH-200) in v0.9.0 and its clarity pass (AGH-201: session labels, problems, learning accept and reject
+through hub PRs, the Brain browser and feature records) in v0.11.0. Ticket planning (AGH-136: tickets read from
+Linear, the golden path per feature, evals per delivery) is built, not released yet. The Phase 1 gate (Loki hub
+recreated) is open; pilot: AGH-54.
 
 The order follows dogfooding: the first generated hub is the platform's own, and the second replaces `loki-trader-hub`. Editable workflows come later because they depend on observation already showing where the current flow gets stuck.
 

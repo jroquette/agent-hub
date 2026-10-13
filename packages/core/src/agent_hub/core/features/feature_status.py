@@ -317,6 +317,11 @@ def _frontmatter(head: bytes | None) -> dict[str, str]:
     return {}
 
 
+def spec_linear(head: bytes | None) -> tuple[str, ...]:
+    """The tracker ids in ``spec.md``'s frontmatter ``linear``, as the feature detail reads them."""
+    return _listed(_frontmatter(head).get("linear"))
+
+
 def _listed(value: str | None) -> tuple[str, ...]:
     """``[a, b]`` or a single ``a`` as a tuple; quotes around items are dropped."""
     if not value:
