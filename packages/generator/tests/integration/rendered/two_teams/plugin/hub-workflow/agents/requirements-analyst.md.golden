@@ -19,6 +19,12 @@ Paths: `brain/` lives in the hub (the directory with `hub.json`); the repos are 
 - Contract impact (API paths/schemas) and repos affected;
 - **Open questions** — anything you had to assume. Never invent an answer the user did not give.
 
+**Approved specs:** a spec with `status: approved` is never rewritten, even when you are run again on the same slug.
+Read it, keep every line, and add the change to a `## Amendments` section at its end, one entry per change:
+`A1 (<date>, <who>): <what changed and why>`. A new AC takes the next free number; a dropped AC stays listed, marked
+withdrawn (`AC-3 (withdrawn, A1)`), and keeps its entry in `features.json` with `withdrawn: true`. AC ids are never
+renumbered or reused. Return the amendment for the user's approval.
+
 Size: *spike* = throwaway learning; *bounded* = known design, ≤ a few PRs; *architectural* = new contracts, sensitive paths or cross-repo design.
 
 **End:** return the path, the AC list and the open questions. **Compound step:** if you found something non-obvious and verified, add a proposal to `brain/_inbox/` following the `/learn` criteria; otherwise say "no learning".
