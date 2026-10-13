@@ -7,8 +7,10 @@ takes no ``Bearer``). Caller values travel only as GraphQL variables, never in t
 Every failure is a one-line ``TrackerError`` naming the operation, the issue id, the cause and
 the fix: a missing or malformed key (before any request), a transport ``OSError`` or timeout,
 an HTTP error status, a body that is not JSON, a GraphQL ``errors`` array at any status, and an
-answer whose shape is not the one the query selects. Nothing is retried. The key is never part
-of a message, a ``repr`` or a log record.
+answer whose shape is not the one the query selects. Each raise site sets the error's ``kind``
+(``not_connected``, ``unauthorized``, ``timeout``, ``rate_limited``, ``unavailable``,
+``unreachable``, ``unexpected``) and ``http_status`` when Linear answered. Nothing is retried.
+The key is never part of a message, a ``repr`` or a log record.
 
 The default transport is ``urllib_post`` (standard library only, AC-9.6); tests pass their own.
 """
@@ -19,10 +21,11 @@ import re
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
+from dataclasses import dataclass
 from email.message import Message
 from typing import IO, Any, Protocol, override
 
-from agent_hub.core.errors import TrackerError
+from agent_hub.core.errors import TrackerError, TrackerFailure
 
 LINEAR_GRAPHQL_URL = "https://api.linear.app/graphql"
 LINEAR_API_KEY_VARIABLE = "LINEAR_API_KEY"
@@ -34,9 +37,17 @@ _API_KEY_PATTERN = re.compile(r"[\x21-\x7e]+")
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 
 
-# A response shape: a type (or types) for a leaf, a dict of exactly these fields, or a list of
-# items of one shape.
-type Shape = type | tuple[type, ...] | dict[str, Shape] | list[Shape]
+# A response shape: a type (or types) for a leaf, a dict of exactly these fields, a list of
+# items of one shape, or ``Nullable(shape)`` for null or that shape.
+type Shape = type | tuple[type, ...] | dict[str, Shape] | list[Shape] | Nullable
+
+
+@dataclass(frozen=True, slots=True)
+class Nullable:
+    """A shape that also accepts null: a nullable object field, such as an unset assignee."""
+
+    shape: Shape
+
 
 UNEXPECTED_FIX = "Linear's API may have changed; report it with the operation named here"
 
@@ -136,6 +147,7 @@ def request_data(  # noqa: PLR0913 - the request's parts, all keyword-only
             issue_id=issue_id,
             cause=f"no answer from Linear within {timeout_s:g} s",
             fix="retry later",
+            kind="timeout",
         ) from error
     except OSError as error:
         raise TrackerError(
@@ -143,6 +155,7 @@ def request_data(  # noqa: PLR0913 - the request's parts, all keyword-only
             issue_id=issue_id,
             cause=f"could not reach Linear: {quoted(error)}",
             fix="check the network connection to api.linear.app, then retry",
+            kind="unreachable",
         ) from error
     return _data(
         operation=operation,
@@ -162,6 +175,7 @@ def api_key(environ: Mapping[str, str], operation: str, issue_id: str | None) ->
             issue_id=issue_id,
             cause=f"{LINEAR_API_KEY_VARIABLE} is not set",
             fix=f"export {LINEAR_API_KEY_VARIABLE} with a Linear personal API key",
+            kind="not_connected",
         )
     if not _API_KEY_PATTERN.fullmatch(key):
         raise TrackerError(
@@ -169,6 +183,7 @@ def api_key(environ: Mapping[str, str], operation: str, issue_id: str | None) ->
             issue_id=issue_id,
             cause=f"{LINEAR_API_KEY_VARIABLE} has a character outside printable ASCII",
             fix=f"set {LINEAR_API_KEY_VARIABLE} to the key alone, without spaces or newlines",
+            kind="unauthorized",
         )
     return key
 
@@ -192,6 +207,8 @@ def _data(
             issue_id=issue_id,
             cause=f"Linear answered with an error: {_first_message(errors)}",
             fix=_errors_fix(errors, issue_id),
+            kind=_errors_kind(errors),
+            http_status=status,
         )
     if not 200 <= status < 300:  # noqa: PLR2004 - the HTTP success range
         raise TrackerError(
@@ -202,10 +219,14 @@ def _data(
                 "check the issue id and the state or label names passed"
                 " (if they are right, Linear's API may have changed)"
             ),
+            kind="unexpected",
+            http_status=status,
         )
     data = payload.get("data") if isinstance(payload, dict) else None
     if not fits(data, shape):
-        raise unexpected(operation, issue_id, f"{operation_name} answered another shape")
+        raise unexpected(
+            operation, issue_id, f"{operation_name} answered another shape", http_status=status
+        )
     return data
 
 
@@ -218,6 +239,8 @@ def _decoded(operation: str, issue_id: str | None, answer: tuple[int, bytes]) ->
             issue_id=issue_id,
             cause=f"Linear's answer is over {MAX_RESPONSE_BYTES // 1024**2} MiB",
             fix="list a narrower label, or report it with the operation named here",
+            kind="unexpected",
+            http_status=status,
         )
     try:
         return json.loads(response)
@@ -227,6 +250,8 @@ def _decoded(operation: str, issue_id: str | None, answer: tuple[int, bytes]) ->
             issue_id=issue_id,
             cause="Linear's answer is nested too deep to read",
             fix=UNEXPECTED_FIX,
+            kind="unexpected",
+            http_status=status,
         ) from error
     except ValueError as error:
         raise TrackerError(
@@ -234,38 +259,65 @@ def _decoded(operation: str, issue_id: str | None, answer: tuple[int, bytes]) ->
             issue_id=issue_id,
             cause=f"Linear answered a body that is not JSON (HTTP {status})",
             fix="retry later",
+            kind="unexpected",
+            http_status=status,
         ) from error
 
 
 def _check_status(operation: str, issue_id: str | None, status: int) -> None:
     """Raise for the HTTP statuses whose fix does not depend on the body."""
+    kind: TrackerFailure
     if status in {401, 403}:
-        cause = f"Linear refused the key (HTTP {status})"
+        kind, cause = "unauthorized", f"Linear refused the key (HTTP {status})"
         fix = f"check that {LINEAR_API_KEY_VARIABLE} is a valid Linear API key with access"
     elif 300 <= status < 400:  # noqa: PLR2004 - HTTP redirects
-        cause = f"Linear answered a redirect (HTTP {status})"
+        kind, cause = "unexpected", f"Linear answered a redirect (HTTP {status})"
         fix = (
             "check for a proxy or network that redirects api.linear.app"
             " (redirects are not followed, so the key is never sent elsewhere)"
         )
     elif status == 429:  # noqa: PLR2004 - HTTP Too Many Requests
-        cause, fix = f"Linear rate-limited the request (HTTP {status})", "retry later"
+        kind, fix = "rate_limited", "retry later"
+        cause = f"Linear rate-limited the request (HTTP {status})"
     elif status >= 500:  # noqa: PLR2004 - HTTP server errors
-        cause, fix = f"Linear is unavailable (HTTP {status})", "retry later"
+        kind, fix = "unavailable", "retry later"
+        cause = f"Linear is unavailable (HTTP {status})"
     else:
         return
-    raise TrackerError(operation=operation, issue_id=issue_id, cause=cause, fix=fix)
+    raise TrackerError(
+        operation=operation,
+        issue_id=issue_id,
+        cause=cause,
+        fix=fix,
+        kind=kind,
+        http_status=status,
+    )
 
 
-def _errors_fix(errors: Any, issue_id: str | None) -> str:
-    """The fix for a GraphQL ``errors`` array, from its ``extensions`` when they say more."""
-    kinds = " ".join(
+def _extension_kinds(errors: Any) -> str:
+    """The ``code`` and ``type`` of each GraphQL error's ``extensions``, lower case."""
+    return " ".join(
         value.lower()
         for error in (errors if isinstance(errors, list) else [])
         if isinstance(error, dict) and isinstance(error.get("extensions"), dict)
         for name, value in error["extensions"].items()
         if name in {"code", "type"} and isinstance(value, str)
     )
+
+
+def _errors_kind(errors: Any) -> TrackerFailure:
+    """The failure kind of a GraphQL ``errors`` array (``unexpected`` unless it says more)."""
+    kinds = _extension_kinds(errors)
+    if "ratelimited" in kinds:
+        return "rate_limited"
+    if "authentication" in kinds or "forbidden" in kinds:
+        return "unauthorized"
+    return "unexpected"
+
+
+def _errors_fix(errors: Any, issue_id: str | None) -> str:
+    """The fix for a GraphQL ``errors`` array, from its ``extensions`` when they say more."""
+    kinds = _extension_kinds(errors)
     if "ratelimited" in kinds:
         return "retry later"
     if "authentication" in kinds or "forbidden" in kinds:
@@ -277,6 +329,8 @@ def _errors_fix(errors: Any, issue_id: str | None) -> str:
 
 def fits(value: Any, shape: Shape) -> bool:
     """Whether ``value`` has ``shape``: exactly the selected fields, each of its type."""
+    if isinstance(shape, Nullable):
+        return value is None or fits(value, shape.shape)
     if isinstance(shape, dict):
         return (
             isinstance(value, dict)
@@ -289,13 +343,17 @@ def fits(value: Any, shape: Shape) -> bool:
     return isinstance(value, shape)
 
 
-def unexpected(operation: str, issue_id: str | None, detail: str) -> TrackerError:
+def unexpected(
+    operation: str, issue_id: str | None, detail: str, *, http_status: int | None = None
+) -> TrackerError:
     """The failure of an answer Linear should not give (``detail`` names what was wrong)."""
     return TrackerError(
         operation=operation,
         issue_id=issue_id,
         cause=f"unexpected response from Linear: {detail}",
         fix=UNEXPECTED_FIX,
+        kind="unexpected",
+        http_status=http_status,
     )
 
 
