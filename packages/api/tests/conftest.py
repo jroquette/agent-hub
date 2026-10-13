@@ -69,6 +69,13 @@ from agent_hub.core.sessions.session import (
     SessionSummary,
     TimelineEvent,
 )
+from agent_hub.core.skills.skill_view import (
+    BundledFileText,
+    ItemKind,
+    SkillCatalog,
+    SkillDetail,
+    SkillUsage,
+)
 
 FIXED_NOW = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
 PORT = 7420
@@ -130,6 +137,7 @@ class FakeEventReadModels:
     needs: list[NeedsYouItem] = field(default_factory=list)
     activity_items: list[ActivityItem] = field(default_factory=list)
     hits: list[SearchHit] = field(default_factory=list)
+    usages: dict[str, SkillUsage] = field(default_factory=dict)
     counts: StreamCounts = field(
         default_factory=lambda: StreamCounts(
             approvals_open=0, live_sessions=0, failed_runs_7d=0, learnings_proposed=0
@@ -230,6 +238,11 @@ class FakeEventReadModels:
         self._call("stream_counts", None)
         return self.counts
 
+    def skill_usage(self, project: str) -> SkillUsage:
+        self._call("skill_usage", project)
+        empty = SkillUsage(since=datetime(2026, 9, 13, tzinfo=UTC), by_skill={}, by_agent={})
+        return self.usages.get(project, empty)
+
 
 @dataclass
 class FakeHubReadModels:
@@ -246,6 +259,9 @@ class FakeHubReadModels:
     settings_view: SettingsView | None = None
     brains: dict[str, BrainTree] = field(default_factory=dict)
     notes: dict[tuple[str, str], BrainNote] = field(default_factory=dict)
+    skill_catalogs: dict[str, SkillCatalog] = field(default_factory=dict)
+    skill_details: dict[tuple[str, str], SkillDetail] = field(default_factory=dict)
+    skill_texts: dict[tuple[str, str, str], BundledFileText] = field(default_factory=dict)
     calls: list[tuple[str, object]] = field(default_factory=list)
     failure: Exception | None = None
 
@@ -317,6 +333,28 @@ class FakeHubReadModels:
         if (project, path) not in self.notes:
             raise EntityNotFoundError(entity="brain note", entity_id=path)
         return self.notes[(project, path)]
+
+    def skill_catalog(self, project: str) -> SkillCatalog:
+        self._call("skill_catalog", project)
+        return _found(self.skill_catalogs, "project", project)
+
+    def skill_detail(self, project: str, *, kind: ItemKind, source: str, name: str) -> SkillDetail:
+        """By ``(project, item id)``."""
+        item = f"{kind}/{source}/{name}"
+        self._call("skill_detail", (project, item))
+        if (project, item) not in self.skill_details:
+            raise EntityNotFoundError(entity="skill", entity_id=item)
+        return self.skill_details[(project, item)]
+
+    def skill_file(
+        self, project: str, *, kind: ItemKind, source: str, name: str, file_id: str
+    ) -> BundledFileText:
+        """By ``(project, item id, file id)``."""
+        item = f"{kind}/{source}/{name}"
+        self._call("skill_file", (project, item, file_id))
+        if (project, item, file_id) not in self.skill_texts:
+            raise EntityNotFoundError(entity="skill file", entity_id=file_id)
+        return self.skill_texts[(project, item, file_id)]
 
 
 @dataclass

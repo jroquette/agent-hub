@@ -91,6 +91,7 @@ from agent_hub.core.sessions.session_cost import fold_session_cost
 from agent_hub.core.sessions.session_files import fold_session_files
 from agent_hub.core.sessions.session_label import LabelRules, with_issue
 from agent_hub.core.sessions.session_summary import summarize_session
+from agent_hub.core.skills.skill_view import SkillUsage
 
 type SortKey = tuple[CursorKeyPart, ...]
 
@@ -741,6 +742,10 @@ class FoldedEventReadModels:
                 if learning.status == LearningStatus.PROPOSED
             ),
         )
+
+    def skill_usage(self, project: str) -> SkillUsage:
+        """How often each skill and agent of ``project`` was used (filled by stream U)."""
+        raise NotImplementedError(project)
 
 
 # Labels at read time
