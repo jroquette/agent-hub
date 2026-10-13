@@ -687,3 +687,317 @@ def test_blocks_when_new_file_at_hub_root(gate: Gate, gate_ws: GateWorkspace) ->
     status = git_output(gate_ws, "status", "--porcelain", "-uall", cwd=gate_ws.hub)
     assert "?? notes.txt" in status.splitlines()  # control: not gitignored
     assert f"- {gate_ws.hub.name}/notes.txt" in lines
+
+
+def test_blocks_when_dirty_before_file_index_mode_changed(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """E-7: on a file staged and dirty (``MM``), a change of the index's mode alone counts: the
+    status, the content, the worktree's mode and the index's blob all stay. The agent sets the
+    mode with ``update-index --cacheinfo`` (``--chmod=+x`` would stage the worktree's content
+    too, a blob change)."""
+    target = gate_ws.app / "a.py"
+    target.write_text("A = 2\n", encoding="utf-8")
+    gate_ws.git("add", "a.py", cwd=gate_ws.app)
+    target.write_text("A = 3\n", encoding="utf-8")
+    assert git_output(gate_ws, "status", "--porcelain", cwd=gate_ws.app).splitlines() == ["MM a.py"]
+    staged = git_output(gate_ws, "ls-files", "-s", "a.py", cwd=gate_ws.app)
+    assert staged.startswith("100644 ")
+    blob = staged.split()[1]
+    mode = target.stat().st_mode
+
+    lines = block_lines(
+        run_researcher(
+            gate,
+            lambda: gate_ws.git(
+                "update-index", "--cacheinfo", f"100755,{blob},a.py", cwd=gate_ws.app
+            ),
+        )
+    )
+
+    assert target.read_text(encoding="utf-8") == "A = 3\n"
+    assert target.stat().st_mode == mode
+    assert git_output(gate_ws, "status", "--porcelain", cwd=gate_ws.app).splitlines() == ["MM a.py"]
+    now = git_output(gate_ws, "ls-files", "-s", "a.py", cwd=gate_ws.app)
+    assert now == "100755" + staged[len("100644") :]  # the same blob, the index's mode moved
+    assert "- app/a.py" in lines
+
+
+EVIDENCE_HEAD = "Commands you ran that may have made them:"
+# The longest command the reason shows in full; a longer one is cut to this many characters.
+COMMAND_CHARS = 160
+# The most Bash commands the reason lists.
+MAX_COMMANDS = 10
+# A Bash command of 300 characters, longer than the reason shows.
+LONG_COMMAND = "echo " + "x" * 295
+
+
+def agent_head(agent_type: str, agent_id: str = "a1") -> str:
+    """The first line of a block's reason for ``agent_type`` (agent ``agent_id``)."""
+    return (
+        f"[hub readonly-gate] {agent_type} (agent {agent_id}) is read-only"
+        " (mutates_checkout: false) but changed:"
+    )
+
+
+def run_agent(
+    gate: Gate,
+    agent_type: str,
+    change: Callable[[], object],
+    *,
+    calls: Iterable[tuple[str, Mapping[str, object]]] = (),
+    agent_path: bool = True,
+    constant: tuple[str, object] | None = None,
+) -> dict[str, Any] | None:
+    """Start ``agent_type`` (agent ``a1``) with ``calls`` in its transcript, run ``change``, stop.
+
+    The stop names the agent's transcript in ``agent_transcript_path`` unless ``agent_path`` is
+    False (Claude Code's fallback path then holds it); ``constant`` is replaced for the stop.
+    """
+    main, agent = transcripts(gate.ws, agent_id="a1", calls=calls)
+    assert gate.start(agent_type, agent_id="a1", transcript_path=main) is None
+    assert state_files(gate.ws) == [state_name("a1")]
+    change()
+    fields: dict[str, Any] = {"transcript_path": main}
+    if agent_path:
+        fields["agent_transcript_path"] = agent
+    return gate.stop(agent_type, agent_id="a1", constant=constant, **fields)
+
+
+def reason_lines(output: dict[str, Any] | None, agent_type: str = "researcher") -> list[str]:
+    """The lines of a block's reason, with no ``systemMessage`` beside it."""
+    assert output is not None
+    assert set(output) == {"decision", "reason"}, output
+    assert output["decision"] == "block"
+    lines: list[str] = output["reason"].splitlines()
+    assert lines[0] == agent_head(agent_type)
+    return lines
+
+
+def app_edit(ws: GateWorkspace) -> tuple[str, Mapping[str, object]]:
+    return "Edit", {"file_path": str(ws.app / "a.py"), "old_string": "1", "new_string": "2"}
+
+
+@pytest.mark.parametrize(
+    "case", ["write", "edit", "multiedit", "notebookedit", "hub_untracked", "app_main"]
+)
+def test_lists_paths_when_own_tool_block_applies(
+    gate: Gate, gate_ws: GateWorkspace, case: str
+) -> None:
+    """AC-141.6: a watched path the agent's own Write, Edit, MultiEdit or NotebookEdit changed is
+    blocked; the reason names the agent, lists the path by its label and asks to revert or
+    explain. A new untracked file in the hub (outside ``brain/``) and a new file in an app repo's
+    main checkout count."""
+    hub = gate_ws.hub.name
+    notebook = gate_ws.app / "n.ipynb"
+    notebook.write_text('{"cells": []}\n', encoding="utf-8")
+    gate_ws.commit_all(gate_ws.app)
+    cases: dict[str, tuple[Path, str, tuple[str, dict[str, object]]]] = {
+        "write": (gate_ws.app / "a.py", "app/a.py", ("Write", {"content": "A = 9\n"})),
+        "edit": (
+            gate_ws.app / "a.py",
+            "app/a.py",
+            ("Edit", {"old_string": "1", "new_string": "9"}),
+        ),
+        "multiedit": (
+            gate_ws.app / "a.py",
+            "app/a.py",
+            ("MultiEdit", {"edits": [{"old_string": "1", "new_string": "9"}]}),
+        ),
+        "notebookedit": (notebook, "app/n.ipynb", ("NotebookEdit", {"new_source": "x = 9"})),
+        "hub_untracked": (
+            gate_ws.hub / "notes.md",
+            f"{hub}/notes.md",
+            ("Write", {"content": "A note.\n"}),
+        ),
+        "app_main": (
+            gate_ws.app / "src" / "new.py",
+            "app/src/new.py",
+            ("Write", {"content": "B = 1\n"}),
+        ),
+    }
+    target, label, (tool, tool_input) = cases[case]
+    key = "notebook_path" if tool == "NotebookEdit" else "file_path"
+
+    def change() -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("changed by the tool\n", encoding="utf-8")
+
+    output = run_agent(gate, "researcher", change, calls=[(tool, {key: str(target), **tool_input})])
+
+    lines = reason_lines(output)
+    assert lines[0].startswith("[hub readonly-gate] researcher ")
+    assert lines == [agent_head("researcher"), f"- {label}", REVERT]
+    assert state_files(gate_ws) == [state_name("a1")]  # kept for the retry
+
+
+def test_lists_bash_evidence_when_no_overlap_block_applies(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """AC-141.9: a change made without a file tool, with nothing else running, is blocked, and
+    the reason lists the agent's Bash commands as evidence, a long one cut to 160 characters."""
+    assert len(LONG_COMMAND) == 300
+    calls = [
+        ("Bash", {"command": "git status", "description": "Show the status"}),
+        ("Bash", {"command": LONG_COMMAND}),
+    ]
+
+    output = run_agent(gate, "researcher", lambda: change_app(gate_ws), calls=calls)
+
+    lines = reason_lines(output)
+    cut = LONG_COMMAND[: COMMAND_CHARS - 1] + "…"
+    assert len(cut) == COMMAND_CHARS
+    assert lines == [
+        agent_head("researcher"),
+        "- app/a.py",
+        REVERT,
+        EVIDENCE_HEAD,
+        "- git status",
+        f"- {cut}",
+    ]
+
+
+def test_lists_last_commands_when_no_overlap_block_ran_many(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """AC-141.9: of many Bash commands the reason lists the last ten, in order, each on one line
+    (a command's line breaks and runs of blanks become one blank); other tools are no evidence."""
+    calls: list[tuple[str, Mapping[str, object]]] = [
+        ("Bash", {"command": f"echo {number}"}) for number in range(1, 12)
+    ]
+    calls.append(("Read", {"file_path": str(gate_ws.app / "a.py")}))
+    calls.append(("Bash", {"command": "cd app &&\n   printf 'A = 2\\n' >\ta.py"}))
+
+    output = run_agent(gate, "researcher", lambda: change_app(gate_ws), calls=calls)
+
+    lines = reason_lines(output)
+    evidence = lines[lines.index(EVIDENCE_HEAD) + 1 :]
+    assert len(evidence) == MAX_COMMANDS
+    assert evidence == [
+        *(f"- echo {number}" for number in range(3, 12)),
+        "- cd app && printf 'A = 2\\n' > a.py",
+    ]
+
+
+def test_uses_fallback_transcript_when_no_overlap_block_path_missing(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """O-8: without ``agent_transcript_path`` the gate reads the agent's transcript at
+    ``<main minus .jsonl>/subagents/agent-<id>.jsonl``; its Bash commands are the evidence."""
+    calls = [("Bash", {"command": "sed -i 's/1/2/' a.py"})]
+    main, agent = transcripts(gate_ws, agent_id="a1", calls=calls)
+    assert agent == main.parent / SESSION / "subagents" / "agent-a1.jsonl"  # control: the fallback
+
+    output = run_agent(
+        gate, "researcher", lambda: change_app(gate_ws), calls=calls, agent_path=False
+    )
+
+    assert reason_lines(output) == [
+        agent_head("researcher"),
+        "- app/a.py",
+        REVERT,
+        EVIDENCE_HEAD,
+        "- sed -i 's/1/2/' a.py",
+    ]
+
+
+def link_base_scout(ws: GateWorkspace) -> None:
+    """The hub's shape: ``.claude/agents/scout.md`` links to the base plugin's declared
+    ``scout.md``, and the project plugin holds an undeclared ``scout`` (found if the link were
+    skipped, so the link must be followed)."""
+    target = declare_agent(ws.hub / BASE_AGENTS, "scout", "false")
+    link = ws.hub / HUB_AGENTS / "scout.md"
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(Path("../..") / BASE_AGENTS / "scout.md")
+    assert link.is_symlink()
+    assert link.resolve() == target.resolve()
+    declare_agent(ws.hub / PROJECT_AGENTS, "scout", None)
+
+
+@pytest.mark.parametrize(
+    "folder",
+    [
+        pytest.param(HUB_AGENTS, id="hub_agents"),
+        pytest.param(PROJECT_AGENTS, id="project_plugin"),
+        pytest.param(BASE_AGENTS, id="base_plugin"),
+        pytest.param(None, id="hub_agents_link"),
+    ],
+)
+def test_blocks_when_resolve_finds_agent_in_each_location(
+    gate: Gate, gate_ws: GateWorkspace, folder: str | None
+) -> None:
+    """AC-141.4: a declared agent defined in any one location (or, as in a hub, linked from
+    ``.claude/agents`` into the base plugin) that changes a watched path through Bash is
+    blocked, with its command as the evidence."""
+    if folder is None:
+        link_base_scout(gate_ws)
+    else:
+        declare_agent(gate_ws.hub / folder, "scout", "false", file="read-only-scout")
+    calls = [("Bash", {"command": "printf 'A = 2\\n' > a.py"})]
+
+    output = run_agent(gate, "scout", lambda: change_app(gate_ws), calls=calls)
+
+    assert reason_lines(output, "scout") == [
+        agent_head("scout"),
+        "- app/a.py",
+        REVERT,
+        EVIDENCE_HEAD,
+        "- printf 'A = 2\\n' > a.py",
+    ]
+
+
+def test_reports_when_agent_transcript_over_cap(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """E-6: an agent transcript over the gate's cap is not read in part: no attribution, so the
+    change is reported, never blocked, with the ``not checked`` note; the state is deleted."""
+    calls = [app_edit(gate_ws)]
+
+    output = run_agent(
+        gate,
+        "researcher",
+        lambda: change_app(gate_ws),
+        calls=calls,
+        constant=("MAX_TRANSCRIPT_BYTES", 64),
+    )
+
+    assert output is not None
+    assert "decision" not in output
+    assert output["systemMessage"].splitlines() == [
+        "[hub readonly-gate] changed while researcher (agent a1) ran, not attributed to it"
+        " (agent transcript unreadable):",
+        "- app/a.py",
+        "[hub readonly-gate] not checked (agent transcript unreadable)",
+    ]
+    assert state_files(gate_ws) == []
+
+
+def test_skips_long_line_when_agent_transcript_line_over_cap(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """A transcript line over the gate's per-line cap, or one that is not JSON, is skipped; the
+    lines around it are still read."""
+    calls = [
+        ("Bash", {"command": "echo before"}),
+        ("Bash", {"command": LONG_COMMAND}),
+        ("Bash", {"command": "echo after"}),
+    ]
+
+    def change() -> None:
+        _, agent = transcripts(gate_ws, agent_id="a1", calls=calls)
+        with agent.open("a", encoding="utf-8") as stream:
+            stream.write('{"type": "tool_use", "name": "Bash", "input": {"command": \n')
+            stream.write(json.dumps({"message": {"content": [{"type": "tool_use"}]}}) + "\n")
+            call = {"type": "tool_use", "name": "Bash", "input": {"command": "echo last"}}
+            stream.write(json.dumps({"type": "assistant", "message": {"content": [call]}}))
+        change_app(gate_ws)
+
+    output = run_agent(gate, "researcher", change, calls=calls, constant=("MAX_LINE_BYTES", 300))
+
+    assert reason_lines(output) == [
+        agent_head("researcher"),
+        "- app/a.py",
+        REVERT,
+        EVIDENCE_HEAD,
+        "- echo before",
+        "- echo after",
+        "- echo last",
+    ]
