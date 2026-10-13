@@ -32,6 +32,7 @@ from agent_hub.core.doctor.lock_rules import NOT_ADOPTED
 from agent_hub.core.events.event import EventSource
 from agent_hub.core.features.feature_status import feature_detail, feature_view
 from agent_hub.core.features.feature_view import FeatureDetail, FeatureView
+from agent_hub.core.features.ticket_view import FeatureTickets
 from agent_hub.core.hub_config.doctor_rules import LOCK_DRIFT_RULE, Severity
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hubs.doctor_cache import DoctorCache
@@ -191,6 +192,10 @@ class HubFilesReadModels:
             if folder.slug == slug:
                 return feature_detail(folder, project=found.name)
         raise missing
+
+    def feature_tickets(self, project: str, slug: str) -> FeatureTickets:
+        """One feature's tickets (AGH-136 C.2 implements it)."""
+        raise NotImplementedError(f"feature_tickets({project!r}, {slug!r})")
 
     def doctor_findings(self, scope: Scope) -> Page[FindingView]:
         """Doctor findings of every scoped hub that names its project, in ``hub doctor`` order.

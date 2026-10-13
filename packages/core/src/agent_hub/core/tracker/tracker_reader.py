@@ -12,6 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # The most ids one ``issue_summaries`` call takes; more raise ``TrackerError(kind="too_many")``.
 MAX_READ_IDS: Final = 200
+# The most relations a summary keeps per direction; beyond, ``relations_truncated`` is True.
+MAX_RELATIONS: Final = 50
 
 # Linear's ``WorkflowState.type`` values (``tracker_client.STATE_TYPES``), as a type.
 type IssueStateType = Literal[
@@ -33,9 +35,9 @@ class IssueSummary(BaseModel):
 
     ``title`` and ``assignee`` (a display name, None when unassigned) are untrusted text.
     ``priority`` is Linear's 0 (none) to 4 (low), 1 being urgent; ``estimate`` is None when not
-    estimated. ``blocks`` names the issues this one blocks and ``blocked_by`` its blockers;
-    ``relations_truncated`` is True when a direction had more relations than one read returns
-    (the first ones are kept).
+    estimated. ``blocks`` names the issues this one blocks and ``blocked_by`` its blockers, in no
+    defined order; ``relations_truncated`` is True when a direction had more than
+    ``MAX_RELATIONS`` (the first ``MAX_RELATIONS`` the tracker returned are kept).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
