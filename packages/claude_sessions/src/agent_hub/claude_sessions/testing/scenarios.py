@@ -2,8 +2,9 @@
 
 A scenario scripts what the stub does: one list of steps per user message (a turn: the one
 ``replies`` holds for the message's exact text, else the next of ``turns``), the session id it
-reports, and its process behaviour (a grandchild to reap, lingering after stdin closes). The shapes mirror what the local Claude Code CLI writes in stream-json mode, observed by
-the Wave 0 spike against a fake Messages API (no model call); every value here is synthetic.
+reports, and its process behaviour (a grandchild to reap, lingering after stdin closes). The
+shapes mirror what the local Claude Code CLI writes in stream-json mode, observed by the Wave 0
+spike against a fake Messages API (no model call); every value here is synthetic.
 
 A test writes the scenario with ``write_scenario``, a ``claude`` shim with ``write_shim`` and points
 the SDK's ``cli_path`` (or ``PATH``) at the shim; ``read_records`` returns what the stub saw.
