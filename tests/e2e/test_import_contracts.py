@@ -15,10 +15,24 @@ import pytest
 
 ROOT = "agent_hub"
 SCRATCH_ROOT = "scratch_hub"
-PACKAGES = ("core", "storage", "collector", "generator", "tracker_linear", "hub_git", "cli", "api")
+PACKAGES = (
+    "core",
+    "storage",
+    "collector",
+    "generator",
+    "tracker_linear",
+    "hub_git",
+    "claude_sessions",
+    "cli",
+    "api",
+)
 COMPOSITION_ROOT = "cli is the composition root"
 API_THROUGH_WEB = "cli reaches api only through web_command"
 CORE_INDEPENDENT = "core imports nothing internal"
+SDK_CONFINED = "only claude_sessions imports the Claude Agent SDK"
+CLI_NO_CLAUDE_SESSIONS = "cli never imports claude_sessions"
+# A third-party module, so the scratch source imports it as is (not under the scratch root).
+SDK = "claude_agent_sdk"
 LINT_IMPORTS = str(Path(sys.executable).parent / "lint-imports")
 
 
@@ -35,7 +49,8 @@ def _write_scratch_root(tmp_path: Path, *, importer: str, imported: str) -> None
         (root / name / "__init__.py").write_text("")
     package, _, module = importer.partition(".")
     source = root / package / (f"{module}.py" if module else "__init__.py")
-    source.write_text(f"import {SCRATCH_ROOT}.{imported}\n")
+    target = imported if imported == SDK else f"{SCRATCH_ROOT}.{imported}"
+    source.write_text(f"import {target}\n")
 
 
 @pytest.fixture
@@ -83,6 +98,11 @@ def lint_imports(
         ("hub_git", "storage"),
         ("hub_git", "api"),
         ("storage", "hub_git"),
+        ("claude_sessions", "cli"),
+        ("claude_sessions", "api"),
+        ("claude_sessions", "storage"),
+        ("storage", "claude_sessions"),
+        ("hub_git", "claude_sessions"),
     ],
 )
 def test_breaks_composition_root_contract_when_adapter_imports_upward_or_sideways(
@@ -95,7 +115,9 @@ def test_breaks_composition_root_contract_when_adapter_imports_upward_or_sideway
     assert f"{SCRATCH_ROOT}.{importer} -> {SCRATCH_ROOT}.{imported}" in result.stdout
 
 
-@pytest.mark.parametrize("imported", ["generator", "tracker_linear", "hub_git", "api"])
+@pytest.mark.parametrize(
+    "imported", ["generator", "tracker_linear", "hub_git", "claude_sessions", "api"]
+)
 def test_breaks_core_contract_when_core_imports_adapter(
     lint_imports: Callable[[str, str], CompletedProcess[str]], imported: str
 ) -> None:
@@ -137,7 +159,8 @@ def test_keeps_every_contract_when_web_command_imports_api(
 
 
 @pytest.mark.parametrize(
-    "imported", ["storage", "collector", "generator", "hub_git", "tracker_linear"]
+    "imported",
+    ["storage", "collector", "generator", "hub_git", "tracker_linear", "claude_sessions"],
 )
 def test_keeps_every_contract_when_api_wires_adapter(
     lint_imports: Callable[[str, str], CompletedProcess[str]], imported: str
@@ -145,3 +168,32 @@ def test_keeps_every_contract_when_api_wires_adapter(
     result = lint_imports("api", imported)
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("importer", ["api", "core", "cli"])
+def test_breaks_sdk_contract_when_api_imports_sdk(
+    lint_imports: Callable[[str, str], CompletedProcess[str]], importer: str
+) -> None:
+    result = lint_imports(importer, SDK)
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert f"{SDK_CONFINED} BROKEN" in result.stdout, result.stdout
+
+
+def test_keeps_sdk_contract_when_claude_sessions_imports_sdk(
+    lint_imports: Callable[[str, str], CompletedProcess[str]],
+) -> None:
+    result = lint_imports("claude_sessions", SDK)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"{SDK_CONFINED} KEPT" in result.stdout, result.stdout
+
+
+@pytest.mark.parametrize("importer", ["cli", "cli.web_command"])
+def test_breaks_cli_contract_when_cli_imports_claude_sessions(
+    lint_imports: Callable[[str, str], CompletedProcess[str]], importer: str
+) -> None:
+    result = lint_imports(importer, "claude_sessions")
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert f"{CLI_NO_CLAUDE_SESSIONS} BROKEN" in result.stdout, result.stdout
