@@ -4,7 +4,8 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../testing/axe";
-import { MAX_MARKDOWN_BYTES, Markdown } from "./Markdown";
+import { aFeatureShapedBody } from "../testing/builders";
+import { MAX_MARKDOWN_BYTES, Markdown, plainHeadingText } from "./Markdown";
 
 const NOTE = { project: "agent-hub", path: "playbooks/cloud-and-local.md" };
 
@@ -142,6 +143,116 @@ describe("Markdown safe", () => {
     // Read as a file: Vitest runs from apps/web.
     const code = readFileSync("src/components/Markdown.tsx", "utf8");
     expect(code).not.toMatch(/dangerouslySetInnerHTML|innerHTML|createElement\(\s*[a-z]/);
+  });
+});
+
+describe("Markdown unsafe skill bodies", () => {
+  it("renders skill bodies' HTML, scripts, remote images and dynamic context as inert text (AC-164.29)", () => {
+    const alert = vi.spyOn(window, "alert").mockImplementation(() => undefined);
+    const open = vi.fn();
+    const { container } = render(
+      <Markdown
+        stepAnchors
+        localLink={(href) => {
+          open(href);
+          return null;
+        }}
+        source={[
+          "<script>alert(1)</script>",
+          "",
+          "<img src=x onerror=alert(2)>",
+          "",
+          "A [x](javascript:alert(3)) link and ![r](https://evil.example/x.png).",
+          "",
+          "Context: !`rm -rf /` then ${CLAUDE_PROJECT_DIR}/scripts.",
+          "",
+          "```!",
+          "git status",
+          "```",
+        ].join("\n")}
+      />,
+    );
+
+    expect(container.querySelector("script, img, iframe, object, embed")).toBeNull();
+    expect(attributesOf(container).filter((name) => name.startsWith("on"))).toEqual([]);
+    expect(container.textContent).toContain("<script>alert(1)</script>");
+    expect(container.textContent).toContain("<img src=x onerror=alert(2)>");
+    expect(screen.getByText("x").closest("a")).toBeNull();
+    expect(screen.getByText("rm -rf /").tagName).toBe("CODE");
+    expect(container.textContent).toContain("${CLAUDE_PROJECT_DIR}/scripts");
+    expect(container.querySelector("pre code")?.textContent).toBe("git status");
+    expect(open).not.toHaveBeenCalled();
+    expect(alert).not.toHaveBeenCalled();
+  });
+});
+
+describe("Markdown step_anchors", () => {
+  it("anchors each top-level numbered item as a step when the body is feature-shaped (P5)", () => {
+    const { container } = render(<Markdown source={aFeatureShapedBody()} stepAnchors />);
+
+    const steps = [...container.querySelectorAll("[id^='step-']")];
+    expect(steps.map((step) => step.id)).toEqual([
+      "step-1",
+      "step-2",
+      "step-3",
+      "step-4",
+      "step-5",
+    ]);
+    expect(steps.every((step) => step.tagName === "LI")).toBe(true);
+    expect(container.querySelector("#step-2")?.textContent).toMatch(
+      /^Gate: user approves the spec/,
+    );
+    expect(container.querySelector("#step-5")?.textContent).toContain("./hub doctor");
+  });
+
+  it("counts steps across lists and skips quoted ones", () => {
+    const { container } = render(
+      <Markdown stepAnchors source={"1. one\n\n## Next\n\n1. two\n2. three\n\n> 1. quoted"} />,
+    );
+
+    expect(
+      [...container.querySelectorAll("[id^='step-']")].map((step) => step.textContent),
+    ).toEqual(["one", "two", "three"]);
+  });
+
+  it("sets no step ids when step anchors are off", () => {
+    const { container } = render(<Markdown source={aFeatureShapedBody()} />);
+
+    expect(container.querySelector("[id^='step-']")).toBeNull();
+  });
+});
+
+describe("Markdown local_link", () => {
+  it("asks the local resolver first for relative links and opens what it resolves", () => {
+    const open = vi.fn();
+    const localLink = vi.fn((href: string) =>
+      href.startsWith("references/") ? { href: "#skill-file-1", open } : null,
+    );
+    render(
+      <Markdown
+        localLink={localLink}
+        source="See [r](references/r.md), [other](../x.md), [web](https://example.com) and [bad](javascript:x)."
+      />,
+    );
+
+    const link = screen.getByRole("link", { name: "r" });
+    expect(link).toHaveAttribute("href", "#skill-file-1");
+    expect(fireEvent.click(link)).toBe(false);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(fireEvent.click(link, { metaKey: true })).toBe(true);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("other").closest("a")).toBeNull();
+    expect(screen.getByText("bad").closest("a")).toBeNull();
+    expect(screen.getByRole("link", { name: /web/ })).toHaveAttribute("target", "_blank");
+    expect(localLink.mock.calls.map(([href]) => href)).toEqual(["references/r.md", "../x.md"]);
+  });
+});
+
+describe("plainHeadingText", () => {
+  it("drops inline marks when given a heading's source text", () => {
+    expect(plainHeadingText("Run `make check` **now** [here](x.md)")).toBe(
+      "Run make check now here",
+    );
   });
 });
 
