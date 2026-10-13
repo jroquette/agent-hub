@@ -181,6 +181,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/features/{project}/{slug}/tickets": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Feature Tickets
+     * @description One feature's tickets with their planning and golden path; Linear when connected, else
+     *     the plan with a notice (always 200 for a known feature).
+     */
+    get: operations["get_feature_tickets_api_v1_features__project___slug__tickets_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/hubs": {
     parameters: {
       query?: never;
@@ -991,6 +1012,37 @@ export interface components {
       /** Transcript Refused */
       transcript_refused: number;
     };
+    /** @enum {string} */
+    EdgeSource: "plan" | "linear" | "both";
+    /**
+     * EvalRecord
+     * @description One evaluation of a delivery: ``evals/<delivery>.md``, or the legacy ``eval.md``.
+     *
+     *     ``path`` is relative to the hub's ``brain/``. ``acs`` is the AC ids evaluated or ``"all"``;
+     *     ``evaluated_at`` is the frontmatter's text (an ISO date or time). ``problem`` says why the
+     *     file could not be read or parsed; its other fields are then empty.
+     */
+    EvalRecord: {
+      /** Acs */
+      acs: string[] | "all";
+      /** Commit */
+      commit: string | null;
+      /** Delivery */
+      delivery: string;
+      /** Evaluated At */
+      evaluated_at: string | null;
+      /** Legacy */
+      legacy: boolean;
+      /** Path */
+      path: string;
+      /** Problem */
+      problem: string | null;
+      /** Prs */
+      prs: string[];
+      /** Tickets */
+      tickets: string[];
+      verdict: components["schemas"]["Verdict"] | null;
+    };
     EventId: string;
     /**
      * EventSource
@@ -1022,8 +1074,23 @@ export interface components {
       | "run.end"
       | "session.summary";
     /**
+     * ExternalBlocker
+     * @description A blocker outside the feature's tickets, with its status when Linear returned it.
+     */
+    ExternalBlocker: {
+      /** Done */
+      done: boolean;
+      /** Id */
+      id: string;
+      state: components["schemas"]["IssueState"] | null;
+      /** Title */
+      title: string | null;
+      /** Url */
+      url: string | null;
+    };
+    /**
      * FeatureDetail
-     * @description A feature with its acceptance criteria rows and its records (D3).
+     * @description A feature with its acceptance criteria rows, its records (D3) and every eval.
      */
     FeatureDetail: {
       /**
@@ -1037,8 +1104,14 @@ export interface components {
        * @default true
        */
       derived: boolean;
+      /**
+       * Evals
+       * @default []
+       */
+      evals: components["schemas"]["EvalRecord"][];
       /** Files */
       files: string[];
+      golden_path: components["schemas"]["GoldenPath"];
       /** Issues */
       issues: string[];
       phase: components["schemas"]["FeaturePhase"];
@@ -1062,6 +1135,7 @@ export interface components {
        * @default []
        */
       sources_missing: components["schemas"]["EventSource"][];
+      tickets_source: components["schemas"]["TicketsSource"];
       verdict: components["schemas"]["Verdict"] | null;
       /** Verdict Line */
       verdict_line: string | null;
@@ -1084,8 +1158,47 @@ export interface components {
     /** @enum {string} */
     FeatureRecordName: "spec" | "research" | "plan" | "eval" | "issues";
     /**
+     * FeatureTickets
+     * @description ``GET /features/{project}/{slug}/tickets``: the tickets, their planning and the golden
+     *     path computed with them.
+     *
+     *     ``source`` is ``linear`` when a snapshot was used (``stale`` when it is the last good one
+     *     after a failure; ``as_of`` is when it was read), else ``plan``, with a ``notice`` and the
+     *     ``tracker_problem`` naming the cause.
+     */
+    FeatureTickets: {
+      as_of: components["schemas"]["ApiTimestamp"] | null;
+      /**
+       * Derived
+       * @default true
+       */
+      derived: boolean;
+      golden_path: components["schemas"]["GoldenPath"];
+      /** Notice */
+      notice: string | null;
+      planning: components["schemas"]["TicketPlan"];
+      /** Project */
+      project: string;
+      /** Slug */
+      slug: string;
+      source: components["schemas"]["TicketsSource"];
+      /**
+       * Sources Missing
+       * @default []
+       */
+      sources_missing: components["schemas"]["EventSource"][];
+      /** Stale */
+      stale: boolean;
+      /** Tickets */
+      tickets: components["schemas"]["TicketRow"][];
+      tracker_problem: components["schemas"]["TrackerProblem"] | null;
+    };
+    /**
      * FeatureView
      * @description A feature as the Features list shows it; ``problem`` when a file of it is malformed.
+     *
+     *     ``phase`` equals ``golden_path.phase``; ``tickets_source`` says whether the ticket counts
+     *     behind the golden path came from Linear or from the plan.
      */
     FeatureView: {
       acs: components["schemas"]["AcCounts"] | null;
@@ -1096,6 +1209,7 @@ export interface components {
       derived: boolean;
       /** Files */
       files: string[];
+      golden_path: components["schemas"]["GoldenPath"];
       /** Issues */
       issues: string[];
       phase: components["schemas"]["FeaturePhase"];
@@ -1114,6 +1228,7 @@ export interface components {
        * @default []
        */
       sources_missing: components["schemas"]["EventSource"][];
+      tickets_source: components["schemas"]["TicketsSource"];
       verdict: components["schemas"]["Verdict"] | null;
       /** Verdict Line */
       verdict_line: string | null;
@@ -1140,6 +1255,30 @@ export interface components {
       severity: components["schemas"]["Severity"];
     };
     FrontmatterValue: string | string[];
+    /**
+     * GoldenPath
+     * @description The feature's steps in their fixed order; ``phase`` is the first step neither done nor
+     *     skipped (``shipped`` when all are).
+     */
+    GoldenPath: {
+      phase: components["schemas"]["FeaturePhase"];
+      /** Steps */
+      steps: components["schemas"]["GoldenStep"][];
+    };
+    /**
+     * GoldenStep
+     * @description One step of the golden path: its state, a short ``meta`` text and the ``reason`` it is
+     *     not done (naming the failing gate), and its ``progress`` when it counts something.
+     */
+    GoldenStep: {
+      /** Meta */
+      meta: string | null;
+      name: components["schemas"]["FeaturePhase"];
+      progress: components["schemas"]["StepProgress"] | null;
+      /** Reason */
+      reason: string | null;
+      state: components["schemas"]["StepState"];
+    };
     /**
      * HookAccepted
      * @description ``POST /events/hooks``: how many events the envelope added and how many were known.
@@ -1268,6 +1407,18 @@ export interface components {
       /** Url */
       url?: string | null;
     };
+    /**
+     * IssueState
+     * @description An issue's workflow state: its ``name`` in the team and Linear's state ``type``.
+     */
+    IssueState: {
+      /** Name */
+      name: string;
+      type: components["schemas"]["IssueStateType"];
+    };
+    /** @enum {string} */
+    IssueStateType:
+      "triage" | "backlog" | "unstarted" | "started" | "completed" | "canceled" | "duplicate";
     JsonValue: unknown;
     /**
      * Learning
@@ -1896,6 +2047,8 @@ export interface components {
       /** Url */
       url: string;
     };
+    /** @enum {string} */
+    Readiness: "can_start" | "waiting" | "done" | "canceled" | "in_cycle" | "unknown";
     /**
      * RejectLearningBody
      * @description ``POST /learnings/{learning_id}/reject``: why, 1 to 300 characters once stripped.
@@ -2330,6 +2483,18 @@ export interface components {
     Stage: "PICKED" | "WORKTREE" | "IMPLEMENTING" | "VERIFYING" | "PR_OPEN" | "REPORTED" | "FAILED";
     /** @enum {string} */
     StepKey: "pick" | "worktree" | "implement" | "verify" | "pr";
+    /**
+     * StepProgress
+     * @description How much of a step is done: ``done`` of ``total`` (tickets, ACs, reviews).
+     */
+    StepProgress: {
+      /** Done */
+      done: number;
+      /** Total */
+      total: number;
+    };
+    /** @enum {string} */
+    StepState: "done" | "partial" | "current" | "pending" | "skipped" | "unknown" | "blocked";
     /** @enum {string} */
     StepStatus: "running" | "ok" | "failed";
     /**
@@ -2341,6 +2506,88 @@ export interface components {
       /** Text */
       text: string;
     };
+    /**
+     * TicketEdge
+     * @description A "blocked by" edge to the ticket ``ref`` (a row's ``ref`` or an external issue id).
+     */
+    TicketEdge: {
+      /** Ref */
+      ref: string;
+      source: components["schemas"]["EdgeSource"];
+    };
+    /**
+     * TicketPlan
+     * @description The planning of the feature's tickets, every ticket named by its row's ``ref``.
+     *
+     *     ``layers`` are the parallel groups (Kahn's layers over tickets not done or canceled);
+     *     ``can_start`` the first layer's tickets that wait on nothing; ``order`` the recommended
+     *     order; ``waiting`` the tickets with a blocker not done; ``cycles`` each dependency cycle
+     *     (left out of the layers); ``critical_path`` the longest chain of tickets not done.
+     */
+    TicketPlan: {
+      /** Can Start */
+      can_start: string[];
+      /** Critical Path */
+      critical_path: string[];
+      /** Cycles */
+      cycles: string[][];
+      /** External Blockers */
+      external_blockers: components["schemas"]["ExternalBlocker"][];
+      /** Layers */
+      layers: string[][];
+      /** Order */
+      order: string[];
+      /** Waiting */
+      waiting: string[];
+      /** Warnings */
+      warnings: string[];
+    };
+    /**
+     * TicketRow
+     * @description One ticket of the feature.
+     *
+     *     ``key`` is the plan's draft key (None for a ticket only Linear or ``linear`` lists), ``id``
+     *     the tracker identifier (None until created). ``title``, ``state``, ``assignee`` and ``url``
+     *     come from Linear when read, else ``title`` from the plan and the others None. ``acs`` are the
+     *     AC ids whose ``ticket`` names it; ``blocks`` the refs it blocks; ``waiting_on`` the refs of
+     *     its blockers not done yet. ``reviewed`` is None when unknown (no snapshot and no record).
+     */
+    TicketRow: {
+      /** Acs */
+      acs: string[];
+      /** Assignee */
+      assignee: string | null;
+      /** Blocked By */
+      blocked_by: components["schemas"]["TicketEdge"][];
+      /** Blocks */
+      blocks: string[];
+      /** Estimate */
+      estimate: number | null;
+      /** Id */
+      id: string | null;
+      /** Key */
+      key: string | null;
+      /** Order */
+      order: number | null;
+      /** Priority */
+      priority: number | null;
+      readiness: components["schemas"]["Readiness"];
+      /** Ref */
+      ref: string;
+      /** Repo */
+      repo: string | null;
+      /** Reviewed */
+      reviewed: boolean | null;
+      state: components["schemas"]["IssueState"] | null;
+      /** Title */
+      title: string | null;
+      /** Url */
+      url: string | null;
+      /** Waiting On */
+      waiting_on: string[];
+    };
+    /** @enum {string} */
+    TicketsSource: "linear" | "plan";
     /** @enum {string} */
     TileGroup: "waiting" | "live" | "idle" | "ended_recently";
     /**
@@ -2405,6 +2652,22 @@ export interface components {
       input: number;
       /** Output */
       output: number;
+    };
+    /**
+     * TrackerProblem
+     * @description Why Linear was not read, as RFC 9457 members: ``type`` is
+     *     ``urn:agent-hub:problem:tracker-<kind>``, ``status`` Linear's HTTP status (or 503 when it did
+     *     not answer, 504 on a timeout).
+     */
+    TrackerProblem: {
+      /** Detail */
+      detail: string;
+      /** Status */
+      status: number;
+      /** Title */
+      title: string;
+      /** Type */
+      type: string;
     };
     /**
      * TrackerView
@@ -2860,6 +3123,47 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["FeatureDetail"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_feature_tickets_api_v1_features__project___slug__tickets_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        slug: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FeatureTickets"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

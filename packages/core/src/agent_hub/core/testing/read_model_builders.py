@@ -5,7 +5,19 @@ from decimal import Decimal
 
 from agent_hub.core.approvals.approval import Approval, ApprovalKind
 from agent_hub.core.brain.brain_note import BrainEntry, BrainNote, BrainTree
-from agent_hub.core.features.feature_view import AcCounts, FeatureView
+from agent_hub.core.features.feature_view import (
+    AcCounts,
+    EvalRecord,
+    FeatureView,
+    GoldenPath,
+    GoldenStep,
+)
+from agent_hub.core.features.ticket_view import (
+    FeatureTickets,
+    TicketEdge,
+    TicketPlan,
+    TicketRow,
+)
 from agent_hub.core.hub_config.doctor_rules import Severity
 from agent_hub.core.hubs.finding_view import FindingView
 from agent_hub.core.hubs.registered_hub import HubView
@@ -29,6 +41,7 @@ from agent_hub.core.sessions.session import (
     SummaryLine,
     TokenUsage,
 )
+from agent_hub.core.tracker.tracker_reader import IssueState, IssueSummary, TicketSnapshot
 
 STARTED = datetime(2026, 10, 9, 14, 0, 0, 123000, tzinfo=UTC)
 LAST_ACTIVITY = datetime(2026, 10, 9, 14, 5, 41, 882000, tzinfo=UTC)
@@ -174,9 +187,46 @@ def a_feature_view(**overrides: object) -> FeatureView:
         "verdict": None,
         "verdict_line": None,
         "repos": ("demo-api",),
+        "golden_path": a_golden_path(),
+        "tickets_source": "plan",
         "sources_missing": ("github",),
     }
     return FeatureView.model_validate(fields | overrides)
+
+
+def a_golden_path(**overrides: object) -> GoldenPath:
+    """The golden path of a synthetic feature in implementation: 1 of 3 tickets, 2 of 5 ACs."""
+    states = (
+        ("spec", "done", None, None),
+        ("research", "skipped", None, None),
+        ("plan", "done", None, None),
+        ("tickets", "done", "3 of 3 created", None),
+        ("implement", "current", "1/3 tickets · 2/5 ACs", None),
+        ("review", "pending", "0/3 reviewed", "Implement is not done"),
+        ("evaluate", "pending", None, "Implement is not done"),
+        ("shipped", "pending", None, "Implement is not done"),
+    )
+    progress = {
+        "tickets": {"done": 3, "total": 3},
+        "implement": {"done": 1, "total": 3},
+        "review": {"done": 0, "total": 3},
+    }
+    fields: dict[str, object] = {
+        "steps": tuple(
+            GoldenStep.model_validate(
+                {
+                    "name": name,
+                    "state": state,
+                    "meta": meta,
+                    "reason": reason,
+                    "progress": progress.get(name),
+                }
+            )
+            for name, state, meta, reason in states
+        ),
+        "phase": "implement",
+    }
+    return GoldenPath.model_validate(fields | overrides)
 
 
 def a_hub_view(**overrides: object) -> HubView:
@@ -291,3 +341,144 @@ def a_learning_detail(**overrides: object) -> LearningDetail:
         "target_choices": ("learnings/", "playbooks/"),
     }
     return LearningDetail.model_validate(fields | overrides)
+
+
+def an_issue_summary(**overrides: object) -> IssueSummary:
+    """Linear's summary of synthetic issue ``DEM-8``: in progress, blocked by ``DEM-7``."""
+    fields: dict[str, object] = {
+        "id": "DEM-8",
+        "title": "Read the ticket summaries",
+        "state": IssueState(name="In Progress", type="started"),
+        "assignee": "Ada Example",
+        "url": "https://linear.app/demo/issue/DEM-8",
+        "priority": 2,
+        "estimate": 3.0,
+        "blocks": ("DEM-9",),
+        "blocked_by": ("DEM-7",),
+    }
+    return IssueSummary.model_validate(fields | overrides)
+
+
+def a_ticket_snapshot(**overrides: object) -> TicketSnapshot:
+    """A read of ``DEM-8``, with ``DEM-404`` unknown and the done blocker ``DEM-7`` external."""
+    fields: dict[str, object] = {
+        "summaries": (an_issue_summary(),),
+        "missing": ("DEM-404",),
+        "external": (
+            an_issue_summary(
+                id="DEM-7",
+                title="Add the collector",
+                state=IssueState(name="Done", type="completed"),
+                url="https://linear.app/demo/issue/DEM-7",
+                blocks=(),
+                blocked_by=(),
+            ),
+        ),
+    }
+    return TicketSnapshot.model_validate(fields | overrides)
+
+
+def a_ticket_row(**overrides: object) -> TicketRow:
+    """Ticket ``T2`` (``DEM-8``) of the synthetic feature: in progress, its blocker done."""
+    fields: dict[str, object] = {
+        "ref": "DEM-8",
+        "key": "T2",
+        "id": "DEM-8",
+        "title": "Read the ticket summaries",
+        "state": IssueState(name="In Progress", type="started"),
+        "assignee": "Ada Example",
+        "url": "https://linear.app/demo/issue/DEM-8",
+        "priority": 2,
+        "estimate": 3.0,
+        "repo": "demo-api",
+        "order": 2,
+        "acs": ("AC-7.2", "AC-7.3"),
+        "blocked_by": (TicketEdge(ref="DEM-7", source="both"),),
+        "blocks": ("DEM-9",),
+        "readiness": "can_start",
+        "waiting_on": (),
+        "reviewed": False,
+    }
+    return TicketRow.model_validate(fields | overrides)
+
+
+def a_ticket_plan(**overrides: object) -> TicketPlan:
+    """The planning of the synthetic feature's three tickets (``DEM-7`` done)."""
+    fields: dict[str, object] = {
+        "layers": (("DEM-8",), ("DEM-9",)),
+        "can_start": ("DEM-8",),
+        "order": ("DEM-8", "DEM-9"),
+        "waiting": ("DEM-9",),
+        "cycles": (),
+        "external_blockers": (),
+        "critical_path": ("DEM-8", "DEM-9"),
+        "warnings": (),
+    }
+    return TicketPlan.model_validate(fields | overrides)
+
+
+def a_feature_tickets(**overrides: object) -> FeatureTickets:
+    """The tickets of the synthetic feature as Linear answered them: one done, one can start,
+    one waiting."""
+    done = a_ticket_row(
+        ref="DEM-7",
+        key="T1",
+        id="DEM-7",
+        title="Add the collector",
+        state=IssueState(name="Done", type="completed"),
+        url="https://linear.app/demo/issue/DEM-7",
+        order=1,
+        acs=("AC-7.1",),
+        blocked_by=(),
+        blocks=("DEM-8",),
+        readiness="done",
+        reviewed=True,
+    )
+    waiting = a_ticket_row(
+        ref="DEM-9",
+        key="T3",
+        id="DEM-9",
+        title="Show the planning view",
+        state=IssueState(name="Todo", type="unstarted"),
+        assignee=None,
+        url="https://linear.app/demo/issue/DEM-9",
+        priority=0,
+        estimate=None,
+        order=3,
+        acs=("AC-7.4", "AC-7.5"),
+        blocked_by=(TicketEdge(ref="DEM-8", source="plan"),),
+        blocks=(),
+        readiness="waiting",
+        waiting_on=("DEM-8",),
+    )
+    fields: dict[str, object] = {
+        "project": "demo",
+        "slug": "demo-feature",
+        "source": "linear",
+        "stale": False,
+        "as_of": LAST_ACTIVITY,
+        "notice": None,
+        "tracker_problem": None,
+        "tickets": (done, a_ticket_row(), waiting),
+        "planning": a_ticket_plan(),
+        "golden_path": a_golden_path(),
+        "sources_missing": ("github",),
+    }
+    return FeatureTickets.model_validate(fields | overrides)
+
+
+def an_eval_record(**overrides: object) -> EvalRecord:
+    """The SHIP eval of the synthetic feature's first delivery, ``evals/dem-7.md``."""
+    fields: dict[str, object] = {
+        "delivery": "dem-7",
+        "path": "features/demo-feature/evals/dem-7.md",
+        "verdict": "SHIP",
+        "tickets": ("DEM-7",),
+        "acs": ("AC-7.1",),
+        "prs": ("demo-api#12",),
+        "commit": "0a1b2c3",
+        "evaluated_at": "2026-10-09",
+        "legacy": False,
+        "problem": None,
+    }
+    return EvalRecord.model_validate(fields | overrides)

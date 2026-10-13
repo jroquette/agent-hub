@@ -1139,6 +1139,44 @@ def test_creates_onboard_skill_when_older_hub_synced(
     assert (again.exit_code, again.stdout, again.stderr) == (0, "up to date\n", "")
 
 
+# AGH-136 (AC-136.27): the feature agents and /feature a hub gets with the ticket plan and evals.
+FEATURE_AGENT_FILES = (
+    "plugin/hub-workflow/agents/evaluator.md",
+    "plugin/hub-workflow/agents/planner.md",
+    "plugin/hub-workflow/agents/requirements-analyst.md",
+    "plugin/hub-workflow/skills/feature/SKILL.md",
+)
+OLDER_FEATURE_AGENT = b"# rendered by an older release: write brain/features/<slug>/eval.md\n"
+
+
+def test_rewrites_feature_agents_when_hub_synced_from_older_templates(
+    demo_hub: Path, demo_hub_template: Path, run_sync: SyncRunner
+) -> None:
+    lock: dict[str, Any] = json.loads((demo_hub / "hub.lock").read_bytes())
+    for path in FEATURE_AGENT_FILES:
+        (demo_hub / path).write_bytes(OLDER_FEATURE_AGENT)
+        lock["files"][path]["sha256"] = hashlib.sha256(OLDER_FEATURE_AGENT).hexdigest()
+    (demo_hub / "hub.lock").write_bytes(dump_json(lock))
+
+    result = run_sync(demo_hub)
+
+    updated = [f"updated {path}" for path in FEATURE_AGENT_FILES]
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        0,
+        "".join(f"{line}\n" for line in [*updated, "updated hub.lock"]),
+        "",
+    )
+    for path in FEATURE_AGENT_FILES:
+        assert (demo_hub / path).read_bytes() == (demo_hub_template / path).read_bytes(), path
+    evaluator = (demo_hub / FEATURE_AGENT_FILES[0]).read_text(encoding="utf-8")
+    assert "a new `brain/features/<slug>/evals/<delivery>.md`" in evaluator
+    planner = (demo_hub / FEATURE_AGENT_FILES[1]).read_text(encoding="utf-8")
+    assert '"blocked_by": ["T1"]' in planner
+    assert (demo_hub / "hub.lock").read_bytes() == (demo_hub_template / "hub.lock").read_bytes()
+    again = run_sync(demo_hub)
+    assert (again.exit_code, again.stdout, again.stderr) == (0, "up to date\n", "")
+
+
 SETTINGS = ".claude/settings.json"
 # AGH-114: the allows a release before it lacked, so a headless `/onboard propose` was denied.
 ONBOARD_PROPOSE_ALLOWS = [

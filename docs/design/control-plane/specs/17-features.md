@@ -1,8 +1,39 @@
 # Features
 
-**Phase:** P2 (read-only) · **Routes:** `/features`, `/features/{project}/{slug}` (params `doc=spec|plan|research|eval|issues`, `ac=AC-48.21`, `phase=`) · **Answers:** "Where is each feature on the golden path, and is it really done?"
+**Phase:** P2 (read-only) · **Routes:** `/features`, `/features/{project}/{slug}` (params `doc=spec|plan|research|eval|issues` (as built: `tickets`, see Departures), `ac=AC-48.21`, `phase=`) · **Answers:** "Where is each feature on the golden path, and is it really done?"
 
 This section holds two screens: the **Features list** and **Feature detail**. A feature is a folder `brain/features/<slug>/` in the hub with `spec.md`, `research.md`, `plan.md`, `features.json`, `issues.md` and `eval.md`. The app only reads these files; editing a feature record stays a human act in a hub PR (principle 2).
+
+## Departures (AGH-136, ticket planning)
+
+Built with the changes below; where this file says otherwise, this list wins (records:
+[feature-records.md](../../feature-records.md); route: [API.md](../../../API.md) "Feature tickets";
+[ADR 0025](../../../adr/0025-reading-the-tracker-from-the-app.md)). For Linear, it replaces the control-plane
+README's "Sources not connected": Linear is read for a feature's tickets; GitHub stays not connected.
+
+- **Records.** A feature folder adds `evals/<delivery>.md` (one per evaluation, never overwritten; `eval.md` is read
+  as the delivery `legacy`) and `reviews/<ticket>.md`. Tickets come from `features.json` (`tickets` and `linear`),
+  not from `issues.md`, which only marks the plan as written.
+- **Tabs.** Spec, Research, Plan, Eval, Criteria and Tickets (`?doc=spec|research|plan|eval|acs|tickets`; the old
+  `?doc=issues` opens Tickets). Eval lists every delivery with its verdict, tickets, ACs, PRs and commit. Tickets
+  loads `GET /features/{project}/{slug}/tickets` only while it is open.
+- **Tickets tab.** Columns Ticket, Title, Status (badge with text, never color alone), Assignee, Blocked by (links,
+  each edge tagged plan, Linear or both), ACs (links to Criteria `?ac=`) and Readiness ("Can start now", "Waiting on
+  …", "Done", "Canceled", "Waiting: cycle", "Unknown"). The assignee is shown: the owner asked for it (D1), a departure from
+  "No assignee column" below. No linked run or PR column (GitHub and runs are not joined). A Linear link opens in a
+  new tab, only for a `https://linear.app/` url. Below the table, the planning view: Can start now, Parallel groups
+  (numbered layers), Recommended order, Critical path, and a banner for cycles and blockers outside the feature.
+- **Notice.** With the plan as source, or a stale Linear snapshot, a notice says why (e.g. "From the plan
+  (features.json); Linear is not connected for hub web, so status may be stale. Set LINEAR_API_KEY where hub web
+  runs.") with its `as_of` and a Refresh button, which refetches the route (the 60 s cache still applies). A failed
+  read shows its `tracker_problem` title.
+- **Golden path stepper.** The steps come from the server (`golden_path`), not from the furthest file: done only when
+  the whole feature satisfies the step (Tickets: every ticket created; Implement: every ticket Done and every AC
+  passing; Review: every ticket Done in Linear or with an approved review record; Evaluate: every AC's latest eval a
+  SHIP; Shipped: every ticket Done). States add `partial` ("partial: covers 3 of 36 ACs") and `unknown` ("Linear not
+  connected"), each shown with text and its reason; `blocked` names the earlier step that does not hold, not a failed
+  run. No step names an approver, a date range, sessions or a PR; "GitHub not connected" no longer appears. The
+  Features list draws the same steps in its phase bar, and its `phase` equals the detail's.
 
 ---
 

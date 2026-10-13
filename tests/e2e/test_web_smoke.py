@@ -18,6 +18,14 @@ a Skill call, starts an ``Explore`` subagent through an Agent call, recovers fro
 the owner. The pages then check Live (red only for needs-you), Session detail (actors, verbs,
 "What went wrong"), Knowledge (read a proposal, accept it: a pull request link), Feature detail
 (Spec and Plan tabs) and Brain (tree, note, an in-app link). Everything is synthetic.
+
+AGH-136 gives the feature a ticket plan (``features.json`` ``tickets``, T2 blocked by T1, which is
+DEM-7), an eval per delivery (``evals/dem-7.md``) and a review record (``reviews/DEM-7.md``).
+``hub web`` runs without ``LINEAR_API_KEY`` (E4: the Linear read is proven in-process by
+``packages/api/tests/integration/test_tickets_route.py``), so the Tickets tab shows the plan's
+tickets, the planning view and the "Linear is not connected" notice, with the content security
+policy unchanged and no request to another host. That check runs in its own test
+(``-k tickets``); the page smoke runs every other test of ``smoke.spec.ts``.
 """
 
 import json
@@ -61,6 +69,7 @@ HUB_FLAGS = (
     "--author-email",
     "jane@example.com",
 )
+FEATURE = "export-button"
 FEATURE_SPEC = "---\ntype: spec\nprocess_size: bounded\nrepos: [demo-api]\nlinear: [DEM-7]\n---\n"
 # The demo hub's GitHub remote, mapped to a local bare repository by the git config the server
 # runs with (``url.<bare>.insteadOf``), so nothing reaches the network.
@@ -80,6 +89,33 @@ BRAIN_INDEX = (
     "[export button spec](features/export-button/spec.md).\n"
 )
 BRAIN_NOW = "# Now\n\nShip the CSV export button (DEM-7).\n"
+# The ticket plan: T1 is DEM-7 in Linear; T2 is not created yet and waits on T1.
+FEATURE_TICKETS = (
+    {"key": "T1", "id": "DEM-7", "title": "Add the export route", "repo": "demo-api", "order": 1},
+    {"key": "T2", "title": "Add the button", "repo": "demo-api", "blocked_by": ["T1"], "order": 2},
+)
+AC_TICKETS = {1: "T2", 2: "T2", 3: "T1"}
+FEATURE_EVAL = (
+    "---\ntype: eval\ndelivery: dem-7\nverdict: SHIP-WITH-OWNER-STEPS\ntickets: [DEM-7]\n"
+    "acs: [AC-7.3]\nprs: [demo-api#3]\ncommit: 9c1e2d4\nevaluated_at: 2026-10-10T09:00:00Z\n---\n"
+    "# Eval DEM-7\n\nOwner step: time the export on the owner's machine.\n"
+)
+FEATURE_REVIEW = (
+    "---\ntype: review\nticket: DEM-7\noutcome: approved\npr: demo-api#3\n"
+    "reviewed_at: 2026-10-10\n---\n# Review DEM-7\n\nBoth reviewers passed.\n"
+)
+# What ``hub web`` answers for the plan's tickets without a key (E4, AC-136.7).
+NOT_CONNECTED_TYPE = "urn:agent-hub:problem:tracker-not_connected"
+NOT_CONNECTED_TEXT = "Linear is not connected for hub web"
+# The policy as v0.9.0 serves it (packages/api/tests/integration/test_local_security.py):
+# reading Linear happens on the server, so the page still connects to its own origin only.
+EXPECTED_CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; "
+    "img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; "
+    "form-action 'self'; frame-ancestors 'none'"
+)
+# The Playwright test of smoke.spec.ts that opens the Tickets tab.
+TICKETS_SPEC = "Tickets tab"
 # A fake ``gh``: ``auth token`` succeeds; ``pr create`` checks the head branch is on the bare
 # ``origin`` and prints the next pull request url of ``--repo``. Synthetic: no account, no token.
 FAKE_GH = """\
@@ -123,6 +159,9 @@ INERT_BUNDLE_URLS = frozenset(
         "http://www.w3.org/XML/1998/namespace",
         "http://localhost",
         "https://same-origin.invalid/app",
+        # AGH-136: the origin ``linearHref`` checks a Linear issue link against before rendering
+        # it as a link the owner opens; the page never requests it (CSP connect-src 'self').
+        "https://linear.app",
     }
 )
 _ABSOLUTE_URL = re.compile(r"https?://[A-Za-z0-9.\-\[\]:]+(?:/[A-Za-z0-9._~/\-]*)?")
@@ -265,8 +304,9 @@ def hub_origin(tmp_path: Path) -> HubOrigin:
 
 @pytest.fixture
 def web_extra_env(hub_origin: HubOrigin) -> Mapping[str, str]:
-    """``hub web`` runs git and gh against the bare origin and the fake gh."""
-    return hub_origin.env
+    """``hub web`` runs git and gh against the bare origin and the fake gh, and with an empty
+    ``LINEAR_API_KEY`` (E4), so a key in the caller's environment never reaches Linear."""
+    return {**hub_origin.env, "LINEAR_API_KEY": ""}
 
 
 def _make_hub(installed_hub: InstalledHub, root: Path, *, project: str, repo: str) -> Path:
@@ -291,8 +331,11 @@ def _make_hub(installed_hub: InstalledHub, root: Path, *, project: str, repo: st
 
 
 def _write_feature(hub: Path) -> None:
-    folder = hub / "brain" / "features" / "export-button"
-    folder.mkdir(parents=True)
+    """The feature folder: spec, plan, a scoped legacy ``eval.md``, ``features.json`` with its
+    ticket plan, an eval per delivery and a review record."""
+    folder = hub / "brain" / "features" / FEATURE
+    (folder / "evals").mkdir(parents=True)
+    (folder / "reviews").mkdir()
     acs = [
         {
             "id": f"AC-7.{index}",
@@ -301,10 +344,16 @@ def _write_feature(hub: Path) -> None:
             "verification": "make check",
             "passes": index < 3,
             "evidence": "test run" if index < 3 else None,
+            "ticket": AC_TICKETS[index],
         }
         for index in (1, 2, 3)
     ]
-    record = {"feature": "export-button", "linear": ["DEM-7"], "acs": acs}
+    record = {
+        "feature": FEATURE,
+        "linear": ["DEM-7"],
+        "tickets": list(FEATURE_TICKETS),
+        "acs": acs,
+    }
     (folder / "features.json").write_text(json.dumps(record), encoding="utf-8")
     criteria = "".join(f"- AC-7.{index} Criterion {index}\n" for index in (1, 2, 3))
     (folder / "spec.md").write_text(
@@ -314,8 +363,12 @@ def _write_feature(hub: Path) -> None:
         "# Plan\n\n1. Add the export route.\n2. Add the button.\n", encoding="utf-8"
     )
     (folder / "eval.md").write_text(
-        "# Eval\n\n**Verdict: SHIP**\n\nAll criteria verified.\n", encoding="utf-8"
+        "---\ntype: eval\nacs: [AC-7.1, AC-7.2]\n---\n"
+        "# Eval\n\n**Verdict: SHIP**\n\nAll criteria verified.\n",
+        encoding="utf-8",
     )
+    (folder / "evals" / "dem-7.md").write_text(FEATURE_EVAL, encoding="utf-8")
+    (folder / "reviews" / "DEM-7.md").write_text(FEATURE_REVIEW, encoding="utf-8")
 
 
 def _write_brain(hub: Path) -> None:
@@ -537,14 +590,18 @@ def ingest_scenario(
     )
 
 
-def test_loads_pages_without_console_error_or_axe_violation_when_scenario_ingested(
-    hub_web: RunningWeb,
-    *,
+def _playwright(
+    web: RunningWeb,
     installed_hub: InstalledHub,
-    hub_origin: HubOrigin,
-    tmp_path: Path,
+    root: Path,
+    *,
+    origin: HubOrigin,
     run: Callable[..., subprocess.CompletedProcess[str]],
-) -> None:
+    selection: tuple[str, str],
+) -> subprocess.CompletedProcess[str]:
+    """Ingests the scenario into ``web``, then runs the smoke.spec.ts tests ``selection`` picks
+    (``("--grep", text)`` or ``("--grep-invert", text)``); skipped without npm or Chromium,
+    failed under CI."""
     npm = shutil.which("npm")
     executable = chromium_executable()
     if npm is None or executable is None:
@@ -552,18 +609,17 @@ def test_loads_pages_without_console_error_or_axe_violation_when_scenario_ingest
         if os.environ.get("CI"):
             pytest.fail(reason)
         pytest.skip(reason)
-    scenario = ingest_scenario(hub_web, installed_hub, tmp_path, origin=hub_origin)
+    scenario = ingest_scenario(web, installed_hub, root, origin=origin)
     env = {
         **os.environ,
-        "AGENT_HUB_WEB_URL": hub_web.url,
+        "AGENT_HUB_WEB_URL": web.url,
         "AGENT_HUB_CHROMIUM": executable,
         "SMOKE_LIVE_SESSION": scenario.live_session,
         "SMOKE_STUCK_SESSION": scenario.stuck_session,
         "SMOKE_LONG_SESSION": scenario.long_session,
         "SMOKE_RUN": scenario.run_id,
     }
-
-    result = run(
+    return run(
         [
             npm,
             "--prefix",
@@ -574,13 +630,68 @@ def test_loads_pages_without_console_error_or_axe_violation_when_scenario_ingest
             "test",
             "--config",
             str(WEB_DIR / "playwright.config.ts"),
+            *selection,
         ],
         env=env,
         cwd=WEB_DIR,
         timeout=PLAYWRIGHT_SECONDS,
     )
 
+
+def test_loads_pages_without_console_error_or_axe_violation_when_scenario_ingested(
+    hub_web: RunningWeb,
+    *,
+    installed_hub: InstalledHub,
+    hub_origin: HubOrigin,
+    tmp_path: Path,
+    run: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    result = _playwright(
+        hub_web,
+        installed_hub,
+        tmp_path,
+        origin=hub_origin,
+        run=run,
+        selection=("--grep-invert", TICKETS_SPEC),
+    )
+
     assert result.returncode == 0, result.stdout + result.stderr
     # Nine pages, the long-session timing and six control-plane clarity checks, none skipped.
     assert re.search(r"\b16 passed\b", result.stdout), result.stdout
     assert "skipped" not in result.stdout, result.stdout
+
+
+def test_shows_plan_notice_when_feature_tickets_opened(
+    hub_web: RunningWeb,
+    *,
+    installed_hub: InstalledHub,
+    hub_origin: HubOrigin,
+    tmp_path: Path,
+    run: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    """AC-136.35 without a key (E4): Feature detail's Tickets tab shows the plan's tickets, the
+    planning view and the not-connected notice; the CSP is unchanged, the browser requests no
+    other host and logs no console error (smoke.spec.ts's ``watch``)."""
+    result = _playwright(
+        hub_web,
+        installed_hub,
+        tmp_path,
+        origin=hub_origin,
+        run=run,
+        selection=("--grep", TICKETS_SPEC),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert re.search(r"\b1 passed\b", result.stdout), result.stdout
+    assert "skipped" not in result.stdout, result.stdout
+    with httpx.Client(base_url=hub_web.url, timeout=REQUEST_SECONDS) as client:
+        page = client.get(f"/features/demo/{FEATURE}")
+        tickets = client.get(f"/api/v1/features/demo/{FEATURE}/tickets")
+    assert page.headers["content-security-policy"] == EXPECTED_CSP
+    assert tickets.headers["content-security-policy"] == EXPECTED_CSP
+    assert tickets.status_code == 200, tickets.text
+    body = tickets.json()
+    assert (body["source"], body["tracker_problem"]["type"]) == ("plan", NOT_CONNECTED_TYPE)
+    assert NOT_CONNECTED_TEXT in body["notice"]
+    assert [row["ref"] for row in body["tickets"]] == ["DEM-7", "T2"]
+    assert body["planning"]["layers"] == [["DEM-7"], ["T2"]]

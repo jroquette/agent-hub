@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
@@ -12,6 +13,8 @@ from agent_hub.core.brain.brain_path import MAX_NOTE_BYTES, BrainPathError
 from agent_hub.core.doctor.snapshot import LockAbsent
 from agent_hub.core.events.event import EventSource
 from agent_hub.core.features.feature_status import FeatureFolder
+from agent_hub.core.features.feature_tickets import NOT_CONNECTED_NOTICE
+from agent_hub.core.features.ticket_snapshots import SnapshotRequest, TicketSnapshots
 from agent_hub.core.hub_config.doctor_rules import LOCK_DRIFT_RULE, Severity
 from agent_hub.core.hub_files.hub_lock import HubLock, ManagedFileEntry
 from agent_hub.core.hubs.hub_read_models import HubFilesReadModels
@@ -31,6 +34,12 @@ from agent_hub.core.testing.hub_fakes import (
     FakeHubFileReader,
     InMemoryHubRegistry,
     hub_json_bytes,
+)
+from agent_hub.core.testing.tracker_reader_fakes import (
+    CountingTrackerReader,
+    InMemoryTicketSnapshots,
+    InMemoryTrackerReader,
+    a_seeded_issue_board,
 )
 
 RUNNING = "4.5.6"
@@ -98,7 +107,7 @@ def a_demo_hub() -> FakeHub:
 
 
 def read_models(
-    hubs: dict[str, FakeHub], *paths: str
+    hubs: dict[str, FakeHub], *paths: str, ticket_snapshots: TicketSnapshots | None = None
 ) -> tuple[HubFilesReadModels, FakeHubFileReader, FakeActivity]:
     registry = InMemoryHubRegistry(clock=lambda: NOW)
     for path in paths:
@@ -112,6 +121,7 @@ def read_models(
         running_version=RUNNING,
         settings=SETTINGS,
         clock=lambda: NOW,
+        ticket_snapshots=ticket_snapshots,
     )
     return models, reader, activity
 
@@ -434,3 +444,106 @@ def test_lists_records_when_feature_detail_read() -> None:
         ("eval", False),
         ("issues", False),
     ]
+
+
+TICKET_RECORD = (
+    b'{"tickets": [{"key": "T1", "id": "DEM-1", "order": 1},'
+    b' {"key": "T2", "id": "DEM-2", "blocked_by": ["T1"], "order": 2}],'
+    b' "acs": [{"id": "AC-7.1", "description": "d", "passes": true, "ticket": "T1"}]}'
+)
+
+
+def a_ticket_hub(**tracker: str) -> FakeHub:
+    document = json.loads(hub_json_bytes(pin=RUNNING))
+    document["tracker"].update(tracker)
+    return FakeHub(
+        hub_json=json.dumps(document).encode(),
+        lock=LockAbsent(),
+        features=(
+            FeatureFolder(
+                slug="ticketed",
+                files=("spec.md", "research.md", "plan.md", "features.json"),
+                features_json=TICKET_RECORD,
+            ),
+        ),
+    )
+
+
+TICKET_REQUEST = SnapshotRequest.of(project="demo", transport="api", ids=("DEM-2", "DEM-1"))
+
+
+def test_fetches_tickets_when_feature_known() -> None:
+    counting = CountingTrackerReader(InMemoryTrackerReader(a_seeded_issue_board()))
+    snapshots = InMemoryTicketSnapshots(counting)
+    models, _, _ = read_models({DEMO: a_ticket_hub()}, DEMO, ticket_snapshots=snapshots)
+
+    tickets = models.feature_tickets("demo", "ticketed")
+
+    assert (tickets.project, tickets.slug, tickets.source, tickets.notice) == (
+        "demo",
+        "ticketed",
+        "linear",
+        None,
+    )
+    assert [(row.ref, row.state is not None) for row in tickets.tickets] == [
+        ("DEM-1", True),
+        ("DEM-2", True),
+    ]
+    assert snapshots.calls == [("fetch", TICKET_REQUEST)]
+    assert counting.count == 1
+    with pytest.raises(EntityNotFoundError):
+        models.feature_tickets("demo", "nope")
+    with pytest.raises(EntityNotFoundError):
+        models.feature_tickets("nope", "ticketed")
+
+
+def test_serves_plan_when_no_ticket_snapshots_wired() -> None:
+    models, _, _ = read_models({DEMO: a_ticket_hub()}, DEMO)
+
+    tickets = models.feature_tickets("demo", "ticketed")
+
+    assert (tickets.source, tickets.notice) == ("plan", NOT_CONNECTED_NOTICE)
+    assert models.get_feature("demo", "ticketed").tickets_source == "plan"
+
+
+def test_asks_mcp_transport_when_hub_uses_it() -> None:
+    snapshots = InMemoryTicketSnapshots(InMemoryTrackerReader(a_seeded_issue_board()))
+    models, _, _ = read_models(
+        {DEMO: a_ticket_hub(transport="mcp")}, DEMO, ticket_snapshots=snapshots
+    )
+
+    tickets = models.feature_tickets("demo", "ticketed")
+
+    assert (tickets.source, tickets.notice) == ("plan", NOT_CONNECTED_NOTICE)
+    assert [request.transport for _, request in snapshots.calls] == ["mcp"]
+
+
+def test_reads_warm_snapshot_when_features_listed() -> None:
+    counting = CountingTrackerReader(InMemoryTrackerReader(a_seeded_issue_board()))
+    snapshots = InMemoryTicketSnapshots(counting)
+    models, _, _ = read_models({DEMO: a_ticket_hub()}, DEMO, ticket_snapshots=snapshots)
+
+    cold = models.list_features(Scope()).items[0]
+    tickets = models.feature_tickets("demo", "ticketed")
+    warm = models.list_features(Scope()).items[0]
+    detail = models.get_feature("demo", "ticketed")
+
+    assert cold.tickets_source == "plan"
+    assert (warm.tickets_source, detail.tickets_source) == ("linear", "linear")
+    assert warm.golden_path == detail.golden_path == tickets.golden_path
+    assert warm.phase == detail.phase == tickets.golden_path.phase
+    assert [kind for kind, _ in snapshots.calls] == ["cached", "fetch", "cached", "cached"]
+    assert {request for _, request in snapshots.calls} == {TICKET_REQUEST}
+    assert counting.count == 1
+
+
+def test_reads_only_named_folder_when_one_feature_read() -> None:
+    snapshots = InMemoryTicketSnapshots(InMemoryTrackerReader(a_seeded_issue_board()))
+    models, reader, _ = read_models({DEMO: a_ticket_hub()}, DEMO, ticket_snapshots=snapshots)
+
+    models.get_feature("demo", "ticketed")
+    models.feature_tickets("demo", "ticketed")
+    with pytest.raises(EntityNotFoundError):
+        models.get_feature("demo", "nope")
+
+    assert reader.feature_reads == [("ticketed", DEMO), ("ticketed", DEMO), ("nope", DEMO)]

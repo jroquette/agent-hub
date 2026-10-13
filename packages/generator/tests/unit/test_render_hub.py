@@ -26,6 +26,7 @@ from agent_hub.core.hub_files.extension_inputs import NO_EXTENSIONS, ExtensionIn
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.hub_files.rendered_link import RenderedLink
+from agent_hub.core.runner import brief
 from agent_hub.core.testing import builders
 from agent_hub.core.testing.builders import a_conventions_document, a_hub_document, a_second_repo
 from agent_hub.core.testing.platform_repository_cases import CUSTOM_REPOSITORY
@@ -1546,6 +1547,76 @@ def test_records_decisions_with_adr_when_feature_plan_step_rendered(
     assert plan_step.index("`/adr`") < plan_step.index("gate: user approves the plan")
 
 
+# AGH-138: `/feature` step 0 checks the input brief before sizing, for spikes too, and renders
+# core's section names and placeholders (AC-138.15 to AC-138.17).
+BRIEF_STEP = "0. **Brief**"
+BRIEF_NAMES = ("Problem", "Why", "Why now", "Outcome", "Invariants", "Acceptance criteria")
+BRIEF_PLACEHOLDER_SPANS = ("`TBD`", "`N/A`", "`-`", "`TODO`")
+BRIEF_CLAUSES = (
+    "ignoring case",
+    "trailing `:`",
+    "code blocks",
+    "one question at a time",
+    "create it",
+    "cannot be read",
+    "Then size it",
+)
+FEATURE_TEMPLATE = "templates/plugin/hub-workflow/skills/feature/SKILL.md.tmpl"
+
+
+def brief_step(text: str) -> str:
+    (line,) = [line for line in text.splitlines() if line.startswith(BRIEF_STEP)]
+    return line
+
+
+def test_renders_brief_step_before_size_when_feature_skill_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    text = skill_text(demo_render, "feature")
+    lines = text.splitlines()
+
+    step = brief_step(text)
+    size = next(index for index, line in enumerate(lines) if line.startswith("1. **Size it**"))
+    assert lines.index(step) < size
+    assert ", ".join(f"`{name}`" for name in BRIEF_NAMES) in step
+    assert ", ".join(BRIEF_PLACEHOLDER_SPANS) in step
+    for clause in BRIEF_CLAUSES:
+        assert clause in step, clause
+    assert "@@" not in text
+
+
+def test_keeps_brief_step_for_spike_when_feature_skill_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    text = skill_text(demo_render, "feature")
+
+    (spike,) = [line for line in text.splitlines() if line.startswith("*Spike*")]
+    assert "step 0 still applies" in spike
+    assert "questions" in spike
+    skipped = spike.split("skip ", 1)[1].split(";", 1)[0]
+    assert re.findall(r"\d+", skipped) == ["2", "4"], skipped
+
+
+def test_renders_brief_single_source_when_core_constants_patched(
+    demo_config: HubConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(brief, "BRIEF_SECTIONS", ("Alpha", "Beta"))
+    monkeypatch.setattr(brief, "PLACEHOLDERS", ("NOPE",))
+
+    step = brief_step(rendered_texts(demo_config)[FEATURE_PATH])
+    template = files("agent_hub.generator").joinpath(FEATURE_TEMPLATE).read_text("utf-8")
+    source = brief_step(template)
+
+    assert "`Alpha`, `Beta`" in step
+    assert "(`NOPE`)" in step
+    assert "`Problem`" not in step
+    assert "`TBD`" not in step
+    assert "@@{brief_sections}" in source
+    assert "@@{brief_placeholders}" in source
+    for name in BRIEF_NAMES:
+        assert f"`{name}`" not in source, name
+
+
 # AGH-23 (AC-23.1-23.3): superpowers is optional, so every rendered base plugin line that names
 # it also carries its fallback, marked by the word `otherwise` on the same physical line.
 SUPERPOWERS_CONDITION = "if superpowers is enabled"
@@ -1692,7 +1763,8 @@ def test_checks_git_identity_when_kickoff_skill_rendered(
 
 
 # AGH-58 (AC-58.8, AC-58.9): /feature and /kickoff send a bug or a small bounded task within
-# /fix's limits to /fix; the spike definition and the *Spike* line stay as they were.
+# /fix's limits to /fix; the spike definition and the *Spike* line stay as they were (the line
+# gains AGH-138's step 0 clause).
 FIX_LIMIT_PHRASES = (
     "one repo",
     "at most 5 changed non-test files",
@@ -1701,7 +1773,8 @@ FIX_LIMIT_PHRASES = (
 )
 FEATURE_SPIKE_DEFINITION = "*spike* (throwaway learning, no merge)"
 FEATURE_SPIKE_LINE = (
-    "*Spike*: skip 2, 4 and the plan gate; timebox; `researcher` findings in"
+    "*Spike*: step 0 still applies (a spike's acceptance criteria may be the questions it"
+    " answers); skip 2, 4 and the plan gate; timebox; `researcher` findings in"
     " `brain/features/<slug>/research.md`; no merge."
 )
 

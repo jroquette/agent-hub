@@ -17,7 +17,9 @@ sets them keeps the bytes it had. A hub with several tracker teams names them al
 sets ``project.conventions`` or a ``repos[].conventions`` shows its branch shape in rule 1 and
 kickoff and gets a Conventions block in ``AGENTS.md``; an unconfigured hub keeps its bytes
 (AGH-57). The README's Join section names the tracker credential by ``tracker.transport`` and has
-a cloud subsection only with ``modules.cloud`` (AGH-51).
+a cloud subsection only with ``modules.cloud`` (AGH-51). ``/feature``'s step 0 names the input
+brief's sections and placeholders from core, read at render time so core stays their one source
+(AGH-138).
 """
 
 import re
@@ -33,6 +35,7 @@ from agent_hub.core.hub_config.platform_repository import (
 )
 from agent_hub.core.hub_config.workspace_repos import workspace_repos
 from agent_hub.core.hub_files.rendered_file import Ownership
+from agent_hub.core.runner import brief
 from agent_hub.core.workspace.shown_conventions import (
     ShownConventions,
     shown_conventions,
@@ -154,6 +157,7 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
         **_team_mentions(config),
         **_conventions_texts(config),
         **_join_texts(config),
+        **_brief_texts(),
         "commit_author": (
             _USER_AUTHOR
             if project.author_name is not None and project.author_email is not None
@@ -161,6 +165,17 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
         ),
         "prefix_note": "" if project.branch_prefix is not None else _PREFIX_NOTE,
         "identity_email": _USER_EMAIL if project.author_email is not None else _DEVELOPER_EMAIL,
+    }
+
+
+def _brief_texts() -> dict[str, str]:
+    """``/feature`` step 0's brief sections and placeholders, code spans in core's order (AGH-138).
+
+    Read from the core module at call time, not imported by name, so core is the one source.
+    """
+    return {
+        "brief_sections": _LIST_SEPARATOR.join(f"`{name}`" for name in brief.BRIEF_SECTIONS),
+        "brief_placeholders": _LIST_SEPARATOR.join(f"`{text}`" for text in brief.PLACEHOLDERS),
     }
 
 

@@ -29,6 +29,8 @@ end; where a spec file says otherwise, this list wins.
   `null` in the API with `sources_missing`, and the UI shows "—" with the tooltip "<Source> is not connected in this
   version.". Cost comes from transcript usage and a dated price table, always labelled "Estimated from transcript";
   an unknown model gives "Cost unknown: model <id> has no price".
+  Exception (AGH-136, ADR 0025): the feature Tickets tab reads Linear server-side, read-only, when
+  `LINEAR_API_KEY` is set; without it the tab shows the plan from `features.json` with a notice.
 - **Screens in Phase 2.** Portfolio, Project overview, Approvals (read-only), Live sessions, Sessions list, Session
   detail (Timeline, Files, Cost and Raw events tabs; no Decisions or Context tab), Workflow runs, Run detail,
   Features, Feature detail, Health, Knowledge › Learnings and Knowledge › Brain (both since AGH-201, no `P3` tag),

@@ -1,6 +1,6 @@
 """``/features`` on the composed app over a registered hub's ``brain/features/`` (AC-200.36,
 D23): counts, verdict and phase come from the files; a malformed record degrades its feature
-only."""
+only. AGH-136 (AC-136.18): the list, the detail and the tickets route carry one golden path."""
 
 import json
 from collections.abc import Callable
@@ -66,9 +66,11 @@ def test_reads_counts_verdict_and_phase_from_files_when_features_listed(
     assert set(views) == {"complete", "no-eval", "malformed"}
     complete, no_eval, malformed = views["complete"], views["no-eval"], views["malformed"]
     assert complete["acs"] == {"passing": 2, "total": 2, "owner_steps": 0}
+    # Its tickets are Linear ids and no Linear is connected: Implement is unknown, so the phase
+    # stays there.
     assert (complete["verdict"], complete["phase"], complete["problem"]) == (
         "SHIP",
-        "evaluate",
+        "implement",
         None,
     )
     assert no_eval["acs"] == {"passing": 1, "total": 3, "owner_steps": 1}
@@ -149,3 +151,44 @@ def test_lists_records_and_ac_fields_when_records_partly_present(
     )
     assert (plan.status_code, plan.json()["markdown"]) == (200, "# Plan\n")
     assert research.status_code == 404
+
+
+def _golden(item: dict[str, Any]) -> tuple[Any, ...]:
+    return (item["tickets_source"], item["phase"], item["golden_path"])
+
+
+def test_carries_golden_path_when_list_and_detail_read(open_tickets: Any) -> None:
+    world = open_tickets()
+    client = world.app.client
+
+    def read() -> tuple[dict[str, Any], dict[str, Any]]:
+        listed = client.get("/api/v1/features", params={"project": "demo"})
+        detail = client.get("/api/v1/features/demo/ticket-planning")
+        assert (listed.status_code, detail.status_code) == (200, 200), (listed.text, detail.text)
+        (item,) = listed.json()["items"]
+        return item, detail.json()
+
+    cold_item, cold_detail = read()
+    tickets = world.tickets().json()
+    warm_item, warm_detail = read()
+
+    # Cold, list and detail serve the plan and never call Linear; warm, they serve the snapshot
+    # the tickets route read, and all three agree.
+    assert world.linear.count == 1
+    assert _golden(cold_item) == _golden(cold_detail)
+    assert cold_item["tickets_source"] == "plan"
+    assert _golden(warm_item) == _golden(warm_detail)
+    assert warm_item["tickets_source"] == "linear"
+    assert warm_item["golden_path"] == tickets["golden_path"]
+    assert warm_item["phase"] == tickets["golden_path"]["phase"] == "tickets"
+    steps = [step["name"] for step in warm_item["golden_path"]["steps"]]
+    assert steps == [
+        "spec",
+        "research",
+        "plan",
+        "tickets",
+        "implement",
+        "review",
+        "evaluate",
+        "shipped",
+    ]
