@@ -11,6 +11,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Changed
+
+- `hub run` refuses, dry or live, an issue whose description lacks one of the six input-brief headings (Problem, Why,
+  Why now, Outcome, Invariants, Acceptance criteria), naming them, before it creates anything; `/feature` gains step 0
+  Brief, which drafts the missing sections with you. When you bump `platform.version`, add the headings to the issues
+  you run (ADR 0026, AGH-138).
+
 ## [0.13.0] - 2026-10-13
 
 ### Added
