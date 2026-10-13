@@ -31,6 +31,7 @@ from agent_hub.api.routes import (
     settings,
     streams,
 )
+from agent_hub.api.session_access import SessionAccessMiddleware
 from agent_hub.api.settings import ApiSettings
 from agent_hub.api.static_files import WEB_DIST, WebApp
 
@@ -71,7 +72,8 @@ def create_app(
     ``ports`` are the adapters the routes use (a route whose port is None answers 501);
     ``problems`` adds error mappings for exceptions of the wired adapters. No docs pages are
     served. Requests pass, outermost first: the request log, the 500 guard, the local
-    security checks, then the routes. On shutdown the change feed is closed, so open streams end.
+    security checks, the agent-session access checks (token exchange, cookie), then the
+    routes. On shutdown the change feed is closed, so open streams end.
     """
     ports = ports or ApiPorts()
 
@@ -100,6 +102,12 @@ def create_app(
     # on an API path, which must stay a 405.
     app.router.default = WebApp(web_dist)
     # add_middleware puts each new one outside the previous ones.
+    app.add_middleware(
+        SessionAccessMiddleware,
+        port=api_settings.port,
+        token=api_settings.session_token,
+        sessions_off=api_settings.sessions_off,
+    )
     app.add_middleware(
         LocalSecurityMiddleware, port=api_settings.port, extra_hosts=api_settings.allowed_hosts
     )
