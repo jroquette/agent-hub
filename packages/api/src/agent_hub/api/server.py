@@ -6,7 +6,10 @@ inside the agent-hub container, ADR 0022); this module binds what it is given.
 """
 
 import errno
+import logging
 import socket
+from collections.abc import Callable
+from types import FrameType
 
 import uvicorn
 from fastapi import FastAPI
@@ -56,12 +59,53 @@ def bind_address(host: str, port: int) -> socket.socket:
     return sock
 
 
+type ExitHook = Callable[[], None]
+
+_log = logging.getLogger(__name__)
+
+
+def _call(hook: ExitHook | None) -> None:
+    if hook is None:
+        return
+    try:
+        hook()
+    except Exception:  # noqa: BLE001 -- the server stops whatever the hook does
+        _log.warning("exit hook failed", exc_info=True)
+
+
+class _HookedServer(uvicorn.Server):
+    """uvicorn's server, calling ``on_exit`` on the first SIGINT or SIGTERM, before it starts
+    to stop (and so before the graceful wait)."""
+
+    def __init__(self, config: uvicorn.Config, on_exit: ExitHook | None) -> None:
+        super().__init__(config)
+        self._on_exit = on_exit
+
+    def handle_exit(self, sig: int, frame: FrameType | None) -> None:
+        if not self.should_exit:
+            _call(self._on_exit)
+        super().handle_exit(sig, frame)
+
+
+def app_exit_hook(app: FastAPI) -> ExitHook | None:
+    """The hook ``create_app`` keeps on ``app.state.on_exit``, if any."""
+    hook = getattr(app.state, "on_exit", None)
+    return hook if callable(hook) else None
+
+
 class LoopbackServer:
     """uvicorn on a socket bound by ``bind_loopback``: no access log (it would print query
-    strings), no proxy headers trusted, no server header."""
+    strings), no proxy headers trusted, no server header.
 
-    def __init__(self, app: FastAPI, sock: socket.socket) -> None:
+    ``on_exit`` (default: the app's own hook, ``app.state.on_exit``) is called once when the
+    server is told to stop, by a signal or ``stop``, before the graceful wait (P12): the
+    agent sessions start ending and their streams close at once."""
+
+    def __init__(
+        self, app: FastAPI, sock: socket.socket, *, on_exit: ExitHook | None = None
+    ) -> None:
         self._sock = sock
+        self._on_exit = on_exit if on_exit is not None else app_exit_hook(app)
         config = uvicorn.Config(
             app,
             log_config=None,
@@ -70,7 +114,7 @@ class LoopbackServer:
             server_header=False,
             timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_SECONDS,
         )
-        self._server = uvicorn.Server(config)
+        self._server = _HookedServer(config, self._on_exit)
 
     @property
     def started(self) -> bool:
@@ -85,10 +129,16 @@ class LoopbackServer:
             self._sock.close()
 
     def stop(self) -> None:
-        """Ask a running server to finish."""
+        """Ask a running server to finish (the exit hook runs first, once)."""
+        if not self._server.should_exit:
+            _call(self._on_exit)
         self._server.should_exit = True
 
+    def signal(self, sig: int) -> None:
+        """Handle ``sig`` as the server's signal handler does (SIGINT, SIGTERM)."""
+        self._server.handle_exit(sig, None)
 
-def serve_on(app: FastAPI, sock: socket.socket) -> None:
-    """Serve ``app`` on ``sock`` until interrupted."""
-    LoopbackServer(app, sock).run()
+
+def serve_on(app: FastAPI, sock: socket.socket, *, on_exit: ExitHook | None = None) -> None:
+    """Serve ``app`` on ``sock`` until interrupted; ``on_exit`` as ``LoopbackServer``'s."""
+    LoopbackServer(app, sock, on_exit=on_exit).run()
