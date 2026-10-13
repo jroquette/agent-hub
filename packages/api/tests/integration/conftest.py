@@ -9,14 +9,15 @@ as ``packages/hub_git/tests/conftest.py`` does. Nothing reaches the network; eve
 token is synthetic.
 """
 
+import asyncio
 import json
 import os
 import re
 import subprocess
 import sys
 import threading
-from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass, replace
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from importlib.metadata import version
 from pathlib import Path
@@ -27,13 +28,40 @@ import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
+from agent_hub.api.app import create_app
 from agent_hub.api.composition import build_app
+from agent_hub.api.dependencies import ApiPorts
+from agent_hub.api.session_token import cookie_name
 from agent_hub.api.settings import ApiSettings
 from agent_hub.cli.main import app as hub_cli
+from agent_hub.core.agent_sessions.agent_session import (
+    AgentSession,
+    AgentSessionList,
+    AgentSessionStatus,
+    CloudMessage,
+    CloudSession,
+    CloudSessionList,
+    CreateAgentSession,
+    MessageAccepted,
+    PermissionDecision,
+    ResumableList,
+    SendMessage,
+    SessionSettings,
+    StartCloud,
+    WorkdirList,
+)
+from agent_hub.core.agent_sessions.driver import DriverCapabilities
+from agent_hub.core.agent_sessions.records import LogRecordPage, StreamItem, StreamPosition
 from agent_hub.core.events.event import Event
 from agent_hub.core.json_form import dump_json
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.core.testing.hook_inputs import a_hook_input, an_envelope
+from agent_hub.core.testing.read_model_builders import (
+    a_cloud_session,
+    a_log_record,
+    a_workdir,
+    an_agent_session,
+)
 from agent_hub.hub_git.brain_change_requests import GitBrainChangeRequests
 from agent_hub.hub_git.git_runner import GitRunner
 from agent_hub.storage.event_store import SqliteEventStore, open_event_store
@@ -657,3 +685,150 @@ def tickets_kit() -> SimpleNamespace:
         path=TICKETS_PATH,
         slug=TICKETS_SLUG,
     )
+
+
+# The agent-session routes (RT) against recording command ports: what each route passes on,
+# the problem each core error becomes, and the stream's wire form.
+
+
+@dataclass
+class RecordingAgentSessions:
+    """``AgentSessionCommands`` that records each call as ``(method, arguments)`` and answers
+    built models. ``failures[method]`` raises instead; ``subscribe`` answers ``stream``, one
+    item after another, after waiting ``pause`` seconds before each."""
+
+    session: AgentSession = field(default_factory=an_agent_session)
+    stream: list[StreamItem] = field(default_factory=list)
+    pause: float = 0.0
+    failures: dict[str, Exception] = field(default_factory=dict)
+    calls: list[tuple[str, tuple[object, ...]]] = field(default_factory=list)
+    closed: bool = False
+
+    def _call(self, method: str, *arguments: object) -> None:
+        self.calls.append((method, arguments))
+        if method in self.failures:
+            raise self.failures[method]
+
+    def methods(self) -> list[str]:
+        """The names of the methods called, in order."""
+        return [method for method, _ in self.calls]
+
+    async def workdirs(self, project: str) -> WorkdirList:
+        self._call("workdirs", project)
+        return WorkdirList(items=(a_workdir(),))
+
+    async def capabilities(self) -> DriverCapabilities:
+        self._call("capabilities")
+        return DriverCapabilities(available=True, engine="in-memory")
+
+    async def resumable(self, project: str, workdir_id: str) -> ResumableList:
+        self._call("resumable", project, workdir_id)
+        return ResumableList(items=())
+
+    async def list_sessions(
+        self, *, project: str | None, status: AgentSessionStatus | None
+    ) -> AgentSessionList:
+        self._call("list_sessions", project, status)
+        return AgentSessionList(items=(self.session,))
+
+    async def create(self, request: CreateAgentSession) -> AgentSession:
+        self._call("create", request)
+        return self.session
+
+    async def snapshot(self, agent_session_id: str) -> AgentSession:
+        self._call("snapshot", agent_session_id)
+        return self.session
+
+    async def delete(self, agent_session_id: str) -> None:
+        self._call("delete", agent_session_id)
+
+    async def events(self, agent_session_id: str, *, after: int, limit: int) -> LogRecordPage:
+        self._call("events", agent_session_id, after, limit)
+        return LogRecordPage(items=(a_log_record(seq=after + 1),), next_after=None)
+
+    async def subscribe(
+        self, agent_session_id: str, after: StreamPosition | None
+    ) -> AsyncIterator[StreamItem]:
+        self._call("subscribe", agent_session_id, after)
+        return self._frames()
+
+    async def _frames(self) -> AsyncIterator[StreamItem]:
+        try:
+            for item in self.stream:
+                await asyncio.sleep(self.pause)
+                yield item
+        finally:
+            self.closed = True
+
+    async def send(self, agent_session_id: str, message: SendMessage) -> MessageAccepted:
+        self._call("send", agent_session_id, message)
+        return MessageAccepted(seq=self.session.last_seq + 1)
+
+    async def interrupt(self, agent_session_id: str) -> AgentSession:
+        self._call("interrupt", agent_session_id)
+        return self.session
+
+    async def answer(
+        self, agent_session_id: str, request_id: str, decision: PermissionDecision
+    ) -> AgentSession:
+        self._call("answer", agent_session_id, request_id, decision)
+        return self.session
+
+    async def change_settings(
+        self, agent_session_id: str, settings: SessionSettings
+    ) -> AgentSession:
+        self._call("change_settings", agent_session_id, settings)
+        return self.session
+
+    async def close(self, agent_session_id: str) -> AgentSession:
+        self._call("close", agent_session_id)
+        return self.session
+
+
+@dataclass
+class RecordingCloudSessions:
+    """``CloudSessionCommands`` that records each call; ``failures[method]`` raises instead."""
+
+    failures: dict[str, Exception] = field(default_factory=dict)
+    calls: list[tuple[str, tuple[object, ...]]] = field(default_factory=list)
+
+    def _call(self, method: str, *arguments: object) -> None:
+        self.calls.append((method, arguments))
+        if method in self.failures:
+            raise self.failures[method]
+
+    async def list_cloud(self, project: str | None) -> CloudSessionList:
+        self._call("list_cloud", project)
+        return CloudSessionList(items=(a_cloud_session(),))
+
+    async def start(self, request: StartCloud) -> CloudSession:
+        self._call("start", request)
+        return a_cloud_session()
+
+    async def follow_up(self, cloud_id: str, message: CloudMessage) -> CloudSession:
+        self._call("follow_up", cloud_id, message)
+        return a_cloud_session(followups=1)
+
+
+@dataclass
+class AgentSessionApp:
+    """``create_app`` over the recording ports, its client signed in and on this server's
+    Origin (so writes pass the access middleware)."""
+
+    client: TestClient
+    control: RecordingAgentSessions
+    cloud: RecordingCloudSessions
+
+
+@pytest.fixture
+def agent_session_app(api_settings: ApiSettings, web_dist: Path) -> Iterator[AgentSessionApp]:
+    """The agent-session routes over ``RecordingAgentSessions`` and ``RecordingCloudSessions``."""
+    control, cloud = RecordingAgentSessions(), RecordingCloudSessions()
+    ports = ApiPorts(agent_sessions=control, cloud_sessions=cloud)
+    app = create_app(api_settings, ports=ports, web_dist=web_dist)
+    origin = f"http://127.0.0.1:{api_settings.port}"
+    with TestClient(
+        app, base_url=origin, headers={"Origin": origin}, raise_server_exceptions=False
+    ) as client:
+        client.cookies.set(cookie_name(api_settings.port), str(api_settings.session_token))
+        yield AgentSessionApp(client, control, cloud)
