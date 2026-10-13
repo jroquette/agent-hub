@@ -7,6 +7,9 @@ project the first registered wins. A project's event-derived numbers come from `
 (``EventReadModels.project_activity``). An unknown project or feature raises
 ``EntityNotFoundError``; a list scoped to an unknown project is empty.
 
+A project's Skills tab (AGH-164) is read through ``SkillReads``, with usage from ``usage``
+(``EventReadModels.skill_usage``; zero without it).
+
 A feature's tickets come from ``ticket_snapshots`` (AGH-136): only ``feature_tickets`` fetches
 (the one read that may call the tracker); the Features list and the detail use what the cache
 holds (Q6), so the list, the detail and the Tickets view fold the same snapshot. Without
@@ -73,6 +76,7 @@ from agent_hub.core.readmodels.filters import Scope
 from agent_hub.core.readmodels.page import Page
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.readmodels.settings_view import SettingsView
+from agent_hub.core.skills.skill_reads import SkillReads, SkillUsageSource
 from agent_hub.core.skills.skill_view import (
     BundledFileText,
     ItemKind,
@@ -122,8 +126,10 @@ class HubFilesReadModels:
         settings: SettingsView,
         clock: Callable[[], datetime],
         ticket_snapshots: TicketSnapshots | None = None,
+        usage: SkillUsageSource | None = None,
     ) -> None:
         self._reader = reader
+        self._skills = SkillReads(reader, usage)
         self._snapshots = ticket_snapshots
         self._activity = activity
         self._settings = settings
@@ -296,18 +302,31 @@ class HubFilesReadModels:
         )
 
     def skill_catalog(self, project: str) -> SkillCatalog:
-        """The project's skills, agents and hooks (filled by stream C2)."""
-        raise NotImplementedError(project)
+        """The project's skills, agents and hooks with their usage (``SkillReads``)."""
+        found = self._project(project)
+        return self._skills.catalog(project=found.name, hub_path=found.path)
 
     def skill_detail(self, project: str, *, kind: ItemKind, source: str, name: str) -> SkillDetail:
-        """One item of the catalog (filled by stream C2)."""
-        raise NotImplementedError(project, kind, source, name)
+        """One item of the catalog by its id; ``EntityNotFoundError`` (``skill``) when unknown."""
+        found = self._project(project)
+        return self._skills.detail(
+            project=found.name, hub_path=found.path, kind=kind, source=source, name=name
+        )
 
     def skill_file(
         self, project: str, *, kind: ItemKind, source: str, name: str, file_id: str
     ) -> BundledFileText:
-        """One bundled file of a skill (filled by stream C2)."""
-        raise NotImplementedError(project, kind, source, name, file_id)
+        """One bundled file of a skill by its issued id (``skill file`` when unknown, 413 over
+        the cap)."""
+        found = self._project(project)
+        return self._skills.file(
+            project=found.name,
+            hub_path=found.path,
+            kind=kind,
+            source=source,
+            name=name,
+            file_id=file_id,
+        )
 
     def _feature(self, project: str, slug: str) -> tuple[_Project, FeatureFolder]:
         missing = EntityNotFoundError(entity="feature", entity_id=f"{project}/{slug}")
