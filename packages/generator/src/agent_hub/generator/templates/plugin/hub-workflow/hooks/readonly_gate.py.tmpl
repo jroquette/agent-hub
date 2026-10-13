@@ -56,6 +56,8 @@ MAX_SUBAGENT_FILES = 256  # subagent transcripts listed
 MAX_STATE_BYTES = 16 * 1024 * 1024
 STALE_SECONDS = 12 * 60 * 60  # a start state older than this is replaced
 MAX_BLOCKS = 1  # per agent_id
+MAX_COMMANDS = 10  # Bash commands a block lists: the agent's last ones
+MAX_COMMAND_CHARS = 160  # per listed command, on one line
 
 
 def read_event() -> dict:
@@ -343,10 +345,11 @@ def run_git(args: list, cwd: str) -> tuple:
 
 def parse_status(text: str) -> tuple:
     """(HEAD's oid, the branch, [(path, state)]) from `git status --porcelain=v2 -z --branch`.
-    A state is `XY mW hI` (`XY mW h1 h2 h3` for an unmerged entry, `??` for an untracked one):
-    the status, the worktree's mode and the index's blobs, so a mode or index change on a path
-    already dirty is a change (E-7); never HEAD's blob, which the HEAD line covers. A rename
-    (`2`) names its new path, then its original path in the next NUL-separated field."""
+    A state is `XY mI mW hI` (`XY m1 m2 m3 mW h1 h2 h3` for an unmerged entry, `??` for an
+    untracked one): the status, the index's and the worktree's modes and the index's blobs, so a
+    mode or index change on a path already dirty is a change (E-7); never HEAD's mode or blob,
+    which the HEAD line covers. A rename (`2`) names its new path, then its original path in the
+    next NUL-separated field."""
     oid, branch, found = "", "", []
     records = text.split("\0")
     index = 0
@@ -360,20 +363,20 @@ def parse_status(text: str) -> tuple:
         elif record.startswith("1 "):
             parts = record.split(" ", 8)
             if len(parts) == 9:
-                found.append((parts[8], " ".join((parts[1], parts[5], parts[7]))))
+                found.append((parts[8], " ".join((parts[1], parts[4], parts[5], parts[7]))))
         elif record.startswith("2 "):
             parts = record.split(" ", 9)
             original = records[index] if index < len(records) else ""
             index += 1
             if len(parts) == 10:
-                state = " ".join((parts[1], parts[5], parts[7]))
+                state = " ".join((parts[1], parts[4], parts[5], parts[7]))
                 found.append((parts[9], state))
                 if original:
                     found.append((original, state))
         elif record.startswith("u "):
             parts = record.split(" ", 10)
             if len(parts) == 11:
-                found.append((parts[10], " ".join((parts[1], parts[6], parts[7], parts[8], parts[9]))))
+                found.append((parts[10], " ".join((parts[1], *parts[3:10]))))
         elif record.startswith("? "):
             found.append((record[2:], "??"))
     return oid, branch, found
@@ -514,11 +517,19 @@ def kind(value: str) -> str:
     return value.split(":", 1)[1] if ":" in value else value
 
 
+def real(top: str, path: str) -> str:
+    """The real path of `path` in the checkout at `top`; "" when it cannot be resolved."""
+    try:
+        return os.path.realpath(os.path.join(top, path))
+    except (OSError, ValueError):
+        return ""
+
+
 def changes(before: list, after: list) -> tuple:
-    """(changed labels, notes) between two snapshots of the same checkouts: `<label>/<path>` for
-    an entry that differs (or is in one snapshot only), `<label>: HEAD old (branch) -> new
-    (branch)` when either moved; a checkout cut on either side, or an entry that cannot be
-    compared, is a note."""
+    """([(label, real path)] changed, notes) between two snapshots of the same checkouts:
+    `<label>/<path>` for an entry that differs (or is in one snapshot only), `<label>: HEAD old
+    (branch) -> new (branch)` (real path "") when either moved; a checkout cut on either side, or
+    an entry that cannot be compared, is a note."""
     changed, notes = [], []
     for old, new in zip(before, after):
         label = old["label"]
@@ -527,9 +538,8 @@ def changes(before: list, after: list) -> tuple:
             notes.append(f"{label}: {cause}")
             continue
         if (old["head"], old["branch"]) != (new["head"], new["branch"]):
-            changed.append(
-                f"{label}: HEAD {short(old['head'])} ({old['branch']}) -> {short(new['head'])} ({new['branch']})"
-            )
+            moved = f"{label}: HEAD {short(old['head'])} ({old['branch']}) -> {short(new['head'])} ({new['branch']})"
+            changed.append((moved, ""))
         was, now = old["entries"], new["entries"]
         for path in sorted(set(was) | set(now)):
             first, second = was.get(path), now.get(path)
@@ -539,7 +549,7 @@ def changes(before: list, after: list) -> tuple:
                     notes.append(f"{label}/{path}: {NOT_COMPARABLE[blind[0]]}")
                     continue
             if first != second:
-                changed.append(f"{label}/{path}")
+                changed.append((f"{label}/{path}", real(old["path"], path)))
     return changed, notes
 
 
@@ -562,6 +572,87 @@ def agent_transcript(event: dict) -> str | None:
     return None
 
 
+FILE_TOOLS = {"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
+
+
+def tool_uses(entry: object) -> list:
+    """[(name, input)] of the `tool_use` blocks of one transcript line's message."""
+    message = entry.get("message") if isinstance(entry, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return []
+    return [
+        (block.get("name"), block.get("input"))
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "tool_use" and isinstance(block.get("input"), dict)
+    ]
+
+
+def one_line(command: str) -> str:
+    """A command on one line (each run of blanks or line breaks one blank), cut to
+    MAX_COMMAND_CHARS with a final `…`."""
+    text = " ".join(command.split())
+    if len(text) > MAX_COMMAND_CHARS:
+        return text[: MAX_COMMAND_CHARS - 1] + "\u2026"
+    return text
+
+
+def read_transcript(path: str) -> bytes | None:
+    """The bytes of a regular file of at most MAX_TRANSCRIPT_BYTES; None when it is not one, is
+    larger, or cannot be read (never read in part, never waiting on a pipe)."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+    try:
+        handle = os.open(path, flags)
+    except (OSError, ValueError):
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(handle).st_mode):
+            return None
+        chunks, size = [], 0
+        while size <= MAX_TRANSCRIPT_BYTES:
+            chunk = os.read(handle, min(CHUNK * 16, MAX_TRANSCRIPT_BYTES + 1 - size))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+    except OSError:
+        return None
+    finally:
+        os.close(handle)
+    return b"".join(chunks) if size <= MAX_TRANSCRIPT_BYTES else None
+
+
+def agent_calls(event: dict) -> tuple:
+    """(real paths the agent's Write, Edit, MultiEdit and NotebookEdit named, its last
+    MAX_COMMANDS Bash commands on one line each, whether its transcript was read). Only lines
+    holding `"tool_use"` are parsed; a line over MAX_LINE_BYTES or not JSON is skipped; a path
+    that is not absolute names nothing."""
+    path = agent_transcript(event)
+    raw = read_transcript(path) if path is not None else None
+    if raw is None:
+        return set(), [], False
+    own, commands = set(), []
+    for line in raw.split(b"\n"):
+        if len(line) > MAX_LINE_BYTES or b'"tool_use"' not in line:
+            continue
+        try:
+            entry = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        for name, tool_input in tool_uses(entry):
+            if name == "Bash":
+                command = tool_input.get("command")
+                text = one_line(command) if isinstance(command, str) else ""
+                if text:
+                    commands.append(text)
+            elif name in FILE_TOOLS:
+                target = tool_input.get(FILE_TOOLS[name])
+                if isinstance(target, str) and os.path.isabs(target):
+                    own.add(real("/", target))
+    own.discard("")
+    return own, commands[-MAX_COMMANDS:], True
+
+
 def listing(paths: list) -> list:
     """One `- <path>` line each, at most MAX_LISTED, then `- … and N more`."""
     lines = [f"- {path}" for path in paths[:MAX_LISTED]]
@@ -574,9 +665,12 @@ def noted(notes: list) -> str:
     return "\n".join(NOTE.format(cause) for cause in notes)
 
 
-def emit_result(agent_type: str, agent_id: str, block: list, report: list, signals: list, notes: list) -> None:
-    """One JSON object: a block (`decision`, `reason`) with the report and the notes as its
-    `systemMessage`; else the `systemMessage` alone; nothing when there is nothing to say."""
+def emit_result(
+    agent_type: str, agent_id: str, block: list, report: list, signals: list, notes: list, commands: list
+) -> None:
+    """One JSON object: a block (`decision`, `reason`, with the agent's Bash commands as the
+    evidence) with the report and the notes as its `systemMessage`; else the `systemMessage`
+    alone; nothing when there is nothing to say."""
     parts = []
     if report:
         head = f"[hub readonly-gate] changed while {agent_type} (agent {agent_id}) ran, not attributed to it"
@@ -588,7 +682,8 @@ def emit_result(agent_type: str, agent_id: str, block: list, report: list, signa
         head = f"[hub readonly-gate] {agent_type} (agent {agent_id}) is read-only (mutates_checkout: false) but changed:"
         ask = "Revert these changes, or explain in your final report why each one was needed."
         output["decision"] = "block"
-        output["reason"] = "\n".join([head, *listing(block), ask])
+        evidence = ["Commands you ran that may have made them:", *(f"- {c}" for c in commands)] if commands else []
+        output["reason"] = "\n".join([head, *listing(block), ask, *evidence])
     if parts:
         output["systemMessage"] = "\n".join(parts)
     if output:
@@ -632,10 +727,19 @@ def start(event: dict, cfg: Config) -> None:
         emit({"systemMessage": noted(notes)})
 
 
+def attribute(changed: list, own: set, signals: list) -> tuple:
+    """(blocked, reported) labels: a changed path the agent's own file tools named is blocked;
+    with no overlap signal every change is the agent's (AC-141.6, AC-141.9)."""
+    block, report = [], []
+    for label, path in changed:
+        (block if not signals or (path and path in own) else report).append(label)
+    return block, report
+
+
 def stop(event: dict, cfg: Config) -> None:
-    """SubagentStop: snapshot the checkouts the start saw again, compare, and hold the stop when
-    something changed. For now every change is the agent's when its transcript is readable (a
-    provisional rule: attribution and overlap replace it)."""
+    """SubagentStop: snapshot the checkouts the start saw again, compare, and hold the stop for
+    the changes attributed to the agent. Without a readable transcript of the agent nothing can
+    be attributed: every change is reported (E-6)."""
     agent_type, agent_id = event["agent_type"], event["agent_id"]
     if not declared(cfg, agent_type):
         return
@@ -657,12 +761,19 @@ def stop(event: dict, cfg: Config) -> None:
         if notes:
             emit({"systemMessage": noted(notes)})
         return
-    if agent_transcript(event) is not None:  # provisional rule: no overlap signal yet
-        emit_result(agent_type, agent_id, changed, [], [], notes)  # the state stays for the retry
+    own, commands, readable = agent_calls(event)
+    if not readable:
+        forget(path)
+        notes.append("agent transcript unreadable")
+        labels = [label for label, _ in changed]
+        emit_result(agent_type, agent_id, [], labels, ["agent transcript unreadable"], notes, [])
         return
-    forget(path)
-    notes.append("agent transcript unreadable")
-    emit_result(agent_type, agent_id, [], changed, ["agent transcript unreadable"], notes)
+    signals = []  # no overlap signal is read: nothing else is known to have run in the window
+    block, report = attribute(changed, own, signals)
+    if not block:
+        forget(path)
+    # a block keeps the state for the retry
+    emit_result(agent_type, agent_id, block, report, signals, notes, commands)
 
 
 def main() -> None:
