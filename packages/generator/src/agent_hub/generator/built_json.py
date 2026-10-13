@@ -101,9 +101,14 @@ _SENSOR_EVENTS: Final = (
     ("SubagentStart", None),
     ("SubagentStop", None),
 )
+# AGH-141 (O-3): the read-only gate on the two subagent events, no matcher; its group follows the
+# sensor's (E-4), so the events keep the sensor's order. Its own budgets are 5 s and 15 s.
+_GATE_FILE: Final = "readonly_gate.py"
+_GATE_EVENTS: Final = (("SubagentStart", 10), ("SubagentStop", 30))
 
 # Spec AC-4.7 (Q-5): the base plugin's six hooks, with this hub's timeouts, then the sensor's
-# eleven (AGH-200); `hooks.json` wires the same groups for a plugin install.
+# eleven (AGH-200), then the read-only gate's two (AGH-141); `hooks.json` wires the same groups
+# for a plugin install.
 HOOK_EVENTS: Final = (
     HookEvent("SessionStart", "startup|resume|clear|compact", "session_start.py", 20),
     HookEvent(
@@ -120,6 +125,7 @@ HOOK_EVENTS: Final = (
         HookEvent(event, matcher, _SENSOR_FILE, _SENSOR_TIMEOUT)
         for event, matcher in _SENSOR_EVENTS
     ),
+    *(HookEvent(event, None, _GATE_FILE, timeout) for event, timeout in _GATE_EVENTS),
 )
 
 
@@ -204,7 +210,7 @@ def _denied_pushes(config: HubConfig) -> list[str]:
 def base_hooks_block() -> dict[str, JsonValue]:
     """The ``hooks`` value of the managed settings: one group per ``HOOK_EVENTS`` row, under its
     event; events in first-seen order, an event's groups in row order (the base hook, then the
-    sensor).
+    sensor, then the read-only gate on SubagentStart and SubagentStop).
 
     hub doctor's ``settings.weakening`` rule checks ``settings.json`` against it without a render
     (spec Q-14). Each call builds a new value.

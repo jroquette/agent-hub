@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""SubagentStart and SubagentStop: hold a read-only agent that changed the checkout.
+
+An agent is read-only when its definition's frontmatter says `mutates_checkout: false` (the
+researcher, the spec-reviewer and the quality-reviewer of the base plugin). At its SubagentStart
+the gate snapshots every watched checkout: each repo of hub.json and the hub, with their task
+worktrees under `.claude/worktrees/`; the hub's `brain/`, gitignored files and $TMPDIR never
+count. At its SubagentStop it snapshots them again and compares. A changed path the agent's own
+Write, Edit, MultiEdit or NotebookEdit touched, or any change when nothing else ran meanwhile,
+holds the stop once (`decision: block`, naming the paths and the agent's Bash commands); any
+other change is reported to the main session. Every outcome is appended to a local record in
+$TMPDIR. Each run fits in its budget (START_BUDGET, STOP_BUDGET seconds) and in the caps below.
+Any failure of the gate's own ends in exit 0: an undeclared agent or an unreadable event prints
+nothing, and a declared agent that could not be checked gets a `not checked` note, never a
+block. Python 3.9, stdlib only; it sends nothing over the network."""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from hubhooks import Config, load_config, run_hook
+except Exception as error:  # a partial install: skip, never error the session
+    print(f"[hub {os.path.splitext(os.path.basename(sys.argv[0] or 'hook'))[0]}] skipped: {type(error).__name__}", file=sys.stderr)
+    sys.exit(0)
+
+# Seconds from the hook's start; Claude Code gives SubagentStart 10 s and SubagentStop 30 s.
+START_BUDGET = 5
+STOP_BUDGET = 15
+GIT_TIMEOUT = 4  # one git call, always within the budget left
+MAX_CHECKOUTS = 24  # per event: main checkouts first, then worktrees newest first
+MAX_STATUS_BYTES = 4 * 1024 * 1024  # of `git status` output per checkout
+MAX_ENTRIES = 2000  # status entries per checkout
+MAX_FILE_BYTES = 8 * 1024 * 1024  # hashed per file
+MAX_HASH_BYTES = 128 * 1024 * 1024  # hashed per event
+MAX_STDIN = 1024 * 1024
+MAX_TRANSCRIPT_BYTES = 16 * 1024 * 1024  # of the agent's transcript
+MAX_WINDOW_BYTES = 8 * 1024 * 1024  # of the main transcript, after its size at start
+MAX_LINE_BYTES = 1024 * 1024  # per transcript line
+MAX_AGENT_FILES = 256  # agent definitions read per folder
+MAX_FRONTMATTER_BYTES = 16 * 1024
+MAX_SUBAGENT_FILES = 256  # subagent transcripts listed
+MAX_STATE_BYTES = 16 * 1024 * 1024
+STALE_SECONDS = 12 * 60 * 60  # a start state older than this is replaced
+MAX_BLOCKS = 1  # per agent_id
+
+
+def read_event() -> dict:
+    """The event on stdin; {} when it is over MAX_STDIN, not UTF-8 JSON, or not an object."""
+    try:
+        raw = sys.stdin.buffer.read(MAX_STDIN + 1)
+    except (OSError, ValueError):
+        return {}
+    if len(raw) > MAX_STDIN:
+        return {}
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (ValueError, RecursionError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def start(event: dict, cfg: Config) -> None:
+    """SubagentStart: nothing yet."""
+
+
+def stop(event: dict, cfg: Config) -> None:
+    """SubagentStop: nothing yet."""
+
+
+def main() -> None:
+    event = read_event()
+    name = event.get("hook_event_name")
+    handler = {"SubagentStart": start, "SubagentStop": stop}.get(name) if isinstance(name, str) else None
+    if handler is None:
+        return
+    for key in ("agent_type", "agent_id"):
+        value = event.get(key)
+        if not isinstance(value, str) or not value:  # Claude Code's internal agents send ""
+            return
+    cwd = event.get("cwd")
+    cfg = load_config(cwd if isinstance(cwd, str) and cwd else None)
+    if not cfg.workspace:
+        return
+    handler(event, cfg)
+
+
+if __name__ == "__main__":
+    run_hook(main)
