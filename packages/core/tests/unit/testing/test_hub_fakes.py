@@ -1,4 +1,5 @@
 from agent_hub.core.brain.brain_note import BrainEntry
+from agent_hub.core.features.feature_status import FeatureFolder
 from agent_hub.core.testing.hub_fakes import FakeHub, FakeHubFileReader
 
 HUB = "/home/demo/demo-hub"
@@ -70,3 +71,17 @@ def test_sizes_file_when_brain_file_regular() -> None:
     assert reader.brain_file_size(HUB, "index.md") == 8
     assert reader.brain_file_size(HUB, "linked.md") is None
     assert reader.brain_file_size(HUB, "absent.md") is None
+
+
+def test_records_feature_reads_when_folders_listed_or_read() -> None:
+    folder = FeatureFolder(slug="demo-feature", files=())
+    reader = FakeHubFileReader({"/hubs/demo": FakeHub(features=(folder,))})
+
+    assert reader.feature_folders("/hubs/demo") == (folder,)
+    assert reader.feature_folder("/hubs/demo", "demo-feature") == folder
+    assert reader.feature_folder("/hubs/demo", "nope") is None
+    assert reader.feature_reads == [
+        ("*", "/hubs/demo"),
+        ("demo-feature", "/hubs/demo"),
+        ("nope", "/hubs/demo"),
+    ]

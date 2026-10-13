@@ -295,10 +295,10 @@ class HubFilesReadModels:
             found = self._project(project)
         except EntityNotFoundError:
             raise missing from None
-        for folder in self._reader.feature_folders(found.path):
-            if folder.slug == slug:
-                return found, folder
-        raise missing
+        folder = self._reader.feature_folder(found.path, slug)
+        if folder is None:
+            raise missing
+        return found, folder
 
     def _cached(self, found: _Project, folder: FeatureFolder) -> SnapshotRead | None:
         """What the snapshot cache holds for the feature's tickets; never reads the tracker."""

@@ -100,7 +100,9 @@ def _listed(path: str) -> bool:
 class FakeHubFileReader:
     """A ``HubFileReader`` over ``FakeHub`` values keyed by path; ``aliases`` play links.
 
-    ``snapshots`` counts the doctor snapshots built per hub, so a test sees the cache work.
+    ``snapshots`` counts the doctor snapshots built per hub, so a test sees the cache work;
+    ``feature_reads`` records each feature read, ``("*", hub_path)`` for a listing and
+    ``(slug, hub_path)`` for one folder, so a test sees how much a request read.
     """
 
     def __init__(
@@ -109,6 +111,7 @@ class FakeHubFileReader:
         self.hubs = dict(hubs or {})
         self.aliases = dict(aliases or {})
         self.snapshots: dict[str, int] = {}
+        self.feature_reads: list[tuple[str, str]] = []
 
     def resolve(self, path: str) -> str:
         """The aliased path, or the path itself."""
@@ -168,7 +171,13 @@ class FakeHubFileReader:
 
     def feature_folders(self, hub_path: str) -> tuple[FeatureFolder, ...]:
         """The hub's feature folders."""
+        self.feature_reads.append(("*", hub_path))
         return self._hub(hub_path).features
+
+    def feature_folder(self, hub_path: str, slug: str) -> FeatureFolder | None:
+        """The hub's feature folder ``slug``, or None."""
+        self.feature_reads.append((slug, hub_path))
+        return next((f for f in self._hub(hub_path).features if f.slug == slug), None)
 
     def brain_tree(self, hub_path: str) -> BrainListing:
         """The hub's ``.md`` brain files by path, without ``auto/``, hidden names or links."""

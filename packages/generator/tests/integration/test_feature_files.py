@@ -13,6 +13,9 @@ from agent_hub.generator.feature_files import (
     MAX_FEATURE_FOLDERS,
     MAX_RECORD_BYTES,
     MAX_REVIEW_FILES,
+    OVER_BUDGET,
+    READ_BUDGET_BYTES,
+    read_feature_folder,
     read_feature_folders,
 )
 
@@ -253,3 +256,113 @@ def test_reports_problem_when_record_is_folder(tmp_path: Path) -> None:
     [read] = read_feature_folders(tmp_path)
 
     assert (read.features_json, read.files) == ("not a regular file", ())
+
+
+class Reads:
+    """Counts what the reader opens and reads, through ``os.open`` and ``os.read``."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.opened: list[str] = []
+        self.bytes = 0
+        real_open, real_read = os.open, os.read
+
+        def counting_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+            self.opened.append(os.fsdecode(path) if isinstance(path, str | bytes) else str(path))
+            return real_open(path, flags, *args, **kwargs)  # type: ignore[arg-type]
+
+        def counting_read(descriptor: int, size: int) -> bytes:
+            chunk = real_read(descriptor, size)
+            self.bytes += len(chunk)
+            return chunk
+
+        monkeypatch.setattr(os, "open", counting_open)
+        monkeypatch.setattr(os, "read", counting_read)
+
+
+def test_opens_only_named_folder_when_one_slug_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    features = features_of(tmp_path)
+    a_feature(features, "alpha", {"features.json": b'{"acs": []}'})
+    a_feature(features, "beta", {"spec.md": b"# Beta\n"})
+    a_feature(features, "gamma", {"features.json": b'{"acs": []}'})
+    reads = Reads(monkeypatch)
+
+    read = read_feature_folder(tmp_path, "beta")
+
+    assert read == FeatureFolder(slug="beta", files=("spec.md",), spec_head=b"# Beta\n")
+    assert "alpha" not in reads.opened
+    assert "gamma" not in reads.opened
+    assert reads.bytes == len(b"# Beta\n")
+
+
+@pytest.mark.parametrize("slug", ["", ".hidden", "linked", "a-file", "nested/inner", "..", "nope"])
+def test_reads_no_folder_when_slug_not_a_feature_folder(tmp_path: Path, slug: str) -> None:
+    features = features_of(tmp_path)
+    a_feature(features, ".hidden", {})
+    a_feature(features, "nested", {})
+    (features / "nested" / "inner").mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (features / "linked").symlink_to(outside)
+    (features / "a-file").write_bytes(b"not a folder\n")
+
+    assert read_feature_folder(tmp_path, slug) is None
+
+
+def test_reads_no_folder_when_hub_has_no_features(tmp_path: Path) -> None:
+    assert read_feature_folder(tmp_path, "demo-feature") is None
+
+
+def test_lists_folders_unread_when_read_budget_spent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    features = features_of(tmp_path)
+    a_feature(features, "alpha", {"features.json": b"x" * 20})
+    a_feature(features, "beta", {"features.json": b"y" * 20})
+    a_feature(features, "gamma", {"spec.md": b"z" * 20})
+    monkeypatch.setattr("agent_hub.generator.feature_files.READ_BUDGET_BYTES", 10)
+    reads = Reads(monkeypatch)
+
+    alpha, beta, gamma = read_feature_folders(tmp_path)
+
+    assert alpha.features_json == b"x" * 20
+    assert beta == FeatureFolder(slug="beta", files=(), features_json=OVER_BUDGET)
+    assert gamma == FeatureFolder(slug="gamma", files=(), features_json=OVER_BUDGET)
+    assert reads.bytes == 20
+    assert "beta" not in reads.opened
+    assert READ_BUDGET_BYTES == 32 * 1_048_576
+
+
+def test_reads_no_byte_when_record_file_only_checked_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    a_feature(
+        features_of(tmp_path),
+        "demo-feature",
+        {"plan.md": b"p" * 100_000, "research.md": b"r" * 100_000, "issues.md": b"i"},
+    )
+    reads = Reads(monkeypatch)
+
+    [read] = read_feature_folders(tmp_path)
+
+    assert read.files == ("research.md", "plan.md", "issues.md")
+    assert reads.bytes == 0
+
+
+def test_reads_first_names_only_when_reviews_over_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    (folder / "reviews").mkdir()
+    for index in (4, 0, 3, 1, 2):
+        (folder / "reviews" / f"dem-{index}.md").write_bytes(b"---\n---\n")
+    os.close(os.open(os.fsencode(folder / "reviews") + b"/dem-\xff.md", os.O_CREAT | os.O_WRONLY))
+    monkeypatch.setattr("agent_hub.generator.feature_files.MAX_REVIEW_FILES", 2)
+    reads = Reads(monkeypatch)
+
+    [read] = read_feature_folders(tmp_path)
+
+    assert [head.name for head in read.reviews] == ["dem-0.md", "dem-1.md"]
+    assert read.reviews_skipped == 4
+    assert [name for name in reads.opened if name.startswith("dem-")] == ["dem-0.md", "dem-1.md"]

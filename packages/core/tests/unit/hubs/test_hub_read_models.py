@@ -535,3 +535,15 @@ def test_reads_warm_snapshot_when_features_listed() -> None:
     assert [kind for kind, _ in snapshots.calls] == ["cached", "fetch", "cached", "cached"]
     assert {request for _, request in snapshots.calls} == {TICKET_REQUEST}
     assert counting.count == 1
+
+
+def test_reads_only_named_folder_when_one_feature_read() -> None:
+    snapshots = InMemoryTicketSnapshots(InMemoryTrackerReader(a_seeded_issue_board()))
+    models, reader, _ = read_models({DEMO: a_ticket_hub()}, DEMO, ticket_snapshots=snapshots)
+
+    models.get_feature("demo", "ticketed")
+    models.feature_tickets("demo", "ticketed")
+    with pytest.raises(EntityNotFoundError):
+        models.get_feature("demo", "nope")
+
+    assert reader.feature_reads == [("ticketed", DEMO), ("ticketed", DEMO), ("nope", DEMO)]
