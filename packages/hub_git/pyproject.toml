@@ -2,6 +2,7 @@
 name = "agent-hub-hub-git"
 version = "0.1.0"
 description = "Hub git adapter of agent-hub: opens hub pull requests for learning decisions with git and gh."
+license = "Apache-2.0"
 requires-python = ">=3.14"
 dependencies = ["agent-hub-core"]
 

@@ -1,0 +1,71 @@
+# agent-hub
+
+> A home base for AI coding agents, for developers who run Claude Code across several repos. One command gives each project shared rules, memory and workflow, pinned to a version and kept up to date.
+
+agent-hub is a Python CLI, `hub`, installed from a git tag with uv (no PyPI package):
+`uvx --from 'git+https://github.com/jroquette/agent-hub@vX.Y.Z#subdirectory=packages/agent-hub' hub --help`.
+`hub init` creates a hub: a repo next to the project's code repos that holds `hub.json` (the
+project config), a brain (curated project memory), the hub-workflow Claude Code plugin (skills,
+agents and guard hooks) and per-task worktrees. `hub sync` keeps a hub up to date with its pinned
+release, and `hub web` serves a local control plane of the agents' sessions.
+
+If you are an agent setting up a hub for a project, read the usage guide first. The repo's own
+AGENTS.md is for agents changing agent-hub itself, not for users of it.
+License: Apache-2.0.
+
+## Use agent-hub
+
+- [Using agent-hub for another project](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/USING.md): `docs/USING.md`
+- [agent-hub README: Quick Start, daily workflow, recipes and configuration](https://raw.githubusercontent.com/jroquette/agent-hub/main/README.md): `README.md`
+- [Project config: `hub.json`](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/project-config.md): `docs/design/project-config.md`
+- [Developer identity: `hub.local.json`, then `hub.json`, then git config](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/developer-identity.md): `docs/design/developer-identity.md`
+- [Hub setup: one-command onboarding of a developer's machine](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/hub-setup.md): `docs/design/hub-setup.md`
+- [Hub start: from a tracker issue to its worktrees and a session](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/hub-start.md): `docs/design/hub-start.md`
+- [Hub sync: hub.lock, hub sync and --check](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/hub-sync.md): `docs/design/hub-sync.md`
+- [Hub adopt: hub sync --adopt, --accept and the link migration](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/hub-adopt.md): `docs/design/hub-adopt.md`
+- [Hub doctor: pluggable rules](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/hub-doctor.md): `docs/design/hub-doctor.md`
+- [Worktree environment: what a repo's setup and teardown scripts get](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/worktree-environment.md): `docs/design/worktree-environment.md`
+- [Memory layers: team brain, personal memory, repo `AGENTS.md`](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/memory-layers.md): `docs/design/memory-layers.md`
+- [Security policy](https://raw.githubusercontent.com/jroquette/agent-hub/main/SECURITY.md): `SECURITY.md`
+
+## Product and design
+
+- [Initial spec — Hubs and agents platform](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/SPEC.md): `docs/SPEC.md`
+- [Changelog](https://raw.githubusercontent.com/jroquette/agent-hub/main/CHANGELOG.md): `CHANGELOG.md`
+- [Design docs](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/README.md): `docs/design/README.md`
+
+## Contribute to agent-hub
+
+- [AGENTS.md — agent-hub](https://raw.githubusercontent.com/jroquette/agent-hub/main/AGENTS.md): `AGENTS.md`
+- [Architecture](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/ARCHITECTURE.md): `docs/ARCHITECTURE.md`
+- [Conventions](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/CONVENTIONS.md): `docs/CONVENTIONS.md`
+- [Testing](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/TESTING.md): `docs/TESTING.md`
+- [Contributing](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/CONTRIBUTING.md): `docs/CONTRIBUTING.md`
+- [API standard](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/API.md): `docs/API.md`
+
+## Optional
+
+- [0001. uv workspace with namespace packages](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0001-uv-workspace-with-namespace-packages.md): `docs/adr/0001-uv-workspace-with-namespace-packages.md`
+- [0002. Lean hexagonal architecture](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0002-lean-hexagonal-architecture.md): `docs/adr/0002-lean-hexagonal-architecture.md`
+- [0003. Persistence with SQLAlchemy Core and Alembic](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0003-persistence-sqlalchemy-core-and-alembic.md): `docs/adr/0003-persistence-sqlalchemy-core-and-alembic.md`
+- [0004. REST API standard](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0004-rest-api-standard.md): `docs/adr/0004-rest-api-standard.md`
+- [0005. Testing strategy](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0005-testing-strategy.md): `docs/adr/0005-testing-strategy.md`
+- [0006. Conventions and English](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0006-conventions-and-english.md): `docs/adr/0006-conventions-and-english.md`
+- [0007. Git and change flow](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0007-git-and-change-flow.md): `docs/adr/0007-git-and-change-flow.md`
+- [0008. CLI as the composition root](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0008-cli-as-composition-root.md): `docs/adr/0008-cli-as-composition-root.md`
+- [0009. Hub sync by per-file ownership](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0009-hub-sync-by-file-ownership.md): `docs/adr/0009-hub-sync-by-file-ownership.md`
+- [0010. hub.json as the versioned config contract](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0010-hub-json-config-contract.md): `docs/adr/0010-hub-json-config-contract.md`
+- [0011. Hub templates as package data in a generator package](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0011-templates-as-package-data.md): `docs/adr/0011-templates-as-package-data.md`
+- [0012. The hub CLI subsumes the hub scripts](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0012-cli-subsumes-hub-scripts.md): `docs/adr/0012-cli-subsumes-hub-scripts.md`
+- [0013. Release the hub CLI by git tags](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0013-release-by-git-tags.md): `docs/adr/0013-release-by-git-tags.md`
+- [0014. Tracker port with a Linear GraphQL adapter](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0014-tracker-port-linear-graphql.md): `docs/adr/0014-tracker-port-linear-graphql.md`
+- [0015. Linear MCP transport for the tracker port](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0015-linear-mcp-tracker-transport.md): `docs/adr/0015-linear-mcp-tracker-transport.md`
+- [0016. Per-developer identity: `hub.local.json`, then `hub.json`, then git config](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0016-per-developer-identity.md): `docs/adr/0016-per-developer-identity.md`
+- [0017. `agent_hub.api` as a second composition root, served locally by `hub web`](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0017-api-second-composition-root.md): `docs/adr/0017-api-second-composition-root.md`
+- [0018. Storage-minted event ids, `received_at` and read queries on the event store](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0018-stored-event-ids-and-received-at.md): `docs/adr/0018-stored-event-ids-and-received-at.md`
+- [0019. Metadata-only event payloads and redaction before append](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0019-metadata-only-events-and-redaction.md): `docs/adr/0019-metadata-only-events-and-redaction.md`
+- [0020. Web stack, generated client and the committed production build](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0020-web-stack-and-committed-build.md): `docs/adr/0020-web-stack-and-committed-build.md`
+- [0021. Hook event sensor and envelope v1](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0021-hook-event-sensor.md): `docs/adr/0021-hook-event-sensor.md`
+- [0022. Container packaging of the control plane, and the bind rule](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0022-container-packaging.md): `docs/adr/0022-container-packaging.md`
+- [0023. A short, redacted error message on failed tool results](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0023-short-error-message.md): `docs/adr/0023-short-error-message.md`
+- [0024. Learning actions from the app open hub pull requests through a `hub_git` adapter](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0024-learning-actions-from-the-app.md): `docs/adr/0024-learning-actions-from-the-app.md`
