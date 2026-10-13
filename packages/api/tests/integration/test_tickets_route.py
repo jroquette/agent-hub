@@ -180,14 +180,9 @@ KEY_SHAPES: dict[str, Callable[[str], str]] = {
     "linear-shaped": lambda key: key.replace("x" * 8, "Sentinel", 1),
     "unshaped": lambda key: "sentinel-" + "k7" * 16,
 }
-# A key without Linear's ``lin_api_`` shape, echoed in a GraphQL error message, reaches
-# ``tracker_problem.detail``: only redaction (r1) hides an echoed key, and it knows the shape only.
-UNSHAPED_LEAK = pytest.mark.xfail(
-    strict=True, reason="AGH-136: an echoed key is hidden by its shape, not by its value"
-)
 
 
-@pytest.mark.parametrize("shape", ["linear-shaped", pytest.param("unshaped", marks=UNSHAPED_LEAK)])
+@pytest.mark.parametrize("shape", ["linear-shaped", "unshaped"])
 def test_leaves_key_never_exposed_when_linear_echoes_it(
     open_tickets: Any, tickets_kit: Any, *, caplog: pytest.LogCaptureFixture, shape: str
 ) -> None:

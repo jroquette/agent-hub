@@ -153,7 +153,7 @@ def request_data(  # noqa: PLR0913 - the request's parts, all keyword-only
         raise TrackerError(
             operation=operation,
             issue_id=issue_id,
-            cause=f"could not reach Linear: {quoted(error)}",
+            cause=f"could not reach Linear: {quoted(without_key(str(error), key))}",
             fix="check the network connection to api.linear.app, then retry",
             kind="unreachable",
         ) from error
@@ -163,6 +163,7 @@ def request_data(  # noqa: PLR0913 - the request's parts, all keyword-only
         operation_name=operation_name,
         answer=(status, response),
         shape=shape,
+        key=key,
     )
 
 
@@ -195,6 +196,7 @@ def _data(
     operation_name: str,
     answer: tuple[int, bytes],
     shape: Shape,
+    key: str,
 ) -> Any:
     """The answer's ``data``, of ``shape``; any failure the answer reports raises."""
     status, response = answer
@@ -205,7 +207,7 @@ def _data(
         raise TrackerError(
             operation=operation,
             issue_id=issue_id,
-            cause=f"Linear answered with an error: {_first_message(errors)}",
+            cause=f"Linear answered with an error: {_first_message(errors, key)}",
             fix=_errors_fix(errors, issue_id),
             kind=_errors_kind(errors),
             http_status=status,
@@ -357,11 +359,16 @@ def unexpected(
     )
 
 
-def _first_message(errors: Any) -> str:
-    """The first GraphQL error's message, quoted and cut: it is untrusted text."""
+def _first_message(errors: Any, key: str) -> str:
+    """The first GraphQL error's message, without the key, quoted and cut: it is untrusted text."""
     first = errors[0] if isinstance(errors, list) and errors else None
     message = first.get("message") if isinstance(first, dict) else None
-    return quoted(message)
+    return quoted(without_key(str(message), key))
+
+
+def without_key(text: str, key: str) -> str:
+    """``text`` with every copy of ``key`` replaced, before any cut (an echo must not leak a prefix)."""
+    return text.replace(key, "[the API key]") if key else text
 
 
 def quoted(text: object) -> str:
