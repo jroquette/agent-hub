@@ -270,6 +270,7 @@ def test_keeps_existing_writes_when_origin_and_fetch_metadata_missing(wired: Any
         "/api/v1/sessions/session-1/problems",
         "/api/v1/projects/demo/brain",
         "/api/v1/projects/demo/brain/note?path=index.md",
+        "/api/v1/features/demo/feature-1/tickets",
     ],
 )
 def test_keeps_csp_when_clarity_routes_served(wired: Any, path: str) -> None:
