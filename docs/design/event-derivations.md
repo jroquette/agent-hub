@@ -81,7 +81,15 @@ whose per-transition log already records a run id, the issue, the repo and the s
 | `REPORTED` | `step.end` of the last step, then `run.end` done | closes it: end time, final state |
 
 A run ends only on its explicit terminal event, `run.end`, never because a step has a given name. A run with no
-`run.end` stays in its current step. Approvals anywhere in a run are a `gate.request` (waiting) and a `gate.result`
+`run.end` stays in its current step.
+
+**Delivery (AGH-140).** Whether the run failed and what it delivered are two fields. `run.end` carries
+`payload.outcome`: `delivered` (its PR), `failed`, or one of two ends that are not failures, `no_changes` (the
+implementing session left no commit) and `blocked` (the session stopped and asked for a human). Those two come from a
+`not_delivered` record instead of `failed`: their stage ends `ok`, the `run.end` is `done` with the reason in
+`payload.reason`, and the run is `REPORTED` with no `failure`, its `delivery` and `delivery_reason` set. A `run.end`
+stored before `outcome` existed reads `delivered` when it names a PR and did not fail, else `failed`. The tracker
+still gets the failure's label and comment for `no_changes` and `blocked`, and `hub run` still exits 1. Approvals anywhere in a run are a `gate.request` (waiting) and a `gate.result`
 (approver, decision), paired by `payload.gate_id`, never by adjacency.
 
 ### Learning

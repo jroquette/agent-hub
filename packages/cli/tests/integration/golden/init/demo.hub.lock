@@ -429,7 +429,7 @@
     "scripts/retro_metrics.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "c15a5925181394ca2c9adf4784ae249aedc7ca5707cc7c8dae903c2b43088ea1"
+      "sha256": "fdac169d0ebd59302540f442f0592e39239ede6ca87fc367184c16806f9eff21"
     }
   },
   "lock_version": 1,

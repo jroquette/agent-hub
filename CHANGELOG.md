@@ -13,6 +13,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub run` keeps the run's status apart from what it delivered: a session that left no commit (`no_changes`) or
+  stopped to ask for a human (`blocked`) records `not_delivered` instead of `failed`, and `reported` names the
+  `outcome`. The control plane shows those runs as "No changes" or "Blocked" (not failed), with the reason, the
+  workflow-run API adds `delivery` and `delivery_reason`, and `retro_metrics.py` counts them apart. The tracker
+  still gets the failed label for them, and the command still exits 1 (AGH-140).
 - Apache License 2.0 (`LICENSE`, `NOTICE`, and `license` in every package), `SECURITY.md`, this changelog, a Renovate
   configuration, and `llms.txt` / `llms-full.txt` for AI agents, generated from the docs and checked by
   `make check-fast` (AGH-137).
