@@ -6,14 +6,21 @@ files read as ``hub doctor`` reads them, the read models folded on request, the 
 the streams wait on, and the learning reads and decisions, which open hub pull requests through
 ``hub_git`` (ADR 0024). Git config stays with the caller (the CLI): ``read_git`` makes the git
 config reader of one hub folder, so the branch prefix and author match ``hub doctor``.
+
+The feature tickets read Linear through ``CachedTicketSnapshots`` (ADR 0025): ``TicketReaders``
+gives its reader per request, None (not connected) when ``LINEAR_API_KEY`` is unset in
+``environ`` or the hub's ``tracker.transport`` is ``mcp``; the key is read at call time and never
+logged or shown.
 """
 
+import inspect
+import os
 import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from fastapi import FastAPI
 
@@ -30,8 +37,14 @@ from agent_hub.api.rfc9457 import (
 )
 from agent_hub.api.settings import ApiSettings
 from agent_hub.api.static_files import WEB_DIST
+from agent_hub.api.ticket_snapshots import (
+    READ_BUDGET_SECONDS,
+    REQUEST_TIMEOUT_SECONDS,
+    CachedTicketSnapshots,
+)
 from agent_hub.collector.claude_hooks import ClaudeHookMapper
 from agent_hub.collector.transcript_tail import TranscriptTail
+from agent_hub.core.features.ticket_snapshots import SnapshotRequest, TrackerTransport
 from agent_hub.core.hub_config.effective_identity import (
     GitReader,
     IdentityKey,
@@ -67,11 +80,14 @@ from agent_hub.core.readmodels.settings_view import SettingsView
 from agent_hub.core.redaction.redact import KINDS as REDACTION_KINDS
 from agent_hub.core.sessions.pricing import PRICES, PRICES_AS_OF
 from agent_hub.core.sessions.session_label import LabelRules
+from agent_hub.core.tracker.tracker_reader import TrackerReader
 from agent_hub.generator.registered_hub_files import GitReaderFactory, HubFileSystem
 from agent_hub.hub_git.brain_change_requests import GitBrainChangeRequests
 from agent_hub.hub_git.git_runner import GitRunner
 from agent_hub.storage.event_store import DatabaseBusyError, SqliteEventStore, open_event_store
 from agent_hub.storage.hub_registry import JsonHubRegistry
+from agent_hub.tracker_linear.graphql_reader import LinearGraphqlTrackerReader
+from agent_hub.tracker_linear.graphql_transport import LINEAR_API_KEY_VARIABLE, Post
 
 # The errors of the wired adapters, each answered by its problem (API.md "Error mapping").
 COMPOSED_PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
@@ -130,6 +146,7 @@ class _HubFacts:
 
     hub: LearningHub | UnavailableHub
     label_rules: LabelRules | None
+    transport: TrackerTransport | None = None
 
 
 _UNREGISTERED: Final = _HubFacts(hub=UnavailableHub(reason=HUB_NOT_REGISTERED), label_rules=None)
@@ -140,7 +157,8 @@ class RegisteredHubFacts:
 
     ``hub_of`` is the hub a learning decision acts on (``hub.json`` with ``hub.local.json``,
     else git config, for the author and branch prefix: ADR 0016), or why it cannot act;
-    ``label_rules_of`` the tracker teams and branch prefix a session's issue is read with. When
+    ``label_rules_of`` the tracker teams and branch prefix a session's issue is read with;
+    ``tracker_transport_of`` the hub's ``tracker.transport`` (ADR 0025). When
     two hubs name a project, the first valid one registered wins, as in the hub read models.
     """
 
@@ -172,6 +190,10 @@ class RegisteredHubFacts:
         """The project's tracker teams and branch prefix; None when no valid hub names it."""
         return self._current().get(project, _UNREGISTERED).label_rules
 
+    def tracker_transport_of(self, project: str) -> TrackerTransport | None:
+        """The project's ``tracker.transport``; None when no valid hub names it."""
+        return self._current().get(project, _UNREGISTERED).transport
+
     def _current(self) -> Mapping[str, _HubFacts]:
         with self._guard:
             now = self._clock()
@@ -201,13 +223,16 @@ class RegisteredHubFacts:
         return invalid | valid
 
     def _facts_of(self, hub_path: str, config: HubConfig) -> _HubFacts:
+        transport = config.tracker.transport
         local = self._reader.read_local(hub_path)
         if not isinstance(local, LocalConfig):
             rules = LabelRules(
                 teams=config.tracker.team_keys, branch_prefix=config.project.branch_prefix or ""
             )
             return _HubFacts(
-                hub=UnavailableHub(reason=HUB_LOCAL_INVALID, path=hub_path), label_rules=rules
+                hub=UnavailableHub(reason=HUB_LOCAL_INVALID, path=hub_path),
+                label_rules=rules,
+                transport=transport,
             )
         values = resolve_identity(
             local=IdentityValues.of(local.project),
@@ -220,7 +245,11 @@ class RegisteredHubFacts:
         rules = LabelRules(teams=config.tracker.team_keys, branch_prefix=branch_prefix)
         name, email = values[IdentityKey.AUTHOR_NAME], values[IdentityKey.AUTHOR_EMAIL]
         if name is None or email is None:
-            return _HubFacts(hub=UnavailableHub(reason=NO_AUTHOR, path=hub_path), label_rules=rules)
+            return _HubFacts(
+                hub=UnavailableHub(reason=NO_AUTHOR, path=hub_path),
+                label_rules=rules,
+                transport=transport,
+            )
         hub = LearningHub(
             project=config.project.name,
             path=hub_path,
@@ -229,7 +258,7 @@ class RegisteredHubFacts:
             branch_prefix=branch_prefix,
             author=CommitAuthor(name=name.value, email=email.value),
         )
-        return _HubFacts(hub=hub, label_rules=rules)
+        return _HubFacts(hub=hub, label_rules=rules, transport=transport)
 
 
 class CachedAvailability:
@@ -264,6 +293,63 @@ class CachedAvailability:
         return reason
 
 
+class TicketReaders:
+    """The ``reader_of`` of ``CachedTicketSnapshots``: ``reader``, or None when not connected.
+
+    Not connected (Not-connected rule, ADR 0025): the request's or the registered hub's
+    ``tracker.transport`` is ``mcp`` (never read through MCP), or ``LINEAR_API_KEY`` is unset or
+    empty in ``environ``. Both are read on every call, so a key set while ``hub web`` runs takes
+    effect at once; no network here, and the key is only tested for presence.
+    """
+
+    def __init__(
+        self, facts: RegisteredHubFacts, *, environ: Mapping[str, str], reader: TrackerReader
+    ) -> None:
+        self._facts = facts
+        self._environ = environ
+        self._reader = reader
+
+    def __call__(self, request: SnapshotRequest) -> TrackerReader | None:
+        if request.transport == "mcp" or self._facts.tracker_transport_of(request.project) == "mcp":
+            return None
+        if not self._environ.get(LINEAR_API_KEY_VARIABLE):
+            return None
+        return self._reader
+
+
+def ticket_snapshots(
+    facts: RegisteredHubFacts,
+    *,
+    environ: Mapping[str, str] | None = None,
+    linear_post: Post | None = None,
+    tracker_reader: TrackerReader | None = None,
+) -> CachedTicketSnapshots:
+    """The feature tickets' cache over Linear's GraphQL reader (``tracker_reader`` in tests).
+
+    ``environ`` defaults to this process's environment, read at call time; ``linear_post`` is
+    the reader's HTTP transport (default ``urllib``).
+    """
+    env: Mapping[str, str] = os.environ if environ is None else environ
+    reader = (
+        LinearGraphqlTrackerReader(
+            environ=env,
+            post=linear_post,
+            timeout_s=REQUEST_TIMEOUT_SECONDS,
+            deadline_s=READ_BUDGET_SECONDS,
+        )
+        if tracker_reader is None
+        else tracker_reader
+    )
+    return CachedTicketSnapshots(TicketReaders(facts, environ=env, reader=reader))
+
+
+def _ticket_keyword(snapshots: CachedTicketSnapshots) -> dict[str, Any]:
+    """``ticket_snapshots=`` for ``HubFilesReadModels`` once it takes it (AGH-136 stream C)."""
+    if "ticket_snapshots" in inspect.signature(HubFilesReadModels).parameters:
+        return {"ticket_snapshots": snapshots}
+    return {}
+
+
 def default_brain_changes() -> BrainChangeRequests:
     """The ``hub_git`` adapter with this process's environment (``AGENT_HUB_IN_CONTAINER=1``
     makes every hub read-only)."""
@@ -293,13 +379,18 @@ def build_app(
     read_git: GitReaderFactory | None = None,
     web_dist: Path = WEB_DIST,
     brain_changes: BrainChangeRequests | None = None,
+    environ: Mapping[str, str] | None = None,
+    linear_post: Post | None = None,
+    tracker_reader: TrackerReader | None = None,
 ) -> FastAPI:
     """The app of ``hub web``: every route wired to the real adapters.
 
     ``projects_root`` is Claude Code's transcripts folder (default ``~/.claude/projects``):
     the live tail reads only under it. ``brain_changes`` opens the learning decisions' hub pull
-    requests (default: ``git`` and ``gh`` through ``hub_git``). ``DatabaseAccessError`` when the
-    store cannot be opened.
+    requests (default: ``git`` and ``gh`` through ``hub_git``). The tickets route reads Linear
+    with ``LINEAR_API_KEY`` from ``environ`` (default this process's environment, read at call
+    time) through ``linear_post`` (default ``urllib``), or ``tracker_reader`` when given (tests).
+    ``DatabaseAccessError`` when the store cannot be opened.
     """
     store = open_event_store(settings.db_path)
     counters = IngestionCounters(clock=settings.clock)
@@ -317,6 +408,9 @@ def build_app(
     events = _event_read_models(
         store, settings, hub_paths=hub_paths, label_rules_of=facts.label_rules_of
     )
+    snapshots = ticket_snapshots(
+        facts, environ=environ, linear_post=linear_post, tracker_reader=tracker_reader
+    )
     hubs = HubFilesReadModels(
         registry=registry,
         reader=reader,
@@ -331,6 +425,7 @@ def build_app(
             prices_as_of=PRICES_AS_OF if PRICES else None,
         ),
         clock=settings.clock,
+        **_ticket_keyword(snapshots),
     )
     hub_paths.hubs = hubs
     changes = default_brain_changes() if brain_changes is None else brain_changes
