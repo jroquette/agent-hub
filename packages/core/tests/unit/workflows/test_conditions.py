@@ -176,3 +176,41 @@ def test_fails_when_reference_cannot_resolve(expr: str, code: str) -> None:
 def test_never_resolves_reference_when_its_clause_is_short_circuited() -> None:
     assert holds("$INPUTS.count == 3 || $INPUTS.missing == 'x'")
     assert not holds("$INPUTS.count == 4 && $build.output == 'x'")
+
+
+def test_compares_canonical_json_when_field_is_an_object_or_array() -> None:
+    context = RefContext(
+        inputs={},
+        nodes={"plan": NodeResult(state="completed", output={"a": [1, {"z": 1, "b": 2}]})},
+    )
+    assert holds("""$plan.output.a == '[1,{"b":2,"z":1}]'""", context)
+    assert holds("""$plan.output == '{"a":[1,{"b":2,"z":1}]}'""", context)
+
+
+def test_refuses_expression_when_left_side_is_a_with_value() -> None:
+    with pytest.raises(ConditionParseError):
+        parse_condition("$WITH.plan == 'x'")
+
+
+def test_refuses_number_when_digits_are_not_ascii() -> None:
+    with pytest.raises(ConditionParseError):
+        parse_condition("$INPUTS.count == \u0663")
+    context = RefContext(inputs={"count": "1\u0663"}, nodes={})
+    assert isinstance(evaluate_when("$INPUTS.count == 1", context), WhenSkip)
+
+
+def test_fails_when_value_is_not_finite() -> None:
+    context = RefContext(inputs={"big": float("inf")}, nodes={})
+    result = evaluate_when("$INPUTS.big == 'x'", context)
+    assert isinstance(result, WhenFail)
+    assert result.error.code == "non_finite"
+
+
+def test_bounds_echoed_expression_when_parse_fails() -> None:
+    expr = "$INPUTS.mode == fast " + "x" * 2000
+    result = evaluate_when(expr, CONTEXT)
+    assert isinstance(result, WhenSkip)
+    assert len(result.detail) < 200
+    with pytest.raises(ConditionParseError) as caught:
+        parse_condition("$" + "a" * 2000 + ".outpu == 1")
+    assert len(str(caught.value)) < 200
