@@ -65,7 +65,7 @@ def _item(catalog: SkillCatalog, item: str) -> CatalogItem:
     return found[0]
 
 
-def test_holds_exact_items_when_fixture_tree_folded() -> None:
+def test_holds_exact_items_when_fixture_sources_folded() -> None:
     catalog = _catalog(a_skills_fixture_tree())
 
     skills = [item.name for item in catalog.items if item.kind is ItemKind.SKILL]
@@ -96,7 +96,7 @@ def test_holds_exact_items_when_fixture_tree_folded() -> None:
     assert (catalog.truncated, catalog.notice) == (False, None)
 
 
-def test_folds_hook_origins_when_settings_differ() -> None:
+def test_folds_origins_of_hooks_when_settings_differ() -> None:
     tree = a_skills_fixture_tree()
     tree[".claude/settings.project.json"] = json.dumps(
         {
@@ -316,7 +316,7 @@ def _codes(folded: FoldedCatalog, item: str) -> list[DiagnosticCode]:
     return [diagnostic.code for diagnostic in folded.details[item].diagnostics]
 
 
-def test_links_uses_and_used_by_when_body_names_items() -> None:
+def test_links_relations_when_body_names_items() -> None:
     folded = build_catalog(_inputs(a_skills_fixture_tree()))
 
     alpha = folded.details["skill/hub-workflow/alpha"]
@@ -375,7 +375,7 @@ def test_reports_not_linked_when_project_skill_unlinked() -> None:
     assert linked.details["skill/demo/gamma"].linked_from == (".claude/skills/gamma",)
 
 
-def test_reports_modified_when_sha_differs_from_lock() -> None:
+def test_reports_modified_since_sync_when_sha_differs_from_lock() -> None:
     tree = a_skills_fixture_tree()
     tree["plugin/hub-workflow/skills/alpha/SKILL.md"] += b"\nEdited by hand.\n"
     tree["plugin/hub-workflow/hooks/hooks.json"] = b'{"hooks": {}}\n'
@@ -393,7 +393,7 @@ def test_reports_modified_when_sha_differs_from_lock() -> None:
     assert alpha.lock.ownership == "managed"
 
 
-def test_reports_modified_hooks_when_hooks_json_differs_from_lock() -> None:
+def test_reports_modified_since_sync_when_hooks_json_differs_from_lock() -> None:
     tree = a_skills_fixture_tree()
     tree["plugin/hub-workflow/hooks/hooks.json"] += b"\n"
     folded = build_catalog(_inputs(tree))
@@ -403,7 +403,7 @@ def test_reports_modified_hooks_when_hooks_json_differs_from_lock() -> None:
     ]
 
 
-def test_lists_every_source_when_names_collide() -> None:
+def test_lists_every_duplicate_source_when_names_collide() -> None:
     tree = a_skills_fixture_tree()
     tree["plugin/demo/skills/alpha/SKILL.md"] = b"---\nname: alpha\ndescription: Again.\n---\n"
     folded = build_catalog(_inputs(tree))

@@ -46,7 +46,7 @@ def _skill(name: str, size: int) -> bytes:
     return head + b"x" * (size - len(head))
 
 
-def test_marks_over_budget_when_catalog_over_sixteen_mebibytes() -> None:
+def test_marks_over_budget_when_catalog_over_byte_bounds() -> None:
     size = 250_000
     count = CATALOG_BUDGET_BYTES // size + 3
     tree: dict[str, TreeEntry] = {
@@ -72,7 +72,7 @@ def _extra(name: str) -> dict[str, object]:
     return {"kind": ItemKind.SKILL, "source": "extra", "name": name}
 
 
-def test_lists_too_large_when_skill_md_over_cap() -> None:
+def test_lists_too_large_when_skill_md_over_file_bounds() -> None:
     path = "plugin/extra/skills/huge/SKILL.md"
     reads, reader, _ = _reads({path: _skill("huge", 300 * 1024)})
 
@@ -188,7 +188,7 @@ def test_answers_not_found_when_id_unknown() -> None:
     assert (HUB, big) not in reader.skill_reads
 
 
-def test_says_not_synced_when_hub_has_no_skills() -> None:
+def test_says_not_synced_when_hub_empty() -> None:
     reads, _, _ = _reads({})
 
     catalog = reads.catalog(project=FIXTURE_PROJECT, hub_path=HUB)

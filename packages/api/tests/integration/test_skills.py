@@ -390,7 +390,7 @@ def _snapshot(root: Path) -> dict[str, tuple[bytes | str, int]]:
     return seen
 
 
-def test_changes_nothing_and_spawns_nothing_when_routes_read(
+def test_stays_read_only_when_routes_read(
     *, composed: Any, skills_hub: SkillsHub, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     sentinel = tmp_path / SENTINEL

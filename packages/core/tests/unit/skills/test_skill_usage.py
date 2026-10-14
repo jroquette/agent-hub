@@ -63,7 +63,7 @@ def _fold(events: Sequence[Event], *, project: str = "demo") -> dict[str, Usage]
     return fold_skill_usage(_sessions(events), project=project, now=NOW).by_skill
 
 
-def test_counts_once_when_hook_and_transcript_report_same_prompt() -> None:
+def test_dedupes_when_hook_and_transcript_report_same_prompt() -> None:
     events = [
         _prompt("/feature", 0),
         _prompt("/feature", 1.5, source="transcript"),
@@ -76,7 +76,7 @@ def test_counts_once_when_hook_and_transcript_report_same_prompt() -> None:
     }
 
 
-def test_counts_once_when_slash_and_skill_call_within_five_seconds() -> None:
+def test_dedupes_when_slash_and_skill_call_within_five_seconds() -> None:
     events = [
         _prompt("/feature", 0),
         _skill_call("hub-workflow:feature", 3, tool_use_id="toolu_skill"),
@@ -92,7 +92,7 @@ def test_counts_once_when_slash_and_skill_call_within_five_seconds() -> None:
     }
 
 
-def test_counts_twice_when_signals_six_seconds_apart() -> None:
+def test_skips_dedupe_when_signals_six_seconds_apart() -> None:
     events = [
         _prompt("/feature", 0),
         _skill_call("hub-workflow:feature", 6, tool_use_id="toolu_skill"),
