@@ -17,6 +17,10 @@ from agent_hub.generator.registry import REGISTRY
 from agent_hub.generator.render_hub import render_hub
 
 SHIPPED_SCHEMA = "agent_hub/core/hub_config/hub.schema.json"
+SHIPPED_OUTPUT_SCHEMAS = (
+    "agent_hub/core/features/review.v1.json",
+    "agent_hub/core/features/eval.v1.json",
+)
 GENERATOR_PACKAGE = "agent_hub.generator"
 INSTALL_TIMEOUT_SECONDS = 300
 
@@ -57,6 +61,20 @@ def test_ships_hub_schema_when_core_wheel_built(
     [wheel] = tmp_path.glob("agent_hub_core-*.whl")
     with zipfile.ZipFile(wheel) as archive:
         assert SHIPPED_SCHEMA in archive.namelist()
+
+
+def test_ships_output_schemas_when_core_wheel_built(
+    tmp_path: Path, run: Callable[..., CompletedProcess[str]]
+) -> None:
+    uv = _uv()
+    command = [uv, "build", "--package", "agent-hub-core", "--wheel", "--out-dir", str(tmp_path)]
+
+    result = run(command)
+
+    assert result.returncode == 0, result.stderr
+    [wheel] = tmp_path.glob("agent_hub_core-*.whl")
+    with zipfile.ZipFile(wheel) as archive:
+        assert set(SHIPPED_OUTPUT_SCHEMAS) <= set(archive.namelist())
 
 
 def test_ships_every_template_when_generator_wheel_built(
