@@ -193,3 +193,130 @@ def test_keeps_folder_problems_when_validate_gets_a_name(
 
     assert result.exit_code == 1
     assert result.stderr.startswith("workflows: $: the workflows folder is a link")
+
+
+PASSING_FIXTURE = """\
+workflow: check
+stubs: {lint: {text: ok}, test: {text: ok}}
+expect: {status: done}
+reached: [lint, test]
+"""
+FAILING_FIXTURE = """\
+workflow: check
+stubs: {lint: {fail: exec_failed}}
+expect: {status: done}
+reached: [lint]
+"""
+
+
+def test_passes_and_exits_zero_when_every_fixture_matches_its_run(hub: Path) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+    write(hub, "workflows/demo/fixtures/green.yaml", PASSING_FIXTURE)
+
+    result = run(hub, "test")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines() == [
+        "workflows/demo/fixtures/green.yaml: ok",
+        "1 fixture: 1 passed, 0 failed",
+    ]
+
+
+def test_reports_each_problem_and_exits_one_when_a_fixture_fails(hub: Path) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+    write(hub, "workflows/demo/fixtures/green.yaml", PASSING_FIXTURE)
+    write(hub, "workflows/demo/fixtures/red.yaml", FAILING_FIXTURE)
+
+    result = run(hub, "test")
+
+    assert result.exit_code == 1
+    assert result.stdout.splitlines() == [
+        "workflows/demo/fixtures/green.yaml: ok",
+        "workflows/demo/fixtures/red.yaml: FAILED",
+        "  status: expected done, got failed",
+        '  failed: expected [], got ["lint"]',
+        "2 fixtures: 1 passed, 1 failed",
+    ]
+
+
+def test_runs_only_the_named_workflow_fixtures_when_test_gets_a_name(hub: Path) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+    write(hub, "workflows/demo/fixtures/green.yaml", PASSING_FIXTURE)
+    write(hub, "workflows/demo/other.yaml", CHECK_YAML.replace("name: check", "name: other"))
+    write(hub, "workflows/demo/fixtures/x.yaml", FAILING_FIXTURE.replace("check", "other"))
+
+    result = run(hub, "test", "check")
+
+    assert result.exit_code == 0, result.output
+    assert "x.yaml" not in result.stdout
+
+
+def test_exits_one_when_the_named_workflow_has_no_fixture(hub: Path) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+
+    result = run(hub, "test", "check")
+
+    assert result.exit_code == 1
+    assert "no fixture for the workflow 'check'" in result.stderr
+
+
+def test_runs_nothing_and_exits_zero_when_no_pack_has_fixtures(hub: Path) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+
+    result = run(hub, "test")
+
+    assert (result.exit_code, result.stdout) == (0, "0 fixtures: 0 passed, 0 failed\n")
+
+
+def test_writes_a_passing_skeleton_when_stubs_init_names_a_workflow(hub: Path) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+
+    written = run(hub, "test", "check", "--stubs-init")
+    tested = run(hub, "test", "check")
+
+    assert written.exit_code == 0, written.output
+    assert written.stdout == "wrote workflows/demo/fixtures/check.yaml\n"
+    assert (
+        "stubs:\n  lint:\n    text: TODO\n"
+        in (hub / "workflows/demo/fixtures/check.yaml").read_text()
+    )
+    assert tested.exit_code == 0, tested.output
+
+
+def test_never_overwrites_the_file_when_stubs_init_finds_one(hub: Path) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+    kept = write(hub, "workflows/demo/fixtures/check.yaml", PASSING_FIXTURE)
+
+    result = run(hub, "test", "check", "--stubs-init")
+
+    assert result.exit_code == 1
+    assert "already exists; it is not overwritten" in result.stderr
+    assert kept.read_text() == PASSING_FIXTURE
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (("--stubs-init",), "--stubs-init needs a workflow name"),
+        (("ghost", "--stubs-init"), "no workflow named"),
+    ],
+)
+def test_exits_one_when_stubs_init_has_no_workflow_to_write_for(
+    hub: Path, args: tuple[str, ...], message: str
+) -> None:
+    write(hub, "workflows/demo/check.yaml", CHECK_YAML)
+
+    result = run(hub, "test", *args)
+
+    assert result.exit_code == 1
+    assert message in result.stderr
+
+
+def test_refuses_a_builtin_workflow_when_stubs_init_names_one(hub: Path, builtins: Path) -> None:
+    write(builtins, "shipped/check.yaml", CHECK_YAML)
+
+    result = run(hub, "test", "check", "--stubs-init")
+
+    assert result.exit_code == 1
+    assert "is a built-in workflow" in result.stderr
+    assert not (builtins / "shipped" / "fixtures").exists()
