@@ -15,6 +15,7 @@ from agent_hub.core.features.output_models import (
     ReviewFinding,
     ReviewOutput,
 )
+from agent_hub.core.features.output_shape import output_path
 
 REVIEW_FILE = "spec-r1.json"
 REVIEW_FOLDER = "AGH-7"
@@ -352,6 +353,10 @@ def test_freezes_models_when_valid_eval_parsed() -> None:
             "red_on_parent[0].failed_on_base",
         ),
         (an_eval_document(owner_steps=["one\ntwo"]), "owner_steps[0]"),
+        (an_eval_document(acs={}), "acs"),
+        (an_eval_document(acs=None), "acs"),
+        (an_eval_document(acs=True), "acs"),
+        (an_eval_document(acs=[["AC-1"]]), "acs[0]"),
     ],
     ids=[
         "schema version 2",
@@ -369,6 +374,10 @@ def test_freezes_models_when_valid_eval_parsed() -> None:
         "missing gates",
         "failed on base a number",
         "owner step with a newline",
+        "acs an object",
+        "acs null",
+        "acs true",
+        "acs a nested list",
     ],
 )
 def test_reports_one_problem_when_eval_shape_broken(document: dict[str, object], path: str) -> None:
@@ -404,3 +413,19 @@ def test_reports_overlong_list_when_eval_shape_has_bad_items(
 
     assert paths.count(path) == 1
     assert len(paths) > 1
+
+
+@pytest.mark.parametrize(
+    ("loc", "path"),
+    [
+        (("findings", 0, "acs", "ids"), "findings[0].acs.ids"),
+        (("ids",), "ids"),
+        (("acs", "ids", 0), "acs[0]"),
+        (("acs", "all"), "acs"),
+    ],
+    ids=["ids key inside a finding", "top-level ids key", "eval acs list tag", "eval acs all tag"],
+)
+def test_drops_only_eval_acs_tag_when_output_path_built(
+    loc: tuple[int | str, ...], path: str
+) -> None:
+    assert output_path(loc) == path
