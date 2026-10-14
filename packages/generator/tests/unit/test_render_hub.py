@@ -2087,7 +2087,7 @@ FIX_STEP_PHRASES = {
         "`hub.json`",
         "an empty one is a missing gate: say so in the PR body",
     ),
-    6: ("`quality-reviewer`", "diff", "Should-fix findings", "follow-ups"),
+    6: ("`quality-reviewer`", "diff", "Minor findings", "follow-ups"),
     7: ("PR", NO_AI_ATTRIBUTION, "No push to the default branch, no force-push"),
     8: ("In Review", "PR link"),
 }
@@ -2111,7 +2111,7 @@ FIX_RECORD_PHRASES = (
     "no `brain/features/<slug>/` folder",
     "if nothing can be tested, say so in one line of the PR body",
     "`check_fast`, `check` and the review still apply",
-    "On `CHANGES` with blockers",
+    "On `FAIL` with `blocking` findings",
     "re-run `check_fast` and `check`",
     "record the findings and the fixes in the PR body",
     "no second review pass",
