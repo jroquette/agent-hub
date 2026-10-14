@@ -11,6 +11,7 @@ from agent_hub.core.agent_sessions.workdirs import (
     workdir_id,
 )
 
+ME = 1000
 HUB = "/work/demo-hub"
 REPO = "/work/agent-hub"
 WORKTREES = "/work/agent-hub/.claude/worktrees"
@@ -23,11 +24,17 @@ class FakeTree:
         self,
         folders: Mapping[str, Sequence[str]],
         links: Mapping[str, str] | None = None,
+        *,
         unreadable: Sequence[str] = (),
+        owners: Mapping[str, int] | None = None,
+        modes: Mapping[str, int] | None = None,
     ) -> None:
         self.folders = folders
         self.links = links or {}
         self.unreadable = unreadable
+        self.owners = owners or {}
+        self.modes = modes or {}
+        self.stated: list[str] = []
 
     def list_dir(self, path: str) -> Sequence[str]:
         if path in self.unreadable:
@@ -43,6 +50,12 @@ class FakeTree:
                 return target + normal[len(link) :]
         return normal
 
+    def stat(self, path: str) -> os.stat_result:
+        self.stated.append(path)
+        mode = self.modes.get(path, 0o40755)
+        uid = self.owners.get(path, ME)
+        return os.stat_result((mode, 0, 0, 0, uid, 0, 0, 0, 0, 0))
+
 
 def _layout(**extra: Sequence[str]) -> dict[str, Sequence[str]]:
     folders: dict[str, Sequence[str]] = {
@@ -54,7 +67,9 @@ def _layout(**extra: Sequence[str]) -> dict[str, Sequence[str]]:
 
 
 def _list(tree: FakeTree, repos: Sequence[str] = ("agent-hub",)) -> WorkdirListing:
-    return list_workdirs(HUB, repos, list_dir=tree.list_dir, realpath=tree.realpath)
+    return list_workdirs(
+        HUB, repos, list_dir=tree.list_dir, realpath=tree.realpath, stat=tree.stat, uid=ME
+    )
 
 
 def test_lists_hub_repo_and_worktree_when_layout_present() -> None:
@@ -131,3 +146,66 @@ def test_caps_worktrees_when_over_limit() -> None:
     worktrees = [item.worktree for item in view.items if item.kind == "worktree"]
     assert worktrees == names[:MAX_WORKTREES]
     assert view.warnings == (f"agent-hub has more than {MAX_WORKTREES} worktrees",)
+
+
+def test_lists_nothing_when_hub_owned_by_other_user() -> None:
+    tree = FakeTree(_layout(), owners={HUB: ME + 1})
+
+    view = _list(tree).view()
+
+    assert view.items == ()
+    assert view.warnings == ("refused demo-hub: not owned by the current user",)
+
+
+def test_drops_repo_when_owned_by_other_user() -> None:
+    tree = FakeTree(_layout(), owners={REPO: ME + 1})
+
+    view = _list(tree).view()
+
+    assert [item.kind for item in view.items] == ["hub"]
+    assert view.warnings == ("refused agent-hub: not owned by the current user",)
+
+
+def test_drops_worktree_when_group_or_world_writable() -> None:
+    tree = FakeTree(
+        _layout(**{WORKTREES: ["agh-7-collector", "agh-8-shared"]}),
+        modes={f"{WORKTREES}/agh-7-collector": 0o40775, f"{WORKTREES}/agh-8-shared": 0o40757},
+    )
+
+    view = _list(tree).view()
+
+    assert [item.kind for item in view.items] == ["hub", "repo"]
+    assert view.warnings == (
+        "refused agent-hub/agh-7-collector: writable by group or others",
+        "refused agent-hub/agh-8-shared: writable by group or others",
+    )
+
+
+def test_checks_real_path_when_worktree_is_link() -> None:
+    tree = FakeTree(
+        _layout(**{WORKTREES: ["agh-7-collector"]}),
+        links={f"{WORKTREES}/agh-7-collector": f"{WORKTREES}/agh-7-real"},
+        owners={f"{WORKTREES}/agh-7-real": ME + 1},
+    )
+
+    view = _list(tree).view()
+
+    assert [item.kind for item in view.items] == ["hub", "repo"]
+    assert f"{WORKTREES}/agh-7-real" in tree.stated
+    assert f"{WORKTREES}/agh-7-collector" not in tree.stated
+
+
+def test_warns_when_stat_fails() -> None:
+    tree = FakeTree(_layout())
+
+    def stat(path: str) -> os.stat_result:
+        if path == REPO:
+            raise PermissionError(path)
+        return tree.stat(path)
+
+    view = list_workdirs(
+        HUB, ("agent-hub",), list_dir=tree.list_dir, realpath=tree.realpath, stat=stat, uid=ME
+    ).view()
+
+    assert [item.kind for item in view.items] == ["hub"]
+    assert view.warnings == ("cannot read agent-hub",)
