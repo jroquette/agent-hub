@@ -8,9 +8,9 @@ retention at start and then every ``PURGE_SECONDS``. ``begin_exit`` is the serve
 ``shutdown`` on the loop, so the live sessions end and their streams close at once. ``stop`` (the
 lifespan's exit) starts it if no signal did, and waits for it: no ``claude`` is left behind.
 
-``UnavailableSessionDriver`` stands in for the Claude driver when the ``sessions`` extra is not
-installed (P2): its capabilities say why, and starting a session raises
-``SessionsUnavailableError`` (503).
+``UnavailableSessionDriver`` and ``UnavailableCloudLauncher`` stand in for the Claude adapters
+when the ``sessions`` extra is not installed (P2): the capabilities say why, and starting a
+session raises ``SessionsUnavailableError`` (503).
 """
 
 import asyncio
@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import Final, Protocol
 
 from agent_hub.core.agent_sessions.agent_session import EndReason
+from agent_hub.core.agent_sessions.cloud import CloudReply
 from agent_hub.core.agent_sessions.driver import (
     DriverAnswer,
     DriverCapabilities,
@@ -93,6 +94,18 @@ class UnavailableSessionDriver:
     async def capabilities(self) -> DriverCapabilities:
         """Unavailable, and why."""
         return DriverCapabilities(available=False, reason=self._reason)
+
+
+class UnavailableCloudLauncher:
+    """A ``CloudLauncher`` that runs nothing, for ``reason`` (the ``sessions`` extra is not
+    installed); ``CloudSessions`` never reaches it while the capabilities say unavailable."""
+
+    def __init__(self, reason: str = INSTALL_EXTRA) -> None:
+        self._reason = reason
+
+    async def follow_up(self, cloud_id: str, text: str, *, timeout_seconds: int) -> CloudReply:  # noqa: ARG002 -- the port's signature
+        """Never runs: ``SessionsUnavailableError``."""
+        raise SessionsUnavailableError(self._reason)
 
 
 class SweptSessions(Protocol):
