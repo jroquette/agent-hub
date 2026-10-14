@@ -24,7 +24,7 @@ export AGENT_HUB_PORT AGENT_HUB_HUBS_ROOT
 URL := http://127.0.0.1:$(AGENT_HUB_PORT)
 
 .PHONY: help format lint typecheck layout lockstep test-fast check-fast test-integration test-e2e \
-        imports migrations coverage check llms-txt hub-schema web-install web-fast web-build web-dist-check \
+        imports migrations coverage check llms-txt hub-schema output-schemas web-install web-fast web-build web-dist-check \
         openapi openapi-check test-docker test-live run up down logs ps dev demo connect
 
 help: ## List the targets
@@ -86,6 +86,10 @@ llms-txt: ## regenerate llms.txt and llms-full.txt from the docs
 # Not part of check: the drift tests in test-fast fail while the shipped file is stale.
 hub-schema: ## regenerate the shipped hub.json schema from HubConfig
 	$(RUN) python -m scripts.export_hub_schema
+
+# Not part of check: the drift tests in test-fast fail while either shipped file is stale.
+output-schemas: ## regenerate the shipped review and eval output schemas from their models
+	$(RUN) python -m scripts.export_output_schemas
 
 # Not part of check: openapi-check (in check-fast) fails while either file is stale.
 openapi: web-install ## regenerate packages/api/openapi.json and apps/web/src/api/schema.d.ts

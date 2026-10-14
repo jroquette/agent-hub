@@ -27,7 +27,9 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   (`P2_PATHS` in `agent_hub/api/openapi_paths.py`) plus the five AGH-201 added (`CLARITY_PATHS`):
   `GET /sessions/{session_id}/problems`, `POST /learnings/{learning_id}/accept`, `POST /learnings/{learning_id}/reject`,
   `GET /projects/{project}/brain` and `GET /projects/{project}/brain/note?path=…`, and the one AGH-136 added
-  (`TICKET_PATHS`): `GET /features/{project}/{slug}/tickets` ([Feature tickets](#feature-tickets)). A test fails on
+  (`TICKET_PATHS`): `GET /features/{project}/{slug}/tickets` ([Feature tickets](#feature-tickets)), and the three
+  AGH-164 added (`SKILL_PATHS`, all GET): `/projects/{project}/skills`, `/projects/{project}/skills/{kind}/{source}/{name}`
+  and `/projects/{project}/skills/{kind}/{source}/{name}/files/{file_id}` ([Skills](#skills)). A test fails on
   any other path.
 - A field kept only for compatibility is marked `deprecated` in the document and stays until `/api/v2`: a session's
   and a live tile's `agent` (read `label` and `actors`) and a learning's `target` (read `note_path`).
@@ -82,6 +84,10 @@ Errors are RFC 9457 Problem Details, with media type `application/problem+json`:
   the failure is the `tracker_problem` member of its 200 answer.
 - The agent-session routes ([Agent sessions](#agent-sessions)) answer typed problems,
   `urn:agent-hub:problem:agent-session-<code>`, listed there.
+- The skills routes ([Skills](#skills)): a `kind` other than `skill`, `agent` or `hook`, a `source` or `name` outside
+  `[A-Za-z0-9_-]{1,128}` or a `file_id` that is not 16 hex characters → 400 "Invalid request parameter" naming it,
+  before any file is read; an unknown project, an item the catalog does not hold or a file id its detail did not
+  issue → 404 (entity `project`, `skill` or `skill file`); a bundled file over 256 KiB → 413 "Skill file too large".
 
 ## Pagination
 
@@ -264,6 +270,31 @@ text or a value the browser sent):
 | `message-too-large` | 413 | a prompt or message over the limit (`limit`, `size`) |
 | `unavailable` | 503 | no `claude` on `PATH` or no `sessions` extra (`reason`), on every write |
 | `cloud-unavailable` · `cloud-failed` · `cloud-timeout` | 501 · 502 · 504 | link-out guidance (`guidance`) · the step that failed (`step`) · the 60 s deadline (`seconds`) |
+
+## Skills
+
+Three read-only GET routes serve a hub's skills, agents and hooks, read from its files on request (the hub tree
+under `plugin/` and `.claude/`, through `HubFileReader.skill_sources` and `read_skill_file`, never through a link) and
+never stored. POST, PUT, PATCH and DELETE answer 405; no route runs a script, a hook or a command.
+
+- `GET /api/v1/projects/{project}/skills` → `SkillCatalog`: `items` (each with `id` `kind/source/name`, `kind`,
+  `source`, `name`, one-line `description`, `origin`, `mode`, `invocation`, hub-relative `source_path`,
+  `diagnostics_count`, `usage` over the last `usage_days` (30; `null` for hooks), `linked_from`, and for hooks `active`
+  and `state`), `external_plugins` (name, marketplace, pin, enabled, `content: "not in this hub"`), `truncated` and
+  `notice`. A hub with no skills answers 200 with no items and the notice "No skills found in this hub; it may not be
+  synced yet."
+- `GET /api/v1/projects/{project}/skills/{kind}/{source}/{name}` → `SkillDetail`: the catalog fields plus the
+  header fields (`description_full`, `when_to_use`, `argument_hint`, `allowed_tools`, `tools`, `model`, `lock`),
+  ordered `frontmatter` pairs with `known`, `body`, `raw` (the file as UTF-8), `toc`, the derived `structure`, `uses`,
+  `used_by`, bundled `files` (id, path, role, size, `link`, `too_large`), `diagnostics`, `context_cost` (approximate)
+  and, for a hook, `hook` (event, matcher, type, command, timeout, active, state).
+- `GET /api/v1/projects/{project}/skills/{kind}/{source}/{name}/files/{file_id}` → `BundledFileText`: id, path,
+  role, size and `text`, or `binary: true` and no text for a file with a NUL or that is not UTF-8.
+
+Items and files are addressed by ids the server issues (`file_id` is 16 hex characters of the sha256 of the file's
+hub-relative path), never by a client path. Bounds: 500 items per kind, 200 bundled files per skill, 2,000 hooks,
+256 KiB per file, 16 MiB read per catalog; past one, `truncated` is `true` with a notice and an over-cap file carries
+the diagnostic `too_large`.
 
 ## Local security
 

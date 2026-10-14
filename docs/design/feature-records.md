@@ -52,6 +52,25 @@ line, its scope its frontmatter when it has one.
 Written by `/feature` step 7 once both reviewers pass: `type: review`, `ticket`, `outcome` (`approved` or
 `changes-requested`), `pr`, `reviewed_at`. At most 500 are read (first by name), heads of 8 KiB.
 
+### Agent outputs: `reviews/<ticket>/<reviewer>-r<N>.json` and `evals/<delivery>.json`
+
+JSON the agents hand to `/feature` ([ADR 0028](../adr/0028-agent-outputs-as-validated-json.md)), checked by
+`agent_hub.core.features.agent_outputs` (`review_problems`, `eval_problems`: bytes in, every problem at its JSON path
+out) against the models of `output_models.py`, exported as `review.v1.json` and `eval.v1.json` beside them. Every key
+is required, unknown keys are refused, text is one line and non-empty.
+
+- Review, schema `agent-hub/review/1`: `reviewer` (`spec`, `quality`), `ticket`, `task`, `round`, `commit`,
+  `verdict` (`PASS`, `FAIL`), `findings` (`severity` `blocking` or `minor`). The file name gives `reviewer` and `round`
+  (`N` 1 to 9999); `ticket` is the folder's name, ASCII case ignored; `FAIL` iff a finding is blocking; ids unique.
+- Eval, schema `agent-hub/eval/1`, beside `evals/<delivery>.md`: `delivery`, `verdict`, `commit`, `tickets`, `acs`
+  (`"all"`, ids, or `[]` for the tickets' ACs), `results` and `gates` (`status` with `exit_code`), `red_on_parent`,
+  `owner_steps`. `SHIP` needs `results` and `gates`, all `pass`; `SHIP-WITH-OWNER-STEPS` an owner step; `pass` exits 0,
+  `not-run` null; list items are unique; the stem is `delivery`; the sibling exists and holds the same `verdict`,
+  `tickets`, `acs` (as sets) and `commit`; `results` name each AC of the scope once. With `features.json`, `all` and a
+  tickets-only scope mean the live ACs (of those tickets), and no listed id or result is withdrawn or unknown.
+- Bounds, applied by core to the bytes it is given: `MAX_OUTPUT_BYTES` per output, each list's `MAX_*`, the sibling's
+  first `EVAL_HEAD_BYTES`, `MAX_RECORD_BYTES` for the record; echoed values are cut to `ECHO_LIMIT`.
+
 The feature list reads at most about 32 MiB of records per call (it may go over by one folder); folders past that are
 listed unread with a record problem. The detail and the tickets route read only their own folder. A malformed record counts for
 nothing and carries its problem.

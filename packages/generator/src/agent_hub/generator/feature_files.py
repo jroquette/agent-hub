@@ -37,6 +37,7 @@ from agent_hub.core.features.feature_evals import (
     MAX_EVAL_FILES,
     NOTE_SUFFIX,
 )
+from agent_hub.core.features.feature_record import MAX_RECORD_BYTES
 from agent_hub.core.features.feature_reviews import (
     MAX_REVIEW_FILES,
     REVIEW_HEAD_BYTES,
@@ -53,7 +54,6 @@ from agent_hub.core.features.feature_status import (
 )
 
 MAX_FEATURE_FOLDERS: Final = 500
-MAX_RECORD_BYTES: Final = 1_048_576
 READ_BUDGET_BYTES: Final = 32 * 1_048_576
 OVER_BUDGET: Final = f"not read: the feature folders read are over {READ_BUDGET_BYTES} bytes"
 FEATURES_PATH: Final = ("brain", "features")

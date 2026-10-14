@@ -17,11 +17,14 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Final, Literal, cast
 
-from pydantic import ValidationError
-
 from agent_hub.core.events.event import EventSource
 from agent_hub.core.features.feature_evals import eval_coverage, eval_records
-from agent_hub.core.features.feature_record import FeatureRecordFile, RecordAc
+from agent_hub.core.features.feature_record import (
+    RECORD_FILE,
+    FeatureRecordFile,
+    RecordAc,
+    record_from_bytes,
+)
 from agent_hub.core.features.feature_reviews import approved_tickets, review_records
 from agent_hub.core.features.feature_view import (
     AcCounts,
@@ -39,7 +42,6 @@ from agent_hub.core.features.golden_path import EvalGate, GoldenInputs, golden_p
 from agent_hub.core.features.ticket_planning import TicketBoard, ticket_board
 from agent_hub.core.features.ticket_snapshots import SnapshotRead
 from agent_hub.core.hub_config.problems import one_line
-from agent_hub.core.json_form import InvalidJsonError, load_json_bytes
 from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN
 from agent_hub.core.tracker.tracker_reader import MAX_READ_IDS
 
@@ -47,7 +49,7 @@ SPEC: Final = "spec.md"
 RESEARCH: Final = "research.md"
 PLAN: Final = "plan.md"
 ISSUES: Final = "issues.md"
-RECORD: Final = "features.json"
+RECORD: Final = RECORD_FILE
 EVAL: Final = "eval.md"
 # The record files of a feature folder, in the order a feature is built.
 RECORD_FILES: Final = (SPEC, RESEARCH, PLAN, ISSUES, RECORD, EVAL)
@@ -259,14 +261,7 @@ def _record(read: bytes | str | None) -> FeatureRecordFile | str | None:
         return None
     if isinstance(read, str):
         return one_line(f"{RECORD} could not be read ({read})")
-    try:
-        return FeatureRecordFile.model_validate(load_json_bytes(read))
-    except InvalidJsonError as error:
-        return one_line(f"{RECORD} could not be parsed ({error.message})")
-    except ValidationError as error:
-        first = error.errors()[0]
-        where = ".".join(str(part) for part in first["loc"])
-        return one_line(f"{RECORD} could not be parsed ({where}: {first['msg']})")
+    return record_from_bytes(read)
 
 
 def _row(ac: RecordAc) -> AcRow:

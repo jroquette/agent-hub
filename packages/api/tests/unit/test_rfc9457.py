@@ -25,6 +25,7 @@ from agent_hub.core.learnings.brain_change_requests import (
 )
 from agent_hub.core.learnings.learning_ports import HubReadOnlyError, LearningConflictError
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
+from agent_hub.core.skills.skill_view import SkillFileTooLargeError
 
 
 def test_writes_problem_document_when_problem_built() -> None:
@@ -203,6 +204,13 @@ def test_names_limit_when_brain_note_too_large() -> None:
 
     assert (found.status, found.title) == (413, "Brain note too large")
     assert found.detail == "Brain notes are served up to 262144 bytes; this one has 300000."
+
+
+def test_maps_too_large_when_skill_file_over_cap() -> None:
+    found = _mapped(SkillFileTooLargeError(limit=262_144, size=300_000))
+
+    assert (found.status, found.title) == (413, "Skill file too large")
+    assert found.detail == "Skill files are served up to 262144 bytes; this one has 300000."
 
 
 def test_names_reason_and_pull_request_when_learning_conflict_mapped() -> None:

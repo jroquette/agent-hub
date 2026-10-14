@@ -258,6 +258,11 @@ it needs you. To read the brain, open Knowledge › Brain (or a project's Brain)
 Criteria tabs show its records. The app reads the registered hub's checkout as it is on disk, so pull the hub to see
 merged changes.
 
+The Skills tab (Knowledge › Skills, or a project's Skills) lists the hub's skills, agents and hooks with how each is
+invoked, whether it is managed or the project's, and how often it was used in the last 30 days; a skill's page shows
+its text (rendered or raw), the steps, agents and commands derived from it, its bundled files and its diagnostics
+(for example "not linked yet: run hub sync"). It only reads the hub's files: nothing is run.
+
 A feature's Tickets tab shows each ticket's title, status, assignee, Linear link and blockers, what can start now and
 in which order, and its golden path says which step the whole feature has reached. For live status, `hub web` reads
 Linear's API itself, read-only, with the `LINEAR_API_KEY` of the environment it runs in (the same key `hub next` and

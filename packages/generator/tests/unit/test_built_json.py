@@ -124,6 +124,12 @@ SENSOR_MATCHERS = {"PreToolUse": "*", "PostToolUse": "*", "PostToolUseFailure": 
 SENSOR_ROWS = tuple(
     (event, SENSOR_MATCHERS.get(event), "event_sensor.py", 5) for event in SENSOR_EVENTS
 )
+# AGH-141 (O-3, E-4): the read-only gate on the two subagent events, no matcher, after the
+# sensor's group: 10 s on SubagentStart, 30 s on SubagentStop.
+GATE_ROWS = (
+    ("SubagentStart", None, "readonly_gate.py", 10),
+    ("SubagentStop", None, "readonly_gate.py", 30),
+)
 
 
 def test_lists_base_hooks_then_sensor_when_settings_built(demo_config: HubConfig) -> None:
@@ -131,7 +137,7 @@ def test_lists_base_hooks_then_sensor_when_settings_built(demo_config: HubConfig
     assert isinstance(settings, dict)
 
     expected: dict[str, list[dict[str, object]]] = {}
-    for event, matcher, file, timeout in (*HOOK_ROWS, *SENSOR_ROWS):
+    for event, matcher, file, timeout in (*HOOK_ROWS, *SENSOR_ROWS, *GATE_ROWS):
         group: dict[str, object] = {
             "hooks": [
                 {
@@ -173,6 +179,56 @@ def test_registers_sensor_for_eleven_events_when_settings_built(demo_config: Hub
     assert [hook.event for hook in HOOK_EVENTS if hook.file == "event_sensor.py"] == list(
         SENSOR_EVENTS
     )
+
+
+def hook_files(groups: object) -> list[tuple[object, str, object]]:
+    """``[(matcher, hook file, timeout)]`` of an event's groups, each group one command."""
+    assert isinstance(groups, list)
+    found: list[tuple[object, str, object]] = []
+    for group in groups:
+        assert isinstance(group, dict)
+        [hook] = group["hooks"]
+        file = hook["command"].rsplit("/", 1)[-1].removesuffix('"')
+        found.append((group.get("matcher"), file, hook["timeout"]))
+    return found
+
+
+def test_registers_readonly_gate_on_subagent_events_when_settings_built(
+    demo_config: HubConfig,
+) -> None:
+    settings = managed_settings(demo_config)
+    assert isinstance(settings, dict)
+
+    for hooks in (settings["hooks"], base_hooks_block()):
+        assert isinstance(hooks, dict)
+        gates = {
+            event: rows
+            for event, groups in hooks.items()
+            if (rows := [row for row in hook_files(groups) if row[1] == "readonly_gate.py"])
+        }
+        assert gates == {
+            "SubagentStart": [(None, "readonly_gate.py", 10)],
+            "SubagentStop": [(None, "readonly_gate.py", 30)],
+        }
+        # Each subagent event: the sensor's group, then the gate's (E-4).
+        assert hook_files(hooks["SubagentStart"]) == [
+            (None, "event_sensor.py", 5),
+            (None, "readonly_gate.py", 10),
+        ]
+        assert hook_files(hooks["SubagentStop"]) == [
+            (None, "event_sensor.py", 5),
+            (None, "readonly_gate.py", 30),
+        ]
+        for groups in (hooks["SubagentStart"], hooks["SubagentStop"]):
+            assert isinstance(groups, list)
+            assert all(isinstance(group, dict) and "matcher" not in group for group in groups)
+        # The gate rows come last: the event order stays the sensor's (O-10).
+        assert list(hooks) == list(SENSOR_EVENTS)
+    assert [hook.event for hook in HOOK_EVENTS if hook.file == "readonly_gate.py"] == [
+        "SubagentStart",
+        "SubagentStop",
+    ]
+    assert [hook.file for hook in HOOK_EVENTS[-2:]] == ["readonly_gate.py", "readonly_gate.py"]
 
 
 def test_renders_additional_directories_when_repos_listed(

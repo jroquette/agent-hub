@@ -30,6 +30,7 @@ from agent_hub.api.routes import (
     runs,
     sessions,
     settings,
+    skills,
     streams,
 )
 from agent_hub.api.session_access import SessionAccessMiddleware
@@ -43,6 +44,7 @@ ROUTERS = (
     hooks,
     hubs,
     projects,
+    skills,
     overview,
     sessions,
     live,

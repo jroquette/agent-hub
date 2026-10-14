@@ -1192,3 +1192,49 @@ def test_reads_walked_hub_local_file_when_cached_hooks_find_hub(
     found = run_python(hook_python, PREFIX_CODE, path=cached_hooks, cwd=hub / "brain")
 
     assert found == "me/"
+
+
+# AGH-141 (O-3, E-4): the read-only gate's group follows the sensor's on both subagent events, in
+# the plugin's `hooks.json` and in the managed settings; the sensor's group is unchanged.
+GATE_TIMEOUTS = {"SubagentStart": 10, "SubagentStop": 30}
+SENSOR_COMMANDS = {
+    f"{HOOKS}/hooks.json": 'python3 "${CLAUDE_PLUGIN_ROOT}/hooks/event_sensor.py"',
+    ".claude/settings.json": (
+        'python3 "$CLAUDE_PROJECT_DIR/plugin/hub-workflow/hooks/event_sensor.py"'
+    ),
+}
+
+
+def hooks_json_line(file: str, timeout: int) -> str:
+    """One group line of the plugin's ``hooks.json``, as its template writes it."""
+    command = 'python3 \\"${CLAUDE_PLUGIN_ROOT}/hooks/' + file + '\\"'
+    hook = '{"type": "command", "command": "' + command + '", "timeout": ' + str(timeout) + "}"
+    return '      {"hooks": [' + hook + "]}"
+
+
+def test_wires_readonly_gate_in_both_files_when_hub_rendered(hub: Path) -> None:
+    gate = hub / HOOKS / "readonly_gate.py"
+
+    assert gate.is_file()
+    assert gate.stat().st_mode & 0o111 == 0o111
+    assert gate.read_bytes().startswith(b"#!/usr/bin/env python3\n")
+    for path, sensor_command in SENSOR_COMMANDS.items():
+        hooks = json.loads((hub / path).read_text(encoding="utf-8"))["hooks"]
+        for event, timeout in GATE_TIMEOUTS.items():
+            sensor_group, gate_group = hooks[event]
+            assert sensor_group == {
+                "hooks": [{"type": "command", "command": sensor_command, "timeout": 5}]
+            }, (path, event)
+            gate_command = sensor_command.replace("event_sensor.py", "readonly_gate.py")
+            assert gate_group == {
+                "hooks": [{"type": "command", "command": gate_command, "timeout": timeout}]
+            }, (path, event)
+    hooks_json = (hub / HOOKS / "hooks.json").read_text(encoding="utf-8")
+    for event, timeout in GATE_TIMEOUTS.items():
+        lines = (
+            f'    "{event}": [',
+            hooks_json_line("event_sensor.py", 5) + ",",
+            hooks_json_line("readonly_gate.py", timeout),
+            "    ]",
+        )
+        assert "\n".join(lines) in hooks_json, event

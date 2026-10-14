@@ -748,6 +748,206 @@
         "title": "BrainTree",
         "type": "object"
       },
+      "BundledFile": {
+        "additionalProperties": false,
+        "description": "A file of a skill folder other than ``SKILL.md`` (S7): ``path`` is relative to the skill\nfolder, ``id`` server-issued; ``link`` when it is a link (never read), ``too_large`` when over\nthe per-file cap.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "link": {
+            "default": false,
+            "title": "Link",
+            "type": "boolean"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/FileRole"
+          },
+          "size": {
+            "minimum": 0.0,
+            "title": "Size",
+            "type": "integer"
+          },
+          "too_large": {
+            "default": false,
+            "title": "Too Large",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "path",
+          "role",
+          "size"
+        ],
+        "title": "BundledFile",
+        "type": "object"
+      },
+      "BundledFileText": {
+        "additionalProperties": false,
+        "description": "A bundled file's text, inert (S7); ``binary`` (NUL or not UTF-8) gives no text.",
+        "properties": {
+          "binary": {
+            "default": false,
+            "title": "Binary",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/FileRole"
+          },
+          "size": {
+            "minimum": 0.0,
+            "title": "Size",
+            "type": "integer"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          }
+        },
+        "required": [
+          "id",
+          "path",
+          "role",
+          "size",
+          "text"
+        ],
+        "title": "BundledFileText",
+        "type": "object"
+      },
+      "CatalogItem": {
+        "additionalProperties": false,
+        "description": "One card of the catalog (D3, AC-164.7).\n\n``description`` is the first line, at most 200 characters; ``invocation`` is\n``/<name> <argument-hint>`` for a skill, None for an agent or a hook; ``mode`` is None for an\nagent or a hook; ``usage`` is None for a hook. ``linked_from`` lists the ``.claude/`` links\nthat point at the item; ``active`` is false for a plugin hook whose plugin is not enabled;\n``state`` is set for hooks only.",
+        "properties": {
+          "active": {
+            "default": true,
+            "title": "Active",
+            "type": "boolean"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "diagnostics_count": {
+            "minimum": 0.0,
+            "title": "Diagnostics Count",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "invocation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invocation"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ItemKind"
+          },
+          "linked_from": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Linked From",
+            "type": "array"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Mode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/Origin"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "source_path": {
+            "title": "Source Path",
+            "type": "string"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HookState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Usage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "source",
+          "name",
+          "description",
+          "origin",
+          "mode",
+          "invocation",
+          "source_path",
+          "diagnostics_count",
+          "usage"
+        ],
+        "title": "CatalogItem",
+        "type": "object"
+      },
       "CloudMessage": {
         "additionalProperties": false,
         "description": "``POST /agent-sessions/cloud/{cloud_id}/messages``: a one-shot follow-up.",
@@ -941,6 +1141,34 @@
         "title": "CollectorStatus",
         "type": "object"
       },
+      "ContextCost": {
+        "additionalProperties": false,
+        "description": "Approximate tokens (characters / 4, P8): ``always_loaded_tokens`` from the description (0\nwhen the model cannot invoke the skill), ``on_invoke_tokens`` from the body.",
+        "properties": {
+          "always_loaded_tokens": {
+            "minimum": 0.0,
+            "title": "Always Loaded Tokens",
+            "type": "integer"
+          },
+          "approximate": {
+            "const": true,
+            "default": true,
+            "title": "Approximate",
+            "type": "boolean"
+          },
+          "on_invoke_tokens": {
+            "minimum": 0.0,
+            "title": "On Invoke Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "always_loaded_tokens",
+          "on_invoke_tokens"
+        ],
+        "title": "ContextCost",
+        "type": "object"
+      },
       "CreateAgentSession": {
         "additionalProperties": false,
         "description": "``POST /agent-sessions``: where, how, and an optional first prompt (its byte size is\nchecked against the message limit, 413), or a past session to resume (and fork).",
@@ -1006,6 +1234,61 @@
         ],
         "title": "CreateAgentSession",
         "type": "object"
+      },
+      "Diagnostic": {
+        "additionalProperties": false,
+        "description": "One informational finding on an item, in one hub-relative line (D5, P6).",
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/DiagnosticCode"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/DiagnosticSeverity"
+          }
+        },
+        "required": [
+          "code",
+          "severity",
+          "message"
+        ],
+        "title": "Diagnostic",
+        "type": "object"
+      },
+      "DiagnosticCode": {
+        "description": "Every diagnostic an item can carry (P6).",
+        "enum": [
+          "name_invalid",
+          "name_mismatch",
+          "description_missing",
+          "description_too_long",
+          "frontmatter_unparseable",
+          "link_outside_hub",
+          "too_large",
+          "not_regular",
+          "not_text",
+          "body_too_long",
+          "reference_not_found",
+          "unknown_key",
+          "duplicate_name",
+          "not_linked",
+          "modified_since_sync",
+          "over_budget"
+        ],
+        "title": "DiagnosticCode",
+        "type": "string"
+      },
+      "DiagnosticSeverity": {
+        "description": "How much a diagnostic matters; never blocking (D5).",
+        "enum": [
+          "info",
+          "warning"
+        ],
+        "title": "DiagnosticSeverity",
+        "type": "string"
       },
       "DriverCapabilities": {
         "additionalProperties": false,
@@ -1296,6 +1579,56 @@
           "done"
         ],
         "title": "ExternalBlocker",
+        "type": "object"
+      },
+      "ExternalPlugin": {
+        "additionalProperties": false,
+        "description": "A third-party plugin named by ``enabledPlugins`` or the marketplace (D1, P7); its content\nis not in the hub and is never fetched. ``pin`` is the pinned sha or ref, or None.",
+        "properties": {
+          "content": {
+            "const": "not in this hub",
+            "default": "not in this hub",
+            "title": "Content",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "marketplace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marketplace"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "pin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pin"
+          }
+        },
+        "required": [
+          "name",
+          "marketplace",
+          "pin",
+          "enabled"
+        ],
+        "title": "ExternalPlugin",
         "type": "object"
       },
       "FeatureDetail": {
@@ -1732,6 +2065,15 @@
         ],
         "type": "string"
       },
+      "FileRole": {
+        "enum": [
+          "scripts",
+          "references",
+          "assets",
+          "other"
+        ],
+        "type": "string"
+      },
       "FindingView": {
         "additionalProperties": false,
         "description": "A finding of a registered hub's doctor run.",
@@ -1788,6 +2130,30 @@
           "fix"
         ],
         "title": "FindingView",
+        "type": "object"
+      },
+      "FrontmatterPair": {
+        "additionalProperties": false,
+        "description": "One frontmatter key in file order; ``known`` when Claude Code understands the key.",
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "known": {
+            "default": false,
+            "title": "Known",
+            "type": "boolean"
+          },
+          "value": {
+            "$ref": "#/components/schemas/SkillFrontmatterValue"
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ],
+        "title": "FrontmatterPair",
         "type": "object"
       },
       "FrontmatterValue": {
@@ -2050,6 +2416,78 @@
         "title": "HookEnvelope",
         "type": "object"
       },
+      "HookFacts": {
+        "additionalProperties": false,
+        "description": "A hook as configured (D4): ``command`` is inert text, never run.",
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command"
+          },
+          "event": {
+            "title": "Event",
+            "type": "string"
+          },
+          "matcher": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Matcher"
+          },
+          "state": {
+            "$ref": "#/components/schemas/HookState"
+          },
+          "timeout": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event",
+          "matcher",
+          "type",
+          "command",
+          "timeout",
+          "active",
+          "state"
+        ],
+        "title": "HookFacts",
+        "type": "object"
+      },
+      "HookState": {
+        "enum": [
+          "synced",
+          "not synced"
+        ],
+        "type": "string"
+      },
       "HubCreate": {
         "additionalProperties": false,
         "description": "``POST /hubs``: the absolute path of a hub to register.",
@@ -2262,6 +2700,16 @@
           "canceled",
           "duplicate"
         ],
+        "type": "string"
+      },
+      "ItemKind": {
+        "description": "What an item is.",
+        "enum": [
+          "skill",
+          "agent",
+          "hook"
+        ],
+        "title": "ItemKind",
         "type": "string"
       },
       "JsonValue": {},
@@ -3145,6 +3593,33 @@
         "title": "LiveTile",
         "type": "object"
       },
+      "LockFacts": {
+        "additionalProperties": false,
+        "description": "What ``hub.lock`` says of the item's file: its ownership and, when managed, its sha256.",
+        "properties": {
+          "ownership": {
+            "title": "Ownership",
+            "type": "string"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          }
+        },
+        "required": [
+          "ownership",
+          "sha256"
+        ],
+        "title": "LockFacts",
+        "type": "object"
+      },
       "LockState": {
         "enum": [
           "in_sync",
@@ -3246,6 +3721,17 @@
         ],
         "title": "MessageAccepted",
         "type": "object"
+      },
+      "Mode": {
+        "description": "Who can invoke a skill (S5, L2); ``neither`` reads \"Hidden\" in the UI.",
+        "enum": [
+          "user-only",
+          "model-only",
+          "both",
+          "neither"
+        ],
+        "title": "Mode",
+        "type": "string"
       },
       "ModelName": {
         "type": "string"
@@ -3405,6 +3891,16 @@
         ],
         "title": "OpenPermission",
         "type": "object"
+      },
+      "Origin": {
+        "description": "Who owns an item (S4): ``managed`` per ``hub.lock``, ``project-owned`` (any other plugin\nfolder, ``settings.project.json``), ``local`` (a real entry in ``.claude/``).",
+        "enum": [
+          "managed",
+          "project-owned",
+          "local"
+        ],
+        "title": "Origin",
+        "type": "string"
       },
       "Outcome": {
         "description": "How an ended session ended; ``None`` when no source says.",
@@ -4683,6 +5179,35 @@
         "title": "RejectLearningBody",
         "type": "object"
       },
+      "Relation": {
+        "additionalProperties": false,
+        "description": "A link to another item of the catalog (Uses / Used by).",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ItemKind"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "source",
+          "name"
+        ],
+        "title": "Relation",
+        "type": "object"
+      },
       "RepoView": {
         "additionalProperties": false,
         "description": "A repo of the project as ``hub.json`` and its checkout describe it.",
@@ -5938,6 +6463,419 @@
         "title": "Severity",
         "type": "string"
       },
+      "SkillCatalog": {
+        "additionalProperties": false,
+        "description": "A project's skills, agents and hooks in stable order (kind, name, source).\n\n``truncated`` says a bound stopped the listing or the reads; ``notice`` is one line for the\nowner (an empty hub, a file not read), or None.",
+        "properties": {
+          "external_plugins": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExternalPlugin"
+            },
+            "title": "External Plugins",
+            "type": "array"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "notice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notice"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "usage_days": {
+            "default": 30,
+            "title": "Usage Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project",
+          "items"
+        ],
+        "title": "SkillCatalog",
+        "type": "object"
+      },
+      "SkillDetail": {
+        "additionalProperties": false,
+        "description": "One item's detail page (D4, AC-164.8): the card's fields and what the file says.\n\n``body`` is the text after the frontmatter and ``raw`` the whole file decoded as UTF-8; both\nare None when the file was not read (too large, not regular, not text, over budget). A hook\nhas ``hook`` set and no body, structure or cost.",
+        "properties": {
+          "active": {
+            "default": true,
+            "title": "Active",
+            "type": "boolean"
+          },
+          "allowed_tools": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Tools",
+            "type": "array"
+          },
+          "argument_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Argument Hint"
+          },
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "context_cost": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextCost"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "description_full": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description Full"
+          },
+          "diagnostics": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Diagnostic"
+            },
+            "title": "Diagnostics",
+            "type": "array"
+          },
+          "diagnostics_count": {
+            "minimum": 0.0,
+            "title": "Diagnostics Count",
+            "type": "integer"
+          },
+          "files": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/BundledFile"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "frontmatter": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/FrontmatterPair"
+            },
+            "title": "Frontmatter",
+            "type": "array"
+          },
+          "hook": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HookFacts"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "invocation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invocation"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ItemKind"
+          },
+          "linked_from": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Linked From",
+            "type": "array"
+          },
+          "lock": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LockFacts"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Mode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/Origin"
+          },
+          "raw": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "source_path": {
+            "title": "Source Path",
+            "type": "string"
+          },
+          "state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HookState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "structure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkillStructure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "toc": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TocEntry"
+            },
+            "title": "Toc",
+            "type": "array"
+          },
+          "tools": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Tools",
+            "type": "array"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Usage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "used_by": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Relation"
+            },
+            "title": "Used By",
+            "type": "array"
+          },
+          "uses": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Relation"
+            },
+            "title": "Uses",
+            "type": "array"
+          },
+          "when_to_use": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "When To Use"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "source",
+          "name",
+          "description",
+          "origin",
+          "mode",
+          "invocation",
+          "source_path",
+          "diagnostics_count",
+          "usage"
+        ],
+        "title": "SkillDetail",
+        "type": "object"
+      },
+      "SkillFrontmatterValue": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          }
+        ]
+      },
+      "SkillStructure": {
+        "additionalProperties": false,
+        "description": "What the body's text says it does, derived heuristically (S6): labelled so in the UI.\n\n``dynamic_context`` counts the ``!`…``` and ```` ```! ```` blocks that run at invocation (shown\nas text, never run); ``truncated`` when steps past the bound were dropped.",
+        "properties": {
+          "agents": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Agents",
+            "type": "array"
+          },
+          "commands": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Commands",
+            "type": "array"
+          },
+          "dynamic_context": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Dynamic Context",
+            "type": "integer"
+          },
+          "gates": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Gates",
+            "type": "array"
+          },
+          "skills": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Skills",
+            "type": "array"
+          },
+          "steps": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Step"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "title": "SkillStructure",
+        "type": "object"
+      },
       "SourceStatus": {
         "additionalProperties": false,
         "description": "When a source last sent an event, and whether that is recent enough.",
@@ -6017,6 +6955,67 @@
         "title": "StartCloud",
         "type": "object"
       },
+      "Step": {
+        "additionalProperties": false,
+        "description": "One top-level ordered list item of a body (S6); ``index`` is 1-based, as ``#step-<n>``.",
+        "properties": {
+          "agents": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Agents",
+            "type": "array"
+          },
+          "commands": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Commands",
+            "type": "array"
+          },
+          "index": {
+            "minimum": 1.0,
+            "title": "Index",
+            "type": "integer"
+          },
+          "scripts": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Scripts",
+            "type": "array"
+          },
+          "skills": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Skills",
+            "type": "array"
+          },
+          "tags": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/StepTag"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "index",
+          "title"
+        ],
+        "title": "Step",
+        "type": "object"
+      },
       "StepKey": {
         "enum": [
           "pick",
@@ -6066,6 +7065,16 @@
           "running",
           "ok",
           "failed"
+        ],
+        "type": "string"
+      },
+      "StepTag": {
+        "enum": [
+          "gate",
+          "agent",
+          "command",
+          "script",
+          "human"
         ],
         "type": "string"
       },
@@ -6535,6 +7544,28 @@
         "title": "TimelineEvent",
         "type": "object"
       },
+      "TocEntry": {
+        "additionalProperties": false,
+        "description": "One heading of a body (outside fenced code); the web computes its anchor (P5).",
+        "properties": {
+          "level": {
+            "maximum": 6.0,
+            "minimum": 1.0,
+            "title": "Level",
+            "type": "integer"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "level",
+          "text"
+        ],
+        "title": "TocEntry",
+        "type": "object"
+      },
       "TokenUsage": {
         "additionalProperties": false,
         "description": "Tokens counted from transcript usage, once per message id.",
@@ -6695,6 +7726,45 @@
           "cost_usd"
         ],
         "title": "TurnCost",
+        "type": "object"
+      },
+      "Usage": {
+        "additionalProperties": false,
+        "description": "How often a skill or agent was used in the window: counts and a time only (D6, ADR 0019).\n\n``user_count`` counts invocations typed by a person, ``model_count`` the ones the model made.",
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "model_count": {
+            "minimum": 0.0,
+            "title": "Model Count",
+            "type": "integer"
+          },
+          "user_count": {
+            "minimum": 0.0,
+            "title": "User Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "count",
+          "user_count",
+          "model_count",
+          "last_used_at"
+        ],
+        "title": "Usage",
         "type": "object"
       },
       "UtcTimestamp": {
@@ -9807,6 +10877,237 @@
         "summary": "List Project Repos",
         "tags": [
           "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/skills": {
+      "get": {
+        "description": "The project's skills, agents and hooks, with 30-day usage and third-party plugins.",
+        "operationId": "get_skill_catalog_api_v1_projects__project__skills_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillCatalog"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Skill Catalog",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/skills/{kind}/{source}/{name}": {
+      "get": {
+        "description": "One skill, agent or hook by its id: header fields, text, structure, relations, files.",
+        "operationId": "get_skill_detail_api_v1_projects__project__skills__kind___source___name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ItemKind"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_-]{1,128}$",
+              "title": "Source",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_-]{1,128}$",
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Skill Detail",
+        "tags": [
+          "skills"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/skills/{kind}/{source}/{name}/files/{file_id}": {
+      "get": {
+        "description": "One bundled file of a skill by the id its detail issued; its text is inert.",
+        "operationId": "get_skill_file_api_v1_projects__project__skills__kind___source___name__files__file_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ItemKind"
+            }
+          },
+          {
+            "in": "path",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_-]{1,128}$",
+              "title": "Source",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_-]{1,128}$",
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "file_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{16}$",
+              "title": "File Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BundledFileText"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Skill File",
+        "tags": [
+          "skills"
         ]
       }
     },

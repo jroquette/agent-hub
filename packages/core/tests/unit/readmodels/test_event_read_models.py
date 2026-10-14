@@ -745,3 +745,92 @@ def test_carries_agent_session_id_on_tile_when_link_known_agent_session_link() -
 
     assert tiles["s-web"].agent_session_id == "a-1"
     assert tiles["s-cli"].agent_session_id is None
+
+
+def _usage_signal(
+    session: str, seconds: float, payload: dict[str, object], *, project: str = "demo"
+) -> Event:
+    type_ = "message" if "slash_command" in payload else "tool.call"
+    return an_event(
+        project=project,
+        session=session,
+        type=type_,
+        timestamp=SCENARIO_START + timedelta(seconds=seconds),
+        source_id=f"{session}:usage:{seconds}",
+        payload=payload,
+    )
+
+
+def _skill_usage_store() -> InMemoryEventStore:
+    # E5: the two /feature messages and the Skill call are 6 s or more apart.
+    prompt = {"role": "user", "chars": 8, "slash_command": "/feature"}
+    store = InMemoryEventStore()
+    store.append(
+        [
+            _usage_signal("s-use", 0, prompt),
+            _usage_signal("s-use", 60, prompt),
+            _usage_signal(
+                "s-use",
+                120,
+                {"tool": "Skill", "tool_use_id": "toolu_skill", "skill": "hub-workflow:feature"},
+            ),
+            _usage_signal("s-old", -31 * 24 * 3_600, prompt),
+            _usage_signal("s-oth", 30, prompt, project="other"),
+            *(
+                _usage_signal(
+                    "s-use",
+                    180 + n,
+                    {"tool": "Agent", "tool_use_id": f"toolu_agent_{n}", "subagent_type": name},
+                )
+                for n, name in enumerate(("evaluator", "evaluator", "hub-workflow:evaluator"))
+            ),
+        ]
+    )
+    return store
+
+
+def test_counts_skill_usage_when_project_events_folded() -> None:
+    service, _ = _service(_skill_usage_store(), NOW)
+
+    usage = service.skill_usage("demo")
+
+    assert usage.since == NOW - timedelta(days=30)
+    feature = usage.by_skill["feature"]
+    assert (feature.count, feature.user_count, feature.model_count) == (3, 2, 1)
+    assert feature.last_used_at == SCENARIO_START + timedelta(seconds=120)
+    assert usage.by_agent["evaluator"].count == 3
+    assert set(usage.by_skill) == {"feature"}
+    assert set(usage.by_agent) == {"evaluator"}
+    assert usage.model_dump(mode="json") == {
+        "since": usage.model_dump(mode="json")["since"],
+        "by_skill": {
+            "feature": {
+                "count": 3,
+                "user_count": 2,
+                "model_count": 1,
+                "last_used_at": feature.model_dump(mode="json")["last_used_at"],
+            }
+        },
+        "by_agent": {
+            "evaluator": {
+                "count": 3,
+                "user_count": 0,
+                "model_count": 3,
+                "last_used_at": usage.by_agent["evaluator"].model_dump(mode="json")["last_used_at"],
+            }
+        },
+        "truncated": False,
+    }
+
+
+def test_reuses_skill_usage_when_store_and_second_unchanged() -> None:
+    service, clock = _service(_skill_usage_store(), NOW)
+
+    first = service.skill_usage("demo")
+    clock.now = NOW + timedelta(milliseconds=200)
+    again = service.skill_usage("demo")
+    other = service.skill_usage("other")
+
+    assert again is first
+    assert other.by_skill["feature"].count == 1
+    assert service.skill_usage("nobody").by_skill == {}

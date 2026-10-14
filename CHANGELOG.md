@@ -22,13 +22,34 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   options with `AGENT_HUB_*` variables. These sessions' conversations are stored, redacted, in the `hub web` database
   for 30 days after they end. Off in the Docker image. No `hub.json` change and no `hub sync` needed (ADR 0027,
   AGH-165).
+- Skills tab in `hub web` (`/projects/:project/skills`): every skill, agent and hook of the hub with what it does, a
+  copyable invocation, origin (managed by `hub sync`, project-owned or local) and invocation mode, the frontmatter, the
+  rendered text with a table of contents and a Raw view, the steps derived from the text, uses and used-by links,
+  bundled files by role, diagnostics, an approximate context cost and 30-day usage counts from the collected events.
+  Read-only and bounded; links are never followed. New routes `GET /api/v1/projects/{project}/skills` and below
+  (AGH-164).
+- `hub.json` takes an optional `models` key: `tiers` maps `small`, `medium` and `large` to model names, and `agents`
+  moves a plugin agent to another tier, e.g. `{"tiers": {"large": "claude-opus-4-1"}, "agents": {"researcher":
+  "large"}}`. `./hub sync` renders each agent's `model:` from it, and `hub run` takes its default model from `medium`
+  (`--model` still wins). Without the key nothing changes (AGH-180).
 
 ### Changed
 
+- `hub run` no longer reports a run that ended with no commit, or whose session stopped to ask a human, as a failure.
+  No commit: a `Run <id> ended with no changes at <STAGE>: …` comment, no label, exit 0. Stopped: the blocked label, a
+  `Run <id> stopped at <STAGE> and needs a human. The session asked: …` comment, exit 3. A failure still adds
+  `tracker.failed_label` and exits 1. A run that did not fail, and `hub ship`, remove the failed and blocked labels the
+  issue carries. When you bump `platform.version`, update scripts that read `hub run`'s exit code: 0 now includes "no
+  changes" and 3 is new (ADR 0030, AGH-178).
 - `hub run` refuses, dry or live, an issue whose description lacks one of the six input-brief headings (Problem, Why,
   Why now, Outcome, Invariants, Acceptance criteria), naming them, before it creates anything; `/feature` gains step 0
   Brief, which drafts the missing sections with you. When you bump `platform.version`, add the headings to the issues
   you run (ADR 0026, AGH-138).
+
+### Added
+
+- Optional `tracker.blocked_label` in `hub.json`: the label a blocked `hub run` adds. Absent, it is
+  `tracker.failed_label`; create the label in the tracker before you set it (ADR 0030, AGH-178).
 
 ## [0.13.0] - 2026-10-13
 

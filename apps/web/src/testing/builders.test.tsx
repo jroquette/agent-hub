@@ -13,6 +13,13 @@ import {
   aPermissionRequest,
   aWorkdir,
   aBrainTree,
+  aBundledFileText,
+  aCatalogItem,
+  aFeatureShapedBody,
+  aHookDetail,
+  anAgentDetail,
+  aSkillCatalog,
+  aSkillDetail,
   aCollectorStatus,
   aFeature,
   aFeatureDetail,
@@ -161,6 +168,32 @@ describe("builders", () => {
 
   it("writes UTC timestamps relative to T0", () => {
     expect(at(90)).toBe("2026-10-11T14:01:30.000Z");
+  });
+});
+
+describe("skills builders", () => {
+  it("builds the skills schemas with consistent ids", () => {
+    const detail = aSkillDetail();
+    const catalog = aSkillCatalog();
+
+    expect(detail.id).toBe(`${detail.kind}/${detail.source}/${detail.name}`);
+    expect(catalog.items.map((item) => item.kind)).toEqual(["skill", "skill", "agent", "hook"]);
+    expect(catalog.items[0]?.id).toBe(detail.id);
+    expect(detail.files.map((file) => file.id)).toContain(aBundledFileText().id);
+    expect(anAgentDetail().used_by[0]?.id).toBe(detail.id);
+    expect(aHookDetail().hook?.event).toBe("PreToolUse");
+    expect(aCatalogItem({ name: "plan" }).name).toBe("plan");
+  });
+
+  it("numbers five top-level steps in the feature-shaped body", () => {
+    const steps = aFeatureShapedBody()
+      .split("\n")
+      .filter((line) => /^\d{1,9}[.)]\s/.test(line));
+
+    // The fenced "6." at column 0 matches the line rule; fences are skipped by the step rule.
+    expect(steps).toHaveLength(6);
+    expect(aSkillDetail().structure?.steps).toHaveLength(5);
+    expect(aSkillDetail().body).toBe(aFeatureShapedBody());
   });
 });
 

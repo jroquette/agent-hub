@@ -277,6 +277,11 @@ it needs you. To read the brain, open Knowledge › Brain (or a project's Brain)
 Criteria tabs show its records. The app reads the registered hub's checkout as it is on disk, so pull the hub to see
 merged changes.
 
+The Skills tab (Knowledge › Skills, or a project's Skills) lists the hub's skills, agents and hooks with how each is
+invoked, whether it is managed or the project's, and how often it was used in the last 30 days; a skill's page shows
+its text (rendered or raw), the steps, agents and commands derived from it, its bundled files and its diagnostics
+(for example "not linked yet: run hub sync"). It only reads the hub's files: nothing is run.
+
 A feature's Tickets tab shows each ticket's title, status, assignee, Linear link and blockers, what can start now and
 in which order, and its golden path says which step the whole feature has reached. For live status, `hub web` reads
 Linear's API itself, read-only, with the `LINEAR_API_KEY` of the environment it runs in (the same key `hub next` and
@@ -999,6 +1004,7 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `tracker.transport` | no | `api` | How the CLI reaches Linear: `api` (GraphQL with `LINEAR_API_KEY`) or `mcp` (the Linear MCP server through `claude -p`, [ADR 0015](docs/adr/0015-linear-mcp-tracker-transport.md)); `hub.local.json` may set it per developer |
 | `tracker.ready_label` | no | `agent-ready` | Label of issues an agent may pick up |
 | `tracker.failed_label` | no | `agent-failed` | Label set when an agent run fails |
+| `tracker.blocked_label` | no | `tracker.failed_label` | Label set when the run's session stopped to ask a human; create it in the tracker before you set it ([ADR 0030](docs/adr/0030-run-outcomes-in-the-tracker.md)) |
 | `tracker.states.started` | no | `In Progress` | State `hub start` moves an issue to: on a fresh start, or on a resume while the issue is unstarted |
 | `tracker.states.review` | no | `In Review` | Reserved for the review step; not read yet |
 | `repos[].dir` | yes | | Folder name of the repo, next to the hub |
@@ -1017,6 +1023,8 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `guard.infra.prod_markers` | no | `[]` | Python `re` patterns that mark production; a match anywhere in an infra command blocks it |
 | `modules` | no | `{}` | Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`), from 0.6.0: each selected one renders its files and `mk/<id>.mk`; `contract-sync` takes `{"source": <repo dir>, "target": <repo dir>}`, the others `{}` |
 | `doctor.rules` | no | `{}` | Per-rule `hub doctor` settings |
+| `models.tiers.small`, `.medium`, `.large` | no | `haiku`, `sonnet`, `opus` | The model each tier names (`^[A-Za-z0-9._-]{1,64}$`, e.g. `claude-opus-4-1-20250805`); each plugin agent renders its tier's model in its `model:` line after `./hub sync`, and `hub run` uses `medium` |
+| `models.agents.<agent>` | no | the agent's own tier | Moves one of the 7 plugin agents to another tier, e.g. `{"researcher": "large"}` |
 
 Example (synthetic project):
 
@@ -1189,7 +1197,7 @@ reached only from `hub web`. import-linter enforces this in `make check`. Detail
 | `hub brief [--no-network]` | Print the session brief: `now.md`, recent journal, repo/PR/CI state |
 | `hub agent [ARGS…]` | Start `claude` with every repo attached; all arguments go to `claude` |
 | `hub next` | Print the tracker's ready issues (`tracker.ready_label`), oldest first: id, repo, title and url |
-| `hub run ISSUE --repo REPO [--live] [--max-turns N] [--budget USD] [--model M] [--effort low\|medium\|high] [--from implement\|verify]` | Take one issue to a PR: worktree, a headless implementing session, the repo's gate, PR, tracker report. Refuses (exit 1) an issue whose description lacks a brief section. A dry run unless `--live`; defaults `--max-turns 40`, `--budget 3.0`, `--model sonnet`, `--effort medium`; `--from verify` runs the gate, PR and report on the commits already made |
+| `hub run ISSUE --repo REPO [--live] [--max-turns N] [--budget USD] [--model M] [--effort low\|medium\|high] [--from implement\|verify]` | Take one issue to a PR: worktree, a headless implementing session, the repo's gate, PR, tracker report. Refuses (exit 1) an issue whose description lacks a brief section. A dry run unless `--live`; defaults `--max-turns 40`, `--budget 3.0`, `--model` `hub.json`'s `models.tiers.medium` (else `sonnet`), `--effort medium`; `--from verify` runs the gate, PR and report on the commits already made. A live run exits 0 when it opened its PR or ended with no changes (a comment, no label), 3 when its session stopped to ask a human (the blocked label and a comment with the question) and 1 when it failed (the failed label and a diagnosis) or a tracker write failed ([ADR 0030](docs/adr/0030-run-outcomes-in-the-tracker.md)) |
 | `hub start ISSUE [--repo DIR]… [--no-agent]` | Start an issue: its worktrees (named `<issue>-<title slug>`), the issue moved to `tracker.states.started`, then `claude` from the hub with those worktrees attached and the issue as first prompt; a rerun resumes the task; `--no-agent` prints how to launch it |
 | `hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …` | Benchmark the `hub-workflow` plugin on closed issues (module `bench`); `--validate` checks the graders |
 | `hub web [--host HOST] [--port N] [--db PATH]` | Serve the control plane (REST API and web app) on `127.0.0.1:7420` until interrupted; another address only inside the agent-hub container (`AGENT_HUB_IN_CONTAINER=1`) |
@@ -1396,6 +1404,7 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `tracker.kind` | closed list: `linear` | req. | selects the tracker adapter (Tracker, below) |
 | `tracker.team`, `tracker.teams` | a team key; or a list of them (≥ 1, unique ignoring case), the first the default; `hub run`/`hub worktree` match keys ignoring case, `features.tracker` exactly | exactly one of the two | `hub next` (each team, in order), `hub run`, `hub start` (exact upper-case `<TEAM>-<n>`), worktree names, `features.tracker`, branch hints, `AGENTS.md` |
 | `tracker.ready_label`, `tracker.failed_label` | strings | `agent-ready`, `agent-failed` | `hub next` (ready), `hub run` on failure (failed) |
+| `tracker.blocked_label` | string; not in `hub.local.json`; the hooks do not read it | optional, no default: absent, the blocked label is `tracker.failed_label` (a label the tracker lacks would fail the write) | `hub run`, added when the session stopped for a human; `hub run` and `hub ship` remove it, with the failed label, from an issue that carries it when the run did not fail ([ADR 0030](../adr/0030-run-outcomes-in-the-tracker.md)) |
 | `tracker.states.started`, `tracker.states.review` | strings; an object with only these keys; not in `hub.local.json` | `In Progress`, `In Review` | `hub start` reads `started`: the state a fresh start, or a resume of an unstarted issue, moves to; `review`: the state `hub run` (success report and dry run) and `hub ship` move the issue to |
 | `tracker.transport` | closed list: `api`, `mcp`; `hub.local.json` may override it | `api` | `hub next`, `hub run`, `hub start` (adapter; Tracker, below), `hub setup` (its `tracker` item) |
 | `repos[]` | list, at least one item | req. | launcher, worktrees, `hub setup` (clone or fetch each), `hub start`, hooks, cloud setup |
@@ -1414,6 +1423,9 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `guard.infra.prod_markers` | list of Python `re` patterns (Infra patterns, below) | `[]` | hooks' config reader; guard: the production markers; a match anywhere in a command naming a covered tool denies it |
 | `modules` | object keyed by module id | `{}` | generator, commands, doctor (Modules) |
 | `doctor.rules` | object keyed by rule id | `{}` | `hub doctor`; contract in [hub-doctor.md](hub-doctor.md) |
+| `models` | object of `tiers` and `agents`; not in `hub.local.json` | absent: every default | generator (the plugin agents' `model:`), `hub run` |
+| `models.tiers.small`, `.medium`, `.large` | model name (Rendered values) | `haiku`, `sonnet`, `opus` | generator: each plugin agent's `model:` frontmatter names its default tier in its template (`large`: architect, evaluator, quality-reviewer, requirements-analyst, spec-reviewer; `medium`: planner, researcher) and renders that tier's model; `hub run`: the implementing session's model is `medium`'s unless `--model` is given |
+| `models.agents.<agent>` | closed list `small`, `medium`, `large`; `<agent>` one of the 7 plugin agents (`architect`, `evaluator`, `planner`, `quality-reviewer`, `requirements-analyst`, `researcher`, `spec-reviewer`) | the template's tier | generator: the agent renders that tier's model instead; an unknown tier or agent is a schema error (`config.schema`) |
 
 Unknown keys are an error at every object level; `_` keys (such as `_comment`) are accepted and ignored at every level,
 and the exported schema says the same ([ADR 0010](../adr/0010-hub-json-config-contract.md)). Cross-field checks are
@@ -1434,6 +1446,10 @@ retype); brain frontmatter lists repo dirs unquoted (no type resolution). A safe
   `^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$`. Other free text has no control character (`\x00-\x1f`, `\x7f`); `author_name`
   is rendered only with format quoting (`shlex.quote`, JSON encoder, escaped YAML scalar), never into a Makefile;
   `check_fast` and `check` are read at run time, never rendered.
+- Model names (`models.tiers.*`): `^[A-Za-z0-9._-]{1,64}$`, the same pattern `hub run --model` takes, rendered
+  unquoted into the agents' YAML frontmatter (`model: opus`), so a hub without `models` keeps its bytes. Aliases
+  (`haiku`, `sonnet`, `opus`, `inherit`) and full model ids (`claude-opus-4-1-20250805`) fit; `[1m]` variants and ids
+  with `:` do not.
 - `platform.version` matches `^[0-9]+\.[0-9]+\.[0-9]+$` in the CLI and the hooks' stdlib reader (a bad value counts as
   absent). `platform.repository` matches `^git\+https://H(?:/S)+$` (`H` as `guard.deny_hosts`), ≤ 200 characters, as
   written: no credential, port, query, fragment, `@ref` or trailing `/`. Read at run time, never baked in; a bad one
@@ -1480,7 +1496,8 @@ benchmark) and `marketplace` (plugin marketplace) take `{}` only; `contract-sync
   a minimal `hub.json` match `HubConfig`'s in `test_hub_json_reader.py`): a missing file, bad JSON or a wrong type gives
   the defaults; the hook fails open. It ignores unknown and `_` keys, except under `guard.infra` (a wrong type, an
   unusable item or an unknown key sets `InfraSection.problem`). A bad `repos[].default_branch` inherits; a bad
-  `tracker.teams` (not a non-empty list of non-empty strings) counts as absent. No hook reads `conventions`.
+  `tracker.teams` (not a non-empty list of non-empty strings) counts as absent. No hook reads `conventions` or
+  `models`.
 
 ### Tracker
 
