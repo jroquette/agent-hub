@@ -470,7 +470,7 @@ class AgentSessionControl:
                 raise PermissionAnsweredError(request_id)
             self._refuse(live, Answer(request_id=request_id))
             answer = validate(live.requests[request_id].request, decision)
-            live.requests.pop(request_id)
+            open_request = live.requests.pop(request_id)
             live.answered.add(request_id)
             live.state = apply(live.state, Answer(request_id=request_id))
             body = PermissionDecisionBody(
@@ -482,9 +482,14 @@ class AgentSessionControl:
                 mode=decision.mode,
             ).as_body()
             seq = await self._emit(live, "permission.decision", body, by="web")
-            await self._driver.answer_permission(live.handle, request_id, answer)
             if seq is None:
+                # The decision is not in the log, so it is not applied: the driver is denied
+                # and the session's end logs the request as denied ``by: closed``.
+                live.requests[request_id] = open_request
+                with contextlib.suppress(PermissionAnsweredError, UnknownPermissionError):
+                    await self._driver.answer_permission(live.handle, request_id, closed_answer())
                 raise await self._log_full(live)
+            await self._driver.answer_permission(live.handle, request_id, answer)
             fields: AgentSessionFields = {}
             if decision.mode is not None:
                 await self._driver.set_mode(live.handle, decision.mode)
