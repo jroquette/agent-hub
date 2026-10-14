@@ -179,3 +179,17 @@ def test_exits_two_when_folder_is_not_a_hub(tmp_path: Path, builtins: Path) -> N
 
     assert result.exit_code == 2
     assert "not a hub" in result.stderr
+
+
+def test_keeps_folder_problems_when_validate_gets_a_name(
+    tmp_path: Path, builtins: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    (tmp_path / "hub.json").write_text("{}\n")
+    elsewhere = tmp_path_factory.mktemp("elsewhere")
+    write(elsewhere, "demo/check.yaml", CHECK_YAML)
+    (tmp_path / "workflows").symlink_to(elsewhere)
+
+    result = run(tmp_path, "validate", "check")
+
+    assert result.exit_code == 1
+    assert result.stderr.startswith("workflows: $: the workflows folder is a link")

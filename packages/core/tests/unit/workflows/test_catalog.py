@@ -1,4 +1,4 @@
-"""The catalog: every file loaded and planned, each problem with its file, line and key."""
+"""The catalog: each file loaded and planned, each problem with file, line and key (AC-213.1)."""
 
 from collections.abc import Iterable
 
