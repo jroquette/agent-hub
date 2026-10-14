@@ -89,7 +89,9 @@ def gate_ws(
     git_config = tmp_path / "gitconfig"
     git_config.write_text(
         "[user]\n\tname = Test User\n\temail = test@example.com\n"
-        "[init]\n\tdefaultBranch = main\n[commit]\n\tgpgsign = false\n",
+        "[init]\n\tdefaultBranch = main\n[commit]\n\tgpgsign = false\n"
+        # No background repack after a commit: it writes into .git while a test compares it.
+        "[gc]\n\tauto = 0\n[maintenance]\n\tauto = false\n",
         encoding="utf-8",
     )
     env = {
