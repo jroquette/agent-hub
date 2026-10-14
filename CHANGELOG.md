@@ -15,7 +15,7 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 - `hub doctor` (`features.tracker`) warns on a feature's agent outputs, `evals/*.json` and `reviews/<ticket>/*.json`:
   one without its `.md` record, or one that fails validation, with its problem count, its first problem and the
-  `./hub validate-output` command that lists them all. Warnings only, bounded per feature (AGH-139).
+  `./hub validate-output` command that lists them all. Warnings only; one validation budget per run, and an info line counts the outputs it skipped (AGH-139).
 - Skills tab in `hub web` (`/projects/:project/skills`): every skill, agent and hook of the hub with what it does, a
   copyable invocation, origin (managed by `hub sync`, project-owned or local) and invocation mode, the frontmatter, the
   rendered text with a table of contents and a Raw view, the steps derived from the text, uses and used-by links,
