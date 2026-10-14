@@ -7,7 +7,8 @@ hub and project with the listing fingerprint it was built from (path, size, mtim
 of every entry, ``hub.lock`` and the settings files included; a changed fingerprint replaces the
 entry), so a warm read is one listing walk plus the usage join. Items and bundled files are
 found by id only: an id the fold did not issue is ``EntityNotFoundError`` (entity ``skill`` or
-``skill file``) before anything is read.
+``skill file``); on a cold memo an item the listing alone rules out (``may_hold``) answers so
+before any file is read.
 """
 
 import re
@@ -18,7 +19,7 @@ from typing import Final, Protocol
 
 from agent_hub.core.hubs.hub_registry import HubFileReader, UnreadHubFile
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
-from agent_hub.core.skills.skill_catalog import build_catalog, catalog_reads
+from agent_hub.core.skills.skill_catalog import build_catalog, catalog_reads, may_hold
 from agent_hub.core.skills.skill_sources import (
     CATALOG_BUDGET_BYTES,
     MAX_SKILL_FILE_BYTES,
@@ -180,7 +181,12 @@ class SkillReads:
         wanted = item_id(kind, source, name)
         if not (_NAME.match(source) and _NAME.match(name)):
             raise EntityNotFoundError(entity=SKILL_ENTITY, entity_id=wanted)
-        folded = self._folded(project, hub_path)
+        sources = self._reader.skill_sources(hub_path)
+        folded = self._memoized(project, hub_path, sources)
+        if folded is None:
+            if not may_hold(sources, kind=kind, source=source, name=name):
+                raise EntityNotFoundError(entity=SKILL_ENTITY, entity_id=wanted)
+            folded = self._fold(project, hub_path, sources)
         detail = folded.details.get(wanted)
         if detail is None:
             raise EntityNotFoundError(entity=SKILL_ENTITY, entity_id=wanted)
@@ -188,15 +194,23 @@ class SkillReads:
 
     def _folded(self, project: str, hub_path: str) -> FoldedCatalog:
         sources = self._reader.skill_sources(hub_path)
-        key, fingerprint = (hub_path, project), _fingerprint(sources)
+        found = self._memoized(project, hub_path, sources)
+        return self._fold(project, hub_path, sources) if found is None else found
+
+    def _memoized(self, project: str, hub_path: str, sources: SkillSources) -> FoldedCatalog | None:
+        key = (hub_path, project)
         with self._guard:
             found = self._memo.get(key)
-            if found is not None and found[0] == fingerprint:
-                self._memo.move_to_end(key)
-                return found[1]
+            if found is None or found[0] != _fingerprint(sources):
+                return None
+            self._memo.move_to_end(key)
+            return found[1]
+
+    def _fold(self, project: str, hub_path: str, sources: SkillSources) -> FoldedCatalog:
+        key = (hub_path, project)
         folded = build_catalog(self._inputs(project, hub_path, sources))
         with self._guard:
-            self._memo[key] = (fingerprint, folded)
+            self._memo[key] = (_fingerprint(sources), folded)
             self._memo.move_to_end(key)
             while len(self._memo) > self._entries:
                 self._memo.popitem(last=False)
