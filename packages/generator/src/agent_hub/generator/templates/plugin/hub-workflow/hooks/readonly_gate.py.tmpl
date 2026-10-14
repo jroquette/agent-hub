@@ -1014,7 +1014,10 @@ def read_tail(path: str) -> tuple | None:
 def still_running(path: str) -> bool | None:
     """Whether a subagent transcript's tail holds a tool call with no result after it: that
     subagent is inside one call, which writes nothing until it ends (E-2). None when the tail
-    cannot tell: unreadable, no whole line in it, or a line holding a tool that is not JSON."""
+    cannot tell: unreadable, no whole line in it, a line holding a tool that is not JSON, or (a
+    tail starting mid-file) a result whose call is before the tail with no assistant entry after
+    it: that turn's other calls are out of view and one may still run. Every whole line of the
+    tail (at most MAX_TAIL_BYTES) holding a tool or `"assistant"` is parsed."""
     tail = read_tail(path)
     if tail is None:
         return None
@@ -1022,29 +1025,40 @@ def still_running(path: str) -> bool | None:
     lines = data.split(b"\n")
     if cut:
         lines = lines[1:]  # the first one may start mid-line
-    pending, whole = set(), False
+    pending, seen, whole, orphan = set(), set(), False, False
     for line in lines:
         if not line.strip():
             continue
         whole = True
-        if b'"tool_use"' not in line and b'"tool_result"' not in line:
+        tools = b'"tool_use"' in line or b'"tool_result"' in line
+        if not tools and b'"assistant"' not in line:
             continue
         try:
             entry = json.loads(line)
         except (ValueError, RecursionError):
-            return None
+            if tools:
+                return None
+            continue
+        if isinstance(entry, dict) and entry.get("type") == "assistant":
+            orphan = False  # the model went on: every call of the turns before it had its result
         message = entry.get("message") if isinstance(entry, dict) else None
         content = message.get("content") if isinstance(message, dict) else None
         for block in content if isinstance(content, list) else []:
             block_type = block.get("type") if isinstance(block, dict) else None
             if block_type == "tool_use":
                 call_id = block.get("id")
+                if isinstance(call_id, str):
+                    seen.add(call_id)
                 pending.add(call_id if isinstance(call_id, str) else object())  # no id: never answered
             elif block_type == "tool_result":
-                pending.discard(block.get("tool_use_id"))
-    if cut and not whole:
+                answered = block.get("tool_use_id")
+                pending.discard(answered)
+                orphan = orphan or answered not in seen
+    if pending:
+        return True
+    if cut and (orphan or not whole):
         return None
-    return bool(pending)
+    return False
 
 
 def subagent_signals(event: dict, state: dict) -> list:
@@ -1077,6 +1091,8 @@ def subagent_signals(event: dict, state: dict) -> list:
     for name in sorted(unchanged):
         if left() <= 0:
             return found + [SUBAGENTS_UNREADABLE]
+        if time.time() - now[name][1] / 1e9 >= STALE_SECONDS:
+            continue  # untouched for that long: killed mid-call, not running
         running = still_running(os.path.join(folder, name))
         if running is None and SUBAGENTS_UNREADABLE not in found:
             found.append(SUBAGENTS_UNREADABLE)
