@@ -120,7 +120,12 @@ input brief (`Problem`, `Why`, `Why now`, `Outcome`, `Invariants`, `Acceptance c
 a live run's `failed` record at stage `PICKED`; otherwise (dry run by default: it prints every command and tracker
 write) it makes the worktree, runs the implementing `claude -p` session (no tracker tool: the issue's text is in its prompt), its own gate, the push and
 `gh pr create`, and reports through the port (on success, like `hub ship`, it moves the issue to
-`tracker.states.review`, default `In Review`); records go to the hub's `.agent-runs/` and `brain/_inbox/runs/`. Secret
+`tracker.states.review`, default `In Review`); records go to the hub's `.agent-runs/` and `brain/_inbox/runs/`. The
+report follows the run's outcome ([ADR 0030](adr/0030-run-outcomes-in-the-tracker.md)): a run that ended with no commit
+gets a comment and no label and exits 0; a run whose session stopped for a human gets the blocked label
+(`tracker.blocked_label`, else `tracker.failed_label`) and a comment with its question and exits 3; a failed run gets
+the failed label and a diagnosis and exits 1, as does any run whose tracker write fails. A run that did not fail
+removes the failed and blocked labels the issue carries. Secret
 scope: no child gets `LINEAR_API_KEY`. What may run the session's code (the session, the gate, git's reads of the
 worktree, `worktree add` and the repo's setup script) gets no GitHub token either. The fetch, the push and `gh` are
 the only calls that hold the tokens, each with git's hooks and fsmonitor off (and the push with signing off). Before
@@ -193,6 +198,8 @@ today), and the CLI's model and the hooks' stdlib reader accept it in the same c
 | `repos[].default_branch` | The repo's default branch: worktree and PR base, push guard | `project.default_branch` | AGH-46 |
 | `repos[].check_fast_timeout` | Seconds the Stop gate gives the repo's `check_fast`, within the gate's total budget; `check_fast` itself becomes optional | The gate's default | AGH-52 |
 | `tracker.teams` | Several tracker team keys, the first being the default; never set together with `tracker.team` | `[tracker.team]` | AGH-56 |
+| `tracker.blocked_label` | The label `hub run` adds when its session stops for a human (ADR 0030); not settable in `hub.local.json`; the hooks do not read it | `tracker.failed_label` | AGH-178 |
+| `models` | Model tiers (`small`, `medium`, `large`) mapped to model names, and per-agent tier overrides for the plugin's agents; `hub run` uses `medium` | Each agent's template tier, with `haiku`, `sonnet`, `opus` | AGH-180 |
 | `platform.repository` | The platform's git source: the repository root as `git+https://<host>/<path>` (no credential, port, query, fragment, ref or trailing `/`; at most 200 characters). The shim, SessionStart and cloud setup read it at every run and run `<repository>@v<platform.version>#subdirectory=packages/agent-hub`; the CI credential step reads it to map the read token; a bad value stops each of them and is never echoed; not settable in `hub.local.json`. Tokens stay on `github.com`: the CI step maps `AGENT_HUB_READ_TOKEN` only when the repository is on exactly `https://github.com/` (another host gets no token), and cloud setup's `GH_TOKEN` helper answers for `github.com` only, so a mirror on another host needs the repository attached or its own credential (follow-up) | `git+https://github.com/jroquette/agent-hub` | AGH-49 |
 | `project.conventions`, `repos[].conventions` | Patterns for the task branch (`{prefix}`, `{ISSUE}`, `{issue_lower}`, `{slug}`; needs the issue) and the commit and PR titles (`{ISSUE}`, `{type}`, `{scope}`, `{summary}`; needs `{summary}`); a repo's keys override the project's, key by key; `hub worktree`, `hub run`, its prompt and `AGENTS.md` follow them; not settable in `hub.local.json` | Today's shapes: `{prefix}{issue_lower}-{slug}`, `{type}({scope}): {summary} ({ISSUE})`; a `pr_title` that no layer sets follows the effective `commit_title` | AGH-57 |
 | `guard.infra.allow`, `guard.infra.prod_markers` | Regexes over infra commands (`aws`, `cdk`, `terraform`, `pulumi`, `kubectl`, `helm`, `sam`, `serverless`), checked by the guard per part of the command: a prod marker anywhere denies, an environment on the part itself that `allow` matches passes (deploy, destroy and delete verbs ask), a local-only form passes, anything else is denied; `guard.infra` present, even `{}`, turns it on (rule below), and the generated `.claude/settings.json` then drops its `Bash(terraform *)` and `Bash(aws *)` denies so the guard decides (run `./hub sync` after adding or removing it; a project re-adds them in `settings.project.json`); not settable in `hub.local.json` | The fixed infra rule: `terraform apply\|destroy\|import`, any `aws` subcommand, `pulumi up\|destroy`, `kubectl apply\|delete` and `cdk deploy\|destroy` (the verb right after `cdk`) are denied | AGH-45 |
@@ -309,7 +316,7 @@ A web app reads the hubs and the agents' events and answers five questions, one 
 **Phase 2 (built).** `hub web` serves the views above that Phase 2 covers: Portfolio, Project overview,
 Approvals (read-only), Live sessions, Sessions and Session detail (Timeline, Files, Cost, Raw events), Workflow runs and
 Run detail, Features and Feature detail, Health (the doctor rules run in process per hub, cached 15 min), Knowledge ›
-Learnings and Knowledge › Brain, Settings and Welcome. Session, WorkflowRun, Learning and Approval are pure folds in core,
+Learnings, Knowledge › Brain and Knowledge › Skills, Settings and Welcome. Session, WorkflowRun, Learning and Approval are pure folds in core,
 recomputed on read and memoized in process by the store's high-water mark ([event-derivations.md](design/event-derivations.md)).
 Cost is estimated from transcript usage times a dated price table and always labelled so; OpenTelemetry and GitHub
 are not connected in this version and their cells say so, and Linear is read only for a feature's tickets (AGH-136
@@ -382,6 +389,32 @@ Linear status ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md), records
   the next free number, a withdrawn AC stays listed (`withdrawn: true` in `features.json`) and no id is renumbered.
   The planner, evaluator and requirements-analyst templates and `/feature` say so, and `hub doctor`'s
   `features.tracker` rule checks the new records.
+
+**Skills tab (AGH-164, built).** Knowledge › Skills shows what a hub's agents can do, read from its files on request
+and never stored:
+
+- **Catalog.** `GET /api/v1/projects/{project}/skills` lists the hub's skills, agents and hooks: the base plugin
+  `plugin/hub-workflow/`, the project and other plugins under `plugin/`, real entries in `.claude/skills/` and
+  `.claude/agents/`, and the hooks of `.claude/settings.json`, `.claude/settings.project.json` and each plugin's
+  `hooks/hooks.json` (never `settings.local.json`). Each item has an origin (`managed` per `hub.lock`,
+  `project-owned`, `local`), an invocation mode (`user-only`, `model-only`, `both`, or `neither`, shown as "Hidden"),
+  its invocation line and its use in the last 30 days (a fold over the stored events: a typed `/name` and a `Skill`
+  call, an `Agent` call by type; signals of one invocation within 5 s count once). Third-party plugins named by the
+  marketplace or `enabledPlugins` are listed with their pin and "not in this hub": nothing is fetched. Search and
+  facets (kind, origin, mode, has diagnostics) live in the URL query.
+- **Detail.** An item is addressed by `kind/source/name`, `source` being the folder it comes from (`claude` for
+  `.claude/`, `settings` / `settings-project` for those files' hooks); every source of a duplicate name is listed.
+  The detail shows the frontmatter (unknown keys flagged "not understood by Claude Code"), the body rendered (raw HTML
+  off, a URL allow-list, `!` dynamic context shown as text) or raw, its table of contents, a structure derived from
+  the text and labelled so (numbered steps, agents, skills, commands, gates), uses and used-by links, bundled files by
+  role (text served inert by a server-issued id), an approximate context cost (characters / 4), and diagnostics
+  (`name_invalid`, `description_missing`, `reference_not_found`, `not_linked`, `modified_since_sync`, …). A hook shows
+  its event, matcher, command, source file and active / not-synced state. Nothing is run.
+- **Bounds.** The tree is listed stat-only through `HubFileReader.skill_sources` and read through
+  `read_skill_file`, never through a link (a link that leaves the hub is `link_outside_hub`); at most 500 items per
+  kind, 200 bundled files per skill, 2,000 hooks, 256 KiB per file and 16 MiB per catalog. Past a bound the catalog
+  says `truncated` with a notice; an over-cap file is listed with `too_large` and no text. The catalog is memoized per
+  hub by its listing's fingerprint.
 
 ## Data sources and event model
 
@@ -534,6 +567,7 @@ The recommendations are a starting point.
 - A deterministic Python engine reads the document and drives the steps. Orchestration spends no tokens: the LLM only runs inside `agent` steps and only receives that step's instruction, not the whole workflow.
 - Deterministic work (tests, lint, contract sync, opening a PR) becomes a `script` step, with no LLM.
 - The UI edits the same document. It is stored on the platform with a version and history, and each execution records the workflow version it used.
+- The format and the minimum engine (`agent`, `script`, `gate`; `human` is refused at load until UI approvals exist) are in [ADR 0027](adr/0027-workflow-format-and-minimum-engine.md) and [docs/design/workflow-schema.md](design/workflow-schema.md).
 
 **2. Brain: stays in the hub repo, which is private and ours only.**
 

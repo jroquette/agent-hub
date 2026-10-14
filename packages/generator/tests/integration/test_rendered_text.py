@@ -3,7 +3,8 @@
 Each case's files are stored byte for byte under ``rendered/<case>/<path>.golden`` (``-text`` in
 ``.gitattributes``; the suffix keeps an agent from reading a nested ``AGENTS.md`` as its own
 instructions): ``two_teams`` a hub with two tracker teams, ``conventions`` the mixed conventions
-hub, ``app_repo_agents`` the seeded starter for app repos. ``GOLDEN_UPDATE=1`` rewrites them,
+hub, ``app_repo_agents`` the seeded starter for app repos, ``model_tiers`` the plugin agents of a
+hub with model tiers (AGH-180). ``GOLDEN_UPDATE=1`` rewrites them,
 refused under ``CI``: review the diff and commit it. A one-team, unconfigured hub's bytes stay
 pinned by the sha constants of ``test_render_hub.py`` and the ``hub init`` lock.
 """
@@ -15,9 +16,11 @@ from typing import Any, NamedTuple
 import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.model_tiers import AGENT_NAMES
 from agent_hub.core.testing.builders import (
     a_conventions_document,
     a_hub_document,
+    a_models_document,
     a_two_team_document,
 )
 from agent_hub.generator.render_hub import render_hub
@@ -59,6 +62,12 @@ CASES = (
     ),
     # The seeded starter for app repos (the same in every hub).
     TextCase("app_repo_agents", a_hub_document, ("docs/app-repo-AGENTS.md",)),
+    # Every plugin agent, with configured tiers and two agents moved off their template's tier.
+    TextCase(
+        "model_tiers",
+        a_models_document,
+        tuple(f"plugin/hub-workflow/agents/{name}.md" for name in AGENT_NAMES),
+    ),
 )
 CASE_PATHS = [
     pytest.param(case, path, id=f"{case.folder}-{path}") for case in CASES for path in case.paths

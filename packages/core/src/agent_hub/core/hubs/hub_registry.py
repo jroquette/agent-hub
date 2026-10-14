@@ -3,10 +3,11 @@
 ``HubRegistry`` keeps the registered hubs: an id (UUIDv7) minted at registration, the hub's
 path and when it was added; a path is registered once. ``HubFileReader`` reads one hub's files
 (``hub.json``, ``hub.lock``, ``hub.local.json``, ``brain/now.md``, feature folders, brain notes,
-repo checkouts) and builds its doctor snapshot; the generator implements it, core decides what the
-files mean. A registry that cannot be read or written raises ``HubRegistryError``; a request
-the registry or a use case refuses raises ``HubConflictError`` (already registered, same
-project) or ``HubInvalidError`` (no or invalid ``hub.json``).
+skill sources, repo checkouts) and builds its doctor snapshot; the generator implements it,
+core decides what the files mean. A registry that cannot be read or written raises
+``HubRegistryError``; a request the registry or a use case refuses raises
+``HubConflictError`` (already registered, same project) or ``HubInvalidError`` (no or invalid
+``hub.json``).
 """
 
 from collections.abc import Sequence
@@ -23,6 +24,7 @@ from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.hubs.registered_hub import RegisteredHub, ValidationProblem
+from agent_hub.core.skills.skill_sources import DEFAULT_LIMITS, SkillLimits, SkillSources
 
 # The most hubs a registry holds.
 MAX_HUBS = 100
@@ -160,4 +162,15 @@ class HubFileReader(Protocol):
 
     def brain_file_size(self, hub_path: str, path: str) -> int | None:
         """The size of the regular file ``brain/<path>``; None when absent, a link or unreadable."""
+        ...
+
+    def skill_sources(self, hub_path: str, *, limits: SkillLimits = DEFAULT_LIMITS) -> SkillSources:
+        """Every entry under the hub's skill roots (``skill_relative``), stat-only, in path
+        order, within ``limits``: no file opened, no link followed (its target text only)."""
+        ...
+
+    def read_skill_file(self, hub_path: str, path: str, *, max_bytes: int) -> bytes | UnreadHubFile:
+        """The bytes of the hub-relative ``path``, or why not: a path ``skill_relative`` refuses
+        reads ``missing`` without any read; a link or special file is ``not_regular`` (never
+        opened through, never blocking); over ``max_bytes`` is ``too_large``."""
         ...

@@ -1,11 +1,13 @@
 """In-memory fakes of the hub ports: ``InMemoryHubRegistry`` (checked by ``HubRegistryContract``)
 and ``FakeHubFileReader``, whose hubs are synthetic files kept in memory (``brain`` holds the
-files under ``brain/``, ``brain_links`` the ones that play links).
+files under ``brain/``, ``brain_links`` the ones that play links; ``skill_files``,
+``skill_links`` and ``skill_specials`` the hub-relative files, links and FIFOs under the skill
+roots, checked by ``SkillSourcesContract``).
 """
 
 import json
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -27,6 +29,14 @@ from agent_hub.core.hubs.hub_registry import (
 )
 from agent_hub.core.hubs.registered_hub import RegisteredHub
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
+from agent_hub.core.skills.skill_sources import (
+    DEFAULT_LIMITS,
+    SkillLimits,
+    SkillPathError,
+    SkillSources,
+    SourceFile,
+    skill_relative,
+)
 from agent_hub.core.testing.builders import a_hub_document
 
 MISSING = UnreadHubFile(message="cannot read: No such file or directory", is_missing=True)
@@ -89,6 +99,9 @@ class FakeHub:
     mtimes: dict[str, int] = field(default_factory=dict)
     brain: dict[str, bytes] = field(default_factory=dict)
     brain_links: frozenset[str] = frozenset()
+    skill_files: dict[str, bytes] = field(default_factory=dict)
+    skill_links: dict[str, str] = field(default_factory=dict)
+    skill_specials: frozenset[str] = frozenset()
 
 
 def _listed(path: str) -> bool:
@@ -102,7 +115,9 @@ class FakeHubFileReader:
 
     ``snapshots`` counts the doctor snapshots built per hub, so a test sees the cache work;
     ``feature_reads`` records each feature read, ``("*", hub_path)`` for a listing and
-    ``(slug, hub_path)`` for one folder, so a test sees how much a request read.
+    ``(slug, hub_path)`` for one folder, so a test sees how much a request read;
+    ``skill_listings`` records each ``skill_sources`` call's hub and ``skill_reads`` each
+    ``read_skill_file`` call as ``(hub_path, path)``, refused paths included.
     """
 
     def __init__(
@@ -112,6 +127,8 @@ class FakeHubFileReader:
         self.aliases = dict(aliases or {})
         self.snapshots: dict[str, int] = {}
         self.feature_reads: list[tuple[str, str]] = []
+        self.skill_listings: list[str] = []
+        self.skill_reads: list[tuple[str, str]] = []
 
     def resolve(self, path: str) -> str:
         """The aliased path, or the path itself."""
@@ -221,5 +238,101 @@ class FakeHubFileReader:
         content = hub.brain.get(path)
         return None if content is None or path in hub.brain_links else len(content)
 
+    def skill_sources(self, hub_path: str, *, limits: SkillLimits = DEFAULT_LIMITS) -> SkillSources:
+        """The hub's skill files, links and FIFOs under the roots, in path order, within
+        ``limits`` (folders per kind, files per skill, names examined); a link is never
+        followed, so nothing under a linked path is listed."""
+        self.skill_listings.append(hub_path)
+        return _skill_listing(self._hub(hub_path), limits)
+
+    def read_skill_file(self, hub_path: str, path: str, *, max_bytes: int) -> bytes | UnreadHubFile:
+        """The skill file's bytes, or why not: a refused path or an absent file ``missing``, a
+        link or FIFO (or a path under a link) ``not_regular``, over ``max_bytes`` ``too_large``."""
+        self.skill_reads.append((hub_path, path))
+        hub = self._hub(hub_path)
+        try:
+            skill_relative(path)
+        except SkillPathError:
+            return UnreadHubFile(message=MISSING.message, is_missing=True, kind="missing")
+        if path in hub.skill_specials or _under_link(path, hub.skill_links):
+            return UnreadHubFile(
+                message="cannot read: not a regular file", is_missing=False, kind="not_regular"
+            )
+        content = hub.skill_files.get(path)
+        if content is None:
+            return UnreadHubFile(message=MISSING.message, is_missing=True, kind="missing")
+        if len(content) > max_bytes:
+            message = f"cannot read: over {max_bytes} bytes"
+            return UnreadHubFile(message=message, is_missing=False, kind="too_large")
+        return content
+
     def _hub(self, hub_path: str) -> FakeHub:
         return self.hubs.get(hub_path) or FakeHub()
+
+
+def _under_link(path: str, links: dict[str, str]) -> bool:
+    """Whether ``path`` is a link or lies under a linked folder."""
+    return any(path == link or path.startswith(f"{link}/") for link in links)
+
+
+def _skill_entries(hub: FakeHub) -> Iterator[SourceFile]:
+    for path, content in hub.skill_files.items():
+        mtime = hub.mtimes.get(path, 0)
+        yield SourceFile(path=path, size=len(content), mtime_ns=mtime, regular=True)
+    for path, target in hub.skill_links.items():
+        mtime = hub.mtimes.get(path, 0)
+        yield SourceFile(
+            path=path, size=len(target), mtime_ns=mtime, regular=False, link_target=target
+        )
+    for path in hub.skill_specials:
+        yield SourceFile(path=path, size=0, mtime_ns=hub.mtimes.get(path, 0), regular=False)
+
+
+def _listed_skill_path(path: str) -> bool:
+    try:
+        skill_relative(path)
+    except SkillPathError:
+        return False
+    return True
+
+
+def _item_key(path: str) -> tuple[str, str] | None:
+    """The skill folder or agent file an entry belongs to, by kind; None for single files."""
+    segments = path.split("/")
+    folder_index = 1 if segments[0] == ".claude" else 2
+    if len(segments) <= folder_index + 1 or segments[folder_index] == "hooks":
+        return None
+    return segments[folder_index], "/".join(segments[: folder_index + 2])
+
+
+def _skill_listing(hub: FakeHub, limits: SkillLimits) -> SkillSources:
+    candidates = sorted(_skill_entries(hub), key=lambda entry: entry.path)
+    kept: list[SourceFile] = []
+    items: dict[str, set[str]] = {}
+    files_per_item: dict[str, int] = {}
+    skipped = 0
+    for examined, entry in enumerate(candidates):
+        if examined >= limits.names_examined:
+            return SkillSources(files=tuple(kept), truncated=True, skipped=skipped)
+        listed = _listed_skill_path(entry.path) and not _inside_link(entry.path, hub.skill_links)
+        if not listed:
+            continue
+        key = _item_key(entry.path)
+        if key is not None:
+            kind, item = key
+            seen = items.setdefault(kind, set())
+            if item not in seen and len(seen) >= limits.items_per_kind:
+                skipped += 1
+                continue
+            seen.add(item)
+            files_per_item[item] = files_per_item.get(item, 0) + 1
+            if files_per_item[item] > limits.files_per_skill + 1:
+                skipped += 1
+                continue
+        kept.append(entry)
+    return SkillSources(files=tuple(kept), truncated=skipped > 0, skipped=skipped)
+
+
+def _inside_link(path: str, links: dict[str, str]) -> bool:
+    """Whether ``path`` lies under a linked folder (the link itself is listed)."""
+    return any(path.startswith(f"{link}/") for link in links)

@@ -678,6 +678,7 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `tracker.transport` | no | `api` | How the CLI reaches Linear: `api` (GraphQL with `LINEAR_API_KEY`) or `mcp` (the Linear MCP server through `claude -p`, [ADR 0015](docs/adr/0015-linear-mcp-tracker-transport.md)); `hub.local.json` may set it per developer |
 | `tracker.ready_label` | no | `agent-ready` | Label of issues an agent may pick up |
 | `tracker.failed_label` | no | `agent-failed` | Label set when an agent run fails |
+| `tracker.blocked_label` | no | `tracker.failed_label` | Label set when the run's session stopped to ask a human; create it in the tracker before you set it ([ADR 0030](docs/adr/0030-run-outcomes-in-the-tracker.md)) |
 | `tracker.states.started` | no | `In Progress` | State `hub start` moves an issue to: on a fresh start, or on a resume while the issue is unstarted |
 | `tracker.states.review` | no | `In Review` | Reserved for the review step; not read yet |
 | `repos[].dir` | yes | | Folder name of the repo, next to the hub |
@@ -696,6 +697,8 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `guard.infra.prod_markers` | no | `[]` | Python `re` patterns that mark production; a match anywhere in an infra command blocks it |
 | `modules` | no | `{}` | Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`), from 0.6.0: each selected one renders its files and `mk/<id>.mk`; `contract-sync` takes `{"source": <repo dir>, "target": <repo dir>}`, the others `{}` |
 | `doctor.rules` | no | `{}` | Per-rule `hub doctor` settings |
+| `models.tiers.small`, `.medium`, `.large` | no | `haiku`, `sonnet`, `opus` | The model each tier names (`^[A-Za-z0-9._-]{1,64}$`, e.g. `claude-opus-4-1-20250805`); each plugin agent renders its tier's model in its `model:` line after `./hub sync`, and `hub run` uses `medium` |
+| `models.agents.<agent>` | no | the agent's own tier | Moves one of the 7 plugin agents to another tier, e.g. `{"researcher": "large"}` |
 
 Example (synthetic project):
 
@@ -868,7 +871,7 @@ reached only from `hub web`. import-linter enforces this in `make check`. Detail
 | `hub brief [--no-network]` | Print the session brief: `now.md`, recent journal, repo/PR/CI state |
 | `hub agent [ARGS…]` | Start `claude` with every repo attached; all arguments go to `claude` |
 | `hub next` | Print the tracker's ready issues (`tracker.ready_label`), oldest first: id, repo, title and url |
-| `hub run ISSUE --repo REPO [--live] [--max-turns N] [--budget USD] [--model M] [--effort low\|medium\|high] [--from implement\|verify]` | Take one issue to a PR: worktree, a headless implementing session, the repo's gate, PR, tracker report. Refuses (exit 1) an issue whose description lacks a brief section. A dry run unless `--live`; defaults `--max-turns 40`, `--budget 3.0`, `--model sonnet`, `--effort medium`; `--from verify` runs the gate, PR and report on the commits already made |
+| `hub run ISSUE --repo REPO [--live] [--max-turns N] [--budget USD] [--model M] [--effort low\|medium\|high] [--from implement\|verify]` | Take one issue to a PR: worktree, a headless implementing session, the repo's gate, PR, tracker report. Refuses (exit 1) an issue whose description lacks a brief section. A dry run unless `--live`; defaults `--max-turns 40`, `--budget 3.0`, `--model` `hub.json`'s `models.tiers.medium` (else `sonnet`), `--effort medium`; `--from verify` runs the gate, PR and report on the commits already made. A live run exits 0 when it opened its PR or ended with no changes (a comment, no label), 3 when its session stopped to ask a human (the blocked label and a comment with the question) and 1 when it failed (the failed label and a diagnosis) or a tracker write failed ([ADR 0030](docs/adr/0030-run-outcomes-in-the-tracker.md)) |
 | `hub start ISSUE [--repo DIR]… [--no-agent]` | Start an issue: its worktrees (named `<issue>-<title slug>`), the issue moved to `tracker.states.started`, then `claude` from the hub with those worktrees attached and the issue as first prompt; a rerun resumes the task; `--no-agent` prints how to launch it |
 | `hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …` | Benchmark the `hub-workflow` plugin on closed issues (module `bench`); `--validate` checks the graders |
 | `hub web [--host HOST] [--port N] [--db PATH]` | Serve the control plane (REST API and web app) on `127.0.0.1:7420` until interrupted; another address only inside the agent-hub container (`AGENT_HUB_IN_CONTAINER=1`) |

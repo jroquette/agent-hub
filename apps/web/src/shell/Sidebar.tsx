@@ -28,6 +28,19 @@ export function brainLink(open: string | null, scope: string | null): string {
   return project === null ? BRAIN_PICKER : `/projects/${encodeURIComponent(project)}/brain`;
 }
 
+const SKILLS_ID = "skills";
+/** Where Skills goes with All projects in scope: a project picker (AGH-164). */
+const SKILLS_PICKER = "/knowledge/skills";
+
+/**
+ * Skills' destination: the catalog of the project whose skills are open, else of the project in
+ * scope, else the picker.
+ */
+export function skillsLink(open: string | null, scope: string | null): string {
+  const project = open ?? scope;
+  return project === null ? SKILLS_PICKER : `/projects/${encodeURIComponent(project)}/skills`;
+}
+
 interface NavItem {
   id: string;
   label: string;
@@ -43,7 +56,8 @@ interface NavItem {
 
 /**
  * The sitemap (D20, AGH-201 D3): Metrics, Bench, Tracker queue and Workflows are not shipped and not
- * shown; Knowledge holds Learnings and the selected project's Brain (`BRAIN_ID`, see `brainLink`).
+ * shown; Knowledge holds Learnings, the selected project's Brain (`BRAIN_ID`, see `brainLink`) and
+ * its Skills (`SKILLS_ID`, see `skillsLink`).
  */
 export const NAV: readonly { group: string; items: NavItem[] }[] = [
   {
@@ -94,6 +108,7 @@ export const NAV: readonly { group: string; items: NavItem[] }[] = [
             countNoun: () => "to triage",
           },
           { id: BRAIN_ID, label: "Brain", to: BRAIN_PICKER },
+          { id: SKILLS_ID, label: "Skills", to: SKILLS_PICKER },
         ],
       },
       { id: "features", label: "Features", to: "/features", icon: "list-checks" },
@@ -134,6 +149,10 @@ export function Sidebar({ counts, onShortcuts }: SidebarProps) {
   const [scope] = useScope();
   const openBrain = useMatch("/projects/:project/brain/*");
   const brainTo = brainLink(openBrain?.params.project ?? null, scope);
+  const openSkills = useMatch("/projects/:project/skills/*");
+  const skillsTo = skillsLink(openSkills?.params.project ?? null, scope);
+  const childTo = (child: NavItem): string =>
+    child.id === BRAIN_ID ? brainTo : child.id === SKILLS_ID ? skillsTo : child.to;
   return (
     <nav className="ah-sidebar" aria-label="Main">
       <div className="ah-brand">
@@ -178,7 +197,7 @@ export function Sidebar({ counts, onShortcuts }: SidebarProps) {
                     return (
                       <NavLink
                         key={child.id}
-                        to={child.id === BRAIN_ID ? brainTo : child.to}
+                        to={childTo(child)}
                         className="ah-nav-item ah-nav-sub"
                         aria-label={accessibleName(child, childCount)}
                       >

@@ -3,6 +3,7 @@ from agent_hub.api.openapi_paths import (
     CLARITY_PATHS,
     P2_PATHS,
     SERVED_PATHS,
+    SKILL_PATHS,
     TICKET_PATHS,
     document_paths,
 )
@@ -59,6 +60,13 @@ CLARITY_SPEC_PATHS = {
 # The one path ticket planning adds (AC-136.33).
 TICKET_SPEC_PATHS = {("get", "/api/v1/features/{project}/{slug}/tickets")}
 
+# The three paths the Skills tab adds (AC-164.11, amendment A1), all GET.
+SKILL_SPEC_PATHS = {
+    ("get", "/api/v1/projects/{project}/skills"),
+    ("get", "/api/v1/projects/{project}/skills/{kind}/{source}/{name}"),
+    ("get", "/api/v1/projects/{project}/skills/{kind}/{source}/{name}/files/{file_id}"),
+}
+
 
 def test_lists_exactly_phase_two_paths_when_document_built(api_settings: ApiSettings) -> None:
     assert P2_PATHS == SPEC_PATHS
@@ -71,9 +79,15 @@ def test_lists_exactly_clarity_paths_when_document_built(api_settings: ApiSettin
 
 
 def test_lists_ticket_path_when_document_built(api_settings: ApiSettings) -> None:
-    # AC-136.33: the current paths plus the feature tickets read, and nothing else.
+    # AC-136.33: the current paths plus the feature tickets read.
     assert TICKET_PATHS == TICKET_SPEC_PATHS
-    assert SERVED_PATHS == P2_PATHS | CLARITY_PATHS | TICKET_PATHS
+    assert document_paths(create_app(api_settings)) >= TICKET_PATHS
+
+
+def test_lists_skill_paths_when_document_built(api_settings: ApiSettings) -> None:
+    # AC-164.11: today's paths plus the three skills reads, all GET, and nothing else.
+    assert SKILL_PATHS == SKILL_SPEC_PATHS
+    assert SERVED_PATHS == P2_PATHS | CLARITY_PATHS | TICKET_PATHS | SKILL_PATHS
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
 
