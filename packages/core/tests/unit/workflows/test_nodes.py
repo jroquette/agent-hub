@@ -227,3 +227,21 @@ def test_keeps_mappings_read_only_when_node_is_loaded() -> None:
             mapping["new"] = 1  # type: ignore[index]
     assert agent.model_dump(by_alias=True)["with"] == {"a": 1}
     assert '"env":{"A":"1"}' in shell.model_dump_json()
+
+
+@pytest.mark.parametrize("duration", ["7d", "168h", "10080m", "604800s", "1s"])
+def test_accepts_duration_when_it_is_at_most_seven_days(duration: str) -> None:
+    raw = {"id": "a", "type": "shell", "command": ["x"], "timeout": duration}
+
+    assert NODE.validate_python(raw | {"retry": {"delay": duration}}).timeout == duration
+
+
+@pytest.mark.parametrize("duration", ["8d", "169h", "10081m", "604801s", "1000000s", "999999999d"])
+@pytest.mark.parametrize("key", ["timeout", "retry"])
+def test_refuses_duration_when_it_is_over_seven_days(duration: str, key: str) -> None:
+    value: object = duration if key == "timeout" else {"delay": duration}
+    raw = {"id": "a", "type": "shell", "command": ["x"], key: value}
+
+    [(loc, message)] = errors_of(raw)
+    assert loc == (("shell", "timeout") if key == "timeout" else ("shell", "retry", "delay"))
+    assert "at most 7 days" in message
