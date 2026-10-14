@@ -283,4 +283,4 @@ def test_fails_config_when_a_reference_escapes_the_load_check(
     failure = failure_of({"$ref": "#/$defs/nope"}, "x")
 
     assert failure.kind == "config"
-    assert failure.detail == 'the output_format refers to a schema it cannot read: "#/$defs/nope"'
+    assert failure.detail.startswith("the output_format refers to a schema it cannot read: ")

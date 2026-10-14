@@ -42,6 +42,10 @@ _ROOT: Final = "urn:agent-hub:output-format"
 _REF_KEYS: Final = ("$ref", "$dynamicRef")
 # Keywords whose values are data, not schemas: a ``$ref`` key there is not a reference.
 _DATA_KEYS: Final = frozenset({"enum", "const", "default", "examples"})
+# Keywords whose values map names to schemas: a name there is never a keyword.
+_NAMED_SCHEMAS: Final = frozenset(
+    {"properties", "patternProperties", "$defs", "definitions", "dependentSchemas"}
+)
 
 type _Problem = tuple[tuple[str | int, ...], str]
 
@@ -66,6 +70,10 @@ class JsonSchemaOutputs:
             raise NodeFailedError("output_contract", detail)
         try:
             errors = _sorted(Draft202012Validator(schema, registry=_OFFLINE).iter_errors(value))
+        except Unresolvable as error:
+            # A backstop: the load check resolves every reference first.
+            detail = f"the output_format refers to a schema it cannot read: {echo(error.ref)}"
+            raise NodeFailedError("config", detail) from None
         except RecursionError:
             raise NodeFailedError("output_contract", "the output nests too deeply") from None
         if errors:
@@ -93,29 +101,40 @@ def _schema_problems(schema: Mapping[str, JsonValue]) -> list[_Problem]:
         return [((), TOO_DEEP)]
 
 
+type _Pending = tuple[JsonValue, tuple[str | int, ...], str]
+
+
 def _ref_problems(schema: dict[str, JsonValue]) -> list[_Problem]:
     """Each ``$ref``/``$dynamicRef`` that does not resolve within ``schema``."""
     resource = Resource.from_contents(schema, default_specification=DRAFT202012)
     registry = _OFFLINE.with_resource(_ROOT, resource).crawl()
     problems: list[_Problem] = []
-    pending: list[tuple[JsonValue, tuple[str | int, ...], str]] = [(schema, (), _ROOT)]
+    pending: list[_Pending] = [(schema, (), _ROOT)]
     while pending:
         node, path, base = pending.pop()
         if isinstance(node, list):
             pending.extend((item, (*path, i), base) for i, item in enumerate(node))
-            continue
-        if not isinstance(node, dict):
-            continue
-        if isinstance(node_id := node.get("$id"), str):
-            base = urljoin(base, node_id)
-        for key in _REF_KEYS:
-            ref = node.get(key)
-            if isinstance(ref, str) and not _resolves(registry, base, ref):
-                problems.append(((*path, key), f"names a schema that cannot be read: {echo(ref)}"))
-        pending.extend(
-            (item, (*path, key), base) for key, item in node.items() if key not in _DATA_KEYS
-        )
-    return sorted(problems, key=lambda problem: output_path(problem[0]))
+        elif isinstance(node, dict):
+            if isinstance(node_id := node.get("$id"), str):
+                base = urljoin(base, node_id)
+            for key in _REF_KEYS:
+                ref = node.get(key)
+                if isinstance(ref, str) and not _resolves(registry, base, ref):
+                    message = f"names a schema that cannot be read: {echo(ref)}"
+                    problems.append(((*path, key), message))
+            pending.extend(_subschemas(node, path, base))
+    return sorted(problems, key=lambda problem: _path_order(problem[0]))
+
+
+def _subschemas(
+    node: dict[str, JsonValue], path: tuple[str | int, ...], base: str
+) -> Iterator[_Pending]:
+    """What may hold schemas under ``node``: names in a name map are never keywords."""
+    for key, item in node.items():
+        if key in _NAMED_SCHEMAS and isinstance(item, dict):
+            yield from ((schema, (*path, key, name), base) for name, schema in item.items())
+        elif key not in _DATA_KEYS:
+            yield item, (*path, key), base
 
 
 def _resolves(registry: Registry[bool | Mapping[str, object]], base: str, ref: str) -> bool:
@@ -146,7 +165,12 @@ def _joined(messages: Sequence[str]) -> str:
 
 
 def _sorted(errors: Iterable[ValidationError]) -> list[_Problem]:
-    return sorted(set(_errors(errors)), key=lambda error: (output_path(error[0]), error[1]))
+    return sorted(set(_errors(errors)), key=lambda error: (_path_order(error[0]), error[1]))
+
+
+def _path_order(path: Sequence[str | int]) -> tuple[tuple[int, int, str], ...]:
+    """A path's sort key: array indexes numerically, before keys."""
+    return tuple((0, part, "") if isinstance(part, int) else (1, 0, part) for part in path)
 
 
 def _errors(errors: Iterable[ValidationError]) -> Iterator[_Problem]:
