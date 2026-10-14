@@ -2173,3 +2173,140 @@ def test_blocks_when_no_overlap_block_other_subagent_turn_start_visible(
     )
 
     assert reason_lines(output)[:3] == [agent_head("researcher"), "- app/a.py", REVERT]
+
+
+def cut_tail(agent: Path, head: list[dict[str, object]], shown: list[dict[str, object]]) -> int:
+    """``agent-b.jsonl`` holding ``head`` then ``shown``; returns a tail size that holds the
+    ``shown`` lines whole and starts inside the last ``head`` line."""
+    (agent.parent / "agent-b.jsonl").write_text(jsonl([*head, *shown]), encoding="utf-8")
+    return len(jsonl(shown).encode("utf-8")) + 10
+
+
+def run_cut_tail(gate: Gate, size: int) -> dict[str, Any] | None:
+    return run_agent(
+        gate,
+        "researcher",
+        lambda: change_app(gate.ws),
+        calls=[BASH_EDIT],
+        constant=("MAX_TAIL_BYTES", size),
+    )
+
+
+PROMPT = {"type": "user", "isSidechain": True, "message": {"role": "user", "content": "x" * 400}}
+RUNNING_BASH = assistant_entry(call_block("toolu_b1", "Bash", command="make check " + "x" * 400))
+
+
+def test_reports_when_overlap_report_other_subagent_message_continues_after_result(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """E-2: one message (``msg_b1``) runs Bash (before the tail) and a Read whose call line the
+    tail starts inside; the Read's result, then another call of the same message and its result
+    follow. The later line of the same message does not end that turn: reported as unreadable."""
+    _, agent = transcripts(gate_ws, agent_id="a1", calls=[BASH_EDIT])
+    read = assistant_entry(call_block("toolu_r1", "Read", file_path="/r1" + "x" * 400))
+    size = cut_tail(
+        agent,
+        [PROMPT, RUNNING_BASH, read],
+        [
+            result_entry("toolu_r1"),
+            assistant_entry(call_block("toolu_r2", "Read", file_path="/r2")),
+            result_entry("toolu_r2"),
+        ],
+    )
+
+    assert report_lines(run_cut_tail(gate, size)) == [
+        report_head(SUBAGENTS_UNREADABLE),
+        "- app/a.py",
+    ]
+
+
+def test_reports_when_overlap_report_other_subagent_attachment_before_turn_line(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """E-2: an attachment line is no entry of the conversation; a turn whose first visible call
+    line follows only it may still hold calls before the tail: reported as unreadable."""
+    _, agent = transcripts(gate_ws, agent_id="a1", calls=[BASH_EDIT])
+    attachment = {"type": "attachment", "isSidechain": True, "attachment": {"type": "todo"}}
+    size = cut_tail(
+        agent,
+        [PROMPT, RUNNING_BASH],
+        [
+            attachment,
+            assistant_entry(call_block("toolu_r2", "Read", file_path="/r2")),
+            result_entry("toolu_r2"),
+        ],
+    )
+
+    assert report_lines(run_cut_tail(gate, size)) == [
+        report_head(SUBAGENTS_UNREADABLE),
+        "- app/a.py",
+    ]
+
+
+def test_reports_when_overlap_report_other_subagent_call_line_without_message_id(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """In a tail starting mid-file, a call line without a ``message.id`` cannot be placed in its
+    turn, even answered and after a visible user line: reported as unreadable."""
+    _, agent = transcripts(gate_ws, agent_id="a1", calls=[BASH_EDIT])
+    call = assistant_entry(call_block("toolu_r1", "Read", file_path="/r1"))
+    message = call["message"]
+    assert isinstance(message, dict)
+    del message["id"]
+    size = cut_tail(
+        agent,
+        [PROMPT],
+        [
+            {"type": "user", "isSidechain": True, "message": {"role": "user", "content": "go"}},
+            call,
+            result_entry("toolu_r1"),
+        ],
+    )
+
+    assert report_lines(run_cut_tail(gate, size)) == [
+        report_head(SUBAGENTS_UNREADABLE),
+        "- app/a.py",
+    ]
+
+
+def test_blocks_when_no_overlap_block_other_subagent_turn_closed_by_later_message(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """E-2 control: a call turn starting on the tail's first whole line, answered, then a text
+    entry of another message (``msg_b2``): that turn ended, so the change is still blocked."""
+    _, agent = transcripts(gate_ws, agent_id="a1", calls=[BASH_EDIT])
+    text = {"type": "text", "text": "done"}
+    size = cut_tail(
+        agent,
+        [PROMPT],
+        [
+            assistant_entry(call_block("toolu_r1", "Read", file_path="/r1")),
+            result_entry("toolu_r1"),
+            assistant_entry(text, message_id="msg_b2"),
+        ],
+    )
+
+    assert reason_lines(run_cut_tail(gate, size))[:3] == [
+        agent_head("researcher"),
+        "- app/a.py",
+        REVERT,
+    ]
+
+
+def test_reports_when_overlap_report_other_subagent_result_id_unhashable(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """A tool result whose ``tool_use_id`` is a list cannot be matched to its call: reported as
+    unreadable, and the gate does not fail."""
+    _, agent = transcripts(gate_ws, agent_id="a1", calls=[BASH_EDIT])
+    result = result_entry("toolu_b1")
+    message = result["message"]
+    assert isinstance(message, dict)
+    message["content"] = [{"type": "tool_result", "tool_use_id": ["toolu_b1"], "content": "ok"}]
+    (agent.parent / "agent-b.jsonl").write_text(jsonl([PROMPT, result]), encoding="utf-8")
+
+    lines = report_lines(
+        run_agent(gate, "researcher", lambda: change_app(gate_ws), calls=[BASH_EDIT])
+    )
+
+    assert lines == [report_head(SUBAGENTS_UNREADABLE), "- app/a.py"]
