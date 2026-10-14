@@ -175,6 +175,7 @@ def test_fails_config_when_condition_reads_a_failed_producer() -> None:
 
     assert run.status_of("b") == ("failed", None, None, "config")
     assert run.runner.ran() == ["a"]
+    assert [(start.node, start.attempt) for start in run.recorder.starts] == [("a", 1), ("b", 1)]
 
 
 def test_renders_references_when_a_node_reads_upstream_outputs() -> None:
@@ -447,3 +448,60 @@ def test_runs_the_node_when_its_condition_holds() -> None:
     run = Run(plan_of(shell("a", when="$INPUTS.mode == 'off'")))
 
     assert run.runner.ran() == ["a"]
+
+
+def test_ends_the_step_unknown_and_the_run_failed_when_a_port_raises() -> None:
+    plan = plan_of(shell("a"), shell("b"))
+    runner = ScriptedRunner({"a": [OSError("the output text")]})
+
+    run = Run(plan, runner)
+
+    assert run.status_of("a") == ("failed", None, None, "unknown")
+    assert run.recorder.end_of("a").detail == "OSError"
+    assert run.runner.ran() == ["a", "b"]
+    assert [end.status for end in run.recorder.run_ends] == ["failed"]
+    assert run.report.state.attempts == {"a": 1, "b": 1}
+
+
+def test_runs_a_cached_node_again_when_an_ancestor_it_reads_changed() -> None:
+    plan = plan_of(
+        shell("a", always_run=True),
+        shell("b", "a"),
+        shell("c", "b", command=["echo", "$a.output"]),
+    )
+    prior = RunState(nodes={n: NodeResult("completed", n.upper()) for n in ("a", "b", "c")})
+
+    run = Run(plan, ScriptedRunner({"a": ["NEW"], "b": ["B"]}), prior=prior)
+
+    assert run.runner.ran() == ["a", "b", "c"]
+    assert run.runner.calls[2].argv == ("echo", "NEW")
+
+
+def test_skips_a_join_when_an_upstream_was_skipped_for_a_failure() -> None:
+    plan = plan_of(
+        shell("f"),
+        shell("s", "f"),
+        shell("ok"),
+        shell("j", "s", "ok", trigger_rule="none_failed_min_one_success"),
+    )
+
+    run = Run(plan, ScriptedRunner({"f": [fails()]}))
+
+    assert run.status_of("j") == ("skipped", "upstream_failed", "f", None)
+
+
+def test_ends_cancelled_when_a_halt_follows_a_failed_node() -> None:
+    plan = plan_of(
+        shell("a"),
+        {
+            "id": "stop",
+            "type": "halt",
+            "reason": "Stop.",
+            "depends_on": ["a"],
+            "trigger_rule": "all_done",
+        },
+    )
+
+    run = Run(plan, ScriptedRunner({"a": [fails()]}))
+
+    assert (run.report.status, run.report.reason) == ("cancelled", "stop")
