@@ -1566,3 +1566,281 @@ def test_stays_silent_when_unignored_worktrees_folder_gets_plain_file(
 
     assert run_agent(gate, "researcher", change) is None
     assert state_files(gate_ws) == []
+
+
+def report_head(*signals: str, agent_type: str = "researcher") -> str:
+    """The first line of a report for ``agent_type`` (agent ``a1``) naming ``signals``."""
+    return (
+        f"[hub readonly-gate] changed while {agent_type} (agent a1) ran, not attributed to it"
+        f" ({', '.join(signals)}):"
+    )
+
+
+OTHER_STATE = "another read-only agent running"
+MAIN_CALL = "main session tool call"
+MAIN_RESULT = "main session tool result"
+OTHER_SUBAGENT = "another subagent ran"
+MAIN_UNREADABLE = "main transcript unreadable"
+BASH_EDIT = ("Bash", {"command": "printf 'A = 2\\n' > a.py"})
+
+
+def append_line(path: Path, entry: Mapping[str, object]) -> None:
+    """Append one JSON line to a transcript."""
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(entry) + "\n")
+
+
+def main_call(name: str, tool_input: Mapping[str, object], **extra: object) -> dict[str, object]:
+    """A main-transcript line holding one ``tool_use`` of ``name``."""
+    call = {"type": "tool_use", "id": "toolu_m1", "name": name, "input": dict(tool_input)}
+    return {"type": "assistant", "message": {"content": [call]}, **extra}
+
+
+def main_result(**extra: object) -> dict[str, object]:
+    """A main-transcript line holding one ``tool_result``."""
+    result = {"type": "tool_result", "tool_use_id": "toolu_m1", "content": "ok"}
+    return {"type": "user", "message": {"role": "user", "content": [result]}, **extra}
+
+
+def main_path(ws: GateWorkspace) -> Path:
+    """The main transcript ``transcripts`` writes."""
+    return ws.home / ".claude" / "projects" / "ws" / f"{SESSION}.jsonl"
+
+
+def report_lines(output: dict[str, Any] | None) -> list[str]:
+    """The lines of a report: a ``systemMessage`` with no ``decision`` beside it."""
+    assert output is not None
+    assert set(output) == {"systemMessage"}, output
+    lines: list[str] = output["systemMessage"].splitlines()
+    assert lines[0].startswith("[hub readonly-gate] changed while researcher ")
+    return lines
+
+
+def test_reports_when_overlap_report_from_other_state(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """AC-141.10: another declared agent of the session started and not stopped ran in the same
+    window, so a change the agent's own file tools did not name is reported, not blocked."""
+    main, _ = transcripts(gate_ws, agent_id="a1", calls=[BASH_EDIT])
+
+    def change() -> None:
+        assert gate.start("researcher", agent_id="a2", transcript_path=main) is None
+        change_app(gate_ws)
+
+    lines = report_lines(run_agent(gate, "researcher", change, calls=[BASH_EDIT]))
+
+    assert lines == [report_head(OTHER_STATE), "- app/a.py"]
+    assert state_files(gate_ws) == [state_name("a2")]  # this agent's state deleted, the other kept
+
+
+@pytest.mark.parametrize("case", ["stale", "other_session", "undeclared_start"])
+def test_blocks_when_no_overlap_block_other_state_not_running(
+    gate: Gate, gate_ws: GateWorkspace, case: str
+) -> None:
+    """A state older than 12 h, a state of another session, or the start of an undeclared agent
+    (no state) is no overlap: the change is still blocked."""
+    declare_agent(gate_ws.hub / HUB_AGENTS, "scout", None)
+
+    def change() -> None:
+        if case == "stale":
+            other = gate_ws.tmp / state_name("a2")
+            other.write_text('{"v": 1}', encoding="utf-8")
+            old = time.time() - STALE_AGE
+            os.utime(other, (old, old))
+        elif case == "other_session":
+            (gate_ws.tmp / f"{STATE_PREFIX}s2-a2.json").write_text('{"v": 1}', encoding="utf-8")
+        else:
+            assert gate.start("scout", agent_id="a2", transcript_path=main_path(gate_ws)) is None
+        change_app(gate_ws)
+
+    output = run_agent(gate, "researcher", change, calls=[BASH_EDIT])
+
+    assert reason_lines(output)[:3] == [agent_head("researcher"), "- app/a.py", REVERT]
+
+
+def test_reports_when_overlap_report_from_main_transcript_call(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """AC-141.10, E-3: a tool call the main session wrote after the agent's start is overlap."""
+
+    def change() -> None:
+        append_line(main_path(gate_ws), main_call("Bash", {"command": "make check"}))
+        change_app(gate_ws)
+
+    lines = report_lines(run_agent(gate, "researcher", change, calls=[BASH_EDIT]))
+
+    assert lines == [report_head(MAIN_CALL), "- app/a.py"]
+    assert state_files(gate_ws) == []
+
+
+def test_reports_when_overlap_report_from_main_tool_result(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """E-2: any tool result in the main transcript's window (a parallel main-session call, or
+    another agent that finished) is overlap."""
+
+    def change() -> None:
+        append_line(main_path(gate_ws), main_result())
+        change_app(gate_ws)
+
+    lines = report_lines(run_agent(gate, "researcher", change, calls=[BASH_EDIT]))
+
+    assert lines == [report_head(MAIN_RESULT), "- app/a.py"]
+
+
+@pytest.mark.parametrize("case", ["grown", "created"])
+def test_reports_when_overlap_report_from_other_subagent_transcript(
+    gate: Gate, gate_ws: GateWorkspace, case: str
+) -> None:
+    """E-2: another subagent transcript in the session's ``subagents/`` folder that grew, or was
+    created, after the start is overlap (an undeclared agent writes no state)."""
+    _, agent = transcripts(gate_ws, agent_id="a1", calls=[BASH_EDIT])
+    other = agent.parent / "agent-b.jsonl"
+    if case == "grown":
+        other.write_text(json.dumps({"type": "user"}) + "\n", encoding="utf-8")
+
+    def change() -> None:
+        append_line(other, main_call("Bash", {"command": "touch x"}))
+        change_app(gate_ws)
+
+    lines = report_lines(run_agent(gate, "researcher", change, calls=[BASH_EDIT]))
+
+    assert lines == [report_head(OTHER_SUBAGENT), "- app/a.py"]
+
+
+@pytest.mark.parametrize("case", ["no_path_at_start", "removed", "truncated", "over_cap"])
+def test_reports_when_overlap_report_main_transcript_unreadable(
+    gate: Gate, gate_ws: GateWorkspace, case: str
+) -> None:
+    """E-3: no main transcript at the start, one gone or shorter at the stop, or a window over
+    MAX_WINDOW_BYTES cannot show what else ran: the change is reported, not blocked."""
+    main, agent = transcripts(gate_ws, agent_id="a1", calls=[BASH_EDIT])
+    start_fields: dict[str, Any] = {} if case == "no_path_at_start" else {"transcript_path": main}
+    assert gate.start("researcher", agent_id="a1", **start_fields) is None
+    if case == "removed":
+        main.unlink()
+    elif case == "truncated":
+        main.write_text("", encoding="utf-8")
+    elif case == "over_cap":
+        append_line(main, {"type": "user", "message": {"role": "user", "content": "x" * 64}})
+    change_app(gate_ws)
+
+    output = gate.stop(
+        "researcher",
+        agent_id="a1",
+        transcript_path=main,
+        agent_transcript_path=agent,
+        constant=("MAX_WINDOW_BYTES", 32) if case == "over_cap" else None,
+    )
+
+    lines = report_lines(output)
+    assert lines[0].startswith(
+        "[hub readonly-gate] changed while researcher (agent a1) ran, not attributed to it ("
+    )
+    assert MAIN_UNREADABLE in lines[0]
+    assert lines[1:] == ["- app/a.py"]
+    assert state_files(gate_ws) == []
+
+
+def test_still_blocks_own_tool_paths_when_overlap_report_applies(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """AC-141.6, AC-141.10: with an overlap signal, the path the agent's own Write named is still
+    blocked; the path its Bash made is reported in the ``systemMessage`` beside the block."""
+    written = gate_ws.app / "w.py"
+    calls = [("Write", {"file_path": str(written), "content": "W = 1\n"}), BASH_EDIT]
+
+    def change() -> None:
+        append_line(main_path(gate_ws), main_call("Read", {"file_path": str(gate_ws.app)}))
+        written.write_text("W = 1\n", encoding="utf-8")
+        change_app(gate_ws)
+
+    output = run_agent(gate, "researcher", change, calls=calls)
+
+    assert output is not None
+    assert output["decision"] == "block"
+    assert output["reason"].splitlines() == [
+        agent_head("researcher"),
+        "- app/w.py",
+        REVERT,
+        EVIDENCE_HEAD,
+        "- printf 'A = 2\\n' > a.py",
+    ]
+    assert output["systemMessage"].splitlines() == [report_head(MAIN_CALL), "- app/a.py"]
+    assert state_files(gate_ws) == [state_name("a1")]  # kept for the retry
+
+
+def test_blocks_when_no_overlap_block_window_holds_only_agent_call(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """E-2: an ``Agent`` or ``Task`` call in the main transcript's window is no overlap by itself
+    (the agent it starts shows through its own transcript); a line without a tool is none."""
+
+    def change() -> None:
+        main = main_path(gate_ws)
+        append_line(main, main_call("Agent", {"subagent_type": "researcher", "prompt": "look"}))
+        append_line(main, main_call("Task", {"subagent_type": "researcher", "prompt": "look"}))
+        append_line(main, {"type": "user", "message": {"role": "user", "content": "tool_use"}})
+        change_app(gate_ws)
+
+    output = run_agent(gate, "researcher", change, calls=[BASH_EDIT])
+
+    assert reason_lines(output) == [
+        agent_head("researcher"),
+        "- app/a.py",
+        REVERT,
+        EVIDENCE_HEAD,
+        "- printf 'A = 2\\n' > a.py",
+    ]
+
+
+def test_blocks_when_no_overlap_block_window_holds_sidechain_lines(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """E-3: lines marked ``isSidechain`` in the main transcript are a subagent's, not the main
+    session's: they are skipped, and the change is still blocked."""
+
+    def change() -> None:
+        main = main_path(gate_ws)
+        append_line(main, main_call("Bash", {"command": "ls"}, isSidechain=True))
+        append_line(main, main_result(isSidechain=True))
+        change_app(gate_ws)
+
+    output = run_agent(gate, "researcher", change, calls=[BASH_EDIT])
+
+    assert reason_lines(output)[:3] == [agent_head("researcher"), "- app/a.py", REVERT]
+
+
+def test_blocks_when_no_overlap_block_own_transcript_grows(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """E-2: the agent's own transcript in ``subagents/`` grows as it runs; that is no overlap."""
+    main, agent = transcripts(gate_ws, agent_id="a1")
+    assert gate.start("researcher", agent_id="a1", transcript_path=main) is None
+    append_line(agent, main_call(*BASH_EDIT))
+    change_app(gate_ws)
+
+    output = gate.stop("researcher", agent_id="a1", transcript_path=main)
+
+    assert reason_lines(output) == [
+        agent_head("researcher"),
+        "- app/a.py",
+        REVERT,
+        EVIDENCE_HEAD,
+        "- printf 'A = 2\\n' > a.py",
+    ]
+
+
+def test_records_window_start_when_start_saves_state(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """E-2, E-3: the start state holds the main transcript's size and the session's subagent
+    transcripts by name, with their size and mtime."""
+    main, agent = transcripts(gate_ws, agent_id="a1")
+    other = agent.parent / "agent-b.jsonl"
+    other.write_text("{}\n", encoding="utf-8")
+
+    assert gate.start("researcher", agent_id="a1", transcript_path=main) is None
+
+    state = read_state(gate_ws, "a1")
+    assert (state["main_transcript"], state["main_offset"]) == (str(main), main.stat().st_size)
+    info = other.stat()
+    assert state["subagents"]["agent-b.jsonl"] == [info.st_size, info.st_mtime_ns]
+    assert set(state["subagents"]) == {"agent-a1.jsonl", "agent-b.jsonl"}
+    assert state["subagents_cut"] is False
