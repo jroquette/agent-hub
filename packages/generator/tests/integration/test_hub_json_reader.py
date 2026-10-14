@@ -1105,7 +1105,7 @@ def test_reads_same_values_when_run_on_python39(
 
 # argv: the modules to import, as JSON. Prints the names that imported. A 3.10+ stdlib module, or
 # a form 3.9 evaluates at import time (``X | None`` outside an annotation) fails here, where
-# ``ast.parse`` and ruff at py39 cannot tell.
+# ``ast.parse`` and ruff at py39 cannot tell; so does a stdlib module this interpreter removed.
 IMPORT_ALL = """
 import importlib, json
 names = json.loads(sys.argv[1])
@@ -1113,9 +1113,9 @@ print(json.dumps([importlib.import_module(name).__name__ for name in names]))
 """
 
 
-def test_imports_every_rendered_module_when_run_on_python39(
+def test_imports_every_rendered_module_when_run_on_each_python(
     *,
-    python39: str,
+    each_python: str,
     demo_config: HubConfig,
     rendered_hub: Callable[[HubConfig], Path],
     run_python: Callable[..., Any],
@@ -1131,7 +1131,7 @@ def test_imports_every_rendered_module_when_run_on_python39(
 
     for folder, names in folders.items():
         imported = run_python(
-            python39, IMPORT_ALL, path=hub / folder, args=[json.dumps(names)], cwd=hub
+            each_python, IMPORT_ALL, path=hub / folder, args=[json.dumps(names)], cwd=hub
         )
 
         assert imported == names, folder

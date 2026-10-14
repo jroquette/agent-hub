@@ -39,6 +39,9 @@ from agent_hub.core.testing.session_driver_fakes import InMemorySessionDriver
 from agent_hub.core.testing.session_scenarios import SCENARIO_START, a_session_events
 from agent_hub.tracker_linear.graphql_reader import BATCH_SIZE
 
+# Wall-clock budgets: run alone, never beside the parallel workers (make test-integration).
+pytestmark = pytest.mark.serial
+
 SESSIONS = 200
 EVENTS = 10_000
 HOOK_P95_MS = 50
