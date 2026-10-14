@@ -3,9 +3,10 @@
 Layers run in order and, in v1, one node at a time; a failure never stops later layers. Each
 node goes through: the resume cache, its ``trigger_rule``, its ``when:``, then its attempts. A
 resumed run reuses a node that completed before (``prior_success``) unless it is ``always_run``
-or a dependency now ends differently. Every visit takes the node's next ``attempt``, counted over
+or an ancestor now ends differently. Every visit takes the node's next ``attempt``, counted over
 the whole run and its resumes, so no two steps share one. A failed attempt asks
-``retry_decision`` and waits through the ``Clock``; each retry is recorded. A ``halt`` ends the
+``retry_decision`` and waits through the ``Clock``; each retry is recorded, and a loop's retry
+starts the loop again from its first turn. A ``halt`` ends the
 run ``cancelled``. ``approval`` nodes come later: a plan holding one is refused before any step.
 """
 
@@ -17,7 +18,13 @@ from agent_hub.core.errors import AgentHubError
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.conditions import WhenFail, WhenSkip, evaluate_when
 from agent_hub.core.workflows.failures import NodeFailedError, RetryRecord, retry_decision
-from agent_hub.core.workflows.loops import Turn, check_turn, next_session, until_met
+from agent_hub.core.workflows.loops import (
+    MaxIterationsError,
+    Turn,
+    check_turn,
+    next_session,
+    until_met,
+)
 from agent_hub.core.workflows.nodes import (
     AgentNode,
     ApprovalNode,
@@ -114,6 +121,11 @@ class _Run:
     ) -> None:
         self.plan, self.inputs, self.ports, self.prior = plan, inputs, ports, prior
         self.ends: dict[str, NodeEnd] = {}
+        # The results references read, kept beside ``ends`` as nodes end.
+        self.results: dict[str, NodeResult] = {}
+        # Nodes whose result differs from the prior run's: their descendants are not reused.
+        self.changed: set[str] = set()
+        self.ancestors: dict[str, frozenset[str]] = {}
         self.attempts = dict(prior.attempts)
         self.sessions = dict(prior.sessions)
         self.halted_by: str | None = None
@@ -122,7 +134,13 @@ class _Run:
         nodes = {node.id: node for node in self.plan.document.nodes}
         for layer in self.plan.layers:
             for node_id in layer:
-                self._visit(nodes[node_id])
+                node = nodes[node_id]
+                self.ancestors[node_id] = frozenset(
+                    ancestor for dep in node.depends_on for ancestor in (dep, *self.ancestors[dep])
+                )
+                self._visit(node)
+                if self.ends[node_id].result != self.prior.nodes.get(node_id):
+                    self.changed.add(node_id)
                 if self.halted_by is not None:
                     return self._finish()
         return self._finish()
@@ -132,9 +150,12 @@ class _Run:
         document = self.plan.document
         outcome = authored_outcome(document.returns, document.outcome_field, self.ends)
         self.ports.recorder.run_ended(RunEnd(status, self.ports.clock.now(), outcome, reason))
-        results = {**self.prior.nodes, **{n: end.result for n, end in self.ends.items()}}
-        state = RunState(results, self.attempts, self.sessions)
+        state = RunState({**self.prior.nodes, **self.results}, self.attempts, self.sessions)
         return RunReport(status, outcome, reason, state)
+
+    def _end(self, node: Node, end: NodeEnd) -> None:
+        self.ends[node.id] = end
+        self.results[node.id] = end.result
 
     def _visit(self, node: Node) -> None:
         if self._reusable(node):
@@ -146,15 +167,18 @@ class _Run:
         elif isinstance(node, HaltNode):
             self._halt(node)
         elif isinstance(node, LoopNode):
-            self._loop(node)
+            self._complete(node, self._retrying(node, lambda: self._loop_once(node)))
         elif not isinstance(node, ApprovalNode):
-            self._execute(node)
+            self._complete(node, self._retrying(node, lambda: self._execute_once(node)))
 
     def _stopped_by_when(self, node: Node, expr: str) -> bool:
         """Skip or fail ``node`` by its ``when:``; whether it stopped the node."""
         when = evaluate_when(expr, self._context())
         if isinstance(when, WhenFail):
-            self._fail_unstarted(node, NodeFailedError("config", str(when.error)))
+            attempt = self._attempt(node)
+            self.ports.recorder.step_started(StepStart(node.id, attempt, self.ports.clock.now()))
+            self._record_failure(node, attempt, NodeFailedError("config", str(when.error)))
+            self._end(node, NodeEnd(NodeResult("failed")))
         elif isinstance(when, WhenSkip):
             self._skip(node, "condition_parse_error")
         elif not when.holds:
@@ -164,20 +188,14 @@ class _Run:
         return True
 
     def _reusable(self, node: Node) -> bool:
+        """A node that completed before, is not ``always_run``, and has no changed ancestor."""
         before = self.prior.nodes.get(node.id)
-        if (
-            before is None
-            or before.state != "completed"
-            or isinstance(node, HaltNode | ApprovalNode)
-        ):
+        if before is None or before.state != "completed":
             return False
-        if node.always_run:
+        if isinstance(node, HaltNode | ApprovalNode) or node.always_run:
             return False
-        # A dependency that now ends differently from before invalidates the cached result.
-        return all(
-            dep in self.ends and self.ends[dep].result == self.prior.nodes.get(dep)
-            for dep in node.depends_on
-        )
+        # References reach only ancestors (planning), so an unchanged ancestry reads the same.
+        return not self.ancestors[node.id] & self.changed
 
     def _attempt(self, node: Node) -> int:
         self.attempts[node.id] = self.attempts.get(node.id, 0) + 1
@@ -195,15 +213,21 @@ class _Run:
         self.ports.recorder.step_ended(
             StepEnd(node.id, attempt, "skipped", at, skip_cause=cause, origin=origin)
         )
-        self.ends[node.id] = NodeEnd(result or NodeResult("skipped"), cause, origin)
+        self._end(node, NodeEnd(result or NodeResult("skipped"), cause, origin))
 
-    def _fail_unstarted(self, node: Node, failure: NodeFailedError) -> None:
-        now = self.ports.clock.now()
-        attempt = self._attempt(node)
+    def _record_failure(self, node: Node, attempt: int, failure: NodeFailedError) -> None:
+        output = failure.output if isinstance(failure, MaxIterationsError) else None
         self.ports.recorder.step_ended(
-            StepEnd(node.id, attempt, "failed", now, failure.kind, detail=failure.detail)
+            StepEnd(
+                node.id,
+                attempt,
+                "failed",
+                self.ports.clock.now(),
+                failure.kind,
+                output=output,
+                detail=failure.detail,
+            )
         )
-        self.ends[node.id] = NodeEnd(NodeResult("failed"))
 
     def _halt(self, node: HaltNode) -> None:
         recorder, now = self.ports.recorder, self.ports.clock.now()
@@ -214,65 +238,81 @@ class _Run:
         except SubstitutionError as error:
             detail = str(error)
         recorder.step_ended(StepEnd(node.id, attempt, "ok", now, detail=detail))
-        self.ends[node.id] = NodeEnd(NodeResult("completed"))
+        self._end(node, NodeEnd(NodeResult("completed")))
         self.halted_by = node.id
 
-    def _execute(self, node: ExecutableNode) -> None:
+    def _execute_once(self, node: ExecutableNode) -> Turn:
         resume = self._resumed_session(node)
 
-        def once(attempt: int) -> tuple[Turn, bool]:
+        def run(attempt: int) -> tuple[Turn, bool]:
             call = self._call(node, attempt, iteration=0, resume=resume)
             reply = self.ports.runner.run(call)
             return Turn(self._output(node, reply.text), reply.text, reply.session), True
 
-        turn, _ = self._with_retries(node, once)
-        self._complete(node, turn)
+        return self._step(node, run)[0]
 
-    def _loop(self, node: LoopNode) -> None:
-        session, iteration = self._resumed_session(node), 0
+    def _loop_once(self, node: LoopNode) -> Turn:
+        """The loop from its first turn; a retry of the node starts here again, afresh."""
+        session = self._resumed_session(node)
+        iteration = 0
         while True:
             iteration += 1
 
-            def once(
-                attempt: int, turn_number: int = iteration, resume: str | None = session
+            def run(
+                attempt: int, number: int = iteration, resume: str | None = session
             ) -> tuple[Turn, bool]:
-                call = self._call(node, attempt, iteration=turn_number, resume=resume)
+                call = self._call(node, attempt, iteration=number, resume=resume)
                 reply = self.ports.runner.run(call)
                 turn = Turn(self._output(node, reply.text), reply.text, reply.session)
                 done = until_met(node, turn, lambda: self._until_exit(node, call))
-                check_turn(node, turn_number, done=done)
+                check_turn(node, number, turn, done=done)
                 return turn, done
 
-            turn, done = self._with_retries(node, once)
-            if turn is None or done:
-                self._complete(node, turn)
-                return
+            turn, done = self._step(node, run)
+            if done:
+                return turn
             session = next_session(node, turn)
 
     def _until_exit(self, node: LoopNode, call: NodeCall) -> int:
         argv = render_argv(node.until_bash or (), call.context)
         return self.ports.runner.until_exit(argv, call)
 
-    def _with_retries(
-        self, node: ExecutableNode, once: Callable[[int], tuple[Turn, bool]]
-    ) -> tuple[Turn | None, bool]:
-        """Attempts of one turn until one ends ``ok`` or no retry is left (``None``)."""
-        recorder, clock = self.ports.recorder, self.ports.clock
+    def _step(
+        self, node: ExecutableNode, run: Callable[[int], tuple[Turn, bool]]
+    ) -> tuple[Turn, bool]:
+        """One attempt, from its start to its end; a failure ends it and raises again.
+
+        Any error a port raises fails the attempt ``unknown``, its type named but not its
+        message (it may hold output text). A recorder's own error is not caught: it is the
+        composition root's bug.
+        """
+        attempt = self._attempt(node)
+        self.ports.recorder.step_started(StepStart(node.id, attempt, self.ports.clock.now()))
+        try:
+            turn, done = run(attempt)
+        except NodeFailedError as failure:
+            self._record_failure(node, attempt, failure)
+            raise
+        except SubstitutionError as error:
+            config = NodeFailedError("config", str(error))
+            self._record_failure(node, attempt, config)
+            raise config from None
+        except Exception as error:  # noqa: BLE001 - a port's unexpected error ends the step
+            unknown = NodeFailedError("unknown", type(error).__name__)
+            self._record_failure(node, attempt, unknown)
+            raise unknown from None
+        self.ports.recorder.step_ended(
+            StepEnd(node.id, attempt, "ok", self.ports.clock.now(), output=turn.output)
+        )
+        return turn, done
+
+    def _retrying(self, node: ExecutableNode, once: Callable[[], Turn]) -> Turn | None:
+        """``once`` again while ``retry_decision`` allows; ``None`` once no retry is left."""
         retries = 0
         while True:
-            attempt = self._attempt(node)
-            recorder.step_started(StepStart(node.id, attempt, clock.now()))
             try:
-                try:
-                    turn, done = once(attempt)
-                except SubstitutionError as error:
-                    raise NodeFailedError("config", str(error)) from None
+                return once()
             except NodeFailedError as failure:
-                recorder.step_ended(
-                    StepEnd(
-                        node.id, attempt, "failed", clock.now(), failure.kind, detail=failure.detail
-                    )
-                )
                 decision = retry_decision(
                     failure.kind,
                     node.retry,
@@ -281,21 +321,18 @@ class _Run:
                     jitter=self.ports.jitter,
                 )
                 if not decision.retry:
-                    return None, False
-                recorder.retry_scheduled(
-                    node.id, RetryRecord(attempt, failure.kind, decision.delay)
-                )
-                clock.sleep(decision.delay)
+                    return None
+                attempt = self.attempts[node.id]
+                record = RetryRecord(attempt, failure.kind, decision.delay)
+                self.ports.recorder.retry_scheduled(node.id, record)
+                self.ports.clock.sleep(decision.delay)
                 retries += 1
-                continue
-            recorder.step_ended(StepEnd(node.id, attempt, "ok", clock.now(), output=turn.output))
-            return turn, done
 
     def _complete(self, node: ExecutableNode, turn: Turn | None) -> None:
         if turn is None:
-            self.ends[node.id] = NodeEnd(NodeResult("failed"))
+            self._end(node, NodeEnd(NodeResult("failed")))
             return
-        self.ends[node.id] = NodeEnd(NodeResult("completed", turn.output))
+        self._end(node, NodeEnd(NodeResult("completed", turn.output)))
         if turn.session is not None:
             self.sessions[node.id] = turn.session
 
@@ -321,8 +358,7 @@ class _Run:
         return NodeCall(node, attempt, context, iteration, prompt=prompt, resume_session=resume)
 
     def _context(self) -> RefContext:
-        results = {node_id: end.result for node_id, end in self.ends.items()}
-        return RefContext(self.inputs, results)
+        return RefContext(self.inputs, self.results)
 
     def _node_context(self, node: ExecutableNode) -> RefContext:
         """The context of an attempt: an agent's ``with`` values resolved (``$WITH``)."""
