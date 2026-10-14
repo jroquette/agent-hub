@@ -353,10 +353,12 @@ def test_accepts_delivery_when_name_follows_pattern(name: str) -> None:
     assert DELIVERY_PATTERN.fullmatch(name)
 
 
-# AGH-139 AC-139.24: a folder's agent outputs (``evals/*.json``, ``reviews/<ticket>/*.json``)
-# change no record, coverage, phase or skipped count. Core reads a folder as ``FeatureFolder``,
-# whose heads are its ``evals/*.md`` and ``reviews/*.md`` only; ``folder_of`` builds it from a
-# tree of files as the reader does.
+# AGH-139 AC-139.24. This test cannot fail through core: ``folder_of`` keeps only ``.md`` heads,
+# as the reader does. It documents that core only ever receives the ``.md`` heads of a folder, so
+# its agent outputs (``evals/*.json``, ``reviews/<ticket>/*.json``) change no record, coverage,
+# phase or skipped count. The proofs of AC-139.24 are the reader's
+# ``test_feature_files.py::test_reads_same_folder_when_outputs_added`` and the doctor's
+# ``test_features_rule.py::test_keeps_findings_when_outputs_added_to_legacy_folder``.
 LEGACY_TREE = {
     "evals/dem-1.md": b"---\ntype: eval\ndelivery: dem-1\nverdict: SHIP\nacs: [AC-7.1]\n---\n",
     "evals/dem-2.md": b"---\ntype: eval\ndelivery: dem-2\nverdict: NO-SHIP\nacs: [AC-7.2]\n---\n",
@@ -395,6 +397,8 @@ def folder_of(tree: dict[str, bytes]) -> FeatureFolder:
 
 
 def test_ignores_json_outputs_when_legacy_and_outputs_mixed() -> None:
+    """Documents that core only ever receives ``.md`` heads; it cannot fail through core. The
+    reader and doctor tests named above prove AC-139.24."""
     legacy = folder_of(LEGACY_TREE)
     mixed = folder_of(LEGACY_TREE | OUTPUTS_TREE)
 
