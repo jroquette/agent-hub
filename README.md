@@ -696,6 +696,8 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `guard.infra.prod_markers` | no | `[]` | Python `re` patterns that mark production; a match anywhere in an infra command blocks it |
 | `modules` | no | `{}` | Optional modules (`cloud`, `bench`, `contract-sync`, `marketplace`), from 0.6.0: each selected one renders its files and `mk/<id>.mk`; `contract-sync` takes `{"source": <repo dir>, "target": <repo dir>}`, the others `{}` |
 | `doctor.rules` | no | `{}` | Per-rule `hub doctor` settings |
+| `models.tiers.small`, `.medium`, `.large` | no | `haiku`, `sonnet`, `opus` | The model each tier names (`^[A-Za-z0-9._-]{1,64}$`, e.g. `claude-opus-4-1-20250805`); each plugin agent renders its tier's model in its `model:` line after `./hub sync`, and `hub run` uses `medium` |
+| `models.agents.<agent>` | no | the agent's own tier | Moves one of the 7 plugin agents to another tier, e.g. `{"researcher": "large"}` |
 
 Example (synthetic project):
 
@@ -868,7 +870,7 @@ reached only from `hub web`. import-linter enforces this in `make check`. Detail
 | `hub brief [--no-network]` | Print the session brief: `now.md`, recent journal, repo/PR/CI state |
 | `hub agent [ARGS…]` | Start `claude` with every repo attached; all arguments go to `claude` |
 | `hub next` | Print the tracker's ready issues (`tracker.ready_label`), oldest first: id, repo, title and url |
-| `hub run ISSUE --repo REPO [--live] [--max-turns N] [--budget USD] [--model M] [--effort low\|medium\|high] [--from implement\|verify]` | Take one issue to a PR: worktree, a headless implementing session, the repo's gate, PR, tracker report. Refuses (exit 1) an issue whose description lacks a brief section. A dry run unless `--live`; defaults `--max-turns 40`, `--budget 3.0`, `--model sonnet`, `--effort medium`; `--from verify` runs the gate, PR and report on the commits already made |
+| `hub run ISSUE --repo REPO [--live] [--max-turns N] [--budget USD] [--model M] [--effort low\|medium\|high] [--from implement\|verify]` | Take one issue to a PR: worktree, a headless implementing session, the repo's gate, PR, tracker report. Refuses (exit 1) an issue whose description lacks a brief section. A dry run unless `--live`; defaults `--max-turns 40`, `--budget 3.0`, `--model` `hub.json`'s `models.tiers.medium` (else `sonnet`), `--effort medium`; `--from verify` runs the gate, PR and report on the commits already made |
 | `hub start ISSUE [--repo DIR]… [--no-agent]` | Start an issue: its worktrees (named `<issue>-<title slug>`), the issue moved to `tracker.states.started`, then `claude` from the hub with those worktrees attached and the issue as first prompt; a rerun resumes the task; `--no-agent` prints how to launch it |
 | `hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …` | Benchmark the `hub-workflow` plugin on closed issues (module `bench`); `--validate` checks the graders |
 | `hub web [--host HOST] [--port N] [--db PATH]` | Serve the control plane (REST API and web app) on `127.0.0.1:7420` until interrupted; another address only inside the agent-hub container (`AGENT_HUB_IN_CONTAINER=1`) |

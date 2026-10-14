@@ -1,4 +1,4 @@
-# 0027. Agent outputs as validated JSON: reviewer findings and evaluator verdicts
+# 0028. Agent outputs as validated JSON: reviewer findings and evaluator verdicts
 
 - Status: proposed
 - Date: 2026-10-14

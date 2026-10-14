@@ -25,7 +25,7 @@ from agent_hub.generator.hub_template import render_template
 from agent_hub.generator.json_form import JsonBuilder, dump_json
 from agent_hub.generator.json_merge import merge_json
 from agent_hub.generator.links import plugin_links, project_links
-from agent_hub.generator.placeholders import substitution_mapping
+from agent_hub.generator.placeholders import agent_model_overlay, substitution_mapping
 from agent_hub.generator.registry import REGISTRY, TemplateEntry
 
 
@@ -64,11 +64,15 @@ def render_entries(
     Each sibling of ``extensions`` must be a seeded built ``X.project.json`` whose managed built
     ``X.json`` renders too (else ``ValueError``, a caller bug); ``X.json`` then holds the strict
     merge (``MergeError``). Project agent and skill links come after the base plugin's, which
-    keep a name both plugins hold.
+    keep a name both plugins hold. A plugin agent whose tier ``models.agents`` sets renders with
+    that tier's model (``agent_model_overlay``).
     """
     mapping = substitution_mapping(config)
     selected = _selected(config, entries)
-    rendered = [_render(entry, path, config=config, mapping=mapping) for path, entry in selected]
+    rendered = [
+        _render(entry, path, config=config, mapping=mapping | agent_model_overlay(config, path))
+        for path, entry in selected
+    ]
     merged = _merged_json(dict(selected), config=config, extensions=extensions)
     rendered = [
         file.model_copy(update={"content": merged[file.path]}) if file.path in merged else file

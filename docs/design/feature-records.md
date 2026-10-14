@@ -54,7 +54,7 @@ Written by `/feature` step 7 once both reviewers pass: `type: review`, `ticket`,
 
 ### Agent outputs: `reviews/<ticket>/<reviewer>-r<N>.json` and `evals/<delivery>.json`
 
-JSON the agents hand to `/feature` ([ADR 0027](../adr/0027-agent-outputs-as-validated-json.md)), checked by
+JSON the agents hand to `/feature` ([ADR 0028](../adr/0028-agent-outputs-as-validated-json.md)), checked by
 `agent_hub.core.features.agent_outputs` (`review_problems`, `eval_problems`: bytes in, every problem at its JSON path
 out) against the models of `output_models.py`, exported as `review.v1.json` and `eval.v1.json` beside them. Every key
 is required, unknown keys are refused, text is one line and non-empty.
