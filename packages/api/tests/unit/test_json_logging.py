@@ -28,7 +28,11 @@ def test_logs_route_template_without_payload_when_request_served(
     wired.client.get(
         "/api/v1/sessions/session-1/events", params={"cursor": LEAK_SAMPLE, "limit": "5"}
     )
-    wired.client.post("/api/v1/hubs", json={"path": f"/home/demo/{LEAK_SAMPLE}"})
+    wired.client.post(
+        "/api/v1/hubs",
+        json={"path": f"/home/demo/{LEAK_SAMPLE}"},
+        headers={"Origin": "http://127.0.0.1:7420"},
+    )
 
     records = _request_records(caplog)
     assert [(record.method, record.path) for record in records] == [  # type: ignore[attr-defined]

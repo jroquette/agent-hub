@@ -60,7 +60,9 @@ def _subset(item: dict[str, Any], keys: dict[str, Any]) -> dict[str, Any]:
 def test_returns_label_and_actors_when_sessions_listed(
     composed: Any, make_hub: Callable[..., Path]
 ) -> None:
-    composed.client.post("/api/v1/hubs", json={"path": str(make_hub())})
+    composed.client.post(
+        "/api/v1/hubs", json={"path": str(make_hub())}, headers={"Origin": "http://127.0.0.1:7420"}
+    )
     _labelled_session(composed, ended=False)
 
     sessions = composed.client.get("/api/v1/sessions")
@@ -95,7 +97,9 @@ def test_leaves_label_issue_empty_when_hub_not_registered(composed: Any) -> None
 def test_reads_issue_from_worktree_when_label_has_no_branch(
     composed: Any, make_hub: Callable[..., Path]
 ) -> None:
-    composed.client.post("/api/v1/hubs", json={"path": str(make_hub())})
+    composed.client.post(
+        "/api/v1/hubs", json={"path": str(make_hub())}, headers={"Origin": "http://127.0.0.1:7420"}
+    )
     worktree = "/work/demo-api/.claude/worktrees/dem-77-retry"
     composed.store.append(a_session_events("session-2", cwd=worktree))
 
@@ -124,7 +128,12 @@ ASK = PermissionRequest(request_id="req-1", tool="Bash", input={"command": "make
 def _waiting_agent_session(app: Any, hub: Path) -> dict[str, Any]:
     """An agent session parked on a permission request, started in the hub's workdir."""
     client, base = app.client, "/api/v1/agent-sessions"
-    assert client.post("/api/v1/hubs", json={"path": str(hub)}).status_code == 201
+    assert (
+        client.post(
+            "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+        ).status_code
+        == 201
+    )
     (workdir, *_) = client.get(f"{base}/workdirs", params={"project": "demo"}).json()["items"]
     created = client.post(
         base, json={"project": "demo", "workdir_id": workdir["workdir_id"], "prompt": "Test it."}

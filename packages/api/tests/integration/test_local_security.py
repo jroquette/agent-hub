@@ -46,7 +46,7 @@ def test_accepts_write_when_origin_is_own(wired: Any) -> None:
     wired.hubs.hubs.append(a_hub_view())
 
     response = wired.client.post(
-        "/api/v1/hubs", json=HUB_PATH, headers={"Origin": "http://localhost:7420"}
+        "/api/v1/hubs", json=HUB_PATH, headers={"Origin": "http://127.0.0.1:7420"}
     )
 
     assert response.status_code == 201
@@ -65,7 +65,9 @@ def test_answers_too_large_problem_when_content_length_over_cap(wired: Any) -> N
     body = b"{" + b" " * MAX_BODY_BYTES + b"}"
 
     response = wired.client.post(
-        "/api/v1/hubs", content=body, headers={"Content-Type": "application/json"}
+        "/api/v1/hubs",
+        content=body,
+        headers={"Content-Type": "application/json", "Origin": "http://127.0.0.1:7420"},
     )
 
     assert response.status_code == 413
@@ -81,7 +83,9 @@ def test_answers_too_large_problem_when_streamed_body_passes_cap(wired: Any) -> 
         yield b'"}'
 
     response = wired.client.post(
-        "/api/v1/hubs", content=chunks(), headers={"Content-Type": "application/json"}
+        "/api/v1/hubs",
+        content=chunks(),
+        headers={"Content-Type": "application/json", "Origin": "http://127.0.0.1:7420"},
     )
 
     assert response.status_code == 413
@@ -252,15 +256,31 @@ def test_refuses_learning_actions_when_body_over_cap(wired: Any, action: Action)
     assert wired.decisions.calls == []
 
 
-def test_keeps_existing_writes_when_origin_and_fetch_metadata_missing(wired: Any) -> None:
+# A11: the hub registry writes need this server's exact Origin, a missing one refused too (a
+# registered hub is a folder agent sessions may start in). The Origin-less hook POST stays
+# accepted: test_hooks_ingestion.
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {},
+        {"Sec-Fetch-Site": "cross-site"},
+        {"Origin": "http://localhost:7420"},
+        {"Origin": "http://127.0.0.1:7420", "Sec-Fetch-Site": "same-site"},
+    ],
+)
+@pytest.mark.parametrize("method", ["post", "delete"])
+def test_refuses_hub_registry_write_when_origin_not_exactly_own(
+    wired: Any, method: str, headers: dict[str, str]
+) -> None:
     wired.hubs.hubs.append(a_hub_view())
+    path = "/api/v1/hubs" if method == "post" else f"/api/v1/hubs/{a_hub_view().id}"
+    options = {"json": HUB_PATH} if method == "post" else {}
 
-    response = wired.client.post(
-        "/api/v1/hubs", json=HUB_PATH, headers={"Sec-Fetch-Site": "cross-site"}
-    )
+    response = wired.client.request(method, path, headers=headers, **options)
 
-    assert response.status_code == 201
-    assert wired.hubs.calls == [("register_hub", HUB_PATH["path"])]
+    assert response.status_code == 403
+    assert wired.hubs.calls == []
+    assert len(wired.hubs.hubs) == 1
 
 
 @pytest.mark.parametrize(

@@ -575,7 +575,9 @@ def ingest_scenario(
     now = datetime.now(UTC)
     with httpx.Client(base_url=web.url, timeout=REQUEST_SECONDS) as client:
         for hub in (demo, ops):
-            response = client.post("/api/v1/hubs", json={"path": str(hub)})
+            response = client.post(
+                "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": web.url}
+            )
             assert response.status_code == 201, response.text
         for envelope in _hooks(now):
             response = client.post("/api/v1/events/hooks", json=envelope)

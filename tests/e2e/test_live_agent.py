@@ -234,7 +234,9 @@ def test_shows_real_session_with_tools_files_and_cost_when_claude_runs_in_hub(
 ) -> None:
     marker = f"marker-{uuid.uuid4().hex}"
     with httpx.Client(base_url=live_hub.url, timeout=REQUEST_SECONDS) as client:
-        registered = client.post("/api/v1/hubs", json={"path": str(live_hub.path)})
+        registered = client.post(
+            "/api/v1/hubs", json={"path": str(live_hub.path)}, headers={"Origin": live_hub.url}
+        )
         assert registered.status_code == 201, registered.text
         prompt = (
             f"This is test {marker}. Use the Bash tool to run exactly `ls`, then use the Read "

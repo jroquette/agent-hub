@@ -3,7 +3,9 @@
 The server binds 127.0.0.1 only, but a page on any site can still make the browser send it a
 request. So: the ``Host`` must name the loopback at this port (DNS rebinding), a ``POST`` or
 ``DELETE`` carrying an ``Origin`` must come from this origin (cross-site writes), the learning
-actions also need that ``Origin``, a same-origin fetch and a JSON body (S7), bodies stop at
+actions also need that ``Origin``, a same-origin fetch and a JSON body (S7), so do the hub
+registry writes (``POST /hubs``, ``DELETE /hubs/{id}``; a missing ``Origin`` is refused too,
+A11: a registered hub is a folder sessions may start in), bodies stop at
 1 MiB, API answers are never cached, a CSP keeps the app to its own origin, and no CORS header
 is ever sent. No route speaks WebSocket (ADR 0027, D3): any ``websocket`` scope is closed with
 1008 before it is accepted, so an upgrade never skips these checks (P7, AC-165.54).
@@ -30,6 +32,12 @@ STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # cross-site form cannot send without a preflight that is never granted. Other writes keep the
 # checks above only (E9).
 STRICT_WRITES = re.compile(rf"^{re.escape(API_PREFIX)}/learnings/[^/]+/(accept|reject)$")
+# The hub registry writes (A11): this server's exact ``Origin`` is required, a missing one too.
+# A script (``make connect``, the demo seed) sends its base URL as ``Origin``.
+HUB_REGISTRY_WRITES = (
+    ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/hubs$")),
+    ("DELETE", re.compile(rf"^{re.escape(API_PREFIX)}/hubs/[^/]+$")),
+)
 JSON_MEDIA_TYPE = "application/json"
 CONTENT_SECURITY_POLICY = "; ".join(
     (
@@ -112,6 +120,14 @@ def is_strict_write(method: str, path: str) -> bool:
     return method in STATE_CHANGING_METHODS and STRICT_WRITES.fullmatch(path) is not None
 
 
+def is_hub_registry_write(method: str, path: str) -> bool:
+    """Whether a request registers or removes a hub (``HUB_REGISTRY_WRITES``)."""
+    return any(
+        method == written and pattern.fullmatch(path) is not None
+        for written, pattern in HUB_REGISTRY_WRITES
+    )
+
+
 def is_json_media_type(content_type: str | None) -> bool:
     """Whether a ``Content-Type`` names ``application/json``, parameters (a charset) aside."""
     if content_type is None:
@@ -177,6 +193,10 @@ class LocalSecurityMiddleware:
             return 403, "Forbidden origin", "Changes are accepted only from this server's pages."
         if is_strict_write(scope["method"], scope["path"]):
             strict = strict_refusal(headers)
+            if strict is not None:
+                return strict
+        if is_hub_registry_write(scope["method"], scope["path"]):
+            strict = strict_refusal(headers, needs_json=scope["method"] == "POST")
             if strict is not None:
                 return strict
         length = headers.get("content-length")

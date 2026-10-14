@@ -782,7 +782,12 @@ def test_keeps_log_and_ends_session_when_restart_opens_same_database(
     hub = make_hub()
     settings = replace(composed_settings, session_token=TOKEN, clock=lambda: START)
     with _composed(settings, projects_root, web_dist) as first:
-        assert first.post("/api/v1/hubs", json={"path": str(hub)}).status_code == 201
+        assert (
+            first.post(
+                "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+            ).status_code
+            == 201
+        )
         workdirs = first.get(f"{BASE}/workdirs", params={"project": "demo"}).json()["items"]
         created = first.post(
             BASE,

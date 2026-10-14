@@ -411,7 +411,11 @@ HOOK_SENT_AT = "2026-10-11T11:58:00.000Z"
 def world_app(open_composed: Callable[..., Composed], hub_world: HubWorld) -> Composed:
     """The composed app acting on ``hub_world`` through ``hub_git``, with the hub registered."""
     composed = open_composed(brain_changes=hub_world.changes())
-    registered = composed.client.post("/api/v1/hubs", json={"path": str(hub_world.hub)})
+    registered = composed.client.post(
+        "/api/v1/hubs",
+        json={"path": str(hub_world.hub)},
+        headers={"Origin": "http://127.0.0.1:7420"},
+    )
     assert registered.status_code == 201, registered.text
     return composed
 
@@ -664,7 +668,9 @@ def open_tickets(
         app = open_composed(
             replace(composed_settings, clock=clock), environ=env, linear_post=linear
         )
-        registered = app.client.post("/api/v1/hubs", json={"path": str(hub)})
+        registered = app.client.post(
+            "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+        )
         assert registered.status_code == 201, registered.text
         return TicketsWorld(app=app, hub=hub, linear=linear, clock=clock, environ=env)
 

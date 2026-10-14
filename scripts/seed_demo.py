@@ -442,7 +442,10 @@ def seed(client: httpx.Client, target: Target, *, db_path: str, now: datetime) -
     )
     for path, text in hub_files(hub).items():
         target.write(path, text)
-    registered = client.post("/api/v1/hubs", json={"path": str(hub)})
+    base = client.base_url
+    origin = f"{base.scheme}://{base.netloc.decode('ascii')}"
+    # The hub registry writes require the server's own Origin (A11).
+    registered = client.post("/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": origin})
     if registered.status_code not in {httpx.codes.CREATED, httpx.codes.CONFLICT}:
         raise SeedError(f"registering {hub} failed: {registered.status_code} {registered.text}")
     for envelope in demo_envelopes(now):
