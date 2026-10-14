@@ -93,25 +93,27 @@ function Entry({
  */
 export function Transcript({ state, onAnswerPermission }: TranscriptProps) {
   return (
-    <div
-      className="as-transcript"
-      role="log"
-      aria-live="polite"
-      aria-relevant="additions text"
-      aria-busy={state.streaming}
-      aria-label="Conversation"
-    >
-      {state.entries.length === 0 && (
-        <p className="ah-muted as-empty">No messages yet. Write the first one below.</p>
-      )}
-      {state.entries.map((entry) => (
-        <Entry
-          key={entry.key}
-          entry={entry}
-          state={state}
-          onAnswerPermission={onAnswerPermission}
-        />
-      ))}
+    <div className="as-scroll">
+      <div
+        className="as-transcript as-column"
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions text"
+        aria-busy={state.streaming}
+        aria-label="Conversation"
+      >
+        {state.entries.length === 0 && (
+          <p className="ah-muted as-empty">No messages yet. Write the first one below.</p>
+        )}
+        {state.entries.map((entry) => (
+          <Entry
+            key={entry.key}
+            entry={entry}
+            state={state}
+            onAnswerPermission={onAnswerPermission}
+          />
+        ))}
+      </div>
     </div>
   );
 }

@@ -130,82 +130,92 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
       });
   };
 
+  // One fixed-height column (AC-234.16): the header and the composer stay put, the transcript
+  // between them is the only scroller.
   return (
-    <div style={{ padding: "16px 32px 40px" }} className="ah-stack">
-      <Breadcrumbs items={crumbs} />
-      <div className="ah-row ah-wrap" style={{ gap: 12 }}>
-        <Icon name="square-terminal" size="lg" style={{ color: "var(--text-subtle)" }} />
-        <h1 className="ah-h1" style={{ fontSize: 20 }}>
-          {session.title ?? "Untitled session"}
-        </h1>
-        <AgentStatusBadge status={status} endReason={state.endReason ?? session.end_reason} />
-        <span className="ah-grow" />
-        {session.claude_session_id && (
-          <AppLink
-            className="ah-row ah-small"
-            style={{ gap: 4 }}
-            href={`/sessions/${encodeURIComponent(session.claude_session_id)}`}
-          >
-            <Icon name="activity" size="sm" />
-            Observed session {short(session.claude_session_id)}
-          </AppLink>
-        )}
-        {ended ? (
-          <Button
-            size="sm"
-            variant="ghost"
-            icon="file-x"
-            disabled={busy}
-            onClick={() => {
-              setConfirmDelete(true);
-            }}
-          >
-            Delete session
-          </Button>
-        ) : (
-          <Button
-            size="sm"
-            icon="x"
-            disabled={busy}
-            onClick={() => {
-              act(commands.close);
-            }}
-          >
-            Close session
-          </Button>
-        )}
-      </div>
-      <div className="ah-row ah-wrap ah-small ah-muted" style={{ gap: 12 }}>
-        <span>
-          {session.project} › <b className="ah-mono">{session.workdir_label}</b>
-        </span>
-        <span>
-          {modeLabel(mode)}
-          {model ? ` · ${model}` : ""}
-        </span>
-        <CostMeter meter={state.meter} />
-      </div>
-      {actionError && (
-        <p className="ah-small as-error" role="alert">
-          {actionError}
-        </p>
-      )}
-      {transcript.streaming && (
-        <ReconnectBanner connected={transcript.health.closedSince === null} />
-      )}
-      <TodoList items={state.todos} />
+    <div className="as-page">
+      <header className="as-header">
+        <div className="as-column ah-stack">
+          <Breadcrumbs items={crumbs} />
+          <div className="ah-row ah-wrap" style={{ gap: 12 }}>
+            <Icon name="square-terminal" size="lg" style={{ color: "var(--text-subtle)" }} />
+            <h1 className="ah-h1" style={{ fontSize: 20 }}>
+              {session.title ?? "Untitled session"}
+            </h1>
+            <AgentStatusBadge status={status} endReason={state.endReason ?? session.end_reason} />
+            <span className="ah-grow" />
+            {session.claude_session_id && (
+              <AppLink
+                className="ah-row ah-small"
+                style={{ gap: 4 }}
+                href={`/sessions/${encodeURIComponent(session.claude_session_id)}`}
+              >
+                <Icon name="activity" size="sm" />
+                Observed session {short(session.claude_session_id)}
+              </AppLink>
+            )}
+            {ended ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="file-x"
+                disabled={busy}
+                onClick={() => {
+                  setConfirmDelete(true);
+                }}
+              >
+                Delete session
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                icon="x"
+                disabled={busy}
+                onClick={() => {
+                  act(commands.close);
+                }}
+              >
+                Close session
+              </Button>
+            )}
+          </div>
+          <div className="ah-row ah-wrap ah-small ah-muted" style={{ gap: 12 }}>
+            <span>
+              {session.project} › <b className="ah-mono">{session.workdir_label}</b>
+            </span>
+            <span>
+              {modeLabel(mode)}
+              {model ? ` · ${model}` : ""}
+            </span>
+            <CostMeter meter={state.meter} />
+          </div>
+          {actionError && (
+            <p className="ah-small as-error" role="alert">
+              {actionError}
+            </p>
+          )}
+          {transcript.streaming && (
+            <ReconnectBanner connected={transcript.health.closedSince === null} />
+          )}
+          <TodoList items={state.todos} />
+        </div>
+      </header>
       <Transcript state={state} onAnswerPermission={ended ? undefined : commands.answer} />
-      <Composer
-        status={status}
-        mode={mode}
-        model={model}
-        models={models}
-        onSend={commands.send}
-        onInterrupt={commands.interrupt}
-        onSettings={commands.settings}
-        maxBytes={DEFAULT_MESSAGE_MAX_BYTES}
-        disabledReason={cloud ? "A cloud session is driven from claude.ai." : null}
-      />
+      <footer className="as-footer">
+        <div className="as-column">
+          <Composer
+            status={status}
+            mode={mode}
+            model={model}
+            models={models}
+            onSend={commands.send}
+            onInterrupt={commands.interrupt}
+            onSettings={commands.settings}
+            maxBytes={DEFAULT_MESSAGE_MAX_BYTES}
+            disabledReason={cloud ? "A cloud session is driven from claude.ai." : null}
+          />
+        </div>
+      </footer>
       {confirmDelete && (
         <ConfirmDialog
           title="Delete this session?"
