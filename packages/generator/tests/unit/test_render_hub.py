@@ -3860,8 +3860,9 @@ def test_parses_every_json_when_rendered(config_name: str, request: pytest.Fixtu
 
     json_files = [file for file in render_hub(config).files if file.path.endswith(".json")]
 
-    # The two settings files, both manifests, `hooks.json` and the schema.
-    assert len(json_files) == 6
+    # The two settings files, both manifests, `hooks.json`, the schema and the two agent output
+    # schemas (AGH-139).
+    assert len(json_files) == 8
     for file in json_files:
         strict_json(file.content)
 
