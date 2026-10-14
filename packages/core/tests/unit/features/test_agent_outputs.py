@@ -1383,3 +1383,12 @@ def test_skips_cross_checks_when_eval_sibling_list_over_bound() -> None:
     assert eval_problems_of(document, sibling_head=head) == (
         OutputProblem("tickets", "Tuple should have at most 100 items after validation, not 101"),
     )
+
+
+def test_cuts_relayed_problem_when_eval_sibling_malformed() -> None:
+    head = a_sibling_head(tickets="[" + "\x01" * 200 + "]")
+
+    problems = eval_problems_of(an_eval_document(), sibling_head=head)
+
+    relayed = "tickets has an invalid item: " + "\\x01" * 12 + "…"
+    assert problems == (OutputProblem("$", f"evals/agh-7.md: {relayed}"),)
