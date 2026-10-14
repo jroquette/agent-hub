@@ -60,9 +60,12 @@ class LiveSession:
     ring: DeltaRing = field(init=False)
     budget: LogBudget = field(init=False)
     # ``emit_lock`` keeps seq order equal to emit order (``last_seq`` moves only under it);
-    # ``commands`` runs one command at a time; ``end_task`` ends the session once.
+    # ``commands`` runs one command at a time; ``sync_lock`` serializes the session's store
+    # writes, so the last write and the last status frame show the state current at that write;
+    # ``end_task`` ends the session once.
     emit_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     commands: asyncio.Lock = field(default_factory=asyncio.Lock)
+    sync_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     requests: dict[str, OpenRequest] = field(default_factory=dict)
     answered: set[str] = field(default_factory=set)
     last_seq: int = 0
