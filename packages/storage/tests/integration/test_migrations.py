@@ -19,6 +19,13 @@ PHASE_ZERO_INSERT = (
     "VALUES ('demo', 'session-1', 'tool.call', 'claude_code', ?, "
     "'2026-09-27 08:00:00.000000', '{}')"
 )
+HEAD = "0004"
+AGENT_SESSION_TABLES = {"agent_sessions", "agent_session_records"}
+AGENT_SESSION_INDEXES = {
+    "ix_agent_sessions_project_claude_session_id": ["project", "claude_session_id"],
+    "ix_agent_sessions_status": ["status"],
+    "ix_agent_sessions_ended_at": ["ended_at"],
+}
 INDEXES = {
     "ix_events_project_session_id": ["project", "session", "id"],
     "ix_events_project_type_timestamp": ["project", "type", "timestamp"],
@@ -60,8 +67,8 @@ def test_creates_and_drops_events_table_when_upgraded_and_downgraded(tmp_path: P
     config = alembic_config(f"sqlite:///{db_path}")
 
     upgrade(config, "head")
-    assert _current_revision(db_path) == "0003"
-    assert _table_names(db_path) == {"alembic_version", "events"}
+    assert _current_revision(db_path) == HEAD
+    assert _table_names(db_path) == {"alembic_version", "events", *AGENT_SESSION_TABLES}
     columns, unique_constraints = _events_schema(db_path)
     filtered = {"project", "session", "type", "timestamp", "source", "source_id"}
     assert filtered <= set(columns)
@@ -125,7 +132,7 @@ def test_upgrades_to_head_when_run_as_module(
 
     runpy.run_module("agent_hub.storage.migration", run_name="__main__")
 
-    assert _current_revision(db_path) == "0003"
+    assert _current_revision(db_path) == HEAD
 
 
 def _rows(db_path: Path) -> list[tuple[Any, ...]]:
@@ -217,3 +224,94 @@ def _insert_phase_zero_rows_after(db_path: Path, source_ids: list[str]) -> None:
     finally:
         engine.dispose()
     assert count == 3
+
+
+def _schema(db_path: Path, table: str) -> dict[str, object]:
+    """A table's columns (name, type, nullable), primary key, foreign keys and indexes."""
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        inspector = inspect(engine)
+        return {
+            "columns": [
+                (column["name"], str(column["type"]), column["nullable"])
+                for column in inspector.get_columns(table)
+            ],
+            "primary_key": inspector.get_pk_constraint(table)["constrained_columns"],
+            "foreign_keys": [
+                (key["constrained_columns"], key["referred_table"], key["options"])
+                for key in inspector.get_foreign_keys(table)
+            ],
+            "indexes": {
+                str(index["name"]): [str(column) for column in index["column_names"]]
+                for index in inspector.get_indexes(table)
+            },
+        }
+    finally:
+        engine.dispose()
+
+
+def test_creates_and_drops_agent_session_tables_when_upgraded_and_downgraded(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0003")
+
+    upgrade(config, "head")
+
+    assert _current_revision(db_path) == HEAD
+    assert _table_names(db_path) >= AGENT_SESSION_TABLES
+    sessions = _schema(db_path, "agent_sessions")
+    assert sessions["primary_key"] == ["id"]
+    assert sessions["indexes"] == AGENT_SESSION_INDEXES
+    nullable = {name for name, _, is_nullable in sessions["columns"] if is_nullable}
+    assert nullable == {
+        "claude_session_id",
+        "cloud_id",
+        "url",
+        "model",
+        "title",
+        "ended_at",
+        "end_reason",
+        "cost_usd",
+        "usage",
+    }
+    records = _schema(db_path, "agent_session_records")
+    assert [name for name, _, _ in records["columns"]] == [
+        "agent_session_id",
+        "seq",
+        "at",
+        "kind",
+        "by",
+        "body",
+        "text_bytes",
+    ]
+    assert records["primary_key"] == ["agent_session_id", "seq"]
+    assert records["foreign_keys"] == [
+        (["agent_session_id"], "agent_sessions", {"ondelete": "CASCADE"})
+    ]
+
+    downgrade(config, "0003")
+
+    assert _current_revision(db_path) == "0003"
+    assert _table_names(db_path) == {"alembic_version", "events"}
+
+
+def test_keeps_events_unchanged_when_agent_session_tables_added(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0002")
+    _insert_phase_zero_rows(db_path, 2)
+    upgrade(config, "0003")
+    events_before = _schema(db_path, "events")
+    rows_before = _rows(db_path)
+
+    upgrade(config, "head")
+    events_at_head = _schema(db_path, "events")
+    rows_at_head = _rows(db_path)
+    downgrade(config, "0003")
+
+    assert events_at_head == events_before
+    assert rows_at_head == rows_before
+    assert _schema(db_path, "events") == events_before
+    assert _rows(db_path) == rows_before

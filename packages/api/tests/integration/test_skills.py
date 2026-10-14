@@ -83,7 +83,9 @@ def skills_hub(composed: Any, make_hub: Callable[..., Path]) -> SkillsHub:
     def make(extra: dict[str, TreeEntry] | None = None) -> Path:
         hub = make_hub()
         _replace_tree(hub, a_skills_fixture_tree() | (extra or {}))
-        registered = composed.client.post("/api/v1/hubs", json={"path": str(hub)})
+        registered = composed.client.post(
+            "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+        )
         assert registered.status_code == 201, registered.text
         return hub
 
@@ -162,7 +164,12 @@ def test_answers_empty_or_unknown_when_hub_bare_or_project_unknown(
     hub = make_hub()
     shutil.rmtree(hub / "plugin")
     shutil.rmtree(hub / ".claude")
-    assert composed.client.post("/api/v1/hubs", json={"path": str(hub)}).status_code == 201
+    assert (
+        composed.client.post(
+            "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+        ).status_code
+        == 201
+    )
 
     bare = composed.client.get(CATALOG)
     unknown = composed.client.get("/api/v1/projects/nowhere/skills")

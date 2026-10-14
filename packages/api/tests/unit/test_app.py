@@ -21,16 +21,37 @@ BODIES: dict[tuple[str, str], object] = {
     ("post", "/api/v1/hubs"): {"path": "/home/demo/demo-hub"},
     ("post", "/api/v1/learnings/{learning_id}/accept"): {"target": "learnings/"},
     ("post", "/api/v1/learnings/{learning_id}/reject"): {"reason": "Duplicate of another note"},
+    ("post", "/api/v1/agent-sessions"): {"project": "demo", "workdir_id": "0123456789abcdef"},
+    ("post", "/api/v1/agent-sessions/cloud"): {
+        "project": "demo",
+        "workdir_id": "0123456789abcdef",
+        "task": "Upgrade the linter",
+    },
+    ("post", "/api/v1/agent-sessions/cloud/{cloud_id}/messages"): {"text": "Also the docs"},
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/messages"): {"text": "Run the tests."},
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/permissions/{request_id}"): {
+        "decision": "allow"
+    },
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/settings"): {"mode": "plan"},
+    # Bodiless agent-session writes still send JSON (the access rules want it).
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/interrupt"): {},
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/close"): {},
 }
 OWN_ORIGIN = {"Origin": "http://127.0.0.1:7420"}
 QUERIES = {
     "/api/v1/search": {"q": "make"},
     "/api/v1/projects/{project}/brain/note": {"path": "index.md"},
+    "/api/v1/agent-sessions/workdirs": {"project": "demo"},
+    "/api/v1/agent-sessions/resumable": {"project": "demo", "workdir_id": "0123456789abcdef"},
 }
+# Agent session ids are UUIDs (the route's convertor); the other ids take any text.
+AGENT_SESSION_ID = "01929a4e-7a11-7c00-8a00-00000000a001"
 
 
 def _concrete(path: str) -> str:
-    for name in ("hub_id", "project", "session_id", "run_id", "approval_id", "learning_id", "slug"):
+    path = path.replace("{agent_session_id}", AGENT_SESSION_ID)
+    names = ("hub_id", "project", "session_id", "run_id", "approval_id", "learning_id", "slug")
+    for name in (*names, "request_id", "cloud_id"):
         path = path.replace(f"{{{name}}}", f"{name}-1")
     return path
 
@@ -98,3 +119,58 @@ def test_closes_change_feed_when_app_shuts_down(api_settings: ApiSettings, fakes
         assert asyncio.run(feed.wait_beyond(0, deadline=1)) == 0
 
     assert asyncio.run(feed.wait_beyond(0, deadline=1)) is None
+
+
+class RecordingLifecycle:
+    """An ``AppLifecycle`` that records its calls in order."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def start(self) -> None:
+        self.calls.append("start")
+
+    def begin_exit(self) -> None:
+        self.calls.append("begin_exit")
+
+    async def stop(self) -> None:
+        self.calls.append("stop")
+
+
+def test_starts_then_stops_lifecycle_when_app_runs(api_settings: ApiSettings) -> None:
+    lifecycle = RecordingLifecycle()
+    app = create_app(api_settings, lifecycle=lifecycle)
+
+    with TestClient(app):
+        started = list(lifecycle.calls)
+
+    assert started == ["start"]
+    assert lifecycle.calls == ["start", "stop"]
+
+
+def test_closes_feed_and_begins_exit_when_exit_hook_called(
+    api_settings: ApiSettings, fakes: Any
+) -> None:
+    reader = fakes.EventReader()
+    feed = ChangeFeed(reader, timer=fakes.Clock())
+    lifecycle = RecordingLifecycle()
+    app = create_app(
+        api_settings, ports=ApiPorts(event_reader=reader, change_feed=feed), lifecycle=lifecycle
+    )
+
+    app.state.on_exit()
+
+    assert feed.is_closed
+    assert lifecycle.calls == ["begin_exit"]
+
+
+def test_closes_feed_when_exit_hook_called_without_lifecycle(
+    api_settings: ApiSettings, fakes: Any
+) -> None:
+    reader = fakes.EventReader()
+    feed = ChangeFeed(reader, timer=fakes.Clock())
+    app = create_app(api_settings, ports=ApiPorts(event_reader=reader, change_feed=feed))
+
+    app.state.on_exit()
+
+    assert feed.is_closed

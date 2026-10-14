@@ -206,6 +206,7 @@ def live_tile(
         actors=session.actors,
         problems=session.problems,
         needs_you_problem=needs_you_line(problems),
+        agent_session_id=session.agent_session_id,
     )
 
 

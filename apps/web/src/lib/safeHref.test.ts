@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isInAppPath, linearHref, safeHref } from "./safeHref";
+import { claudeCodeHref, isInAppPath, linearHref, safeHref } from "./safeHref";
 
 describe("safeHref", () => {
   it.each([
@@ -73,5 +73,32 @@ describe("linearHref", () => {
     undefined,
   ])("returns null when given the look-alike %j (linear-link)", (value) => {
     expect(linearHref(value)).toBeNull();
+  });
+});
+
+describe("claudeCodeHref", () => {
+  it("keeps only an https URL under claude.ai/code/ when given a cloud session url (claude-code-link)", () => {
+    expect(claudeCodeHref("https://claude.ai/code/session_01AbC")).toBe(
+      "https://claude.ai/code/session_01AbC",
+    );
+  });
+
+  it.each([
+    "https://claude.ai/code/",
+    "https://claude.ai/code",
+    "https://claude.ai/chat/abc",
+    "http://claude.ai/code/abc",
+    "https://claude.ai.evil.example/code/abc",
+    "https://user@claude.ai/code/abc",
+    "https://claude.ai:444/code/abc",
+    "https://evil.example/https://claude.ai/code/abc",
+    "https://claude.ai/code/../settings",
+    "https://claude.ai/code/%2e%2e/settings",
+    "javascript:alert(1)",
+    "/code/abc",
+    null,
+    undefined,
+  ])("returns null when given the look-alike %j (claude-code-link)", (value) => {
+    expect(claudeCodeHref(value)).toBeNull();
   });
 });

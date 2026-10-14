@@ -65,6 +65,32 @@ TICKET_PATHS: frozenset[tuple[str, str]] = frozenset(
     {("get", f"{API_PREFIX}/features/{{project}}/{{slug}}/tickets")}
 )
 
+# The 17 route-method pairs driving Claude Code sessions adds (AGH-165 P5, AC-165.48): the only
+# routes the per-launch token guards (ADR 0031).
+AGENT_SESSIONS = f"{API_PREFIX}/agent-sessions"
+AGENT_SESSION_PATHS: frozenset[tuple[str, str]] = frozenset(
+    (method, f"{AGENT_SESSIONS}{path}")
+    for method, path in (
+        ("get", "/workdirs"),
+        ("get", "/capabilities"),
+        ("get", "/resumable"),
+        ("get", "/cloud"),
+        ("post", "/cloud"),
+        ("post", "/cloud/{cloud_id}/messages"),
+        ("get", ""),
+        ("post", ""),
+        ("get", "/{agent_session_id}"),
+        ("delete", "/{agent_session_id}"),
+        ("get", "/{agent_session_id}/events"),
+        ("get", "/{agent_session_id}/stream"),
+        ("post", "/{agent_session_id}/messages"),
+        ("post", "/{agent_session_id}/interrupt"),
+        ("post", "/{agent_session_id}/permissions/{request_id}"),
+        ("post", "/{agent_session_id}/settings"),
+        ("post", "/{agent_session_id}/close"),
+    )
+)
+
 # The paths the Skills tab adds (AC-164.11, amendment A1): the catalog, an item's detail and a
 # bundled file's text, all read-only.
 SKILL_PATHS: frozenset[tuple[str, str]] = frozenset(
@@ -77,7 +103,9 @@ SKILL_PATHS: frozenset[tuple[str, str]] = frozenset(
 )
 
 # Every path the document lists.
-SERVED_PATHS: frozenset[tuple[str, str]] = P2_PATHS | CLARITY_PATHS | TICKET_PATHS | SKILL_PATHS
+SERVED_PATHS: frozenset[tuple[str, str]] = (
+    P2_PATHS | CLARITY_PATHS | TICKET_PATHS | SKILL_PATHS | AGENT_SESSION_PATHS
+)
 
 
 def document_paths(app: FastAPI) -> frozenset[tuple[str, str]]:

@@ -173,7 +173,8 @@ class LiveTile(DerivedView):
     """A session tile of the Live sessions screen.
 
     ``agent`` is deprecated (``label`` and ``actors``); ``needs_you_problem`` is the owner-facing
-    line of the first problem that needs the owner ("Needs you: <kind> in <where>").
+    line of the first problem that needs the owner ("Needs you: <kind> in <where>");
+    ``agent_session_id`` is the agent session ``hub web`` drives it from, when there is one.
     """
 
     id: str
@@ -207,6 +208,7 @@ class LiveTile(DerivedView):
     actors: tuple[Actor, ...] = ()
     problems: ProblemCounts = ProblemCounts()
     needs_you_problem: str | None = None
+    agent_session_id: str | None = None
 
 
 class StreamCounts(ViewModel):

@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from agent_hub.core.agent_sessions.links import AgentSessionLink
 from agent_hub.core.events.event import MAX_ID_CHARS, Event, EventType
 from agent_hub.core.events.event_query import EventPage, EventQuery
 from agent_hub.core.events.stored_event import StoredEvent
@@ -694,6 +695,56 @@ def test_leaves_issue_empty_when_no_hub_rules() -> None:
 
     assert label is not None
     assert label.issue is None
+
+
+def _linked_service(links: dict[tuple[str, str], AgentSessionLink]) -> FoldedEventReadModels:
+    store = InMemoryEventStore()
+    store.append(
+        [
+            *a_session_events("s-web", ended=False),
+            *a_session_events("s-cli", ended=False),
+        ]
+    )
+    return FoldedEventReadModels(
+        store,
+        now=Clock(SCENARIO_START + timedelta(minutes=8)),
+        agent_session_link_of=lambda project, session_id: links.get((project, session_id)),
+    )
+
+
+def test_carries_agent_session_id_when_link_known_agent_session_link() -> None:
+    service = _linked_service({("demo", "s-web"): AgentSessionLink(agent_session_id="a-1")})
+
+    listed = {s.id: s for s in service.list_sessions(SessionFilter()).items}
+    one = service.get_session("s-web")
+
+    assert listed["s-web"].agent_session_id == "a-1"
+    assert listed["s-cli"].agent_session_id is None
+    assert one.agent_session_id == "a-1"
+
+
+def test_shows_waiting_tile_when_permission_pending_agent_session_link() -> None:
+    links = {("demo", "s-web"): AgentSessionLink(agent_session_id="a-1", waiting=True)}
+    service = _linked_service(links)
+
+    tiles = {tile.id: tile for tile in service.list_live_sessions(Scope()).items}
+    links[("demo", "s-web")] = AgentSessionLink(agent_session_id="a-1")
+    later = {tile.id: tile for tile in service.list_live_sessions(Scope()).items}
+
+    assert (tiles["s-web"].group, tiles["s-web"].status) == ("waiting", SessionStatus.WAITING)
+    assert tiles["s-web"].waiting_reason == "Permission prompt"
+    assert tiles["s-cli"].group == "live"
+    assert later["s-web"].group == "live"
+    assert service.get_session("s-web").status == SessionStatus.LIVE
+
+
+def test_carries_agent_session_id_on_tile_when_link_known_agent_session_link() -> None:
+    service = _linked_service({("demo", "s-web"): AgentSessionLink(agent_session_id="a-1")})
+
+    tiles = {tile.id: tile for tile in service.list_live_sessions(Scope()).items}
+
+    assert tiles["s-web"].agent_session_id == "a-1"
+    assert tiles["s-cli"].agent_session_id is None
 
 
 def _usage_signal(
