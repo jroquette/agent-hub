@@ -771,6 +771,14 @@ def test_carries_agent_session_id_when_link_known_agent_session_link() -> None:
     assert one.agent_session_id == "a-1"
 
 
+def test_answers_observed_by_project_when_session_known(store: InMemoryEventStore) -> None:
+    service = _service(store, NOW)[0]
+
+    assert service.is_observed("demo", "s-a")
+    assert not service.is_observed("other", "s-a")
+    assert not service.is_observed("demo", "s-unknown")
+
+
 def test_shows_waiting_tile_when_permission_pending_agent_session_link() -> None:
     links = {("demo", "s-web"): AgentSessionLink(agent_session_id="a-1", waiting=True)}
     service = _linked_service(links)

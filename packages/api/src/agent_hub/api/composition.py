@@ -60,7 +60,7 @@ from agent_hub.collector.transcript_tail import TranscriptTail
 from agent_hub.core.agent_sessions.cloud import CloudLauncher, CloudSessions
 from agent_hub.core.agent_sessions.control import AgentSessionControl, WorkdirSource
 from agent_hub.core.agent_sessions.driver import SessionDriver
-from agent_hub.core.agent_sessions.links import AgentSessionLinks
+from agent_hub.core.agent_sessions.links import AgentSessionLinks, ObservedSessionLookup
 from agent_hub.core.agent_sessions.store import AgentSessionStore
 from agent_hub.core.features.ticket_snapshots import (
     SnapshotRequest,
@@ -154,6 +154,17 @@ class _HubPaths:
             return self.hubs.get_project(project).hub_path
         except EntityNotFoundError, HubRegistryError:
             return None
+
+
+class _ObservedSessions:
+    """``ObservedSessionLookup`` over the event read models (D2); bound once they exist,
+    since they are built with the agent sessions' links."""
+
+    def __init__(self) -> None:
+        self.events: FoldedEventReadModels | None = None
+
+    def is_observed(self, project: str, session_id: str) -> bool:
+        return self.events is not None and self.events.is_observed(project, session_id)
 
 
 def _no_git(_keys: frozenset[str]) -> Mapping[str, str]:
@@ -415,9 +426,11 @@ def wire_agent_sessions(  # noqa: PLR0913 -- the use cases' ports, all injected
     driver: SessionDriver,
     launcher: CloudLauncher,
     url: str,
+    observed_sessions: ObservedSessionLookup | None = None,
 ) -> AgentSessionWiring:
     """``AgentSessionControl``, ``CloudSessions`` and ``AgentSessionLinks`` over ``driver``,
-    ``launcher`` and ``store``; the children get ``AGENT_HUB_WEB_URL=url`` (never the token)."""
+    ``launcher`` and ``store``; the children get ``AGENT_HUB_WEB_URL=url`` (never the token).
+    ``observed_sessions`` fills each agent session's ``observed_session_id``."""
     control = AgentSessionControl(
         driver,
         store,
@@ -425,6 +438,7 @@ def wire_agent_sessions(  # noqa: PLR0913 -- the use cases' ports, all injected
         clock=settings.clock,
         limits=settings.limits,
         environment_extra={"AGENT_HUB_WEB_URL": url},
+        observed_sessions=observed_sessions,
     )
     cloud = CloudSessions(
         launcher=launcher,
@@ -526,6 +540,7 @@ def build_app(
         running_version=settings.running_version,
         read_git=_files_only if read_git is None else read_git,
     )
+    observed = _ObservedSessions()
     sessions = _agent_sessions(
         settings,
         registry=registry,
@@ -533,6 +548,7 @@ def build_app(
         environ=environ,
         session_driver=session_driver,
         cloud_launcher=cloud_launcher,
+        observed_sessions=observed,
     )
     events = _event_read_models(
         store,
@@ -541,6 +557,7 @@ def build_app(
         label_rules_of=facts.label_rules_of,
         sessions=sessions,
     )
+    observed.events = events
     snapshots = ticket_snapshots(
         facts,
         environ=environ,
@@ -597,6 +614,7 @@ def _agent_sessions(  # noqa: PLR0913 -- build_app's session options, passed on
     environ: Mapping[str, str] | None,
     session_driver: SessionDriver | None,
     cloud_launcher: CloudLauncher | None,
+    observed_sessions: ObservedSessionLookup,
 ) -> AgentSessionWiring | None:
     if settings.sessions_off:
         return None
@@ -614,4 +632,5 @@ def _agent_sessions(  # noqa: PLR0913 -- build_app's session options, passed on
         driver=session_driver,
         launcher=cloud_launcher,
         url=web_url(settings),
+        observed_sessions=observed_sessions,
     )
