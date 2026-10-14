@@ -604,7 +604,7 @@ def test_refuses_always_without_suggestion_when_permission_answer_invalid(
         {"type": "addDirectories", "directories": ["/"], "destination": "localSettings"},
     ],
 )
-def test_refuses_and_hides_always_when_suggestion_widens_session(
+def test_refuses_and_hides_permission_answer_always_when_suggestion_widens_session(
     open_agent_session_app: Any, rule: dict[str, JsonValue]
 ) -> None:
     unsafe = PermissionSuggestion(index=1, destination="localSettings", rule=rule)
