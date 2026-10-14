@@ -76,12 +76,12 @@ def test_reports_a_cycle_when_node_depends_on_itself() -> None:
 
 def test_names_the_dependency_when_depends_on_target_is_unknown() -> None:
     assert problems_of(shell("a"), shell("b", "a", "ghost")) == [
-        ("nodes[1].depends_on[1]", "no node has the id 'ghost'")
+        ("nodes[1].depends_on[1]", 'no node has the id "ghost"')
     ]
 
 
 def test_stops_before_the_cycle_check_when_an_id_repeats() -> None:
-    assert problems_of(shell("a"), shell("a", "a")) == [("nodes[1].id", "the id 'a' is repeated")]
+    assert problems_of(shell("a"), shell("a", "a")) == [("nodes[1].id", 'the id "a" is repeated')]
 
 
 @pytest.mark.parametrize(
@@ -132,24 +132,24 @@ def test_accepts_reference_when_producer_is_upstream(node: dict[str, object]) ->
     ],
 )
 def test_refuses_reference_when_producer_is_not_upstream(node: dict[str, object], key: str) -> None:
-    assert problems_of(shell("a"), node) == [(key, "the node 'a' is not upstream")]
+    assert problems_of(shell("a"), node) == [(key, 'the node "a" is not upstream')]
 
 
 def test_refuses_reference_when_producer_is_downstream() -> None:
     nodes = (shell("a", when="$b.output == 'x'"), shell("b", "a"))
 
-    assert problems_of(*nodes) == [("nodes[0].when", "the node 'b' is not upstream")]
+    assert problems_of(*nodes) == [("nodes[0].when", 'the node "b" is not upstream')]
 
 
 def test_refuses_reference_when_node_reads_its_own_output() -> None:
     assert problems_of(shell("a", when="$a.output == 'x'")) == [
-        ("nodes[0].when", "the node 'a' is not upstream")
+        ("nodes[0].when", 'the node "a" is not upstream')
     ]
 
 
 def test_refuses_reference_when_node_id_is_unknown() -> None:
     assert problems_of(shell("a", cwd="$ghost.output")) == [
-        ("nodes[0].cwd", "no node has the id 'ghost'")
+        ("nodes[0].cwd", 'no node has the id "ghost"')
     ]
 
 
@@ -157,7 +157,7 @@ def test_refuses_input_reference_when_input_is_not_declared() -> None:
     node = {"id": "a", "type": "agent", "prompt": "Do $INPUTS.issue in $INPUTS.repo"}
 
     assert problems_of(node, inputs={"issue": {"required": True}}) == [
-        ("nodes[0].prompt", "the input 'repo' is not declared")
+        ("nodes[0].prompt", 'the input "repo" is not declared')
     ]
 
 
@@ -173,7 +173,7 @@ def test_refuses_output_path_when_producer_schema_lacks_it(schema: object) -> No
     nodes = (shell("a", output_format=schema), shell("b", "a", cwd="$a.output.missing.x"))
 
     assert problems_of(*nodes) == [
-        ("nodes[1].cwd", "$a.output.missing.x is not in the output of 'a'")
+        ("nodes[1].cwd", 'the path "missing.x" is not in the output of "a"')
     ]
 
 
@@ -224,7 +224,7 @@ def test_refuses_resume_when_target_is_not_an_upstream_agent(
     plan = {"id": "plan", "type": "agent", "prompt": "Plan"}
 
     assert problems_of(shell("a"), plan, resumer) == [
-        ("nodes[2].context.resume", f"{target!r} is not an upstream agent or loop node")
+        ("nodes[2].context.resume", f'"{target}" is not an upstream agent or loop node')
     ]
 
 
@@ -277,7 +277,7 @@ def test_refuses_outcome_field_when_returns_is_absent() -> None:
 
 
 def test_refuses_returns_when_it_names_no_node() -> None:
-    assert problems_of(shell("a"), returns="ghost") == [("returns", "no node has the id 'ghost'")]
+    assert problems_of(shell("a"), returns="ghost") == [("returns", 'no node has the id "ghost"')]
 
 
 @pytest.mark.parametrize(
