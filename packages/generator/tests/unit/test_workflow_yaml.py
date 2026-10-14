@@ -3,7 +3,10 @@ strict reader; each key path's line recorded for the document model's errors (AC
 
 import pytest
 
+from agent_hub.core.hub_config.versions import ECHO_LIMIT
 from agent_hub.generator.workflow_yaml import (
+    MAX_LINE_DEPTH,
+    MAX_LINE_ENTRIES,
     MAX_WORKFLOW_BYTES,
     WorkflowFileError,
     load_workflow_bytes,
@@ -212,9 +215,13 @@ def test_refuses_with_line_when_surrogate_escape_given(content: bytes, line: int
 
 
 def test_cuts_echoed_parser_text_when_reason_is_long() -> None:
-    error = _refusal(b"a: " + b"\x01" * 5_000 + b"\n")
+    handle = b"!" + b"h" * 5_000 + b"!"
+    error = _refusal(b"a: " + handle + b"x\n")
 
-    assert len(error.reason) < 300
+    assert error.line == 1
+    assert "hhhh" in error.reason
+    assert error.reason.endswith("…")
+    assert len(error.reason) <= len("not valid YAML: ") + ECHO_LIMIT
 
 
 @pytest.mark.parametrize("text", ["012", "-01", "01.5", ".5", "1.", "+007"])
@@ -265,3 +272,59 @@ def test_records_line_of_each_key_when_json_loaded() -> None:
         ("nodes", 0): 4,
         ("nodes", 0, "id"): 4,
     }
+
+
+def _nested(depth: int, items: int) -> bytes:
+    """``a: {a: … [items] }`` nested ``depth`` mappings deep, in flow style."""
+    leaf = "[" + ", ".join(str(n) for n in range(items)) + "]"
+    return ("a: " + "{a: " * (depth - 1) + leaf + "}" * (depth - 1) + "\n").encode()
+
+
+def test_bounds_key_lines_when_document_is_deep_and_wide() -> None:
+    lines = load_workflow_bytes(_nested(50, 1_000), source="w.yaml").lines
+
+    assert len(lines) <= MAX_LINE_ENTRIES
+    assert all(len(path) <= MAX_LINE_DEPTH for path in lines)
+    assert ("a",) * MAX_LINE_DEPTH in lines
+
+
+def test_keeps_shallow_lines_first_when_entry_cap_reached() -> None:
+    content = b"version: 1\nitems:\n" + b"  - 1\n" * (MAX_LINE_ENTRIES + 500) + b"tail: 2\n"
+
+    lines = load_workflow_bytes(content, source="w.yaml").lines
+
+    assert len(lines) == MAX_LINE_ENTRIES
+    assert lines[("tail",)] == MAX_LINE_ENTRIES + 503
+    assert lines[("items", 0)] == 3
+
+
+def test_records_lines_when_json_is_tab_indented() -> None:
+    content = b'{\n\t"version": 1,\n\t"nodes": [\n\t\t{"id": "a"}\n\t]\n}\n'
+
+    lines = load_workflow_bytes(content, source="w.json").lines
+
+    assert dict(lines) == {
+        (): 1,
+        ("version",): 2,
+        ("nodes",): 3,
+        ("nodes", 0): 4,
+        ("nodes", 0, "id"): 4,
+    }
+
+
+@pytest.mark.parametrize("odd", ["\x7f", "\x85", "\u2028", "\u2029"])
+def test_leaves_lines_empty_when_json_text_defeats_composer(odd: str) -> None:
+    content = f'{{\n"a": "x{odd}y",\n"b": 1\n}}\n'.encode()
+
+    loaded = load_workflow_bytes(content, source="w.json")
+
+    assert loaded.document == {"a": f"x{odd}y", "b": 1}
+    assert dict(loaded.lines) == {}
+
+
+@pytest.mark.parametrize(
+    ("content", "line"),
+    [(b"a: 1\r\nb: 2\rc: \x00\n", 3), (b"a: 1\r\n\r\nb: \x01\n", 3), (b"a: \xc2\x85b: \x00\n", 2)],
+)
+def test_counts_breaks_as_marks_do_when_control_character_given(content: bytes, line: int) -> None:
+    assert _refusal(content).line == line
