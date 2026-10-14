@@ -1,6 +1,6 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
@@ -198,6 +198,61 @@ describe("AgentSessionScreen (layout)", () => {
     const list = within(header).getByRole("region", { name: "Todo list" });
     expect(list.querySelector("details")).not.toHaveAttribute("open");
     expect(within(list).getByText(/0 of 1 done/)).toBeVisible();
+  });
+});
+
+/** jsdom lays nothing out: a 1000 px transcript in a 400 px scroller, frames run at once. */
+function stubScrolling() {
+  vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(1000);
+  vi.spyOn(Element.prototype, "clientHeight", "get").mockReturnValue(400);
+  vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockReturnValue(300);
+  const writes = vi.spyOn(Element.prototype, "scrollTop", "set");
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    callback(0);
+    return 1;
+  });
+  return writes;
+}
+
+describe("AgentSessionScreen (open-position)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("opens the saved transcript at its latest entry", async () => {
+    const writes = stubScrolling();
+    renderChat();
+    const conversation = await screen.findByRole("log", { name: "Conversation" });
+
+    const scroller = conversation.closest(".as-scroll");
+    await waitFor(() => {
+      expect(writes.mock.contexts).toContain(scroller);
+    });
+    expect(writes).toHaveBeenLastCalledWith(1000);
+  });
+
+  it("opens at the oldest pending permission card when one waits", async () => {
+    const writes = stubScrolling();
+    const older = aLogRecord("permission.request", { seq: 4 });
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "waiting_permission",
+          last_seq: 4,
+          open_permission: aPermissionRequest({ request_id: "req-2", summary: "ls" }),
+        }),
+        [EVENTS]: { items: [...log(), older], next_after: null },
+      }),
+    );
+
+    const cards = await screen.findAllByRole("region", { name: /Claude wants to use Bash/ });
+    expect(cards).toHaveLength(2);
+    const scroller = cards[0]?.closest(".as-scroll");
+    await waitFor(() => {
+      expect(writes.mock.contexts).toContain(scroller);
+    });
+    // The first card's top, less a 16 px margin; never the bottom.
+    expect(writes.mock.calls).toEqual([[284]]);
   });
 });
 
