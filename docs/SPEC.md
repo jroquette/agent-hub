@@ -541,6 +541,9 @@ before anything is appended, and the data stays on the machine in v1:
 | `gate.request`, `gate.result` | `gate_id`, `kind`, `name`, `command`, `path`, `rule`, `feature`, `result`, `exit_code`, `duration_ms`, `approver`, `where`, `issue`, `repo`, `mode` |
 | `learning.proposed`, `.accepted`, `.rejected` | `text` (title, 120), `target`, `author`, `proposal`, `brain_path`, `commit`, `reason`, `provenance`; an app decision adds `pr_url`, `branch` and `state` |
 | `step.start`, `step.end`, `run.end` | `issue`, `repo`, `status`, `stage`, `reason`, `caps` (`budget`, `max_turns`, `model`, `transport`), `pr_url`, `cost_usd`, `mode`, `outcome` (`run.end`: `delivered`, `no_changes`, `blocked` or `failed`, AGH-140) |
+| `step.end` from the workflow engine ([ADR 0032](adr/0032-workflow-engine.md)) | `failure_kind` (`transient`, `timeout`, `rate_limited`, `overloaded`, `exec_failed`, `output_contract`, `max_iterations`, `unknown`, `config`, `auth`, `cancelled`, `fatal`), `skip_cause` (`upstream_failed`, `upstream_skipped`, `condition`, `condition_parse_error`, `prior_success`) |
+| `run.end` from the workflow engine | `outcome` (the `returns` node's `outcome_field` value, stored as JSON: a boolean or an enum string; issue-to-pr keeps the four above); `reason` holds only engine-made metadata (a kind, an origin node id), never rendered or human text |
+| `step.start`, `run.end` from the workflow engine | `revision` (the document's integer), `content_hash` (`sha256:` + 64 hex) |
 | `session.summary` | `text`, `lines` |
 
 Note, spec, plan and brain text is read from the hub on request and never stored or logged; a learning's summary
@@ -598,7 +601,7 @@ The MVP goes up to Phase 2: generate hubs from Loki and see the agents' sessions
 | 1 · Hub generator (MVP) | First, `hub init` generating the platform's own hub; then extract brain, rules, launcher, worktrees, brief and plugin; `hub sync` (with `--adopt`) and `hub doctor` | Loki hub recreated, same `make check` and bench |
 | 2 · Read-only observability (MVP) | Hooks and transcripts collector, session timeline, portfolio and live sessions | Sessions of both projects live and in history |
 | 3 · Knowledge and decisions | Provenance in the brain, inbox triage in the UI (accept and reject moved to Phase 2 by AGH-201; snooze stays here), extracted decisions, learning metrics | One learning traced from the session to the rule |
-| 4 · Workflows as data and actions | Generic executor reading the workflow, gates approved from the UI, adapters for other agents | — |
+| 4 · Workflows as data and actions | Generic executor reading the workflow ([ADR 0032](adr/0032-workflow-engine.md)), gates approved from the UI, adapters for other agents | — |
 
 Status (2026-10-14, latest release v0.14.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
 Phase 1 in progress: `init`, `sync` (`--adopt`), `doctor`, `worktree`, `brief`, `agent`, `next`, `run` and `bench`
@@ -627,11 +630,11 @@ The recommendations are a starting point.
 
 **1. Workflow: declarative YAML executed by a Python engine.**
 
-- The workflow is a declarative document (YAML or JSON) validated by a Pydantic schema. It holds the steps, the type of each one (`agent`, `script`, `gate`, `human`), inputs, outputs, limits and what to execute.
+- The workflow is a declarative document (YAML or JSON) validated by a Pydantic schema. It holds the nodes, the type of each one (`agent`, `shell`, `script`, `loop`, `loop_group`, `approval`, `wait`, `halt`, `include`), their joins and conditions, inputs, outputs and what to execute.
 - A deterministic Python engine reads the document and drives the steps. Orchestration spends no tokens: the LLM only runs inside `agent` steps and only receives that step's instruction, not the whole workflow.
 - Deterministic work (tests, lint, contract sync, opening a PR) becomes a `script` step, with no LLM.
 - The UI edits the same document. It is stored on the platform with a version and history, and each execution records the workflow version it used.
-- The format and the minimum engine (`agent`, `script`, `gate`; `human` is refused at load until UI approvals exist) are in [ADR 0027](adr/0027-workflow-format-and-minimum-engine.md) and [docs/design/workflow-schema.md](design/workflow-schema.md).
+- The format and the engine: [ADR 0032](adr/0032-workflow-engine.md) (proposed; it supersedes [ADR 0027](adr/0027-workflow-format-and-minimum-engine.md) and keeps its invariants) and [docs/design/workflow-schema.md](design/workflow-schema.md).
 
 **2. Brain: stays in the hub repo, which is private and ours only.**
 
