@@ -253,11 +253,13 @@ test("Feature detail Tickets tab shows the plan's tickets, planning and the not-
 
 // AGH-165 (AC-165.47, E14): the installed `hub web` drives the stub `claude` on its PATH. The
 // printed token became the cookie (beforeEach), "New session" starts a session in the demo hub, the
-// permission card survives a reload, and the transcript survives one after the answer. Run alone
-// by test_survives_reload_when_session_driven_agent_session (it needs SMOKE_TOKEN).
+// permission card survives a reload, a message goes through the composer after the answer, and
+// the transcript survives a reload. Run alone by
+// test_survives_reload_when_session_driven_agent_session (it needs SMOKE_TOKEN).
 const AGENT_PROMPT = "Run the build.";
+const AGENT_FOLLOW_UP = "Now run the tests.";
 
-test("Agent session started from Sessions survives a reload while waiting and after the answer", async ({
+test("Agent session started from Sessions survives a reload while waiting and after the answer and a message", async ({
   page,
   baseURL,
 }) => {
@@ -278,9 +280,15 @@ test("Agent session started from Sessions survives a reload while waiting and af
   await page.reload();
   await page.getByRole("button", { name: "Allow once" }).click();
   await expect(conversation.getByText("The build ran.")).toBeVisible();
+  const composer = page.getByRole("form", { name: "Message composer" });
+  await composer.getByLabel("Message Claude").fill(AGENT_FOLLOW_UP);
+  await composer.getByRole("button", { name: "Send" }).click();
+  await expect(conversation.getByText("The tests ran.")).toBeVisible();
   await page.reload();
   await expect(conversation.getByText("The build ran.")).toBeVisible();
   await expect(conversation.getByText(AGENT_PROMPT)).toBeVisible();
+  await expect(conversation.getByText(AGENT_FOLLOW_UP)).toBeVisible();
+  await expect(conversation.getByText("The tests ran.")).toBeVisible();
   await expectAccessible(page);
   expect(problems).toEqual([]);
 });
