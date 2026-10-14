@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -206,12 +206,24 @@ function stubScrolling() {
   vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(1000);
   vi.spyOn(Element.prototype, "clientHeight", "get").mockReturnValue(400);
   vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockReturnValue(300);
-  const writes = vi.spyOn(Element.prototype, "scrollTop", "set");
+  const writes = vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation((value) => {
+    scrolled.top = Math.min(value, 600);
+  });
+  vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(() => scrolled.top);
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
     callback(0);
     return 1;
   });
   return writes;
+}
+
+/** The one scroll position stubScrolling's elements share. */
+const scrolled = { top: 0 };
+
+/** The reader scrolls the transcript up to `top`. */
+function scrollUp(scroller: Element, top = 100) {
+  scrolled.top = top;
+  fireEvent.scroll(scroller);
 }
 
 describe("AgentSessionScreen (open-position)", () => {
@@ -253,6 +265,71 @@ describe("AgentSessionScreen (open-position)", () => {
     });
     // The first card's top, less a 16 px margin; never the bottom.
     expect(writes.mock.calls).toEqual([[284]]);
+  });
+});
+
+describe("AgentSessionScreen (jump-to-latest)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    scrolled.top = 0;
+  });
+
+  async function detachedChat() {
+    stubScrolling();
+    const view = renderChat();
+    const conversation = await screen.findByRole("log", { name: "Conversation" });
+    const scroller = conversation.closest(".as-scroll");
+    if (!scroller) throw new Error("no scroller");
+    await waitFor(() => {
+      expect(scrolled.top).toBe(600);
+    });
+    expect(screen.queryByRole("button", { name: /Jump to latest/ })).toBeNull();
+    scrollUp(scroller);
+    return { view, scroller };
+  }
+
+  it("counts the entries that arrive while detached and jumps to the latest", async () => {
+    const { view, scroller } = await detachedChat();
+    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeInTheDocument();
+
+    act(() => {
+      const source = view.stream(STREAM);
+      source.emit("record.user.message", aLogRecord("user.message", { seq: 4 }), "4");
+      source.emit(
+        "record.text",
+        aLogRecord("text", { seq: 5, body: { block: 1, text: "On it." } }),
+        "5",
+      );
+      source.emit("record.tool.call", aLogRecord("tool.call", { seq: 6 }), "6");
+    });
+    expect(scrolled.top).toBe(100);
+    const jump = screen.getByRole("button", { name: "Jump to latest, 3 new" });
+    expect(jump).toHaveTextContent("Jump to latest · 3 new");
+
+    await userEvent.click(jump);
+
+    expect(scrolled.top).toBe(600);
+    expect(screen.queryByRole("button", { name: /Jump to latest/ })).toBeNull();
+    scrollUp(scroller);
+    expect(screen.getByRole("button", { name: "Jump to latest" })).toBeInTheDocument();
+  });
+
+  it("jumps with End in the transcript, smoothly unless the reader asks for less motion", async () => {
+    const { scroller } = await detachedChat();
+    const smooth = vi.fn();
+    Object.defineProperty(scroller, "scrollTo", { value: smooth, configurable: true });
+
+    fireEvent.keyDown(scroller, { key: "End" });
+
+    expect(smooth).toHaveBeenCalledWith({ top: 1000, behavior: "smooth" });
+    expect(screen.queryByRole("button", { name: /Jump to latest/ })).toBeNull();
+
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("reduce") }));
+    scrollUp(scroller, 50);
+    await userEvent.click(screen.getByRole("button", { name: "Jump to latest" }));
+
+    expect(smooth).toHaveBeenCalledTimes(1);
+    expect(scrolled.top).toBe(600);
   });
 });
 
