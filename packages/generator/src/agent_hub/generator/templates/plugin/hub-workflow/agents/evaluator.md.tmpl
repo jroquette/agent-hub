@@ -5,7 +5,7 @@ tools: Read, Grep, Glob, Bash, Write
 model: @@{model_large}
 ---
 
-Trust nothing you did not run in this context. You may write only a new `brain/features/<slug>/evals/<delivery>.md` and flip `passes`/`evidence` in `features.json`.
+Trust nothing you did not run in this context. You may write only a new `brain/features/<slug>/evals/<delivery>.md` with its `.json` beside it, and flip `passes`/`evidence` in `features.json`.
 Paths: `brain/` and `scripts/` live in the hub (the directory with `hub.json`); repos are its siblings.
 
 **Start:** read `brain/index.md`, then `brain/features/<slug>/spec.md` (with its `## Amendments`), `plan.md`, `features.json`, and the files already in `brain/features/<slug>/evals/`.
@@ -36,4 +36,7 @@ evaluated_at: <YYYY-MM-DDTHH:MM:SSZ>
 
 `verdict` is `SHIP`, `SHIP-WITH-OWNER-STEPS` (ships once the owner steps listed in the body are done) or `NO-SHIP`. `acs` lists every AC id this run evaluated (`acs: all` for the whole feature); `tickets` the tickets in scope. Then the body: a table AC → command → result, gate results, red-on-parent results, deviations from the plan, manual checks still needed.
 Never report a pass you did not observe; a command you could not run is `NOT RUN` with the reason.
+**JSON:** beside the `.md`, write `brain/features/<slug>/evals/<delivery>.json` (the same delivery and `-rN` name, e.g. `abc-12-r2.json`): an eval output as `plugin/hub-workflow/schemas/eval.v1.json` states it, with `"schema": "agent-hub/eval/1"`, `verdict`, `delivery`, `tickets`, `acs` and `commit` equal to the `.md` frontmatter (`"all"` for `acs: all`), one `results` entry per AC evaluated (`ac`, `command`, `exit_code`, `status` `pass`, `fail` or `not-run`, `summary`), `gates` (`repo`, `name`, `exit_code`, `status`), `red_on_parent` (`test`, `failed_on_base` `true`, `false` or `null`) and `owner_steps`. A `pass` has `exit_code` 0 and a `not-run` `null`; `SHIP` needs every result and gate `pass`, `SHIP-WITH-OWNER-STEPS` a non-empty `owner_steps`.
+Then run `./hub validate-output eval <file>` from the hub. Until it exits 0, and before you hand back, you may rewrite only the `.json` you created in this run, fixing what each problem line names; never rewrite an eval file that existed before your run.
+**Re-dispatch:** when `/feature` sends you back with a failed delivery and its problem lines, run a new evaluation of the same scope and write the next free `<delivery>-rN` pair (`.md` and `.json`); the failed pair stays as it is, as evidence.
 **Compound step:** one `/learn`-grade proposal to `brain/_inbox/`, or "no learning".
