@@ -19,6 +19,7 @@ agent-session tables; ``SessionRuntime`` sweeps and shuts them down with the app
 container (``settings.sessions_off``, L2) none of it is built.
 """
 
+import ipaddress
 import os
 import threading
 import time
@@ -380,8 +381,14 @@ def claude_adapters(environ: Mapping[str, str]) -> tuple[SessionDriver, CloudLau
 
 
 def web_url(settings: ApiSettings) -> str:
-    """The loopback URL the children reach ``hub web`` at (``AGENT_HUB_WEB_URL``)."""
-    return f"http://127.0.0.1:{settings.port}"
+    """The URL the children reach ``hub web`` at (``AGENT_HUB_WEB_URL``): the bound address
+    and port, an IPv6 one in brackets; a bind on every address (the container's) is reached at
+    127.0.0.1."""
+    host = settings.bound_host
+    if ipaddress.ip_address(host).is_unspecified:
+        host = "127.0.0.1"
+    shown = f"[{host}]" if ":" in host else host
+    return f"http://{shown}:{settings.port}"
 
 
 @dataclass(frozen=True)

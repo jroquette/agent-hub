@@ -23,7 +23,9 @@ class ApiSettings:
 
     ``session_token`` is this launch's token for the agent-session routes (None: every such
     route answers 401; hidden from ``repr`` so it never reaches a log), ``sessions_off`` turns
-    those routes off (404, the container, L2) and ``limits`` bounds the sessions (P14)."""
+    those routes off (404, the container, L2) and ``limits`` bounds the sessions (P14).
+    ``bound_host`` is the address the socket listens on, so the sessions' children reach this
+    server where it really listens (``AGENT_HUB_WEB_URL``)."""
 
     db_path: Path
     registry_path: Path
@@ -34,3 +36,4 @@ class ApiSettings:
     session_token: str | None = field(default=None, repr=False)
     sessions_off: bool = False
     limits: SessionLimits = field(default_factory=SessionLimits)
+    bound_host: str = "127.0.0.1"

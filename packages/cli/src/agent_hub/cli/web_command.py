@@ -285,6 +285,7 @@ def web(
         session_token=None if in_container else mint_token(),
         sessions_off=in_container,
         limits=limits,
+        bound_host=bound,
     )
     try:
         app = build_app(settings, projects_root=projects_root, read_git=_git_reader)
