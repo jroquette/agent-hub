@@ -68,6 +68,7 @@ hub init --config hub.json   # generates from an existing project config
 hub sync [--check]   # reapplies templates without overwriting what the project customized (--check: plan only)
 hub sync --adopt [--accept PATH]…   # joins a hand-made hub: identical files become managed, differences are listed
 hub doctor [--only RULE]… [--json]   # checks rules, links, dead references and instruction size
+hub validate-output review|eval FILE   # checks one agent JSON output: a review round or an eval
 hub setup [--yes]   # onboards this machine: clones or fetches the repos, writes hub.local.json after confirmation, lists what is missing
 hub worktree NAME [--only REPO] [--remove] [--no-fetch]   # isolated worktrees for one task (--remove removes them; --no-fetch starts from the already-fetched base)
 hub start ISSUE [--repo DIR]… [--no-agent]   # issue to worktrees, In Progress and a claude session (resumes)
@@ -99,6 +100,16 @@ events with the same all-or-nothing rule; their events name no project of their 
 `hub.json` of the hub folder they run in. FILE, `--transcript` and `--runs` exclude each other (exit 2). `hub run`
 also appends its executor events to the same store as it writes each record; an unwritable store prints one
 `hub run: event store unavailable: <reason>` line and the run carries on.
+
+`hub validate-output review|eval FILE` checks one agent JSON output against its versioned schema
+(`agent-hub/review/1`, `agent-hub/eval/1`) and its cross-field rules, reporting every violation in one run. A `review`
+file is a reviewer's round, `reviews/<ticket>/<reviewer>-r<N>.json`; an `eval` file is `evals/<delivery>.json`, checked
+against its sibling `evals/<delivery>.md` (a missing sibling is a problem) and, when the folder above `evals/` holds
+one, the feature record `features.json`, whose live ACs scope the results (without it, only the document is checked).
+Each input is read as a regular file, at most its bound, and links are never followed. Exit 0 prints `<file>: valid`;
+exit 1 prints one line per problem, `<file>: <json path>: <message>`, the first 200 then `<file>: … and <N> more
+problems (<T> in total)`, or one line naming an input that could not be read; a usage error (a kind other than
+`review` or `eval`, no file) exits 2 before any read. It needs no `hub.json`, writes nothing and makes no network call.
 
 `hub web` serves the control plane from one local process ([Layer 2](#layer-2-control-plane-and-observability)): the
 `/api/v1` REST and SSE API ([API.md](API.md)) and the committed build of the web app, from the database `hub collect`
