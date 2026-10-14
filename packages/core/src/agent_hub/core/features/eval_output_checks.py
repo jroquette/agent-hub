@@ -8,7 +8,8 @@ repeated ``tickets`` and ``acs`` items, the file stem against ``delivery``, then
 ``evals/<stem>.md`` (missing, malformed, or per field: ``verdict``, ``tickets``, ``acs``,
 ``commit``). ``NO-SHIP`` is free, and ``red_on_parent`` gates no verdict (D11). The sibling is
 read as ``feature_evals`` reads every eval record, from its first ``EVAL_HEAD_BYTES``; its
-``delivery`` is its file stem by that rule, so the stem check covers it.
+``delivery`` is its file stem by that rule, so the stem check covers it. A malformed sibling's
+problem, which may echo a value, is relayed cut to ``ECHO_LIMIT``.
 """
 
 import json
@@ -175,7 +176,7 @@ def _sibling_problems(
     )
     (sibling,) = eval_records((head,), None, slug="-")
     if sibling.problem is not None:
-        yield OutputProblem(ROOT_PATH, f"{name}: {sibling.problem}")
+        yield OutputProblem(ROOT_PATH, f"{name}: {echo(sibling.problem)}")
         return
     for key, rule in _SIBLING_FIELDS:
         yield from _field_problems(document.get(key), key=key, rule=rule, sibling=(name, sibling))
