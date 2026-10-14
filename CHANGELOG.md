@@ -13,6 +13,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub validate-output review|eval FILE` checks one agent JSON output, a reviewer's
+  `reviews/<ticket>/<reviewer>-r<N>.json` or the evaluator's `evals/<delivery>.json` (with its sibling `.md` and the
+  feature's `features.json`), against its versioned schema and cross-field rules: exit 0 `<file>: valid`, exit 1 with
+  one line per problem (the first 200, then the total), exit 2 on a usage error. Links are never followed and no
+  `hub.json` is needed. `hub sync` now ships the two JSON Schemas to `plugin/hub-workflow/schemas/review.v1.json` and
+  `eval.v1.json` (managed, run `hub sync` after the bump) (AGH-139).
 - `hub doctor` (`features.tracker`) warns on a feature's agent outputs, `evals/*.json` and `reviews/<ticket>/*.json`:
   one without its `.md` record, or one that fails validation, with its problem count, its first problem and the
   `./hub validate-output` command that lists them all. Warnings only; one validation budget per run, and an info line counts the outputs it skipped (AGH-139).

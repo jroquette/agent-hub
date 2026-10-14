@@ -17,6 +17,13 @@ from agent_hub.generator.render_hub import render_hub
 
 GENERATOR_PACKAGE = "agent_hub.generator"
 TEMPLATES_FOLDER = "templates"
+OUTPUT_SCHEMA_PACKAGE = "agent_hub.core.features"
+# The entries whose bytes are core's package data, copied verbatim (AGH-139 plan P2).
+CORE_SOURCES: dict[str, tuple[str, str]] = {
+    "hub.schema.json": (SCHEMA_PACKAGE, SCHEMA_FILE),
+    "plugin/hub-workflow/schemas/eval.v1.json": (OUTPUT_SCHEMA_PACKAGE, "eval.v1.json"),
+    "plugin/hub-workflow/schemas/review.v1.json": (OUTPUT_SCHEMA_PACKAGE, "review.v1.json"),
+}
 
 # AC-3.11: the D5 path set, transcribed from docs/design/hub-generator.md § Classification and
 # rendering. Each row cites the table row it comes from; every entry has no module (AC-3.12).
@@ -97,6 +104,9 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "plugin/hub-workflow/hooks/session_start.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/stdlib_reader.py": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/hooks/stop_gate.py": (Kind.GENERIC, Ownership.MANAGED, None),
+    # AGH-139 D5, S8: the agent output JSON schemas, core's package data copied verbatim.
+    "plugin/hub-workflow/schemas/eval.v1.json": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/schemas/review.v1.json": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/adr/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/create-plan/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/deliver/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
@@ -272,15 +282,31 @@ def test_finds_every_source_when_package_data_read() -> None:
             assert not entry.verbatim, entry.path
             continue
         package, name = entry.source
-        if entry.path == "hub.schema.json":
+        if entry.path in CORE_SOURCES:
             # Spec Q2: core's shipped schema, copied verbatim, never a second copy here.
-            assert (package, name) == (SCHEMA_PACKAGE, SCHEMA_FILE)
+            assert (package, name) == CORE_SOURCES[entry.path]
             assert entry.verbatim
         else:
             assert package == GENERATOR_PACKAGE
             assert name.startswith(f"{TEMPLATES_FOLDER}/")
             assert not entry.verbatim
         assert files(package).joinpath(*name.split("/")).is_file(), name
+
+
+def test_sources_output_schema_from_core_when_registry_read() -> None:
+    entries = {entry.path: entry for entry in REGISTRY}
+
+    for kind in ("eval", "review"):
+        entry = entries[f"plugin/hub-workflow/schemas/{kind}.v1.json"]
+        assert entry.source == TemplateSource(OUTPUT_SCHEMA_PACKAGE, f"{kind}.v1.json")
+        assert entry.build is None
+        assert entry.verbatim
+        assert (entry.kind, entry.ownership, entry.module, entry.executable) == (
+            Kind.GENERIC,
+            Ownership.MANAGED,
+            None,
+            False,
+        )
 
 
 def test_names_no_dotted_source_when_registry_walked() -> None:
