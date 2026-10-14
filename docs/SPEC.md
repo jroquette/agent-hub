@@ -542,7 +542,7 @@ before anything is appended, and the data stays on the machine in v1:
 | `learning.proposed`, `.accepted`, `.rejected` | `text` (title, 120), `target`, `author`, `proposal`, `brain_path`, `commit`, `reason`, `provenance`; an app decision adds `pr_url`, `branch` and `state` |
 | `step.start`, `step.end`, `run.end` | `issue`, `repo`, `status`, `stage`, `reason`, `caps` (`budget`, `max_turns`, `model`, `transport`), `pr_url`, `cost_usd`, `mode`, `outcome` (`run.end`: `delivered`, `no_changes`, `blocked` or `failed`, AGH-140) |
 | `step.end` from the workflow engine ([ADR 0032](adr/0032-workflow-engine.md)) | `failure_kind` (`transient`, `timeout`, `rate_limited`, `overloaded`, `exec_failed`, `output_contract`, `max_iterations`, `unknown`, `config`, `auth`, `cancelled`, `fatal`), `skip_cause` (`upstream_failed`, `upstream_skipped`, `condition`, `condition_parse_error`, `prior_success`) |
-| `run.end` from the workflow engine | `outcome` (the `returns` node's `outcome_field` value: `true`, `false` or an enum value; issue-to-pr keeps the four above) |
+| `run.end` from the workflow engine | `outcome` (the `returns` node's `outcome_field` value, stored as JSON: a boolean or an enum string; issue-to-pr keeps the four above); `reason` holds only engine-made metadata (a kind, an origin node id), never rendered or human text |
 | `step.start`, `run.end` from the workflow engine | `revision` (the document's integer), `content_hash` (`sha256:` + 64 hex) |
 | `session.summary` | `text`, `lines` |
 
