@@ -7,7 +7,7 @@ a skill's detail under 100 ms, warm, with 200 skills beside the 10,000 events.
 
 Each read follows an append, so it folds again (the memo is keyed by the high-water mark): the
 budget holds while sessions are live, not only on a warm memo. The first read after start-up,
-which loads every event once, is left out.
+which loads every event once, is left out, and so is the first hook POST, the route's cold call.
 """
 
 import asyncio
@@ -96,8 +96,7 @@ def _hook_envelope(tool_use_id: str) -> dict[str, Any]:
 
 
 def test_answers_hook_within_budget_when_store_holds_ten_thousand_events(loaded: Any) -> None:
-    # One unmeasured hook warms the route's first-call path (cold on CI: 134 ms), not a read memo:
-    # a hook only appends, and its own tool_use_id keeps it apart from every sample.
+    # Unmeasured: warms the route's cold first call (134 ms on CI); a hook only appends, no memo.
     hooks = "/api/v1/events/hooks"
     assert loaded.client.post(hooks, json=_hook_envelope("toolu_perf_warmup")).status_code == 202
     samples: list[float] = []
