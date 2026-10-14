@@ -99,6 +99,7 @@ def test_fails_max_iterations_when_no_channel_is_met_by_the_cap() -> None:
     report, recorder = run(a_loop(until="DONE"), runner)
 
     assert fix_ends(recorder) == [(1, "ok", None), (2, "ok", None), (3, "failed", "max_iterations")]
+    assert recorder.end_of("fix").output == "c"
     assert recorder.end_of("after").skip_cause == "upstream_failed"
     assert report.status == "failed"
 
@@ -127,3 +128,27 @@ def test_retries_an_iteration_with_a_new_attempt_when_it_fails_transiently() -> 
 
     assert fix_ends(recorder) == [(1, "failed", "transient"), (2, "ok", None)]
     assert [call.iteration for call in runner.calls if call.node.id == "fix"] == [1, 1]
+
+
+def test_keeps_going_when_until_field_is_truthy_but_not_true() -> None:
+    loop = a_loop(until_field="done", output_format=DONE_SCHEMA)
+    runner = ScriptedRunner({"fix": ['{"done": "true"}', '{"done": 1}', '{"done": true}']})
+
+    report, recorder = run(loop, runner)
+
+    assert len(fix_ends(recorder)) == 3
+    assert report.status == "done"
+
+
+def test_restarts_from_the_first_turn_when_a_loop_is_retried() -> None:
+    loop = a_loop(until="DONE", max_iterations=2, retry={"max_attempts": 1, "on_error": "all"})
+    replies = [NodeReply(text, session=f"s{n}") for n, text in enumerate("abcd")]
+    runner = ScriptedRunner({"fix": replies})
+
+    _, recorder = run(loop, runner)
+
+    fix_calls = [call for call in runner.calls if call.node.id == "fix"]
+    assert [call.iteration for call in fix_calls] == [1, 2, 1, 2]
+    assert [call.resume_session for call in fix_calls] == [None, "s0", None, "s2"]
+    assert [status for _, status, _ in fix_ends(recorder)] == ["ok", "failed", "ok", "failed"]
+    assert [(retry.attempt, retry.kind) for _, retry in recorder.retries] == [(2, "max_iterations")]

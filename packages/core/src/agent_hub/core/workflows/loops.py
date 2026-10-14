@@ -41,8 +41,16 @@ def until_met(node: LoopNode, turn: Turn, until_exit: Callable[[], int]) -> bool
     return node.until_bash is not None and until_exit() == 0
 
 
-def check_turn(node: LoopNode, iteration: int, *, done: bool) -> None:
-    """Raise ``max_iterations`` when the last allowed turn did not end the loop."""
+class MaxIterationsError(NodeFailedError):
+    """The last allowed turn did not end the loop; ``output`` is that turn's, for the record."""
+
+    def __init__(self, detail: str, output: JsonValue) -> None:
+        super().__init__("max_iterations", detail)
+        self.output = output
+
+
+def check_turn(node: LoopNode, iteration: int, turn: Turn, *, done: bool) -> None:
+    """Raise ``MaxIterationsError`` when the last allowed turn did not end the loop."""
     if not done and iteration >= node.max_iterations:
         channels = [
             name
@@ -54,7 +62,7 @@ def check_turn(node: LoopNode, iteration: int, *, done: bool) -> None:
             if value is not None
         ]
         detail = f"{node.max_iterations} iterations met none of {', '.join(channels)}"
-        raise NodeFailedError("max_iterations", detail)
+        raise MaxIterationsError(detail, turn.output)
 
 
 def next_session(node: LoopNode, turn: Turn) -> str | None:
