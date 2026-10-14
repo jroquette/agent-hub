@@ -29,6 +29,7 @@ from agent_hub.core.workflows.catalog import (
 from agent_hub.generator.workflow_discovery import (
     BUILTIN_WORKFLOWS,
     HUB_WORKFLOWS,
+    WORKFLOW_SUFFIXES,
     discover_workflows,
 )
 
@@ -90,7 +91,10 @@ class _DiscoveredSource:
     def workflow_files(self) -> Iterator[WorkflowFile | LoadProblem]:
         discovery = discover_workflows(self.root, builtin_root=self.builtin_root)
         for problem in discovery.problems:
-            if self.only is None or problem.path.stem == self.only:
+            # A folder's problem (a linked workflows/, an unreadable pack, the file budget)
+            # bears on every name; a file's only on its own.
+            on_folder = problem.path.suffix not in WORKFLOW_SUFFIXES
+            if self.only is None or on_folder or problem.path.stem == self.only:
                 yield LoadProblem(
                     self._shown(problem.path), problem.line, ROOT_PATH, problem.reason
                 )
