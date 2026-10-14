@@ -9,19 +9,32 @@ budget holds while sessions are live, not only on a warm memo. The first read af
 which loads every event once, is left out.
 """
 
+import asyncio
+import http.client
+import json
 import math
 import statistics
+import threading
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from agent_hub.api.app import create_app
+from agent_hub.api.dependencies import ApiPorts
+from agent_hub.api.server import LoopbackServer, bind_loopback
+from agent_hub.api.session_token import cookie_name
+from agent_hub.core.agent_sessions.driver import DriverEvent, DriverHandle, TextBlock, TextDelta
 from agent_hub.core.events.event import Event
+from agent_hub.core.testing.agent_session_rig import build_rig
 from agent_hub.core.testing.builders import an_event
 from agent_hub.core.testing.hook_inputs import a_hook_input, an_envelope
+from agent_hub.core.testing.read_model_builders import WORKDIR_ID
+from agent_hub.core.testing.session_driver_fakes import InMemorySessionDriver
 from agent_hub.core.testing.session_scenarios import SCENARIO_START, a_session_events
 from agent_hub.tracker_linear.graphql_reader import BATCH_SIZE
 
@@ -225,3 +238,104 @@ def test_answers_tickets_within_budget_when_cache_warm_with_fifty_tickets(
     # One snapshot read, sent as batches of BATCH_SIZE ids: the warm samples call Linear no more.
     assert world.linear.count == math.ceil(TICKETS / BATCH_SIZE)
     assert _p95(samples) < TICKETS_P95_MS, samples
+
+
+# The agent-session stream (spec NFR, AC-165.51): a delta reaches the browser within 50 ms (p95)
+# and 100 ms (p99) of the driver emitting it, on a real loopback server, the deltas paced as a
+# model streams them (1 ms apart).
+
+DELTAS = 1_000
+DELTA_GAP_SECONDS = 0.001
+DELTA_P95_MS = 50
+DELTA_P99_MS = 100
+STREAM_TOKEN = "s" * 43
+
+
+class _StampingDriver(InMemorySessionDriver):
+    """The in-memory driver, noting when it emits each delta (keyed by its text)."""
+
+    def __init__(self, **options: Any) -> None:
+        super().__init__(**options)
+        self.emitted: dict[str, float] = {}
+
+    async def events(self, handle: DriverHandle) -> AsyncIterator[DriverEvent]:
+        async for event in super().events(handle):
+            if isinstance(event, TextDelta):
+                await asyncio.sleep(DELTA_GAP_SECONDS)
+                self.emitted[event.text] = time.perf_counter()
+            yield event
+
+
+def _request(port: int, method: str, path: str, *, body: object | None = None) -> Any:
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    headers = {
+        "Cookie": f"{cookie_name(port)}={STREAM_TOKEN}",
+        "Origin": f"http://127.0.0.1:{port}",
+        "Content-Type": "application/json",
+    }
+    connection.request(
+        method, path, body=None if body is None else json.dumps(body), headers=headers
+    )
+    return connection, connection.getresponse()
+
+
+def _arrivals(response: Any) -> dict[str, float]:
+    """When each delta of the stream arrives, until the turn's result."""
+    arrived: dict[str, float] = {}
+    event = ""
+    while True:
+        line = response.readline().decode("utf-8").rstrip("\n")
+        if line.startswith("event: "):
+            event = line.removeprefix("event: ")
+        elif line.startswith("data: ") and event == "delta":
+            arrived[json.loads(line.removeprefix("data: "))["text"]] = time.perf_counter()
+        elif line.startswith("data: ") and event == "record.result":
+            return arrived
+
+
+def test_streams_delta_within_budget_when_thousand_deltas_emitted_agent_session_stream(
+    api_settings: Any, web_dist: Path
+) -> None:
+    turn = tuple(TextDelta(block=0, index=n, text=f"d{n:04d} ") for n in range(DELTAS))
+    driver = _StampingDriver(replies={"Go.": (*turn, TextBlock(block=0, text="done"))})
+    rig = build_rig(driver=driver)
+    sock = bind_loopback(0)
+    port = sock.getsockname()[1]
+    settings = replace(api_settings, port=port, session_token=STREAM_TOKEN)
+    server = LoopbackServer(
+        create_app(settings, ports=ApiPorts(agent_sessions=rig.control), web_dist=web_dist), sock
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not server.started and time.monotonic() < deadline:
+            time.sleep(0.01)
+        base = "/api/v1/agent-sessions"
+        _, created = _request(
+            port, "POST", base, body={"project": "demo", "workdir_id": WORKDIR_ID}
+        )
+        session_id = json.loads(created.read())["id"]
+        stream_connection, stream = _request(port, "GET", f"{base}/{session_id}/stream")
+        assert stream.status == 200
+        assert stream.readline() == b"retry: 3000\n"
+        sender = threading.Thread(
+            target=lambda: _request(
+                port, "POST", f"{base}/{session_id}/messages", body={"text": "Go."}
+            )
+        )
+        sender.start()
+        arrived = _arrivals(stream)
+        sender.join(timeout=10)
+        stream_connection.close()
+        _request(port, "POST", f"{base}/{session_id}/close", body={})
+    finally:
+        server.stop()
+        thread.join(timeout=10)
+
+    assert len(arrived) == DELTAS
+    latencies = [(arrived[text] - driver.emitted[text]) * 1000 for text in arrived]
+    p95 = statistics.quantiles(latencies, n=100, method="inclusive")[94]
+    p99 = statistics.quantiles(latencies, n=100, method="inclusive")[98]
+    assert p95 < DELTA_P95_MS, (p95, p99)
+    assert p99 < DELTA_P99_MS, (p95, p99)
