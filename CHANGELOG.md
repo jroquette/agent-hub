@@ -11,6 +11,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- `hub workflow list` and `hub workflow validate [NAME]` load and plan the hub's `workflows/<pack>/` files (YAML through
+  the strict loader, or JSON), then the built-ins, against the graph workflow format (ADR 0032): unknown keys, unknown
+  or non-upstream node references, argv references that are not a whole element, cycles and a bad
+  `returns`/`outcome_field` are reported as `<file>:<line>: <key>: <message>`, exit 1 (AGH-218).
+
 ### Fixed
 
 - Releases are annotated tags again. The tags `v0.9.0` to `v0.14.0` were pushed as lightweight tags, so `release.yml`
