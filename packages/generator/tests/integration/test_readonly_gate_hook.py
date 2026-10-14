@@ -1532,3 +1532,37 @@ def test_folds_removed_notes_when_worktrees_removed_over_listed(
         "[hub readonly-gate] not checked (app/.claude/worktrees/agh-2: removed)",
         "[hub readonly-gate] not checked (… and 1 more removed)",
     ]
+
+
+def test_blocks_when_main_checkout_is_symlink(
+    gate: Gate, gate_ws: GateWorkspace, tmp_path: Path
+) -> None:
+    """A repo dir of the workspace may be a link to a checkout elsewhere (``ws/app ->
+    ~/code/app``): it is watched like any main checkout, so the agent's change is named."""
+    code = tmp_path / "code"
+    code.mkdir()
+    gate_ws.app.rename(code / "app")
+    gate_ws.app.symlink_to(code / "app")
+    assert gate_ws.app.is_symlink()  # control: the workspace holds a link
+
+    output = run_agent(gate, "researcher", lambda: change_app(gate_ws))
+
+    assert reason_lines(output) == [agent_head("researcher"), "- app/a.py", REVERT]
+
+
+def test_stays_silent_when_unignored_worktrees_folder_gets_plain_file(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """The ``.claude/worktrees/`` drop: in a repo that does not ignore that folder, a plain file
+    written there (no task worktree) is never a changed path of the main checkout."""
+    unignore_worktrees(gate_ws)
+    stray = gate_ws.app / ".claude" / "worktrees" / "stray.txt"
+
+    def change() -> None:
+        stray.parent.mkdir(parents=True)
+        stray.write_text("x\n", encoding="utf-8")
+        status = git_output(gate_ws, "status", "--porcelain", "-uall", cwd=gate_ws.app)
+        assert status.splitlines() == ["?? .claude/worktrees/stray.txt"]  # control: git lists it
+
+    assert run_agent(gate, "researcher", change) is None
+    assert state_files(gate_ws) == []
