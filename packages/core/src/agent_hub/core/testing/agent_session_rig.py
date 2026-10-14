@@ -87,10 +87,11 @@ def build_rig(
     limits: SessionLimits | None = None,
     past_sessions: Sequence[PastSession] = (),
     driver: InMemorySessionDriver | None = None,
+    store: InMemoryAgentSessionStore | None = None,
 ) -> Rig:
     """A rig; ``replies`` script the fake driver per user message."""
     fake = driver or InMemorySessionDriver(replies=replies, past_sessions=past_sessions)
-    store = InMemoryAgentSessionStore()
+    store = store or InMemoryAgentSessionStore()
     clock = Clock()
     control = AgentSessionControl(
         fake,
