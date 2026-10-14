@@ -267,6 +267,26 @@
           "title": "Deny Paths",
           "type": "array"
         },
+        "readable_env_files": {
+          "default": [],
+          "description": "Env file names (.env.<suffix>) the guard does not treat as secret, on top of its fixed list (.env.example, .env.sample, ...).",
+          "items": {
+            "pattern": "^\\.env\\.[A-Za-z0-9_.-]+$",
+            "type": "string"
+          },
+          "title": "Readable Env Files",
+          "type": "array"
+        },
+        "secret_env_files": {
+          "default": [],
+          "description": "Env file names (.env.<suffix>) the guard always treats as secret, even when its fixed list or readable_env_files names them.",
+          "items": {
+            "pattern": "^\\.env\\.[A-Za-z0-9_.-]+$",
+            "type": "string"
+          },
+          "title": "Secret Env Files",
+          "type": "array"
+        },
         "infra": {
           "$ref": "#/$defs/GuardInfra",
           "description": "Turns on the guard's infra classification: Python re patterns, searched with no flags. Absent: the fixed infra rule."

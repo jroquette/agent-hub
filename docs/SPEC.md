@@ -218,6 +218,7 @@ today), and the CLI's model and the hooks' stdlib reader accept it in the same c
 | `platform.repository` | The platform's git source: the repository root as `git+https://<host>/<path>` (no credential, port, query, fragment, ref or trailing `/`; at most 200 characters). The shim, SessionStart and cloud setup read it at every run and run `<repository>@v<platform.version>#subdirectory=packages/agent-hub`; the CI credential step reads it to map the read token; a bad value stops each of them and is never echoed; not settable in `hub.local.json`. Tokens stay on `github.com`: the CI step maps `AGENT_HUB_READ_TOKEN` only when the repository is on exactly `https://github.com/` (another host gets no token), and cloud setup's `GH_TOKEN` helper answers for `github.com` only, so a mirror on another host needs the repository attached or its own credential (follow-up) | `git+https://github.com/jroquette/agent-hub` | AGH-49 |
 | `project.conventions`, `repos[].conventions` | Patterns for the task branch (`{prefix}`, `{ISSUE}`, `{issue_lower}`, `{slug}`; needs the issue) and the commit and PR titles (`{ISSUE}`, `{type}`, `{scope}`, `{summary}`; needs `{summary}`); a repo's keys override the project's, key by key; `hub worktree`, `hub run`, its prompt and `AGENTS.md` follow them; not settable in `hub.local.json` | Today's shapes: `{prefix}{issue_lower}-{slug}`, `{type}({scope}): {summary} ({ISSUE})`; a `pr_title` that no layer sets follows the effective `commit_title` | AGH-57 |
 | `guard.infra.allow`, `guard.infra.prod_markers` | Regexes over infra commands (`aws`, `cdk`, `terraform`, `pulumi`, `kubectl`, `helm`, `sam`, `serverless`), checked by the guard per part of the command: a prod marker anywhere denies, an environment on the part itself that `allow` matches passes (deploy, destroy and delete verbs ask), a local-only form passes, anything else is denied; `guard.infra` present, even `{}`, turns it on (rule below), and the generated `.claude/settings.json` then drops its `Bash(terraform *)` and `Bash(aws *)` denies so the guard decides (run `./hub sync` after adding or removing it; a project re-adds them in `settings.project.json`); not settable in `hub.local.json` | The fixed infra rule: `terraform apply\|destroy\|import`, any `aws` subcommand, `pulumi up\|destroy`, `kubectl apply\|delete` and `cdk deploy\|destroy` (the verb right after `cdk`) are denied | AGH-45 |
+| `guard.readable_env_files`, `guard.secret_env_files` | Env file names (`.env.<suffix>`, never `.env` itself, a path or a key file) the guard stops treating as secret, on top of its fixed list (`.env.example`, …), or always treats as secret, even when that list or `readable_env_files` names one; a name in both is a schema error. A `hub.json` named by `$HUB_CONFIG` can add secret names but never release one; `hub doctor`'s `secrets.config` shows both lists as infos | The guard's fixed list | AGH-210 |
 | `tracker.states.started`, `tracker.states.review` | The workflow state names: `hub start` moves an issue to `started` on a fresh start, or on a resume while it is unstarted; `review` is reserved for the review step and read by nothing yet; not settable in `hub.local.json` | `In Progress`, `In Review` | AGH-62 |
 | Developer identity: `project.author_name`, `author_email`, `branch_prefix` | Become optional. Effective value: the gitignored `hub.local.json`, else `hub.json`, else the hub repo's `git config user.name`/`user.email`; the prefix, when no file sets it, is the effective email's local part plus `/` (ADR 0016) | Set per developer, by `hub setup` in `hub.local.json`; `hub worktree`, `hub run` and `hub start` refuse without a prefix | AGH-65 |
 
@@ -402,6 +403,10 @@ Linear status ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md), records
 - **Evals per delivery.** Each evaluation is its own file, `brain/features/<slug>/evals/<delivery>.md`, with its
   scope in frontmatter (tickets, ACs, PRs, commit); none is overwritten. For each AC the latest eval naming it
   decides. A legacy `eval.md` is read as one delivery, `legacy`. The Eval tab lists every delivery.
+  Beside each `.md` the evaluator writes `evals/<delivery>.json` (`agent-hub/eval/1`), and `/feature` saves each
+  reviewer's JSON block to `reviews/<ticket>/<reviewer>-r<N>.json` (`agent-hub/review/1`); `/feature` gates review
+  and ship only on files `hub validate-output` accepts, re-asking a reviewer or re-dispatching the evaluator once
+  (ADR 0028).
 - **Spec amendments.** An approved spec is never rewritten: changes go in its `## Amendments` section, new ACs take
   the next free number, a withdrawn AC stays listed (`withdrawn: true` in `features.json`) and no id is renumbered.
   The planner, evaluator and requirements-analyst templates and `/feature` say so, and `hub doctor`'s
@@ -595,13 +600,13 @@ The MVP goes up to Phase 2: generate hubs from Loki and see the agents' sessions
 | 3 · Knowledge and decisions | Provenance in the brain, inbox triage in the UI (accept and reject moved to Phase 2 by AGH-201; snooze stays here), extracted decisions, learning metrics | One learning traced from the session to the rule |
 | 4 · Workflows as data and actions | Generic executor reading the workflow, gates approved from the UI, adapters for other agents | — |
 
-Status (2026-10-13, latest release v0.13.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
+Status (2026-10-14, latest release v0.14.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
 Phase 1 in progress: `init`, `sync` (`--adopt`), `doctor`, `worktree`, `brief`, `agent`, `next`, `run` and `bench`
 shipped in v0.8.0, and `setup`, `start` and `ship` in v0.9.0. Phase 2's first slice is shipped too: the control plane
 `hub web` (AGH-200) in v0.9.0 and its clarity pass (AGH-201: session labels, problems, learning accept and reject
 through hub PRs, the Brain browser and feature records) in v0.11.0, and ticket planning (AGH-136: tickets read
 from Linear, the golden path per feature, evals per delivery) in v0.13.0. Phase 4's session subset is delivered
-early and unreleased: `hub web` starts and drives Claude Code sessions (AGH-165); the generic executor, gate approvals
+early in v0.14.0: `hub web` starts and drives Claude Code sessions (AGH-165); the generic executor, gate approvals
 from the UI and other agents' adapters stay in Phase 4. The Phase 1 gate (Loki hub recreated) is open; pilot: AGH-54.
 
 The order follows dogfooding: the first generated hub is the platform's own, and the second replaces `loki-trader-hub`. Editable workflows come later because they depend on observation already showing where the current flow gets stuck.

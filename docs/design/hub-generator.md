@@ -68,7 +68,8 @@ else the hook root's (the hub or hub worktree holding the hook files; a worktree
 is its main checkout and the workspace that checkout's parent), else (plugin cache) the first found walking up from the
 start, a sibling hub only if the start is in it or a repo it lists. That file gives every value (repos, the stop gate's
 `check_fast`, SessionStart's `platform.version`, default branch, branch prefix, hub, workspace), except that
-`$HUB_CONFIG`'s `ask_before_edit`, `deny_paths` and `deny_hosts` are added to the hook root's, never replace them; for
+`$HUB_CONFIG`'s `ask_before_edit`, `deny_paths`, `deny_hosts` and `secret_env_files` are added to the hook root's, never
+replace them, and `readable_env_files` is the hook root's only; for
 `guard.infra`, the mode and `allow` are the hook root's only and `$HUB_CONFIG`'s `prod_markers` and unusable-value
 problem are added (in the plugin cache, the found file's `guard.infra` as is); the extension, `@hub/` anchors and
 guard-file asks stay pinned to the hook root. Only SessionStart calls the CLI, from the hub with `AGENT_HUB_ROOT` set:

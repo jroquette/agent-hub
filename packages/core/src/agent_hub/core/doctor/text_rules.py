@@ -1,5 +1,8 @@
 """``secrets.config`` and ``attribution.ai`` (spec AC-11.23, plan E11).
 
+``secrets.config`` also adds one info at ``hub.json`` per non-empty ``guard.readable_env_files``
+and ``guard.secret_env_files``, naming the env files the guard releases or always denies (AGH-210).
+
 The port of the hub's old config lint script's text checks. Each line (``text_lines``, E29)
 of the scanned files is searched for the old lint's nine secret shapes and three AI-attribution
 patterns; a finding names the kind at the file's line, never the text it matched.
@@ -27,6 +30,7 @@ from agent_hub.core.doctor.config_lint import (
     plugin_files,
     text_lines,
 )
+from agent_hub.core.doctor.config_rules import CONFIG_PATH
 from agent_hub.core.doctor.finding import Finding, Read, Rule
 from agent_hub.core.doctor.snapshot import DoctorSnapshot, HubFiles
 from agent_hub.core.hub_config.doctor_rules import (
@@ -49,6 +53,11 @@ EXTRA_FILES: Final = (
 )
 
 ROTATE_FIX: Final = "remove it and rotate the credential; reference an env var name instead"
+# AGH-210: the env files hub.json releases from, or adds to, the guard's secret files.
+READABLE_ENV_FILES: Final = "guard.readable_env_files lets agents read: {names}"
+READABLE_ENV_FILES_FIX: Final = "remove a name from guard.readable_env_files to deny it again"
+DENIED_ENV_FILES: Final = "guard.secret_env_files always denies: {names}"
+DENIED_ENV_FILES_FIX: Final = "none needed"
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -134,10 +143,29 @@ ATTRIBUTIONS: Final = (
 
 
 def _secrets_config(snapshot: DoctorSnapshot) -> Iterator[Finding]:
-    for path, line, kind in _flagged(snapshot.hub, config=snapshot.hub_config, shapes=SECRETS):
+    config = snapshot.hub_config
+    for path, line, kind in _flagged(snapshot.hub, config=config, shapes=SECRETS):
         yield SECRETS_CONFIG.finding(
             path=path, line=line, message=f"possible secret ({kind})", fix=ROTATE_FIX
         )
+    yield from _env_file_infos(config)
+
+
+def _env_file_infos(config: HubConfig) -> Iterator[Finding]:
+    """One info per non-empty env file list of ``guard``: what the guard releases or adds."""
+    for names, message, fix in (
+        (config.guard.readable_env_files, READABLE_ENV_FILES, READABLE_ENV_FILES_FIX),
+        (config.guard.secret_env_files, DENIED_ENV_FILES, DENIED_ENV_FILES_FIX),
+    ):
+        if names:
+            yield Finding(
+                rule=SECRETS_CONFIG_RULE,
+                severity=Severity.INFO,
+                path=CONFIG_PATH,
+                line=None,
+                message=message.format(names=cut_echo(", ".join(names))),
+                fix=fix,
+            )
 
 
 def _attribution_ai(snapshot: DoctorSnapshot) -> Iterator[Finding]:
