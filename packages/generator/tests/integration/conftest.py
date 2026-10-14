@@ -12,6 +12,7 @@ import contextlib
 import copy
 import datetime
 import difflib
+import functools
 import hashlib
 import json
 import os
@@ -72,8 +73,12 @@ def runs_python39(executable: str) -> bool:
     return completed.stdout.strip() == "True"
 
 
+@functools.cache
 def find_python39() -> str | None:
-    """The first of ``python3.9`` and ``python3`` on ``PATH`` that is Python 3.9."""
+    """The first of ``python3.9`` and ``python3`` on ``PATH`` that is Python 3.9.
+
+    Cached: ``PATH`` does not change during a run, and each probe starts an interpreter.
+    """
     for name in ("python3.9", "python3"):
         executable = shutil.which(name)
         if executable is not None and runs_python39(executable):

@@ -64,6 +64,9 @@ from agent_hub.core.testing.hook_inputs import a_hook_input
 from agent_hub.core.testing.run_lines import run_lines_failed_in_verify
 from tests.e2e.conftest import REPO_ROOT, InstalledHub, RunningWeb, StubClaude
 
+# The browser checks time budgets (a 5,000-event session under 2 s): run alone (make test-e2e).
+pytestmark = pytest.mark.serial
+
 WEB_DIR = REPO_ROOT / "apps" / "web"
 WEB_DIST = REPO_ROOT / "packages" / "api" / "src" / "agent_hub" / "api" / "web_dist"
 PLAYWRIGHT_SECONDS = 300
