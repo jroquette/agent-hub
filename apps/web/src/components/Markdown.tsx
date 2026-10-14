@@ -42,7 +42,7 @@ type Block =
   | { t: "para"; text: string }
   | { t: "code"; lang: string; text: string }
   | { t: "quote"; blocks: Block[] }
-  | { t: "list"; ordered: boolean; start: number; items: Block[][] }
+  | { t: "list"; ordered: boolean; start: number; indent: number; items: Block[][] }
   | { t: "table"; head: string[]; align: Align[]; rows: string[][] }
   | { t: "hr" }
   | { t: "text"; text: string };
@@ -162,7 +162,8 @@ function listAt(lines: string[], start: number) {
       if (sibling && (sibling[1] ?? "").length === indent) i = next;
     }
   }
-  return { ordered, start: ordered ? Number.parseInt(first?.[2] ?? "1", 10) : 1, items, end: i };
+  const number = ordered ? Number.parseInt(first?.[2] ?? "1", 10) : 1;
+  return { ordered, start: number, indent, items, end: i };
 }
 
 function parseBlocks(lines: string[], depth: Depth): Block[] {
@@ -231,6 +232,7 @@ function parseBlocks(lines: string[], depth: Depth): Block[] {
           t: "list",
           ordered: list.ordered,
           start: list.start,
+          indent: list.indent,
           items: list.items.map((item) => parseBlocks(item, inner)),
         });
       }
@@ -572,9 +574,12 @@ function headingId(text: string, ctx: Ctx): string | undefined {
   return uniqueAnchor(ctx.ids, text) ?? undefined;
 }
 
-/** The id of a list item: `step-<n>` for an item of a top-level ordered list when steps are on. */
+/**
+ * The id of a list item: `step-<n>` for an item of a top-level ordered list at column 0 when
+ * steps are on (core's `STEP_LINE`, so the anchors match the structure's steps).
+ */
 function itemId(block: Extract<Block, { t: "list" }>, top: boolean, ctx: Ctx): string | undefined {
-  if (!top || !block.ordered || ctx.steps === null) return undefined;
+  if (!top || !block.ordered || block.indent !== 0 || ctx.steps === null) return undefined;
   ctx.steps += 1;
   return stepAnchor(ctx.steps);
 }

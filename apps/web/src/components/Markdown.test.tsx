@@ -243,6 +243,17 @@ describe("Markdown step_anchors", () => {
     ).toEqual(["one", "two", "three"]);
   });
 
+  it("anchors only lists at column 0 when a list is indented 1 to 3 spaces (as core)", () => {
+    const { container } = render(
+      <Markdown stepAnchors source={" 1. one\n   2. two\n\n1. three"} />,
+    );
+
+    expect(
+      [...container.querySelectorAll("[id^='step-']")].map((step) => step.textContent),
+    ).toEqual(["three"]);
+    expect(container.querySelectorAll("ol > li")).toHaveLength(3);
+  });
+
   it("sets no step ids when step anchors are off", () => {
     const { container } = render(<Markdown source={aFeatureShapedBody()} />);
 
