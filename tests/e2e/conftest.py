@@ -14,9 +14,22 @@ from pathlib import Path
 
 import pytest
 
+from agent_hub.claude_sessions.testing.scenarios import (
+    RECORD_ENV,
+    SCENARIO_ENV,
+    Scenario,
+    StubRecord,
+    read_records,
+    simple_turn,
+    write_scenario,
+    write_shim,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TIMEOUT_SECONDS = 120
 INSTALL_TIMEOUT_SECONDS = 300
+# The extra that adds session control to ``hub web`` (the Claude Agent SDK, ADR 0027).
+SESSIONS_EXTRA = "sessions"
 
 
 @dataclass(frozen=True)
@@ -59,7 +72,8 @@ def run() -> Callable[..., subprocess.CompletedProcess[str]]:
 
 @pytest.fixture(scope="session")
 def installed_hub(tmp_path_factory: pytest.TempPathFactory) -> InstalledHub:
-    """Install the meta-package once per session, pinned to uv.lock, into isolated tool dirs.
+    """Install the meta-package with its ``sessions`` extra once per session, pinned to uv.lock,
+    into isolated tool dirs (``uv tool install 'agent-hub[sessions]'``, ADR 0027).
 
     The install keeps the real ``HOME`` and ``XDG_*`` so uv finds its warm cache; tests that run
     ``hub`` against a database point ``HOME``/``XDG_DATA_HOME`` at their own ``tmp_path``.
@@ -74,7 +88,16 @@ def installed_hub(tmp_path_factory: pytest.TempPathFactory) -> InstalledHub:
     # hub must never write to a database named by the caller's environment.
     env.pop("AGENT_HUB_DB", None)
     constraints = tmp_path / "constraints.txt"
-    export_command = [uv, "export", "--locked", "--package", "agent-hub", "--no-emit-workspace"]
+    export_command = [
+        uv,
+        "export",
+        "--locked",
+        "--package",
+        "agent-hub",
+        "--extra",
+        SESSIONS_EXTRA,
+        "--no-emit-workspace",
+    ]
     _run_or_fail([*export_command, "--no-hashes", "-o", str(constraints)], env=env)
     meta_package = REPO_ROOT / "packages" / "agent-hub"
     # The interpreter running the tests (a final 3.14 build), so uv never picks an rc build or
@@ -84,7 +107,8 @@ def installed_hub(tmp_path_factory: pytest.TempPathFactory) -> InstalledHub:
     # module would be missing from the installed copy; the members are rebuilt every time.
     for member in _workspace_members():
         install_command += ["--reinstall-package", member]
-    _run_or_fail([*install_command, str(meta_package)], env=env, timeout=INSTALL_TIMEOUT_SECONDS)
+    requirement = f"agent-hub[{SESSIONS_EXTRA}] @ {meta_package.as_uri()}"
+    _run_or_fail([*install_command, requirement], env=env, timeout=INSTALL_TIMEOUT_SECONDS)
     return InstalledHub(executable=bin_dir / "hub", env=env)
 
 
@@ -125,6 +149,12 @@ class RunningWeb:
     first_line: str
     db_path: Path
     env: Mapping[str, str]
+    process: subprocess.Popen[str]
+
+    @property
+    def token(self) -> str:
+        """This start's session token, from the URL line (``/?token=``)."""
+        return self.first_line.strip().partition("/?token=")[2]
 
 
 def free_loopback_port() -> int:
@@ -182,11 +212,49 @@ def hub_web(
                 first_line=line,
                 db_path=db_path,
                 env=env,
+                process=process,
             )
         finally:
-            process.send_signal(signal.SIGINT)
+            if process.poll() is None:
+                process.send_signal(signal.SIGINT)
             try:
                 process.wait(timeout=WEB_STOP_SECONDS)
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
+
+
+@dataclass(frozen=True)
+class StubClaude:
+    """A ``claude`` on ``PATH`` that is the stub CLI (P17, E14): ``env`` puts it first on
+    ``PATH`` and names its scenario and record files; ``play`` writes the scenario it plays."""
+
+    bin_dir: Path
+    scenario_path: Path
+    record_path: Path
+    env: Mapping[str, str]
+
+    def play(self, scenario: Scenario) -> None:
+        """The scenario the stub plays from its next start."""
+        self.scenario_path.write_text(scenario.model_dump_json(), encoding="utf-8")
+
+    def records(self) -> list[StubRecord]:
+        """What every stub process saw, oldest first."""
+        return read_records(self.record_path)
+
+
+@pytest.fixture
+def stub_claude(tmp_path: Path) -> StubClaude:
+    """The stub ``claude`` (run by this Python, never a model), playing a simple turn until a
+    test sets its scenario. No production switch selects it: it is found on ``PATH``."""
+    folder = tmp_path / "stub-claude"
+    bin_dir = folder / "bin"
+    write_shim(bin_dir)
+    scenario_path = write_scenario(folder, Scenario(turns=[simple_turn()]))
+    record_path = folder / "record.jsonl"
+    env = {
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        SCENARIO_ENV: str(scenario_path),
+        RECORD_ENV: str(record_path),
+    }
+    return StubClaude(bin_dir, scenario_path, record_path, env)
