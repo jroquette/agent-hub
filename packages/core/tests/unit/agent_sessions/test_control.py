@@ -40,7 +40,7 @@ from agent_hub.core.agent_sessions.errors import (
     UnknownResumeError,
 )
 from agent_hub.core.agent_sessions.limits import KIB, SessionLimits
-from agent_hub.core.agent_sessions.permission_policy import TIMEOUT_MESSAGE
+from agent_hub.core.agent_sessions.permission_policy import CLOSED_MESSAGE, TIMEOUT_MESSAGE
 from agent_hub.core.testing.agent_session_rig import HUB_PATH, START, WEB_URL, Rig
 from agent_hub.core.testing.session_driver_fakes import Hold, InMemorySessionDriver
 
@@ -511,6 +511,25 @@ async def test_allows_local_suggestion_when_permission_answer_always(make_rig: M
 
     assert rig.driver.answers == {"req-1": Allow(updated_permissions=(ASK.suggestions[0],))}
     assert _decisions(rig) == [("web", "always")]
+
+
+async def test_denies_driver_and_raises_log_full_when_decision_cannot_be_logged(
+    make_rig: MakeRig,
+) -> None:
+    # user.message, init, 81 thinking and the request fill the 84 records before the headroom.
+    limits = SessionLimits(log_records=100, log_bytes=64 * KIB, headroom=16)
+    turn = (*(Thinking(text=f"step {n}") for n in range(81)), ASK, TextBlock(block=0, text="x"))
+    rig = make_rig(replies={"Ask first.": turn}, limits=limits)
+    created = await rig.create("Ask first.")
+    await rig.until_status(created.id, "waiting_permission")
+
+    with pytest.raises(LogFullError):
+        await rig.control.answer(created.id, "req-1", PermissionDecision(decision="allow"))
+    ended = await rig.until_status(created.id, "ended")
+
+    assert rig.driver.answers == {"req-1": Deny(message=CLOSED_MESSAGE)}
+    assert ended.end_reason == EndReason.LOG_FULL
+    assert _decisions(rig) == [("closed", "deny")]
 
 
 async def test_refuses_second_permission_answer_when_already_answered(make_rig: MakeRig) -> None:
