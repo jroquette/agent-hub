@@ -2,6 +2,8 @@
 
 import os
 import stat
+import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -157,3 +159,41 @@ def test_leaves_tree_unchanged_when_inputs_read(tmp_path: Path) -> None:
     read_eval_inputs(evals / "missing.json")
 
     assert tree_of(tmp_path) == before
+
+
+def within_seconds[T](read: Callable[[], T], seconds: float = 5.0) -> T:
+    """``read()``'s result, failing the test when it has not returned within ``seconds``."""
+    results: list[T] = []
+    worker = threading.Thread(target=lambda: results.append(read()), daemon=True)
+    worker.start()
+    worker.join(seconds)
+    assert results, "the read blocked"
+    return results[0]
+
+
+@pytest.mark.parametrize("fifo", ["output", "sibling", "record"])
+def test_refuses_fifo_without_blocking_when_eval_inputs_read(tmp_path: Path, fifo: str) -> None:
+    evals = an_evals_folder(tmp_path, {})
+    paths = {
+        "output": evals / "abc-1.json",
+        "sibling": evals / "abc-1.md",
+        "record": evals.parent / "features.json",
+    }
+    contents = {"output": OUTPUT, "sibling": SIBLING, "record": RECORD}
+    for name, path in paths.items():
+        if name == fifo:
+            os.mkfifo(path)
+        else:
+            path.write_bytes(contents[name])
+    output = paths["output"]
+
+    inputs = within_seconds(lambda: read_eval_inputs(output))
+
+    expected = {
+        "output": EvalInputs(content=NOT_READ_AS_REGULAR, sibling_head=None, record=None),
+        "sibling": EvalInputs(content=OUTPUT, sibling_head=NOT_READ_AS_REGULAR, record=RECORD),
+        "record": EvalInputs(content=OUTPUT, sibling_head=SIBLING, record=NOT_READ_AS_REGULAR),
+    }
+    assert inputs == expected[fifo]
+    if fifo == "output":
+        assert within_seconds(lambda: read_output(output)) == NOT_READ_AS_REGULAR
