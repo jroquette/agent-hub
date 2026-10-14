@@ -9,6 +9,7 @@ import pytest
 
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.workflows.failures import (
+    DurationError,
     ExecutableType,
     FailureKind,
     NodeFailedError,
@@ -80,10 +81,22 @@ def test_maps_exit_to_exec_failed_or_timeout_when_shell_or_script_ends(
 
 @pytest.mark.parametrize(
     ("text", "delta"),
-    [("2s", timedelta(seconds=2)), ("5m", timedelta(minutes=5)), ("1h", timedelta(hours=1))],
+    [
+        ("2s", timedelta(seconds=2)),
+        ("5m", timedelta(minutes=5)),
+        ("1h", timedelta(hours=1)),
+        ("1d", timedelta(days=1)),
+        ("999999d", timedelta(days=999999)),
+    ],
 )
 def test_reads_a_timedelta_when_duration_is_well_formed(text: str, delta: timedelta) -> None:
     assert parse_duration(text) == delta
+
+
+@pytest.mark.parametrize("text", ["1000000s", "9999999999999999999999d"])
+def test_refuses_duration_when_it_has_more_than_six_digits(text: str) -> None:
+    with pytest.raises(DurationError):
+        parse_duration(text)
 
 
 @pytest.mark.parametrize("kind", TRANSIENT)
@@ -146,6 +159,26 @@ def test_doubles_the_delay_when_each_retry_follows_another() -> None:
     delays = [decide("transient", policy, retries_done=n).delay for n in range(4)]
 
     assert delays == [timedelta(seconds=seconds) for seconds in (3, 6, 12, 24)]
+
+
+@pytest.mark.parametrize(("delay", "retries_done"), [("1d", 4), ("1d", 0), ("31m", 1)])
+def test_clamps_to_one_hour_when_backoff_would_wait_longer(delay: str, retries_done: int) -> None:
+    decision = decide("transient", Retry(max_attempts=5, delay=delay), retries_done=retries_done)
+
+    assert decision == RetryDecision(retry=True, delay=timedelta(hours=1))
+
+
+def test_keeps_the_five_minute_cap_when_provider_pushes_back_with_a_long_delay() -> None:
+    policy = Retry(max_attempts=5, delay="1d")
+
+    assert decide("overloaded", policy, retries_done=4).delay == timedelta(minutes=5)
+
+
+@pytest.mark.parametrize(("draw", "seconds"), [(-3.0, 22.5), (1.0, 67.5), (7.0, 67.5)])
+def test_clamps_the_draw_when_jitter_source_leaves_its_range(draw: float, seconds: float) -> None:
+    decision = decide("rate_limited", jitter=lambda: draw)
+
+    assert decision.delay == timedelta(seconds=seconds)
 
 
 def test_ignores_the_jitter_source_when_kind_is_transient_or_timeout() -> None:

@@ -6,6 +6,7 @@ engine asks ``retry_decision`` whether and when to try again. Everything here is
 comes from a source the caller injects, so a run is deterministic under a seeded one.
 """
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
@@ -44,7 +45,15 @@ _NO_RETRY_ON_COMMANDS: Final[frozenset[FailureKind]] = frozenset({"output_contra
 DEFAULT_RETRY: Final = Retry()
 PUSHBACK_FLOOR: Final = timedelta(seconds=45)
 PUSHBACK_CAP: Final = timedelta(minutes=5)
+# Defence in depth over the model's own bound: no computed wait ever exceeds this.
+MAX_RETRY_DELAY: Final = timedelta(hours=1)
+MAX_DURATION_DIGITS: Final = 6
 _UNITS: Final = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+_LAST_DRAW: Final = math.nextafter(1.0, 0.0)
+
+
+class DurationError(AgentHubError):
+    """A duration outside ``^[1-9][0-9]{0,5}(s|m|h|d)$``."""
 
 
 class NodeFailedError(AgentHubError):
@@ -79,8 +88,15 @@ def kind_for_exit(exit_code: int, *, timed_out: bool = False) -> FailureKind | N
 
 
 def parse_duration(value: str) -> timedelta:
-    """A duration the node model already checked (``^[1-9][0-9]*(s|m|h|d)$``)."""
-    return timedelta(seconds=int(value[:-1]) * _UNITS[value[-1]])
+    """A duration of at most six digits and a unit, else ``DurationError``."""
+    digits, unit = value[:-1], value[-1:]
+    if not (digits.isascii() and digits.isdigit()) or len(digits) > MAX_DURATION_DIGITS:
+        msg = f"a duration is 1 to {MAX_DURATION_DIGITS} digits and a unit (s, m, h, d)"
+        raise DurationError(msg)
+    if unit not in _UNITS or digits.startswith("0"):
+        msg = "a duration starts with a non-zero digit and ends with s, m, h or d"
+        raise DurationError(msg)
+    return timedelta(seconds=int(digits) * _UNITS[unit])
 
 
 def retry_decision(
@@ -95,16 +111,29 @@ def retry_decision(
 
     ``retries_done`` counts this execution's retries, not the run-wide ``attempt``. The delay
     is the policy's ``delay × 2^retries_done``; ``rate_limited`` and ``overloaded`` start at
-    no less than 45s, cap at 5 minutes and spread ±50% by ``jitter`` (a draw in [0, 1)).
+    no less than 45s, cap at 5 minutes and spread ±50% by ``jitter`` (a draw in [0, 1), a
+    draw outside clamped into it). No delay ever exceeds ``MAX_RETRY_DELAY``.
     """
     policy = policy or DEFAULT_RETRY
     if retries_done >= policy.max_attempts or not _retryable(kind, policy, node_type):
         return RetryDecision(retry=False, delay=timedelta(0))
     base = parse_duration(policy.delay)
     if kind not in PUSHBACK_KINDS:
-        return RetryDecision(retry=True, delay=base * 2**retries_done)
-    delay = min(max(base, PUSHBACK_FLOOR) * 2**retries_done, PUSHBACK_CAP)
-    return RetryDecision(retry=True, delay=delay * (0.5 + jitter()))
+        return RetryDecision(retry=True, delay=_doubled(base, retries_done, MAX_RETRY_DELAY))
+    delay = _doubled(max(base, PUSHBACK_FLOOR), retries_done, PUSHBACK_CAP)
+    draw = min(max(jitter(), 0.0), _LAST_DRAW)
+    return RetryDecision(retry=True, delay=min(delay * (0.5 + draw), MAX_RETRY_DELAY))
+
+
+def _doubled(base: timedelta, times: int, cap: timedelta) -> timedelta:
+    """``base × 2^times`` clamped to ``cap`` (and ``MAX_RETRY_DELAY``), never past it."""
+    cap = min(cap, MAX_RETRY_DELAY)
+    delay = min(base, cap)
+    for _ in range(times):
+        if delay >= cap:
+            break
+        delay = min(delay * 2, cap)
+    return delay
 
 
 def _retryable(kind: FailureKind, policy: Retry, node_type: ExecutableType) -> bool:
