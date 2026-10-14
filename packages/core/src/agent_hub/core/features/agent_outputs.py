@@ -3,10 +3,16 @@
 ``review_problems`` and ``eval_problems`` return every problem of an output, uncapped: first the
 root problem (bytes that are not a JSON object), else every shape problem against
 ``ReviewOutput`` or ``EvalOutput``. The caller decides how many to show.
+
+The JSON Schemas of both outputs ship as package data beside this module (``review.v1.json``,
+``eval.v1.json``), regenerated with ``make output-schemas`` whenever a model changes; unit tests
+fail while a shipped file differs from the export.
 """
 
-from collections.abc import Callable, Iterator
-from typing import Final
+import json
+from collections.abc import Callable, Iterator, Mapping
+from importlib.resources import files
+from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ValidationError
 
@@ -31,6 +37,17 @@ from agent_hub.core.features.output_shape import (
 )
 
 type _Document = dict[str, object]
+type OutputKind = Literal["review", "eval"]
+
+OUTPUT_SCHEMA_PACKAGE: Final = "agent_hub.core.features"
+OUTPUT_SCHEMA_FILES: Final[Mapping[OutputKind, str]] = {
+    "review": "review.v1.json",
+    "eval": "eval.v1.json",
+}
+_OUTPUT_MODELS: Final[Mapping[OutputKind, type[BaseModel]]] = {
+    "review": ReviewOutput,
+    "eval": EvalOutput,
+}
 
 # Each list of an eval output and its bound, in the model's field order.
 _EVAL_LISTS: Final[tuple[tuple[str, int], ...]] = (
@@ -101,3 +118,16 @@ def _overlong_review_lists(document: _Document) -> Iterator[OutputProblem]:
 def _overlong_eval_lists(document: _Document) -> Iterator[OutputProblem]:
     for name, limit in _EVAL_LISTS:
         yield from overlong_problem(name, document.get(name), limit)
+
+
+def export_output_schema_text(kind: OutputKind) -> str:
+    """The JSON Schema of one output as its shipped file holds it: indented, one final newline."""
+    schema = _OUTPUT_MODELS[kind].model_json_schema()
+    return json.dumps(schema, indent=2, ensure_ascii=False) + "\n"
+
+
+def read_shipped_output_schema(kind: OutputKind) -> dict[str, Any]:
+    """The JSON Schema of one output shipped with the package, read as package data."""
+    package_file = files(OUTPUT_SCHEMA_PACKAGE).joinpath(OUTPUT_SCHEMA_FILES[kind])
+    schema: dict[str, Any] = json.loads(package_file.read_text(encoding="utf-8"))
+    return schema
