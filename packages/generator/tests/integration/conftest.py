@@ -1,7 +1,8 @@
 """Rendered hubs on disk and the interpreters that run their hooks and scripts.
 
 Every rendered ``.py`` runs on the system ``python3``, which is 3.9 on macOS (AC-4.24): each test
-that runs one takes ``hook_python`` and so runs twice, on this interpreter and on a real 3.9.
+that runs one takes ``hook_python``, a real 3.9 (this interpreter only where none is installed;
+CI installs one). ``each_python`` runs a smoke on both, so a module this interpreter rejects fails.
 Children get an environment built from scratch and ``-I``, so nothing of this process leaks in.
 The golden file harness of the characterization cases (AC-4.22) follows, behind the ``golden``
 fixture, and then the workspace a case runs in, behind ``char_workspace``.
@@ -97,9 +98,21 @@ def require_python39() -> str:
     return executable
 
 
+@pytest.fixture
+def hook_python() -> str:
+    """The interpreter a rendered hook or script runs on: a real 3.9, the hooks' floor.
+
+    Without one, this interpreter, so a machine with no 3.9 still runs every case; under CI (which
+    installs one) a missing 3.9 fails instead.
+    """
+    if find_python39() is None and not os.environ.get("CI"):
+        return sys.executable
+    return require_python39()
+
+
 @pytest.fixture(params=[CURRENT, PYTHON39])
-def hook_python(request: pytest.FixtureRequest) -> str:
-    """The interpreter a rendered hook or script runs on: this one, then a real 3.9."""
+def each_python(request: pytest.FixtureRequest) -> str:
+    """This interpreter, then a real 3.9: for the smoke tests that must pass on both."""
     if request.param == CURRENT:
         return sys.executable
     return require_python39()

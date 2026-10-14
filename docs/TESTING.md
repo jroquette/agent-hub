@@ -105,8 +105,10 @@ driver selected in production.
 The API's integration tests for the learning decisions and the web smoke drive the same kind of synthetic hub (a bare
 `origin` and a fake `gh`) through `hub web`.
 
-A test that runs a rendered hook or script takes the `hook_python` fixture, so it runs on the current Python and on a
-real Python 3.9 (the system `python3` on macOS); without a 3.9 on `PATH` that case skips, and under `CI` it fails. A
+A test that runs a rendered hook or script takes the `hook_python` fixture, a real Python 3.9 (the system `python3` on
+macOS, the hooks' floor); without a 3.9 on `PATH` it runs on the current Python, and under `CI` it fails. The
+`each_python` fixture runs a smoke on both interpreters: every rendered module imports, and every hook entry point
+runs once (`test_imports_every_rendered_module_when_run_on_each_python`, `test_exits_zero_when_git_fails`). A
 characterization case compares a hook's or script's exit code, stdout, stderr, files and calls to fake tools with
 `packages/generator/tests/integration/golden/<file>/<case>.golden`, stored byte-exact (`-text` in `.gitattributes`).
 `GOLDEN_UPDATE=1` rewrites the goldens (refused under `CI`; review and commit the diff) and `GOLDEN_KEEP=1` keeps each
