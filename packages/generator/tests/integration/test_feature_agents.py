@@ -331,3 +331,83 @@ def test_redispatches_once_when_eval_outputs_invalid(texts: dict[str, str]) -> N
         assert phrase in verify, phrase
     positions = [verify.index(phrase) for phrase in phrases]
     assert positions == sorted(positions)
+
+
+def test_hands_back_when_eval_problem_needs_md_or_rewrites_run_out(texts: dict[str, str]) -> None:
+    text = flat(texts[EVALUATOR])
+
+    phrases = (
+        "Then run `./hub validate-output eval <file>`",
+        "you may rewrite only the `.json` you created in this run",
+        "at most two rewrites of the `.json`, then hand back with every line the command printed",
+        "When a printed problem names the `.md`, or a verdict the observed results do not support,"
+        " never change a result or status to make it pass: hand back with every line the command"
+        " printed (`/feature` then re-dispatches you).",
+    )
+    for phrase in phrases:
+        assert phrase in text, phrase
+    positions = [text.index(phrase) for phrase in phrases]
+    assert positions == sorted(positions)
+    assert text.index(phrases[-1]) < text.index("**Re-dispatch:**")
+
+
+def test_names_delivery_as_file_stem_when_evaluator_rendered(texts: dict[str, str]) -> None:
+    text = flat(texts[EVALUATOR])
+
+    assert (
+        "The frontmatter's `delivery` is the file stem, `-rN` included (`delivery: abc-12-r2` in"
+        " `abc-12-r2.md`)." in text
+    )
+    assert "delivery: abc-12 # the file stem, -rN included (abc-12-r2)" in text
+    assert "its `delivery` is that stem, `-rN` included (e.g. `abc-12-r2`)" in text
+
+
+def test_leaves_out_empty_gate_when_evaluator_rendered(texts: dict[str, str]) -> None:
+    text = flat(texts[EVALUATOR])
+
+    assert (
+        "a gate whose command is empty is skipped: say so in the body and leave it out of `gates`"
+        in text
+    )
+    assert (
+        "a gate skipped because its command is empty is left out of `gates`, never recorded as"
+        " `not-run`" in text
+    )
+
+
+def test_counts_bad_block_and_rounds_when_feature_step_seven_rendered(
+    texts: dict[str, str],
+) -> None:
+    review = step(texts[FEATURE], 7)
+
+    block = (
+        "A reply with no fenced `json` block, or more than one, counts as invalid: re-ask that"
+        " reviewer once, as for an invalid file."
+    )
+    rounds = (
+        "`N` the ticket's review round, counted across all its tasks and never restarted per task,"
+        " so no file is overwritten"
+    )
+    assert block in review
+    assert rounds in review
+    assert review.index(rounds) < review.index(block)
+    assert review.index(block) < review.index("when the second reply is invalid too")
+
+
+def test_acts_on_each_verdict_when_feature_step_eight_rendered(texts: dict[str, str]) -> None:
+    verify = step(texts[FEATURE], 8)
+
+    phrases = (
+        "Act only on the validated JSON: ship only on `SHIP`",
+        "on `SHIP-WITH-OWNER-STEPS` list its `owner_steps` to the user and stop: ship once the user"
+        " confirms they are done, with no new evaluation",
+        "on `NO-SHIP` send its failing `results` and `gates` back to the implementer and, after the"
+        " fix, run a fresh evaluation (a new `<delivery>-rN` pair)",
+        "The re-dispatch-once budget covers only a missing or invalid eval JSON,"
+        " never a `NO-SHIP`.",
+    )
+    for phrase in phrases:
+        assert phrase in verify, phrase
+    positions = [verify.index(phrase) for phrase in phrases]
+    assert positions == sorted(positions)
+    assert positions[-1] < verify.index("**Finish**")
