@@ -4727,7 +4727,7 @@ def test_ignores_local_file_when_gitignore_rendered(demo_config: HubConfig) -> N
 # AGH-180 (spec AC-1): sha256 of the agent files as rendered on main (267c3f9, after AGH-161)
 # before the templates named a tier; a hub without `models`, or with empty or default ones, keeps
 # them.
-# AGH-139 changed the reviewers' text: their sha256 are those of the new text,
+# AGH-139 changed the reviewers' and the evaluator's text: their sha256 are those of the new text,
 # which every config below still renders byte for byte.
 AGENTS_FOLDER = "plugin/hub-workflow/agents"
 AGENT_FILES_SHA256 = {
@@ -4735,7 +4735,7 @@ AGENT_FILES_SHA256 = {
         "65f87843553ecc602d854a6c7f2f9389b188ced0ceff5cc5ef03c9d43f2b616f"
     ),
     f"{AGENTS_FOLDER}/evaluator.md": (
-        "dd5ff73ca988d3f42f3700fa941439cf5b9e685051d713c042424df918dc5197"
+        "635203168631212733d7035862197dbf456c5cc887ca842de0c8de446b89a1e8"
     ),
     f"{AGENTS_FOLDER}/planner.md": (
         "703db29e7407541e9895e66b1868f7615335c0599db68d57a5dfb7916811c00e"
