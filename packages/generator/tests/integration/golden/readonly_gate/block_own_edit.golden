@@ -1,0 +1,17 @@
+--- rc (2 bytes) ---
+0
+
+--- stdout (299 bytes) ---
+{"decision": "block", "reason": "[hub readonly-gate] researcher (agent ab12cd34) is read-only (mutates_checkout: false) but changed:\n- api/x.py\nRevert these changes, or explain in your final report why each one was needed.\nCommands you ran that may have made them:\n- git -C api status --short"}
+
+--- stderr (0 bytes) ---
+
+--- fs (300 bytes) ---
+A <ROOT>/home/tmp/hub-readonly-abcdef123456-ab12cd34.blocks
+| 1
+\ no newline at end of file
+A <ROOT>/home/tmp/hub-readonly-abcdef123456.jsonl
+| {"ts": "2026-01-15T10:30:00Z", "session_id": "abcdef123456", "agent_id": "ab12cd34", "agent_type": "researcher", "outcome": "block", "paths": ["api/x.py"]}
+
+--- calls (0 bytes) ---
+
