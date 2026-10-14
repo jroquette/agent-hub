@@ -45,9 +45,9 @@ MAX_LINE_ENTRIES: Final = 20_000
 JSON_SUFFIX: Final = ".json"
 _SURROGATE: Final = re.compile("[\ud800-\udfff]")
 # The line breaks of YAML's reader: what its marks count as a new line.
-_YAML_BREAK: Final = re.compile("\r\n|[\r\n\x85  ]")
+_YAML_BREAK: Final = re.compile("\r\n|[\r\n\x85\u2028\u2029]")
 # Line breaks to YAML, plain characters to JSON: the composer would count lines wrongly.
-_JSON_ONLY_TEXT: Final = re.compile("[\x85  ]")
+_JSON_ONLY_TEXT: Final = re.compile("[\x85\u2028\u2029]")
 
 type WorkflowMapping = dict[str, JsonValue]
 type KeyPath = tuple[str | int, ...]
