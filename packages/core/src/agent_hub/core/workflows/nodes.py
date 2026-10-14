@@ -81,6 +81,24 @@ def _positive_finite(value: float) -> float:
     return value
 
 
+MAX_DURATION_SECONDS: Final = 7 * 24 * 3600
+MAX_DURATION_DIGITS: Final = 6
+_UNIT_SECONDS: Final = {"s": 1, "m": 60, "h": 3600, "d": 24 * 3600}
+
+
+def duration_seconds(duration: str) -> int:
+    """The seconds a ``Duration`` (``30s``, ``5m``, ``2h``, ``7d``) stands for."""
+    return int(duration[:-1]) * _UNIT_SECONDS[duration[-1]]
+
+
+def _within_a_week(value: str) -> str:
+    # The digit count first: a long number is never converted.
+    if len(value) > MAX_DURATION_DIGITS + 1 or duration_seconds(value) > MAX_DURATION_SECONDS:
+        msg = f"must be at most 7 days, in at most {MAX_DURATION_DIGITS} digits"
+        raise ValueError(msg)
+    return value
+
+
 def read_only[Key, Value](value: Mapping[Key, Value]) -> Mapping[Key, Value]:
     """A read-only copy of ``value``: a frozen document's mappings cannot be changed either."""
     return MappingProxyType(dict(value))
@@ -112,7 +130,10 @@ FieldName = Annotated[StrictStr, Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")]
 VariableName = Annotated[StrictStr, Field(pattern=r"^[a-z][a-z0-9_]*$")]
 KebabId = Annotated[StrictStr, Field(pattern=r"^[a-z0-9]+(-[a-z0-9]+)*$")]
 EnvName = Annotated[StrictStr, Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")]
-Duration = Annotated[StrictStr, Field(pattern=r"^[1-9][0-9]*(s|m|h|d)$")]
+# At most six digits and seven days (the contract's longest wait), so a run never overflows.
+Duration = Annotated[
+    StrictStr, Field(pattern=r"^[1-9][0-9]*(s|m|h|d)$"), AfterValidator(_within_a_week)
+]
 PackPath = Annotated[Text, AfterValidator(_pack_path)]
 Argv = Annotated[tuple[Text, ...], Field(min_length=1)]
 OutputRef = Annotated[StrictStr, AfterValidator(_output_ref)]
