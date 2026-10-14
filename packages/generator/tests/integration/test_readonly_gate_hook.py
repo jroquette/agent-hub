@@ -1001,3 +1001,154 @@ def test_skips_long_line_when_agent_transcript_line_over_cap(
         "- echo after",
         "- echo last",
     ]
+
+
+UNATTRIBUTED_REPORT = [
+    "[hub readonly-gate] changed while researcher (agent a1) ran, not attributed to it"
+    " (agent transcript unreadable):",
+    "- app/a.py",
+    "[hub readonly-gate] not checked (agent transcript unreadable)",
+]
+
+
+def test_reports_when_agent_transcript_out_of_budget(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """O-3, E-6: with no time left to read the agent's transcript, its own Edit is not evidence:
+    the change is reported, never blocked, with the ``not checked`` note; the state is deleted."""
+    output = run_agent(
+        gate,
+        "researcher",
+        lambda: change_app(gate_ws),
+        calls=[app_edit(gate_ws)],
+        constant=("TRANSCRIPT_BUDGET", 0),
+    )
+
+    assert output is not None
+    assert "decision" not in output
+    assert output["systemMessage"].splitlines() == UNATTRIBUTED_REPORT
+    assert state_files(gate_ws) == []
+
+
+def test_reports_when_agent_file_targets_over_cap(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """O-3, E-6: more distinct file-tool targets than the gate resolves is partial evidence, so
+    nothing is blocked: the change is reported with the ``not checked`` note."""
+    calls = [
+        app_edit(gate_ws),
+        ("Edit", {"file_path": str(gate_ws.app / "b.py"), "old_string": "1", "new_string": "2"}),
+    ]
+
+    output = run_agent(
+        gate,
+        "researcher",
+        lambda: change_app(gate_ws),
+        calls=calls,
+        constant=("MAX_TARGETS", 1),
+    )
+
+    assert output is not None
+    assert "decision" not in output
+    assert output["systemMessage"].splitlines() == UNATTRIBUTED_REPORT
+    assert state_files(gate_ws) == []
+
+
+def test_counts_target_once_when_agent_edits_same_file_repeatedly(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """O-3: the same target named by many calls counts once against the cap and is resolved
+    once; the agent's own Edit still blocks."""
+    calls = [app_edit(gate_ws)] * 3
+
+    output = run_agent(
+        gate,
+        "researcher",
+        lambda: change_app(gate_ws),
+        calls=calls,
+        constant=("MAX_TARGETS", 1),
+    )
+
+    assert reason_lines(output) == [agent_head("researcher"), "- app/a.py", REVERT]
+    assert state_files(gate_ws) == [state_name("a1")]
+
+
+def test_replaces_control_chars_when_block_lists_command(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """A Bash command's escape sequences, NUL, backspace and bidi overrides are shown as ``?``,
+    so the reason cannot clear a screen or reorder its text."""
+    calls = [("Bash", {"command": "echo \x1b[2J‮gnp.exe\x00\x08 done"})]
+
+    output = run_agent(gate, "researcher", lambda: change_app(gate_ws), calls=calls)
+
+    assert reason_lines(output) == [
+        agent_head("researcher"),
+        "- app/a.py",
+        REVERT,
+        EVIDENCE_HEAD,
+        "- echo ?[2J?gnp.exe?? done",
+    ]
+
+
+def test_replaces_control_chars_when_block_lists_path(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """A changed path's line break, escape sequence or bidi override is shown as ``?``: a file
+    name cannot add lines to the reason or rewrite it."""
+
+    def change() -> None:
+        for name in ("bad\nname.txt", "esc\x1b[2J.txt", "rtl‮txt.exe"):
+            (gate_ws.app / name).write_text("x\n", encoding="utf-8")
+
+    lines = reason_lines(run_agent(gate, "researcher", change))
+
+    assert lines == [
+        agent_head("researcher"),
+        "- app/bad?name.txt",
+        "- app/esc?[2J.txt",
+        "- app/rtl?txt.exe",
+        REVERT,
+    ]
+
+
+def test_blocks_when_unmerged_entry_stage_mode_changed(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """E-7: on an unmerged entry (``UU``), a change of one stage's mode alone counts: the
+    status, the worktree's content and every stage's blob stay. The agent sets the mode with
+    ``update-index --index-info``, which keeps the entry unmerged."""
+    gate_ws.git("checkout", "-q", "-b", "side", cwd=gate_ws.app)
+    (gate_ws.app / "a.py").write_text("A = 3\n", encoding="utf-8")
+    gate_ws.commit_all(gate_ws.app)
+    gate_ws.git("checkout", "-q", "main", cwd=gate_ws.app)
+    change_app(gate_ws)
+    gate_ws.commit_all(gate_ws.app)
+    git = shutil.which("git")
+    assert git is not None
+    merged = subprocess.run(  # noqa: S603 - git found on PATH, fixed arguments
+        [git, "merge", "-q", "side"],
+        cwd=gate_ws.app,
+        check=False,
+        capture_output=True,
+        env={"PATH": os.environ.get("PATH", os.defpath), **gate_ws.env},
+    )
+    assert merged.returncode == 1  # control: a conflict
+    assert git_output(gate_ws, "status", "--porcelain", cwd=gate_ws.app).splitlines() == ["UU a.py"]
+    stages = git_output(gate_ws, "ls-files", "-s", "a.py", cwd=gate_ws.app).splitlines()
+    ours = stages[1].split()
+    assert (ours[0], ours[2]) == ("100644", "2")
+    content = (gate_ws.app / "a.py").read_bytes()
+
+    lines = block_lines(
+        run_researcher(
+            gate,
+            lambda: subprocess.run(  # noqa: S603 - git found on PATH, fixed arguments
+                [git, "update-index", "--index-info"],
+                cwd=gate_ws.app,
+                check=True,
+                capture_output=True,
+                input=f"100755 {ours[1]} 2\ta.py\n".encode(),
+                env={"PATH": os.environ.get("PATH", os.defpath), **gate_ws.env},
+            ),
+        )
+    )
+
+    assert (gate_ws.app / "a.py").read_bytes() == content
+    assert git_output(gate_ws, "status", "--porcelain", cwd=gate_ws.app).splitlines() == ["UU a.py"]
+    now = git_output(gate_ws, "ls-files", "-s", "a.py", cwd=gate_ws.app).splitlines()
+    assert now[1] == "100755" + stages[1][len("100644") :]  # stage 2's blob kept, its mode moved
+    assert [now[0], now[2]] == [stages[0], stages[2]]
+    assert "- app/a.py" in lines
