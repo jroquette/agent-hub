@@ -2857,7 +2857,7 @@
       },
       "LiveTile": {
         "additionalProperties": false,
-        "description": "A session tile of the Live sessions screen.\n\n``agent`` is deprecated (``label`` and ``actors``); ``needs_you_problem`` is the owner-facing\nline of the first problem that needs the owner (\"Needs you: <kind> in <where>\").",
+        "description": "A session tile of the Live sessions screen.\n\n``agent`` is deprecated (``label`` and ``actors``); ``needs_you_problem`` is the owner-facing\nline of the first problem that needs the owner (\"Needs you: <kind> in <where>\");\n``agent_session_id`` is the agent session ``hub web`` drives it from, when there is one.",
         "properties": {
           "actors": {
             "default": [],
@@ -2871,6 +2871,17 @@
             "deprecated": true,
             "title": "Agent",
             "type": "string"
+          },
+          "agent_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Session Id"
           },
           "attempt": {
             "anyOf": [

@@ -16,7 +16,22 @@ describe("live tiles (waiting)", () => {
     expect(splitTiles([running, waiting]).waiting).toEqual([waiting]);
   });
 
-  it("links a permission prompt to its session, where the chat answers it", () => {
+  it("links a permission prompt of a session hub web drives to its chat", () => {
+    const tile = aLiveTile({
+      id: anId(1, "5091b986"),
+      group: "waiting",
+      status: "waiting",
+      waiting_reason: "Permission prompt",
+      agent_session_id: anId(7, "0192aaaa"),
+    });
+
+    expect(waitingLink(tile)).toEqual({
+      href: `/agent-sessions/${anId(7, "0192aaaa")}`,
+      label: "Open chat",
+    });
+  });
+
+  it("links a hook-observed permission prompt to the approvals", () => {
     const tile = aLiveTile({
       id: anId(1, "5091b986"),
       group: "waiting",
@@ -24,10 +39,7 @@ describe("live tiles (waiting)", () => {
       waiting_reason: "Permission prompt",
     });
 
-    expect(waitingLink(tile)).toEqual({
-      href: `/sessions/${anId(1, "5091b986")}`,
-      label: "Open session",
-    });
+    expect(waitingLink(tile)).toEqual({ href: "/approvals", label: "Open approval" });
   });
 
   it("links any other wait to the approvals", () => {
