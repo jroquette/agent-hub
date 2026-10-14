@@ -336,8 +336,20 @@ def module_constant(source: str, name: str) -> object:
         if isinstance(node, ast.Assign) and [
             target.id for target in node.targets if isinstance(target, ast.Name)
         ] == [name]:
+            if isinstance(node.value, ast.BinOp):
+                return literal_product(node.value)
             return ast.literal_eval(node.value)
     raise AssertionError(f"no module-level {name} = <literal>")
+
+
+def literal_product(node: ast.expr) -> object:
+    """A literal, or a product of int literals as a size reads (``4 * 1024 * 1024``)."""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
+        left, right = literal_product(node.left), literal_product(node.right)
+        if type(left) is int and type(right) is int:
+            return left * right
+        raise ValueError(f"not a product of int literals: {ast.unparse(node)}")
+    return ast.literal_eval(node)
 
 
 # The hook sensor (AGH-200) runs beside the base hook of an event, with its own short timeout.
