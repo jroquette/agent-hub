@@ -25,7 +25,7 @@ issue at read time from the hub's ``LabelRules`` (``label_rules_of``), outside e
 import bisect
 import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
@@ -66,7 +66,12 @@ from agent_hub.core.readmodels.filters import (
     SessionFilter,
 )
 from agent_hub.core.readmodels.fold_memo import FoldMemo
-from agent_hub.core.readmodels.live_tiles import WAITING_REASONS, has_tile, live_tiles
+from agent_hub.core.readmodels.live_tiles import (
+    WAITING_REASONS,
+    has_tile,
+    live_tiles,
+    tile_fields,
+)
 from agent_hub.core.readmodels.page import Page
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.runner.run_record import Stage
@@ -515,11 +520,14 @@ class FoldedEventReadModels:
             request=session_filter,
             hwm=snapshot.hwm,
         )
-        return page.model_copy(update={"items": tuple(self._with_issues(page.items))})
+        items = self._with_issues(_with_tile_fields(snapshot, page.items))
+        return page.model_copy(update={"items": tuple(items)})
 
     def get_session(self, session_id: str) -> Session:
-        """One session."""
-        return self._with_issues([self._session(self._snapshot(), session_id)])[0]
+        """One session, with its tile fields."""
+        snapshot = self._snapshot()
+        session = self._session(snapshot, session_id)
+        return self._with_issues(_with_tile_fields(snapshot, [session]))[0]
 
     def session_summary(self, session_id: str) -> SessionSummary:
         """The session's summary lines (D17)."""
@@ -784,7 +792,21 @@ class FoldedEventReadModels:
         )
 
 
-# Labels at read time
+# Labels and tile fields at read time
+
+
+def _with_tile_fields(snapshot: _Snapshot, sessions: Iterable[Session]) -> list[Session]:
+    """``sessions`` with the fields their Live tile shows (D5), derived for these rows only."""
+    filled: list[Session] = []
+    for session in sessions:
+        fields = tile_fields(
+            session,
+            snapshot.by_session[session.id],
+            now=snapshot.now,
+            problems=snapshot.problems[session.id],
+        )
+        filled.append(session.model_copy(update=asdict(fields)))
+    return filled
 
 
 def _waiting(session: Session) -> Session:
