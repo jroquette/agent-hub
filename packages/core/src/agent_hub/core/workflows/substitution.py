@@ -62,8 +62,9 @@ _TOKEN = re.compile(
 _RESERVED = re.compile(r"\$(?:INPUTS|WITH|LOOP_PREV)(?![A-Za-z0-9_])")
 _BAD_SUFFIX = re.compile(rf"\$(?:LOOP_PREV\.)?{_ID}\.output{_PATH}{_FOREIGN}")
 _LEADING_ZERO = re.compile(r"0[0-9]+")
-# A short-option cluster holding ``c`` (``-c``, ``-lc``, ``-ec``): the next non-option is a script.
-_SCRIPT_FLAG = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
+# A short-option cluster (``-e``, ``+ec``); one holding ``c`` is a script flag. No ``*`` around
+# the ``c``: that pattern backtracks quadratically on a long cluster that does not match.
+_CLUSTER = re.compile(r"[-+][A-Za-z]+")
 
 
 @dataclass(frozen=True)
@@ -168,14 +169,35 @@ def render(template: str, context: RefContext) -> str:
 
 
 def check_argv(argv: Sequence[str]) -> list[ArgvProblem]:
-    """Return the references argv refuses, without resolving any.
+    """Return the references argv refuses, by index, without resolving any.
 
-    A reference must fill a whole element, and never the program (``argv[0]``) nor the element
-    right after a ``-c`` (a script for ``sh``, ``bash``, ``python`` alike): a script gets values
-    only as positional parameters.
+    A reference must fill a whole element and never be the program (``argv[0]``). Shell option
+    grammar is not modelled; once argv holds a reference, the rule fails closed. A script flag is
+    a short-option cluster, prefixed by ``-`` or ``+``, holding ``c`` (``-c``, ``-lc``, ``+ec``).
+    The flag is refused when it also holds ``o`` or ``O``, or when the element after it is
+    missing, starts with ``-`` or ``+``, or is a reference: shell options go before ``-c``, and
+    the element right after it is the literal script. A reference at or before the last flag's
+    script is refused too; the ones after it are positional parameters, the only way a script
+    gets values.
     """
-    scripts = _script_positions(argv)
+    problems, whole = _whole_references(argv)
+    if not problems and not whole:
+        return []
+    reach = _check_script_flags(argv, set(whole), problems)
+    for index in whole:
+        if index == 0:
+            problems.append(_problem(argv, index, code="argv_program", detail="not the program"))
+        elif index <= reach:
+            problems.append(
+                _problem(argv, index, code="argv_script", detail="pass it after the script")
+            )
+    return sorted(problems, key=lambda problem: problem.index)
+
+
+def _whole_references(argv: Sequence[str]) -> tuple[list[ArgvProblem], list[int]]:
+    """Problems of malformed and partial references, and the indexes of whole ones."""
     problems: list[ArgvProblem] = []
+    whole: list[int] = []
     for index, element in enumerate(argv):
         try:
             tokens = _scan(element)
@@ -183,35 +205,35 @@ def check_argv(argv: Sequence[str]) -> list[ArgvProblem]:
             problems.append(ArgvProblem(index, malformed))
             continue
         refs = [(start, end) for start, end, ref in tokens if ref is not None]
-        if not refs:
-            continue
-        text = element[refs[0][0] : refs[0][1]]
-        if len(tokens) > 1 or refs[0] != (0, len(element)):
+        if refs and (len(tokens) > 1 or refs[0] != (0, len(element))):
+            text = element[refs[0][0] : refs[0][1]]
             error = SubstitutionError("partial_argv", text, "a reference must fill a whole element")
-        elif index == 0:
-            error = SubstitutionError("argv_program", text, "a reference cannot be the program")
-        elif index in scripts:
-            error = SubstitutionError("argv_script", text, "pass it as a positional parameter")
-        else:
-            continue
-        problems.append(ArgvProblem(index, error))
-    return problems
+            problems.append(ArgvProblem(index, error))
+        elif refs:
+            whole.append(index)
+    return problems, whole
 
 
-def _script_positions(argv: Sequence[str]) -> set[int]:
-    """Indexes from each ``-c`` cluster to its script: the options between, then the script."""
-    positions: set[int] = set()
-    for flag, element in enumerate(argv):
-        if _SCRIPT_FLAG.fullmatch(element) is None:
+def _check_script_flags(argv: Sequence[str], whole: set[int], problems: list[ArgvProblem]) -> int:
+    """Add a problem for each ill-placed script flag; return the last flag's script index."""
+    reach = -1
+    for index, element in enumerate(argv):
+        if "c" not in element or _CLUSTER.fullmatch(element) is None:
             continue
-        index = flag + 1
-        while index < len(argv) and argv[index].startswith("-") and argv[index] != "--":
-            positions.add(index)
-            index += 1
-        if index < len(argv) and argv[index] == "--":
-            index += 1
-        positions.add(index)
-    return positions
+        reach = index + 1
+        after = argv[reach] if reach < len(argv) else None
+        if reach in whole:
+            continue
+        if "o" in element.lower() or after is None or after.startswith(("-", "+")):
+            detail = "put shell options before -c; the element right after -c is the literal script"
+            problems.append(_problem(argv, index, code="argv_script", detail=detail))
+    return reach
+
+
+def _problem(
+    argv: Sequence[str], index: int, *, code: SubstitutionErrorCode, detail: str
+) -> ArgvProblem:
+    return ArgvProblem(index, SubstitutionError(code, argv[index], detail))
 
 
 def render_argv(argv: Sequence[str], context: RefContext) -> list[str]:

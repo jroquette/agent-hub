@@ -11,7 +11,7 @@ type = forbidden
 source_modules =
     agent_hub.core
 # Sibling packages, and the adapter libraries (core stays Pydantic-only, ADR 0002; JSON Schema is
-# generator's, behind core's OutputValidator port, ADR 0032).
+# generator's, behind core's OutputValidator port, and YAML is generator's loader, ADR 0032).
 forbidden_modules =
     agent_hub.storage
     agent_hub.collector
@@ -29,6 +29,7 @@ forbidden_modules =
     uvicorn
     jsonschema
     referencing
+    yaml
 
 # cli is the composition root (ADR 0008): it may import the adapters to wire them into core use cases, nothing
 # imports it, and the adapters below it stay independent of each other ("|"). api (Phase 2) is a second
