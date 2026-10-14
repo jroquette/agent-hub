@@ -7,6 +7,9 @@ import pytest
 from agent_hub.core.doctor.features_rule import FEATURES_TRACKER
 from agent_hub.core.doctor.finding import Read
 from agent_hub.core.doctor.snapshot import DoctorSnapshot
+from agent_hub.core.features import agent_outputs
+from agent_hub.core.features.feature_record import MAX_RECORD_BYTES
+from agent_hub.core.features.output_models import MAX_OUTPUT_BYTES
 from agent_hub.core.hub_config.doctor_rules import Severity
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, LinkEntry, TreeEntry
@@ -1059,3 +1062,368 @@ def test_adds_no_warning_when_record_or_spec_already_fails(
         files[SPEC] = spec
 
     assert findings_of(snapshot_of(config=a_config(), files=files)) == expected
+
+
+# AGH-139 S9: the light check of agent outputs, warnings only, inside features.tracker.
+REVIEWS = "brain/features/demo/reviews"
+NO_EVAL_NOTE = "eval output without its record evals/<name>.md"
+NO_EVAL_NOTE_FIX = "write the eval record beside it, or remove the output"
+NO_REVIEW_NOTE = "review output without its ticket record reviews/<ticket>.md"
+NO_REVIEW_NOTE_FIX = (
+    "write reviews/<ticket>.md once the ticket's reviews pass, or remove the output"
+)
+SHIP_FIELDS = {"commit": "feb9c4c"}
+# Eight outputs of the largest size fill the per-feature budget exactly (``MAX_VALIDATED_BYTES``).
+BUDGET_OUTPUTS = 8
+
+type Leveled = tuple[Severity, str | None, str, str]
+
+
+def a_result_of(ac: str) -> dict[str, object]:
+    return {"ac": ac, "command": "pytest", "exit_code": 0, "status": "pass", "summary": "Passes."}
+
+
+def an_eval_output(delivery: str = "tst-7", **changes: object) -> bytes:
+    """An eval output that agrees with ``a_good_eval(delivery, **SHIP_FIELDS)`` and the record."""
+    document: dict[str, object] = {
+        "schema": "agent-hub/eval/1",
+        "delivery": delivery,
+        "verdict": "SHIP",
+        "commit": "feb9c4c",
+        "tickets": [],
+        "acs": ["AC-1", "AC-2"],
+        "results": [a_result_of("AC-1"), a_result_of("AC-2")],
+        "gates": [{"repo": "api", "name": "check", "exit_code": 0, "status": "pass"}],
+        "red_on_parent": [],
+        "owner_steps": [],
+    }
+    return json.dumps(document | changes).encode()
+
+
+def a_review_output(ticket: str = "TST-7", **changes: object) -> bytes:
+    document: dict[str, object] = {
+        "schema": "agent-hub/review/1",
+        "reviewer": "spec",
+        "ticket": ticket,
+        "task": "T1",
+        "round": 1,
+        "commit": "feb9c4c",
+        "verdict": "PASS",
+        "findings": [],
+    }
+    return json.dumps(document | changes).encode()
+
+
+def an_eval_pair(delivery: str, output: bytes | None = None) -> dict[str, bytes]:
+    """``evals/<delivery>.md`` and its ``.json``, both valid unless ``output`` replaces the JSON."""
+    return {
+        f"{EVALS}/{delivery}.md": a_good_eval(delivery, **SHIP_FIELDS),
+        f"{EVALS}/{delivery}.json": an_eval_output(delivery) if output is None else output,
+    }
+
+
+def outputs_found(
+    snapshot_of: SnapshotFactory,
+    files: Mapping[str, bytes],
+    *,
+    entries: Mapping[str, TreeEntry] | None = None,
+    record: bytes | None = None,
+) -> list[Leveled]:
+    """Every finding, with its level, on the demo feature folder holding ``files``."""
+    default = json.dumps(a_record(an_ac(1), an_ac(2))).encode()
+    all_files = {RECORD: default if record is None else record} | dict(files)
+    return shown_with_level(snapshot_of(config=a_config(), files=all_files, entries=entries))
+
+
+def eval_warning(name: str, message: str, fix: str) -> Leveled:
+    return (Severity.WARNING, f"{EVALS}/{name}", message, fix)
+
+
+def review_warning(name: str, message: str, fix: str) -> Leveled:
+    return (Severity.WARNING, f"{REVIEWS}/{name}", message, fix)
+
+
+def validate_fix(kind: str, path: str) -> str:
+    return f"run ./hub validate-output {kind} {path}"
+
+
+def counting(monkeypatch: pytest.MonkeyPatch, name: str) -> list[None]:
+    """Count the calls the doctor makes to ``agent_outputs.<name>``: one per validated output."""
+    calls: list[None] = []
+    original = getattr(agent_outputs, name)
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        calls.append(None)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(agent_outputs, name, counted)
+    return calls
+
+
+def test_passes_valid_outputs_when_records_present(snapshot_of: SnapshotFactory) -> None:
+    files = {
+        **an_eval_pair("tst-7"),
+        **an_eval_pair("tst-7-r2"),
+        f"{REVIEWS}/TST-7.md": b"---\nstatus: approved\n---\n",
+        f"{REVIEWS}/TST-7/spec-r1.json": a_review_output(),
+        f"{REVIEWS}/TST-7/quality-r2.json": a_review_output(reviewer="quality", round=2),
+        f"{REVIEWS}/tst-8.md": b"# Review\n",
+        f"{REVIEWS}/tst-8/spec-r1.json": a_review_output("TST-8"),
+        f"{EVALS}/.draft.json": b"not an output",
+        f"{EVALS}/notes.txt": b"not an output",
+        f"{REVIEWS}/TST-7/.draft.json": b"not an output",
+        f"{REVIEWS}/.hidden/spec-r1.json": b"not an output",
+        f"{REVIEWS}/TST-7/notes.md": b"not an output",
+    }
+
+    assert outputs_found(snapshot_of, files) == []
+
+
+def test_warns_on_eval_outputs_when_sibling_missing(snapshot_of: SnapshotFactory) -> None:
+    # A lone output is not validated: its only warning is the missing record.
+    files = {f"{EVALS}/abc-2.json": b"{}", f"{EVALS}/abc-4.json": an_eval_output("abc-4")}
+    entries = {f"{EVALS}/abc-4.md": LinkEntry(target="../abc-4.md", outside=False)}
+
+    assert outputs_found(snapshot_of, files, entries=entries) == [
+        (Severity.ERROR, f"{EVALS}/abc-4.md", NOT_READ, LINK_FIX),
+        eval_warning("abc-2.json", NO_EVAL_NOTE, NO_EVAL_NOTE_FIX),
+        eval_warning("abc-4.json", NO_EVAL_NOTE, NO_EVAL_NOTE_FIX),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("output", "sibling", "message"),
+    [
+        pytest.param(
+            an_eval_output("abc-3", verdict="MAYBE", colour=1),
+            a_good_eval("abc-3", **SHIP_FIELDS),
+            "invalid eval output: 2 problems, first: verdict: Input should be 'SHIP',"
+            " 'SHIP-WITH-OWNER-STEPS' or 'NO-SHIP'",
+            id="two-problems",
+        ),
+        # Valid without a record; the folder's features.json names AC-2 too.
+        pytest.param(
+            an_eval_output("abc-3", acs="all", results=[a_result_of("AC-1")]),
+            a_good_eval("abc-3", acs="all", **SHIP_FIELDS),
+            "invalid eval output: 1 problem, first: results: no result for AC-2,"
+            " which the scope names",
+            id="record-scope",
+        ),
+    ],
+)
+def test_warns_on_invalid_outputs_when_validation_fails(
+    snapshot_of: SnapshotFactory, output: bytes, *, sibling: bytes, message: str
+) -> None:
+    files = {**an_eval_pair("abc-1"), f"{EVALS}/abc-3.md": sibling, f"{EVALS}/abc-3.json": output}
+
+    assert outputs_found(snapshot_of, files) == [
+        eval_warning("abc-3.json", message, validate_fix("eval", f"{EVALS}/abc-3.json"))
+    ]
+
+
+def test_warns_on_review_outputs_when_record_missing(snapshot_of: SnapshotFactory) -> None:
+    files = {
+        f"{REVIEWS}/TST-7/spec-r1.json": b"{}",
+        f"{REVIEWS}/TST-8/spec-r1.json": a_review_output("TST-8"),
+    }
+    entries = {f"{REVIEWS}/TST-8.md": LinkEntry(target="../TST-8.md", outside=False)}
+
+    assert outputs_found(snapshot_of, files, entries=entries) == [
+        review_warning("TST-7/spec-r1.json", NO_REVIEW_NOTE, NO_REVIEW_NOTE_FIX),
+        review_warning("TST-8/spec-r1.json", NO_REVIEW_NOTE, NO_REVIEW_NOTE_FIX),
+    ]
+
+
+def test_warns_on_invalid_review_outputs_when_validation_fails(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    path = f"{REVIEWS}/TST-8/quality-r1.json"
+    files = {
+        f"{REVIEWS}/TST-8.md": b"# Review\n",
+        path: a_review_output(reviewer="quality", verdict="FAIL"),
+    }
+
+    assert outputs_found(snapshot_of, files) == [
+        review_warning(
+            "TST-8/quality-r1.json",
+            "invalid review output: 2 problems, first: ticket: the ticket is TST-7 but the"
+            " folder is TST-8",
+            validate_fix("review", path),
+        )
+    ]
+
+
+def test_skips_outputs_when_folder_has_no_record(snapshot_of: SnapshotFactory) -> None:
+    other = "brain/features/other"
+    files = {
+        f"{other}/reviews/TST-9/spec-r1.json": b"{}",
+        f"{other}/evals/abc-1.json": b"{}",
+        f"{other}/evals/abc-2.md": b"not an eval",
+        f"{other}/evals/abc-2.json": b"{}",
+    }
+
+    assert outputs_found(snapshot_of, files) == []
+
+
+def test_warns_when_outputs_not_regular(snapshot_of: SnapshotFactory) -> None:
+    files = {
+        f"{EVALS}/abc-1.md": a_good_eval("abc-1", **SHIP_FIELDS),
+        f"{REVIEWS}/TST-7.md": b"# Review\n",
+    }
+    entries: dict[str, TreeEntry] = {
+        f"{EVALS}/abc-1.json": LinkEntry(target="../abc-1.json", outside=False),
+        f"{REVIEWS}/TST-7/spec-r1.json": FileEntry(executable=False, content=None),
+    }
+
+    assert outputs_found(snapshot_of, files, entries=entries) == [
+        eval_warning("abc-1.json", NOT_READ, LINK_FIX),
+        review_warning("TST-7/spec-r1.json", UNREAD, UNREAD_FIX),
+    ]
+
+
+def test_warns_once_when_outputs_over_bound(snapshot_of: SnapshotFactory) -> None:
+    oversize = b" " * (MAX_OUTPUT_BYTES + 1)
+    files = {
+        **an_eval_pair("abc-1", oversize),
+        f"{REVIEWS}/TST-7.md": b"# Review\n",
+        f"{REVIEWS}/TST-7/spec-r1.json": oversize,
+    }
+
+    assert outputs_found(snapshot_of, files) == [
+        eval_warning(
+            "abc-1.json",
+            "invalid eval output: 1 problem, first: $: the file is over 524288 bytes",
+            validate_fix("eval", f"{EVALS}/abc-1.json"),
+        ),
+        review_warning(
+            "TST-7/spec-r1.json",
+            "invalid review output: 1 problem, first: $: the file is over 524288 bytes",
+            validate_fix("review", f"{REVIEWS}/TST-7/spec-r1.json"),
+        ),
+    ]
+
+
+def test_warns_once_on_eval_outputs_when_record_over_bound(snapshot_of: SnapshotFactory) -> None:
+    record = json.dumps(a_record(an_ac(1), an_ac(2))).encode().ljust(MAX_RECORD_BYTES + 1)
+
+    assert outputs_found(snapshot_of, an_eval_pair("abc-1"), record=record) == [
+        eval_warning(
+            "abc-1.json",
+            "invalid eval output: 1 problem, first: $: features.json is over 1048576 bytes",
+            validate_fix("eval", f"{EVALS}/abc-1.json"),
+        )
+    ]
+
+
+def many_eval_outputs(count: int) -> dict[str, bytes]:
+    return {
+        path: content
+        for index in range(count)
+        for path, content in an_eval_pair(f"e-{index:03}", b"{}").items()
+    }
+
+
+def many_review_outputs(count: int) -> dict[str, bytes]:
+    outputs = {f"{REVIEWS}/TST-7/spec-r{index}.json": b"{}" for index in range(1, count + 1)}
+    return {f"{REVIEWS}/TST-7.md": b"# Review\n", **outputs}
+
+
+@pytest.mark.parametrize(
+    ("name", "files", "cap"),
+    [
+        pytest.param("eval_problems", many_eval_outputs(201), 200, id="eval"),
+        pytest.param("review_problems", many_review_outputs(501), 500, id="review"),
+    ],
+)
+def test_validates_at_most_cap_when_outputs_many(
+    snapshot_of: SnapshotFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    *,
+    files: dict[str, bytes],
+    cap: int,
+) -> None:
+    calls = counting(monkeypatch, name)
+
+    found = outputs_found(snapshot_of, files)
+
+    outputs = sorted(path for path in files if path.endswith(".json"))
+    assert len(calls) == cap
+    assert [path for _, path, _, _ in found] == outputs[:cap]
+    assert {severity for severity, _, _, _ in found} == {Severity.WARNING}
+
+
+@pytest.mark.parametrize(
+    ("name", "files", "validated"),
+    [
+        # A review costs its own bytes: eight of the largest fill the budget exactly.
+        pytest.param(
+            "review_problems",
+            {
+                f"{REVIEWS}/TST-7.md": b"# Review\n",
+                **{
+                    f"{REVIEWS}/TST-7/spec-r{index}.json": b"{}".ljust(MAX_OUTPUT_BYTES)
+                    for index in range(1, BUDGET_OUTPUTS + 2)
+                },
+            },
+            BUDGET_OUTPUTS,
+            id="review",
+        ),
+        # An eval also costs its sibling's head and the record, so one fewer fits.
+        pytest.param(
+            "eval_problems",
+            {
+                path: content
+                for index in range(BUDGET_OUTPUTS)
+                for path, content in an_eval_pair(
+                    f"e-{index}", b"{}".ljust(MAX_OUTPUT_BYTES)
+                ).items()
+            },
+            BUDGET_OUTPUTS - 1,
+            id="eval",
+        ),
+    ],
+)
+def test_validates_within_budget_when_outputs_large(
+    snapshot_of: SnapshotFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    *,
+    files: dict[str, bytes],
+    validated: int,
+) -> None:
+    calls = counting(monkeypatch, name)
+
+    found = outputs_found(snapshot_of, files)
+
+    assert len(calls) == validated
+    assert len(found) == validated
+
+
+def test_keeps_findings_when_outputs_added_to_legacy_folder(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    legacy = {
+        SPEC: b"AC-1 AC-2 AC-3\n",
+        "brain/features/demo/eval.md": b"# Eval\n",
+        f"{EVALS}/tst-7.md": a_good_eval("tst-7", **SHIP_FIELDS),
+        f"{EVALS}/tst-8.md": a_good_eval("tst-9"),
+        f"{REVIEWS}/TST-7.md": b"# Review\n",
+    }
+    outputs = {
+        f"{EVALS}/tst-7.json": an_eval_output("tst-7"),
+        f"{EVALS}/tst-10.json": an_eval_output("tst-10"),
+        f"{REVIEWS}/TST-7/spec-r1.json": a_review_output(),
+        f"{REVIEWS}/TST-9/spec-r1.json": a_review_output("TST-9"),
+    }
+    record = json.dumps(a_record(an_ac(1), an_ac(2, repo="other"))).encode()
+
+    before = outputs_found(snapshot_of, legacy, record=record)
+    after = outputs_found(snapshot_of, legacy | outputs, record=record)
+
+    assert len(before) == 3
+    assert [finding for finding in after if finding[1] not in outputs] == before
+    assert [finding for finding in after if finding[1] in outputs] == [
+        eval_warning("tst-10.json", NO_EVAL_NOTE, NO_EVAL_NOTE_FIX),
+        review_warning("TST-9/spec-r1.json", NO_REVIEW_NOTE, NO_REVIEW_NOTE_FIX),
+    ]
