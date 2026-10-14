@@ -11,6 +11,12 @@ The feature tickets read Linear through ``CachedTicketSnapshots`` (ADR 0025): ``
 gives its reader per request, None (not connected) when ``LINEAR_API_KEY`` is unset in
 ``environ`` or the hub's ``tracker.transport`` is ``mcp``; the key is read at call time and never
 logged or shown.
+
+The agent sessions (AGH-165, ADR 0027) run over the Claude driver and cloud launcher of
+``agent_hub.claude_sessions``, imported in ``claude_adapters`` alone: without the ``sessions``
+extra the driver is ``UnavailableSessionDriver`` (P2). Their store is the same database's
+agent-session tables; ``SessionRuntime`` sweeps and shuts them down with the app. Inside the
+container (``settings.sessions_off``, L2) none of it is built.
 """
 
 import os
@@ -24,6 +30,11 @@ from typing import Final
 
 from fastapi import FastAPI
 
+from agent_hub.api.agent_session_runtime import (
+    SessionRuntime,
+    UnavailableCloudLauncher,
+    UnavailableSessionDriver,
+)
 from agent_hub.api.app import create_app
 from agent_hub.api.change_feed import ChangeFeed, SystemTimer
 from agent_hub.api.dependencies import ApiPorts
@@ -42,8 +53,14 @@ from agent_hub.api.ticket_snapshots import (
     REQUEST_TIMEOUT_SECONDS,
     CachedTicketSnapshots,
 )
+from agent_hub.api.workdir_listing import RegisteredWorkdirs
 from agent_hub.collector.claude_hooks import ClaudeHookMapper
 from agent_hub.collector.transcript_tail import TranscriptTail
+from agent_hub.core.agent_sessions.cloud import CloudLauncher, CloudSessions
+from agent_hub.core.agent_sessions.control import AgentSessionControl, WorkdirSource
+from agent_hub.core.agent_sessions.driver import SessionDriver
+from agent_hub.core.agent_sessions.links import AgentSessionLinks
+from agent_hub.core.agent_sessions.store import AgentSessionStore
 from agent_hub.core.features.ticket_snapshots import SnapshotRequest, TrackerTransport
 from agent_hub.core.hub_config.effective_identity import (
     GitReader,
@@ -84,6 +101,7 @@ from agent_hub.core.tracker.tracker_reader import TrackerReader
 from agent_hub.generator.registered_hub_files import GitReaderFactory, HubFileSystem
 from agent_hub.hub_git.brain_change_requests import GitBrainChangeRequests
 from agent_hub.hub_git.git_runner import GitRunner
+from agent_hub.storage.agent_session_store import open_agent_session_store
 from agent_hub.storage.event_store import DatabaseBusyError, SqliteEventStore, open_event_store
 from agent_hub.storage.hub_registry import JsonHubRegistry
 from agent_hub.tracker_linear.graphql_reader import LinearGraphqlTrackerReader
@@ -350,12 +368,74 @@ def default_brain_changes() -> BrainChangeRequests:
     return GitBrainChangeRequests(GitRunner())
 
 
+def claude_adapters(environ: Mapping[str, str]) -> tuple[SessionDriver, CloudLauncher]:
+    """The Claude driver and cloud launcher over ``environ`` (the children's environment), or
+    their unavailable stand-ins when the ``sessions`` extra is not installed (P2)."""
+    try:
+        from agent_hub.claude_sessions.cloud_launcher import ClaudeCloudLauncher  # noqa: PLC0415
+        from agent_hub.claude_sessions.sdk_driver import ClaudeSdkSessionDriver  # noqa: PLC0415
+    except ImportError:
+        return UnavailableSessionDriver(), UnavailableCloudLauncher()
+    return ClaudeSdkSessionDriver(environ=environ), ClaudeCloudLauncher(environ=environ)
+
+
+def web_url(settings: ApiSettings) -> str:
+    """The loopback URL the children reach ``hub web`` at (``AGENT_HUB_WEB_URL``)."""
+    return f"http://127.0.0.1:{settings.port}"
+
+
+@dataclass(frozen=True)
+class AgentSessionWiring:
+    """The agent-session use cases of one app, the links into the session views, and the
+    runtime that sweeps and stops them with the app."""
+
+    control: AgentSessionControl
+    cloud: CloudSessions
+    links: AgentSessionLinks
+    runtime: SessionRuntime
+
+
+def wire_agent_sessions(  # noqa: PLR0913 -- the use cases' ports, all injected
+    settings: ApiSettings,
+    *,
+    store: AgentSessionStore,
+    workdirs: WorkdirSource,
+    driver: SessionDriver,
+    launcher: CloudLauncher,
+    url: str,
+) -> AgentSessionWiring:
+    """``AgentSessionControl``, ``CloudSessions`` and ``AgentSessionLinks`` over ``driver``,
+    ``launcher`` and ``store``; the children get ``AGENT_HUB_WEB_URL=url`` (never the token)."""
+    control = AgentSessionControl(
+        driver,
+        store,
+        workdirs=workdirs,
+        clock=settings.clock,
+        limits=settings.limits,
+        environment_extra={"AGENT_HUB_WEB_URL": url},
+    )
+    cloud = CloudSessions(
+        launcher=launcher,
+        store=store,
+        capabilities=driver.capabilities,
+        clock=settings.clock,
+        limits=settings.limits,
+    )
+    return AgentSessionWiring(
+        control=control,
+        cloud=cloud,
+        links=AgentSessionLinks(control.live_link, store),
+        runtime=SessionRuntime(control, store, clock=settings.clock),
+    )
+
+
 def _event_read_models(
     store: SqliteEventStore,
     settings: ApiSettings,
     *,
     hub_paths: _HubPaths,
     label_rules_of: Callable[[str], LabelRules | None],
+    sessions: AgentSessionWiring | None,
 ) -> FoldedEventReadModels:
     return FoldedEventReadModels(
         store,
@@ -363,6 +443,7 @@ def _event_read_models(
         hub_path_of=hub_paths,
         prices=PRICES,
         label_rules_of=label_rules_of,
+        agent_session_link_of=None if sessions is None else sessions.links.link_of,
     )
 
 
@@ -376,6 +457,8 @@ def build_app(
     environ: Mapping[str, str] | None = None,
     linear_post: Post | None = None,
     tracker_reader: TrackerReader | None = None,
+    session_driver: SessionDriver | None = None,
+    cloud_launcher: CloudLauncher | None = None,
 ) -> FastAPI:
     """The app of ``hub web``: every route wired to the real adapters.
 
@@ -384,6 +467,8 @@ def build_app(
     requests (default: ``git`` and ``gh`` through ``hub_git``). The tickets route reads Linear
     with ``LINEAR_API_KEY`` from ``environ`` (default this process's environment, read at call
     time) through ``linear_post`` (default ``urllib``), or ``tracker_reader`` when given (tests).
+    The agent sessions run on ``session_driver`` and ``cloud_launcher`` (default
+    ``claude_adapters`` over ``environ``); none is built when ``settings.sessions_off``.
     ``DatabaseAccessError`` when the store cannot be opened.
     """
     store = open_event_store(settings.db_path)
@@ -399,8 +484,20 @@ def build_app(
         running_version=settings.running_version,
         read_git=_files_only if read_git is None else read_git,
     )
+    sessions = _agent_sessions(
+        settings,
+        registry=registry,
+        reader=reader,
+        environ=environ,
+        session_driver=session_driver,
+        cloud_launcher=cloud_launcher,
+    )
     events = _event_read_models(
-        store, settings, hub_paths=hub_paths, label_rules_of=facts.label_rules_of
+        store,
+        settings,
+        hub_paths=hub_paths,
+        label_rules_of=facts.label_rules_of,
+        sessions=sessions,
     )
     snapshots = ticket_snapshots(
         facts,
@@ -445,5 +542,42 @@ def build_app(
             hub_of=facts.hub_of,
             today=settings.clock,
         ),
+        agent_sessions=None if sessions is None else sessions.control,
+        cloud_sessions=None if sessions is None else sessions.cloud,
+        agent_session_links=None if sessions is None else sessions.links,
     )
-    return create_app(settings, ports=ports, problems=COMPOSED_PROBLEMS, web_dist=web_dist)
+    return create_app(
+        settings,
+        ports=ports,
+        problems=COMPOSED_PROBLEMS,
+        web_dist=web_dist,
+        lifecycle=None if sessions is None else sessions.runtime,
+    )
+
+
+def _agent_sessions(  # noqa: PLR0913 -- build_app's session options, passed on
+    settings: ApiSettings,
+    *,
+    registry: HubRegistry,
+    reader: HubFileReader,
+    environ: Mapping[str, str] | None,
+    session_driver: SessionDriver | None,
+    cloud_launcher: CloudLauncher | None,
+) -> AgentSessionWiring | None:
+    if settings.sessions_off:
+        return None
+    env: Mapping[str, str] = os.environ if environ is None else environ
+    if session_driver is None or cloud_launcher is None:
+        driver, launcher = claude_adapters(env)
+        session_driver = session_driver or driver
+        cloud_launcher = cloud_launcher or launcher
+    return wire_agent_sessions(
+        settings,
+        store=open_agent_session_store(settings.db_path),
+        workdirs=RegisteredWorkdirs(
+            registry=registry, reader=reader, running_version=settings.running_version
+        ),
+        driver=session_driver,
+        launcher=cloud_launcher,
+        url=web_url(settings),
+    )
