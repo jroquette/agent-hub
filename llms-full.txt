@@ -307,13 +307,11 @@ It needs the `sessions` extra (the Claude Agent SDK, about 240 MiB): from the hu
 instead of `./hub web`; without it the screen says what is missing. Open the printed address once per browser: the
 token becomes a cookie the session routes need. Limits are `hub web` options with `AGENT_HUB_*` variables (`hub web
 --help`; 4 live sessions, 30 min idle, 10 min to answer a prompt). Their conversations are kept, redacted, in `hub
-web`'s database for 30 days after they end (Delete removes one at once). Off in Docker.
-
-From another device, keep `hub web` on loopback and bring the port to it: `ssh -L 7420:127.0.0.1:7420 <host>`, or
-`tailscale serve` to `http://127.0.0.1:7420` on your own tailnet; then open the token address there. Never Tailscale
-Funnel, ngrok or `--host 0.0.0.0`. Claude's own Remote Control is the other way to reach a session from a phone.
-Cloud sessions (claude.ai/code) are not driven from the app: it gives the `claude --cloud` command to run, then the
-session's link and `claude --teleport <id>`.
+web`'s database for 30 days after they end (Delete removes one at once). Off in Docker. From another device, keep
+`hub web` on loopback and bring the port to it: `ssh -L 7420:127.0.0.1:7420 <host>`, or `tailscale serve` to
+`http://127.0.0.1:7420` on your own tailnet, then open the token address there; never Tailscale Funnel, ngrok or
+`--host 0.0.0.0`. Claude's Remote Control also reaches a session from a phone. Cloud sessions (claude.ai/code) are not
+driven from the app: it gives the `claude --cloud` command, then the session's link and `claude --teleport <id>`.
 
 Release note for a hub that moves to a release with the control plane: `./hub sync` adds
 `plugin/hub-workflow/hooks/event_sensor.py` and rewrites `hooks.json`, `.claude/settings.json` (the sensor joins
