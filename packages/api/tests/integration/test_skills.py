@@ -313,6 +313,28 @@ def test_reads_no_file_when_name_unknown(
     assert "read_skill_file" not in adapter_calls
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        f"{CATALOG}/skill/hub-workflow/missing",
+        f"{CATALOG}/skill/nowhere/alpha",
+        f"{CATALOG}/agent/hub-workflow/alpha",
+        f"{CATALOG}/hook/nowhere/nowhere-stop-1",
+        f"{CATALOG}/skill/hub-workflow/missing/files/{'0' * 16}",
+    ],
+)
+def test_refuses_unknown_name_without_reading_when_catalog_cold(
+    *, composed: Any, skills_hub: SkillsHub, adapter_calls: list[str], path: str
+) -> None:
+    skills_hub()
+    adapter_calls.clear()
+
+    response = composed.client.get(path)
+
+    _problem(response, 404)
+    assert adapter_calls == ["skill_sources"]
+
+
 def test_serves_bundled_file_when_id_issued(composed: Any, skills_hub: SkillsHub) -> None:
     skills_hub(
         {

@@ -222,6 +222,55 @@ def test_reads_nothing_when_name_unknown(source: str, name: str) -> None:
     assert len(reader.skill_reads) == warm
 
 
+@pytest.mark.parametrize(
+    ("kind", "source", "name"),
+    [
+        pytest.param(ItemKind.SKILL, "hub-workflow", "missing", id="skill-name"),
+        pytest.param(ItemKind.SKILL, "nowhere", "alpha", id="skill-source"),
+        pytest.param(ItemKind.AGENT, "hub-workflow", "alpha", id="agent-kind"),
+        pytest.param(ItemKind.HOOK, "nowhere", "nowhere-stop-1", id="hook-source"),
+        pytest.param(ItemKind.HOOK, "settings", "other-stop-1", id="hook-name"),
+    ],
+)
+def test_refuses_unknown_item_without_reading_when_catalog_cold(
+    kind: ItemKind, source: str, name: str
+) -> None:
+    reads, reader, _ = _reads()
+
+    with pytest.raises(EntityNotFoundError) as unknown:
+        reads.detail(project=FIXTURE_PROJECT, hub_path=HUB, kind=kind, source=source, name=name)
+    with pytest.raises(EntityNotFoundError):
+        reads.file(
+            project=FIXTURE_PROJECT,
+            hub_path=HUB,
+            kind=kind,
+            source=source,
+            name=name,
+            file_id="0" * 16,
+        )
+
+    assert unknown.value.entity_id == f"{kind.value}/{source}/{name}"
+    assert reader.skill_reads == []
+    assert reader.skill_listings == [HUB, HUB]
+
+
+def test_reads_item_when_listed_and_catalog_cold() -> None:
+    reads, reader, _ = _reads()
+
+    detail = reads.detail(project=FIXTURE_PROJECT, hub_path=HUB, **ALPHA)
+    hook = reads.detail(
+        project=FIXTURE_PROJECT,
+        hub_path=HUB,
+        kind=ItemKind.HOOK,
+        source="settings",
+        name="settings-pretooluse-1",
+    )
+
+    assert detail.id == "skill/hub-workflow/alpha"
+    assert hook.id == "hook/settings/settings-pretooluse-1"
+    assert reader.skill_reads != []
+
+
 def test_joins_usage_when_source_given() -> None:
     usage = FakeUsage(a_skill_usage())
     reads, _, _ = _reads(usage=usage)

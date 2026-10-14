@@ -45,8 +45,10 @@ from agent_hub.core.skills.skill_sources import (
     MAX_SKILL_FILE_BYTES,
     PLUGIN_FOLDER,
     PROJECT_SETTINGS_PATH,
+    PROJECT_SETTINGS_SOURCE,
     RESERVED_SOURCES,
     SETTINGS_PATH,
+    SETTINGS_SOURCE,
     SKILL_FILE,
     SKILLS_FOLDER,
     CatalogInputs,
@@ -213,6 +215,21 @@ def catalog_reads(sources: SkillSources) -> tuple[str, ...]:
     items.extend(agent.entry.path for agent in listing.agents.values() if agent.entry.regular)
     items.extend(entry.path for entry in listing.hooks.values() if entry.regular)
     return singles + tuple(sorted(items))
+
+
+def may_hold(sources: SkillSources, *, kind: ItemKind, source: str, name: str) -> bool:
+    """False when the listing alone shows the fold cannot hold ``kind/source/name`` (no file is
+    read): a skill needs its folder with a ``SKILL.md`` or as a link, an agent its file, a hook
+    its settings file or plugin ``hooks.json`` and a name starting ``<source>-``."""
+    listing = _listing(sources)
+    if kind is ItemKind.SKILL:
+        folder = listing.folders.get((source, name))
+        return folder is not None and (folder.link is not None or folder.skill_md is not None)
+    if kind is ItemKind.AGENT:
+        return (source, name) in listing.agents
+    settings = {SETTINGS_SOURCE: SETTINGS_PATH, PROJECT_SETTINGS_SOURCE: PROJECT_SETTINGS_PATH}
+    listed = settings[source] in listing.singles if source in settings else source in listing.hooks
+    return listed and name.startswith(f"{source.lower()}-")
 
 
 # Links
