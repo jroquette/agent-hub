@@ -1,4 +1,5 @@
 import json
+import signal
 import socket
 import threading
 import time
@@ -92,3 +93,61 @@ def test_serves_api_until_stopped_when_run(api_settings: ApiSettings, web_dist: 
     assert not thread.is_alive()
     with socket.socket() as probe:
         assert probe.connect_ex(("127.0.0.1", port)) != 0
+
+
+class OrderedLifecycle:
+    """An ``AppLifecycle`` noting each call, and whether the server had started to stop."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.server: LoopbackServer | None = None
+
+    async def start(self) -> None:
+        self.calls.append("start")
+
+    def begin_exit(self) -> None:
+        assert self.server is not None
+        self.calls.append("begin_exit" if self.server.started else "begin_exit_late")
+
+    async def stop(self) -> None:
+        self.calls.append("stop")
+
+
+def _serve(
+    app: Any, sock: socket.socket, **options: Any
+) -> tuple[LoopbackServer, threading.Thread]:
+    server = LoopbackServer(app, sock, **options)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return server, thread
+
+
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT])
+def test_calls_on_exit_before_graceful_wait_when_signalled(
+    api_settings: ApiSettings, web_dist: Any, sig: signal.Signals
+) -> None:
+    lifecycle = OrderedLifecycle()
+    app = create_app(api_settings, web_dist=web_dist, lifecycle=lifecycle)
+    server, thread = _serve(app, bind_loopback(0))
+    lifecycle.server = server
+
+    server.signal(sig)
+    thread.join(timeout=10)
+
+    assert not thread.is_alive()
+    assert lifecycle.calls == ["start", "begin_exit", "stop"]
+
+
+def test_calls_given_hook_once_when_stopped_twice(api_settings: ApiSettings, web_dist: Any) -> None:
+    hooked: list[str] = []
+    app = create_app(api_settings, web_dist=web_dist)
+    server, thread = _serve(app, bind_loopback(0), on_exit=lambda: hooked.append("exit"))
+
+    server.stop()
+    server.stop()
+    thread.join(timeout=10)
+
+    assert hooked == ["exit"]

@@ -168,6 +168,7 @@ def _get_paths(app: Any, slug: str) -> list[str]:
         "learning_id": "learning-1",
         "run_id": "run-1",
         "hub_id": "hub-1",
+        "agent_session_id": "01929a4e-7a11-7c00-8a00-00000000a001",
         "kind": "skill",
         "source": "hub-workflow",
         "name": "alpha",

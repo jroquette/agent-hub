@@ -1120,6 +1120,92 @@ def test_warns_and_passes_when_drafted_issues_have_no_ids(
     ]
 
 
+def a_demo_eval_output(delivery: str, **changes: object) -> bytes:
+    """An eval output that agrees with ``a_demo_eval_note(delivery)`` and the record's ACs."""
+    results = [
+        {"ac": ac, "command": "pytest", "exit_code": 0, "status": "pass", "summary": "Passes."}
+        for ac in ("AC-1", "AC-2")
+    ]
+    gate = {"repo": "demo-api", "name": "check", "exit_code": 0, "status": "pass"}
+    document = {
+        "schema": "agent-hub/eval/1",
+        "delivery": delivery,
+        "verdict": "SHIP",
+        "commit": "feb9c4c",
+        "tickets": [],
+        "acs": ["AC-1", "AC-2"],
+        "results": results,
+        "gates": [gate],
+        "red_on_parent": [],
+        "owner_steps": [],
+    }
+    return dump_json(document | changes)
+
+
+def a_demo_eval_note(delivery: str) -> bytes:
+    fields = f"type: eval\ndelivery: {delivery}\nverdict: SHIP\ncommit: feb9c4c\nacs: [AC-1, AC-2]"
+    return f"---\n{fields}\n---\n# Eval\n".encode()
+
+
+def a_demo_review_output(ticket: str, **changes: object) -> bytes:
+    document = {
+        "schema": "agent-hub/review/1",
+        "reviewer": "spec",
+        "ticket": ticket,
+        "task": "T1",
+        "round": 1,
+        "commit": "feb9c4c",
+        "verdict": "PASS",
+        "findings": [],
+    }
+    return dump_json(document | changes)
+
+
+def test_warns_on_agent_outputs_when_records_missing_or_invalid(
+    demo_hub: Path, run_doctor: DoctorRunner
+) -> None:
+    # AC-139.18 (S9, E5): the outputs of a recorded feature folder get warnings only.
+    folder = demo_hub / "brain/features/outputs"
+    record = {"feature": "outputs", "linear": ["DEM-1"], "acs": [a_demo_ac(1), a_demo_ac(2)]}
+    files = {
+        "features.json": dump_json(record),
+        "evals/abc-1.md": a_demo_eval_note("abc-1"),
+        "evals/abc-1.json": a_demo_eval_output("abc-1"),
+        "evals/abc-2.json": a_demo_eval_output("abc-2"),
+        "evals/abc-3.md": a_demo_eval_note("abc-3"),
+        "evals/abc-3.json": a_demo_eval_output("abc-3", verdict="MAYBE", colour=1),
+        "reviews/DEM-7/spec-r1.json": a_demo_review_output("DEM-7"),
+        "reviews/DEM-8.md": b"# Review\n",
+        "reviews/DEM-8/quality-r1.json": a_demo_review_output(
+            "DEM-7", reviewer="quality", verdict="FAIL"
+        ),
+        # E5: a folder without features.json gets no output finding.
+        "../no-record/reviews/DEM-9/spec-r1.json": b"{}",
+    }
+    for name, content in files.items():
+        (folder / name).parent.mkdir(parents=True, exist_ok=True)
+        (folder / name).write_bytes(content)
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "features.tracker"), exit_code=0)
+
+    shown = "warning features.tracker brain/features/outputs"
+    validate = "Fix: run ./hub validate-output"
+    assert lines == [
+        f"{shown}/evals/abc-2.json: eval output without its record evals/<name>.md"
+        " Fix: write the eval record beside it, or remove the output",
+        f"{shown}/evals/abc-3.json: invalid eval output: 2 problems, first: verdict: Input"
+        " should be 'SHIP', 'SHIP-WITH-OWNER-STEPS' or 'NO-SHIP'"
+        f" {validate} eval brain/features/outputs/evals/abc-3.json",
+        f"{shown}/reviews/DEM-7/spec-r1.json: review output without its ticket record"
+        " reviews/<ticket>.md Fix: write reviews/<ticket>.md once the ticket's reviews pass,"
+        " or remove the output",
+        f"{shown}/reviews/DEM-8/quality-r1.json: invalid review output: 2 problems, first:"
+        " ticket: the ticket is DEM-7 but the folder is DEM-8"
+        f" {validate} review brain/features/outputs/reviews/DEM-8/quality-r1.json",
+        "0 errors, 4 warnings, 0 infos",
+    ]
+
+
 def test_lists_files_when_rule_reads_instruction_files(
     demo_hub: Path, run_doctor: DoctorRunner, monkeypatch: pytest.MonkeyPatch
 ) -> None:

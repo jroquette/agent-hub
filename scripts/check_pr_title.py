@@ -18,6 +18,7 @@ SCOPES = (
     "generator",
     "tracker",
     "hub-git",
+    "claude-sessions",
     "api",
     "web",
     "repo",

@@ -19,6 +19,7 @@ The product and its phases are in [SPEC.md](../SPEC.md). Phase 1 is designed as 
 | [feature-records.md](feature-records.md) | a feature's records: the `features.json` ticket plan (`tickets`, `blocked_by`, each AC's `ticket`, `withdrawn`), `evals/<delivery>.md`, `reviews/<ticket>.md`, the legacy `eval.md`, the planning fold and the golden path states | a change reads or writes a feature record, the planner or evaluator templates, the Tickets tab or the golden path |
 | [workflow-schema.md](workflow-schema.md) | the declarative workflow document and minimum engine (sketch, Phase 4): admission rule, step types, typed outputs, status apart from outcome, failure classes, fixtures | workflow steps, gates, outputs or the executor |
 | [control-plane/README.md](control-plane/README.md) | the approved UI design of the Phase 2 control plane: principles, tokens, the screen specs in `control-plane/specs/` and the departures of Phase 2 and of AGH-201, and of AGH-136 in `specs/17-features.md` (a copied reference, not a subject file) | building `apps/web` screens or the `/api/v1` read models they show |
+| [agent-sessions.md](agent-sessions.md) | the sessions `hub web` drives: the `SessionDriver` port, the log and its stream, the state machine, permissions, limits, access, storage and retention | changing `agent_hub.core.agent_sessions`, `claude_sessions`, the agent-session routes or the chat screen |
 | [worktree-environment.md](worktree-environment.md) | what the repo's worktree setup and teardown scripts get: argv, cwd, the six `HUB_*` variables, the port slot, examples | writing or running a repo's worktree script, changing what `hub worktree`, `hub run` or `hub start` passes it |
 
 ## Rules for these files
@@ -42,4 +43,5 @@ The product and its phases are in [SPEC.md](../SPEC.md). Phase 1 is designed as 
 - [ADR 0024](../adr/0024-learning-actions-from-the-app.md): learning accept and reject open hub PRs through `hub_git`.
 - [ADR 0025](../adr/0025-reading-the-tracker-from-the-app.md): `hub web` reads ticket metadata through a read-only `TrackerReader`.
 - [ADR 0027](../adr/0027-workflow-format-and-minimum-engine.md): the Phase 4 workflow format and minimum engine.
+- [ADR 0031](../adr/0031-driving-claude-code-sessions-from-the-app.md): `hub web` drives the user's own Claude Code through the Claude Agent SDK.
 - [ADR 0030](../adr/0030-run-outcomes-in-the-tracker.md): `no_changes` and `blocked` runs get their own tracker report and exit (0, 3).

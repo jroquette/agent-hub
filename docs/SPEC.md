@@ -27,6 +27,8 @@ Success for v1 is recreating `loki-trader-hub` through the platform without losi
 **Non-goals (v1)**
 
 - It is not a new agent or an LLM runtime. The platform orchestrates and observes Claude Code (and others later); it does not replace it.
+  `hub web` can start and drive sessions of the user's own, installed Claude Code ([Defined directions](#defined-directions-2026-09-27) 4),
+  as `hub run` already runs it; it implements no agent loop and calls no model itself.
 - It is not a hosted multi-tenant service. v1 is local-first: a hub serves a team of developers who share one hub repo, each
   running the CLI and the hooks on their own machine or cloud session ([Team use and per-repo config](#team-use-and-per-repo-config)).
 - It does not edit the brain on its own. It keeps the current hub's rule: agents propose in `_inbox/`, and the human decides.
@@ -66,6 +68,7 @@ hub init --config hub.json   # generates from an existing project config
 hub sync [--check]   # reapplies templates without overwriting what the project customized (--check: plan only)
 hub sync --adopt [--accept PATH]…   # joins a hand-made hub: identical files become managed, differences are listed
 hub doctor [--only RULE]… [--json]   # checks rules, links, dead references and instruction size
+hub validate-output review|eval FILE   # checks one agent JSON output: a review round or an eval
 hub setup [--yes]   # onboards this machine: clones or fetches the repos, writes hub.local.json after confirmation, lists what is missing
 hub worktree NAME [--only REPO] [--remove] [--no-fetch]   # isolated worktrees for one task (--remove removes them; --no-fetch starts from the already-fetched base)
 hub start ISSUE [--repo DIR]… [--no-agent]   # issue to worktrees, In Progress and a claude session (resumes)
@@ -98,13 +101,25 @@ events with the same all-or-nothing rule; their events name no project of their 
 also appends its executor events to the same store as it writes each record; an unwritable store prints one
 `hub run: event store unavailable: <reason>` line and the run carries on.
 
+`hub validate-output review|eval FILE` checks one agent JSON output against its versioned schema
+(`agent-hub/review/1`, `agent-hub/eval/1`) and its cross-field rules, reporting every violation in one run. A `review`
+file is a reviewer's round, `reviews/<ticket>/<reviewer>-r<N>.json`; an `eval` file is `evals/<delivery>.json`, checked
+against its sibling `evals/<delivery>.md` (a missing sibling is a problem) and, when the folder above `evals/` holds
+one, the feature record `features.json`, whose live ACs scope the results (without it, only the document is checked).
+Each input is read as a regular file, at most its bound, and links are never followed. Exit 0 prints `<file>: valid`;
+exit 1 prints one line per problem, `<file>: <json path>: <message>`, the first 200 then `<file>: … and <N> more
+problems (<T> in total)`, or one line naming an input that could not be read; a usage error (a kind other than
+`review` or `eval`, no file) exits 2 before any read. It needs no `hub.json`, writes nothing and makes no network call.
+
 `hub web` serves the control plane from one local process ([Layer 2](#layer-2-control-plane-and-observability)): the
 `/api/v1` REST and SSE API ([API.md](API.md)) and the committed build of the web app, from the database `hub collect`
 uses. It binds `127.0.0.1` (`--host` may name another loopback address or `localhost`), prints `agent-hub at
-http://127.0.0.1:<port>`, and exits 1 with one line naming the port when it is taken. Any other address exits 2
+http://127.0.0.1:<port>/?token=<token>` (a fresh session token each start, held in memory only; `--open` opens that
+address; [ADR 0031](adr/0031-driving-claude-code-sessions-from-the-app.md)), and exits 1 with one line naming the port
+when it is taken. Any other address exits 2
 (`binding outside loopback needs AGENT_HUB_IN_CONTAINER=1`) unless `AGENT_HUB_IN_CONTAINER` is `1`, which only the
 agent-hub image sets; there it binds `0.0.0.0` and Compose publishes the port on the host's `127.0.0.1` only
-([ADR 0022](adr/0022-container-packaging.md)). The `Host` and `Origin` checks stay loopback-only, plus the exact
+([ADR 0022](adr/0022-container-packaging.md)), prints the plain URL (no token) and session control is off. The `Host` and `Origin` checks stay loopback-only, plus the exact
 `host[:port]` names of `AGENT_HUB_ALLOWED_HOSTS` (never a wildcard). `AGENT_HUB_CLAUDE_PROJECTS` (absolute) replaces
 `~/.claude/projects` as the only folder the transcript tail reads. Hubs are registered from the app (Settings › Hubs)
 into `$XDG_CONFIG_HOME/agent-hub/hubs.json` (absolute only), else `~/.config/agent-hub/hubs.json` (mode 0600).
@@ -327,8 +342,10 @@ The server is local only: loopback bind, `Host` and `Origin` checks, 1 MiB reque
 keeps the app on its own origin. It reaches the network in two documented cases only: the learning decisions' explicit
 pull request ([ADR 0024](adr/0024-learning-actions-from-the-app.md)), and a read-only, server-side read of Linear's
 GraphQL API for a feature's tickets, only when `LINEAR_API_KEY` is set where `hub web` runs
-([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md)). The browser never contacts Linear. The approved UI design and the departures from it are in
-[design/control-plane/](design/control-plane/README.md); the decisions are ADRs 0017 to 0025.
+([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md)). The browser never contacts Linear. Agent sessions (AGH-165,
+below) add no outbound call of the server: the `claude` processes it starts reach Anthropic as when the user runs
+them. The approved UI design and the departures from it are in
+[design/control-plane/](design/control-plane/README.md); the decisions are ADRs 0017 to 0025 and 0031.
 
 **Control-plane clarity (AGH-201, built).** What the owner could not use in the first `hub web` is now derived on read:
 
@@ -390,6 +407,32 @@ Linear status ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md), records
   the next free number, a withdrawn AC stays listed (`withdrawn: true` in `features.json`) and no id is renumbered.
   The planner, evaluator and requirements-analyst templates and `/feature` say so, and `hub doctor`'s
   `features.tracker` rule checks the new records.
+
+**Agent sessions (AGH-165, built).** `hub web` opens and drives Claude Code sessions, as the desktop app does
+([ADR 0031](adr/0031-driving-claude-code-sessions-from-the-app.md), routes in [API.md](API.md#agent-sessions), design
+in [design/agent-sessions.md](design/agent-sessions.md)):
+
+- **Engine.** "New session" on the Sessions screen starts the user's own `claude` (found on `PATH`) through the
+  Claude Agent SDK, in the registered hub, one of its repos or one of their existing worktrees, picked by an opaque id
+  (never a path from the browser), with the CLI's default setting sources: the workdir's CLAUDE.md, the hub's hooks
+  (the guard still applies, before any prompt), skills and agents. The SDK is the optional extra
+  `agent-hub[sessions]`; without it, or without `claude`, the screen says why and every write answers 503.
+- **Control.** Send messages (also while a turn runs), interrupt, answer permission prompts (allow once, deny with a
+  message, always allow one suggested rule; `AskUserQuestion` and plan approval too; unanswered in 10 minutes is a
+  deny), change mode (`default`, `acceptEdits`, `plan`; never a bypass mode) and model, close, resume or fork a past
+  session of that workdir, delete an ended one. At most 4 live sessions; an idle one ends after 30 minutes; every limit
+  is a `hub web` option with an `AGENT_HUB_*` variable. Each `claude` child ends with `hub web` (within 5 s); a
+  session left open by a crash is marked ended at the next start, and Resume picks it up.
+- **Log and stream.** Each session's log (gap-free `seq`) is streamed over SSE with `Last-Event-ID` replay; text
+  deltas live only in memory. A session `hub web` drives links to the hook-observed Session by Claude's session id
+  ("Open chat"), and its live tile shows `waiting` while a permission request is open.
+- **Access.** The `/api/v1/agent-sessions/**` routes need the cookie the printed `/?token=` address sets (per launch,
+  `HttpOnly`, `SameSite=Strict`); writes also need the server's own `Origin` and a JSON body; no WebSocket is served.
+  Every other route is unchanged. In the container, session control is off (404) and no token is minted.
+- **Data.** Only these sessions' conversations are stored, in the `hub web` database, redacted before storage, kept
+  30 days after the session ends (or deleted at once); the owner's live view is not redacted, a reload shows the
+  stored copy. No server log line holds conversation text. Cloud sessions are link-out guidance through the CLI
+  (`claude --cloud`, `--teleport`); the platform never calls claude.ai itself.
 
 **Skills tab (AGH-164, built).** Knowledge › Skills shows what a hub's agents can do, read from its files on request
 and never stored:
@@ -543,8 +586,9 @@ Phase 1 in progress: `init`, `sync` (`--adopt`), `doctor`, `worktree`, `brief`, 
 shipped in v0.8.0, and `setup`, `start` and `ship` in v0.9.0. Phase 2's first slice is shipped too: the control plane
 `hub web` (AGH-200) in v0.9.0 and its clarity pass (AGH-201: session labels, problems, learning accept and reject
 through hub PRs, the Brain browser and feature records) in v0.11.0, and ticket planning (AGH-136: tickets read
-from Linear, the golden path per feature, evals per delivery) in v0.13.0. The Phase 1 gate (Loki hub
-recreated) is open; pilot: AGH-54.
+from Linear, the golden path per feature, evals per delivery) in v0.13.0. Phase 4's session subset is delivered
+early and unreleased: `hub web` starts and drives Claude Code sessions (AGH-165); the generic executor, gate approvals
+from the UI and other agents' adapters stay in Phase 4. The Phase 1 gate (Loki hub recreated) is open; pilot: AGH-54.
 
 The order follows dogfooding: the first generated hub is the platform's own, and the second replaces `loki-trader-hub`. Editable workflows come later because they depend on observation already showing where the current flow gets stuck.
 
@@ -595,8 +639,19 @@ Continuity between sessions comes from the brain and the summaries, not from rer
 
 - No architecture change: v1 remains local-first, with the hub in git. The difference is that the hub repo is private and is the only place where the brain exists.
 
+**4. `hub web` drives the user's installed Claude Code (2026-10-14, AGH-165, [ADR 0031](adr/0031-driving-claude-code-sessions-from-the-app.md)).**
+
+- The app may start, talk to and stop sessions of the user's own `claude`, through the Claude Agent SDK pointed at
+  that binary, as `hub run` runs it from the CLI. The non-goal stands: no agent loop, no model call, no token of the
+  platform's own; credentials stay the user's `claude` login or `ANTHROPIC_API_KEY`, never read or forwarded.
+- Those sessions' conversations are the one exception to metadata-only storage: local, redacted, 30 days after the
+  session ends, deletable; the hook-fed events stay metadata-only.
+- Remote use goes through the user's own tunnel to the loopback port (SSH, `tailscale serve`) with the token, or
+  Claude's Remote Control; never a public bind, relay or hosted mode.
+
 **Open questions**
 
-- [ ] What is the retention period for the raw transcript?
+- [ ] What is the retention period for the raw transcript? (For sessions `hub web` drives: 30 days after they end,
+  direction 4; for transcripts in general it is still open.)
 - [ ] When the platform becomes a product, does the agent run on our infrastructure (protected brain) or in the customer's environment (mitigations only)?
 - [ ] Should cloud sessions (claude.ai/code) emit events to the collector, and how?

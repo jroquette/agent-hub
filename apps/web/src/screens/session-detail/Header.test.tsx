@@ -59,4 +59,19 @@ describe("Header", () => {
 
     expect(screen.getByText("Main agent · 3 subagents: Explore ×2, reviewer")).toBeInTheDocument();
   });
+
+  it("links to the chat when hub web drives the session (agent_session_link)", () => {
+    renderHeader(aSession({ agent_session_id: anId(1, "0192a5e5") }));
+
+    expect(screen.getByRole("link", { name: /Open chat/ })).toHaveAttribute(
+      "href",
+      `/agent-sessions/${anId(1, "0192a5e5")}`,
+    );
+  });
+
+  it("offers no chat link for a session hub web does not drive (agent_session_link)", () => {
+    renderHeader(aSession({ agent_session_id: null }));
+
+    expect(screen.queryByRole("link", { name: /Open chat/ })).toBeNull();
+  });
 });
