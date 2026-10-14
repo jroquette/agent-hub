@@ -197,7 +197,7 @@
     "hub.schema.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "e2b78bd709f31516847a5256e9d12444b2bfe115550790358013de54d0438f8d"
+      "sha256": "76e60c796d156fd5f0cf32a1b3e0ac92fb652cea4334fdc94cf7241637e436d8"
     },
     "plugin/demo/.claude-plugin/plugin.json": {
       "ownership": "seeded"
@@ -274,7 +274,7 @@
     "plugin/hub-workflow/hooks/guard.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "f3a9c13b0a39c411e0ca21f87490a46e684523e6b78e79772b8b9b52db8c5051"
+      "sha256": "db1c6c9a292e32de5fbd9bc29b096a4390e121680d554a2bc7767c13cd8a0d81"
     },
     "plugin/hub-workflow/hooks/hooks.json": {
       "executable": false,
@@ -284,7 +284,7 @@
     "plugin/hub-workflow/hooks/hubhooks.py": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "388a2b1ad2a229d280a87a91d050c31a0c96de31232f7bf4807a068654e87e5c"
+      "sha256": "c05a6ab7ea116eb63c7a5d927d4ffd6dd57657fe3b70456c5b3dd7836e9d9130"
     },
     "plugin/hub-workflow/hooks/post_edit.py": {
       "executable": true,
@@ -319,7 +319,7 @@
     "plugin/hub-workflow/hooks/stdlib_reader.py": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "16136944055c6e8ef80a97f272f4d09e77dce3b00420629ecf1df9bae18f1506"
+      "sha256": "072a6e245f71da1830b32f4d8eea832a9ca225478fe74e687a7101537cb9eedc"
     },
     "plugin/hub-workflow/hooks/stop_gate.py": {
       "executable": true,

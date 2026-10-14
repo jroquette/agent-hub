@@ -1238,3 +1238,59 @@ def test_wires_readonly_gate_in_both_files_when_hub_rendered(hub: Path) -> None:
             "    ]",
         )
         assert "\n".join(lines) in hooks_json, event
+
+
+# AGH-210 D-tighten: $HUB_CONFIG may add secret env files but never release one; without a hook
+# root (plugin cache), the config's own lists apply.
+ENV_FILES_CODE = """
+import json
+from pathlib import Path
+from hubhooks import Config
+from stdlib_reader import GuardSection, HubFile
+config = HubFile(guard=GuardSection(readable_env_files=(".env.local",),
+                                    secret_env_files=(".env.a",)))
+root = HubFile(guard=GuardSection(readable_env_files=(".env.tests",),
+                                  secret_env_files=(".env.b",)))
+alone = Config(None, config)
+rooted = Config(None, config, root=Path(sys.argv[1]), root_file=root)
+print(json.dumps([list(alone.readable_env_files), list(alone.secret_env_files),
+                  list(rooted.readable_env_files), list(rooted.secret_env_files)]))
+"""
+
+
+def test_keeps_root_readable_env_files_when_config_is_another_file(
+    hub: Path, *, hook_python: str, run_python: Callable[..., Any], elsewhere: Path
+) -> None:
+    lists = run_python(
+        hook_python, ENV_FILES_CODE, path=hub / HOOKS, args=[str(elsewhere)], cwd=elsewhere
+    )
+
+    assert lists == [[".env.local"], [".env.a"], [".env.tests"], [".env.b", ".env.a"]]
+
+
+def test_denies_env_files_when_hub_config_lists_them(
+    run_hook: Callable[..., subprocess.CompletedProcess[bytes]], hub: Path, *, elsewhere: Path
+) -> None:
+    write_hub_json(hub, ROOT_GUARD)
+    other = elsewhere / "other.json"
+    other.write_text(
+        json.dumps(
+            {
+                "project": {"name": "demo", "default_branch": "trunk"},
+                "guard": {
+                    "readable_env_files": [".env.local"],
+                    "secret_env_files": [".env.staging"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    env = {"HUB_CONFIG": str(other)}
+    calls = [
+        {"tool_name": "Read", "tool_input": {"file_path": str(hub.parent / "demo-api" / name)}}
+        for name in (".env.local", ".env.staging")
+    ]
+
+    verdicts = [verdict_of(run_hook("guard", event, env=env)) for event in calls]
+
+    assert [verdict and verdict[0] for verdict in verdicts] == ["deny", "deny"]

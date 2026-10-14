@@ -755,8 +755,8 @@ Hooks are small scripts Claude Code runs on its own at fixed moments; you never 
   `guard.infra`, `terraform apply|destroy|import`, any `aws` subcommand, `pulumi up|destroy`, `kubectl apply|delete`,
   `cdk deploy|destroy`; with it, see *Infra commands* below;
 - reading secret files (`.env*` other than `.env.example`, `.env.sample`, `.env.template`, `.env.test`,
-  `.env.development` and `.env.staging`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, SSH private keys), from any tool or
-  command;
+  `.env.development`, `.env.staging` and the names in `guard.readable_env_files`, plus the names in
+  `guard.secret_env_files` always, `*.pem`, `*.key`, `*.p12`, `*.pfx`, SSH private keys), from any tool or command;
 - AI attribution in commits, tags and pull requests, and `claude/…` branches;
 - touching the `.git` internals, and reading or changing any path in `guard.deny_paths`.
 
@@ -818,11 +818,13 @@ to keep a blanket deny. The sandbox still limits the network: add your cloud API
 
 Everything else goes through Claude Code's normal permission rules.
 
-**Configuration.** The lists come from `hub.json`: `guard.ask_before_edit`, `guard.deny_paths` and `guard.deny_hosts`,
+**Configuration.** The lists come from `hub.json`: `guard.ask_before_edit`, `guard.deny_paths`, `guard.deny_hosts`,
+`guard.readable_env_files` and `guard.secret_env_files`,
 plus `project.default_branch` and each `repos[].default_branch`. The branch hint's prefix is the developer's
 (`hub.local.json`, else `hub.json`, else git config; see [developer-identity](docs/design/developer-identity.md)).
 An entry `@hub/<path>` means
-`<path>` inside the hub. A `hub.json` named by `$HUB_CONFIG` can only add entries to these lists, never remove them.
+`<path>` inside the hub. A `hub.json` named by `$HUB_CONFIG` can only add entries to these lists, never remove them, and its
+`guard.readable_env_files` is ignored (only the hub's own releases a file).
 Only the hub's own `hub.json` turns `guard.infra` on and sets `guard.infra.allow`: `hub.local.json` cannot set it, and
 a `$HUB_CONFIG` file can only add `guard.infra.prod_markers`.
 
@@ -1030,6 +1032,8 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `guard.ask_before_edit` | no | `[]` | Paths where the guard asks before an edit |
 | `guard.deny_paths` | no | `[]` | Paths the guard never lets the agent read or edit |
 | `guard.deny_hosts` | no | `[]` | Hosts the guard blocks network calls to |
+| `guard.readable_env_files` | no | `[]` | Env file names (`.env.<suffix>`, e.g. `.env.local`) the guard lets agents read and edit; `.env` itself, paths and key files are rejected; `hub doctor` lists them |
+| `guard.secret_env_files` | no | `[]` | Env file names the guard always denies, even `.env.staging` or another name of its fixed non-secret list; not also in `readable_env_files` |
 | `guard.infra` | no | absent | Present, even `{}`, the guard classifies infra commands by environment (see the guard section) and `.claude/settings.json` drops its `terraform *` and `aws *` denies (after `./hub sync`); absent, the fixed infra rule |
 | `guard.infra.allow` | no | `[]` | Python `re` patterns for allowed environments, e.g. `(?<![^ \t])--profile[= ]demo-dev(?![^ \t])` and `^[ \t]*AWS_PROFILE=demo-dev(?=[ \t])`; bound each by a space or tab (an `AWS_PROFILE` prefix by the part's start), since `\b` also matches `demo-dev.x` or `>--profile=demo-dev` and `\s` also matches a carriage return the shell does not split on |
 | `guard.infra.prod_markers` | no | `[]` | Python `re` patterns that mark production; a match anywhere in an infra command blocks it |
@@ -1431,6 +1435,8 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `guard.ask_before_edit` | list of paths | `[]` | guard: ask before an edit under them |
 | `guard.deny_hosts` | list of host names | `[]` | guard: deny network calls to them |
 | `guard.deny_paths` | list of paths | `[]` | guard: deny any read or edit under them |
+| `guard.readable_env_files` | list of env file names (Env file names, below) | `[]` | hooks' config reader (only names of that shape count; with `$HUB_CONFIG`, the hook root's list only); guard: these names are not secret files, for any tool or Bash token; `hub doctor` (`secrets.config` info); a name also in `guard.secret_env_files` is a cross-field error |
+| `guard.secret_env_files` | list of env file names (Env file names, below) | `[]` | hooks' config reader (with `$HUB_CONFIG`, added to the hook root's); guard: these names are always secret files, even in its fixed non-secret list or `guard.readable_env_files`; `hub doctor` (`secrets.config` info) |
 | `guard.infra` | object; not in `hub.local.json` | absent | hooks' config reader (validated); present, even `{}`, it turns on the guard's infra classification (the [SPEC](../SPEC.md)'s infra guard; absent, the guard's fixed infra rule); generator: `.claude/settings.json` leaves out its `Bash(terraform *)` and `Bash(aws *)` denies while it is present (applied by `hub sync`); an unknown key under it (other than `_` keys) is reported by the reader as unusable (`InfraSection.problem`; the CLI rejects it), and the guard then denies every infra command |
 | `guard.infra.allow` | list of Python `re` patterns (Infra patterns, below) | `[]` | hooks' config reader; guard: the allowed environments; a part or call naming a covered tool must match one unless it is a local-only form, and what passes is asked instead when the command holds a character other than ASCII letters, digits, space, tab and `_ - . / : = @ , + %` (joined by `;`, `&&`, `||`, `|`, newline), or a word that always asks (a shell, `python*`, `perl`, `node`, `ruby`, `php`, `xargs`, `eval`, `exec`, `source`, `.` as a command, `env -i`/`-u`, `sudo`, `su`, `doas`, a lone `--`, `parallel`, a `sed` that runs its text: the [SPEC](../SPEC.md)'s infra guard), or a part that sets the environment twice (a second `AWS_PROFILE=` or `--profile`, …, also under two spellings such as `AWS_PROFILE=` and `--profile`), or an environment selector the guard knows (`AWS_PROFILE=`, `AWS_DEFAULT_PROFILE=`, `KUBECONFIG=`, `KUBE_CONTEXT=`, `HELM_KUBECONTEXT=`, `TF_WORKSPACE=`, `TF_DATA_DIR=`, `TF_CLI_ARGS[_*]=`, `PULUMI_BACKEND_URL=`, `AWS_CONFIG_FILE=`, `AWS_SHARED_CREDENTIALS_FILE=`, `AWS_ROLE_ARN=`, `CDK_DEFAULT_ACCOUNT=` anywhere, and any other word holding one of these names as an identifier, such as `export AWS_PROFILE` or `read KUBECONFIG`; `--profile`, `--aws-profile`, `--context`, `--kube-context`, `--cluster`, `--server`, `--user`, `--kubeconfig`, `--kube-apiserver`, `-chdir`, `--cwd`, `--stack`, `-s`, `--stage`, `--workspace`, `-var-file`, `-backend-config`, pulumi's `-C`, as `--x v` or `--x=v`, in a part naming a covered tool) that no match holds whole, so a pattern must match the whole setting, not its value alone, or a command that changes a tool's configuration (`aws configure set|import`, `kubectl config set-context|use-context|set-cluster|set-credentials|use|set|rename-context|delete-context`, `terraform workspace select|new`, `pulumi stack select`); a match that overlaps a quoted region (`'…'`, `"…"`, `$'…'`) neither allows nor denies |
 | `guard.infra.prod_markers` | list of Python `re` patterns (Infra patterns, below) | `[]` | hooks' config reader; guard: the production markers; a match anywhere in a command naming a covered tool denies it |
@@ -1472,6 +1478,10 @@ retype); brain frontmatter lists repo dirs unquoted (no type resolution). A safe
   (the hub, whatever its checkout is called; `@` cannot start a `dir`); `guard.deny_paths` may also start with another
   workspace directory (Loki's `_archive`). Hooks resolve `@hub` to the hub root holding the hook file. Loki's guards on
   adoption: [hub-adopt.md](hub-adopt.md#project-guards).
+- Env file names (`guard.readable_env_files`, `guard.secret_env_files`): `^\.env\.[A-Za-z0-9_.-]+$`, an env file with a
+  suffix, matched against a path's last component, case-sensitive, and not ending in `.pem`, `.key`, `.p12` or `.pfx`
+  (a model check; the exported schema has the pattern only, and the guard denies such names whatever a list says);
+  `.env` itself, a path and `id_*` never fit.
 - Conventions: each pattern ≤ 120 characters, each placeholder at most once. `branch`: `{prefix}` (the developer's
   effective branch prefix: `project.branch_prefix`, or `hub.local.json`), `{ISSUE}` (the issue id, e.g. `DEM-7`) or
   `{issue_lower}` (the same lowercased; one of the two needed), `{slug}` (the worktree name's description; empty, it
@@ -2321,7 +2331,7 @@ functions registered when the module ships.
 | `settings.valid` | error | `.claude/settings.json` (strict, as `settings.weakening` reads it) and `.mcp.json` (lenient, as the old lint) parse to a JSON object; settings hold no deprecated key (`allowedTools`, `ignorePatterns`); a linked file gives no finding | config lint |
 | `settings.weakening` | error | neither `.claude/settings.project.json` nor `.claude/settings.json` sets `disableAllHooks` or `permissions.defaultMode`; both parse as strict JSON; `settings.json` holds every group of the release's base hooks block, compared by JSON form | [ADR 0009](../adr/0009-hub-sync-by-file-ownership.md) |
 | `permissions.bypass` | error | no `bypassPermissions` default mode in `.claude/settings.json`; no skip-permissions flag in a key or string of it or `.mcp.json` (both read leniently, so a `settings.valid` error never hides one), nor in a line of a hub file (listed, or a fixed path present) under `scripts/` or `.github/workflows/`, `Makefile` or `package.json` | config lint |
-| `secrets.config` | error | no secret shape (eight kinds: JWT, AWS access key, private key, API key, GitHub token, Linear API key, credential assignment, Fernet-like key) in the instruction and plugin files, `.mcp.json`, `.claude/settings.json`, `CONTRIBUTING.md` or the PR template; once per kind per line, naming the kind, never the text | config lint |
+| `secrets.config` | error | no secret shape (eight kinds: JWT, AWS access key, private key, API key, GitHub token, Linear API key, credential assignment, Fernet-like key) in the instruction and plugin files, `.mcp.json`, `.claude/settings.json`, `CONTRIBUTING.md` or the PR template; once per kind per line, naming the kind, never the text; plus one info at `hub.json` per non-empty `guard.readable_env_files` and `guard.secret_env_files`, naming the env files the guard releases or always denies | config lint |
 | `mcp.pinned` | error | each `.mcp.json` server is not `@latest` and, run by `npx`, names a version (`@<digit>`); a server whose `args` are not all strings is skipped; settings' `mcpServers` are not checked | config lint |
 | `attribution.ai` | error | no AI co-author trailer, "Generated with Claude Code" line or `claude/` branch prefix in the files `secrets.config` reads | config lint |
 | `brain.leak` | error | no trimmed line of `min_line_length` (default 60, 1–10000) or more characters of a listed UTF-8 file under `brain/` (frontmatter, an unterminated one read as text, fenced blocks and table rows skipped) is a trimmed line of a listed text file in a repo; reported at the repo `path:line`, naming the brain `path:line`, never the leaked line | [SPEC](../SPEC.md) direction 2 |
