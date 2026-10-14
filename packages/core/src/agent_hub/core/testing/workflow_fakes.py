@@ -1,7 +1,7 @@
 """Fakes for the workflow engine's ports: scripted nodes, a clock that never sleeps, a recorder.
 
 ``ScriptedRunner`` answers each node from a list, one item per attempt: a ``NodeReply``, a
-string (the reply's text) or a ``NodeFailedError`` to raise. ``KeysOutputs`` checks only an
+string (the reply's text) or an exception to raise. ``KeysOutputs`` checks only an
 object schema's ``required`` keys; JSON Schema itself is ``generator``'s, tested there.
 """
 
@@ -17,7 +17,7 @@ from agent_hub.core.workflows.ports import NodeCall, NodeReply, RunEnd, StepEnd,
 
 START = datetime(2026, 10, 15, 9, 0, tzinfo=UTC)
 
-type Scripted = NodeReply | str | NodeFailedError
+type Scripted = NodeReply | str | Exception
 
 
 def a_plan(*nodes: Mapping[str, object], **top: object) -> WorkflowPlan:
@@ -55,7 +55,7 @@ class ScriptedRunner:
         self.calls.append(call)
         script = self.replies.get(call.node.id, ())
         reply: Scripted = script[done] if done < len(script) else ""
-        if isinstance(reply, NodeFailedError):
+        if isinstance(reply, Exception):
             raise reply
         return NodeReply(reply) if isinstance(reply, str) else reply
 

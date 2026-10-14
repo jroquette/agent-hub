@@ -175,6 +175,7 @@ def test_fails_config_when_condition_reads_a_failed_producer() -> None:
 
     assert run.status_of("b") == ("failed", None, None, "config")
     assert run.runner.ran() == ["a"]
+    assert [(start.node, start.attempt) for start in run.recorder.starts] == [("a", 1), ("b", 1)]
 
 
 def test_renders_references_when_a_node_reads_upstream_outputs() -> None:
@@ -447,3 +448,126 @@ def test_runs_the_node_when_its_condition_holds() -> None:
     run = Run(plan_of(shell("a", when="$INPUTS.mode == 'off'")))
 
     assert run.runner.ran() == ["a"]
+
+
+def test_ends_the_step_unknown_and_the_run_failed_when_a_port_raises() -> None:
+    plan = plan_of(shell("a"), shell("b"))
+    runner = ScriptedRunner({"a": [OSError("the output text")]})
+
+    run = Run(plan, runner)
+
+    assert run.status_of("a") == ("failed", None, None, "unknown")
+    assert run.recorder.end_of("a").detail == "OSError"
+    assert run.runner.ran() == ["a", "b"]
+    assert [end.status for end in run.recorder.run_ends] == ["failed"]
+    assert run.report.state.attempts == {"a": 1, "b": 1}
+
+
+def test_runs_a_cached_node_again_when_an_ancestor_it_reads_changed() -> None:
+    plan = plan_of(
+        shell("a", always_run=True),
+        shell("b", "a"),
+        shell("c", "b", command=["echo", "$a.output"]),
+    )
+    prior = RunState(nodes={n: NodeResult("completed", n.upper()) for n in ("a", "b", "c")})
+
+    run = Run(plan, ScriptedRunner({"a": ["NEW"], "b": ["B"]}), prior=prior)
+
+    assert run.runner.ran() == ["a", "b", "c"]
+    assert run.runner.calls[2].argv == ("echo", "NEW")
+
+
+def test_skips_a_join_when_an_upstream_was_skipped_for_a_failure() -> None:
+    plan = plan_of(
+        shell("f"),
+        shell("s", "f"),
+        shell("ok"),
+        shell("j", "s", "ok", trigger_rule="none_failed_min_one_success"),
+    )
+
+    run = Run(plan, ScriptedRunner({"f": [fails()]}))
+
+    assert run.status_of("j") == ("skipped", "upstream_failed", "f", None)
+
+
+def test_ends_cancelled_when_a_halt_follows_a_failed_node() -> None:
+    plan = plan_of(
+        shell("a"),
+        {
+            "id": "stop",
+            "type": "halt",
+            "reason": "Stop.",
+            "depends_on": ["a"],
+            "trigger_rule": "all_done",
+        },
+    )
+
+    run = Run(plan, ScriptedRunner({"a": [fails()]}))
+
+    assert (run.report.status, run.report.reason) == ("cancelled", "stop")
+
+
+def completed(*node_ids: str) -> RunState:
+    return RunState(nodes={n: NodeResult("completed", n.upper()) for n in node_ids})
+
+
+def test_reruns_only_what_follows_a_change_when_a_chain_resumes() -> None:
+    plan = plan_of(
+        shell("a"), shell("b", "a", always_run=True), shell("c", "b"), shell("d", "c"), shell("e")
+    )
+
+    run = Run(plan, ScriptedRunner({"b": ["NEW"]}), prior=completed("a", "b", "c", "d", "e"))
+
+    assert run.runner.ran() == ["b", "c", "d"]
+    assert [n for n in "ae" if run.status_of(n)[1] == "prior_success"] == ["a", "e"]
+
+
+@pytest.mark.parametrize(
+    ("changed_value", "expected"),
+    [("B", ["b"]), ("NEW", ["b", "d"])],
+    ids=["same-value", "new-value"],
+)
+def test_reruns_the_join_only_when_a_branch_changed_when_a_diamond_resumes(
+    changed_value: str, expected: list[str]
+) -> None:
+    plan = plan_of(
+        shell("a"), shell("b", "a", always_run=True), shell("c", "a"), shell("d", "b", "c")
+    )
+
+    run = Run(plan, ScriptedRunner({"b": [changed_value]}), prior=completed("a", "b", "c", "d"))
+
+    assert run.runner.ran() == expected
+
+
+def test_fails_the_node_and_ends_the_run_when_jitter_raises() -> None:
+    plan = plan_of(shell("a"), shell("b"))
+    recorder = ListRecorder()
+
+    def broken() -> float:
+        raise RuntimeError
+
+    runner = ScriptedRunner({"a": [fails("rate_limited"), "late"]})
+    ports = EnginePorts(runner, recorder, FakeClock(), KeysOutputs(), broken)
+    report = run_workflow(plan, {}, ports)
+
+    assert runner.ran() == ["a", "b"]
+    assert (report.status, report.reason) == ("failed", "a")
+    assert [end.status for end in recorder.run_ends] == ["failed"]
+    assert recorder.retries == []
+
+
+def test_fails_the_node_and_ends_the_run_when_the_clock_cannot_sleep() -> None:
+    class StuckClock(FakeClock):
+        def sleep(self, delay: timedelta) -> None:
+            raise OSError
+
+    plan = plan_of(shell("a"))
+    recorder = ListRecorder()
+    runner = ScriptedRunner({"a": [fails("transient"), "late"]})
+    report = run_workflow(
+        plan, {}, EnginePorts(runner, recorder, StuckClock(), KeysOutputs(), lambda: 0.5)
+    )
+
+    assert runner.ran() == ["a"]
+    assert report.status == "failed"
+    assert [end.status for end in recorder.run_ends] == ["failed"]
