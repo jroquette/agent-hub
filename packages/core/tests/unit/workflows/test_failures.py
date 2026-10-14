@@ -174,7 +174,9 @@ def test_keeps_the_five_minute_cap_when_provider_pushes_back_with_a_long_delay()
     assert decide("overloaded", policy, retries_done=4).delay == timedelta(minutes=5)
 
 
-@pytest.mark.parametrize(("draw", "seconds"), [(-3.0, 22.5), (1.0, 67.5), (7.0, 67.5)])
+@pytest.mark.parametrize(
+    ("draw", "seconds"), [(-3.0, 22.5), (1.0, 67.5), (7.0, 67.5), (float("nan"), 22.5)]
+)
 def test_clamps_the_draw_when_jitter_source_leaves_its_range(draw: float, seconds: float) -> None:
     decision = decide("rate_limited", jitter=lambda: draw)
 

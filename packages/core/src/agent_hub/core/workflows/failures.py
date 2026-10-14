@@ -13,7 +13,7 @@ from datetime import timedelta
 from typing import Final, Literal
 
 from agent_hub.core.errors import AgentHubError
-from agent_hub.core.workflows.nodes import Retry
+from agent_hub.core.workflows.nodes import MAX_DURATION_DIGITS, Retry, duration_seconds
 
 type FailureKind = Literal[
     "transient",
@@ -47,8 +47,6 @@ PUSHBACK_FLOOR: Final = timedelta(seconds=45)
 PUSHBACK_CAP: Final = timedelta(minutes=5)
 # Defence in depth over the model's own bound: no computed wait ever exceeds this.
 MAX_RETRY_DELAY: Final = timedelta(hours=1)
-MAX_DURATION_DIGITS: Final = 6
-_UNITS: Final = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 _LAST_DRAW: Final = math.nextafter(1.0, 0.0)
 
 
@@ -88,15 +86,19 @@ def kind_for_exit(exit_code: int, *, timed_out: bool = False) -> FailureKind | N
 
 
 def parse_duration(value: str) -> timedelta:
-    """A duration of at most six digits and a unit, else ``DurationError``."""
+    """A duration of at most six digits and a unit, else ``DurationError``.
+
+    The model also caps a ``Duration`` at seven days; a longer one parses here, and
+    ``MAX_RETRY_DELAY`` bounds what a retry waits either way.
+    """
     digits, unit = value[:-1], value[-1:]
     if not (digits.isascii() and digits.isdigit()) or len(digits) > MAX_DURATION_DIGITS:
         msg = f"a duration is 1 to {MAX_DURATION_DIGITS} digits and a unit (s, m, h, d)"
         raise DurationError(msg)
-    if unit not in _UNITS or digits.startswith("0"):
+    if unit not in {"s", "m", "h", "d"} or digits.startswith("0"):
         msg = "a duration starts with a non-zero digit and ends with s, m, h or d"
         raise DurationError(msg)
-    return timedelta(seconds=int(digits) * _UNITS[unit])
+    return timedelta(seconds=duration_seconds(value))
 
 
 def retry_decision(
@@ -121,7 +123,9 @@ def retry_decision(
     if kind not in PUSHBACK_KINDS:
         return RetryDecision(retry=True, delay=_doubled(base, retries_done, MAX_RETRY_DELAY))
     delay = _doubled(max(base, PUSHBACK_FLOOR), retries_done, PUSHBACK_CAP)
-    draw = min(max(jitter(), 0.0), _LAST_DRAW)
+    raw = jitter()
+    # NaN fails both comparisons and reads as 0.
+    draw = raw if 0.0 <= raw < 1.0 else (_LAST_DRAW if raw >= 1.0 else 0.0)
     return RetryDecision(retry=True, delay=min(delay * (0.5 + draw), MAX_RETRY_DELAY))
 
 
