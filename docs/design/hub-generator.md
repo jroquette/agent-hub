@@ -19,7 +19,7 @@ Kind: `generic` (same for every project), `module` (only when selected in `modul
 | `hub.schema.json`, `AGENTS.md` and `CLAUDE.md` (base rules; Brain rules route each learning: [memory-layers.md](memory-layers.md)), `Makefile`, `hub` shim, `agent` launcher, `.pre-commit-config.yaml`, `.github/workflows/ci.yml` | generic | managed |
 | `AGENTS.project.md` (project rules, created empty); `Makefile.project`; `README.md` (with a "Join this hub" section: requirements, access, `./hub setup`, known traps, and cloud steps with module `cloud`); `docs/app-repo-AGENTS.md` (starter for each repo's root `AGENTS.md`); `.gitignore` (base entries, `hub.local.json`, the launch context files `brain/auto/agent-context*.md` and personal memory `brain/auto/workspace/*` among them) | project-owned (`README.md`, `docs/app-repo-AGENTS.md`, `.gitignore` generic) | seeded |
 | `.claude/settings.json` (merged with a seeded `.claude/settings.project.json`, which can add sandbox hosts and override the sandbox's scalars, `enabled` included: only managed or CLI settings can enforce the sandbox; it holds the base denies (push denies per protected branch; no `terraform`/`aws` denies when `guard.infra` is set) and sandbox and runs the base hooks, so a hub never enables `hub-workflow`: Claude Code drops only identical duplicate hook commands), `.claude/agents/` and `.claude/skills/` (one link per entry of both plugins, since cloud sessions do not install repo-declared plugins; not dotfiles such as `.gitkeep`; a new project entry is linked at the next sync) | generic (+ project-owned) | managed (+ seeded) |
-| `plugin/hub-workflow/**` (base agents `architect`, `evaluator`, `planner`, `quality-reviewer`, `requirements-analyst`, `researcher`, `spec-reviewer`; skills `adr`, `create-plan`, `deliver`, `feature`, `fix`, `handoff`, `incident`, `kickoff`, `learn` (`/learn personal` writes `brain/auto/workspace/`), `onboard`, `recall`, `refactor`, `release`, `research`, `retro`, `review`, `triage`, `upgrade`; hooks; `schemas/review.v1.json` and `schemas/eval.v1.json`, the agent output schemas, core package data copied verbatim; same name in every hub; on adoption, Loki's `loki-workflow` becomes it plus `plugin/loki/`) | generic | managed |
+| `plugin/hub-workflow/**` (base agents `architect`, `evaluator`, `planner`, `quality-reviewer`, `requirements-analyst`, `researcher`, `spec-reviewer`; `quality-reviewer`, `researcher` and `spec-reviewer` say `mutates_checkout: false`; skills `adr`, `create-plan`, `deliver`, `feature`, `fix`, `handoff`, `incident`, `kickoff`, `learn` (`/learn personal` writes `brain/auto/workspace/`), `onboard`, `recall`, `refactor`, `release`, `research`, `retro`, `review`, `triage`, `upgrade`; hooks; `schemas/review.v1.json` and `schemas/eval.v1.json`, the agent output schemas, core package data copied verbatim; same name in every hub; on adoption, Loki's `loki-workflow` becomes it plus `plugin/loki/`) | generic | managed |
 | `plugin/<project>/**` (project agents, skills, guard extension; empty folders hold a `.gitkeep`) | project-owned | seeded |
 | Brain skeleton: `brain/index.md`, `brain/now.md`, `brain/decisions/index.md`, folder `.gitkeep`s (`brain/auto/workspace/` too), journal template | generic | seeded |
 | `scripts/` transcript mining, recall and retro metrics | generic | managed (until Phase 2) |
@@ -115,6 +115,52 @@ guard sends a deny or an ask (`decision: {by: guard, kind, rule}`, `rule` a stab
 `push_protected_branch`, `ask_before_edit`) and the Stop gate a block (`{by: stop_gate, kind: block, command,
 exit_code}`) through the sensor's `send_decision`, bounded the same way; their output and exit codes do not change
 (characterization goldens `golden/guard`, `golden/stop_gate`). Proof: integration tests.
+The read-only gate `readonly_gate.py` (AGH-141) is a second group on SubagentStart (timeout 10 s) and SubagentStop
+(30 s), after the sensor's. It acts only for a declared agent: the first definition whose frontmatter `name` is the bare
+`agent_type` (split at its last `:`), looked up in the hook root's `.claude/agents/`, then `plugin/<project>/agents/`,
+then the base plugin's own `agents/` (prefix `hub-workflow:`: the last only; the project's name: the second only; any
+other prefix: none; `<name>.md` first, then the folder's other `*.md`), says `mutates_checkout: false` (unquoted, any
+case). The base `researcher`, `spec-reviewer` and `quality-reviewer` do; app repos' and `~/.claude/agents/` are not
+searched; any other agent gets no state and no output. Watched checkouts: each repo of `hub.json` with a plain folder
+name, then the hub, then their task worktrees (a folder holding `.git` under `<checkout>/.claude/worktrees/`, newest
+first), each a checkout of its own labelled `<dir>/.claude/worktrees/<name>`; a worktree that is a link, or a
+`.claude/worktrees/` reached through one, is not watched (a main checkout's folder may be a link). At the start the gate
+saves in `$TMPDIR/hub-readonly-<session>-<agent>.json` each checkout's HEAD, branch and `git status --porcelain=v2`
+entries (status, modes, index blobs and the file's sha256, so staging alone is a change; a link's target text is hashed,
+never followed), the main transcript's size and the listing of the session's `subagents/` folder; a resumed agent keeps
+its first state while it is under 12 h old. The hub's `brain/` (also in a hub worktree), gitignored files,
+`.claude/worktrees/` seen from the main checkout and `$TMPDIR` never count; submodule content is not checked. At the
+stop the same checkouts are snapshotted again: a changed entry, a HEAD or branch move and a new task worktree
+(`<dir>/.claude/worktrees/<name>/ (new worktree)`, its files not read) are changes; a removed worktree or checkout is a
+note. Attribution reads the agent's transcript (`agent_transcript_path`, else
+`<main transcript minus .jsonl>/subagents/agent-<id>.jsonl`): the real paths its Write, Edit, MultiEdit and NotebookEdit
+named, and its Bash commands. A change at one of those paths is blocked. Any other change is blocked only when no
+overlap signal is present, each named in the report: another fresh gate state of the session
+(`another read-only agent running`), a tool call other than Agent or Task, or any tool result, in the main transcript
+after its size at the start (`main session tool call`, `main session tool result`; sidechain lines skipped), another
+subagent transcript created or grown (`another subagent ran`) or left ending in a call with no result
+(`another subagent running`), or any of these inputs unreadable or cut. With a signal, or without a readable agent
+transcript, the change is reported in a `systemMessage`: every doubtful case reports, never blocks. A block
+(`decision: block`) lists the paths (at most 40), asks the agent to revert them or explain each in its final report, and
+names its last 10 Bash commands (one line each, cut at 160 characters). The gate writes the agent's `.blocks` counter
+before blocking, so an agent is held once: on its next stop, or when `stop_hook_active` is true, whatever is still
+changed is reported as "left changed"; a counter that cannot be written means no block. Each outcome present (`block`,
+`report`, `left_changed`) appends one line `{ts, session_id, agent_id, agent_type, outcome, paths}` (labels only, at
+most 200; never file content or command text) to `$TMPDIR/hub-readonly-<session>.jsonl`. It imports no network module
+and sends nothing; the decisions will reach the control plane with AGH-159. Fail-open: no hub, an undeclared agent or an
+unreadable event prints nothing; a declared agent that cannot be checked gets
+`[hub readonly-gate] not checked (<cause>)` (`no start snapshot`, `start snapshot unreadable`, `state not saved`,
+`agent transcript unreadable`, `<label>: git failed`, `budget`, `caps` or `removed`, `<label>/<path>: too large`, …) and
+is never blocked for it; a crash prints one `skipped` line. Bounds: a 5 s budget at the start and 15 s at the stop (one
+`git` call at most 4 s, its process group killed after; at most 5 s of it reading the agent transcript), 24 checkouts
+per event, 256 worktree names per folder, 4 MiB and 2,000 status entries per checkout, 8 MiB hashed per file and 128 MiB
+per event, 1 MiB of stdin, 16 MiB of agent transcript, 8 MiB of main-transcript window, 1 MiB per line, 256 agent files
+per folder and 16 KiB of frontmatter, 256 subagent transcripts and 256 other states looked at, the last 64 KiB of each
+unchanged subagent transcript, a 16 MiB state, 12 h before a state or a silent subagent transcript is stale. Not seen,
+so a change it makes can be blamed on the agent (one block, which the agent answers by saying so): another Claude
+session or the user editing the same checkout, and a main-session background Bash started before the agent. A state left
+by a subagent that never got SubagentStop, or a subagent killed mid-call, makes later read-only agents of the session
+report instead of block for up to 12 h. Proof: integration tests, characterization goldens `golden/readonly_gate`.
 
 ### Commands
 
@@ -129,7 +175,7 @@ exit_code}`) through the sensor's `send_decision`, bounded the same way; their o
 | `bench.py`, `make bench`, `make bench-validate` | `hub bench [--validate] [options]`, module `bench` | cases stay in the brain: `brain/workflow/bench/tasks.json` (absent or `[]`: nothing to do; bounds: the `bench.tasks` row of [hub-doctor.md](hub-doctor.md)); without `bench` selected, exit 2 `module bench is not selected`. `--validate` (no run option) grades each case not excluded at its merge's parent (must fail) and at its merge (must pass), never runs `claude`. A run (`--runs` 3, `--arms with,without`, `--cases` all, `--budget` 15, `--per-run` 2, `--parallel` 3, `--label` `bench-%Y%m%d-%H%M`, `--trace`; `BENCH_EFFORT` low/medium/high) lays `origin/main`'s agent config over each case's merge parent in a detached worktree under `<ws>/_bench/wt` (`<ws>`: the folder of the hub's main checkout), runs one `claude -p` per job (the `with` arm enables `hub-workflow@<project>`), then grades it; a wave starts only while it fits the budget (else `STOP:`), and a failed session without a cost counts at `--per-run`. Records go to `<ws>/_bench/results/<label>.jsonl` (traces in `results/traces/`, files 0600), then the summary. Children run without `LINEAR_API_KEY`, `GH_TOKEN`, `GITHUB_TOKEN`; sessions use `--setting-sources user`, so the user's own hooks and plugins load in both arms (AGH-77 checks whether project instruction files are read). `<ws>/_bench/bench.lock` allows one bench per workspace; a left-behind lock exits 1 for the user to delete. Each job's `git worktree add` and its removal (`remove`, `prune`) run under one in-process lock, one at a time (AGH-120). Exits: 0 done, 1 bad cases, wrong grade, failed step or lock, 2 usage |
 | `agent_config_lint.py`, `features_check.py`; `hubconfig.py` | doctor rules ([hub-doctor.md](hub-doctor.md)); `hubconfig.py` dropped (the CLI reads `HubConfig`) | skills run `hub doctor --only features.tracker` |
 | `cloud-setup.sh` | stays a hub file, module `cloud` | sets the git identity from `hub.json`'s author (global and repo-local), else from `HUB_AUTHOR_NAME`/`HUB_AUTHOR_EMAIL` repo-local only, else a WARN ([developer-identity.md](developer-identity.md)); checks access to the pinned tag, warms the uv cache, then fetches the repos; no access: exit 1 naming it; it cannot need the CLI |
-| `mine_transcripts.py`, `recall_transcripts.py`, `retro_metrics.py`, `make mine`, `make retro`; `guard.py`, `hubhooks.py`, `hooks.json`, `post_edit.py`, `stop_gate.py`, `session_start.py`, `session_end.py`, `pre_compact.py`, `event_sensor.py` | stay hub files, managed | scripts: AGH-5 R12, Phase 2 redesigns them; hooks: the hooks exception, AGH-5 D9 ([ADR 0012](../adr/0012-cli-subsumes-hub-scripts.md)) |
+| `mine_transcripts.py`, `recall_transcripts.py`, `retro_metrics.py`, `make mine`, `make retro`; `guard.py`, `hubhooks.py`, `hooks.json`, `post_edit.py`, `stop_gate.py`, `session_start.py`, `session_end.py`, `pre_compact.py`, `event_sensor.py`, `readonly_gate.py` | stay hub files, managed | scripts: AGH-5 R12, Phase 2 redesigns them; hooks: the hooks exception, AGH-5 D9 ([ADR 0012](../adr/0012-cli-subsumes-hub-scripts.md)) |
 | `make usage`, `make check`, `make help` | stay targets; `check` runs `hub doctor` and the hub's own tests | `usage` wraps an external cost tool until the Phase 2 cost view; hook tests move to agent-hub |
 
 Every caller (Makefile `HUB`: `$(CURDIR)/hub` single-quoted; pre-commit `./hub doctor`; skills; `./agent`) goes through
