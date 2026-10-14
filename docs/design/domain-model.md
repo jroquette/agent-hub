@@ -62,13 +62,19 @@ unknown fields rejected. How Phase 2 proves it: unit tests per model, and contra
 - Identities are the ids the sources already carry (config keys, event fields, event keys). Phase 2 mints only two
   kinds of its own, neither an entity identity: a stored event's `event_id` and `received_at` (D5) and a registered
   hub's registry id (D18).
-- No entity holds raw transcript text; a Session only points to the blob while its retention lasts.
+- No entity holds raw transcript text; a Session only points to the blob while its retention lasts. The one
+  exception is the AgentSession of a session `hub web` drives (AGH-165, ADR 0027): its conversation log is stored,
+  redacted, in `hub web`'s own tables for 30 days after it ends, deletable; it is not an entity of the event store
+  and never feeds the events. An AgentSession links to the hook-observed Session by Claude's `session_id`
+  ([agent-sessions.md](agent-sessions.md)).
 
 ## Decisions
 
 - [SPEC](../SPEC.md) core concepts: the nine entities and the rule that a run is never a session; direction 3 for
   the transcript's retention.
 - [ADR 0002](../adr/0002-lean-hexagonal-architecture.md): entities live in core; adapters come to them.
+- [ADR 0027](../adr/0027-driving-claude-code-sessions-from-the-app.md): the stored, redacted conversation of the
+  sessions `hub web` drives, the exception to "no raw transcript text".
 - [ADR 0010](../adr/0010-hub-json-config-contract.md): Project, Hub and Repo come from the validated `hub.json`.
 
 ## Open questions

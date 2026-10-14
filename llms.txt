@@ -71,3 +71,4 @@ License: Apache-2.0.
 - [0024. Learning actions from the app open hub pull requests through a `hub_git` adapter](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0024-learning-actions-from-the-app.md): `docs/adr/0024-learning-actions-from-the-app.md`
 - [0025. Reading the tracker from the app through a read-only `TrackerReader` port](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0025-reading-the-tracker-from-the-app.md): `docs/adr/0025-reading-the-tracker-from-the-app.md`
 - [0026. The input brief as a contract for `hub run` and `/feature`](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0026-input-brief-contract.md): `docs/adr/0026-input-brief-contract.md`
+- [0027. Driving Claude Code sessions from the app](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0027-driving-claude-code-sessions-from-the-app.md): `docs/adr/0027-driving-claude-code-sessions-from-the-app.md`
