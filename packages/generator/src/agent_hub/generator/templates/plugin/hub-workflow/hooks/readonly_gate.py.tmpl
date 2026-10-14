@@ -30,7 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
-    from hubhooks import GIT_LOCATION_VARIABLES, Config, checkouts, emit, load_config, run_hook
+    from hubhooks import GIT_LOCATION_VARIABLES, Config, emit, load_config, run_hook
 except Exception as error:  # a partial install: skip, never error the session
     print(f"[hub {os.path.splitext(os.path.basename(sys.argv[0] or 'hook'))[0]}] skipped: {type(error).__name__}", file=sys.stderr)
     sys.exit(0)
@@ -43,6 +43,7 @@ STOP_BUDGET = 15
 TRANSCRIPT_BUDGET = 5  # of the stop's budget left, for reading the agent's transcript
 GIT_TIMEOUT = 4  # one git call, always within the budget left
 MAX_CHECKOUTS = 24  # per event: main checkouts first, then worktrees newest first
+MAX_WORKTREES = 256  # names read per `.claude/worktrees/` folder
 MAX_STATUS_BYTES = 4 * 1024 * 1024  # of `git status` output per checkout
 MAX_ENTRIES = 2000  # status entries per checkout
 MAX_FILE_BYTES = 8 * 1024 * 1024  # hashed per file
@@ -477,37 +478,61 @@ def snapshot_one(label: str, top: str, hub: bool) -> dict:
     return item
 
 
+def task_worktrees(main: Path) -> tuple:
+    """([(name, path, st_mtime)] of the main checkout's task worktrees, whether its
+    `.claude/worktrees/` held more than MAX_WORKTREES names). A task worktree is a folder, never
+    a link, holding `.git`, in a `.claude/worktrees/` reached through no link; past
+    MAX_WORKTREES names the folder is not read further (the names read before still count)."""
+    folder = main / ".claude" / "worktrees"
+    entries, over = [], False
+    try:
+        if os.path.realpath(folder) != os.path.join(os.path.realpath(main), ".claude", "worktrees"):
+            return [], False
+        with os.scandir(folder) as scan:
+            for entry in scan:
+                if len(entries) == MAX_WORKTREES:
+                    over = True
+                    break
+                entries.append(entry)
+    except (OSError, ValueError):  # no such folder, or not readable
+        return [], False
+    found = []
+    for entry in entries:
+        try:
+            if entry.is_dir(follow_symlinks=False) and os.path.lexists(os.path.join(entry.path, ".git")):
+                found.append((entry.name, entry.path, entry.stat(follow_symlinks=False).st_mtime))
+        except (OSError, ValueError):
+            continue
+    return found, over
+
+
 def watched(cfg: Config) -> tuple:
     """([(label, path, is the hub or a worktree of it)] of the checkouts to snapshot, how many
-    were over MAX_CHECKOUTS, and {main checkout's label: the sorted names of its task worktrees}).
-    The main checkouts come first: each repo of hub.json with a plain folder name, then the hub;
-    then their task worktrees (`.claude/worktrees/<name>` holding `.git`, labelled
-    `<dir>/.claude/worktrees/<name>`), newest first by st_mtime. Each is a checkout of its own:
-    its main checkout's status never lists it (the `.claude/worktrees/` drop)."""
+    were over MAX_CHECKOUTS, {main checkout's label: the sorted names of its task worktrees}, and
+    notes). The main checkouts come first: each repo of hub.json with a plain folder name, then
+    the hub; then their task worktrees (labelled `<dir>/.claude/worktrees/<name>`), newest first
+    by st_mtime. Each is a checkout of its own: its main checkout's status never lists it (the
+    `.claude/worktrees/` drop). A main checkout with over MAX_WORKTREES names there has no
+    listing (new and removed worktrees are not told) and a note."""
     names = [name for name in cfg.repo_dirs if name and "/" not in name and name not in (".", "..")]
     hub = cfg.hub.name if cfg.hub else None
     if hub and hub not in names:
         names.append(hub)
-    mains, trees, listed = [], [], {}
-    for name, top in checkouts(cfg, names):
-        if cfg.workspace is None:
+    mains, trees, listed, notes = [], [], {}, []
+    for name in names:
+        main = cfg.workspace / name if cfg.workspace is not None else None
+        if main is None or not main.is_dir() or not (main / ".git").exists():
             continue
-        main = cfg.workspace / name
-        if top == main:
-            mains.append((name, str(top), name == hub))
-            listed.setdefault(name, [])
-        elif top.parent == main / ".claude" / "worktrees":
-            try:
-                mtime = top.stat().st_mtime
-            except OSError:
-                continue
-            label = f"{name}/{WORKTREES}{top.name}"
-            trees.append((-mtime, label, str(top), name == hub))
-            listed.setdefault(name, []).append(top.name)
+        mains.append((name, str(main), name == hub))
+        found, over = task_worktrees(main)
+        if over:
+            notes.append(f"{name}/{WORKTREES.rstrip('/')}: over {MAX_WORKTREES} names")
+        else:
+            listed[name] = sorted(tree for tree, _, _ in found)
+        trees.extend((-mtime, f"{name}/{WORKTREES}{tree}", path, name == hub) for tree, path, mtime in found)
     trees.sort()
-    found = mains + [(label, top, is_hub) for _, label, top, is_hub in trees]
-    worktrees = {name: sorted(tree_names) for name, tree_names in listed.items()}
-    return found[:MAX_CHECKOUTS], max(0, len(found) - MAX_CHECKOUTS), worktrees
+    checkouts = mains + [(label, top, is_hub) for _, label, top, is_hub in trees]
+    return checkouts[:MAX_CHECKOUTS], max(0, len(checkouts) - MAX_CHECKOUTS), listed, notes
 
 
 def saved_checkouts(state: dict | None) -> list | None:
@@ -539,14 +564,22 @@ def saved_worktrees(state: dict | None) -> dict | None:
 
 
 def worktree_changes(before: dict, after: dict) -> tuple:
-    """([(line, "")] for each task worktree new since the start, notes for each one removed (O-6),
-    in the main checkouts listed at both ends. A new worktree's files are not read."""
-    changed, notes = [], []
+    """([(line, "")] for each task worktree new since the start, the labels of those removed
+    (O-6), in the main checkouts listed at both ends. A new worktree's files are not read."""
+    changed, removed = [], []
     for main in sorted(set(before) & set(after)):
         was, now = set(before[main]), set(after[main])
         changed.extend((f"{main}/{WORKTREES}{name}/ (new worktree)", "") for name in sorted(now - was))
-        notes.extend(f"{main}/{WORKTREES}{name}: removed" for name in sorted(was - now))
-    return changed, notes
+        removed.extend(f"{main}/{WORKTREES}{name}" for name in sorted(was - now))
+    return changed, removed
+
+
+def removed_notes(labels: list) -> list:
+    """`<label>: removed` for at most MAX_LISTED labels, then `… and N more removed`."""
+    notes = [f"{label}: removed" for label in labels[:MAX_LISTED]]
+    if len(labels) > MAX_LISTED:
+        notes.append(f"\u2026 and {len(labels) - MAX_LISTED} more removed")
+    return notes
 
 
 def short(oid: str) -> str:
@@ -576,6 +609,8 @@ def changes(before: list, after: list) -> tuple:
     changed, notes = [], []
     for old, new in zip(before, after):
         label = old["label"]
+        if new["cut"] == "removed":  # gone since the start: the caller notes it
+            continue
         cause = old["cut"] or new["cut"]
         if cause:
             notes.append(f"{label}: {cause}")
@@ -768,8 +803,9 @@ def start(event: dict, cfg: Config) -> None:
     if is_fresh(path):
         return
     transcript, offset = main_transcript(event)
-    found, over, worktrees = watched(cfg)
+    found, over, worktrees, listing_notes = watched(cfg)
     notes = [f"{over} checkouts over the cap"] if over else []
+    notes.extend(listing_notes)
     items = [snapshot_one(label, top, hub) for label, top, hub in found]
     notes.extend(f"{item['label']}: {item['cut']}" for item in items if item["cut"])
     state = {
@@ -799,10 +835,12 @@ def attribute(changed: list, own: set, signals: list) -> tuple:
 
 def again(item: dict) -> dict:
     """The stop's snapshot of a checkout the start saw: the start's when it was cut then, a cut
-    `removed` when its folder is gone (a task worktree removed meanwhile)."""
+    `removed` when its folder, or the `.git` in it, is gone, or the folder is now a link (a task
+    worktree removed meanwhile; git would read the repo above it)."""
     if item["cut"]:
         return item
-    if not os.path.isdir(item["path"]):
+    top = item["path"]
+    if os.path.islink(top) or not os.path.isdir(top) or not os.path.lexists(os.path.join(top, ".git")):
         return {**item, "cut": "removed"}
     return snapshot_one(item["label"], item["path"], item["hub"])
 
@@ -827,9 +865,12 @@ def stop(event: dict, cfg: Config) -> None:
     # a checkout cut at start stays a note: it is not read again; one gone since is a note
     after = [again(item) for item in before]
     changed, notes = changes(before, after)
-    new, removed = worktree_changes(listed, watched(cfg)[2])
+    _, _, now_listed, listing_notes = watched(cfg)
+    new, removed = worktree_changes(listed, now_listed)
     changed.extend(new)
-    notes = list(dict.fromkeys(notes + removed))  # a removed worktree that was snapshotted: one note
+    gone = {item["label"] for item in after if item["cut"] == "removed"}
+    notes.extend(listing_notes)
+    notes.extend(removed_notes(sorted(gone | set(removed))))  # a snapshotted one is listed too: once
     if not changed:
         forget(path)
         if notes:
