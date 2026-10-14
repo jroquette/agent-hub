@@ -92,7 +92,8 @@ Option 1 (A).
 - Bad: the seven templates and two schema files are managed: every hub rewrites them on its next `hub sync` after the
   release, and the reviewer vocabulary changes for every caller (`/feature`, `/fix`, `/refactor`, `/review`) at once.
 - Bad: the JSON Schema states shape only; a document that validates against it can still fail `validate-output`
-  (the cross-checks), so agents are told to run the command, not a schema validator.
+  (the cross-checks, and the strict JSON and type rules: duplicate keys, `NaN`, a lone surrogate, or `1.0` where an
+  integer is expected), so agents are told to run the command, not a schema validator.
 - Bad: the evaluator's `.md` and `.json` repeat the same scope fields, kept equal by the validator, not by
   construction; hubs on older releases keep prose-only gates until they bump and sync.
 
