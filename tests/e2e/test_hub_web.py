@@ -1,15 +1,21 @@
 """``hub web`` as installed: what it serves and where it listens (AC-200.58), and how its
-streams see events another process appends (AC-200.41)."""
+streams see events another process appends (AC-200.41).
+
+AGH-165: the installed server (with the ``sessions`` extra) drives the stub ``claude`` found on
+``PATH`` (E14): on SIGTERM or Ctrl-C it leaves no child it started and stores its sessions as
+ended by the server (AC-165.23), and it never upgrades a connection to a WebSocket (AC-165.54)."""
 
 import contextlib
 import json
 import queue
 import re
+import signal
 import socket
+import sqlite3
 import subprocess
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,9 +24,20 @@ from typing import Any
 import httpx
 import pytest
 
+from agent_hub.claude_sessions.process_tree import alive
+from agent_hub.claude_sessions.testing.scenarios import Scenario, held_turn
 from agent_hub.core.testing.builders import an_event, events_to_jsonl
+from tests.e2e.conftest import InstalledHub, RunningWeb, StubClaude
 
 REQUEST_SECONDS = 10
+
+
+@pytest.fixture
+def web_extra_env(stub_claude: StubClaude) -> Mapping[str, str]:
+    """``hub web`` finds the stub ``claude`` first on ``PATH``."""
+    return stub_claude.env
+
+
 # AC-200.41: the tile arrives within 2 s of the append.
 STREAM_SECONDS = 2.0
 
@@ -154,3 +171,135 @@ def test_streams_tile_and_counts_when_another_process_collects_live_session(
 
     assert tile is not None, "no tile.upsert for live-1 within 2 s"
     assert counts is not None, "no counts with one live session within 2 s"
+
+
+# AGH-165: sessions driven by the installed server, on the stub claude.
+
+AGENT_SESSIONS = "/api/v1/agent-sessions"
+SHUTDOWN_SECONDS = 5.0
+HELD_PROMPT = "Work on it."
+HUB_FLAGS = (
+    "--repos",
+    "acme/demo-api",
+    "--hub-repo",
+    "acme/demo-hub",
+    "--tracker",
+    "linear:DEM",
+    "--branch-prefix",
+    "jdoe/",
+    "--author-name",
+    "Jane Doe",
+    "--author-email",
+    "jane@example.com",
+)
+
+
+@contextmanager
+def _signed_in(web: RunningWeb) -> Iterator[httpx.Client]:
+    """A client that traded the printed token for the cookie, writing from the server's Origin."""
+    with httpx.Client(
+        base_url=web.url, timeout=REQUEST_SECONDS, headers={"Origin": web.url}
+    ) as client:
+        exchanged = client.get(f"/?token={web.token}")
+        assert exchanged.status_code == 303, exchanged.text
+        assert client.cookies.get(f"agent_hub_{web.port}") == web.token
+        yield client
+
+
+def _hub_workdir(client: httpx.Client, installed_hub: InstalledHub, root: Path) -> str:
+    """A synthetic hub for ``demo``, registered; its workdir id."""
+    hub = root / "demo-hub"
+    command = [str(installed_hub.executable), "init", "demo", *HUB_FLAGS, "--dir", str(hub)]
+    made = subprocess.run(
+        command, cwd=root, env=installed_hub.env, capture_output=True, text=True, check=False
+    )
+    assert made.returncode == 0, made.stderr
+    assert client.post("/api/v1/hubs", json={"path": str(hub)}).status_code == 201
+    listed = client.get(f"{AGENT_SESSIONS}/workdirs", params={"project": "demo"})
+    assert listed.status_code == 200, listed.text
+    workdir_id: str = listed.json()["items"][0]["workdir_id"]
+    return workdir_id
+
+
+def _running(client: httpx.Client, workdir_id: str) -> str:
+    created = client.post(
+        AGENT_SESSIONS, json={"project": "demo", "workdir_id": workdir_id, "prompt": HELD_PROMPT}
+    )
+    assert created.status_code == 201, created.text
+    session_id: str = created.json()["id"]
+    deadline = time.monotonic() + REQUEST_SECONDS
+    while client.get(f"{AGENT_SESSIONS}/{session_id}").json()["status"] != "running":
+        assert time.monotonic() < deadline, "the session never started its turn"
+        time.sleep(0.05)
+    return session_id
+
+
+def _stored_endings(db_path: Path) -> list[tuple[str, str | None]]:
+    with contextlib.closing(sqlite3.connect(db_path)) as connection:
+        rows = connection.execute("SELECT status, end_reason FROM agent_sessions").fetchall()
+    return [(str(status), reason) for status, reason in rows]
+
+
+@pytest.mark.parametrize("stop", [signal.SIGTERM, signal.SIGINT], ids=["sigterm", "ctrl_c"])
+def test_leaves_no_child_when_sigterm_or_ctrl_c_with_two_sessions_agent_session_shutdown(
+    hub_web: RunningWeb,
+    *,
+    stub_claude: StubClaude,
+    installed_hub: InstalledHub,
+    tmp_path: Path,
+    stop: signal.Signals,
+) -> None:
+    # Each stub holds its turn, runs a tool in its own session and outlives a closed stdin.
+    stub_claude.play(
+        Scenario(replies={HELD_PROMPT: held_turn()}, grandchild=True, linger_on_eof=True)
+    )
+    with _signed_in(hub_web) as client:
+        workdir_id = _hub_workdir(client, installed_hub, tmp_path)
+        sessions = [_running(client, workdir_id) for _ in range(2)]
+    spawns = [record for record in stub_claude.records() if record.event == "spawn"]
+    children = [record.pid for record in spawns]
+    tools = [record.grandchild_pid for record in spawns if record.grandchild_pid is not None]
+
+    hub_web.process.send_signal(stop)
+    deadline = time.monotonic() + SHUTDOWN_SECONDS
+    while any(alive(pid) for pid in (*children, *tools)) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    left = [pid for pid in (*children, *tools) if alive(pid)]
+    hub_web.process.wait(timeout=SHUTDOWN_SECONDS)
+
+    assert (len(sessions), len(children), len(tools)) == (2, 2, 2)
+    assert left == [], f"still running {SHUTDOWN_SECONDS} s after the signal: {left}"
+    assert _stored_endings(hub_web.db_path) == [("ended", "server_stopped")] * 2
+
+
+UPGRADE = (
+    "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: {origin}\r\n"
+    "Cookie: agent_hub_{port}={token}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+)
+
+
+def _upgrade_status(web: RunningWeb, path: str) -> str:
+    """The status line the server answers a WebSocket upgrade with ("" when it just closes)."""
+    request = UPGRADE.format(path=path, port=web.port, origin=web.url, token=web.token)
+    with socket.create_connection(("127.0.0.1", web.port), timeout=REQUEST_SECONDS) as sock:
+        sock.sendall(request.encode("ascii"))
+        answer = b""
+        with contextlib.suppress(TimeoutError, ConnectionResetError):
+            while b"\r\n" not in answer and (chunk := sock.recv(4096)):
+                answer += chunk
+    return answer.split(b"\r\n", 1)[0].decode("latin-1")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/",
+        "/api/v1/events/stream",
+        f"{AGENT_SESSIONS}/0192f3a0-0000-7000-8000-000000000001/stream",
+    ],
+)
+def test_refuses_websocket_upgrade_when_any_path_requested(hub_web: RunningWeb, path: str) -> None:
+    status = _upgrade_status(hub_web, path)
+
+    assert not status.startswith("HTTP/1.1 101"), status
