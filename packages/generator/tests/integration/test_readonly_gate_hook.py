@@ -1177,3 +1177,202 @@ def test_replaces_control_chars_when_block_names_agent(gate: Gate, gate_ws: Gate
         "- app/a.py",
         REVERT,
     ]
+
+
+WORKTREE = "agh-1-x"
+
+
+def add_worktree(ws: GateWorkspace, repo: Path, name: str) -> Path:
+    """A task worktree of ``repo`` at ``.claude/worktrees/<name>``, on a new branch ``t/<name>``."""
+    ws.git("worktree", "add", "-q", "-b", f"t/{name}", f".claude/worktrees/{name}", cwd=repo)
+    tree = repo / ".claude" / "worktrees" / name
+    assert (tree / ".git").is_file()
+    return tree
+
+
+@pytest.mark.parametrize("case", ["file_tool", "bash"])
+def test_labels_worktree_path_when_agent_edits_task_worktree(
+    gate: Gate, gate_ws: GateWorkspace, case: str
+) -> None:
+    """AC-141.7: a task worktree is a checkout of its own; a change in it is named by the label
+    ``<repo>/.claude/worktrees/<name>/<path>``, whether the agent's Edit or its Bash made it."""
+    tree = add_worktree(gate_ws, gate_ws.app, WORKTREE)
+    target = tree / "a.py"
+    command = "printf 'A = 2\\n' > a.py"
+    if case == "file_tool":
+        calls = [("Edit", {"file_path": str(target), "old_string": "1", "new_string": "2"})]
+        evidence: list[str] = []
+    else:
+        calls = [("Bash", {"command": command})]
+        evidence = [EVIDENCE_HEAD, f"- {command}"]
+
+    output = run_agent(
+        gate, "researcher", lambda: target.write_text("A = 2\n", encoding="utf-8"), calls=calls
+    )
+
+    assert reason_lines(output) == [
+        agent_head("researcher"),
+        f"- app/.claude/worktrees/{WORKTREE}/a.py",
+        REVERT,
+        *evidence,
+    ]
+
+
+def test_counts_change_once_when_worktree_edited(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """AC-141.7: a change in a task worktree is named once, by the worktree; the main checkout
+    ``app`` that holds the worktree's folder is not named."""
+    tree = add_worktree(gate_ws, gate_ws.app, WORKTREE)
+
+    def change() -> None:
+        (tree / "a.py").write_text("A = 2\n", encoding="utf-8")
+        (tree / "new.py").write_text("B = 1\n", encoding="utf-8")
+
+    lines = reason_lines(run_agent(gate, "researcher", change))
+
+    assert lines == [
+        agent_head("researcher"),
+        f"- app/.claude/worktrees/{WORKTREE}/a.py",
+        f"- app/.claude/worktrees/{WORKTREE}/new.py",
+        REVERT,
+    ]
+    assert git_output(gate_ws, "status", "--porcelain", "-uall", cwd=gate_ws.app) == ""
+
+
+def test_blocks_when_app_worktree_brain_changed(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """AC-141.7: only the hub's ``brain/`` is dropped; an app repo's ``brain/`` folder, in a task
+    worktree of it, is a change like any other."""
+    (gate_ws.app / "brain").mkdir()
+    (gate_ws.app / "brain" / "now.md").write_text("# Now\n", encoding="utf-8")
+    gate_ws.commit_all(gate_ws.app)
+    tree = add_worktree(gate_ws, gate_ws.app, WORKTREE)
+
+    lines = reason_lines(
+        run_agent(
+            gate,
+            "researcher",
+            lambda: (tree / "brain" / "now.md").write_text("# Now\n\nEdited.\n", encoding="utf-8"),
+        )
+    )
+
+    assert lines == [
+        agent_head("researcher"),
+        f"- app/.claude/worktrees/{WORKTREE}/brain/now.md",
+        REVERT,
+    ]
+
+
+def test_stays_silent_when_hub_worktree_brain_changed(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """AC-141.7: a task worktree of the hub drops ``brain/`` as the hub does (tracked or new);
+    the same worktree is watched, so a change outside ``brain/`` is named by its label."""
+    hub = gate_ws.hub.name
+    tree = add_worktree(gate_ws, gate_ws.hub, WORKTREE)
+
+    def change_brain() -> None:
+        (tree / "brain" / "now.md").write_text("# Now\n\nEdited.\n", encoding="utf-8")
+        (tree / "brain" / "_inbox" / "note.md").write_text("A note.\n", encoding="utf-8")
+        status = git_output(gate_ws, "status", "--porcelain", "-uall", cwd=tree).splitlines()
+        assert {" M brain/now.md", "?? brain/_inbox/note.md"} <= set(status)  # control: changed
+
+    assert run_agent(gate, "researcher", change_brain) is None
+    assert state_files(gate_ws) == []
+
+    lines = reason_lines(
+        run_agent(
+            gate,
+            "researcher",
+            lambda: (tree / "notes.txt").write_text("x\n", encoding="utf-8"),
+        )
+    )
+
+    assert lines == [
+        agent_head("researcher"),
+        f"- {hub}/.claude/worktrees/{WORKTREE}/notes.txt",
+        REVERT,
+    ]
+
+
+def test_names_new_worktree_when_agent_adds_worktree(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """O-6: a task worktree created during the run is one changed path, ``<repo>/.claude/
+    worktrees/<name>/ (new worktree)``, attributed like a Bash change; its files are not named."""
+    command = f"git worktree add -b t/{WORKTREE} .claude/worktrees/{WORKTREE}"
+    calls = [("Bash", {"command": command})]
+
+    output = run_agent(
+        gate, "researcher", lambda: add_worktree(gate_ws, gate_ws.app, WORKTREE), calls=calls
+    )
+
+    assert reason_lines(output) == [
+        agent_head("researcher"),
+        f"- app/.claude/worktrees/{WORKTREE}/ (new worktree)",
+        REVERT,
+        EVIDENCE_HEAD,
+        f"- {command}",
+    ]
+
+
+def test_replaces_control_chars_when_block_names_new_worktree(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """A new worktree's name with a bidi override is shown with it as ``?``."""
+    name = "agh-1-‮x"
+
+    output = run_agent(gate, "researcher", lambda: add_worktree(gate_ws, gate_ws.app, name))
+
+    assert reason_lines(output) == [
+        agent_head("researcher"),
+        "- app/.claude/worktrees/agh-1-?x/ (new worktree)",
+        REVERT,
+    ]
+
+
+def test_notes_removed_when_agent_removes_worktree(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """O-6: a task worktree removed during the run is a ``not checked`` note, never a block."""
+    add_worktree(gate_ws, gate_ws.app, WORKTREE)
+
+    output = run_agent(
+        gate,
+        "researcher",
+        lambda: gate_ws.git("worktree", "remove", f".claude/worktrees/{WORKTREE}", cwd=gate_ws.app),
+    )
+
+    assert output == {
+        "systemMessage": "[hub readonly-gate] not checked"
+        f" (app/.claude/worktrees/{WORKTREE}: removed)"
+    }
+    assert state_files(gate_ws) == []
+
+
+def test_watches_newest_worktree_when_worktree_checkouts_over_cap(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """O-3: main checkouts come first, then task worktrees newest first, up to the cap; the rest
+    are a ``not checked`` note at the start, and a change in them is not named."""
+    old = add_worktree(gate_ws, gate_ws.app, "agh-1-old")
+    new = add_worktree(gate_ws, gate_ws.app, "agh-2-new")
+    now = time.time()
+    os.utime(old, (now - 60, now - 60))
+    os.utime(new, (now, now))
+    main, agent = transcripts(gate_ws, agent_id="a1")
+
+    started = gate.start(
+        "researcher", agent_id="a1", transcript_path=main, constant=("MAX_CHECKOUTS", 3)
+    )
+
+    assert started == {
+        "systemMessage": "[hub readonly-gate] not checked (1 checkouts over the cap)"
+    }
+    assert [item["label"] for item in read_state(gate_ws, "a1")["checkouts"]] == [
+        "app",
+        gate_ws.hub.name,
+        "app/.claude/worktrees/agh-2-new",
+    ]
+    for tree in (old, new):
+        (tree / "a.py").write_text("A = 2\n", encoding="utf-8")
+    output = gate.stop(
+        "researcher", agent_id="a1", transcript_path=main, agent_transcript_path=agent
+    )
+    assert reason_lines(output) == [
+        agent_head("researcher"),
+        "- app/.claude/worktrees/agh-2-new/a.py",
+        REVERT,
+    ]
