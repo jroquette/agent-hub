@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner, Result
 
+from agent_hub.api.composition import web_url
 from agent_hub.api.session_token import cookie_name
 from agent_hub.cli import web_command
 from agent_hub.cli.main import app
@@ -105,6 +106,31 @@ def test_binds_other_loopback_address_when_host_is_loopback(
     url_line, listening = result.stdout.splitlines()
     assert _token_of(url_line, f"127.0.0.1:{port}")
     assert listening == f"listening on 127.0.0.2:{port}"
+
+
+def _bindable(host: str) -> bool:
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    try:
+        with socket.socket(family, socket.SOCK_STREAM) as probe:
+            probe.bind((host, 0))
+    except OSError:
+        return False
+    return True
+
+
+@pytest.mark.parametrize(("host", "shown"), [("127.0.0.2", "127.0.0.2"), ("::1", "[::1]")])
+def test_hands_bound_address_to_sessions_when_bound_to_other_loopback(
+    served: ServedApp, tmp_path: Path, *, host: str, shown: str
+) -> None:
+    if not _bindable(host):
+        pytest.skip(f"{host} cannot be bound here")
+    port = _free_port()
+
+    result = _web(["--host", host, "--port", str(port)], env=_scratch_env(tmp_path))
+
+    assert result.exit_code == 0, result.output
+    assert served.app is not None
+    assert web_url(served.app.state.settings) == f"http://{shown}:{port}"
 
 
 def test_binds_loopback_when_host_is_localhost(served: ServedApp, tmp_path: Path) -> None:

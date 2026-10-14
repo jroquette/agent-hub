@@ -458,3 +458,18 @@ def test_ends_unfinished_sessions_when_app_starts(tmp_path: Path) -> None:
 
 def test_names_loopback_port_when_web_url_built(tmp_path: Path) -> None:
     assert web_url(_session_settings(tmp_path)) == "http://127.0.0.1:7420"
+
+
+@pytest.mark.parametrize(
+    ("bound", "url"),
+    [
+        ("127.0.0.2", "http://127.0.0.2:7420"),
+        ("::1", "http://[::1]:7420"),
+        ("0.0.0.0", "http://127.0.0.1:7420"),  # noqa: S104 -- the container's bind
+        ("::", "http://127.0.0.1:7420"),
+    ],
+)
+def test_names_bound_address_when_web_url_built_on_other_bind(
+    tmp_path: Path, bound: str, url: str
+) -> None:
+    assert web_url(_session_settings(tmp_path, bound_host=bound)) == url
