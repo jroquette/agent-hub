@@ -76,6 +76,10 @@ _PATH_CHAR = r"[!-.0-\[\]-~]"
 _PATH_CHAR_NOT_DOT = r"[!-\-0-\[\]-~]"
 _GUARD_SEGMENT = rf"(?:{_PATH_CHAR}*{_PATH_CHAR_NOT_DOT}{_PATH_CHAR}*|\.{{3,}})"
 GuardPath = Annotated[str, Field(pattern=rf"^{_GUARD_SEGMENT}(?:/{_GUARD_SEGMENT})*$")]
+# An env file name with a suffix (``.env.local``): never ``.env`` itself, a path, or a key file.
+# The hooks' reader keeps its own copy of the pattern (``ENV_FILE_NAME``).
+ENV_FILE_NAME: Final = r"^\.env\.[A-Za-z0-9_.-]+$"
+EnvFileName = Annotated[str, Field(pattern=ENV_FILE_NAME)]
 
 
 def _not_blank(value: str) -> str:
@@ -376,10 +380,37 @@ class Guard(ConfigObject):
     ask_before_edit: tuple[GuardPath, ...] = ()
     deny_hosts: tuple[HostName, ...] = ()
     deny_paths: tuple[GuardPath, ...] = ()
+    readable_env_files: tuple[EnvFileName, ...] = Field(
+        default=(),
+        description="Env file names (.env.<suffix>) the guard does not treat as secret, on top of"
+        " its fixed list (.env.example, .env.sample, ...).",
+    )
+    secret_env_files: tuple[EnvFileName, ...] = Field(
+        default=(),
+        description="Env file names (.env.<suffix>) the guard always treats as secret, even when"
+        " its fixed list or readable_env_files names them.",
+    )
     infra: GuardInfra | None = absent_by_default(
         description="Turns on the guard's infra classification: Python re patterns, searched with"
         " no flags. Absent: the fixed infra rule."
     )
+
+    def cross_field_problems(self) -> list[InitErrorDetails]:
+        """No env file name both readable and secret."""
+        secret = set(self.secret_env_files)
+        return [
+            InitErrorDetails(
+                type=PydanticCustomError(
+                    "readable_and_secret",
+                    "{name} is also in secret_env_files; keep it in one list",
+                    {"name": json.dumps(name)},
+                ),
+                loc=("readable_env_files", index),
+                input=name,
+            )
+            for index, name in enumerate(self.readable_env_files)
+            if name in secret
+        ]
 
 
 class ModuleSettings(ConfigObject):

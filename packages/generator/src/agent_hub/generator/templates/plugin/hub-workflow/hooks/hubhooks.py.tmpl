@@ -3,8 +3,9 @@
 The config is the hub that holds these files (spec Q-4): when the folder three levels above
 this file holds hub.json, that hub wins, whatever the event's cwd, $CLAUDE_PROJECT_DIR or the
 process cwd say; only $HUB_CONFIG (a hub.json path) comes first. $HUB_CONFIG can only tighten the
-guard: its lists (ask_before_edit, deny_hosts, deny_paths) are added to the hook root's, never put
-in their place, since a settings `env` entry can set it. Hooks in a hub worktree read the
+guard: its lists (ask_before_edit, deny_hosts, deny_paths, secret_env_files) are added to the hook
+root's, never put in their place, since a settings `env` entry can set it; readable_env_files is the
+hook root's only. Hooks in a hub worktree read the
 worktree's hub.json, but the hub (and so the workspace of repos) is the main checkout. When the
 hooks run from Claude Code's plugin cache, no hub holds them, and the hub is found by walking up
 from the session cwd (then $CLAUDE_PROJECT_DIR, then the process cwd) to the first directory
@@ -190,7 +191,8 @@ class Config:
     root_project its own project name. root_file is the root's hub.json when the config is another
     file ($HUB_CONFIG): the guard's lists are then the union of both, so that file only tightens.
     $HUB_CONFIG cannot turn on or widen guard.infra: mode and allow are the hook root's; its
-    prod_markers are added (infra is None when guard.infra is off).
+    prod_markers are added (infra is None when guard.infra is off). Likewise readable_env_files is
+    the root's only, and secret_env_files the union.
     protected_branches (sorted, each once) is main, master and every default branch of the config,
     plus the root file's when there is one. identity gives the developer's values from local_file
     (hub.local.json), else the config, else git config run in identity_home (none without it);
@@ -228,6 +230,9 @@ class Config:
         self.ask_before_edit = _union(root_guard.ask_before_edit, hub_file.guard.ask_before_edit)
         self.deny_hosts = _union(root_guard.deny_hosts, hub_file.guard.deny_hosts)
         self.deny_paths = _union(root_guard.deny_paths, hub_file.guard.deny_paths)
+        self.secret_env_files = _union(root_guard.secret_env_files, hub_file.guard.secret_env_files)
+        # A release, so the hook root's only: another file can never widen the guard.
+        self.readable_env_files = (root_file if root_file is not None else hub_file).guard.readable_env_files
         self.infra = _infra_of(hub_file, root_file)
         root_branches = _branches(root_file) if root_file is not None else ()
         self.protected_branches = tuple(sorted({"main", "master", *_branches(hub_file), *root_branches}))

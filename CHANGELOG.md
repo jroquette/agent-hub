@@ -23,6 +23,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   moves a plugin agent to another tier, e.g. `{"tiers": {"large": "claude-opus-4-1"}, "agents": {"researcher":
   "large"}}`. `./hub sync` renders each agent's `model:` from it, and `hub run` takes its default model from `medium`
   (`--model` still wins). Without the key nothing changes (AGH-180).
+- `hub.json` takes `guard.readable_env_files` and `guard.secret_env_files`: env file names (`.env.<suffix>`) the guard
+  lets agents read, e.g. `[".env.local"]`, or always denies, e.g. `[".env.staging"]`. `.env` itself, paths and key
+  files are rejected, and a name cannot be in both lists. A `$HUB_CONFIG` file can add secret names but never release
+  one. `hub doctor` (`secrets.config`) lists both as infos. Run `./hub sync` after bumping `platform.version` to get
+  the new guard. Without the keys nothing changes (AGH-210).
 
 ### Changed
 

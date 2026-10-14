@@ -57,11 +57,11 @@ import json
 from pathlib import Path
 from guard import check_bash, check_file
 from hubhooks import Config, find_hub, load_config
-from stdlib_reader import HubFile, ProjectSection
+from stdlib_reader import GuardSection, HubFile, ProjectSection
 hub, ws = Path(sys.argv[1]), Path(sys.argv[2])
 scope = dict(check_bash=check_bash, check_file=check_file, Config=Config, find_hub=find_hub,
              load_config=load_config, cfg=load_config(hub), hub=hub, ws=ws, HubFile=HubFile,
-             ProjectSection=ProjectSection)
+             ProjectSection=ProjectSection, GuardSection=GuardSection)
 print(json.dumps([repr(eval(expression, scope)) for expression in json.loads(sys.argv[3])]))
 """
 
@@ -2173,6 +2173,101 @@ def test_allows_read_when_env_file_is_not_secret(evaluate: Evaluate) -> None:
     verdicts = verdicts_of(evaluate, [file("Read", {"file_path": path}) for path in paths])
 
     assert verdicts == dict.fromkeys(verdicts)
+
+
+# AGH-210: guard.readable_env_files and guard.secret_env_files.
+READABLE = (
+    "Config(hub, HubFile(guard=GuardSection("
+    "readable_env_files=('.env.local', '.env.local-tests'))))"
+)
+DENYING = "Config(hub, HubFile(guard=GuardSection(secret_env_files=('.env.staging',))))"
+BOTH = (
+    "Config(hub, HubFile(guard=GuardSection("
+    "readable_env_files=('.env.x',), secret_env_files=('.env.x',))))"
+)
+STILL_SECRET = (
+    "/w/x/.env.personal",
+    "/w/x/.env",
+    "/w/x/.env.live",
+    "/w/k/server.key",
+    "/home/u/.ssh/id_rsa",
+)
+
+
+def with_config(expression: str, config: str) -> str:
+    """``expression`` with its trailing ``cfg`` argument replaced by ``config``."""
+    assert expression.endswith(", cfg)")
+    return expression[: -len("cfg)")] + config + ")"
+
+
+def test_denies_env_file_when_not_in_readable_env_files(evaluate: Evaluate) -> None:
+    calls = [file("Read", {"file_path": "/w/x/.env.local"}), bash("cat .env.local")]
+
+    verdicts = verdicts_of(evaluate, calls)
+
+    assert kinds(verdicts) == dict.fromkeys(verdicts, "deny")
+
+
+def test_allows_env_file_when_in_readable_env_files(evaluate: Evaluate) -> None:
+    calls = [
+        file("Read", {"file_path": "/w/x/.env.local"}),
+        file("Edit", {"file_path": "/w/x/.env.local", "old_string": "A=1", "new_string": "A=2"}),
+        file("Write", {"file_path": "/w/x/.env.local", "content": "A=1"}),
+        file("Read", {"file_path": "/w/x/.env.local-tests"}),
+        bash("cat app/.env.local"),
+    ]
+
+    verdicts = verdicts_of(evaluate, [with_config(call, READABLE) for call in calls])
+
+    assert verdicts == dict.fromkeys(verdicts)
+
+
+def test_denies_secret_file_when_readable_env_files_lists_others(evaluate: Evaluate) -> None:
+    calls = [
+        *(file("Read", {"file_path": path}) for path in STILL_SECRET),
+        *(bash(f"cat {path}") for path in STILL_SECRET),
+    ]
+
+    verdicts = verdicts_of(evaluate, [with_config(call, READABLE) for call in calls])
+
+    assert kinds(verdicts) == dict.fromkeys(verdicts, "deny")
+
+
+def test_denies_env_file_when_in_secret_env_files(evaluate: Evaluate) -> None:
+    calls = [
+        file("Read", {"file_path": "/w/web/.env.staging"}),
+        bash("cat web/.env.staging"),
+    ]
+    allowed = [file("Read", {"file_path": "/w/x/.env.example"}), bash("cat .env.example")]
+
+    verdicts = verdicts_of(evaluate, [with_config(call, DENYING) for call in calls])
+    others = verdicts_of(evaluate, [with_config(call, DENYING) for call in allowed])
+
+    assert kinds(verdicts) == dict.fromkeys(verdicts, "deny")
+    assert others == dict.fromkeys(others)
+
+
+def test_denies_env_file_when_both_readable_and_secret(evaluate: Evaluate) -> None:
+    calls = [file("Read", {"file_path": "/w/x/.env.x"}), bash("cat .env.x")]
+
+    verdicts = verdicts_of(evaluate, [with_config(call, BOTH) for call in calls])
+
+    assert kinds(verdicts) == dict.fromkeys(verdicts, "deny")
+
+
+def test_keeps_fixed_non_secret_env_files_when_env_files_added(evaluate: Evaluate) -> None:
+    (names,) = evaluate(["sorted(__import__('guard').NON_SECRET_ENV)"])
+
+    assert names == (
+        [
+            ".env.development",
+            ".env.example",
+            ".env.sample",
+            ".env.staging",
+            ".env.template",
+            ".env.test",
+        ]
+    )
 
 
 def test_asks_when_edit_removes_assertions(evaluate: Evaluate) -> None:

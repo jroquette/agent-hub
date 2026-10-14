@@ -52,6 +52,8 @@ OPTIONAL_PATHS: tuple[tuple[str | int, ...], ...] = (
     ("guard", "ask_before_edit"),
     ("guard", "deny_hosts"),
     ("guard", "deny_paths"),
+    ("guard", "readable_env_files"),
+    ("guard", "secret_env_files"),
     ("modules",),
     ("doctor", "rules"),
 )
@@ -693,6 +695,48 @@ def test_uses_model_branch_pattern_when_source_checked(
     loaded = read(hook_python, path, checks=checks)
 
     assert loaded["equal"] == {"pattern": True}
+
+
+def test_uses_model_env_file_pattern_when_source_checked(
+    tmp_path: Path, hook_python: str, read: Reader
+) -> None:
+    pattern = Guard.model_json_schema()["properties"]["readable_env_files"]["items"]["pattern"]
+    assert pattern.startswith("^")
+    assert pattern.endswith("$")
+    path = write_hub_file(tmp_path, a_hub_document())
+
+    checks = {"pattern": ("ENV_FILE_NAME.pattern", repr(pattern[1:-1]))}
+    loaded = read(hook_python, path, checks=checks)
+
+    assert loaded["equal"] == {"pattern": True}
+
+
+def test_drops_readable_env_file_when_not_env_file_with_suffix(
+    tmp_path: Path, hook_python: str, read: Reader
+) -> None:
+    document = a_hub_document()
+    document["guard"]["readable_env_files"] = [".env.local", "id_rsa", ".env", "a/.env.x"]
+    document["guard"]["secret_env_files"] = [".env.staging", "odd name"]
+    path = write_hub_file(tmp_path, document)
+
+    guard = read(hook_python, path)["hub_file"]["guard"]
+
+    assert guard["readable_env_files"] == [".env.local"]
+    assert guard["secret_env_files"] == [".env.staging", "odd name"]
+
+
+def test_reads_no_env_files_when_list_holds_non_string(
+    tmp_path: Path, hook_python: str, read: Reader
+) -> None:
+    document = a_hub_document()
+    document["guard"]["readable_env_files"] = [".env.local", 7]
+    document["guard"]["secret_env_files"] = [".env.staging", None]
+    path = write_hub_file(tmp_path, document)
+
+    guard = read(hook_python, path)["hub_file"]["guard"]
+
+    assert guard["readable_env_files"] == []
+    assert guard["secret_env_files"] == []
 
 
 def character_set(character_class: str) -> frozenset[str]:

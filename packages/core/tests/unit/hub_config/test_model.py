@@ -120,6 +120,8 @@ def test_applies_defaults_when_optional_fields_absent() -> None:
     assert config.guard.ask_before_edit == ()
     assert config.guard.deny_hosts == ()
     assert config.guard.deny_paths == ()
+    assert config.guard.readable_env_files == ()
+    assert config.guard.secret_env_files == ()
     dump = config.model_dump(mode="json", exclude_none=True)
     assert dump["modules"] == {}
     assert dump["doctor"] == {"rules": {}}
@@ -954,6 +956,44 @@ def test_accepts_deny_host_when_dns_name(host: str) -> None:
 )
 def test_rejects_deny_host_when_not_dns_name(host: str) -> None:
     assert error_locs(with_value(("guard", "deny_hosts"), [host])) == [("guard", "deny_hosts", 0)]
+
+
+ENV_FILE_LISTS = ["readable_env_files", "secret_env_files"]
+
+
+@pytest.mark.parametrize("env_list", ENV_FILE_LISTS)
+@pytest.mark.parametrize("name", [".env.local", ".env.local-tests", ".env.a.b_c"])
+def test_accepts_env_file_name_when_env_file_with_suffix(env_list: str, name: str) -> None:
+    config = HubConfig.model_validate(with_value(("guard", env_list), [name]))
+
+    assert getattr(config.guard, env_list) == (name,)
+
+
+@pytest.mark.parametrize("env_list", ENV_FILE_LISTS)
+@pytest.mark.parametrize(
+    "name",
+    [
+        ".env",
+        ".env.",
+        "env.local",
+        "id_rsa",
+        "server.key",
+        "key.pem",
+        "a/.env.local",
+        ".env.\u00e9",
+        "",
+        1,
+    ],
+)
+def test_rejects_env_file_name_when_not_env_file_with_suffix(env_list: str, name: object) -> None:
+    assert error_locs(with_value(("guard", env_list), [name])) == [("guard", env_list, 0)]
+
+
+def test_rejects_env_file_name_when_both_readable_and_secret() -> None:
+    document = with_value(("guard", "readable_env_files"), [".env.a", ".env.local"])
+    document["guard"]["secret_env_files"] = [".env.local"]
+
+    assert error_types(document) == [(("guard", "readable_env_files", 1), "readable_and_secret")]
 
 
 @pytest.mark.parametrize("guard_list", GUARD_PATH_LISTS)
