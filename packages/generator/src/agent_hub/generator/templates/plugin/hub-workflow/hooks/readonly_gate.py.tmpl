@@ -56,6 +56,7 @@ MAX_AGENT_FILES = 256  # agent definitions read per folder
 MAX_FRONTMATTER_BYTES = 16 * 1024
 MAX_SUBAGENT_FILES = 256  # subagent transcripts listed
 MAX_STATE_FILES = 256  # other gate states of the session looked at
+MAX_TAIL_BYTES = 64 * 1024  # read from the end of each other subagent transcript left unchanged
 MAX_STATE_BYTES = 16 * 1024 * 1024
 STALE_SECONDS = 12 * 60 * 60  # a start state older than this is replaced
 MAX_BLOCKS = 1  # per agent_id
@@ -872,6 +873,7 @@ MAIN_CALL = "main session tool call"
 MAIN_RESULT = "main session tool result"
 MAIN_UNREADABLE = "main transcript unreadable"
 OTHER_SUBAGENT = "another subagent ran"
+SUBAGENT_RUNNING = "another subagent running"
 SUBAGENTS_UNREADABLE = "subagents unreadable"
 LAUNCHERS = ("Agent", "Task")  # their effect shows through the subagents/ folder
 
@@ -981,10 +983,76 @@ def saved_subagents(state: dict) -> dict | None:
     return listed
 
 
+def read_tail(path: str) -> tuple | None:
+    """(the last MAX_TAIL_BYTES of the regular file at path, whether it starts past the file's
+    start); None when it is not one (a link is not followed) or cannot be read."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        handle = os.open(path, flags)
+    except (OSError, ValueError):
+        return None
+    try:
+        info = os.fstat(handle)
+        if not stat.S_ISREG(info.st_mode):
+            return None
+        start = max(0, info.st_size - MAX_TAIL_BYTES)
+        os.lseek(handle, start, os.SEEK_SET)
+        chunks, size = [], 0
+        while size < MAX_TAIL_BYTES:
+            chunk = os.read(handle, min(CHUNK, MAX_TAIL_BYTES - size))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+    except OSError:
+        return None
+    finally:
+        os.close(handle)
+    return b"".join(chunks), start > 0
+
+
+def still_running(path: str) -> bool | None:
+    """Whether a subagent transcript's tail holds a tool call with no result after it: that
+    subagent is inside one call, which writes nothing until it ends (E-2). None when the tail
+    cannot tell: unreadable, no whole line in it, or a line holding a tool that is not JSON."""
+    tail = read_tail(path)
+    if tail is None:
+        return None
+    data, cut = tail
+    lines = data.split(b"\n")
+    if cut:
+        lines = lines[1:]  # the first one may start mid-line
+    pending, whole = set(), False
+    for line in lines:
+        if not line.strip():
+            continue
+        whole = True
+        if b'"tool_use"' not in line and b'"tool_result"' not in line:
+            continue
+        try:
+            entry = json.loads(line)
+        except (ValueError, RecursionError):
+            return None
+        message = entry.get("message") if isinstance(entry, dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
+        for block in content if isinstance(content, list) else []:
+            block_type = block.get("type") if isinstance(block, dict) else None
+            if block_type == "tool_use":
+                call_id = block.get("id")
+                pending.add(call_id if isinstance(call_id, str) else object())  # no id: never answered
+            elif block_type == "tool_result":
+                pending.discard(block.get("tool_use_id"))
+    if cut and not whole:
+        return None
+    return bool(pending)
+
+
 def subagent_signals(event: dict, state: dict) -> list:
     """[OTHER_SUBAGENT] when another `agent-*.jsonl` of the session's subagents/ folder was
-    created or changed since the start (E-2); [SUBAGENTS_UNREADABLE] when either listing is cut.
-    The agent's own transcript grows as it runs and never counts."""
+    created or changed since the start (E-2); else [SUBAGENT_RUNNING] when one left unchanged
+    ends in a tool call with no result (a long call spanning the whole window). Either listing
+    cut, a tail that cannot tell, or the budget running out: [SUBAGENTS_UNREADABLE]. The agent's
+    own transcript grows as it runs and never counts."""
     before = saved_subagents(state)
     folder = subagents_folder(state.get("main_transcript"))
     now, cut = subagent_listing(folder)
@@ -998,10 +1066,23 @@ def subagent_signals(event: dict, state: dict) -> list:
                 own.add(os.path.basename(path))
         except (OSError, ValueError):
             pass
+    unchanged = []
     for name, value in now.items():
-        if name not in own and before.get(name) != value:
+        if name in own:
+            continue
+        if before.get(name) != value:
             return [OTHER_SUBAGENT]
-    return []
+        unchanged.append(name)
+    found = []
+    for name in sorted(unchanged):
+        if left() <= 0:
+            return found + [SUBAGENTS_UNREADABLE]
+        running = still_running(os.path.join(folder, name))
+        if running is None and SUBAGENTS_UNREADABLE not in found:
+            found.append(SUBAGENTS_UNREADABLE)
+        elif running and SUBAGENT_RUNNING not in found:
+            found.append(SUBAGENT_RUNNING)
+    return sorted(found, key=[SUBAGENT_RUNNING, SUBAGENTS_UNREADABLE].index)
 
 
 def overlap(event: dict, state: dict, own: Path) -> list:

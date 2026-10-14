@@ -304,7 +304,7 @@
     "plugin/hub-workflow/hooks/readonly_gate.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "98fbe6de938441ea4cdf277b6a5ef5c10a7aa4e9fa28a41504daaaceee7a9920"
+      "sha256": "28d4d294703a288295ca70cf8e8de0b688705bf1d1a957a96e761a9303a16f2e"
     },
     "plugin/hub-workflow/hooks/session_end.py": {
       "executable": true,
