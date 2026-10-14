@@ -326,6 +326,16 @@
       "ownership": "managed",
       "sha256": "fda989c56a96c0b52c630a60efa31fb0858322292df04031c3bc99165a025066"
     },
+    "plugin/hub-workflow/schemas/eval.v1.json": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "6974784c184964e81c26857c12499ad28c8fe8752c79db155f4524378aa0b5cf"
+    },
+    "plugin/hub-workflow/schemas/review.v1.json": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "159a25ebc3c2de478e8da585579adfca44cc35129fc552a7fbd51c5607601cdb"
+    },
     "plugin/hub-workflow/skills/adr/SKILL.md": {
       "executable": false,
       "ownership": "managed",
