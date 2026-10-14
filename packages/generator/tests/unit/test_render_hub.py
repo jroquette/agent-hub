@@ -108,6 +108,9 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/hooks/session_start.py",
     "plugin/hub-workflow/hooks/stdlib_reader.py",
     "plugin/hub-workflow/hooks/stop_gate.py",
+    # AGH-139 D5, S8: the agent output JSON schemas.
+    "plugin/hub-workflow/schemas/eval.v1.json",
+    "plugin/hub-workflow/schemas/review.v1.json",
     "plugin/hub-workflow/skills/adr/SKILL.md",
     "plugin/hub-workflow/skills/create-plan/SKILL.md",
     "plugin/hub-workflow/skills/deliver/SKILL.md",
@@ -393,6 +396,28 @@ def test_copies_core_schema_bytes_when_schema_rendered(demo_config: HubConfig) -
     schema = {file.path: file for file in render_hub(demo_config).files}["hub.schema.json"]
 
     assert schema.content == core_schema
+
+
+@pytest.mark.parametrize("kind", ["eval", "review"])
+def test_copies_output_schema_bytes_when_rendered(demo_config: HubConfig, kind: str) -> None:
+    shipped = files("agent_hub.core.features").joinpath(f"{kind}.v1.json").read_bytes()
+
+    rendered = {file.path: file for file in render_hub(demo_config).files}
+    schema = rendered[f"plugin/hub-workflow/schemas/{kind}.v1.json"]
+
+    assert schema.content == shipped
+    assert not schema.executable
+    assert (schema.kind, schema.ownership, schema.module) == (Kind.GENERIC, Ownership.MANAGED, None)
+
+
+def test_links_no_output_schema_when_rendered(demo_config: HubConfig) -> None:
+    rendered = render_hub(demo_config)
+
+    assert rendered.links
+    for link in rendered.links:
+        assert link.path.startswith(".claude/")
+        assert "schemas" not in link.target.split("/"), link.target
+        assert "schemas" not in link.path.split("/"), link.path
 
 
 def test_substitutes_config_values_when_template_rendered(
@@ -3835,8 +3860,9 @@ def test_parses_every_json_when_rendered(config_name: str, request: pytest.Fixtu
 
     json_files = [file for file in render_hub(config).files if file.path.endswith(".json")]
 
-    # The two settings files, both manifests, `hooks.json` and the schema.
-    assert len(json_files) == 6
+    # The two settings files, both manifests, `hooks.json`, the schema and the two agent output
+    # schemas (AGH-139).
+    assert len(json_files) == 8
     for file in json_files:
         strict_json(file.content)
 
@@ -4603,6 +4629,8 @@ ADAPTER_MODULES = frozenset(
         "doctor_snapshot.py",
         "hub_config_files.py",
         "feature_files.py",
+        "output_files.py",
+        "regular_files.py",
         "brain_files.py",
         "skill_files.py",
         "registered_hub_files.py",

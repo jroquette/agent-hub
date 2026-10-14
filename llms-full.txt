@@ -937,6 +937,20 @@ Exit codes: `0` no errors, `1` at least one error, `2` usage error. Rules and th
 </details>
 
 <details>
+<summary><strong>Check an agent's JSON output</strong></summary>
+
+```bash
+./hub validate-output review brain/features/login/reviews/DEMO-7/spec-r1.json
+./hub validate-output eval brain/features/login/evals/demo-7.json
+```
+
+Exit codes: `0` valid (`<file>: valid`), `1` one line per problem, `<file>: <json path>: <message>` (the first 200, then
+the total), or one line naming a file that could not be read, `2` usage error. The schemas ship in every hub as
+`plugin/hub-workflow/schemas/review.v1.json` and `eval.v1.json`.
+
+</details>
+
+<details>
 <summary><strong>Create worktrees in one repo only</strong></summary>
 
 ```bash
@@ -1192,6 +1206,7 @@ reached only from `hub web`. import-linter enforces this in `make check`. Detail
 | `hub sync [--check]` | Reapply the templates without overwriting what the project customized |
 | `hub sync --adopt [--accept PATH]… [--check]` | Join a hand-made hub to `hub.lock` (from 0.7.0): record what matches, create what is missing, list what differs |
 | `hub doctor [--only RULE]… [--json]` | Check rules, links, dead references, instruction size and template drift |
+| `hub validate-output review\|eval FILE` | Check one agent JSON output (a reviewer's `reviews/<ticket>/<reviewer>-r<N>.json` or the evaluator's `evals/<delivery>.json`, with its `.md` and `../features.json`): exit 0 `<file>: valid`, 1 with one line per problem (the first 200, then the total), 2 on a usage error; needs no `hub.json` |
 | `hub setup [--yes]` | Set up this machine for the hub: tools (uv, git, python3, claude, gh) and the tracker credential, the developer identity (`hub.local.json` proposed from git config and written after asking; `--yes` without asking), each repo cloned or fetched next to the hub, then `hub doctor`; exit 0 when every line is `ok`, else 1, each missing line naming its fix |
 | `hub worktree NAME [--only REPO] [--remove] [--no-fetch]` | Create (or remove) one task's worktrees in the hub's repos; `--no-fetch` starts from the already-fetched base |
 | `hub brief [--no-network]` | Print the session brief: `now.md`, recent journal, repo/PR/CI state |
