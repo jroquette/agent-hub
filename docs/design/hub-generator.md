@@ -138,7 +138,7 @@ named, and its Bash commands. A change at one of those paths is blocked. Any oth
 overlap signal is present, each named in the report: another fresh gate state of the session
 (`another read-only agent running`), a tool call other than Agent or Task, or any tool result, in the main transcript
 after its size at the start (`main session tool call`, `main session tool result`; sidechain lines skipped), another
-subagent transcript created or grown (`another subagent ran`) or left ending in a call with no result
+subagent transcript created or changed (`another subagent ran`) or left ending in a call with no result
 (`another subagent running`), or any of these inputs unreadable or cut. With a signal, or without a readable agent
 transcript, the change is reported in a `systemMessage`: every doubtful case reports, never blocks. A block
 (`decision: block`) lists the paths (at most 40), asks the agent to revert them or explain each in its final report, and
