@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from agent_hub.core.errors import AgentHubError
+from agent_hub.core.hub_config.versions import cut_echo
 from agent_hub.core.json_form import JsonValue
 
 type NodeState = Literal["completed", "failed", "skipped"]
@@ -49,15 +50,20 @@ _NAME = r"[a-z][a-z0-9_]*"
 _ID = r"[a-z][a-z0-9_-]*"
 # Possessive, so a path never gives back a segment to slip past the lookahead after it.
 _PATH = r"(?:\.[A-Za-z0-9_]++)*+"
+# Index syntax that is not ours (``[0]``, ``.[0]``, ``?.``), refused right after a reference.
+_FOREIGN = r"(?:\[|\.\[|\?\.)"
 _TOKEN = re.compile(
     rf"\$(?:(?P<dollar>\$)"
     rf"|INPUTS\.(?P<input>{_NAME})(?![A-Za-z0-9_.])"
     rf"|WITH\.(?P<with>{_NAME})(?![A-Za-z0-9_.])"
-    rf"|LOOP_PREV\.(?P<prev>{_ID})\.output(?P<prev_path>{_PATH})(?![A-Za-z0-9_\[]|\?\.)"
-    rf"|(?P<node>{_ID})\.output(?P<path>{_PATH})(?![A-Za-z0-9_\[]|\?\.))"
+    rf"|LOOP_PREV\.(?P<prev>{_ID})\.output(?P<prev_path>{_PATH})(?![A-Za-z0-9_]|{_FOREIGN})"
+    rf"|(?P<node>{_ID})\.output(?P<path>{_PATH})(?![A-Za-z0-9_]|{_FOREIGN}))"
 )
 _RESERVED = re.compile(r"\$(?:INPUTS|WITH|LOOP_PREV)(?![A-Za-z0-9_])")
-_BAD_SUFFIX = re.compile(rf"\$(?:LOOP_PREV\.)?{_ID}\.output{_PATH}(?:\[|\?\.)")
+_BAD_SUFFIX = re.compile(rf"\$(?:LOOP_PREV\.)?{_ID}\.output{_PATH}{_FOREIGN}")
+_LEADING_ZERO = re.compile(r"0[0-9]+")
+# A short-option cluster holding ``c`` (``-c``, ``-lc``, ``-ec``): the next non-option is a script.
+_SCRIPT_FLAG = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
 
 
 @dataclass(frozen=True)
@@ -109,7 +115,12 @@ class SubstitutionError(AgentHubError):
     def __init__(self, code: SubstitutionErrorCode, ref: str, detail: str) -> None:
         self.code: SubstitutionErrorCode = code
         self.ref = ref
-        super().__init__(f"{ref}: {detail}")
+        super().__init__(f"{echo(ref)}: {detail}")
+
+
+def echo(text: str) -> str:
+    """``text`` quoted and escaped as JSON, cut to the repo's echo limit, for messages."""
+    return cut_echo(json.dumps(text))
 
 
 def canonical_text(value: JsonValue) -> str:
@@ -163,6 +174,7 @@ def check_argv(argv: Sequence[str]) -> list[ArgvProblem]:
     right after a ``-c`` (a script for ``sh``, ``bash``, ``python`` alike): a script gets values
     only as positional parameters.
     """
+    scripts = _script_positions(argv)
     problems: list[ArgvProblem] = []
     for index, element in enumerate(argv):
         try:
@@ -178,12 +190,28 @@ def check_argv(argv: Sequence[str]) -> list[ArgvProblem]:
             error = SubstitutionError("partial_argv", text, "a reference must fill a whole element")
         elif index == 0:
             error = SubstitutionError("argv_program", text, "a reference cannot be the program")
-        elif argv[index - 1] == "-c":
+        elif index in scripts:
             error = SubstitutionError("argv_script", text, "pass it as a positional parameter")
         else:
             continue
         problems.append(ArgvProblem(index, error))
     return problems
+
+
+def _script_positions(argv: Sequence[str]) -> set[int]:
+    """Indexes from each ``-c`` cluster to its script: the options between, then the script."""
+    positions: set[int] = set()
+    for flag, element in enumerate(argv):
+        if _SCRIPT_FLAG.fullmatch(element) is None:
+            continue
+        index = flag + 1
+        while index < len(argv) and argv[index].startswith("-") and argv[index] != "--":
+            positions.add(index)
+            index += 1
+        if index < len(argv) and argv[index] == "--":
+            index += 1
+        positions.add(index)
+    return positions
 
 
 def render_argv(argv: Sequence[str], context: RefContext) -> list[str]:
@@ -195,8 +223,9 @@ def render_argv(argv: Sequence[str], context: RefContext) -> list[str]:
 
 def resolve_text(ref: Ref, context: RefContext, text: str) -> str:
     """Return the canonical text of the value ``ref`` reads; a NaN or infinity is an error."""
+    value = resolve(ref, context, text)
     try:
-        return canonical_text(resolve(ref, context, text))
+        return canonical_text(value)
     except ValueError as error:
         raise SubstitutionError("non_finite", text, "the value holds a NaN or infinity") from error
 
@@ -215,7 +244,7 @@ def resolve(ref: Ref, context: RefContext, text: str) -> JsonValue:
             return None if result is None else _read(result, path, text)
         case NodeRef(node, path):
             if node not in context.nodes:
-                raise SubstitutionError("unknown_node", text, f"node {node!r} has no result")
+                raise SubstitutionError("unknown_node", text, f"node {echo(node)} has no result")
             return _read(context.nodes[node], path, text)
 
 
@@ -228,7 +257,7 @@ def _named(
 ) -> JsonValue:
     if name not in values:
         known = ", ".join(sorted(values)) or "none"
-        raise SubstitutionError(code, text, f"no value named {name!r} (known: {known})")
+        raise SubstitutionError(code, text, f"no value named {echo(name)} (known: {echo(known)})")
     return values[name]
 
 
@@ -248,7 +277,7 @@ def _read(result: NodeResult, path: tuple[str, ...], text: str) -> JsonValue:
         elif value is None:
             return None
         else:
-            raise SubstitutionError("bad_path", text, f"cannot read {segment!r} there")
+            raise SubstitutionError("bad_path", text, f"cannot read {echo(segment)} there")
     return value
 
 
@@ -277,9 +306,12 @@ def _ref_of(match: re.Match[str]) -> Ref:
     if match["with"]:
         return WithRef(match["with"])
     if match["prev"]:
-        return LoopPrevRef(match["prev"], _segments(match["prev_path"]))
-    return NodeRef(match["node"], _segments(match["path"]))
+        return LoopPrevRef(match["prev"], _segments(match["prev_path"], match[0]))
+    return NodeRef(match["node"], _segments(match["path"], match[0]))
 
 
-def _segments(path: str) -> tuple[str, ...]:
-    return tuple(path.split(".")[1:])
+def _segments(path: str, text: str) -> tuple[str, ...]:
+    segments = tuple(path.split(".")[1:])
+    if any(_LEADING_ZERO.fullmatch(segment) for segment in segments):
+        raise SubstitutionError("malformed", text, "an index is 0 or has no leading zero")
+    return segments
