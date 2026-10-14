@@ -561,6 +561,21 @@ The sessions and GitHub/Linear feed the collector, and the web app reads everyth
 
 - **Stack (decided, ADRs 0001–0004, 0008, 0011, 0014, 0015, 0017, 0020 and 0024):** Python 3.14 in a uv workspace with one package per component (`core`, `storage`, `collector`, `generator`, `tracker_linear`, `hub_git`, `cli`, `api`) under a lean hexagonal architecture: entities, use cases and ports in `core`, adapters in the other packages. Persistence is SQLAlchemy Core + Alembic on SQLite, moving to Postgres via config when there are multiple users. The API is FastAPI + Pydantic in `packages/api`, a second composition root that `hub web` serves; the front end is React 18 + TypeScript in `apps/web`, whose production build is committed to `packages/api` so a `uvx` install needs no Node.
 - **Hooks as sensors** ([ADR 0021](adr/0021-hook-event-sensor.md)): the generated hub registers a stdlib Python 3.9 sensor, `plugin/hub-workflow/hooks/event_sensor.py`, for eleven Claude Code hooks (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PostToolUseFailure, Notification, Stop, SubagentStart, SubagentStop, PreCompact, SessionEnd). It wraps the hook input in a versioned envelope (`v: 1`, project, repo, the `hub run` run, step and attempt) and posts it to `POST /api/v1/events/hooks` with a 0.5 s timeout; it prints nothing and exits 0 on any failure, so without `hub web` the session carries on normally. `AGENT_HUB_WEB_URL` may only name a loopback URL. The guard and the Stop gate send their own decisions (a denial, an ask, a blocked Stop) the same way, after deciding, without changing their output or exit codes. On Stop, SubagentStop and SessionEnd the server reads the session's transcript from its last offset, only under `~/.claude/projects/` and never through a link.
+- **Read-only agents** (AGH-141): an agent whose definition's frontmatter says `mutates_checkout: false` is held if it
+  changes a checkout. The base plugin's researcher, spec-reviewer and quality-reviewer declare it; any hub or project
+  agent may opt in, and an agent without the key is untouched. A second stdlib Python 3.9 hook,
+  `plugin/hub-workflow/hooks/readonly_gate.py`, runs on SubagentStart and SubagentStop after the sensor: at the start it
+  snapshots every watched checkout (each repo of `hub.json` and the hub, with their task worktrees under
+  `.claude/worktrees/`; never the hub's `brain/`, gitignored files or `$TMPDIR`), at the stop it compares. A changed
+  path the agent's own Write, Edit, MultiEdit or NotebookEdit named, or any change when nothing else ran meanwhile,
+  holds the stop once, naming the paths and the agent's Bash commands and asking it to revert or explain. A change
+  something else may have made (another subagent, a main-session tool call, another read-only agent) is reported to the
+  main session, never blocked; so is every case the gate cannot attribute. A second stop is never held. Each outcome is
+  one line of a local record, `$TMPDIR/hub-readonly-<session>.jsonl` (paths only, no content); nothing is sent to the
+  control plane yet (AGH-159). It is detection after the fact, not a sandbox: it fails open (a `not checked` note, never
+  a block, when it cannot check), keeps to a 5 s budget at the start and 15 s at the stop, and cannot see another Claude
+  session or the user editing the same checkout, or a main-session background command started before the agent
+  ([design/hub-generator.md](design/hub-generator.md)).
 - **Packaging ([ADR 0022](adr/0022-container-packaging.md)):** besides `uvx`/`uv tool install`, the control plane
   ships as a container image built from the repo (`Dockerfile`, `compose.yaml`): multi-stage (the web app built from
   its lockfile, the workspace installed from `uv.lock`), base images pinned by digest, a non-root user (uid 10001), a
