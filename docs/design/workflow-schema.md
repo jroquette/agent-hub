@@ -48,10 +48,10 @@ duration is `^[1-9][0-9]*(s|m|h|d)$`. A key outside the node's row is a load err
   names to values or `{from: <output ref>, if_skipped: <value>}`, read in a prompt as `$WITH.<name>`. `model` is a
   `hub.json` → `models.tiers` tier (default `medium`); `limits` is `{max_turns, max_cost_usd}` (default 40 and 3.0);
   `context` is `fresh` (default) or `{resume: <upstream agent node id>}`.
-- No child gets `LINEAR_API_KEY`: agents run with `session_env`, commands with `untrusted_env`; `env` adds no token. A
-  shell node is a `hub step` node iff `command[0:2]` is `[hub, step]`: the engine runs its own hub executable (absolute
-  path), refuses `env` and a referenced `cwd`, and `hub step` scopes tokens as today (`untrusted_env` for git reads and
-  the gate, `push_env` only for fetch, push and gh). Tracker writes (ADR 0030) happen only in the parent (`hub workflow
+- No child gets `LINEAR_API_KEY`. Agents run with `session_env`, other commands with `untrusted_env`; `env` adds no
+  token. A `hub step` node (`command[0:2]` is `[hub, step]`) runs the engine's own hub (absolute path) with `child_env`
+  (GitHub tokens), refuses `env` and a referenced `cwd`, and narrows per call as today: `untrusted_env` for git reads
+  and the gate, `push_env` for fetch, push and gh. Tracker writes (ADR 0030) happen only in the parent (`hub workflow
   run`, `hub run`) after the run ends, from `run.end`'s outcome; `hub step report` only computes the delivery.
 - `loop`: `max_iterations` (1–50) and at least one channel: `until` (text the final line equals), `until_field` (a
   `required` boolean of its `output_format`), `until_bash` (argv; exit 0 is done). `fresh_context: false` (default)
@@ -85,11 +85,11 @@ path needs the producer's `output_format`), `$LOOP_PREV…` and `$WITH.<name>`, 
 `env`, `with`, `until_bash`, `wait.until`, `message` and `reason`, resolved in one pass (never rescanned). An
 undeclared input or a path outside the producer's schema is a load error; a failed producer fails the node (`config`).
 Values render as canonical text: strings as is, numbers and booleans as JSON, null as empty, objects and arrays as
-compact JSON with sorted keys. In argv lists a reference fills a whole element, else it is a load error; a shell script
-gets values only as positional parameters: `[sh, -c, 'gh pr view "$1"', sh, $pr.output.url]`. A node's output is the
-agent's final message or the command's stdout (≤ 512 KiB). With `output_format` (JSON Schema 2020-12, checked by the
-core port `OutputValidator`) it must be one matching JSON value, else `output_contract`. Outputs, rendered text and
-human answers live in the run's record under `.agent-runs/`, never in events.
+compact JSON with sorted keys. In argv a reference fills a whole element, never `command[0]` nor a `-c` script, else a
+load error; a script gets values only as positional parameters: `[sh, -c, 'gh pr view "$1"', sh, $pr.output.url]`. The
+output is the agent's final message or the command's stdout (≤ 512 KiB). With `output_format` (JSON Schema 2020-12,
+checked by the core port `OutputValidator`) it must be one matching JSON value, else `output_contract`. Outputs,
+rendered text and human answers live in the run's record under `.agent-runs/`, never in events.
 
 A run is `running` or `paused`, then ends `done`, `failed` (a node failed after its retries) or `cancelled` (`halt`,
 cancel, abandon). The outcome is apart: `outcome_field`'s JSON value (boolean or string) on the completed `returns`
@@ -101,15 +101,15 @@ is set where the failure happens, never from message text; a shell or script exi
 `transient` (network), `timeout`, `rate_limited` and `overloaded` retry with backoff; `exec_failed`, `output_contract`
 (never retried on shell or script), `max_iterations` and `unknown` retry only with `on_error: all`; `config` (the setup
 must change), `auth`, `cancelled` and `fatal` (a provider refusal) never retry.
-Events go through `IngestEvents`: source `executor`, session `run:<run id>`, `workflow` the name, `step` the node id
-as recorded (`a__b`). `attempt` is per node and keeps counting across retries, iterations and resumes, so `source_id`
-`<run>:<step>:<attempt>:<type>` never repeats. Each attempt is one `step.start` (`attempt`, `revision`,
-`content_hash`) and one `step.end` (`attempt`, `status` `ok`, `failed` or `skipped`, `failure_kind`, `skip_cause`).
-`reason` holds only engine-made metadata (a kind, an origin node id). `approval` and `wait` add `gate.request`
-(`gate_id` `<run>:<step>:<attempt>`, `kind` `approval` or `wait`); one decision per `gate_id` comes back as a
-`control_plane` `gate.result` (`result`, `approver`, `where`), and a second is refused. `run.end` (`source_id`
-`<run>:run:<n>:end`, n counting the run's ends from 0; the fold takes the latest) carries `status`, `outcome`,
-`reason`, `revision` and `content_hash` (`sha256:` over the expanded document and every prompt and script it reads).
+Events go through `IngestEvents`: source `executor`, session `run:<run id>`, `workflow` the name, `step` the node id as
+recorded (`a__b`). `attempt` is per node and keeps counting across retries, iterations and resumes, so `source_id`
+`<run>:<step>:<attempt>:<type>` never repeats. Each attempt is one `step.start` (`attempt`, `revision`, `content_hash`)
+and one `step.end` (`attempt`, `status` `ok`, `failed` or `skipped`, `failure_kind`, `skip_cause`); a skipped node emits
+only `step.end`. `reason` holds only engine metadata (a kind, an origin node id): a halt's rendered `reason` stays in
+the record. `approval` and `wait` add `gate.request` (`gate_id` `<run>:<step>:<attempt>`, `kind` `approval` or `wait`);
+one decision per `gate_id` comes back as a `control_plane` `gate.result` (`result`, `approver`, `where`), and a second
+is refused. `run.end` (`source_id` `<run>:run:<n>:end`, n counting the run's ends from 0; the fold takes the highest n)
+carries `status`, `outcome`, `reason`, `revision` and `content_hash` (`sha256:` over the run's snapshot).
 
 ### Dry run and fixtures
 
