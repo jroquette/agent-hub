@@ -2,7 +2,8 @@
 
 ``review_problems`` and ``eval_problems`` return every problem of an output, uncapped: first the
 root problem (bytes that are not a JSON object), else every shape problem against
-``ReviewOutput`` or ``EvalOutput``. The caller decides how many to show.
+``ReviewOutput`` or ``EvalOutput``, then every cross-check problem (``review_output_checks``,
+``eval_output_checks``) in S2's order. The caller decides how many to show.
 
 The JSON Schemas of both outputs ship as package data beside this module (``review.v1.json``,
 ``eval.v1.json``), regenerated with ``make output-schemas`` whenever a model changes; unit tests
@@ -16,6 +17,7 @@ from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ValidationError
 
+from agent_hub.core.features.eval_output_checks import eval_cross_problems
 from agent_hub.core.features.output_models import (
     MAX_EVAL_ACS,
     MAX_EVAL_TICKETS,
@@ -35,6 +37,7 @@ from agent_hub.core.features.output_shape import (
     parse_document,
     shape_problems,
 )
+from agent_hub.core.features.review_output_checks import review_cross_problems
 
 type _Document = dict[str, object]
 type OutputKind = Literal["review", "eval"]
@@ -67,11 +70,12 @@ def review_problems(
 
     ``file_name`` and ``folder_name`` are the file's own name and its ticket folder's name.
     """
-    del file_name, folder_name  # The cross-checks against the file's name come next.
     document = parse_document(content)
     if isinstance(document, OutputProblem):
         return (document,)
-    return _shape(document, model=ReviewOutput, overlong=_overlong_review_lists)
+    shape = _shape(document, model=ReviewOutput, overlong=_overlong_review_lists)
+    cross = review_cross_problems(document, file_name=file_name, folder_name=folder_name)
+    return (*shape, *cross)
 
 
 def eval_problems(
@@ -82,11 +86,12 @@ def eval_problems(
     ``sibling_head`` is the first bytes of the sibling ``evals/<stem>.md`` (None when absent) and
     ``record`` the feature's ``features.json`` (None when absent).
     """
-    del file_name, sibling_head, record  # The sibling and record cross-checks come next.
+    del file_name, sibling_head, record  # The stem, sibling and record cross-checks come next.
     document = parse_document(content)
     if isinstance(document, OutputProblem):
         return (document,)
-    return _shape(document, model=EvalOutput, overlong=_overlong_eval_lists)
+    shape = _shape(document, model=EvalOutput, overlong=_overlong_eval_lists)
+    return (*shape, *eval_cross_problems(document))
 
 
 def _shape(
