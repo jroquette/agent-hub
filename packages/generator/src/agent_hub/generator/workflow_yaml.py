@@ -3,24 +3,32 @@
 A ``.json`` file goes through core's strict JSON reader. Any other file is YAML, read by a
 ``SafeLoader`` subclass that refuses what the format does not need and what makes a file mean
 something other than it shows: a repeated key, an anchor or alias (reuse comes from ``include``),
-a tag or ``%TAG`` directive, and a second document. Its scalars are JSON's: ``true``/``false``,
-``null``/``~``/empty, decimal integers and floats; everything else plain is text, so ``on``,
-``yes``, ``2026-10-14``, ``012`` and ``1:30`` never change type as YAML 1.1 would have them. A key
-must be text. Both forms are capped at ``MAX_WORKFLOW_BYTES`` and must hold a mapping.
+a tag or ``%TAG`` directive, a second document, and a surrogate code point (a ``\\ud800`` escape,
+which has no UTF-8 form). Its scalars are JSON's: ``true``/``false``, ``null``/``~``/empty, and
+numbers as JSON writes them (an optional sign aside); everything else plain is text, so ``on``,
+``yes``, ``2026-10-14``, ``012``, ``.5`` and ``1:30`` never change type as YAML 1.1 would have
+them. A key must be text. Both forms are capped at ``MAX_WORKFLOW_BYTES`` and must hold a mapping.
 
-The line in an error comes from the parser's marks, never from its message text. What the
-mapping means is core's document model; this module only reads it.
+The line in an error comes from the parser's marks (or, for a character YAML does not allow, from
+its position), never from its message text; parser text echoed in a reason is cut. The result
+also maps each key path to its 1-based line, so the document model can name the line of a key it
+refuses: every mapping key and every sequence item, ``()`` for the top level. For JSON the map is
+best effort: the same composer reads the text, and when it cannot, the map is empty.
+What the mapping means is core's document model; this module only reads it.
 """
 
 import json
 import math
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Final
 
 import yaml
 from yaml.events import AliasEvent, CollectionStartEvent, Event, ScalarEvent, StreamEndEvent
-from yaml.nodes import MappingNode, Node, ScalarNode
+from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
+from yaml.reader import ReaderError
 
 from agent_hub.core.hub_config.versions import cut_echo
 from agent_hub.core.json_form import InvalidJsonError, JsonValue, load_json_bytes
@@ -28,8 +36,19 @@ from agent_hub.generator.errors import GeneratorError
 
 MAX_WORKFLOW_BYTES: Final = 256 * 1024
 JSON_SUFFIX: Final = ".json"
+_SURROGATE: Final = re.compile("[\ud800-\udfff]")
 
 type WorkflowMapping = dict[str, JsonValue]
+type KeyPath = tuple[str | int, ...]
+"""A place in the document: mapping keys and sequence indexes from the top (core's ``Loc``)."""
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class LoadedWorkflow:
+    """A workflow file's mapping and the 1-based line of each key path the loader saw."""
+
+    document: WorkflowMapping
+    lines: Mapping[KeyPath, int]
 
 
 class WorkflowFileError(GeneratorError):
@@ -44,8 +63,9 @@ class WorkflowFileError(GeneratorError):
         super().__init__(f"{where}: {reason}")
 
 
-def load_workflow_bytes(content: bytes, *, source: str) -> WorkflowMapping:
-    """The mapping a workflow file holds; JSON when ``source`` ends in ``.json``, else YAML.
+def load_workflow_bytes(content: bytes, *, source: str) -> LoadedWorkflow:
+    """The mapping a workflow file holds, with its key lines; JSON when ``source`` ends in
+    ``.json``, else YAML.
 
     Raises ``WorkflowFileError`` naming ``source`` and, when known, the line.
     """
@@ -53,52 +73,84 @@ def load_workflow_bytes(content: bytes, *, source: str) -> WorkflowMapping:
         reason = f"the file is over {MAX_WORKFLOW_BYTES} bytes"
         raise WorkflowFileError(source=source, line=None, reason=reason)
     if source.endswith(JSON_SUFFIX):
-        value, line = _load_json(content, source=source)
+        value, lines = _load_json(content, source=source)
     else:
-        value, line = _load_yaml(content, source=source)
+        value, lines = _load_yaml(content, source=source)
     if not isinstance(value, dict):
         reason = "the top level is not a mapping of keys to values"
-        raise WorkflowFileError(source=source, line=line, reason=reason)
-    return value
+        raise WorkflowFileError(source=source, line=lines.get(()), reason=reason)
+    return LoadedWorkflow(document=value, lines=MappingProxyType(lines))
 
 
-def _load_json(content: bytes, *, source: str) -> tuple[JsonValue, int | None]:
+def _load_json(content: bytes, *, source: str) -> tuple[JsonValue, dict[KeyPath, int]]:
     try:
-        return load_json_bytes(content, strict=True), 1
+        value = load_json_bytes(content, strict=True)
     except InvalidJsonError as error:
         raise WorkflowFileError(source=source, line=error.line, reason=error.message) from None
+    try:
+        _, lines = _parse_yaml(content.decode("utf-8"))
+    except yaml.YAMLError, _RefusedError, RecursionError:
+        lines = {}
+    return value, lines
 
 
-def _load_yaml(content: bytes, *, source: str) -> tuple[JsonValue, int | None]:
+def _load_yaml(content: bytes, *, source: str) -> tuple[JsonValue, dict[KeyPath, int]]:
     try:
         text = content.decode("utf-8")
     except UnicodeDecodeError as error:
         reason = f"not UTF-8 text: byte {error.start} cannot be decoded"
         raise WorkflowFileError(source=source, line=None, reason=reason) from None
+    try:
+        return _parse_yaml(text)
+    except _RefusedError as refusal:
+        raise WorkflowFileError(source=source, line=refusal.line, reason=refusal.reason) from None
+    except ReaderError as error:
+        # A character YAML does not allow: the reader gives its position, not a line.
+        at = text.count("\n", 0, error.position) + 1
+        character = error.character
+        shown = f"#x{character:04x}" if isinstance(character, int) else "a character"
+        reason = f"not valid YAML: {shown} is a character YAML does not allow"
+        raise WorkflowFileError(source=source, line=at, reason=reason) from None
+    except yaml.MarkedYAMLError as error:
+        mark = error.problem_mark or error.context_mark
+        line = None if mark is None else mark.line + 1
+        reason = f"not valid YAML: {cut_echo(str(error.problem or error.context))}"
+        raise WorkflowFileError(source=source, line=line, reason=reason) from None
+    except yaml.YAMLError as error:
+        reason = f"not valid YAML: {cut_echo(str(error))}"
+        raise WorkflowFileError(source=source, line=None, reason=reason) from None
+    except RecursionError:
+        reason = "not valid YAML here: it is nested too deeply"
+        raise WorkflowFileError(source=source, line=None, reason=reason) from None
+
+
+def _parse_yaml(text: str) -> tuple[JsonValue, dict[KeyPath, int]]:
+    # Built inside the caller's handlers: the reader refuses a control character right here.
     loader = _StrictLoader(text)
     try:
         node = loader.get_single_node()
         if node is None:
-            return None, None
+            return None, {}
         value: JsonValue = loader.construct_document(node)
-        return value, node.start_mark.line + 1
-    except _RefusedError as refusal:
-        raise WorkflowFileError(source=source, line=refusal.line, reason=refusal.reason) from None
-    except yaml.MarkedYAMLError as error:
-        mark = error.problem_mark or error.context_mark
-        line = None if mark is None else mark.line + 1
-        reason = f"not valid YAML: {error.problem or error.context}"
-        raise WorkflowFileError(source=source, line=line, reason=reason) from None
-    except yaml.YAMLError as error:
-        # ReaderError (a character YAML does not allow) carries a position, not a line.
-        raise WorkflowFileError(
-            source=source, line=None, reason=f"not valid YAML: {error}"
-        ) from None
-    except RecursionError:
-        reason = "not valid YAML here: it is nested too deeply"
-        raise WorkflowFileError(source=source, line=None, reason=reason) from None
+        return value, _key_lines(node)
     finally:
         loader.dispose()
+
+
+def _key_lines(root: Node) -> dict[KeyPath, int]:
+    lines: dict[KeyPath, int] = {(): root.start_mark.line + 1}
+    pending: list[tuple[KeyPath, Node]] = [((), root)]
+    while pending:
+        path, node = pending.pop()
+        children: list[tuple[KeyPath, Node, Node]] = []
+        if isinstance(node, MappingNode):
+            children = [((*path, key.value), key, value) for key, value in node.value]
+        elif isinstance(node, SequenceNode):
+            children = [((*path, index), item, item) for index, item in enumerate(node.value)]
+        for child, marked, value in children:
+            lines[child] = marked.start_mark.line + 1
+            pending.append((child, value))
+    return lines
 
 
 class _RefusedError(Exception):
@@ -137,6 +189,9 @@ class _StrictLoader(yaml.SafeLoader):
         event = self._peek()
         if isinstance(event, AliasEvent):
             raise _RefusedError(event.start_mark, f"an alias (*{event.anchor}) is not accepted")
+        if isinstance(event, ScalarEvent) and _SURROGATE.search(event.value):
+            reason = "a string holds a surrogate code point, which has no UTF-8 form"
+            raise _RefusedError(event.start_mark, reason)
         if isinstance(event, ScalarEvent | CollectionStartEvent):
             if event.anchor is not None:
                 reason = f"an anchor (&{event.anchor}) is not accepted"
@@ -191,12 +246,12 @@ _StrictLoader.add_implicit_resolver(
     list("tTfF"),
 )
 _StrictLoader.add_implicit_resolver(
-    "tag:yaml.org,2002:int", re.compile(r"^[-+]?[0-9]+$"), list("-+0123456789")
+    "tag:yaml.org,2002:int", re.compile(r"^[-+]?(?:0|[1-9][0-9]*)$"), list("-+0123456789")
 )
 _StrictLoader.add_implicit_resolver(
     "tag:yaml.org,2002:float",
-    re.compile(r"^[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?$"),
-    list("-+.0123456789"),
+    re.compile(r"^[-+]?(?:0|[1-9][0-9]*)(?:\.[0-9]+(?:[eE][-+]?[0-9]+)?|[eE][-+]?[0-9]+)$"),
+    list("-+0123456789"),
 )
 _StrictLoader.add_constructor("tag:yaml.org,2002:int", _construct_int)
 _StrictLoader.add_constructor("tag:yaml.org,2002:float", _construct_float)
