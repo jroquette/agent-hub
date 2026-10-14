@@ -367,7 +367,8 @@ def test_names_delivery_as_file_stem_when_evaluator_rendered(texts: dict[str, st
         "The frontmatter's `delivery` is the file stem, `-rN` included (`delivery: abc-12-r2` in"
         " `abc-12-r2.md`)." in text
     )
-    assert "delivery: abc-12 # the file stem, -rN included (abc-12-r2)" in text
+    # The example stays a plain value an evaluator can copy; the prose explains `-rN`.
+    assert "delivery: abc-12\n" in eval_example(texts[EVALUATOR])
     assert "its `delivery` is that stem, `-rN` included (e.g. `abc-12-r2`)" in text
 
 
