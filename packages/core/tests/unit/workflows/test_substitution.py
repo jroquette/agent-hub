@@ -262,8 +262,17 @@ def test_reads_empty_text_when_index_has_too_many_digits() -> None:
         (["hub", "$plan.output[0]"], 1, "malformed"),
         (["bash", "-lc", "$INPUTS.issue"], 2, "argv_script"),
         (["sh", "-ec", "$INPUTS.issue"], 2, "argv_script"),
-        (["bash", "-c", "-e", "$INPUTS.issue"], 3, "argv_script"),
-        (["sh", "-c", "--", "$INPUTS.issue"], 3, "argv_script"),
+        # Fail closed: anything but the literal script right after a -c cluster is refused.
+        (["bash", "-c", "-e", "$INPUTS.issue"], 1, "argv_script"),
+        (["sh", "-c", "--", "$INPUTS.issue"], 1, "argv_script"),
+        (["sh", "-c", "--", 'echo "$1"', "sh", "$INPUTS.issue"], 1, "argv_script"),
+        (["bash", "-c", "-o", "pipefail", "$INPUTS.issue"], 1, "argv_script"),
+        (["sh", "-c", "-o", "errexit", "$INPUTS.issue"], 1, "argv_script"),
+        (["bash", "-c", "-O", "extglob", "$INPUTS.issue"], 1, "argv_script"),
+        (["bash", "-c", "+e", "$INPUTS.issue"], 1, "argv_script"),
+        (["bash", "-c", "+o", "posix", "$INPUTS.issue"], 1, "argv_script"),
+        (["bash", "-co", "pipefail", "$INPUTS.issue"], 1, "argv_script"),
+        (["bash", "-oc", "pipefail", "$INPUTS.issue"], 1, "argv_script"),
         (["python3", "-I", "-c", "$INPUTS.issue"], 3, "argv_script"),
     ],
 )
@@ -282,7 +291,8 @@ def test_reports_no_problem_when_references_are_positional_parameters() -> None:
 
 
 def test_reports_no_problem_when_reference_follows_the_script_or_a_long_option() -> None:
-    assert check_argv(["sh", "-c", "--", 'echo "$1"', "sh", "$INPUTS.issue"]) == []
+    assert check_argv(["bash", "-e", "-o", "pipefail", "-c", "s", "sh", "$INPUTS.issue"]) == []
+    assert check_argv(["bash", "-c", "-e", "s"]) == []  # no reference, nothing to guard
     assert check_argv(["tool", "--check", "$INPUTS.issue"]) == []
 
 
@@ -302,3 +312,17 @@ def test_bounds_echoed_reference_when_reference_is_huge() -> None:
 
 def test_keeps_error_kind_when_resolution_fails_for_another_reason() -> None:
     assert error_code("$plan.output.summary.deeper") == "bad_path"
+
+
+def test_reports_each_flag_and_reached_reference_when_c_clusters_repeat() -> None:
+    problems = check_argv(["sh", "-c", "-c", "-c", "s", "sh", "$INPUTS.issue"])
+    assert [(p.index, p.error.code) for p in problems] == [(1, "argv_script"), (2, "argv_script")]
+    problems = check_argv(["sh", "-c", "-c", "$INPUTS.issue"])
+    assert [(p.index, p.error.code) for p in problems] == [(1, "argv_script"), (3, "argv_script")]
+    problems = check_argv(["sh", "$INPUTS.issue", "-c"])  # no script after the flag
+    assert [(p.index, p.error.code) for p in problems] == [(1, "argv_script"), (2, "argv_script")]
+
+
+def test_checks_in_linear_time_when_argv_repeats_c_clusters() -> None:
+    argv = ["sh", *["-c"] * 50_000, "s", "sh", "$INPUTS.issue"]
+    assert len(check_argv(argv)) == 49_999
