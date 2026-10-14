@@ -1987,3 +1987,118 @@ def test_reports_when_overlap_report_states_over_cap(gate: Gate, gate_ws: GateWo
     )
 
     assert lines == [report_head(STATES_UNREADABLE), "- app/a.py"]
+
+
+def call_block(call_id: str, name: str, **tool_input: object) -> dict[str, object]:
+    return {"type": "tool_use", "id": call_id, "name": name, "input": dict(tool_input)}
+
+
+def assistant_entry(*blocks: Mapping[str, object]) -> dict[str, object]:
+    return {"type": "assistant", "isSidechain": True, "message": {"content": [*blocks]}}
+
+
+def result_entry(call_id: str, content: str = "ok") -> dict[str, object]:
+    result = {"type": "tool_result", "tool_use_id": call_id, "content": content}
+    return {"type": "user", "isSidechain": True, "message": {"role": "user", "content": [result]}}
+
+
+def jsonl(entries: Iterable[Mapping[str, object]]) -> str:
+    return "".join(json.dumps(entry) + "\n" for entry in entries)
+
+
+def test_reports_when_overlap_report_from_other_subagent_first_of_two_calls_open(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """E-2: one assistant entry with two calls, only the second answered: the first is still
+    running, so another subagent is running."""
+    _, agent = transcripts(gate_ws, agent_id="a1", calls=[BASH_EDIT])
+    entry = assistant_entry(
+        call_block("toolu_b1", "Bash", command="make check"),
+        call_block("toolu_b2", "Read", file_path="/x"),
+    )
+    (agent.parent / "agent-b.jsonl").write_text(
+        jsonl([entry, result_entry("toolu_b2")]), encoding="utf-8"
+    )
+
+    lines = report_lines(
+        run_agent(gate, "researcher", lambda: change_app(gate_ws), calls=[BASH_EDIT])
+    )
+
+    assert lines == [report_head(SUBAGENT_RUNNING), "- app/a.py"]
+
+
+def sibling_results(agent: Path, *, later: bool) -> int:
+    """``agent-b.jsonl``: one turn with a Bash call and two Reads, the Reads' results after it,
+    then (``later``) an assistant entry after them. Returns a tail size that holds the two
+    results (and the later entry) whole but none of the turn's calls."""
+    turn = assistant_entry(
+        call_block("toolu_b1", "Bash", command="make check " + "x" * 400),
+        call_block("toolu_r1", "Read", file_path="/r1"),
+        call_block("toolu_r2", "Read", file_path="/r2"),
+    )
+    tail = [result_entry("toolu_r1", "r" * 100), result_entry("toolu_r2", "r" * 100)]
+    if later:
+        tail.append(
+            {
+                "type": "assistant",
+                "isSidechain": True,
+                "message": {"content": [{"type": "text", "text": "done"}]},
+            }
+        )
+    (agent.parent / "agent-b.jsonl").write_text(jsonl([turn, *tail]), encoding="utf-8")
+    return len(jsonl(tail).encode("utf-8")) + 10
+
+
+def test_reports_when_overlap_report_other_subagent_tail_holds_only_results(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """E-2: results whose calls are before the tail, with no assistant entry after them, mean
+    the turn's call list is out of view (a Bash call may still run): reported as unreadable."""
+    _, agent = transcripts(gate_ws, agent_id="a1", calls=[BASH_EDIT])
+    size = sibling_results(agent, later=False)
+
+    lines = report_lines(
+        run_agent(
+            gate,
+            "researcher",
+            lambda: change_app(gate_ws),
+            calls=[BASH_EDIT],
+            constant=("MAX_TAIL_BYTES", size),
+        )
+    )
+
+    assert lines == [report_head(SUBAGENTS_UNREADABLE), "- app/a.py"]
+
+
+def test_blocks_when_no_overlap_block_other_subagent_results_then_reply(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """E-2 control: the same orphan results followed by an assistant entry: that turn ended, so
+    the transcript shows nothing running and the change is still blocked."""
+    _, agent = transcripts(gate_ws, agent_id="a1", calls=[BASH_EDIT])
+    size = sibling_results(agent, later=True)
+
+    output = run_agent(
+        gate,
+        "researcher",
+        lambda: change_app(gate_ws),
+        calls=[BASH_EDIT],
+        constant=("MAX_TAIL_BYTES", size),
+    )
+
+    assert reason_lines(output)[:3] == [agent_head("researcher"), "- app/a.py", REVERT]
+
+
+def test_blocks_when_no_overlap_block_other_subagent_open_call_stale(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """A subagent transcript ending in an unanswered call but untouched for over 12 h (killed
+    mid-call) is no longer running: the change is still blocked."""
+    _, agent = transcripts(gate_ws, agent_id="a1", calls=[BASH_EDIT])
+    other = other_subagent(agent, answered=False)
+    old = time.time() - STALE_AGE
+    os.utime(other, (old, old))
+
+    output = run_agent(gate, "researcher", lambda: change_app(gate_ws), calls=[BASH_EDIT])
+
+    assert reason_lines(output)[:3] == [agent_head("researcher"), "- app/a.py", REVERT]
