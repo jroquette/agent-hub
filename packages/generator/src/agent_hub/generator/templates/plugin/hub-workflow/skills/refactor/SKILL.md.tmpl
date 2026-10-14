@@ -24,7 +24,7 @@ Step types: `agent` (done in the session), `script` (deterministic commands), `g
    Mechanical change only, as planned: no fixes, features or unrelated cleanup. Then the repo's `check_fast` and `check` from `hub.json`, each with its output redirected to a file and `$?` checked; an empty one is a missing gate: say so in the PR body.
    Coverage floors and import contracts (import-linter or the repo's own) must not drop: never lower a floor or loosen a contract. A batch over its size is split and goes back to step 3.
 5. `agent` **Drift review**: one `quality-reviewer` agent pass per batch, focused on behaviour drift: golden or snapshot diffs, changed error messages, ordering, defaults, log lines.
-   For any golden or snapshot diff, the PR body explains each one, or the batch is reverted. Blockers: fix them and re-run both gates; no second pass.
+   For any golden or snapshot diff, the PR body explains each one, or the batch is reverted. `blocking` findings: fix them and re-run both gates; no second pass.
 6. `script` **PR**: commit, push the batch branch and open its PR, linked to the issue and to the previous batch's PR, authored by the user: no AI co-author trailer, no "Generated with", no 🤖.
    Titles as the repo's `AGENTS.md` sets them. No push to the default branch, no force-push. The body holds batch k of N, the verification and characterization commands, the `quality-reviewer` verdict and each golden diff explained.
    Post the PR link on the issue and move it to In Review with the first PR; `/deliver` drives each PR to merged before the next batch starts, and the issue closes with the last one.

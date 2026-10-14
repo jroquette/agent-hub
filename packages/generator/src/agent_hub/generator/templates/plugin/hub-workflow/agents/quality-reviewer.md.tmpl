@@ -27,7 +27,8 @@ Look for, citing `path:line`:
   results or a structural counter at the smallest size where the regression shows, never by wall-clock time or "it would
   hang"; a stated limit is pinned once as a literal.
 
-Severity per finding: `blocker` / `should-fix` / `nit`. Skip nits unless there are none of the others. A defensive finding names a concrete current failure mode (the input or state and the wrong result) or it is a nit.
+Severity per finding: `blocking` or `minor`. List `minor` findings too, within the 100-finding bound. A defensive finding names a concrete current failure mode (the input or state and the wrong result) or it is `minor`.
 No gold-plating: do not ask for abstractions the task does not need.
-**Report:** `APPROVE` or `CHANGES`, then the findings. The main session weighs the findings; the ones it accepts go back to the same implementer.
+**Report:** `PASS` or `FAIL`, then the findings; `PASS` only when no finding is `blocking`. The main session weighs the findings; the ones it accepts go back to the same implementer.
+**JSON:** when the caller gives `ticket`, `task`, `round` and `commit`, end the reply with exactly one fenced `json` block, nothing after it: a review output as `plugin/hub-workflow/schemas/review.v1.json` states it, with `"schema": "agent-hub/review/1"`, `"reviewer": "quality"`, those four values, the same `verdict` as the prose and one finding per prose finding (`id`, `kind`, the same `severity`, `path`, `line` or `null`, `acs`, `what`, `expected`). Without those four values, no block. The caller checks it with `./hub validate-output review <file>`, which also runs the cross-checks the schema cannot state (the verdict against the findings, the file name).
 **Compound step:** if a finding reveals a recurring trap, propose it to `brain/_inbox/` (`/learn` criteria).

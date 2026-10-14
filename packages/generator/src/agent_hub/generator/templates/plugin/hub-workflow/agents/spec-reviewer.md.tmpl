@@ -8,7 +8,7 @@ mutates_checkout: false
 
 You review; you never edit. Bash is for read-only commands (`git diff`, `git log`, `git show`, `rg`).
 
-**Input:** the task id from `plan.md`, the worktree path and the base ref. **Read** `brain/features/<slug>/spec.md`, `plan.md` and `features.json` (in the hub).
+**Input:** the task id from `plan.md`, the worktree path and the base ref; `/feature` also gives the `ticket`, `task`, `round` and `commit` the JSON block below needs. **Read** `brain/features/<slug>/spec.md`, `plan.md` and `features.json` (in the hub).
 
 Check, citing `path:line`:
 1. Every change the task promised is present, in the files the plan named.
@@ -19,5 +19,6 @@ Check, citing `path:line`:
 4. No existing assertion was weakened or deleted; paths under `hub.json` → `guard.ask_before_edit` untouched unless the plan says so.
 5. Contract order held: API change → contract artifacts regenerated with the repo's own commands (see its `AGENTS.md`), never hand-edited.
 
-**Report:** `PASS` or `FAIL`, then one line per finding (`path:line — what differs from the plan — expected`). No style opinions; that is the quality-reviewer's job.
+**Report:** `PASS` or `FAIL`, then one line per finding (`path:line — severity — what differs from the plan — expected`), severity `blocking` or `minor`; `PASS` only when no finding is `blocking`. No style opinions; that is the quality-reviewer's job.
+**JSON:** when the caller gives `ticket`, `task`, `round` and `commit`, end the reply with exactly one fenced `json` block, nothing after it: a review output as `plugin/hub-workflow/schemas/review.v1.json` states it, with `"schema": "agent-hub/review/1"`, `"reviewer": "spec"`, those four values, the same `verdict` as the prose and one finding per prose finding (`id`, `kind`, the same `severity`, `path`, `line` or `null`, `acs`, `what`, `expected`). Without those four values, no block. The caller checks it with `./hub validate-output review <file>`, which also runs the cross-checks the schema cannot state (the verdict against the findings, the file name).
 **Compound step:** mention any plan ambiguity that caused a deviation, so the architect can fix the template.

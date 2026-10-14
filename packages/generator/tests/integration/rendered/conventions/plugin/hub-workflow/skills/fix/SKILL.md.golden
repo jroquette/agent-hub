@@ -19,7 +19,7 @@ No spec, no plan gate and no `brain/features/<slug>/` folder: the PR body and th
    Nothing to reproduce (a docs or config task): still write a failing test when the change is checkable (a scan, a render, a config load); if nothing can be tested, say so in one line of the PR body and go to step 4; `check_fast`, `check` and the review still apply.
 4. **Fix**: the smallest change that turns the RED test green. Never weaken existing assertions or add skip markers.
 5. **Gates**: the repo's `check_fast`, then its `check` (both from `hub.json`), each with its output redirected to a file and `$?` checked; an empty one is a missing gate: say so in the PR body. Both green is GREEN.
-6. **Review**: one **`quality-reviewer`** agent pass on the diff. On `CHANGES` with blockers: fix them, re-run `check_fast` and `check`, and record the findings and the fixes in the PR body; no second review pass. Should-fix findings without blockers: fix them or list them in the PR body as follow-ups.
+6. **Review**: one **`quality-reviewer`** agent pass on the diff. On `FAIL` with `blocking` findings: fix them, re-run `check_fast` and `check`, and record the findings and the fixes in the PR body; no second review pass. Minor findings without `blocking` ones: fix them or list them in the PR body as follow-ups.
 7. **Ship**: commit, push the branch and open the PR, authored by the user: no AI co-author trailer, no "Generated with", no 🤖; commit and PR titles as the repo's `AGENTS.md` sets them. No push to the default branch, no force-push.
    The PR body holds the RED command and the failing assertion line, the fix summary and the `quality-reviewer` verdict.
 8. **Tracker**: post the PR link on the issue and move it to In Review.
