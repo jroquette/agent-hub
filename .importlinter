@@ -68,6 +68,8 @@ source_modules =
     agent_hub.api
 forbidden_modules =
     claude_agent_sdk
+# api reaches the SDK only through claude_sessions (composition's guarded import): indirect imports pass.
+allow_indirect_imports = True
 
 # Driving sessions belongs to hub web (api); every cli module stays free of the session adapter.
 [importlinter:contract:cli-no-claude-sessions]
@@ -77,3 +79,5 @@ source_modules =
     agent_hub.cli
 forbidden_modules =
     agent_hub.claude_sessions
+# web_command reaches it only through api's composition.
+allow_indirect_imports = True
