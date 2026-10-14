@@ -73,3 +73,4 @@ License: Apache-2.0.
 - [0026. The input brief as a contract for `hub run` and `/feature`](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0026-input-brief-contract.md): `docs/adr/0026-input-brief-contract.md`
 - [0027. The workflow format and the minimum engine](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0027-workflow-format-and-minimum-engine.md): `docs/adr/0027-workflow-format-and-minimum-engine.md`
 - [0028. Agent outputs as validated JSON: reviewer findings and evaluator verdicts](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0028-agent-outputs-as-validated-json.md): `docs/adr/0028-agent-outputs-as-validated-json.md`
+- [0030. Run outcomes in the tracker and in `hub run`'s exit code](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0030-run-outcomes-in-the-tracker.md): `docs/adr/0030-run-outcomes-in-the-tracker.md`

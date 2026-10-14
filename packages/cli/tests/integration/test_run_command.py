@@ -607,6 +607,24 @@ def set_team(hub: Any, team: str) -> None:
     (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
 
 
+BLOCKED_LABEL = "agent-blocked"
+
+
+def use_blocked_label(hub: Any, run_tracker: Any, *, carried: bool) -> None:
+    """``tracker.blocked_label`` set to ``agent-blocked`` in ``hub.json``, the label known to the
+    tracker's workspace, and carried by DEM-1 when ``carried``."""
+    document = json.loads((hub / "hub.json").read_text())
+    document["tracker"]["blocked_label"] = BLOCKED_LABEL
+    (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+    backend = run_tracker.backend
+    backend.workspace_labels = (*backend.workspace_labels, BLOCKED_LABEL)
+    if carried:
+        issue = backend.issues["DEM-1"]
+        backend.issues["DEM-1"] = issue.model_copy(
+            update={"labels": (*issue.labels, BLOCKED_LABEL)}
+        )
+
+
 def claude_line(result: Result) -> str:
     (line,) = [line for line in dry_lines(result) if line.startswith("would run: claude ")]
     return line
@@ -1034,6 +1052,32 @@ class TestLiveSuccess:
             "remove_label",
             "comment",
         ]
+
+    def test_removes_blocked_label_when_delivered(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        use_blocked_label(workspace.hub, run_tracker, carried=True)
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        assert [call[:3] for call in run_tracker.calls] == [
+            ("get_issue", "DEM-1"),
+            ("move_state", "DEM-1", "In Review"),
+            ("remove_label", "DEM-1", "agent-failed"),
+            ("remove_label", "DEM-1", BLOCKED_LABEL),
+            ("comment", "DEM-1", run_tracker.backend.comments[0][1]),
+        ]
+        labels = run_tracker.backend.issues["DEM-1"].labels
+        assert BLOCKED_LABEL not in labels
+        assert "agent-failed" not in labels
 
     def test_reads_commits_and_opens_pr_on_repo_branch_when_live(
         self,
@@ -1823,6 +1867,48 @@ def assert_failed_at(result: Result, run_tracker: Any, stage: str) -> str:
     return found.group(2)
 
 
+NO_CHANGES_COMMENT = re.compile(
+    r"Run [0-9a-f]{8} ended with no changes at ([A-Z_]+): (.*)", re.DOTALL
+)
+BLOCKED_COMMENT = re.compile(
+    r"Run [0-9a-f]{8} stopped at ([A-Z_]+) and needs a human\. The session asked: (.*)",
+    re.DOTALL,
+)
+NO_CHANGES_REASON = "no commit on the branch (the session reported done or gave no verdict)"
+
+
+def assert_no_changes(result: Result, run_tracker: Any, calls: list[tuple[str, ...]]) -> str:
+    """Exit 0, exactly one no-changes comment at ``IMPLEMENTING``, the tracker ``calls`` (the
+    comment's body left out) and no ``agent-failed`` on the issue (ADR 0030); its reason."""
+    assert result.exit_code == 0, result.output
+    (comment,) = [body for _, body in run_tracker.backend.comments]
+    found = NO_CHANGES_COMMENT.fullmatch(comment)
+    assert found is not None, comment
+    assert found.group(1) == "IMPLEMENTING"
+    assert len(found.group(2)) <= 900
+    assert "agent" not in comment.lower()
+    assert [call[:-1] if call[0] == "comment" else call for call in run_tracker.calls] == calls
+    assert "agent-failed" not in run_tracker.backend.issues["DEM-1"].labels
+    return found.group(2)
+
+
+def assert_blocked(
+    result: Result, run_tracker: Any, *, label: str, calls: list[tuple[str, ...]]
+) -> str:
+    """Exit 3, ``label`` on the issue, exactly one blocked comment at ``IMPLEMENTING`` and the
+    tracker ``calls`` (the comment's body left out) (ADR 0030); the session's question."""
+    assert result.exit_code == run_steps.BLOCKED_EXIT == 3, result.output
+    assert label in run_tracker.backend.issues["DEM-1"].labels
+    (comment,) = [body for _, body in run_tracker.backend.comments]
+    found = BLOCKED_COMMENT.fullmatch(comment)
+    assert found is not None, comment
+    assert found.group(1) == "IMPLEMENTING"
+    assert len(found.group(2)) <= 900
+    assert "agent" not in comment.lower()
+    assert [call[:-1] if call[0] == "comment" else call for call in run_tracker.calls] == calls
+    return found.group(2)
+
+
 def assert_outcome(workspace: Any, outcome: str, *, reason: str | None = None) -> None:
     """The run's last records: ``not_delivered`` with ``reason`` (no ``failed``) when ``reason`` is
     given, then ``reported`` with ``outcome`` (AGH-140)."""
@@ -1860,17 +1946,18 @@ class TestVerdict:
     """The old runner's verdict cases (hub tests/test_agent_runner.py at 300559b), live."""
 
     @pytest.mark.parametrize(
-        ("mode", "diagnosis"),
+        ("mode", "diagnosis", "question"),
         [
-            ("blocked", "the implementing session stopped: needs a plan"),
+            ("blocked", "the implementing session stopped: needs a plan", "needs a plan"),
             (
                 "blocked-text",
                 "the implementing session stopped: BLOCKED: the issue has an open question",
+                "BLOCKED: the issue has an open question",
             ),
         ],
         ids=["verdict", "text"],
     )
-    def test_fails_implementing_when_blocked(
+    def test_reports_blocked_when_session_stops(
         self,
         run_workspace: Workspace,
         run_command: CommandRunner,
@@ -1879,17 +1966,53 @@ class TestVerdict:
         monkeypatch: pytest.MonkeyPatch,
         mode: str,
         diagnosis: str,
+        question: str,
     ) -> None:
+        # No tracker.blocked_label: the blocked label falls back to agent-failed (ADR 0030).
         inject(monkeypatch, run_tracker)
         monkeypatch.setenv("FAKE_CLAUDE_MODE", mode)
 
         result = live(run_command, run_workspace.workspace)
 
-        assert assert_failed_at(result, run_tracker, "IMPLEMENTING") == diagnosis
+        calls = [
+            ("get_issue", "DEM-1"),
+            ("add_label", "DEM-1", "agent-failed"),
+            ("comment", "DEM-1"),
+        ]
+        assert assert_blocked(result, run_tracker, label="agent-failed", calls=calls) == question
         assert_outcome(run_workspace.workspace, "blocked", reason=diagnosis)
         assert "NOT DELIVERED (blocked) at IMPLEMENTING" in result.stderr
         assert_never_pushed(run_workspace)
         assert run_workspace.calls("make") == []
+
+    def test_reports_blocked_label_when_configured(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        inject(monkeypatch, run_tracker)
+        use_blocked_label(workspace.hub, run_tracker, carried=False)
+        monkeypatch.setenv("FAKE_CLAUDE_MODE", "blocked")
+
+        result = live(run_command, workspace)
+
+        calls = [
+            ("get_issue", "DEM-1"),
+            ("add_label", "DEM-1", BLOCKED_LABEL),
+            ("remove_label", "DEM-1", "agent-failed"),
+            ("comment", "DEM-1"),
+        ]
+        assert (
+            assert_blocked(result, run_tracker, label=BLOCKED_LABEL, calls=calls) == "needs a plan"
+        )
+        assert "agent-failed" not in run_tracker.backend.issues["DEM-1"].labels
+        assert_outcome(
+            workspace, "blocked", reason="the implementing session stopped: needs a plan"
+        )
 
     def test_fails_implementing_when_session_errors(
         self,
@@ -1934,7 +2057,7 @@ class TestVerdict:
         assert_outcome(run_workspace.workspace, "delivered")
 
     @pytest.mark.parametrize("mode", ["silent", "done-no-commit"], ids=["no-verdict", "done"])
-    def test_fails_when_session_leaves_no_commit(
+    def test_reports_no_changes_when_session_leaves_no_commit(
         self,
         run_workspace: Workspace,
         run_command: CommandRunner,
@@ -1943,17 +2066,79 @@ class TestVerdict:
         monkeypatch: pytest.MonkeyPatch,
         mode: str,
     ) -> None:
+        # An issue with no outcome label: the report is the comment alone (ADR 0030).
+        issues = run_tracker.backend.issues
+        issues["DEM-1"] = issues["DEM-1"].model_copy(update={"labels": ("agent-ready", "demo-api")})
         inject(monkeypatch, run_tracker)
         monkeypatch.setenv("FAKE_CLAUDE_MODE", mode)
 
         result = live(run_command, run_workspace.workspace)
 
-        diagnosis = assert_failed_at(result, run_tracker, "IMPLEMENTING")
-        assert diagnosis == (
-            "no commit on the branch (the session reported done or gave no verdict)"
-        )
-        assert_outcome(run_workspace.workspace, "no_changes", reason=diagnosis)
+        calls = [("get_issue", "DEM-1"), ("comment", "DEM-1")]
+        assert assert_no_changes(result, run_tracker, calls) == NO_CHANGES_REASON
+        assert issues["DEM-1"].labels == ("agent-ready", "demo-api")
+        assert_outcome(run_workspace.workspace, "no_changes", reason=NO_CHANGES_REASON)
+        assert "NOT DELIVERED (no_changes) at IMPLEMENTING" in result.stderr
         assert_never_pushed(run_workspace)
+
+    def test_removes_stale_failed_label_when_no_changes(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The run issue carries agent-failed from an earlier run.
+        inject(monkeypatch, run_tracker)
+        monkeypatch.setenv("FAKE_CLAUDE_MODE", "silent")
+
+        result = live(run_command, run_workspace.workspace)
+
+        calls = [
+            ("get_issue", "DEM-1"),
+            ("remove_label", "DEM-1", "agent-failed"),
+            ("comment", "DEM-1"),
+        ]
+        assert assert_no_changes(result, run_tracker, calls) == NO_CHANGES_REASON
+        assert_outcome(run_workspace.workspace, "no_changes", reason=NO_CHANGES_REASON)
+
+    @pytest.mark.parametrize(
+        ("mode", "fail_on", "done"),
+        [
+            ("silent", "remove_label", ["get_issue", "remove_label"]),
+            ("blocked", "add_label", ["get_issue", "add_label"]),
+            ("blocked", "comment", ["get_issue", "add_label", "comment"]),
+        ],
+        ids=["no-changes", "blocked-label", "blocked-comment"],
+    )
+    def test_fails_when_outcome_report_write_fails(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        mode: str,
+        fail_on: str,
+        done: list[str],
+    ) -> None:
+        inject(monkeypatch, run_tracker)
+        run_tracker.fail_on = {fail_on}
+        monkeypatch.setenv("FAKE_CLAUDE_MODE", mode)
+
+        result = live(run_command, run_workspace.workspace)
+
+        assert result.exit_code == 1, result.output
+        assert [call[0] for call in run_tracker.calls] == done
+        lines = result.stderr.splitlines()
+        assert f"hub run: {fail_on} DEM-1: {OUTAGE}" in lines
+        if fail_on != "comment":
+            assert [line for line in lines if line.startswith("not done: comment(DEM-1, Run ")]
+        reported = [
+            record for record in records(run_workspace.workspace) if record["event"] == "reported"
+        ]
+        assert [record["ok"] for record in reported] == [False]
 
     def test_never_pushes_when_gate_fails(
         self,
