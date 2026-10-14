@@ -158,3 +158,26 @@ def test_keeps_inputs_read_only_when_document_is_loaded() -> None:
     with pytest.raises(TypeError):
         document.inputs["other"] = document.inputs["issue"]  # type: ignore[index]
     assert '"inputs":{"issue":' in document.model_dump_json()
+
+
+@pytest.mark.parametrize(
+    ("node", "message"),
+    [
+        (
+            {"id": "pr", "type": "shell", "command": ["hub", "step", "pr"], "env": {"A": "1"}},
+            "a hub step node takes no 'env': hub step scopes its own environment",
+        ),
+        ({"id": "a", "type": "agent"}, "give exactly one of 'prompt' or 'prompt_file'"),
+        (
+            {"id": "a", "type": "loop", "prompt": "x", "max_iterations": 2},
+            "give at least one of 'until', 'until_field' or 'until_bash'",
+        ),
+    ],
+)
+def test_points_at_the_node_when_a_node_level_rule_fails(
+    node: dict[str, object], message: str
+) -> None:
+    with pytest.raises(WorkflowLoadError) as caught:
+        parse_workflow(a_document(nodes=[node]))
+
+    assert [(p.loc, p.message) for p in caught.value.problems] == [(("nodes", 0), message)]
