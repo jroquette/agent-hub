@@ -1,9 +1,54 @@
 /* Agent-session chat (D10); colours come from the design tokens only. */
+/* A fixed-height column (AC-234.16): header and composer stay put, only the transcript scrolls. */
+.as-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.as-column {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 960px;
+  margin-inline: auto;
+  padding-inline: var(--space-8);
+}
+.as-header {
+  flex: none;
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  padding: var(--space-4) 0 var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.as-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.as-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.as-scroll:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.as-footer {
+  flex: none;
+  padding: var(--space-2) 0 var(--space-4);
+  background: var(--bg);
+}
 .as-transcript {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  padding: var(--space-4) 0;
+  padding-block: var(--space-4);
 }
 .as-empty {
   margin: 0;
@@ -283,7 +328,14 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  cursor: pointer;
+}
+.as-todos details[open] > .as-todos-head {
   margin-bottom: 4px;
+}
+.as-todos ul {
+  max-height: 160px;
+  overflow-y: auto;
 }
 .as-todos ul {
   list-style: none;

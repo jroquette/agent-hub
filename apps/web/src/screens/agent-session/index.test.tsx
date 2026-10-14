@@ -169,6 +169,38 @@ describe("AgentSessionScreen (transcript)", () => {
   });
 });
 
+describe("AgentSessionScreen (layout)", () => {
+  it("keeps the header and the composer outside the one scrolling transcript column", async () => {
+    const todos = aLogRecord("todos", { seq: 4 });
+    const view = renderChat(
+      routes({
+        [SESSION]: anAgentSession({ status: "running", last_seq: 4 }),
+        [EVENTS]: { items: [...log(), todos], next_after: null },
+      }),
+    );
+    const conversation = await screen.findByRole("log", { name: "Conversation" });
+
+    const header = view.container.querySelector("header.as-header");
+    if (!(header instanceof HTMLElement)) throw new Error("no chat header");
+    expect(within(header).getByRole("heading", { level: 1 })).toBeInTheDocument();
+    expect(within(header).getByText("Running")).toBeInTheDocument();
+    expect(within(header).getByRole("group", { name: /Cost and tokens/ })).toBeInTheDocument();
+    expect(within(header).getByRole("button", { name: "Close session" })).toBeInTheDocument();
+
+    const scroller = conversation.closest(".as-scroll");
+    expect(scroller).not.toBeNull();
+    expect(scroller?.contains(header)).toBe(false);
+    const composer = screen.getByRole("form", { name: "Message composer" });
+    expect(scroller?.contains(composer)).toBe(false);
+    expect(composer.closest("footer.as-footer")).not.toBeNull();
+    expect(conversation).toHaveClass("as-column");
+
+    const list = within(header).getByRole("region", { name: "Todo list" });
+    expect(list.querySelector("details")).not.toHaveAttribute("open");
+    expect(within(list).getByText(/0 of 1 done/)).toBeVisible();
+  });
+});
+
 describe("AgentSessionScreen (permission)", () => {
   it("shows the snapshot's raw request over the stored copy and posts one answer", async () => {
     const stored = aLogRecord("permission.request", {
