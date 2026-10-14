@@ -374,6 +374,7 @@ export function aLiveTile(overrides: Partial<LiveTile> = {}): LiveTile {
   return {
     actors: [anActor()],
     agent: "claude",
+    agent_session_id: null,
     attempt: null,
     budget_usd: null,
     cost_usd: "0.8000",

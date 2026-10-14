@@ -2044,7 +2044,8 @@ export interface components {
      * @description A session tile of the Live sessions screen.
      *
      *     ``agent`` is deprecated (``label`` and ``actors``); ``needs_you_problem`` is the owner-facing
-     *     line of the first problem that needs the owner ("Needs you: <kind> in <where>").
+     *     line of the first problem that needs the owner ("Needs you: <kind> in <where>");
+     *     ``agent_session_id`` is the agent session ``hub web`` drives it from, when there is one.
      */
     LiveTile: {
       /**
@@ -2057,6 +2058,8 @@ export interface components {
        * @deprecated
        */
       agent: string;
+      /** Agent Session Id */
+      agent_session_id?: string | null;
       /** Attempt */
       attempt?: number | null;
       budget_usd?: components["schemas"]["Money"] | null;

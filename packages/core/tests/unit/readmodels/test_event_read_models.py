@@ -736,3 +736,12 @@ def test_shows_waiting_tile_when_permission_pending_agent_session_link() -> None
     assert tiles["s-cli"].group == "live"
     assert later["s-web"].group == "live"
     assert service.get_session("s-web").status == SessionStatus.LIVE
+
+
+def test_carries_agent_session_id_on_tile_when_link_known_agent_session_link() -> None:
+    service = _linked_service({("demo", "s-web"): AgentSessionLink(agent_session_id="a-1")})
+
+    tiles = {tile.id: tile for tile in service.list_live_sessions(Scope()).items}
+
+    assert tiles["s-web"].agent_session_id == "a-1"
+    assert tiles["s-cli"].agent_session_id is None

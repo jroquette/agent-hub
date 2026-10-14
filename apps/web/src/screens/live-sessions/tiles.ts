@@ -110,15 +110,16 @@ export function splitTiles(tiles: LiveTile[]): Split {
   };
 }
 
-/** The wait a permission prompt shows (an agent session hub web drives, or a hook-observed one). */
-export const PERMISSION_WAIT = "Permission prompt";
-
 /**
- * Where a waiting tile sends the owner: a permission prompt to its session (whose header opens
- * the chat when hub web drives it, AC-165.25), any other wait to the approvals.
+ * Where a waiting tile sends the owner: a session hub web drives to its chat, where the
+ * permission card answers it (AC-165.25); any other wait, a hook-observed permission prompt
+ * included, to the approvals.
  */
 export function waitingLink(tile: LiveTile): { href: string; label: string } {
-  if (tile.waiting_reason === PERMISSION_WAIT)
-    return { href: `/sessions/${encodeURIComponent(tile.id)}`, label: "Open session" };
+  if (tile.agent_session_id)
+    return {
+      href: `/agent-sessions/${encodeURIComponent(tile.agent_session_id)}`,
+      label: "Open chat",
+    };
   return { href: "/approvals", label: "Open approval" };
 }
