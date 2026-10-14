@@ -1,18 +1,33 @@
 import "./agent-session.css";
 
+import { useCallback, useEffect, useRef } from "react";
+
 import { Icon, Markdown, type IconName } from "../../components";
 import { cx } from "../../lib/cx";
 import { PermissionCard, type PermissionAnswer } from "./PermissionCard";
 import { StoredCopyLabel } from "./SessionStatus";
 import { ToolCallCard } from "./ToolCallCard";
-import type { NoticeTone, TranscriptEntry, TranscriptState } from "./transcript";
+import {
+  pendingPermissions,
+  type NoticeTone,
+  type TranscriptEntry,
+  type TranscriptState,
+} from "./transcript";
+import type { StickToBottom } from "./useStickToBottom";
 
 export interface TranscriptProps {
   state: TranscriptState;
   /** Posts a permission answer; without it the cards are read-only. */
   onAnswerPermission?:
     ((requestId: string, answer: PermissionAnswer) => Promise<unknown> | undefined) | undefined;
+  /** Receives the scroll container, for the chat's `useStickToBottom`. */
+  scrollerRef?: ((element: HTMLDivElement | null) => void) | undefined;
+  /** The chat's stick-to-bottom state; without it the transcript only renders. */
+  follow?: StickToBottom | undefined;
 }
+
+/** Space left above a permission card the chat opens on. */
+const OPEN_MARGIN_PX = 16;
 
 const NOTICE_ICON: Record<NoticeTone, IconName> = {
   info: "info",
@@ -91,9 +106,37 @@ function Entry({
  * and notices. The region is `aria-live="polite"` and `aria-busy` while a block streams, so screen
  * readers announce a block once it completes instead of every delta.
  */
-export function Transcript({ state, onAnswerPermission }: TranscriptProps) {
+export function Transcript({ state, onAnswerPermission, scrollerRef, follow }: TranscriptProps) {
+  const scroller = useRef<HTMLDivElement | null>(null);
+  const opened = useRef(false);
+  const attach = useCallback(
+    (element: HTMLDivElement | null) => {
+      scroller.current = element;
+      scrollerRef?.(element);
+    },
+    [scrollerRef],
+  );
+  const oldestPending = pendingPermissions(state)[0];
+  const release = follow?.release;
+
+  // Opens once, on the loaded transcript (AC-234.17): at the oldest pending permission card,
+  // else at the latest entry (the stick-to-bottom hook starts pinned).
+  useEffect(() => {
+    if (opened.current || !release) return;
+    opened.current = true;
+    if (oldestPending === undefined) return;
+    const element = scroller.current;
+    const card = Array.from(element?.querySelectorAll<HTMLElement>("[data-request-id]") ?? []).find(
+      (candidate) => candidate.dataset.requestId === oldestPending,
+    );
+    if (!element || !card) return;
+    release();
+    // `.as-scroll` is positioned, so the card's offset is from the scroller's top.
+    element.scrollTop = Math.max(0, card.offsetTop - OPEN_MARGIN_PX);
+  }, [oldestPending, release]);
+
   return (
-    <div className="as-scroll">
+    <div className="as-scroll" ref={attach}>
       <div
         className="as-transcript as-column"
         role="log"

@@ -29,6 +29,7 @@ import { AgentStatusBadge, ReconnectBanner } from "./SessionStatus";
 import { TodoList } from "./TodoList";
 import { Transcript } from "./Transcript";
 import { modeLabel } from "./transcript";
+import { useStickToBottom } from "./useStickToBottom";
 
 const DEFAULT_MODELS = ["default", "opus", "sonnet", "haiku"];
 const short = (id: string) => id.replace(/-/g, "").slice(0, 8);
@@ -59,6 +60,8 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
+  const follow = useStickToBottom(scroller);
 
   const problem = snapshot.error ?? transcript.error;
   const session = snapshot.data;
@@ -200,7 +203,12 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
           <TodoList items={state.todos} />
         </div>
       </header>
-      <Transcript state={state} onAnswerPermission={ended ? undefined : commands.answer} />
+      <Transcript
+        state={state}
+        onAnswerPermission={ended ? undefined : commands.answer}
+        scrollerRef={setScroller}
+        follow={follow}
+      />
       <footer className="as-footer">
         <div className="as-column">
           <Composer
