@@ -17,8 +17,8 @@ reference, are ``malformed`` errors, never text.
 Values render as canonical text (``canonical_text``), in one left-to-right pass: inserted text is
 never scanned again. A skipped producer, an absent key or item, and ``$LOOP_PREV`` before a first
 iteration read as empty text; a failed producer, a node with no result, an unknown input or
-``with`` name, and a path through a scalar are errors. In argv a reference must be a whole element
-(no splicing into an ``sh -c`` script).
+``with`` name, a path through a scalar, and a NaN or infinity are errors. In argv a reference
+must be a whole element, never the program nor a ``-c`` script (``check_argv``).
 """
 
 import json
@@ -39,12 +39,16 @@ type SubstitutionErrorCode = Literal[
     "producer_failed",
     "bad_path",
     "not_in_loop",
+    "non_finite",
     "partial_argv",
+    "argv_program",
+    "argv_script",
 ]
 
 _NAME = r"[a-z][a-z0-9_]*"
 _ID = r"[a-z][a-z0-9_-]*"
-_PATH = r"(?:\.[A-Za-z0-9_]+)*"
+# Possessive, so a path never gives back a segment to slip past the lookahead after it.
+_PATH = r"(?:\.[A-Za-z0-9_]++)*+"
 _TOKEN = re.compile(
     rf"\$(?:(?P<dollar>\$)"
     rf"|INPUTS\.(?P<input>{_NAME})(?![A-Za-z0-9_.])"
@@ -119,6 +123,14 @@ def canonical_text(value: JsonValue) -> str:
     )
 
 
+@dataclass(frozen=True)
+class ArgvProblem:
+    """Why the argv element at ``index`` cannot hold its reference."""
+
+    index: int
+    error: SubstitutionError
+
+
 def parse_ref(text: str) -> Ref:
     """Return the one reference ``text`` is, whole; anything else is ``malformed``."""
     match = _TOKEN.fullmatch(text)
@@ -138,27 +150,55 @@ def render(template: str, context: RefContext) -> str:
     last = 0
     for start, end, ref in _scan(template):
         parts.append(template[last:start])
-        parts.append(
-            "$" if ref is None else canonical_text(resolve(ref, context, template[start:end]))
-        )
+        parts.append("$" if ref is None else resolve_text(ref, context, template[start:end]))
         last = end
     parts.append(template[last:])
     return "".join(parts)
 
 
+def check_argv(argv: Sequence[str]) -> list[ArgvProblem]:
+    """Return the references argv refuses, without resolving any.
+
+    A reference must fill a whole element, and never the program (``argv[0]``) nor the element
+    right after a ``-c`` (a script for ``sh``, ``bash``, ``python`` alike): a script gets values
+    only as positional parameters.
+    """
+    problems: list[ArgvProblem] = []
+    for index, element in enumerate(argv):
+        try:
+            tokens = _scan(element)
+        except SubstitutionError as malformed:
+            problems.append(ArgvProblem(index, malformed))
+            continue
+        refs = [(start, end) for start, end, ref in tokens if ref is not None]
+        if not refs:
+            continue
+        text = element[refs[0][0] : refs[0][1]]
+        if len(tokens) > 1 or refs[0] != (0, len(element)):
+            error = SubstitutionError("partial_argv", text, "a reference must fill a whole element")
+        elif index == 0:
+            error = SubstitutionError("argv_program", text, "a reference cannot be the program")
+        elif argv[index - 1] == "-c":
+            error = SubstitutionError("argv_script", text, "pass it as a positional parameter")
+        else:
+            continue
+        problems.append(ArgvProblem(index, error))
+    return problems
+
+
 def render_argv(argv: Sequence[str], context: RefContext) -> list[str]:
-    """Render each element; a reference must fill a whole element (``partial_argv`` otherwise)."""
-    rendered: list[str] = []
-    for element in argv:
-        tokens = list(_scan(element))
-        refs = [(start, end, ref) for start, end, ref in tokens if ref is not None]
-        if refs and (len(tokens) > 1 or refs[0][:2] != (0, len(element))):
-            start, end, _ = refs[0]
-            raise SubstitutionError(
-                "partial_argv", element[start:end], "a reference must be a whole argv element"
-            )
-        rendered.append(render(element, context))
-    return rendered
+    """Render each element, after refusing what ``check_argv`` reports (its first problem)."""
+    if problems := check_argv(argv):
+        raise problems[0].error
+    return [render(element, context) for element in argv]
+
+
+def resolve_text(ref: Ref, context: RefContext, text: str) -> str:
+    """Return the canonical text of the value ``ref`` reads; a NaN or infinity is an error."""
+    try:
+        return canonical_text(resolve(ref, context, text))
+    except ValueError as error:
+        raise SubstitutionError("non_finite", text, "the value holds a NaN or infinity") from error
 
 
 def resolve(ref: Ref, context: RefContext, text: str) -> JsonValue:
@@ -202,7 +242,8 @@ def _read(result: NodeResult, path: tuple[str, ...], text: str) -> JsonValue:
         if isinstance(value, dict):
             value = value.get(segment)
         elif isinstance(value, list) and segment.isdigit():
-            index = int(segment)
+            # More digits than any list length is absent (and int() refuses over 4300 digits).
+            index = int(segment) if len(segment) <= len(str(len(value))) else len(value)
             value = value[index] if index < len(value) else None
         elif value is None:
             return None
