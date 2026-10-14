@@ -26,6 +26,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -60,6 +61,7 @@ MAX_TAIL_BYTES = 64 * 1024  # read from the end of each other subagent transcrip
 MAX_STATE_BYTES = 16 * 1024 * 1024
 STALE_SECONDS = 12 * 60 * 60  # a start state older than this is replaced
 MAX_BLOCKS = 1  # per agent_id
+MAX_RECORD_PATHS = 200  # labels per record line
 MAX_COMMANDS = 10  # Bash commands a block lists: the agent's last ones
 MAX_COMMAND_CHARS = 160  # per listed command, on one line
 MAX_TARGETS = 256  # distinct paths the agent's file tools named that are kept, resolved once each
@@ -82,6 +84,7 @@ def read_event() -> dict:
 
 STATE_VERSION = 1
 NOTE = "[hub readonly-gate] not checked ({})"
+UNRECORDED = "[hub readonly-gate] not recorded ({})"
 SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 COMMENT = re.compile(r"\s#.*$")
 BASE_PLUGIN = "hub-workflow"
@@ -185,6 +188,82 @@ def safe_id(value: object) -> str:
 
 def state_path(session_id: object, agent_id: object) -> Path:
     return Path(tempfile.gettempdir()) / f"hub-readonly-{safe_id(session_id)}-{safe_id(agent_id)}.json"
+
+
+def blocks_path(state: Path) -> Path:
+    """The agent's block counter beside its state: the state is never rewritten after start."""
+    return state.with_suffix(".blocks")
+
+
+def record_path(session_id: object) -> Path:
+    """The session's local record of outcomes (O-2): never in a checkout, never sent."""
+    return Path(tempfile.gettempdir()) / f"hub-readonly-{safe_id(session_id)}.jsonl"
+
+
+def blocks_done(path: Path) -> int:
+    """The blocks already held for the agent: 0 without a counter; MAX_BLOCKS when the counter
+    cannot be read or holds anything but a count (never a block too many)."""
+    if not os.path.lexists(path):
+        return 0
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        handle = os.open(str(path), flags)
+    except OSError:
+        return MAX_BLOCKS
+    try:
+        if not stat.S_ISREG(os.fstat(handle).st_mode):
+            return MAX_BLOCKS
+        text = os.read(handle, 16).decode("ascii")
+    except (OSError, ValueError):
+        return MAX_BLOCKS
+    finally:
+        os.close(handle)
+    return int(text) if text.isdigit() else MAX_BLOCKS
+
+
+def count_block(path: Path, done: int) -> bool:
+    """Write the counter (done + 1) before the block is printed; False on any error."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        handle = os.open(str(path), flags, 0o600)
+    except OSError:
+        return False
+    try:
+        os.write(handle, str(done + 1).encode("ascii"))
+        return True
+    except OSError:
+        return False
+    finally:
+        os.close(handle)
+
+
+def record(event: dict, outcomes: list) -> str:
+    """Append one JSON line per (outcome, labels) to the session's record; labels only (at most
+    MAX_RECORD_PATHS each), never file content or transcript text. The cause on failure, else ""."""
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    fields = {}
+    for key in ("session_id", "agent_id", "agent_type"):
+        value = event.get(key)
+        fields[key] = value if isinstance(value, str) else ""
+    lines = [
+        json.dumps({"ts": stamp, **fields, "outcome": outcome, "paths": paths[:MAX_RECORD_PATHS]})
+        for outcome, paths in outcomes
+        if paths
+    ]
+    if not lines:
+        return ""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        handle = os.open(str(record_path(event.get("session_id"))), flags, 0o600)
+    except OSError as error:
+        return type(error).__name__
+    try:
+        os.write(handle, ("\n".join(lines) + "\n").encode("utf-8", "surrogatepass"))
+    except (OSError, ValueError) as error:
+        return type(error).__name__
+    finally:
+        os.close(handle)
+    return ""
 
 
 def save_state(path: Path, state: dict) -> bool:
@@ -798,19 +877,32 @@ def noted(notes: list) -> str:
 
 
 def emit_result(
-    agent_type: str, agent_id: str, block: list, report: list, signals: list, notes: list, commands: list
+    agent_type: str,
+    agent_id: str,
+    block: list,
+    report: list,
+    signals: list,
+    notes: list,
+    commands: list,
+    left: list | None = None,
+    unrecorded: str = "",
 ) -> None:
     """One JSON object: a block (`decision`, `reason`, with the agent's Bash commands as the
-    evidence) with the report and the notes as its `systemMessage`; else the `systemMessage`
-    alone; nothing when there is nothing to say."""
+    evidence) with the report, the paths left changed and the notes as its `systemMessage`; else
+    the `systemMessage` alone; nothing when there is nothing to say."""
     agent_type, agent_id = printable(agent_type), printable(agent_id)
     parts = []
     if report:
         head = f"[hub readonly-gate] changed while {agent_type} (agent {agent_id}) ran, not attributed to it"
         named = ", ".join(printable(name) for name in signals)
         parts.append("\n".join([f"{head} ({named}):", *listing(report)]))
+    if left:
+        head = f"[hub readonly-gate] {agent_type} (agent {agent_id}) finished and left these changed:"
+        parts.append("\n".join([head, *listing(left)]))
     if notes:
         parts.append(noted(notes))
+    if unrecorded:
+        parts.append(UNRECORDED.format(printable(unrecorded)))
     output = {}
     if block:
         head = f"[hub readonly-gate] {agent_type} (agent {agent_id}) is read-only (mutates_checkout: false) but changed:"
@@ -1194,6 +1286,16 @@ def stop(event: dict, cfg: Config) -> None:
     gone = {item["label"] for item in after if item["cut"] == "removed"}
     notes.extend(listing_notes)
     notes.extend(removed_notes(sorted(gone | set(removed))))  # a snapshotted one is listed too: once
+    counter = blocks_path(path)
+    done = blocks_done(counter)
+    labels = [label for label, _ in changed]
+    if done >= MAX_BLOCKS or event.get("stop_hook_active") is True:
+        # the agent was held once already (or Claude Code says it is continuing): never again
+        forget(path)
+        forget(counter)
+        unrecorded = record(event, [("left_changed", labels)])
+        emit_result(agent_type, agent_id, [], [], [], notes, [], left=labels, unrecorded=unrecorded)
+        return
     if not changed:
         forget(path)
         if notes:
@@ -1203,15 +1305,25 @@ def stop(event: dict, cfg: Config) -> None:
     if not readable:
         forget(path)
         notes.append("agent transcript unreadable")
-        labels = [label for label, _ in changed]
-        emit_result(agent_type, agent_id, [], labels, ["agent transcript unreadable"], notes, [])
+        unrecorded = record(event, [("report", labels)])
+        signals = ["agent transcript unreadable"]
+        emit_result(agent_type, agent_id, [], labels, signals, notes, [], unrecorded=unrecorded)
         return
     signals = overlap(event, state, path)
     block, report = attribute(changed, own, signals)
+    left = []
+    if block and not count_block(counter, done):
+        forget(path)
+        forget(counter)
+        notes.append("state not saved")
+        block, left = [], block
     if not block:
         forget(path)
-    # a block keeps the state for the retry
-    emit_result(agent_type, agent_id, block, report, signals, notes, commands)
+    # a block keeps the state and the counter for the retry
+    unrecorded = record(event, [("block", block), ("report", report), ("left_changed", left)])
+    emit_result(
+        agent_type, agent_id, block, report, signals, notes, commands, left=left, unrecorded=unrecorded
+    )
 
 
 def main() -> None:
