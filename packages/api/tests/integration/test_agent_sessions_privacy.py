@@ -169,7 +169,12 @@ def test_leaks_no_sentinel_when_session_runs_one_turn_credentials(  # noqa: PLR0
     with _composed(
         settings, projects_root=projects_root, web_dist=web_dist, driver=driver
     ) as client:
-        assert client.post("/api/v1/hubs", json={"path": str(hub)}).status_code == 201
+        assert (
+            client.post(
+                "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+            ).status_code
+            == 201
+        )
         workdirs = client.get(f"{BASE}/workdirs", params={"project": "demo"})
         created = client.post(
             BASE,

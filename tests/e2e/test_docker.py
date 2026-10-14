@@ -231,7 +231,9 @@ def test_registers_hub_at_host_path_when_hubs_root_mounted(stack: Stack) -> None
     ]
     _checked(init, env=stack.env)
     with httpx.Client(base_url=stack.url, timeout=REQUEST_SECONDS) as client:
-        registered = client.post("/api/v1/hubs", json={"path": str(hub)})
+        registered = client.post(
+            "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": stack.url}
+        )
         hubs = client.get("/api/v1/hubs").json()["items"]
 
     assert registered.status_code == 201, registered.text

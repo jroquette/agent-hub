@@ -247,7 +247,14 @@ def test_refuses_actions_when_hub_read_only(
     open_composed: Any, propose: Any, hub_world: Any
 ) -> None:
     app = open_composed(brain_changes=hub_world.changes(AGENT_HUB_IN_CONTAINER="1"))
-    assert app.client.post("/api/v1/hubs", json={"path": str(hub_world.hub)}).status_code == 201
+    assert (
+        app.client.post(
+            "/api/v1/hubs",
+            json={"path": str(hub_world.hub)},
+            headers={"Origin": "http://127.0.0.1:7420"},
+        ).status_code
+        == 201
+    )
     learning_id = propose(app, "gate-first.md", NOTE)
 
     listed = app.client.get("/api/v1/learnings").json()["items"]

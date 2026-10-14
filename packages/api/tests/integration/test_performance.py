@@ -164,7 +164,12 @@ def big_brain(composed: Any, make_hub: Callable[..., Path]) -> Any:
         (folder / f"note-{number:04d}.md").write_text(
             f"---\ntype: learning\n---\n# Note {number}\n\n" + "Text. " * 200, encoding="utf-8"
         )
-    assert composed.client.post("/api/v1/hubs", json={"path": str(hub)}).status_code == 201
+    assert (
+        composed.client.post(
+            "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+        ).status_code
+        == 201
+    )
     return composed
 
 
