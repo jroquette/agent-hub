@@ -157,6 +157,7 @@ def _document_loc(loc: Sequence[str | int], content: object) -> Loc:
     A segment is kept when the content has it, or when it is the last one and names a key
     missing from a mapping; any other segment is a label, not a key of the document.
     """
+    loc = _without_node_tag(loc, content)
     kept: list[str | int] = []
     current = content
     for position, segment in enumerate(loc):
@@ -167,6 +168,17 @@ def _document_loc(loc: Sequence[str | int], content: object) -> Loc:
             continue
         kept.append(segment)
     return tuple(kept)
+
+
+def _without_node_tag(loc: Sequence[str | int], content: object) -> Sequence[str | int]:
+    # pydantic puts a node's ``type`` value after its index; a rule of the whole node ends
+    # there, where it would otherwise read as a missing key.
+    if len(loc) > 2 and loc[0] == "nodes" and isinstance(loc[1], int):
+        _, nodes = _child(content, "nodes")
+        _, node = _child(nodes, loc[1])
+        if isinstance(node, dict) and node.get("type") == loc[2]:
+            return (*loc[:2], *loc[3:])
+    return loc
 
 
 def _child(value: object, segment: str | int) -> tuple[bool, object]:
