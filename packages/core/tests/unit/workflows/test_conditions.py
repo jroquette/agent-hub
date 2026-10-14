@@ -214,3 +214,14 @@ def test_bounds_echoed_expression_when_parse_fails() -> None:
     with pytest.raises(ConditionParseError) as caught:
         parse_condition("$" + "a" * 2000 + ".outpu == 1")
     assert len(str(caught.value)) < 200
+
+
+def test_bounds_echoed_reference_when_evaluation_fails() -> None:
+    long_ref = "$INPUTS." + "n" * 5000
+    failed = evaluate_when(long_ref + " == 'x'", CONTEXT)
+    assert isinstance(failed, WhenFail)
+    assert len(str(failed.error)) < 300
+    context = RefContext(inputs={"n" * 5000: "word"}, nodes={})
+    skipped = evaluate_when(long_ref + " == 1", context)
+    assert isinstance(skipped, WhenSkip)
+    assert len(skipped.detail) < 300

@@ -125,6 +125,9 @@ def test_renders_one_dollar_when_dollar_is_doubled() -> None:
         "$plan.output.x?.y",
         "$plan.output.items.0[1]",
         "$LOOP_PREV.review.output.a[0]",
+        "$plan.output.items.[0]",
+        "$plan.output.items.01",  # an index is 0 or has no leading zero
+        "$LOOP_PREV.review.output.00",
     ],
 )
 def test_errors_when_reference_is_malformed(template: str) -> None:
@@ -257,6 +260,11 @@ def test_reads_empty_text_when_index_has_too_many_digits() -> None:
         (["bash", "-e", "-c", "$plan.output", "bash"], 3, "argv_script"),
         (["hub", "--title=$INPUTS.issue"], 1, "partial_argv"),
         (["hub", "$plan.output[0]"], 1, "malformed"),
+        (["bash", "-lc", "$INPUTS.issue"], 2, "argv_script"),
+        (["sh", "-ec", "$INPUTS.issue"], 2, "argv_script"),
+        (["bash", "-c", "-e", "$INPUTS.issue"], 3, "argv_script"),
+        (["sh", "-c", "--", "$INPUTS.issue"], 3, "argv_script"),
+        (["python3", "-I", "-c", "$INPUTS.issue"], 3, "argv_script"),
     ],
 )
 def test_reports_problem_when_reference_sits_where_argv_refuses_it(
@@ -271,3 +279,26 @@ def test_reports_problem_when_reference_sits_where_argv_refuses_it(
 
 def test_reports_no_problem_when_references_are_positional_parameters() -> None:
     assert check_argv(["sh", "-c", 'gh pr view "$1"', "sh", "$plan.output.summary", "$$x"]) == []
+
+
+def test_reports_no_problem_when_reference_follows_the_script_or_a_long_option() -> None:
+    assert check_argv(["sh", "-c", "--", 'echo "$1"', "sh", "$INPUTS.issue"]) == []
+    assert check_argv(["tool", "--check", "$INPUTS.issue"]) == []
+
+
+def test_bounds_echoed_reference_when_reference_is_huge() -> None:
+    huge = "$plan.output" + ".a" * 5000
+    with pytest.raises(SubstitutionError) as caught:
+        render(huge + "[0]", context())
+    assert len(str(caught.value)) < 300
+    with pytest.raises(SubstitutionError) as caught:
+        render("$plan.output.summary" + ".a" * 5000, context())
+    assert caught.value.code == "bad_path"
+    assert len(str(caught.value)) < 300
+    with pytest.raises(SubstitutionError) as caught:
+        render("$INPUTS." + "n" * 5000, context())
+    assert len(str(caught.value)) < 300
+
+
+def test_keeps_error_kind_when_resolution_fails_for_another_reason() -> None:
+    assert error_code("$plan.output.summary.deeper") == "bad_path"
