@@ -48,7 +48,6 @@ import { AgentSessionList, agentSessionHref, sessionControlUnavailable } from ".
 import { CloudPanel } from "./CloudPanel";
 import { NewSessionDialog } from "./NewSessionDialog";
 import {
-  cloudFollowUp,
   useAgentCapabilities,
   useAgentSessions,
   useCloudSessions,
@@ -56,7 +55,6 @@ import {
   useProjects,
   useResumable,
   useSessionPages,
-  useStartCloud,
   useWorkdirs,
   type Session,
 } from "./queries";
@@ -624,7 +622,6 @@ function AgentSessionsPanel({
   const resumable = useResumable(dialog ? project : null, dialog ? resumeFor : null);
   const cloudSessions = useCloudSessions(project, canDrive && caps.cloud);
   const create = useCreateAgentSession();
-  const startCloud = useStartCloud();
   const folders = workdirs.data?.items;
 
   return (
@@ -681,15 +678,7 @@ function AgentSessionsPanel({
           <CloudPanel
             key={project}
             capabilities={caps}
-            project={project}
-            workdirs={folders}
             sessions={cloudSessions.data?.items ?? []}
-            pending={startCloud.isPending}
-            error={startCloud.error}
-            onStart={(body) => {
-              startCloud.mutate(body);
-            }}
-            onFollowUp={cloudFollowUp}
           />
         </details>
       )}

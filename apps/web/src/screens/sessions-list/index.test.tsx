@@ -306,12 +306,9 @@ describe("SessionsListScreen agent sessions (permission)", () => {
 });
 
 describe("SessionsListScreen agent sessions (cloud)", () => {
-  it("shows the cloud panel and starts a cloud session", async () => {
+  it("shows the cloud guidance and never posts a cloud start or follow-up", async () => {
     const view = renderList(
-      routes({
-        [`${AGENT}/cloud`]: { items: [aCloudSession()] },
-        [`POST ${AGENT}/cloud`]: aCloudSession(),
-      }),
+      routes({ [`${AGENT}/cloud`]: { items: [aCloudSession()] } }),
       "/sessions?scope=agent-hub",
     );
 
@@ -319,23 +316,16 @@ describe("SessionsListScreen agent sessions (cloud)", () => {
     expect((await screen.findAllByText("cloud: limited control")).length).toBeGreaterThan(0);
     expect(screen.getByText("claude --teleport cse_01synthetic")).toBeInTheDocument();
     await userEvent.type(screen.getByRole("textbox", { name: "Task" }), "Upgrade the linter");
-    await userEvent.click(screen.getByRole("button", { name: "Start in the cloud" }));
 
-    await waitFor(() => {
-      expect(
-        view.requests.some(
-          (r) => r.method === "POST" && new URL(r.url).pathname === `${AGENT}/cloud`,
-        ),
-      ).toBe(true);
-    });
-    const post = view.requests.find(
-      (r) => r.method === "POST" && new URL(r.url).pathname === `${AGENT}/cloud`,
+    expect(screen.getByRole("group", { name: "Cloud start command" })).toHaveTextContent(
+      "claude --cloud 'Upgrade the linter'",
     );
-    expect(await bodyOf(post)).toEqual({
-      project: "agent-hub",
-      workdir_id: aWorkdir().workdir_id,
-      task: "Upgrade the linter",
-    });
+    expect(screen.queryByRole("button", { name: "Start in the cloud" })).toBeNull();
+    expect(
+      view.requests.filter(
+        (r) => r.method === "POST" && new URL(r.url).pathname.startsWith(`${AGENT}/cloud`),
+      ),
+    ).toEqual([]);
   });
 
   it("shows guidance only when the CLI has no cloud command", async () => {

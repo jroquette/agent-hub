@@ -40,7 +40,6 @@ export function useProjects() {
 
 export type AgentSession = components["schemas"]["AgentSession"];
 export type CreateAgentSession = components["schemas"]["CreateAgentSession"];
-export type StartCloud = components["schemas"]["StartCloud"];
 export type CloudSession = components["schemas"]["CloudSession"];
 
 /** While a listed session is live, the list refreshes this often (statuses, waiting). */
@@ -105,24 +104,4 @@ export function useCreateAgentSession() {
       void queryClient.invalidateQueries({ queryKey: apiKey("/api/v1/agent-sessions") });
     },
   });
-}
-
-/** `POST /agent-sessions/cloud` (and its one-shot follow-up). */
-export function useStartCloud() {
-  const queryClient = useQueryClient();
-  return useMutation<CloudSession, ApiProblem, StartCloud>({
-    mutationFn: (body) => apiPost("/api/v1/agent-sessions/cloud", body),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: apiKey("/api/v1/agent-sessions/cloud") });
-    },
-  });
-}
-
-/** Sends a one-shot follow-up to a cloud session. */
-export function cloudFollowUp(cloudId: string, text: string) {
-  return apiPost(
-    "/api/v1/agent-sessions/cloud/{cloud_id}/messages",
-    { text },
-    { path: { cloud_id: cloudId } },
-  );
 }
