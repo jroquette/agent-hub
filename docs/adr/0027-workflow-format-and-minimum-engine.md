@@ -1,9 +1,9 @@
 # 0027. The workflow format and the minimum engine
 
-- Status: proposed
-- Date: 2026-10-13
+- Status: accepted
+- Date: 2026-10-14
 - Deciders: José Henrique Roquette (D-1 to D-9 and the answers to the open questions approved with the AGH-181 plan on
-  2026-10-13; the ADR itself awaits review)
+  2026-10-13; the ADR accepted on 2026-10-14)
 
 ## Context and Problem Statement
 
