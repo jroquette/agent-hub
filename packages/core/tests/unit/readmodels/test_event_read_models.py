@@ -227,6 +227,54 @@ def test_lists_session_views_when_session_known(store: InMemoryEventStore) -> No
     assert len(calls.items) == 4
 
 
+def test_fills_tile_fields_when_sessions_listed(store: InMemoryEventStore) -> None:
+    service = _service(store, NOW)[0]
+
+    listed = {s.id: s for s in service.list_sessions(SessionFilter()).items}
+    [tile] = service.list_live_sessions(Scope(project="demo")).items
+    one = service.get_session("s-b")
+
+    waiting = listed["s-b"]
+    assert (
+        waiting.waiting_reason,
+        waiting.last_action,
+        waiting.last_tool,
+        waiting.needs_you_problem,
+        waiting.failing_notice,
+    ) == (
+        tile.waiting_reason,
+        tile.last_action,
+        tile.last_tool,
+        tile.needs_you_problem,
+        tile.failing_notice,
+    )
+    assert waiting.waiting_reason == "Guard ask"
+    assert waiting.sparkline_60s == ()
+    assert one == waiting
+    ended = listed["s-a"]
+    assert ended.last_tool is not None
+    assert ended.sparkline_60s is None
+
+
+def test_folds_tile_fields_for_page_rows_only_when_page_smaller_than_matches(
+    store: InMemoryEventStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service = _service(store, NOW)[0]
+    calls: list[str] = []
+    real = event_read_models.tile_fields
+
+    def counting(session: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append(session.id)
+        return real(session, *args, **kwargs)
+
+    monkeypatch.setattr(event_read_models, "tile_fields", counting)
+
+    page = service.list_sessions(SessionFilter(limit=1))
+
+    assert calls == [item.id for item in page.items]
+    assert len(calls) == 1
+
+
 def test_pages_session_events_when_limit_smaller_than_events(store: InMemoryEventStore) -> None:
     service = _service(store, NOW)[0]
     first = service.session_events("s-a", types=frozenset(), page=PageRequest(limit=5))

@@ -131,6 +131,20 @@ the same operation behaves the same from every entry point ([ARCHITECTURE.md](AR
   of a resource, `DELETE` removes it. The only writes are registering and removing a hub, posting hook envelopes,
   since AGH-201 the two learning decisions, and since AGH-165 the agent-session commands.
 
+## Sessions
+
+`GET /api/v1/sessions` and `GET /api/v1/sessions/{session_id}` carry, besides the folded counts, the fields a Live tile
+shows, derived on read by the same code as `GET /api/v1/live-sessions` (never stored, no new payload key). They are
+filled for the rows of the page only; every one is optional and `null` when there is nothing to say.
+
+| Field | Value |
+| --- | --- |
+| `waiting_reason` | why a `waiting` session waits (`Guard ask`, `Plan approval`, `Spec approval`, `Human gate`, `Permission prompt`) |
+| `last_action` · `last_tool` | the last tool call in plain words (`Ran make check`, `Edited src/app.py`) and its tool |
+| `needs_you_problem` | the "what went wrong" line of the first problem that needs the owner |
+| `failing_notice` | the same gate or command failed 2 times in a row, or 3 tool errors in the last 5 minutes |
+| `sparkline_60s` | activity in the last 60 s; `null` once the session has ended |
+
 ## Learning decisions
 
 `POST /api/v1/learnings/{learning_id}/accept` with `{"target": "<folder or .md path under brain/>"}` (1 to 200
