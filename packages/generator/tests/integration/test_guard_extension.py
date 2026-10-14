@@ -386,6 +386,7 @@ def test_keeps_extension_timeout_inside_guard_timeout_when_rendered(
     assert EXTENSION_TIMEOUT < GUARD_HOOK_TIMEOUT
 
 
+@pytest.mark.serial
 def test_asks_with_cause_when_extension_times_out(
     hub: Path,
     marker: Path,
@@ -417,6 +418,7 @@ GRANDCHILD_SCRIPT = "import time; time.sleep({delay}); open({late!r}, 'w').close
 GRANDCHILD_DELAY = 2.0
 
 
+@pytest.mark.serial
 def test_kills_extension_process_group_when_timed_out(
     hub: Path,
     marker: Path,
@@ -897,6 +899,7 @@ def test_computes_nearest_rank_p95_when_samples_given() -> None:
     assert p95([float(n) for n in range(1, 101)]) == 95.0
 
 
+@pytest.mark.serial
 def test_stays_under_ceiling_when_guard_runs_with_and_without_stub(
     *,
     hook_python: str,

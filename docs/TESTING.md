@@ -105,8 +105,10 @@ driver selected in production.
 The API's integration tests for the learning decisions and the web smoke drive the same kind of synthetic hub (a bare
 `origin` and a fake `gh`) through `hub web`.
 
-A test that runs a rendered hook or script takes the `hook_python` fixture, so it runs on the current Python and on a
-real Python 3.9 (the system `python3` on macOS); without a 3.9 on `PATH` that case skips, and under `CI` it fails. A
+A test that runs a rendered hook or script takes the `hook_python` fixture, a real Python 3.9 (the system `python3` on
+macOS, the hooks' floor); without a 3.9 on `PATH` it runs on the current Python, and under `CI` it fails. The
+`each_python` fixture runs a smoke on both interpreters: every rendered module imports, and every hook entry point
+runs once (`test_imports_every_rendered_module_when_run_on_each_python`, `test_exits_zero_when_git_fails`). A
 characterization case compares a hook's or script's exit code, stdout, stderr, files and calls to fake tools with
 `packages/generator/tests/integration/golden/<file>/<case>.golden`, stored byte-exact (`-text` in `.gitattributes`).
 `GOLDEN_UPDATE=1` rewrites the goldens (refused under `CI`; review and commit the diff) and `GOLDEN_KEEP=1` keeps each
@@ -173,6 +175,12 @@ at most three turns; `AGENT_HUB_LIVE_MODEL` picks another model).
 `docker` is the other hand-written marker: `tests/e2e/test_docker.py` builds the image (`agent-hub:local`), starts the
 Compose service under its own project name, port, hubs root and data volume, and removes them afterwards. Without a
 Docker daemon it skips, and under `CI` it fails. `make test-e2e` selects `e2e and not docker and not live`.
+
+`serial` marks a test that asserts a wall-clock budget (a p95 in milliseconds, a hook that must answer within 1 s, the
+web smoke's 2 s page): under parallel workers the machine is loaded and such a bound flakes. The test targets run
+everything else first with pytest-xdist (`-n $(PYTEST_N)`, one worker per CPU by default; `PYTEST_N=0` runs in one
+process), then the `serial` tests alone. Mark a test `serial` only for a wall-clock bound, never to hide shared state:
+every test must pass beside any other.
 
 Select a level with `-m`: `$R pytest -m unit`, `$R pytest -m "unit or contract"`, `$R pytest -m integration`,
 `$R pytest -m e2e`. A single file: `$R pytest packages/core/tests/unit/test_errors.py`.
@@ -284,7 +292,8 @@ floors) and `web-dist-check` (rebuild the web app in a scratch folder and diff i
 The API's integration tests (including `test_performance.py`, the NFR budgets on 10,000 synthetic events) run in
 `test-integration`, and the web smoke in `test-e2e`.
 
-Make runs the steps left to right and stops at the first failure. Never run the gate targets with `-j`.
+Make runs the steps left to right and stops at the first failure. Never run the gate targets with `-j`: the tests
+are already parallel inside each target (pytest-xdist, see [Markers](#markers)).
 
 Notes:
 

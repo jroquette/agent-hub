@@ -3773,6 +3773,7 @@ def test_emits_denied_push_when_server_up(
     assert (envelope.project, envelope.repo) == ("demo", None)
 
 
+@pytest.mark.serial
 @pytest.mark.parametrize("server", ["slow", "down"])
 def test_keeps_guard_output_when_server_slow_or_down(
     server: str,

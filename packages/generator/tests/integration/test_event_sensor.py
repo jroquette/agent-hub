@@ -149,6 +149,7 @@ def assert_silent(completed: subprocess.CompletedProcess[bytes]) -> None:
     assert (completed.returncode, completed.stdout, completed.stderr) == (0, b"", b"")
 
 
+@pytest.mark.serial
 @pytest.mark.parametrize("event", EVENTS)
 def test_posts_envelope_when_server_up(
     event: str,
@@ -208,6 +209,7 @@ def test_posts_repo_of_cwd_when_cwd_in_repo_or_worktree(
     assert body["repo"] == repo
 
 
+@pytest.mark.serial
 @pytest.mark.parametrize("event", EVENTS)
 def test_exits_silently_when_server_down(
     event: str,
@@ -227,6 +229,7 @@ def test_exits_silently_when_server_down(
     assert elapsed < RUN_BOUND
 
 
+@pytest.mark.serial
 def test_exits_within_bound_when_server_down_slow(
     *,
     hub: Path,

@@ -271,7 +271,7 @@ def test_exits_zero_without_traceback_when_input_or_hub_broken(
 
 @pytest.mark.parametrize("name", ENTRY_POINTS)
 def test_exits_zero_when_git_fails(
-    name: str, *, hub: Path, hook_python: str, run_hook_file: RunHook, tmp_path: Path
+    name: str, *, hub: Path, each_python: str, run_hook_file: RunHook, tmp_path: Path
 ) -> None:
     valid_hub_json(hub)
     (hub / "notes.py").write_text("x = 1\n", encoding="utf-8")
@@ -285,7 +285,7 @@ def test_exits_zero_when_git_fails(
     env |= {"PATH": f"{fake.parent}:/usr/bin:/bin"}
 
     completed = run_hook_file(
-        hook_python,
+        each_python,
         hub / HOOKS / f"{name}.py",
         stdin=json.dumps(valid_event(name, hub)).encode(),
         cwd=hub,

@@ -10,6 +10,10 @@ COV := --cov=agent_hub.core --cov=agent_hub.storage --cov=agent_hub.collector \
        --cov=agent_hub.generator --cov=agent_hub.tracker_linear --cov=agent_hub.cli \
        --cov=agent_hub.hub_git --cov=agent_hub.claude_sessions --cov=agent_hub.api \
        --cov=packages/storage/src/agent_hub/storage/migrations --cov-branch --cov-report=
+# pytest-xdist workers for the test targets: one per CPU by default; PYTEST_N=0 runs in one process.
+# Tests marked serial assert a wall-clock budget, so they run alone after the parallel run.
+PYTEST_N ?= auto
+XDIST := -n $(PYTEST_N)
 ALEMBIC := $(RUN) python -m agent_hub.storage.migration
 # The web app (apps/web): Node from apps/web/.node-version, dependencies from its package-lock.json.
 WEB := npm --prefix apps/web
@@ -47,7 +51,7 @@ lockstep: ## agent-hub-cli and agent-hub share one version (scripts/check_releas
 
 test-fast: ## unit and contract tests; starts fresh coverage data
 	$(RUN) coverage erase
-	$(RUN) pytest -m "unit or contract" $(COV)
+	$(RUN) pytest -m "unit or contract" $(XDIST) $(COV)
 
 web-install: ## install the web app's dependencies exactly as package-lock.json pins them
 	$(WEB) ci --no-audit --no-fund
@@ -61,10 +65,12 @@ openapi-check: web-install ## the committed openapi.json and the generated TS ty
 check-fast: format lint typecheck layout lockstep openapi-check test-fast web-fast ## the fast gate, run while working
 
 test-integration: ## integration tests (real SQLite files under tmp_path), never live ones; appends coverage
-	$(RUN) pytest -m "integration and not live" $(COV) --cov-append
+	$(RUN) pytest -m "integration and not live and not serial" $(XDIST) $(COV) --cov-append
+	$(RUN) pytest -m "integration and not live and serial" $(COV) --cov-append
 
 test-e2e: ## e2e tests: hub installed with uv tool install, gate self-test (not in coverage)
-	$(RUN) pytest -m "e2e and not docker and not live"
+	$(RUN) pytest -m "e2e and not docker and not live and not serial" $(XDIST)
+	$(RUN) pytest -m "e2e and not docker and not live and serial"
 
 imports: ## import-linter contracts (config in .importlinter)
 	$(RUN) lint-imports
