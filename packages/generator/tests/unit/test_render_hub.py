@@ -21,6 +21,7 @@ from agent_hub.core.doctor.snapshot import module_makefiles
 from agent_hub.core.doctor.text_rules import ATTRIBUTIONS, SECRETS
 from agent_hub.core.hub_config.conventions import MAX_PATTERN_CHARS
 from agent_hub.core.hub_config.model import MODULE_IDS, HubConfig
+from agent_hub.core.hub_config.model_tiers import AGENT_NAMES
 from agent_hub.core.hub_config.versions import PINNED_RELEASE_COMMAND
 from agent_hub.core.hub_files.extension_inputs import NO_EXTENSIONS, ExtensionInputs
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
@@ -28,7 +29,12 @@ from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.hub_files.rendered_link import RenderedLink
 from agent_hub.core.runner import brief
 from agent_hub.core.testing import builders
-from agent_hub.core.testing.builders import a_conventions_document, a_hub_document, a_second_repo
+from agent_hub.core.testing.builders import (
+    a_conventions_document,
+    a_hub_document,
+    a_models_document,
+    a_second_repo,
+)
 from agent_hub.core.testing.platform_repository_cases import CUSTOM_REPOSITORY
 from agent_hub.generator.built_json import managed_settings
 from agent_hub.generator.errors import GeneratorError, TemplateError
@@ -4687,3 +4693,172 @@ def test_ignores_local_file_when_gitignore_rendered(demo_config: HubConfig) -> N
     gitignore = next(file for file in render_hub(demo_config).files if file.path == ".gitignore")
 
     assert "hub.local.json" in gitignore.content.decode("utf-8").splitlines()
+
+
+# AGH-180 (spec AC-1): sha256 of the agent files as rendered on main (267c3f9, after AGH-161)
+# before the templates named a tier; a hub without `models`, or with empty or default ones, keeps
+# them.
+AGENTS_FOLDER = "plugin/hub-workflow/agents"
+AGENT_FILES_SHA256 = {
+    f"{AGENTS_FOLDER}/architect.md": (
+        "65f87843553ecc602d854a6c7f2f9389b188ced0ceff5cc5ef03c9d43f2b616f"
+    ),
+    f"{AGENTS_FOLDER}/evaluator.md": (
+        "dd5ff73ca988d3f42f3700fa941439cf5b9e685051d713c042424df918dc5197"
+    ),
+    f"{AGENTS_FOLDER}/planner.md": (
+        "703db29e7407541e9895e66b1868f7615335c0599db68d57a5dfb7916811c00e"
+    ),
+    f"{AGENTS_FOLDER}/quality-reviewer.md": (
+        "2d22c3d570fd968ae07604ff39f87152ab5dff41f738e6cf50756aef4c079f71"
+    ),
+    f"{AGENTS_FOLDER}/requirements-analyst.md": (
+        "d5702ea0391a96d356ebd9e1b83195cd1828efb509dfb56cfcc611560484d063"
+    ),
+    f"{AGENTS_FOLDER}/researcher.md": (
+        "f4859e0b694dff6cea2a69d29074d111c9374971f544289b134a8f0a620da9cf"
+    ),
+    f"{AGENTS_FOLDER}/spec-reviewer.md": (
+        "9cace3f38b381fd67a33bf7177a550d6f61c3c455331ab6f7ec37b93a1c37023"
+    ),
+}
+# The tier each agent template names: its default (spec D3).
+TEMPLATE_TIERS = {
+    "architect": "large",
+    "evaluator": "large",
+    "planner": "medium",
+    "quality-reviewer": "large",
+    "requirements-analyst": "large",
+    "researcher": "medium",
+    "spec-reviewer": "large",
+}
+TIER_LINE = re.compile(r"^model: @@\{model_(small|medium|large)\}$")
+
+
+def a_config_with_models(models: object) -> HubConfig:
+    document = a_hub_document()
+    document["models"] = models
+    return HubConfig.model_validate(document)
+
+
+def agent_template_texts() -> dict[str, str]:
+    """Each plugin agent template's text, by file stem."""
+    prefix = f"{AGENTS_FOLDER}/"
+    return {
+        path.removeprefix(prefix).removesuffix(".md.tmpl"): text
+        for path, text in template_texts()
+        if path.startswith(prefix) and path.endswith(".md.tmpl")
+    }
+
+
+def agent_model_lines(config: HubConfig) -> dict[str, str]:
+    """Each rendered agent's ``model:`` frontmatter line, by file stem."""
+    texts = rendered_texts(config)
+    return {
+        name: next(
+            line
+            for line in frontmatter_lines(texts[f"{AGENTS_FOLDER}/{name}.md"])
+            if line.startswith("model:")
+        )
+        for name in TEMPLATE_TIERS
+    }
+
+
+@pytest.mark.parametrize(
+    "models",
+    [
+        None,
+        {},
+        {"tiers": {}, "agents": {}},
+        {"tiers": {"small": "haiku", "medium": "sonnet", "large": "opus"}},
+        {"agents": dict(TEMPLATE_TIERS)},
+    ],
+    ids=["absent", "empty", "empty-parts", "default-tiers", "template-tiers"],
+)
+def test_keeps_agent_bytes_when_models_absent_or_default(models: object) -> None:
+    config = (
+        HubConfig.model_validate(a_hub_document())
+        if models is None
+        else a_config_with_models(models)
+    )
+
+    rendered = {file.path: file.content for file in render_hub(config).files}
+
+    assert {
+        path: hashlib.sha256(rendered[path]).hexdigest() for path in AGENT_FILES_SHA256
+    } == AGENT_FILES_SHA256
+
+
+def test_names_template_tier_when_agent_template_read() -> None:
+    texts = agent_template_texts()
+
+    tiers = {}
+    for name, text in texts.items():
+        model_lines = [line for line in frontmatter_lines(text) if line.startswith("model:")]
+        assert len(model_lines) == 1, name
+        match = TIER_LINE.fullmatch(model_lines[0])
+        assert match is not None, (name, model_lines[0])
+        tiers[name] = match.group(1)
+        # The tier keys appear only on that line, so an override changes nothing else.
+        assert text.count("@@{model_") == 1, name
+    assert tiers == TEMPLATE_TIERS
+
+
+def test_lists_agent_templates_when_agent_names_read() -> None:
+    assert sorted(agent_template_texts()) == list(AGENT_NAMES)
+
+
+def test_renders_tier_models_when_tiers_set() -> None:
+    config = a_config_with_models({"tiers": {"medium": "claude-sonnet-4-5", "large": "x.y_z-1"}})
+
+    lines = agent_model_lines(config)
+
+    assert lines == {
+        name: f"model: {'claude-sonnet-4-5' if tier == 'medium' else 'x.y_z-1'}"
+        for name, tier in TEMPLATE_TIERS.items()
+    }
+
+
+def test_overrides_agent_tier_when_models_agents_set() -> None:
+    config = HubConfig.model_validate(a_models_document())
+    default = rendered_texts(HubConfig.model_validate(a_hub_document()))
+
+    texts = rendered_texts(config)
+    lines = agent_model_lines(config)
+
+    assert lines == {
+        "architect": "model: claude-opus-4-1",
+        "evaluator": "model: haiku",
+        "planner": "model: sonnet",
+        "quality-reviewer": "model: claude-opus-4-1",
+        "requirements-analyst": "model: claude-opus-4-1",
+        "researcher": "model: claude-opus-4-1",
+        "spec-reviewer": "model: claude-opus-4-1",
+    }
+    # Only the overridden or retiered model lines differ from the default render.
+    default_lines = agent_model_lines(HubConfig.model_validate(a_hub_document()))
+    for path, text in texts.items():
+        changed = [
+            (old, new)
+            for old, new in zip(default[path].splitlines(), text.splitlines(), strict=True)
+            if old != new
+        ]
+        name = path.removeprefix(f"{AGENTS_FOLDER}/").removesuffix(".md")
+        if name in lines and lines[name] != default_lines[name]:
+            assert changed == [(default_lines[name], lines[name])], path
+        else:
+            assert changed == [], path
+
+
+def test_keeps_tier_keys_global_when_one_agent_overridden() -> None:
+    config = a_config_with_models({"agents": {"planner": "large"}})
+
+    mapping = substitution_mapping(config)
+
+    assert (mapping["model_small"], mapping["model_medium"], mapping["model_large"]) == (
+        "haiku",
+        "sonnet",
+        "opus",
+    )
+    assert agent_model_lines(config)["planner"] == "model: opus"
+    assert agent_model_lines(config)["researcher"] == "model: sonnet"
