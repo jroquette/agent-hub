@@ -62,8 +62,9 @@ _TOKEN = re.compile(
 _RESERVED = re.compile(r"\$(?:INPUTS|WITH|LOOP_PREV)(?![A-Za-z0-9_])")
 _BAD_SUFFIX = re.compile(rf"\$(?:LOOP_PREV\.)?{_ID}\.output{_PATH}{_FOREIGN}")
 _LEADING_ZERO = re.compile(r"0[0-9]+")
-# A short-option cluster holding ``c`` (``-c``, ``-lc``, ``-ec``): a script flag.
-_SCRIPT_FLAG = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
+# A short-option cluster (``-e``, ``+ec``); one holding ``c`` is a script flag. No ``*`` around
+# the ``c``: that pattern backtracks quadratically on a long cluster that does not match.
+_CLUSTER = re.compile(r"[-+][A-Za-z]+")
 
 
 @dataclass(frozen=True)
@@ -172,11 +173,12 @@ def check_argv(argv: Sequence[str]) -> list[ArgvProblem]:
 
     A reference must fill a whole element and never be the program (``argv[0]``). Shell option
     grammar is not modelled; once argv holds a reference, the rule fails closed. A script flag is
-    a short-option cluster holding ``c`` (``-c``, ``-lc``, ``-ec``). The flag is refused when it
-    also holds ``o`` or ``O``, or when the element after it is missing, starts with ``-`` or
-    ``+``, or is a reference: shell options go before ``-c``, and the element right after it is
-    the literal script. A reference at or before the last flag's script is refused too; the ones
-    after it are positional parameters, the only way a script gets values.
+    a short-option cluster, prefixed by ``-`` or ``+``, holding ``c`` (``-c``, ``-lc``, ``+ec``).
+    The flag is refused when it also holds ``o`` or ``O``, or when the element after it is
+    missing, starts with ``-`` or ``+``, or is a reference: shell options go before ``-c``, and
+    the element right after it is the literal script. A reference at or before the last flag's
+    script is refused too; the ones after it are positional parameters, the only way a script
+    gets values.
     """
     problems, whole = _whole_references(argv)
     if not problems and not whole:
@@ -216,7 +218,7 @@ def _check_script_flags(argv: Sequence[str], whole: set[int], problems: list[Arg
     """Add a problem for each ill-placed script flag; return the last flag's script index."""
     reach = -1
     for index, element in enumerate(argv):
-        if _SCRIPT_FLAG.fullmatch(element) is None:
+        if "c" not in element or _CLUSTER.fullmatch(element) is None:
             continue
         reach = index + 1
         after = argv[reach] if reach < len(argv) else None
