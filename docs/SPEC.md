@@ -541,6 +541,7 @@ The recommendations are a starting point.
 - A deterministic Python engine reads the document and drives the steps. Orchestration spends no tokens: the LLM only runs inside `agent` steps and only receives that step's instruction, not the whole workflow.
 - Deterministic work (tests, lint, contract sync, opening a PR) becomes a `script` step, with no LLM.
 - The UI edits the same document. It is stored on the platform with a version and history, and each execution records the workflow version it used.
+- The format and the minimum engine (`agent`, `script`, `gate`; `human` is refused at load until UI approvals exist) are in [ADR 0027](adr/0027-workflow-format-and-minimum-engine.md) and [docs/design/workflow-schema.md](design/workflow-schema.md).
 
 **2. Brain: stays in the hub repo, which is private and ours only.**
 
