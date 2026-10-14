@@ -212,6 +212,134 @@ def test_reports_every_unknown_key_when_review_shape_has_many_extra_keys() -> No
     assert [problem.path for problem in problems] == list(extra)
 
 
+def named_review_problems(
+    document: object, *, file_name: str = REVIEW_FILE, folder_name: str = REVIEW_FOLDER
+) -> tuple[OutputProblem, ...]:
+    return review_problems(review_bytes(document), file_name=file_name, folder_name=folder_name)
+
+
+@pytest.mark.parametrize(
+    ("document", "problem"),
+    [
+        (
+            a_review_document(verdict="FAIL"),
+            OutputProblem("verdict", "the verdict is FAIL but no finding is blocking"),
+        ),
+        (
+            a_review_document(findings=[a_finding(), a_finding(id="F2", severity="blocking")]),
+            OutputProblem("verdict", "the verdict is PASS but findings[1] is blocking"),
+        ),
+    ],
+    ids=["fail with only minor findings", "pass with a blocking finding"],
+)
+def test_reports_verdict_when_review_verdict_contradicts_findings(
+    document: dict[str, object], problem: OutputProblem
+) -> None:
+    assert problems_of(document) == (problem,)
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        a_review_document(verdict="FAIL", findings=[a_finding(severity="blocking")]),
+        a_review_document(verdict="PASS", findings=[a_finding()]),
+        a_review_document(verdict="PASS", findings=[]),
+    ],
+    ids=["fail with a blocking finding", "pass with a minor finding", "pass with none"],
+)
+def test_accepts_review_verdict_when_it_matches_findings(document: dict[str, object]) -> None:
+    assert problems_of(document) == ()
+
+
+def test_reports_repeated_finding_id_when_review_verdict_checked() -> None:
+    document = a_review_document(findings=[a_finding(), a_finding(line=13)])
+
+    assert problems_of(document) == (
+        OutputProblem("findings[1].id", "the id F1 repeats findings[0].id"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("file_name", "folder_name", "problem"),
+    [
+        (
+            "quality-r1.json",
+            "AGH-7",
+            OutputProblem("reviewer", "the reviewer is spec but the file name says quality"),
+        ),
+        (
+            "spec-r2.json",
+            "AGH-7",
+            OutputProblem("round", "the round is 1 but the file name says 2"),
+        ),
+        (
+            "spec-r1.json",
+            "AGH-8",
+            OutputProblem("ticket", "the ticket is AGH-7 but the folder is AGH-8"),
+        ),
+    ],
+    ids=["other reviewer", "other round", "other folder"],
+)
+def test_reports_mismatch_when_review_file_name_differs(
+    file_name: str, folder_name: str, problem: OutputProblem
+) -> None:
+    problems = named_review_problems(
+        a_review_document(), file_name=file_name, folder_name=folder_name
+    )
+
+    assert problems == (problem,)
+
+
+@pytest.mark.parametrize(
+    ("document", "file_name", "folder_name"),
+    [
+        (a_review_document(), "spec-r1.json", "agh-7"),
+        (a_review_document(ticket="agh-7"), "spec-r1.json", "AGH-7"),
+        (a_review_document(reviewer="quality", round=9999), "quality-r9999.json", "AGH-7"),
+    ],
+    ids=["lower-case folder", "lower-case ticket", "quality round 9999"],
+)
+def test_accepts_folder_case_when_review_file_name_matches(
+    document: dict[str, object], file_name: str, folder_name: str
+) -> None:
+    assert named_review_problems(document, file_name=file_name, folder_name=folder_name) == ()
+
+
+@pytest.mark.parametrize(
+    ("file_name", "echo"),
+    [
+        ("spec.json", "spec.json"),
+        ("spec-r0.json", "spec-r0.json"),
+        ("style-r1.json", "style-r1.json"),
+        ("spec-r01.json", "spec-r01.json"),
+        ("spec-r1.md", "spec-r1.md"),
+        ("spec-r10000.json", "spec-r10000.json"),
+        ("spec-r1\n.json", "spec-r1\\n.json"),
+        ("x" * 100 + ".json", "x" * 79 + "…"),
+    ],
+    ids=[
+        "no round",
+        "round 0",
+        "unknown reviewer",
+        "leading zero",
+        "not json",
+        "round 10000",
+        "control character",
+        "long name",
+    ],
+)
+def test_reports_root_when_review_file_name_unknown(file_name: str, echo: str) -> None:
+    problems = named_review_problems(
+        a_review_document(reviewer="quality", round=3), file_name=file_name
+    )
+
+    message = (
+        f"the file name {echo} is not spec-r<N>.json or quality-r<N>.json"
+        " (N from 1 to 9999, no leading zero)"
+    )
+    assert problems == (OutputProblem("$", message),)
+
+
 def review_check(content: bytes) -> tuple[OutputProblem, ...]:
     return review_problems(content, file_name=REVIEW_FILE, folder_name=REVIEW_FOLDER)
 
@@ -428,6 +556,181 @@ def test_reports_overlong_list_when_eval_shape_has_bad_items(
 
     assert paths.count(path) == 1
     assert len(paths) > 1
+
+
+def a_matching_head(document: dict[str, object]) -> bytes:
+    """The head of a sibling whose verdict and ``acs`` match ``document``'s."""
+    acs = document["acs"]
+    acs_text = "[" + ", ".join(acs) + "]" if isinstance(acs, list) else str(acs)
+    return a_sibling_head(verdict=str(document["verdict"]), acs=acs_text)
+
+
+def verdict_problems_of(document: dict[str, object]) -> tuple[OutputProblem, ...]:
+    return eval_problems_of(document, sibling_head=a_matching_head(document))
+
+
+TWO_ACS = ["AC-139.1", "AC-139.2"]
+THREE_ACS = ["AC-139.1", "AC-139.2", "AC-139.3"]
+
+
+@pytest.mark.parametrize(
+    "document",
+    [an_eval_document(), an_eval_document(owner_steps=["Rotate the token."])],
+    ids=["without owner steps", "with owner steps"],
+)
+def test_accepts_ship_when_eval_verdict_all_pass(document: dict[str, object]) -> None:
+    assert verdict_problems_of(document) == ()
+
+
+@pytest.mark.parametrize(
+    ("document", "message"),
+    [
+        (
+            an_eval_document(
+                acs=TWO_ACS,
+                results=[a_result(), a_result(ac="AC-139.2", exit_code=1, status="fail")],
+            ),
+            "SHIP needs every result to pass, but results[1] is fail",
+        ),
+        (
+            an_eval_document(
+                acs=TWO_ACS,
+                results=[a_result(), a_result(ac="AC-139.2", exit_code=None, status="not-run")],
+            ),
+            "SHIP needs every result to pass, but results[1] is not-run",
+        ),
+        (
+            an_eval_document(gates=[a_gate(), a_gate(name="check", exit_code=1, status="fail")]),
+            "SHIP needs every gate to pass, but gates[1] is fail",
+        ),
+        (
+            an_eval_document(
+                gates=[a_gate(), a_gate(name="check", exit_code=None, status="not-run")]
+            ),
+            "SHIP needs every gate to pass, but gates[1] is not-run",
+        ),
+    ],
+    ids=["result fail", "result not-run", "gate fail", "gate not-run"],
+)
+def test_reports_verdict_when_eval_verdict_ship_rests_on_failure(
+    document: dict[str, object], message: str
+) -> None:
+    assert verdict_problems_of(document) == (OutputProblem("verdict", message),)
+
+
+@pytest.mark.parametrize(
+    ("document", "message"),
+    [
+        (an_eval_document(acs=[], results=[]), "SHIP needs at least one result"),
+        (an_eval_document(gates=[]), "SHIP needs at least one gate"),
+    ],
+    ids=["no results", "no gates"],
+)
+def test_reports_verdict_when_eval_verdict_ship_has_empty_lists(
+    document: dict[str, object], message: str
+) -> None:
+    assert verdict_problems_of(document) == (OutputProblem("verdict", message),)
+
+
+def test_reports_owner_steps_when_eval_verdict_needs_steps() -> None:
+    document = an_eval_document(verdict="SHIP-WITH-OWNER-STEPS", owner_steps=[])
+
+    assert verdict_problems_of(document) == (
+        OutputProblem("owner_steps", "SHIP-WITH-OWNER-STEPS needs at least one owner step"),
+    )
+
+
+def test_accepts_owner_steps_verdict_when_eval_verdict_has_fail() -> None:
+    document = an_eval_document(
+        verdict="SHIP-WITH-OWNER-STEPS",
+        results=[a_result(exit_code=1, status="fail")],
+        gates=[a_gate(exit_code=2, status="fail")],
+        owner_steps=["Rotate the token."],
+    )
+
+    assert verdict_problems_of(document) == ()
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        an_eval_document(
+            verdict="NO-SHIP",
+            acs=THREE_ACS,
+            results=[
+                a_result(),
+                a_result(ac="AC-139.2", exit_code=1, status="fail"),
+                a_result(ac="AC-139.3", exit_code=None, status="not-run"),
+            ],
+            gates=[
+                a_gate(),
+                a_gate(name="check", exit_code=2, status="fail"),
+                a_gate(name="e2e", exit_code=None, status="not-run"),
+            ],
+        ),
+        an_eval_document(verdict="NO-SHIP", acs=[], results=[], gates=[]),
+    ],
+    ids=["every status", "empty lists"],
+)
+def test_accepts_no_ship_when_eval_verdict_mixes_statuses(document: dict[str, object]) -> None:
+    assert verdict_problems_of(document) == ()
+
+
+def test_ignores_red_on_parent_when_eval_verdict_checked() -> None:
+    document = an_eval_document(red_on_parent=[{"test": "t", "failed_on_base": False}])
+
+    assert verdict_problems_of(document) == ()
+
+
+@pytest.mark.parametrize(
+    ("document", "problem"),
+    [
+        (
+            an_eval_document(verdict="NO-SHIP", results=[a_result(exit_code=1)]),
+            OutputProblem("results[0].exit_code", "a pass needs exit code 0, not 1"),
+        ),
+        (
+            an_eval_document(verdict="NO-SHIP", results=[a_result(exit_code=None)]),
+            OutputProblem("results[0].exit_code", "a pass needs exit code 0, not null"),
+        ),
+        (
+            an_eval_document(verdict="NO-SHIP", results=[a_result(status="not-run")]),
+            OutputProblem("results[0].exit_code", "a not-run needs exit code null, not 0"),
+        ),
+        (
+            an_eval_document(verdict="NO-SHIP", gates=[a_gate(exit_code=2)]),
+            OutputProblem("gates[0].exit_code", "a pass needs exit code 0, not 2"),
+        ),
+        (
+            an_eval_document(verdict="NO-SHIP", gates=[a_gate(status="not-run", exit_code=-1)]),
+            OutputProblem("gates[0].exit_code", "a not-run needs exit code null, not -1"),
+        ),
+    ],
+    ids=[
+        "result pass exit 1",
+        "result pass exit null",
+        "result not-run exit 0",
+        "gate pass exit 2",
+        "gate not-run exit -1",
+    ],
+)
+def test_reports_exit_code_when_eval_verdict_status_disagrees(
+    document: dict[str, object], problem: OutputProblem
+) -> None:
+    assert verdict_problems_of(document) == (problem,)
+
+
+def test_accepts_any_exit_code_when_eval_verdict_result_fails() -> None:
+    document = an_eval_document(
+        verdict="NO-SHIP",
+        acs=TWO_ACS,
+        results=[
+            a_result(exit_code=0, status="fail"),
+            a_result(ac="AC-139.2", exit_code=None, status="fail"),
+        ],
+    )
+
+    assert verdict_problems_of(document) == ()
 
 
 @pytest.mark.parametrize(
