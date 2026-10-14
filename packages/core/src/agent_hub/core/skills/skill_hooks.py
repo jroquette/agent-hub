@@ -120,7 +120,7 @@ class _EntryReader:
             self._refuse('"hooks" is not an object')
             return
         for event, groups in hooks.items():
-            if not _EVENT_NAME.match(event):
+            if not _EVENT_NAME.fullmatch(event):
                 self._refuse("an event name is not letters, digits, '-' or '_'")
             elif not isinstance(groups, list):
                 self._refuse("an event's hooks are not a list")
@@ -198,7 +198,7 @@ class _Fold:
             self.truncated = True
             return
         name = f"{source.name}-{entry.event}-{entry.position}".lower()
-        if not _ITEM_NAME.match(name):
+        if not _ITEM_NAME.fullmatch(name):
             self.notices.append(f"{source.path}: a hook is skipped (its name is too long)")
             return
         facts = HookFacts(

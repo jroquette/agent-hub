@@ -174,6 +174,18 @@ def test_keeps_good_hooks_when_one_entry_malformed() -> None:
     assert len(fold.notices) == 1
 
 
+def test_skips_event_when_name_ends_with_newline() -> None:
+    settings = _json({"hooks": {"Stop\n": [_group("bad")], "Stop": [_group("good")]}})
+
+    fold = hook_records(settings, None, {}, enabled={}, marketplace=None)
+
+    assert _names(fold.records) == ["settings-stop-1"]
+    assert fold.notices == (
+        ".claude/settings.json: some hooks not read"
+        " (an event name is not letters, digits, '-' or '_')",
+    )
+
+
 def test_reads_nothing_when_files_absent() -> None:
     missing = UnreadHubFile(message="File does not exist", is_missing=True)
 

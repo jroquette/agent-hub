@@ -152,7 +152,7 @@ class _Listing:
             self._item(entry, source=CLAUDE_SOURCE, segments=segments, root_at=2)
         elif segments[0] == PLUGIN_FOLDER and len(segments) >= _PLUGIN_ITEM_SEGMENTS:
             plugin = segments[1]
-            if plugin in RESERVED_SOURCES or not _NAME.match(plugin):
+            if plugin in RESERVED_SOURCES or not _NAME.fullmatch(plugin):
                 self.skipped_plugins.add(plugin)
                 return
             self.plugins.add(plugin)
@@ -169,14 +169,14 @@ class _Listing:
             self._skill(entry, source, rest, root="/".join(entry.path.split("/")[: root_at + 1]))
         elif folder == AGENTS_FOLDER and len(rest) == 1:
             name = rest[0].removesuffix(AGENT_SUFFIX)
-            if not _NAME.match(name):
+            if not _NAME.fullmatch(name):
                 self.skipped_names += 1
                 return
             self.agents[(source, name)] = _AgentFile(source=source, name=name, entry=entry)
 
     def _skill(self, entry: SourceFile, source: str, rest: list[str], *, root: str) -> None:
         name = rest[0]
-        if not _NAME.match(name):
+        if not _NAME.fullmatch(name):
             self.skipped_names += 1
             return
         folder = self.folders.setdefault((source, name), _Folder(source, name, root))

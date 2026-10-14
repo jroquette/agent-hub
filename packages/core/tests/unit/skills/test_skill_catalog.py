@@ -12,6 +12,7 @@ from agent_hub.core.skills.skill_sources import (
     CatalogInputs,
     FoldedCatalog,
     SkillSources,
+    SourceFile,
     file_id,
 )
 from agent_hub.core.skills.skill_view import (
@@ -235,6 +236,37 @@ def test_skips_plugin_folder_when_name_reserved() -> None:
     assert [item.id for item in catalog.items] == ["skill/demo/two"]
     assert catalog.notice is not None
     assert "plugin/claude" in catalog.notice
+
+
+def test_skips_names_when_they_end_with_newline() -> None:
+    # The adapters refuse such names when listing; the fold refuses them on its own too.
+    inputs = _inputs({"plugin/demo/skills/two/SKILL.md": b"---\nname: two\n---\n"})
+    odd = tuple(
+        SourceFile(path=path, size=10, mtime_ns=0, regular=True)
+        for path in (
+            "plugin/demo/skills/foo\n/SKILL.md",
+            "plugin/demo/agents/bar\n.md",
+            "plugin/demo\n/skills/baz/SKILL.md",
+        )
+    )
+    sources = SkillSources(files=inputs.sources.files + odd)
+
+    folded = build_catalog(
+        CatalogInputs(
+            project=inputs.project,
+            project_plugin=inputs.project_plugin,
+            sources=sources,
+            texts=inputs.texts,
+            lock=inputs.lock,
+        )
+    )
+
+    assert [item.id for item in folded.catalog.items] == ["skill/demo/two"]
+    assert catalog_reads(sources) == ("plugin/demo/skills/two/SKILL.md",)
+    notice = folded.catalog.notice
+    assert notice is not None
+    assert "2 entries skipped" in notice
+    assert "plugin/demo\n: skipped" in notice
 
 
 def test_says_not_synced_when_tree_empty() -> None:

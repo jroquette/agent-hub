@@ -155,7 +155,7 @@ class SkillReads:
         missing = EntityNotFoundError(
             entity=SKILL_FILE_ENTITY, entity_id=f"{item_id(kind, source, name)}/{file_id}"
         )
-        if not _FILE_ID.match(file_id):
+        if not _FILE_ID.fullmatch(file_id):
             raise missing
         folded, detail = self._detail(project, hub_path, kind=kind, source=source, name=name)
         path = folded.files.get(detail.id, {}).get(file_id)
@@ -179,7 +179,7 @@ class SkillReads:
         self, project: str, hub_path: str, *, kind: ItemKind, source: str, name: str
     ) -> tuple[FoldedCatalog, SkillDetail]:
         wanted = item_id(kind, source, name)
-        if not (_NAME.match(source) and _NAME.match(name)):
+        if not (_NAME.fullmatch(source) and _NAME.fullmatch(name)):
             raise EntityNotFoundError(entity=SKILL_ENTITY, entity_id=wanted)
         sources = self._reader.skill_sources(hub_path)
         folded = self._memoized(project, hub_path, sources)
