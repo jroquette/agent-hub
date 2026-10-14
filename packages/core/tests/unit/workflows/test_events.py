@@ -1,5 +1,6 @@
 """A workflow run's events: built from the engine's recorder calls, metadata only (ADR 0019)."""
 
+import hashlib
 from datetime import timedelta
 
 from agent_hub.core.events.event import EventSource, EventType
@@ -18,7 +19,8 @@ from agent_hub.core.workflows.events import WorkflowEvents
 from agent_hub.core.workflows.failures import NodeFailedError, RetryRecord
 from agent_hub.core.workflows.ports import RunEnd, StepEnd, StepStart
 
-HASH = "sha256:" + "ab" * 32
+# A real digest: redaction must keep it whole.
+HASH = "sha256:" + hashlib.sha256(b"issue-to-pr snapshot").hexdigest()
 
 
 def a_recorder(end_index: int = 0) -> WorkflowEvents:
