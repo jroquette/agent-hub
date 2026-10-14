@@ -15,6 +15,8 @@ from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.generator.render_hub import render_hub
 
 SKILL_PATH = "plugin/hub-workflow/skills/review/SKILL.md"
+# AGH-139 E4: the reviewer words the unified vocabulary replaced, matched as whole words.
+OLD_WORDS = re.compile(r"\b(?:APPROVE|CHANGES)\b|(?i:\b(?:blockers?|should-fix|nits?)\b)")
 
 # The ticket's steps, in order, each with its type.
 STEPS = (
@@ -88,8 +90,10 @@ def test_cites_evidence_or_marks_a_question_when_finding_consolidated() -> None:
     step = _step(5)
 
     assert "path:line" in step
-    for severity in ("blocking", "should-fix", "nit"):
+    for severity in ("blocking", "minor"):
         assert severity in step
+    # AGH-139 E4: the unified vocabulary left no old reviewer word in the step.
+    assert OLD_WORDS.findall(step) == []
     assert "by path" in step
     assert "question" in step
     assert "dropped" in step
