@@ -13,7 +13,6 @@ compares numerically against the value's canonical text read as a JSON number (`
 value that is not one is a parse failure. Other literals compare canonical text exactly.
 """
 
-import json
 import operator
 import re
 from collections.abc import Callable
@@ -22,12 +21,12 @@ from decimal import Decimal
 from typing import Literal
 
 from agent_hub.core.errors import AgentHubError
-from agent_hub.core.hub_config.versions import cut_echo
 from agent_hub.core.workflows.substitution import (
     Ref,
     RefContext,
     SubstitutionError,
     WithRef,
+    echo,
     parse_ref,
     resolve_text,
 )
@@ -155,7 +154,7 @@ def parse_condition(expr: str) -> Condition:
         if joiner is None:
             return Condition(tuple(clauses))
         if not isinstance(joiner, _Join):
-            raise ConditionParseError(f"{_echo(expr)}: expected && or || after an atom")
+            raise ConditionParseError(f"{echo(expr)}: expected && or || after an atom")
         index += 1
 
 
@@ -163,9 +162,9 @@ def _atom(tokens: list[_Token], expr: str) -> Atom:
     match tokens:
         case [_RefToken(ref, text), _OpToken(op), _Literal(literal)]:
             if isinstance(literal, str) and op not in ("==", "!="):
-                raise ConditionParseError(f"{_echo(expr)}: {op} needs a number literal")
+                raise ConditionParseError(f"{echo(expr)}: {op} needs a number literal")
             return Atom(ref, text, op, literal)
-    raise ConditionParseError(f"{_echo(expr)}: each atom is <reference> <operator> <literal>")
+    raise ConditionParseError(f"{echo(expr)}: each atom is <reference> <operator> <literal>")
 
 
 def _tokens(expr: str) -> list[_Token]:
@@ -189,9 +188,9 @@ def _token(expr: str, index: int) -> tuple[_Token, int]:
         try:
             parsed = parse_ref(ref[0])
         except SubstitutionError as error:
-            raise ConditionParseError(f"{_echo(expr)}: bad reference {_echo(ref[0])}") from error
+            raise ConditionParseError(f"{echo(expr)}: bad reference {echo(ref[0])}") from error
         if isinstance(parsed, WithRef):
-            raise ConditionParseError(f"{_echo(expr)}: $WITH is for prompts, not conditions")
+            raise ConditionParseError(f"{echo(expr)}: $WITH is for prompts, not conditions")
         return _RefToken(parsed, ref[0]), ref.end()
     for op in _OPS:
         if expr.startswith(op, index):
@@ -204,7 +203,7 @@ def _bare_literal(expr: str, index: int) -> tuple[_Token, int]:
         return _Literal(Decimal(number[0])), number.end()
     if boolean := _BOOLEAN.match(expr, index):
         return _Literal(boolean[0]), boolean.end()
-    raise ConditionParseError(f"{_echo(expr)}: unexpected text at column {index + 1}")
+    raise ConditionParseError(f"{echo(expr)}: unexpected text at column {index + 1}")
 
 
 def _quoted(expr: str, index: int) -> tuple[_Token, int]:
@@ -219,7 +218,7 @@ def _quoted(expr: str, index: int) -> tuple[_Token, int]:
             index += 2
         else:
             return _Literal("".join(chars)), index + 1
-    raise ConditionParseError(f"{_echo(expr)}: unterminated quoted literal")
+    raise ConditionParseError(f"{echo(expr)}: unterminated quoted literal")
 
 
 def _holds(atom: Atom, context: RefContext) -> bool:
@@ -227,10 +226,5 @@ def _holds(atom: Atom, context: RefContext) -> bool:
     if isinstance(atom.literal, str):
         return (text == atom.literal) == (atom.op == "==")
     if _JSON_NUMBER.fullmatch(text) is None:
-        raise _NotANumberError(f"{atom.ref_text} is not a number")
+        raise _NotANumberError(f"{echo(atom.ref_text)} is not a number")
     return _COMPARE[atom.op](Decimal(text), atom.literal)
-
-
-def _echo(text: str) -> str:
-    """``text`` quoted and escaped as JSON, cut to the repo's echo limit."""
-    return cut_echo(json.dumps(text))
