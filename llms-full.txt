@@ -255,8 +255,8 @@ and tell the user; do not try other versions.
 The control plane (`hub web`: an API and a web app) shows the hub's live sessions, runs, approvals and health. It
 serves on `127.0.0.1` only, port 7420 by default. Run it one of two ways, on the same machine as the sessions:
 
-- **Locally:** `./hub web` from the hub folder (the pinned release, through the shim). It prints the URL to open,
-  `http://127.0.0.1:7420`. Ctrl C stops it.
+- **Locally:** `./hub web` from the hub folder (the pinned release, through the shim). It prints the address to
+  open, `http://127.0.0.1:7420/?token=…` (a new token each start; `--open` opens it). Ctrl C stops it.
 - **In Docker:** in a clone of agent-hub at the hub's release (`git clone --branch v<version>` into the workspace),
   `make up` builds the image and starts it, published on `127.0.0.1:7420` only; the workspace folder is mounted
   read-only so the server can read the hubs in it, and `~/.claude/projects` for the transcripts. `make down` stops
@@ -298,6 +298,20 @@ authored as the hub's author), and nothing changes until the user merges it. Tha
 `hub web`, a writable hub checkout whose `origin` is the hub's GitHub repo, `git`, and `gh` signed in to GitHub (the
 PR is opened as that `gh` account). Under Docker the hubs are mounted read-only, so both actions are disabled with
 "Hub is read-only here"; run `./hub web` locally to decide learnings.
+
+**Sessions from the app.** On the Sessions screen, New session starts the user's own `claude` (on `PATH`, logged in)
+in the hub, a repo or one of their worktrees, with the hub's CLAUDE.md, hooks (the guard still applies), skills and
+agents; the chat sends messages, answers permission prompts, interrupts, changes mode and model, resumes and forks.
+It needs the `sessions` extra (the Claude Agent SDK, about 240 MiB): from the hub folder, run `uvx --from
+'agent-hub[sessions] @ git+https://github.com/jroquette/agent-hub@v<version>#subdirectory=packages/agent-hub' hub web`
+instead of `./hub web`; without it the screen says what is missing. Open the printed address once per browser: the
+token becomes a cookie the session routes need. Limits are `hub web` options with `AGENT_HUB_*` variables (`hub web
+--help`; 4 live sessions, 30 min idle, 10 min to answer a prompt). Their conversations are kept, redacted, in `hub
+web`'s database for 30 days after they end (Delete removes one at once). Off in Docker. From another device, keep
+`hub web` on loopback and bring the port to it: `ssh -L 7420:127.0.0.1:7420 <host>`, or `tailscale serve` to
+`http://127.0.0.1:7420` on your own tailnet, then open the token address there; never Tailscale Funnel, ngrok or
+`--host 0.0.0.0`. Claude's Remote Control also reaches a session from a phone. Cloud sessions (claude.ai/code) are not
+driven from the app: it gives the `claude --cloud` command, then the session's link and `claude --teleport <id>`.
 
 Release note for a hub that moves to a release with the control plane: `./hub sync` adds
 `plugin/hub-workflow/hooks/event_sensor.py` and rewrites `hooks.json`, `.claude/settings.json` (the sensor joins
@@ -923,6 +937,20 @@ Exit codes: `0` no errors, `1` at least one error, `2` usage error. Rules and th
 </details>
 
 <details>
+<summary><strong>Check an agent's JSON output</strong></summary>
+
+```bash
+./hub validate-output review brain/features/login/reviews/DEMO-7/spec-r1.json
+./hub validate-output eval brain/features/login/evals/demo-7.json
+```
+
+Exit codes: `0` valid (`<file>: valid`), `1` one line per problem, `<file>: <json path>: <message>` (the first 200, then
+the total), or one line naming a file that could not be read, `2` usage error. The schemas ship in every hub as
+`plugin/hub-workflow/schemas/review.v1.json` and `eval.v1.json`.
+
+</details>
+
+<details>
 <summary><strong>Create worktrees in one repo only</strong></summary>
 
 ```bash
@@ -1180,6 +1208,7 @@ reached only from `hub web`. import-linter enforces this in `make check`. Detail
 | `hub sync [--check]` | Reapply the templates without overwriting what the project customized |
 | `hub sync --adopt [--accept PATH]… [--check]` | Join a hand-made hub to `hub.lock` (from 0.7.0): record what matches, create what is missing, list what differs |
 | `hub doctor [--only RULE]… [--json]` | Check rules, links, dead references, instruction size and template drift |
+| `hub validate-output review\|eval FILE` | Check one agent JSON output (a reviewer's `reviews/<ticket>/<reviewer>-r<N>.json` or the evaluator's `evals/<delivery>.json`, with its `.md` and `../features.json`): exit 0 `<file>: valid`, 1 with one line per problem (the first 200, then the total), 2 on a usage error; needs no `hub.json` |
 | `hub setup [--yes]` | Set up this machine for the hub: tools (uv, git, python3, claude, gh) and the tracker credential, the developer identity (`hub.local.json` proposed from git config and written after asking; `--yes` without asking), each repo cloned or fetched next to the hub, then `hub doctor`; exit 0 when every line is `ok`, else 1, each missing line naming its fix |
 | `hub worktree NAME [--only REPO] [--remove] [--no-fetch]` | Create (or remove) one task's worktrees in the hub's repos; `--no-fetch` starts from the already-fetched base |
 | `hub brief [--no-network]` | Print the session brief: `now.md`, recent journal, repo/PR/CI state |
@@ -2308,7 +2337,7 @@ functions registered when the module ships.
 | `brain.leak` | error | no trimmed line of `min_line_length` (default 60, 1–10000) or more characters of a listed UTF-8 file under `brain/` (frontmatter, an unterminated one read as text, fenced blocks and table rows skipped) is a trimmed line of a listed text file in a repo; reported at the repo `path:line`, naming the brain `path:line`, never the leaked line | [SPEC](../SPEC.md) direction 2 |
 | `hooks.guard-extension` | error | static, never imported or run: the extension (at most 1 MiB, UTF-8) parses from its raw bytes as Python 3.9 (BOM and coding cookie as the runner reads them; best-effort: newer f-string syntax passes), and the last top-level binding of `check` is a `def` that `check(event, cfg)` can call; no file: no finding | [hub-generator.md](hub-generator.md) |
 | `makefile.override` | warning | `Makefile.project` does not redefine a target parsed from the managed `Makefile` (and the targets of `mk/<id>.mk` of selected modules; grouped `&:` rules read; `$(T):` targets not expanded; no other included file is followed) | [hub-generator.md](hub-generator.md) |
-| `features.tracker` | error | each listed `brain/features/*/features.json`: shape, AC ids, evidence, and the cross-check with a listed sibling `spec.md`; links are not followed. A warning on the record when a sibling `issues.md` is listed but no tracker id is recorded, neither in its `linear` (absent or `[]`), nor as a planned ticket's `id` (AGH-136), nor in the spec's frontmatter `linear:` (read as `hub web` reads it, in its first 64 KiB; only ids of a team key count, so a placeholder does not): "issues.md exists but `linear` holds no tracker id, here or in spec.md", fix "write the created issue ids into features.json → linear"; none when the record is not an object, its `linear` is malformed or the spec cannot be read (each already an error). A `doctor.rules` severity retunes it with the rule's errors | feature check, AGH-143 |
+| `features.tracker` | error | each listed `brain/features/*/features.json`: shape, AC ids, evidence, and the cross-check with a listed sibling `spec.md`; links are not followed. A warning on the record when a sibling `issues.md` is listed but no tracker id is recorded, neither in its `linear` (absent or `[]`), nor as a planned ticket's `id` (AGH-136), nor in the spec's frontmatter `linear:` (read as `hub web` reads it, in its first 64 KiB; only ids of a team key count, so a placeholder does not): "issues.md exists but `linear` holds no tracker id, here or in spec.md", fix "write the created issue ids into features.json → linear"; none when the record is not an object, its `linear` is malformed or the spec cannot be read (each already an error). Warnings on each recorded folder's agent outputs, `evals/*.json` and `reviews/<ticket>/*.json` (hidden names skipped; a folder without `features.json` gets none, AGH-139): one without its `evals/<name>.md` or `reviews/<ticket>.md`; one not read as a regular file; one that fails validation (an eval with the folder's record), as "invalid <kind> output: <n> problems, first: <path>: <message>", fix `run ./hub validate-output <kind> <path>`; per feature, the first 200 eval and 500 review outputs by path; one 4 MiB validation budget per run, which the features spend in listing order: an output is validated when it fits the remaining budget, and the skipped outputs are counted in one info line on `brain/features`, "<n> agent outputs not validated (over the doctor's budget)". A `doctor.rules` severity retunes it with the rule's errors | feature check, AGH-143 |
 | `bench.tasks` | error | module `bench`, snapshot only (no git, no process): listed `brain/workflow/bench/tasks.json` is a strict JSON list (at most 1 MiB, 200 cases; absent or `[]` is clean); each case an object with `id` (`[A-Za-z0-9._-]{1,64}`, unique ignoring case), `repo` (a `repos[].dir` unless `excluded`), `merge` (a 7–40 hex sha), `prompt` (1–20 000 characters, not starting with `-`), `hidden_tests` (1–100 literal relative paths of at most 1 024 characters: no glob or `\`, no leading `/`, `-` or `:` (pathspec magic), no empty, `.`, `..` or `.git` segment in any case, no control, format or surrogate character), `test_cmd` (1–32 non-empty strings of at most 1 024 characters); optional `setup_cmd` (at most 4 096 characters), `env` (at most 32 keys `[A-Za-z_][A-Za-z0-9_]*`, values string, number or boolean), `excluded` (boolean); no NUL in a string a process gets; one finding per problem | module `bench` |
 | `config.identity` | info | the branch prefix this developer gets when no file sets one: derived from the effective email (named with its source); can be disabled, cannot be retuned (a `severity` is a `config.schema` error), so every developer's run exits alike | AGH-65 |
 | `repos.agents` | warning | each checked-out repo's root holds `AGENTS.md` as the repo rules list it (a file or a link, not followed; empty passes; a gitignored or deleted file does not count, an unreadable one does; `CLAUDE.md`, a nested or differently cased name do not count); the fix names the hub's seeded `docs/app-repo-AGENTS.md` and the repo's `check_fast` (unless absent or blank) and `check` (escaped, cut); missing or unlistable checkouts are the runner's | AGH-76 |

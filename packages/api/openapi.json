@@ -234,6 +234,205 @@
         ],
         "type": "string"
       },
+      "AgentSession": {
+        "additionalProperties": false,
+        "description": "One session ``hub web`` started (or one cloud start, ``kind=\"cloud\"``).\n\n``claude_session_id`` links it to the hook-observed Session once ``init`` arrives (or at\nstart when the id is given, P13). ``last_seq`` is the last persisted record's ``seq``.\n``cost_usd`` and ``usage`` add up the turns' results (an estimate).",
+        "properties": {
+          "claude_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claude Session Id"
+          },
+          "cloud_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cloud Id"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "end_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EndReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AgentSessionKind",
+            "default": "local"
+          },
+          "last_seq": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Last Seq",
+            "type": "integer"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/PermissionMode"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "open_permission": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpenPermission"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AgentSessionStatus"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "updated_at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TokenUsage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "workdir_id": {
+            "title": "Workdir Id",
+            "type": "string"
+          },
+          "workdir_label": {
+            "title": "Workdir Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project",
+          "workdir_id",
+          "workdir_label",
+          "status",
+          "mode",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AgentSession",
+        "type": "object"
+      },
+      "AgentSessionKind": {
+        "enum": [
+          "local",
+          "cloud"
+        ],
+        "type": "string"
+      },
+      "AgentSessionList": {
+        "additionalProperties": false,
+        "description": "``GET /agent-sessions``: newest first.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AgentSession"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "AgentSessionList",
+        "type": "object"
+      },
+      "AgentSessionStatus": {
+        "description": "Where a session is (P18): ``idle`` between turns, ``running`` in a turn,\n``waiting_permission`` while a request is unanswered; ``ended`` and ``failed`` are final.",
+        "enum": [
+          "running",
+          "idle",
+          "waiting_permission",
+          "ended",
+          "failed"
+        ],
+        "title": "AgentSessionStatus",
+        "type": "string"
+      },
       "ApiTimestamp": {
         "format": "date-time",
         "type": "string"
@@ -749,6 +948,109 @@
         "title": "CatalogItem",
         "type": "object"
       },
+      "CloudMessage": {
+        "additionalProperties": false,
+        "description": "``POST /agent-sessions/cloud/{cloud_id}/messages``: a one-shot follow-up.",
+        "properties": {
+          "text": {
+            "maxLength": 65536,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "CloudMessage",
+        "type": "object"
+      },
+      "CloudSession": {
+        "additionalProperties": false,
+        "description": "A session started in the cloud (D8): where to open it and how to teleport it here.",
+        "properties": {
+          "cloud_id": {
+            "title": "Cloud Id",
+            "type": "string"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "followups": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Followups",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "teleport_command": {
+            "title": "Teleport Command",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "workdir_id": {
+            "title": "Workdir Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project",
+          "workdir_id",
+          "cloud_id",
+          "teleport_command",
+          "created_at"
+        ],
+        "title": "CloudSession",
+        "type": "object"
+      },
+      "CloudSessionList": {
+        "additionalProperties": false,
+        "description": "``GET /agent-sessions/cloud``: the persisted cloud starts, newest first, at most 50.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CloudSession"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "CloudSessionList",
+        "type": "object"
+      },
       "CollectorStatus": {
         "additionalProperties": false,
         "description": "``GET /collector/status``: what ``hub web`` received and stored since it started.",
@@ -867,6 +1169,72 @@
         "title": "ContextCost",
         "type": "object"
       },
+      "CreateAgentSession": {
+        "additionalProperties": false,
+        "description": "``POST /agent-sessions``: where, how, and an optional first prompt (its byte size is\nchecked against the message limit, 413), or a past session to resume (and fork).",
+        "properties": {
+          "fork": {
+            "default": false,
+            "title": "Fork",
+            "type": "boolean"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/PermissionMode",
+            "default": "default"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelName"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "project": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Project",
+            "type": "string"
+          },
+          "prompt": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt"
+          },
+          "resume_session_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resume Session Id"
+          },
+          "workdir_id": {
+            "pattern": "^[0-9a-f]{16}$",
+            "title": "Workdir Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "workdir_id"
+        ],
+        "title": "CreateAgentSession",
+        "type": "object"
+      },
       "Diagnostic": {
         "additionalProperties": false,
         "description": "One informational finding on an item, in one hub-relative line (D5, P6).",
@@ -922,12 +1290,95 @@
         "title": "DiagnosticSeverity",
         "type": "string"
       },
+      "DriverCapabilities": {
+        "additionalProperties": false,
+        "description": "What this machine can do: whether sessions can start (and why not), the engine, the\n``claude`` version, the model aliases offered, and the cloud commands the CLI lists.",
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "cli_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cli Version"
+          },
+          "cloud": {
+            "default": false,
+            "title": "Cloud",
+            "type": "boolean"
+          },
+          "cloud_followup": {
+            "default": false,
+            "title": "Cloud Followup",
+            "type": "boolean"
+          },
+          "engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Engine"
+          },
+          "models": {
+            "default": [
+              "default",
+              "opus",
+              "sonnet",
+              "haiku"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "title": "Models",
+            "type": "array"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "available"
+        ],
+        "title": "DriverCapabilities",
+        "type": "object"
+      },
       "EdgeSource": {
         "enum": [
           "plan",
           "linear",
           "both"
         ],
+        "type": "string"
+      },
+      "EndReason": {
+        "description": "Why a session ended.",
+        "enum": [
+          "closed",
+          "idle_timeout",
+          "server_stopped",
+          "failed",
+          "log_full"
+        ],
+        "title": "EndReason",
         "type": "string"
       },
       "EvalRecord": {
@@ -2854,7 +3305,7 @@
       },
       "LiveTile": {
         "additionalProperties": false,
-        "description": "A session tile of the Live sessions screen.\n\n``agent`` is deprecated (``label`` and ``actors``); ``needs_you_problem`` is the owner-facing\nline of the first problem that needs the owner (\"Needs you: <kind> in <where>\").",
+        "description": "A session tile of the Live sessions screen.\n\n``agent`` is deprecated (``label`` and ``actors``); ``needs_you_problem`` is the owner-facing\nline of the first problem that needs the owner (\"Needs you: <kind> in <where>\");\n``agent_session_id`` is the agent session ``hub web`` drives it from, when there is one.",
         "properties": {
           "actors": {
             "default": [],
@@ -2868,6 +3319,17 @@
             "deprecated": true,
             "title": "Agent",
             "type": "string"
+          },
+          "agent_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Session Id"
           },
           "attempt": {
             "anyOf": [
@@ -3167,6 +3629,99 @@
         ],
         "type": "string"
       },
+      "LogRecord": {
+        "additionalProperties": false,
+        "description": "One persisted record of a session's log.",
+        "properties": {
+          "at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "body": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Body",
+            "type": "object"
+          },
+          "by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecordBy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RecordKind"
+          },
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "text_bytes": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Text Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq",
+          "at",
+          "kind",
+          "body"
+        ],
+        "title": "LogRecord",
+        "type": "object"
+      },
+      "LogRecordPage": {
+        "additionalProperties": false,
+        "description": "``GET /{id}/events``: records after ``after`` in ``seq`` order; ``next_after`` is the\n``after`` of the next page, None on the last one.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LogRecord"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next After"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "LogRecordPage",
+        "type": "object"
+      },
+      "MessageAccepted": {
+        "additionalProperties": false,
+        "description": "``POST /{id}/messages`` (202): the ``seq`` of the ``user.message`` record.",
+        "properties": {
+          "seq": {
+            "minimum": 1.0,
+            "title": "Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq"
+        ],
+        "title": "MessageAccepted",
+        "type": "object"
+      },
       "Mode": {
         "description": "Who can invoke a skill (S5, L2); ``neither`` reads \"Hidden\" in the UI.",
         "enum": [
@@ -3176,6 +3731,9 @@
           "neither"
         ],
         "title": "Mode",
+        "type": "string"
+      },
+      "ModelName": {
         "type": "string"
       },
       "Money": {
@@ -3273,6 +3831,65 @@
           "text"
         ],
         "title": "NowItem",
+        "type": "object"
+      },
+      "OpenPermission": {
+        "additionalProperties": false,
+        "description": "The permission request a live session waits on, as memory holds it (E10).\n\n``summary`` is the input summary (at most 4 KiB); ``input`` is the tool input only for an\n``AskUserQuestion`` (its questions) or a plan approval (its plan), None for a tool.",
+        "properties": {
+          "asked_at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "deadline_at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "input": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "request_kind": {
+            "$ref": "#/components/schemas/RequestKind"
+          },
+          "suggestions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PermissionSuggestion"
+            },
+            "title": "Suggestions",
+            "type": "array"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "tool": {
+            "title": "Tool",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "tool",
+          "request_kind",
+          "summary",
+          "asked_at",
+          "deadline_at"
+        ],
+        "title": "OpenPermission",
         "type": "object"
       },
       "Origin": {
@@ -3821,6 +4438,154 @@
         "title": "Page[WorkflowRun]",
         "type": "object"
       },
+      "PastSession": {
+        "additionalProperties": false,
+        "description": "A Claude session of a working directory that can be resumed; ``title`` is redacted and\nat most 200 characters.",
+        "properties": {
+          "cwd": {
+            "title": "Cwd",
+            "type": "string"
+          },
+          "last_activity": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "session_id",
+          "last_activity",
+          "cwd"
+        ],
+        "title": "PastSession",
+        "type": "object"
+      },
+      "PermissionDecision": {
+        "additionalProperties": false,
+        "description": "``POST /{id}/permissions/{request_id}`` (E7).\n\n``allow`` may carry ``answers`` (an ``AskUserQuestion``) or ``mode`` (a plan approval);\n``deny`` may carry ``message``; ``always`` needs ``suggestion``, the index of the\n``localSettings`` rule to keep. Any other combination is refused (422); whether the fields\nfit the request is the permission policy's check.",
+        "properties": {
+          "answers": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                "maxProperties": 16,
+                "propertyNames": {
+                  "maxLength": 200,
+                  "minLength": 1
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answers"
+          },
+          "decision": {
+            "enum": [
+              "allow",
+              "deny",
+              "always"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "default",
+                  "acceptEdits"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          },
+          "suggestion": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suggestion"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "title": "PermissionDecision",
+        "type": "object"
+      },
+      "PermissionMode": {
+        "enum": [
+          "default",
+          "acceptEdits",
+          "plan"
+        ],
+        "type": "string"
+      },
+      "PermissionSuggestion": {
+        "additionalProperties": false,
+        "description": "A rule Claude suggests for \"always allow\"; ``index`` is its position in the request,\n``rule`` is passed back to the CLI verbatim. Only ``localSettings`` ones are offered (D5).",
+        "properties": {
+          "destination": {
+            "title": "Destination",
+            "type": "string"
+          },
+          "index": {
+            "minimum": 0.0,
+            "title": "Index",
+            "type": "integer"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/JsonValue"
+          }
+        },
+        "required": [
+          "index",
+          "destination",
+          "rule"
+        ],
+        "title": "PermissionSuggestion",
+        "type": "object"
+      },
       "Problem": {
         "additionalProperties": false,
         "description": "One problem of a session and the event it comes from.\n\n``where`` is the command head, path, pattern, URL, MCP tool or skill of the paired tool\ncall (derived on read, at most 120 characters); ``message`` is the stored ``error_message``,\nelse ``error_line``, else the rule or the gate's command and exit code.",
@@ -4364,6 +5129,39 @@
         ],
         "type": "string"
       },
+      "RecordBy": {
+        "enum": [
+          "web",
+          "timeout",
+          "closed",
+          "driver",
+          "server"
+        ],
+        "type": "string"
+      },
+      "RecordKind": {
+        "enum": [
+          "init",
+          "text",
+          "thinking",
+          "tool.call",
+          "tool.result",
+          "todos",
+          "permission.request",
+          "result",
+          "error",
+          "exited",
+          "user.message",
+          "permission.decision",
+          "interrupt",
+          "settings",
+          "close",
+          "log.truncated",
+          "cloud.start",
+          "cloud.followup"
+        ],
+        "type": "string"
+      },
       "RejectLearningBody": {
         "additionalProperties": false,
         "description": "``POST /learnings/{learning_id}/reject``: why, 1 to 300 characters once stripped.",
@@ -4510,6 +5308,14 @@
         "title": "RepoView",
         "type": "object"
       },
+      "RequestKind": {
+        "enum": [
+          "tool",
+          "ask_user_question",
+          "plan_approval"
+        ],
+        "type": "string"
+      },
       "Resolution": {
         "description": "How a problem ended (S4 with E5).\n\n``recovered`` and ``agent_continued`` show as \"Handled by the agent\", ``open`` as \"Agent is\non it\", ``needs_you`` as \"Needs you\" and ``by_you`` as \"You interrupted\" or \"You declined\".",
         "enum": [
@@ -4521,6 +5327,24 @@
         ],
         "title": "Resolution",
         "type": "string"
+      },
+      "ResumableList": {
+        "additionalProperties": false,
+        "description": "``GET /agent-sessions/resumable``: past Claude sessions of a workdir, newest first.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PastSession"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ResumableList",
+        "type": "object"
       },
       "RunCaps": {
         "additionalProperties": false,
@@ -4827,9 +5651,25 @@
         ],
         "type": "string"
       },
+      "SendMessage": {
+        "additionalProperties": false,
+        "description": "``POST /{id}/messages``: one user message (byte limit checked, 413).",
+        "properties": {
+          "text": {
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "SendMessage",
+        "type": "object"
+      },
       "Session": {
         "additionalProperties": false,
-        "description": "A session folded from its events (status, counts, tokens, estimated cost).\n\n``agent`` is deprecated: ``actors`` and ``label`` say who acted and what the session is about.",
+        "description": "A session folded from its events (status, counts, tokens, estimated cost).\n\n``agent`` is deprecated: ``actors`` and ``label`` say who acted and what the session is about.\n``agent_session_id`` is the agent session ``hub web`` drives it from, when there is one.",
         "properties": {
           "actors": {
             "default": [],
@@ -4843,6 +5683,17 @@
             "deprecated": true,
             "title": "Agent",
             "type": "string"
+          },
+          "agent_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Session Id"
           },
           "attempt": {
             "anyOf": [
@@ -5457,6 +6308,34 @@
         "title": "SessionSegment",
         "type": "object"
       },
+      "SessionSettings": {
+        "additionalProperties": false,
+        "description": "``POST /{id}/settings``: a new mode, a new model, or both (at least one).",
+        "properties": {
+          "mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PermissionMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelName"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "SessionSettings",
+        "type": "object"
+      },
       "SessionStatus": {
         "description": "Where a session is now (D14): waiting wins over live; ended is final until reopened.",
         "enum": [
@@ -6045,6 +6924,36 @@
         ],
         "title": "Stage",
         "type": "string"
+      },
+      "StartCloud": {
+        "additionalProperties": false,
+        "description": "``POST /agent-sessions/cloud``: a task for ``claude --cloud``, passed as one argument.",
+        "properties": {
+          "project": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Project",
+            "type": "string"
+          },
+          "task": {
+            "maxLength": 65536,
+            "minLength": 1,
+            "title": "Task",
+            "type": "string"
+          },
+          "workdir_id": {
+            "pattern": "^[0-9a-f]{16}$",
+            "title": "Workdir Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "workdir_id",
+          "task"
+        ],
+        "title": "StartCloud",
+        "type": "object"
       },
       "Step": {
         "additionalProperties": false,
@@ -6890,6 +7799,93 @@
         ],
         "type": "string"
       },
+      "Workdir": {
+        "additionalProperties": false,
+        "description": "A folder a session may start in (D6): the hub, a repo checkout or one of its worktrees.\n\n``workdir_id`` is opaque and stable; the server resolves it only by lookup. ``skills`` are\nthe names under its ``.claude/skills/`` (the ``/skill`` shortcut, P15).",
+        "properties": {
+          "kind": {
+            "enum": [
+              "hub",
+              "repo",
+              "worktree"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "repo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repo"
+          },
+          "skills": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Skills",
+            "type": "array"
+          },
+          "workdir_id": {
+            "pattern": "^[0-9a-f]{16}$",
+            "title": "Workdir Id",
+            "type": "string"
+          },
+          "worktree": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worktree"
+          }
+        },
+        "required": [
+          "workdir_id",
+          "kind",
+          "label"
+        ],
+        "title": "Workdir",
+        "type": "object"
+      },
+      "WorkdirList": {
+        "additionalProperties": false,
+        "description": "``GET /agent-sessions/workdirs``; ``warnings`` name folders that could not be read.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Workdir"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "WorkdirList",
+        "type": "object"
+      },
       "WorkflowRun": {
         "additionalProperties": false,
         "description": "A run folded from executor events (D9, D16): the first ``run.end`` wins.",
@@ -7190,6 +8186,1048 @@
         "summary": "List Activity",
         "tags": [
           "overview"
+        ]
+      }
+    },
+    "/api/v1/agent-sessions": {
+      "get": {
+        "description": "Agent sessions, newest first.",
+        "operationId": "list_agent_sessions_api_v1_agent_sessions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/AgentSessionStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSessionList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Agent Sessions",
+        "tags": [
+          "agent-sessions"
+        ]
+      },
+      "post": {
+        "description": "Start a session in a listed workdir, optionally with a first prompt or a resume.",
+        "operationId": "create_agent_session_api_v1_agent_sessions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAgentSession"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Create Agent Session",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
+    "/api/v1/agent-sessions/capabilities": {
+      "get": {
+        "description": "Whether sessions can start on this machine (and why not), the models, the cloud.",
+        "operationId": "get_capabilities_api_v1_agent_sessions_capabilities_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DriverCapabilities"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Capabilities",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
+    "/api/v1/agent-sessions/cloud": {
+      "get": {
+        "description": "The cloud sessions started from here, newest first, at most 50.",
+        "operationId": "list_cloud_sessions_api_v1_agent_sessions_cloud_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudSessionList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Cloud Sessions",
+        "tags": [
+          "agent-sessions"
+        ]
+      },
+      "post": {
+        "description": "Start a cloud session with a task; answers its claude.ai/code link and teleport command.",
+        "operationId": "start_cloud_session_api_v1_agent_sessions_cloud_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartCloud"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Start Cloud Session",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
+    "/api/v1/agent-sessions/cloud/{cloud_id}/messages": {
+      "post": {
+        "description": "Send one follow-up message to a cloud session (cloud: limited control).",
+        "operationId": "follow_up_cloud_session_api_v1_agent_sessions_cloud__cloud_id__messages_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "cloud_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_-]{1,128}$",
+              "title": "Cloud Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CloudMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CloudSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Follow Up Cloud Session",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
+    "/api/v1/agent-sessions/resumable": {
+      "get": {
+        "description": "Past Claude sessions of a workdir that can be resumed or forked.",
+        "operationId": "list_resumable_api_v1_agent_sessions_resumable_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workdir_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{16}$",
+              "title": "Workdir Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResumableList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Resumable",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
+    "/api/v1/agent-sessions/workdirs": {
+      "get": {
+        "description": "The folders a session may start in: the hub, its repos and their worktrees (D6).",
+        "operationId": "list_workdirs_api_v1_agent_sessions_workdirs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkdirList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Workdirs",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
+    "/api/v1/agent-sessions/{agent_session_id}": {
+      "delete": {
+        "description": "Remove an ended session and its stored conversation.",
+        "operationId": "delete_agent_session_api_v1_agent_sessions__agent_session_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Delete Agent Session",
+        "tags": [
+          "agent-sessions"
+        ]
+      },
+      "get": {
+        "description": "One session, with the permission request it waits on while live.",
+        "operationId": "get_agent_session_api_v1_agent_sessions__agent_session_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Agent Session",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
+    "/api/v1/agent-sessions/{agent_session_id}/close": {
+      "post": {
+        "description": "End the session; its log is kept and it can be resumed.",
+        "operationId": "close_agent_session_api_v1_agent_sessions__agent_session_id__close_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Close Agent Session",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
+    "/api/v1/agent-sessions/{agent_session_id}/events": {
+      "get": {
+        "description": "The stored log after ``after``, in ``seq`` order (redacted).",
+        "operationId": "list_agent_session_events_api_v1_agent_sessions__agent_session_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogRecordPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Agent Session Events",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
+    "/api/v1/agent-sessions/{agent_session_id}/interrupt": {
+      "post": {
+        "description": "Interrupt the running turn; its result follows on the stream.",
+        "operationId": "interrupt_agent_session_api_v1_agent_sessions__agent_session_id__interrupt_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Interrupt Agent Session",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
+    "/api/v1/agent-sessions/{agent_session_id}/messages": {
+      "post": {
+        "description": "Send a message; it plays after the running turn.",
+        "operationId": "send_agent_session_message_api_v1_agent_sessions__agent_session_id__messages_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Send Agent Session Message",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
+    "/api/v1/agent-sessions/{agent_session_id}/permissions/{request_id}": {
+      "post": {
+        "description": "Answer a permission request: allow, deny (with a message) or always (a suggestion).",
+        "operationId": "answer_agent_session_permission_api_v1_agent_sessions__agent_session_id__permissions__request_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "title": "Request Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PermissionDecision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Answer Agent Session Permission",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
+    "/api/v1/agent-sessions/{agent_session_id}/settings": {
+      "post": {
+        "description": "Change the permission mode or the model.",
+        "operationId": "change_agent_session_settings_api_v1_agent_sessions__agent_session_id__settings_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Change Agent Session Settings",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
+    "/api/v1/agent-sessions/{agent_session_id}/stream": {
+      "get": {
+        "description": "The session's records and deltas as they happen, after a replay from the position.",
+        "operationId": "stream_agent_session_api_v1_agent_sessions__agent_session_id__stream_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 32,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Last-Event-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Server-Sent Events: record.<kind>, delta, status, reset, heartbeat"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Stream Agent Session",
+        "tags": [
+          "agent-sessions"
         ]
       }
     },

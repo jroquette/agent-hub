@@ -1,10 +1,20 @@
+import asyncio
 import json
+import sys
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi.testclient import TestClient
 
+from agent_hub.api import composition
+from agent_hub.api.agent_session_runtime import (
+    INSTALL_EXTRA,
+    UnavailableCloudLauncher,
+    UnavailableSessionDriver,
+)
 from agent_hub.api.composition import (
     HUB_CONFIG_INVALID,
     HUB_LOCAL_INVALID,
@@ -12,12 +22,21 @@ from agent_hub.api.composition import (
     CachedAvailability,
     RegisteredHubFacts,
     TicketReaders,
+    build_app,
+    claude_adapters,
     default_brain_changes,
     hub_read_models,
     ticket_snapshots,
+    web_url,
 )
 from agent_hub.api.settings import ApiSettings
 from agent_hub.api.ticket_snapshots import REQUEST_TIMEOUT_SECONDS
+from agent_hub.claude_sessions.cloud_launcher import ClaudeCloudLauncher
+from agent_hub.claude_sessions.sdk_driver import ClaudeSdkSessionDriver
+from agent_hub.core.agent_sessions.agent_session import AgentSessionStatus, EndReason
+from agent_hub.core.agent_sessions.cloud import CloudSessions
+from agent_hub.core.agent_sessions.control import AgentSessionControl
+from agent_hub.core.agent_sessions.links import AgentSessionLinks
 from agent_hub.core.features.ticket_snapshots import SnapshotRequest, TrackerTransport
 from agent_hub.core.hub_config.local_config import LocalConfig, LocalProject
 from agent_hub.core.hub_config.problems import ConfigProblem
@@ -29,6 +48,7 @@ from agent_hub.core.learnings.read_learnings import HUB_NOT_REGISTERED, Unavaila
 from agent_hub.core.projects.project_views import ProjectActivity
 from agent_hub.core.sessions.session_label import LabelRules
 from agent_hub.core.skills.skill_view import SkillUsage
+from agent_hub.core.testing.brain_fakes import FakeBrainOrigin, InMemoryBrainChangeRequests
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.core.testing.hub_fakes import (
     FakeHub,
@@ -36,16 +56,24 @@ from agent_hub.core.testing.hub_fakes import (
     InMemoryHubRegistry,
     hub_json_bytes,
 )
-from agent_hub.core.testing.read_model_builders import a_skill_usage
+from agent_hub.core.testing.read_model_builders import (
+    AGENT_SESSION_ID,
+    a_skill_usage,
+    an_agent_session,
+)
+from agent_hub.core.testing.session_driver_fakes import InMemorySessionDriver
 from agent_hub.core.testing.skill_trees import a_skills_fixture_tree, fake_hub_of
 from agent_hub.core.testing.tracker_reader_fakes import (
     CountingTrackerReader,
     InMemoryTrackerReader,
     a_seeded_issue_board,
 )
+from agent_hub.storage.agent_session_store import open_agent_session_store
+from agent_hub.storage.event_store import open_event_store
 
 RUNNING = "0.9.0"
 HUB = "/work/demo-hub"
+STOPPED_AT = datetime(2026, 10, 13, 9, 0, tzinfo=UTC)
 
 
 def _without(*keys: str) -> bytes:
@@ -347,6 +375,112 @@ def test_names_tracker_transport_when_hub_registered() -> None:
 
     assert facts.tracker_transport_of("demo") == "mcp"
     assert facts.tracker_transport_of("other") is None
+
+
+# Agent sessions (CP)
+
+
+def _session_settings(tmp_path: Path, **fields: Any) -> ApiSettings:
+    return ApiSettings(
+        db_path=tmp_path / "agent-hub.db",
+        registry_path=tmp_path / "hubs.json",
+        port=7420,
+        running_version=RUNNING,
+        clock=lambda: STOPPED_AT,
+        **fields,
+    )
+
+
+def _build(settings: ApiSettings, tmp_path: Path, **options: Any) -> Any:
+    return build_app(
+        settings,
+        projects_root=tmp_path / "projects",
+        web_dist=tmp_path / "web_dist",
+        brain_changes=InMemoryBrainChangeRequests(FakeBrainOrigin()),
+        environ={},
+        **options,
+    )
+
+
+def test_wires_unavailable_driver_when_extra_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "agent_hub.claude_sessions.sdk_driver", None)
+
+    driver, launcher = claude_adapters({})
+
+    assert isinstance(driver, UnavailableSessionDriver)
+    assert isinstance(launcher, UnavailableCloudLauncher)
+    capabilities = asyncio.run(driver.capabilities())
+    assert (capabilities.available, capabilities.reason) == (False, INSTALL_EXTRA)
+
+
+def test_wires_claude_driver_when_extra_installed() -> None:
+    driver, launcher = claude_adapters({"PATH": ""})
+
+    assert isinstance(driver, ClaudeSdkSessionDriver)
+    assert isinstance(launcher, ClaudeCloudLauncher)
+
+
+def test_builds_no_control_when_in_container(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_driver(_environ: Mapping[str, str]) -> Any:
+        msg = "no driver is built in the container"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(composition, "claude_adapters", no_driver)
+
+    app = _build(_session_settings(tmp_path, sessions_off=True), tmp_path)
+
+    ports = app.state.ports
+    assert (ports.agent_sessions, ports.cloud_sessions, ports.agent_session_links) == (
+        None,
+        None,
+        None,
+    )
+
+
+def test_wires_control_cloud_and_links_when_sessions_on(tmp_path: Path) -> None:
+    app = _build(_session_settings(tmp_path), tmp_path, session_driver=InMemorySessionDriver())
+
+    ports = app.state.ports
+    assert isinstance(ports.agent_sessions, AgentSessionControl)
+    assert isinstance(ports.cloud_sessions, CloudSessions)
+    assert isinstance(ports.agent_session_links, AgentSessionLinks)
+
+
+def test_ends_unfinished_sessions_when_app_starts(tmp_path: Path) -> None:
+    settings = _session_settings(tmp_path)
+    open_event_store(settings.db_path)
+    store = open_agent_session_store(settings.db_path)
+    store.create(an_agent_session(status=AgentSessionStatus.RUNNING, last_seq=0))
+    app = _build(settings, tmp_path, session_driver=InMemorySessionDriver())
+
+    before = store.get(AGENT_SESSION_ID)
+    with TestClient(app):
+        after = store.get(AGENT_SESSION_ID)
+
+    assert before.status == AgentSessionStatus.RUNNING
+    assert after.status == AgentSessionStatus.ENDED
+    assert after.end_reason == EndReason.SERVER_STOPPED
+
+
+def test_names_loopback_port_when_web_url_built(tmp_path: Path) -> None:
+    assert web_url(_session_settings(tmp_path)) == "http://127.0.0.1:7420"
+
+
+@pytest.mark.parametrize(
+    ("bound", "url"),
+    [
+        ("127.0.0.2", "http://127.0.0.2:7420"),
+        ("::1", "http://[::1]:7420"),
+        ("0.0.0.0", "http://127.0.0.1:7420"),  # noqa: S104 -- the container's bind
+        ("::", "http://127.0.0.1:7420"),
+    ],
+)
+def test_names_bound_address_when_web_url_built_on_other_bind(
+    tmp_path: Path, bound: str, url: str
+) -> None:
+    assert web_url(_session_settings(tmp_path, bound_host=bound)) == url
 
 
 class _Usage:

@@ -3,6 +3,17 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 
+from pydantic import JsonValue
+
+from agent_hub.core.agent_sessions.agent_session import (
+    AgentSession,
+    AgentSessionStatus,
+    CloudSession,
+    OpenPermission,
+    Workdir,
+)
+from agent_hub.core.agent_sessions.driver import PermissionRequest, PermissionSuggestion
+from agent_hub.core.agent_sessions.records import LogRecord, RecordKind
 from agent_hub.core.approvals.approval import Approval, ApprovalKind
 from agent_hub.core.brain.brain_note import BrainEntry, BrainNote, BrainTree
 from agent_hub.core.features.feature_view import (
@@ -507,6 +518,170 @@ def an_eval_record(**overrides: object) -> EvalRecord:
         "problem": None,
     }
     return EvalRecord.model_validate(fields | overrides)
+
+
+AGENT_SESSION_ID = "01929a4e-7a11-7c00-8a00-00000000a001"
+CLAUDE_SESSION_ID = "5091b986-0000-4000-8000-000000000001"
+WORKDIR_ID = "3f2a9c1d4b5e6f70"
+SUGGESTIONS = (
+    PermissionSuggestion(
+        index=0,
+        destination="localSettings",
+        rule={
+            "type": "addRules",
+            "rules": [{"toolName": "Bash", "ruleContent": "git status"}],
+            "behavior": "allow",
+            "destination": "localSettings",
+        },
+    ),
+    PermissionSuggestion(
+        index=1,
+        destination="session",
+        rule={"type": "setMode", "mode": "acceptEdits", "destination": "session"},
+    ),
+)
+
+# The body of a record of each kind; synthetic text only.
+RECORD_BODIES: dict[str, dict[str, JsonValue]] = {
+    "init": {"session_id": CLAUDE_SESSION_ID, "model": "sonnet", "slash_commands": ["/feature"]},
+    "text": {"block": 0, "text": "The tests pass."},
+    "thinking": {"text": "Check the failing test first."},
+    "tool.call": {
+        "tool_use_id": "toolu_01",
+        "name": "Edit",
+        "input": {"file_path": "src/app.py", "old_string": "a = 1", "new_string": "a = 2"},
+        "parent_tool_use_id": None,
+    },
+    "tool.result": {"tool_use_id": "toolu_01", "content": "edited", "is_error": False},
+    "todos": {"items": [{"content": "Fix the test", "status": "in_progress", "active_form": None}]},
+    "permission.request": {
+        "request_id": "req-1",
+        "tool": "Bash",
+        "request_kind": "tool",
+        "summary": "git status",
+        "suggestions": [suggestion.model_dump(mode="json") for suggestion in SUGGESTIONS],
+    },
+    "result": {
+        "subtype": "success",
+        "terminal_reason": "completed",
+        "cost_usd": "0.0012",
+        "usage": {"input": 12, "output": 5, "cache_read": 0, "cache_write": 0},
+        "model_usage": None,
+        "duration_ms": 40,
+        "num_turns": 1,
+    },
+    "error": {"message": "claude exited with code 1"},
+    "exited": {"code": 0},
+    "user.message": {"text": "Run the tests."},
+    "permission.decision": {"request_id": "req-1", "decision": "allow"},
+    "interrupt": {},
+    "settings": {"mode": "plan"},
+    "close": {},
+    "log.truncated": {"cap": "records", "limit": 50000},
+    "cloud.start": {"cloud_id": "cse_01synthetic"},
+    "cloud.followup": {"cloud_id": "cse_01synthetic"},
+}
+RECORD_BY: dict[str, str | None] = {
+    "user.message": "web",
+    "permission.decision": "web",
+    "interrupt": "web",
+    "settings": "web",
+    "close": "web",
+    "log.truncated": "server",
+    "cloud.start": "web",
+    "cloud.followup": "web",
+}
+
+
+def an_agent_session(**overrides: object) -> AgentSession:
+    """An idle local agent session of project ``demo`` in the hub's workdir."""
+    fields: dict[str, object] = {
+        "id": AGENT_SESSION_ID,
+        "kind": "local",
+        "project": "demo",
+        "workdir_id": WORKDIR_ID,
+        "workdir_label": "demo-hub",
+        "claude_session_id": CLAUDE_SESSION_ID,
+        "status": AgentSessionStatus.IDLE,
+        "mode": "default",
+        "model": "sonnet",
+        "title": "Run the tests",
+        "created_at": STARTED,
+        "updated_at": LAST_ACTIVITY,
+        "cost_usd": Decimal("0.0012"),
+        "usage": TokenUsage(input=12, output=5, cache_read=0, cache_write=0),
+        "last_seq": 4,
+    }
+    return AgentSession.model_validate(fields | overrides)
+
+
+def a_log_record(kind: RecordKind = "text", seq: int = 1, **overrides: object) -> LogRecord:
+    """A record of ``kind`` at ``seq`` with that kind's synthetic body."""
+    body = RECORD_BODIES[kind]
+    fields: dict[str, object] = {
+        "seq": seq,
+        "at": STARTED,
+        "kind": kind,
+        "by": RECORD_BY.get(kind, "driver"),
+        "body": body,
+        "text_bytes": len(str(body).encode()),
+    }
+    return LogRecord.model_validate(fields | overrides)
+
+
+def a_permission_request(**overrides: object) -> PermissionRequest:
+    """A ``Bash`` permission request with a ``localSettings`` and a ``session`` suggestion."""
+    fields: dict[str, object] = {
+        "request_id": "req-1",
+        "tool": "Bash",
+        "input": {"command": "git status", "description": "Show the working tree"},
+        "suggestions": SUGGESTIONS,
+        "request_kind": "tool",
+    }
+    return PermissionRequest.model_validate(fields | overrides)
+
+
+def an_open_permission(**overrides: object) -> OpenPermission:
+    """The open request a live session waits on, as ``GET /{id}`` shows it."""
+    fields: dict[str, object] = {
+        "request_id": "req-1",
+        "tool": "Bash",
+        "request_kind": "tool",
+        "summary": "git status",
+        "suggestions": SUGGESTIONS,
+        "asked_at": LAST_ACTIVITY,
+        "deadline_at": datetime(2026, 10, 9, 14, 15, 41, 882000, tzinfo=UTC),
+    }
+    return OpenPermission.model_validate(fields | overrides)
+
+
+def a_workdir(**overrides: object) -> Workdir:
+    """The hub's own folder, with one skill."""
+    fields: dict[str, object] = {
+        "workdir_id": WORKDIR_ID,
+        "kind": "hub",
+        "label": "demo-hub",
+        "repo": None,
+        "worktree": None,
+        "skills": ("feature",),
+    }
+    return Workdir.model_validate(fields | overrides)
+
+
+def a_cloud_session(**overrides: object) -> CloudSession:
+    """A cloud start with its claude.ai/code link and teleport command."""
+    fields: dict[str, object] = {
+        "id": "01929a4e-7a11-7c00-8a00-00000000c001",
+        "project": "demo",
+        "workdir_id": WORKDIR_ID,
+        "cloud_id": "cse_01synthetic",
+        "url": "https://claude.ai/code/cse_01synthetic",
+        "teleport_command": "claude --teleport cse_01synthetic",
+        "title": "Upgrade the linter",
+        "created_at": STARTED,
+        "followups": 0,
+    }
+    return CloudSession.model_validate(fields | overrides)
 
 
 _ALPHA_DIR = "plugin/hub-workflow/skills/alpha"

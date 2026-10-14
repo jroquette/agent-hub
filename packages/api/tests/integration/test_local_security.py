@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Any
 
 import pytest
@@ -45,7 +46,7 @@ def test_accepts_write_when_origin_is_own(wired: Any) -> None:
     wired.hubs.hubs.append(a_hub_view())
 
     response = wired.client.post(
-        "/api/v1/hubs", json=HUB_PATH, headers={"Origin": "http://localhost:7420"}
+        "/api/v1/hubs", json=HUB_PATH, headers={"Origin": "http://127.0.0.1:7420"}
     )
 
     assert response.status_code == 201
@@ -64,7 +65,9 @@ def test_answers_too_large_problem_when_content_length_over_cap(wired: Any) -> N
     body = b"{" + b" " * MAX_BODY_BYTES + b"}"
 
     response = wired.client.post(
-        "/api/v1/hubs", content=body, headers={"Content-Type": "application/json"}
+        "/api/v1/hubs",
+        content=body,
+        headers={"Content-Type": "application/json", "Origin": "http://127.0.0.1:7420"},
     )
 
     assert response.status_code == 413
@@ -80,7 +83,9 @@ def test_answers_too_large_problem_when_streamed_body_passes_cap(wired: Any) -> 
         yield b'"}'
 
     response = wired.client.post(
-        "/api/v1/hubs", content=chunks(), headers={"Content-Type": "application/json"}
+        "/api/v1/hubs",
+        content=chunks(),
+        headers={"Content-Type": "application/json", "Origin": "http://127.0.0.1:7420"},
     )
 
     assert response.status_code == 413
@@ -251,15 +256,31 @@ def test_refuses_learning_actions_when_body_over_cap(wired: Any, action: Action)
     assert wired.decisions.calls == []
 
 
-def test_keeps_existing_writes_when_origin_and_fetch_metadata_missing(wired: Any) -> None:
+# A11: the hub registry writes need this server's exact Origin, a missing one refused too (a
+# registered hub is a folder agent sessions may start in). The Origin-less hook POST stays
+# accepted: test_hooks_ingestion.
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {},
+        {"Sec-Fetch-Site": "cross-site"},
+        {"Origin": "http://localhost:7420"},
+        {"Origin": "http://127.0.0.1:7420", "Sec-Fetch-Site": "same-site"},
+    ],
+)
+@pytest.mark.parametrize("method", ["post", "delete"])
+def test_refuses_hub_registry_write_when_origin_not_exactly_own(
+    wired: Any, method: str, headers: dict[str, str]
+) -> None:
     wired.hubs.hubs.append(a_hub_view())
+    path = "/api/v1/hubs" if method == "post" else f"/api/v1/hubs/{a_hub_view().id}"
+    options = {"json": HUB_PATH} if method == "post" else {}
 
-    response = wired.client.post(
-        "/api/v1/hubs", json=HUB_PATH, headers={"Sec-Fetch-Site": "cross-site"}
-    )
+    response = wired.client.request(method, path, headers=headers, **options)
 
-    assert response.status_code == 201
-    assert wired.hubs.calls == [("register_hub", HUB_PATH["path"])]
+    assert response.status_code == 403
+    assert wired.hubs.calls == []
+    assert len(wired.hubs.hubs) == 1
 
 
 @pytest.mark.parametrize(
@@ -281,6 +302,62 @@ def test_keeps_csp_when_clarity_routes_served(wired: Any, path: str) -> None:
 
     assert response.headers["content-security-policy"] == V0_9_0_CSP
     assert response.headers["cache-control"] == "no-store"
+
+
+AGENT_SESSION_ID_PATH = "/api/v1/agent-sessions/0192f3a0-0000-7000-8000-000000000001"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/agent-sessions",
+        "/api/v1/agent-sessions/capabilities",
+        "/api/v1/agent-sessions/workdirs?project=demo",
+        "/api/v1/agent-sessions/cloud",
+        AGENT_SESSION_ID_PATH,
+        f"{AGENT_SESSION_ID_PATH}/events",
+    ],
+)
+def test_keeps_csp_when_agent_session_routes_served(wired: Any, path: str) -> None:
+    response = wired.client.get(path)
+
+    assert response.headers["content-security-policy"] == V0_9_0_CSP
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_keeps_csp_when_agent_session_page_served(wired: Any) -> None:
+    response = wired.client.get("/agent-sessions/0192f3a0-0000-7000-8000-000000000001")
+
+    assert response.status_code == 200
+    assert response.headers["content-security-policy"] == V0_9_0_CSP
+
+
+def _pre_existing_reads(wired: Any) -> list[str]:
+    """Every ``GET`` of the document outside the agent sessions, path parameters filled in, the
+    endless streams left out."""
+    paths: dict[str, dict[str, object]] = wired.client.app.openapi()["paths"]
+    return [
+        re.sub(r"\{[^}]+\}", "demo", path)
+        for path, item in sorted(paths.items())
+        if "get" in item
+        and not path.startswith("/api/v1/agent-sessions")
+        and not path.endswith("/stream")
+    ]
+
+
+def test_keeps_routes_unchanged_when_no_cookie(wired: Any) -> None:
+    # The Origin-less hook POST without a cookie: test_hooks_ingestion (composed app, no token).
+    wired.hubs.hubs.append(a_hub_view())
+    reads = _pre_existing_reads(wired)
+    signed_in = [(path, wired.client.get(path)) for path in reads]
+
+    wired.client.cookies.clear()
+    without = [(path, wired.client.get(path)) for path in reads]
+
+    assert len(reads) > 20
+    assert [(path, r.status_code, r.content) for path, r in without] == [
+        (path, r.status_code, r.content) for path, r in signed_in
+    ]
 
 
 @pytest.mark.parametrize(

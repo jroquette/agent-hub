@@ -1,5 +1,6 @@
 from agent_hub.api.app import create_app
 from agent_hub.api.openapi_paths import (
+    AGENT_SESSION_PATHS,
     CLARITY_PATHS,
     P2_PATHS,
     SERVED_PATHS,
@@ -81,13 +82,47 @@ def test_lists_exactly_clarity_paths_when_document_built(api_settings: ApiSettin
 def test_lists_ticket_path_when_document_built(api_settings: ApiSettings) -> None:
     # AC-136.33: the current paths plus the feature tickets read.
     assert TICKET_PATHS == TICKET_SPEC_PATHS
-    assert document_paths(create_app(api_settings)) >= TICKET_PATHS
+    assert document_paths(create_app(api_settings)) >= P2_PATHS | CLARITY_PATHS | TICKET_PATHS
+
+
+# The 17 route-method pairs agent sessions add (S3 + E11, AGH-165 P5).
+AGENT_SESSION_SPEC_PATHS = {
+    ("get", "/api/v1/agent-sessions/workdirs"),
+    ("get", "/api/v1/agent-sessions/capabilities"),
+    ("get", "/api/v1/agent-sessions/resumable"),
+    ("get", "/api/v1/agent-sessions/cloud"),
+    ("post", "/api/v1/agent-sessions/cloud"),
+    ("post", "/api/v1/agent-sessions/cloud/{cloud_id}/messages"),
+    ("get", "/api/v1/agent-sessions"),
+    ("post", "/api/v1/agent-sessions"),
+    ("get", "/api/v1/agent-sessions/{agent_session_id}"),
+    ("delete", "/api/v1/agent-sessions/{agent_session_id}"),
+    ("get", "/api/v1/agent-sessions/{agent_session_id}/events"),
+    ("get", "/api/v1/agent-sessions/{agent_session_id}/stream"),
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/messages"),
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/interrupt"),
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/permissions/{request_id}"),
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/settings"),
+    ("post", "/api/v1/agent-sessions/{agent_session_id}/close"),
+}
+
+
+def test_lists_agent_session_paths_when_document_built(api_settings: ApiSettings) -> None:
+    # AC-165.48: today's paths plus exactly the 17 agent-session pairs.
+    assert len(AGENT_SESSION_SPEC_PATHS) == 17
+    assert AGENT_SESSION_PATHS == AGENT_SESSION_SPEC_PATHS
+    assert SERVED_PATHS == (
+        P2_PATHS | CLARITY_PATHS | TICKET_PATHS | SKILL_PATHS | AGENT_SESSION_PATHS
+    )
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
 
 def test_lists_skill_paths_when_document_built(api_settings: ApiSettings) -> None:
     # AC-164.11: today's paths plus the three skills reads, all GET, and nothing else.
     assert SKILL_PATHS == SKILL_SPEC_PATHS
-    assert SERVED_PATHS == P2_PATHS | CLARITY_PATHS | TICKET_PATHS | SKILL_PATHS
+    assert SERVED_PATHS == (
+        P2_PATHS | CLARITY_PATHS | TICKET_PATHS | SKILL_PATHS | AGENT_SESSION_PATHS
+    )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
 

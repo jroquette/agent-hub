@@ -19,6 +19,24 @@ from pydantic import JsonValue
 from starlette.exceptions import HTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from agent_hub.core.agent_sessions.errors import (
+    AgentSessionNotFoundError,
+    CloudFailedError,
+    CloudTimeoutError,
+    CloudUnavailableError,
+    InvalidDecisionError,
+    InvalidWorkdirError,
+    LiveLimitError,
+    LogFullError,
+    MessageTooLargeError,
+    PermissionAnsweredError,
+    SessionBusyError,
+    SessionsOffError,
+    SessionsUnavailableError,
+    SessionTerminalError,
+    UnknownPermissionError,
+    UnknownResumeError,
+)
 from agent_hub.core.brain.brain_note import BrainNoteNotFoundError, BrainNoteTooLargeError
 from agent_hub.core.brain.brain_path import BrainPathError
 from agent_hub.core.errors import AgentHubError, EventConflictError
@@ -273,6 +291,210 @@ def _not_implemented_problem(error: NotImplementedInBuildError) -> Problem:
     return Problem(501, "Not implemented in this build", str(error))
 
 
+# Agent sessions (RT): each core error is a problem of type ``<prefix><code>``. Details name
+# ids, limits and causes only, never conversation text or a value the browser sent (privacy NFR).
+AGENT_SESSION_PROBLEM_PREFIX = "urn:agent-hub:problem:agent-session-"
+AGENT_SESSIONS_OFF_TYPE = "urn:agent-hub:problem:agent-sessions-off"
+
+
+def _agent_session_problem(
+    status: int,
+    code: str,
+    title: str,
+    *,
+    detail: str,
+    members: Mapping[str, JsonValue] | None = None,
+) -> Problem:
+    return Problem(
+        status, title, detail, {"type": f"{AGENT_SESSION_PROBLEM_PREFIX}{code}", **(members or {})}
+    )
+
+
+def _agent_session_not_found_problem(error: AgentSessionNotFoundError) -> Problem:
+    return _agent_session_problem(
+        404,
+        "not-found",
+        "Agent session not found",
+        detail=f"No agent session with id '{error.entity_id}'.",
+    )
+
+
+def _session_terminal_problem(error: SessionTerminalError) -> Problem:
+    return _agent_session_problem(
+        409,
+        "terminal",
+        "Agent session ended",
+        detail=f"The agent session is {error.status}; resume it to go on.",
+        members={"session_status": error.status},
+    )
+
+
+def _session_busy_problem(_: SessionBusyError) -> Problem:
+    return _agent_session_problem(
+        409,
+        "busy",
+        "Agent session busy",
+        detail="The session is ending its turn after an interrupt; try again after its result.",
+    )
+
+
+def _live_limit_problem(error: LiveLimitError) -> Problem:
+    return _agent_session_problem(
+        429,
+        "limit",
+        "Too many live agent sessions",
+        detail=f"At most {error.limit} agent sessions can be live; close one to start another.",
+        members={"limit": error.limit},
+    )
+
+
+def _log_full_problem(_: LogFullError) -> Problem:
+    return _agent_session_problem(
+        409,
+        "log-full",
+        "Agent session log full",
+        detail="The agent session's log reached its cap and the session ended; Resume it to go on.",
+    )
+
+
+def _permission_answered_problem(error: PermissionAnsweredError) -> Problem:
+    return _agent_session_problem(
+        409,
+        "answered",
+        "Permission request already answered",
+        detail="This permission request was already answered; the first answer stands.",
+        members={"request_id": error.request_id},
+    )
+
+
+def _unknown_permission_problem(error: UnknownPermissionError) -> Problem:
+    return _agent_session_problem(
+        404,
+        "unknown-request",
+        "Permission request not found",
+        detail="The agent session has no pending permission request with this id.",
+        members={"request_id": error.request_id},
+    )
+
+
+def _invalid_decision_problem(error: InvalidDecisionError) -> Problem:
+    # The reason is the policy's own words; it names fields, never the answer's text.
+    return _agent_session_problem(
+        422,
+        "invalid-decision",
+        "Invalid permission answer",
+        detail=f"Invalid permission answer: {error.reason}.",
+    )
+
+
+def _body_field_problem(code: str, title: str, *, pointer: str, detail: str) -> Problem:
+    return _agent_session_problem(
+        422,
+        code,
+        title,
+        detail=detail,
+        members={"errors": [{"pointer": pointer, "message": detail}]},
+    )
+
+
+def _invalid_workdir_problem(_: InvalidWorkdirError) -> Problem:
+    return _body_field_problem(
+        "invalid-workdir",
+        "Unknown workdir",
+        pointer="/workdir_id",
+        detail="No workdir with this id in the project; GET /workdirs lists them.",
+    )
+
+
+def _unknown_resume_problem(_: UnknownResumeError) -> Problem:
+    return _body_field_problem(
+        "unknown-resume",
+        "Unknown session to resume",
+        pointer="/resume_session_id",
+        detail="No resumable session with this id in the workdir; GET /resumable lists them.",
+    )
+
+
+def _message_too_large_problem(error: MessageTooLargeError) -> Problem:
+    return _agent_session_problem(
+        413,
+        "message-too-large",
+        "Message too large",
+        detail=f"Messages are limited to {error.limit} bytes (UTF-8); this one has {error.size}.",
+        members={"limit": error.limit, "size": error.size},
+    )
+
+
+def _sessions_unavailable_problem(error: SessionsUnavailableError) -> Problem:
+    return _agent_session_problem(
+        503,
+        "unavailable",
+        "Agent sessions unavailable",
+        detail=error.reason,
+        members={"reason": error.reason},
+    )
+
+
+def _sessions_off_problem(_: SessionsOffError) -> Problem:
+    return Problem(
+        404,
+        "Agent sessions off",
+        "Agent sessions are off in the container.",
+        {"type": AGENT_SESSIONS_OFF_TYPE},
+    )
+
+
+def _cloud_unavailable_problem(error: CloudUnavailableError) -> Problem:
+    return _agent_session_problem(
+        501,
+        "cloud-unavailable",
+        "Cloud sessions unavailable",
+        detail=error.guidance,
+        members={"guidance": error.guidance},
+    )
+
+
+def _cloud_failed_problem(error: CloudFailedError) -> Problem:
+    # The step's name only: the CLI's output can quote paths, ids and tokens.
+    return _agent_session_problem(
+        502,
+        "cloud-failed",
+        "Cloud command failed",
+        detail=f"The cloud command failed at the {error.step} step.",
+        members={"step": error.step},
+    )
+
+
+def _cloud_timeout_problem(error: CloudTimeoutError) -> Problem:
+    return _agent_session_problem(
+        504,
+        "cloud-timeout",
+        "Cloud command timed out",
+        detail=f"The cloud command passed its {error.seconds} s deadline and was stopped.",
+        members={"seconds": error.seconds},
+    )
+
+
+AGENT_SESSION_PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
+    AgentSessionNotFoundError: _agent_session_not_found_problem,
+    SessionTerminalError: _session_terminal_problem,
+    SessionBusyError: _session_busy_problem,
+    LiveLimitError: _live_limit_problem,
+    LogFullError: _log_full_problem,
+    PermissionAnsweredError: _permission_answered_problem,
+    UnknownPermissionError: _unknown_permission_problem,
+    InvalidDecisionError: _invalid_decision_problem,
+    InvalidWorkdirError: _invalid_workdir_problem,
+    UnknownResumeError: _unknown_resume_problem,
+    MessageTooLargeError: _message_too_large_problem,
+    SessionsUnavailableError: _sessions_unavailable_problem,
+    SessionsOffError: _sessions_off_problem,
+    CloudUnavailableError: _cloud_unavailable_problem,
+    CloudFailedError: _cloud_failed_problem,
+    CloudTimeoutError: _cloud_timeout_problem,
+}
+
+
 # The one place where a named exception becomes a problem. Starlette picks the closest class in
 # the exception's MRO, so a subclass entry (a busy database) wins over its base.
 PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
@@ -293,6 +515,7 @@ PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     RefspecRefusedError: _push_refused_problem,
     ChangeRequestFailedError: _change_request_failed_problem,
     ChangeRequestTimeoutError: _change_request_timeout_problem,
+    **AGENT_SESSION_PROBLEMS,
 }
 
 

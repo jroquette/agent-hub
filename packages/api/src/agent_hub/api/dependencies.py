@@ -14,6 +14,9 @@ from pydantic import BaseModel, ValidationError
 from agent_hub.api.change_feed import ChangeFeed
 from agent_hub.api.rfc9457 import InvalidParameterError, NotImplementedInBuildError
 from agent_hub.api.settings import ApiSettings
+from agent_hub.core.agent_sessions.cloud import CloudSessionCommands
+from agent_hub.core.agent_sessions.control import AgentSessionCommands
+from agent_hub.core.agent_sessions.links import AgentSessionLinkLookup
 from agent_hub.core.brain.brain_path import DEFAULT_ACCEPT_FOLDER
 from agent_hub.core.events.event_reader import EventReader
 from agent_hub.core.ingestion.ingest_hook import IngestHook
@@ -37,6 +40,9 @@ class ApiPorts:
     counters: IngestionCounters | None = None
     learning_reads: LearningReads | None = None
     learning_decisions: LearningDecisions | None = None
+    agent_sessions: AgentSessionCommands | None = None
+    cloud_sessions: CloudSessionCommands | None = None
+    agent_session_links: AgentSessionLinkLookup | None = None
 
 
 def _ports(request: Request) -> ApiPorts:
@@ -95,6 +101,22 @@ def learning_reads(request: Request) -> LearningReads:
 def learning_decisions(request: Request) -> LearningDecisions:
     """The learning decisions, or 501 when not wired."""
     port = _ports(request).learning_decisions
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+def agent_session_control(request: Request) -> AgentSessionCommands:
+    """The agent-session commands, or 501 when not wired."""
+    port = _ports(request).agent_sessions
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+def cloud_sessions(request: Request) -> CloudSessionCommands:
+    """The cloud-session commands, or 501 when not wired."""
+    port = _ports(request).cloud_sessions
     if port is None:
         raise _unwired(request)
     return port
@@ -178,3 +200,5 @@ LearningDecisionsDep = Annotated[LearningDecisions, Depends(learning_decisions)]
 StreamPortsDep = Annotated[StreamPorts, Depends(stream_ports)]
 CollectorPortsDep = Annotated[CollectorPorts, Depends(collector_ports)]
 SettingsDep = Annotated[ApiSettings, Depends(api_settings)]
+AgentSessionControlDep = Annotated[AgentSessionCommands, Depends(agent_session_control)]
+CloudSessionsDep = Annotated[CloudSessionCommands, Depends(cloud_sessions)]

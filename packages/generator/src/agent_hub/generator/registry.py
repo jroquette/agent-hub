@@ -4,6 +4,7 @@ One entry per output path, sorted by path, classified as in docs/design/hub-gene
 § Classification and rendering. Template sources are package data under ``templates/``, named
 without a leading dot and with a ``.tmpl`` suffix, so no tool takes a template for a live config
 file. ``hub.schema.json`` is core's shipped schema, copied verbatim: the generator holds no copy.
+So are the agent output schemas under ``plugin/hub-workflow/schemas/`` (AGH-139 D5).
 A JSON file whose value comes from the config is built in code instead (spec Q-9): its entry names
 a builder and has no source file.
 """
@@ -12,6 +13,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, NamedTuple
 
+from agent_hub.core.features.agent_outputs import OUTPUT_SCHEMA_FILES, OUTPUT_SCHEMA_PACKAGE
 from agent_hub.core.hub_config.schema import SCHEMA_FILE, SCHEMA_PACKAGE
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership
 from agent_hub.generator.built_json import (
@@ -85,6 +87,13 @@ def _generic_seeded(path: str, template: str) -> TemplateEntry:
 def _project_seeded(path: str, template: str) -> TemplateEntry:
     return TemplateEntry(
         path=path, source=_template(template), kind=Kind.PROJECT_OWNED, ownership=Ownership.SEEDED
+    )
+
+
+def _core_verbatim(path: str, source: TemplateSource) -> TemplateEntry:
+    """A file of core's package data, copied byte for byte: generic, managed."""
+    return TemplateEntry(
+        path=path, source=source, kind=Kind.GENERIC, ownership=Ownership.MANAGED, verbatim=True
     )
 
 
@@ -233,13 +242,7 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
     _generic_seeded("brain/playbooks/.gitkeep", "brain/playbooks/gitkeep.tmpl"),
     _generic_seeded("docs/app-repo-AGENTS.md", "docs/app-repo-AGENTS.md.tmpl"),
     _entry_point("hub"),
-    TemplateEntry(
-        path="hub.schema.json",
-        source=TemplateSource(SCHEMA_PACKAGE, SCHEMA_FILE),
-        kind=Kind.GENERIC,
-        ownership=Ownership.MANAGED,
-        verbatim=True,
-    ),
+    _core_verbatim("hub.schema.json", TemplateSource(SCHEMA_PACKAGE, SCHEMA_FILE)),
     # Each selected module's make targets (AGH-17 D5); `Makefile` includes them in id order.
     _module_makefile("bench"),
     _module_makefile("cloud"),
@@ -292,6 +295,14 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
         f"{_BASE_PLUGIN}/hooks/stdlib_reader.py", f"{_BASE_PLUGIN}/hooks/stdlib_reader.py.tmpl"
     ),
     _hook_entry_point("stop_gate"),
+    # The agent output JSON schemas the reviewers and the evaluator write to (AGH-139 S8).
+    *(
+        _core_verbatim(
+            f"{_BASE_PLUGIN}/schemas/{OUTPUT_SCHEMA_FILES[kind]}",
+            TemplateSource(OUTPUT_SCHEMA_PACKAGE, OUTPUT_SCHEMA_FILES[kind]),
+        )
+        for kind in ("eval", "review")
+    ),
     # `render_entries` links each skill folder into `.claude/skills/`.
     *(
         _generic_managed(

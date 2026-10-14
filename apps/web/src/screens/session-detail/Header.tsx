@@ -16,6 +16,7 @@ import {
 import { fmtAgo, fmtClock, fmtDuration, fmtInt, fmtMoney } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
+import { agentSessionHref } from "../sessions-list/AgentSessionList";
 import type { Session } from "./queries";
 import { durationOf, isOpen, statusOf, tokensText } from "./session-status";
 
@@ -108,6 +109,16 @@ export function Header({ session, now, staleSince }: HeaderProps) {
         )}
         {session.issue && !label?.issue && <IssueLink id={session.issue} />}
         <span className="ah-grow" />
+        {session.agent_session_id && (
+          <AppLink
+            className="ah-row ah-small"
+            href={agentSessionHref(session.agent_session_id)}
+            style={{ gap: 4, fontWeight: 500 }}
+          >
+            <Icon name="message-square" size="sm" />
+            Open chat
+          </AppLink>
+        )}
         {runHref && (
           <AppLink className="ah-row ah-small" href={runHref} style={{ gap: 4 }}>
             <Icon name="route" size="sm" />

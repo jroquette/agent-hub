@@ -13,6 +13,24 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- Drive Claude Code sessions from `hub web`: "New session" on the Sessions screen starts your own `claude` in the hub,
+  a repo or a worktree, with the hub's CLAUDE.md, hooks (the guard still applies), skills and agents; the chat sends
+  messages, answers permission prompts, interrupts, changes mode and model, resumes and forks. Install with the
+  `sessions` extra (`agent-hub[sessions]`, the Claude Agent SDK). `hub web` now prints
+  `http://127.0.0.1:<port>/?token=…`: open it once per browser, the token becomes the cookie the new
+  `/api/v1/agent-sessions` routes need (every other route is unchanged); `--open` opens it, and the session limits are
+  options with `AGENT_HUB_*` variables. These sessions' conversations are stored, redacted, in the `hub web` database
+  for 30 days after they end. Off in the Docker image. No `hub.json` change and no `hub sync` needed (ADR 0031,
+  AGH-165).
+- `hub validate-output review|eval FILE` checks one agent JSON output, a reviewer's
+  `reviews/<ticket>/<reviewer>-r<N>.json` or the evaluator's `evals/<delivery>.json` (with its sibling `.md` and the
+  feature's `features.json`), against its versioned schema and cross-field rules: exit 0 `<file>: valid`, exit 1 with
+  one line per problem (the first 200, then the total), exit 2 on a usage error. Links are never followed and no
+  `hub.json` is needed. `hub sync` now ships the two JSON Schemas to `plugin/hub-workflow/schemas/review.v1.json` and
+  `eval.v1.json` (managed, run `hub sync` after the bump) (AGH-139).
+- `hub doctor` (`features.tracker`) warns on a feature's agent outputs, `evals/*.json` and `reviews/<ticket>/*.json`:
+  one without its `.md` record, or one that fails validation, with its problem count, its first problem and the
+  `./hub validate-output` command that lists them all. Warnings only; one validation budget per run, and an info line counts the outputs it skipped (AGH-139).
 - Skills tab in `hub web` (`/projects/:project/skills`): every skill, agent and hook of the hub with what it does, a
   copyable invocation, origin (managed by `hub sync`, project-owned or local) and invocation mode, the frontmatter, the
   rendered text with a table of contents and a Raw view, the steps derived from the text, uses and used-by links,

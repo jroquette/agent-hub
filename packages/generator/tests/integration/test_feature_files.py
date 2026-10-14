@@ -366,3 +366,49 @@ def test_reads_first_names_only_when_reviews_over_cap(
     assert [head.name for head in read.reviews] == ["dem-0.md", "dem-1.md"]
     assert read.reviews_skipped == 4
     assert [name for name in reads.opened if name.startswith("dem-")] == ["dem-0.md", "dem-1.md"]
+
+
+# AGH-139 AC-139.24: the agent outputs beside the records are never read as records.
+LEGACY_RECORDS = {
+    "features.json": b'{"acs": []}',
+    "spec.md": b"---\nprocess_size: bounded\n---\n",
+    "eval.md": b"Verdict: SHIP\n",
+    "evals/dem-1.md": b"---\ntype: eval\ndelivery: dem-1\nverdict: SHIP\n---\n",
+    "evals/dem-2.md": b"---\ntype: eval\ndelivery: dem-2\nverdict: NO-SHIP\n---\n",
+    "evals/dem-3.md": b"---\n---\n",
+    "reviews/DEM-1.md": b"---\ntype: review\noutcome: approved\n---\n",
+    "reviews/DEM-2.md": b"---\n---\n",
+}
+AGENT_OUTPUTS = {
+    "evals/dem-1.json": b'{"schema": "agent-hub/eval/1"}',
+    "evals/dem-0.json": b"{}",
+    "reviews/DEM-1/spec-r1.json": b'{"schema": "agent-hub/review/1"}',
+    "reviews/DEM-1/quality-r1.json": b"{}",
+    "reviews/DEM-3/spec-r1.json": b"{}",
+}
+
+
+def a_tree_feature(hub: Path, files: dict[str, bytes]) -> None:
+    folder = features_of(hub) / "demo-feature"
+    for name, content in files.items():
+        (folder / name).parent.mkdir(parents=True, exist_ok=True)
+        (folder / name).write_bytes(content)
+
+
+def test_reads_same_folder_when_outputs_added(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Caps of two: the third record of each kind is skipped, and no output counts against them.
+    monkeypatch.setattr("agent_hub.generator.feature_files.MAX_EVAL_FILES", 2)
+    monkeypatch.setattr("agent_hub.generator.feature_files.MAX_REVIEW_FILES", 1)
+    a_tree_feature(tmp_path / "legacy", LEGACY_RECORDS)
+    a_tree_feature(tmp_path / "mixed", LEGACY_RECORDS | AGENT_OUTPUTS)
+
+    legacy = read_feature_folder(tmp_path / "legacy", "demo-feature")
+    mixed = read_feature_folder(tmp_path / "mixed", "demo-feature")
+
+    assert mixed == legacy
+    assert legacy is not None
+    assert [head.name for head in legacy.evals] == ["dem-1.md", "dem-2.md"]
+    assert [head.name for head in legacy.reviews] == ["DEM-1.md"]
+    assert (legacy.evals_skipped, legacy.reviews_skipped) == (1, 1)
