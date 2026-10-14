@@ -9,6 +9,11 @@ tails it there (``AGENT_HUB_CLAUDE_PROJECTS``); the whole temp folder, transcrip
 included, is deleted afterwards. The API must then show the session with its tool calls, the
 file it read, an estimated cost and a prompt kept as a size, never as text.
 
+AGH-165 (AC-165.5): an agent session started through ``hub web``'s own API (``hub web`` drives the
+user's ``claude`` with ``CLAUDE_CONFIG_DIR`` set to the temp folder) asks for ``git push origin
+main``: the hub's guard hook denies it before any permission prompt reaches the browser, and the
+hook-observed session appears in ``GET /sessions``, linked to its agent session.
+
 Skips when ``claude`` is missing or not logged in for a fresh config folder (an API key or
 ``CLAUDE_CODE_OAUTH_TOKEN`` in the environment, or ``claude auth login`` reaching it). It costs
 a few cents; the model is ``AGENT_HUB_LIVE_MODEL``, else Claude Haiku 4.5.
@@ -55,6 +60,7 @@ class LiveHub:
 
     path: Path
     url: str
+    token: str
     claude: str
     claude_env: Mapping[str, str]
 
@@ -98,13 +104,13 @@ def _hub_command(*arguments: str, env: Mapping[str, str], cwd: Path) -> None:
 
 
 @contextmanager
-def _hub_web(root: Path, *, projects: Path) -> Iterator[str]:
-    """``hub web`` of this working tree on a free port, a temp database and registry."""
+def _hub_web(root: Path, *, config: Path) -> Iterator[tuple[str, str]]:
+    """``hub web`` of this working tree on a free port, a temp database and registry; it drives
+    ``claude`` with the temp config folder. Yields its URL and this start's session token."""
     port = free_loopback_port()
-    env = {
-        **{name: value for name, value in os.environ.items() if not name.startswith("AGENT_HUB_")},
+    env = _claude_env(config) | {
         "XDG_CONFIG_HOME": str(root / "xdg-config"),
-        "AGENT_HUB_CLAUDE_PROJECTS": str(projects),
+        "AGENT_HUB_CLAUDE_PROJECTS": str(config / "projects"),
     }
     hub = Path(sys.executable).with_name("hub")
     command = [str(hub), "web", "--port", str(port), "--db", str(root / "live.db")]
@@ -116,10 +122,9 @@ def _hub_web(root: Path, *, projects: Path) -> Iterator[str]:
             assert process.stdout is not None
             line = process.stdout.readline()
             # The URL carries this start's session token (AGH-165, P6).
-            assert line.startswith(f"agent-hub at http://127.0.0.1:{port}/?token="), (
-                root / "web.log"
-            ).read_text()
-            yield f"http://127.0.0.1:{port}"
+            prefix = f"agent-hub at http://127.0.0.1:{port}/?token="
+            assert line.startswith(prefix), (root / "web.log").read_text()
+            yield f"http://127.0.0.1:{port}", line.strip().removeprefix(prefix)
         finally:
             process.send_signal(signal.SIGINT)
             try:
@@ -164,10 +169,11 @@ def live_hub() -> Iterator[LiveHub]:
             env=init_env,
             cwd=root,
         )
-        with _hub_web(root, projects=config / "projects") as url:
+        with _hub_web(root, config=config) as (url, token):
             yield LiveHub(
                 path=hub,
                 url=url,
+                token=token,
                 claude=claude,
                 claude_env=claude_env | {"AGENT_HUB_WEB_URL": url},
             )
@@ -263,3 +269,67 @@ def test_shows_real_session_with_tools_files_and_cost_when_claude_runs_in_hub(
     every_view = "".join(response.text for response in views.values())
     assert marker not in every_view
     assert "reply with the single word" not in every_view
+
+
+PUSH_PROMPT = (
+    "Use the Bash tool to run exactly `git push origin main` in this folder, then reply with the "
+    "single word: done."
+)
+AGENT_SESSIONS = "/api/v1/agent-sessions"
+
+
+def _until_idle(client: httpx.Client, agent_session_id: str) -> dict[str, Any]:
+    """The agent session once its turn ended, failing if it ever waits on the browser."""
+    deadline = time.monotonic() + CLAUDE_SECONDS
+    while True:
+        body: dict[str, Any] = client.get(f"{AGENT_SESSIONS}/{agent_session_id}").json()
+        prompted = body["open_permission"]
+        assert prompted is None or "git push" not in json.dumps(prompted), prompted
+        if body["status"] in {"idle", "ended", "failed"} or time.monotonic() > deadline:
+            return body
+        time.sleep(1)
+
+
+def _with_denial(client: httpx.Client, session_id: str) -> httpx.Response:
+    """The hook-observed session once its guard denial is in (the sensor posts it at once)."""
+    deadline = time.monotonic() + SETTLE_SECONDS
+    while True:
+        response = client.get(f"/api/v1/sessions/{session_id}")
+        denied = response.status_code == 200 and response.json()["guard_denials"] >= 1
+        if denied or time.monotonic() > deadline:
+            return response
+        time.sleep(1)
+
+
+def test_denies_guarded_push_when_web_session_runs(live_hub: LiveHub) -> None:
+    model = os.environ.get("AGENT_HUB_LIVE_MODEL") or DEFAULT_MODEL
+    with httpx.Client(
+        base_url=live_hub.url, timeout=REQUEST_SECONDS, headers={"Origin": live_hub.url}
+    ) as client:
+        assert client.get(f"/?token={live_hub.token}").status_code == 303
+        assert client.post("/api/v1/hubs", json={"path": str(live_hub.path)}).status_code == 201
+        workdirs = client.get(f"{AGENT_SESSIONS}/workdirs", params={"project": PROJECT}).json()
+        created = client.post(
+            AGENT_SESSIONS,
+            json={
+                "project": PROJECT,
+                "workdir_id": workdirs["items"][0]["workdir_id"],
+                "model": model,
+                "prompt": PUSH_PROMPT,
+            },
+        )
+        assert created.status_code == 201, created.text
+        agent_session = _until_idle(client, created.json()["id"])
+        records = client.get(f"{AGENT_SESSIONS}/{agent_session['id']}/events").json()["items"]
+        claude_session = agent_session["claude_session_id"]
+        session = _with_denial(client, claude_session)
+        client.post(f"{AGENT_SESSIONS}/{agent_session['id']}/close", json={})
+
+    assert agent_session["status"] == "idle", agent_session
+    kinds = [record["kind"] for record in records]
+    assert "permission.request" not in kinds
+    calls = [r for r in records if r["kind"] == "tool.call" and "git push" in json.dumps(r)]
+    assert calls, kinds
+    assert session.status_code == 200, session.text
+    assert session.json()["agent_session_id"] == agent_session["id"]
+    assert session.json()["guard_denials"] >= 1
