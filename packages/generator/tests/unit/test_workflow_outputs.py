@@ -221,6 +221,7 @@ def test_cuts_the_detail_after_twenty_messages_when_value_breaks_many_rules() ->
 
     messages = failure.detail.split("; ")
     assert len(messages) == 21
+    assert messages[:20] == [f"[{index}]: breaks 'type'" for index in range(20)]
     assert messages[-1] == "and 5 more"
 
 
@@ -251,3 +252,35 @@ def test_resolves_a_reference_against_its_schema_id_when_one_is_nested() -> None
 
     assert a_validator().schema_problems(schema) == ()
     assert failure_of(schema, {"a": 1}).detail == "a: breaks 'type'"
+
+
+@pytest.mark.parametrize(
+    ("schema", "path"),
+    [
+        ({"properties": {"enum": {"$ref": "#/$defs/nope"}}}, "properties.enum.$ref"),
+        ({"$defs": {"const": {"$ref": "#/nope"}}, "$ref": "#/$defs/const"}, "$defs.const.$ref"),
+        (
+            {"properties": {"default": {"$ref": "https://example.com/x.json"}}},
+            "properties.default.$ref",
+        ),
+    ],
+    ids=["property-named-enum", "def-named-const", "property-named-default"],
+)
+def test_lists_a_problem_when_a_schema_named_like_a_data_keyword_holds_a_bad_ref(
+    schema: dict[str, Any], path: str
+) -> None:
+    [problem] = a_validator().schema_problems(schema)
+
+    assert problem.startswith(f"{path}: {CANNOT_READ}")
+    assert failure_of(schema, {}).kind == "config"
+
+
+def test_fails_config_when_a_reference_escapes_the_load_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(workflow_outputs, "_ref_problems", lambda schema: [])
+
+    failure = failure_of({"$ref": "#/$defs/nope"}, "x")
+
+    assert failure.kind == "config"
+    assert failure.detail.startswith("the output_format refers to a schema it cannot read: ")
