@@ -352,3 +352,13 @@ def test_cuts_the_echoed_id_when_it_is_long() -> None:
     [(_, message)] = problems_of(shell("a", "x" * 500))
 
     assert len(message) < 120
+
+
+def test_shows_ten_names_then_a_count_when_the_cycle_is_long() -> None:
+    count = 12
+    nodes = [shell(f"n{index}", f"n{(index + 1) % count}") for index in range(count)]
+
+    [(_, message)] = problems_of(*nodes)
+
+    names = ", ".join(f"n{index}" for index in range(10))
+    assert message == f"a cycle runs through the nodes {names} and 2 more"
