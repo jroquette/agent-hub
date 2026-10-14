@@ -107,52 +107,53 @@ def test_reports_unknown_key_when_valid_review_gains_colour(
     assert [problem.path for problem in problems] == [path]
 
 
-@pytest.mark.parametrize(
-    ("document", "path"),
-    [
-        (a_review_document(schema="agent-hub/review/2"), "schema"),
-        (without(a_review_document(), "schema"), "schema"),
-        (a_review_document(reviewer="style"), "reviewer"),
-        (a_review_document(findings=[a_finding(kind="typo")]), "findings[0].kind"),
-        (a_review_document(findings=[a_finding(severity="nit")]), "findings[0].severity"),
-        (a_review_document(findings=[a_finding(severity="should-fix")]), "findings[0].severity"),
-        (a_review_document(findings=[a_finding(severity="blocker")]), "findings[0].severity"),
-        (a_review_document(round=0), "round"),
-        (a_review_document(round=10000), "round"),
-        (a_review_document(round=True), "round"),
-        (a_review_document(findings=[a_finding(line=0)]), "findings[0].line"),
-        (a_review_document(commit="XYZ"), "commit"),
-        (a_review_document(ticket="T" * 33), "ticket"),
-        (a_review_document(findings=[a_finding(acs=["AC 1"])]), "findings[0].acs[0]"),
-        (a_review_document(findings=[a_finding(what="w" * 1001)]), "findings[0].what"),
-        (a_review_document(findings=[a_finding(what="one\ntwo")]), "findings[0].what"),
-        (
-            a_review_document(findings=[a_finding(id=f"F{index}") for index in range(101)]),
-            "findings",
-        ),
-        (a_review_document(findings=[without(a_finding(), "what")]), "findings[0].what"),
-    ],
-    ids=[
-        "schema version 2",
-        "schema absent",
-        "reviewer style",
-        "kind typo",
-        "severity nit",
-        "severity should-fix",
-        "severity blocker",
-        "round 0",
-        "round 10000",
-        "round true",
-        "line 0",
-        "commit XYZ",
-        "ticket over 32",
-        "ac id with a space",
-        "what of 1001",
-        "what with a newline",
-        "101 findings",
-        "missing what",
-    ],
-)
+# One row per shape rule a review breaks, and the path of its one problem.
+REVIEW_SHAPE_BROKEN: list[tuple[dict[str, object], str]] = [
+    (a_review_document(schema="agent-hub/review/2"), "schema"),
+    (without(a_review_document(), "schema"), "schema"),
+    (a_review_document(reviewer="style"), "reviewer"),
+    (a_review_document(findings=[a_finding(kind="typo")]), "findings[0].kind"),
+    (a_review_document(findings=[a_finding(severity="nit")]), "findings[0].severity"),
+    (a_review_document(findings=[a_finding(severity="should-fix")]), "findings[0].severity"),
+    (a_review_document(findings=[a_finding(severity="blocker")]), "findings[0].severity"),
+    (a_review_document(round=0), "round"),
+    (a_review_document(round=10000), "round"),
+    (a_review_document(round=True), "round"),
+    (a_review_document(findings=[a_finding(line=0)]), "findings[0].line"),
+    (a_review_document(commit="XYZ"), "commit"),
+    (a_review_document(ticket="T" * 33), "ticket"),
+    (a_review_document(findings=[a_finding(acs=["AC 1"])]), "findings[0].acs[0]"),
+    (a_review_document(findings=[a_finding(what="w" * 1001)]), "findings[0].what"),
+    (a_review_document(findings=[a_finding(what="one\ntwo")]), "findings[0].what"),
+    (
+        a_review_document(findings=[a_finding(id=f"F{index}") for index in range(101)]),
+        "findings",
+    ),
+    (a_review_document(findings=[without(a_finding(), "what")]), "findings[0].what"),
+]
+REVIEW_SHAPE_BROKEN_IDS = [
+    "schema version 2",
+    "schema absent",
+    "reviewer style",
+    "kind typo",
+    "severity nit",
+    "severity should-fix",
+    "severity blocker",
+    "round 0",
+    "round 10000",
+    "round true",
+    "line 0",
+    "commit XYZ",
+    "ticket over 32",
+    "ac id with a space",
+    "what of 1001",
+    "what with a newline",
+    "101 findings",
+    "missing what",
+]
+
+
+@pytest.mark.parametrize(("document", "path"), REVIEW_SHAPE_BROKEN, ids=REVIEW_SHAPE_BROKEN_IDS)
 def test_reports_one_problem_when_review_shape_broken(
     document: dict[str, object], path: str
 ) -> None:
@@ -342,57 +343,58 @@ def test_freezes_models_when_valid_eval_parsed() -> None:
     assert evaluation.acs == ("AC-139.1",)
 
 
-@pytest.mark.parametrize(
-    ("document", "path"),
-    [
-        (an_eval_document(schema="agent-hub/eval/2"), "schema"),
-        (an_eval_document(verdict="MAYBE"), "verdict"),
-        (an_eval_document(results=[a_result(status="skipped")]), "results[0].status"),
-        (an_eval_document(results=[a_result(exit_code="1")]), "results[0].exit_code"),
-        (an_eval_document(results=[a_result(exit_code=True)]), "results[0].exit_code"),
-        (an_eval_document(gates=[a_gate(exit_code=256)]), "gates[0].exit_code"),
-        (an_eval_document(acs="some"), "acs"),
-        (an_eval_document(acs=3), "acs"),
-        (an_eval_document(acs=["a b"]), "acs[0]"),
-        (an_eval_document(delivery="ABC 12"), "delivery"),
-        (
-            an_eval_document(results=[a_result(ac=f"A{index}") for index in range(301)]),
-            "results",
-        ),
-        (an_eval_document(results=[a_result(command="c" * 2001)]), "results[0].command"),
-        (without(an_eval_document(), "gates"), "gates"),
-        (
-            an_eval_document(red_on_parent=[{"test": "t", "failed_on_base": 1}]),
-            "red_on_parent[0].failed_on_base",
-        ),
-        (an_eval_document(owner_steps=["one\ntwo"]), "owner_steps[0]"),
-        (an_eval_document(acs={}), "acs"),
-        (an_eval_document(acs=None), "acs"),
-        (an_eval_document(acs=True), "acs"),
-        (an_eval_document(acs=[["AC-1"]]), "acs[0]"),
-    ],
-    ids=[
-        "schema version 2",
-        "verdict maybe",
-        "status skipped",
-        "exit code string",
-        "exit code true",
-        "gate exit code 256",
-        "acs some",
-        "acs a number",
-        "acs id with a space",
-        "delivery with a space",
-        "301 results",
-        "command of 2001",
-        "missing gates",
-        "failed on base a number",
-        "owner step with a newline",
-        "acs an object",
-        "acs null",
-        "acs true",
-        "acs a nested list",
-    ],
-)
+# One row per shape rule an eval breaks, and the path of its one problem.
+EVAL_SHAPE_BROKEN: list[tuple[dict[str, object], str]] = [
+    (an_eval_document(schema="agent-hub/eval/2"), "schema"),
+    (an_eval_document(verdict="MAYBE"), "verdict"),
+    (an_eval_document(results=[a_result(status="skipped")]), "results[0].status"),
+    (an_eval_document(results=[a_result(exit_code="1")]), "results[0].exit_code"),
+    (an_eval_document(results=[a_result(exit_code=True)]), "results[0].exit_code"),
+    (an_eval_document(gates=[a_gate(exit_code=256)]), "gates[0].exit_code"),
+    (an_eval_document(acs="some"), "acs"),
+    (an_eval_document(acs=3), "acs"),
+    (an_eval_document(acs=["a b"]), "acs[0]"),
+    (an_eval_document(delivery="ABC 12"), "delivery"),
+    (
+        an_eval_document(results=[a_result(ac=f"A{index}") for index in range(301)]),
+        "results",
+    ),
+    (an_eval_document(results=[a_result(command="c" * 2001)]), "results[0].command"),
+    (without(an_eval_document(), "gates"), "gates"),
+    (
+        an_eval_document(red_on_parent=[{"test": "t", "failed_on_base": 1}]),
+        "red_on_parent[0].failed_on_base",
+    ),
+    (an_eval_document(owner_steps=["one\ntwo"]), "owner_steps[0]"),
+    (an_eval_document(acs={}), "acs"),
+    (an_eval_document(acs=None), "acs"),
+    (an_eval_document(acs=True), "acs"),
+    (an_eval_document(acs=[["AC-1"]]), "acs[0]"),
+]
+EVAL_SHAPE_BROKEN_IDS = [
+    "schema version 2",
+    "verdict maybe",
+    "status skipped",
+    "exit code string",
+    "exit code true",
+    "gate exit code 256",
+    "acs some",
+    "acs a number",
+    "acs id with a space",
+    "delivery with a space",
+    "301 results",
+    "command of 2001",
+    "missing gates",
+    "failed on base a number",
+    "owner step with a newline",
+    "acs an object",
+    "acs null",
+    "acs true",
+    "acs a nested list",
+]
+
+
+@pytest.mark.parametrize(("document", "path"), EVAL_SHAPE_BROKEN, ids=EVAL_SHAPE_BROKEN_IDS)
 def test_reports_one_problem_when_eval_shape_broken(document: dict[str, object], path: str) -> None:
     problems = eval_problems_of(document)
 
@@ -577,3 +579,25 @@ def test_validates_sample_when_meta_schema_checked(
     assert list(validator.iter_errors(sample)) == []
     errors = list(validator.iter_errors(sample | {"colour": "red"}))
     assert [error.validator for error in errors] == ["additionalProperties"]
+
+
+# Every broken-shape row above, which the shipped schema must refuse as the models do. No row is
+# skipped: none is a case JSON Schema cannot state (an integer-valued float such as 1.0, a pattern
+# field ending in one "\n" that re.search lets through, a lone surrogate, a duplicate key or NaN).
+SCHEMA_REJECTS: list[tuple[OutputKind, dict[str, object]]] = [
+    *(("review", document) for document, _ in REVIEW_SHAPE_BROKEN),
+    *(("eval", document) for document, _ in EVAL_SHAPE_BROKEN),
+]
+SCHEMA_REJECTS_IDS = [
+    *(f"review {name}" for name in REVIEW_SHAPE_BROKEN_IDS),
+    *(f"eval {name}" for name in EVAL_SHAPE_BROKEN_IDS),
+]
+
+
+@pytest.mark.parametrize(("kind", "document"), SCHEMA_REJECTS, ids=SCHEMA_REJECTS_IDS)
+def test_rejects_broken_shape_when_shipped_schema_validates(
+    kind: OutputKind, document: dict[str, object]
+) -> None:
+    validator = Draft202012Validator(read_shipped_output_schema(kind))
+
+    assert list(validator.iter_errors(json.loads(review_bytes(document)))) != []
