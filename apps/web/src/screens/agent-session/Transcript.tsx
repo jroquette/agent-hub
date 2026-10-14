@@ -1,9 +1,10 @@
 import "./agent-session.css";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import { Icon, Markdown, type IconName } from "../../components";
 import { cx } from "../../lib/cx";
+import { JumpToLatest } from "./JumpToLatest";
 import { PermissionCard, type PermissionAnswer } from "./PermissionCard";
 import { StoredCopyLabel } from "./SessionStatus";
 import { ToolCallCard } from "./ToolCallCard";
@@ -25,6 +26,10 @@ export interface TranscriptProps {
   /** The chat's stick-to-bottom state; without it the transcript only renders. */
   follow?: StickToBottom | undefined;
 }
+
+const isEditable = (target: EventTarget) =>
+  target instanceof HTMLElement &&
+  (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
 
 /** Space left above a permission card the chat opens on. */
 const OPEN_MARGIN_PX = 16;
@@ -135,28 +140,53 @@ export function Transcript({ state, onAnswerPermission, scrollerRef, follow }: T
     element.scrollTop = Math.max(0, card.offsetTop - OPEN_MARGIN_PX);
   }, [oldestPending, release]);
 
+  // Entries that arrived while the reader was away from the bottom (AC-234.19).
+  const count = state.entries.length;
+  const atBottom = follow?.atBottom ?? true;
+  const [seen, setSeen] = useState(count);
+  if (atBottom && seen !== count) setSeen(count);
+  const unseen = atBottom ? 0 : Math.max(0, count - seen);
+
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "End" || !follow || isEditable(event.target)) return;
+    event.preventDefault();
+    follow.pin("smooth");
+  };
+
   return (
-    <div className="as-scroll" ref={attach}>
-      <div
-        className="as-transcript as-column"
-        role="log"
-        aria-live="polite"
-        aria-relevant="additions text"
-        aria-busy={state.streaming}
-        aria-label="Conversation"
-      >
-        {state.entries.length === 0 && (
-          <p className="ah-muted as-empty">No messages yet. Write the first one below.</p>
-        )}
-        {state.entries.map((entry) => (
-          <Entry
-            key={entry.key}
-            entry={entry}
-            state={state}
-            onAnswerPermission={onAnswerPermission}
-          />
-        ))}
+    <div className="as-body">
+      {/* A scroll container takes focus so the keyboard can scroll it and press End. */}
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex, jsx-a11y/no-static-element-interactions */}
+      <div className="as-scroll" ref={attach} tabIndex={0} onKeyDown={onKeyDown}>
+        <div
+          className="as-transcript as-column"
+          role="log"
+          aria-live="polite"
+          aria-relevant="additions text"
+          aria-busy={state.streaming}
+          aria-label="Conversation"
+        >
+          {state.entries.length === 0 && (
+            <p className="ah-muted as-empty">No messages yet. Write the first one below.</p>
+          )}
+          {state.entries.map((entry) => (
+            <Entry
+              key={entry.key}
+              entry={entry}
+              state={state}
+              onAnswerPermission={onAnswerPermission}
+            />
+          ))}
+        </div>
       </div>
+      {follow && !atBottom && (
+        <JumpToLatest
+          unseen={unseen}
+          onJump={() => {
+            follow.pin("smooth");
+          }}
+        />
+      )}
     </div>
   );
 }

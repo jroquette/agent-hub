@@ -37,6 +37,7 @@ export function useStickToBottom(
   const [atBottom, setAtBottom] = useState(true);
   const following = useRef(true);
   const frame = useRef<number | null>(null);
+  const scheduled = useRef(false);
   const lastTop = useRef(0);
 
   const follow = useCallback((value: boolean) => {
@@ -45,9 +46,10 @@ export function useStickToBottom(
   }, []);
 
   const scheduleWrite = useCallback(() => {
-    if (!scroller || frame.current !== null) return;
+    if (!scroller || scheduled.current) return;
+    scheduled.current = true;
     frame.current = requestAnimationFrame(() => {
-      frame.current = null;
+      scheduled.current = false;
       if (!following.current) return;
       scroller.scrollTop = scroller.scrollHeight;
       lastTop.current = scroller.scrollTop;
@@ -79,8 +81,8 @@ export function useStickToBottom(
     return () => {
       scroller.removeEventListener("scroll", onScroll);
       observer?.disconnect();
-      if (frame.current !== null) cancelAnimationFrame(frame.current);
-      frame.current = null;
+      if (scheduled.current && frame.current !== null) cancelAnimationFrame(frame.current);
+      scheduled.current = false;
     };
   }, [scroller, threshold, follow, scheduleWrite]);
 

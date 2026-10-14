@@ -40,6 +40,29 @@
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
+.as-jump {
+  position: absolute;
+  left: 50%;
+  bottom: var(--space-3);
+  transform: translateX(-50%);
+  z-index: var(--z-sticky);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text);
+  font: 500 12px/16px var(--font-sans);
+  box-shadow: var(--shadow-popover);
+  cursor: pointer;
+}
+.as-jump:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
 .as-footer {
   flex: none;
   padding: var(--space-2) 0 var(--space-4);
