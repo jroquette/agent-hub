@@ -172,6 +172,13 @@ The drift tests (in `make check-fast`) fail while the file differs from the expo
 `make hub-schema` leaves `git status --porcelain` empty. A Pydantic upgrade that changes the export needs the same
 regeneration in its PR.
 
+The agent output schemas `review.v1.json` and `eval.v1.json` (ADR 0027) are exported the same way from `ReviewOutput`
+and `EvalOutput` and ship beside them (`packages/core/src/agent_hub/core/features/`). After any change to either model,
+run `make output-schemas` and commit both files. Two drift tests fail while a file differs from the export:
+`packages/core/tests/unit/features/test_agent_outputs.py` (`test_matches_export_when_shipped_schema_read`) and
+`tests/unit/scripts/test_export_output_schemas.py` (`test_matches_repo_files_when_schemas_exported`), both on the exact
+bytes.
+
 ## Releases
 
 A release is an annotated tag `vX.Y.Z` on a commit of `main` ([ADR 0013](adr/0013-release-by-git-tags.md)). The owner
