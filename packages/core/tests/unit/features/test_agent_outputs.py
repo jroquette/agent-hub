@@ -1373,3 +1373,13 @@ def test_never_raises_when_arbitrary_object_given_property(
     )
 
     assert all("\n" not in problem.message for problem in (*review, *evaluation, *raw))
+
+
+def test_skips_cross_checks_when_eval_sibling_list_over_bound() -> None:
+    tickets = [f"T{index}" for index in range(1, 102)]
+    document = an_eval_document(tickets=tickets, acs=["A1"], results=results_for("A1", "A1"))
+    head = a_sibling_head(tickets="[T1]", acs="[A1]")
+
+    assert eval_problems_of(document, sibling_head=head) == (
+        OutputProblem("tickets", "Tuple should have at most 100 items after validation, not 101"),
+    )
