@@ -12,14 +12,19 @@ them. A key must be text. Both forms are capped at ``MAX_WORKFLOW_BYTES`` and mu
 The line in an error comes from the parser's marks (or, for a character YAML does not allow, from
 its position), never from its message text; parser text echoed in a reason is cut. The result
 also maps each key path to its 1-based line, so the document model can name the line of a key it
-refuses: every mapping key and every sequence item, ``()`` for the top level. For JSON the map is
-best effort: the same composer reads the text, and when it cannot, the map is empty.
+refuses: every mapping key and every sequence item, ``()`` for the top level, shallowest first.
+It is bounded: only key paths of at most ``MAX_LINE_DEPTH`` elements, and at most
+``MAX_LINE_ENTRIES`` entries; past either bound a path is left out (never an error), and a
+consumer names the line of its nearest recorded ancestor. For JSON the map is best effort: the
+same composer reads the text (tabs read as spaces), and the map is empty when it cannot, or when
+the text holds a character YAML counts as a line break and JSON does not (U+0085, U+2028, U+2029).
 What the mapping means is core's document model; this module only reads it.
 """
 
 import json
 import math
 import re
+from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -35,8 +40,14 @@ from agent_hub.core.json_form import InvalidJsonError, JsonValue, load_json_byte
 from agent_hub.generator.errors import GeneratorError
 
 MAX_WORKFLOW_BYTES: Final = 256 * 1024
+MAX_LINE_DEPTH: Final = 8
+MAX_LINE_ENTRIES: Final = 20_000
 JSON_SUFFIX: Final = ".json"
 _SURROGATE: Final = re.compile("[\ud800-\udfff]")
+# The line breaks of YAML's reader: what its marks count as a new line.
+_YAML_BREAK: Final = re.compile("\r\n|[\r\n\x85  ]")
+# Line breaks to YAML, plain characters to JSON: the composer would count lines wrongly.
+_JSON_ONLY_TEXT: Final = re.compile("[\x85  ]")
 
 type WorkflowMapping = dict[str, JsonValue]
 type KeyPath = tuple[str | int, ...]
@@ -87,8 +98,12 @@ def _load_json(content: bytes, *, source: str) -> tuple[JsonValue, dict[KeyPath,
         value = load_json_bytes(content, strict=True)
     except InvalidJsonError as error:
         raise WorkflowFileError(source=source, line=error.line, reason=error.message) from None
+    text = content.decode("utf-8")
+    if _JSON_ONLY_TEXT.search(text):
+        return value, {}
     try:
-        _, lines = _parse_yaml(content.decode("utf-8"))
+        # Strict JSON holds no raw tab inside a string, so a tab here is only indentation.
+        _, lines = _parse_yaml(text.replace("\t", " "))
     except yaml.YAMLError, _RefusedError, RecursionError:
         lines = {}
     return value, lines
@@ -106,7 +121,7 @@ def _load_yaml(content: bytes, *, source: str) -> tuple[JsonValue, dict[KeyPath,
         raise WorkflowFileError(source=source, line=refusal.line, reason=refusal.reason) from None
     except ReaderError as error:
         # A character YAML does not allow: the reader gives its position, not a line.
-        at = text.count("\n", 0, error.position) + 1
+        at = len(_YAML_BREAK.findall(text, 0, error.position)) + 1
         character = error.character
         shown = f"#x{character:04x}" if isinstance(character, int) else "a character"
         reason = f"not valid YAML: {shown} is a character YAML does not allow"
@@ -138,16 +153,22 @@ def _parse_yaml(text: str) -> tuple[JsonValue, dict[KeyPath, int]]:
 
 
 def _key_lines(root: Node) -> dict[KeyPath, int]:
+    # Breadth first, so the entry cap keeps the shallow keys; nothing below MAX_LINE_DEPTH is
+    # visited, so the work stays bounded by the cap, not by the document's depth.
     lines: dict[KeyPath, int] = {(): root.start_mark.line + 1}
-    pending: list[tuple[KeyPath, Node]] = [((), root)]
+    pending: deque[tuple[KeyPath, Node]] = deque([((), root)])
     while pending:
-        path, node = pending.pop()
+        path, node = pending.popleft()
+        if len(path) >= MAX_LINE_DEPTH:
+            continue
         children: list[tuple[KeyPath, Node, Node]] = []
         if isinstance(node, MappingNode):
             children = [((*path, key.value), key, value) for key, value in node.value]
         elif isinstance(node, SequenceNode):
             children = [((*path, index), item, item) for index, item in enumerate(node.value)]
         for child, marked, value in children:
+            if len(lines) >= MAX_LINE_ENTRIES:
+                return lines
             lines[child] = marked.start_mark.line + 1
             pending.append((child, value))
     return lines
