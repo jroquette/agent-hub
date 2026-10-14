@@ -26,6 +26,7 @@ forbidden_modules =
     fastapi
     starlette
     uvicorn
+    yaml
 
 # cli is the composition root (ADR 0008): it may import the adapters to wire them into core use cases, nothing
 # imports it, and the adapters below it stay independent of each other ("|"). api (Phase 2) is a second
