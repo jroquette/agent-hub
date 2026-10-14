@@ -9,11 +9,11 @@
 3. With two PRs or more, per PR in ``hub.json`` order: its body read back, its Related PRs
    section made to list the other PRs (``with_related``), and the body edited only when that
    changed it, so a re-run edits nothing. A failure lists the PRs; the tracker is not written.
-4. The tracker writes of ``success_writes``: the move to the review state, the failed label
-   removed when the issue read carries it, then one comment listing the PRs. The first write
-   that fails stops them; none is retried. The failure is named without the adapter's advice
-   (spec E5), then the PRs open, the failed write as not confirmed (it may have landed), and
-   each later write as not done.
+4. The tracker writes of ``success_writes``: the move to the review state, the failed and blocked
+   labels removed when the issue read carries them (ADR 0030), then one comment listing the
+   PRs. The first write that fails stops them; none is retried. The failure is named without
+   the adapter's advice (spec E5), then the PRs open, the failed write as not confirmed (it may
+   have landed), and each later write as not done.
 
 Each child runs through ``ship_child``: in the caller's process group, with ``pr_steps``'
 environments, timeouts read from ``run_steps``' constants at call time (PD-2). A failure names
@@ -101,6 +101,7 @@ class ShipRun:
     client: TrackerClient
     review_state: str
     failed_label: str
+    blocked_label: str
 
 
 def ship_issue(run: ShipRun) -> int:
@@ -458,12 +459,13 @@ def _report(run: ShipRun, urls: Sequence[str]) -> None:
 
 
 def tracker_writes(run: ShipRun, urls: Sequence[str]) -> tuple[TrackerWrite, ...]:
-    """The writes of a ship that opened ``urls``: the move to the review state, the failed
-    label removed when the issue read carries it, the comment listing the PRs."""
+    """The writes of a ship that opened ``urls``: the move to the review state, the failed and
+    blocked labels removed when the issue read carries them, the comment listing the PRs."""
     return success_writes(
         run.issue,
         review_state=run.review_state,
         failed_label=run.failed_label,
+        blocked_label=run.blocked_label,
         comment=ship_comment(urls=urls, workspace=str(run.hub.parent)),
     )
 
