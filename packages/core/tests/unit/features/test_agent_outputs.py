@@ -260,31 +260,46 @@ def test_reports_repeated_finding_id_when_review_verdict_checked() -> None:
 
 
 @pytest.mark.parametrize(
-    ("file_name", "folder_name", "problem"),
+    ("ticket", "file_name", "folder_name", "problem"),
     [
         (
+            "AGH-7",
             "quality-r1.json",
             "AGH-7",
             OutputProblem("reviewer", "the reviewer is spec but the file name says quality"),
         ),
         (
+            "AGH-7",
             "spec-r2.json",
             "AGH-7",
             OutputProblem("round", "the round is 1 but the file name says 2"),
         ),
         (
+            "AGH-7",
             "spec-r1.json",
             "AGH-8",
             OutputProblem("ticket", "the ticket is AGH-7 but the folder is AGH-8"),
         ),
+        (
+            "AGS-7",
+            "spec-r1.json",
+            "agſ-7",
+            OutputProblem("ticket", "the ticket is AGS-7 but the folder is agſ-7"),
+        ),
+        (
+            "AGI-7",
+            "spec-r1.json",
+            "agı-7",
+            OutputProblem("ticket", "the ticket is AGI-7 but the folder is agı-7"),
+        ),
     ],
-    ids=["other reviewer", "other round", "other folder"],
+    ids=["other reviewer", "other round", "other folder", "long s folder", "dotless i folder"],
 )
 def test_reports_mismatch_when_review_file_name_differs(
-    file_name: str, folder_name: str, problem: OutputProblem
+    ticket: str, file_name: str, folder_name: str, problem: OutputProblem
 ) -> None:
     problems = named_review_problems(
-        a_review_document(), file_name=file_name, folder_name=folder_name
+        a_review_document(ticket=ticket), file_name=file_name, folder_name=folder_name
     )
 
     assert problems == (problem,)
