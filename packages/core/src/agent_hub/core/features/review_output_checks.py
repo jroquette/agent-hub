@@ -75,7 +75,8 @@ def _ticket_problems(document: dict[str, object], folder_name: str) -> Iterator[
     ticket = document.get("ticket")
     if not isinstance(ticket, str) or not well_formed(_TICKET, ticket):
         return
-    if ticket.upper() != folder_name.upper():
+    # ``str.upper`` maps some non-ASCII letters to ASCII (ſ to S, ı to I): compare ASCII only.
+    if not folder_name.isascii() or ticket.upper() != folder_name.upper():
         message = f"the ticket is {echo(ticket)} but the folder is {echo(folder_name)}"
         yield OutputProblem("ticket", message)
 

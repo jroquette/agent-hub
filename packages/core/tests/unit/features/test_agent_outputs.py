@@ -296,7 +296,7 @@ def test_reports_repeated_finding_id_when_review_verdict_checked() -> None:
     ids=["other reviewer", "other round", "other folder", "long s folder", "dotless i folder"],
 )
 def test_reports_mismatch_when_review_file_name_differs(
-    ticket: str, file_name: str, folder_name: str, problem: OutputProblem
+    *, ticket: str, file_name: str, folder_name: str, problem: OutputProblem
 ) -> None:
     problems = named_review_problems(
         a_review_document(ticket=ticket), file_name=file_name, folder_name=folder_name
