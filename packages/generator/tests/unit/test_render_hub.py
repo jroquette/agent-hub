@@ -4648,6 +4648,7 @@ RENDERING_MODULES = frozenset(
         "placeholders.py",
         "registry.py",
         "render_hub.py",
+        "workflow_outputs.py",
     }
 )
 
