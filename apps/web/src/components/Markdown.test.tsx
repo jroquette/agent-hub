@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../testing/axe";
 import { aFeatureShapedBody } from "../testing/builders";
-import { MAX_MARKDOWN_BYTES, Markdown, plainHeadingText } from "./Markdown";
+import { MAX_HEADING_CHARS, MAX_MARKDOWN_BYTES, Markdown, plainHeadingText } from "./Markdown";
 
 const NOTE = { project: "agent-hub", path: "playbooks/cloud-and-local.md" };
 
@@ -102,6 +102,34 @@ describe("Markdown blocks", () => {
 
     const ids = screen.getAllByRole("heading", { level: 2 }).map((h) => h.id);
     expect(ids).toEqual(["md-steps", "md-steps-1"]);
+  });
+
+  it.each([
+    ["# a #", "a"],
+    ["# a#", "a#"],
+    ["# #", ""],
+    ["#   ", ""],
+    ["# a ##  ", "a"],
+    ["## a\t#\t", "a"],
+    ["#" + " ".repeat(1000), ""],
+  ])("strips the closing sequence when heading %j is read (as core's TOC)", (line, text) => {
+    const { container } = render(<Markdown source={line} />);
+
+    const headings = [...container.querySelectorAll("h1, h2")];
+    expect(headings.map((heading) => heading.textContent)).toEqual([text]);
+  });
+
+  it("renders a line over the heading cap as text (as core's TOC)", () => {
+    const atCap = "# " + "a".repeat(MAX_HEADING_CHARS - 2);
+    const over = "# " + "b".repeat(MAX_HEADING_CHARS - 1);
+
+    const { container } = render(<Markdown source={`${atCap}\n\n${over}`} />);
+
+    expect(atCap).toHaveLength(MAX_HEADING_CHARS);
+    expect([...container.querySelectorAll("h1")].map((h) => h.textContent)).toEqual([
+      "a".repeat(MAX_HEADING_CHARS - 2),
+    ]);
+    expect(container.querySelector("p")?.textContent).toBe(over);
   });
 });
 

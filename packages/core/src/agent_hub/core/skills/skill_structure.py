@@ -19,6 +19,8 @@ MAX_STEPS: Final = 200
 MAX_STEP_TITLE_CHARS: Final = 80
 MAX_REFERENCES: Final = 200
 MAX_TOC_ENTRIES: Final = 200
+# A longer line is not a heading (here and in the web's renderer), so a TOC entry stays bounded.
+MAX_HEADING_CHARS: Final = 1024
 
 # A step: an ordered list item at column 0 (P5; the web's rule).
 STEP_LINE: Final = re.compile(r"^\d{1,9}[.)]\s")
@@ -76,7 +78,8 @@ CLAUDE_CODE_COMMANDS: Final = frozenset(
 
 _FENCE_OPEN: Final = re.compile(r"^[ \t]*(`{3,}|~{3,})(.*)$")
 _FENCE_CLOSE: Final = re.compile(r"`+|~+")
-_HEADING: Final = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
+# Linear by construction: the closing ``#`` sequence is stripped by ``_heading_text``, not here.
+_HEADING: Final = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*))?$")
 _DYNAMIC_SPAN: Final = re.compile(r"!`[^`]*`")
 _STEP_PREFIX: Final = re.compile(r"^\d{1,9}[.)]\s+")
 _BOLD_TITLE: Final = re.compile(r"^\*\*(.+?)\*\*")
@@ -195,13 +198,31 @@ def references(body: str, *, agents: frozenset[str], skills: frozenset[str]) -> 
     )
 
 
+def _heading_text(content: str) -> str:
+    """A heading's text from what follows its opening ``#`` run: trailing spaces and tabs
+    dropped, then a closing ``#`` sequence when a space or tab precedes it or nothing else is
+    left (CommonMark)."""
+    text = content.rstrip(" \t")
+    bare = text.rstrip("#")
+    if not bare:
+        return ""
+    if bare != text and bare[-1] in " \t":
+        return bare.rstrip(" \t")
+    return text
+
+
+def _heading(text: str) -> re.Match[str] | None:
+    return _HEADING.match(text) if len(text) <= MAX_HEADING_CHARS else None
+
+
 def table_of_contents(body: str) -> tuple[TocEntry, ...]:
     """The headings of ``body`` outside fenced code, in order (at most ``MAX_TOC_ENTRIES``);
-    headings with no text are left out. The web computes their anchors (P5)."""
+    headings with no text and lines over ``MAX_HEADING_CHARS`` are left out. The web computes
+    their anchors (P5)."""
     entries: list[TocEntry] = []
     for line in _lines(body):
-        found = None if line.fenced else _HEADING.match(line.text)
-        text = (found.group(2) or "").strip() if found else ""
+        found = None if line.fenced else _heading(line.text)
+        text = _heading_text(found.group(2) or "").strip() if found else ""
         if found and text:
             entries.append(TocEntry(level=len(found.group(1)), text=text))
             if len(entries) == MAX_TOC_ENTRIES:

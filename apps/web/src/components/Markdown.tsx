@@ -33,6 +33,8 @@ const MAX_QUOTE_DEPTH = 6;
 const MAX_INLINE_DEPTH = 8;
 /** How far a link's label and destination may run before the `[` is taken as text. */
 const LINK_WINDOW = 2000;
+/** A longer line is not a heading (core's `MAX_HEADING_CHARS`, so the TOC matches the body). */
+export const MAX_HEADING_CHARS = 1024;
 
 type Align = "left" | "center" | "right" | null;
 type Block =
@@ -60,18 +62,37 @@ interface Depth {
 /* ---------- Blocks ---------- */
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*([^`\s]*)/;
-const HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/;
+// Linear by construction: the closing `#` sequence is stripped by `headingText`, not here.
+const HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*))?$/;
 const RULE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 const ITEM = /^( *)([-*+]|\d{1,9}[.)])( +|$)(.*)$/;
 const QUOTE = /^ {0,3}> ?(.*)$/;
 const TABLE_RULE = /^ *\|? *:?-+:? *(\| *:?-+:? *)*\|? *$/;
+
+/** A heading's text: trailing blanks dropped, then a closing `#` run after a blank or alone. */
+function headingText(content: string): string {
+  const text = content.replace(/[ \t]+$/, "");
+  let end = text.length;
+  while (end > 0 && text[end - 1] === "#") end--;
+  if (end === 0) return "";
+  if (end < text.length && (text[end - 1] === " " || text[end - 1] === "\t")) {
+    return text.slice(0, end).replace(/[ \t]+$/, "");
+  }
+  return text;
+}
+
+const heading = (line: string) => (line.length <= MAX_HEADING_CHARS ? HEADING.exec(line) : null);
 
 const lead = (line: string) => line.length - line.trimStart().length;
 const blank = (line: string) => line.trim() === "";
 
 function startsBlock(line: string): boolean {
   return (
-    FENCE.test(line) || HEADING.test(line) || RULE.test(line) || ITEM.test(line) || QUOTE.test(line)
+    FENCE.test(line) ||
+    heading(line) !== null ||
+    RULE.test(line) ||
+    ITEM.test(line) ||
+    QUOTE.test(line)
   );
 }
 
@@ -169,10 +190,10 @@ function parseBlocks(lines: string[], depth: Depth): Block[] {
       blocks.push({ t: "code", lang: (fence[2] ?? "").slice(0, 40), text: body.join("\n") });
       continue;
     }
-    const heading = HEADING.exec(line);
-    if (heading) {
-      const level = Math.min(6, Math.max(1, (heading[1] ?? "#").length)) as 1 | 2 | 3 | 4 | 5 | 6;
-      blocks.push({ t: "heading", level, text: heading[2] ?? "" });
+    const found = heading(line);
+    if (found) {
+      const level = Math.min(6, Math.max(1, (found[1] ?? "#").length)) as 1 | 2 | 3 | 4 | 5 | 6;
+      blocks.push({ t: "heading", level, text: headingText(found[2] ?? "") });
       i++;
       continue;
     }
