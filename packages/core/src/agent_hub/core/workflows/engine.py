@@ -123,9 +123,10 @@ class _Run:
         self.ends: dict[str, NodeEnd] = {}
         # The results references read, kept beside ``ends`` as nodes end.
         self.results: dict[str, NodeResult] = {}
-        # Nodes whose result differs from the prior run's: their descendants are not reused.
+        # Nodes whose result differs from the prior run's, and nodes below one (stale): neither
+        # is reused. One flag per node, set in layer order.
         self.changed: set[str] = set()
-        self.ancestors: dict[str, frozenset[str]] = {}
+        self.stale: set[str] = set()
         self.attempts = dict(prior.attempts)
         self.sessions = dict(prior.sessions)
         self.halted_by: str | None = None
@@ -135,9 +136,8 @@ class _Run:
         for layer in self.plan.layers:
             for node_id in layer:
                 node = nodes[node_id]
-                self.ancestors[node_id] = frozenset(
-                    ancestor for dep in node.depends_on for ancestor in (dep, *self.ancestors[dep])
-                )
+                if any(dep in self.changed or dep in self.stale for dep in node.depends_on):
+                    self.stale.add(node_id)
                 self._visit(node)
                 if self.ends[node_id].result != self.prior.nodes.get(node_id):
                     self.changed.add(node_id)
@@ -195,7 +195,7 @@ class _Run:
         if isinstance(node, HaltNode | ApprovalNode) or node.always_run:
             return False
         # References reach only ancestors (planning), so an unchanged ancestry reads the same.
-        return not self.ancestors[node.id] & self.changed
+        return node.id not in self.stale
 
     def _attempt(self, node: Node) -> int:
         self.attempts[node.id] = self.attempts.get(node.id, 0) + 1
@@ -313,20 +313,32 @@ class _Run:
             try:
                 return once()
             except NodeFailedError as failure:
-                decision = retry_decision(
-                    failure.kind,
-                    node.retry,
-                    node_type=node.type,
-                    retries_done=retries,
-                    jitter=self.ports.jitter,
-                )
-                if not decision.retry:
+                if not self._wait_for_retry(node, failure, retries):
                     return None
-                attempt = self.attempts[node.id]
-                record = RetryRecord(attempt, failure.kind, decision.delay)
-                self.ports.recorder.retry_scheduled(node.id, record)
-                self.ports.clock.sleep(decision.delay)
                 retries += 1
+
+    def _wait_for_retry(self, node: ExecutableNode, failure: NodeFailedError, retries: int) -> bool:
+        """Whether to try again, after the wait. A jitter or clock that raises leaves the node
+        failed with the kind its attempt ended with, and the run goes on."""
+        try:
+            decision = retry_decision(
+                failure.kind,
+                node.retry,
+                node_type=node.type,
+                retries_done=retries,
+                jitter=self.ports.jitter,
+            )
+        except Exception:  # noqa: BLE001 - a port's unexpected error: no retry
+            return False
+        if not decision.retry:
+            return False
+        record = RetryRecord(self.attempts[node.id], failure.kind, decision.delay)
+        self.ports.recorder.retry_scheduled(node.id, record)
+        try:
+            self.ports.clock.sleep(decision.delay)
+        except Exception:  # noqa: BLE001 - a port's unexpected error: no retry
+            return False
+        return True
 
     def _complete(self, node: ExecutableNode, turn: Turn | None) -> None:
         if turn is None:
