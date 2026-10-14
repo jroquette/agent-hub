@@ -45,6 +45,19 @@ def test_folds_description_when_folded_block_scalar(header: str, expected: str) 
     assert values["name"] == "plan"
 
 
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        ("| # c", "kept\n"),
+        (">- # c", "kept"),
+        ("|\t# c", "kept\n"),
+        (">" + " " * 4000 + "# c", "kept\n"),
+    ],
+)
+def test_drops_comment_when_block_scalar_header_has_one(header: str, expected: str) -> None:
+    assert _values(_doc(f"description: {header}", "  kept"))["description"] == expected
+
+
 def test_keeps_more_indented_lines_when_folded_block_scalar() -> None:
     text = _doc("description: >", "  One", "    indented", "  two")
 

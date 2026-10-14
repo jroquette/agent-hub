@@ -33,7 +33,8 @@ _UNSUPPORTED_START: Final = {
 }
 _BLOCK_HEADER: Final = re.compile(r"^([|>])([+-]?)$")
 _INDENT_INDICATOR: Final = re.compile(r"^[|>][+-]?[0-9]|^[|>][0-9]")
-_HEADER_COMMENT: Final = re.compile(r"[ \t]+#.*$")
+# One blank before the ``#`` (the rest are stripped after): ``[ \t]+#`` backtracks quadratically.
+_HEADER_COMMENT: Final = re.compile(r"[ \t]#.*$")
 _MAP_IN_ITEM: Final = re.compile(r"^[^\s\"'\[{][^:]*:(?:[ \t]|$)")
 _LIST_ITEM: Final = re.compile(r"^-(?:[ \t]|$)")
 _FOLDED: Final = ">"
@@ -159,7 +160,7 @@ def _children(lines: Sequence[_Line], start: int, *, compact_list: bool) -> int:
 
 
 def _block_header(header: str, number: int) -> tuple[str, str]:
-    header = _HEADER_COMMENT.sub("", header)
+    header = _HEADER_COMMENT.sub("", header, count=1).rstrip(" \t")
     if _INDENT_INDICATOR.match(header):
         raise _Unparseable(
             f"Line {number} of the frontmatter uses an indentation indicator, outside the subset"
