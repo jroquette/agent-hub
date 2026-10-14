@@ -31,8 +31,10 @@ cross-check (the spec keeps naming it, under ``## Amendments``) and skips the pe
 AGH-139 (``feature_output_checks``): the folder's agent outputs, ``evals/*.json`` and
 ``reviews/<ticket>/*.json`` (hidden names skipped), get warnings only: one without its ``.md``
 record, one that fails ``agent_outputs``' validation (its problem count and first problem), within
-per-feature caps. Only folders with a listed record are checked; the outputs change no other
-finding.
+per-feature file caps and one validation budget per run, which the records spend in listing
+order; an output is validated when it fits the remaining budget, and the skipped outputs are
+counted in one info finding per run, on ``brain/features``. Only folders with a listed record are
+checked; the outputs change no other finding.
 """
 
 import re
@@ -45,7 +47,10 @@ from agent_hub.core.doctor.feature_output_checks import (
     EVALS_FOLDER,
     OUTPUT_SUFFIX,
     REVIEWS_FOLDER,
+    SKIPPED_FIX,
+    OutputBudget,
     output_problems,
+    skipped_message,
 )
 from agent_hub.core.doctor.feature_plan_checks import (
     RECORD_FIX,
@@ -112,20 +117,27 @@ def _features_tracker(snapshot: DoctorSnapshot) -> Iterable[Finding]:
     project = _project_of(snapshot.hub_config)
     listed = frozenset(snapshot.hub.listed)
     entries = snapshot.hub.entries
-    evals = _evals_by_folder(snapshot.hub.listed)
-    outputs = _outputs_by_folder(snapshot.hub.listed)
-    return tuple(
-        finding
-        for path in snapshot.hub.listed
-        if _is_record(path)
-        for finding in _record_findings(
-            path,
-            entries=entries,
-            listed=listed,
-            project=project,
-            folders=_Folders(evals=evals, outputs=outputs),
-        )
+    folders = _Folders(
+        evals=_evals_by_folder(snapshot.hub.listed),
+        outputs=_outputs_by_folder(snapshot.hub.listed),
     )
+    found: list[Finding] = []
+    # One output budget for the run, spent by the records in listing order (E22).
+    budget = OutputBudget()
+    for path in snapshot.hub.listed:
+        if _is_record(path):
+            findings, budget = _record_findings(
+                path,
+                entries=entries,
+                listed=listed,
+                project=project,
+                folders=folders,
+                budget=budget,
+            )
+            found.extend(findings)
+    if budget.skipped:
+        found.append(_skipped_info(budget.skipped))
+    return tuple(found)
 
 
 def _evals_by_folder(listed: Iterable[str]) -> dict[str, list[str]]:
@@ -193,7 +205,9 @@ def _record_findings(
     listed: frozenset[str],
     project: _Project,
     folders: _Folders,
-) -> tuple[Finding, ...]:
+    budget: OutputBudget,
+) -> tuple[tuple[Finding, ...], OutputBudget]:
+    """The findings on one record and its folder, and the run's output budget after them."""
     folder = path.removesuffix(RECORD_NAME)
     spec_path = folder + SPEC_NAME
     spec = _spec_text(entries.get(spec_path)) if spec_path in listed else None
@@ -217,6 +231,14 @@ def _record_findings(
             for item in spec_linear(_spec_head(entries.get(spec_path), spec))
         )
     )
+    outputs = output_problems(
+        folder,
+        outputs=folders.outputs.get(folder, ()),
+        entries=entries,
+        listed=listed,
+        record=_record_bytes(entries.get(path)),
+        budget=budget,
+    )
     return (
         *(_finding(spec_path, problem) for problem in spec_problems),
         *(_finding(path, problem) for problem in problems),
@@ -225,18 +247,17 @@ def _record_findings(
             for eval_path in folders.evals.get(folder, ())
             for problem in _eval_file_problems(eval_path, entries.get(eval_path), ac_ids=ac_ids)
         ),
-        *(
-            _finding(output_path, problem)
-            for output_path, problem in output_problems(
-                folder,
-                outputs=folders.outputs.get(folder, ()),
-                entries=entries,
-                listed=listed,
-                record=_record_bytes(entries.get(path)),
-            )
-        ),
+        *(_finding(output_path, problem) for output_path, problem in outputs.found),
         *((_no_ids_warning(path),) if unlinked else ()),
+    ), outputs.budget
+
+
+def _skipped_info(count: int) -> Finding:
+    """The run's one info line on the agent outputs no cap or budget let it validate (E22)."""
+    finding = FEATURES_TRACKER.finding(
+        path="/".join(FEATURES_FOLDER), message=skipped_message(count), fix=SKIPPED_FIX
     )
+    return replace(finding, severity=Severity.INFO)
 
 
 def _record_bytes(entry: TreeEntry | None) -> bytes | None:

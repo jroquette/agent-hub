@@ -8,28 +8,29 @@ without one gets that warning only and is not validated. The others are validate
 problem, and the ``hub validate-output`` command that lists them all. An output that is not a
 regular file, or whose read failed, gets the rule's usual read warning.
 
-The work is bounded per feature: the first ``MAX_EVAL_FILES`` eval and ``MAX_REVIEW_FILES``
-review outputs by path are checked, and an output is validated only while the bytes handed to core
-stay within ``MAX_VALIDATED_BYTES`` (an output's own bytes; for an eval also the sibling's head
-and the record; a file core refuses over its bound costs nothing). Past a cap an output gets no
-finding: the caps keep the doctor's time bounded on a hostile hub, ``hub validate-output`` checks
-any file.
+The work is bounded. Per feature, the first ``MAX_EVAL_FILES`` eval and ``MAX_REVIEW_FILES``
+review outputs by path are checked (the caps of the records they sit beside). Per run, one budget of
+``MAX_VALIDATED_BYTES`` is shared by every feature in listing order: an output is validated when
+the bytes it hands core fit the remaining budget (its own bytes; for an eval also the sibling's
+head and the record; a file core refuses over its bound costs nothing). The outputs left out by a
+cap or the budget get no finding of their own: ``OutputBudget.skipped`` counts them, and the rule
+reports the count in one info finding per run (``skipped_message``); ``hub validate-output``
+checks any file.
 """
 
 import shlex
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Mapping
 from typing import Final, NamedTuple
 
 from agent_hub.core.doctor.feature_plan_checks import Problem, file_content
 from agent_hub.core.features import agent_outputs
-from agent_hub.core.features.feature_evals import EVAL_HEAD_BYTES
+from agent_hub.core.features.feature_evals import EVAL_HEAD_BYTES, MAX_EVAL_FILES
 from agent_hub.core.features.feature_record import MAX_RECORD_BYTES
+from agent_hub.core.features.feature_reviews import MAX_REVIEW_FILES
 from agent_hub.core.features.output_models import MAX_OUTPUT_BYTES, OutputProblem
 from agent_hub.core.hub_config.problems import one_line
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, TreeEntry
 
-MAX_EVAL_FILES: Final = 200
-MAX_REVIEW_FILES: Final = 500
 MAX_VALIDATED_BYTES: Final = 4_194_304
 OUTPUT_SUFFIX: Final = ".json"
 NOTE_SUFFIX: Final = ".md"
@@ -38,9 +39,24 @@ REVIEWS_FOLDER: Final = "reviews"
 NO_EVAL_NOTE: Final = "eval output without its record evals/<name>.md"
 NO_EVAL_NOTE_FIX: Final = "write the eval record beside it, or remove the output"
 NO_REVIEW_NOTE: Final = "review output without its ticket record reviews/<ticket>.md"
+SKIPPED_FIX: Final = "run ./hub validate-output <kind> <path> on each"
 NO_REVIEW_NOTE_FIX: Final = (
     "write reviews/<ticket>.md once the ticket's reviews pass, or remove the output"
 )
+
+
+class OutputBudget(NamedTuple):
+    """What is left of a run's validation budget, and how many outputs went unvalidated."""
+
+    left: int = MAX_VALIDATED_BYTES
+    skipped: int = 0
+
+
+class OutputCheck(NamedTuple):
+    """The warnings on a folder's outputs, by output path, and the run's budget after them."""
+
+    found: tuple[tuple[str, Problem], ...]
+    budget: OutputBudget
 
 
 class _Output(NamedTuple):
@@ -68,31 +84,45 @@ def output_problems(
     entries: Mapping[str, TreeEntry],
     listed: frozenset[str],
     record: bytes | None,
-) -> tuple[tuple[str, Problem], ...]:
-    """Each warning on the outputs of ``folder`` (``brain/features/<name>/``), by output path.
+    budget: OutputBudget,
+) -> OutputCheck:
+    """Each warning on the outputs of ``folder`` (``brain/features/<name>/``), by output path,
+    with ``budget`` (what the run's earlier folders left) spent on the outputs validated here.
 
     ``outputs`` are the listed ``evals/*.json`` and ``reviews/<ticket>/*.json`` of the folder,
     hidden names left out; ``record`` is the bytes of its ``features.json`` (None when unread).
     """
     found: list[tuple[str, Problem]] = []
-    spent = 0
-    for output in _capped(folder, outputs):
+    kept, over_cap = _capped(folder, outputs)
+    left, skipped = budget.left, budget.skipped + over_cap
+    for output in kept:
         inputs = _inputs(output, entries=entries, listed=listed, record=record)
         if isinstance(inputs, Problem):
             found.append((output.path, inputs))
-        elif inputs is not None and spent + inputs.cost <= MAX_VALIDATED_BYTES:
-            spent += inputs.cost
+        elif inputs is not None and inputs.cost > left:
+            skipped += 1
+        elif inputs is not None:
+            left -= inputs.cost
             problems = _validated(output, inputs, record=record)
             if problems:
                 found.append((output.path, _invalid(output, problems)))
-    return tuple(found)
+    return OutputCheck(tuple(found), OutputBudget(left=left, skipped=skipped))
 
 
-def _capped(folder: str, outputs: Iterable[str]) -> Iterator[_Output]:
-    """The first eval outputs, then the first review outputs, each kind in path order."""
+def skipped_message(count: int) -> str:
+    """The run's info line on the outputs no cap or budget let it validate."""
+    noun = "output" if count == 1 else "outputs"
+    return f"{count} agent {noun} not validated (over the doctor's budget)"
+
+
+def _capped(folder: str, outputs: Iterable[str]) -> tuple[list[_Output], int]:
+    """The first eval outputs, then the first review outputs, each kind in path order, and how
+    many outputs the caps left out."""
     parsed = [output for path in sorted(outputs) if (output := _output(folder, path)) is not None]
-    yield from [output for output in parsed if output.kind == "eval"][:MAX_EVAL_FILES]
-    yield from [output for output in parsed if output.kind == "review"][:MAX_REVIEW_FILES]
+    evals = [output for output in parsed if output.kind == "eval"]
+    reviews = [output for output in parsed if output.kind == "review"]
+    kept = [*evals[:MAX_EVAL_FILES], *reviews[:MAX_REVIEW_FILES]]
+    return kept, len(parsed) - len(kept)
 
 
 def _output(folder: str, path: str) -> _Output | None:
