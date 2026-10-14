@@ -271,6 +271,22 @@ def test_reads_item_when_listed_and_catalog_cold() -> None:
     assert reader.skill_reads != []
 
 
+def test_refuses_ids_when_they_end_with_newline() -> None:
+    reads, reader, _ = _reads()
+    detail = reads.detail(project=FIXTURE_PROJECT, hub_path=HUB, **ALPHA)
+    issued = detail.files[0].id
+    newline = {**ALPHA, "name": "alpha\n"}
+
+    with pytest.raises(EntityNotFoundError):
+        reads.detail(project=FIXTURE_PROJECT, hub_path=HUB, **newline)
+    with pytest.raises(EntityNotFoundError):
+        reads.file(project=FIXTURE_PROJECT, hub_path=HUB, file_id=f"{issued}\n", **ALPHA)
+    with pytest.raises(EntityNotFoundError):
+        reads.detail(project=FIXTURE_PROJECT, hub_path=HUB, **{**ALPHA, "source": "hub-workflow\n"})
+
+    assert reader.skill_listings == [HUB]
+
+
 def test_joins_usage_when_source_given() -> None:
     usage = FakeUsage(a_skill_usage())
     reads, _, _ = _reads(usage=usage)
