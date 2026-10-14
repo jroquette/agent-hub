@@ -55,7 +55,7 @@ def test_leaves_the_line_unknown_when_loader_recorded_none() -> None:
     [problem] = check_workflows(ListSource(a_file("lint", depends_on=["ghost"]))).problems
 
     assert problem == LoadProblem(
-        "workflows/demo/lint.yaml", None, "nodes[0].depends_on[0]", "no node has the id 'ghost'"
+        "workflows/demo/lint.yaml", None, "nodes[0].depends_on[0]", 'no node has the id "ghost"'
     )
 
 
