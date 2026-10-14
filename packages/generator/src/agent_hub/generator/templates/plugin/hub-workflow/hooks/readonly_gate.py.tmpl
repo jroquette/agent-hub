@@ -1014,14 +1014,14 @@ def read_tail(path: str) -> tuple | None:
 def still_running(path: str) -> bool | None:
     """Whether a subagent transcript's tail holds a tool call with no result after it: that
     subagent is inside one call, which writes nothing until it ends (E-2). None when the tail
-    cannot tell: unreadable, no whole line in it, a line holding a tool that is not JSON, or (a
-    tail starting mid-file) a result whose call is before the tail with no assistant entry after
-    it: that turn's other calls are out of view and one may still run. Claude Code writes each
-    block of one assistant message on its own line, sharing `message.id`: in a tail starting
-    mid-file, the last turn holding a call must have a whole line of something else before its
-    first line, unless a later assistant entry closes it; a call line without a `message.id` is
-    out of view too. Every whole line of the tail (at most MAX_TAIL_BYTES) holding a tool or
-    `"assistant"` is parsed."""
+    cannot tell: unreadable, no whole line in it, a line holding a tool that is not JSON, or a
+    result whose `tool_use_id` is not a string. Claude Code writes each block of one assistant
+    message on its own line, sharing `message.id`, with results and other lines between them. In
+    a tail starting mid-file, also None when (1) a result's call is before the tail and no
+    assistant entry of another message (than that result's turn) follows it, (2) the last turn
+    holding a call has no user or assistant entry before its first line in the tail and none of
+    another message after it, or (3) a call line has no `message.id`. Every whole line of the
+    tail (at most MAX_TAIL_BYTES) is parsed."""
     tail = read_tail(path)
     if tail is None:
         return None
@@ -1029,47 +1029,54 @@ def still_running(path: str) -> bool | None:
     lines = data.split(b"\n")
     if cut:
         lines = lines[1:]  # the first one may start mid-line
-    pending, seen, whole, orphan = set(), set(), False, False
-    turns, last_turn, no_id = [], None, False  # [(whole line number, message.id)] of assistant entries
-    number = -1
+    pending, seen, whole = set(), set(), False
+    turns, last_turn, no_id = [], None, False  # [(type, message.id)] of the user and assistant entries
+    current = None  # the message.id of the last assistant entry
+    orphan, orphan_turn = False, None  # a result whose call is out of view, and that call's turn
     for line in lines:
         if not line.strip():
             continue
         whole = True
-        number += 1
-        tools = b'"tool_use"' in line or b'"tool_result"' in line
-        if not tools and b'"assistant"' not in line:
-            continue
         try:
             entry = json.loads(line)
         except (ValueError, RecursionError):
-            if tools:
+            if b'"tool_use"' in line or b'"tool_result"' in line:
                 return None
             continue
-        if isinstance(entry, dict) and entry.get("type") == "assistant":
-            orphan = False  # the model went on: every call of the turns before it had its result
-        message = entry.get("message") if isinstance(entry, dict) else None
+        if not isinstance(entry, dict) or entry.get("type") not in ("user", "assistant"):
+            continue  # an attachment, a summary, a progress or system line: no conversation entry
+        message = entry.get("message")
         content = message.get("content") if isinstance(message, dict) else None
-        if isinstance(entry, dict) and entry.get("type") == "assistant":
+        blocks = [block for block in content if isinstance(block, dict)] if isinstance(content, list) else []
+        if entry["type"] == "assistant":
             message_id = message.get("id") if isinstance(message, dict) else None
-            turns.append((number, message_id))
-            calls = isinstance(content, list) and any(
-                isinstance(block, dict) and block.get("type") == "tool_use" for block in content
-            )
+            message_id = message_id if isinstance(message_id, str) else None
+            calls = any(block.get("type") == "tool_use" for block in blocks)
+            if orphan and message_id is not None:
+                if orphan_turn is None and calls:
+                    orphan_turn = message_id  # may continue the orphan's turn: that turn is this one
+                elif message_id != orphan_turn:
+                    orphan = False  # another message: every call of the orphan's turn had its result
             if calls:
                 last_turn = message_id
-                no_id = no_id or not isinstance(message_id, str)
-        for block in content if isinstance(content, list) else []:
-            block_type = block.get("type") if isinstance(block, dict) else None
-            if block_type == "tool_use":
+                no_id = no_id or message_id is None
+            current = message_id
+            turns.append(("assistant", message_id))
+        else:
+            turns.append(("user", None))
+        for block in blocks:
+            if block.get("type") == "tool_use":
                 call_id = block.get("id")
                 if isinstance(call_id, str):
                     seen.add(call_id)
                 pending.add(call_id if isinstance(call_id, str) else object())  # no id: never answered
-            elif block_type == "tool_result":
+            elif block.get("type") == "tool_result":
                 answered = block.get("tool_use_id")
+                if not isinstance(answered, str):
+                    return None
                 pending.discard(answered)
-                orphan = orphan or answered not in seen
+                if answered not in seen and not orphan:
+                    orphan, orphan_turn = True, current
     if pending:
         return True
     if cut and (orphan or not whole or no_id or turn_cut(turns, last_turn)):
@@ -1078,13 +1085,16 @@ def still_running(path: str) -> bool | None:
 
 
 def turn_cut(turns: list, turn: object) -> bool:
-    """Whether the assistant turn `turn` (a message.id) starts on the tail's first whole line
-    (line 0), so lines of it may be before the tail, and no later assistant entry of another
-    message closes it. False when no turn holds a call."""
+    """Whether the assistant turn `turn` (a message.id) has no user or assistant entry before its
+    first line in the tail, so lines of it may be before the tail, and no later assistant entry
+    of another message closes it. False when no turn holds a call."""
     if turn is None:
         return False
-    numbers = [number for number, message_id in turns if message_id == turn]
-    later = any(number > numbers[-1] and message_id != turn for number, message_id in turns)
+    numbers = [number for number, (kind_of, message_id) in enumerate(turns) if message_id == turn]
+    later = any(
+        number > numbers[-1] and kind_of == "assistant" and message_id != turn
+        for number, (kind_of, message_id) in enumerate(turns)
+    )
     return numbers[0] == 0 and not later
 
 
