@@ -59,7 +59,7 @@ STALE_SECONDS = 12 * 60 * 60  # a start state older than this is replaced
 MAX_BLOCKS = 1  # per agent_id
 MAX_COMMANDS = 10  # Bash commands a block lists: the agent's last ones
 MAX_COMMAND_CHARS = 160  # per listed command, on one line
-MAX_TARGETS = 256  # distinct paths the agent's file tools named, resolved once each
+MAX_TARGETS = 256  # distinct paths the agent's file tools named that are kept, resolved once each
 
 
 def read_event() -> dict:
@@ -635,8 +635,8 @@ def agent_calls(event: dict) -> tuple:
     MAX_COMMANDS Bash commands on one line each, whether its transcript was read). Only lines
     holding `"tool_use"` are parsed; a line over MAX_LINE_BYTES or not JSON is skipped; a path
     that is not absolute names nothing. The transcript is not read when it takes longer than
-    TRANSCRIPT_BUDGET (or the budget left; one line may overrun it) or names more than
-    MAX_TARGETS distinct paths: partial evidence never blocks."""
+    TRANSCRIPT_BUDGET (or the budget left; one line may overrun it). Past MAX_TARGETS distinct
+    paths no more are kept: fewer own paths can only turn a block into a report."""
     deadline = min(run["deadline"], time.monotonic() + TRANSCRIPT_BUDGET)
     path = agent_transcript(event)
     raw = read_transcript(path) if path is not None else None
@@ -660,10 +660,8 @@ def agent_calls(event: dict) -> tuple:
                     commands.append(text)
             elif name in FILE_TOOLS:
                 target = tool_input.get(FILE_TOOLS[name])
-                if isinstance(target, str) and os.path.isabs(target):
+                if isinstance(target, str) and os.path.isabs(target) and len(targets) < MAX_TARGETS:
                     targets.add(target)
-                    if len(targets) > MAX_TARGETS:
-                        return set(), [], False
     own = set()
     for target in targets:
         if time.monotonic() >= deadline:
@@ -691,6 +689,7 @@ def emit_result(
     """One JSON object: a block (`decision`, `reason`, with the agent's Bash commands as the
     evidence) with the report and the notes as its `systemMessage`; else the `systemMessage`
     alone; nothing when there is nothing to say."""
+    agent_type, agent_id = printable(agent_type), printable(agent_id)
     parts = []
     if report:
         head = f"[hub readonly-gate] changed while {agent_type} (agent {agent_id}) ran, not attributed to it"
