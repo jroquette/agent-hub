@@ -5,8 +5,11 @@
 
 A run's outcome (AGH-140) is ``delivered`` with its PR, ``failed``, or one of two ends that are
 not failures: ``no_changes`` (no commit on the branch) and ``blocked`` (the session stopped and
-asked for a human). Those record ``not_delivered`` instead of ``failed``; the tracker still gets
-the failure's label and diagnosis, and the command still exits 1.
+asked for a human). Those record ``not_delivered`` instead of ``failed`` and get a report of
+their own (ADR 0030): ``no_changes`` a comment and no label, exit 0; ``blocked`` the blocked
+label (``tracker.blocked_label``, else the failed label) and a comment with the session's
+question, exit ``BLOCKED_EXIT`` (3). Every outcome but ``failed`` removes the outcome labels the
+issue carries; a tracker write that fails makes the exit 1 whatever the outcome.
 
 Each stage raises ``StageFailure`` naming itself and the reason; the report then runs through
 the tracker port. The worktree is made in process with ``hub worktree``'s steps (D7, E18), each
@@ -65,8 +68,10 @@ from agent_hub.cli.worktree_steps import check_branches, create_worktree, worktr
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.runner.report_writes import (
     TrackerWrite,
+    blocked_writes,
     call_line,
     failure_writes,
+    no_changes_writes,
     success_writes,
 )
 from agent_hub.core.runner.run_record import (
@@ -77,9 +82,11 @@ from agent_hub.core.runner.run_record import (
     reported_data,
 )
 from agent_hub.core.runner.run_texts import (
+    blocked_comment,
     commit_summary,
     failure_comment,
     inbox_line,
+    no_changes_comment,
     pr_body,
     success_comment,
 )
@@ -98,6 +105,9 @@ PUSH_TIMEOUT: Final = 300.0
 GH_TIMEOUT: Final = 120.0
 GIT_TIMEOUT: Final = 120.0
 MAX_LOGGED_REASON_CHARS: Final = 1_500
+# The exit of a run whose session stopped for a human and whose report was made (ADR 0030);
+# 0 is delivered or no changes, 1 (``FAILURE``) a failure or a report that failed.
+BLOCKED_EXIT: Final = 3
 MAX_GATE_SHOWN_CHARS: Final = 200
 # The most of a child's output kept (its last bytes): the gate's and git's, and the session's,
 # whose whole JSON result must fit.
@@ -110,13 +120,21 @@ _HOOKS_OFF = ("-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false"
 
 class StageFailure(Exception):  # noqa: N818 - a stage's outcome, read as "the stage failed"
     """A stage ended the run: the stage, why, and the run's outcome (``failed`` unless the run
-    ended without a PR yet without failing)."""
+    ended without a PR yet without failing); ``question`` is what a blocked session asked."""
 
-    def __init__(self, stage: Stage, reason: str, outcome: RunOutcome = RunOutcome.FAILED) -> None:
+    def __init__(
+        self,
+        stage: Stage,
+        reason: str,
+        outcome: RunOutcome = RunOutcome.FAILED,
+        *,
+        question: str = "",
+    ) -> None:
         super().__init__(reason)
         self.stage = stage
         self.reason = reason
         self.outcome = outcome
+        self.question = question
 
 
 @dataclass(kw_only=True, slots=True)
@@ -245,7 +263,9 @@ class LiveRun:
             },
         )
         if outcome.kind is OutcomeKind.STOPPED:
-            raise StageFailure(Stage.IMPLEMENTING, outcome.text, RunOutcome.BLOCKED)
+            raise StageFailure(
+                Stage.IMPLEMENTING, outcome.text, RunOutcome.BLOCKED, question=outcome.question
+            )
         if outcome.kind is not OutcomeKind.DONE:
             raise StageFailure(Stage.IMPLEMENTING, outcome.text)
         self.summary = outcome.text
@@ -350,6 +370,7 @@ class LiveRun:
             self.issue,
             review_state=self.children.config.tracker.states.review,
             failed_label=self.children.config.tracker.failed_label,
+            blocked_label=self.children.config.tracker.effective_blocked_label,
             comment=comment,
         )
 
@@ -373,26 +394,43 @@ class LiveRun:
             self.log.record("not_delivered", data)
             ended = f"NOT DELIVERED ({failure.outcome})"
         typer.echo(f"{ended} at {failure.stage}: {shown_text(failure.reason)}", err=True)
-        comment = failure_comment(
-            run_id=self.log.run_id,
-            stage=failure.stage.value,
-            reason=failure.reason,
-            workspace=self._workspace,
-        )
-        writes = failure_writes(
-            issue_id=self.issue.id,
-            failed_label=self.children.config.tracker.failed_label,
-            comment=comment,
-        )
+        writes, exit_code = self._outcome_report(failure)
         if is_failed:
             self.log.state = Stage.FAILED
-        self._report(
+        made = self._report(
             writes,
             failed_stage=failure.stage if is_failed else None,
             run_outcome=failure.outcome,
         )
         self._inbox(f"{ended} at {failure.stage}")
-        return FAILURE
+        return exit_code if made else FAILURE
+
+    def _outcome_report(self, failure: StageFailure) -> tuple[tuple[TrackerWrite, ...], int]:
+        """The tracker writes of a run that ended without a PR, and its exit once they are made
+        (ADR 0030)."""
+        tracker = self.children.config.tracker
+        failed, blocked = tracker.failed_label, tracker.effective_blocked_label
+        run_id, stage, workspace = self.log.run_id, failure.stage.value, self._workspace
+        if failure.outcome is RunOutcome.NO_CHANGES:
+            comment = no_changes_comment(
+                run_id=run_id, stage=stage, reason=failure.reason, workspace=workspace
+            )
+            writes = no_changes_writes(
+                self.issue, failed_label=failed, blocked_label=blocked, comment=comment
+            )
+            return writes, 0
+        if failure.outcome is RunOutcome.BLOCKED:
+            comment = blocked_comment(
+                run_id=run_id, stage=stage, question=failure.question, workspace=workspace
+            )
+            writes = blocked_writes(
+                self.issue, failed_label=failed, blocked_label=blocked, comment=comment
+            )
+            return writes, BLOCKED_EXIT
+        comment = failure_comment(
+            run_id=run_id, stage=stage, reason=failure.reason, workspace=workspace
+        )
+        return failure_writes(issue_id=self.issue.id, failed_label=failed, comment=comment), FAILURE
 
     def _report(
         self, writes: Sequence[TrackerWrite], *, failed_stage: Stage | None, run_outcome: RunOutcome
