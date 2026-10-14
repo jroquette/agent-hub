@@ -20,8 +20,8 @@ Never approve a PR this session opened or pushed to, and never merge: merging is
    When the ticket has ACs, it marks every AC `covered`, `not covered` or `not testable`, naming the test that covers it (`path::test`) or why none can.
 4. `agent` **`quality-reviewer`** in a fresh context, on the same diff: invariants, security and secrets, idempotency and failure paths, and tests that pass vacuously (would they fail if the code were wrong?).
    Both reviewers stay read-only and see only their own input, not each other's findings.
-5. `agent` **Consolidate** both reports and step 2 into one list. Each finding: `path:line`, severity (blocking / should-fix / nit), the source it rests on (an AC id, an ADR or brain note by path, a learning) and a suggested change.
-   A finding with no evidence is dropped, or kept as a question to the author. Duplicates merge; nits go only when nothing heavier is left. Show the list and the AC table.
+5. `agent` **Consolidate** both reports and step 2 into one list. Each finding: `path:line`, severity (blocking / minor), the source it rests on (an AC id, an ADR or brain note by path, a learning) and a suggested change.
+   A finding with no evidence is dropped, or kept as a question to the author. Duplicates merge; minor findings go only when no blocking one is left. Show the list and the AC table.
 6. `gate` **The user picks** which findings to post, edits their wording if needed, and the verdict: approve, request changes or comment. No answer, no post.
    A PR opened or pushed to by this session, or authored by the `gh` user, can only get comment.
 7. `script` **Post** one pending review with the chosen findings as inline comments (`gh api repos/<owner>/<repo>/pulls/<n>/reviews` with `comments` and no `event`), then submit it with the chosen verdict.

@@ -33,6 +33,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
+- The `spec-reviewer` and `quality-reviewer` agents speak one vocabulary: `PASS` or `FAIL`, findings `blocking` or
+  `minor`, `PASS` only when no finding is `blocking` (`APPROVE`/`CHANGES` and `blocker`/`should-fix`/`nit` are gone).
+  Given the ticket, task, round and commit, each ends its reply with one JSON block, a review output
+  (`agent-hub/review/1`); both stay read-only. `/fix`, `/refactor` and `/review` read the new words. `hub sync` rewrites
+  five managed files (the two agents and the three skills): run `hub sync` after the bump (AGH-139).
 - `hub run` no longer reports a run that ended with no commit, or whose session stopped to ask a human, as a failure.
   No commit: a `Run <id> ended with no changes at <STAGE>: …` comment, no label, exit 0. Stopped: the blocked label, a
   `Run <id> stopped at <STAGE> and needs a human. The session asked: …` comment, exit 3. A failure still adds
