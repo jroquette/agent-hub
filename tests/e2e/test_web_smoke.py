@@ -30,8 +30,8 @@ policy unchanged and no request to another host. That check runs in its own test
 AGH-165 (AC-165.47, E14): ``hub web`` (installed with the ``sessions`` extra) finds the stub
 ``claude`` first on ``PATH``. Its own test (``-k agent_session``) opens the printed token URL,
 starts a session from the Sessions screen, reloads while the permission card waits, answers it,
-reloads again: the transcript and state survive, the CSP is unchanged, no other host is requested
-and no console error is logged.
+sends one message through the composer, reloads again: the transcript and state survive, the CSP
+is unchanged, no other host is requested and no console error is logged.
 """
 
 import json
@@ -50,7 +50,7 @@ import httpx
 import pytest
 
 from agent_hub.claude_sessions.testing.scenarios import Scenario as StubScenario
-from agent_hub.claude_sessions.testing.scenarios import permission_turn
+from agent_hub.claude_sessions.testing.scenarios import permission_turn, simple_turn
 from agent_hub.core.testing.builders import an_event, events_to_jsonl
 from agent_hub.core.testing.hook_inputs import a_hook_input
 from agent_hub.core.testing.run_lines import run_lines_failed_in_verify
@@ -127,6 +127,7 @@ TICKETS_SPEC = "Tickets tab"
 # The Playwright test of smoke.spec.ts that drives an agent session, and the prompt it sends.
 AGENT_SESSION_SPEC = "Agent session"
 AGENT_PROMPT = "Run the build."
+AGENT_FOLLOW_UP = "Now run the tests."
 # A fake ``gh``: ``auth token`` succeeds; ``pr create`` checks the head branch is on the bare
 # ``origin`` and prints the next pull request url of ``--repo``. Synthetic: no account, no token.
 FAKE_GH = """\
@@ -726,7 +727,8 @@ def test_survives_reload_when_session_driven_agent_session(  # noqa: PLR0913 -- 
     tmp_path: Path,
     run: Callable[..., subprocess.CompletedProcess[str]],
 ) -> None:
-    stub_claude.play(StubScenario(replies={AGENT_PROMPT: permission_turn()}))
+    replies = {AGENT_PROMPT: permission_turn(), AGENT_FOLLOW_UP: simple_turn("The tests ran.")}
+    stub_claude.play(StubScenario(replies=replies))
 
     result = _playwright(
         hub_web,
@@ -748,6 +750,9 @@ def test_survives_reload_when_session_driven_agent_session(  # noqa: PLR0913 -- 
     assert (session["project"], session["status"]) == ("demo", "idle")
     kinds = [event["kind"] for event in events]
     assert kinds.index("permission.request") < kinds.index("permission.decision")
+    messages = [event["body"]["text"] for event in events if event["kind"] == "user.message"]
+    assert messages == [AGENT_PROMPT, AGENT_FOLLOW_UP]
+    assert kinds.index("permission.decision") < kinds.index("user.message", 1)
     assert page.headers["content-security-policy"] == EXPECTED_CSP
     started = [record for record in stub_claude.records() if record.event == "start"]
     assert any("stream-json" in record.args for record in started)
