@@ -78,7 +78,7 @@ from agent_hub.core.agent_sessions.errors import (
     UnknownResumeError,
 )
 from agent_hub.core.agent_sessions.limits import SessionLimits
-from agent_hub.core.agent_sessions.links import AgentSessionLink
+from agent_hub.core.agent_sessions.links import AgentSessionLink, ObservedSessionLookup
 from agent_hub.core.agent_sessions.live_session import LiveSession, OpenRequest
 from agent_hub.core.agent_sessions.log_caps import Full, Truncated
 from agent_hub.core.agent_sessions.permission_policy import (
@@ -283,7 +283,8 @@ class AgentSessionControl:
     ``workdirs`` lists a project's workdirs (raises for an unknown project); ``clock`` is the
     app's; ``environment_extra`` is added to each child's environment (``AGENT_HUB_WEB_URL``,
     never the access token, L5); ``new_id`` mints agent-session ids (UUIDv7) and
-    ``new_claude_session_id`` the Claude session id given to a new session (P13).
+    ``new_claude_session_id`` the Claude session id given to a new session (P13);
+    ``observed_sessions`` fills ``observed_session_id`` on the listed and read sessions (D2).
     """
 
     def __init__(  # noqa: PLR0913 -- the use case's ports and settings, all injected
@@ -297,6 +298,7 @@ class AgentSessionControl:
         environment_extra: Mapping[str, str] | None = None,
         new_id: Callable[[], str] = _uuid7,
         new_claude_session_id: Callable[[], str] = _uuid4,
+        observed_sessions: ObservedSessionLookup | None = None,
     ) -> None:
         self._driver = driver
         self._store = store
@@ -306,6 +308,7 @@ class AgentSessionControl:
         self._environment_extra = dict(environment_extra or {})
         self._new_id = new_id
         self._new_claude_session_id = new_claude_session_id
+        self._observed_sessions = observed_sessions
         self._live: dict[str, LiveSession] = {}
         self._pumps: set[asyncio.Task[None]] = set()
         self._admission = asyncio.Lock()
@@ -333,14 +336,17 @@ class AgentSessionControl:
         stored = await asyncio.to_thread(
             lambda: self._store.list(project=project, status=status, kind="local")
         )
-        return AgentSessionList(items=tuple(self._view(session) for session in stored))
+        views = [self._view(session) for session in stored]
+        return AgentSessionList(items=tuple(await self._with_twins(views)))
 
     async def snapshot(self, agent_session_id: str) -> AgentSession:
         """One session, with its open permission request while live (E10)."""
         live = self._live.get(agent_session_id)
         if live is not None:
-            return live.view()
-        return await asyncio.to_thread(self._store.get, agent_session_id)
+            session = live.view()
+        else:
+            session = await asyncio.to_thread(self._store.get, agent_session_id)
+        return (await self._with_twins([session]))[0]
 
     async def events(self, agent_session_id: str, *, after: int, limit: int) -> LogRecordPage:
         """A page of the persisted (redacted) log after ``after``."""
@@ -644,6 +650,21 @@ class AgentSessionControl:
         return live
 
     # Commands' checks
+
+    async def _with_twins(self, sessions: list[AgentSession]) -> list[AgentSession]:
+        """``sessions`` with ``observed_session_id`` set where the twin was observed; the
+        lookup folds events, so it runs off the loop."""
+        lookup = self._observed_sessions
+        if lookup is None or all(item.claude_session_id is None for item in sessions):
+            return sessions
+
+        def twinned(session: AgentSession) -> AgentSession:
+            claude_id = session.claude_session_id
+            if claude_id is None or not lookup.is_observed(session.project, claude_id):
+                return session
+            return session.model_copy(update={"observed_session_id": claude_id})
+
+        return await asyncio.to_thread(lambda: [twinned(session) for session in sessions])
 
     def _view(self, session: AgentSession) -> AgentSession:
         live = self._live.get(session.id)
