@@ -236,8 +236,8 @@ and tell the user; do not try other versions.
 The control plane (`hub web`: an API and a web app) shows the hub's live sessions, runs, approvals and health. It
 serves on `127.0.0.1` only, port 7420 by default. Run it one of two ways, on the same machine as the sessions:
 
-- **Locally:** `./hub web` from the hub folder (the pinned release, through the shim). It prints the URL to open,
-  `http://127.0.0.1:7420`. Ctrl C stops it.
+- **Locally:** `./hub web` from the hub folder (the pinned release, through the shim). It prints the address to
+  open, `http://127.0.0.1:7420/?token=…` (a new token each start; `--open` opens it). Ctrl C stops it.
 - **In Docker:** in a clone of agent-hub at the hub's release (`git clone --branch v<version>` into the workspace),
   `make up` builds the image and starts it, published on `127.0.0.1:7420` only; the workspace folder is mounted
   read-only so the server can read the hubs in it, and `~/.claude/projects` for the transcripts. `make down` stops
@@ -279,6 +279,20 @@ authored as the hub's author), and nothing changes until the user merges it. Tha
 `hub web`, a writable hub checkout whose `origin` is the hub's GitHub repo, `git`, and `gh` signed in to GitHub (the
 PR is opened as that `gh` account). Under Docker the hubs are mounted read-only, so both actions are disabled with
 "Hub is read-only here"; run `./hub web` locally to decide learnings.
+
+**Sessions from the app.** On the Sessions screen, New session starts the user's own `claude` (on `PATH`, logged in)
+in the hub, a repo or one of their worktrees, with the hub's CLAUDE.md, hooks (the guard still applies), skills and
+agents; the chat sends messages, answers permission prompts, interrupts, changes mode and model, resumes and forks.
+It needs the `sessions` extra (the Claude Agent SDK, about 240 MiB): from the hub folder, run `uvx --from
+'agent-hub[sessions] @ git+https://github.com/jroquette/agent-hub@v<version>#subdirectory=packages/agent-hub' hub web`
+instead of `./hub web`; without it the screen says what is missing. Open the printed address once per browser: the
+token becomes a cookie the session routes need. Limits are `hub web` options with `AGENT_HUB_*` variables (`hub web
+--help`; 4 live sessions, 30 min idle, 10 min to answer a prompt). Their conversations are kept, redacted, in `hub
+web`'s database for 30 days after they end (Delete removes one at once). Off in Docker. From another device, keep
+`hub web` on loopback and bring the port to it: `ssh -L 7420:127.0.0.1:7420 <host>`, or `tailscale serve` to
+`http://127.0.0.1:7420` on your own tailnet, then open the token address there; never Tailscale Funnel, ngrok or
+`--host 0.0.0.0`. Claude's Remote Control also reaches a session from a phone. Cloud sessions (claude.ai/code) are not
+driven from the app: it gives the `claude --cloud` command, then the session's link and `claude --teleport <id>`.
 
 Release note for a hub that moves to a release with the control plane: `./hub sync` adds
 `plugin/hub-workflow/hooks/event_sensor.py` and rewrites `hooks.json`, `.claude/settings.json` (the sensor joins

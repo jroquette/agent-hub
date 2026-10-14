@@ -37,7 +37,12 @@ def test_equals_doctor_json_when_registered_hub_has_findings(
     # A drifted managed file and a missing brain note give findings of several rules.
     (hub / "AGENTS.md").write_text("# edited by hand\n", encoding="utf-8")
     (hub / "brain" / "now.md").unlink()
-    assert composed.client.post("/api/v1/hubs", json={"path": str(hub)}).status_code == 201
+    assert (
+        composed.client.post(
+            "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+        ).status_code
+        == 201
+    )
 
     from_api = _api_findings(composed, "demo")
     from_cli = _doctor_json(hub, monkeypatch)
@@ -51,7 +56,12 @@ def test_lists_only_scoped_project_when_two_hubs_registered(
 ) -> None:
     demo, other = make_hub(), make_hub("other")
     for hub in (demo, other):
-        assert composed.client.post("/api/v1/hubs", json={"path": str(hub)}).status_code == 201
+        assert (
+            composed.client.post(
+                "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+            ).status_code
+            == 201
+        )
     (other / "AGENTS.md").write_text("# edited by hand\n", encoding="utf-8")
 
     assert _api_findings(composed, "other") == _doctor_json(other, monkeypatch)
@@ -62,7 +72,12 @@ def test_answers_not_found_problem_when_registered_hub_becomes_unreadable(
     composed: Any, make_hub: Callable[..., Path]
 ) -> None:
     hub = make_hub()
-    assert composed.client.post("/api/v1/hubs", json={"path": str(hub)}).status_code == 201
+    assert (
+        composed.client.post(
+            "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+        ).status_code
+        == 201
+    )
     (hub / "hub.json").write_text("{not json", encoding="utf-8")
 
     response = composed.client.get("/api/v1/doctor/findings", params={"project": "demo"})

@@ -57,7 +57,12 @@ def test_reads_counts_verdict_and_phase_from_files_when_features_listed(
     composed: Any, make_hub: Callable[..., Path]
 ) -> None:
     hub = _features_hub(make_hub)
-    assert composed.client.post("/api/v1/hubs", json={"path": str(hub)}).status_code == 201
+    assert (
+        composed.client.post(
+            "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+        ).status_code
+        == 201
+    )
 
     response = composed.client.get("/api/v1/features", params={"project": "demo"})
 
@@ -89,7 +94,9 @@ def test_reads_ac_rows_when_feature_detail_requested(
     composed: Any, make_hub: Callable[..., Path]
 ) -> None:
     hub = _features_hub(make_hub)
-    composed.client.post("/api/v1/hubs", json={"path": str(hub)})
+    composed.client.post(
+        "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+    )
 
     response = composed.client.get("/api/v1/features/demo/no-eval")
 
@@ -108,7 +115,9 @@ def test_lists_records_and_ac_fields_when_records_partly_present(
     hub = _features_hub(make_hub)
     files = {"spec.md": SPEC, "plan.md": "# Plan\n", "features.json": _record((True, False))}
     _feature(hub, "partial", files)
-    composed.client.post("/api/v1/hubs", json={"path": str(hub)})
+    composed.client.post(
+        "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+    )
 
     response = composed.client.get("/api/v1/features/demo/partial")
 

@@ -7,6 +7,10 @@ requires-python = ">=3.14"
 dependencies = ["agent-hub-core", "agent-hub-storage", "agent-hub-collector", "agent-hub-generator",
                 "agent-hub-tracker-linear", "agent-hub-hub-git", "agent-hub-cli", "agent-hub-api"]
 
+[project.optional-dependencies]
+# `uv tool install 'agent-hub[sessions]'` adds session control to hub web (ADR 0031).
+sessions = ["agent-hub-api[sessions]"]
+
 [tool.uv.sources]
 agent-hub-core = { workspace = true }
 agent-hub-storage = { workspace = true }

@@ -3,12 +3,15 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from agent_hub.api.app import create_app
 from agent_hub.api.local_security import (
     CONTENT_SECURITY_POLICY,
+    WEBSOCKET_POLICY_VIOLATION,
     allowed_hosts,
     allowed_origins,
+    is_hub_registry_write,
     is_json_media_type,
     is_strict_write,
     parse_allowed_hosts,
@@ -158,3 +161,62 @@ def test_reads_json_when_media_type_is_application_json(value: str) -> None:
 )
 def test_refuses_json_when_media_type_is_other(value: str | None) -> None:
     assert not is_json_media_type(value)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/",
+        "/api/v1/events/stream",
+        "/api/v1/agent-sessions/01929a4e-7a11-7c00-8a00-00000000a001/stream",
+    ],
+)
+def test_closes_websocket_when_any_path_upgraded(client: TestClient, path: str) -> None:
+    with pytest.raises(WebSocketDisconnect) as closed, client.websocket_connect(path):
+        pass
+
+    assert closed.value.code == WEBSOCKET_POLICY_VIOLATION
+
+
+@pytest.mark.parametrize(
+    ("method", "path"), [("POST", "/api/v1/hubs"), ("DELETE", "/api/v1/hubs/hub-1")]
+)
+def test_refuses_hub_registry_write_when_origin_missing(
+    client: TestClient, method: str, path: str
+) -> None:
+    client.headers.pop("Origin", None)
+
+    response = client.request(method, path, json={"path": "/home/demo/demo-hub"})
+
+    assert response.status_code == 403
+    assert response.json()["title"] == "Forbidden origin"
+
+
+@pytest.mark.parametrize(
+    "origin", ["http://localhost:7420", "http://127.0.0.1:7421", "null", "http://127.0.0.1"]
+)
+def test_refuses_hub_registration_when_origin_not_exactly_this_server(
+    client: TestClient, origin: str
+) -> None:
+    response = client.post(
+        "/api/v1/hubs", json={"path": "/home/demo/demo-hub"}, headers={"Origin": origin}
+    )
+
+    assert response.status_code == 403
+    assert response.json()["title"] == "Forbidden origin"
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/api/v1/hubs"),
+        ("DELETE", "/api/v1/hubs/hub-1"),
+        ("DELETE", "/api/v1/hubs/a/b"),
+        ("POST", "/api/v1/hubsx"),
+        ("GET", "/api/v1/hubs"),
+    ],
+)
+def test_marks_hub_registry_write_when_post_or_delete_on_hubs(method: str, path: str) -> None:
+    expected = (method, path) in {("POST", "/api/v1/hubs"), ("DELETE", "/api/v1/hubs/hub-1")}
+
+    assert is_hub_registry_write(method, path) is expected

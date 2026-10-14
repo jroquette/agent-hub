@@ -31,7 +31,15 @@ AGH-164 gives the demo hub (already holding ``hub init``'s managed skills, agent
 hooks) a project skill ``plugin/demo/skills/demo-check``; the live session's Skill call is its
 ``/feature`` use. The Skills catalog and the ``/feature`` detail are checked in their own test
 (``-k skills``, AC-164.30): the content security policy unchanged, no request to another host,
-no console error. The page smoke runs every other test of ``smoke.spec.ts``.
+no console error.
+
+AGH-165 (AC-165.47, E14): ``hub web`` (installed with the ``sessions`` extra) finds the stub
+``claude`` first on ``PATH``. Its own test (``-k agent_session``) opens the printed token URL,
+starts a session from the Sessions screen, reloads while the permission card waits, answers it,
+sends one message through the composer, reloads again: the transcript and state survive, the CSP
+is unchanged, no other host is requested and no console error is logged.
+
+The page smoke runs every other test of ``smoke.spec.ts``.
 """
 
 import json
@@ -49,10 +57,12 @@ from typing import Any
 import httpx
 import pytest
 
+from agent_hub.claude_sessions.testing.scenarios import Scenario as StubScenario
+from agent_hub.claude_sessions.testing.scenarios import permission_turn, simple_turn
 from agent_hub.core.testing.builders import an_event, events_to_jsonl
 from agent_hub.core.testing.hook_inputs import a_hook_input
 from agent_hub.core.testing.run_lines import run_lines_failed_in_verify
-from tests.e2e.conftest import REPO_ROOT, InstalledHub, RunningWeb
+from tests.e2e.conftest import REPO_ROOT, InstalledHub, RunningWeb, StubClaude
 
 WEB_DIR = REPO_ROOT / "apps" / "web"
 WEB_DIST = REPO_ROOT / "packages" / "api" / "src" / "agent_hub" / "api" / "web_dist"
@@ -122,6 +132,10 @@ EXPECTED_CSP = (
 )
 # The Playwright test of smoke.spec.ts that opens the Tickets tab.
 TICKETS_SPEC = "Tickets tab"
+# The Playwright test of smoke.spec.ts that drives an agent session, and the prompt it sends.
+AGENT_SESSION_SPEC = "Agent session"
+AGENT_PROMPT = "Run the build."
+AGENT_FOLLOW_UP = "Now run the tests."
 # The Playwright test of smoke.spec.ts that opens the Skills catalog and a skill's detail.
 SKILLS_SPEC = "Skills"
 # The demo hub's own skill (AGH-164), beside the managed ones ``hub init`` writes.
@@ -178,6 +192,10 @@ INERT_BUNDLE_URLS = frozenset(
         # AGH-136: the origin ``linearHref`` checks a Linear issue link against before rendering
         # it as a link the owner opens; the page never requests it (CSP connect-src 'self').
         "https://linear.app",
+        # AGH-165: the origin and prefix ``claudeCodeHref`` checks a cloud session link against
+        # (a link the owner opens in claude.ai); never requested.
+        "https://claude.ai",
+        "https://claude.ai/code",
     }
 )
 _ABSOLUTE_URL = re.compile(r"https?://[A-Za-z0-9.\-\[\]:]+(?:/[A-Za-z0-9._~/\-]*)?")
@@ -319,10 +337,12 @@ def hub_origin(tmp_path: Path) -> HubOrigin:
 
 
 @pytest.fixture
-def web_extra_env(hub_origin: HubOrigin) -> Mapping[str, str]:
-    """``hub web`` runs git and gh against the bare origin and the fake gh, and with an empty
-    ``LINEAR_API_KEY`` (E4), so a key in the caller's environment never reaches Linear."""
-    return {**hub_origin.env, "LINEAR_API_KEY": ""}
+def web_extra_env(hub_origin: HubOrigin, stub_claude: StubClaude) -> Mapping[str, str]:
+    """``hub web`` runs git and gh against the bare origin and the fake gh, with an empty
+    ``LINEAR_API_KEY`` (E4), so a key in the caller's environment never reaches Linear, and
+    finds the stub ``claude`` first on ``PATH`` (E14)."""
+    path = f"{stub_claude.bin_dir}{os.pathsep}{hub_origin.env['PATH']}"
+    return {**hub_origin.env, **stub_claude.env, "PATH": path, "LINEAR_API_KEY": ""}
 
 
 def _make_hub(installed_hub: InstalledHub, root: Path, *, project: str, repo: str) -> Path:
@@ -582,7 +602,9 @@ def ingest_scenario(
     now = datetime.now(UTC)
     with httpx.Client(base_url=web.url, timeout=REQUEST_SECONDS) as client:
         for hub in (demo, ops):
-            response = client.post("/api/v1/hubs", json={"path": str(hub)})
+            response = client.post(
+                "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": web.url}
+            )
             assert response.status_code == 201, response.text
         for envelope in _hooks(now):
             response = client.post("/api/v1/events/hooks", json=envelope)
@@ -642,6 +664,7 @@ def _playwright(
         "SMOKE_STUCK_SESSION": scenario.stuck_session,
         "SMOKE_LONG_SESSION": scenario.long_session,
         "SMOKE_RUN": scenario.run_id,
+        "SMOKE_TOKEN": web.token,
     }
     return run(
         [
@@ -676,7 +699,7 @@ def test_loads_pages_without_console_error_or_axe_violation_when_scenario_ingest
         tmp_path,
         origin=hub_origin,
         run=run,
-        selection=("--grep-invert", f"{TICKETS_SPEC}|{SKILLS_SPEC}"),
+        selection=("--grep-invert", f"{TICKETS_SPEC}|{SKILLS_SPEC}|{AGENT_SESSION_SPEC}"),
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -758,3 +781,43 @@ def test_shows_skills_catalog_and_detail_when_skills_opened(
     ids = {item["id"] for item in catalog.json()["items"]}
     assert {"skill/hub-workflow/feature", "skill/demo/demo-check"} <= ids
     assert detail.json()["usage"]["count"] >= 1
+
+
+def test_survives_reload_when_session_driven_agent_session(  # noqa: PLR0913 -- fixtures
+    hub_web: RunningWeb,
+    *,
+    installed_hub: InstalledHub,
+    hub_origin: HubOrigin,
+    stub_claude: StubClaude,
+    tmp_path: Path,
+    run: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    replies = {AGENT_PROMPT: permission_turn(), AGENT_FOLLOW_UP: simple_turn("The tests ran.")}
+    stub_claude.play(StubScenario(replies=replies))
+
+    result = _playwright(
+        hub_web,
+        installed_hub,
+        tmp_path,
+        origin=hub_origin,
+        run=run,
+        selection=("--grep", AGENT_SESSION_SPEC),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert re.search(r"\b1 passed\b", result.stdout), result.stdout
+    assert "skipped" not in result.stdout, result.stdout
+    cookie = {f"agent_hub_{hub_web.port}": hub_web.token}
+    with httpx.Client(base_url=hub_web.url, timeout=REQUEST_SECONDS, cookies=cookie) as client:
+        (session,) = client.get("/api/v1/agent-sessions").json()["items"]
+        events = client.get(f"/api/v1/agent-sessions/{session['id']}/events").json()["items"]
+        page = client.get(f"/agent-sessions/{session['id']}")
+    assert (session["project"], session["status"]) == ("demo", "idle")
+    kinds = [event["kind"] for event in events]
+    assert kinds.index("permission.request") < kinds.index("permission.decision")
+    messages = [event["body"]["text"] for event in events if event["kind"] == "user.message"]
+    assert messages == [AGENT_PROMPT, AGENT_FOLLOW_UP]
+    assert kinds.index("permission.decision") < kinds.index("user.message", 1)
+    assert page.headers["content-security-policy"] == EXPECTED_CSP
+    started = [record for record in stub_claude.records() if record.event == "start"]
+    assert any("stream-json" in record.args for record in started)

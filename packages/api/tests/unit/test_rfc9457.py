@@ -145,7 +145,11 @@ def test_answers_registered_problem_when_extra_error_raised(open_client: Any, fa
     with open_client(
         ports=ApiPorts(hub_read_models=hubs), problems={HubInvalidError: hub_invalid_problem}
     ) as client:
-        response = client.post("/api/v1/hubs", json={"path": "/home/demo/nothing"})
+        response = client.post(
+            "/api/v1/hubs",
+            json={"path": "/home/demo/nothing"},
+            headers={"Origin": "http://127.0.0.1:7420"},
+        )
 
     assert response.status_code == 422
     assert response.json()["title"] == "No hub.json"

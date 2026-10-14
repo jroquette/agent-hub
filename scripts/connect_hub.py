@@ -1,6 +1,7 @@
 """``make connect HUB=<path>``: register a hub with the running control plane and check its sensor.
 
-POSTs the hub's absolute path to ``/api/v1/hubs`` (409, registered already, is fine), then
+POSTs the hub's absolute path to ``/api/v1/hubs`` with the server's own ``Origin`` (the
+registry writes require it), 409 (registered already) is fine, then
 checks that the hub sends its sessions' events: ``plugin/hub-workflow/hooks/event_sensor.py``
 exists and ``.claude/settings.json`` runs it for each of the sensor's hook events. When it does
 not, it prints the way out: move ``platform.version`` to this release, ``./hub sync``, a PR.
@@ -51,6 +52,12 @@ def _sensor_entries(hub: Path) -> set[str]:
     return {event for event, groups in hooks.items() if SENSOR_FILE in json.dumps(groups)}
 
 
+def origin_of(client: httpx.Client) -> str:
+    """The origin of ``client``'s server, as a page it served would send it in ``Origin``."""
+    base = client.base_url
+    return f"{base.scheme}://{base.netloc.decode('ascii')}"
+
+
 def _pinned_version(hub: Path) -> str:
     try:
         config = json.loads((hub / "hub.json").read_text(encoding="utf-8"))
@@ -77,7 +84,9 @@ def main(argv: Sequence[str] | None = None, *, transport: httpx.BaseTransport | 
 def _register(hub: Path, *, url: str, transport: httpx.BaseTransport | None) -> bool:
     try:
         with httpx.Client(base_url=url, timeout=REQUEST_SECONDS, transport=transport) as client:
-            response = client.post("/api/v1/hubs", json={"path": str(hub)})
+            response = client.post(
+                "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": origin_of(client)}
+            )
     except httpx.HTTPError:
         print(
             f"error: no agent-hub answers at {url}; start it with make up or make run",
