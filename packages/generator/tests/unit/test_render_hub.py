@@ -2087,7 +2087,7 @@ FIX_STEP_PHRASES = {
         "`hub.json`",
         "an empty one is a missing gate: say so in the PR body",
     ),
-    6: ("`quality-reviewer`", "diff", "Should-fix findings", "follow-ups"),
+    6: ("`quality-reviewer`", "diff", "Minor findings", "follow-ups"),
     7: ("PR", NO_AI_ATTRIBUTION, "No push to the default branch, no force-push"),
     8: ("In Review", "PR link"),
 }
@@ -2111,7 +2111,7 @@ FIX_RECORD_PHRASES = (
     "no `brain/features/<slug>/` folder",
     "if nothing can be tested, say so in one line of the PR body",
     "`check_fast`, `check` and the review still apply",
-    "On `CHANGES` with blockers",
+    "On `FAIL` with `blocking` findings",
     "re-run `check_fast` and `check`",
     "record the findings and the fixes in the PR body",
     "no second review pass",
@@ -4727,19 +4727,21 @@ def test_ignores_local_file_when_gitignore_rendered(demo_config: HubConfig) -> N
 # AGH-180 (spec AC-1): sha256 of the agent files as rendered on main (267c3f9, after AGH-161)
 # before the templates named a tier; a hub without `models`, or with empty or default ones, keeps
 # them.
+# AGH-139 changed the reviewers' and the evaluator's text: their sha256 are those of the new text,
+# which every config below still renders byte for byte.
 AGENTS_FOLDER = "plugin/hub-workflow/agents"
 AGENT_FILES_SHA256 = {
     f"{AGENTS_FOLDER}/architect.md": (
         "65f87843553ecc602d854a6c7f2f9389b188ced0ceff5cc5ef03c9d43f2b616f"
     ),
     f"{AGENTS_FOLDER}/evaluator.md": (
-        "dd5ff73ca988d3f42f3700fa941439cf5b9e685051d713c042424df918dc5197"
+        "efc8f4c7e5f7865f1b8c7f8a57ba0d59155492015e0f86529fd0780eb92865f5"
     ),
     f"{AGENTS_FOLDER}/planner.md": (
         "703db29e7407541e9895e66b1868f7615335c0599db68d57a5dfb7916811c00e"
     ),
     f"{AGENTS_FOLDER}/quality-reviewer.md": (
-        "2d22c3d570fd968ae07604ff39f87152ab5dff41f738e6cf50756aef4c079f71"
+        "06346ed2d9948f63b1a2b5ac850ef73e698326316e8cabe95de39dba9f1fb2ae"
     ),
     f"{AGENTS_FOLDER}/requirements-analyst.md": (
         "d5702ea0391a96d356ebd9e1b83195cd1828efb509dfb56cfcc611560484d063"
@@ -4748,7 +4750,7 @@ AGENT_FILES_SHA256 = {
         "f4859e0b694dff6cea2a69d29074d111c9374971f544289b134a8f0a620da9cf"
     ),
     f"{AGENTS_FOLDER}/spec-reviewer.md": (
-        "9cace3f38b381fd67a33bf7177a550d6f61c3c455331ab6f7ec37b93a1c37023"
+        "54ae53835b987ac549f3058736a22c4038bd41bbc4d8d59e1b20c7cb74adc451"
     ),
 }
 # The tier each agent template names: its default (spec D3).

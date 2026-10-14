@@ -417,10 +417,12 @@ def test_finds_nothing_when_doctor_runs_on_fresh_init(
     home = tmp_path / "git-home"
     home.mkdir()
     author = ["-c", "user.name=Jane Doe", "-c", "user.email=jane@example.com"]
+    # No background repack after the commit: it would write into .git during the digests below.
+    no_repack = ["-c", "gc.auto=0", "-c", "maintenance.auto=false"]
     git(["-c", "init.defaultBranch=main", "init", "-q"], cwd=committed, home=home)
     git(["add", "-A"], cwd=committed, home=home)
     git(
-        [*author, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"],
+        [*author, *no_repack, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"],
         cwd=committed,
         home=home,
     )
