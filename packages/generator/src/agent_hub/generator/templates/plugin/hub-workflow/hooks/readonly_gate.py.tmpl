@@ -55,6 +55,7 @@ MAX_LINE_BYTES = 1024 * 1024  # per transcript line
 MAX_AGENT_FILES = 256  # agent definitions read per folder
 MAX_FRONTMATTER_BYTES = 16 * 1024
 MAX_SUBAGENT_FILES = 256  # subagent transcripts listed
+MAX_STATE_FILES = 256  # other gate states of the session looked at
 MAX_STATE_BYTES = 16 * 1024 * 1024
 STALE_SECONDS = 12 * 60 * 60  # a start state older than this is replaced
 MAX_BLOCKS = 1  # per agent_id
@@ -225,6 +226,43 @@ def is_fresh(path: Path) -> bool:
     except OSError:
         return False
     return age < STALE_SECONDS and load_state(path) is not None
+
+
+def subagents_folder(transcript: object) -> str | None:
+    """`<main transcript minus .jsonl>/subagents`, where Claude Code writes each subagent's
+    transcript; None without an absolute main transcript path."""
+    if not isinstance(transcript, str) or not os.path.isabs(transcript):
+        return None
+    stem = transcript[: -len(".jsonl")] if transcript.endswith(".jsonl") else transcript
+    return os.path.join(stem, "subagents")
+
+
+def subagent_listing(folder: str | None) -> tuple:
+    """({name: [size, mtime_ns]} of the `agent-*.jsonl` files in folder, whether it was cut: no
+    folder known, not listable, an entry not readable, or over MAX_SUBAGENT_FILES). A folder that
+    does not exist holds none and is not cut."""
+    if folder is None:
+        return {}, True
+    found, cut = {}, False
+    try:
+        with os.scandir(folder) as scan:
+            for entry in scan:
+                name = entry.name
+                if not (name.startswith("agent-") and name.endswith(".jsonl")):
+                    continue
+                if len(found) == MAX_SUBAGENT_FILES:
+                    return found, True
+                try:
+                    info = entry.stat(follow_symlinks=False)
+                except OSError:
+                    cut = True
+                    continue
+                found[name] = [info.st_size, info.st_mtime_ns]
+    except FileNotFoundError:
+        return {}, False
+    except (OSError, ValueError):
+        return found, True
+    return found, cut
 
 
 def main_transcript(event: dict) -> tuple:
@@ -636,11 +674,10 @@ def agent_transcript(event: dict) -> str | None:
     file, else `<main transcript minus .jsonl>/subagents/agent-<id>.jsonl`; None when neither is."""
     path = event.get("agent_transcript_path")
     candidates = [path] if isinstance(path, str) and path and os.path.isabs(path) else []
-    main = event.get("transcript_path")
+    folder = subagents_folder(event.get("transcript_path"))
     agent_id = event.get("agent_id")
-    if isinstance(main, str) and os.path.isabs(main) and isinstance(agent_id, str) and SAFE_ID.fullmatch(agent_id):
-        stem = main[: -len(".jsonl")] if main.endswith(".jsonl") else main
-        candidates.append(os.path.join(stem, "subagents", f"agent-{agent_id}.jsonl"))
+    if folder is not None and isinstance(agent_id, str) and SAFE_ID.fullmatch(agent_id):
+        candidates.append(os.path.join(folder, f"agent-{agent_id}.jsonl"))
     for candidate in candidates:
         try:
             if stat.S_ISREG(os.stat(candidate).st_mode):
@@ -769,7 +806,8 @@ def emit_result(
     parts = []
     if report:
         head = f"[hub readonly-gate] changed while {agent_type} (agent {agent_id}) ran, not attributed to it"
-        parts.append("\n".join([f"{head} ({', '.join(signals)}):", *listing(report)]))
+        named = ", ".join(printable(name) for name in signals)
+        parts.append("\n".join([f"{head} ({named}):", *listing(report)]))
     if notes:
         parts.append(noted(notes))
     output = {}
@@ -803,6 +841,7 @@ def start(event: dict, cfg: Config) -> None:
     if is_fresh(path):
         return
     transcript, offset = main_transcript(event)
+    subagents, subagents_cut = subagent_listing(subagents_folder(transcript))
     found, over, worktrees, listing_notes = watched(cfg)
     notes = [f"{over} checkouts over the cap"] if over else []
     notes.extend(listing_notes)
@@ -815,6 +854,8 @@ def start(event: dict, cfg: Config) -> None:
         "session_id": session_id if isinstance(session_id, str) else "",
         "main_transcript": transcript,
         "main_offset": offset,
+        "subagents": subagents,
+        "subagents_cut": subagents_cut,
         "checkouts": items,
         "worktrees": worktrees,
     }
@@ -822,6 +863,152 @@ def start(event: dict, cfg: Config) -> None:
         notes.append("state not saved")
     if notes:
         emit({"systemMessage": noted(notes)})
+
+
+# What else may have run in the agent's window (E-2, E-3), as the report names it.
+OTHER_STATE = "another read-only agent running"
+STATES_UNREADABLE = "agent states unreadable"
+MAIN_CALL = "main session tool call"
+MAIN_RESULT = "main session tool result"
+MAIN_UNREADABLE = "main transcript unreadable"
+OTHER_SUBAGENT = "another subagent ran"
+SUBAGENTS_UNREADABLE = "subagents unreadable"
+LAUNCHERS = ("Agent", "Task")  # their effect shows through the subagents/ folder
+
+
+def other_states(session_id: object, own: Path) -> list:
+    """[OTHER_STATE] when another gate state of the session (`hub-readonly-<sid>-*.json`) is
+    younger than STALE_SECONDS: a declared agent started and not done. [STATES_UNREADABLE] when
+    $TMPDIR cannot be listed, the budget runs out, or more than MAX_STATE_FILES are looked at."""
+    prefix = f"hub-readonly-{safe_id(session_id)}-"
+    seen = 0
+    try:
+        with os.scandir(tempfile.gettempdir()) as scan:
+            for entry in scan:
+                if left() <= 0:
+                    return [STATES_UNREADABLE]
+                name = entry.name
+                if not (name.startswith(prefix) and name.endswith(".json")) or name == own.name:
+                    continue
+                seen += 1
+                if seen > MAX_STATE_FILES:
+                    return [STATES_UNREADABLE]
+                try:
+                    age = time.time() - entry.stat(follow_symlinks=False).st_mtime
+                except OSError:  # gone meanwhile: that agent stopped
+                    continue
+                if age < STALE_SECONDS:
+                    return [OTHER_STATE]
+    except (OSError, ValueError):
+        return [STATES_UNREADABLE]
+    return []
+
+
+def read_window(path: str, offset: int) -> bytes | None:
+    """The bytes of the regular file at path after offset, at most MAX_WINDOW_BYTES; None when it
+    is not one, is now shorter than offset, holds more, or cannot be read."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+    try:
+        handle = os.open(path, flags)
+    except (OSError, ValueError):
+        return None
+    try:
+        info = os.fstat(handle)
+        if not stat.S_ISREG(info.st_mode) or info.st_size < offset or info.st_size - offset > MAX_WINDOW_BYTES:
+            return None
+        os.lseek(handle, offset, os.SEEK_SET)
+        chunks, size = [], 0
+        while size <= MAX_WINDOW_BYTES:
+            chunk = os.read(handle, min(CHUNK * 16, MAX_WINDOW_BYTES + 1 - size))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+    except OSError:
+        return None
+    finally:
+        os.close(handle)
+    return b"".join(chunks) if size <= MAX_WINDOW_BYTES else None
+
+
+def main_signals(state: dict) -> list:
+    """What the main transcript's window (its bytes after its size at the start) shows: any tool
+    call but an Agent or Task one, any tool result. Lines marked `isSidechain` are a subagent's
+    and skipped. No transcript at the start, one gone, shorter or over MAX_WINDOW_BYTES, a line
+    over MAX_LINE_BYTES or not JSON among those holding a tool, or the budget running out:
+    MAIN_UNREADABLE (E-3)."""
+    path, offset = state.get("main_transcript"), state.get("main_offset")
+    if not isinstance(path, str) or not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+        return [MAIN_UNREADABLE]
+    raw = read_window(path, offset)
+    if raw is None:
+        return [MAIN_UNREADABLE]
+    found = []
+    for line in raw.split(b"\n"):
+        if left() <= 0:
+            return found + [MAIN_UNREADABLE]
+        if len(line) > MAX_LINE_BYTES:
+            found.append(MAIN_UNREADABLE)
+            continue
+        if b'"tool_use"' not in line and b'"tool_result"' not in line:
+            continue
+        try:
+            entry = json.loads(line)
+        except (ValueError, RecursionError):
+            found.append(MAIN_UNREADABLE)
+            continue
+        if not isinstance(entry, dict) or entry.get("isSidechain") is True:
+            continue
+        message = entry.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        for block in content if isinstance(content, list) else []:
+            block_type = block.get("type") if isinstance(block, dict) else None
+            if block_type == "tool_result":
+                found.append(MAIN_RESULT)
+            elif block_type == "tool_use" and block.get("name") not in LAUNCHERS:
+                found.append(MAIN_CALL)
+    return found
+
+
+def saved_subagents(state: dict) -> dict | None:
+    """The state's {name: [size, mtime_ns]} listing when it has that shape and was not cut."""
+    listed = state.get("subagents")
+    if state.get("subagents_cut") is not False or not isinstance(listed, dict):
+        return None
+    for value in listed.values():
+        if not isinstance(value, list) or len(value) != 2 or not all(type(n) is int for n in value):
+            return None
+    return listed
+
+
+def subagent_signals(event: dict, state: dict) -> list:
+    """[OTHER_SUBAGENT] when another `agent-*.jsonl` of the session's subagents/ folder was
+    created or changed since the start (E-2); [SUBAGENTS_UNREADABLE] when either listing is cut.
+    The agent's own transcript grows as it runs and never counts."""
+    before = saved_subagents(state)
+    folder = subagents_folder(state.get("main_transcript"))
+    now, cut = subagent_listing(folder)
+    if before is None or cut or folder is None:
+        return [SUBAGENTS_UNREADABLE]
+    own = {f"agent-{state.get('agent_id')}.jsonl"}
+    path = event.get("agent_transcript_path")
+    if isinstance(path, str) and os.path.isabs(path):
+        try:
+            if os.path.realpath(os.path.dirname(path)) == os.path.realpath(folder):
+                own.add(os.path.basename(path))
+        except (OSError, ValueError):
+            pass
+    for name, value in now.items():
+        if name not in own and before.get(name) != value:
+            return [OTHER_SUBAGENT]
+    return []
+
+
+def overlap(event: dict, state: dict, own: Path) -> list:
+    """The overlap signals, each once, in a fixed order: another gate state, the main
+    transcript's window, another subagent's transcript (AC-141.10, E-2, E-3)."""
+    found = other_states(event.get("session_id"), own) + main_signals(state) + subagent_signals(event, state)
+    return [name for index, name in enumerate(found) if name not in found[:index]]
 
 
 def attribute(changed: list, own: set, signals: list) -> tuple:
@@ -885,7 +1072,7 @@ def stop(event: dict, cfg: Config) -> None:
         labels = [label for label, _ in changed]
         emit_result(agent_type, agent_id, [], labels, ["agent transcript unreadable"], notes, [])
         return
-    signals = []  # no overlap signal is read: nothing else is known to have run in the window
+    signals = overlap(event, state, path)
     block, report = attribute(changed, own, signals)
     if not block:
         forget(path)
