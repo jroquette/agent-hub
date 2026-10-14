@@ -4,11 +4,14 @@ from typing import Any
 
 import pytest
 
+from agent_hub.core.doctor.feature_output_checks import MAX_VALIDATED_BYTES
 from agent_hub.core.doctor.features_rule import FEATURES_TRACKER
 from agent_hub.core.doctor.finding import Read
 from agent_hub.core.doctor.snapshot import DoctorSnapshot
 from agent_hub.core.features import agent_outputs
+from agent_hub.core.features.feature_evals import MAX_EVAL_FILES
 from agent_hub.core.features.feature_record import MAX_RECORD_BYTES
+from agent_hub.core.features.feature_reviews import MAX_REVIEW_FILES
 from agent_hub.core.features.output_models import MAX_OUTPUT_BYTES
 from agent_hub.core.hub_config.doctor_rules import Severity
 from agent_hub.core.hub_config.model import HubConfig
@@ -1349,8 +1352,11 @@ def test_validates_at_most_cap_when_outputs_many(
 
     outputs = sorted(path for path in files if path.endswith(".json"))
     assert len(calls) == cap
-    assert [path for _, path, _, _ in found] == outputs[:cap]
-    assert {severity for severity, _, _, _ in found} == {Severity.WARNING}
+    assert [path for _, path, _, _ in found[:-1]] == outputs[:cap]
+    assert {severity for severity, _, _, _ in found[:-1]} == {Severity.WARNING}
+    # E22: the output past the cap is counted in the run's one info line.
+    assert found[-1] == skipped_info(1)
+    assert (MAX_EVAL_FILES, MAX_REVIEW_FILES) == (200, 500)
 
 
 @pytest.mark.parametrize(
@@ -1397,7 +1403,76 @@ def test_validates_within_budget_when_outputs_large(
     found = outputs_found(snapshot_of, files)
 
     assert len(calls) == validated
-    assert len(found) == validated
+    assert len(found) == validated + 1
+    # E22: the output that does not fit the budget is counted in the run's one info line.
+    assert found[-1] == skipped_info(1)
+    assert MAX_VALIDATED_BYTES == 4_194_304
+
+
+OTHER_RECORD = "brain/features/other/features.json"
+FEATURES_DIR = "brain/features"
+SKIPPED_FIX = "run ./hub validate-output <kind> <path> on each"
+
+
+def skipped_info(count: int) -> Leveled:
+    noun = "output" if count == 1 else "outputs"
+    message = f"{count} agent {noun} not validated (over the doctor's budget)"
+    return (Severity.INFO, FEATURES_DIR, message, SKIPPED_FIX)
+
+
+def full_budget_reviews(folder: str) -> dict[str, bytes]:
+    """Reviews of the largest size that fill the whole run's budget on their own."""
+    outputs = {
+        f"{folder}/reviews/TST-7/spec-r{index}.json": b"{}".ljust(MAX_OUTPUT_BYTES)
+        for index in range(1, BUDGET_OUTPUTS + 1)
+    }
+    return {f"{folder}/reviews/TST-7.md": b"# Review\n", **outputs}
+
+
+def test_shares_budget_when_outputs_in_many_features(
+    snapshot_of: SnapshotFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # E22: one budget per run, spent in listing order; the second feature finds it spent.
+    calls = counting(monkeypatch, "review_problems")
+    files = {
+        OTHER_RECORD: json.dumps(a_record(an_ac(1), an_ac(2))).encode(),
+        **full_budget_reviews("brain/features/demo"),
+        **full_budget_reviews("brain/features/other"),
+    }
+
+    found = outputs_found(snapshot_of, files)
+
+    assert len(calls) == BUDGET_OUTPUTS
+    assert [path for _, path, _, _ in found[:-1]] == sorted(
+        path for path in files if path.startswith(f"{REVIEWS}/") and path.endswith(".json")
+    )
+    assert found[-1] == skipped_info(BUDGET_OUTPUTS)
+
+
+def test_counts_skipped_outputs_once_when_caps_reached_in_many_features(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    other = "brain/features/other"
+    files = {
+        OTHER_RECORD: json.dumps(a_record(an_ac(1))).encode(),
+        **many_review_outputs(502),
+        f"{other}/reviews/TST-7.md": b"# Review\n",
+        **{f"{other}/reviews/TST-7/spec-r{index}.json": b"{}" for index in range(1, 504)},
+    }
+
+    found = outputs_found(snapshot_of, files)
+
+    assert [finding for finding in found if finding[0] is Severity.INFO] == [skipped_info(5)]
+    assert found[-1] == skipped_info(5)
+
+
+def test_adds_no_info_when_no_outputs_skipped(snapshot_of: SnapshotFactory) -> None:
+    files = {**many_review_outputs(500), **an_eval_pair("abc-1", b"{}")}
+
+    found = outputs_found(snapshot_of, files)
+
+    assert len(found) == 501
+    assert {severity for severity, _, _, _ in found} == {Severity.WARNING}
 
 
 def test_keeps_findings_when_outputs_added_to_legacy_folder(
