@@ -28,7 +28,7 @@ from agent_hub.claude_sessions.testing.scenarios import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TIMEOUT_SECONDS = 120
 INSTALL_TIMEOUT_SECONDS = 300
-# The extra that adds session control to ``hub web`` (the Claude Agent SDK, ADR 0027).
+# The extra that adds session control to ``hub web`` (the Claude Agent SDK, ADR 0031).
 SESSIONS_EXTRA = "sessions"
 
 
@@ -73,7 +73,7 @@ def run() -> Callable[..., subprocess.CompletedProcess[str]]:
 @pytest.fixture(scope="session")
 def installed_hub(tmp_path_factory: pytest.TempPathFactory) -> InstalledHub:
     """Install the meta-package with its ``sessions`` extra once per session, pinned to uv.lock,
-    into isolated tool dirs (``uv tool install 'agent-hub[sessions]'``, ADR 0027).
+    into isolated tool dirs (``uv tool install 'agent-hub[sessions]'``, ADR 0031).
 
     The install keeps the real ``HOME`` and ``XDG_*`` so uv finds its warm cache; tests that run
     ``hub`` against a database point ``HOME``/``XDG_DATA_HOME`` at their own ``tmp_path``.

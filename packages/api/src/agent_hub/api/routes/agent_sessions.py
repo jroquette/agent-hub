@@ -1,6 +1,6 @@
 """``/agent-sessions``: start, read and drive the Claude Code sessions ``hub web`` runs (S3, P5).
 
-Every route is one call to ``AgentSessionCommands`` (ADR 0027). The static paths come before
+Every route is one call to ``AgentSessionCommands`` (ADR 0031). The static paths come before
 the id paths, and ids are UUIDs (``uuid`` convertor), so ``/cloud`` or ``/workdirs`` never
 reach ``/{agent_session_id}``. Access (cookie, Origin) is checked before routing.
 """

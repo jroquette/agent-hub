@@ -116,7 +116,7 @@ agent_sessions = Table(
 )
 
 # One row per log record of an agent session; ``seq`` is gap-free per session (S4). Its text is
-# redacted before it is stored (ADR 0027). Deleting a session deletes its records.
+# redacted before it is stored (ADR 0031). Deleting a session deletes its records.
 agent_session_records = Table(
     "agent_session_records",
     metadata,

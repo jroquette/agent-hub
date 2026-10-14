@@ -65,7 +65,7 @@ cache), `FailingTrackerReader(kind, http_status=)` (each failure kind) and `InMe
 reach the GraphQL reader end to end through `build_app(linear_post=…)`, an injected transport, with a synthetic key in
 the injected environment: no socket opens and no real key is read.
 
-The fifth and sixth are the agent sessions' (ADR 0027). `SessionDriverContract`
+The fifth and sixth are the agent sessions' (ADR 0031). `SessionDriverContract`
 (`agent_hub.core.testing.session_driver_contract`) takes `session_driver` and `scenario` fixtures and checks event order, `init`
 before text, a `result` with cost and usage ending each turn, `exited` after close, and a permission request parked
 until answered. It runs against `InMemorySessionDriver` (`agent_hub.core.testing.session_driver_fakes`, scripted turns

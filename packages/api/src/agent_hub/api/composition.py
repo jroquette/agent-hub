@@ -12,7 +12,7 @@ gives its reader per request, None (not connected) when ``LINEAR_API_KEY`` is un
 ``environ`` or the hub's ``tracker.transport`` is ``mcp``; the key is read at call time and never
 logged or shown.
 
-The agent sessions (AGH-165, ADR 0027) run over the Claude driver and cloud launcher of
+The agent sessions (AGH-165, ADR 0031) run over the Claude driver and cloud launcher of
 ``agent_hub.claude_sessions``, imported in ``claude_adapters`` alone: without the ``sessions``
 extra the driver is ``UnavailableSessionDriver`` (P2). Their store is the same database's
 agent-session tables; ``SessionRuntime`` sweeps and shuts them down with the app. Inside the

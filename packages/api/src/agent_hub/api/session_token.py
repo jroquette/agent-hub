@@ -1,4 +1,4 @@
-"""The per-launch token that opens the agent-session routes (P6, ADR 0027).
+"""The per-launch token that opens the agent-session routes (P6, ADR 0031).
 
 ``hub web`` mints one token per start (``mint_token``) and prints it once in its URL; the
 browser trades it for an ``HttpOnly`` cookie named after the port (``cookie_name``), since

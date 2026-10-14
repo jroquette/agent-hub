@@ -9,7 +9,7 @@ dependencies = ["agent-hub-core", "agent-hub-storage", "agent-hub-collector", "a
                 "starlette==1.7.0", "uvicorn==0.54.0"]
 
 [project.optional-dependencies]
-# Driving Claude Code sessions from the app (ADR 0027): the SDK wheel bundles a ~240 MiB CLI, so it is opt-in.
+# Driving Claude Code sessions from the app (ADR 0031): the SDK wheel bundles a ~240 MiB CLI, so it is opt-in.
 sessions = ["agent-hub-claude-sessions"]
 
 [tool.uv.sources]

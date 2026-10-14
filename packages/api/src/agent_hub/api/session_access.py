@@ -1,4 +1,4 @@
-"""Who may reach the agent-session routes (P6, L1, L2; ADR 0027): a pure ASGI middleware.
+"""Who may reach the agent-session routes (P6, L1, L2; ADR 0031): a pure ASGI middleware.
 
 It sits inside ``LocalSecurityMiddleware``, so the ``Host`` is already this server's, and it
 refuses before routing, so a refused request never reaches a port.
