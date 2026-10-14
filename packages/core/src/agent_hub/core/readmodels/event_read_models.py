@@ -529,6 +529,11 @@ class FoldedEventReadModels:
         session = self._session(snapshot, session_id)
         return self._with_issues(_with_tile_fields(snapshot, [session]))[0]
 
+    def is_observed(self, project: str, session_id: str) -> bool:
+        """Whether ``session_id`` is a session of ``project`` (``ObservedSessionLookup``)."""
+        session = self._snapshot().sessions.get(session_id)
+        return session is not None and session.project == project
+
     def session_summary(self, session_id: str) -> SessionSummary:
         """The session's summary lines (D17)."""
         snapshot = self._snapshot()

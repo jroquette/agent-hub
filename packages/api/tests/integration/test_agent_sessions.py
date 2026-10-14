@@ -51,6 +51,7 @@ from agent_hub.core.agent_sessions.errors import (
 )
 from agent_hub.core.agent_sessions.limits import SessionLimits
 from agent_hub.core.testing.agent_session_rig import HUB_PATH, START, WEB_URL
+from agent_hub.core.testing.hook_inputs import a_hook_input, an_envelope
 from agent_hub.core.testing.read_model_builders import AGENT_SESSION_ID, WORKDIR_ID
 from agent_hub.core.testing.session_driver_fakes import Hold, InMemorySessionDriver
 
@@ -839,3 +840,38 @@ def test_keeps_log_and_ends_session_when_restart_opens_same_database(
     assert (after["status"], after["end_reason"]) == ("ended", "server_stopped")
     assert replayed[: len(before)] == before
     assert [item["kind"] for item in replayed][-1] == "exited"
+
+
+# D2: an agent session names its observed twin once the hooks posted the same Claude session.
+
+
+def test_names_twin_when_hook_posts_same_id_observed_session_id(
+    open_composed: Any, composed_settings: ApiSettings, make_hub: Any
+) -> None:
+    token = "o" * 43
+    origin = f"http://127.0.0.1:{composed_settings.port}"
+    app = open_composed(replace(composed_settings, session_token=token))
+    app.client.headers["Origin"] = origin
+    app.client.cookies.set(cookie_name(composed_settings.port), token)
+    hub = app.client.post("/api/v1/hubs", json={"path": str(make_hub())})
+    assert hub.status_code == 201, hub.text
+    (workdir, *_) = app.client.get(f"{BASE}/workdirs", params={"project": "demo"}).json()["items"]
+    twin, alone = (
+        app.client.post(BASE, json={"project": "demo", "workdir_id": workdir["workdir_id"]}).json()
+        for _ in range(2)
+    )
+    before = app.client.get(f"{BASE}/{twin['id']}").json()
+    hook = a_hook_input("SessionStart", session_id=twin["claude_session_id"])
+    posted = app.client.post(
+        "/api/v1/events/hooks",
+        json=an_envelope(hook, sent_at="2026-10-11T11:59:00.000Z").model_dump(mode="json"),
+    )
+
+    listed = {item["id"]: item for item in app.client.get(BASE).json()["items"]}
+    one = app.client.get(f"{BASE}/{twin['id']}").json()
+
+    assert posted.status_code == 202, posted.text
+    assert before["observed_session_id"] is None
+    assert listed[twin["id"]]["observed_session_id"] == twin["claude_session_id"]
+    assert listed[alone["id"]]["observed_session_id"] is None
+    assert one["observed_session_id"] == twin["claude_session_id"]
