@@ -119,3 +119,58 @@ def test_closes_change_feed_when_app_shuts_down(api_settings: ApiSettings, fakes
         assert asyncio.run(feed.wait_beyond(0, deadline=1)) == 0
 
     assert asyncio.run(feed.wait_beyond(0, deadline=1)) is None
+
+
+class RecordingLifecycle:
+    """An ``AppLifecycle`` that records its calls in order."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def start(self) -> None:
+        self.calls.append("start")
+
+    def begin_exit(self) -> None:
+        self.calls.append("begin_exit")
+
+    async def stop(self) -> None:
+        self.calls.append("stop")
+
+
+def test_starts_then_stops_lifecycle_when_app_runs(api_settings: ApiSettings) -> None:
+    lifecycle = RecordingLifecycle()
+    app = create_app(api_settings, lifecycle=lifecycle)
+
+    with TestClient(app):
+        started = list(lifecycle.calls)
+
+    assert started == ["start"]
+    assert lifecycle.calls == ["start", "stop"]
+
+
+def test_closes_feed_and_begins_exit_when_exit_hook_called(
+    api_settings: ApiSettings, fakes: Any
+) -> None:
+    reader = fakes.EventReader()
+    feed = ChangeFeed(reader, timer=fakes.Clock())
+    lifecycle = RecordingLifecycle()
+    app = create_app(
+        api_settings, ports=ApiPorts(event_reader=reader, change_feed=feed), lifecycle=lifecycle
+    )
+
+    app.state.on_exit()
+
+    assert feed.is_closed
+    assert lifecycle.calls == ["begin_exit"]
+
+
+def test_closes_feed_when_exit_hook_called_without_lifecycle(
+    api_settings: ApiSettings, fakes: Any
+) -> None:
+    reader = fakes.EventReader()
+    feed = ChangeFeed(reader, timer=fakes.Clock())
+    app = create_app(api_settings, ports=ApiPorts(event_reader=reader, change_feed=feed))
+
+    app.state.on_exit()
+
+    assert feed.is_closed
