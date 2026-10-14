@@ -336,3 +336,36 @@ def test_fails_one_line_when_record_link_or_oversize(tmp_path: Path, case: str) 
     assert result.exit_code == 1
     assert result.stdout == ""
     assert result.stderr == expected
+
+
+def a_relative_review(root: Path, folder: str, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """``spec-r1.json`` in ticket folder ``folder``, as a bare name from inside that folder."""
+    ticket = root / "feature" / "reviews" / folder
+    ticket.mkdir(parents=True)
+    (ticket / "spec-r1.json").write_text(json.dumps(a_review_document()))
+    monkeypatch.chdir(ticket)
+    return Path("spec-r1.json")
+
+
+def test_prints_valid_when_review_path_relative_in_ticket_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = a_relative_review(tmp_path, "DEM-7", monkeypatch)
+
+    result = run_unchanged(tmp_path, "review", path)
+
+    assert result.exit_code == 0
+    assert result.stdout == "spec-r1.json: valid\n"
+    assert result.stderr == ""
+
+
+def test_names_folder_when_review_path_relative_in_other_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = a_relative_review(tmp_path, "DEM-8", monkeypatch)
+
+    result = run_unchanged(tmp_path, "review", path)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "spec-r1.json: ticket: the ticket is DEM-7 but the folder is DEM-8\n"
