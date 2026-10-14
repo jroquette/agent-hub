@@ -4,7 +4,7 @@
 
 A sketch for Phase 4: the declarative workflow document from [SPEC](../SPEC.md) direction 1, the minimum engine that
 runs today's `hub run` from it, and the rule for growing the format; engine code, storage and UI come in Phase 4. The
-reasons, and what we took from Archon, are in [ADR 0027](../adr/0027-workflow-format-and-minimum-engine.md) (proposed).
+reasons, and what we took from Archon, are in [ADR 0027](../adr/0027-workflow-format-and-minimum-engine.md).
 
 ## Contract
 
@@ -134,7 +134,7 @@ on_not_delivered:
 
 - [SPEC](../SPEC.md) direction 1: a declarative document, a Pydantic schema, a deterministic Python engine, the four
   step types, and a recorded version per execution.
-- [ADR 0027](../adr/0027-workflow-format-and-minimum-engine.md) (proposed): this format and the minimum engine.
+- [ADR 0027](../adr/0027-workflow-format-and-minimum-engine.md): this format and the minimum engine.
 - [ADR 0010](../adr/0010-hub-json-config-contract.md): the same model-plus-exported-schema pattern as `hub.json`.
 - AGH-139 (output schemas), AGH-140 (status apart from outcome), AGH-179 (failure classes).
 - Informed by Archon (github.com/coleam00/archon, MIT; read at commit `a5834f2c`): its workflow-language constitution,
