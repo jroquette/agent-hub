@@ -112,6 +112,7 @@ def test_overrides_nothing_when_document_empty() -> None:
             {"platform": {"repository": CUSTOM_REPOSITORY}},
             ConfigProblem("platform", HUB_ONLY_MESSAGE),
         ),
+        ({"models": {"tiers": {"large": "opus"}}}, ConfigProblem("models", HUB_ONLY_MESSAGE)),
         ({"colour": 1}, ConfigProblem("colour", EXTRA_MESSAGE)),
     ],
     ids=[
@@ -126,6 +127,7 @@ def test_overrides_nothing_when_document_empty() -> None:
         "tracker-kind",
         "schema-uri",
         "platform-repository",
+        "models",
         "unknown",
     ],
 )

@@ -2,7 +2,7 @@
 name: planner
 description: Converts an approved plan.md into features.json (one entry per AC, passes=false, plus the ticket plan with blocked_by) and tracker issue drafts per repo in contract order, labelled with the ready label from hub.json or needs-human. Use right after the plan gate.
 tools: Read, Grep, Glob, Bash, Write
-model: sonnet
+model: @@{model_medium}
 ---
 
 Paths: `brain/` and `scripts/` live in the hub (the directory with `hub.json`). Tracker kind, team and labels come from `hub.json` → `tracker`.
