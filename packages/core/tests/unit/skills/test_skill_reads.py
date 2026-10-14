@@ -104,6 +104,38 @@ def test_reads_listing_once_when_catalog_warm() -> None:
     assert detail.raw.endswith("More.\n")
 
 
+def test_keeps_one_entry_per_hub_when_files_edited() -> None:
+    other = "/hubs/other-hub"
+    hub, second = fake_hub_of(a_skills_fixture_tree()), fake_hub_of(a_skills_fixture_tree())
+    reader = FakeHubFileReader({HUB: hub, other: second})
+    reads = SkillReads(reader, memo_entries=2)
+    reads.catalog(project=FIXTURE_PROJECT, hub_path=other)
+    path = "plugin/hub-workflow/skills/alpha/SKILL.md"
+    for edit in range(1, 5):
+        hub.skill_files[path] = hub.skill_files[path] + b"\nMore.\n"
+        hub.mtimes[path] = edit
+        reads.detail(project=FIXTURE_PROJECT, hub_path=HUB, **ALPHA)
+    before = len(reader.skill_reads)
+
+    reads.catalog(project=FIXTURE_PROJECT, hub_path=other)
+
+    assert len(reads._memo) == 2  # noqa: SLF001 - one entry per hub, whatever the edits
+    assert len(reader.skill_reads) == before
+    keys = list(reads._memo)  # noqa: SLF001 - the second hub's entry survived the edits
+    assert keys == [(HUB, FIXTURE_PROJECT), (other, FIXTURE_PROJECT)]
+
+
+def test_holds_one_entry_when_hub_edited_many_times() -> None:
+    reads, _, hub = _reads()
+    path = "plugin/hub-workflow/skills/alpha/SKILL.md"
+    for edit in range(1, 6):
+        hub.skill_files[path] = hub.skill_files[path] + b"\nMore.\n"
+        hub.mtimes[path] = edit
+        reads.catalog(project=FIXTURE_PROJECT, hub_path=HUB)
+
+    assert len(reads._memo) == 1  # noqa: SLF001 - a stale fold is replaced, not kept
+
+
 def test_serves_file_when_id_issued() -> None:
     tree = a_skills_fixture_tree()
     tree["plugin/hub-workflow/skills/alpha/assets/logo.png"] = b"\x89PNG\r\n\x1a\n\x00\x00"

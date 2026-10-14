@@ -3,10 +3,11 @@
 Each read lists the hub's skill roots (stat-only) and folds the files ``catalog_reads`` names,
 read within the catalog's 16 MiB byte budget: a file that does not fit, and every one after it,
 is left unread (``over_budget``); a file over its cap is never read. The fold is memoized per
-hub and listing fingerprint (path, size, mtime and link target of every entry, ``hub.lock`` and
-the settings files included), so a warm read is one listing walk plus the usage join. Items and
-bundled files are found by id only: an id the fold did not issue is ``EntityNotFoundError``
-(entity ``skill`` or ``skill file``) before anything is read.
+hub and project with the listing fingerprint it was built from (path, size, mtime and link target
+of every entry, ``hub.lock`` and the settings files included; a changed fingerprint replaces the
+entry), so a warm read is one listing walk plus the usage join. Items and bundled files are
+found by id only: an id the fold did not issue is ``EntityNotFoundError`` (entity ``skill`` or
+``skill file``) before anything is read.
 """
 
 import re
@@ -115,7 +116,9 @@ class SkillReads:
         self._reader = reader
         self._usage = usage
         self._entries = memo_entries
-        self._memo: OrderedDict[tuple[str, str, _Fingerprint], FoldedCatalog] = OrderedDict()
+        # One fold per (hub, project), with the fingerprint it was built from: a stale fold is
+        # replaced, never kept beside the fresh one.
+        self._memo: OrderedDict[tuple[str, str], tuple[_Fingerprint, FoldedCatalog]] = OrderedDict()
         self._guard = threading.Lock()
 
     def catalog(self, *, project: str, hub_path: str) -> SkillCatalog:
@@ -185,15 +188,15 @@ class SkillReads:
 
     def _folded(self, project: str, hub_path: str) -> FoldedCatalog:
         sources = self._reader.skill_sources(hub_path)
-        key = (hub_path, project, _fingerprint(sources))
+        key, fingerprint = (hub_path, project), _fingerprint(sources)
         with self._guard:
             found = self._memo.get(key)
-            if found is not None:
+            if found is not None and found[0] == fingerprint:
                 self._memo.move_to_end(key)
-                return found
+                return found[1]
         folded = build_catalog(self._inputs(project, hub_path, sources))
         with self._guard:
-            self._memo[key] = folded
+            self._memo[key] = (fingerprint, folded)
             self._memo.move_to_end(key)
             while len(self._memo) > self._entries:
                 self._memo.popitem(last=False)
