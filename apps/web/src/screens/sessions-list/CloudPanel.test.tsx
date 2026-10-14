@@ -1,20 +1,21 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import { ApiProblem } from "../../lib/api";
 import { seriousViolations } from "../../testing/axe";
-import { aCapabilities, aCloudSession, aWorkdir } from "../../testing/builders";
-import { CloudPanel, taskProblem, type CloudPanelProps } from "./CloudPanel";
+import { aCapabilities, aCloudSession } from "../../testing/builders";
+import {
+  CloudPanel,
+  cloudCommand,
+  shellQuote,
+  taskProblem,
+  type CloudPanelProps,
+} from "./CloudPanel";
 
 function show(overrides: Partial<CloudPanelProps> = {}) {
   const props: CloudPanelProps = {
     capabilities: aCapabilities(),
-    project: "agent-hub",
-    workdirs: [aWorkdir()],
     sessions: [aCloudSession()],
-    onStart: vi.fn(),
-    onFollowUp: vi.fn(() => Promise.resolve()),
     ...overrides,
   };
   const view = render(<CloudPanel {...props} />);
@@ -66,76 +67,41 @@ describe("CloudPanel (cloud)", () => {
     ).toHaveLength(2);
   });
 
-  it("starts a cloud task as typed from the chosen folder", async () => {
-    const { panel, props } = show();
+  it("builds a copyable start command with the task quoted for the shell (cloud start guidance)", async () => {
+    const { panel } = show();
 
     await userEvent.type(
       within(panel).getByRole("textbox", { name: "Task" }),
-      "Upgrade the linter",
+      "Fix it's `ls` and $HOME",
     );
-    await userEvent.click(within(panel).getByRole("button", { name: "Start in the cloud" }));
 
-    expect(props.onStart).toHaveBeenCalledWith({
-      project: "agent-hub",
-      workdir_id: aWorkdir().workdir_id,
-      task: "Upgrade the linter",
-    });
+    const command = within(panel).getByRole("group", { name: "Cloud start command" });
+    expect(command).toHaveTextContent("claude --cloud 'Fix it'\\''s `ls` and $HOME'");
+    expect(within(command).getByRole("button", { name: "Copy command" })).toBeInTheDocument();
+    expect(panel).toHaveTextContent("claude --teleport <id>");
+    expect(panel).toHaveTextContent("Only https://claude.ai/code/ links open from here.");
   });
 
-  it("refuses a task that starts with a dash", async () => {
-    const { panel, props } = show();
+  it("offers no start form, start button or follow-up even when the CLI could (cloud)", () => {
+    const { panel } = show({ capabilities: aCapabilities({ cloud: true, cloud_followup: true }) });
+
+    expect(within(panel).queryByRole("button", { name: /Start/ })).toBeNull();
+    expect(within(panel).queryByRole("textbox", { name: "One-shot follow-up" })).toBeNull();
+    expect(within(panel).queryByRole("combobox")).toBeNull();
+    expect(panel.querySelector("form")).toBeNull();
+  });
+
+  it("shows the command template and no copy until the task is valid (cloud)", async () => {
+    const { panel } = show();
+    const command = () => within(panel).getByRole("group", { name: "Cloud start command" });
+    expect(command()).toHaveTextContent('claude --cloud "<task>"');
+    expect(within(command()).queryByRole("button")).toBeNull();
 
     await userEvent.type(within(panel).getByRole("textbox", { name: "Task" }), "--help");
 
     expect(within(panel).getByText("A task cannot start with “-”.")).toBeInTheDocument();
-    expect(within(panel).getByRole("button", { name: "Start in the cloud" })).toBeDisabled();
-    expect(props.onStart).not.toHaveBeenCalled();
-  });
-
-  it("shows progress and the problem the start answered", () => {
-    const { rerender, props } = show({ pending: true });
-    expect(screen.getByRole("status")).toHaveTextContent("Starting the cloud session…");
-
-    rerender(
-      <CloudPanel
-        {...props}
-        pending={false}
-        error={
-          new ApiProblem({ status: 501, title: "Not available", detail: "Use claude.ai/code" })
-        }
-      />,
-    );
-    expect(screen.getByRole("alert")).toHaveTextContent("Not available: Use claude.ai/code");
-  });
-
-  it("sends a one-shot follow-up when the CLI supports it", async () => {
-    const { panel, props } = show();
-
-    await userEvent.type(
-      within(panel).getByRole("textbox", { name: "One-shot follow-up" }),
-      "Status?",
-    );
-    await userEvent.click(within(panel).getByRole("button", { name: "Send" }));
-
-    expect(props.onFollowUp).toHaveBeenCalledWith(aCloudSession().cloud_id, "Status?");
-    expect(await within(panel).findByRole("status")).toHaveTextContent("Sent.");
-  });
-
-  it("says so when a follow-up fails", async () => {
-    const { panel } = show({ onFollowUp: vi.fn(() => Promise.reject(new Error("502"))) });
-
-    await userEvent.type(within(panel).getByRole("textbox", { name: "One-shot follow-up" }), "Hi");
-    await userEvent.click(within(panel).getByRole("button", { name: "Send" }));
-
-    expect(await within(panel).findByRole("alert")).toHaveTextContent(
-      "Could not send the follow-up",
-    );
-  });
-
-  it("offers no follow-up without the follow-up capability", () => {
-    const { panel } = show({ capabilities: aCapabilities({ cloud_followup: false }) });
-
-    expect(within(panel).queryByRole("textbox", { name: "One-shot follow-up" })).toBeNull();
+    expect(command()).toHaveTextContent('claude --cloud "<task>"');
+    expect(within(command()).queryByRole("button")).toBeNull();
   });
 
   it("has no serious violation (cloud a11y)", async () => {
@@ -151,5 +117,14 @@ describe("taskProblem (cloud)", () => {
     expect(taskProblem("  ")).toBe("Describe the task.");
     expect(taskProblem(" -x")).toBe("A task cannot start with “-”.");
     expect(taskProblem("x".repeat(64 * 1024 + 1))).toBe("Too long: at most 64 KiB.");
+  });
+});
+
+describe("cloudCommand (cloud)", () => {
+  it("quotes the task as one shell word whatever it holds", () => {
+    expect(shellQuote("plain")).toBe("'plain'");
+    expect(shellQuote("it's")).toBe("'it'\\''s'");
+    expect(shellQuote('$(rm -rf ~) `id` "x" \\ !!')).toBe("'$(rm -rf ~) `id` \"x\" \\ !!'");
+    expect(cloudCommand("Upgrade the linter")).toBe("claude --cloud 'Upgrade the linter'");
   });
 });

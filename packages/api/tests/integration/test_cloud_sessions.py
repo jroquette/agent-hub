@@ -5,14 +5,17 @@ from typing import Any
 
 import pytest
 
-from agent_hub.core.agent_sessions.agent_session import CloudMessage, StartCloud
+from agent_hub.core.agent_sessions.agent_session import CloudMessage
+from agent_hub.core.agent_sessions.cloud import FOLLOWUP_GUIDANCE, START_GUIDANCE
+from agent_hub.core.agent_sessions.driver import DriverCapabilities
 from agent_hub.core.agent_sessions.errors import (
     CloudFailedError,
     CloudTimeoutError,
     CloudUnavailableError,
     InvalidWorkdirError,
 )
-from agent_hub.core.testing.read_model_builders import WORKDIR_ID, a_cloud_session
+from agent_hub.core.testing.read_model_builders import WORKDIR_ID
+from agent_hub.core.testing.session_driver_fakes import InMemorySessionDriver
 
 CLOUD = "/api/v1/agent-sessions/cloud"
 FOLLOW_UP = f"{CLOUD}/cse_01synthetic/messages"
@@ -21,12 +24,40 @@ PROBLEM = "urn:agent-hub:problem:agent-session-"
 GUIDANCE = "Start it with claude --cloud in a terminal, then open its claude.ai/code link."
 
 
-def test_answers_link_and_teleport_command_when_start_called(recorded_app: Any) -> None:
-    response = recorded_app.client.post(CLOUD, json=TASK)
+# A11: claude --cloud needs a terminal, so the app never starts a cloud session; the start and
+# the follow-up answer 501 with the guidance, over the real CloudSessions (whose launcher fails
+# the test if it is reached) and with the cloud capability on.
+CLOUD_CAPABLE = DriverCapabilities(
+    available=True, engine="in-memory", cli_version="0.0.0-synthetic", cloud=True
+)
 
-    assert response.status_code == 201, response.text
-    assert response.json() == a_cloud_session().model_dump(mode="json")
-    assert recorded_app.cloud.calls == [("start", (StartCloud.model_validate(TASK),))]
+
+def test_answers_501_guidance_without_subprocess_when_start_called(
+    open_agent_session_app: Any,
+) -> None:
+    app = open_agent_session_app(driver=InMemorySessionDriver(capabilities=CLOUD_CAPABLE))
+
+    response = app.client.post(CLOUD, json=TASK)
+    listed = app.client.get(CLOUD, params={"project": "demo"})
+
+    assert response.status_code == 501, response.text
+    document = response.json()
+    assert document["type"] == f"{PROBLEM}cloud-unavailable"
+    assert (document["guidance"], document["detail"]) == (START_GUIDANCE, START_GUIDANCE)
+    assert TASK["task"] not in response.text
+    assert listed.json()["items"] == []
+    assert app.rig.store.list(kind="cloud") == ()
+
+
+def test_answers_501_guidance_when_followup_url_posted_without_stored_start(
+    open_agent_session_app: Any,
+) -> None:
+    app = open_agent_session_app(driver=InMemorySessionDriver(capabilities=CLOUD_CAPABLE))
+
+    response = app.client.post(FOLLOW_UP, json={"text": "Also the docs"})
+
+    assert response.status_code == 501, response.text
+    assert response.json()["guidance"] == FOLLOWUP_GUIDANCE
 
 
 @pytest.mark.parametrize("task", ["", "--dangerously-skip-permissions", "-p x"])
