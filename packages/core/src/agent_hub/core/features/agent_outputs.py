@@ -3,7 +3,10 @@
 ``review_problems`` and ``eval_problems`` return every problem of an output, uncapped: first the
 root problem (bytes that are not a JSON object), else every shape problem against
 ``ReviewOutput`` or ``EvalOutput``, then every cross-check problem (``review_output_checks``,
-``eval_output_checks``) in S2's order. The caller decides how many to show.
+``eval_output_checks``, then ``eval_output_scope``) in S2's order. The caller decides how many to
+show. Core applies the size bounds to the bytes it is given, whatever the caller read:
+``MAX_OUTPUT_BYTES`` to the output, ``MAX_RECORD_BYTES`` to the record, and the sibling's first
+``EVAL_HEAD_BYTES`` only are read.
 
 The JSON Schemas of both outputs ship as package data beside this module (``review.v1.json``,
 ``eval.v1.json``), regenerated with ``make output-schemas`` whenever a model changes; unit tests
@@ -18,6 +21,7 @@ from typing import Any, Final, Literal
 from pydantic import BaseModel, ValidationError
 
 from agent_hub.core.features.eval_output_checks import eval_cross_problems
+from agent_hub.core.features.eval_output_scope import eval_scope_problems
 from agent_hub.core.features.output_models import (
     MAX_EVAL_ACS,
     MAX_EVAL_TICKETS,
@@ -86,12 +90,12 @@ def eval_problems(
     ``sibling_head`` is the first bytes of the sibling ``evals/<stem>.md`` (None when absent) and
     ``record`` the feature's ``features.json`` (None when absent).
     """
-    del file_name, sibling_head, record  # The stem, sibling and record cross-checks come next.
     document = parse_document(content)
     if isinstance(document, OutputProblem):
         return (document,)
     shape = _shape(document, model=EvalOutput, overlong=_overlong_eval_lists)
-    return (*shape, *eval_cross_problems(document))
+    cross = eval_cross_problems(document, file_name=file_name, sibling_head=sibling_head)
+    return (*shape, *cross, *eval_scope_problems(document, record=record))
 
 
 def _shape(
