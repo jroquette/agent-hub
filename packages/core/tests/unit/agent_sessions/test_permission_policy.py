@@ -4,7 +4,7 @@ import pytest
 from pydantic import JsonValue
 
 from agent_hub.core.agent_sessions.agent_session import PermissionDecision
-from agent_hub.core.agent_sessions.driver import Allow, Deny
+from agent_hub.core.agent_sessions.driver import Allow, Deny, PermissionSuggestion
 from agent_hub.core.agent_sessions.errors import InvalidDecisionError
 from agent_hub.core.agent_sessions.limits import SessionLimits
 from agent_hub.core.agent_sessions.permission_policy import (
@@ -13,6 +13,7 @@ from agent_hub.core.agent_sessions.permission_policy import (
     closed_answer,
     deadline,
     expired,
+    offered_suggestions,
     timeout_answer,
     validate,
 )
@@ -112,3 +113,50 @@ def test_denies_when_deadline_passes() -> None:
 
 def test_denies_with_closed_message_when_session_closes() -> None:
     assert closed_answer() == Deny(message=CLOSED_MESSAGE)
+
+
+LOCAL_ALLOW: dict[str, JsonValue] = {
+    "type": "addRules",
+    "rules": [{"toolName": "Bash", "ruleContent": "npm test"}],
+    "behavior": "allow",
+    "destination": "localSettings",
+}
+UNSAFE_RULES: list[dict[str, JsonValue]] = [
+    {"type": "setMode", "mode": "bypassPermissions", "destination": "localSettings"},
+    {"type": "addDirectories", "directories": ["/"], "destination": "localSettings"},
+    LOCAL_ALLOW | {"behavior": "deny"},
+    LOCAL_ALLOW | {"behavior": "ask"},
+    LOCAL_ALLOW | {"type": "replaceRules"},
+    LOCAL_ALLOW | {"destination": "userSettings"},
+    {key: value for key, value in LOCAL_ALLOW.items() if key != "behavior"},
+]
+
+
+def _offering(rule: JsonValue, destination: str = "localSettings") -> PermissionSuggestion:
+    return PermissionSuggestion(index=0, destination=destination, rule=rule)
+
+
+@pytest.mark.parametrize("rule", UNSAFE_RULES)
+def test_refuses_always_when_suggestion_not_local_allow_rule(rule: JsonValue) -> None:
+    request = a_permission_request(suggestions=(_offering(rule),))
+
+    with pytest.raises(InvalidDecisionError):
+        validate(request, PermissionDecision(decision="always", suggestion=0))
+
+
+def test_refuses_always_when_rule_not_object() -> None:
+    request = a_permission_request(suggestions=(_offering("addRules"),))
+
+    with pytest.raises(InvalidDecisionError):
+        validate(request, PermissionDecision(decision="always", suggestion=0))
+
+
+def test_keeps_only_local_allow_rules_when_suggestions_filtered() -> None:
+    suggestions = (
+        PermissionSuggestion(index=0, destination="localSettings", rule=UNSAFE_RULES[0]),
+        PermissionSuggestion(index=1, destination="localSettings", rule=LOCAL_ALLOW),
+        PermissionSuggestion(index=2, destination="localSettings", rule=UNSAFE_RULES[1]),
+        PermissionSuggestion(index=3, destination="session", rule=LOCAL_ALLOW),
+    )
+
+    assert offered_suggestions(suggestions) == (suggestions[1],)

@@ -180,3 +180,34 @@ async def test_forgets_request_when_cli_cancels_it() -> None:
     assert probe.bridge.pending() == ()
     with pytest.raises(UnknownPermissionError):
         probe.bridge.answer("toolu_1", Allow())
+
+
+BYPASS = PermissionUpdate(type="setMode", mode="bypassPermissions", destination="localSettings")
+ROOT = PermissionUpdate(type="addDirectories", directories=["/"], destination="localSettings")
+
+
+async def test_emits_only_local_allow_rules_when_cli_suggests_mode_or_directories() -> None:
+    probe = Bridge()
+    asked = probe.ask("Bash", {"command": "rm -rf build"}, _context("toolu_1", BYPASS, RULE, ROOT))
+    request = await probe.request()
+    probe.bridge.answer("toolu_1", Deny(message="no"))
+    await asked
+
+    assert request.suggestions == (
+        PermissionSuggestion(index=1, destination="localSettings", rule=RULE.to_dict()),
+    )
+
+
+async def test_passes_no_update_when_answer_carries_mode_or_directories() -> None:
+    probe = Bridge()
+    asked = probe.ask("Bash", {"command": "ls"}, _context("toolu_1", BYPASS, ROOT))
+    await probe.request()
+    smuggled = tuple(
+        PermissionSuggestion(index=index, destination="localSettings", rule=update.to_dict())
+        for index, update in enumerate((BYPASS, ROOT))
+    )
+    probe.bridge.answer("toolu_1", Allow(updated_permissions=smuggled))
+    result = await asked
+
+    assert isinstance(result, PermissionResultAllow)
+    assert result.updated_permissions is None

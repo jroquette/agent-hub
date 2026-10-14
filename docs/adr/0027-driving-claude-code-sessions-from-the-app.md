@@ -91,8 +91,9 @@ Engine option 1 (the Wave 0 spike's go, 2026-10-13), with option 2 as the docume
   Host allowlist still runs first.
 - **Permissions.** Modes `default`, `acceptEdits` and `plan` only; `bypassPermissions`, `dontAsk` and `auto` are never
   offered or accepted. A permission request reaches the browser with the tool, an input summary and Claude's
-  suggestions; answers are allow once, deny with a message, or always allow with one suggested rule whose destination is
-  `localSettings`. `AskUserQuestion` and plan approval use the same path. Nothing answered within 10 minutes, an
+  suggestions; answers are allow once, deny with a message, or always allow with one suggested `addRules` rule with
+  behaviour `allow` whose destination is `localSettings`. Any other suggestion (`setMode`, which could switch to
+  `bypassPermissions`, `addDirectories`, other destinations) is dropped before it is stored or shown, and refused. `AskUserQuestion` and plan approval use the same path. Nothing answered within 10 minutes, an
   interrupt or a close is a deny. Every request and decision (by `web`, `timeout` or `closed`) is a log record. The
   hub's guard hook runs before any prompt and can deny first.
 - **Conversation data (exception to ADR 0019).** Only sessions started from `hub web` store conversation text: in the

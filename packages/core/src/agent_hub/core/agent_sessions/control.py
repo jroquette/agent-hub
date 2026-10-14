@@ -85,6 +85,7 @@ from agent_hub.core.agent_sessions.permission_policy import (
     closed_answer,
     deadline,
     expired,
+    offered_suggestions,
     timeout_answer,
     validate,
 )
@@ -814,6 +815,10 @@ class AgentSessionControl:
             await self._sync(live, fields)
 
     async def _on_permission(self, live: LiveSession, request: PermissionRequest) -> None:
+        # Only the suggestions "Always allow" may apply reach the records and the browser (A11).
+        offered = offered_suggestions(request.suggestions)
+        if offered != request.suggestions:
+            request = request.model_copy(update={"suggestions": offered})
         now = self._clock()
         limit = self._limits.summary_bytes
         view = OpenPermission(
