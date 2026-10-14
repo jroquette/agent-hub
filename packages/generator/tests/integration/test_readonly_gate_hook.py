@@ -11,10 +11,12 @@ are synthetic JSON lines.
 
 import ast
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -2577,3 +2579,46 @@ def test_notes_not_recorded_when_record_unwritable(gate: Gate, gate_ws: GateWork
     assert output["reason"].splitlines() == [agent_head("researcher"), "- app/a.py", REVERT]
     assert output["systemMessage"] == "[hub readonly-gate] not recorded (IsADirectoryError)"
     assert state_files(gate_ws) == [counter_name("a1"), state_name("a1"), RECORD_NAME]
+
+
+def test_notes_not_recorded_when_record_unwritable_fifo(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """AC-141.12: a FIFO at the record's path with no reader is refused at once (never waited
+    on): the block is still printed, with a ``not recorded`` note. The hook runner's timeout
+    bounds this test if the gate ever waits."""
+
+    def change() -> None:
+        os.mkfifo(gate_ws.tmp / RECORD_NAME)
+        change_app(gate_ws)
+
+    output = run_agent(gate, "researcher", change, calls=[app_edit(gate_ws)])
+
+    assert output is not None
+    assert output["decision"] == "block"
+    assert output["reason"].splitlines() == [agent_head("researcher"), "- app/a.py", REVERT]
+    assert output["systemMessage"] == "[hub readonly-gate] not recorded (OSError)"
+    assert state_files(gate_ws) == [counter_name("a1"), state_name("a1"), RECORD_NAME]
+
+
+def test_refuses_existing_counter_when_record_block_counted(
+    gate_ws: GateWorkspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-141.11: the first block's counter is created exclusively, so a stop racing another
+    one finds it there and does not count (nor print) a second block; a counter written by an
+    earlier block of a larger MAX_BLOCKS is rewritten. Runs the rendered gate's ``count_block``
+    in this process."""
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setattr(sys, "modules", dict(sys.modules))
+    spec = importlib.util.spec_from_file_location("readonly_gate_under_test", gate_ws.hub / HOOK)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    fresh, raced = gate_ws.tmp / counter_name("a1"), gate_ws.tmp / counter_name("a2")
+    raced.write_text("1", encoding="utf-8")
+
+    assert module.count_block(fresh, 0) is True
+    assert module.count_block(raced, 0) is False
+    assert module.count_block(fresh, 1) is True
+
+    assert fresh.read_text(encoding="utf-8") == "2"
+    assert raced.read_text(encoding="utf-8") == "1"
