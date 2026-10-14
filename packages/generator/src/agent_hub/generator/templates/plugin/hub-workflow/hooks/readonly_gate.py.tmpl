@@ -835,12 +835,14 @@ def attribute(changed: list, own: set, signals: list) -> tuple:
 
 def again(item: dict) -> dict:
     """The stop's snapshot of a checkout the start saw: the start's when it was cut then, a cut
-    `removed` when its folder, or the `.git` in it, is gone, or the folder is now a link (a task
-    worktree removed meanwhile; git would read the repo above it)."""
+    `removed` when its folder, or the `.git` in it, is gone, or a task worktree's folder is now a
+    link (removed meanwhile; git would read the repo above it). A main checkout's folder may be a
+    link (a repo dir linked from elsewhere), as at the start."""
     if item["cut"]:
         return item
     top = item["path"]
-    if os.path.islink(top) or not os.path.isdir(top) or not os.path.lexists(os.path.join(top, ".git")):
+    linked = "/" + WORKTREES in item["label"] and os.path.islink(top)
+    if linked or not os.path.isdir(top) or not os.path.lexists(os.path.join(top, ".git")):
         return {**item, "cut": "removed"}
     return snapshot_one(item["label"], item["path"], item["hub"])
 
