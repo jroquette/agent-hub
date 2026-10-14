@@ -26,11 +26,12 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
-    from hubhooks import GIT_LOCATION_VARIABLES, Config, checkouts, emit, load_config, run_hook
+    from hubhooks import GIT_LOCATION_VARIABLES, Config, emit, load_config, run_hook
 except Exception as error:  # a partial install: skip, never error the session
     print(f"[hub {os.path.splitext(os.path.basename(sys.argv[0] or 'hook'))[0]}] skipped: {type(error).__name__}", file=sys.stderr)
     sys.exit(0)
@@ -40,8 +41,10 @@ HOOK_START = time.monotonic()
 # Seconds from the hook's start; Claude Code gives SubagentStart 10 s and SubagentStop 30 s.
 START_BUDGET = 5
 STOP_BUDGET = 15
+TRANSCRIPT_BUDGET = 5  # of the stop's budget left, for reading the agent's transcript
 GIT_TIMEOUT = 4  # one git call, always within the budget left
 MAX_CHECKOUTS = 24  # per event: main checkouts first, then worktrees newest first
+MAX_WORKTREES = 256  # names read per `.claude/worktrees/` folder
 MAX_STATUS_BYTES = 4 * 1024 * 1024  # of `git status` output per checkout
 MAX_ENTRIES = 2000  # status entries per checkout
 MAX_FILE_BYTES = 8 * 1024 * 1024  # hashed per file
@@ -53,9 +56,15 @@ MAX_LINE_BYTES = 1024 * 1024  # per transcript line
 MAX_AGENT_FILES = 256  # agent definitions read per folder
 MAX_FRONTMATTER_BYTES = 16 * 1024
 MAX_SUBAGENT_FILES = 256  # subagent transcripts listed
+MAX_STATE_FILES = 256  # other gate states of the session looked at
+MAX_TAIL_BYTES = 64 * 1024  # read from the end of each other subagent transcript left unchanged
 MAX_STATE_BYTES = 16 * 1024 * 1024
 STALE_SECONDS = 12 * 60 * 60  # a start state older than this is replaced
 MAX_BLOCKS = 1  # per agent_id
+MAX_RECORD_PATHS = 200  # labels per record line
+MAX_COMMANDS = 10  # Bash commands a block lists: the agent's last ones
+MAX_COMMAND_CHARS = 160  # per listed command, on one line
+MAX_TARGETS = 256  # distinct paths the agent's file tools named that are kept, resolved once each
 
 
 def read_event() -> dict:
@@ -75,6 +84,7 @@ def read_event() -> dict:
 
 STATE_VERSION = 1
 NOTE = "[hub readonly-gate] not checked ({})"
+UNRECORDED = "[hub readonly-gate] not recorded ({})"
 SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 COMMENT = re.compile(r"\s#.*$")
 BASE_PLUGIN = "hub-workflow"
@@ -180,6 +190,87 @@ def state_path(session_id: object, agent_id: object) -> Path:
     return Path(tempfile.gettempdir()) / f"hub-readonly-{safe_id(session_id)}-{safe_id(agent_id)}.json"
 
 
+def blocks_path(state: Path) -> Path:
+    """The agent's block counter beside its state: the state is never rewritten after start."""
+    return state.with_suffix(".blocks")
+
+
+def record_path(session_id: object) -> Path:
+    """The session's local record of outcomes (O-2): never in a checkout, never sent."""
+    return Path(tempfile.gettempdir()) / f"hub-readonly-{safe_id(session_id)}.jsonl"
+
+
+def blocks_done(path: Path) -> int:
+    """The blocks already held for the agent: 0 without a counter; MAX_BLOCKS when the counter
+    cannot be read or holds anything but a count (never a block too many)."""
+    if not os.path.lexists(path):
+        return 0
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        handle = os.open(str(path), flags)
+    except OSError:
+        return MAX_BLOCKS
+    try:
+        if not stat.S_ISREG(os.fstat(handle).st_mode):
+            return MAX_BLOCKS
+        text = os.read(handle, 16).decode("ascii")
+    except (OSError, ValueError):
+        return MAX_BLOCKS
+    finally:
+        os.close(handle)
+    return int(text) if text.isdigit() else MAX_BLOCKS
+
+
+def count_block(path: Path, done: int) -> bool:
+    """Write the counter (done + 1) before the block is printed; False on any error. The first
+    is created exclusively: a stop racing another finds it there and does not block again."""
+    flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | (os.O_EXCL if not done else os.O_TRUNC)
+    try:
+        handle = os.open(str(path), flags, 0o600)
+    except OSError:
+        return False
+    try:
+        os.write(handle, str(done + 1).encode("ascii"))
+        return True
+    except OSError:
+        return False
+    finally:
+        os.close(handle)
+
+
+def record(event: dict, outcomes: list) -> str:
+    """Append one JSON line per (outcome, labels) to the session's record; labels only (at most
+    MAX_RECORD_PATHS each), never file content or transcript text. The cause on failure, else ""."""
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    fields = {}
+    for key in ("session_id", "agent_id", "agent_type"):
+        value = event.get(key)
+        fields[key] = value if isinstance(value, str) else ""
+    lines = [
+        json.dumps({"ts": stamp, **fields, "outcome": outcome, "paths": paths[:MAX_RECORD_PATHS]})
+        for outcome, paths in outcomes
+        if paths
+    ]
+    if not lines:
+        return ""
+    # never waits on a FIFO; only a regular file this user owns (a shared /tmp) is appended to
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        handle = os.open(str(record_path(event.get("session_id"))), flags, 0o600)
+    except OSError as error:
+        return type(error).__name__
+    try:
+        info = os.fstat(handle)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+            return OSError.__name__
+        os.write(handle, ("\n".join(lines) + "\n").encode("utf-8", "surrogatepass"))
+    except (OSError, ValueError) as error:
+        return type(error).__name__
+    finally:
+        os.close(handle)
+    return ""
+
+
 def save_state(path: Path, state: dict) -> bool:
     """Write state to a temp file beside path, then move it in place; False on any error."""
     temp = None
@@ -220,6 +311,43 @@ def is_fresh(path: Path) -> bool:
     except OSError:
         return False
     return age < STALE_SECONDS and load_state(path) is not None
+
+
+def subagents_folder(transcript: object) -> str | None:
+    """`<main transcript minus .jsonl>/subagents`, where Claude Code writes each subagent's
+    transcript; None without an absolute main transcript path."""
+    if not isinstance(transcript, str) or not os.path.isabs(transcript):
+        return None
+    stem = transcript[: -len(".jsonl")] if transcript.endswith(".jsonl") else transcript
+    return os.path.join(stem, "subagents")
+
+
+def subagent_listing(folder: str | None) -> tuple:
+    """({name: [size, mtime_ns]} of the `agent-*.jsonl` files in folder, whether it was cut: no
+    folder known, not listable, an entry not readable, or over MAX_SUBAGENT_FILES). A folder that
+    does not exist holds none and is not cut."""
+    if folder is None:
+        return {}, True
+    found, cut = {}, False
+    try:
+        with os.scandir(folder) as scan:
+            for entry in scan:
+                name = entry.name
+                if not (name.startswith("agent-") and name.endswith(".jsonl")):
+                    continue
+                if len(found) == MAX_SUBAGENT_FILES:
+                    return found, True
+                try:
+                    info = entry.stat(follow_symlinks=False)
+                except OSError:
+                    cut = True
+                    continue
+                found[name] = [info.st_size, info.st_mtime_ns]
+    except FileNotFoundError:
+        return {}, False
+    except (OSError, ValueError):
+        return found, True
+    return found, cut
 
 
 def main_transcript(event: dict) -> tuple:
@@ -343,10 +471,11 @@ def run_git(args: list, cwd: str) -> tuple:
 
 def parse_status(text: str) -> tuple:
     """(HEAD's oid, the branch, [(path, state)]) from `git status --porcelain=v2 -z --branch`.
-    A state is `XY mW hI` (`XY mW h1 h2 h3` for an unmerged entry, `??` for an untracked one):
-    the status, the worktree's mode and the index's blobs, so a mode or index change on a path
-    already dirty is a change (E-7); never HEAD's blob, which the HEAD line covers. A rename
-    (`2`) names its new path, then its original path in the next NUL-separated field."""
+    A state is `XY mI mW hI` (`XY m1 m2 m3 mW h1 h2 h3` for an unmerged entry, `??` for an
+    untracked one): the status, the index's and the worktree's modes and the index's blobs, so a
+    mode or index change on a path already dirty is a change (E-7); never HEAD's mode or blob,
+    which the HEAD line covers. A rename (`2`) names its new path, then its original path in the
+    next NUL-separated field."""
     oid, branch, found = "", "", []
     records = text.split("\0")
     index = 0
@@ -360,20 +489,20 @@ def parse_status(text: str) -> tuple:
         elif record.startswith("1 "):
             parts = record.split(" ", 8)
             if len(parts) == 9:
-                found.append((parts[8], " ".join((parts[1], parts[5], parts[7]))))
+                found.append((parts[8], " ".join((parts[1], parts[4], parts[5], parts[7]))))
         elif record.startswith("2 "):
             parts = record.split(" ", 9)
             original = records[index] if index < len(records) else ""
             index += 1
             if len(parts) == 10:
-                state = " ".join((parts[1], parts[5], parts[7]))
+                state = " ".join((parts[1], parts[4], parts[5], parts[7]))
                 found.append((parts[9], state))
                 if original:
                     found.append((original, state))
         elif record.startswith("u "):
             parts = record.split(" ", 10)
             if len(parts) == 11:
-                found.append((parts[10], " ".join((parts[1], parts[6], parts[7], parts[8], parts[9]))))
+                found.append((parts[10], " ".join((parts[1], *parts[3:10]))))
         elif record.startswith("? "):
             found.append((record[2:], "??"))
     return oid, branch, found
@@ -472,18 +601,61 @@ def snapshot_one(label: str, top: str, hub: bool) -> dict:
     return item
 
 
+def task_worktrees(main: Path) -> tuple:
+    """([(name, path, st_mtime)] of the main checkout's task worktrees, whether its
+    `.claude/worktrees/` held more than MAX_WORKTREES names). A task worktree is a folder, never
+    a link, holding `.git`, in a `.claude/worktrees/` reached through no link; past
+    MAX_WORKTREES names the folder is not read further (the names read before still count)."""
+    folder = main / ".claude" / "worktrees"
+    entries, over = [], False
+    try:
+        if os.path.realpath(folder) != os.path.join(os.path.realpath(main), ".claude", "worktrees"):
+            return [], False
+        with os.scandir(folder) as scan:
+            for entry in scan:
+                if len(entries) == MAX_WORKTREES:
+                    over = True
+                    break
+                entries.append(entry)
+    except (OSError, ValueError):  # no such folder, or not readable
+        return [], False
+    found = []
+    for entry in entries:
+        try:
+            if entry.is_dir(follow_symlinks=False) and os.path.lexists(os.path.join(entry.path, ".git")):
+                found.append((entry.name, entry.path, entry.stat(follow_symlinks=False).st_mtime))
+        except (OSError, ValueError):
+            continue
+    return found, over
+
+
 def watched(cfg: Config) -> tuple:
-    """([(label, path, is the hub)] of the main checkouts: each repo of hub.json with a plain
-    folder name, then the hub; at most MAX_CHECKOUTS), and how many were over that cap."""
+    """([(label, path, is the hub or a worktree of it)] of the checkouts to snapshot, how many
+    were over MAX_CHECKOUTS, {main checkout's label: the sorted names of its task worktrees}, and
+    notes). The main checkouts come first: each repo of hub.json with a plain folder name, then
+    the hub; then their task worktrees (labelled `<dir>/.claude/worktrees/<name>`), newest first
+    by st_mtime. Each is a checkout of its own: its main checkout's status never lists it (the
+    `.claude/worktrees/` drop). A main checkout with over MAX_WORKTREES names there has no
+    listing (new and removed worktrees are not told) and a note."""
     names = [name for name in cfg.repo_dirs if name and "/" not in name and name not in (".", "..")]
     hub = cfg.hub.name if cfg.hub else None
     if hub and hub not in names:
         names.append(hub)
-    found = []
-    for name, top in checkouts(cfg, names):
-        if cfg.workspace is not None and top == cfg.workspace / name:
-            found.append((name, str(top), name == hub))
-    return found[:MAX_CHECKOUTS], max(0, len(found) - MAX_CHECKOUTS)
+    mains, trees, listed, notes = [], [], {}, []
+    for name in names:
+        main = cfg.workspace / name if cfg.workspace is not None else None
+        if main is None or not main.is_dir() or not (main / ".git").exists():
+            continue
+        mains.append((name, str(main), name == hub))
+        found, over = task_worktrees(main)
+        if over:
+            notes.append(f"{name}/{WORKTREES.rstrip('/')}: over {MAX_WORKTREES} names")
+        else:
+            listed[name] = sorted(tree for tree, _, _ in found)
+        trees.extend((-mtime, f"{name}/{WORKTREES}{tree}", path, name == hub) for tree, path, mtime in found)
+    trees.sort()
+    checkouts = mains + [(label, top, is_hub) for _, label, top, is_hub in trees]
+    return checkouts[:MAX_CHECKOUTS], max(0, len(checkouts) - MAX_CHECKOUTS), listed, notes
 
 
 def saved_checkouts(state: dict | None) -> list | None:
@@ -503,6 +675,36 @@ def saved_checkouts(state: dict | None) -> list | None:
     return items
 
 
+def saved_worktrees(state: dict | None) -> dict | None:
+    """The state's {main checkout's label: worktree names} when it has that shape; None otherwise."""
+    listed = state.get("worktrees") if state is not None else None
+    if not isinstance(listed, dict):
+        return None
+    for tree_names in listed.values():
+        if not isinstance(tree_names, list) or not all(isinstance(name, str) for name in tree_names):
+            return None
+    return listed
+
+
+def worktree_changes(before: dict, after: dict) -> tuple:
+    """([(line, "")] for each task worktree new since the start, the labels of those removed
+    (O-6), in the main checkouts listed at both ends. A new worktree's files are not read."""
+    changed, removed = [], []
+    for main in sorted(set(before) & set(after)):
+        was, now = set(before[main]), set(after[main])
+        changed.extend((f"{main}/{WORKTREES}{name}/ (new worktree)", "") for name in sorted(now - was))
+        removed.extend(f"{main}/{WORKTREES}{name}" for name in sorted(was - now))
+    return changed, removed
+
+
+def removed_notes(labels: list) -> list:
+    """`<label>: removed` for at most MAX_LISTED labels, then `… and N more removed`."""
+    notes = [f"{label}: removed" for label in labels[:MAX_LISTED]]
+    if len(labels) > MAX_LISTED:
+        notes.append(f"\u2026 and {len(labels) - MAX_LISTED} more removed")
+    return notes
+
+
 def short(oid: str) -> str:
     """An oid's first 7 hex digits; any other value (`(initial)`) as it is."""
     return oid[:7] if len(oid) >= 7 and all(c in "0123456789abcdef" for c in oid) else oid
@@ -514,22 +716,31 @@ def kind(value: str) -> str:
     return value.split(":", 1)[1] if ":" in value else value
 
 
+def real(top: str, path: str) -> str:
+    """The real path of `path` in the checkout at `top`; "" when it cannot be resolved."""
+    try:
+        return os.path.realpath(os.path.join(top, path))
+    except (OSError, ValueError):
+        return ""
+
+
 def changes(before: list, after: list) -> tuple:
-    """(changed labels, notes) between two snapshots of the same checkouts: `<label>/<path>` for
-    an entry that differs (or is in one snapshot only), `<label>: HEAD old (branch) -> new
-    (branch)` when either moved; a checkout cut on either side, or an entry that cannot be
-    compared, is a note."""
+    """([(label, real path)] changed, notes) between two snapshots of the same checkouts:
+    `<label>/<path>` for an entry that differs (or is in one snapshot only), `<label>: HEAD old
+    (branch) -> new (branch)` (real path "") when either moved; a checkout cut on either side, or
+    an entry that cannot be compared, is a note."""
     changed, notes = [], []
     for old, new in zip(before, after):
         label = old["label"]
+        if new["cut"] == "removed":  # gone since the start: the caller notes it
+            continue
         cause = old["cut"] or new["cut"]
         if cause:
             notes.append(f"{label}: {cause}")
             continue
         if (old["head"], old["branch"]) != (new["head"], new["branch"]):
-            changed.append(
-                f"{label}: HEAD {short(old['head'])} ({old['branch']}) -> {short(new['head'])} ({new['branch']})"
-            )
+            moved = f"{label}: HEAD {short(old['head'])} ({old['branch']}) -> {short(new['head'])} ({new['branch']})"
+            changed.append((moved, ""))
         was, now = old["entries"], new["entries"]
         for path in sorted(set(was) | set(now)):
             first, second = was.get(path), now.get(path)
@@ -539,7 +750,7 @@ def changes(before: list, after: list) -> tuple:
                     notes.append(f"{label}/{path}: {NOT_COMPARABLE[blind[0]]}")
                     continue
             if first != second:
-                changed.append(f"{label}/{path}")
+                changed.append((f"{label}/{path}", real(old["path"], path)))
     return changed, notes
 
 
@@ -548,11 +759,10 @@ def agent_transcript(event: dict) -> str | None:
     file, else `<main transcript minus .jsonl>/subagents/agent-<id>.jsonl`; None when neither is."""
     path = event.get("agent_transcript_path")
     candidates = [path] if isinstance(path, str) and path and os.path.isabs(path) else []
-    main = event.get("transcript_path")
+    folder = subagents_folder(event.get("transcript_path"))
     agent_id = event.get("agent_id")
-    if isinstance(main, str) and os.path.isabs(main) and isinstance(agent_id, str) and SAFE_ID.fullmatch(agent_id):
-        stem = main[: -len(".jsonl")] if main.endswith(".jsonl") else main
-        candidates.append(os.path.join(stem, "subagents", f"agent-{agent_id}.jsonl"))
+    if folder is not None and isinstance(agent_id, str) and SAFE_ID.fullmatch(agent_id):
+        candidates.append(os.path.join(folder, f"agent-{agent_id}.jsonl"))
     for candidate in candidates:
         try:
             if stat.S_ISREG(os.stat(candidate).st_mode):
@@ -562,33 +772,149 @@ def agent_transcript(event: dict) -> str | None:
     return None
 
 
+FILE_TOOLS = {"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
+
+
+def tool_uses(entry: object) -> list:
+    """[(name, input)] of the `tool_use` blocks of one transcript line's message."""
+    message = entry.get("message") if isinstance(entry, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return []
+    return [
+        (block.get("name"), block.get("input"))
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "tool_use" and isinstance(block.get("input"), dict)
+    ]
+
+
+def printable(text: str) -> str:
+    """text with each character that is not printable (a line break, an escape sequence's ESC,
+    NUL, a bidi override, a byte git could not decode) as `?`: it cannot add or rewrite lines."""
+    return "".join(c if c.isprintable() else "?" for c in text)
+
+
+def one_line(command: str) -> str:
+    """A command on one line (each run of blanks or line breaks one blank, any other character
+    that is not printable `?`), cut to MAX_COMMAND_CHARS with a final `…`."""
+    text = printable(" ".join(command.split()))
+    if len(text) > MAX_COMMAND_CHARS:
+        return text[: MAX_COMMAND_CHARS - 1] + "\u2026"
+    return text
+
+
+def read_transcript(path: str) -> bytes | None:
+    """The bytes of a regular file of at most MAX_TRANSCRIPT_BYTES; None when it is not one, is
+    larger, or cannot be read (never read in part, never waiting on a pipe)."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+    try:
+        handle = os.open(path, flags)
+    except (OSError, ValueError):
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(handle).st_mode):
+            return None
+        chunks, size = [], 0
+        while size <= MAX_TRANSCRIPT_BYTES:
+            chunk = os.read(handle, min(CHUNK * 16, MAX_TRANSCRIPT_BYTES + 1 - size))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+    except OSError:
+        return None
+    finally:
+        os.close(handle)
+    return b"".join(chunks) if size <= MAX_TRANSCRIPT_BYTES else None
+
+
+def agent_calls(event: dict) -> tuple:
+    """(real paths the agent's Write, Edit, MultiEdit and NotebookEdit named, its last
+    MAX_COMMANDS Bash commands on one line each, whether its transcript was read). Only lines
+    holding `"tool_use"` are parsed; a line over MAX_LINE_BYTES or not JSON is skipped; a path
+    that is not absolute names nothing. The transcript is not read when it takes longer than
+    TRANSCRIPT_BUDGET (or the budget left; one line may overrun it). Past MAX_TARGETS distinct
+    paths no more are kept: fewer own paths can only turn a block into a report."""
+    deadline = min(run["deadline"], time.monotonic() + TRANSCRIPT_BUDGET)
+    path = agent_transcript(event)
+    raw = read_transcript(path) if path is not None else None
+    if raw is None:
+        return set(), [], False
+    targets, commands = set(), []
+    for line in raw.split(b"\n"):
+        if time.monotonic() >= deadline:
+            return set(), [], False
+        if len(line) > MAX_LINE_BYTES or b'"tool_use"' not in line:
+            continue
+        try:
+            entry = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        for name, tool_input in tool_uses(entry):
+            if name == "Bash":
+                command = tool_input.get("command")
+                text = one_line(command) if isinstance(command, str) else ""
+                if text:
+                    commands.append(text)
+            elif name in FILE_TOOLS:
+                target = tool_input.get(FILE_TOOLS[name])
+                if isinstance(target, str) and os.path.isabs(target) and len(targets) < MAX_TARGETS:
+                    targets.add(target)
+    own = set()
+    for target in targets:
+        if time.monotonic() >= deadline:
+            return set(), [], False
+        own.add(real("/", target))
+    own.discard("")
+    return own, commands[-MAX_COMMANDS:], True
+
+
 def listing(paths: list) -> list:
-    """One `- <path>` line each, at most MAX_LISTED, then `- … and N more`."""
-    lines = [f"- {path}" for path in paths[:MAX_LISTED]]
+    """One `- <path>` line each (made printable), at most MAX_LISTED, then `- … and N more`."""
+    lines = [f"- {printable(path)}" for path in paths[:MAX_LISTED]]
     if len(paths) > MAX_LISTED:
         lines.append(f"- \u2026 and {len(paths) - MAX_LISTED} more")
     return lines
 
 
 def noted(notes: list) -> str:
-    return "\n".join(NOTE.format(cause) for cause in notes)
+    return "\n".join(NOTE.format(printable(cause)) for cause in notes)
 
 
-def emit_result(agent_type: str, agent_id: str, block: list, report: list, signals: list, notes: list) -> None:
-    """One JSON object: a block (`decision`, `reason`) with the report and the notes as its
-    `systemMessage`; else the `systemMessage` alone; nothing when there is nothing to say."""
+def emit_result(
+    agent_type: str,
+    agent_id: str,
+    block: list,
+    report: list,
+    signals: list,
+    notes: list,
+    commands: list,
+    left: list | None = None,
+    unrecorded: str = "",
+) -> None:
+    """One JSON object: a block (`decision`, `reason`, with the agent's Bash commands as the
+    evidence) with the report, the paths left changed and the notes as its `systemMessage`; else
+    the `systemMessage` alone; nothing when there is nothing to say."""
+    agent_type, agent_id = printable(agent_type), printable(agent_id)
     parts = []
     if report:
         head = f"[hub readonly-gate] changed while {agent_type} (agent {agent_id}) ran, not attributed to it"
-        parts.append("\n".join([f"{head} ({', '.join(signals)}):", *listing(report)]))
+        named = ", ".join(printable(name) for name in signals)
+        parts.append("\n".join([f"{head} ({named}):", *listing(report)]))
+    if left:
+        head = f"[hub readonly-gate] {agent_type} (agent {agent_id}) finished and left these changed:"
+        parts.append("\n".join([head, *listing(left)]))
     if notes:
         parts.append(noted(notes))
+    if unrecorded:
+        parts.append(UNRECORDED.format(printable(unrecorded)))
     output = {}
     if block:
         head = f"[hub readonly-gate] {agent_type} (agent {agent_id}) is read-only (mutates_checkout: false) but changed:"
         ask = "Revert these changes, or explain in your final report why each one was needed."
         output["decision"] = "block"
-        output["reason"] = "\n".join([head, *listing(block), ask])
+        evidence = ["Commands you ran that may have made them:", *(f"- {c}" for c in commands)] if commands else []
+        output["reason"] = "\n".join([head, *listing(block), ask, *evidence])
     if parts:
         output["systemMessage"] = "\n".join(parts)
     if output:
@@ -613,8 +939,10 @@ def start(event: dict, cfg: Config) -> None:
     if is_fresh(path):
         return
     transcript, offset = main_transcript(event)
-    found, over = watched(cfg)
+    subagents, subagents_cut = subagent_listing(subagents_folder(transcript))
+    found, over, worktrees, listing_notes = watched(cfg)
     notes = [f"{over} checkouts over the cap"] if over else []
+    notes.extend(listing_notes)
     items = [snapshot_one(label, top, hub) for label, top, hub in found]
     notes.extend(f"{item['label']}: {item['cut']}" for item in items if item["cut"])
     state = {
@@ -624,7 +952,10 @@ def start(event: dict, cfg: Config) -> None:
         "session_id": session_id if isinstance(session_id, str) else "",
         "main_transcript": transcript,
         "main_offset": offset,
+        "subagents": subagents,
+        "subagents_cut": subagents_cut,
         "checkouts": items,
+        "worktrees": worktrees,
     }
     if not save_state(path, state):
         notes.append("state not saved")
@@ -632,10 +963,312 @@ def start(event: dict, cfg: Config) -> None:
         emit({"systemMessage": noted(notes)})
 
 
+# What else may have run in the agent's window (E-2, E-3), as the report names it.
+OTHER_STATE = "another read-only agent running"
+STATES_UNREADABLE = "agent states unreadable"
+MAIN_CALL = "main session tool call"
+MAIN_RESULT = "main session tool result"
+MAIN_UNREADABLE = "main transcript unreadable"
+OTHER_SUBAGENT = "another subagent ran"
+SUBAGENT_RUNNING = "another subagent running"
+SUBAGENTS_UNREADABLE = "subagents unreadable"
+LAUNCHERS = ("Agent", "Task")  # their effect shows through the subagents/ folder
+
+
+def other_states(session_id: object, own: Path) -> list:
+    """[OTHER_STATE] when another gate state of the session (`hub-readonly-<sid>-*.json`) is
+    younger than STALE_SECONDS: a declared agent started and not done. [STATES_UNREADABLE] when
+    $TMPDIR cannot be listed, the budget runs out, or more than MAX_STATE_FILES are looked at."""
+    prefix = f"hub-readonly-{safe_id(session_id)}-"
+    seen = 0
+    try:
+        with os.scandir(tempfile.gettempdir()) as scan:
+            for entry in scan:
+                if left() <= 0:
+                    return [STATES_UNREADABLE]
+                name = entry.name
+                if not (name.startswith(prefix) and name.endswith(".json")) or name == own.name:
+                    continue
+                seen += 1
+                if seen > MAX_STATE_FILES:
+                    return [STATES_UNREADABLE]
+                try:
+                    age = time.time() - entry.stat(follow_symlinks=False).st_mtime
+                except OSError:  # gone meanwhile: that agent stopped
+                    continue
+                if age < STALE_SECONDS:
+                    return [OTHER_STATE]
+    except (OSError, ValueError):
+        return [STATES_UNREADABLE]
+    return []
+
+
+def read_window(path: str, offset: int) -> bytes | None:
+    """The bytes of the regular file at path after offset, at most MAX_WINDOW_BYTES; None when it
+    is not one, is now shorter than offset, holds more, or cannot be read."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+    try:
+        handle = os.open(path, flags)
+    except (OSError, ValueError):
+        return None
+    try:
+        info = os.fstat(handle)
+        if not stat.S_ISREG(info.st_mode) or info.st_size < offset or info.st_size - offset > MAX_WINDOW_BYTES:
+            return None
+        os.lseek(handle, offset, os.SEEK_SET)
+        chunks, size = [], 0
+        while size <= MAX_WINDOW_BYTES:
+            chunk = os.read(handle, min(CHUNK * 16, MAX_WINDOW_BYTES + 1 - size))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+    except OSError:
+        return None
+    finally:
+        os.close(handle)
+    return b"".join(chunks) if size <= MAX_WINDOW_BYTES else None
+
+
+def main_signals(state: dict) -> list:
+    """What the main transcript's window (its bytes after its size at the start) shows: any tool
+    call but an Agent or Task one, any tool result. Lines marked `isSidechain` are a subagent's
+    and skipped. No transcript at the start, one gone, shorter or over MAX_WINDOW_BYTES, a line
+    over MAX_LINE_BYTES or not JSON among those holding a tool, or the budget running out:
+    MAIN_UNREADABLE (E-3)."""
+    path, offset = state.get("main_transcript"), state.get("main_offset")
+    if not isinstance(path, str) or not isinstance(offset, int) or isinstance(offset, bool) or offset < 0:
+        return [MAIN_UNREADABLE]
+    raw = read_window(path, offset)
+    if raw is None:
+        return [MAIN_UNREADABLE]
+    found = []
+    for line in raw.split(b"\n"):
+        if left() <= 0:
+            return found + [MAIN_UNREADABLE]
+        if len(line) > MAX_LINE_BYTES:
+            found.append(MAIN_UNREADABLE)
+            continue
+        if b'"tool_use"' not in line and b'"tool_result"' not in line:
+            continue
+        try:
+            entry = json.loads(line)
+        except (ValueError, RecursionError):
+            found.append(MAIN_UNREADABLE)
+            continue
+        if not isinstance(entry, dict) or entry.get("isSidechain") is True:
+            continue
+        message = entry.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        for block in content if isinstance(content, list) else []:
+            block_type = block.get("type") if isinstance(block, dict) else None
+            if block_type == "tool_result":
+                found.append(MAIN_RESULT)
+            elif block_type == "tool_use" and block.get("name") not in LAUNCHERS:
+                found.append(MAIN_CALL)
+    return found
+
+
+def saved_subagents(state: dict) -> dict | None:
+    """The state's {name: [size, mtime_ns]} listing when it has that shape and was not cut."""
+    listed = state.get("subagents")
+    if state.get("subagents_cut") is not False or not isinstance(listed, dict):
+        return None
+    for value in listed.values():
+        if not isinstance(value, list) or len(value) != 2 or not all(type(n) is int for n in value):
+            return None
+    return listed
+
+
+def read_tail(path: str) -> tuple | None:
+    """(the last MAX_TAIL_BYTES of the regular file at path, whether it starts past the file's
+    start); None when it is not one (a link is not followed) or cannot be read."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    try:
+        handle = os.open(path, flags)
+    except (OSError, ValueError):
+        return None
+    try:
+        info = os.fstat(handle)
+        if not stat.S_ISREG(info.st_mode):
+            return None
+        start = max(0, info.st_size - MAX_TAIL_BYTES)
+        os.lseek(handle, start, os.SEEK_SET)
+        chunks, size = [], 0
+        while size < MAX_TAIL_BYTES:
+            chunk = os.read(handle, min(CHUNK, MAX_TAIL_BYTES - size))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+    except OSError:
+        return None
+    finally:
+        os.close(handle)
+    return b"".join(chunks), start > 0
+
+
+def still_running(path: str) -> bool | None:
+    """Whether a subagent transcript's tail holds a tool call with no result after it: that
+    subagent is inside one call, which writes nothing until it ends (E-2). None when the tail
+    cannot tell: unreadable, no whole line in it, a line holding a tool that is not JSON, or a
+    result whose `tool_use_id` is not a string. Claude Code writes each block of one assistant
+    message on its own line, sharing `message.id`, with results and other lines between them. In
+    a tail starting mid-file, also None when (1) a result's call is before the tail and no
+    assistant entry of another message (than that result's turn) follows it, (2) the last turn
+    holding a call has no user or assistant entry before its first line in the tail and none of
+    another message after it, or (3) a call line has no `message.id`. Every whole line of the
+    tail (at most MAX_TAIL_BYTES) is parsed."""
+    tail = read_tail(path)
+    if tail is None:
+        return None
+    data, cut = tail
+    lines = data.split(b"\n")
+    if cut:
+        lines = lines[1:]  # the first one may start mid-line
+    pending, seen, whole = set(), set(), False
+    turns, last_turn, no_id = [], None, False  # [(type, message.id)] of the user and assistant entries
+    current = None  # the message.id of the last assistant entry
+    orphan, orphan_turn = False, None  # a result whose call is out of view, and that call's turn
+    for line in lines:
+        if not line.strip():
+            continue
+        whole = True
+        try:
+            entry = json.loads(line)
+        except (ValueError, RecursionError):
+            if b'"tool_use"' in line or b'"tool_result"' in line:
+                return None
+            continue
+        if not isinstance(entry, dict) or entry.get("type") not in ("user", "assistant"):
+            continue  # an attachment, a summary, a progress or system line: no conversation entry
+        message = entry.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        blocks = [block for block in content if isinstance(block, dict)] if isinstance(content, list) else []
+        if entry["type"] == "assistant":
+            message_id = message.get("id") if isinstance(message, dict) else None
+            message_id = message_id if isinstance(message_id, str) else None
+            calls = any(block.get("type") == "tool_use" for block in blocks)
+            if orphan and message_id is not None:
+                if orphan_turn is None and calls:
+                    orphan_turn = message_id  # may continue the orphan's turn: that turn is this one
+                elif message_id != orphan_turn:
+                    orphan = False  # another message: every call of the orphan's turn had its result
+            if calls:
+                last_turn = message_id
+                no_id = no_id or message_id is None
+            current = message_id
+            turns.append(("assistant", message_id))
+        else:
+            turns.append(("user", None))
+        for block in blocks:
+            if block.get("type") == "tool_use":
+                call_id = block.get("id")
+                if isinstance(call_id, str):
+                    seen.add(call_id)
+                pending.add(call_id if isinstance(call_id, str) else object())  # no id: never answered
+            elif block.get("type") == "tool_result":
+                answered = block.get("tool_use_id")
+                if not isinstance(answered, str):
+                    return None
+                pending.discard(answered)
+                if answered not in seen and not orphan:
+                    orphan, orphan_turn = True, current
+    if pending:
+        return True
+    if cut and (orphan or not whole or no_id or turn_cut(turns, last_turn)):
+        return None
+    return False
+
+
+def turn_cut(turns: list, turn: object) -> bool:
+    """Whether the assistant turn `turn` (a message.id) has no user or assistant entry before its
+    first line in the tail, so lines of it may be before the tail, and no later assistant entry
+    of another message closes it. False when no turn holds a call."""
+    if turn is None:
+        return False
+    numbers = [number for number, (kind_of, message_id) in enumerate(turns) if message_id == turn]
+    later = any(
+        number > numbers[-1] and kind_of == "assistant" and message_id != turn
+        for number, (kind_of, message_id) in enumerate(turns)
+    )
+    return numbers[0] == 0 and not later
+
+
+def subagent_signals(event: dict, state: dict) -> list:
+    """[OTHER_SUBAGENT] when another `agent-*.jsonl` of the session's subagents/ folder was
+    created or changed since the start (E-2); else [SUBAGENT_RUNNING] when one left unchanged
+    ends in a tool call with no result (a long call spanning the whole window). Either listing
+    cut, a tail that cannot tell, or the budget running out: [SUBAGENTS_UNREADABLE]. The agent's
+    own transcript grows as it runs and never counts."""
+    before = saved_subagents(state)
+    folder = subagents_folder(state.get("main_transcript"))
+    now, cut = subagent_listing(folder)
+    if before is None or cut or folder is None:
+        return [SUBAGENTS_UNREADABLE]
+    own = {f"agent-{state.get('agent_id')}.jsonl"}
+    path = event.get("agent_transcript_path")
+    if isinstance(path, str) and os.path.isabs(path):
+        try:
+            if os.path.realpath(os.path.dirname(path)) == os.path.realpath(folder):
+                own.add(os.path.basename(path))
+        except (OSError, ValueError):
+            pass
+    unchanged = []
+    for name, value in now.items():
+        if name in own:
+            continue
+        if before.get(name) != value:
+            return [OTHER_SUBAGENT]
+        unchanged.append(name)
+    found = []
+    for name in sorted(unchanged):
+        if left() <= 0:
+            return found + [SUBAGENTS_UNREADABLE]
+        if time.time() - now[name][1] / 1e9 >= STALE_SECONDS:
+            continue  # untouched for that long: killed mid-call, not running
+        running = still_running(os.path.join(folder, name))
+        if running is None and SUBAGENTS_UNREADABLE not in found:
+            found.append(SUBAGENTS_UNREADABLE)
+        elif running and SUBAGENT_RUNNING not in found:
+            found.append(SUBAGENT_RUNNING)
+    return sorted(found, key=[SUBAGENT_RUNNING, SUBAGENTS_UNREADABLE].index)
+
+
+def overlap(event: dict, state: dict, own: Path) -> list:
+    """The overlap signals, each once, in a fixed order: another gate state, the main
+    transcript's window, another subagent's transcript (AC-141.10, E-2, E-3)."""
+    found = other_states(event.get("session_id"), own) + main_signals(state) + subagent_signals(event, state)
+    return [name for index, name in enumerate(found) if name not in found[:index]]
+
+
+def attribute(changed: list, own: set, signals: list) -> tuple:
+    """(blocked, reported) labels: a changed path the agent's own file tools named is blocked;
+    with no overlap signal every change is the agent's (AC-141.6, AC-141.9)."""
+    block, report = [], []
+    for label, path in changed:
+        (block if not signals or (path and path in own) else report).append(label)
+    return block, report
+
+
+def again(item: dict) -> dict:
+    """The stop's snapshot of a checkout the start saw: the start's when it was cut then, a cut
+    `removed` when its folder, or the `.git` in it, is gone, or a task worktree's folder is now a
+    link (removed meanwhile; git would read the repo above it). A main checkout's folder may be a
+    link (a repo dir linked from elsewhere), as at the start."""
+    if item["cut"]:
+        return item
+    top = item["path"]
+    linked = "/" + WORKTREES in item["label"] and os.path.islink(top)
+    if linked or not os.path.isdir(top) or not os.path.lexists(os.path.join(top, ".git")):
+        return {**item, "cut": "removed"}
+    return snapshot_one(item["label"], item["path"], item["hub"])
+
+
 def stop(event: dict, cfg: Config) -> None:
-    """SubagentStop: snapshot the checkouts the start saw again, compare, and hold the stop when
-    something changed. For now every change is the agent's when its transcript is readable (a
-    provisional rule: attribution and overlap replace it)."""
+    """SubagentStop: snapshot the checkouts the start saw again, compare, and hold the stop for
+    the changes attributed to the agent. Without a readable transcript of the agent nothing can
+    be attributed: every change is reported (E-6)."""
     agent_type, agent_id = event["agent_type"], event["agent_id"]
     if not declared(cfg, agent_type):
         return
@@ -644,25 +1277,58 @@ def stop(event: dict, cfg: Config) -> None:
         emit({"systemMessage": NOTE.format("no start snapshot")})
         return
     state = load_state(path)
-    before = saved_checkouts(state)
-    if before is None:
+    before, listed = saved_checkouts(state), saved_worktrees(state)
+    if before is None or listed is None:
         forget(path)
         emit({"systemMessage": NOTE.format("start snapshot unreadable")})
         return
-    # a checkout cut at start stays a note: it is not read again
-    after = [item if item["cut"] else snapshot_one(item["label"], item["path"], item["hub"]) for item in before]
+    # a checkout cut at start stays a note: it is not read again; one gone since is a note
+    after = [again(item) for item in before]
     changed, notes = changes(before, after)
+    _, _, now_listed, listing_notes = watched(cfg)
+    new, removed = worktree_changes(listed, now_listed)
+    changed.extend(new)
+    gone = {item["label"] for item in after if item["cut"] == "removed"}
+    notes.extend(listing_notes)
+    notes.extend(removed_notes(sorted(gone | set(removed))))  # a snapshotted one is listed too: once
+    counter = blocks_path(path)
+    done = blocks_done(counter)
+    labels = [label for label, _ in changed]
+    if done >= MAX_BLOCKS or event.get("stop_hook_active") is True:
+        # the agent was held once already (or Claude Code says it is continuing): never again
+        forget(path)
+        forget(counter)
+        unrecorded = record(event, [("left_changed", labels)])
+        emit_result(agent_type, agent_id, [], [], [], notes, [], left=labels, unrecorded=unrecorded)
+        return
     if not changed:
         forget(path)
         if notes:
             emit({"systemMessage": noted(notes)})
         return
-    if agent_transcript(event) is not None:  # provisional rule: no overlap signal yet
-        emit_result(agent_type, agent_id, changed, [], [], notes)  # the state stays for the retry
+    own, commands, readable = agent_calls(event)
+    if not readable:
+        forget(path)
+        notes.append("agent transcript unreadable")
+        unrecorded = record(event, [("report", labels)])
+        signals = ["agent transcript unreadable"]
+        emit_result(agent_type, agent_id, [], labels, signals, notes, [], unrecorded=unrecorded)
         return
-    forget(path)
-    notes.append("agent transcript unreadable")
-    emit_result(agent_type, agent_id, [], changed, ["agent transcript unreadable"], notes)
+    signals = overlap(event, state, path)
+    block, report = attribute(changed, own, signals)
+    left = []
+    if block and not count_block(counter, done):
+        forget(path)
+        forget(counter)
+        notes.append("state not saved")
+        block, left = [], block
+    if not block:
+        forget(path)
+    # a block keeps the state and the counter for the retry
+    unrecorded = record(event, [("block", block), ("report", report), ("left_changed", left)])
+    emit_result(
+        agent_type, agent_id, block, report, signals, notes, commands, left=left, unrecorded=unrecorded
+    )
 
 
 def main() -> None:
