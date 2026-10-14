@@ -1,6 +1,8 @@
 # Sessions list
 
-**Phase:** P2 (compare view P3) · **Route:** `/sessions` (params below) · **Answers:** "Which sessions happened, and which one do I need to look at?"
+**Phase:** P2 (compare view P3) · **Route:** `/sessions?view=grid|table&within=repo|run|workflow` (filters below) ·
+**Decision:** [ADR 0033](../../../adr/0033-sessions-and-chat-interaction-model.md) (one screen; replaces
+[11-live-sessions.md](11-live-sessions.md), retired) · **Answers:** "Which sessions happened, and which one do I need to look at?"
 
 ## Purpose and primary user
 
@@ -11,6 +13,51 @@ The historical index of every Session (one Claude Code session = one execution o
 - **Owner:** sorts by cost to spot outliers.
 
 It is a dense, fast table, not a dashboard: overview (counts per facet) → zoom and filter (rail) → details on demand (hover preview, then Session detail).
+
+## One screen, two views, status sections (ADR 0033)
+
+Sessions is the only sessions screen: the sidebar's Sessions entry carries the live badge, and `/live` redirects here
+(see [01-navigation.md](01-navigation.md)). It shows both kinds of session: **observed** ones (hook-fed, open
+`/sessions/:id`) and **driven** ones (started by `hub web`, open the chat at `/agent-sessions/:id`).
+
+```
+Sessions                    [Grid | Table]  [Views ▾] [Columns] [24 h|7 d|30 d|Custom]  [New session]
+[chips…]
+▾ Waiting · 1          tiles or table, oldest wait first
+▾ Live · 4             within=repo|run|workflow sub-groups (grid)
+▸ Idle · 2             (collapsed)
+▾ Ended or failed · ~1,233   period applies here only            [Load more]
+▸ Cloud sessions       (collapsed details: `claude --cloud` / `--teleport` guidance)
+```
+
+- **View.** `view=grid|table` in the URL (header `SegmentedControl` or `v`); stored in `ah.sessions.view`; the URL wins
+  over the stored value; with neither, the grid. Unknown values fall back to the default.
+- **Sections**, in this order: Waiting (`waiting`; driven `waiting_permission`), Live (`live`; driven `running`), Idle,
+  Ended or failed (`ended`, `outcome=error` in red text; driven `ended`, `failed`). Troubled sessions
+  (`needs_you > 0`) keep their section and get the red edge (`data-trouble`). Each section is its own
+  `GET /sessions?status=` query (50 per page, "Load more" by cursor) and its header count is that query's
+  `total_estimate`. A header button with `aria-expanded` collapses it; the collapsed set persists in
+  `ah.sessions.collapsed`. Empty sections are hidden; when all are empty, one empty state shows.
+- **Grid view.** Each session is a `SessionTile` (waiting reason, last action, problems, stats, sparkline while not
+  ended; fields from `GET /sessions`). `within=repo|run|workflow` sub-groups the tiles inside each section.
+- **Table view.** Each section is its own table with the chosen columns and density; sort applies within a section;
+  a section over 100 rows is virtualised.
+- **Filters.** Chips, saved views and the column picker apply to both views (columns to the table only). A status
+  facet value shows only that section; "Live now" shows only Live. The period filters the Ended section only, so a
+  running session older than the period still shows.
+- **Driven sessions.** A driven session with an observed twin shows once, as the twin, with a "Chat" badge, and opens
+  the chat. One without a twin (`observed_session_id` null) shows in its section with the fields it has. "New session"
+  sits in the page header; the 401, 404 `agent-sessions-off` and 503 banners stay. There is no separate "Driven from
+  hub web" list. Cloud guidance is a collapsed "Cloud sessions" details below the sections.
+- **Open.** Every tile and row has a visible primary button: "Open" (observed), "Open chat" (driven), "Answer" when
+  waiting (the chat or Approvals). The title is a real `<a href>`. No "…" button.
+- **Keys.** `j` / `k` move across tiles and rows of every section with a visible focus ring; `Enter` or `o` opens;
+  `v` toggles the view.
+- **Live updates.** Sections refetch on the live-tile stream at most once per 2 s (and on the driven-list poll). The
+  first visible row keeps its scroll offset; a focused row keeps focus when it moves to another section. A polite
+  digest is announced at most every 15 s; offline shows `AsOfStamp`.
+
+The rest of this file describes the table view; the tile anatomy is in [11-live-sessions.md](11-live-sessions.md).
 
 ## Layout (1440 px)
 
@@ -102,7 +149,7 @@ Transcript retention column (privacy principle): it tells the user before they c
 
 | Element | Entity.field (brief §3) | API resource | Source · latency |
 |---|---|---|---|
-| Row set | Session (derived) | `GET /sessions?project=&repo=&agent=&outcome=&workflow=&from=&to=&cost_min=&cost_max=&file=&tool=&guard_denied=&has_decisions=&sort=&cursor=&limit=50` → `items`, `next_cursor`, `total_estimate` | collector DB · < 300 ms target |
+| Row set | Session (derived) | `GET /sessions?project=&repo=&agent=&outcome=&workflow=&from=&to=&cost_min=&cost_max=&file=&tool=&guard_denial=&has_decisions=&sort=&cursor=&limit=50` → `items`, `next_cursor`, `total_estimate` | collector DB · < 300 ms target |
 | Started / Ended | Session.start, end | `items[].started_at`, `ended_at` | claude_code hooks · real time |
 | Duration | end − start, minus nothing (wall clock) | derived client-side from the two fields | derived |
 | Project, Repo | Session.project, repo | `items[].project`, `repo` | hooks |
@@ -117,7 +164,7 @@ Transcript retention column (privacy principle): it tells the user before they c
 | Decisions | decisions | `items[].decision_count` | transcript (recorded) / P3 extraction |
 | Transcript | transcript ref + deletion date | `items[].transcript.{status,expires_at}` | collector retention policy |
 | "Showing 50 of ~1,240" | count | `total_estimate` (approximate, from the query planner; "~" always shown unless exact flag) | DB |
-| Facet counts | aggregates over current filters minus the facet itself | `GET /sessions?…&facets=project,repo,agent,outcome,workflow,tool,guard_denied,has_decisions` → `facets` | DB · may arrive after rows |
+| Facet counts | aggregates over current filters minus the facet itself | `GET /sessions?…&facets=project,repo,agent,outcome,workflow,tool,guard_denial,has_decisions` → `facets` | DB · may arrive after rows |
 | Row hover preview | last events + density | `GET /sessions/{id}/events?types=tool.call,tool.result,decision,gate.request,gate.result&limit=5` + `items[].density` (60 buckets, included in the list payload) | DB |
 | Live rows | status changes | `GET /events/stream` (global SSE, `session.*` events for rows on screen) | real time |
 | Saved views | user preference | browser local storage in v1 (per viewer); see Open question | local |
@@ -135,17 +182,16 @@ Transcript retention column (privacy principle): it tells the user before they c
 - Range facets: date range (calendar popover, presets), cost range (two inputs, `$` prefix, histogram behind the slider).
 - Touched file: autocomplete over paths (`PathText`), supports a glob (`packages/core/**/guard*.py`). Used tool: chips Read, Edit, Write, Bash, Grep, Glob, Agent, WebFetch, MCP (plus MCP server names).
 - Boolean facets: "Had a guard denial", "Has decisions".
-- Every filter is in the URL: `/sessions?project=agent-hub&outcome=error&file=packages/core/src/agent_hub/core/guard.py&guard_denied=true`.
+- Every filter is in the URL: `/sessions?project=agent-hub&outcome=error&file=packages/core/src/agent_hub/core/guard.py&guard_denial=1`.
 
 **Saved views.** `SavedViewMenu` lists built-in views first:
 - "Default" (all, 7 d)
 - "Live now" (status=live)
 - "Errors this week" (outcome=error, 7 d)
-- "Guard denials" (guard_denied=true, 30 d)
+- "Guard denials" (guard_denial=1, 30 d)
 - "Expensive sessions" (sort=cost desc, 30 d)
-- "Transcript expiring soon" (transcript expires in <= 7 d)
 
-"Save current view…" asks for a name (max 40 chars), saves filters, columns, order, sort, density. Views are per viewer (local, single-user app in v1); they survive reloads. "Copy link to view" copies the URL, which carries the full state, so views are shareable without a server.
+Not built: a "Transcript expiring soon" view and "Save current view…" (user-saved views are out of scope for ADR 0033). As designed, "Save current view…" asks for a name (max 40 chars), saves filters, columns, order, sort, density. Views are per viewer (local, single-user app in v1); they survive reloads. "Copy link to view" copies the URL, which carries the full state, so views are shareable without a server.
 
 **Column chooser.** `Popover` with checkboxes and drag handles; "Reset to default". Choices persist with the view.
 
@@ -172,7 +218,7 @@ The strip uses `Minimap` colors (`ev-tool`, `ev-decision`, `failed` markers, `gu
 
 **Multi-select.** Checkbox per row; Shift+click selects a range; `x` toggles the focused row. Selection count shows in the header: "Selected 2". With exactly 2 selected, "Compare" becomes active (P3). With 3+, Compare is disabled with tooltip "Compare works on 2 sessions. Deselect 1." Selection persists across "Load more" but clears on filter change (with a polite live-region note "Selection cleared because filters changed").
 
-**Keyboard.** `j` / `k` row focus, Enter open, `x` select, `/` focus the rail search, `[` toggle rail, `c` column chooser, `v` saved views, `g s` comes here from anywhere.
+**Keyboard.** `j` / `k` row focus (across sections), Enter or `o` open, `x` select, `/` focus the rail search, `[` toggle rail, `c` column chooser, `v` grid / table, `g s` comes here from anywhere (`g l` opens the grid).
 
 ## Compare two sessions (P3, brief)
 
@@ -206,7 +252,7 @@ Header deltas (B − A), timelines aligned by turn number with a toggle to wall 
 | Partial: otel down | Tokens and Cost cells `--`, header tooltip | `Banner` info: "Token and cost data unavailable since 08:40 (OpenTelemetry receiver not reporting). Sessions and events are current." |
 | Partial: transcripts not yet ingested | Turns cell shows "…" for live/just-ended rows | Tooltip: "Turns are counted after each turn's transcript arrives." |
 | Error | `ProblemError` replaces the table, rail stays | e.g. "Could not load sessions" / "Filter `cost_min` must be a decimal (status 400)." [Retry] [Clear filters] |
-| Live | Live rows keep their place in the current sort order and show a pulse dot in Outcome and ticking duration; new sessions do not insert into the visible list (no jumping); a pill appears | "3 new sessions · Show" (pill above the table; click reloads first page) |
+| Live | Live rows show a pulse dot in Outcome and ticking duration; a session moves to its new status section on the next refetch (≤ 1 per 2 s) without moving the reader's scroll position or focus | (none) |
 | Stale | `AsOfStamp` next to the title; pulse dots stop | "As of 14:02 · collector offline" |
 | Transcript expired row | Transcript column "expired 2026-09-30" (`idle`); row still clickable | Tooltip: "Raw content expired. Summary and structured events remain." |
 | Redacted values | Never shown in this table (metadata only) | n/a |
@@ -220,7 +266,7 @@ Header deltas (B − A), timelines aligned by turn number with a toggle to wall 
 | Copy link to view | P2 | No | Clipboard |
 | Export visible rows as CSV | P2 | No | Downloads metadata only (no content); filename `sessions-2026-10-11.csv` |
 | Compare 2 sessions | P3 | No | Opens compare view |
-| Pause / cancel a live session | P4 | Yes | Available from Session detail and Live sessions, not from this list (keeps the list a read surface) |
+| Pause / cancel a live session | P4 | Yes | Available from Session detail and the chat, not from this list (keeps the list a read surface) |
 
 ## UX principles applied
 
