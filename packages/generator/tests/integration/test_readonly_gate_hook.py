@@ -2992,6 +2992,7 @@ LIMITS = {
     "MAX_COMMANDS": 10,
     "MAX_COMMAND_CHARS": 160,
     "MAX_TARGETS": 256,
+    "KILL_WAIT": 1,  # waited after killing git's group, past the budget's end
 }
 
 
@@ -3018,3 +3019,5 @@ def test_pins_limits_when_budget_constants_read(
     assert LIMITS["STOP_BUDGET"] < 30
     assert LIMITS["GIT_TIMEOUT"] < LIMITS["START_BUDGET"]
     assert LIMITS["TRANSCRIPT_BUDGET"] < LIMITS["STOP_BUDGET"]
+    assert LIMITS["START_BUDGET"] + LIMITS["KILL_WAIT"] < 10
+    assert LIMITS["STOP_BUDGET"] + LIMITS["KILL_WAIT"] < 30
