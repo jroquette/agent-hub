@@ -29,9 +29,9 @@ Makefile uses.
 | integration | Adapters against real infrastructure: a SQLite file under `tmp_path`, Alembic upgrade and downgrade; the generator's rendered hooks, scripts and `./hub` shim run in a temporary hub, with the characterization goldens; the CLI commands against local bare repos | `packages/<pkg>/tests/integration/` | `make check` |
 | e2e | The installed product and the gates as subprocesses: `hub` installed with `uv tool install`; `docs/USING.md`'s runbook run line by line; ruff and mypy run with the repo's configs; the import-linter contracts; the rendered hooks and scripts linted for Python 3.9; the package data the built wheels ship; `make demo`'s seed against `hub web` | root `tests/e2e/` | `make check` |
 | docker | The image and its Compose service, built and run, checked from the host (`tests/e2e/test_docker.py`, marker `docker`) | root `tests/e2e/` | `make test-docker` and its CI job, never `make check` |
-| live agent | A real `claude -p` session in a temp hub, seen through `hub web` (`tests/e2e/test_live_agent.py`, marker `live("claude")`) | root `tests/e2e/` | `make test-live`, by hand |
+| live agent | A real `claude -p` session in a temp hub, seen through `hub web`, and a session `hub web` drives whose `git push origin main` the guard denies (`tests/e2e/test_live_agent.py`, marker `live("claude")`) | root `tests/e2e/` | `make test-live`, by hand |
 | web | The React app: Vitest + Testing Library in jsdom for components and screens (states, a11y with `axe-core`), against `src/testing/builders.ts` fixtures and a mocked API (`renderWithApi`) | `apps/web/src/**/*.test.{ts,tsx}` beside the code | `make check-fast` (`web-fast`) |
-| web smoke | The built app on an installed `hub web`: Playwright (Chromium) visits the nine P2 pages of a synthetic scenario | `apps/web/e2e/smoke.spec.ts`, driven by root `tests/e2e/test_web_smoke.py` | `make check` (`test-e2e`) |
+| web smoke | The built app on an installed `hub web`: Playwright (Chromium) opens the printed token URL, visits the nine P2 pages of a synthetic scenario, and drives an agent session against the stub `claude` through two reloads | `apps/web/e2e/smoke.spec.ts`, driven by root `tests/e2e/test_web_smoke.py` | `make check` (`test-e2e`) |
 
 A port's suite is written once, as reusable tests in `agent_hub.core.testing.contracts`, and each implementation's
 `tests/contract/` runs it against that implementation, so the fake used by unit tests is proven to behave like the real
@@ -64,6 +64,26 @@ The same fakes module holds what the app's tests use instead of Linear: `Countin
 cache), `FailingTrackerReader(kind, http_status=)` (each failure kind) and `InMemoryTicketSnapshots`. The API's tests
 reach the GraphQL reader end to end through `build_app(linear_post=…)`, an injected transport, with a synthetic key in
 the injected environment: no socket opens and no real key is read.
+
+The fifth and sixth are the agent sessions' (ADR 0027). `SessionDriverContract`
+(`agent_hub.core.testing.session_driver_contract`) takes `session_driver` and `scenario` fixtures and checks event order, `init`
+before text, a `result` with cost and usage ending each turn, `exited` after close, and a permission request parked
+until answered. It runs against `InMemorySessionDriver` (`agent_hub.core.testing.session_driver_fakes`, scripted turns
+per message, `Hold` to park a turn; `packages/core/tests/contract/`) and against `ClaudeSdkSessionDriver`
+(`packages/claude_sessions/tests/contract/`) driving the **stub CLI**: `agent_hub.claude_sessions.testing.stub_claude`,
+run by a `claude` shim on `PATH` (`scenarios.write_shim`), plays a synthetic `Scenario` (`STUB_CLAUDE_SCENARIO`) over
+Claude Code's stream-json and control protocol, answers `--version`, `--help` and the `--cloud` forms, can spawn a
+tool grandchild, and appends what it saw to `STUB_CLAUDE_RECORD`. No recorded real output is committed, and no test
+calls a model. A subclass sets `pytestmark = pytest.mark.anyio`. `AgentSessionStoreContract`
+(`agent_hub.core.testing.agent_session_store_contract`) takes an `agent_session_store` fixture and runs against
+`InMemoryAgentSessionStore` and `SqliteAgentSessionStore`. `agent_hub.core.testing.agent_session_rig` (`build_rig`)
+puts `AgentSessionControl` over the in-memory driver and store with a clock the test moves; the API's
+`agent_session_app` fixture serves the routes over it with the cookie and `Origin` preset. The e2e tests run the
+installed `hub web` (with the `sessions` extra) against the stub on `PATH` (the `stub_claude` fixture), never a fake
+driver selected in production.
+
+**Async tests.** The use case and the adapter are async: such tests are `@pytest.mark.anyio` and run on asyncio only
+(the root `conftest.py`'s `anyio_backend`, as `hub web`'s loop); time is a fake clock and `sweep(now)`, never a sleep.
 
 `hub_git` is tested at three levels, all without the network and without a real GitHub account:
 
