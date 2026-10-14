@@ -237,9 +237,10 @@ def transcripts(
     first = json.dumps({"type": "user", "message": {"role": "user", "content": "go"}})
     main.write_text(first + "\n", encoding="utf-8")
     lines = [first]
-    for tool, tool_input in calls:
+    for number, (tool, tool_input) in enumerate(calls, 1):
         call = {"type": "tool_use", "name": tool, "input": dict(tool_input)}
-        lines.append(json.dumps({"type": "assistant", "message": {"content": [call]}}))
+        message = {"id": f"msg_{number}", "content": [call]}
+        lines.append(json.dumps({"type": "assistant", "message": message}))
     agent.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return main, agent
 
@@ -1591,9 +1592,9 @@ def append_line(path: Path, entry: Mapping[str, object]) -> None:
 
 
 def main_call(name: str, tool_input: Mapping[str, object], **extra: object) -> dict[str, object]:
-    """A main-transcript line holding one ``tool_use`` of ``name``."""
+    """A main-transcript line holding one ``tool_use`` of ``name`` (message ``msg_m1``)."""
     call = {"type": "tool_use", "id": "toolu_m1", "name": name, "input": dict(tool_input)}
-    return {"type": "assistant", "message": {"content": [call]}, **extra}
+    return {"type": "assistant", "message": {"id": "msg_m1", "content": [call]}, **extra}
 
 
 def main_result(**extra: object) -> dict[str, object]:
@@ -1862,6 +1863,7 @@ def other_subagent(agent: Path, *, answered: bool) -> Path:
             "type": "assistant",
             "isSidechain": True,
             "message": {
+                "id": "msg_b1",
                 "content": [
                     {
                         "type": "tool_use",
@@ -1869,7 +1871,7 @@ def other_subagent(agent: Path, *, answered: bool) -> Path:
                         "name": "Bash",
                         "input": {"command": "make check"},
                     }
-                ]
+                ],
             },
         },
     ]
@@ -1993,8 +1995,9 @@ def call_block(call_id: str, name: str, **tool_input: object) -> dict[str, objec
     return {"type": "tool_use", "id": call_id, "name": name, "input": dict(tool_input)}
 
 
-def assistant_entry(*blocks: Mapping[str, object]) -> dict[str, object]:
-    return {"type": "assistant", "isSidechain": True, "message": {"content": [*blocks]}}
+def assistant_entry(*blocks: Mapping[str, object], message_id: str = "msg_b1") -> dict[str, object]:
+    message = {"id": message_id, "content": [*blocks]}
+    return {"type": "assistant", "isSidechain": True, "message": message}
 
 
 def result_entry(call_id: str, content: str = "ok") -> dict[str, object]:
@@ -2042,7 +2045,7 @@ def sibling_results(agent: Path, *, later: bool) -> int:
             {
                 "type": "assistant",
                 "isSidechain": True,
-                "message": {"content": [{"type": "text", "text": "done"}]},
+                "message": {"id": "msg_b2", "content": [{"type": "text", "text": "done"}]},
             }
         )
     (agent.parent / "agent-b.jsonl").write_text(jsonl([turn, *tail]), encoding="utf-8")
@@ -2100,5 +2103,73 @@ def test_blocks_when_no_overlap_block_other_subagent_open_call_stale(
     os.utime(other, (old, old))
 
     output = run_agent(gate, "researcher", lambda: change_app(gate_ws), calls=[BASH_EDIT])
+
+    assert reason_lines(output)[:3] == [agent_head("researcher"), "- app/a.py", REVERT]
+
+
+def split_turn(agent: Path, *, start_visible: bool) -> int:
+    """``agent-b.jsonl`` in Claude Code's shape: each call of one assistant message (``msg_b1``) on
+    its own line, then the Reads' results. With ``start_visible`` the Bash call is absent and a
+    user line precedes the turn; else the Bash call (no result yet) is first. Returns a tail size
+    that holds the two Read lines and their results whole, after the line before them (whole
+    only with ``start_visible``)."""
+    head: list[dict[str, object]] = [
+        {"type": "user", "isSidechain": True, "message": {"role": "user", "content": "x" * 400}}
+    ]
+    shown: list[dict[str, object]] = []
+    if start_visible:
+        shown.append(
+            {"type": "user", "isSidechain": True, "message": {"role": "user", "content": "go"}}
+        )
+    else:
+        head.append(
+            assistant_entry(call_block("toolu_b1", "Bash", command="make check " + "x" * 400))
+        )
+    shown += [
+        assistant_entry(call_block("toolu_r1", "Read", file_path="/r1")),
+        assistant_entry(call_block("toolu_r2", "Read", file_path="/r2")),
+        result_entry("toolu_r1"),
+        result_entry("toolu_r2"),
+    ]
+    (agent.parent / "agent-b.jsonl").write_text(jsonl([*head, *shown]), encoding="utf-8")
+    return len(jsonl(shown).encode("utf-8")) + 10
+
+
+def test_reports_when_overlap_report_other_subagent_turn_start_out_of_view(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """E-2: a turn written one call per line whose first line is the tail's first whole line may
+    hold calls before the tail (here a Bash call still running): reported as unreadable."""
+    _, agent = transcripts(gate_ws, agent_id="a1", calls=[BASH_EDIT])
+    size = split_turn(agent, start_visible=False)
+
+    lines = report_lines(
+        run_agent(
+            gate,
+            "researcher",
+            lambda: change_app(gate_ws),
+            calls=[BASH_EDIT],
+            constant=("MAX_TAIL_BYTES", size),
+        )
+    )
+
+    assert lines == [report_head(SUBAGENTS_UNREADABLE), "- app/a.py"]
+
+
+def test_blocks_when_no_overlap_block_other_subagent_turn_start_visible(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """E-2 control: the same turn with an earlier entry before its first line inside the tail and
+    every call answered shows nothing running: the change is still blocked."""
+    _, agent = transcripts(gate_ws, agent_id="a1", calls=[BASH_EDIT])
+    size = split_turn(agent, start_visible=True)
+
+    output = run_agent(
+        gate,
+        "researcher",
+        lambda: change_app(gate_ws),
+        calls=[BASH_EDIT],
+        constant=("MAX_TAIL_BYTES", size),
+    )
 
     assert reason_lines(output)[:3] == [agent_head("researcher"), "- app/a.py", REVERT]
