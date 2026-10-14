@@ -38,6 +38,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   Given the ticket, task, round and commit, each ends its reply with one JSON block, a review output
   (`agent-hub/review/1`); both stay read-only. `/fix`, `/refactor` and `/review` read the new words. `hub sync` rewrites
   five managed files (the two agents and the three skills): run `hub sync` after the bump (AGH-139).
+- `/feature` acts only on validated outputs. Step 7 saves each reviewer's JSON to
+  `reviews/<ticket>/<reviewer>-r<N>.json`, runs `./hub validate-output review`, re-asks once with every printed line
+  and stops on a second failure; a ticket is `approved` only when the latest round of both reviewers is a validated
+  `PASS`. The evaluator writes and validates `evals/<delivery>.json` beside its `.md`; step 8 re-dispatches it once
+  (a new `-rN` pair) when that file is missing or invalid, and ships only on a validated `SHIP`. `hub sync` rewrites
+  `agents/evaluator.md` and `skills/feature/SKILL.md`: run `hub sync` after the bump (AGH-139).
 - `hub run` no longer reports a run that ended with no commit, or whose session stopped to ask a human, as a failure.
   No commit: a `Run <id> ended with no changes at <STAGE>: …` comment, no label, exit 0. Stopped: the blocked label, a
   `Run <id> stopped at <STAGE> and needs a human. The session asked: …` comment, exit 3. A failure still adds
