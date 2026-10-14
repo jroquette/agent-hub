@@ -1016,8 +1016,12 @@ def still_running(path: str) -> bool | None:
     subagent is inside one call, which writes nothing until it ends (E-2). None when the tail
     cannot tell: unreadable, no whole line in it, a line holding a tool that is not JSON, or (a
     tail starting mid-file) a result whose call is before the tail with no assistant entry after
-    it: that turn's other calls are out of view and one may still run. Every whole line of the
-    tail (at most MAX_TAIL_BYTES) holding a tool or `"assistant"` is parsed."""
+    it: that turn's other calls are out of view and one may still run. Claude Code writes each
+    block of one assistant message on its own line, sharing `message.id`: in a tail starting
+    mid-file, the last turn holding a call must have a whole line of something else before its
+    first line, unless a later assistant entry closes it; a call line without a `message.id` is
+    out of view too. Every whole line of the tail (at most MAX_TAIL_BYTES) holding a tool or
+    `"assistant"` is parsed."""
     tail = read_tail(path)
     if tail is None:
         return None
@@ -1026,10 +1030,13 @@ def still_running(path: str) -> bool | None:
     if cut:
         lines = lines[1:]  # the first one may start mid-line
     pending, seen, whole, orphan = set(), set(), False, False
+    turns, last_turn, no_id = [], None, False  # [(whole line number, message.id)] of assistant entries
+    number = -1
     for line in lines:
         if not line.strip():
             continue
         whole = True
+        number += 1
         tools = b'"tool_use"' in line or b'"tool_result"' in line
         if not tools and b'"assistant"' not in line:
             continue
@@ -1043,6 +1050,15 @@ def still_running(path: str) -> bool | None:
             orphan = False  # the model went on: every call of the turns before it had its result
         message = entry.get("message") if isinstance(entry, dict) else None
         content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(entry, dict) and entry.get("type") == "assistant":
+            message_id = message.get("id") if isinstance(message, dict) else None
+            turns.append((number, message_id))
+            calls = isinstance(content, list) and any(
+                isinstance(block, dict) and block.get("type") == "tool_use" for block in content
+            )
+            if calls:
+                last_turn = message_id
+                no_id = no_id or not isinstance(message_id, str)
         for block in content if isinstance(content, list) else []:
             block_type = block.get("type") if isinstance(block, dict) else None
             if block_type == "tool_use":
@@ -1056,9 +1072,20 @@ def still_running(path: str) -> bool | None:
                 orphan = orphan or answered not in seen
     if pending:
         return True
-    if cut and (orphan or not whole):
+    if cut and (orphan or not whole or no_id or turn_cut(turns, last_turn)):
         return None
     return False
+
+
+def turn_cut(turns: list, turn: object) -> bool:
+    """Whether the assistant turn `turn` (a message.id) starts on the tail's first whole line
+    (line 0), so lines of it may be before the tail, and no later assistant entry of another
+    message closes it. False when no turn holds a call."""
+    if turn is None:
+        return False
+    numbers = [number for number, message_id in turns if message_id == turn]
+    later = any(number > numbers[-1] and message_id != turn for number, message_id in turns)
+    return numbers[0] == 0 and not later
 
 
 def subagent_signals(event: dict, state: dict) -> list:
