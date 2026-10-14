@@ -641,3 +641,51 @@ def class_end(source: str, start: int) -> int:
 )
 def test_finds_anchors_when_outside_classes(source: str, anchors: list[str]) -> None:
     assert anchors_of(source) == anchors
+
+
+class TestEnvFiles:
+    """AGH-210: ``secrets.config`` shows the env files the guard releases or adds, as infos."""
+
+    @staticmethod
+    def config_with(**guard: list[str]) -> HubConfig:
+        document = a_hub_document()
+        document["guard"] |= guard
+        return HubConfig.model_validate(document)
+
+    @staticmethod
+    def infos(snapshot: DoctorSnapshot) -> list[Shown]:
+        findings = [f for f in SECRETS_CONFIG.check(snapshot) if f.severity is Severity.INFO]
+        return [(finding.path, finding.line, finding.message, finding.fix) for finding in findings]
+
+    def test_reports_info_when_readable_env_files_set(self, snapshot_of: SnapshotFactory) -> None:
+        config = self.config_with(readable_env_files=[".env.local", ".env.local-tests"])
+
+        assert self.infos(snapshot_of(config=config)) == [
+            (
+                "hub.json",
+                None,
+                "guard.readable_env_files lets agents read: .env.local, .env.local-tests",
+                "remove a name from guard.readable_env_files to deny it again",
+            )
+        ]
+
+    def test_reports_info_when_secret_env_files_set(self, snapshot_of: SnapshotFactory) -> None:
+        config = self.config_with(
+            readable_env_files=[".env.local"], secret_env_files=[".env.staging"]
+        )
+
+        assert [message for _, _, message, _ in self.infos(snapshot_of(config=config))] == [
+            "guard.readable_env_files lets agents read: .env.local",
+            "guard.secret_env_files always denies: .env.staging",
+        ]
+
+    def test_reports_nothing_when_env_files_unset(self, snapshot_of: SnapshotFactory) -> None:
+        assert list(SECRETS_CONFIG.check(snapshot_of())) == []
+
+    def test_keeps_exit_clean_when_only_env_file_infos(self, snapshot_of: SnapshotFactory) -> None:
+        config = self.config_with(readable_env_files=[".env.local"])
+        selection = Selection(rules=(SECRETS_CONFIG,), notes=(), severities={})
+
+        findings = run_rules(selection, snapshot_of(config=config))
+
+        assert [finding.severity for finding in findings] == [Severity.INFO]

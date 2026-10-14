@@ -11,6 +11,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-14
+
 ### Added
 
 - Read-only agents are held when they change a checkout. An agent whose frontmatter says `mutates_checkout: false` (the
@@ -37,7 +39,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   one line per problem (the first 200, then the total), exit 2 on a usage error. Links are never followed and no
   `hub.json` is needed. `hub sync` now ships the two JSON Schemas to `plugin/hub-workflow/schemas/review.v1.json` and
   `eval.v1.json` (managed, run `hub sync` after the bump) (AGH-139).
-
+- `hub doctor` (`features.tracker`) warns on a feature's agent outputs, `evals/*.json` and `reviews/<ticket>/*.json`:
+  one without its `.md` record, or one that fails validation, with its problem count, its first problem and the
+  `./hub validate-output` command that lists them all. Warnings only; one validation budget per run, and an info line counts the outputs it skipped (AGH-139).
 - Skills tab in `hub web` (`/projects/:project/skills`): every skill, agent and hook of the hub with what it does, a
   copyable invocation, origin (managed by `hub sync`, project-owned or local) and invocation mode, the frontmatter, the
   rendered text with a table of contents and a Raw view, the steps derived from the text, uses and used-by links,
@@ -48,9 +52,25 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   moves a plugin agent to another tier, e.g. `{"tiers": {"large": "claude-opus-4-1"}, "agents": {"researcher":
   "large"}}`. `./hub sync` renders each agent's `model:` from it, and `hub run` takes its default model from `medium`
   (`--model` still wins). Without the key nothing changes (AGH-180).
+- `hub.json` takes `guard.readable_env_files` and `guard.secret_env_files`: env file names (`.env.<suffix>`) the guard
+  lets agents read, e.g. `[".env.local"]`, or always denies, e.g. `[".env.staging"]`. `.env` itself, paths and key
+  files are rejected, and a name cannot be in both lists. A `$HUB_CONFIG` file can add secret names but never release
+  one. `hub doctor` (`secrets.config`) lists both as infos. Run `./hub sync` after bumping `platform.version` to get
+  the new guard. Without the keys nothing changes (AGH-210).
 
 ### Changed
 
+- The `spec-reviewer` and `quality-reviewer` agents speak one vocabulary: `PASS` or `FAIL`, findings `blocking` or
+  `minor`, `PASS` only when no finding is `blocking` (`APPROVE`/`CHANGES` and `blocker`/`should-fix`/`nit` are gone).
+  Given the ticket, task, round and commit, each ends its reply with one JSON block, a review output
+  (`agent-hub/review/1`); both stay read-only. `/fix`, `/refactor` and `/review` read the new words. `hub sync` rewrites
+  five managed files (the two agents and the three skills): run `hub sync` after the bump (AGH-139).
+- `/feature` acts only on validated outputs. Step 7 saves each reviewer's JSON to
+  `reviews/<ticket>/<reviewer>-r<N>.json`, runs `./hub validate-output review`, re-asks once with every printed line
+  and stops on a second failure; a ticket is `approved` only when the latest round of both reviewers is a validated
+  `PASS`. The evaluator writes and validates `evals/<delivery>.json` beside its `.md`; step 8 re-dispatches it once
+  (a new `-rN` pair) when that file is missing or invalid, and ships only on a validated `SHIP`. `hub sync` rewrites
+  `agents/evaluator.md` and `skills/feature/SKILL.md`: run `hub sync` after the bump (AGH-139).
 - `hub run` no longer reports a run that ended with no commit, or whose session stopped to ask a human, as a failure.
   No commit: a `Run <id> ended with no changes at <STAGE>: …` comment, no label, exit 0. Stopped: the blocked label, a
   `Run <id> stopped at <STAGE> and needs a human. The session asked: …` comment, exit 3. A failure still adds
@@ -219,7 +239,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/jroquette/agent-hub/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/jroquette/agent-hub/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/jroquette/agent-hub/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/jroquette/agent-hub/compare/v0.10.0...v0.11.0

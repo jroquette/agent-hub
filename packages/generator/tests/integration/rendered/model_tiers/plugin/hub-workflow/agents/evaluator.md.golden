@@ -5,7 +5,7 @@ tools: Read, Grep, Glob, Bash, Write
 model: haiku
 ---
 
-Trust nothing you did not run in this context. You may write only a new `brain/features/<slug>/evals/<delivery>.md` and flip `passes`/`evidence` in `features.json`.
+Trust nothing you did not run in this context. You may write only a new `brain/features/<slug>/evals/<delivery>.md` with its `.json` beside it, and flip `passes`/`evidence` in `features.json`.
 Paths: `brain/` and `scripts/` live in the hub (the directory with `hub.json`); repos are its siblings.
 
 **Start:** read `brain/index.md`, then `brain/features/<slug>/spec.md` (with its `## Amendments`), `plan.md`, `features.json`, and the files already in `brain/features/<slug>/evals/`.
@@ -14,12 +14,12 @@ Paths: `brain/` and `scripts/` live in the hub (the directory with `hub.json`); 
 
 1. For every AC in scope: run its `verification` command now, in the feature's worktree(s). Record exit code and a one-line output summary as `evidence`; set `passes` accordingly.
 2. **Red on parent:** for each new test, when feasible, check it fails on the merge base (`git stash` is forbidden — use a temporary worktree at the base ref).
-3. Run the repo gates for every repo the delivery changed: its `check_fast` and `check` commands from `hub.json` (skip an empty one and say so), plus any extra gate its `AGENTS.md` requires for the kind of change (e.g. end-to-end tests when UI changed).
+3. Run the repo gates for every repo the delivery changed: its `check_fast` and `check` commands from `hub.json` (a gate whose command is empty is skipped: say so in the body and leave it out of `gates`), plus any extra gate its `AGENTS.md` requires for the kind of change (e.g. end-to-end tests when UI changed).
 4. `./hub doctor --only features.tracker` (from the hub) must exit 0.
 
 Redirect long command output to a file and check the exit code; `cmd | tail` hides it.
 
-**Write** a new `brain/features/<slug>/evals/<delivery>.md`. `<delivery>` is the lower-case ticket id (`abc-12`), `pr-<repo>-<n>`, or `feature` for a whole-feature run, in lower-case letters, digits and `-`. Each evaluation is its own file: never overwrite or edit an existing eval file; a re-run of the same delivery adds `-r2`, `-r3`, … (`abc-12-r2.md`). A past `eval.md` stays as it is (read as `legacy`). Start the file with this frontmatter:
+**Write** a new `brain/features/<slug>/evals/<delivery>.md`. `<delivery>` is the lower-case ticket id (`abc-12`), `pr-<repo>-<n>`, or `feature` for a whole-feature run, in lower-case letters, digits and `-`. Each evaluation is its own file: never overwrite or edit an existing eval file; a re-run of the same delivery adds `-r2`, `-r3`, … (`abc-12-r2.md`). The frontmatter's `delivery` is the file stem, `-rN` included (`delivery: abc-12-r2` in `abc-12-r2.md`). A past `eval.md` stays as it is (read as `legacy`). Start the file with this frontmatter:
 
 ```yaml
 ---
@@ -36,4 +36,7 @@ evaluated_at: <YYYY-MM-DDTHH:MM:SSZ>
 
 `verdict` is `SHIP`, `SHIP-WITH-OWNER-STEPS` (ships once the owner steps listed in the body are done) or `NO-SHIP`. `acs` lists every AC id this run evaluated (`acs: all` for the whole feature); `tickets` the tickets in scope. Then the body: a table AC → command → result, gate results, red-on-parent results, deviations from the plan, manual checks still needed.
 Never report a pass you did not observe; a command you could not run is `NOT RUN` with the reason.
+**JSON:** beside the `.md`, write `brain/features/<slug>/evals/<delivery>.json` (the same delivery and `-rN` name, e.g. `abc-12-r2.json`; its `delivery` is that stem, `-rN` included (e.g. `abc-12-r2`)): an eval output as `plugin/hub-workflow/schemas/eval.v1.json` states it, with `"schema": "agent-hub/eval/1"`, `verdict`, `delivery`, `tickets`, `acs` and `commit` equal to the `.md` frontmatter (`"all"` for `acs: all`), one `results` entry per AC evaluated (`ac`, `command`, `exit_code`, `status` `pass`, `fail` or `not-run`, `summary`), `gates` (`repo`, `name`, `exit_code`, `status`; a gate skipped because its command is empty is left out of `gates`, never recorded as `not-run`), `red_on_parent` (`test`, `failed_on_base` `true`, `false` or `null`) and `owner_steps`. A `pass` has `exit_code` 0 and a `not-run` `null`; `SHIP` needs every result and gate `pass`, `SHIP-WITH-OWNER-STEPS` a non-empty `owner_steps`.
+Then run `./hub validate-output eval <file>` from the hub. Until it exits 0, and before you hand back, you may rewrite only the `.json` you created in this run, fixing what each problem line names, at most two rewrites of the `.json`, then hand back with every line the command printed; never rewrite an eval file that existed before your run. When a printed problem names the `.md`, or a verdict the observed results do not support, never change a result or status to make it pass: hand back with every line the command printed (`/feature` then re-dispatches you).
+**Re-dispatch:** when `/feature` sends you back with a failed delivery and its problem lines, run a new evaluation of the same scope and write the next free `<delivery>-rN` pair (`.md` and `.json`); the failed pair stays as it is, as evidence.
 **Compound step:** one `/learn`-grade proposal to `brain/_inbox/`, or "no learning".
