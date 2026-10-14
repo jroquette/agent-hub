@@ -20,7 +20,7 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `http://127.0.0.1:<port>/?token=…`: open it once per browser, the token becomes the cookie the new
   `/api/v1/agent-sessions` routes need (every other route is unchanged); `--open` opens it, and the session limits are
   options with `AGENT_HUB_*` variables. These sessions' conversations are stored, redacted, in the `hub web` database
-  for 30 days after they end. Off in the Docker image. No `hub.json` change and no `hub sync` needed (ADR 0027,
+  for 30 days after they end. Off in the Docker image. No `hub.json` change and no `hub sync` needed (ADR 0031,
   AGH-165).
 - Skills tab in `hub web` (`/projects/:project/skills`): every skill, agent and hook of the hub with what it does, a
   copyable invocation, origin (managed by `hub sync`, project-owned or local) and invocation mode, the frontmatter, the

@@ -7,7 +7,7 @@ actions also need that ``Origin``, a same-origin fetch and a JSON body (S7), so 
 registry writes (``POST /hubs``, ``DELETE /hubs/{id}``; a missing ``Origin`` is refused too,
 A11: a registered hub is a folder sessions may start in), bodies stop at
 1 MiB, API answers are never cached, a CSP keeps the app to its own origin, and no CORS header
-is ever sent. No route speaks WebSocket (ADR 0027, D3): any ``websocket`` scope is closed with
+is ever sent. No route speaks WebSocket (ADR 0031, D3): any ``websocket`` scope is closed with
 1008 before it is accepted, so an upgrade never skips these checks (P7, AC-165.54).
 
 ``AGENT_HUB_ALLOWED_HOSTS`` (read by ``hub web``, parsed here) may add exact ``host[:port]``

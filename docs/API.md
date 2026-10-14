@@ -190,7 +190,7 @@ the app refetches the route; the cache still applies (`as_of` shows its age). `G
 ## Agent sessions
 
 `hub web` starts and drives Claude Code sessions of the user's own `claude`
-([ADR 0027](adr/0027-driving-claude-code-sessions-from-the-app.md); design in
+([ADR 0031](adr/0031-driving-claude-code-sessions-from-the-app.md); design in
 [design/agent-sessions.md](design/agent-sessions.md)). Seventeen route-method pairs, all under
 `/api/v1/agent-sessions`; ids are UUIDv7, a request id at most 64 characters of `[A-Za-z0-9_-]`.
 

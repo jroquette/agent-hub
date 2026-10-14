@@ -52,7 +52,7 @@ ignore_imports =
 # web_command may import the package or its modules, so one of the two lines can stay unmatched.
 unmatched_ignore_imports_alerting = none
 
-# The Claude Agent SDK stays inside the claude_sessions adapter (ADR 0027): api wires that adapter, and
+# The Claude Agent SDK stays inside the claude_sessions adapter (ADR 0031): api wires that adapter, and
 # no other package, api and cli included, imports the SDK itself.
 [importlinter:contract:claude-agent-sdk-confined]
 name = only claude_sessions imports the Claude Agent SDK

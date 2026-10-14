@@ -1,7 +1,7 @@
 [project]
 name = "agent-hub-claude-sessions"
 version = "0.1.0"
-description = "Claude Code session adapter of agent-hub: drives the user's own claude for hub web (ADR 0027)."
+description = "Claude Code session adapter of agent-hub: drives the user's own claude for hub web (ADR 0031)."
 license = "Apache-2.0"
 requires-python = ">=3.14"
 dependencies = ["agent-hub-core", "claude-agent-sdk==0.2.165"]

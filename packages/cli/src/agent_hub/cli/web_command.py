@@ -6,7 +6,7 @@ is ``1``, which only the agent-hub image sets (ADR 0022). The Host and Origin ch
 loopback-only, plus the exact names of ``AGENT_HUB_ALLOWED_HOSTS``.
 
 Each start mints a fresh token for the agent-session routes and prints it once in the URL
-(``?token=``); the browser trades it for a cookie (P6, ADR 0027). The token is held in memory
+(``?token=``); the browser trades it for a cookie (P6, ADR 0031). The token is held in memory
 only: no file, no log line. In the container no token is minted and session control is off
 (L2). The session bounds are options with ``AGENT_HUB_*`` variables (P14); ``--open`` opens
 the URL in the default browser through a private file, as Jupyter does: the browser is given a

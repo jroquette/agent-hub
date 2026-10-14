@@ -104,7 +104,7 @@ also appends its executor events to the same store as it writes each record; an 
 `/api/v1` REST and SSE API ([API.md](API.md)) and the committed build of the web app, from the database `hub collect`
 uses. It binds `127.0.0.1` (`--host` may name another loopback address or `localhost`), prints `agent-hub at
 http://127.0.0.1:<port>/?token=<token>` (a fresh session token each start, held in memory only; `--open` opens that
-address; [ADR 0027](adr/0027-driving-claude-code-sessions-from-the-app.md)), and exits 1 with one line naming the port
+address; [ADR 0031](adr/0031-driving-claude-code-sessions-from-the-app.md)), and exits 1 with one line naming the port
 when it is taken. Any other address exits 2
 (`binding outside loopback needs AGENT_HUB_IN_CONTAINER=1`) unless `AGENT_HUB_IN_CONTAINER` is `1`, which only the
 agent-hub image sets; there it binds `0.0.0.0` and Compose publishes the port on the host's `127.0.0.1` only
@@ -333,7 +333,7 @@ GraphQL API for a feature's tickets, only when `LINEAR_API_KEY` is set where `hu
 ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md)). The browser never contacts Linear. Agent sessions (AGH-165,
 below) add no outbound call of the server: the `claude` processes it starts reach Anthropic as when the user runs
 them. The approved UI design and the departures from it are in
-[design/control-plane/](design/control-plane/README.md); the decisions are ADRs 0017 to 0025 and 0027.
+[design/control-plane/](design/control-plane/README.md); the decisions are ADRs 0017 to 0025 and 0031.
 
 **Control-plane clarity (AGH-201, built).** What the owner could not use in the first `hub web` is now derived on read:
 
@@ -397,7 +397,7 @@ Linear status ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md), records
   `features.tracker` rule checks the new records.
 
 **Agent sessions (AGH-165, built).** `hub web` opens and drives Claude Code sessions, as the desktop app does
-([ADR 0027](adr/0027-driving-claude-code-sessions-from-the-app.md), routes in [API.md](API.md#agent-sessions), design
+([ADR 0031](adr/0031-driving-claude-code-sessions-from-the-app.md), routes in [API.md](API.md#agent-sessions), design
 in [design/agent-sessions.md](design/agent-sessions.md)):
 
 - **Engine.** "New session" on the Sessions screen starts the user's own `claude` (found on `PATH`) through the
@@ -627,7 +627,7 @@ Continuity between sessions comes from the brain and the summaries, not from rer
 
 - No architecture change: v1 remains local-first, with the hub in git. The difference is that the hub repo is private and is the only place where the brain exists.
 
-**4. `hub web` drives the user's installed Claude Code (2026-10-14, AGH-165, [ADR 0027](adr/0027-driving-claude-code-sessions-from-the-app.md)).**
+**4. `hub web` drives the user's installed Claude Code (2026-10-14, AGH-165, [ADR 0031](adr/0031-driving-claude-code-sessions-from-the-app.md)).**
 
 - The app may start, talk to and stop sessions of the user's own `claude`, through the Claude Agent SDK pointed at
   that binary, as `hub run` runs it from the CLI. The non-goal stands: no agent loop, no model call, no token of the

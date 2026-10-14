@@ -4,7 +4,7 @@
 
 `hub web` opens Claude Code sessions and keeps talking to them as the desktop app does: send, interrupt, answer
 permission prompts, change mode and model, close, resume, fork. It drives the user's own installed `claude`, never a
-loop of its own ([ADR 0027](../adr/0027-driving-claude-code-sessions-from-the-app.md)). This file is the contract of
+loop of its own ([ADR 0031](../adr/0031-driving-claude-code-sessions-from-the-app.md)). This file is the contract of
 the core area `agent_hub.core.agent_sessions`, its adapter `agent_hub.claude_sessions` and what the API builds on
 them; the routes and frames are in [API.md](../API.md#agent-sessions), the product rules in the
 [SPEC](../SPEC.md).
@@ -107,7 +107,7 @@ Session its `agent_session_id` and makes its live tile `waiting` while a request
 
 ## Decisions
 
-- [ADR 0027](../adr/0027-driving-claude-code-sessions-from-the-app.md): the engine, the token, the data exception,
+- [ADR 0031](../adr/0031-driving-claude-code-sessions-from-the-app.md): the engine, the token, the data exception,
   the cloud link-out; partially supersedes ADR 0017, 0019 and 0022.
 - [ADR 0019](../adr/0019-metadata-only-events-and-redaction.md): the redaction rule set the stored copy uses.
 - [ADR 0024](../adr/0024-learning-actions-from-the-app.md): off in the container, as hubs are read-only there.

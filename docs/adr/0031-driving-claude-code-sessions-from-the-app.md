@@ -1,4 +1,4 @@
-# 0027. Driving Claude Code sessions from the app
+# 0031. Driving Claude Code sessions from the app
 
 - Status: accepted
 - Date: 2026-10-14

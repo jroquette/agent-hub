@@ -66,7 +66,7 @@ TICKET_PATHS: frozenset[tuple[str, str]] = frozenset(
 )
 
 # The 17 route-method pairs driving Claude Code sessions adds (AGH-165 P5, AC-165.48): the only
-# routes the per-launch token guards (ADR 0027).
+# routes the per-launch token guards (ADR 0031).
 AGENT_SESSIONS = f"{API_PREFIX}/agent-sessions"
 AGENT_SESSION_PATHS: frozenset[tuple[str, str]] = frozenset(
     (method, f"{AGENT_SESSIONS}{path}")

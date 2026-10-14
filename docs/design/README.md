@@ -43,5 +43,5 @@ The product and its phases are in [SPEC.md](../SPEC.md). Phase 1 is designed as 
 - [ADR 0024](../adr/0024-learning-actions-from-the-app.md): learning accept and reject open hub PRs through `hub_git`.
 - [ADR 0025](../adr/0025-reading-the-tracker-from-the-app.md): `hub web` reads ticket metadata through a read-only `TrackerReader`.
 - [ADR 0027](../adr/0027-workflow-format-and-minimum-engine.md): the Phase 4 workflow format and minimum engine.
-- [ADR 0027](../adr/0027-driving-claude-code-sessions-from-the-app.md): `hub web` drives the user's own Claude Code through the Claude Agent SDK.
+- [ADR 0031](../adr/0031-driving-claude-code-sessions-from-the-app.md): `hub web` drives the user's own Claude Code through the Claude Agent SDK.
 - [ADR 0030](../adr/0030-run-outcomes-in-the-tracker.md): `no_changes` and `blocked` runs get their own tracker report and exit (0, 3).
