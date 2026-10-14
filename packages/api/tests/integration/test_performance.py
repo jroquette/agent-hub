@@ -91,15 +91,21 @@ def loaded(composed: Any) -> Any:
     return composed
 
 
+def _hook_envelope(tool_use_id: str) -> dict[str, Any]:
+    return an_envelope(a_hook_input("PreToolUse", tool_use_id=tool_use_id)).model_dump(mode="json")
+
+
 def test_answers_hook_within_budget_when_store_holds_ten_thousand_events(loaded: Any) -> None:
+    # One unmeasured hook warms the route's first-call path (cold on CI: 134 ms), not a read memo:
+    # a hook only appends, and its own tool_use_id keeps it apart from every sample.
+    hooks = "/api/v1/events/hooks"
+    assert loaded.client.post(hooks, json=_hook_envelope("toolu_perf_warmup")).status_code == 202
     samples: list[float] = []
     for number in range(40):
-        hook = a_hook_input("PreToolUse", tool_use_id=f"toolu_perf_{number}")
-        envelope = an_envelope(hook).model_dump(mode="json")
-        elapsed, response = _timed(
-            lambda e=envelope: loaded.client.post("/api/v1/events/hooks", json=e)
-        )
+        envelope = _hook_envelope(f"toolu_perf_{number}")
+        elapsed, response = _timed(lambda e=envelope: loaded.client.post(hooks, json=e))
         assert response.status_code == 202
+        assert response.json()["duplicates"] == 0, response.json()
         samples.append(elapsed)
 
     assert _p95(samples) < HOOK_P95_MS, samples
