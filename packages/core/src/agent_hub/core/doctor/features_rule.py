@@ -27,6 +27,14 @@ AGH-136 (``feature_plan_checks``): the record's optional ticket plan (``tickets`
 ``ticket`` and ``withdrawn``) and the folder's ``evals/<delivery>.md`` files are checked too, each
 eval finding naming the eval. A cycle of ``blocked_by`` is a warning. A withdrawn AC stays in the
 cross-check (the spec keeps naming it, under ``## Amendments``) and skips the pending-command check.
+
+AGH-139 (``feature_output_checks``): the folder's agent outputs, ``evals/*.json`` and
+``reviews/<ticket>/*.json`` (hidden names skipped), get warnings only: one without its ``.md``
+record, one that fails ``agent_outputs``' validation (its problem count and first problem), within
+per-feature file caps and one validation budget per run, which the records spend in listing
+order; an output is validated when it fits the remaining budget, and the skipped outputs are
+counted in one info finding per run, on ``brain/features``. Only folders with a listed record are
+checked; the outputs change no other finding.
 """
 
 import re
@@ -35,10 +43,20 @@ from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from typing import Final
 
+from agent_hub.core.doctor.feature_output_checks import (
+    EVALS_FOLDER,
+    OUTPUT_SUFFIX,
+    REVIEWS_FOLDER,
+    SKIPPED_FIX,
+    OutputBudget,
+    output_problems,
+    skipped_message,
+)
 from agent_hub.core.doctor.feature_plan_checks import (
     RECORD_FIX,
     ac_plan_problems,
     eval_problems,
+    file_content,
     ticket_plan,
 )
 from agent_hub.core.doctor.feature_plan_checks import Problem as _Problem
@@ -56,17 +74,12 @@ from agent_hub.core.json_form import InvalidJsonError, JsonValue, load_json_byte
 FEATURES_FOLDER: Final = ("brain", "features")
 RECORD_NAME: Final = "features.json"
 SPEC_NAME: Final = "spec.md"
-EVALS_FOLDER: Final = "evals"
 ISSUES_NAME: Final = "issues.md"
 MASKED_FIX: Final = "end the verification with the check itself, so a failure exits non-zero"
 EVIDENCE_FIX: Final = "record the command run and its result in evidence"
 SPEC_FIX: Final = "give spec.md and features.json the same AC ids"
 JSON_FIX: Final = "fix the JSON of the record"
-LINK_FIX: Final = "replace it with the file itself"
 TEXT_FIX: Final = "save it as UTF-8 text"
-NOT_READ: Final = "not read as a regular file (links are never followed)"
-UNREAD: Final = "could not be read"
-UNREAD_FIX: Final = "run hub doctor again"
 NO_IDS: Final = "issues.md exists but `linear` holds no tracker id, here or in spec.md"
 NO_IDS_FIX: Final = "write the created issue ids into features.json → linear"
 MASKED: Final = (
@@ -85,6 +98,14 @@ _TEXT_FIELDS: Final = ("id", "description", "repo", "verification")
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
+class _Folders:
+    """The listed evals and agent outputs of each feature folder, by folder path."""
+
+    evals: Mapping[str, list[str]]
+    outputs: Mapping[str, list[str]]
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
 class _Project:
     """What the records are checked against: the repo names and the tracker's team keys."""
 
@@ -96,15 +117,27 @@ def _features_tracker(snapshot: DoctorSnapshot) -> Iterable[Finding]:
     project = _project_of(snapshot.hub_config)
     listed = frozenset(snapshot.hub.listed)
     entries = snapshot.hub.entries
-    evals = _evals_by_folder(snapshot.hub.listed)
-    return tuple(
-        finding
-        for path in snapshot.hub.listed
-        if _is_record(path)
-        for finding in _record_findings(
-            path, entries=entries, listed=listed, project=project, evals=evals
-        )
+    folders = _Folders(
+        evals=_evals_by_folder(snapshot.hub.listed),
+        outputs=_outputs_by_folder(snapshot.hub.listed),
     )
+    found: list[Finding] = []
+    # One output budget for the run, spent by the records in listing order (E22).
+    budget = OutputBudget()
+    for path in snapshot.hub.listed:
+        if _is_record(path):
+            findings, budget = _record_findings(
+                path,
+                entries=entries,
+                listed=listed,
+                project=project,
+                folders=folders,
+                budget=budget,
+            )
+            found.extend(findings)
+    if budget.skipped:
+        found.append(_skipped_info(budget.skipped))
+    return tuple(found)
 
 
 def _evals_by_folder(listed: Iterable[str]) -> dict[str, list[str]]:
@@ -122,6 +155,31 @@ def _evals_by_folder(listed: Iterable[str]) -> dict[str, list[str]]:
         ):
             found.setdefault("/".join(parts[:-2]) + "/", []).append(path)
     return found
+
+
+def _outputs_by_folder(listed: Iterable[str]) -> dict[str, list[str]]:
+    """The listed ``evals/*.json`` and ``reviews/<ticket>/*.json`` of each feature folder (no
+    hidden file or ticket folder), by folder path: ``_evals_by_folder``'s twin for outputs."""
+    found: dict[str, list[str]] = {}
+    for path in listed:
+        folder = _output_folder(tuple(path.split("/")))
+        if folder is not None:
+            found.setdefault(folder, []).append(path)
+    return found
+
+
+def _output_folder(parts: tuple[str, ...]) -> str | None:
+    """The feature folder of an output path, or None when the path is not one."""
+    depth = len(FEATURES_FOLDER) + 1
+    inside = parts[depth:-1]
+    is_output = (
+        len(parts) > depth
+        and parts[: len(FEATURES_FOLDER)] == FEATURES_FOLDER
+        and parts[-1].endswith(OUTPUT_SUFFIX)
+        and (inside == (EVALS_FOLDER,) or (len(inside) == 2 and inside[0] == REVIEWS_FOLDER))
+        and not any(part.startswith(".") for part in (*inside, parts[-1]))
+    )
+    return "/".join(parts[:depth]) + "/" if is_output else None
 
 
 def _project_of(config: HubConfig) -> _Project:
@@ -146,8 +204,10 @@ def _record_findings(
     entries: Mapping[str, TreeEntry],
     listed: frozenset[str],
     project: _Project,
-    evals: Mapping[str, list[str]],
-) -> tuple[Finding, ...]:
+    folders: _Folders,
+    budget: OutputBudget,
+) -> tuple[tuple[Finding, ...], OutputBudget]:
+    """The findings on one record and its folder, and the run's output budget after them."""
     folder = path.removesuffix(RECORD_NAME)
     spec_path = folder + SPEC_NAME
     spec = _spec_text(entries.get(spec_path)) if spec_path in listed else None
@@ -171,16 +231,38 @@ def _record_findings(
             for item in spec_linear(_spec_head(entries.get(spec_path), spec))
         )
     )
+    outputs = output_problems(
+        folder,
+        outputs=folders.outputs.get(folder, ()),
+        entries=entries,
+        listed=listed,
+        record=_record_bytes(entries.get(path)),
+        budget=budget,
+    )
     return (
         *(_finding(spec_path, problem) for problem in spec_problems),
         *(_finding(path, problem) for problem in problems),
         *(
             _finding(eval_path, problem)
-            for eval_path in evals.get(folder, ())
+            for eval_path in folders.evals.get(folder, ())
             for problem in _eval_file_problems(eval_path, entries.get(eval_path), ac_ids=ac_ids)
         ),
+        *(_finding(output_path, problem) for output_path, problem in outputs.found),
         *((_no_ids_warning(path),) if unlinked else ()),
+    ), outputs.budget
+
+
+def _skipped_info(count: int) -> Finding:
+    """The run's one info line on the agent outputs no cap or budget let it validate (E22)."""
+    finding = FEATURES_TRACKER.finding(
+        path="/".join(FEATURES_FOLDER), message=skipped_message(count), fix=SKIPPED_FIX
     )
+    return replace(finding, severity=Severity.INFO)
+
+
+def _record_bytes(entry: TreeEntry | None) -> bytes | None:
+    """The record's bytes for the output check; None when it is no file or was not read."""
+    return entry.content if isinstance(entry, FileEntry) else None
 
 
 def _ac_ids(document: JsonValue) -> frozenset[str] | None:
@@ -232,17 +314,8 @@ def _finding(path: str, problem: _Problem) -> Finding:
     return replace(finding, severity=Severity.WARNING) if problem.warning else finding
 
 
-def _content(entry: TreeEntry | None) -> bytes | _Problem:
-    """A listed file's bytes, or why there are none: not a regular file, or its read failed."""
-    if not isinstance(entry, FileEntry):
-        return _Problem(NOT_READ, LINK_FIX)
-    if entry.content is None:
-        return _Problem(UNREAD, UNREAD_FIX)
-    return entry.content
-
-
 def _document(entry: TreeEntry | None) -> JsonValue | _Problem:
-    content = _content(entry)
+    content = file_content(entry)
     if isinstance(content, _Problem):
         return content
     try:
@@ -253,7 +326,7 @@ def _document(entry: TreeEntry | None) -> JsonValue | _Problem:
 
 def _spec_text(entry: TreeEntry | None) -> str | _Problem:
     """The spec's text; any UTF-8 is read (a NUL too), as the old check opened it."""
-    content = _content(entry)
+    content = file_content(entry)
     if isinstance(content, _Problem):
         return content
     try:

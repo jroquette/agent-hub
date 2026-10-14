@@ -2,6 +2,7 @@ import { Navigate, Outlet } from "react-router";
 import type { RouteObject } from "react-router";
 
 import { useApi } from "./lib/api";
+import { AgentSessionScreen } from "./screens/agent-session";
 import { ApprovalsScreen } from "./screens/approvals";
 import { BrainPickerScreen, BrainScreen } from "./screens/brain";
 import { FeatureDetailScreen } from "./screens/feature-detail";
@@ -55,6 +56,7 @@ export const appRoutes: RouteObject[] = [
           { path: "live", element: <LiveSessionsScreen /> },
           { path: "sessions", element: <SessionsListScreen /> },
           { path: "sessions/:sessionId", element: <SessionDetailScreen /> },
+          { path: "agent-sessions/:agentSessionId", element: <AgentSessionScreen /> },
           { path: "runs", element: <RunsListScreen /> },
           { path: "runs/:runId", element: <RunDetailScreen /> },
           { path: "knowledge", element: <Navigate to="/knowledge/learnings" replace /> },

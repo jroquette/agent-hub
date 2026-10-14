@@ -44,7 +44,20 @@ import {
   sortOf,
   type Period,
 } from "./filters";
-import { useProjects, useSessionPages, type Session } from "./queries";
+import { AgentSessionList, agentSessionHref, sessionControlUnavailable } from "./AgentSessionList";
+import { CloudPanel } from "./CloudPanel";
+import { NewSessionDialog } from "./NewSessionDialog";
+import {
+  useAgentCapabilities,
+  useAgentSessions,
+  useCloudSessions,
+  useCreateAgentSession,
+  useProjects,
+  useResumable,
+  useSessionPages,
+  useWorkdirs,
+  type Session,
+} from "./queries";
 
 const COLUMNS_KEY = "ah.sessions.columns";
 const DENSITY_KEY = "ah.sessions.density";
@@ -583,6 +596,118 @@ function currentView(params: URLSearchParams): string {
 }
 
 /** Sessions: "Which sessions happened, and which one do I need to look at?" (spec 14). */
+/**
+ * The sessions `hub web` drives (AGH-165): the list with its waiting highlight, "New session"
+ * (then the chat view), the cloud panel, and why control is unavailable (401, container, 503).
+ */
+function AgentSessionsPanel({
+  scope,
+  projects,
+}: {
+  scope: string | null;
+  projects: readonly string[];
+}) {
+  const navigate = useNavigate();
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [dialog, setDialog] = useState(false);
+  const [resumeFor, setResumeFor] = useState<string | null>(null);
+  const project =
+    scope ?? (chosen !== null && projects.includes(chosen) ? chosen : null) ?? projects[0] ?? null;
+  const list = useAgentSessions(scope);
+  const capabilities = useAgentCapabilities();
+  const problem = list.error ?? capabilities.error;
+  const caps = capabilities.data;
+  const canDrive = caps !== undefined && sessionControlUnavailable(problem, caps) === null;
+  const workdirs = useWorkdirs(project, canDrive);
+  const resumable = useResumable(dialog ? project : null, dialog ? resumeFor : null);
+  const cloudSessions = useCloudSessions(project, canDrive && caps.cloud);
+  const create = useCreateAgentSession();
+  const folders = workdirs.data?.items;
+
+  return (
+    <div className="ah-stack" style={{ gap: 12 }}>
+      <AgentSessionList
+        sessions={list.data?.items ?? []}
+        problem={problem}
+        capabilities={caps}
+        onNewSession={
+          canDrive && folders
+            ? () => {
+                create.reset();
+                setDialog(true);
+              }
+            : undefined
+        }
+        onRetry={() => {
+          void list.refetch();
+          void capabilities.refetch();
+        }}
+      />
+      {canDrive && !scope && projects.length > 1 && (
+        <label className="ah-row ah-small" style={{ gap: 6 }}>
+          <span className="ah-subtle">Start sessions in</span>
+          <select
+            className="ah-input as-select"
+            value={project ?? ""}
+            onChange={(event) => {
+              setChosen(event.target.value);
+            }}
+          >
+            {projects.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {workdirs.error && canDrive && (
+        <ProblemError
+          title="Could not list the working folders"
+          detail={workdirs.error.detail}
+          status={workdirs.error.status}
+          onRetry={() => {
+            void workdirs.refetch();
+          }}
+          compact
+        />
+      )}
+      {canDrive && project !== null && folders && (
+        <details>
+          <summary className="ah-small">Cloud sessions</summary>
+          <CloudPanel
+            key={project}
+            capabilities={caps}
+            sessions={cloudSessions.data?.items ?? []}
+          />
+        </details>
+      )}
+      {dialog && canDrive && project !== null && folders && (
+        <NewSessionDialog
+          project={project}
+          workdirs={folders}
+          capabilities={caps}
+          resumable={resumable.data?.items}
+          onWorkdirChange={setResumeFor}
+          pending={create.isPending}
+          error={create.error}
+          onSubmit={(body) => {
+            create.mutate(body, {
+              onSuccess: (created) => {
+                setDialog(false);
+                void navigate(agentSessionHref(created.id));
+              },
+            });
+          }}
+          onCancel={() => {
+            setDialog(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
 export function SessionsListScreen() {
   const [params, setParams] = useSearchParams();
   const [scope] = useScope();
@@ -986,6 +1111,10 @@ export function SessionsListScreen() {
           options={PERIODS}
         />
       </div>
+      <AgentSessionsPanel
+        scope={scope}
+        projects={(projects.data?.items ?? []).map((project) => project.name)}
+      />
       <div className="ah-row ah-wrap" style={{ gap: 12, minHeight: 28 }}>
         <span className="ah-muted">{countLine}</span>
         <span className="ah-grow" />

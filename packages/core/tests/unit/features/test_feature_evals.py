@@ -1,16 +1,20 @@
 """Evals per delivery and their aggregation per AC (AGH-136 S6, S7; AC-136.19-21)."""
 
+import json
+
 import pytest
 
 from agent_hub.core.features.feature_evals import (
     DELIVERY_PATTERN,
     LEGACY_DELIVERY,
+    NOTE_SUFFIX,
     EvalCoverage,
     eval_coverage,
     eval_records,
 )
 from agent_hub.core.features.feature_record import PlannedTicket, RecordAc
-from agent_hub.core.features.feature_status import RecordHead
+from agent_hub.core.features.feature_reviews import review_records
+from agent_hub.core.features.feature_status import FeatureFolder, RecordHead, feature_detail
 
 SLUG = "demo-feature"
 
@@ -347,3 +351,64 @@ def test_ignores_withdrawn_ac_when_legacy_rule_checks_passes() -> None:
 @pytest.mark.parametrize("name", ["tip-1520", "pr-demo-api-12", "feature", "tip-1521-r2"])
 def test_accepts_delivery_when_name_follows_pattern(name: str) -> None:
     assert DELIVERY_PATTERN.fullmatch(name)
+
+
+# AGH-139 AC-139.24. This test cannot fail through core: ``folder_of`` keeps only ``.md`` heads,
+# as the reader does. It documents that core only ever receives the ``.md`` heads of a folder, so
+# its agent outputs (``evals/*.json``, ``reviews/<ticket>/*.json``) change no record, coverage,
+# phase or skipped count. The proofs of AC-139.24 are the reader's
+# ``test_feature_files.py::test_reads_same_folder_when_outputs_added`` and the doctor's
+# ``test_features_rule.py::test_keeps_findings_when_outputs_added_to_legacy_folder``.
+LEGACY_TREE = {
+    "evals/dem-1.md": b"---\ntype: eval\ndelivery: dem-1\nverdict: SHIP\nacs: [AC-7.1]\n---\n",
+    "evals/dem-2.md": b"---\ntype: eval\ndelivery: dem-2\nverdict: NO-SHIP\nacs: [AC-7.2]\n---\n",
+    "reviews/DEM-1.md": b"---\ntype: review\nticket: DEM-1\noutcome: approved\n---\n",
+}
+OUTPUTS_TREE = {
+    "evals/dem-1.json": b'{"schema": "agent-hub/eval/1", "verdict": "NO-SHIP"}',
+    "evals/dem-3.json": b"{}",
+    "reviews/DEM-1/spec-r1.json": b'{"schema": "agent-hub/review/1", "verdict": "FAIL"}',
+    "reviews/DEM-2/spec-r1.json": b"{}",
+}
+
+
+def folder_of(tree: dict[str, bytes]) -> FeatureFolder:
+    """The folder as read: ``eval.md``, and the heads of the ``.md`` files of each record folder."""
+
+    def heads(folder: str) -> tuple[RecordHead, ...]:
+        return tuple(
+            RecordHead(name=name.split("/")[1], head=tree[name], problem=None)
+            for name in sorted(tree)
+            if name.startswith(f"{folder}/") and name.count("/") == 1 and name.endswith(NOTE_SUFFIX)
+        )
+
+    acs = [{"id": ac.id, "description": ac.description, "passes": False} for ac in acs_named(3)]
+    record = {"feature": SLUG, "linear": ["DEM-1"], "tickets": [{"key": "DEM-1"}], "acs": acs}
+    return FeatureFolder(
+        slug=SLUG,
+        files=("spec.md", "plan.md", "features.json", "eval.md"),
+        features_json=json.dumps(record).encode(),
+        eval_head=b"**Verdict: SHIP.**\n",
+        evals=heads("evals"),
+        reviews=heads("reviews"),
+        evals_skipped=1,
+        reviews_skipped=1,
+    )
+
+
+def test_ignores_json_outputs_when_legacy_and_outputs_mixed() -> None:
+    """Documents that core only ever receives ``.md`` heads; it cannot fail through core. The
+    reader and doctor tests named above prove AC-139.24."""
+    legacy = folder_of(LEGACY_TREE)
+    mixed = folder_of(LEGACY_TREE | OUTPUTS_TREE)
+
+    records = eval_records(mixed.evals, mixed.eval_head, slug=SLUG)
+
+    assert records == eval_records(legacy.evals, legacy.eval_head, slug=SLUG)
+    assert [record.delivery for record in records] == [LEGACY_DELIVERY, "dem-1", "dem-2"]
+    assert eval_coverage(records, acs_named(3)) == eval_coverage(
+        eval_records(legacy.evals, legacy.eval_head, slug=SLUG), acs_named(3)
+    )
+    assert review_records(mixed.reviews, slug=SLUG) == review_records(legacy.reviews, slug=SLUG)
+    assert feature_detail(mixed, project="demo") == feature_detail(legacy, project="demo")
+    assert (mixed.evals_skipped, mixed.reviews_skipped) == (1, 1)

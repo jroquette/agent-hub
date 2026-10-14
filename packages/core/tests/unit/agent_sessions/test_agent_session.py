@@ -1,0 +1,76 @@
+import pytest
+from pydantic import ValidationError
+
+from agent_hub.core.agent_sessions.agent_session import (
+    TERMINAL_STATUSES,
+    AgentSessionStatus,
+    CreateAgentSession,
+    PermissionDecision,
+    SessionSettings,
+    StartCloud,
+)
+
+WORKDIR_ID = "0123456789abcdef"
+
+
+def test_refuses_decision_when_always_without_suggestion() -> None:
+    with pytest.raises(ValidationError):
+        PermissionDecision(decision="always")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"decision": "allow", "suggestion": 0},
+        {"decision": "allow", "message": "why"},
+        {"decision": "deny", "answers": {"Which?": "A"}},
+        {"decision": "deny", "mode": "acceptEdits"},
+        {"decision": "always", "suggestion": 0, "mode": "default"},
+        {"decision": "allow", "mode": "bypassPermissions"},
+        {"decision": "allow", "answers": {f"q{n}": "a" for n in range(17)}},
+        {"decision": "deny", "message": "x" * 2049},
+    ],
+)
+def test_refuses_decision_when_fields_do_not_fit(body: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        PermissionDecision.model_validate(body)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"decision": "allow"},
+        {"decision": "deny", "message": "use the worktree"},
+        {"decision": "always", "suggestion": 1},
+        {"decision": "allow", "answers": {"Which database?": "SQLite"}},
+        {"decision": "allow", "mode": "acceptEdits"},
+    ],
+)
+def test_accepts_decision_when_fields_fit(body: dict[str, object]) -> None:
+    assert PermissionDecision.model_validate(body).decision == body["decision"]
+
+
+def test_refuses_create_when_workdir_is_a_path() -> None:
+    with pytest.raises(ValidationError):
+        CreateAgentSession(project="demo", workdir_id="../../etc")
+
+
+def test_refuses_create_when_fork_without_resume() -> None:
+    with pytest.raises(ValidationError):
+        CreateAgentSession(project="demo", workdir_id=WORKDIR_ID, fork=True)
+
+
+def test_refuses_settings_when_empty_or_bypass() -> None:
+    with pytest.raises(ValidationError):
+        SessionSettings()
+    with pytest.raises(ValidationError):
+        SessionSettings.model_validate({"mode": "bypassPermissions"})
+
+
+def test_refuses_cloud_task_when_it_starts_with_dash() -> None:
+    with pytest.raises(ValidationError):
+        StartCloud(project="demo", workdir_id=WORKDIR_ID, task="--dangerously-skip-permissions")
+
+
+def test_marks_ended_and_failed_terminal_when_statuses_listed() -> None:
+    assert {AgentSessionStatus.ENDED, AgentSessionStatus.FAILED} == TERMINAL_STATUSES

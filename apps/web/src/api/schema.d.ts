@@ -21,6 +21,298 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/agent-sessions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Agent Sessions
+     * @description Agent sessions, newest first.
+     */
+    get: operations["list_agent_sessions_api_v1_agent_sessions_get"];
+    put?: never;
+    /**
+     * Create Agent Session
+     * @description Start a session in a listed workdir, optionally with a first prompt or a resume.
+     */
+    post: operations["create_agent_session_api_v1_agent_sessions_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/agent-sessions/capabilities": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Capabilities
+     * @description Whether sessions can start on this machine (and why not), the models, the cloud.
+     */
+    get: operations["get_capabilities_api_v1_agent_sessions_capabilities_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/agent-sessions/cloud": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Cloud Sessions
+     * @description The cloud sessions started from here, newest first, at most 50.
+     */
+    get: operations["list_cloud_sessions_api_v1_agent_sessions_cloud_get"];
+    put?: never;
+    /**
+     * Start Cloud Session
+     * @description Start a cloud session with a task; answers its claude.ai/code link and teleport command.
+     */
+    post: operations["start_cloud_session_api_v1_agent_sessions_cloud_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/agent-sessions/cloud/{cloud_id}/messages": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Follow Up Cloud Session
+     * @description Send one follow-up message to a cloud session (cloud: limited control).
+     */
+    post: operations["follow_up_cloud_session_api_v1_agent_sessions_cloud__cloud_id__messages_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/agent-sessions/resumable": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Resumable
+     * @description Past Claude sessions of a workdir that can be resumed or forked.
+     */
+    get: operations["list_resumable_api_v1_agent_sessions_resumable_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/agent-sessions/workdirs": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Workdirs
+     * @description The folders a session may start in: the hub, its repos and their worktrees (D6).
+     */
+    get: operations["list_workdirs_api_v1_agent_sessions_workdirs_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/agent-sessions/{agent_session_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Agent Session
+     * @description One session, with the permission request it waits on while live.
+     */
+    get: operations["get_agent_session_api_v1_agent_sessions__agent_session_id__get"];
+    put?: never;
+    post?: never;
+    /**
+     * Delete Agent Session
+     * @description Remove an ended session and its stored conversation.
+     */
+    delete: operations["delete_agent_session_api_v1_agent_sessions__agent_session_id__delete"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/agent-sessions/{agent_session_id}/close": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Close Agent Session
+     * @description End the session; its log is kept and it can be resumed.
+     */
+    post: operations["close_agent_session_api_v1_agent_sessions__agent_session_id__close_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/agent-sessions/{agent_session_id}/events": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Agent Session Events
+     * @description The stored log after ``after``, in ``seq`` order (redacted).
+     */
+    get: operations["list_agent_session_events_api_v1_agent_sessions__agent_session_id__events_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/agent-sessions/{agent_session_id}/interrupt": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Interrupt Agent Session
+     * @description Interrupt the running turn; its result follows on the stream.
+     */
+    post: operations["interrupt_agent_session_api_v1_agent_sessions__agent_session_id__interrupt_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/agent-sessions/{agent_session_id}/messages": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Send Agent Session Message
+     * @description Send a message; it plays after the running turn.
+     */
+    post: operations["send_agent_session_message_api_v1_agent_sessions__agent_session_id__messages_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/agent-sessions/{agent_session_id}/permissions/{request_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Answer Agent Session Permission
+     * @description Answer a permission request: allow, deny (with a message) or always (a suggestion).
+     */
+    post: operations["answer_agent_session_permission_api_v1_agent_sessions__agent_session_id__permissions__request_id__post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/agent-sessions/{agent_session_id}/settings": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Change Agent Session Settings
+     * @description Change the permission mode or the model.
+     */
+    post: operations["change_agent_session_settings_api_v1_agent_sessions__agent_session_id__settings_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/agent-sessions/{agent_session_id}/stream": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Stream Agent Session
+     * @description The session's records and deltas as they happen, after a replay from the position.
+     */
+    get: operations["stream_agent_session_api_v1_agent_sessions__agent_session_id__stream_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/approvals": {
     parameters: {
       query?: never;
@@ -910,6 +1202,67 @@ export interface components {
     };
     /** @enum {string} */
     ActorKind: "main" | "subagent";
+    /**
+     * AgentSession
+     * @description One session ``hub web`` started (or one cloud start, ``kind="cloud"``).
+     *
+     *     ``claude_session_id`` links it to the hook-observed Session once ``init`` arrives (or at
+     *     start when the id is given, P13). ``last_seq`` is the last persisted record's ``seq``.
+     *     ``cost_usd`` and ``usage`` add up the turns' results (an estimate).
+     */
+    AgentSession: {
+      /** Claude Session Id */
+      claude_session_id?: string | null;
+      /** Cloud Id */
+      cloud_id?: string | null;
+      cost_usd?: components["schemas"]["Money"] | null;
+      created_at: components["schemas"]["ApiTimestamp"];
+      end_reason?: components["schemas"]["EndReason"] | null;
+      ended_at?: components["schemas"]["ApiTimestamp"] | null;
+      /** Id */
+      id: string;
+      /** @default local */
+      kind: components["schemas"]["AgentSessionKind"];
+      /**
+       * Last Seq
+       * @default 0
+       */
+      last_seq: number;
+      mode: components["schemas"]["PermissionMode"];
+      /** Model */
+      model?: string | null;
+      open_permission?: components["schemas"]["OpenPermission"] | null;
+      /** Project */
+      project: string;
+      status: components["schemas"]["AgentSessionStatus"];
+      /** Title */
+      title?: string | null;
+      updated_at: components["schemas"]["ApiTimestamp"];
+      /** Url */
+      url?: string | null;
+      usage?: components["schemas"]["TokenUsage"] | null;
+      /** Workdir Id */
+      workdir_id: string;
+      /** Workdir Label */
+      workdir_label: string;
+    };
+    /** @enum {string} */
+    AgentSessionKind: "local" | "cloud";
+    /**
+     * AgentSessionList
+     * @description ``GET /agent-sessions``: newest first.
+     */
+    AgentSessionList: {
+      /** Items */
+      items: components["schemas"]["AgentSession"][];
+    };
+    /**
+     * AgentSessionStatus
+     * @description Where a session is (P18): ``idle`` between turns, ``running`` in a turn,
+     *     ``waiting_permission`` while a request is unanswered; ``ended`` and ``failed`` are final.
+     * @enum {string}
+     */
+    AgentSessionStatus: "running" | "idle" | "waiting_permission" | "ended" | "failed";
     /** Format: date-time */
     ApiTimestamp: string;
     /**
@@ -1122,6 +1475,48 @@ export interface components {
       usage: components["schemas"]["Usage"] | null;
     };
     /**
+     * CloudMessage
+     * @description ``POST /agent-sessions/cloud/{cloud_id}/messages``: a one-shot follow-up.
+     */
+    CloudMessage: {
+      /** Text */
+      text: string;
+    };
+    /**
+     * CloudSession
+     * @description A session started in the cloud (D8): where to open it and how to teleport it here.
+     */
+    CloudSession: {
+      /** Cloud Id */
+      cloud_id: string;
+      created_at: components["schemas"]["ApiTimestamp"];
+      /**
+       * Followups
+       * @default 0
+       */
+      followups: number;
+      /** Id */
+      id: string;
+      /** Project */
+      project: string;
+      /** Teleport Command */
+      teleport_command: string;
+      /** Title */
+      title?: string | null;
+      /** Url */
+      url?: string | null;
+      /** Workdir Id */
+      workdir_id: string;
+    };
+    /**
+     * CloudSessionList
+     * @description ``GET /agent-sessions/cloud``: the persisted cloud starts, newest first, at most 50.
+     */
+    CloudSessionList: {
+      /** Items */
+      items: components["schemas"]["CloudSession"][];
+    };
+    /**
      * CollectorStatus
      * @description ``GET /collector/status``: what ``hub web`` received and stored since it started.
      */
@@ -1176,6 +1571,29 @@ export interface components {
       on_invoke_tokens: number;
     };
     /**
+     * CreateAgentSession
+     * @description ``POST /agent-sessions``: where, how, and an optional first prompt (its byte size is
+     *     checked against the message limit, 413), or a past session to resume (and fork).
+     */
+    CreateAgentSession: {
+      /**
+       * Fork
+       * @default false
+       */
+      fork: boolean;
+      /** @default default */
+      mode: components["schemas"]["PermissionMode"];
+      model?: components["schemas"]["ModelName"] | null;
+      /** Project */
+      project: string;
+      /** Prompt */
+      prompt?: string | null;
+      /** Resume Session Id */
+      resume_session_id?: string | null;
+      /** Workdir Id */
+      workdir_id: string;
+    };
+    /**
      * Diagnostic
      * @description One informational finding on an item, in one hub-relative line (D5, P6).
      */
@@ -1213,8 +1631,49 @@ export interface components {
      * @enum {string}
      */
     DiagnosticSeverity: "info" | "warning";
+    /**
+     * DriverCapabilities
+     * @description What this machine can do: whether sessions can start (and why not), the engine, the
+     *     ``claude`` version, the model aliases offered, and the cloud commands the CLI lists.
+     */
+    DriverCapabilities: {
+      /** Available */
+      available: boolean;
+      /** Cli Version */
+      cli_version?: string | null;
+      /**
+       * Cloud
+       * @default false
+       */
+      cloud: boolean;
+      /**
+       * Cloud Followup
+       * @default false
+       */
+      cloud_followup: boolean;
+      /** Engine */
+      engine?: string | null;
+      /**
+       * Models
+       * @default [
+       *       "default",
+       *       "opus",
+       *       "sonnet",
+       *       "haiku"
+       *     ]
+       */
+      models: string[];
+      /** Reason */
+      reason?: string | null;
+    };
     /** @enum {string} */
     EdgeSource: "plan" | "linear" | "both";
+    /**
+     * EndReason
+     * @description Why a session ended.
+     * @enum {string}
+     */
+    EndReason: "closed" | "idle_timeout" | "server_stopped" | "failed" | "log_full";
     /**
      * EvalRecord
      * @description One evaluation of a delivery: ``evals/<delivery>.md``, or the legacy ``eval.md``.
@@ -1850,7 +2309,8 @@ export interface components {
      * @description A session tile of the Live sessions screen.
      *
      *     ``agent`` is deprecated (``label`` and ``actors``); ``needs_you_problem`` is the owner-facing
-     *     line of the first problem that needs the owner ("Needs you: <kind> in <where>").
+     *     line of the first problem that needs the owner ("Needs you: <kind> in <where>");
+     *     ``agent_session_id`` is the agent session ``hub web`` drives it from, when there is one.
      */
     LiveTile: {
       /**
@@ -1863,6 +2323,8 @@ export interface components {
        * @deprecated
        */
       agent: string;
+      /** Agent Session Id */
+      agent_session_id?: string | null;
       /** Attempt */
       attempt?: number | null;
       budget_usd?: components["schemas"]["Money"] | null;
@@ -1949,11 +2411,51 @@ export interface components {
     /** @enum {string} */
     LockState: "in_sync" | "drift" | "sync_pending" | "not_adopted";
     /**
+     * LogRecord
+     * @description One persisted record of a session's log.
+     */
+    LogRecord: {
+      at: components["schemas"]["ApiTimestamp"];
+      /** Body */
+      body: {
+        [key: string]: components["schemas"]["JsonValue"];
+      };
+      by?: components["schemas"]["RecordBy"] | null;
+      kind: components["schemas"]["RecordKind"];
+      /** Seq */
+      seq: number;
+      /**
+       * Text Bytes
+       * @default 0
+       */
+      text_bytes: number;
+    };
+    /**
+     * LogRecordPage
+     * @description ``GET /{id}/events``: records after ``after`` in ``seq`` order; ``next_after`` is the
+     *     ``after`` of the next page, None on the last one.
+     */
+    LogRecordPage: {
+      /** Items */
+      items: components["schemas"]["LogRecord"][];
+      /** Next After */
+      next_after?: number | null;
+    };
+    /**
+     * MessageAccepted
+     * @description ``POST /{id}/messages`` (202): the ``seq`` of the ``user.message`` record.
+     */
+    MessageAccepted: {
+      /** Seq */
+      seq: number;
+    };
+    /**
      * Mode
      * @description Who can invoke a skill (S5, L2); ``neither`` reads "Hidden" in the UI.
      * @enum {string}
      */
     Mode: "user-only" | "model-only" | "both" | "neither";
+    ModelName: string;
     Money: string;
     /**
      * NeedsYouItem
@@ -1984,6 +2486,33 @@ export interface components {
       provenance?: string | null;
       /** Text */
       text: string;
+    };
+    /**
+     * OpenPermission
+     * @description The permission request a live session waits on, as memory holds it (E10).
+     *
+     *     ``summary`` is the input summary (at most 4 KiB); ``input`` is the tool input only for an
+     *     ``AskUserQuestion`` (its questions) or a plan approval (its plan), None for a tool.
+     */
+    OpenPermission: {
+      asked_at: components["schemas"]["ApiTimestamp"];
+      deadline_at: components["schemas"]["ApiTimestamp"];
+      /** Input */
+      input?: {
+        [key: string]: components["schemas"]["JsonValue"];
+      } | null;
+      /** Request Id */
+      request_id: string;
+      request_kind: components["schemas"]["RequestKind"];
+      /**
+       * Suggestions
+       * @default []
+       */
+      suggestions: components["schemas"]["PermissionSuggestion"][];
+      /** Summary */
+      summary: string;
+      /** Tool */
+      tool: string;
     };
     /**
      * Origin
@@ -2132,6 +2661,60 @@ export interface components {
       next_cursor?: string | null;
       /** Total Estimate */
       total_estimate: number;
+    };
+    /**
+     * PastSession
+     * @description A Claude session of a working directory that can be resumed; ``title`` is redacted and
+     *     at most 200 characters.
+     */
+    PastSession: {
+      /** Cwd */
+      cwd: string;
+      last_activity: components["schemas"]["ApiTimestamp"];
+      /** Session Id */
+      session_id: string;
+      /** Title */
+      title?: string | null;
+    };
+    /**
+     * PermissionDecision
+     * @description ``POST /{id}/permissions/{request_id}`` (E7).
+     *
+     *     ``allow`` may carry ``answers`` (an ``AskUserQuestion``) or ``mode`` (a plan approval);
+     *     ``deny`` may carry ``message``; ``always`` needs ``suggestion``, the index of the
+     *     ``localSettings`` rule to keep. Any other combination is refused (422); whether the fields
+     *     fit the request is the permission policy's check.
+     */
+    PermissionDecision: {
+      /** Answers */
+      answers?: {
+        [key: string]: string;
+      } | null;
+      /**
+       * Decision
+       * @enum {string}
+       */
+      decision: "allow" | "deny" | "always";
+      /** Message */
+      message?: string | null;
+      /** Mode */
+      mode?: ("default" | "acceptEdits") | null;
+      /** Suggestion */
+      suggestion?: number | null;
+    };
+    /** @enum {string} */
+    PermissionMode: "default" | "acceptEdits" | "plan";
+    /**
+     * PermissionSuggestion
+     * @description A rule Claude suggests for "always allow"; ``index`` is its position in the request,
+     *     ``rule`` is passed back to the CLI verbatim. Only ``localSettings`` ones are offered (D5).
+     */
+    PermissionSuggestion: {
+      /** Destination */
+      destination: string;
+      /** Index */
+      index: number;
+      rule: components["schemas"]["JsonValue"];
     };
     /**
      * Problem
@@ -2337,6 +2920,28 @@ export interface components {
     };
     /** @enum {string} */
     Readiness: "can_start" | "waiting" | "done" | "canceled" | "in_cycle" | "unknown";
+    /** @enum {string} */
+    RecordBy: "web" | "timeout" | "closed" | "driver" | "server";
+    /** @enum {string} */
+    RecordKind:
+      | "init"
+      | "text"
+      | "thinking"
+      | "tool.call"
+      | "tool.result"
+      | "todos"
+      | "permission.request"
+      | "result"
+      | "error"
+      | "exited"
+      | "user.message"
+      | "permission.decision"
+      | "interrupt"
+      | "settings"
+      | "close"
+      | "log.truncated"
+      | "cloud.start"
+      | "cloud.followup";
     /**
      * RejectLearningBody
      * @description ``POST /learnings/{learning_id}/reject``: why, 1 to 300 characters once stripped.
@@ -2394,6 +2999,8 @@ export interface components {
        */
       sources_missing: components["schemas"]["EventSource"][];
     };
+    /** @enum {string} */
+    RequestKind: "tool" | "ask_user_question" | "plan_approval";
     /**
      * Resolution
      * @description How a problem ended (S4 with E5).
@@ -2403,6 +3010,14 @@ export interface components {
      * @enum {string}
      */
     Resolution: "recovered" | "agent_continued" | "open" | "needs_you" | "by_you";
+    /**
+     * ResumableList
+     * @description ``GET /agent-sessions/resumable``: past Claude sessions of a workdir, newest first.
+     */
+    ResumableList: {
+      /** Items */
+      items: components["schemas"]["PastSession"][];
+    };
     /**
      * RunCaps
      * @description The limits a run started with.
@@ -2489,10 +3104,19 @@ export interface components {
     SearchKind:
       "session" | "run" | "approval" | "learning" | "feature" | "file" | "command" | "tool";
     /**
+     * SendMessage
+     * @description ``POST /{id}/messages``: one user message (byte limit checked, 413).
+     */
+    SendMessage: {
+      /** Text */
+      text: string;
+    };
+    /**
      * Session
      * @description A session folded from its events (status, counts, tokens, estimated cost).
      *
      *     ``agent`` is deprecated: ``actors`` and ``label`` say who acted and what the session is about.
+     *     ``agent_session_id`` is the agent session ``hub web`` drives it from, when there is one.
      */
     Session: {
       /**
@@ -2505,6 +3129,8 @@ export interface components {
        * @deprecated
        */
       agent: string;
+      /** Agent Session Id */
+      agent_session_id?: string | null;
       /** Attempt */
       attempt?: number | null;
       /** Cost Unknown Reason */
@@ -2696,6 +3322,14 @@ export interface components {
       /** Index */
       index: number;
       started_at: components["schemas"]["ApiTimestamp"];
+    };
+    /**
+     * SessionSettings
+     * @description ``POST /{id}/settings``: a new mode, a new model, or both (at least one).
+     */
+    SessionSettings: {
+      mode?: components["schemas"]["PermissionMode"] | null;
+      model?: components["schemas"]["ModelName"] | null;
     };
     /**
      * SessionStatus
@@ -2957,6 +3591,18 @@ export interface components {
      * @enum {string}
      */
     Stage: "PICKED" | "WORKTREE" | "IMPLEMENTING" | "VERIFYING" | "PR_OPEN" | "REPORTED" | "FAILED";
+    /**
+     * StartCloud
+     * @description ``POST /agent-sessions/cloud``: a task for ``claude --cloud``, passed as one argument.
+     */
+    StartCloud: {
+      /** Project */
+      project: string;
+      /** Task */
+      task: string;
+      /** Workdir Id */
+      workdir_id: string;
+    };
     /**
      * Step
      * @description One top-level ordered list item of a body (S6); ``index`` is 1-based, as ``#step-<n>``.
@@ -3253,6 +3899,46 @@ export interface components {
     /** @enum {string} */
     Verdict: "SHIP" | "SHIP-WITH-OWNER-STEPS" | "NO-SHIP";
     /**
+     * Workdir
+     * @description A folder a session may start in (D6): the hub, a repo checkout or one of its worktrees.
+     *
+     *     ``workdir_id`` is opaque and stable; the server resolves it only by lookup. ``skills`` are
+     *     the names under its ``.claude/skills/`` (the ``/skill`` shortcut, P15).
+     */
+    Workdir: {
+      /**
+       * Kind
+       * @enum {string}
+       */
+      kind: "hub" | "repo" | "worktree";
+      /** Label */
+      label: string;
+      /** Repo */
+      repo?: string | null;
+      /**
+       * Skills
+       * @default []
+       */
+      skills: string[];
+      /** Workdir Id */
+      workdir_id: string;
+      /** Worktree */
+      worktree?: string | null;
+    };
+    /**
+     * WorkdirList
+     * @description ``GET /agent-sessions/workdirs``; ``warnings`` name folders that could not be read.
+     */
+    WorkdirList: {
+      /** Items */
+      items: components["schemas"]["Workdir"][];
+      /**
+       * Warnings
+       * @default []
+       */
+      warnings: string[];
+    };
+    /**
      * WorkflowRun
      * @description A run folded from executor events (D9, D16): the first ``run.end`` wins.
      */
@@ -3334,6 +4020,712 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["Page_ActivityItem_"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  list_agent_sessions_api_v1_agent_sessions_get: {
+    parameters: {
+      query?: {
+        project?: string | null;
+        status?: components["schemas"]["AgentSessionStatus"] | null;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AgentSessionList"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  create_agent_session_api_v1_agent_sessions_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CreateAgentSession"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AgentSession"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_capabilities_api_v1_agent_sessions_capabilities_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["DriverCapabilities"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  list_cloud_sessions_api_v1_agent_sessions_cloud_get: {
+    parameters: {
+      query?: {
+        project?: string | null;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CloudSessionList"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  start_cloud_session_api_v1_agent_sessions_cloud_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["StartCloud"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CloudSession"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  follow_up_cloud_session_api_v1_agent_sessions_cloud__cloud_id__messages_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        cloud_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["CloudMessage"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["CloudSession"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  list_resumable_api_v1_agent_sessions_resumable_get: {
+    parameters: {
+      query: {
+        project: string;
+        workdir_id: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ResumableList"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  list_workdirs_api_v1_agent_sessions_workdirs_get: {
+    parameters: {
+      query: {
+        project: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["WorkdirList"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_agent_session_api_v1_agent_sessions__agent_session_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        agent_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AgentSession"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  delete_agent_session_api_v1_agent_sessions__agent_session_id__delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        agent_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  close_agent_session_api_v1_agent_sessions__agent_session_id__close_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        agent_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AgentSession"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  list_agent_session_events_api_v1_agent_sessions__agent_session_id__events_get: {
+    parameters: {
+      query?: {
+        after?: number;
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        agent_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["LogRecordPage"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  interrupt_agent_session_api_v1_agent_sessions__agent_session_id__interrupt_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        agent_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AgentSession"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  send_agent_session_message_api_v1_agent_sessions__agent_session_id__messages_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        agent_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SendMessage"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["MessageAccepted"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  answer_agent_session_permission_api_v1_agent_sessions__agent_session_id__permissions__request_id__post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        agent_session_id: string;
+        request_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PermissionDecision"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AgentSession"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  change_agent_session_settings_api_v1_agent_sessions__agent_session_id__settings_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        agent_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SessionSettings"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AgentSession"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  stream_agent_session_api_v1_agent_sessions__agent_session_id__stream_get: {
+    parameters: {
+      query?: {
+        after?: string | null;
+      };
+      header?: {
+        "Last-Event-ID"?: string | null;
+      };
+      path: {
+        agent_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Server-Sent Events: record.<kind>, delta, status, reset, heartbeat */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "text/event-stream": string;
         };
       };
       /** @description A client error, as an RFC 9457 problem */

@@ -63,6 +63,7 @@ class FakeServer:
 
     def __init__(self, *, hubs_status: int = 201) -> None:
         self.hubs: list[dict[str, Any]] = []
+        self.hub_origins: list[str | None] = []
         self.envelopes: list[dict[str, Any]] = []
         self._hubs_status = hubs_status
 
@@ -72,6 +73,7 @@ class FakeServer:
             return httpx.Response(200, json={"db_path": "/data/agent-hub.db"})
         if request.method == "POST" and path == "/api/v1/hubs":
             self.hubs.append(json.loads(request.content))
+            self.hub_origins.append(request.headers.get("origin"))
             return httpx.Response(self._hubs_status, json={})
         if request.method == "POST" and path == "/api/v1/events/hooks":
             self.envelopes.append(json.loads(request.content))
@@ -166,6 +168,7 @@ def test_loads_every_screen_input_when_run_against_target(
     assert f"{folder}/reviews/{ISSUE}.md" in target.files
     assert target.files[f"{hub}/{INBOX_NOTE}"].startswith("---\nkind: team\n")
     assert server.hubs == [{"path": hub}]
+    assert server.hub_origins == [URL]
     assert len(server.envelopes) == len(demo_envelopes(NOW))
     runs, transcript = target.commands[1], target.commands[2]
     assert runs[:2] == ["collect", "--runs"]

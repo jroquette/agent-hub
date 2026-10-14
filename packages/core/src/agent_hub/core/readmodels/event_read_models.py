@@ -30,7 +30,8 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
 
-from agent_hub.core.approvals.approval import Approval
+from agent_hub.core.agent_sessions.links import AgentSessionLink
+from agent_hub.core.approvals.approval import Approval, ApprovalKind
 from agent_hub.core.approvals.fold_approvals import fold_approvals
 from agent_hub.core.events.event import EventType
 from agent_hub.core.events.event_query import MAX_QUERY_LIMIT, EventQuery
@@ -65,7 +66,7 @@ from agent_hub.core.readmodels.filters import (
     SessionFilter,
 )
 from agent_hub.core.readmodels.fold_memo import FoldMemo
-from agent_hub.core.readmodels.live_tiles import has_tile, live_tiles
+from agent_hub.core.readmodels.live_tiles import WAITING_REASONS, has_tile, live_tiles
 from agent_hub.core.readmodels.page import Page
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.runner.run_record import Stage
@@ -346,7 +347,10 @@ class FoldedEventReadModels:
     ``now`` is the clock (folds never read one themselves); ``hub_path_of`` names a project's
     hub path for "How to decide", when the caller knows it; ``label_rules_of`` gives a
     project's ``LabelRules`` (tracker teams, branch prefix), or None when its hub is unknown,
-    and is asked on every read that returns a session or a tile.
+    and is asked on every read that returns a session or a tile. ``agent_session_link_of``
+    finds the agent session ``hub web`` drives a session from (P13), asked on the same reads:
+    it fills ``Session.agent_session_id``, and a tile whose agent session waits on a
+    permission request shows ``waiting`` (AC-165.25).
     """
 
     def __init__(
@@ -357,11 +361,13 @@ class FoldedEventReadModels:
         hub_path_of: Callable[[str], str | None] | None = None,
         prices: Mapping[str, PerMillion] = PRICES,
         label_rules_of: Callable[[str], LabelRules | None] | None = None,
+        agent_session_link_of: Callable[[str, str], AgentSessionLink | None] | None = None,
     ) -> None:
         self._reader = reader
         self._now = now
         self._hub_path_of = hub_path_of
         self._label_rules_of = label_rules_of
+        self._agent_session_link_of = agent_session_link_of
         self._prices = prices
         # The events read so far, grouped, and the mark they were read up to: the store only
         # grows, so a later read takes only what was appended since.
@@ -468,15 +474,26 @@ class FoldedEventReadModels:
         return session
 
     def _with_issues(self, sessions: Iterable[Session]) -> list[Session]:
-        """``sessions`` with the issue each label names under its hub's current rules."""
+        """``sessions`` with the issue each label names under its hub's current rules, and
+        the agent session each one is driven from."""
+        return [session for session, _ in self._decorated(sessions)]
+
+    def _decorated(self, sessions: Iterable[Session]) -> list[tuple[Session, bool]]:
+        """Each session with its issue and agent-session link, and whether that agent session
+        waits on a permission request."""
         rules: dict[str, LabelRules | None] = {}
-        labelled: list[Session] = []
+        decorated: list[tuple[Session, bool]] = []
         for session in sessions:
             if session.project not in rules:
                 found = self._label_rules_of
                 rules[session.project] = None if found is None else found(session.project)
-            labelled.append(_with_issue(session, rules[session.project]))
-        return labelled
+            labelled = _with_issue(session, rules[session.project])
+            link_of = self._agent_session_link_of
+            link = None if link_of is None else link_of(session.project, session.id)
+            if link is not None:
+                labelled = labelled.model_copy(update={"agent_session_id": link.agent_session_id})
+            decorated.append((labelled, link is not None and link.waiting))
+        return decorated
 
     # Sessions
 
@@ -564,7 +581,12 @@ class FoldedEventReadModels:
             for session in snapshot.sessions.values()
             if _in_scope(session.project, scope) and has_tile(session, now=snapshot.now)
         ]
-        sessions = {session.id: session for session in self._with_issues(scoped)}
+        decorated = self._decorated(scoped)
+        waiting = {session.id for session, waits in decorated if waits}
+        sessions = {
+            session.id: _waiting(session) if session.id in waiting else session
+            for session, _ in decorated
+        }
         budgets = {
             run_id: run.caps.budget_usd
             for run_id, run in snapshot.runs.items()
@@ -577,7 +599,9 @@ class FoldedEventReadModels:
             budgets=budgets,
             problems=snapshot.problems,
         )
-        return _whole(tiles)
+        return _whole(
+            tuple(_permission_tile(tile) if tile.id in waiting else tile for tile in tiles)
+        )
 
     # Runs, approvals, learnings
 
@@ -761,6 +785,20 @@ class FoldedEventReadModels:
 
 
 # Labels at read time
+
+
+def _waiting(session: Session) -> Session:
+    """A live session whose agent session waits on a permission request: its tile is
+    ``waiting`` (an ended one keeps its status)."""
+    if session.status not in {SessionStatus.LIVE, SessionStatus.IDLE}:
+        return session
+    return session.model_copy(update={"status": SessionStatus.WAITING})
+
+
+def _permission_tile(tile: LiveTile) -> LiveTile:
+    if tile.group != "waiting" or tile.waiting_reason is not None:
+        return tile
+    return tile.model_copy(update={"waiting_reason": WAITING_REASONS[ApprovalKind.PERMISSION]})
 
 
 def _with_issue(session: Session, rules: LabelRules | None) -> Session:

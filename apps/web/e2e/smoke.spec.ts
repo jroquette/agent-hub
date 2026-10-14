@@ -45,6 +45,13 @@ async function expectAccessible(page: Page): Promise<void> {
   expect(blocking).toEqual([]);
 }
 
+// Every page is opened as the owner opens hub web: once through the printed token URL, so the
+// session cookie is set (AGH-165, P6). Without it the Sessions screen's agent-session reads answer
+// 401 (it then says to open that link), which the browser logs as failed loads.
+test.beforeEach(async ({ page }) => {
+  await page.goto(`/?token=${env("SMOKE_TOKEN")}`);
+});
+
 interface SmokePage {
   name: string;
   path: string;
@@ -200,7 +207,7 @@ test("Feature detail renders its Spec and Plan tabs", async ({ page, baseURL }) 
 
 test("Brain shows the tree and a note, and follows an in-app link", async ({ page, baseURL }) => {
   await visit(page, baseURL, "/projects/demo/brain/index.md", async () => {
-    await expect(page.getByRole("heading", { level: 1, name: "Brain" })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "Brain", exact: true })).toBeVisible();
     const tree = page.getByRole("navigation", { name: "Brain notes" });
     await expect(tree.getByText("now.md")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Demo brain" })).toBeVisible();
@@ -242,6 +249,48 @@ test("Feature detail Tickets tab shows the plan's tickets, planning and the not-
     await expect(planning.getByText("Layer 2")).toBeVisible();
     await expect(planning.getByRole("heading", { name: "Recommended order" })).toBeVisible();
   });
+});
+
+// AGH-165 (AC-165.47, E14): the installed `hub web` drives the stub `claude` on its PATH. The
+// printed token became the cookie (beforeEach), "New session" starts a session in the demo hub, the
+// permission card survives a reload, a message goes through the composer after the answer, and
+// the transcript survives a reload. Run alone by
+// test_survives_reload_when_session_driven_agent_session (it needs SMOKE_TOKEN).
+const AGENT_PROMPT = "Run the build.";
+const AGENT_FOLLOW_UP = "Now run the tests.";
+
+test("Agent session started from Sessions survives a reload while waiting and after the answer and a message", async ({
+  page,
+  baseURL,
+}) => {
+  const problems = watch(page, baseURL ?? "");
+  // beforeEach traded the token for the cookie; the address keeps no token.
+  await expect(page).not.toHaveURL(/token=/);
+  await page.goto("/sessions");
+  const driven = page.getByRole("region", { name: "Driven from hub web" });
+  await page.getByLabel("Start sessions in").selectOption("demo");
+  await driven.getByRole("button", { name: "New session" }).click();
+  const dialog = page.getByRole("dialog", { name: "New session" });
+  await dialog.getByLabel("First prompt (optional)").fill(AGENT_PROMPT);
+  await dialog.getByRole("button", { name: "Start session" }).click();
+
+  await expect(page).toHaveURL(/\/agent-sessions\/[0-9a-f-]+$/);
+  const conversation = page.getByRole("log", { name: "Conversation" });
+  await expect(page.getByRole("button", { name: "Allow once" })).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name: "Allow once" }).click();
+  await expect(conversation.getByText("The build ran.")).toBeVisible();
+  const composer = page.getByRole("form", { name: "Message composer" });
+  await composer.getByLabel("Message Claude").fill(AGENT_FOLLOW_UP);
+  await composer.getByRole("button", { name: "Send" }).click();
+  await expect(conversation.getByText("The tests ran.")).toBeVisible();
+  await page.reload();
+  await expect(conversation.getByText("The build ran.")).toBeVisible();
+  await expect(conversation.getByText(AGENT_PROMPT)).toBeVisible();
+  await expect(conversation.getByText(AGENT_FOLLOW_UP)).toBeVisible();
+  await expect(conversation.getByText("The tests ran.")).toBeVisible();
+  await expectAccessible(page);
+  expect(problems).toEqual([]);
 });
 
 // AGH-164 (AC-164.30): the demo hub's Skills catalog (hub init's managed skills plus the

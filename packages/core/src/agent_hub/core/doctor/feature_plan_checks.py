@@ -25,10 +25,15 @@ from agent_hub.core.features.feature_record import (
     MAX_TITLE_CHARS,
 )
 from agent_hub.core.hub_config.versions import cut_echo
+from agent_hub.core.hub_files.tree_snapshot import FileEntry, TreeEntry
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN
 
 RECORD_FIX: Final = "fix the record in features.json"
+LINK_FIX: Final = "replace it with the file itself"
+NOT_READ: Final = "not read as a regular file (links are never followed)"
+UNREAD: Final = "could not be read"
+UNREAD_FIX: Final = "run hub doctor again"
 TICKET_FIX: Final = "name a key or id of `tickets` (or add that ticket)"
 SELF_FIX: Final = "remove it from blocked_by"
 CYCLE_FIX: Final = "remove one blocked_by edge of the cycle"
@@ -53,6 +58,15 @@ class Problem(NamedTuple):
     message: str
     fix: str
     warning: bool = False
+
+
+def file_content(entry: TreeEntry | None) -> bytes | Problem:
+    """A listed file's bytes, or why there are none: not a regular file, or its read failed."""
+    if not isinstance(entry, FileEntry):
+        return Problem(NOT_READ, LINK_FIX)
+    if entry.content is None:
+        return Problem(UNREAD, UNREAD_FIX)
+    return entry.content
 
 
 class _Ticket(NamedTuple):

@@ -128,3 +128,20 @@ def test_fails_when_folder_is_not_hub(tmp_path: Path, capsys: pytest.CaptureFixt
 
     assert code == 1
     assert "not a hub: no hub.json" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("url", "origin"),
+    [(URL, URL), (f"{URL}/", URL), ("http://localhost:8000/x/", "http://localhost:8000")],
+)
+def test_sends_server_origin_when_registering(tmp_path: Path, url: str, origin: str) -> None:
+    sent: list[str | None] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(request.headers.get("origin"))
+        return httpx.Response(201, json={})
+
+    code = main([str(_hub(tmp_path)), "--url", url], transport=httpx.MockTransport(answer))
+
+    assert code == 0
+    assert sent == [origin]

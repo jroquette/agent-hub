@@ -4,11 +4,17 @@ import pytest
 from sqlalchemy import JSON, UniqueConstraint
 from sqlalchemy.dialects import sqlite
 
-from agent_hub.storage.db import UtcDateTime, events, metadata
+from agent_hub.storage.db import (
+    UtcDateTime,
+    agent_session_records,
+    agent_sessions,
+    events,
+    metadata,
+)
 
 
 def test_declares_events_table_when_metadata_loaded() -> None:
-    assert set(metadata.tables) == {"events"}
+    assert set(metadata.tables) == {"events", "agent_sessions", "agent_session_records"}
     required = {
         "id",
         "project",
@@ -63,3 +69,36 @@ def test_attaches_utc_when_result_read() -> None:
     assert read == datetime(2026, 9, 27, 8, 0, tzinfo=UTC)
     assert read is not None
     assert read.tzinfo is UTC
+
+
+def test_declares_agent_session_tables_when_metadata_loaded() -> None:
+    optional = {
+        "claude_session_id",
+        "cloud_id",
+        "url",
+        "model",
+        "title",
+        "ended_at",
+        "end_reason",
+        "cost_usd",
+        "usage",
+    }
+    assert {column.name for column in agent_sessions.columns if column.nullable} == optional
+    assert [column.name for column in agent_sessions.primary_key] == ["id"]
+    assert isinstance(agent_sessions.c.usage.type, JSON)
+    assert isinstance(agent_sessions.c.created_at.type, UtcDateTime)
+    assert {
+        index.name: [column.name for column in index.columns] for index in agent_sessions.indexes
+    } == {
+        "ix_agent_sessions_project_claude_session_id": ["project", "claude_session_id"],
+        "ix_agent_sessions_status": ["status"],
+        "ix_agent_sessions_ended_at": ["ended_at"],
+    }
+    assert [column.name for column in agent_session_records.primary_key] == [
+        "agent_session_id",
+        "seq",
+    ]
+    [key] = agent_session_records.foreign_keys
+    assert (key.target_fullname, key.ondelete) == ("agent_sessions.id", "CASCADE")
+    assert isinstance(agent_session_records.c.body.type, JSON)
+    assert {column.name for column in agent_session_records.columns if column.nullable} == {"by"}
