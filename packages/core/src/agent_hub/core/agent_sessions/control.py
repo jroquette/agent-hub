@@ -396,17 +396,29 @@ class AgentSessionControl:
                 environment_extra=self._environment_extra,
             )
             live = await self._start(session, spec, state)
-            if prompt is not None:
-                await self._emit(
-                    live, "user.message", UserMessageBody(text=prompt).as_body(), by="web"
-                )
-            pump = asyncio.create_task(self._pump(live), name=f"agent-session-{session.id}")
-            live.pump = pump
-            self._pumps.add(pump)
-            pump.add_done_callback(self._pumps.discard)
-            if prompt is not None:
-                await self._driver.send(live.handle, prompt)
+            try:
+                await self._begin(live, prompt)
+            except Exception:
+                await self._fail_start(live)
+                raise
         return live.view()
+
+    async def _begin(self, live: LiveSession, prompt: str | None) -> None:
+        """Log the first prompt, start the pump, then send the prompt."""
+        if prompt is not None:
+            await self._emit(live, "user.message", UserMessageBody(text=prompt).as_body(), by="web")
+        pump = asyncio.create_task(self._pump(live), name=f"agent-session-{live.id}")
+        live.pump = pump
+        self._pumps.add(pump)
+        pump.add_done_callback(self._pumps.discard)
+        if prompt is not None:
+            await self._driver.send(live.handle, prompt)
+
+    async def _fail_start(self, live: LiveSession) -> None:
+        """End a session whose first record or prompt failed ``failed``; the caller re-raises
+        the first failure, so one while ending is only suppressed."""
+        with contextlib.suppress(Exception):
+            await asyncio.shield(self._ending(live, EndReason.FAILED, by="server"))
 
     async def subscribe(
         self, agent_session_id: str, after: StreamPosition | None
@@ -535,6 +547,11 @@ class AgentSessionControl:
         ended more than the retention ago (AC-165.53)."""
         now = now or self._clock()
         for live in list(self._live.values()):
+            if live.pump is not None and live.pump.done() and not live.ended:
+                # The pump died without ending the session (cancelled): reclaim it.
+                with contextlib.suppress(Exception):
+                    await asyncio.shield(self._ending(live, EndReason.FAILED, by="server"))
+                continue
             for request_id, open_request in list(live.requests.items()):
                 if expired(open_request.view, now):
                     await self._time_out(live, request_id)
@@ -752,18 +769,21 @@ class AgentSessionControl:
         live.state = apply(
             live.state, Close() if reason == EndReason.CLOSED else End(reason=reason)
         )
-        if full is not None:
-            truncated = LogTruncatedBody(cap=full.cap, limit=full.limit).as_body()
-            await self._emit(live, "log.truncated", truncated, by="server")
-        for request_id in list(live.requests):
-            await self._close_request(live, request_id)
-        if running and not exited and reason != EndReason.CLOSED:
-            await self._emit(live, "interrupt", {}, by="server")
-            await _bounded(self._driver.interrupt(live.handle), INTERRUPT_SECONDS)
-        if not exited:
-            await self._emit(live, "close", {"reason": reason.value}, by=by)
-        await self._sync(live)
-        await _bounded(self._driver.close(live.handle), CLOSE_SECONDS)
+        try:
+            if full is not None:
+                truncated = LogTruncatedBody(cap=full.cap, limit=full.limit).as_body()
+                await self._emit(live, "log.truncated", truncated, by="server")
+            for request_id in list(live.requests):
+                await self._close_request(live, request_id)
+            if running and not exited and reason != EndReason.CLOSED:
+                await self._emit(live, "interrupt", {}, by="server")
+                await _bounded(self._driver.interrupt(live.handle), INTERRUPT_SECONDS)
+            if not exited:
+                await self._emit(live, "close", {"reason": reason.value}, by=by)
+            await self._sync(live)
+        finally:
+            # A store that fails while the session ends never keeps the CLI running.
+            await _bounded(self._driver.close(live.handle), CLOSE_SECONDS)
 
     async def _drain(self, live: LiveSession) -> None:
         """Wait (bounded) until the driver's last events are logged."""
@@ -777,18 +797,24 @@ class AgentSessionControl:
             async for event in self._driver.events(live.handle):
                 await self._on_event(live, event)
             if not live.ended:
-                message = "the session's events ended without an exit"
-                await self._emit(live, "error", {"message": message}, by="server")
-                self._ending(live, EndReason.FAILED, by="server")
+                await self._fail(live, "the session's events ended without an exit")
         except Exception as error:  # noqa: BLE001 -- a driver failure fails the session
             if not live.ended:
-                message = f"the session's driver failed ({type(error).__name__})"
-                await self._emit(live, "error", {"message": message}, by="server")
-                self._ending(live, EndReason.FAILED, by="server")
+                await self._fail(live, f"the session's driver failed ({type(error).__name__})")
         finally:
-            if live.end_task is not None:
-                await asyncio.shield(live.end_task)
-            await live.finish()
+            try:
+                if live.end_task is not None:
+                    with contextlib.suppress(Exception):  # the end's own failure is its caller's
+                        await asyncio.shield(live.end_task)
+            finally:
+                await live.finish()
+
+    async def _fail(self, live: LiveSession, message: str) -> None:
+        """End the session ``failed`` first (so a store that fails cannot keep it live), then
+        log the ``error``; a failure to log it is suppressed."""
+        self._ending(live, EndReason.FAILED, by="server")
+        with contextlib.suppress(Exception):
+            await self._emit(live, "error", {"message": message}, by="server")
 
     async def _on_event(self, live: LiveSession, event: DriverEvent) -> None:
         match event:

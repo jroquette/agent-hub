@@ -1,10 +1,13 @@
-from collections.abc import Callable
+import asyncio
+from collections.abc import AsyncIterator, Callable, Sequence
 from datetime import timedelta
+from typing import Unpack
 
 import pytest
 from pydantic import JsonValue
 
 from agent_hub.core.agent_sessions.agent_session import (
+    AgentSession,
     AgentSessionStatus,
     EndReason,
     PermissionDecision,
@@ -16,6 +19,8 @@ from agent_hub.core.agent_sessions.driver import (
     Allow,
     Deny,
     DriverCapabilities,
+    DriverEvent,
+    DriverHandle,
     PastSession,
     PermissionRequest,
     PermissionSuggestion,
@@ -41,7 +46,10 @@ from agent_hub.core.agent_sessions.errors import (
 )
 from agent_hub.core.agent_sessions.limits import KIB, SessionLimits
 from agent_hub.core.agent_sessions.permission_policy import CLOSED_MESSAGE, TIMEOUT_MESSAGE
+from agent_hub.core.agent_sessions.records import LogRecord
+from agent_hub.core.agent_sessions.store import AgentSessionFields
 from agent_hub.core.testing.agent_session_rig import HUB_PATH, START, WEB_URL, Rig
+from agent_hub.core.testing.agent_session_store_fakes import InMemoryAgentSessionStore
 from agent_hub.core.testing.session_driver_fakes import Hold, InMemorySessionDriver
 
 type MakeRig = Callable[..., Rig]
@@ -177,6 +185,8 @@ async def test_logs_message_in_order_when_sent_during_turn(make_rig: MakeRig) ->
     accepted = await rig.control.send(created.id, SendMessage(text="And then this."))
     rig.driver.release(rig.handle())
     await rig.until(lambda: rig.kinds(created.id).count("result") == 2)
+    # The status is stored just after the result record.
+    await rig.until(lambda: rig.store.get(created.id).status == AgentSessionStatus.IDLE)
 
     assert accepted.seq == 3
     assert rig.kinds(created.id)[:3] == ["user.message", "init", "user.message"]
@@ -441,6 +451,12 @@ async def _waiting(make_rig: MakeRig, request: PermissionRequest = ASK, **option
     return rig
 
 
+def _suggestion_indexes(body: dict[str, JsonValue]) -> list[JsonValue]:
+    suggestions = body["suggestions"]
+    assert isinstance(suggestions, list)
+    return [item["index"] for item in suggestions if isinstance(item, dict)]
+
+
 def _decisions(rig: Rig) -> list[tuple[str | None, JsonValue]]:
     records = rig.records(rig.created[0].id)
     return [(r.by, r.body.get("decision")) for r in records if r.kind == "permission.decision"]
@@ -461,7 +477,7 @@ async def test_keeps_raw_open_request_and_stores_redacted_when_permission_reques
     assert snapshot.open_permission.deadline_at == START + timedelta(minutes=10)
     assert GITHUB_TOKEN not in str(stored.body)
     assert stored.body["request_id"] == "req-1"
-    assert [item["index"] for item in stored.body["suggestions"]] == [0]  # type: ignore[index,union-attr]
+    assert _suggestion_indexes(stored.body) == [0]
 
 
 @pytest.mark.parametrize("index", [1, 2, 3])
@@ -480,7 +496,7 @@ async def test_hides_and_refuses_suggestion_when_not_local_allow_rule(
 
     assert snapshot.open_permission is not None
     assert snapshot.open_permission.suggestions == (ASK.suggestions[0],)
-    assert [item["index"] for item in stored.body["suggestions"]] == [0]  # type: ignore[index,union-attr]
+    assert _suggestion_indexes(stored.body) == [0]
     assert rig.driver.answers == {}
 
 
@@ -697,3 +713,120 @@ async def test_ends_server_stopped_when_shutdown(make_rig: MakeRig) -> None:
     assert calls.index(("interrupt", rig.handle(1))) < calls.index(("close", rig.handle(1)))
     with pytest.raises(SessionsUnavailableError):
         await rig.create()
+
+
+# Failure paths: a store or driver that raises never leaves a session live or its driver open.
+
+
+class FailingStore(InMemoryAgentSessionStore):
+    """Raises ``OSError`` on ``append`` of the record kinds in ``fail_kinds``, and on every
+    ``append`` and ``update`` once ``broken``."""
+
+    def __init__(self, *fail_kinds: str) -> None:
+        super().__init__()
+        self.fail_kinds = set(fail_kinds)
+        self.broken = False
+
+    def append(self, agent_session_id: str, records: Sequence[LogRecord]) -> None:
+        if self.broken or any(record.kind in self.fail_kinds for record in records):
+            raise OSError("disk full")
+        super().append(agent_session_id, records)
+
+    def update(self, agent_session_id: str, **fields: Unpack[AgentSessionFields]) -> AgentSession:
+        if self.broken:
+            raise OSError("disk full")
+        return super().update(agent_session_id, **fields)
+
+
+class SendFailingDriver(InMemorySessionDriver):
+    async def send(self, handle: DriverHandle, text: str) -> None:
+        raise RuntimeError("pipe closed")
+
+
+class DyingDriver(InMemorySessionDriver):
+    """Its events stop as a cancelled pump would, without an exit."""
+
+    async def events(self, handle: DriverHandle) -> AsyncIterator[DriverEvent]:
+        raise asyncio.CancelledError
+        yield  # pragma: no cover -- makes this an async generator
+
+
+def _closes(rig: Rig) -> int:
+    return [call.method for call in rig.driver.calls].count("close")
+
+
+def _is_live(rig: Rig, session: AgentSession) -> bool:
+    assert session.claude_session_id is not None
+    return rig.control.live_link("demo", session.claude_session_id) is not None
+
+
+async def test_closes_driver_once_and_leaves_live_when_store_fails_while_ending(
+    make_rig: MakeRig,
+) -> None:
+    store = FailingStore()
+    rig = make_rig(store=store)
+    created = await rig.create()
+    store.broken = True
+
+    with pytest.raises(OSError, match="disk full"):
+        await rig.control.close(created.id)
+    await rig.until(lambda: _closes(rig) == 1)
+
+    assert _closes(rig) == 1
+    assert not _is_live(rig, created)
+
+
+async def test_fails_session_when_event_and_error_records_cannot_be_stored(
+    make_rig: MakeRig,
+) -> None:
+    store = FailingStore("thinking", "error")
+    rig = make_rig(replies={"Think.": (Thinking(text="step"),)}, store=store)
+    created = await rig.create("Think.")
+
+    ended = await rig.until_status(created.id, "failed")
+    await rig.until(lambda: _closes(rig) == 1)
+
+    assert ended.end_reason == EndReason.FAILED
+    assert _closes(rig) == 1
+    assert not _is_live(rig, created)
+    # The pump stopped at the failure, so the driver's exit is not logged.
+    assert rig.kinds(created.id) == ["user.message", "init", "interrupt", "close"]
+
+
+async def test_fails_session_when_first_message_cannot_be_stored(make_rig: MakeRig) -> None:
+    store = FailingStore("user.message")
+    rig = make_rig(store=store)
+
+    with pytest.raises(OSError, match="disk full"):
+        await rig.create("Hello")
+    session = store.list(project="demo", status=None, kind="local")[0]
+
+    assert session.status == AgentSessionStatus.FAILED
+    assert session.end_reason == EndReason.FAILED
+    assert _closes(rig) == 1
+    assert not _is_live(rig, session)
+
+
+async def test_fails_session_when_first_prompt_cannot_be_sent(make_rig: MakeRig) -> None:
+    rig = make_rig(driver=SendFailingDriver())
+
+    with pytest.raises(RuntimeError, match="pipe closed"):
+        await rig.create("Hello")
+    session = rig.store.list(project="demo", status=None, kind="local")[0]
+
+    assert session.status == AgentSessionStatus.FAILED
+    assert _closes(rig) == 1
+    assert not _is_live(rig, session)
+
+
+async def test_reclaims_session_when_pump_died_while_running(make_rig: MakeRig) -> None:
+    rig = make_rig(driver=DyingDriver())
+    created = await rig.create("Hello")
+    await asyncio.sleep(0)
+
+    await rig.control.sweep(rig.clock(), purge=False)
+    ended = await rig.until_status(created.id, "failed")
+
+    assert ended.end_reason == EndReason.FAILED
+    assert _closes(rig) == 1
+    assert not _is_live(rig, created)
