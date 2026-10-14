@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import JsonValue
 
 from agent_hub.api.composition import build_app
 from agent_hub.api.session_token import cookie_name
@@ -310,7 +311,16 @@ ASK = PermissionRequest(
     tool="Bash",
     input={"command": f"echo {SENTINEL}"},
     suggestions=(
-        PermissionSuggestion(index=0, destination="localSettings", rule={"tool": "Bash"}),
+        PermissionSuggestion(
+            index=0,
+            destination="localSettings",
+            rule={
+                "type": "addRules",
+                "rules": [{"toolName": "Bash", "ruleContent": "echo *"}],
+                "behavior": "allow",
+                "destination": "localSettings",
+            },
+        ),
     ),
 )
 PAST = PastSession(
@@ -583,6 +593,31 @@ def test_refuses_always_without_suggestion_when_permission_answer_invalid(
         f"{BASE}/{session_id}/permissions/req-1", json={"decision": "always", "suggestion": 4}
     )
 
+    _problem(response, 422, "invalid-decision")
+    assert app.driver.answers == {}
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        {"type": "setMode", "mode": "bypassPermissions", "destination": "localSettings"},
+        {"type": "addDirectories", "directories": ["/"], "destination": "localSettings"},
+    ],
+)
+def test_refuses_and_hides_always_when_suggestion_widens_session(
+    open_agent_session_app: Any, rule: dict[str, JsonValue]
+) -> None:
+    unsafe = PermissionSuggestion(index=1, destination="localSettings", rule=rule)
+    request = ASK.model_copy(update={"suggestions": (*ASK.suggestions, unsafe)})
+    app = open_agent_session_app(**_asking(request))
+    session_id = _waiting(app)
+
+    shown = app.client.get(f"{BASE}/{session_id}").json()["open_permission"]["suggestions"]
+    response = app.client.post(
+        f"{BASE}/{session_id}/permissions/req-1", json={"decision": "always", "suggestion": 1}
+    )
+
+    assert [item["index"] for item in shown] == [0]
     _problem(response, 422, "invalid-decision")
     assert app.driver.answers == {}
 

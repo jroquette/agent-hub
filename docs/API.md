@@ -209,7 +209,9 @@ the app refetches the route; the cache still applies (`as_of` shows its age). `G
   `opus`, `sonnet`, `haiku` or an id matching `^[A-Za-z0-9._\-\[\]]{1,64}$`; anything else is 422 and the driver is
   not called. Status is `idle`, `running`, `waiting_permission`, `ended` or `failed`; without a first prompt a new
   session is `idle` with no `init` yet.
-- **Permission answers.** `always` needs `suggestion` (the index of the request's `localSettings` rule); `answers`
+- **Permission answers.** `always` needs `suggestion`, the index of one of the request's suggestions; a request
+  carries only `addRules` suggestions with behaviour `allow` and destination `localSettings` (a `setMode`,
+  `addDirectories` or other suggestion is never shown, and naming one is 422); `answers`
   only for `AskUserQuestion`; `mode` (`default` or `acceptEdits`) only for plan approval, applied after the allow.
   Other combinations are 422. The first answer stands (a second is 409); none within 10 minutes is a deny by
   `timeout`.

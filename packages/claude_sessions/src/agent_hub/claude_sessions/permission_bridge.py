@@ -4,7 +4,9 @@ Each call becomes a ``PermissionRequest`` event and waits on a future, with no d
 own: ``hub web``'s permission timeout (``AgentSessionControl.sweep``) answers it ``deny`` when
 it passes. The request id is the tool use id when it is a safe id (so the browser can tie the
 request to its tool card), else a minted one. ``AskUserQuestion`` and ``ExitPlanMode`` requests
-are marked as such. Suggestions are the CLI's own rules, passed back verbatim on "always".
+are marked as such. Suggestions are the CLI's own rules, passed back verbatim on "always"; only
+the ones "Always allow" may apply (``addRules``, ``allow``, ``localSettings``; A11) are emitted
+or passed back, with their index in the CLI's list.
 
 ``deny_all`` answers every parked request (interrupt, close); after ``close`` new requests are
 denied at once. When the CLI cancels a request, it is forgotten.
@@ -34,6 +36,7 @@ from agent_hub.core.agent_sessions.driver import (
     RequestKind,
 )
 from agent_hub.core.agent_sessions.errors import PermissionAnsweredError, UnknownPermissionError
+from agent_hub.core.agent_sessions.permission_policy import is_offered, offered_suggestions
 
 CLOSED: Final = "session closed"
 INTERRUPTED: Final = "interrupted"
@@ -58,7 +61,7 @@ def _sdk_result(answer: DriverAnswer) -> PermissionResult:
     updates = [
         PermissionUpdate.from_dict(dict(suggestion.rule))
         for suggestion in answer.updated_permissions
-        if isinstance(suggestion.rule, dict)
+        if isinstance(suggestion.rule, dict) and is_offered(suggestion)
     ]
     return PermissionResultAllow(
         updated_input=None if answer.updated_input is None else dict(answer.updated_input),
@@ -91,7 +94,7 @@ class PermissionBridge:
                     request_id=request_id,
                     tool=tool_name,
                     input=cast("dict[str, JsonValue]", tool_input),
-                    suggestions=tuple(
+                    suggestions=offered_suggestions(
                         _suggestion(index, update)
                         for index, update in enumerate(context.suggestions)
                     ),

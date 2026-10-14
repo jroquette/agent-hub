@@ -9,12 +9,16 @@ request itself and builds what the driver receives:
   changes the mode after the allow, E6).
 - ``deny``: deny with the owner's message.
 - ``always``: allow with exactly the suggestion at that index, passed through verbatim, and
-  only when its destination is ``localSettings``.
+  only when it is offered (A11): an ``addRules`` rule with behaviour ``allow`` whose destination
+  is ``localSettings``. A ``setMode`` (``bypassPermissions``), ``addDirectories`` (``/``) or any
+  other suggestion would widen what the session may do without a prompt, so it is refused
+  (422) and ``offered_suggestions`` drops it before it reaches a record or the browser.
 
 A request nobody answers is denied at its deadline (``by: timeout``); closing or interrupting
 the session denies it too (``by: closed``).
 """
 
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Final
 
@@ -33,6 +37,9 @@ from agent_hub.core.agent_sessions.limits import SessionLimits
 
 # The only destination "Always allow" may write to (D5).
 ALWAYS_DESTINATION: Final = "localSettings"
+# The only suggestion "Always allow" may apply (A11): add allow rules.
+ALWAYS_TYPE: Final = "addRules"
+ALWAYS_BEHAVIOR: Final = "allow"
 TIMEOUT_MESSAGE: Final = "No answer came from hub web before the permission timeout."
 CLOSED_MESSAGE: Final = "The hub web session was closed or interrupted."
 
@@ -58,11 +65,34 @@ def validate(request: PermissionRequest, decision: PermissionDecision) -> Driver
             return Allow(updated_input=request.input | {"answers": answers})
 
 
+def is_offered(suggestion: PermissionSuggestion) -> bool:
+    """Whether "Always allow" may apply ``suggestion``: an ``addRules`` rule with behaviour
+    ``allow`` and destination ``localSettings`` (the suggestion's and the rule's own)."""
+    rule = suggestion.rule
+    return (
+        isinstance(rule, dict)
+        and suggestion.destination == ALWAYS_DESTINATION
+        and rule.get("destination") == ALWAYS_DESTINATION
+        and rule.get("type") == ALWAYS_TYPE
+        and rule.get("behavior") == ALWAYS_BEHAVIOR
+    )
+
+
+def offered_suggestions(
+    suggestions: Iterable[PermissionSuggestion],
+) -> tuple[PermissionSuggestion, ...]:
+    """The suggestions "Always allow" may apply, their indexes kept."""
+    return tuple(suggestion for suggestion in suggestions if is_offered(suggestion))
+
+
 def _suggestion(request: PermissionRequest, index: int | None) -> PermissionSuggestion:
     for suggestion in request.suggestions:
         if suggestion.index == index:
-            if suggestion.destination != ALWAYS_DESTINATION:
-                msg = f"suggestion {index} is not a {ALWAYS_DESTINATION} rule"
+            if not is_offered(suggestion):
+                msg = (
+                    f"suggestion {index} is not an {ALWAYS_TYPE} {ALWAYS_BEHAVIOR} rule "
+                    f"for {ALWAYS_DESTINATION}"
+                )
                 raise InvalidDecisionError(msg)
             return suggestion
     msg = f"no suggestion {index} in this request"
