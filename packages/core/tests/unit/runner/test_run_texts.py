@@ -12,11 +12,13 @@ from agent_hub.core.runner.run_texts import (
     MAX_SUCCESS_SUMMARY_CHARS,
     WORKSPACE_WORDS,
     PrTitle,
+    blocked_comment,
     commit_summary,
     conventional_pr_title,
     failure_comment,
     inbox_line,
     is_attribution,
+    no_changes_comment,
     pr_body,
     pr_title,
     sanitized_summary,
@@ -126,6 +128,44 @@ def test_writes_neutral_comment_when_run_fails() -> None:
     )
 
 
+def test_writes_no_changes_comment_when_run_left_no_commit() -> None:
+    comment = no_changes_comment(
+        run_id="ab12cd34",
+        stage="IMPLEMENTING",
+        reason="n" * (MAX_DIAGNOSIS_CHARS + 1),
+        workspace=WORKSPACE,
+    )
+
+    assert comment == (
+        f"Run ab12cd34 ended with no changes at IMPLEMENTING: {'n' * MAX_DIAGNOSIS_CHARS}"
+    )
+
+
+def test_writes_blocked_comment_when_session_asked() -> None:
+    comment = blocked_comment(
+        run_id="ab12cd34",
+        stage="IMPLEMENTING",
+        question="q" * (MAX_DIAGNOSIS_CHARS + 1),
+        workspace=WORKSPACE,
+    )
+
+    assert comment == (
+        "Run ab12cd34 stopped at IMPLEMENTING and needs a human. The session asked: "
+        + "q" * MAX_DIAGNOSIS_CHARS
+    )
+
+
+def test_names_no_agent_when_outcome_comments_built() -> None:
+    texts = (
+        no_changes_comment(
+            run_id="ab12cd34", stage="IMPLEMENTING", reason="x", workspace=WORKSPACE
+        ),
+        blocked_comment(run_id="ab12cd34", stage="IMPLEMENTING", question="x", workspace=WORKSPACE),
+    )
+
+    assert [text for text in texts if "agent" in text.lower()] == []
+
+
 def test_formats_inbox_line_when_outcome_given() -> None:
     common = {"issue_id": "DEM-1", "repo": "demo-api", "run_id": "ab12cd34"}
 
@@ -225,6 +265,17 @@ def test_cleans_texts_when_pr_body_and_comments_built() -> None:
     assert body == "DEM-1\n\nEdits demo-api/x.py.\n\n## Verification\nGates green: `make check`."
     assert opened == f"Run ab12cd34 opened {URL}. Edits demo-api/x.py."
     assert failed == "Run ab12cd34 failed at VERIFYING. Diagnosis: Edits demo-api/x.py."
+    no_changes = no_changes_comment(
+        run_id="ab12cd34", stage="IMPLEMENTING", reason=dirty, workspace=WORKSPACE
+    )
+    blocked = blocked_comment(
+        run_id="ab12cd34", stage="IMPLEMENTING", question=dirty, workspace=WORKSPACE
+    )
+    assert no_changes == "Run ab12cd34 ended with no changes at IMPLEMENTING: Edits demo-api/x.py."
+    assert blocked == (
+        "Run ab12cd34 stopped at IMPLEMENTING and needs a human. The session asked: Edits"
+        " demo-api/x.py."
+    )
 
 
 def test_pins_title_cap_when_module_loaded() -> None:

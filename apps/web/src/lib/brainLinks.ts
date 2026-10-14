@@ -44,6 +44,54 @@ export function anchorId(fragment: string): string {
   return `md-${headingSlug(fragment)}`;
 }
 
+/**
+ * The unique element id of a heading with this text: the first `md-<slug>`, then `md-<slug>-1`, …
+ * (`ids` counts the slugs already given). Null when the text has no slug; then nothing is counted.
+ * Markdown names its headings with it, and `tocAnchors` names a table of contents the same way.
+ */
+export function uniqueAnchor(ids: Map<string, number>, text: string): string | null {
+  const slug = headingSlug(text);
+  if (!slug) return null;
+  const seen = ids.get(slug) ?? 0;
+  ids.set(slug, seen + 1);
+  return anchorId(seen === 0 ? slug : `${slug}-${String(seen)}`);
+}
+
+/** A table of contents entry and the id of its heading in the rendered body (or null). */
+export interface TocAnchor {
+  level: number;
+  text: string;
+  anchor: string | null;
+}
+
+/**
+ * The anchors of a body's headings, in order, as Markdown names them (P5): `plain` turns a heading's
+ * source text into the text Markdown shows (inline marks removed) before it is slugged.
+ */
+export function tocAnchors(
+  toc: readonly { level: number; text: string }[],
+  plain: (text: string) => string = (text) => text,
+): TocAnchor[] {
+  const ids = new Map<string, number>();
+  return toc.map(({ level, text }) => ({ level, text, anchor: uniqueAnchor(ids, plain(text)) }));
+}
+
+/** The element id of the n-th numbered step of a skill body (1-based), `#step-<n>` (P5). */
+export function stepAnchor(index: number): string {
+  return `step-${String(index)}`;
+}
+
+/** True for a link relative to the document (`a.md`, `./b/c.md#x`, `#x`): no scheme, no root. */
+export function isRelativeHref(href: string): boolean {
+  return (
+    href !== "" &&
+    href === href.trim() &&
+    !CONTROL_OR_BACKSLASH.test(href) &&
+    !SCHEME.test(href) &&
+    !href.startsWith("/")
+  );
+}
+
 function decode(value: string): string | null {
   try {
     return decodeURIComponent(value);

@@ -31,7 +31,7 @@
     ".claude/settings.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "9acd1cb980fcf2f8660ef9755ec5b31d979819f032994d1292845d3809ef6360"
+      "sha256": "8ddf89e90b52bb8b42bb2c1b8526eee93f021987af1938bf9015501f81814a7b"
     },
     ".claude/settings.project.json": {
       "ownership": "seeded"
@@ -197,7 +197,7 @@
     "hub.schema.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "5228cbc7bc30d22b74065deb63b6617f9db43633dc91516a398c8b29b3341b82"
+      "sha256": "e2b78bd709f31516847a5256e9d12444b2bfe115550790358013de54d0438f8d"
     },
     "plugin/demo/.claude-plugin/plugin.json": {
       "ownership": "seeded"
@@ -249,7 +249,7 @@
     "plugin/hub-workflow/agents/quality-reviewer.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "3fa7c48d0ad30d8c3ebf1d04aafc68322410e9f6016ac7790e8cb8157136aa24"
+      "sha256": "2d22c3d570fd968ae07604ff39f87152ab5dff41f738e6cf50756aef4c079f71"
     },
     "plugin/hub-workflow/agents/requirements-analyst.md": {
       "executable": false,
@@ -259,12 +259,12 @@
     "plugin/hub-workflow/agents/researcher.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "6c7e226adfcbb4bd0d7195d3aa15b03f49df3268a55b1afcd6267a7de6355908"
+      "sha256": "f4859e0b694dff6cea2a69d29074d111c9374971f544289b134a8f0a620da9cf"
     },
     "plugin/hub-workflow/agents/spec-reviewer.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "c85d1974eb74ef4a7251c5929c4bba29b1431101998ab2f03d8886cfef132062"
+      "sha256": "9cace3f38b381fd67a33bf7177a550d6f61c3c455331ab6f7ec37b93a1c37023"
     },
     "plugin/hub-workflow/hooks/event_sensor.py": {
       "executable": true,
@@ -279,7 +279,7 @@
     "plugin/hub-workflow/hooks/hooks.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "771171c9b82008ea5e8fd8d1ddef46b08bd0a78329eae2e30533682731983391"
+      "sha256": "4b582dec64ca0c55d77e0f4da5ba9537caf7a67fca71f153dd24feeb8826af12"
     },
     "plugin/hub-workflow/hooks/hubhooks.py": {
       "executable": false,
@@ -300,6 +300,11 @@
       "executable": false,
       "ownership": "managed",
       "sha256": "fe50e04fe056020dbd3b72050b17019b31a25118bc922583dc6d33130b83350c"
+    },
+    "plugin/hub-workflow/hooks/readonly_gate.py": {
+      "executable": true,
+      "ownership": "managed",
+      "sha256": "e589273410f098add1cbca3201a3dd4d4d7c8339464565d9dde79d33d05f522c"
     },
     "plugin/hub-workflow/hooks/session_end.py": {
       "executable": true,

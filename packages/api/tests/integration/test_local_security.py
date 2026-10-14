@@ -292,6 +292,9 @@ def test_refuses_hub_registry_write_when_origin_not_exactly_own(
         "/api/v1/projects/demo/brain",
         "/api/v1/projects/demo/brain/note?path=index.md",
         "/api/v1/features/demo/feature-1/tickets",
+        "/api/v1/projects/demo/skills",
+        "/api/v1/projects/demo/skills/skill/hub-workflow/alpha",
+        "/api/v1/projects/demo/skills/skill/hub-workflow/alpha/files/0123456789abcdef",
     ],
 )
 def test_keeps_csp_when_clarity_routes_served(wired: Any, path: str) -> None:
@@ -355,3 +358,19 @@ def test_keeps_routes_unchanged_when_no_cookie(wired: Any) -> None:
     assert [(path, r.status_code, r.content) for path, r in without] == [
         (path, r.status_code, r.content) for path, r in signed_in
     ]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/projects/demo/skills",
+        "/projects/demo/skills/skill/hub-workflow/alpha",
+        "/knowledge/skills",
+    ],
+)
+def test_keeps_csp_when_skills_deep_link_served(wired: Any, path: str) -> None:
+    response = wired.client.get(path)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert response.headers["content-security-policy"] == V0_9_0_CSP

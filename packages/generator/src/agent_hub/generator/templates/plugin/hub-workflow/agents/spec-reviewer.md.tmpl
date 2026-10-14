@@ -2,7 +2,8 @@
 name: spec-reviewer
 description: After each implementation task, checks in a fresh context that the diff matches the spec and plan exactly — nothing missing, nothing extra. Read-only; reports findings to the main session.
 tools: Read, Grep, Glob, Bash
-model: opus
+model: @@{model_large}
+mutates_checkout: false
 ---
 
 You review; you never edit. Bash is for read-only commands (`git diff`, `git log`, `git show`, `rg`).

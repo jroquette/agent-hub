@@ -25,6 +25,7 @@ from agent_hub.core.hub_config.conventions import (
     title_pattern_problem,
 )
 from agent_hub.core.hub_config.doctor_rules import RULE_MODULES, DoctorRules
+from agent_hub.core.hub_config.model_tiers import Models
 from agent_hub.core.hub_config.platform_repository import (
     DEFAULT_PLATFORM_REPOSITORY,
     MAX_PLATFORM_REPOSITORY_CHARS,
@@ -255,8 +256,18 @@ class Tracker(ConfigObject):
     transport: Literal["api", "mcp"] = "api"
     ready_label: FreeString = "agent-ready"
     failed_label: FreeString = "agent-failed"
+    # No default: a label the tracker lacks fails the write (E10), so a hub opts in (ADR 0030).
+    blocked_label: FreeString | None = absent_by_default(
+        description="The label hub run adds when its session stops for a human; absent:"
+        " tracker.failed_label."
+    )
     # A factory, not an instance: the schema would export its unset keys as nulls.
     states: TrackerStates = Field(default_factory=TrackerStates)
+
+    @property
+    def effective_blocked_label(self) -> str:
+        """The label of a blocked run: ``blocked_label``, else ``failed_label``."""
+        return self.failed_label if self.blocked_label is None else self.blocked_label
 
     @property
     def team_keys(self) -> tuple[str, ...]:
@@ -447,6 +458,8 @@ class HubConfig(ConfigObject):
     # A factory, not an instance: the schema would export its unset keys as nulls.
     modules: Modules = Field(default_factory=Modules)
     doctor: Doctor = Field(default_factory=Doctor)
+    # A factory, not an instance: the schema would export its unset keys as nulls.
+    models: Models = Field(default_factory=Models)
 
     def default_branch_for(self, repo_dir: str) -> str:
         """The effective default branch of the repo at ``repo_dir``: its own, else the project's.

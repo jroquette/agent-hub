@@ -2,7 +2,8 @@
 sessions built in ``tmp_path``: a hook POST p95 under 50 ms, a read endpoint p95 under 300 ms;
 and AGH-201's: a session's problems p95 under 150 ms at 5,000 events, a brain note under 100 ms
 and the brain tree under 150 ms in a hub of 2,000 notes; AGH-136's: a feature's tickets under
-100 ms on a warm snapshot cache with 50 tickets.
+100 ms on a warm snapshot cache with 50 tickets; AGH-164's: the skills catalog under 150 ms and
+a skill's detail under 100 ms, warm, with 200 skills beside the 10,000 events.
 
 Each read follows an append, so it folds again (the memo is keyed by the high-water mark): the
 budget holds while sessions are live, not only on a warm memo. The first read after start-up,
@@ -344,3 +345,60 @@ def test_streams_delta_within_budget_when_thousand_deltas_emitted_agent_session_
     p99 = statistics.quantiles(latencies, n=100, method="inclusive")[98]
     assert p95 < DELTA_P95_MS, (p95, p99)
     assert p99 < DELTA_P99_MS, (p95, p99)
+
+
+# AGH-164 budget (AC-164.26): a hub of 200 skills beside 10,000 events in 200 sessions, read
+# warm: the catalog under 150 ms, a skill's detail under 100 ms.
+HUB_SKILLS = 200
+SKILL_CATALOG_P95_MS = 150
+SKILL_DETAIL_P95_MS = 100
+
+
+@pytest.fixture
+def skills_loaded(loaded: Any, make_hub: Callable[..., Path]) -> Any:
+    hub = make_hub()
+    body = "".join(
+        f"{step}. **Step {step}**: run `make check` and ask the `evaluator` agent.\n"
+        for step in range(1, 21)
+    )
+    for number in range(HUB_SKILLS):
+        folder = hub / "plugin" / "demo" / "skills" / f"s-{number:03d}"
+        (folder / "references").mkdir(parents=True)
+        (folder / "SKILL.md").write_text(
+            f"---\nname: s-{number:03d}\ndescription: Skill {number}.\n---\n# S\n\n{body}",
+            encoding="utf-8",
+        )
+        (folder / "references" / "r.md").write_text("# R\n", encoding="utf-8")
+    assert (
+        loaded.client.post(
+            "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+        ).status_code
+        == 201
+    )
+    return loaded
+
+
+def _warm_p95(composed: Any, path: str) -> tuple[float, list[float]]:
+    assert composed.client.get(path).status_code == 200
+    samples: list[float] = []
+    for _ in range(SAMPLES):
+        elapsed, response = _timed(lambda: composed.client.get(path))
+        assert response.status_code == 200, response.text
+        samples.append(elapsed)
+    return _p95(samples), samples
+
+
+def test_answers_skills_within_budget_when_two_hundred_skills_and_ten_thousand_events(
+    skills_loaded: Any,
+) -> None:
+    catalog = skills_loaded.client.get("/api/v1/projects/demo/skills")
+    assert catalog.status_code == 200, catalog.text
+    assert len([item for item in catalog.json()["items"] if item["source"] == "demo"]) >= HUB_SKILLS
+
+    catalog_p95, catalog_samples = _warm_p95(skills_loaded, "/api/v1/projects/demo/skills")
+    detail_p95, detail_samples = _warm_p95(
+        skills_loaded, "/api/v1/projects/demo/skills/skill/demo/s-100"
+    )
+
+    assert catalog_p95 < SKILL_CATALOG_P95_MS, catalog_samples
+    assert detail_p95 < SKILL_DETAIL_P95_MS, detail_samples

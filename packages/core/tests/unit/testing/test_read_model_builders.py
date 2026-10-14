@@ -2,14 +2,18 @@ from pydantic import TypeAdapter
 
 from agent_hub.core.agent_sessions.records import RecordKind
 from agent_hub.core.sessions.session import ProblemCounts
+from agent_hub.core.skills.skill_view import ItemKind, Mode, Origin
 from agent_hub.core.testing.read_model_builders import (
     a_brain_note,
     a_brain_tree,
+    a_bundled_file_text,
+    a_catalog_item,
     a_cloud_session,
     a_feature_tickets,
     a_feature_view,
     a_finding_view,
     a_golden_path,
+    a_hook_detail,
     a_hub_view,
     a_learning,
     a_learning_detail,
@@ -21,8 +25,12 @@ from agent_hub.core.testing.read_model_builders import (
     a_session,
     a_session_label,
     a_session_problems,
+    a_skill_catalog,
+    a_skill_detail,
+    a_skill_usage,
     a_ticket_snapshot,
     a_workdir,
+    an_agent_detail,
     an_agent_session,
     an_approval,
     an_eval_record,
@@ -105,3 +113,31 @@ def test_builds_every_record_kind_when_agent_session_builders_used() -> None:
     assert all(record.model_dump(mode="json")["seq"] >= 1 for record in records)
     assert an_open_permission().suggestions[0].destination == "localSettings"
     assert all(view.model_dump(mode="json") for view in views)
+
+
+def test_serializes_skill_builders_when_defaults_used() -> None:
+    views = [
+        a_catalog_item(),
+        a_skill_catalog(),
+        a_skill_detail(),
+        an_agent_detail(),
+        a_hook_detail(),
+        a_bundled_file_text(),
+        a_skill_usage(),
+    ]
+
+    for view in views:
+        assert type(view).model_validate_json(view.model_dump_json()) == view
+
+
+def test_keeps_ids_consistent_when_skill_builders_used() -> None:
+    detail = a_skill_detail()
+    catalog = a_skill_catalog()
+
+    assert detail.id == f"{detail.kind}/{detail.source}/{detail.name}"
+    assert {item.kind for item in catalog.items} == set(ItemKind)
+    assert (detail.origin, detail.mode) == (Origin.MANAGED, Mode.BOTH)
+    assert a_bundled_file_text().id in {file.id for file in detail.files}
+    assert an_agent_detail().used_by[0].id == detail.id
+    assert a_hook_detail().hook is not None
+    assert a_catalog_item(name="beta").name == "beta"

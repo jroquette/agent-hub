@@ -9,6 +9,8 @@ from agent_hub.core.testing.fakes import (
     InMemoryEventStore,
     InMemoryTrackerClient,
 )
+from agent_hub.core.testing.skill_sources_contract import SkillTree
+from agent_hub.core.testing.skill_trees import InMemorySkillTree
 from agent_hub.core.testing.tracker_reader_fakes import (
     FakeIssueBoard,
     InMemoryTrackerReader,
@@ -41,3 +43,8 @@ def issue_board() -> FakeIssueBoard:
 @pytest.fixture
 def tracker_reader(issue_board: FakeIssueBoard) -> TrackerReader:
     return InMemoryTrackerReader(issue_board)
+
+
+@pytest.fixture
+def skill_tree() -> SkillTree:
+    return InMemorySkillTree()

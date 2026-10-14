@@ -50,6 +50,10 @@ export type Workdir = Schemas["Workdir"];
 export type DriverCapabilities = Schemas["DriverCapabilities"];
 export type CloudSession = Schemas["CloudSession"];
 export type PastSession = Schemas["PastSession"];
+export type CatalogItem = Schemas["CatalogItem"];
+export type SkillCatalog = Schemas["SkillCatalog"];
+export type SkillDetail = Schemas["SkillDetail"];
+export type BundledFileText = Schemas["BundledFileText"];
 
 /** The synthetic clock every builder uses. */
 export const T0 = "2026-10-11T14:00:00.000Z";
@@ -1084,6 +1088,349 @@ export function aDeltaFrame(overrides: Partial<DeltaFrame> = {}): DeltaFrame {
 }
 
 /* ---------- Stubbed API ---------- */
+
+/**
+ * A body shaped like the hub's `/feature` (AC-164.18, P5): five steps by the shared rule (column-0
+ * `^\d{1,9}[.)]\s` outside fences). The same text as core's `a_feature_shaped_body`.
+ */
+export function aFeatureShapedBody(): string {
+  return [
+    "# Feature",
+    "",
+    "Turn an idea into a delivered feature.",
+    "",
+    "## Steps",
+    "",
+    "1. **Spec**: the `requirements-analyst` agent writes `spec.md`.",
+    "   1. A nested item is not a step.",
+    "2. **Gate: user approves the spec**. Stop until they do.",
+    "3. **Plan**: run `/create-plan` on the approved spec.",
+    "4. **Implement** in a worktree; run `make check` before the PR.",
+    "   ```bash",
+    "   1. not a step inside a fence",
+    "   ```",
+    "5. **Doctor**: run `./hub doctor` and fix what it finds.",
+    "",
+    "```text",
+    "6. not a step either",
+    "```",
+    "",
+    "## Notes",
+    "",
+    "- Ask the user when the scope is unclear.",
+    "",
+  ].join("\n");
+}
+
+/** The card of the managed skill `feature` of project `demo`: used 3 times in 30 days. */
+export function aCatalogItem(overrides: Partial<CatalogItem> = {}): CatalogItem {
+  const name = overrides.name ?? "feature";
+  const source = overrides.source ?? "hub-workflow";
+  return {
+    active: true,
+    description: "Takes an idea or a tracker issue from spec to delivery.",
+    diagnostics_count: 1,
+    id: `skill/${source}/${name}`,
+    invocation: `/${name} <idea or tracker issue id>`,
+    kind: "skill",
+    linked_from: [`.claude/skills/${name}`],
+    mode: "both",
+    name,
+    origin: "managed",
+    source,
+    source_path: `plugin/${source}/skills/${name}/SKILL.md`,
+    state: null,
+    usage: { count: 3, last_used_at: at(-3600), model_count: 1, user_count: 2 },
+    ...overrides,
+  };
+}
+
+function anAgentItem(): CatalogItem {
+  return aCatalogItem({
+    description: "Checks a delivery against its spec.",
+    diagnostics_count: 0,
+    id: "agent/hub-workflow/evaluator",
+    invocation: null,
+    kind: "agent",
+    linked_from: [".claude/agents/evaluator.md"],
+    mode: null,
+    name: "evaluator",
+    source_path: "plugin/hub-workflow/agents/evaluator.md",
+    usage: { count: 0, last_used_at: null, model_count: 0, user_count: 0 },
+  });
+}
+
+function aHookItem(): CatalogItem {
+  return aCatalogItem({
+    description: "python3 plugin/hub-workflow/hooks/guard.py",
+    diagnostics_count: 0,
+    id: "hook/settings/settings-pretooluse-1",
+    invocation: null,
+    kind: "hook",
+    linked_from: [],
+    mode: null,
+    name: "settings-pretooluse-1",
+    source: "settings",
+    source_path: ".claude/settings.json",
+    state: "synced",
+    usage: null,
+  });
+}
+
+/** The catalog of project `demo`: `feature`, the user-only project skill `plan`, the agent
+ * `evaluator`, one settings hook, and the pinned third-party plugin `superpowers`. */
+export function aSkillCatalog(overrides: Partial<SkillCatalog> = {}): SkillCatalog {
+  return {
+    external_plugins: [
+      {
+        content: "not in this hub",
+        enabled: true,
+        marketplace: "agent-hub",
+        name: "superpowers",
+        pin: "5f0c2e1",
+      },
+    ],
+    items: [
+      aCatalogItem(),
+      aCatalogItem({
+        description: "Writes an implementation plan.",
+        diagnostics_count: 0,
+        invocation: "/plan",
+        linked_from: [],
+        mode: "user-only",
+        name: "plan",
+        origin: "project-owned",
+        source: "demo",
+        usage: { count: 0, last_used_at: null, model_count: 0, user_count: 0 },
+      }),
+      anAgentItem(),
+      aHookItem(),
+    ],
+    notice: null,
+    project: "demo",
+    truncated: false,
+    usage_days: 30,
+    ...overrides,
+  };
+}
+
+const FEATURE_FRONTMATTER =
+  "---\nname: feature\ndescription: Takes an idea or a tracker issue from spec to delivery.\n" +
+  'argument-hint: "<idea or tracker issue id>"\nreviewers: two\n---\n';
+
+/** The detail of `skill/hub-workflow/feature`: the feature-shaped body, five derived steps, one
+ * unknown key, two bundled files. */
+export function aSkillDetail(overrides: Partial<SkillDetail> = {}): SkillDetail {
+  const body = aFeatureShapedBody();
+  return {
+    ...aCatalogItem(),
+    allowed_tools: [],
+    argument_hint: "<idea or tracker issue id>",
+    body,
+    context_cost: { always_loaded_tokens: 14, approximate: true, on_invoke_tokens: 150 },
+    description_full: "Takes an idea or a tracker issue from spec to delivery.",
+    diagnostics: [
+      {
+        code: "unknown_key",
+        message: "reviewers: not understood by Claude Code",
+        severity: "info",
+      },
+    ],
+    files: [
+      {
+        id: "0123456789abcdef",
+        link: false,
+        path: "references/checklist.md",
+        role: "references",
+        size: 64,
+        too_large: false,
+      },
+      {
+        id: "fedcba9876543210",
+        link: false,
+        path: "scripts/check.sh",
+        role: "scripts",
+        size: 32,
+        too_large: false,
+      },
+    ],
+    frontmatter: [
+      { key: "name", known: true, value: "feature" },
+      {
+        key: "description",
+        known: true,
+        value: "Takes an idea or a tracker issue from spec to delivery.",
+      },
+      { key: "argument-hint", known: true, value: "<idea or tracker issue id>" },
+      { key: "reviewers", known: false, value: "two" },
+    ],
+    hook: null,
+    lock: { ownership: "managed", sha256: "a".repeat(64) },
+    model: null,
+    raw: FEATURE_FRONTMATTER + body,
+    structure: {
+      agents: ["requirements-analyst"],
+      commands: ["make check", "./hub doctor"],
+      dynamic_context: 0,
+      gates: ["Gate: user approves the spec"],
+      skills: ["create-plan"],
+      steps: [
+        {
+          agents: ["requirements-analyst"],
+          commands: [],
+          index: 1,
+          scripts: [],
+          skills: [],
+          tags: ["agent"],
+          title: "Spec",
+        },
+        {
+          agents: [],
+          commands: [],
+          index: 2,
+          scripts: [],
+          skills: [],
+          tags: ["gate", "human"],
+          title: "Gate: user approves the spec",
+        },
+        {
+          agents: [],
+          commands: [],
+          index: 3,
+          scripts: [],
+          skills: ["create-plan"],
+          tags: [],
+          title: "Plan",
+        },
+        {
+          agents: [],
+          commands: ["make check"],
+          index: 4,
+          scripts: [],
+          skills: [],
+          tags: ["command"],
+          title: "Implement",
+        },
+        {
+          agents: [],
+          commands: ["./hub doctor"],
+          index: 5,
+          scripts: [],
+          skills: [],
+          tags: ["command"],
+          title: "Doctor",
+        },
+      ],
+      truncated: false,
+    },
+    toc: [
+      { level: 1, text: "Feature" },
+      { level: 2, text: "Steps" },
+      { level: 2, text: "Notes" },
+    ],
+    tools: [],
+    used_by: [],
+    uses: [
+      {
+        id: "agent/hub-workflow/requirements-analyst",
+        kind: "agent",
+        name: "requirements-analyst",
+        source: "hub-workflow",
+      },
+      {
+        id: "skill/hub-workflow/create-plan",
+        kind: "skill",
+        name: "create-plan",
+        source: "hub-workflow",
+      },
+    ],
+    when_to_use: null,
+    ...overrides,
+  };
+}
+
+/** The detail of `agent/hub-workflow/evaluator`, used by `feature`. */
+export function anAgentDetail(overrides: Partial<SkillDetail> = {}): SkillDetail {
+  const body = "You are the evaluator. Read the spec, then the diff.\n";
+  return {
+    ...aSkillDetail(),
+    ...anAgentItem(),
+    allowed_tools: [],
+    argument_hint: null,
+    body,
+    context_cost: { always_loaded_tokens: 9, approximate: true, on_invoke_tokens: 13 },
+    description_full: "Checks a delivery against its spec.",
+    diagnostics: [],
+    files: [],
+    frontmatter: [
+      { key: "name", known: true, value: "evaluator" },
+      { key: "tools", known: true, value: "Read, Grep" },
+      { key: "model", known: true, value: "sonnet" },
+    ],
+    model: "sonnet",
+    raw: "---\nname: evaluator\ntools: Read, Grep\nmodel: sonnet\n---\n" + body,
+    structure: {
+      agents: [],
+      commands: [],
+      dynamic_context: 0,
+      gates: [],
+      skills: [],
+      steps: [],
+      truncated: false,
+    },
+    toc: [],
+    tools: ["Read", "Grep"],
+    used_by: [
+      { id: "skill/hub-workflow/feature", kind: "skill", name: "feature", source: "hub-workflow" },
+    ],
+    uses: [],
+    ...overrides,
+  };
+}
+
+/** The detail of `hook/settings/settings-pretooluse-1`: a `Bash` guard, synced and active. */
+export function aHookDetail(overrides: Partial<SkillDetail> = {}): SkillDetail {
+  return {
+    ...aSkillDetail(),
+    ...aHookItem(),
+    argument_hint: null,
+    body: null,
+    context_cost: null,
+    description_full: null,
+    diagnostics: [],
+    files: [],
+    frontmatter: [],
+    hook: {
+      active: true,
+      command: "python3 plugin/hub-workflow/hooks/guard.py",
+      event: "PreToolUse",
+      matcher: "Bash",
+      state: "synced",
+      timeout: null,
+      type: "command",
+    },
+    lock: null,
+    raw: null,
+    structure: null,
+    toc: [],
+    used_by: [],
+    uses: [],
+    ...overrides,
+  };
+}
+
+/** The text of `feature`'s `references/checklist.md`. */
+export function aBundledFileText(overrides: Partial<BundledFileText> = {}): BundledFileText {
+  return {
+    binary: false,
+    id: "0123456789abcdef",
+    path: "references/checklist.md",
+    role: "references",
+    size: 64,
+    text: "# Checklist\n\n- The spec is approved.\n- `make check` passes.\n",
+    ...overrides,
+  };
+}
 
 /** A problem reply for `renderWithApi` routes. */
 export class ProblemReply {

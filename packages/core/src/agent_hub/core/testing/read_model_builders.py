@@ -52,6 +52,31 @@ from agent_hub.core.sessions.session import (
     SummaryLine,
     TokenUsage,
 )
+from agent_hub.core.skills.skill_sources import file_id
+from agent_hub.core.skills.skill_view import (
+    BundledFile,
+    BundledFileText,
+    CatalogItem,
+    ContextCost,
+    Diagnostic,
+    DiagnosticCode,
+    DiagnosticSeverity,
+    ExternalPlugin,
+    FrontmatterPair,
+    HookFacts,
+    ItemKind,
+    LockFacts,
+    Mode,
+    Origin,
+    Relation,
+    SkillCatalog,
+    SkillDetail,
+    SkillStructure,
+    SkillUsage,
+    Step,
+    TocEntry,
+    Usage,
+)
 from agent_hub.core.tracker.tracker_reader import IssueState, IssueSummary, TicketSnapshot
 
 STARTED = datetime(2026, 10, 9, 14, 0, 0, 123000, tzinfo=UTC)
@@ -657,3 +682,218 @@ def a_cloud_session(**overrides: object) -> CloudSession:
         "followups": 0,
     }
     return CloudSession.model_validate(fields | overrides)
+
+
+_ALPHA_DIR = "plugin/hub-workflow/skills/alpha"
+_ALPHA_RAW = (
+    "---\nname: alpha\ndescription: Checks the alpha flow before a release.\n"
+    'argument-hint: "<issue id>"\n---\n'
+)
+_ALPHA_BODY = (
+    "# Alpha\n\nRun it before a release.\n\n## Steps\n\n"
+    "1. **Review**: ask the `evaluator` agent to check the change.\n"
+    "2. **Next**: run `/beta` when the review passes.\n\n"
+    "See [r](references/r.md); `scripts/s.sh` runs at invocation.\n"
+)
+_HOOK_COMMAND = "python3 plugin/hub-workflow/hooks/guard.py"
+
+
+def _relation(kind: ItemKind, source: str, name: str) -> Relation:
+    return Relation(id=f"{kind}/{source}/{name}", kind=kind, source=source, name=name)
+
+
+def a_skill_usage(**overrides: object) -> SkillUsage:
+    """Usage of project ``demo``: ``alpha`` 3 times (2 typed, 1 by the model), ``evaluator``
+    once."""
+    fields: dict[str, object] = {
+        "since": datetime(2026, 9, 13, 10, 0, tzinfo=UTC),
+        "by_skill": {
+            "alpha": Usage(
+                count=3,
+                user_count=2,
+                model_count=1,
+                last_used_at=datetime(2026, 10, 12, 9, 30, tzinfo=UTC),
+            )
+        },
+        "by_agent": {
+            "evaluator": Usage(
+                count=1,
+                user_count=0,
+                model_count=1,
+                last_used_at=datetime(2026, 10, 11, 16, 0, tzinfo=UTC),
+            )
+        },
+    }
+    return SkillUsage.model_validate(fields | overrides)
+
+
+def a_catalog_item(**overrides: object) -> CatalogItem:
+    """The card of the managed skill ``alpha`` of ``hub-workflow`` (id follows ``name``)."""
+    name = str(overrides.get("name", "alpha"))
+    source = str(overrides.get("source", "hub-workflow"))
+    usage = a_skill_usage().by_skill["alpha"]
+    fields: dict[str, object] = {
+        "id": f"skill/{source}/{name}",
+        "kind": ItemKind.SKILL,
+        "source": source,
+        "name": name,
+        "description": "Checks the alpha flow before a release.",
+        "origin": Origin.MANAGED,
+        "mode": Mode.BOTH,
+        "invocation": f"/{name} <issue id>",
+        "source_path": f"plugin/{source}/skills/{name}/SKILL.md",
+        "diagnostics_count": 0,
+        "usage": usage,
+        "linked_from": (f".claude/skills/{name}",),
+    }
+    return CatalogItem.model_validate(fields | overrides)
+
+
+def _agent_item() -> CatalogItem:
+    return a_catalog_item(
+        id="agent/hub-workflow/evaluator",
+        kind=ItemKind.AGENT,
+        name="evaluator",
+        description="Checks a delivery against its spec.",
+        mode=None,
+        invocation=None,
+        source_path="plugin/hub-workflow/agents/evaluator.md",
+        usage=a_skill_usage().by_agent["evaluator"],
+        linked_from=(),
+    )
+
+
+def _hook_item() -> CatalogItem:
+    return a_catalog_item(
+        id="hook/settings/settings-pretooluse-1",
+        kind=ItemKind.HOOK,
+        source="settings",
+        name="settings-pretooluse-1",
+        description=_HOOK_COMMAND,
+        mode=None,
+        invocation=None,
+        source_path=".claude/settings.json",
+        usage=None,
+        linked_from=(),
+        state="synced",
+    )
+
+
+def a_skill_catalog(**overrides: object) -> SkillCatalog:
+    """The catalog of project ``demo``: ``alpha``, the agent ``evaluator``, one settings hook,
+    and the pinned third-party plugin ``superpowers``."""
+    fields: dict[str, object] = {
+        "project": "demo",
+        "items": (a_catalog_item(), _agent_item(), _hook_item()),
+        "external_plugins": (
+            ExternalPlugin(
+                name="superpowers", marketplace="agent-hub", pin="5f0c2e1", enabled=True
+            ),
+        ),
+    }
+    return SkillCatalog.model_validate(fields | overrides)
+
+
+def a_skill_detail(**overrides: object) -> SkillDetail:
+    """The detail of ``skill/hub-workflow/alpha``: two steps, uses ``evaluator`` and ``beta``,
+    two bundled files, one info diagnostic."""
+    fields: dict[str, object] = a_catalog_item().model_dump() | {
+        "diagnostics_count": 1,
+        "description_full": "Checks the alpha flow before a release.",
+        "argument_hint": "<issue id>",
+        "lock": LockFacts(ownership="managed", sha256="a" * 64),
+        "frontmatter": (
+            FrontmatterPair(key="name", value="alpha", known=True),
+            FrontmatterPair(
+                key="description", value="Checks the alpha flow before a release.", known=True
+            ),
+            FrontmatterPair(key="argument-hint", value="<issue id>", known=True),
+        ),
+        "body": _ALPHA_BODY,
+        "raw": _ALPHA_RAW + _ALPHA_BODY,
+        "toc": (TocEntry(level=1, text="Alpha"), TocEntry(level=2, text="Steps")),
+        "structure": SkillStructure(
+            steps=(
+                Step(index=1, title="Review", tags=("agent",), agents=("evaluator",)),
+                Step(index=2, title="Next", skills=("beta",)),
+            ),
+            agents=("evaluator",),
+            skills=("beta",),
+        ),
+        "uses": (
+            _relation(ItemKind.AGENT, "hub-workflow", "evaluator"),
+            _relation(ItemKind.SKILL, "hub-workflow", "beta"),
+        ),
+        "files": (
+            BundledFile(
+                id=file_id(f"{_ALPHA_DIR}/references/r.md"),
+                path="references/r.md",
+                role="references",
+                size=22,
+            ),
+            BundledFile(
+                id=file_id(f"{_ALPHA_DIR}/scripts/s.sh"),
+                path="scripts/s.sh",
+                role="scripts",
+                size=21,
+            ),
+        ),
+        "diagnostics": (
+            Diagnostic(
+                code=DiagnosticCode.MODIFIED_SINCE_SYNC,
+                severity=DiagnosticSeverity.INFO,
+                message="SKILL.md differs from hub.lock: modified since sync",
+            ),
+        ),
+        "context_cost": ContextCost(always_loaded_tokens=10, on_invoke_tokens=60),
+    }
+    return SkillDetail.model_validate(fields | overrides)
+
+
+def an_agent_detail(**overrides: object) -> SkillDetail:
+    """The detail of ``agent/hub-workflow/evaluator``, used by ``alpha``."""
+    body = "You are the evaluator. Read the spec, then the diff.\n"
+    fields: dict[str, object] = _agent_item().model_dump() | {
+        "description_full": "Checks a delivery against its spec.",
+        "tools": ("Read", "Grep"),
+        "model": "sonnet",
+        "frontmatter": (
+            FrontmatterPair(key="name", value="evaluator", known=True),
+            FrontmatterPair(key="tools", value="Read, Grep", known=True),
+            FrontmatterPair(key="model", value="sonnet", known=True),
+        ),
+        "body": body,
+        "raw": "---\nname: evaluator\ntools: Read, Grep\nmodel: sonnet\n---\n" + body,
+        "structure": SkillStructure(),
+        "used_by": (_relation(ItemKind.SKILL, "hub-workflow", "alpha"),),
+        "context_cost": ContextCost(always_loaded_tokens=9, on_invoke_tokens=13),
+    }
+    return SkillDetail.model_validate(fields | overrides)
+
+
+def a_hook_detail(**overrides: object) -> SkillDetail:
+    """The detail of ``hook/settings/settings-pretooluse-1``: a ``Bash`` guard, synced."""
+    fields: dict[str, object] = _hook_item().model_dump() | {
+        "hook": HookFacts(
+            event="PreToolUse",
+            matcher="Bash",
+            type="command",
+            command=_HOOK_COMMAND,
+            timeout=None,
+            active=True,
+            state="synced",
+        ),
+    }
+    return SkillDetail.model_validate(fields | overrides)
+
+
+def a_bundled_file_text(**overrides: object) -> BundledFileText:
+    """The text of ``alpha``'s ``references/r.md``."""
+    fields: dict[str, object] = {
+        "id": file_id(f"{_ALPHA_DIR}/references/r.md"),
+        "path": "references/r.md",
+        "role": "references",
+        "size": 22,
+        "text": "# R\n\nRead on demand.\n",
+    }
+    return BundledFileText.model_validate(fields | overrides)

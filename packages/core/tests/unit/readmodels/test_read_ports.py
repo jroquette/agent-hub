@@ -34,3 +34,9 @@ def test_declares_clarity_methods_when_protocols_inspected() -> None:
 def test_declares_feature_tickets_when_protocol_inspected() -> None:
     assert callable(HubReadModels.feature_tickets)
     assert "feature_tickets" in vars(HubReadModels)
+
+
+def test_declares_skill_reads_when_protocol_inspected() -> None:
+    assert {"skill_catalog", "skill_detail", "skill_file"} <= set(vars(HubReadModels))
+    assert "skill_usage" in vars(EventReadModels)
+    assert {"skill_sources", "read_skill_file"} <= set(vars(HubFileReader))
