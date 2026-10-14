@@ -1376,3 +1376,159 @@ def test_watches_newest_worktree_when_worktree_checkouts_over_cap(
         "- app/.claude/worktrees/agh-2-new/a.py",
         REVERT,
     ]
+
+
+def unignore_worktrees(ws: GateWorkspace) -> None:
+    """Commit an ``app/.gitignore`` that does not ignore ``.claude/worktrees/``."""
+    (ws.app / ".gitignore").write_text("*.log\n", encoding="utf-8")
+    ws.commit_all(ws.app)
+
+
+def test_counts_change_once_when_unignored_worktree_edited(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """AC-141.7: in a repo that does not ignore ``.claude/worktrees/``, its status lists the task
+    worktree, but the worktree is still named once, by its own label."""
+    unignore_worktrees(gate_ws)
+    tree = add_worktree(gate_ws, gate_ws.app, WORKTREE)
+    status = git_output(gate_ws, "status", "--porcelain", "-uall", cwd=gate_ws.app)
+    assert status.splitlines() == [f"?? .claude/worktrees/{WORKTREE}/"]  # control: not ignored
+
+    lines = reason_lines(
+        run_agent(
+            gate, "researcher", lambda: (tree / "a.py").write_text("A = 2\n", encoding="utf-8")
+        )
+    )
+
+    assert lines == [agent_head("researcher"), f"- app/.claude/worktrees/{WORKTREE}/a.py", REVERT]
+
+
+def test_names_new_worktree_when_unignored_worktree_added(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """O-6: in a repo that does not ignore ``.claude/worktrees/``, a new task worktree is named
+    once, by its new-worktree line, never as a new folder of the main checkout."""
+    unignore_worktrees(gate_ws)
+
+    def change() -> None:
+        add_worktree(gate_ws, gate_ws.app, WORKTREE)
+        status = git_output(gate_ws, "status", "--porcelain", "-uall", cwd=gate_ws.app)
+        assert status.splitlines() == [f"?? .claude/worktrees/{WORKTREE}/"]  # control
+
+    lines = reason_lines(run_agent(gate, "researcher", change))
+
+    assert lines == [
+        agent_head("researcher"),
+        f"- app/.claude/worktrees/{WORKTREE}/ (new worktree)",
+        REVERT,
+    ]
+
+
+@pytest.mark.parametrize("case", ["loop", "outside"])
+def test_skips_link_when_worktree_entry_is_symlink(
+    gate: Gate, gate_ws: GateWorkspace, case: str
+) -> None:
+    """A link under ``.claude/worktrees/`` is no task worktree: ``loop`` (to the repo itself)
+    does not watch the repo twice, ``outside`` (to a repo hub.json does not list) is not
+    watched."""
+    other = gate_ws.root / "other"
+    other.mkdir()
+    (other / "a.py").write_text("A = 1\n", encoding="utf-8")
+    gate_ws.git("init", "-q", cwd=other)
+    gate_ws.commit_all(other)
+    folder = gate_ws.app / ".claude" / "worktrees"
+    folder.mkdir(parents=True)
+    link = folder / case
+    link.symlink_to(Path("../..") if case == "loop" else other)
+    assert (link / ".git").exists()  # control: the link leads to a checkout
+    main, agent = transcripts(gate_ws, agent_id="a1")
+
+    assert gate.start("researcher", agent_id="a1", transcript_path=main) is None
+    state = read_state(gate_ws, "a1")
+    assert [item["label"] for item in state["checkouts"]] == ["app", gate_ws.hub.name]
+    assert state["worktrees"] == {"app": [], gate_ws.hub.name: []}
+    change_app(gate_ws)
+    (other / "a.py").write_text("A = 2\n", encoding="utf-8")
+    output = gate.stop(
+        "researcher", agent_id="a1", transcript_path=main, agent_transcript_path=agent
+    )
+
+    assert reason_lines(output) == [agent_head("researcher"), "- app/a.py", REVERT]
+
+
+def test_notes_removed_when_worktree_loses_git_file(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """A task worktree whose ``.git`` is gone by the stop is no checkout any more (git would
+    read the repo above it): one ``removed`` note, no HEAD line, none of the repo's entries."""
+    tree = add_worktree(gate_ws, gate_ws.app, WORKTREE)
+    change_app(gate_ws)  # dirty in the main checkout before the start: not this run's change
+
+    output = run_agent(gate, "researcher", lambda: (tree / ".git").unlink())
+
+    assert output == {
+        "systemMessage": "[hub readonly-gate] not checked"
+        f" (app/.claude/worktrees/{WORKTREE}: removed)"
+    }
+    assert state_files(gate_ws) == []
+
+
+def test_notes_caps_when_worktree_names_over_cap_at_start(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """O-3: past MAX_WORKTREES names under one ``.claude/worktrees/`` the listing stops: one
+    ``not checked`` note, at most that many worktrees watched, no listing kept for that repo."""
+    for number in (1, 2, 3):
+        add_worktree(gate_ws, gate_ws.app, f"agh-{number}")
+    main, _ = transcripts(gate_ws, agent_id="a1")
+
+    started = gate.start(
+        "researcher", agent_id="a1", transcript_path=main, constant=("MAX_WORKTREES", 2)
+    )
+
+    assert started == {
+        "systemMessage": "[hub readonly-gate] not checked (app/.claude/worktrees: over 2 names)"
+    }
+    state = read_state(gate_ws, "a1")
+    trees = [item["label"] for item in state["checkouts"] if "/.claude/worktrees/" in item["label"]]
+    assert len(trees) == 2
+    assert state["worktrees"] == {gate_ws.hub.name: []}
+
+
+def test_notes_caps_when_worktree_names_over_cap_at_stop(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """O-3: over MAX_WORKTREES names at the stop, new worktrees in that repo cannot be told: one
+    ``not checked`` note, and no new-worktree line."""
+    for number in (1, 2):
+        add_worktree(gate_ws, gate_ws.app, f"agh-{number}")
+
+    output = run_agent(
+        gate,
+        "researcher",
+        lambda: add_worktree(gate_ws, gate_ws.app, "agh-3"),
+        constant=("MAX_WORKTREES", 2),
+    )
+
+    assert output == {
+        "systemMessage": "[hub readonly-gate] not checked (app/.claude/worktrees: over 2 names)"
+    }
+
+
+def test_folds_removed_notes_when_worktrees_removed_over_listed(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """Removed worktrees past MAX_LISTED are one ``… and N more removed`` note."""
+    for number in (1, 2, 3):
+        add_worktree(gate_ws, gate_ws.app, f"agh-{number}")
+
+    def remove_all() -> None:
+        for number in (1, 2, 3):
+            gate_ws.git("worktree", "remove", f".claude/worktrees/agh-{number}", cwd=gate_ws.app)
+
+    output = run_agent(gate, "researcher", remove_all, constant=("MAX_LISTED", 2))
+
+    assert output is not None
+    assert output["systemMessage"].splitlines() == [
+        "[hub readonly-gate] not checked (app/.claude/worktrees/agh-1: removed)",
+        "[hub readonly-gate] not checked (app/.claude/worktrees/agh-2: removed)",
+        "[hub readonly-gate] not checked (… and 1 more removed)",
+    ]
