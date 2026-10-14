@@ -7,6 +7,8 @@ process: an option out of range, an issue not shaped ``<team>-<n>`` for a team o
 ``hub.local.json`` in the main checkout, or no branch prefix for the developer. The local file's
 ``tracker.transport`` replaces ``hub.json``'s. An issue whose description lacks a section of the
 input brief (ADR 0026) is refused with exit 1 right after the read, before anything is created.
+A live run exits 0 when it opened its PR or ended with no changes, 3 when its session stopped for a
+human, and 1 on a failure or a tracker report that failed (ADR 0030).
 """
 
 import contextlib
@@ -232,6 +234,7 @@ def _print_dry_run(
         issue,
         review_state=tracker.states.review,
         failed_label=tracker.failed_label,
+        blocked_label=tracker.effective_blocked_label,
         comment=comment,
     ):
         typer.echo(f"would call: {shown_text(call_line(write))}")

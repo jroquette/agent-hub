@@ -43,12 +43,17 @@ class OutcomeKind(StrEnum):
 
 
 class Outcome(BaseModel):
-    """The session's outcome: for ``done`` the summary (maybe empty), otherwise the reason."""
+    """The session's outcome: for ``done`` the summary (maybe empty), otherwise the reason.
+
+    ``question`` is what a stopped session asked, without the reason's prefix: the verdict's
+    summary, else the reply's tail; empty unless ``stopped``.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     kind: OutcomeKind
     text: str
+    question: str = ""
 
 
 def parse_session_output(text: str) -> SessionReply:
@@ -98,7 +103,10 @@ def session_outcome(reply: SessionReply) -> Outcome:
     summary = verdict.get("summary")
     text = summary if isinstance(summary, str) else ""
     if BLOCKED_MARK in reply.result or verdict.get("status") == "blocked":
-        return Outcome(kind=OutcomeKind.STOPPED, text=f"{_SESSION} stopped: {text or tail}")
+        question = text or tail
+        return Outcome(
+            kind=OutcomeKind.STOPPED, text=f"{_SESSION} stopped: {question}", question=question
+        )
     return Outcome(kind=OutcomeKind.DONE, text=text)
 
 

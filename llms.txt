@@ -72,3 +72,4 @@ License: Apache-2.0.
 - [0025. Reading the tracker from the app through a read-only `TrackerReader` port](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0025-reading-the-tracker-from-the-app.md): `docs/adr/0025-reading-the-tracker-from-the-app.md`
 - [0026. The input brief as a contract for `hub run` and `/feature`](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0026-input-brief-contract.md): `docs/adr/0026-input-brief-contract.md`
 - [0027. The workflow format and the minimum engine](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0027-workflow-format-and-minimum-engine.md): `docs/adr/0027-workflow-format-and-minimum-engine.md`
+- [0030. Run outcomes in the tracker and in `hub run`'s exit code](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0030-run-outcomes-in-the-tracker.md): `docs/adr/0030-run-outcomes-in-the-tracker.md`

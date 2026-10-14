@@ -1689,6 +1689,44 @@ class TestShipTracker:
         ]
         assert "agent-failed" not in failed.backend.issues[ISSUE].labels
 
+    def test_removes_blocked_label_when_issue_carries_it(
+        self,
+        ship_workspace: Workspace,
+        run_command: CommandRunner,
+        make_task_worktree: Callable[..., Any],
+        *,
+        tracker: Any,
+        child_calls: Any,
+        tracker_backend_for_ship: Callable[..., Any],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # ADR 0030: a delivered issue keeps no outcome label, the configured blocked one too.
+        hub_file = ship_workspace.workspace.hub / "hub.json"
+        document = json.loads(hub_file.read_text())
+        document["tracker"]["blocked_label"] = "agent-blocked"
+        hub_file.write_text(json.dumps(document, indent=2) + "\n")
+        backend = tracker_backend_for_ship(failed=True)
+        backend.workspace_labels = (*backend.workspace_labels, "agent-blocked")
+        issue = backend.issues[ISSUE]
+        backend.issues[ISSUE] = issue.model_copy(
+            update={"labels": (*issue.labels, "agent-blocked")}
+        )
+        blocked = type(tracker)(backend)
+        monkeypatch.setattr(ship_command, "resolve_tracker_client", Resolve(blocked))
+        both_ahead(make_task_worktree)
+
+        result = ship_live(ship_workspace, run_command, child_calls)
+
+        assert result.exit_code == 0, result.output
+        assert blocked.calls == [
+            ("get_issue", ISSUE),
+            ("move_state", ISSUE, "In Review"),
+            ("remove_label", ISSUE, "agent-failed"),
+            ("remove_label", ISSUE, "agent-blocked"),
+            ("comment", ISSUE, SHIP_COMMENT),
+        ]
+        assert {"agent-failed", "agent-blocked"}.isdisjoint(blocked.backend.issues[ISSUE].labels)
+
     def test_uses_configured_review_state_when_states_set(
         self,
         ship_workspace: Workspace,
