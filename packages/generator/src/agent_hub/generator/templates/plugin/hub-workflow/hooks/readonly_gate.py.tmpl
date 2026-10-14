@@ -478,17 +478,36 @@ def snapshot_one(label: str, top: str, hub: bool) -> dict:
 
 
 def watched(cfg: Config) -> tuple:
-    """([(label, path, is the hub)] of the main checkouts: each repo of hub.json with a plain
-    folder name, then the hub; at most MAX_CHECKOUTS), and how many were over that cap."""
+    """([(label, path, is the hub or a worktree of it)] of the checkouts to snapshot, how many
+    were over MAX_CHECKOUTS, and {main checkout's label: the sorted names of its task worktrees}).
+    The main checkouts come first: each repo of hub.json with a plain folder name, then the hub;
+    then their task worktrees (`.claude/worktrees/<name>` holding `.git`, labelled
+    `<dir>/.claude/worktrees/<name>`), newest first by st_mtime. Each is a checkout of its own:
+    its main checkout's status never lists it (the `.claude/worktrees/` drop)."""
     names = [name for name in cfg.repo_dirs if name and "/" not in name and name not in (".", "..")]
     hub = cfg.hub.name if cfg.hub else None
     if hub and hub not in names:
         names.append(hub)
-    found = []
+    mains, trees, listed = [], [], {}
     for name, top in checkouts(cfg, names):
-        if cfg.workspace is not None and top == cfg.workspace / name:
-            found.append((name, str(top), name == hub))
-    return found[:MAX_CHECKOUTS], max(0, len(found) - MAX_CHECKOUTS)
+        if cfg.workspace is None:
+            continue
+        main = cfg.workspace / name
+        if top == main:
+            mains.append((name, str(top), name == hub))
+            listed.setdefault(name, [])
+        elif top.parent == main / ".claude" / "worktrees":
+            try:
+                mtime = top.stat().st_mtime
+            except OSError:
+                continue
+            label = f"{name}/{WORKTREES}{top.name}"
+            trees.append((-mtime, label, str(top), name == hub))
+            listed.setdefault(name, []).append(top.name)
+    trees.sort()
+    found = mains + [(label, top, is_hub) for _, label, top, is_hub in trees]
+    worktrees = {name: sorted(tree_names) for name, tree_names in listed.items()}
+    return found[:MAX_CHECKOUTS], max(0, len(found) - MAX_CHECKOUTS), worktrees
 
 
 def saved_checkouts(state: dict | None) -> list | None:
@@ -506,6 +525,28 @@ def saved_checkouts(state: dict | None) -> list | None:
         if not isinstance(entries, dict) or not all(isinstance(value, str) for value in entries.values()):
             return None
     return items
+
+
+def saved_worktrees(state: dict | None) -> dict | None:
+    """The state's {main checkout's label: worktree names} when it has that shape; None otherwise."""
+    listed = state.get("worktrees") if state is not None else None
+    if not isinstance(listed, dict):
+        return None
+    for tree_names in listed.values():
+        if not isinstance(tree_names, list) or not all(isinstance(name, str) for name in tree_names):
+            return None
+    return listed
+
+
+def worktree_changes(before: dict, after: dict) -> tuple:
+    """([(line, "")] for each task worktree new since the start, notes for each one removed (O-6),
+    in the main checkouts listed at both ends. A new worktree's files are not read."""
+    changed, notes = [], []
+    for main in sorted(set(before) & set(after)):
+        was, now = set(before[main]), set(after[main])
+        changed.extend((f"{main}/{WORKTREES}{name}/ (new worktree)", "") for name in sorted(now - was))
+        notes.extend(f"{main}/{WORKTREES}{name}: removed" for name in sorted(was - now))
+    return changed, notes
 
 
 def short(oid: str) -> str:
@@ -727,7 +768,7 @@ def start(event: dict, cfg: Config) -> None:
     if is_fresh(path):
         return
     transcript, offset = main_transcript(event)
-    found, over = watched(cfg)
+    found, over, worktrees = watched(cfg)
     notes = [f"{over} checkouts over the cap"] if over else []
     items = [snapshot_one(label, top, hub) for label, top, hub in found]
     notes.extend(f"{item['label']}: {item['cut']}" for item in items if item["cut"])
@@ -739,6 +780,7 @@ def start(event: dict, cfg: Config) -> None:
         "main_transcript": transcript,
         "main_offset": offset,
         "checkouts": items,
+        "worktrees": worktrees,
     }
     if not save_state(path, state):
         notes.append("state not saved")
@@ -755,6 +797,16 @@ def attribute(changed: list, own: set, signals: list) -> tuple:
     return block, report
 
 
+def again(item: dict) -> dict:
+    """The stop's snapshot of a checkout the start saw: the start's when it was cut then, a cut
+    `removed` when its folder is gone (a task worktree removed meanwhile)."""
+    if item["cut"]:
+        return item
+    if not os.path.isdir(item["path"]):
+        return {**item, "cut": "removed"}
+    return snapshot_one(item["label"], item["path"], item["hub"])
+
+
 def stop(event: dict, cfg: Config) -> None:
     """SubagentStop: snapshot the checkouts the start saw again, compare, and hold the stop for
     the changes attributed to the agent. Without a readable transcript of the agent nothing can
@@ -767,14 +819,17 @@ def stop(event: dict, cfg: Config) -> None:
         emit({"systemMessage": NOTE.format("no start snapshot")})
         return
     state = load_state(path)
-    before = saved_checkouts(state)
-    if before is None:
+    before, listed = saved_checkouts(state), saved_worktrees(state)
+    if before is None or listed is None:
         forget(path)
         emit({"systemMessage": NOTE.format("start snapshot unreadable")})
         return
-    # a checkout cut at start stays a note: it is not read again
-    after = [item if item["cut"] else snapshot_one(item["label"], item["path"], item["hub"]) for item in before]
+    # a checkout cut at start stays a note: it is not read again; one gone since is a note
+    after = [again(item) for item in before]
     changed, notes = changes(before, after)
+    new, removed = worktree_changes(listed, watched(cfg)[2])
+    changed.extend(new)
+    notes = list(dict.fromkeys(notes + removed))  # a removed worktree that was snapshotted: one note
     if not changed:
         forget(path)
         if notes:
