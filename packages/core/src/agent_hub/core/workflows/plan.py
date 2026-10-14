@@ -45,6 +45,8 @@ from agent_hub.core.workflows.substitution import (
 
 # An approval's output is ``{decision}`` (plus ``text``), whatever its schema.
 _APPROVAL_FIELDS: Final = frozenset({"decision", "text"})
+# A cycle message names at most this many nodes, then how many more.
+_MAX_CYCLE_NAMES: Final = 10
 
 
 @dataclass(frozen=True)
@@ -119,12 +121,16 @@ def _cycle_problem(nodes: Sequence[Node], leftover: set[str]) -> WorkflowProblem
     by_id = {node.id: node for node in nodes}
     order = {node.id: index for index, node in enumerate(nodes)}
     path: list[str] = []
+    seen: set[str] = set()
     current = min(leftover, key=order.__getitem__)
-    while current not in path:
+    while current not in seen:
         path.append(current)
+        seen.add(current)
         current = next(item for item in by_id[current].depends_on if item in leftover)
     cycle = sorted(path[path.index(current) :], key=order.__getitem__)
-    names = ", ".join(echo(node_id)[1:-1] for node_id in cycle)
+    names = ", ".join(echo(node_id)[1:-1] for node_id in cycle[:_MAX_CYCLE_NAMES])
+    if len(cycle) > _MAX_CYCLE_NAMES:
+        names += f" and {len(cycle) - _MAX_CYCLE_NAMES} more"
     loc = ("nodes", order[cycle[0]], "depends_on")
     return WorkflowProblem(loc, f"a cycle runs through the nodes {names}")
 
