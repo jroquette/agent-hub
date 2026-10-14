@@ -9,11 +9,17 @@ Each start mints a fresh token for the agent-session routes and prints it once i
 (``?token=``); the browser trades it for a cookie (P6, ADR 0027). The token is held in memory
 only: no file, no log line. In the container no token is minted and session control is off
 (L2). The session bounds are options with ``AGENT_HUB_*`` variables (P14); ``--open`` opens
-the URL in the default browser.
+the URL in the default browser through a private file, as Jupyter does: the browser is given a
+``file://`` page only this user can read (mode 0600) that redirects to the token URL, so the
+token never reaches a command line another local user can read; the file is removed when the
+server stops.
 """
 
+import contextlib
+import html
 import ipaddress
 import os
+import tempfile
 import webbrowser
 from collections.abc import Mapping
 from importlib.metadata import version
@@ -111,6 +117,25 @@ def startup_url(bound: str, port: int, token: str | None) -> str:
     url_host = f"[{bound}]" if bound == IPV6_LOOPBACK else LOOPBACK
     url = f"http://{url_host}:{port}"
     return url if token is None else f"{url}/?token={token}"
+
+
+def redirect_page(url: str) -> str:
+    """The page ``--open`` hands the browser: an immediate redirect to ``url``."""
+    target = html.escape(url, quote=True)
+    return (
+        '<!doctype html>\n<meta charset="utf-8">\n'
+        f'<meta http-equiv="refresh" content="0;url={target}">\n'
+        f'<title>agent-hub</title>\n<p><a href="{target}">Open agent-hub</a></p>\n'
+    )
+
+
+def write_redirect_file(url: str) -> Path:
+    """A new ``redirect_page(url)`` file only this user can read or write (mode 0600)."""
+    descriptor, name = tempfile.mkstemp(prefix="agent-hub-open-", suffix=".html")
+    with os.fdopen(descriptor, "w", encoding="utf-8") as page:
+        page.write(redirect_page(url))
+    os.chmod(name, 0o600)
+    return Path(name)
 
 
 def _startup_lines(bound: str, url: str, port: int) -> list[str]:
@@ -296,6 +321,12 @@ def web(
     for line in _startup_lines(bound, url, port):
         typer.echo(line)
     configure_logging()
-    if open_browser:
-        webbrowser.open(url)
-    serve_on(app, sock)
+    redirect = write_redirect_file(url) if open_browser else None
+    try:
+        if redirect is not None:
+            webbrowser.open(redirect.as_uri())
+        serve_on(app, sock)
+    finally:
+        if redirect is not None:
+            with contextlib.suppress(OSError):
+                redirect.unlink()

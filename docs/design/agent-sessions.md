@@ -97,6 +97,12 @@ Session its `agent_session_id` and makes its live tile `waiting` while a request
 - Stored text is redacted; the live view is not; no log line, problem detail or metric holds conversation text.
 - Every request and decision is a record; an unanswered request is a deny, never an allow.
 - No `claude` survives `hub web`; session control is off in the container (`AGENT_HUB_IN_CONTAINER=1`).
+- The token is never on a command line: `--open` hands the browser a mode-0600 `file://` page that redirects to the
+  token URL, removed when `hub web` stops.
+- A workdir is listed only when its real path is owned by the current user and not group- or world-writable; the hub
+  registry writes (`POST`/`DELETE /hubs`) need this server's exact `Origin`.
+- "Always allow" applies only an `addRules` suggestion with behaviour `allow` and destination `localSettings`; every
+  other suggestion is dropped before it is stored or shown, and refused (422).
 - `claude_agent_sdk` is imported only by `claude_sessions`; core never imports it; `cli` never imports the adapter.
 
 ## Decisions
@@ -105,6 +111,14 @@ Session its `agent_session_id` and makes its live tile `waiting` while a request
   the cloud link-out; partially supersedes ADR 0017, 0019 and 0022.
 - [ADR 0019](../adr/0019-metadata-only-events-and-redaction.md): the redaction rule set the stored copy uses.
 - [ADR 0024](../adr/0024-learning-actions-from-the-app.md): off in the container, as hubs are read-only there.
+
+## Residual risks
+
+- Cookies are not port-scoped on http: another local server on `127.0.0.1` (any port) receives the
+  `agent_hub_<port>` cookie from the browser and could replay it here. The cookie lives for one launch only.
+- The hook-observed copy of a session (the event store, the Phase 2 routes such as `/sessions/{id}/events` and
+  Approvals) is readable without the token, like every route outside `/api/v1/agent-sessions/**`; it is metadata
+  only (ADR 0019), never the drive log's conversation text.
 
 ## Open questions
 

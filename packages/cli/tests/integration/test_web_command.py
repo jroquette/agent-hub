@@ -1,8 +1,10 @@
 import logging
 import re
 import socket
+import stat
 from collections.abc import Iterator, Mapping
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 from fastapi import FastAPI
@@ -476,18 +478,33 @@ def test_exits_two_when_limits_out_of_range(
     assert served.app is None
 
 
-def test_opens_token_url_when_open_given(
+def test_opens_private_redirect_file_without_token_in_argv_when_open_given(
     served: ServedApp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    opened: list[str] = []
-    monkeypatch.setattr(web_command.webbrowser, "open", opened.append)
+    # The token never reaches a command line (another user can read argv): the browser opens
+    # a file only this user can read, which redirects to the token URL (A11).
+    opened: list[tuple[str, int, str]] = []
+
+    def open_file(target: str) -> bool:
+        path = Path(urlparse(target).path)
+        opened.append((target, stat.S_IMODE(path.stat().st_mode), path.read_text("utf-8")))
+        return True
+
+    monkeypatch.setattr(web_command.webbrowser, "open", open_file)
     port = _free_port()
 
     result = _web(["--port", str(port), "--open"], env=_scratch_env(tmp_path))
 
     assert result.exit_code == 0, result.output
     token = _token_of(result.stdout.rstrip("\n"), f"127.0.0.1:{port}")
-    assert opened == [f"http://127.0.0.1:{port}/?token={token}"]
+    url = f"http://127.0.0.1:{port}/?token={token}"
+    [(target, mode, page)] = opened
+    assert target.startswith("file:///")
+    assert token not in target
+    assert mode == 0o600
+    assert page == web_command.redirect_page(url)
+    assert f'<meta http-equiv="refresh" content="0;url={url}">' in page
+    assert not Path(urlparse(target).path).exists()
 
 
 def test_opens_nothing_when_open_not_given(

@@ -88,7 +88,11 @@ Engine option 1 (the Wave 0 spike's go, 2026-10-13), with option 2 as the docume
   and a JSON body; the stream refuses a foreign `Origin` or a cross-site `Sec-Fetch-Site` and accepts a missing
   `Origin` with a valid cookie (Chromium sends none on a same-origin `EventSource`; Firefox and WebKit unverified).
   This is an exception to ADR 0017's "no auth" for this route family only; every other route is unchanged, and the
-  Host allowlist still runs first.
+  Host allowlist still runs first. `--open` never puts the token on a command line (another local user can read
+  argv): the browser opens a `file://` page of mode 0600 that redirects to the token URL, removed when `hub web` stops.
+  The hub registry writes (`POST /hubs`, `DELETE /hubs/{id}`) also need this server's exact `Origin`, a missing one
+  refused, because a registered hub is a folder sessions may start in; a workdir is listed only when its real path is
+  owned by the current user and is not group- or world-writable.
 - **Permissions.** Modes `default`, `acceptEdits` and `plan` only; `bypassPermissions`, `dontAsk` and `auto` are never
   offered or accepted. A permission request reaches the browser with the tool, an input summary and Claude's
   suggestions; answers are allow once, deny with a message, or always allow with one suggested `addRules` rule with
@@ -130,6 +134,13 @@ Engine option 1 (the Wave 0 spike's go, 2026-10-13), with option 2 as the docume
   maintain; a reload shows redacted text where the live view did not.
 - Bad: a token to handle: printed in the terminal, needed once per browser per launch; `localhost` and `127.0.0.1`
   hold separate cookies.
+- Bad (residual risk): cookies are not port-scoped on http, so another local server on `127.0.0.1` (any port) is sent
+  the `agent_hub_<port>` cookie by the browser and can replay it against this server; the port in the name only keeps
+  two `hub web` launches apart. The cookie is per launch and dies with `hub web`; a process of the same user that runs
+  such a server could read the terminal anyway.
+- Bad (residual risk): the hook-observed copy of a session (the event store and the Phase 2 routes, such as
+  `/sessions/{id}/events` and Approvals) stays readable without the token, as every route outside
+  `/api/v1/agent-sessions/**` is: it holds metadata only (ADR 0019), never the conversation text of the drive log.
 - Bad: one more package (and an optional extra of about 240 MiB installed) to register in the gates; the SDK's support of Python
   3.14 rests on the spike, not on its classifiers.
 - Bad: sessions live and die with `hub web`; resume is the way back after a restart.
