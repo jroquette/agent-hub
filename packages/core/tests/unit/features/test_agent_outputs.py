@@ -6,6 +6,8 @@ from importlib.resources import files
 from typing import Any
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from jsonschema import Draft202012Validator
 from pydantic import BaseModel, ValidationError
 
@@ -919,3 +921,455 @@ def test_rejects_broken_shape_when_shipped_schema_validates(
     validator = Draft202012Validator(read_shipped_output_schema(kind))
 
     assert list(validator.iter_errors(json.loads(review_bytes(document)))) != []
+
+
+def a_head_for(document: dict[str, object], **fields: str) -> bytes:
+    """The head of a sibling whose verdict, tickets and ``acs`` match ``document``'s."""
+    lists = {
+        name: "[" + ", ".join(map(str, value)) + "]" if isinstance(value, list) else str(value)
+        for name, value in document.items()
+        if name in {"tickets", "acs"}
+    }
+    return a_sibling_head(verdict=str(document["verdict"]), **lists | fields)
+
+
+def scope_problems_of(
+    document: dict[str, object], *, record: bytes | None = None, file_name: str = EVAL_FILE
+) -> tuple[OutputProblem, ...]:
+    """The problems of ``document`` beside a matching sibling, with ``record`` as features.json."""
+    head = a_head_for(document, delivery=file_name.removesuffix(".json"))
+    content = review_bytes(document)
+    return eval_problems(content, file_name=file_name, sibling_head=head, record=record)
+
+
+def results_for(*acs: str) -> list[dict[str, object]]:
+    return [a_result(ac=ac) for ac in acs]
+
+
+@pytest.mark.parametrize(
+    ("results", "problem"),
+    [
+        (
+            results_for("A1"),
+            OutputProblem("results", "no result for A2, which the scope names"),
+        ),
+        (
+            results_for("A1", "A2", "A3"),
+            OutputProblem("results", "the result for A3 is outside the scope"),
+        ),
+        (
+            results_for("A1", "A2", "A1"),
+            OutputProblem("results", "more than one result for A1"),
+        ),
+    ],
+    ids=["missing", "extra", "repeated"],
+)
+def test_reports_results_when_eval_scope_not_covered_without_record(
+    results: list[dict[str, object]], problem: OutputProblem
+) -> None:
+    document = an_eval_document(acs=["A1", "A2"], results=results)
+
+    assert scope_problems_of(document) == (problem,)
+
+
+@pytest.mark.parametrize("acs", ["all", []], ids=["all acs", "tickets only"])
+def test_accepts_distinct_results_when_eval_scope_all_without_record(acs: object) -> None:
+    document = an_eval_document(acs=acs, results=results_for("A1", "A2", "A9"))
+
+    assert scope_problems_of(document) == ()
+
+
+@pytest.mark.parametrize("acs", ["all", []], ids=["all acs", "tickets only"])
+def test_reports_repeated_result_when_eval_scope_all_without_record(acs: object) -> None:
+    document = an_eval_document(acs=acs, results=results_for("A1", "A2", "A1", "A1"))
+
+    assert scope_problems_of(document) == (OutputProblem("results", "more than one result for A1"),)
+
+
+@pytest.mark.parametrize(
+    ("document", "head", "problem"),
+    [
+        (
+            an_eval_document(),
+            a_sibling_head(verdict="NO-SHIP"),
+            OutputProblem("verdict", "the verdict is SHIP but evals/agh-7.md says NO-SHIP"),
+        ),
+        (
+            an_eval_document(delivery="agh-8"),
+            a_sibling_head(),
+            OutputProblem("delivery", "the delivery is agh-8 but the file name says agh-7"),
+        ),
+        (
+            an_eval_document(),
+            a_sibling_head(tickets="[AGH-7, AGH-8]"),
+            OutputProblem(
+                "tickets", "the tickets are [AGH-7] but evals/agh-7.md says [AGH-7, AGH-8]"
+            ),
+        ),
+        (
+            an_eval_document(),
+            a_sibling_head(acs="all"),
+            OutputProblem("acs", "the acs are [AC-139.1] but evals/agh-7.md says all"),
+        ),
+        (
+            an_eval_document(),
+            a_sibling_head(commit="1234567"),
+            OutputProblem("commit", "the commit is feb9c4c but evals/agh-7.md says 1234567"),
+        ),
+        (
+            an_eval_document(),
+            a_sibling_head(commit=""),
+            OutputProblem("commit", "the commit is feb9c4c but evals/agh-7.md has none"),
+        ),
+    ],
+    ids=["verdict", "delivery", "tickets", "acs", "commit", "no commit"],
+)
+def test_reports_field_when_eval_sibling_differs(
+    document: dict[str, object], head: bytes, problem: OutputProblem
+) -> None:
+    assert eval_problems_of(document, sibling_head=head) == (problem,)
+
+
+def test_accepts_reordered_lists_when_eval_sibling_matches() -> None:
+    document = an_eval_document(
+        tickets=["AGH-7", "AGH-8"], acs=["A1", "A2"], results=results_for("A2", "A1")
+    )
+    head = a_sibling_head(tickets="[AGH-8, AGH-7]", acs="[A2, A1]")
+
+    assert eval_problems_of(document, sibling_head=head) == ()
+
+
+def test_reports_root_when_eval_sibling_missing() -> None:
+    content = review_bytes(an_eval_document())
+
+    problems = eval_problems(content, file_name=EVAL_FILE, sibling_head=None, record=None)
+
+    assert problems == (OutputProblem("$", "evals/agh-7.md is missing"),)
+
+
+@pytest.mark.parametrize(
+    ("head", "message"),
+    [
+        (b"# Eval\n", "evals/agh-7.md: no frontmatter"),
+        (
+            a_sibling_head(verdict="MAYBE"),
+            "evals/agh-7.md: verdict must be one of SHIP, SHIP-WITH-OWNER-STEPS, NO-SHIP",
+        ),
+        (a_sibling_head(type="note"), "evals/agh-7.md: type is note, not eval"),
+        (
+            a_sibling_head(delivery="agh-8"),
+            "evals/agh-7.md: delivery agh-8 does not match the file name",
+        ),
+    ],
+    ids=["no frontmatter", "verdict maybe", "another type", "another delivery"],
+)
+def test_reports_root_when_eval_sibling_malformed(head: bytes, message: str) -> None:
+    assert eval_problems_of(an_eval_document(), sibling_head=head) == (OutputProblem("$", message),)
+
+
+def test_reads_head_only_when_eval_sibling_long() -> None:
+    head = a_sibling_head() + b"x" * 100_000 + b"\xff"
+
+    assert eval_problems_of(an_eval_document(), sibling_head=head) == ()
+
+
+def test_reports_delivery_when_eval_sibling_stem_differs() -> None:
+    document = an_eval_document(delivery="abc-13")
+    head = a_head_for(document, delivery="abc-12")
+    content = review_bytes(document)
+
+    problems = eval_problems(content, file_name="abc-12.json", sibling_head=head, record=None)
+
+    assert problems == (
+        OutputProblem("delivery", "the delivery is abc-13 but the file name says abc-12"),
+    )
+
+
+def test_accepts_rerun_pair_when_eval_sibling_matches() -> None:
+    document = an_eval_document(delivery="abc-12-r2")
+
+    assert scope_problems_of(document, file_name="abc-12-r2.json") == ()
+
+
+def test_reports_duplicates_when_eval_sibling_lists_repeat() -> None:
+    document = an_eval_document(tickets=["AGH-7", "AGH-8", "AGH-7"], acs=["AC-139.1", "AC-139.1"])
+    head = a_sibling_head(tickets="[AGH-7, AGH-8]")
+
+    assert eval_problems_of(document, sibling_head=head) == (
+        OutputProblem("tickets[2]", "the ticket AGH-7 repeats tickets[0]"),
+        OutputProblem("acs[1]", "the AC AC-139.1 repeats acs[0]"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("file_name", "echo"),
+    [
+        ("AGH-7.json", "AGH-7.json"),
+        ("agh-7.md", "agh-7.md"),
+        ("agh-7", "agh-7"),
+        ("agh-7\n.json", "agh-7\\n.json"),
+        ("agh_7.json", "agh_7.json"),
+        ("a" * 64 + ".json", "a" * 64 + ".json"),
+        ("a" * 100 + ".json", "a" * 79 + "…"),
+    ],
+    ids=["upper case", "not json", "no suffix", "control character", "underscore", "64", "long"],
+)
+def test_reports_root_when_eval_sibling_stem_not_delivery(file_name: str, echo: str) -> None:
+    content = review_bytes(an_eval_document(delivery="agh-9"))
+
+    problems = eval_problems(
+        content, file_name=file_name, sibling_head=a_sibling_head(), record=None
+    )
+
+    message = f"the file name {echo} is not <delivery>.json ([a-z0-9][a-z0-9-]{{0,62}})"
+    assert problems == (OutputProblem("$", message),)
+
+
+def a_record_ac(ac_id: str, **overrides: object) -> dict[str, object]:
+    return {"id": ac_id, "description": "A criterion.", "passes": False} | overrides
+
+
+def record_bytes(acs: list[dict[str, object]]) -> bytes:
+    tickets = [{"key": "T1"}, {"key": "T2", "id": "AGH-9"}]
+    return json.dumps({"linear": ["AGH-9"], "tickets": tickets, "acs": acs}).encode()
+
+
+# Live A1 (no ticket), A2 (ticket T1), A3 (ticket T2, plan key of AGH-9); withdrawn A4 (T1).
+RECORD = record_bytes(
+    [
+        a_record_ac("A1"),
+        a_record_ac("A2", ticket="T1"),
+        a_record_ac("A3", ticket="T2"),
+        a_record_ac("A4", ticket="T1", withdrawn=True),
+    ]
+)
+
+
+def test_covers_live_acs_when_eval_record_scope_all() -> None:
+    document = an_eval_document(acs="all", results=results_for("A1", "A2", "A3"))
+
+    assert scope_problems_of(document, record=RECORD) == ()
+
+
+@pytest.mark.parametrize(
+    ("results", "problem"),
+    [
+        (
+            results_for("A1", "A2"),
+            OutputProblem("results", "no result for A3, which the scope names"),
+        ),
+        (
+            results_for("A1", "A2", "A3", "A4"),
+            OutputProblem("results", "the result for A4 names a withdrawn AC"),
+        ),
+        (
+            results_for("A1", "A2", "A3", "A9"),
+            OutputProblem("results", "the result for A9 is outside the scope"),
+        ),
+    ],
+    ids=["missing A3", "adding withdrawn A4", "adding unknown A9"],
+)
+def test_reports_results_when_eval_record_scope_misses_or_adds(
+    results: list[dict[str, object]], problem: OutputProblem
+) -> None:
+    document = an_eval_document(acs="all", results=results)
+
+    assert scope_problems_of(document, record=RECORD) == (problem,)
+
+
+@pytest.mark.parametrize(
+    ("tickets", "results", "problems"),
+    [
+        (["T1"], results_for("A2"), ()),
+        (["AGH-9"], results_for("A3"), ()),
+        (["agh-9"], results_for("A3"), ()),
+        (["T2"], results_for("A3"), ()),
+        (
+            ["T1"],
+            results_for("A1", "A2"),
+            (OutputProblem("results", "the result for A1 is outside the scope"),),
+        ),
+        (
+            ["AGH-9"],
+            results_for("A2"),
+            (
+                OutputProblem("results", "no result for A3, which the scope names"),
+                OutputProblem("results", "the result for A2 is outside the scope"),
+            ),
+        ),
+    ],
+    ids=["T1 is A2", "tracker id is A3", "id in lower case", "plan key is A3", "A1", "A2"],
+)
+def test_expands_tickets_when_eval_record_scope_by_ticket(
+    tickets: list[str], results: list[dict[str, object]], problems: tuple[OutputProblem, ...]
+) -> None:
+    document = an_eval_document(tickets=tickets, acs=[], results=results)
+
+    assert scope_problems_of(document, record=RECORD) == problems
+
+
+@pytest.mark.parametrize(
+    ("acs", "results", "problem"),
+    [
+        (["A1", "A4"], ["A1"], OutputProblem("acs", "A4 is withdrawn in features.json")),
+        (["A1", "A4"], ["A1", "A4"], OutputProblem("acs", "A4 is withdrawn in features.json")),
+        (["A9"], ["A9"], OutputProblem("acs", "A9 is not an AC of features.json")),
+    ],
+    ids=["withdrawn", "withdrawn with its result", "unknown"],
+)
+def test_reports_acs_when_eval_record_names_withdrawn_or_unknown(
+    acs: list[str], results: list[str], problem: OutputProblem
+) -> None:
+    document = an_eval_document(acs=acs, results=results_for(*results))
+
+    assert scope_problems_of(document, record=RECORD) == (problem,)
+
+
+@pytest.mark.parametrize(
+    ("record", "message"),
+    [
+        (b"{not json", "features.json could not be parsed (not valid JSON: "),
+        (b"[]", "features.json could not be parsed ("),
+        (b'{"linear": []}', "features.json could not be parsed (acs: Field required)"),
+        (b"\xff", "features.json could not be parsed (not UTF-8 text: "),
+    ],
+    ids=["not json", "an array", "not a record", "not utf-8"],
+)
+def test_reports_one_problem_when_eval_record_unparseable(record: bytes, message: str) -> None:
+    document = an_eval_document(acs="all", results=results_for("A1", "A2", "A9"))
+
+    problems = scope_problems_of(document, record=record)
+
+    assert [problem.path for problem in problems] == ["$"]
+    assert problems[0].message.startswith(message)
+    assert "\n" not in problems[0].message
+
+
+@pytest.mark.parametrize(
+    ("size", "problems"),
+    [
+        (MAX_RECORD_BYTES, ()),
+        (MAX_RECORD_BYTES + 1, (OutputProblem("$", "features.json is over 1048576 bytes"),)),
+    ],
+    ids=["at the bound", "one byte over"],
+)
+def test_refuses_record_when_eval_record_over_bound(
+    size: int, problems: tuple[OutputProblem, ...]
+) -> None:
+    record = RECORD.ljust(size)
+    document = an_eval_document(acs="all", results=results_for("A1", "A2", "A3"))
+
+    assert scope_problems_of(document, record=record) == problems
+
+
+def test_cuts_echoed_id_when_eval_record_names_long_id() -> None:
+    record = record_bytes([a_record_ac("x" * 100)])
+    document = an_eval_document(verdict="NO-SHIP", acs="all", results=[], gates=[])
+
+    assert scope_problems_of(document, record=record) == (
+        OutputProblem("results", "no result for " + "x" * 79 + "…, which the scope names"),
+    )
+
+
+def test_reports_all_problems_in_order_when_review_breaks_many_rules() -> None:
+    document = a_review_document(
+        round=0, commit="XYZ", verdict="FAIL", findings=[a_finding(kind="typo")]
+    )
+
+    problems = problems_of(document)
+
+    assert [problem.path for problem in problems] == [
+        "round",
+        "commit",
+        "findings[0].kind",
+        "verdict",
+    ]
+    assert problems[-1] == OutputProblem(
+        "verdict", "the verdict is FAIL but no finding is blocking"
+    )
+
+
+def test_reports_all_problems_in_order_when_eval_breaks_many_rules() -> None:
+    document = an_eval_document(
+        tickets=["T1"],
+        acs="all",
+        results=[
+            a_result(ac="A1", summary=""),
+            a_result(ac="A2", exit_code=1, status="fail"),
+            *results_for("A3", "A4"),
+        ],
+        gates=[a_gate(name="")],
+    )
+    head = a_head_for(document, tickets="[T2]", commit="1234567")
+    content = review_bytes(document)
+
+    problems = eval_problems(content, file_name=EVAL_FILE, sibling_head=head, record=RECORD)
+
+    assert [problem.path for problem in problems] == [
+        "results[0].summary",
+        "gates[0].name",
+        "verdict",
+        "tickets",
+        "commit",
+        "results",
+    ]
+    assert problems[2:] == (
+        OutputProblem("verdict", "SHIP needs every result to pass, but results[1] is fail"),
+        OutputProblem("tickets", "the tickets are [T1] but evals/agh-7.md says [T2]"),
+        OutputProblem("commit", "the commit is feb9c4c but evals/agh-7.md says 1234567"),
+        OutputProblem("results", "the result for A4 names a withdrawn AC"),
+    )
+
+
+def json_values() -> st.SearchStrategy[object]:
+    scalars = st.none() | st.booleans() | st.integers() | st.text(max_size=20)
+    floats = st.floats(allow_nan=False, allow_infinity=False)
+    return st.recursive(
+        scalars | floats,
+        lambda children: (
+            st.lists(children, max_size=4)
+            | st.dictionaries(st.text(max_size=8), children, max_size=4)
+        ),
+        max_leaves=20,
+    )
+
+
+OUTPUT_KEYS = sorted({*a_review_document(), *an_eval_document(), *a_finding(), *a_result()})
+RECORDS = [None, RECORD, b"{}", b"[]"]
+
+
+@settings(max_examples=200, deadline=None)
+@given(
+    content=st.binary(max_size=400),
+    file_name=st.text(max_size=40),
+    sibling_head=st.none() | st.binary(max_size=200),
+    record=st.none() | st.binary(max_size=200),
+)
+def test_never_raises_when_arbitrary_bytes_given_property(
+    *, content: bytes, file_name: str, sibling_head: bytes | None, record: bytes | None
+) -> None:
+    review = review_problems(content, file_name=file_name, folder_name=file_name)
+    evaluation = eval_problems(
+        content, file_name=file_name, sibling_head=sibling_head, record=record
+    )
+
+    assert all("\n" not in problem.message for problem in (*review, *evaluation))
+
+
+@settings(max_examples=300, deadline=None)
+@given(
+    overrides=st.dictionaries(
+        st.sampled_from(OUTPUT_KEYS) | st.text(max_size=8), json_values(), max_size=6
+    ),
+    record=st.sampled_from(RECORDS),
+)
+def test_never_raises_when_arbitrary_object_given_property(
+    overrides: dict[str, object], record: bytes | None
+) -> None:
+    review = problems_of(a_review_document(**overrides))
+    evaluation = scope_problems_of(an_eval_document(**overrides), record=record)
+    raw = eval_problems(
+        review_bytes(overrides), file_name=EVAL_FILE, sibling_head=a_sibling_head(), record=record
+    )
+
+    assert all("\n" not in problem.message for problem in (*review, *evaluation, *raw))
