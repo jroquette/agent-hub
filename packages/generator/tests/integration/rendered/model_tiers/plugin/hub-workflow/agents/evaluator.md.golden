@@ -24,7 +24,7 @@ Redirect long command output to a file and check the exit code; `cmd | tail` hid
 ```yaml
 ---
 type: eval
-delivery: abc-12  # the file stem, -rN included (abc-12-r2)
+delivery: abc-12
 verdict: SHIP
 tickets: [ABC-12]
 acs: [AC-1, AC-2]
