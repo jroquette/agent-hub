@@ -2,14 +2,15 @@
 
 Pure: bytes in, a parsed object or one root problem out. Each shape error becomes one problem
 at its JSON path. A key echoed in a path is escaped once and cut to ``ECHO_LIMIT``, never inside
-an escape sequence, so a document of long or unprintable keys cannot make a long line.
+an escape sequence, so a document of long or unprintable keys cannot make a long line. The
+cross-checks ask ``well_formed`` whether a raw field passes its model's own rule (S2).
 """
 
 import json
 from collections.abc import Iterator, Sequence
-from typing import Final
+from typing import Any, Final
 
-from pydantic import ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from agent_hub.core.features.output_models import (
     ACS_ALL_TAG,
@@ -49,6 +50,25 @@ def shape_problems(error: ValidationError) -> tuple[OutputProblem, ...]:
         OutputProblem(output_path(detail["loc"]), one_line(detail["msg"]))
         for detail in error.errors(include_url=False, include_input=False)
     )
+
+
+def field_adapter(model: type[BaseModel], name: str) -> TypeAdapter[Any]:
+    """A validator of one field of ``model`` by its annotation (the field carries no metadata)."""
+    return TypeAdapter(model.model_fields[name].annotation)
+
+
+def well_formed(adapter: TypeAdapter[Any], value: object) -> bool:
+    """Whether a raw value passes the rule of the field ``adapter`` validates."""
+    try:
+        adapter.validate_python(value)
+    except ValidationError:
+        return False
+    return True
+
+
+def echo(text: str) -> str:
+    """A text from the file or its name, escaped onto one line and cut to ``ECHO_LIMIT``."""
+    return cut_echo(one_line(text))
 
 
 def output_path(loc: Sequence[int | str]) -> str:
