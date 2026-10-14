@@ -63,6 +63,7 @@ def test_gives_no_steps_when_body_has_no_ordered_list() -> None:
         pytest.param("~~~\n1. fenced\n~~~\n1. after\n", 1, id="anchors-tilde-fence"),
         pytest.param("````\n```\n1. still fenced\n````\n", 0, id="anchors-long-fence"),
         pytest.param("1.no space\n1234567890. too long\n", 0, id="anchors-not-items"),
+        pytest.param(" 1. one\n   2. two\n\n1. three\n", 1, id="anchors-indented-list"),
     ],
 )
 def test_counts_steps_like_web_when_lists_nested_or_fenced(body: str, steps: int) -> None:
