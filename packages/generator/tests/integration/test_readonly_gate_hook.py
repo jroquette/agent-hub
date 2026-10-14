@@ -1844,3 +1844,146 @@ def test_records_window_start_when_start_saves_state(gate: Gate, gate_ws: GateWo
     assert state["subagents"]["agent-b.jsonl"] == [info.st_size, info.st_mtime_ns]
     assert set(state["subagents"]) == {"agent-a1.jsonl", "agent-b.jsonl"}
     assert state["subagents_cut"] is False
+
+
+SUBAGENT_RUNNING = "another subagent running"
+SUBAGENTS_UNREADABLE = "subagents unreadable"
+STATES_UNREADABLE = "agent states unreadable"
+
+
+def other_subagent(agent: Path, *, answered: bool) -> Path:
+    """``agent-b.jsonl`` beside the agent's transcript, written before the start: a ``Bash`` call
+    (``toolu_b1``), then its result when ``answered``; another call answered before it."""
+    other = agent.parent / "agent-b.jsonl"
+    lines = [
+        main_call("Read", {"file_path": "/x"}),
+        main_result(),
+        {
+            "type": "assistant",
+            "isSidechain": True,
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_b1",
+                        "name": "Bash",
+                        "input": {"command": "make check"},
+                    }
+                ]
+            },
+        },
+    ]
+    if answered:
+        result = {"type": "tool_result", "tool_use_id": "toolu_b1", "content": "ok"}
+        lines.append({"type": "user", "message": {"role": "user", "content": [result]}})
+    other.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
+    return other
+
+
+def test_reports_when_overlap_report_from_other_subagent_in_tool_call(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """E-2: another subagent inside one long tool call for the whole run writes nothing in the
+    window; its transcript's last call has no result yet, so it is still running: overlap."""
+    _, agent = transcripts(gate_ws, agent_id="a1", calls=[BASH_EDIT])
+    other = other_subagent(agent, answered=False)
+    before = other.stat()
+
+    lines = report_lines(
+        run_agent(gate, "researcher", lambda: change_app(gate_ws), calls=[BASH_EDIT])
+    )
+
+    after = other.stat()
+    assert (after.st_size, after.st_mtime_ns) == (before.st_size, before.st_mtime_ns)  # control
+    assert lines == [report_head(SUBAGENT_RUNNING), "- app/a.py"]
+
+
+def test_blocks_when_no_overlap_block_other_subagent_answered(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """E-2 control: another subagent transcript, unchanged, whose last call has its result (a
+    subagent that finished before the start) is no overlap: the change is still blocked."""
+    _, agent = transcripts(gate_ws, agent_id="a1", calls=[BASH_EDIT])
+    other_subagent(agent, answered=True)
+
+    output = run_agent(gate, "researcher", lambda: change_app(gate_ws), calls=[BASH_EDIT])
+
+    assert reason_lines(output)[:3] == [agent_head("researcher"), "- app/a.py", REVERT]
+
+
+def test_reports_when_overlap_report_other_subagent_tail_over_cap(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """E-2: another subagent transcript whose last line is longer than the tail the gate reads
+    cannot show whether it is still running: reported as unreadable."""
+    _, agent = transcripts(gate_ws, agent_id="a1", calls=[BASH_EDIT])
+    other = other_subagent(agent, answered=True)
+    append_line(other, {"type": "assistant", "message": {"content": "x" * 256}})
+
+    lines = report_lines(
+        run_agent(
+            gate,
+            "researcher",
+            lambda: change_app(gate_ws),
+            calls=[BASH_EDIT],
+            constant=("MAX_TAIL_BYTES", 128),
+        )
+    )
+
+    assert lines == [report_head(SUBAGENTS_UNREADABLE), "- app/a.py"]
+
+
+def test_reports_when_overlap_report_subagents_over_cap_at_stop(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """Over MAX_SUBAGENT_FILES transcripts at the stop, the listing is cut: reported as
+    unreadable, never read in part as if complete."""
+    _, agent = transcripts(gate_ws, agent_id="a1", calls=[BASH_EDIT])
+    for name in ("agent-b.jsonl", "agent-c.jsonl"):
+        (agent.parent / name).write_text("{}\n", encoding="utf-8")
+
+    lines = report_lines(
+        run_agent(
+            gate,
+            "researcher",
+            lambda: change_app(gate_ws),
+            calls=[BASH_EDIT],
+            constant=("MAX_SUBAGENT_FILES", 1),
+        )
+    )
+
+    assert lines == [report_head(SUBAGENTS_UNREADABLE), "- app/a.py"]
+
+
+def test_reports_when_overlap_report_subagents_cut_at_start(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """A subagents listing cut at the start (over MAX_SUBAGENT_FILES then) is no baseline: the
+    stop reports it as unreadable even when its own listing is complete."""
+    main, agent = transcripts(gate_ws, agent_id="a1", calls=[BASH_EDIT])
+    started = gate.start(
+        "researcher", agent_id="a1", transcript_path=main, constant=("MAX_SUBAGENT_FILES", 0)
+    )
+    assert started is None
+    assert read_state(gate_ws, "a1")["subagents_cut"] is True  # control
+    change_app(gate_ws)
+
+    output = gate.stop(
+        "researcher", agent_id="a1", transcript_path=main, agent_transcript_path=agent
+    )
+
+    assert report_lines(output) == [report_head(SUBAGENTS_UNREADABLE), "- app/a.py"]
+
+
+def test_reports_when_overlap_report_states_over_cap(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """Past MAX_STATE_FILES other gate states the gate stops looking: reported as unreadable."""
+
+    def change() -> None:
+        (gate_ws.tmp / state_name("a2")).write_text('{"v": 1}', encoding="utf-8")
+        change_app(gate_ws)
+
+    lines = report_lines(
+        run_agent(gate, "researcher", change, calls=[BASH_EDIT], constant=("MAX_STATE_FILES", 0))
+    )
+
+    assert lines == [report_head(STATES_UNREADABLE), "- app/a.py"]
