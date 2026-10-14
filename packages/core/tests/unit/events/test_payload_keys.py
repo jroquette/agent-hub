@@ -93,7 +93,7 @@ def test_declares_added_keys_when_allow_list_widened() -> None:
         (EventType.STEP_END, {"run", "attempt", "status", "failure_kind", "skip_cause", "reason"}),
         (EventType.RUN_END, {"run", "status", "outcome", "reason", "revision", "content_hash"}),
     ],
-    ids=lambda value: str(value),
+    ids=["step.start", "step.end", "run.end"],
 )
 def test_keeps_workflow_engine_keys_when_engine_event_given(
     event_type: EventType, keys: set[str]
