@@ -319,7 +319,7 @@ A web app reads the hubs and the agents' events and answers five questions, one 
 | --- | --- | --- |
 | Portfolio | How are my projects doing? | Hubs, repos, tasks in progress, open PRs, CI, cost of the week |
 | Workflows | How should work flow? | Editor and visualization of steps and gates; which step each task is at; where it gets stuck |
-| Live sessions | What are the agents doing right now? | Active sessions by repo and task, last action, accumulated turns and cost, pending approvals |
+| Sessions | What are the agents doing right now, and which one needs me? | Every session, observed or driven, in status sections (waiting first) as tiles or a table: last action, accumulated turns and cost, pending approvals |
 | Session timeline | Why did the agent do that? | Messages, reasoning summaries, tool calls, files and diffs, marked decisions and the final outcome |
 | Knowledge | What does it know and what did it learn? | Context loaded in the session (rules, brain, memory), proposed learnings, inbox triage, evolution over time |
 
@@ -345,7 +345,7 @@ GraphQL API for a feature's tickets, only when `LINEAR_API_KEY` is set where `hu
 ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md)). The browser never contacts Linear. Agent sessions (AGH-165,
 below) add no outbound call of the server: the `claude` processes it starts reach Anthropic as when the user runs
 them. The approved UI design and the departures from it are in
-[design/control-plane/](design/control-plane/README.md); the decisions are ADRs 0017 to 0025 and 0031.
+[design/control-plane/](design/control-plane/README.md); the decisions are ADRs 0017 to 0025, 0031 and 0033.
 
 **Control-plane clarity (AGH-201, built).** What the owner could not use in the first `hub web` is now derived on read:
 
@@ -437,6 +437,28 @@ in [design/agent-sessions.md](design/agent-sessions.md)):
   30 days after the session ends (or deleted at once); the owner's live view is not redacted, a reload shows the
   stored copy. No server log line holds conversation text. Cloud sessions are link-out guidance through the CLI
   (`claude --cloud`, `--teleport`); the platform never calls claude.ai itself.
+
+**Sessions and chat (AGH-234, [ADR 0033](adr/0033-sessions-and-chat-interaction-model.md)).** One Sessions screen
+replaces Live sessions and the separate list of driven sessions (design in
+[14-sessions-list.md](design/control-plane/specs/14-sessions-list.md)):
+
+- **One tab.** The sidebar has one Sessions entry with the live badge; `/live` and its deep links redirect to
+  `/sessions?view=grid` (`group=` becomes `within=`), and `g l` opens the grid. A grid (tiles) and a table view share
+  the same filters, saved views and period.
+- **Status sections.** Both views group sessions as Waiting, Live, Idle, Ended or failed (failed in red text), each
+  section its own paginated `GET /sessions?status=` query with its own count; the period filters the Ended section
+  only. `Session` carries the tile fields `LiveTile` has, derived on read; no new route, payload key or migration.
+- **Driven sessions in the same list.** A session `hub web` drives shows once: as its observed twin with a "Chat"
+  badge, or, with no twin (`AgentSession.observed_session_id` null), in its own status section. Every tile and row
+  has a visible Open (or Open chat, Answer) and a real link. New session is a short dialog (where and the prompt).
+- **Chat.** The chat stays a full page and behaves as a chat client: it opens at the latest entry, follows the stream
+  only at the bottom, keeps header, composer and Stop on screen, and has message time and Copy, code labels, clear
+  tool states, a saved draft, a `/` menu and keyboard paths for permissions
+  ([agent-sessions.md](design/agent-sessions.md#chat-behaviour)). Transport, access and storage stay as ADR 0031 set.
+- **Credit.** Open WebUI (github.com/open-webui/open-webui, Open WebUI License, a BSD-3 variant with a branding
+  clause) was read as design study material at commit `6a18585` (v0.12.2) for chat and list interaction patterns.
+  We write our own React code. Nothing was copied, no asset or branding is used, and `NOTICE` and `LICENSES/` do not
+  change. Open WebUI is not affiliated with, and has not endorsed, this project.
 
 **Skills tab (AGH-164, built).** Knowledge › Skills shows what a hub's agents can do, read from its files on request
 and never stored:
