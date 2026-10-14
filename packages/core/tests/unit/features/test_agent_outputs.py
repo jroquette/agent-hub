@@ -1,12 +1,24 @@
 """The agent output checks: a review or eval JSON document's shape, every problem at its path."""
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from importlib.resources import files
+from typing import Any
 
 import pytest
-from pydantic import ValidationError
+from jsonschema import Draft202012Validator
+from pydantic import BaseModel, ValidationError
 
-from agent_hub.core.features.agent_outputs import eval_problems, review_problems
+from agent_hub.core.features.agent_outputs import (
+    OUTPUT_SCHEMA_FILES,
+    OUTPUT_SCHEMA_PACKAGE,
+    OutputKind,
+    eval_problems,
+    export_output_schema_text,
+    read_shipped_output_schema,
+    review_problems,
+)
+from agent_hub.core.features.feature_record import MAX_RECORD_BYTES
 from agent_hub.core.features.output_models import (
     MAX_OUTPUT_BYTES,
     AcResult,
@@ -16,6 +28,7 @@ from agent_hub.core.features.output_models import (
     ReviewOutput,
 )
 from agent_hub.core.features.output_shape import output_path
+from agent_hub.core.hub_config.versions import ECHO_LIMIT
 
 REVIEW_FILE = "spec-r1.json"
 REVIEW_FOLDER = "AGH-7"
@@ -429,3 +442,138 @@ def test_drops_only_eval_acs_tag_when_output_path_built(
     loc: tuple[int | str, ...], path: str
 ) -> None:
     assert output_path(loc) == path
+
+
+KINDS: tuple[OutputKind, ...] = ("review", "eval")
+MODELS: dict[OutputKind, type[BaseModel]] = {"review": ReviewOutput, "eval": EvalOutput}
+
+
+def object_nodes(node: object) -> Iterator[dict[str, Any]]:
+    """Every schema node with ``type: object``, root included."""
+    if isinstance(node, list):
+        for item in node:
+            yield from object_nodes(item)
+    elif isinstance(node, dict):
+        if node.get("type") == "object":
+            yield node
+        for value in node.values():
+            yield from object_nodes(value)
+
+
+def resolved(schema: dict[str, Any], node: dict[str, Any]) -> dict[str, Any]:
+    """``node``, or the ``$defs`` entry its local ``$ref`` names."""
+    reference = node.get("$ref")
+    if reference is None:
+        return node
+    found: dict[str, Any] = schema["$defs"][reference.removeprefix("#/$defs/")]
+    return found
+
+
+def field(schema: dict[str, Any], owner: str | None, name: str) -> dict[str, Any]:
+    """Property ``name`` of the root (``owner`` None) or of a ``$defs`` model, resolved."""
+    model = schema if owner is None else schema["$defs"][owner]
+    return resolved(schema, model["properties"][name])
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_matches_export_when_shipped_schema_read(kind: OutputKind) -> None:
+    shipped = files(OUTPUT_SCHEMA_PACKAGE).joinpath(OUTPUT_SCHEMA_FILES[kind]).read_bytes()
+
+    assert shipped == export_output_schema_text(kind).encode()
+    assert read_shipped_output_schema(kind) == MODELS[kind].model_json_schema()
+    assert OUTPUT_SCHEMA_FILES == {"review": "review.v1.json", "eval": "eval.v1.json"}
+    assert OUTPUT_SCHEMA_PACKAGE == "agent_hub.core.features"
+
+
+@pytest.mark.parametrize(
+    ("kind", "schema_id"), [("review", "agent-hub/review/1"), ("eval", "agent-hub/eval/1")]
+)
+def test_states_schema_const_when_schema_exported(kind: OutputKind, schema_id: str) -> None:
+    schema = read_shipped_output_schema(kind)
+
+    assert schema["properties"]["schema"]["const"] == schema_id
+    assert "schema_id" not in json.dumps(schema)
+
+
+@pytest.mark.parametrize(("kind", "objects"), [("review", 2), ("eval", 4)])
+def test_forbids_extra_keys_when_schema_object_nodes_walked(kind: OutputKind, objects: int) -> None:
+    nodes = list(object_nodes(read_shipped_output_schema(kind)))
+
+    assert len(nodes) == objects
+    assert all(node.get("additionalProperties") is False for node in nodes)
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_requires_every_key_when_schema_exported(kind: OutputKind) -> None:
+    for node in object_nodes(read_shipped_output_schema(kind)):
+        assert node["required"] == list(node["properties"])
+
+
+def test_states_bounds_as_literals_when_schema_exported() -> None:
+    review = read_shipped_output_schema("review")
+    evaluation = read_shipped_output_schema("eval")
+    eval_acs = resolved(evaluation, evaluation["properties"]["acs"])["oneOf"]
+
+    assert review["properties"]["findings"]["maxItems"] == 100
+    assert review["$defs"]["ReviewFinding"]["properties"]["acs"]["maxItems"] == 50
+    assert evaluation["properties"]["tickets"]["maxItems"] == 100
+    assert [arm.get("maxItems") for arm in eval_acs] == [None, 300]
+    assert evaluation["properties"]["results"]["maxItems"] == 300
+    assert evaluation["properties"]["gates"]["maxItems"] == 50
+    assert evaluation["properties"]["red_on_parent"]["maxItems"] == 300
+    assert evaluation["properties"]["owner_steps"]["maxItems"] == 50
+    assert field(review, "ReviewFinding", "what")["maxLength"] == 1000
+    assert field(evaluation, "AcResult", "command")["maxLength"] == 2000
+    assert field(review, "ReviewFinding", "path")["maxLength"] == 512
+    assert field(evaluation, "GateResult", "name")["maxLength"] == 64
+    assert MAX_OUTPUT_BYTES == 524_288
+    assert MAX_RECORD_BYTES == 1_048_576
+    assert ECHO_LIMIT == 80
+
+
+def test_requires_text_when_schema_exported() -> None:
+    review = read_shipped_output_schema("review")
+    evaluation = read_shipped_output_schema("eval")
+    owner_step = resolved(evaluation, evaluation["properties"]["owner_steps"]["items"])
+    texts = [
+        field(review, "ReviewFinding", "what"),
+        field(review, "ReviewFinding", "expected"),
+        field(review, "ReviewFinding", "path"),
+        field(evaluation, "AcResult", "command"),
+        field(evaluation, "AcResult", "summary"),
+        owner_step,
+        field(evaluation, "RedOnParent", "test"),
+        field(evaluation, "GateResult", "repo"),
+        field(evaluation, "GateResult", "name"),
+    ]
+
+    assert [text["minLength"] for text in texts] == [1] * 9
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_passes_meta_schema_when_shipped_schemas_checked(kind: OutputKind) -> None:
+    schema = read_shipped_output_schema(kind)
+
+    Draft202012Validator.check_schema(schema)
+    assert "$schema" not in schema
+
+
+@pytest.mark.parametrize(
+    ("kind", "sample"),
+    [
+        ("review", a_review_document()),
+        ("review", a_review_document(verdict="FAIL", findings=[a_finding(line=None)])),
+        ("eval", an_eval_document()),
+        ("eval", an_eval_document(acs="all")),
+        ("eval", an_eval_document(acs=[])),
+    ],
+    ids=["review", "review with a null line", "eval", "eval all acs", "eval by tickets"],
+)
+def test_validates_sample_when_meta_schema_checked(
+    kind: OutputKind, sample: dict[str, object]
+) -> None:
+    validator = Draft202012Validator(read_shipped_output_schema(kind))
+
+    assert list(validator.iter_errors(sample)) == []
+    errors = list(validator.iter_errors(sample | {"colour": "red"}))
+    assert [error.validator for error in errors] == ["additionalProperties"]
