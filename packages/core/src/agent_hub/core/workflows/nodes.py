@@ -5,24 +5,31 @@ then their ``type`` is refused like any other unknown one. Checks that need more
 (``depends_on`` targets, references, ``context.resume``) are planning's (``plan.py``).
 """
 
+import math
+from collections.abc import Mapping
 from pathlib import PurePosixPath
+from types import MappingProxyType
 from typing import Annotated, Final, Literal, Self
 
 from pydantic import (
     AfterValidator,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
+    Discriminator,
     Field,
     JsonValue,
+    PlainSerializer,
     StrictBool,
-    StrictFloat,
     StrictInt,
     StrictStr,
+    Tag,
     field_validator,
     model_validator,
 )
 
 from agent_hub.core.hub_config.model_tiers import Tier
+from agent_hub.core.workflows.substitution import NodeRef, SubstitutionError, parse_ref
 
 TriggerRule = Literal["all_success", "one_success", "none_failed_min_one_success", "all_done"]
 # A hub step node runs the engine's own hub executable (ADR 0032): ``command[0:2]``.
@@ -59,9 +66,42 @@ def _unique[Item](items: tuple[Item, ...]) -> tuple[Item, ...]:
     return items
 
 
-def _positive(value: float) -> float:
-    if value <= 0:
-        msg = "must be greater than 0"
+def _json_number(value: object) -> object:
+    # A float field would take ``"3"`` and ``true``; a document's number is an int or a float.
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        msg = "must be a number"
+        raise ValueError(msg)
+    return value
+
+
+def _positive_finite(value: float) -> float:
+    if not math.isfinite(value) or value <= 0:
+        msg = "must be a finite number greater than 0"
+        raise ValueError(msg)
+    return value
+
+
+def read_only[Key, Value](value: Mapping[Key, Value]) -> Mapping[Key, Value]:
+    """A read-only copy of ``value``: a frozen document's mappings cannot be changed either."""
+    return MappingProxyType(dict(value))
+
+
+def _output_ref(value: str) -> str:
+    try:
+        ref = parse_ref(value)
+    except SubstitutionError as error:
+        raise ValueError(str(error)) from None
+    if not isinstance(ref, NodeRef):
+        msg = "must be a node output reference ($<node>.output[.path])"
+        raise ValueError(msg)
+    return value
+
+
+def _plain_value(value: object) -> object:
+    # A mapping holding ``from`` is a binding: the plain-value branch must not swallow one that
+    # has a typo, an extra key or a bad reference.
+    if isinstance(value, dict) and "from" in value:
+        msg = "a binding takes only 'from' (a node output reference) and 'if_skipped'"
         raise ValueError(msg)
     return value
 
@@ -75,7 +115,17 @@ EnvName = Annotated[StrictStr, Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")]
 Duration = Annotated[StrictStr, Field(pattern=r"^[1-9][0-9]*(s|m|h|d)$")]
 PackPath = Annotated[Text, AfterValidator(_pack_path)]
 Argv = Annotated[tuple[Text, ...], Field(min_length=1)]
-OutputRef = Annotated[StrictStr, Field(pattern=r"^\$[a-z][a-z0-9_-]*\.output(\.[A-Za-z0-9_-]+)*$")]
+OutputRef = Annotated[StrictStr, AfterValidator(_output_ref)]
+PositiveNumber = Annotated[float, BeforeValidator(_json_number), AfterValidator(_positive_finite)]
+# Validated as a dict, kept read-only, serialised as a dict again.
+READ_ONLY = (AfterValidator(read_only), PlainSerializer(dict, return_type=dict))
+JsonObject = Annotated[Mapping[str, JsonValue], *READ_ONLY]
+EnvMap = Annotated[Mapping[EnvName, StrictStr], *READ_ONLY]
+
+
+def empty[Key, Value]() -> Mapping[Key, Value]:
+    """A new read-only empty mapping (a default: pydantic copies a default value it is given)."""
+    return MappingProxyType({})
 
 
 class WorkflowObject(BaseModel):
@@ -94,7 +144,7 @@ class Retry(WorkflowObject):
 
 class Limits(WorkflowObject):
     max_turns: Annotated[StrictInt, Field(ge=1)] = 40
-    max_cost_usd: Annotated[StrictInt | StrictFloat, AfterValidator(_positive)] = 3.0
+    max_cost_usd: PositiveNumber = 3.0
 
 
 class ResumeContext(WorkflowObject):
@@ -110,8 +160,22 @@ class FromBinding(WorkflowObject):
     if_skipped: JsonValue = None
 
 
+def _context_kind(value: object) -> str:
+    return "<fresh>" if isinstance(value, str) else "<resume>"
+
+
+# One member checked, chosen by the value's kind: a wrong value gets one error, not one per
+# member. The tags are not keys a document can hold, so error paths drop them.
+Context = Annotated[
+    Annotated[Literal["fresh"], Tag("<fresh>")] | Annotated[ResumeContext, Tag("<resume>")],
+    Discriminator(_context_kind),
+]
+
+
 # Left to right: a mapping that is a well-formed binding never reads as a plain value.
-Binding = Annotated[FromBinding | JsonValue, Field(union_mode="left_to_right")]
+Binding = Annotated[
+    FromBinding | JsonValue, Field(union_mode="left_to_right"), AfterValidator(_plain_value)
+]
 
 
 class Decision(WorkflowObject):
@@ -131,7 +195,7 @@ class _Executable(_Node):
     retry: Retry | None = None
     always_run: StrictBool = False
     timeout: Duration | None = None
-    output_format: dict[str, JsonValue] | None = None
+    output_format: JsonObject | None = None
     # ``false`` asks the engine to compare git status before and after: a change fails the node.
     mutates_checkout: StrictBool = True
 
@@ -139,25 +203,12 @@ class _Executable(_Node):
 class _AgentKeys(_Executable):
     prompt: Text | None = None
     prompt_file: PackPath | None = None
-    with_: dict[VariableName, Binding] = Field(default_factory=dict, alias="with")
+    with_: Annotated[Mapping[VariableName, Binding], *READ_ONLY] = Field(
+        default_factory=empty, alias="with"
+    )
     model: Tier = "medium"
     limits: Limits = Field(default_factory=Limits)
-    context: Literal["fresh"] | ResumeContext = "fresh"
-
-    @field_validator("with_")
-    @classmethod
-    def _bindings_well_formed(
-        cls, value: dict[str, FromBinding | JsonValue]
-    ) -> dict[str, FromBinding | JsonValue]:
-        # A mapping holding ``from`` is a binding: the plain-value branch must not swallow one
-        # that has a typo or an extra key.
-        for name, item in value.items():
-            if isinstance(item, dict) and "from" in item:
-                msg = (
-                    f"the binding {name!r} takes only 'from' (an output reference) and 'if_skipped'"
-                )
-                raise ValueError(msg)
-        return value
+    context: Context = "fresh"
 
     @model_validator(mode="after")
     def _one_prompt(self) -> Self:
@@ -175,7 +226,7 @@ class ShellNode(_Executable):
     type: Literal["shell"]
     command: Argv
     cwd: Text | None = None
-    env: dict[EnvName, StrictStr] = Field(default_factory=dict)
+    env: EnvMap = Field(default_factory=empty)
 
     @property
     def is_hub_step(self) -> bool:
@@ -195,7 +246,7 @@ class ScriptNode(_Executable):
     script: PackPath
     args: tuple[StrictStr, ...] = ()
     cwd: Text | None = None
-    env: dict[EnvName, StrictStr] = Field(default_factory=dict)
+    env: EnvMap = Field(default_factory=empty)
 
 
 class LoopNode(_AgentKeys):
@@ -247,8 +298,8 @@ Node = Annotated[
 
 
 def required_property(
-    output_format: dict[str, JsonValue] | None, name: str
-) -> dict[str, JsonValue] | None:
+    output_format: Mapping[str, JsonValue] | None, name: str
+) -> Mapping[str, JsonValue] | None:
     """The schema of ``name`` when ``output_format`` is an object schema that requires it."""
     if output_format is None or output_format.get("type") != "object":
         return None

@@ -1,1 +1,1 @@
-"""Workflows as data: the document model, its planning, and the catalog the CLI lists (ADR 0032)."""
+"""Workflows as data (ADR 0032): the format's model, its planning and the engine's pure core."""

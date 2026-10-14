@@ -1,4 +1,4 @@
-"""The node models: one ``type`` each, carrying only that type's keys."""
+"""The node models: one ``type`` each, carrying only that type's keys (AC-213.1)."""
 
 from typing import Any
 
@@ -152,8 +152,8 @@ def test_refuses_binding_when_it_is_malformed(binding: dict[str, object]) -> Non
     raw = {"id": "b", "type": "agent", "prompt": "x", "with": {"plan": binding}}
 
     [(loc, message)] = errors_of(raw)
-    assert loc == ("agent", "with")
-    assert "'plan'" in message
+    assert loc == ("agent", "with", "plan")
+    assert "takes only 'from'" in message
 
 
 def test_refuses_env_when_node_is_a_hub_step() -> None:
@@ -207,3 +207,23 @@ def test_refuses_decisions_when_an_id_repeats() -> None:
     raw = {"id": "g", "type": "approval", "message": "x", "decisions": decisions}
 
     assert [loc for loc, _ in errors_of(raw)] == [("approval", "decisions")]
+
+
+@pytest.mark.parametrize("cost", [float("nan"), float("inf"), True, "3"])
+def test_refuses_cost_when_it_is_not_a_finite_number(cost: object) -> None:
+    raw = {"id": "b", "type": "agent", "prompt": "x", "limits": {"max_cost_usd": cost}}
+
+    assert [loc for loc, _ in errors_of(raw)] == [("agent", "limits", "max_cost_usd")]
+
+
+def test_keeps_mappings_read_only_when_node_is_loaded() -> None:
+    agent = NODE.validate_python(
+        {"id": "b", "type": "agent", "prompt": "x", "with": {"a": 1}, "output_format": DONE_SCHEMA}
+    )
+    shell = NODE.validate_python({"id": "s", "type": "shell", "command": ["x"], "env": {"A": "1"}})
+
+    for mapping in (agent.with_, agent.output_format, shell.env):
+        with pytest.raises(TypeError):
+            mapping["new"] = 1  # type: ignore[index]
+    assert agent.model_dump(by_alias=True)["with"] == {"a": 1}
+    assert '"env":{"A":"1"}' in shell.model_dump_json()
