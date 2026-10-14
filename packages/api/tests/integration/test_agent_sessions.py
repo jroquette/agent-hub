@@ -355,7 +355,7 @@ def test_lists_hub_workdir_when_workdir_listed(agent_session_app: Any) -> None:
     assert HUB_PATH not in response.text
 
 
-def test_answers_404_when_workdir_listed_for_unknown_project(
+def test_answers_not_found_when_workdir_listed_for_unknown_project(
     agent_session_app: Any,
 ) -> None:
     response = agent_session_app.client.get(f"{BASE}/workdirs", params={"project": "other"})
@@ -723,7 +723,7 @@ def test_deletes_ended_session_and_refuses_live_one_when_delete_called(
     assert agent_session_app.client.get(f"{BASE}/{ended}/events").status_code == 404
 
 
-def test_answers_capabilities_and_503_when_unavailable(
+def test_answers_cause_and_refuses_writes_when_unavailable(
     open_agent_session_app: Any,
 ) -> None:
     cause = "Install agent-hub[sessions] to drive sessions"
