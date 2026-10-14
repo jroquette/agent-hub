@@ -273,6 +273,9 @@ def test_reads_empty_text_when_index_has_too_many_digits() -> None:
         (["bash", "-c", "+o", "posix", "$INPUTS.issue"], 1, "argv_script"),
         (["bash", "-co", "pipefail", "$INPUTS.issue"], 1, "argv_script"),
         (["bash", "-oc", "pipefail", "$INPUTS.issue"], 1, "argv_script"),
+        (["bash", "+c", "$INPUTS.issue"], 2, "argv_script"),
+        (["sh", "+ec", "$INPUTS.issue"], 2, "argv_script"),
+        (["bash", "-e", "+c", "$INPUTS.issue"], 3, "argv_script"),
         (["python3", "-I", "-c", "$INPUTS.issue"], 3, "argv_script"),
     ],
 )
@@ -326,3 +329,8 @@ def test_reports_each_flag_and_reached_reference_when_c_clusters_repeat() -> Non
 def test_checks_in_linear_time_when_argv_repeats_c_clusters() -> None:
     argv = ["sh", *["-c"] * 50_000, "s", "sh", "$INPUTS.issue"]
     assert len(check_argv(argv)) == 49_999
+
+
+def test_classifies_in_linear_time_when_cluster_is_long_and_not_a_flag() -> None:
+    assert check_argv(["sh", "-" + "c" * 200_000 + "1", "$INPUTS.issue"]) == []
+    assert check_argv(["sh", "--" + "c" * 200_000, "$INPUTS.issue"]) == []
