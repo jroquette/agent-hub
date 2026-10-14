@@ -2,7 +2,9 @@
 
 ``AgentSessionLinks`` (LK) implements ``AgentSessionLinkLookup`` from the live index and the
 store; the session read models take it to fill ``Session.agent_session_id`` and to show a live
-tile ``waiting`` while a permission request is open (AC-165.25).
+tile ``waiting`` while a permission request is open (AC-165.25). The other way round,
+``ObservedSessionLookup`` tells the agent-session use case whether a Claude session has an
+observed twin, to fill ``AgentSession.observed_session_id`` (D2).
 """
 
 from collections.abc import Callable
@@ -23,6 +25,14 @@ class AgentSessionLinkLookup(Protocol):
 
     def link_of(self, project: str, claude_session_id: str) -> AgentSessionLink | None:
         """The link of ``claude_session_id`` in ``project``, or None."""
+        ...
+
+
+class ObservedSessionLookup(Protocol):
+    """Whether the hooks or transcripts observed a Claude session (the session read models)."""
+
+    def is_observed(self, project: str, session_id: str) -> bool:
+        """True when ``session_id`` is an observed session of ``project``."""
         ...
 
 

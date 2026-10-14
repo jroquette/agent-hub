@@ -84,7 +84,8 @@ class AgentSession(ViewModel):
     """One session ``hub web`` started (or one cloud start, ``kind="cloud"``).
 
     ``claude_session_id`` links it to the hook-observed Session once ``init`` arrives (or at
-    start when the id is given, P13). ``last_seq`` is the last persisted record's ``seq``.
+    start when the id is given, P13); ``observed_session_id`` is that Session's id once it has
+    been observed, else ``null`` (a twin may never arrive, D2). ``last_seq`` is the last persisted record's ``seq``.
     ``cost_usd`` and ``usage`` add up the turns' results (an estimate).
     """
 
@@ -108,6 +109,7 @@ class AgentSession(ViewModel):
     usage: TokenUsage | None = None
     last_seq: int = Field(default=0, ge=0)
     open_permission: OpenPermission | None = None
+    observed_session_id: str | None = None
 
 
 class AgentSessionList(ViewModel):

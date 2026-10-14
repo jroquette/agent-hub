@@ -947,3 +947,43 @@ async def test_agrees_on_idle_when_running_write_slow_after_permission_timeout(
     assert store.get(session_id).status == AgentSessionStatus.IDLE
     assert (await rig.control.snapshot(session_id)).status == AgentSessionStatus.IDLE
     assert statuses == [AgentSessionStatus.RUNNING, AgentSessionStatus.IDLE]
+
+
+class ObservedSessions:
+    """The observed sessions' ids by project, as the session read models would know them."""
+
+    def __init__(self) -> None:
+        self.ids: set[tuple[str, str]] = set()
+
+    def is_observed(self, project: str, session_id: str) -> bool:
+        return (project, session_id) in self.ids
+
+
+async def test_fills_observed_session_id_when_twin_observed(make_rig: MakeRig) -> None:
+    observed = ObservedSessions()
+    rig = make_rig(observed_sessions=observed)
+    twin, alone = await rig.create(), await rig.create()
+    assert twin.claude_session_id is not None
+    observed.ids.add(("demo", twin.claude_session_id))
+
+    listed = {
+        item.id: item for item in (await rig.control.list_sessions(project=None, status=None)).items
+    }
+    live = await rig.control.snapshot(twin.id)
+    await rig.control.close(twin.id)
+    stored = await rig.control.snapshot(twin.id)
+
+    assert listed[twin.id].observed_session_id == twin.claude_session_id
+    assert listed[alone.id].observed_session_id is None
+    assert live.observed_session_id == twin.claude_session_id
+    assert stored.observed_session_id == twin.claude_session_id
+    assert (await rig.control.snapshot(alone.id)).observed_session_id is None
+
+
+async def test_leaves_observed_session_id_empty_when_no_lookup_given(
+    make_rig: MakeRig,
+) -> None:
+    rig = make_rig()
+    created = await rig.create()
+
+    assert (await rig.control.snapshot(created.id)).observed_session_id is None
