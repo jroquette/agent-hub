@@ -122,6 +122,7 @@ def test_stops_when_blocked_text_without_json() -> None:
         kind=OutcomeKind.STOPPED,
         text="the implementing session stopped: I read the plan.\nBLOCKED: the spec has an"
         " open question",
+        question="I read the plan.\nBLOCKED: the spec has an open question",
     )
 
 
@@ -129,7 +130,9 @@ def test_stops_when_verdict_blocked() -> None:
     result = 'prose\n{"status": "blocked", "summary": "needs an approved plan"}'
 
     assert session_outcome(a_reply(result)) == Outcome(
-        kind=OutcomeKind.STOPPED, text="the implementing session stopped: needs an approved plan"
+        kind=OutcomeKind.STOPPED,
+        text="the implementing session stopped: needs an approved plan",
+        question="needs an approved plan",
     )
 
 
@@ -139,6 +142,14 @@ def test_keeps_tail_when_blocked_verdict_has_no_summary() -> None:
     outcome = session_outcome(a_reply(result))
 
     assert outcome.text == f"the implementing session stopped: {result[-800:]}"
+    assert outcome.question == result[-800:]
+
+
+def test_leaves_question_empty_when_not_stopped() -> None:
+    done = session_outcome(a_reply('{"status": "done", "summary": "s"}'))
+    errored = session_outcome(a_reply("x", is_error=True))
+
+    assert (done.question, errored.question) == ("", "")
 
 
 def test_reads_summary_when_done() -> None:

@@ -981,6 +981,7 @@ def test_rejects_guard_path_when_not_printable_ascii(guard_list: str, path: str)
         ("project", "author_name"),
         ("tracker", "ready_label"),
         ("tracker", "failed_label"),
+        ("tracker", "blocked_label"),
         ("repos", 0, "role"),
         ("repos", 0, "check_fast"),
         ("repos", 0, "check"),
@@ -992,6 +993,30 @@ def test_rejects_free_string_when_control_character(
     path: tuple[str | int, ...], value: str
 ) -> None:
     assert error_locs(with_value(path, value)) == [path]
+
+
+def test_falls_back_to_failed_label_when_blocked_label_absent() -> None:
+    config = HubConfig.model_validate(with_value(("tracker", "failed_label"), "needs-look"))
+
+    assert config.tracker.blocked_label is None
+    assert config.tracker.effective_blocked_label == "needs-look"
+
+
+def test_reads_blocked_label_when_set() -> None:
+    config = HubConfig.model_validate(with_value(("tracker", "blocked_label"), "agent-blocked"))
+
+    assert config.tracker.blocked_label == "agent-blocked"
+    assert config.tracker.effective_blocked_label == "agent-blocked"
+    assert config.tracker.failed_label == "agent-failed"
+
+
+@pytest.mark.parametrize(
+    ("value", "kind"), [(None, "null_not_allowed"), (5, "string_type"), (["x"], "string_type")]
+)
+def test_rejects_blocked_label_when_not_string(value: object, kind: str) -> None:
+    document = with_value(("tracker", "blocked_label"), value)
+
+    assert error_types(document) == [(("tracker", "blocked_label"), kind)]
 
 
 def test_accepts_repo_when_check_fast_absent_or_blank() -> None:

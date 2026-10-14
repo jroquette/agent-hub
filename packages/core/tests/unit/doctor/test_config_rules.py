@@ -92,6 +92,17 @@ def failure_of(read: bytes | tuple[ConfigProblem, ...]) -> ConfigFailure:
             ["shade: Extra inputs are not permitted", "tracker.team: Field required"],
             id="two-problems",
         ),
+        # AGH-180 D1: an unknown tier is a schema error, not a rule of its own.
+        pytest.param(
+            document_bytes(lambda document: document.update(models={"agents": {"planner": "xl"}})),
+            ["models.agents.planner: Input should be 'small', 'medium' or 'large'"],
+            id="unknown-tier-value",
+        ),
+        pytest.param(
+            document_bytes(lambda document: document.update(models={"tiers": {"huge": "opus"}})),
+            ["models.tiers.huge: Extra inputs are not permitted"],
+            id="unknown-tier-key",
+        ),
     ],
 )
 def test_reports_one_finding_per_problem_when_config_invalid(

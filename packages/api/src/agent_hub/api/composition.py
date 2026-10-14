@@ -44,7 +44,11 @@ from agent_hub.api.ticket_snapshots import (
 )
 from agent_hub.collector.claude_hooks import ClaudeHookMapper
 from agent_hub.collector.transcript_tail import TranscriptTail
-from agent_hub.core.features.ticket_snapshots import SnapshotRequest, TrackerTransport
+from agent_hub.core.features.ticket_snapshots import (
+    SnapshotRequest,
+    TicketSnapshots,
+    TrackerTransport,
+)
 from agent_hub.core.hub_config.effective_identity import (
     GitReader,
     IdentityKey,
@@ -54,7 +58,7 @@ from agent_hub.core.hub_config.effective_identity import (
 from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hubs.hub_document import read_hub_document
-from agent_hub.core.hubs.hub_read_models import HubFilesReadModels
+from agent_hub.core.hubs.hub_read_models import HubFilesReadModels, ProjectActivitySource
 from agent_hub.core.hubs.hub_registry import (
     HubConflictError,
     HubFileReader,
@@ -80,6 +84,7 @@ from agent_hub.core.readmodels.settings_view import SettingsView
 from agent_hub.core.redaction.redact import KINDS as REDACTION_KINDS
 from agent_hub.core.sessions.pricing import PRICES, PRICES_AS_OF
 from agent_hub.core.sessions.session_label import LabelRules
+from agent_hub.core.skills.skill_reads import SkillUsageSource
 from agent_hub.core.tracker.tracker_reader import TrackerReader
 from agent_hub.generator.registered_hub_files import GitReaderFactory, HubFileSystem
 from agent_hub.hub_git.brain_change_requests import GitBrainChangeRequests
@@ -366,6 +371,36 @@ def _event_read_models(
     )
 
 
+def hub_read_models(  # noqa: PLR0913 - the hub reads' ports, all keyword-only
+    settings: ApiSettings,
+    *,
+    registry: HubRegistry,
+    reader: HubFileReader,
+    activity: ProjectActivitySource,
+    usage: SkillUsageSource,
+    ticket_snapshots: TicketSnapshots | None,
+) -> HubFilesReadModels:
+    """The hub read models of ``hub web``: ``activity`` and ``usage`` are the event read models
+    (the project cards' numbers, the Skills tab's 30-day counts)."""
+    return HubFilesReadModels(
+        registry=registry,
+        reader=reader,
+        activity=activity,
+        running_version=settings.running_version,
+        settings=SettingsView(
+            db_path=str(settings.db_path),
+            registry_path=str(settings.registry_path),
+            port=settings.port,
+            running_version=settings.running_version,
+            redaction_kinds=REDACTION_KINDS,
+            prices_as_of=PRICES_AS_OF if PRICES else None,
+        ),
+        clock=settings.clock,
+        ticket_snapshots=ticket_snapshots,
+        usage=usage,
+    )
+
+
 def build_app(
     settings: ApiSettings,
     *,
@@ -409,20 +444,12 @@ def build_app(
         tracker_reader=tracker_reader,
         clock=settings.clock,
     )
-    hubs = HubFilesReadModels(
+    hubs = hub_read_models(
+        settings,
         registry=registry,
         reader=reader,
         activity=events,
-        running_version=settings.running_version,
-        settings=SettingsView(
-            db_path=str(settings.db_path),
-            registry_path=str(settings.registry_path),
-            port=settings.port,
-            running_version=settings.running_version,
-            redaction_kinds=REDACTION_KINDS,
-            prices_as_of=PRICES_AS_OF if PRICES else None,
-        ),
-        clock=settings.clock,
+        usage=events,
         ticket_snapshots=snapshots,
     )
     hub_paths.hubs = hubs

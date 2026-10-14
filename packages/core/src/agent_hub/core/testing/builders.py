@@ -103,6 +103,17 @@ def a_conventions_document() -> dict[str, Any]:
     return document
 
 
+def a_models_document() -> dict[str, Any]:
+    """Build ``a_hub_document`` with model tiers: ``large`` and ``medium`` set, ``small`` left to
+    its default, and the researcher moved to ``large`` and the evaluator to ``small``."""
+    document = a_hub_document()
+    document["models"] = {
+        "tiers": {"medium": "sonnet", "large": "claude-opus-4-1"},
+        "agents": {"researcher": "large", "evaluator": "small"},
+    }
+    return document
+
+
 def a_guard_infra() -> dict[str, list[str]]:
     r"""Build a synthetic ``guard.infra`` value as plain JSON data; a fresh copy per call.
 

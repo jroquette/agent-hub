@@ -29,12 +29,15 @@ from agent_hub.core.readmodels.filters import Scope
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError, HubReadModels
 from agent_hub.core.readmodels.settings_view import SettingsView
 from agent_hub.core.runner.run_record import Stage
+from agent_hub.core.skills.skill_view import ItemKind, SkillUsage
 from agent_hub.core.testing.hub_fakes import (
     FakeHub,
     FakeHubFileReader,
     InMemoryHubRegistry,
     hub_json_bytes,
 )
+from agent_hub.core.testing.read_model_builders import a_skill_usage
+from agent_hub.core.testing.skill_trees import a_skills_fixture_tree, fake_hub_of
 from agent_hub.core.testing.tracker_reader_fakes import (
     CountingTrackerReader,
     InMemoryTicketSnapshots,
@@ -547,3 +550,41 @@ def test_reads_only_named_folder_when_one_feature_read() -> None:
         models.get_feature("demo", "nope")
 
     assert reader.feature_reads == [("ticketed", DEMO), ("ticketed", DEMO), ("nope", DEMO)]
+
+
+def test_reads_skill_catalog_when_project_known() -> None:
+    hub = fake_hub_of(a_skills_fixture_tree(), hub_json=hub_json_bytes(pin=RUNNING))
+    usage = a_skill_usage()
+
+    class Usage:
+        def skill_usage(self, project: str) -> SkillUsage:
+            assert project == "demo"
+            return usage
+
+    registry = InMemoryHubRegistry(clock=lambda: NOW)
+    registry.add(DEMO)
+    models = HubFilesReadModels(
+        registry=registry,
+        reader=FakeHubFileReader({DEMO: hub}),
+        activity=FakeActivity(),
+        running_version=RUNNING,
+        settings=SETTINGS,
+        clock=lambda: NOW,
+        usage=Usage(),
+    )
+
+    catalog = models.skill_catalog("demo")
+    detail = models.skill_detail("demo", kind=ItemKind.SKILL, source="hub-workflow", name="alpha")
+    reference = next(bundled for bundled in detail.files if bundled.path == "references/r.md")
+    text = models.skill_file(
+        "demo", kind=ItemKind.SKILL, source="hub-workflow", name="alpha", file_id=reference.id
+    )
+
+    assert catalog.project == "demo"
+    assert "skill/hub-workflow/alpha" in {item.id for item in catalog.items}
+    assert detail.usage is not None
+    assert detail.usage.count == 3
+    assert text.text == "# R\n\nRead on demand.\n"
+    with pytest.raises(EntityNotFoundError) as unknown:
+        models.skill_catalog("nope")
+    assert unknown.value.entity == "project"

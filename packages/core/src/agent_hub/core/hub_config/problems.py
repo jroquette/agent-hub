@@ -9,7 +9,7 @@ ROOT_PATH = "$"
 # A config file whose top level is not an object: hub.json and hub.local.json say it alike.
 NOT_AN_OBJECT_MESSAGE = "must be a JSON object"
 # A key written as is after a dot; any other key is quoted, so the path cannot be misread.
-_PLAIN_KEY = re.compile(r"[A-Za-z_$][A-Za-z0-9_$-]*")
+PLAIN_KEY = re.compile(r"[A-Za-z_$][A-Za-z0-9_$-]*")
 
 
 class ConfigProblem(NamedTuple):
@@ -29,7 +29,7 @@ def json_path(loc: Sequence[str | int]) -> str:
     for segment in loc:
         if isinstance(segment, int):
             path += f"[{segment}]"
-        elif _PLAIN_KEY.fullmatch(segment):
+        elif PLAIN_KEY.fullmatch(segment):
             path += f".{segment}" if path else segment
         else:
             path += f"[{json.dumps(segment)}]"

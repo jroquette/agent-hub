@@ -1,0 +1,176 @@
+{
+  "$defs": {
+    "AcId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+      "type": "string"
+    },
+    "Commit": {
+      "pattern": "^[0-9a-f]{7,40}$",
+      "type": "string"
+    },
+    "FindingId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$",
+      "type": "string"
+    },
+    "FindingKind": {
+      "enum": [
+        "missing",
+        "extra",
+        "test",
+        "assertion",
+        "contract",
+        "invariant",
+        "security",
+        "idempotency",
+        "quality"
+      ],
+      "type": "string"
+    },
+    "LineNumber": {
+      "maximum": 10000000,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "OneLine1000": {
+      "maxLength": 1000,
+      "minLength": 1,
+      "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]*$",
+      "type": "string"
+    },
+    "PathText": {
+      "maxLength": 512,
+      "minLength": 1,
+      "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]*$",
+      "type": "string"
+    },
+    "ReviewFinding": {
+      "additionalProperties": false,
+      "description": "One finding of a review: where it is, how serious, what is wrong and what is expected.",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/FindingId"
+        },
+        "kind": {
+          "$ref": "#/$defs/FindingKind"
+        },
+        "severity": {
+          "enum": [
+            "blocking",
+            "minor"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "path": {
+          "$ref": "#/$defs/PathText"
+        },
+        "line": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LineNumber"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "acs": {
+          "items": {
+            "$ref": "#/$defs/AcId"
+          },
+          "maxItems": 50,
+          "title": "Acs",
+          "type": "array"
+        },
+        "what": {
+          "$ref": "#/$defs/OneLine1000"
+        },
+        "expected": {
+          "$ref": "#/$defs/OneLine1000"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "severity",
+        "path",
+        "line",
+        "acs",
+        "what",
+        "expected"
+      ],
+      "title": "ReviewFinding",
+      "type": "object"
+    },
+    "ReviewRound": {
+      "maximum": 9999,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "TaskId": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+      "type": "string"
+    },
+    "TicketKey": {
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,31}$",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A reviewer's report for one review round of one task: PASS iff no blocking finding.",
+  "properties": {
+    "schema": {
+      "const": "agent-hub/review/1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "reviewer": {
+      "enum": [
+        "spec",
+        "quality"
+      ],
+      "title": "Reviewer",
+      "type": "string"
+    },
+    "ticket": {
+      "$ref": "#/$defs/TicketKey"
+    },
+    "task": {
+      "$ref": "#/$defs/TaskId"
+    },
+    "round": {
+      "$ref": "#/$defs/ReviewRound"
+    },
+    "commit": {
+      "$ref": "#/$defs/Commit"
+    },
+    "verdict": {
+      "enum": [
+        "PASS",
+        "FAIL"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    },
+    "findings": {
+      "items": {
+        "$ref": "#/$defs/ReviewFinding"
+      },
+      "maxItems": 100,
+      "title": "Findings",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema",
+    "reviewer",
+    "ticket",
+    "task",
+    "round",
+    "commit",
+    "verdict",
+    "findings"
+  ],
+  "title": "ReviewOutput",
+  "type": "object"
+}

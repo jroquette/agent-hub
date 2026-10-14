@@ -1,5 +1,6 @@
 import json
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -12,8 +13,10 @@ from agent_hub.api.composition import (
     RegisteredHubFacts,
     TicketReaders,
     default_brain_changes,
+    hub_read_models,
     ticket_snapshots,
 )
+from agent_hub.api.settings import ApiSettings
 from agent_hub.api.ticket_snapshots import REQUEST_TIMEOUT_SECONDS
 from agent_hub.core.features.ticket_snapshots import SnapshotRequest, TrackerTransport
 from agent_hub.core.hub_config.local_config import LocalConfig, LocalProject
@@ -23,7 +26,9 @@ from agent_hub.core.hubs.registered_hub import RegisteredHub
 from agent_hub.core.learnings.brain_change_requests import CommitAuthor
 from agent_hub.core.learnings.learning_ports import LearningHub
 from agent_hub.core.learnings.read_learnings import HUB_NOT_REGISTERED, UnavailableHub
+from agent_hub.core.projects.project_views import ProjectActivity
 from agent_hub.core.sessions.session_label import LabelRules
+from agent_hub.core.skills.skill_view import SkillUsage
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.core.testing.hub_fakes import (
     FakeHub,
@@ -31,6 +36,8 @@ from agent_hub.core.testing.hub_fakes import (
     InMemoryHubRegistry,
     hub_json_bytes,
 )
+from agent_hub.core.testing.read_model_builders import a_skill_usage
+from agent_hub.core.testing.skill_trees import a_skills_fixture_tree, fake_hub_of
 from agent_hub.core.testing.tracker_reader_fakes import (
     CountingTrackerReader,
     InMemoryTrackerReader,
@@ -340,3 +347,46 @@ def test_names_tracker_transport_when_hub_registered() -> None:
 
     assert facts.tracker_transport_of("demo") == "mcp"
     assert facts.tracker_transport_of("other") is None
+
+
+class _Usage:
+    def __init__(self) -> None:
+        self.asked: list[str] = []
+
+    def skill_usage(self, project: str) -> SkillUsage:
+        self.asked.append(project)
+        return a_skill_usage()
+
+
+class _Activity:
+    def project_activity(self, project: str) -> ProjectActivity:
+        raise AssertionError(project)
+
+
+def test_wires_skill_usage_when_app_built() -> None:
+    registry = InMemoryHubRegistry()
+    registry.add(HUB)
+    hub = fake_hub_of(a_skills_fixture_tree(), hub_json=_without())
+    usage = _Usage()
+    settings = ApiSettings(
+        db_path=Path("/data/agent-hub.db"),
+        registry_path=Path("/config/hubs.json"),
+        port=7420,
+        running_version=RUNNING,
+    )
+    models = hub_read_models(
+        settings,
+        registry=registry,
+        reader=FakeHubFileReader({HUB: hub}),
+        activity=_Activity(),
+        usage=usage,
+        ticket_snapshots=None,
+    )
+
+    catalog = models.skill_catalog("demo")
+
+    alpha = next(item for item in catalog.items if item.id == "skill/hub-workflow/alpha")
+    assert alpha.usage is not None
+    assert alpha.usage.count == 3
+    assert usage.asked == ["demo"]
+    assert models.settings().db_path == "/data/agent-hub.db"
