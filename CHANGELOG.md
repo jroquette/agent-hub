@@ -13,10 +13,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
-- `hub workflow list` and `hub workflow validate [NAME]` load and plan the hub's `workflows/<pack>/<name>.json` files
-  against the graph workflow format (ADR 0032): unknown keys, unknown or non-upstream node references, cycles and a bad
-  `returns`/`outcome_field` are reported as `<file>: <key>: <message>`, exit 1. YAML files and built-in packs come
-  with the strict loader and discovery (AGH-218).
+- `hub workflow list` and `hub workflow validate [NAME]` load and plan the hub's `workflows/<pack>/` files (YAML through
+  the strict loader, or JSON), then the built-ins, against the graph workflow format (ADR 0032): unknown keys, unknown
+  or non-upstream node references, argv references that are not a whole element, cycles and a bad
+  `returns`/`outcome_field` are reported as `<file>:<line>: <key>: <message>`, exit 1 (AGH-218).
 
 ## [0.14.0] - 2026-10-14
 
