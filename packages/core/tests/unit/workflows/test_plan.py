@@ -190,9 +190,9 @@ def test_reads_the_decision_when_producer_is_an_approval() -> None:
 def test_refuses_argv_element_when_reference_is_only_part_of_it(element: str) -> None:
     nodes = (shell("a", output_format=REPORT_SCHEMA), shell("b", "a", command=["x", element]))
 
-    assert ("nodes[1].command[1]", "a reference must fill the whole argv element") in problems_of(
-        *nodes
-    )
+    [(key, message)] = problems_of(*nodes)
+    assert key == "nodes[1].command[1]"
+    assert message.endswith("a reference must fill a whole element")
 
 
 def test_accepts_positional_parameter_when_a_shell_script_reads_a_reference() -> None:
@@ -278,3 +278,77 @@ def test_refuses_outcome_field_when_returns_is_absent() -> None:
 
 def test_refuses_returns_when_it_names_no_node() -> None:
     assert problems_of(shell("a"), returns="ghost") == [("returns", "no node has the id 'ghost'")]
+
+
+@pytest.mark.parametrize(
+    ("command", "index", "ending"),
+    [
+        (["$a.output", "x"], 0, "a reference cannot be the program"),
+        (["sh", "-c", "$a.output"], 2, "pass it as a positional parameter"),
+        (["bash", "-lc", "$a.output", "bash"], 2, "pass it as a positional parameter"),
+        (["sh", "-e", "-c", "-x", "$a.output"], 4, "pass it as a positional parameter"),
+    ],
+)
+def test_refuses_argv_reference_when_it_is_the_program_or_a_script(
+    command: list[str], index: int, ending: str
+) -> None:
+    [(key, message)] = problems_of(shell("a"), shell("b", "a", command=command))
+
+    assert key == f"nodes[1].command[{index}]"
+    assert message.endswith(ending)
+
+
+def test_refuses_until_bash_reference_when_it_is_partial() -> None:
+    loop = {
+        "id": "l",
+        "type": "loop",
+        "prompt": "x",
+        "max_iterations": 2,
+        "depends_on": ["a"],
+        "until_bash": ["test", "-f", "x$a.output"],
+    }
+
+    [(key, _)] = problems_of(shell("a"), loop)
+
+    assert key == "nodes[1].until_bash[2]"
+
+
+@pytest.mark.parametrize("text", ["Use $INPUTS here", "Read $a.output[0]"])
+def test_refuses_reference_when_it_is_malformed(text: str) -> None:
+    node = {"id": "b", "type": "agent", "prompt": text, "depends_on": ["a"]}
+
+    [(key, message)] = problems_of(shell("a"), node)
+
+    assert key == "nodes[1].prompt"
+    assert "malformed reference" in message
+
+
+def test_accepts_reference_when_producer_is_a_transitive_ancestor() -> None:
+    nodes = (shell("a"), shell("b", "a"), shell("c", "b", cwd="$a.output"))
+
+    assert plan_of(*nodes).layers == (("a",), ("b",), ("c",))
+
+
+def test_plans_a_long_chain_when_nodes_are_declared_in_reverse() -> None:
+    count = 1000
+    nodes = [shell(f"n{index}", f"n{index - 1}") for index in range(count - 1, 0, -1)]
+    nodes[0]["cwd"] = "$n0.output"
+    nodes.append(shell("n0"))
+
+    plan = plan_of(*nodes)
+
+    assert len(plan.layers) == count
+    assert plan.layers[0] == ("n0",)
+    assert plan.layers[-1] == (f"n{count - 1}",)
+
+
+def test_names_only_the_cycle_when_other_nodes_wait_on_it() -> None:
+    nodes = (shell("a", "b"), shell("b", "a"), shell("c", "a"), shell("d", "c"))
+
+    assert problems_of(*nodes) == [("nodes[0].depends_on", "a cycle runs through the nodes a, b")]
+
+
+def test_cuts_the_echoed_id_when_it_is_long() -> None:
+    [(_, message)] = problems_of(shell("a", "x" * 500))
+
+    assert len(message) < 120

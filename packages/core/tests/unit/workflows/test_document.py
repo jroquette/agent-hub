@@ -117,3 +117,44 @@ def test_names_every_problem_when_the_error_is_printed() -> None:
     )
 
     assert str(error) == "nodes[0].id: bad; $: x"
+
+
+@pytest.mark.parametrize("node", [{"id": "a"}, {"id": "a", "type": "wait"}])
+def test_points_at_the_type_key_when_node_type_is_missing_or_unknown(
+    node: dict[str, object],
+) -> None:
+    [(key, _)] = problems_of(a_document(nodes=[node]))
+
+    assert key == "nodes[0].type"
+
+
+@pytest.mark.parametrize(
+    ("keys", "key"),
+    [
+        ({"context": "stale"}, "nodes[0].context"),
+        ({"context": {"resume": "A"}}, "nodes[0].context.resume"),
+        ({"limits": {"max_cost_usd": "x"}}, "nodes[0].limits.max_cost_usd"),
+        ({"with": {"p": {"from": "x"}}}, "nodes[0].with.p"),
+    ],
+)
+def test_names_document_keys_only_when_a_union_value_is_wrong(
+    keys: dict[str, object], key: str
+) -> None:
+    node = {"id": "a", "type": "agent", "prompt": "x"} | keys
+
+    assert {found for found, _ in problems_of(a_document(nodes=[node]))} == {key}
+
+
+@pytest.mark.parametrize("default", [float("nan"), float("-inf")])
+def test_refuses_input_default_when_it_is_not_finite(default: float) -> None:
+    spec = {"type": "number", "default": default}
+
+    assert [key for key, _ in problems_of(a_document(inputs={"n": spec}))] == ["inputs.n"]
+
+
+def test_keeps_inputs_read_only_when_document_is_loaded() -> None:
+    document = parse_workflow(a_document(inputs={"issue": {}}))
+
+    with pytest.raises(TypeError):
+        document.inputs["other"] = document.inputs["issue"]  # type: ignore[index]
+    assert '"inputs":{"issue":' in document.model_dump_json()
