@@ -2247,6 +2247,21 @@ def test_denies_env_file_when_in_secret_env_files(evaluate: Evaluate) -> None:
     assert others == dict.fromkeys(others)
 
 
+def test_denies_key_file_when_in_readable_env_files(evaluate: Evaluate) -> None:
+    listing = (
+        "Config(hub, HubFile(guard=GuardSection(readable_env_files=('.env.key', '.env.prod.pem'))))"
+    )
+    calls = [
+        *(file("Read", {"file_path": f"/w/x/{name}"}) for name in (".env.key", ".env.prod.pem")),
+        bash("cat .env.key"),
+        bash("cat x/.env.prod.pem"),
+    ]
+
+    verdicts = verdicts_of(evaluate, [with_config(call, listing) for call in calls])
+
+    assert kinds(verdicts) == dict.fromkeys(verdicts, "deny")
+
+
 def test_denies_env_file_when_both_readable_and_secret(evaluate: Evaluate) -> None:
     calls = [file("Read", {"file_path": "/w/x/.env.x"}), bash("cat .env.x")]
 

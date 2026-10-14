@@ -715,7 +715,13 @@ def test_drops_readable_env_file_when_not_env_file_with_suffix(
     tmp_path: Path, hook_python: str, read: Reader
 ) -> None:
     document = a_hub_document()
-    document["guard"]["readable_env_files"] = [".env.local", "id_rsa", ".env", "a/.env.x"]
+    document["guard"]["readable_env_files"] = [
+        ".env.local",
+        "id_rsa",
+        ".env",
+        "a/.env.x",
+        ".env.prod.pem",
+    ]
     document["guard"]["secret_env_files"] = [".env.staging", "odd name"]
     path = write_hub_file(tmp_path, document)
 

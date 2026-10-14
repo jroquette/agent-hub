@@ -73,6 +73,7 @@ except Exception:
 Verdict = Optional[tuple[str, str]]
 
 NON_SECRET_ENV = {".env.example", ".env.development", ".env.staging", ".env.test", ".env.sample", ".env.template"}
+KEY_FILE = re.compile(r"\.(pem|key|p12|pfx)$")  # never released, whatever a list says
 SECRET_FILE = re.compile(r"(^|/)(\.env(\.[\w.-]+)?|[^/]*\.(pem|key|p12|pfx)|id_(rsa|ed25519)[^/]*)$")
 AI_ATTRIBUTION = re.compile(r"co-authored-by:\s*[^\n]*(claude|anthropic|openai|copilot|\bai\b)|generated with \[?claude|🤖", re.I)
 SECRET_TOKEN = re.compile(
@@ -259,10 +260,11 @@ def _read_text(path: str) -> str:
 
 
 def _secret_path(path: str, cfg: Config) -> bool:
-    """A secret file: guard.secret_env_files always, NON_SECRET_ENV and guard.readable_env_files never,
-    else by SECRET_FILE. Names are matched against the path's last component."""
+    """A secret file: guard.secret_env_files and key files always, NON_SECRET_ENV and
+    guard.readable_env_files never, else by SECRET_FILE. Names are matched against the path's last
+    component."""
     name = os.path.basename(path)
-    if name in cfg.secret_env_files:
+    if name in cfg.secret_env_files or KEY_FILE.search(name):
         return True
     if name in NON_SECRET_ENV or name in cfg.readable_env_files:
         return False
