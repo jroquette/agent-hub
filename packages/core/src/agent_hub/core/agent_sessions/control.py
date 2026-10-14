@@ -50,7 +50,7 @@ from agent_hub.core.agent_sessions.agent_session import (
     SessionSettings,
     WorkdirList,
 )
-from agent_hub.core.agent_sessions.diff import edit_diff, write_diff
+from agent_hub.core.agent_sessions.diff import OFF_LOOP_BYTES, edit_diff, write_diff
 from agent_hub.core.agent_sessions.driver import (
     DriverCapabilities,
     DriverError,
@@ -179,6 +179,21 @@ def _tool_call_body(call: ToolCall) -> dict[str, JsonValue]:
     elif call.name == "Write" and isinstance(content, str):
         body["diff"] = write_diff(path, content)
     return body
+
+
+def _diff_input_bytes(call: ToolCall) -> int:
+    """The UTF-8 bytes a file tool's diff compares (0 for other tools)."""
+    if call.name not in {"Edit", "Write"}:
+        return 0
+    texts = (call.input.get(key) for key in ("old_string", "new_string", "content"))
+    return sum(len(text.encode()) for text in texts if isinstance(text, str))
+
+
+async def _tool_call_record(call: ToolCall) -> dict[str, JsonValue]:
+    """``_tool_call_body``, off the event loop when its diff compares a large input."""
+    if _diff_input_bytes(call) > OFF_LOOP_BYTES:
+        return await asyncio.to_thread(_tool_call_body, call)
+    return _tool_call_body(call)
 
 
 async def _bounded(step: Awaitable[None], seconds: float) -> None:
@@ -830,7 +845,7 @@ class AgentSessionControl:
             case Exited(code=code):
                 await self._on_exit(live, code)
             case ToolCall():
-                await self._emit(live, "tool.call", _tool_call_body(event), by="driver")
+                await self._emit(live, "tool.call", await _tool_call_record(event), by="driver")
             case DriverError():
                 live.error_logged = True
                 await self._emit(live, "error", _event_body(event), by="driver")

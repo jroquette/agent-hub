@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from collections.abc import AsyncIterator, Callable, Sequence
 from datetime import timedelta
 from typing import Unpack
@@ -6,6 +7,7 @@ from typing import Unpack
 import pytest
 from pydantic import JsonValue
 
+from agent_hub.core.agent_sessions import control as control_module
 from agent_hub.core.agent_sessions.agent_session import (
     AgentSession,
     AgentSessionStatus,
@@ -15,6 +17,7 @@ from agent_hub.core.agent_sessions.agent_session import (
     SessionSettings,
 )
 from agent_hub.core.agent_sessions.control import AgentSessionCommands, AgentSessionControl
+from agent_hub.core.agent_sessions.diff import OFF_LOOP_BYTES, edit_diff
 from agent_hub.core.agent_sessions.driver import (
     Allow,
     Deny,
@@ -335,6 +338,35 @@ async def test_adds_diff_when_edit_called(make_rig: MakeRig) -> None:
     call = next(r for r in rig.records(created.id) if r.kind == "tool.call")
 
     assert call.body["diff"] == "--- a/src/app.py\n+++ b/src/app.py\n@@ -1 +1 @@\n-a = 1\n+a = 2\n"
+
+
+@pytest.mark.parametrize(
+    ("size", "off_loop"), [(OFF_LOOP_BYTES, False), (OFF_LOOP_BYTES + 1, True)]
+)
+async def test_diffs_off_loop_when_edit_input_large(
+    make_rig: MakeRig, monkeypatch: pytest.MonkeyPatch, *, size: int, off_loop: bool
+) -> None:
+    threads: list[int] = []
+
+    def recording_diff(path: str, old: str, new: str) -> str:
+        threads.append(threading.get_ident())
+        return edit_diff(path, old, new)
+
+    monkeypatch.setattr(control_module, "edit_diff", recording_diff)
+    old = "a" * (size - 1) + "\n"
+    edit = ToolCall(
+        tool_use_id="toolu_1",
+        name="Edit",
+        input={"file_path": "big.txt", "old_string": old, "new_string": ""},
+    )
+    rig = make_rig(replies={"Edit it.": (edit,)})
+    created = await rig.create("Edit it.")
+    await rig.until_status(created.id, "idle")
+
+    call = next(r for r in rig.records(created.id) if r.kind == "tool.call")
+
+    assert (threads[0] != threading.get_ident()) is off_loop
+    assert call.body["diff"] == edit_diff("big.txt", old, "")
 
 
 async def test_redacts_stored_copy_when_text_holds_token(make_rig: MakeRig) -> None:
