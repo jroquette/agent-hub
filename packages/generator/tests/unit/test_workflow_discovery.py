@@ -1,4 +1,5 @@
-"""Workflow discovery: hub packs, then built-ins, by name; pack paths kept inside the pack.
+"""Workflow discovery: hub packs, then built-ins, by name (AC-213.16, precedence hub > built-in);
+each file loaded by the strict loader (AC-213.2); pack paths kept inside the pack.
 
 TESTING.md: synthetic trees only, written under ``tmp_path``.
 """
@@ -10,6 +11,7 @@ import pytest
 
 from agent_hub.generator.workflow_discovery import (
     BUILTIN_WORKFLOWS,
+    MAX_ROOT_WORKFLOWS,
     PackPathError,
     WorkflowDiscovery,
     discover_workflows,
@@ -221,13 +223,23 @@ def test_resolves_script_when_link_stays_in_pack(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "relative", ["../workflow.yaml", "a/../../x.md", "/etc/hosts", "", "a\\b.md", "a\0b"]
+    ("relative", "match"),
+    [
+        ("../workflow.yaml", "'..'"),
+        ("a/../../x.md", "'..'"),
+        ("/etc/hosts", "not a relative path"),
+        ("", "not a relative path"),
+        ("a\\b.md", "not a relative path"),
+        ("a\0b", "not a relative path"),
+    ],
 )
-def test_refuses_path_when_it_could_escape_folder(tmp_path: Path, relative: str) -> None:
+def test_refuses_path_when_it_could_escape_folder(
+    tmp_path: Path, relative: str, match: str
+) -> None:
     _write(tmp_path / "pack/workflow.yaml", b"name: w\n")
     (tmp_path / "pack/prompts").mkdir()
 
-    with pytest.raises(PackPathError):
+    with pytest.raises(PackPathError, match=match):
         resolve_pack_file(tmp_path / "pack", "prompts", relative)
 
 
@@ -240,9 +252,84 @@ def test_refuses_path_when_link_leaves_pack(tmp_path: Path) -> None:
         resolve_pack_file(tmp_path / "pack", "prompts", "p.md")
 
 
-@pytest.mark.parametrize("relative", ["missing.md", "sub"])
-def test_refuses_path_when_not_a_regular_file(tmp_path: Path, relative: str) -> None:
+@pytest.mark.parametrize(
+    ("relative", "match"), [("missing.md", "no such file"), ("sub", "not a regular file")]
+)
+def test_refuses_path_when_not_a_regular_file(tmp_path: Path, relative: str, match: str) -> None:
     (tmp_path / "pack/prompts/sub").mkdir(parents=True)
 
-    with pytest.raises(PackPathError):
+    with pytest.raises(PackPathError, match=match):
         resolve_pack_file(tmp_path / "pack", "prompts", relative)
+
+
+def test_keeps_other_workflows_when_file_holds_control_character(hub: Path, builtin: Path) -> None:
+    _write(hub / "workflows/p/bad.yaml", b"a: \x00b\n")
+    _workflow(hub / "workflows", "p", "good")
+
+    found = _discover(hub, builtin)
+
+    assert [w.name for w in found.workflows] == ["good"]
+    [problem] = found.problems
+    assert (problem.path.name, problem.line) == ("bad.yaml", 1)
+
+
+def test_carries_key_lines_when_workflow_loads(hub: Path, builtin: Path) -> None:
+    _workflow(hub / "workflows", "p", "w")
+
+    [workflow] = _discover(hub, builtin).workflows
+
+    assert workflow.lines[("name",)] == 2
+    assert workflow.lines[("nodes", 0, "command")] == 6
+
+
+def test_reports_one_problem_when_root_holds_too_many_files(hub: Path, builtin: Path) -> None:
+    for number in range(MAX_ROOT_WORKFLOWS + 5):
+        _workflow(hub / "workflows", f"pack{number // 50}", f"w{number:04d}")
+    _workflow(builtin, "extra", "builtin-only")
+
+    found = _discover(hub, builtin)
+
+    hub_names = [w.name for w in found.workflows if w.origin == "hub"]
+    assert len(hub_names) == MAX_ROOT_WORKFLOWS
+    assert "builtin-only" in [w.name for w in found.workflows]
+    [problem] = found.problems
+    assert problem.path == hub / "workflows"
+    assert str(MAX_ROOT_WORKFLOWS) in problem.reason
+
+
+def test_reports_problem_when_hub_workflows_root_is_link(hub: Path, builtin: Path) -> None:
+    _workflow(hub, "elsewhere/p", "w")
+    os.symlink(hub / "elsewhere", hub / "workflows")
+
+    found = _discover(hub, builtin)
+
+    assert found.workflows == ()
+    [problem] = found.problems
+    assert problem.path == hub / "workflows"
+    assert "link" in problem.reason
+
+
+@pytest.mark.parametrize(
+    "content", [b"name: [\n", b"version: 1\nname: other\nnodes: []\n"], ids=["broken", "renamed"]
+)
+def test_shadows_builtin_when_hub_file_of_same_name_fails(
+    hub: Path, builtin: Path, content: bytes
+) -> None:
+    _write(hub / "workflows/p/review.yaml", content)
+    theirs = _workflow(builtin, "review", "review")
+
+    found = _discover(hub, builtin)
+
+    assert found.workflows == ()
+    assert [w.path for w in found.overridden] == [theirs]
+    assert [p.path.name for p in found.problems] == ["review.yaml"]
+
+
+def test_keeps_failed_first_claim_when_later_pack_reuses_name(hub: Path, builtin: Path) -> None:
+    _write(hub / "workflows/a/review.yaml", b"name: [\n")
+    later = _workflow(hub / "workflows", "b", "review")
+
+    found = _discover(hub, builtin)
+
+    assert found.workflows == ()
+    assert [p.path for p in found.problems][-1] == later
