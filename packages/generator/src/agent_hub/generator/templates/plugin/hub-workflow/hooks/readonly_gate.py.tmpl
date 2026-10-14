@@ -40,6 +40,7 @@ HOOK_START = time.monotonic()
 # Seconds from the hook's start; Claude Code gives SubagentStart 10 s and SubagentStop 30 s.
 START_BUDGET = 5
 STOP_BUDGET = 15
+TRANSCRIPT_BUDGET = 5  # of the stop's budget left, for reading the agent's transcript
 GIT_TIMEOUT = 4  # one git call, always within the budget left
 MAX_CHECKOUTS = 24  # per event: main checkouts first, then worktrees newest first
 MAX_STATUS_BYTES = 4 * 1024 * 1024  # of `git status` output per checkout
@@ -58,6 +59,7 @@ STALE_SECONDS = 12 * 60 * 60  # a start state older than this is replaced
 MAX_BLOCKS = 1  # per agent_id
 MAX_COMMANDS = 10  # Bash commands a block lists: the agent's last ones
 MAX_COMMAND_CHARS = 160  # per listed command, on one line
+MAX_TARGETS = 256  # distinct paths the agent's file tools named, resolved once each
 
 
 def read_event() -> dict:
@@ -588,10 +590,16 @@ def tool_uses(entry: object) -> list:
     ]
 
 
+def printable(text: str) -> str:
+    """text with each character that is not printable (a line break, an escape sequence's ESC,
+    NUL, a bidi override, a byte git could not decode) as `?`: it cannot add or rewrite lines."""
+    return "".join(c if c.isprintable() else "?" for c in text)
+
+
 def one_line(command: str) -> str:
-    """A command on one line (each run of blanks or line breaks one blank), cut to
-    MAX_COMMAND_CHARS with a final `…`."""
-    text = " ".join(command.split())
+    """A command on one line (each run of blanks or line breaks one blank, any other character
+    that is not printable `?`), cut to MAX_COMMAND_CHARS with a final `…`."""
+    text = printable(" ".join(command.split()))
     if len(text) > MAX_COMMAND_CHARS:
         return text[: MAX_COMMAND_CHARS - 1] + "\u2026"
     return text
@@ -626,13 +634,18 @@ def agent_calls(event: dict) -> tuple:
     """(real paths the agent's Write, Edit, MultiEdit and NotebookEdit named, its last
     MAX_COMMANDS Bash commands on one line each, whether its transcript was read). Only lines
     holding `"tool_use"` are parsed; a line over MAX_LINE_BYTES or not JSON is skipped; a path
-    that is not absolute names nothing."""
+    that is not absolute names nothing. The transcript is not read when it takes longer than
+    TRANSCRIPT_BUDGET (or the budget left; one line may overrun it) or names more than
+    MAX_TARGETS distinct paths: partial evidence never blocks."""
+    deadline = min(run["deadline"], time.monotonic() + TRANSCRIPT_BUDGET)
     path = agent_transcript(event)
     raw = read_transcript(path) if path is not None else None
     if raw is None:
         return set(), [], False
-    own, commands = set(), []
+    targets, commands = set(), []
     for line in raw.split(b"\n"):
+        if time.monotonic() >= deadline:
+            return set(), [], False
         if len(line) > MAX_LINE_BYTES or b'"tool_use"' not in line:
             continue
         try:
@@ -648,21 +661,28 @@ def agent_calls(event: dict) -> tuple:
             elif name in FILE_TOOLS:
                 target = tool_input.get(FILE_TOOLS[name])
                 if isinstance(target, str) and os.path.isabs(target):
-                    own.add(real("/", target))
+                    targets.add(target)
+                    if len(targets) > MAX_TARGETS:
+                        return set(), [], False
+    own = set()
+    for target in targets:
+        if time.monotonic() >= deadline:
+            return set(), [], False
+        own.add(real("/", target))
     own.discard("")
     return own, commands[-MAX_COMMANDS:], True
 
 
 def listing(paths: list) -> list:
-    """One `- <path>` line each, at most MAX_LISTED, then `- … and N more`."""
-    lines = [f"- {path}" for path in paths[:MAX_LISTED]]
+    """One `- <path>` line each (made printable), at most MAX_LISTED, then `- … and N more`."""
+    lines = [f"- {printable(path)}" for path in paths[:MAX_LISTED]]
     if len(paths) > MAX_LISTED:
         lines.append(f"- \u2026 and {len(paths) - MAX_LISTED} more")
     return lines
 
 
 def noted(notes: list) -> str:
-    return "\n".join(NOTE.format(cause) for cause in notes)
+    return "\n".join(NOTE.format(printable(cause)) for cause in notes)
 
 
 def emit_result(
