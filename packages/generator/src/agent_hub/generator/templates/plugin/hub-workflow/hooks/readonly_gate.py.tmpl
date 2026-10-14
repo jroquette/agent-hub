@@ -222,8 +222,9 @@ def blocks_done(path: Path) -> int:
 
 
 def count_block(path: Path, done: int) -> bool:
-    """Write the counter (done + 1) before the block is printed; False on any error."""
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    """Write the counter (done + 1) before the block is printed; False on any error. The first
+    is created exclusively: a stop racing another finds it there and does not block again."""
+    flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | (os.O_EXCL if not done else os.O_TRUNC)
     try:
         handle = os.open(str(path), flags, 0o600)
     except OSError:
@@ -252,12 +253,16 @@ def record(event: dict, outcomes: list) -> str:
     ]
     if not lines:
         return ""
-    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0)
+    # never waits on a FIFO; only a regular file this user owns (a shared /tmp) is appended to
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     try:
         handle = os.open(str(record_path(event.get("session_id"))), flags, 0o600)
     except OSError as error:
         return type(error).__name__
     try:
+        info = os.fstat(handle)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+            return OSError.__name__
         os.write(handle, ("\n".join(lines) + "\n").encode("utf-8", "surrogatepass"))
     except (OSError, ValueError) as error:
         return type(error).__name__
