@@ -881,6 +881,8 @@ COMMANDS = {
 DECISION_COMMANDS = {
     "guard": "plugin/hub-workflow/hooks/guard.py",
     "stop_gate": "plugin/hub-workflow/hooks/stop_gate.py",
+    # The read-only gate (AGH-141): its decisions stay in a local record until AGH-159 sends them.
+    "readonly_gate": "plugin/hub-workflow/hooks/readonly_gate.py",
 }
 # AGH-7's per-case budget: from the workspace's creation through setup, run and compare (the
 # session-scoped render is not counted). The child gets what is left, at least the floor.

@@ -842,6 +842,138 @@ def stop_gate_no_changed_code(*, ws: Any) -> Run:
     return stop_gate_workspace(ws, check_fast="echo boom; exit 3", changed=False)
 
 
+# readonly_gate (AGH-141, AC-141.15): the base plugin's researcher, declared read-only, runs in a
+# workspace of the hub copy and ``api``. Setup runs its SubagentStart (silent, the state saved in
+# ``<ROOT>/home/tmp``), makes the change and writes the transcripts; the case is its SubagentStop.
+# The stream shows the gate's files only as added or deleted (the state, holding mtimes and
+# hashes, is never rewritten after its start), and the record's ``ts`` is the frozen clock's.
+GATE_SESSION = "abcdef123456"
+GATE_AGENT = "ab12cd34"
+GATE_STATE = f"hub-readonly-{GATE_SESSION}-{GATE_AGENT}.json"
+RESEARCHER = "plugin/hub-workflow/agents/researcher.md"
+
+
+def gate_transcript_line(number: int, block: Mapping[str, Any]) -> str:
+    """One assistant (a ``tool_use`` block) or user (a ``tool_result``) JSON line."""
+    role = "assistant" if block["type"] == "tool_use" else "user"
+    message: dict[str, Any] = {"role": role, "content": [dict(block)]}
+    if role == "assistant":
+        message["id"] = f"msg_{number:02d}"
+    return json.dumps({"type": role, "message": message}) + "\n"
+
+
+def gate_call(number: int, tool: str, **tool_input: Any) -> dict[str, Any]:
+    return {"type": "tool_use", "id": f"toolu_{number:02d}", "name": tool, "input": tool_input}
+
+
+def gate_result(number: int) -> dict[str, Any]:
+    return {"type": "tool_result", "tool_use_id": f"toolu_{number:02d}", "content": "ok"}
+
+
+def gate_event(ws: Any, name: str) -> bytes:
+    main = gate_main_transcript(ws)
+    data: dict[str, Any] = {
+        "session_id": GATE_SESSION,
+        "transcript_path": str(main),
+        "cwd": str(hub_of(ws)),
+        "hook_event_name": name,
+        "agent_id": GATE_AGENT,
+        "agent_type": "researcher",
+    }
+    if name == "SubagentStop":
+        data["agent_transcript_path"] = str(
+            main.with_suffix("") / "subagents" / f"agent-{GATE_AGENT}.jsonl"
+        )
+        data["stop_hook_active"] = False
+    return json.dumps(data).encode()
+
+
+def gate_main_transcript(ws: Any) -> Path:
+    return Path(ws.root) / "home" / ".claude" / "projects" / "ws" / f"{GATE_SESSION}.jsonl"
+
+
+def readonly_gate_workspace(ws: Any, *, worktree: bool = False) -> Path:
+    """The hub copy (holding the rendered researcher), ``api`` (and its worktree ``t``), the
+    main transcript, then the researcher's SubagentStart; returns the checkout it works in."""
+    researcher = next(file for file in ws.render.files if file.path == RESEARCHER)
+    ws.hub_copy(extra_files={"brain/now.md": "# Now\n", RESEARCHER: researcher.content})
+    api = Path(ws.make_repo(ws.root / "ws" / "api", files={"x.py": "x = 1\n"}))
+    checkout = ws.add_worktree(api, "t") if worktree else api
+    main = gate_main_transcript(ws)
+    ws.write_files(main.parent, {main.name: gate_transcript_line(0, gate_call(0, "Agent"))})
+    started = ws.run_named(
+        "readonly_gate/start", stdin=gate_event(ws, "SubagentStart"), **gate_run(ws)
+    )
+    assert (started["rc"], started["stdout"], started["stderr"]) == (b"0\n", b"", b""), started
+    assert (Path(ws.root) / "home" / "tmp" / GATE_STATE).is_file()
+    return checkout
+
+
+def gate_run(ws: Any) -> Run:
+    temp = Path(ws.root) / "home" / "tmp"
+    temp.mkdir(parents=True, exist_ok=True)
+    return {"cwd": ws.root / "elsewhere", "env": {"TMPDIR": str(temp)}}
+
+
+def gate_agent_transcript(ws: Any, *blocks: Mapping[str, Any]) -> None:
+    folder = gate_main_transcript(ws).with_suffix("") / "subagents"
+    first = json.dumps({"type": "user", "message": {"role": "user", "content": "Research."}})
+    calls = (gate_transcript_line(number, block) for number, block in enumerate(blocks, 1))
+    text = "".join([first + "\n", *calls])
+    ws.write_files(folder, {f"agent-{GATE_AGENT}.jsonl": text})
+
+
+def gate_stop(ws: Any) -> Run:
+    return {"stdin": gate_event(ws, "SubagentStop"), **gate_run(ws)}
+
+
+def readonly_gate_clean_silent(*, ws: Any) -> Run:
+    # The researcher only read: silent, its state deleted.
+    api = readonly_gate_workspace(ws)
+    gate_agent_transcript(ws, gate_call(1, "Read", file_path=str(api / "x.py")), gate_result(1))
+    return gate_stop(ws)
+
+
+def readonly_gate_block_own_edit(*, ws: Any) -> Run:
+    # Its own Write changed api/x.py and nothing else ran: held once, with its Bash command as the
+    # evidence; the counter is added and the state kept for the retry.
+    api = readonly_gate_workspace(ws)
+    ws.write_files(api, {"x.py": "x = 2\n"})
+    gate_agent_transcript(
+        ws,
+        gate_call(1, "Write", file_path=str(api / "x.py"), content="x = 2\n"),
+        gate_result(1),
+        gate_call(2, "Bash", command="git -C api status\n  --short"),
+        gate_result(2),
+    )
+    return gate_stop(ws)
+
+
+def readonly_gate_block_worktree_edit(*, ws: Any) -> Run:
+    # Its Edit in api's task worktree t, and a new file there: both blocked, labelled by worktree.
+    wt = readonly_gate_workspace(ws, worktree=True)
+    ws.write_files(wt, {"x.py": "x = 3\n", "notes.md": "n\n"})
+    gate_agent_transcript(
+        ws,
+        gate_call(1, "Edit", file_path=str(wt / "x.py"), old_string="1", new_string="3"),
+        gate_result(1),
+    )
+    return gate_stop(ws)
+
+
+def readonly_gate_overlap_report(*, ws: Any) -> Run:
+    # The main session edited api/x.py while the researcher ran (a call and its result in the
+    # main transcript's window): reported to the main session, never blocked.
+    api = readonly_gate_workspace(ws)
+    ws.write_files(api, {"x.py": "x = 4\n"})
+    main = gate_main_transcript(ws)
+    with main.open("a", encoding="utf-8") as stream:
+        stream.write(gate_transcript_line(5, gate_call(5, "Edit", file_path=str(api / "x.py"))))
+        stream.write(gate_transcript_line(5, gate_result(5)))
+    gate_agent_transcript(ws, gate_call(1, "Grep", pattern="x"), gate_result(1))
+    return gate_stop(ws)
+
+
 CASES: dict[str, Builder] = {
     "post_edit/empty_stdin": post_edit_empty_stdin,
     "post_edit/missing_file": post_edit_missing_file,
@@ -887,6 +1019,10 @@ CASES: dict[str, Builder] = {
     "stop_gate/check_passes": stop_gate_check_passes,
     "stop_gate/check_fails_block": stop_gate_check_fails_block,
     "stop_gate/no_changed_code": stop_gate_no_changed_code,
+    "readonly_gate/clean_silent": readonly_gate_clean_silent,
+    "readonly_gate/block_own_edit": readonly_gate_block_own_edit,
+    "readonly_gate/block_worktree_edit": readonly_gate_block_worktree_edit,
+    "readonly_gate/overlap_report": readonly_gate_overlap_report,
 }
 # AGH-7's case count per file under test, plus AGH-46's retro_metrics/per_repo_branch and
 # AGH-200's guard and stop_gate cases (E9).
@@ -898,6 +1034,7 @@ CASES_PER_FILE = {
     "retro_metrics": 7,
     "guard": 5,
     "stop_gate": 3,
+    "readonly_gate": 4,  # AGH-141 (AC-141.15)
 }
 
 
