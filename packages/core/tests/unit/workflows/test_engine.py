@@ -20,6 +20,14 @@ from agent_hub.core.workflows.ports import NodeReply
 from agent_hub.core.workflows.run_state import RunReport, RunState
 from agent_hub.core.workflows.substitution import NodeResult
 
+INPUTS = {"mode": {"default": "off"}, "issue": {}}
+# Skips its node with cause ``condition``: ``mode`` is ``off`` unless a test gives it.
+NEVER = "$INPUTS.mode == 'on'"
+
+
+def plan_of(*nodes: dict[str, object], **top: object) -> WorkflowPlan:
+    return a_plan(*nodes, **({"inputs": INPUTS} | top))
+
 
 def shell(node_id: str, *depends_on: str, **keys: object) -> dict[str, object]:
     return {
@@ -69,7 +77,7 @@ def fails(kind: str = "exec_failed") -> NodeFailedError:
 
 
 def test_runs_layers_in_order_one_node_at_a_time_when_graph_has_layers() -> None:
-    plan = a_plan(shell("c", "a", "b"), shell("a"), shell("b"), shell("d", "c"))
+    plan = plan_of(shell("c", "a", "b"), shell("a"), shell("b"), shell("d", "c"))
 
     run = Run(plan)
 
@@ -99,18 +107,18 @@ def test_applies_trigger_rule_when_upstream_ends_vary(
     replies: dict[str, list[object]] = {}
     for index, end in enumerate(upstream):
         node_id = f"u{index}"
-        nodes.append(shell(node_id, when="1 == 2") if end == "skip" else shell(node_id))
+        nodes.append(shell(node_id, when=NEVER) if end == "skip" else shell(node_id))
         if end == "fail":
             replies[node_id] = [fails()]
     nodes.append(shell("join", "u0", "u1", trigger_rule=rule))
 
-    run = Run(a_plan(*nodes), ScriptedRunner(replies))  # type: ignore[arg-type]
+    run = Run(plan_of(*nodes), ScriptedRunner(replies))  # type: ignore[arg-type]
 
     assert run.status_of("join")[0] == expected
 
 
 def test_carries_the_failed_origin_down_the_chain_when_a_node_fails() -> None:
-    plan = a_plan(
+    plan = plan_of(
         shell("a"), shell("b", "a"), shell("c", "b"), shell("d", "c", trigger_rule="one_success")
     )
 
@@ -122,7 +130,7 @@ def test_carries_the_failed_origin_down_the_chain_when_a_node_fails() -> None:
 
 
 def test_carries_the_skipped_origin_down_the_chain_when_a_condition_skips() -> None:
-    plan = a_plan(shell("a", when="1 == 2"), shell("b", "a"), shell("c", "b"))
+    plan = plan_of(shell("a", when=NEVER), shell("b", "a"), shell("c", "b"))
 
     run = Run(plan)
 
@@ -132,7 +140,7 @@ def test_carries_the_skipped_origin_down_the_chain_when_a_condition_skips() -> N
 
 
 def test_prefers_upstream_failed_when_upstreams_failed_and_skipped() -> None:
-    plan = a_plan(shell("s", when="1 == 2"), shell("f"), shell("j", "s", "f"))
+    plan = plan_of(shell("s", when=NEVER), shell("f"), shell("j", "s", "f"))
 
     run = Run(plan, ScriptedRunner({"f": [fails()]}))
 
@@ -140,7 +148,7 @@ def test_prefers_upstream_failed_when_upstreams_failed_and_skipped() -> None:
 
 
 def test_runs_later_layers_when_a_node_fails() -> None:
-    plan = a_plan(shell("a"), shell("b"), shell("c", "b"))
+    plan = plan_of(shell("a"), shell("b"), shell("c", "b"))
 
     run = Run(plan, ScriptedRunner({"a": [fails()]}))
 
@@ -150,7 +158,7 @@ def test_runs_later_layers_when_a_node_fails() -> None:
 
 
 def test_skips_with_a_cause_when_condition_is_false_or_does_not_parse() -> None:
-    plan = a_plan(shell("a", when="$INPUTS.mode == 'x'"), shell("b", when="$INPUTS.mode < 3"))
+    plan = plan_of(shell("a", when="$INPUTS.mode == 'x'"), shell("b", when="$INPUTS.mode < 3"))
 
     run = Run(plan, inputs={"mode": "y"})
 
@@ -161,7 +169,7 @@ def test_skips_with_a_cause_when_condition_is_false_or_does_not_parse() -> None:
 
 
 def test_fails_config_when_condition_reads_a_failed_producer() -> None:
-    plan = a_plan(shell("a"), shell("b", "a", trigger_rule="all_done", when="$a.output == 'x'"))
+    plan = plan_of(shell("a"), shell("b", "a", trigger_rule="all_done", when="$a.output == 'x'"))
 
     run = Run(plan, ScriptedRunner({"a": [fails()]}))
 
@@ -170,7 +178,7 @@ def test_fails_config_when_condition_reads_a_failed_producer() -> None:
 
 
 def test_renders_references_when_a_node_reads_upstream_outputs() -> None:
-    plan = a_plan(
+    plan = plan_of(
         agent("plan", output_format=OBJECT),
         shell("use", "plan", command=["echo", "$plan.output.delivery", "$INPUTS.issue"]),
     )
@@ -183,7 +191,7 @@ def test_renders_references_when_a_node_reads_upstream_outputs() -> None:
 
 
 def test_retries_and_records_each_retry_when_failure_is_transient() -> None:
-    plan = a_plan(shell("a", retry={"max_attempts": 2, "delay": "3s"}))
+    plan = plan_of(shell("a", retry={"max_attempts": 2, "delay": "3s"}))
     runner = ScriptedRunner({"a": [fails("transient"), fails("timeout"), "done"]})
 
     run = Run(plan, runner)
@@ -203,7 +211,7 @@ def test_retries_and_records_each_retry_when_failure_is_transient() -> None:
 
 @pytest.mark.parametrize("kind", ["config", "auth", "cancelled", "fatal", "exec_failed"])
 def test_never_retries_when_kind_is_not_retried_by_default(kind: str) -> None:
-    run = Run(a_plan(shell("a")), ScriptedRunner({"a": [fails(kind), "late"]}))
+    run = Run(plan_of(shell("a")), ScriptedRunner({"a": [fails(kind), "late"]}))
 
     assert run.runner.ran() == ["a"]
     assert run.recorder.retries == []
@@ -211,7 +219,7 @@ def test_never_retries_when_kind_is_not_retried_by_default(kind: str) -> None:
 
 
 def test_fails_output_contract_without_retry_when_stdout_is_not_json() -> None:
-    plan = a_plan(shell("a", output_format=OBJECT, retry={"on_error": "all"}))
+    plan = plan_of(shell("a", output_format=OBJECT, retry={"on_error": "all"}))
 
     run = Run(plan, ScriptedRunner({"a": ["not json", "{}"]}))
 
@@ -220,7 +228,7 @@ def test_fails_output_contract_without_retry_when_stdout_is_not_json() -> None:
 
 
 def test_retries_output_contract_when_agent_opts_in() -> None:
-    plan = a_plan(agent("a", output_format=OBJECT, retry={"on_error": "all"}))
+    plan = plan_of(agent("a", output_format=OBJECT, retry={"on_error": "all"}))
 
     run = Run(plan, ScriptedRunner({"a": ['{"ok": true}', '{"ok": true, "delivery": "a"}']}))
 
@@ -228,7 +236,7 @@ def test_retries_output_contract_when_agent_opts_in() -> None:
 
 
 def test_refuses_a_non_finite_number_when_output_is_parsed() -> None:
-    plan = a_plan(agent("a", output_format={"type": "number"}))
+    plan = plan_of(agent("a", output_format={"type": "number"}))
 
     run = Run(plan, ScriptedRunner({"a": ["NaN"]}))
 
@@ -236,7 +244,7 @@ def test_refuses_a_non_finite_number_when_output_is_parsed() -> None:
 
 
 def test_passes_the_resumed_session_when_context_names_an_upstream_agent() -> None:
-    plan = a_plan(agent("a"), agent("b", "a", context={"resume": "a"}), agent("c", "b"))
+    plan = plan_of(agent("a"), agent("b", "a", context={"resume": "a"}), agent("c", "b"))
     runner = ScriptedRunner({"a": [NodeReply("x", session="s-a")]})
 
     Run(plan, runner)
@@ -245,7 +253,7 @@ def test_passes_the_resumed_session_when_context_names_an_upstream_agent() -> No
 
 
 def test_reuses_completed_nodes_and_keeps_counting_attempts_when_resumed() -> None:
-    plan = a_plan(shell("a"), shell("b", "a"), shell("c", "b", always_run=True))
+    plan = plan_of(shell("a"), shell("b", "a"), shell("c", "b", always_run=True))
     prior = RunState(
         nodes={
             "a": NodeResult("completed", "A"),
@@ -266,7 +274,7 @@ def test_reuses_completed_nodes_and_keeps_counting_attempts_when_resumed() -> No
 
 
 def test_runs_a_cached_node_again_when_its_dependency_changed_on_resume() -> None:
-    plan = a_plan(shell("a", always_run=True), shell("b", "a"), shell("c"))
+    plan = plan_of(shell("a", always_run=True), shell("b", "a"), shell("c"))
     prior = RunState(
         nodes={n: NodeResult("completed", n.upper()) for n in ("a", "b", "c")},
         attempts={"a": 1, "b": 1, "c": 1},
@@ -279,7 +287,7 @@ def test_runs_a_cached_node_again_when_its_dependency_changed_on_resume() -> Non
 
 
 def test_keeps_the_cache_when_a_rerun_dependency_gives_the_same_value() -> None:
-    plan = a_plan(shell("a", always_run=True), shell("b", "a"))
+    plan = plan_of(shell("a", always_run=True), shell("b", "a"))
     prior = RunState(nodes={"a": NodeResult("completed", "A"), "b": NodeResult("completed", "B")})
 
     run = Run(plan, ScriptedRunner({"a": ["A"]}), prior=prior)
@@ -288,7 +296,7 @@ def test_keeps_the_cache_when_a_rerun_dependency_gives_the_same_value() -> None:
 
 
 def test_reports_status_apart_from_outcome_when_returns_node_completes() -> None:
-    plan = a_plan(
+    plan = plan_of(
         agent("report", output_format=OBJECT),
         shell("after", "report"),
         returns="report",
@@ -304,7 +312,7 @@ def test_reports_status_apart_from_outcome_when_returns_node_completes() -> None
 
 
 def test_reads_a_boolean_outcome_when_outcome_field_is_boolean() -> None:
-    plan = a_plan(agent("r", output_format=OBJECT), returns="r", outcome_field="ok")
+    plan = plan_of(agent("r", output_format=OBJECT), returns="r", outcome_field="ok")
 
     run = Run(plan, ScriptedRunner({"r": ['{"ok": false, "delivery": "a"}']}))
 
@@ -312,7 +320,7 @@ def test_reads_a_boolean_outcome_when_outcome_field_is_boolean() -> None:
 
 
 def test_leaves_no_outcome_when_returns_node_did_not_complete() -> None:
-    plan = a_plan(agent("r", output_format=OBJECT, when="1 == 2"), returns="r", outcome_field="ok")
+    plan = plan_of(agent("r", output_format=OBJECT, when=NEVER), returns="r", outcome_field="ok")
 
     run = Run(plan)
 
@@ -320,7 +328,7 @@ def test_leaves_no_outcome_when_returns_node_did_not_complete() -> None:
 
 
 def test_ends_cancelled_without_running_later_nodes_when_halt_is_reached() -> None:
-    plan = a_plan(
+    plan = plan_of(
         shell("a"),
         {"id": "stop", "type": "halt", "reason": "Stopped on $a.output", "depends_on": ["a"]},
         shell("b", "stop"),
@@ -336,18 +344,18 @@ def test_ends_cancelled_without_running_later_nodes_when_halt_is_reached() -> No
 
 
 def test_refuses_to_start_when_document_holds_an_approval_node() -> None:
-    plan = a_plan(
+    plan = plan_of(
         shell("a"), {"id": "gate", "type": "approval", "message": "Ok?", "depends_on": ["a"]}
     )
     runner = ScriptedRunner()
 
-    with pytest.raises(WorkflowEngineError, match="'gate'.*approval"):
+    with pytest.raises(WorkflowEngineError, match='"gate".*approval'):
         Run(plan, runner)
     assert runner.calls == []
 
 
 def test_fills_defaults_when_inputs_are_left_out() -> None:
-    plan = a_plan(
+    plan = plan_of(
         shell("a", command=["echo", "$INPUTS.mode"]),
         inputs={"mode": {"default": "fast"}},
     )
@@ -360,12 +368,82 @@ def test_fills_defaults_when_inputs_are_left_out() -> None:
 @pytest.mark.parametrize(
     ("given", "message"),
     [
-        ({}, "the input 'issue' is required"),
-        ({"issue": "x", "other": 1}, "no input is named 'other'"),
+        ({}, 'the input "issue" is required'),
+        ({"issue": "x", "other": 1}, 'no input is named "other"'),
     ],
 )
 def test_refuses_to_start_when_inputs_do_not_fit(given: dict[str, JsonValue], message: str) -> None:
-    plan = a_plan(shell("a"), inputs={"issue": {"required": True}})
+    plan = plan_of(shell("a"), inputs={"issue": {"required": True}})
 
     with pytest.raises(WorkflowEngineError, match=message):
         Run(plan, inputs=given)
+
+
+def test_resolves_with_values_when_an_agent_binds_upstream_outputs() -> None:
+    plan = plan_of(
+        shell("a"),
+        shell("s", when=NEVER),
+        agent(
+            "b",
+            "a",
+            "s",
+            trigger_rule="all_done",
+            prompt="Use $WITH.got and $WITH.missing!",
+            **{
+                "with": {
+                    "got": {"from": "$a.output"},
+                    "missing": {"from": "$s.output", "if_skipped": "none"},
+                    "issue": ["for $INPUTS.issue"],
+                    "limits": {"n": 2, "who": "$INPUTS.issue"},
+                }
+            },
+        ),
+    )
+    runner = ScriptedRunner({"a": ["A"]})
+
+    Run(plan, runner, inputs={"issue": "AGH-1"})
+
+    call = runner.calls[1]
+    assert call.context.with_values == {
+        "got": "A",
+        "missing": "none",
+        "issue": ["for AGH-1"],
+        "limits": {"n": 2, "who": "AGH-1"},
+    }
+    assert call.prompt == "Use A and none!"
+
+
+def test_fails_config_without_running_when_argv_reads_a_failed_producer() -> None:
+    plan = plan_of(
+        shell("a"), shell("b", "a", trigger_rule="all_done", command=["echo", "$a.output"])
+    )
+    runner = ScriptedRunner({"a": [fails()]})
+
+    run = Run(plan, runner)
+
+    assert run.status_of("b") == ("failed", None, None, "config")
+    assert runner.ran() == ["a"]
+
+
+def test_records_the_error_as_detail_when_a_halt_reason_cannot_render() -> None:
+    plan = plan_of(
+        shell("a"),
+        {
+            "id": "stop",
+            "type": "halt",
+            "reason": "On $a.output",
+            "depends_on": ["a"],
+            "trigger_rule": "all_done",
+        },
+    )
+
+    run = Run(plan, ScriptedRunner({"a": [fails()]}))
+
+    assert "its producer failed" in run.recorder.end_of("stop").detail
+    assert run.report.status == "cancelled"
+
+
+def test_runs_the_node_when_its_condition_holds() -> None:
+    run = Run(plan_of(shell("a", when="$INPUTS.mode == 'off'")))
+
+    assert run.runner.ran() == ["a"]
