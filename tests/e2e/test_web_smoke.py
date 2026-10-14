@@ -25,7 +25,13 @@ DEM-7), an eval per delivery (``evals/dem-7.md``) and a review record (``reviews
 ``packages/api/tests/integration/test_tickets_route.py``), so the Tickets tab shows the plan's
 tickets, the planning view and the "Linear is not connected" notice, with the content security
 policy unchanged and no request to another host. That check runs in its own test
-(``-k tickets``); the page smoke runs every other test of ``smoke.spec.ts``.
+(``-k tickets``).
+
+AGH-164 gives the demo hub (already holding ``hub init``'s managed skills, agents and settings
+hooks) a project skill ``plugin/demo/skills/demo-check``; the live session's Skill call is its
+``/feature`` use. The Skills catalog and the ``/feature`` detail are checked in their own test
+(``-k skills``, AC-164.30): the content security policy unchanged, no request to another host,
+no console error. The page smoke runs every other test of ``smoke.spec.ts``.
 """
 
 import json
@@ -116,6 +122,16 @@ EXPECTED_CSP = (
 )
 # The Playwright test of smoke.spec.ts that opens the Tickets tab.
 TICKETS_SPEC = "Tickets tab"
+# The Playwright test of smoke.spec.ts that opens the Skills catalog and a skill's detail.
+SKILLS_SPEC = "Skills"
+# The demo hub's own skill (AGH-164), beside the managed ones ``hub init`` writes.
+DEMO_SKILL = "plugin/demo/skills/demo-check/SKILL.md"
+DEMO_SKILL_TEXT = (
+    "---\nname: demo-check\ndescription: Checks the demo export before a release.\n"
+    'argument-hint: "<issue id>"\n---\n# Demo check\n\n'
+    "1. **Test**: run `make check` in demo-api.\n"
+    "2. **Review**: ask the `evaluator` agent to read the diff.\n"
+)
 # A fake ``gh``: ``auth token`` succeeds; ``pr create`` checks the head branch is on the bare
 # ``origin`` and prints the next pull request url of ``--repo``. Synthetic: no account, no token.
 FAKE_GH = """\
@@ -381,6 +397,13 @@ def _write_brain(hub: Path) -> None:
     note.write_text(INBOX_TEXT, encoding="utf-8")
 
 
+def _write_skill(hub: Path) -> None:
+    """The project's own skill, next to the managed ones (AGH-164)."""
+    skill = hub / DEMO_SKILL
+    skill.parent.mkdir(parents=True, exist_ok=True)
+    skill.write_text(DEMO_SKILL_TEXT, encoding="utf-8")
+
+
 def _publish_hub(hub: Path, origin: HubOrigin) -> None:
     """Make ``hub`` a checkout of ``acme/demo-hub`` whose ``main`` is on the bare origin."""
     origin.git("init", "--quiet", "--initial-branch=main", cwd=hub)
@@ -554,6 +577,7 @@ def ingest_scenario(
     ops = _make_hub(installed_hub, root, project="ops", repo="ops-api")
     _write_feature(demo)
     _write_brain(demo)
+    _write_skill(demo)
     _publish_hub(demo, origin)
     now = datetime.now(UTC)
     with httpx.Client(base_url=web.url, timeout=REQUEST_SECONDS) as client:
@@ -652,7 +676,7 @@ def test_loads_pages_without_console_error_or_axe_violation_when_scenario_ingest
         tmp_path,
         origin=hub_origin,
         run=run,
-        selection=("--grep-invert", TICKETS_SPEC),
+        selection=("--grep-invert", f"{TICKETS_SPEC}|{SKILLS_SPEC}"),
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
@@ -695,3 +719,42 @@ def test_shows_plan_notice_when_feature_tickets_opened(
     assert NOT_CONNECTED_TEXT in body["notice"]
     assert [row["ref"] for row in body["tickets"]] == ["DEM-7", "T2"]
     assert body["planning"]["layers"] == [["DEM-7"], ["T2"]]
+
+
+def test_shows_skills_catalog_and_detail_when_skills_opened(
+    hub_web: RunningWeb,
+    *,
+    installed_hub: InstalledHub,
+    hub_origin: HubOrigin,
+    tmp_path: Path,
+    run: Callable[..., subprocess.CompletedProcess[str]],
+) -> None:
+    """AC-164.30: the Skills catalog of the demo hub and the ``/feature`` detail load with no
+    console error and no request to another host (smoke.spec.ts's ``watch``), axe clean, and
+    the pages and the skills routes keep the content security policy."""
+    result = _playwright(
+        hub_web,
+        installed_hub,
+        tmp_path,
+        origin=hub_origin,
+        run=run,
+        selection=("--grep", SKILLS_SPEC),
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert re.search(r"\b1 passed\b", result.stdout), result.stdout
+    assert "skipped" not in result.stdout, result.stdout
+    with httpx.Client(base_url=hub_web.url, timeout=REQUEST_SECONDS) as client:
+        pages = [
+            client.get("/projects/demo/skills"),
+            client.get("/projects/demo/skills/skill/hub-workflow/feature"),
+            client.get("/knowledge/skills"),
+        ]
+        catalog = client.get("/api/v1/projects/demo/skills")
+        detail = client.get("/api/v1/projects/demo/skills/skill/hub-workflow/feature")
+    for response in [*pages, catalog, detail]:
+        assert response.status_code == 200, response.text
+        assert response.headers["content-security-policy"] == EXPECTED_CSP
+    ids = {item["id"] for item in catalog.json()["items"]}
+    assert {"skill/hub-workflow/feature", "skill/demo/demo-check"} <= ids
+    assert detail.json()["usage"]["count"] >= 1

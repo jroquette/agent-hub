@@ -13,6 +13,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- Skills tab in `hub web` (`/projects/:project/skills`): every skill, agent and hook of the hub with what it does, a
+  copyable invocation, origin (managed by `hub sync`, project-owned or local) and invocation mode, the frontmatter, the
+  rendered text with a table of contents and a Raw view, the steps derived from the text, uses and used-by links,
+  bundled files by role, diagnostics, an approximate context cost and 30-day usage counts from the collected events.
+  Read-only and bounded; links are never followed. New routes `GET /api/v1/projects/{project}/skills` and below
+  (AGH-164).
 - `hub.json` takes an optional `models` key: `tiers` maps `small`, `medium` and `large` to model names, and `agents`
   moves a plugin agent to another tier, e.g. `{"tiers": {"large": "claude-opus-4-1"}, "agents": {"researcher":
   "large"}}`. `./hub sync` renders each agent's `model:` from it, and `hub run` takes its default model from `medium`

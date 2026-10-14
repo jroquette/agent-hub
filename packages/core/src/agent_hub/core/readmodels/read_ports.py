@@ -48,6 +48,13 @@ from agent_hub.core.sessions.session import (
     SessionSummary,
     TimelineEvent,
 )
+from agent_hub.core.skills.skill_view import (
+    BundledFileText,
+    ItemKind,
+    SkillCatalog,
+    SkillDetail,
+    SkillUsage,
+)
 
 
 class EntityNotFoundError(AgentHubError):
@@ -140,6 +147,11 @@ class EventReadModels(Protocol):
         """The badge counts of the global stream."""
         ...
 
+    def skill_usage(self, project: str) -> SkillUsage:
+        """How often each skill and agent of the project was used over the last 30 days:
+        names, counts and times only (D6, S8); a project with no event has empty maps."""
+        ...
+
 
 class HubReadModels(Protocol):
     """Reads of the hub registry and the registered hubs' files."""
@@ -200,4 +212,21 @@ class HubReadModels(Protocol):
     def brain_note(self, project: str, path: str) -> BrainNote:
         """One note of the project's hub brain; ``BrainPathError`` for a refused path,
         ``BrainNoteNotFoundError`` or ``BrainNoteTooLargeError`` when it cannot be served."""
+        ...
+
+    def skill_catalog(self, project: str) -> SkillCatalog:
+        """The project's skills, agents and hooks with their usage (AGH-164)."""
+        ...
+
+    def skill_detail(self, project: str, *, kind: ItemKind, source: str, name: str) -> SkillDetail:
+        """One item of the catalog by its id; ``EntityNotFoundError`` (entity ``skill``) when the
+        catalog has no such item."""
+        ...
+
+    def skill_file(
+        self, project: str, *, kind: ItemKind, source: str, name: str, file_id: str
+    ) -> BundledFileText:
+        """One bundled file of a skill by its server-issued id; ``EntityNotFoundError`` (entity
+        ``skill file``) for an id the detail did not issue, ``SkillFileTooLargeError`` over the
+        per-file cap."""
         ...

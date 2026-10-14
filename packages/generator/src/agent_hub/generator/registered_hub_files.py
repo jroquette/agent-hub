@@ -2,7 +2,7 @@
 
 ``hub.json`` and ``hub.local.json`` go through ``hub_config_files``, the lock and the doctor
 snapshot through ``doctor_snapshot``, feature folders through ``feature_files``, brain notes
-through ``brain_files``. The hub's
+through ``brain_files``, skills, agents and hooks through ``skill_files``. The hub's
 ``hub.local.json`` is the one in the registered folder (``hub doctor`` reads the main
 checkout's, the same folder for a hub registered at its main checkout). The developer's branch
 prefix comes from the files alone unless ``read_git`` is given: git stays with the composition
@@ -27,6 +27,7 @@ from agent_hub.core.hub_config.local_config import LOCAL_FILE, LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.hubs.hub_registry import BrainListing, UnreadHubFile
+from agent_hub.core.skills.skill_sources import DEFAULT_LIMITS, SkillLimits, SkillSources
 from agent_hub.generator.brain_files import (
     brain_file_size,
     brain_folders,
@@ -36,6 +37,7 @@ from agent_hub.generator.brain_files import (
 from agent_hub.generator.doctor_snapshot import build_doctor_snapshot, read_lock
 from agent_hub.generator.feature_files import read_feature_folder, read_feature_folders
 from agent_hub.generator.hub_config_files import UnreadFile, read_file_bytes, read_local_json
+from agent_hub.generator.skill_files import list_skill_sources, read_skill_file
 
 HUB_JSON: Final = "hub.json"
 NOW_PATH: Final = ("brain", "now.md")
@@ -151,6 +153,14 @@ class HubFileSystem:
     def brain_file_size(self, hub_path: str, path: str) -> int | None:
         """The size of the regular file ``brain/<path>``; None when absent, a link or unreadable."""
         return brain_file_size(Path(hub_path), path)
+
+    def skill_sources(self, hub_path: str, *, limits: SkillLimits = DEFAULT_LIMITS) -> SkillSources:
+        """Every entry under the hub's skill roots, stat-only, bounded, no link followed."""
+        return list_skill_sources(Path(hub_path), limits)
+
+    def read_skill_file(self, hub_path: str, path: str, *, max_bytes: int) -> bytes | UnreadHubFile:
+        """The bytes of the hub-relative ``path`` under the skill roots, or why not."""
+        return read_skill_file(Path(hub_path), path, max_bytes=max_bytes)
 
 
 def _unread_or_bytes(read: bytes | UnreadFile) -> bytes | UnreadHubFile:

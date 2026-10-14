@@ -91,6 +91,8 @@ from agent_hub.core.sessions.session_cost import fold_session_cost
 from agent_hub.core.sessions.session_files import fold_session_files
 from agent_hub.core.sessions.session_label import LabelRules, with_issue
 from agent_hub.core.sessions.session_summary import summarize_session
+from agent_hub.core.skills.skill_usage import fold_skill_usage
+from agent_hub.core.skills.skill_view import SkillUsage
 
 type SortKey = tuple[CursorKeyPart, ...]
 
@@ -370,6 +372,8 @@ class FoldedEventReadModels:
         # A session's timeline depends only on its events, so it lives as long as the mark: the
         # pages of one long session (a 5,000-event one is 25 pages) build it once.
         self._timelines: FoldMemo[str, _SortedTimeline] = FoldMemo(max_entries=32)
+        # Skill usage per (mark, second of ``now``, project), folded from that snapshot (P2).
+        self._usage: FoldMemo[tuple[int, datetime, str], SkillUsage] = FoldMemo(max_entries=8)
 
     # Loading and folding
 
@@ -739,6 +743,19 @@ class FoldedEventReadModels:
                 1
                 for learning in snapshot.learnings.values()
                 if learning.status == LearningStatus.PROPOSED
+            ),
+        )
+
+    def skill_usage(self, project: str) -> SkillUsage:
+        """How often each skill and agent of ``project`` was used over the last ``USAGE_DAYS``
+        of the snapshot's ``now``: names, counts and times only (L7 dedupe in the fold)."""
+        snapshot = self._snapshot()
+        key = (snapshot.hwm, snapshot.now.replace(microsecond=0), project)
+        return self._usage.get(
+            key,
+            hwm=snapshot.hwm,
+            compute=lambda: fold_skill_usage(
+                snapshot.by_session, project=project, now=snapshot.now
             ),
         )
 

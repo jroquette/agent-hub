@@ -506,6 +506,66 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/projects/{project}/skills": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Skill Catalog
+     * @description The project's skills, agents and hooks, with 30-day usage and third-party plugins.
+     */
+    get: operations["get_skill_catalog_api_v1_projects__project__skills_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/projects/{project}/skills/{kind}/{source}/{name}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Skill Detail
+     * @description One skill, agent or hook by its id: header fields, text, structure, relations, files.
+     */
+    get: operations["get_skill_detail_api_v1_projects__project__skills__kind___source___name__get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/projects/{project}/skills/{kind}/{source}/{name}/files/{file_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Skill File
+     * @description One bundled file of a skill by the id its detail issued; its text is inert.
+     */
+    get: operations["get_skill_file_api_v1_projects__project__skills__kind___source___name__files__file_id__get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/search": {
     parameters: {
       query?: never;
@@ -976,6 +1036,92 @@ export interface components {
       truncated: boolean;
     };
     /**
+     * BundledFile
+     * @description A file of a skill folder other than ``SKILL.md`` (S7): ``path`` is relative to the skill
+     *     folder, ``id`` server-issued; ``link`` when it is a link (never read), ``too_large`` when over
+     *     the per-file cap.
+     */
+    BundledFile: {
+      /** Id */
+      id: string;
+      /**
+       * Link
+       * @default false
+       */
+      link: boolean;
+      /** Path */
+      path: string;
+      role: components["schemas"]["FileRole"];
+      /** Size */
+      size: number;
+      /**
+       * Too Large
+       * @default false
+       */
+      too_large: boolean;
+    };
+    /**
+     * BundledFileText
+     * @description A bundled file's text, inert (S7); ``binary`` (NUL or not UTF-8) gives no text.
+     */
+    BundledFileText: {
+      /**
+       * Binary
+       * @default false
+       */
+      binary: boolean;
+      /** Id */
+      id: string;
+      /** Path */
+      path: string;
+      role: components["schemas"]["FileRole"];
+      /** Size */
+      size: number;
+      /** Text */
+      text: string | null;
+    };
+    /**
+     * CatalogItem
+     * @description One card of the catalog (D3, AC-164.7).
+     *
+     *     ``description`` is the first line, at most 200 characters; ``invocation`` is
+     *     ``/<name> <argument-hint>`` for a skill, None for an agent or a hook; ``mode`` is None for an
+     *     agent or a hook; ``usage`` is None for a hook. ``linked_from`` lists the ``.claude/`` links
+     *     that point at the item; ``active`` is false for a plugin hook whose plugin is not enabled;
+     *     ``state`` is set for hooks only.
+     */
+    CatalogItem: {
+      /**
+       * Active
+       * @default true
+       */
+      active: boolean;
+      /** Description */
+      description: string | null;
+      /** Diagnostics Count */
+      diagnostics_count: number;
+      /** Id */
+      id: string;
+      /** Invocation */
+      invocation: string | null;
+      kind: components["schemas"]["ItemKind"];
+      /**
+       * Linked From
+       * @default []
+       */
+      linked_from: string[];
+      mode: components["schemas"]["Mode"] | null;
+      /** Name */
+      name: string;
+      origin: components["schemas"]["Origin"];
+      /** Source */
+      source: string;
+      /** Source Path */
+      source_path: string;
+      state?: components["schemas"]["HookState"] | null;
+      usage: components["schemas"]["Usage"] | null;
+    };
+    /**
      * CollectorStatus
      * @description ``GET /collector/status``: what ``hub web`` received and stored since it started.
      */
@@ -1012,6 +1158,61 @@ export interface components {
       /** Transcript Refused */
       transcript_refused: number;
     };
+    /**
+     * ContextCost
+     * @description Approximate tokens (characters / 4, P8): ``always_loaded_tokens`` from the description (0
+     *     when the model cannot invoke the skill), ``on_invoke_tokens`` from the body.
+     */
+    ContextCost: {
+      /** Always Loaded Tokens */
+      always_loaded_tokens: number;
+      /**
+       * Approximate
+       * @default true
+       * @constant
+       */
+      approximate: true;
+      /** On Invoke Tokens */
+      on_invoke_tokens: number;
+    };
+    /**
+     * Diagnostic
+     * @description One informational finding on an item, in one hub-relative line (D5, P6).
+     */
+    Diagnostic: {
+      code: components["schemas"]["DiagnosticCode"];
+      /** Message */
+      message: string;
+      severity: components["schemas"]["DiagnosticSeverity"];
+    };
+    /**
+     * DiagnosticCode
+     * @description Every diagnostic an item can carry (P6).
+     * @enum {string}
+     */
+    DiagnosticCode:
+      | "name_invalid"
+      | "name_mismatch"
+      | "description_missing"
+      | "description_too_long"
+      | "frontmatter_unparseable"
+      | "link_outside_hub"
+      | "too_large"
+      | "not_regular"
+      | "not_text"
+      | "body_too_long"
+      | "reference_not_found"
+      | "unknown_key"
+      | "duplicate_name"
+      | "not_linked"
+      | "modified_since_sync"
+      | "over_budget";
+    /**
+     * DiagnosticSeverity
+     * @description How much a diagnostic matters; never blocking (D5).
+     * @enum {string}
+     */
+    DiagnosticSeverity: "info" | "warning";
     /** @enum {string} */
     EdgeSource: "plan" | "linear" | "both";
     /**
@@ -1087,6 +1288,27 @@ export interface components {
       title: string | null;
       /** Url */
       url: string | null;
+    };
+    /**
+     * ExternalPlugin
+     * @description A third-party plugin named by ``enabledPlugins`` or the marketplace (D1, P7); its content
+     *     is not in the hub and is never fetched. ``pin`` is the pinned sha or ref, or None.
+     */
+    ExternalPlugin: {
+      /**
+       * Content
+       * @default not in this hub
+       * @constant
+       */
+      content: "not in this hub";
+      /** Enabled */
+      enabled: boolean;
+      /** Marketplace */
+      marketplace: string | null;
+      /** Name */
+      name: string;
+      /** Pin */
+      pin: string | null;
     };
     /**
      * FeatureDetail
@@ -1235,6 +1457,8 @@ export interface components {
     };
     /** @enum {string} */
     FileOperation: "read" | "edited" | "created" | "written";
+    /** @enum {string} */
+    FileRole: "scripts" | "references" | "assets" | "other";
     /**
      * FindingView
      * @description A finding of a registered hub's doctor run.
@@ -1253,6 +1477,20 @@ export interface components {
       /** Rule */
       rule: string;
       severity: components["schemas"]["Severity"];
+    };
+    /**
+     * FrontmatterPair
+     * @description One frontmatter key in file order; ``known`` when Claude Code understands the key.
+     */
+    FrontmatterPair: {
+      /** Key */
+      key: string;
+      /**
+       * Known
+       * @default false
+       */
+      known: boolean;
+      value: components["schemas"]["SkillFrontmatterValue"];
     };
     FrontmatterValue: string | string[];
     /**
@@ -1344,6 +1582,27 @@ export interface components {
       v: 1;
     };
     /**
+     * HookFacts
+     * @description A hook as configured (D4): ``command`` is inert text, never run.
+     */
+    HookFacts: {
+      /** Active */
+      active: boolean;
+      /** Command */
+      command: string | null;
+      /** Event */
+      event: string;
+      /** Matcher */
+      matcher: string | null;
+      state: components["schemas"]["HookState"];
+      /** Timeout */
+      timeout: number | null;
+      /** Type */
+      type: string;
+    };
+    /** @enum {string} */
+    HookState: "synced" | "not synced";
+    /**
      * HubCreate
      * @description ``POST /hubs``: the absolute path of a hub to register.
      */
@@ -1419,6 +1678,12 @@ export interface components {
     /** @enum {string} */
     IssueStateType:
       "triage" | "backlog" | "unstarted" | "started" | "completed" | "canceled" | "duplicate";
+    /**
+     * ItemKind
+     * @description What an item is.
+     * @enum {string}
+     */
+    ItemKind: "skill" | "agent" | "hook";
     JsonValue: unknown;
     /**
      * Learning
@@ -1671,8 +1936,24 @@ export interface components {
       /** Waiting Reason */
       waiting_reason?: string | null;
     };
+    /**
+     * LockFacts
+     * @description What ``hub.lock`` says of the item's file: its ownership and, when managed, its sha256.
+     */
+    LockFacts: {
+      /** Ownership */
+      ownership: string;
+      /** Sha256 */
+      sha256: string | null;
+    };
     /** @enum {string} */
     LockState: "in_sync" | "drift" | "sync_pending" | "not_adopted";
+    /**
+     * Mode
+     * @description Who can invoke a skill (S5, L2); ``neither`` reads "Hidden" in the UI.
+     * @enum {string}
+     */
+    Mode: "user-only" | "model-only" | "both" | "neither";
     Money: string;
     /**
      * NeedsYouItem
@@ -1704,6 +1985,13 @@ export interface components {
       /** Text */
       text: string;
     };
+    /**
+     * Origin
+     * @description Who owns an item (S4): ``managed`` per ``hub.lock``, ``project-owned`` (any other plugin
+     *     folder, ``settings.project.json``), ``local`` (a real entry in ``.claude/``).
+     * @enum {string}
+     */
+    Origin: "managed" | "project-owned" | "local";
     /**
      * Outcome
      * @description How an ended session ended; ``None`` when no source says.
@@ -2056,6 +2344,19 @@ export interface components {
     RejectLearningBody: {
       /** Reason */
       reason: string;
+    };
+    /**
+     * Relation
+     * @description A link to another item of the catalog (Uses / Used by).
+     */
+    Relation: {
+      /** Id */
+      id: string;
+      kind: components["schemas"]["ItemKind"];
+      /** Name */
+      name: string;
+      /** Source */
+      source: string;
     };
     /**
      * RepoView
@@ -2463,6 +2764,181 @@ export interface components {
      */
     Severity: "error" | "warning" | "info";
     /**
+     * SkillCatalog
+     * @description A project's skills, agents and hooks in stable order (kind, name, source).
+     *
+     *     ``truncated`` says a bound stopped the listing or the reads; ``notice`` is one line for the
+     *     owner (an empty hub, a file not read), or None.
+     */
+    SkillCatalog: {
+      /**
+       * External Plugins
+       * @default []
+       */
+      external_plugins: components["schemas"]["ExternalPlugin"][];
+      /** Items */
+      items: components["schemas"]["CatalogItem"][];
+      /** Notice */
+      notice?: string | null;
+      /** Project */
+      project: string;
+      /**
+       * Truncated
+       * @default false
+       */
+      truncated: boolean;
+      /**
+       * Usage Days
+       * @default 30
+       */
+      usage_days: number;
+    };
+    /**
+     * SkillDetail
+     * @description One item's detail page (D4, AC-164.8): the card's fields and what the file says.
+     *
+     *     ``body`` is the text after the frontmatter and ``raw`` the whole file decoded as UTF-8; both
+     *     are None when the file was not read (too large, not regular, not text, over budget). A hook
+     *     has ``hook`` set and no body, structure or cost.
+     */
+    SkillDetail: {
+      /**
+       * Active
+       * @default true
+       */
+      active: boolean;
+      /**
+       * Allowed Tools
+       * @default []
+       */
+      allowed_tools: string[];
+      /** Argument Hint */
+      argument_hint?: string | null;
+      /** Body */
+      body?: string | null;
+      context_cost?: components["schemas"]["ContextCost"] | null;
+      /** Description */
+      description: string | null;
+      /** Description Full */
+      description_full?: string | null;
+      /**
+       * Diagnostics
+       * @default []
+       */
+      diagnostics: components["schemas"]["Diagnostic"][];
+      /** Diagnostics Count */
+      diagnostics_count: number;
+      /**
+       * Files
+       * @default []
+       */
+      files: components["schemas"]["BundledFile"][];
+      /**
+       * Frontmatter
+       * @default []
+       */
+      frontmatter: components["schemas"]["FrontmatterPair"][];
+      hook?: components["schemas"]["HookFacts"] | null;
+      /** Id */
+      id: string;
+      /** Invocation */
+      invocation: string | null;
+      kind: components["schemas"]["ItemKind"];
+      /**
+       * Linked From
+       * @default []
+       */
+      linked_from: string[];
+      lock?: components["schemas"]["LockFacts"] | null;
+      mode: components["schemas"]["Mode"] | null;
+      /** Model */
+      model?: string | null;
+      /** Name */
+      name: string;
+      origin: components["schemas"]["Origin"];
+      /** Raw */
+      raw?: string | null;
+      /** Source */
+      source: string;
+      /** Source Path */
+      source_path: string;
+      state?: components["schemas"]["HookState"] | null;
+      structure?: components["schemas"]["SkillStructure"] | null;
+      /**
+       * Toc
+       * @default []
+       */
+      toc: components["schemas"]["TocEntry"][];
+      /**
+       * Tools
+       * @default []
+       */
+      tools: string[];
+      usage: components["schemas"]["Usage"] | null;
+      /**
+       * Used By
+       * @default []
+       */
+      used_by: components["schemas"]["Relation"][];
+      /**
+       * Uses
+       * @default []
+       */
+      uses: components["schemas"]["Relation"][];
+      /** When To Use */
+      when_to_use?: string | null;
+    };
+    SkillFrontmatterValue:
+      | string
+      | string[]
+      | {
+          [key: string]: string;
+        };
+    /**
+     * SkillStructure
+     * @description What the body's text says it does, derived heuristically (S6): labelled so in the UI.
+     *
+     *     ``dynamic_context`` counts the ``!`…``` and ```` ```! ```` blocks that run at invocation (shown
+     *     as text, never run); ``truncated`` when steps past the bound were dropped.
+     */
+    SkillStructure: {
+      /**
+       * Agents
+       * @default []
+       */
+      agents: string[];
+      /**
+       * Commands
+       * @default []
+       */
+      commands: string[];
+      /**
+       * Dynamic Context
+       * @default 0
+       */
+      dynamic_context: number;
+      /**
+       * Gates
+       * @default []
+       */
+      gates: string[];
+      /**
+       * Skills
+       * @default []
+       */
+      skills: string[];
+      /**
+       * Steps
+       * @default []
+       */
+      steps: components["schemas"]["Step"][];
+      /**
+       * Truncated
+       * @default false
+       */
+      truncated: boolean;
+    };
+    /**
      * SourceStatus
      * @description When a source last sent an event, and whether that is recent enough.
      */
@@ -2481,6 +2957,41 @@ export interface components {
      * @enum {string}
      */
     Stage: "PICKED" | "WORKTREE" | "IMPLEMENTING" | "VERIFYING" | "PR_OPEN" | "REPORTED" | "FAILED";
+    /**
+     * Step
+     * @description One top-level ordered list item of a body (S6); ``index`` is 1-based, as ``#step-<n>``.
+     */
+    Step: {
+      /**
+       * Agents
+       * @default []
+       */
+      agents: string[];
+      /**
+       * Commands
+       * @default []
+       */
+      commands: string[];
+      /** Index */
+      index: number;
+      /**
+       * Scripts
+       * @default []
+       */
+      scripts: string[];
+      /**
+       * Skills
+       * @default []
+       */
+      skills: string[];
+      /**
+       * Tags
+       * @default []
+       */
+      tags: components["schemas"]["StepTag"][];
+      /** Title */
+      title: string;
+    };
     /** @enum {string} */
     StepKey: "pick" | "worktree" | "implement" | "verify" | "pr";
     /**
@@ -2497,6 +3008,8 @@ export interface components {
     StepState: "done" | "partial" | "current" | "pending" | "skipped" | "unknown" | "blocked";
     /** @enum {string} */
     StepStatus: "running" | "ok" | "failed";
+    /** @enum {string} */
+    StepTag: "gate" | "agent" | "command" | "script" | "human";
     /**
      * SummaryLine
      * @description One line of a session summary and the event it comes from.
@@ -2640,6 +3153,16 @@ export interface components {
       workflow: string | null;
     };
     /**
+     * TocEntry
+     * @description One heading of a body (outside fenced code); the web computes its anchor (P5).
+     */
+    TocEntry: {
+      /** Level */
+      level: number;
+      /** Text */
+      text: string;
+    };
+    /**
      * TokenUsage
      * @description Tokens counted from transcript usage, once per message id.
      */
@@ -2699,6 +3222,21 @@ export interface components {
       output: number;
       /** Turn */
       turn: number;
+    };
+    /**
+     * Usage
+     * @description How often a skill or agent was used in the window: counts and a time only (D6, ADR 0019).
+     *
+     *     ``user_count`` counts invocations typed by a person, ``model_count`` the ones the model made.
+     */
+    Usage: {
+      /** Count */
+      count: number;
+      last_used_at: components["schemas"]["ApiTimestamp"] | null;
+      /** Model Count */
+      model_count: number;
+      /** User Count */
+      user_count: number;
     };
     /** Format: date-time */
     UtcTimestamp: string;
@@ -3887,6 +4425,133 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["Page_RepoView_"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_skill_catalog_api_v1_projects__project__skills_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SkillCatalog"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_skill_detail_api_v1_projects__project__skills__kind___source___name__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        kind: components["schemas"]["ItemKind"];
+        source: string;
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SkillDetail"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_skill_file_api_v1_projects__project__skills__kind___source___name__files__file_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        kind: components["schemas"]["ItemKind"];
+        source: string;
+        name: string;
+        file_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["BundledFileText"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */
