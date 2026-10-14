@@ -18,6 +18,15 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   or non-upstream node references, argv references that are not a whole element, cycles and a bad
   `returns`/`outcome_field` are reported as `<file>:<line>: <key>: <message>`, exit 1 (AGH-218).
 
+### Fixed
+
+- Releases are annotated tags again. The tags `v0.9.0` to `v0.14.0` were pushed as lightweight tags, so `release.yml`
+  refused each one (red runs nobody acted on), and a stray `v.0.14.0` tag points at the `v0.14.0` commit; `release.yml`
+  refused it for its form. Tags are never moved or deleted, so all of them stay, and `v.0.14.0` is not a release: do not
+  pin it. This patch release is the first annotated tag since `v0.8.0`; nothing changes for a hub that pins an older
+  version. A new e2e test runs the workflow's annotation step with real git and proves a lightweight tag is refused
+  (AGH-216).
+
 ## [0.14.0] - 2026-10-14
 
 ### Added

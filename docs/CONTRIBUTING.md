@@ -205,7 +205,9 @@ The hub's `/release` skill walks these steps: it proposes the version, checks th
 3. `.github/workflows/release.yml` runs on the tag. It checks the tag form, that the tag is annotated (the remote has a
    peeled `^{}` entry for it) and that it is `v` + the cli and meta version
    (`scripts/check_release.py --tag=vX.Y.Z --peeled=…`), that its commit is on `main`, and that the pinned `uvx`
-   command prints `X.Y.Z`.
+   command prints `X.Y.Z`. Wait for this run to be green: a red run means the tag is not a release (0.9.0 to 0.14.0
+   were lightweight tags whose runs failed unnoticed). `tests/e2e/test_release_annotated_tag.py` runs this step with
+   real git and proves a lightweight tag is refused.
 
 - A wrong or failed tag is never moved or deleted: fix the cause in a PR, bump the patch version and tag that. This
   holds for a lightweight tag too: the existing ones stay as they are.
