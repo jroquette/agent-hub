@@ -11,6 +11,18 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- Drive Claude Code sessions from `hub web`: "New session" on the Sessions screen starts your own `claude` in the hub,
+  a repo or a worktree, with the hub's CLAUDE.md, hooks (the guard still applies), skills and agents; the chat sends
+  messages, answers permission prompts, interrupts, changes mode and model, resumes and forks. Install with the
+  `sessions` extra (`agent-hub[sessions]`, the Claude Agent SDK). `hub web` now prints
+  `http://127.0.0.1:<port>/?token=…`: open it once per browser, the token becomes the cookie the new
+  `/api/v1/agent-sessions` routes need (every other route is unchanged); `--open` opens it, and the session limits are
+  options with `AGENT_HUB_*` variables. These sessions' conversations are stored, redacted, in the `hub web` database
+  for 30 days after they end. Off in the Docker image. No `hub.json` change and no `hub sync` needed (ADR 0027,
+  AGH-165).
+
 ### Changed
 
 - `hub run` refuses, dry or live, an issue whose description lacks one of the six input-brief headings (Problem, Why,
