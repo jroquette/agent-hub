@@ -18,6 +18,8 @@ import re
 
 import pytest
 
+from agent_hub.core.features.feature_evals import eval_records, record_fields
+from agent_hub.core.features.feature_status import RecordHead
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing.builders import a_hub_document, a_two_team_document
 from agent_hub.generator.render_hub import render_hub
@@ -418,3 +420,33 @@ def test_acts_on_each_verdict_when_feature_step_eight_rendered(texts: dict[str, 
     positions = [verify.index(phrase) for phrase in phrases]
     assert positions == sorted(positions)
     assert positions[-1] < verify.index("**Finish**")
+
+
+def eval_example(text: str) -> str:
+    """The frontmatter example the evaluator copies: the ``yaml`` block after its **Write** rule."""
+    start = text.index("```yaml\n", text.index("**Write**")) + len("```yaml\n")
+    return text[start : text.index("```", start)]
+
+
+def test_parses_clean_frontmatter_when_eval_example_copied(texts: dict[str, str]) -> None:
+    example = eval_example(texts[EVALUATOR])
+    # The example's placeholders, filled the way an evaluator fills them.
+    copied = (
+        example.replace("<repo>#<n>", "demo#7")
+        .replace("<sha evaluated>", "0123abc")
+        .replace("<YYYY-MM-DDTHH:MM:SSZ>", "2026-10-14T12:00:00Z")
+    )
+
+    fields = record_fields(example.encode())
+    (record,) = eval_records(
+        [RecordHead(name="abc-12.md", head=copied.encode(), problem=None)], None, slug="demo"
+    )
+
+    assert record.problem is None
+    assert record.delivery == "abc-12"
+    assert fields["delivery"] == "abc-12"
+    # No inline comment survives into a value; `prs` names `<repo>#<n>`, its only `#`.
+    for name, value in fields.items():
+        for item in value if isinstance(value, list) else [value]:
+            assert " #" not in item, (name, item)
+            assert "#" not in item or (name, item) == ("prs", "<repo>#<n>"), (name, item)
