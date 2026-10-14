@@ -9,7 +9,9 @@ counts a ticket as reviewed (D4). One-team and two-team hubs render the same rul
 
 AGH-139: both reviewers and every skill that reads them speak one vocabulary (``PASS``/``FAIL``,
 ``blocking``/``minor``); a reviewer given the ticket, task, round and commit ends its reply with
-one JSON block, a review output, and stays read-only.
+one JSON block, a review output, and stays read-only. The evaluator writes and validates its own
+``evals/<delivery>.json``; ``/feature`` saves and validates each reviewer's JSON, re-asks or
+re-dispatches once on an invalid output, and gates review and ship only on validated files.
 """
 
 import re
@@ -58,6 +60,9 @@ OLD_WORDS = (
     re.compile(r"\b(?:blockers?|should-fix|nits?)\b", re.IGNORECASE),
 )
 REVIEW_SCHEMA_FILE = "`plugin/hub-workflow/schemas/review.v1.json`"
+EVAL_JSON = "brain/features/<slug>/evals/<delivery>.json"
+REVIEW_JSON = "brain/features/<slug>/reviews/<ticket>/<reviewer>-r<N>.json"
+PRINTED_LINES = "every line the command printed (the `… and N more` line included)"
 REVIEW_INPUTS = "when the caller gives `ticket`, `task`, `round` and `commit`"
 AMENDMENT_RULES = (
     "`status: approved`",
@@ -236,3 +241,93 @@ def test_reads_unified_vocabulary_when_fix_refactor_review_rendered(
     assert "minor findings go only when no blocking one is left" in review
     for path in (FIX, REFACTOR, REVIEW):
         assert old_words(texts[path]) == [], path
+
+
+def test_writes_eval_json_when_evaluator_rendered(texts: dict[str, str]) -> None:
+    text = flat(texts[EVALUATOR])
+
+    assert f"You may write only a new `{EVAL_FILE}` with its `.json` beside it" in text
+    assert f"beside the `.md`, write `{EVAL_JSON}` (the same delivery and `-rN` name" in text
+    assert "`plugin/hub-workflow/schemas/eval.v1.json`" in text
+    assert '`"schema": "agent-hub/eval/1"`' in text
+    assert (
+        "`verdict`, `delivery`, `tickets`, `acs` and `commit` equal to the `.md` frontmatter"
+        in text
+    )
+    for key in ("`results`", "`gates`", "`red_on_parent`", "`owner_steps`"):
+        assert key in text, key
+    assert "Then run `./hub validate-output eval <file>`" in text
+    # The `.md` stays the record AGH-136 reads; the JSON only joins it.
+    assert text.index(f"**Write** a new `{EVAL_FILE}`") < text.index(EVAL_JSON)
+    assert texts[EVALUATOR].count("./hub doctor --only features.tracker") == 1
+
+
+def test_rewrites_only_own_eval_json_when_evaluator_rendered(texts: dict[str, str]) -> None:
+    text = flat(texts[EVALUATOR])
+
+    assert (
+        "Until it exits 0, and before you hand back, you may rewrite only the `.json` you created"
+        " in this run" in text
+    )
+    assert "never rewrite an eval file that existed before your run" in text
+    assert "never overwrite or edit an existing eval file" in text
+
+
+def test_writes_next_pair_when_eval_json_redispatched(texts: dict[str, str]) -> None:
+    text = flat(texts[EVALUATOR])
+
+    assert (
+        "**Re-dispatch:** when `/feature` sends you back with a failed delivery and its problem"
+        " lines, run a new evaluation of the same scope and write the next free `<delivery>-rN`"
+        " pair (`.md` and `.json`); the failed pair stays as it is, as evidence." in text
+    )
+
+
+def test_validates_review_outputs_when_feature_step_seven_rendered(texts: dict[str, str]) -> None:
+    review = step(texts[FEATURE], 7)
+
+    phrases = (
+        "passing each the `ticket`, `task`, `round` (from 1) and `commit` it reviews",
+        f"Save each reply's fenced `json` block verbatim to `{REVIEW_JSON}`",
+        "run `./hub validate-output review <file>`",
+        f"re-ask that reviewer once, passing {PRINTED_LINES}",
+        "when the second reply is invalid too, stop and report to the user: no repair, no guessing",
+        "send `blocking` findings back to the implementer",
+        "weigh each `minor` one",
+        "one-line reason",
+        "the latest round of each is a validated `PASS`",
+    )
+    for phrase in phrases:
+        assert phrase in review, phrase
+    positions = [review.index(phrase) for phrase in phrases]
+    assert positions == sorted(positions)
+    assert review.index("`approved` once both reviewers pass") > positions[-2]
+    assert old_words(review) == []
+
+
+def test_gates_ship_on_eval_outputs_when_feature_step_eight_rendered(
+    texts: dict[str, str],
+) -> None:
+    verify = step(texts[FEATURE], 8)
+
+    assert f"Run `./hub validate-output eval <file>` on the evaluator's `{EVAL_JSON}`" in verify
+    assert "Act only on the validated JSON: ship only on `SHIP`" in verify
+    assert "on `SHIP-WITH-OWNER-STEPS` list its `owner_steps` to the user" in verify
+    assert "on `NO-SHIP` send its failing `results` and `gates` back to the implementer" in verify
+    assert verify.index("Act only on the validated JSON") < verify.index("**Finish**")
+
+
+def test_redispatches_once_when_eval_outputs_invalid(texts: dict[str, str]) -> None:
+    verify = step(texts[FEATURE], 8)
+
+    phrases = (
+        "When it is missing or the command exits non-zero, re-dispatch the evaluator once with"
+        f" the same scope, the failed delivery and {PRINTED_LINES}",
+        "it writes a new `<delivery>-rN` pair and the failed pair stays as evidence",
+        "validate that new `-rN` JSON",
+        "A second missing or invalid output stops: report it to the user, no ship.",
+    )
+    for phrase in phrases:
+        assert phrase in verify, phrase
+    positions = [verify.index(phrase) for phrase in phrases]
+    assert positions == sorted(positions)

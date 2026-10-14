@@ -1177,6 +1177,62 @@ def test_rewrites_feature_agents_when_hub_synced_from_older_templates(
     assert (again.exit_code, again.stdout, again.stderr) == (0, "up to date\n", "")
 
 
+# AGH-139 (AC-139.14): the seven templates that read or write agent outputs, and the two schemas.
+AGENT_OUTPUT_TEMPLATES = (
+    "plugin/hub-workflow/agents/evaluator.md",
+    "plugin/hub-workflow/agents/quality-reviewer.md",
+    "plugin/hub-workflow/agents/spec-reviewer.md",
+    "plugin/hub-workflow/skills/feature/SKILL.md",
+    "plugin/hub-workflow/skills/fix/SKILL.md",
+    "plugin/hub-workflow/skills/refactor/SKILL.md",
+    "plugin/hub-workflow/skills/review/SKILL.md",
+)
+AGENT_OUTPUT_SCHEMAS = (
+    "plugin/hub-workflow/schemas/eval.v1.json",
+    "plugin/hub-workflow/schemas/review.v1.json",
+)
+
+
+def test_rewrites_agent_outputs_templates_when_hub_synced_from_older_release(
+    demo_hub: Path, demo_hub_template: Path, run_sync: SyncRunner
+) -> None:
+    lock: dict[str, Any] = json.loads((demo_hub / "hub.lock").read_bytes())
+    for path in AGENT_OUTPUT_TEMPLATES:
+        (demo_hub / path).write_bytes(OLDER_RENDER)
+        lock["files"][path]["sha256"] = hashlib.sha256(OLDER_RENDER).hexdigest()
+    for path in AGENT_OUTPUT_SCHEMAS:
+        (demo_hub / path).unlink()
+        del lock["files"][path]
+    (demo_hub / "hub.lock").write_bytes(dump_json(lock))
+
+    result = run_sync(demo_hub)
+
+    changed = sorted(
+        [f"updated {path}" for path in AGENT_OUTPUT_TEMPLATES]
+        + [f"created {path}" for path in AGENT_OUTPUT_SCHEMAS],
+        key=lambda line: line.split(" ", 1)[1],
+    )
+    assert (result.exit_code, result.stdout, result.stderr) == (
+        0,
+        "".join(f"{line}\n" for line in [*changed, "updated hub.lock"]),
+        "",
+    )
+    for path in (*AGENT_OUTPUT_TEMPLATES, *AGENT_OUTPUT_SCHEMAS):
+        assert (demo_hub / path).read_bytes() == (demo_hub_template / path).read_bytes(), path
+    texts = {path: (demo_hub / path).read_text(encoding="utf-8") for path in AGENT_OUTPUT_TEMPLATES}
+    assert "`./hub validate-output eval <file>`" in texts[AGENT_OUTPUT_TEMPLATES[0]]
+    for reviewer in AGENT_OUTPUT_TEMPLATES[1:3]:
+        assert '`"schema": "agent-hub/review/1"`' in texts[reviewer], reviewer
+    assert "`./hub validate-output review <file>`" in texts[AGENT_OUTPUT_TEMPLATES[3]]
+    for skill in AGENT_OUTPUT_TEMPLATES[4:]:
+        assert "should-fix" not in texts[skill].lower(), skill
+    assert (demo_hub / "hub.lock").read_bytes() == (demo_hub_template / "hub.lock").read_bytes()
+    again = run_sync(demo_hub)
+    assert (again.exit_code, again.stdout, again.stderr) == (0, "up to date\n", "")
+    checked = run_sync(demo_hub, "--check")
+    assert (checked.exit_code, checked.stdout, checked.stderr) == (0, "up to date\n", "")
+
+
 SETTINGS = ".claude/settings.json"
 # AGH-114: the allows a release before it lacked, so a headless `/onboard propose` was denied.
 ONBOARD_PROPOSE_ALLOWS = [
