@@ -9,6 +9,7 @@ server's URL on a port nothing listens on. Agent definitions are written by the 
 are synthetic JSON lines.
 """
 
+import ast
 import hashlib
 import json
 import os
@@ -17,6 +18,7 @@ import subprocess
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +30,8 @@ from agent_hub.core.testing.builders import a_hub_document
 HOOK = "plugin/hub-workflow/hooks/readonly_gate.py"
 SESSION = "s1"
 STATE_PREFIX = "hub-readonly-"
+# The session's local record of outcomes (O-2).
+RECORD_NAME = f"{STATE_PREFIX}{SESSION}.jsonl"
 # Where each agent definition folder is, relative to the hub (O-1).
 HUB_AGENTS = ".claude/agents"
 PROJECT_AGENTS = "plugin/demo/agents"
@@ -252,6 +256,11 @@ def state_files(ws: GateWorkspace) -> list[str]:
 
 def state_name(agent_id: str) -> str:
     return f"{STATE_PREFIX}{SESSION}-{agent_id}.json"
+
+
+def counter_name(agent_id: str) -> str:
+    """The agent's block counter beside its state (S8)."""
+    return f"{STATE_PREFIX}{SESSION}-{agent_id}.blocks"
 
 
 def read_state(ws: GateWorkspace, agent_id: str) -> dict[str, Any]:
@@ -829,7 +838,11 @@ def test_lists_paths_when_own_tool_block_applies(
     lines = reason_lines(output)
     assert lines[0].startswith("[hub readonly-gate] researcher ")
     assert lines == [agent_head("researcher"), f"- {label}", REVERT]
-    assert state_files(gate_ws) == [state_name("a1")]  # kept for the retry
+    assert state_files(gate_ws) == [
+        counter_name("a1"),
+        state_name("a1"),
+        RECORD_NAME,
+    ]  # kept for the retry
 
 
 def test_lists_bash_evidence_when_no_overlap_block_applies(
@@ -968,7 +981,7 @@ def test_reports_when_agent_transcript_over_cap(gate: Gate, gate_ws: GateWorkspa
         "- app/a.py",
         "[hub readonly-gate] not checked (agent transcript unreadable)",
     ]
-    assert state_files(gate_ws) == []
+    assert state_files(gate_ws) == [RECORD_NAME]
 
 
 def test_skips_long_line_when_agent_transcript_line_over_cap(
@@ -1026,7 +1039,7 @@ def test_reports_when_agent_transcript_out_of_budget(gate: Gate, gate_ws: GateWo
     assert output is not None
     assert "decision" not in output
     assert output["systemMessage"].splitlines() == UNATTRIBUTED_REPORT
-    assert state_files(gate_ws) == []
+    assert state_files(gate_ws) == [RECORD_NAME]
 
 
 def test_blocks_when_agent_file_targets_over_cap(gate: Gate, gate_ws: GateWorkspace) -> None:
@@ -1054,7 +1067,7 @@ def test_blocks_when_agent_file_targets_over_cap(gate: Gate, gate_ws: GateWorksp
         EVIDENCE_HEAD,
         "- echo after",
     ]
-    assert state_files(gate_ws) == [state_name("a1")]
+    assert state_files(gate_ws) == [counter_name("a1"), state_name("a1"), RECORD_NAME]
 
 
 def test_counts_target_once_when_agent_edits_same_file_repeatedly(
@@ -1073,7 +1086,7 @@ def test_counts_target_once_when_agent_edits_same_file_repeatedly(
     )
 
     assert reason_lines(output) == [agent_head("researcher"), "- app/a.py", REVERT]
-    assert state_files(gate_ws) == [state_name("a1")]
+    assert state_files(gate_ws) == [counter_name("a1"), state_name("a1"), RECORD_NAME]
 
 
 def test_replaces_control_chars_when_block_lists_command(
@@ -1629,7 +1642,7 @@ def test_reports_when_overlap_report_from_other_state(gate: Gate, gate_ws: GateW
     lines = report_lines(run_agent(gate, "researcher", change, calls=[BASH_EDIT]))
 
     assert lines == [report_head(OTHER_STATE), "- app/a.py"]
-    assert state_files(gate_ws) == [state_name("a2")]  # this agent's state deleted, the other kept
+    assert state_files(gate_ws) == [state_name("a2"), RECORD_NAME]  # this agent's state deleted
 
 
 @pytest.mark.parametrize("case", ["stale", "other_session", "undeclared_start"])
@@ -1669,7 +1682,7 @@ def test_reports_when_overlap_report_from_main_transcript_call(
     lines = report_lines(run_agent(gate, "researcher", change, calls=[BASH_EDIT]))
 
     assert lines == [report_head(MAIN_CALL), "- app/a.py"]
-    assert state_files(gate_ws) == []
+    assert state_files(gate_ws) == [RECORD_NAME]
 
 
 def test_reports_when_overlap_report_from_main_tool_result(
@@ -1738,7 +1751,7 @@ def test_reports_when_overlap_report_main_transcript_unreadable(
     )
     assert MAIN_UNREADABLE in lines[0]
     assert lines[1:] == ["- app/a.py"]
-    assert state_files(gate_ws) == []
+    assert state_files(gate_ws) == [RECORD_NAME]
 
 
 def test_still_blocks_own_tool_paths_when_overlap_report_applies(
@@ -1766,7 +1779,11 @@ def test_still_blocks_own_tool_paths_when_overlap_report_applies(
         "- printf 'A = 2\\n' > a.py",
     ]
     assert output["systemMessage"].splitlines() == [report_head(MAIN_CALL), "- app/a.py"]
-    assert state_files(gate_ws) == [state_name("a1")]  # kept for the retry
+    assert state_files(gate_ws) == [
+        counter_name("a1"),
+        state_name("a1"),
+        RECORD_NAME,
+    ]  # kept for the retry
 
 
 def test_blocks_when_no_overlap_block_window_holds_only_agent_call(
@@ -2310,3 +2327,253 @@ def test_reports_when_overlap_report_other_subagent_result_id_unhashable(
     )
 
     assert lines == [report_head(SUBAGENTS_UNREADABLE), "- app/a.py"]
+
+
+# S8: one block per agent (AC-141.11) and the local record (AC-141.12, O-2, E-8, E-9).
+RECORD_KEYS = {"ts", "session_id", "agent_id", "agent_type", "outcome", "paths"}
+# Every module the gate may import (E-9): the stdlib it needs and the hub's own helpers.
+ALLOWED_IMPORTS = {
+    "__future__",
+    "datetime",
+    "hashlib",
+    "json",
+    "os",
+    "re",
+    "signal",
+    "stat",
+    "subprocess",
+    "sys",
+    "tempfile",
+    "time",
+    "pathlib",
+    "hubhooks",
+}
+
+
+def left_head(agent_type: str = "researcher", agent_id: str = "a1") -> str:
+    """The first line of the "left changed" message for ``agent_type`` (agent ``agent_id``)."""
+    return f"[hub readonly-gate] {agent_type} (agent {agent_id}) finished and left these changed:"
+
+
+def record_lines(ws: GateWorkspace) -> list[dict[str, Any]]:
+    """The record's lines, each a JSON object."""
+    text = (ws.tmp / RECORD_NAME).read_text(encoding="utf-8")
+    assert text.endswith("\n")
+    return [json.loads(line) for line in text.splitlines()]
+
+
+def block_own_edit(gate: Gate) -> tuple[Path, Path]:
+    """Start the researcher ``a1``, let its own Edit change ``app/a.py``, stop: held once.
+
+    Returns the main transcript and the agent's, for the stops that follow.
+    """
+    ws = gate.ws
+    output = run_agent(gate, "researcher", lambda: change_app(ws), calls=[app_edit(ws)])
+    assert reason_lines(output) == [agent_head("researcher"), "- app/a.py", REVERT]
+    assert state_files(ws) == [counter_name("a1"), state_name("a1"), RECORD_NAME]
+    return main_path(ws), main_path(ws).with_suffix("") / "subagents" / "agent-a1.jsonl"
+
+
+def stop_again(gate: Gate, main: Path, agent: Path) -> dict[str, Any] | None:
+    return gate.stop("researcher", agent_id="a1", transcript_path=main, agent_transcript_path=agent)
+
+
+def test_reports_left_changed_when_no_loop_after_block(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """AC-141.11: the stop after a block never blocks again; a path still changed is reported as
+    left changed, and the state and the counter are deleted."""
+    main, agent = block_own_edit(gate)
+
+    output = stop_again(gate, main, agent)
+
+    assert output == {"systemMessage": "\n".join([left_head(), "- app/a.py"])}
+    assert state_files(gate_ws) == [RECORD_NAME]
+
+
+def test_stays_silent_when_no_loop_after_revert(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """AC-141.11: the agent reverted after its block: the next stop is silent and cleans up."""
+    main, agent = block_own_edit(gate)
+    (gate_ws.app / "a.py").write_text("A = 1\n", encoding="utf-8")
+
+    assert stop_again(gate, main, agent) is None
+
+    assert state_files(gate_ws) == [RECORD_NAME]
+    assert [line["outcome"] for line in record_lines(gate_ws)] == ["block"]
+
+
+def test_reports_when_no_loop_stop_hook_active(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """AC-141.11: a first stop Claude Code marks ``stop_hook_active`` is never held: the change
+    the agent's own Edit made is reported as left changed."""
+    main, agent = transcripts(gate_ws, agent_id="a1", calls=[app_edit(gate_ws)])
+    assert gate.start("researcher", agent_id="a1", transcript_path=main) is None
+    change_app(gate_ws)
+
+    output = gate.run(
+        "SubagentStop",
+        "researcher",
+        agent_id="a1",
+        stop_hook_active=True,
+        transcript_path=main,
+        agent_transcript_path=agent,
+    )
+
+    assert output == {"systemMessage": "\n".join([left_head(), "- app/a.py"])}
+    assert state_files(gate_ws) == [RECORD_NAME]
+
+
+def test_never_blocks_when_no_loop_third_stop(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """AC-141.11: a third stop finds no state: a note, never a block."""
+    main, agent = block_own_edit(gate)
+    assert stop_again(gate, main, agent) is not None
+
+    output = stop_again(gate, main, agent)
+
+    assert output == {"systemMessage": "[hub readonly-gate] not checked (no start snapshot)"}
+    assert state_files(gate_ws) == [RECORD_NAME]
+
+
+def test_never_blocks_when_no_loop_counter_unreadable(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """AC-141.11: a counter that cannot be read (a folder) counts as a block already held."""
+
+    def change() -> None:
+        (gate_ws.tmp / counter_name("a1")).mkdir()
+        change_app(gate_ws)
+
+    output = run_agent(gate, "researcher", change, calls=[app_edit(gate_ws)])
+
+    assert output == {"systemMessage": "\n".join([left_head(), "- app/a.py"])}
+    assert state_files(gate_ws) == [counter_name("a1"), RECORD_NAME]
+    assert [line["outcome"] for line in record_lines(gate_ws)] == ["left_changed"]
+
+
+@pytest.mark.parametrize("outcome", ["block", "report", "left_changed"])
+def test_appends_one_line_when_record_outcome_written(
+    gate: Gate, gate_ws: GateWorkspace, outcome: str
+) -> None:
+    """AC-141.12: each outcome appends one JSON line to ``$TMPDIR/hub-readonly-<session>.jsonl``:
+    exactly the ISO time, the ids, the agent type, the outcome and the paths by their labels."""
+    if outcome == "block":
+        block_own_edit(gate)
+    elif outcome == "report":
+
+        def change() -> None:
+            append_line(main_path(gate_ws), main_call("Bash", {"command": "make check"}))
+            change_app(gate_ws)
+
+        assert report_lines(run_agent(gate, "researcher", change, calls=[BASH_EDIT])) == [
+            report_head(MAIN_CALL),
+            "- app/a.py",
+        ]
+    else:
+        main, agent = block_own_edit(gate)
+        (gate_ws.tmp / RECORD_NAME).unlink()  # only the left_changed line is looked at
+        assert stop_again(gate, main, agent) is not None
+
+    lines = record_lines(gate_ws)
+
+    assert len(lines) == 1
+    line = lines[0]
+    assert set(line) == RECORD_KEYS
+    assert {key: line[key] for key in RECORD_KEYS - {"ts"}} == {
+        "session_id": SESSION,
+        "agent_id": "a1",
+        "agent_type": "researcher",
+        "outcome": outcome,
+        "paths": ["app/a.py"],
+    }
+    assert line["ts"].endswith("Z")
+    stamp = datetime.fromisoformat(line["ts"][:-1] + "+00:00")
+    assert abs(time.time() - stamp.timestamp()) < 600
+
+
+def test_appends_line_per_outcome_when_record_block_and_report(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """E-8: one stop that blocks one path and reports another appends one line per outcome."""
+    written = gate_ws.app / "w.py"
+    calls = [("Write", {"file_path": str(written), "content": "W = 1\n"}), BASH_EDIT]
+
+    def change() -> None:
+        append_line(main_path(gate_ws), main_call("Read", {"file_path": str(gate_ws.app)}))
+        written.write_text("W = 1\n", encoding="utf-8")
+        change_app(gate_ws)
+
+    output = run_agent(gate, "researcher", change, calls=calls)
+
+    assert output is not None
+    assert output["decision"] == "block"
+    assert [(line["outcome"], line["paths"]) for line in record_lines(gate_ws)] == [
+        ("block", ["app/w.py"]),
+        ("report", ["app/a.py"]),
+    ]
+
+
+def test_caps_paths_when_record_line_over_limit(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """E-8: a record line holds at most 200 paths, the first ones by label."""
+    names = [f"f{number:03d}.txt" for number in range(205)]
+
+    def change() -> None:
+        for name in names:
+            (gate_ws.app / name).write_text("x\n", encoding="utf-8")
+
+    block_lines(run_agent(gate, "researcher", change, calls=[BASH_EDIT]))
+
+    (line,) = record_lines(gate_ws)
+    assert line["paths"] == [f"app/{name}" for name in names[:200]]
+
+
+def test_keeps_no_content_when_record_written(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """AC-141.12: the record holds labels and ids only: neither a changed file's content nor a
+    command from the agent's transcript."""
+    content_marker = "CONTENT-MARKER-7f3a"
+    command_marker = "COMMAND-MARKER-91c2"
+    calls = [("Bash", {"command": f"echo {command_marker} > a.py"})]
+
+    def change() -> None:
+        (gate_ws.app / "a.py").write_text(f"{content_marker}\n", encoding="utf-8")
+
+    lines = block_lines(run_agent(gate, "researcher", change, calls=calls))
+    assert f"- echo {command_marker} > a.py" in lines  # control: the command did reach the block
+
+    text = (gate_ws.tmp / RECORD_NAME).read_text(encoding="utf-8")
+    assert content_marker not in text
+    assert command_marker not in text
+    assert [line["paths"] for line in record_lines(gate_ws)] == [["app/a.py"]]
+
+
+def test_imports_no_network_module_when_record_source_read(
+    rendered_hub: Callable[[HubConfig], Path], demo_config: HubConfig
+) -> None:
+    """E-9: the rendered gate imports only allowed stdlib modules and the hub's helpers (no
+    ``socket``, ``http``, ``urllib``, ``ssl`` or ``event_sensor``), and never ``__import__``."""
+    source = (rendered_hub(demo_config) / HOOK).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            assert node.level == 0
+            assert node.module is not None
+            imported.add(node.module.split(".")[0])
+
+    assert imported <= ALLOWED_IMPORTS, imported - ALLOWED_IMPORTS
+    assert {"json", "hubhooks", "datetime"} <= imported  # control: the walk saw the imports
+    names = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    assert not names & {"__import__", "importlib", "eval", "exec"}
+
+
+def test_notes_not_recorded_when_record_unwritable(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """AC-141.12: a record that cannot be appended to (its path is a folder) still blocks, with
+    a ``not recorded`` note beside the block."""
+
+    def change() -> None:
+        (gate_ws.tmp / RECORD_NAME).mkdir()
+        change_app(gate_ws)
+
+    output = run_agent(gate, "researcher", change, calls=[app_edit(gate_ws)])
+
+    assert output is not None
+    assert output["decision"] == "block"
+    assert output["reason"].splitlines() == [agent_head("researcher"), "- app/a.py", REVERT]
+    assert output["systemMessage"] == "[hub readonly-gate] not recorded (IsADirectoryError)"
+    assert state_files(gate_ws) == [counter_name("a1"), state_name("a1"), RECORD_NAME]
