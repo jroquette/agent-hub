@@ -25,6 +25,7 @@ dev = [
     "ruff>=0.15.8",
     # mypy --strict reads PyYAML (a generator dependency) through its stubs.
     "types-pyyaml>=6.0.12",
+    "types-jsonschema>=4.26",
 ]
 
 [tool.ruff]
