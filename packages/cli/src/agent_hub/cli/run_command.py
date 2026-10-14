@@ -14,11 +14,11 @@ human, and 1 on a failure or a tracker report that failed (ADR 0030).
 import contextlib
 import math
 import os
-import re
 from enum import StrEnum
 from typing import Annotated, Final
 
 import typer
+from typer._click.core import ParameterSource
 
 from agent_hub.cli.command_exits import fail
 from agent_hub.cli.effective_config import effective_with_prefix_or_fail
@@ -39,6 +39,11 @@ from agent_hub.cli.run_steps import LiveRun
 from agent_hub.cli.tracker_client import missing_key_line, resolve_tracker_client, transport_line
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.hub_config.model_tiers import (
+    DEFAULT_TIER_MODELS,
+    MODEL_NAME_PATTERN,
+    RUN_TIER,
+)
 from agent_hub.core.hub_config.team_keys import team_of, teams_text
 from agent_hub.core.runner.brief import check_brief, missing_brief_reason
 from agent_hub.core.runner.report_writes import call_line, success_writes
@@ -49,8 +54,8 @@ from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, Issue, Track
 COMMAND: Final = "run"
 DEFAULT_MAX_TURNS: Final = 40
 DEFAULT_BUDGET_USD: Final = 3.0
-DEFAULT_MODEL: Final = "sonnet"
-MODEL_PATTERN: Final = re.compile(r"[A-Za-z0-9._-]{1,64}")
+# The implementing session's model when hub.json sets no ``models.tiers.medium`` (AGH-180).
+DEFAULT_MODEL: Final = DEFAULT_TIER_MODELS[RUN_TIER]
 _PREFIX: Final = f"hub {COMMAND}"
 # What a dry run shows for what only a live run knows.
 DRY_RUN_TEXT: Final = "(dry run)"
@@ -83,7 +88,7 @@ def _budget(value: float) -> float:
 
 
 def _model(value: str) -> str:
-    if not MODEL_PATTERN.fullmatch(value):
+    if not MODEL_NAME_PATTERN.fullmatch(value):
         msg = "use 1 to 64 of A-Z a-z 0-9 . _ -"
         raise typer.BadParameter(msg)
     return value
@@ -110,7 +115,12 @@ def run(
         typer.Option("--budget", callback=_budget, help="USD cap of the implementing session."),
     ] = DEFAULT_BUDGET_USD,
     model: Annotated[
-        str, typer.Option("--model", callback=_model, help="Model of the implementing session.")
+        str,
+        typer.Option(
+            "--model",
+            callback=_model,
+            help="Model of the implementing session; unset, hub.json's models.tiers.medium.",
+        ),
     ] = DEFAULT_MODEL,
     start: Annotated[
         RunStart,
@@ -132,6 +142,9 @@ def run(
     if missing is not None:
         fail(missing)
     typer.echo(transport_line(config), err=True)
+    if context.get_parameter_source("model") is ParameterSource.DEFAULT:
+        # Not given: the tier's model, the default itself while hub.json sets none (AGH-180).
+        model = hub_config.models.model_for(RUN_TIER)
     options = RunOptions(
         live=live, max_turns=max_turns, budget=budget, model=model, start=start, effort=effort
     )

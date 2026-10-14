@@ -19,7 +19,10 @@ kickoff and gets a Conventions block in ``AGENTS.md``; an unconfigured hub keeps
 (AGH-57). The README's Join section names the tracker credential by ``tracker.transport`` and has
 a cloud subsection only with ``modules.cloud`` (AGH-51). ``/feature``'s step 0 names the input
 brief's sections and placeholders from core, read at render time so core stays their one source
-(AGH-138).
+(AGH-138). Each plugin agent's ``model:`` names its default tier, ``@@{model_<tier>}``, resolved
+from ``models.tiers``; ``agent_model_overlay`` maps every tier key of one agent's file to the
+tier ``models.agents`` gives it. A hub without ``models`` renders the models the templates pinned
+before tiers (AGH-180).
 """
 
 import re
@@ -28,6 +31,7 @@ from typing import Final
 
 from agent_hub.core.doctor.snapshot import module_makefiles
 from agent_hub.core.hub_config.model import PREFIX_PLACEHOLDER, HubConfig
+from agent_hub.core.hub_config.model_tiers import TIERS, Tier
 from agent_hub.core.hub_config.platform_repository import (
     DEFAULT_PLATFORM_REPOSITORY,
     PLATFORM_REPOSITORY_FORM,
@@ -53,6 +57,9 @@ _LIST_SEPARATOR = ", "
 MODULE_MAKEFILE_PATTERN: Final = "mk/<id>.mk"
 _MARKDOWN_WIDTH: Final = 120
 _MARKDOWN_INDENT: Final = "  "
+# The rendered folder of the plugin's agents, whose files ``models.agents`` names by stem.
+AGENTS_FOLDER: Final = "plugin/hub-workflow/agents/"
+_AGENT_SUFFIX: Final = ".md"
 # ``AGENTS.md``'s worktree base once a repo sets its own branch; each repo's follows (AGH-46).
 _PER_REPO_BASE: Final = "`origin/<the repo's default branch>`"
 # ``AGENTS.md`` rule 1's author: hub.json's, or each developer's (AGH-65). Line breaks keep the
@@ -158,6 +165,7 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
         **_conventions_texts(config),
         **_join_texts(config),
         **_brief_texts(),
+        **_model_texts(config),
         "commit_author": (
             _USER_AUTHOR
             if project.author_name is not None and project.author_email is not None
@@ -166,6 +174,31 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
         "prefix_note": "" if project.branch_prefix is not None else _PREFIX_NOTE,
         "identity_email": _USER_EMAIL if project.author_email is not None else _DEVELOPER_EMAIL,
     }
+
+
+def _tier_key(tier: Tier) -> str:
+    return f"model_{tier}"
+
+
+def _model_texts(config: HubConfig) -> dict[str, str]:
+    """Each tier's model name, as the agents' ``model:`` lines name it (AGH-180)."""
+    return {_tier_key(tier): config.models.model_for(tier) for tier in TIERS}
+
+
+def agent_model_overlay(config: HubConfig, path: str) -> dict[str, str]:
+    """The tier keys of the plugin agent rendered at ``path``, when ``models.agents`` sets its tier.
+
+    Every tier key maps to that tier's model, so the template's own tier is replaced whichever it
+    is; empty for any other file and for an agent that keeps its template's tier. The keys appear
+    only on an agent's ``model:`` line, so nothing else in the file changes (AGH-180, spec D3).
+    """
+    if not (path.startswith(AGENTS_FOLDER) and path.endswith(_AGENT_SUFFIX)):
+        return {}
+    tier = config.models.agent_tier(path.removeprefix(AGENTS_FOLDER).removesuffix(_AGENT_SUFFIX))
+    if tier is None:
+        return {}
+    model = config.models.model_for(tier)
+    return dict.fromkeys(map(_tier_key, TIERS), model)
 
 
 def _brief_texts() -> dict[str, str]:
