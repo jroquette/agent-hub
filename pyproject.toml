@@ -24,6 +24,8 @@ dev = [
     "pytest-xdist>=3.8",
     "ruff>=0.15.8",
     "types-jsonschema>=4.26",
+    # mypy --strict reads PyYAML (a generator dependency) through its stubs.
+    "types-pyyaml>=6.0.12",
 ]
 
 [tool.ruff]
