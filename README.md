@@ -431,8 +431,8 @@ Hooks are small scripts Claude Code runs on its own at fixed moments; you never 
   `guard.infra`, `terraform apply|destroy|import`, any `aws` subcommand, `pulumi up|destroy`, `kubectl apply|delete`,
   `cdk deploy|destroy`; with it, see *Infra commands* below;
 - reading secret files (`.env*` other than `.env.example`, `.env.sample`, `.env.template`, `.env.test`,
-  `.env.development` and `.env.staging`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, SSH private keys), from any tool or
-  command;
+  `.env.development`, `.env.staging` and the names in `guard.readable_env_files`, plus the names in
+  `guard.secret_env_files` always, `*.pem`, `*.key`, `*.p12`, `*.pfx`, SSH private keys), from any tool or command;
 - AI attribution in commits, tags and pull requests, and `claude/…` branches;
 - touching the `.git` internals, and reading or changing any path in `guard.deny_paths`.
 
@@ -494,11 +494,13 @@ to keep a blanket deny. The sandbox still limits the network: add your cloud API
 
 Everything else goes through Claude Code's normal permission rules.
 
-**Configuration.** The lists come from `hub.json`: `guard.ask_before_edit`, `guard.deny_paths` and `guard.deny_hosts`,
+**Configuration.** The lists come from `hub.json`: `guard.ask_before_edit`, `guard.deny_paths`, `guard.deny_hosts`,
+`guard.readable_env_files` and `guard.secret_env_files`,
 plus `project.default_branch` and each `repos[].default_branch`. The branch hint's prefix is the developer's
 (`hub.local.json`, else `hub.json`, else git config; see [developer-identity](docs/design/developer-identity.md)).
 An entry `@hub/<path>` means
-`<path>` inside the hub. A `hub.json` named by `$HUB_CONFIG` can only add entries to these lists, never remove them.
+`<path>` inside the hub. A `hub.json` named by `$HUB_CONFIG` can only add entries to these lists, never remove them, and its
+`guard.readable_env_files` is ignored (only the hub's own releases a file).
 Only the hub's own `hub.json` turns `guard.infra` on and sets `guard.infra.allow`: `hub.local.json` cannot set it, and
 a `$HUB_CONFIG` file can only add `guard.infra.prod_markers`.
 
@@ -706,6 +708,8 @@ Schema (`hub.schema.json`) for editors. Unknown keys are errors; keys starting w
 | `guard.ask_before_edit` | no | `[]` | Paths where the guard asks before an edit |
 | `guard.deny_paths` | no | `[]` | Paths the guard never lets the agent read or edit |
 | `guard.deny_hosts` | no | `[]` | Hosts the guard blocks network calls to |
+| `guard.readable_env_files` | no | `[]` | Env file names (`.env.<suffix>`, e.g. `.env.local`) the guard lets agents read and edit; `.env` itself, paths and key files are rejected; `hub doctor` lists them |
+| `guard.secret_env_files` | no | `[]` | Env file names the guard always denies, even `.env.staging` or another name of its fixed non-secret list; not also in `readable_env_files` |
 | `guard.infra` | no | absent | Present, even `{}`, the guard classifies infra commands by environment (see the guard section) and `.claude/settings.json` drops its `terraform *` and `aws *` denies (after `./hub sync`); absent, the fixed infra rule |
 | `guard.infra.allow` | no | `[]` | Python `re` patterns for allowed environments, e.g. `(?<![^ \t])--profile[= ]demo-dev(?![^ \t])` and `^[ \t]*AWS_PROFILE=demo-dev(?=[ \t])`; bound each by a space or tab (an `AWS_PROFILE` prefix by the part's start), since `\b` also matches `demo-dev.x` or `>--profile=demo-dev` and `\s` also matches a carriage return the shell does not split on |
 | `guard.infra.prod_markers` | no | `[]` | Python `re` patterns that mark production; a match anywhere in an infra command blocks it |

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PreToolUse guard for a hub workspace (hub.json + sibling repos).
 
-deny  = hard block (secrets, force-push / push to the default branch, curl|sh, docker volumes, infra commands
+deny  = hard block (secrets (guard.secret_env_files added, guard.readable_env_files released), force-push / push to the default branch, curl|sh, docker volumes, infra commands
         (with guard.infra: a production marker anywhere, or a part or one of its calls (also split at a single
         &, $( ), backticks, <( ), ( ), { }) with no allowed environment outside a ` #` comment and not a
         local-only form; without it: the fixed infra rule; both see a redirection glued to the tool word,
@@ -73,6 +73,7 @@ except Exception:
 Verdict = Optional[tuple[str, str]]
 
 NON_SECRET_ENV = {".env.example", ".env.development", ".env.staging", ".env.test", ".env.sample", ".env.template"}
+KEY_FILE = re.compile(r"\.(pem|key|p12|pfx)$")  # never released, whatever a list says
 SECRET_FILE = re.compile(r"(^|/)(\.env(\.[\w.-]+)?|[^/]*\.(pem|key|p12|pfx)|id_(rsa|ed25519)[^/]*)$")
 AI_ATTRIBUTION = re.compile(r"co-authored-by:\s*[^\n]*(claude|anthropic|openai|copilot|\bai\b)|generated with \[?claude|🤖", re.I)
 SECRET_TOKEN = re.compile(
@@ -258,8 +259,14 @@ def _read_text(path: str) -> str:
         return ""
 
 
-def _secret_path(path: str) -> bool:
-    if os.path.basename(path) in NON_SECRET_ENV:
+def _secret_path(path: str, cfg: Config) -> bool:
+    """A secret file: guard.secret_env_files and key files always, NON_SECRET_ENV and
+    guard.readable_env_files never, else by SECRET_FILE. Names are matched against the path's last
+    component."""
+    name = os.path.basename(path)
+    if name in cfg.secret_env_files or KEY_FILE.search(name):
+        return True
+    if name in NON_SECRET_ENV or name in cfg.readable_env_files:
         return False
     return bool(SECRET_FILE.search(path))
 
@@ -958,7 +965,7 @@ def _after_infra(c: str, cfg: Config) -> Verdict:
             continue
         for m in SECRET_TOKEN.finditer(seg):
             tok = m.group(0).lstrip("<").strip("'\"")
-            if _secret_path(tok):
+            if _secret_path(tok, cfg):
                 return "deny", f"reading secret file {tok} is not allowed (any command, not just cat); reference the variable name instead"
     if re.search(r"\bgit\s+(commit|tag)\b", c) and AI_ATTRIBUTION.search(c):
         return "deny", "commits carry no AI attribution (no Co-Authored-By AI, no 'Generated with', no 🤖)"
@@ -1041,7 +1048,7 @@ def check_file(tool: str, ti: dict, cfg: Config | None = None) -> Verdict:
             return "deny", DENY_PATH_REASON.format(target, pat)
     if not path:
         return None
-    if _secret_path(path):
+    if _secret_path(path, cfg):
         return "deny", f"{os.path.basename(path)} may hold secrets; reference variable names instead of reading it"
     if tool in ("Read", "Grep", "Glob"):
         return None
