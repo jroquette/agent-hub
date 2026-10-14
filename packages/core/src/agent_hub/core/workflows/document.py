@@ -6,16 +6,16 @@ located by its key path (``loc``), never by a line: the loader that read the fil
 lines, and the catalog maps a key path to one (``catalog.WorkflowFile.line_of``).
 """
 
-from collections.abc import Sequence
+import math
+from collections.abc import Mapping, Sequence
 from typing import Annotated, Literal, NamedTuple, Self
 
 from pydantic import (
     AfterValidator,
     Field,
+    JsonValue,
     StrictBool,
-    StrictFloat,
     StrictInt,
-    StrictStr,
     ValidationError,
     field_validator,
     model_validator,
@@ -25,6 +25,7 @@ from agent_hub.core.errors import AgentHubError
 from agent_hub.core.features.output_shape import output_path
 from agent_hub.core.hub_config.problems import one_line
 from agent_hub.core.workflows.nodes import (
+    READ_ONLY,
     FieldName,
     KebabId,
     Node,
@@ -32,10 +33,10 @@ from agent_hub.core.workflows.nodes import (
     Text,
     VariableName,
     WorkflowObject,
+    empty,
 )
 
 type Loc = tuple[str | int, ...]
-type InputValue = StrictStr | StrictInt | StrictFloat | StrictBool
 
 _INPUT_TYPES: dict[str, tuple[type, ...]] = {
     "string": (str,),
@@ -43,11 +44,18 @@ _INPUT_TYPES: dict[str, tuple[type, ...]] = {
     "number": (int, float),
     "boolean": (bool,),
 }
+_NODE_TYPES = "agent, shell, script, loop, approval, halt"
 _MESSAGES = {
     "extra_forbidden": "unknown key",
     "model_type": "must be a mapping",
     "model_attributes_type": "must be a mapping",
+    "union_tag_invalid": f"must be one of {_NODE_TYPES}",
+    "union_tag_not_found": "Field required",
 }
+# Errors pydantic reports at a node's index, about its ``type`` key.
+_TYPE_ERRORS = frozenset({"union_tag_invalid", "union_tag_not_found"})
+# What pydantic puts after a mapping key it refuses.
+_KEY_LABEL = "[key]"
 
 
 def _not_empty[Item](items: tuple[Item, ...]) -> tuple[Item, ...]:
@@ -80,7 +88,8 @@ class WorkflowLoadError(AgentHubError):
 class WorkflowInput(WorkflowObject):
     type: Literal["string", "integer", "number", "boolean"] = "string"
     required: StrictBool = False
-    default: InputValue | None = None
+    # Any JSON value, checked against ``type`` below: one message whatever the mismatch.
+    default: JsonValue = None
     description: Text | None = None
 
     @model_validator(mode="after")
@@ -89,6 +98,9 @@ class WorkflowInput(WorkflowObject):
             return self
         if self.required:
             msg = "a required input takes no 'default'"
+            raise ValueError(msg)
+        if isinstance(self.default, float) and not math.isfinite(self.default):
+            msg = "'default' must be a finite number"
             raise ValueError(msg)
         # ``bool`` is an ``int``: it fits only a boolean input.
         if isinstance(self.default, bool) != (self.type == "boolean") or not isinstance(
@@ -106,7 +118,9 @@ class WorkflowDocument(WorkflowObject):
     name: KebabId
     description: Text | None = None
     revision: Annotated[StrictInt, Field(ge=1)]
-    inputs: dict[VariableName, WorkflowInput] = Field(default_factory=dict)
+    inputs: Annotated[Mapping[VariableName, WorkflowInput], *READ_ONLY] = Field(
+        default_factory=empty
+    )
     returns: NodeId | None = None
     outcome_field: FieldName | None = None
     # Checked after the items, not as a length constraint: pydantic reports a length error
@@ -128,20 +142,39 @@ def parse_workflow(content: object) -> WorkflowDocument:
     try:
         return WorkflowDocument.model_validate(content)
     except ValidationError as error:
-        raise WorkflowLoadError(
-            [
-                WorkflowProblem(_untagged(detail["loc"]), _message(detail["type"], detail["msg"]))
-                for detail in error.errors(include_url=False, include_input=False)
-            ]
-        ) from None
+        problems = []
+        for detail in error.errors(include_url=False, include_input=False):
+            loc = _document_loc(detail["loc"], content)
+            if detail["type"] in _TYPE_ERRORS:
+                loc = (*loc, "type")
+            problems.append(WorkflowProblem(loc, _message(detail["type"], detail["msg"])))
+        raise WorkflowLoadError(problems) from None
 
 
-def _untagged(loc: Sequence[str | int]) -> Loc:
-    # pydantic puts the node's ``type`` after its index (``nodes.0.shell.command``) and
-    # ``[key]`` after a mapping key it refuses; neither is a key of the document.
-    if len(loc) > 2 and loc[0] == "nodes" and isinstance(loc[1], int):
-        loc = (*loc[:2], *loc[3:])
-    return tuple(segment for segment in loc if segment != "[key]")
+def _document_loc(loc: Sequence[str | int], content: object) -> Loc:
+    """``loc`` without pydantic's own labels: a node's type tag, a union member, ``[key]``.
+
+    A segment is kept when the content has it, or when it is the last one and names a key
+    missing from a mapping; any other segment is a label, not a key of the document.
+    """
+    kept: list[str | int] = []
+    current = content
+    for position, segment in enumerate(loc):
+        found, child = _child(current, segment)
+        if found:
+            current = child
+        elif position < len(loc) - 1 or not isinstance(current, dict) or segment == _KEY_LABEL:
+            continue
+        kept.append(segment)
+    return tuple(kept)
+
+
+def _child(value: object, segment: str | int) -> tuple[bool, object]:
+    if isinstance(value, dict) and segment in value:
+        return True, value[segment]
+    if isinstance(value, list) and isinstance(segment, int) and segment < len(value):
+        return True, value[segment]
+    return False, None
 
 
 def _message(kind: str, message: str) -> str:
