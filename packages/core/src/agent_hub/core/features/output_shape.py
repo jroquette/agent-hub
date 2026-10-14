@@ -8,7 +8,7 @@ cross-checks ask ``well_formed`` whether a raw field passes its model's own rule
 
 import json
 from collections.abc import Iterator, Sequence
-from typing import Any, Final
+from typing import Annotated, Any, Final
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
@@ -53,8 +53,15 @@ def shape_problems(error: ValidationError) -> tuple[OutputProblem, ...]:
 
 
 def field_adapter(model: type[BaseModel], name: str) -> TypeAdapter[Any]:
-    """A validator of one field of ``model`` by its annotation (the field carries no metadata)."""
-    return TypeAdapter(model.model_fields[name].annotation)
+    """A validator of one field of ``model``: its annotation and its constraints.
+
+    pydantic moves the constraints of an ``Annotated`` field (a list's ``max_length``) from its
+    annotation to its metadata, so they are put back.
+    """
+    info = model.model_fields[name]
+    if not info.metadata:
+        return TypeAdapter(info.annotation)
+    return TypeAdapter(Annotated[(info.annotation, *info.metadata)])
 
 
 def well_formed(adapter: TypeAdapter[Any], value: object) -> bool:
