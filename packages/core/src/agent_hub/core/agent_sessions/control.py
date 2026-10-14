@@ -516,15 +516,16 @@ class AgentSessionControl:
                 with contextlib.suppress(PermissionAnsweredError, UnknownPermissionError):
                     await self._driver.answer_permission(live.handle, request_id, closed_answer())
                 raise await self._log_full(live)
+            # Stored before the driver goes on, as ``interrupt`` does: the turn's own status
+            # writes then always come after this one.
+            await self._sync(live)
             await self._driver.answer_permission(live.handle, request_id, answer)
-            fields: AgentSessionFields = {}
             if decision.mode is not None:
                 await self._driver.set_mode(live.handle, decision.mode)
                 await self._emit(
                     live, "settings", SettingsBody(mode=decision.mode).as_body(), by="web"
                 )
-                fields["mode"] = decision.mode
-            await self._sync(live, fields)
+                await self._sync(live, {"mode": decision.mode})
         return live.view()
 
     async def change_settings(
@@ -721,21 +722,27 @@ class AgentSessionControl:
         return raw.model_copy(update={"body": body, "text_bytes": stored.text_bytes})
 
     async def _sync(self, live: LiveSession, fields: AgentSessionFields | None = None) -> None:
-        """Store the session's status (and ``fields``); publish a status frame on a change."""
-        now = self._clock()
-        state = live.state
-        changed = state.status != live.session.status
-        update: AgentSessionFields = {"status": state.status, "updated_at": now}
-        if state.terminal:
-            update |= {"end_reason": state.end_reason, "ended_at": now}
-        update |= fields or {}
-        if state.status != AgentSessionStatus.IDLE:
-            live.idle_since = None
-        elif changed or live.idle_since is None:
-            live.idle_since = now
-        live.session = await asyncio.to_thread(lambda: self._store.update(live.id, **update))
-        if changed:
-            await live.publish(StatusFrame(status=state.status, end_reason=state.end_reason))
+        """Store the session's status (and ``fields``); publish a status frame on a change.
+
+        Writes of one session run one at a time (``sync_lock``) and each reads the state once it
+        holds the lock, right before its store write: a write that waited never stores a state
+        older than the one stored before it, and frames follow the stored order.
+        """
+        async with live.sync_lock:
+            now = self._clock()
+            state = live.state
+            changed = state.status != live.session.status
+            update: AgentSessionFields = {"status": state.status, "updated_at": now}
+            if state.terminal:
+                update |= {"end_reason": state.end_reason, "ended_at": now}
+            update |= fields or {}
+            if state.status != AgentSessionStatus.IDLE:
+                live.idle_since = None
+            elif changed or live.idle_since is None:
+                live.idle_since = now
+            live.session = await asyncio.to_thread(lambda: self._store.update(live.id, **update))
+            if changed:
+                await live.publish(StatusFrame(status=state.status, end_reason=state.end_reason))
 
     async def _close_request(self, live: LiveSession, request_id: str) -> None:
         """Deny an open request because the session closes or is interrupted (``by: closed``);
@@ -759,10 +766,10 @@ class AgentSessionControl:
                 request_id=request_id, decision="deny", message=answer.message
             ).as_body()
             await self._emit(live, "permission.decision", body, by="timeout", reserved=True)
+            await self._sync(live)  # before the driver goes on, as in ``answer``
             # The driver may have ended the request itself meanwhile.
             with contextlib.suppress(PermissionAnsweredError, UnknownPermissionError):
                 await self._driver.answer_permission(live.handle, request_id, answer)
-            await self._sync(live)
 
     # Ending
 
@@ -903,7 +910,10 @@ class AgentSessionControl:
             "usage": _sum_usage(session.usage, result.usage),
         }
         if live.ended:
-            live.session = await asyncio.to_thread(lambda: self._store.update(live.id, **fields))
+            async with live.sync_lock:
+                live.session = await asyncio.to_thread(
+                    lambda: self._store.update(live.id, **fields)
+                )
             return
         live.state = apply(live.state, result)
         await self._sync(live, fields)

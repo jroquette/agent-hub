@@ -1,6 +1,7 @@
 import asyncio
 import threading
-from collections.abc import AsyncIterator, Callable, Sequence
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import timedelta
 from typing import Unpack
 
@@ -49,7 +50,7 @@ from agent_hub.core.agent_sessions.errors import (
 )
 from agent_hub.core.agent_sessions.limits import KIB, SessionLimits
 from agent_hub.core.agent_sessions.permission_policy import CLOSED_MESSAGE, TIMEOUT_MESSAGE
-from agent_hub.core.agent_sessions.records import LogRecord
+from agent_hub.core.agent_sessions.records import LogRecord, StatusFrame
 from agent_hub.core.agent_sessions.store import AgentSessionFields
 from agent_hub.core.testing.agent_session_rig import HUB_PATH, START, WEB_URL, Rig
 from agent_hub.core.testing.agent_session_store_fakes import InMemoryAgentSessionStore
@@ -862,3 +863,87 @@ async def test_reclaims_session_when_pump_died_while_running(make_rig: MakeRig) 
     assert ended.end_reason == EndReason.FAILED
     assert _closes(rig) == 1
     assert not _is_live(rig, created)
+
+
+# Status writes (evaluator): the store write of an answer or a timeout must never land after the
+# pump's write of the turn's result, so memory, store and stream agree once the turn ends.
+
+
+class SlowRunningStore(InMemoryAgentSessionStore):
+    """Once ``armed``, holds the next ``running`` status write for 0.3 s."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.armed = False
+        self.delayed = threading.Event()
+
+    def update(self, agent_session_id: str, **fields: Unpack[AgentSessionFields]) -> AgentSession:
+        if self.armed and fields.get("status") == AgentSessionStatus.RUNNING:
+            self.armed = False
+            time.sleep(0.3)
+            updated = super().update(agent_session_id, **fields)
+            self.delayed.set()
+            return updated
+        return super().update(agent_session_id, **fields)
+
+
+async def _statuses_after(
+    rig: Rig, store: SlowRunningStore, act: Callable[[str], Awaitable[object]]
+) -> tuple[str, list[AgentSessionStatus]]:
+    """Run ``act`` with the next ``running`` write held; the status frames seen until the
+    session is idle in memory and in the store and the held write is done."""
+    session_id = rig.created[0].id
+    frames = await rig.control.subscribe(session_id, None)
+    await anext(frames)  # the current status; the subscriber is attached from here
+    statuses: list[AgentSessionStatus] = []
+
+    async def collect() -> None:
+        async for item in frames:
+            if isinstance(item, StatusFrame):
+                statuses.append(item.status)
+
+    collector = asyncio.create_task(collect())
+    store.armed = True
+    await act(session_id)
+    live = rig.control._live[session_id]
+    idle = AgentSessionStatus.IDLE
+    await rig.until(lambda: live.state.status == idle and store.get(session_id).status == idle)
+    await rig.until(store.delayed.is_set)
+    await asyncio.sleep(0.05)  # let a late write or frame land, if any
+    collector.cancel()
+    return session_id, statuses
+
+
+async def test_agrees_on_idle_when_running_write_slow_after_permission_answer(
+    make_rig: MakeRig,
+) -> None:
+    store = SlowRunningStore()
+    rig = await _waiting(make_rig, store=store)
+
+    async def answer(session_id: str) -> object:
+        return await rig.control.answer(session_id, "req-1", PermissionDecision(decision="allow"))
+
+    session_id, statuses = await _statuses_after(rig, store, answer)
+
+    assert rig.control._live[session_id].state.status == AgentSessionStatus.IDLE
+    assert store.get(session_id).status == AgentSessionStatus.IDLE
+    assert (await rig.control.snapshot(session_id)).status == AgentSessionStatus.IDLE
+    assert statuses == [AgentSessionStatus.RUNNING, AgentSessionStatus.IDLE]
+
+
+async def test_agrees_on_idle_when_running_write_slow_after_permission_timeout(
+    make_rig: MakeRig,
+) -> None:
+    store = SlowRunningStore()
+    rig = await _waiting(make_rig, store=store, limits=SessionLimits(permission_timeout_seconds=1))
+
+    async def time_out(session_id: str) -> object:
+        del session_id
+        return await rig.control.sweep(rig.clock.advance(1), purge=False)
+
+    session_id, statuses = await _statuses_after(rig, store, time_out)
+
+    assert rig.control._live[session_id].state.status == AgentSessionStatus.IDLE
+    assert store.get(session_id).status == AgentSessionStatus.IDLE
+    assert (await rig.control.snapshot(session_id)).status == AgentSessionStatus.IDLE
+    assert statuses == [AgentSessionStatus.RUNNING, AgentSessionStatus.IDLE]
