@@ -39,6 +39,7 @@ jobs:
       # the remote: checkout may fetch an annotated tag as lightweight. Only an annotated tag has a
       # peeled ^{} entry; ls-remote prints nothing for a lightweight one. The token reaches git only
       # through the GIT_CONFIG_* rewrite (never in the URL, never printed).
+      # tests/e2e/test_release_annotated_tag.py runs this run: block by the step name; rename both together.
       - name: Check the tag form, that it is annotated, and the cli and meta versions
         env:
           TAG: ${{ github.ref_name }}
