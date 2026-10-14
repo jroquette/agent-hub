@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Any
 
 import pytest
@@ -278,3 +279,59 @@ def test_keeps_csp_when_clarity_routes_served(wired: Any, path: str) -> None:
 
     assert response.headers["content-security-policy"] == V0_9_0_CSP
     assert response.headers["cache-control"] == "no-store"
+
+
+AGENT_SESSION_ID_PATH = "/api/v1/agent-sessions/0192f3a0-0000-7000-8000-000000000001"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/agent-sessions",
+        "/api/v1/agent-sessions/capabilities",
+        "/api/v1/agent-sessions/workdirs?project=demo",
+        "/api/v1/agent-sessions/cloud",
+        AGENT_SESSION_ID_PATH,
+        f"{AGENT_SESSION_ID_PATH}/events",
+    ],
+)
+def test_keeps_csp_when_agent_session_routes_served(wired: Any, path: str) -> None:
+    response = wired.client.get(path)
+
+    assert response.headers["content-security-policy"] == V0_9_0_CSP
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_keeps_csp_when_agent_session_page_served(wired: Any) -> None:
+    response = wired.client.get("/agent-sessions/0192f3a0-0000-7000-8000-000000000001")
+
+    assert response.status_code == 200
+    assert response.headers["content-security-policy"] == V0_9_0_CSP
+
+
+def _pre_existing_reads(wired: Any) -> list[str]:
+    """Every ``GET`` of the document outside the agent sessions, path parameters filled in, the
+    endless streams left out."""
+    paths: dict[str, dict[str, object]] = wired.client.app.openapi()["paths"]
+    return [
+        re.sub(r"\{[^}]+\}", "demo", path)
+        for path, item in sorted(paths.items())
+        if "get" in item
+        and not path.startswith("/api/v1/agent-sessions")
+        and not path.endswith("/stream")
+    ]
+
+
+def test_keeps_routes_unchanged_when_no_cookie(wired: Any) -> None:
+    # The Origin-less hook POST without a cookie: test_hooks_ingestion (composed app, no token).
+    wired.hubs.hubs.append(a_hub_view())
+    reads = _pre_existing_reads(wired)
+    signed_in = [(path, wired.client.get(path)) for path in reads]
+
+    wired.client.cookies.clear()
+    without = [(path, wired.client.get(path)) for path in reads]
+
+    assert len(reads) > 20
+    assert [(path, r.status_code, r.content) for path, r in without] == [
+        (path, r.status_code, r.content) for path, r in signed_in
+    ]
