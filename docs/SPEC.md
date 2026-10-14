@@ -396,6 +396,10 @@ Linear status ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md), records
 - **Evals per delivery.** Each evaluation is its own file, `brain/features/<slug>/evals/<delivery>.md`, with its
   scope in frontmatter (tickets, ACs, PRs, commit); none is overwritten. For each AC the latest eval naming it
   decides. A legacy `eval.md` is read as one delivery, `legacy`. The Eval tab lists every delivery.
+  Beside each `.md` the evaluator writes `evals/<delivery>.json` (`agent-hub/eval/1`), and `/feature` saves each
+  reviewer's JSON block to `reviews/<ticket>/<reviewer>-r<N>.json` (`agent-hub/review/1`); `/feature` gates review
+  and ship only on files `hub validate-output` accepts, re-asking a reviewer or re-dispatching the evaluator once
+  (ADR 0028).
 - **Spec amendments.** An approved spec is never rewritten: changes go in its `## Amendments` section, new ACs take
   the next free number, a withdrawn AC stays listed (`withdrawn: true` in `features.json`) and no id is renumbered.
   The planner, evaluator and requirements-analyst templates and `/feature` say so, and `hub doctor`'s
