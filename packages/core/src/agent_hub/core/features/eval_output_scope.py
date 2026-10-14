@@ -134,13 +134,15 @@ def _acs_problems(
 
 def _coverage_problems(counts: Counter[str], scope: _Scope) -> Iterator[OutputProblem]:
     """The ``results`` problems: missing, outside the scope, repeated, withdrawn (P7)."""
+    expected = None if scope.expected is None else frozenset(scope.expected)
     if scope.expected is not None:
         yield from _held_problems(counts, expected=scope.expected, scope=scope)
     for ac in counts:
-        if counts[ac] > 1 and (scope.expected is None or ac in scope.expected):
+        if counts[ac] > 1 and (expected is None or ac in expected):
             yield OutputProblem("results", f"more than one result for {echo(ac)}")
+    withdrawn = scope.withdrawn - scope.reported
     for ac in counts:
-        if ac in scope.withdrawn - scope.reported:
+        if ac in withdrawn:
             yield OutputProblem("results", f"the result for {echo(ac)} names a withdrawn AC")
 
 
