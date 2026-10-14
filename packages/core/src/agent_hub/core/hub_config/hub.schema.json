@@ -1,5 +1,72 @@
 {
   "$defs": {
+    "AgentTiers": {
+      "additionalProperties": false,
+      "description": "The tier of each plugin agent that does not keep its template's tier.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "architect": {
+          "enum": [
+            "small",
+            "medium",
+            "large"
+          ],
+          "type": "string"
+        },
+        "evaluator": {
+          "enum": [
+            "small",
+            "medium",
+            "large"
+          ],
+          "type": "string"
+        },
+        "planner": {
+          "enum": [
+            "small",
+            "medium",
+            "large"
+          ],
+          "type": "string"
+        },
+        "quality-reviewer": {
+          "enum": [
+            "small",
+            "medium",
+            "large"
+          ],
+          "type": "string"
+        },
+        "requirements-analyst": {
+          "enum": [
+            "small",
+            "medium",
+            "large"
+          ],
+          "type": "string"
+        },
+        "researcher": {
+          "enum": [
+            "small",
+            "medium",
+            "large"
+          ],
+          "type": "string"
+        },
+        "spec-reviewer": {
+          "enum": [
+            "small",
+            "medium",
+            "large"
+          ],
+          "type": "string"
+        }
+      },
+      "title": "AgentTiers",
+      "type": "object"
+    },
     "BrainLeakSettings": {
       "additionalProperties": false,
       "description": "``brain.leak``: the shortest trimmed brain line that counts as a leak.",
@@ -285,6 +352,49 @@
         }
       },
       "title": "InstructionsSizeSettings",
+      "type": "object"
+    },
+    "ModelTiers": {
+      "additionalProperties": false,
+      "description": "The model name of each tier; an absent tier takes its default.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "small": {
+          "description": "Default: haiku.",
+          "pattern": "^[A-Za-z0-9._-]{1,64}$",
+          "type": "string"
+        },
+        "medium": {
+          "description": "Default: sonnet.",
+          "pattern": "^[A-Za-z0-9._-]{1,64}$",
+          "type": "string"
+        },
+        "large": {
+          "description": "Default: opus.",
+          "pattern": "^[A-Za-z0-9._-]{1,64}$",
+          "type": "string"
+        }
+      },
+      "title": "ModelTiers",
+      "type": "object"
+    },
+    "Models": {
+      "additionalProperties": false,
+      "description": "Which model each tier names, and which agents leave their template's tier.",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "tiers": {
+          "$ref": "#/$defs/ModelTiers"
+        },
+        "agents": {
+          "$ref": "#/$defs/AgentTiers"
+        }
+      },
+      "title": "Models",
       "type": "object"
     },
     "ModuleSettings": {
@@ -644,6 +754,9 @@
     },
     "doctor": {
       "$ref": "#/$defs/Doctor"
+    },
+    "models": {
+      "$ref": "#/$defs/Models"
     }
   },
   "required": [

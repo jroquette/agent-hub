@@ -25,6 +25,7 @@ from agent_hub.core.hub_config.conventions import (
     title_pattern_problem,
 )
 from agent_hub.core.hub_config.doctor_rules import RULE_MODULES, DoctorRules
+from agent_hub.core.hub_config.model_tiers import Models
 from agent_hub.core.hub_config.platform_repository import (
     DEFAULT_PLATFORM_REPOSITORY,
     MAX_PLATFORM_REPOSITORY_CHARS,
@@ -457,6 +458,8 @@ class HubConfig(ConfigObject):
     # A factory, not an instance: the schema would export its unset keys as nulls.
     modules: Modules = Field(default_factory=Modules)
     doctor: Doctor = Field(default_factory=Doctor)
+    # A factory, not an instance: the schema would export its unset keys as nulls.
+    models: Models = Field(default_factory=Models)
 
     def default_branch_for(self, repo_dir: str) -> str:
         """The effective default branch of the repo at ``repo_dir``: its own, else the project's.

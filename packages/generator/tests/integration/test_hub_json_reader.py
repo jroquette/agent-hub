@@ -31,7 +31,12 @@ from agent_hub.core.hub_config.model import (
     Tracker,
 )
 from agent_hub.core.testing import builders
-from agent_hub.core.testing.builders import a_conventions_document, a_hub_document, a_second_repo
+from agent_hub.core.testing.builders import (
+    a_conventions_document,
+    a_hub_document,
+    a_models_document,
+    a_second_repo,
+)
 from agent_hub.core.testing.platform_repository_cases import REPOSITORY_CASES, RepositoryCase
 from agent_hub.generator.render_hub import render_hub
 
@@ -68,12 +73,13 @@ LOCAL_PATHS: tuple[tuple[str | int, ...], ...] = (
 TEAM_PATHS: tuple[tuple[str | int, ...], ...] = (("tracker", "team"), ("tracker", "teams"))
 
 # Keys no hook reads: the reader leaves them out, which ``test_reads_same_values_when_hub_sets_
-# conventions`` checks.
+# conventions`` and ``test_reads_same_values_when_hub_sets_models`` check.
 IGNORED_PATHS: tuple[tuple[str | int, ...], ...] = (
     ("project", "conventions"),
     ("repos", 0, "conventions"),
     ("tracker", "states"),
     ("tracker", "blocked_label"),
+    ("models",),
 )
 
 # Read leniently by the hooks; absent is ``None`` in both; agreement is the shared cases'
@@ -544,6 +550,18 @@ def test_reads_same_values_when_hub_sets_conventions(
     without = read(hook_python, write_hub_file(tmp_path / "plain", plain))
 
     assert with_conventions["hub_file"] == without["hub_file"]
+
+
+def test_reads_same_values_when_hub_sets_models(
+    tmp_path: Path, hook_python: str, read: Reader
+) -> None:
+    for name in ("tiers", "plain"):
+        (tmp_path / name).mkdir()
+
+    with_models = read(hook_python, write_hub_file(tmp_path / "tiers", a_models_document()))
+    without = read(hook_python, write_hub_file(tmp_path / "plain", a_hub_document()))
+
+    assert with_models["hub_file"] == without["hub_file"]
 
 
 def repo_branches(hub_file: Mapping[str, Any]) -> dict[str, str]:

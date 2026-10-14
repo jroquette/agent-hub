@@ -326,6 +326,16 @@ def set_transport(hub: Any, transport: str) -> None:
     (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
 
 
+def set_models(hub: Any, models: dict[str, Any]) -> None:
+    document = json.loads((hub / "hub.json").read_text())
+    document["models"] = models
+    (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+
+
+# AGH-180: the implementing session's model is hub.json's `medium` tier unless --model is given.
+TIER_MODELS = {"tiers": {"medium": "claude-sonnet-4-5", "large": "claude-opus-4-1"}}
+
+
 @pytest.fixture
 def with_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(KEY_VARIABLE, synthetic_key())
@@ -399,6 +409,37 @@ class TestDryRun:
         assert RUN_ID.fullmatch(comment.group(1))
         assert len(lines) == 8
         assert run_workspace.calls("claude") == []
+
+    @pytest.mark.parametrize(
+        ("models", "options", "model"),
+        [
+            (TIER_MODELS, (), "claude-sonnet-4-5"),
+            (TIER_MODELS, ("--model", "opus"), "opus"),
+            # Given on the command line, the default's own value still wins over the tier.
+            (TIER_MODELS, ("--model", "sonnet"), "sonnet"),
+            ({"agents": {"researcher": "large"}}, (), "sonnet"),
+        ],
+        ids=["tier", "option", "option-equal-to-default", "agents-only"],
+    )
+    def test_uses_medium_tier_model_when_model_option_absent(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+        models: dict[str, Any],
+        options: tuple[str, ...],
+        model: str,
+    ) -> None:
+        workspace = run_workspace.workspace
+        set_models(workspace.hub, models)
+        inject(monkeypatch, run_tracker)
+
+        result = run_command(workspace.hub, "run", "DEM-1", "--repo", "demo-api", *options)
+
+        claude = dry_lines(result)[1]
+        assert f" --max-budget-usd 3 --model {model} --settings " in claude
 
     def test_prints_full_gate_step_when_repo_has_no_fast_gate(
         self,
@@ -2499,6 +2540,27 @@ class TestRecords:
             "failed_stage": None,
             "outcome": "delivered",
         }
+
+    def test_records_tier_model_when_hub_sets_tiers(
+        self,
+        run_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        run_tracker: Any,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = run_workspace.workspace
+        set_models(workspace.hub, TIER_MODELS)
+        inject(monkeypatch, run_tracker)
+
+        result = live(run_command, workspace)
+
+        assert result.exit_code == 0, result.output
+        picked = records(workspace)[0]
+        assert (picked["event"], picked["model"]) == ("picked", "claude-sonnet-4-5")
+        (call,) = run_workspace.calls("claude")
+        argv = call["argv"]
+        assert argv[argv.index("--model") + 1] == "claude-sonnet-4-5"
 
     def test_appends_inbox_line_when_run_ends(
         self,
