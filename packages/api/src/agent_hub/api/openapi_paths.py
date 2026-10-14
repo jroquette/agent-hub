@@ -1,5 +1,5 @@
-"""The Phase 2 contract's paths, the paths control-plane clarity and ticket planning add, and the
-paths an app's OpenAPI document lists."""
+"""The Phase 2 contract's paths, the paths control-plane clarity, ticket planning and the Skills
+tab add, and the paths an app's OpenAPI document lists."""
 
 from fastapi import FastAPI
 
@@ -65,8 +65,19 @@ TICKET_PATHS: frozenset[tuple[str, str]] = frozenset(
     {("get", f"{API_PREFIX}/features/{{project}}/{{slug}}/tickets")}
 )
 
+# The paths the Skills tab adds (AC-164.11, amendment A1): the catalog, an item's detail and a
+# bundled file's text, all read-only.
+SKILL_PATHS: frozenset[tuple[str, str]] = frozenset(
+    ("get", f"{API_PREFIX}{path}")
+    for path in (
+        "/projects/{project}/skills",
+        "/projects/{project}/skills/{kind}/{source}/{name}",
+        "/projects/{project}/skills/{kind}/{source}/{name}/files/{file_id}",
+    )
+)
+
 # Every path the document lists.
-SERVED_PATHS: frozenset[tuple[str, str]] = P2_PATHS | CLARITY_PATHS | TICKET_PATHS
+SERVED_PATHS: frozenset[tuple[str, str]] = P2_PATHS | CLARITY_PATHS | TICKET_PATHS | SKILL_PATHS
 
 
 def document_paths(app: FastAPI) -> frozenset[tuple[str, str]]:

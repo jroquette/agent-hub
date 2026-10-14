@@ -18,6 +18,7 @@ import { RunsListScreen } from "./screens/runs-list";
 import { SessionDetailScreen } from "./screens/session-detail";
 import { SessionsListScreen } from "./screens/sessions-list";
 import { SettingsScreen } from "./screens/settings";
+import { SkillDetailScreen, SkillsPickerScreen, SkillsScreen } from "./screens/skills";
 import { WelcomeScreen } from "./screens/welcome";
 import { AppShell } from "./shell/AppShell";
 
@@ -34,7 +35,8 @@ export function HubGate() {
 /**
  * The Phase 2 routes (D20, spec 01 sitemap). Screens live in `src/screens/<name>/index.tsx`
  * and export `<Name>Screen`; hidden destinations (Metrics, Bench, Tracker, Workflows) fall to 404.
- * A project's Brain is `projects/:project/brain/<note path>` (AGH-201 D3).
+ * A project's Brain is `projects/:project/brain/<note path>` (AGH-201 D3); its Skills are
+ * `projects/:project/skills[/<kind>/<source>/<name>]` (AGH-164).
  */
 export const appRoutes: RouteObject[] = [
   {
@@ -46,6 +48,8 @@ export const appRoutes: RouteObject[] = [
           { index: true, element: <PortfolioScreen /> },
           { path: "projects/:project", element: <ProjectOverviewScreen /> },
           { path: "projects/:project/brain/*", element: <BrainScreen /> },
+          { path: "projects/:project/skills", element: <SkillsScreen /> },
+          { path: "projects/:project/skills/:kind/:source/:name", element: <SkillDetailScreen /> },
           { path: "approvals", element: <ApprovalsScreen /> },
           { path: "approvals/:approvalId", element: <ApprovalsScreen /> },
           { path: "live", element: <LiveSessionsScreen /> },
@@ -57,6 +61,8 @@ export const appRoutes: RouteObject[] = [
           { path: "knowledge/learnings", element: <LearningsScreen /> },
           { path: "knowledge/learnings/:learningId", element: <LearningsScreen /> },
           { path: "knowledge/brain", element: <BrainPickerScreen /> },
+          // Before `knowledge/:section`, which would show the Phase 3 placeholder.
+          { path: "knowledge/skills", element: <SkillsPickerScreen /> },
           { path: "knowledge/:section", element: <KnowledgePhase3Screen /> },
           { path: "features", element: <FeaturesScreen /> },
           { path: "features/:project/:slug", element: <FeatureDetailScreen /> },

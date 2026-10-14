@@ -31,6 +31,7 @@ from agent_hub.core.learnings.brain_change_requests import (
 )
 from agent_hub.core.learnings.learning_ports import HubReadOnlyError, LearningConflictError
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
+from agent_hub.core.skills.skill_view import SkillFileTooLargeError
 from agent_hub.storage.errors import DatabaseAccessError
 
 PROBLEM_MEDIA_TYPE = "application/problem+json"
@@ -207,6 +208,14 @@ def _brain_note_too_large_problem(error: BrainNoteTooLargeError) -> Problem:
     )
 
 
+def _skill_file_too_large_problem(error: SkillFileTooLargeError) -> Problem:
+    return Problem(
+        413,
+        "Skill file too large",
+        f"Skill files are served up to {error.limit} bytes; this one has {error.size}.",
+    )
+
+
 def _learning_conflict(*, code: str, reason: str, pr_url: str | None = None) -> Problem:
     members: dict[str, JsonValue] = {"code": code, "reason": reason}
     if pr_url is not None:
@@ -276,6 +285,7 @@ PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     BrainPathError: _brain_path_problem,
     BrainNoteNotFoundError: _brain_note_not_found_problem,
     BrainNoteTooLargeError: _brain_note_too_large_problem,
+    SkillFileTooLargeError: _skill_file_too_large_problem,
     LearningConflictError: _learning_conflict_problem,
     HubReadOnlyError: _hub_read_only_problem,
     ChangeRequestError: _change_request_error_problem,

@@ -11,6 +11,8 @@ import {
   aFeatureDetail,
   aHub,
   aPage,
+  aSkillCatalog,
+  aSkillDetail,
   stubApi,
   stubEventSource,
   testQueryClient,
@@ -23,6 +25,8 @@ const withHub: ApiRoutes = {
   "/api/v1/projects": aPage([]),
   "/api/v1/features/agent-hub/control-plane": aFeatureDetail(),
   "/api/v1/projects/agent-hub/brain": aBrainTree(),
+  "/api/v1/projects/agent-hub/skills": aSkillCatalog({ project: "agent-hub" }),
+  "/api/v1/projects/agent-hub/skills/skill/hub-workflow/feature": aSkillDetail(),
   "/api/v1/projects/agent-hub/brain/note": (request: Request) =>
     aBrainNote({
       path: new URL(request.url).searchParams.get("path") ?? "",
@@ -56,6 +60,9 @@ describe("routes", () => {
     ["/runs/abc", "Run abc not found"],
     ["/knowledge/learnings", "Knowledge"],
     ["/knowledge/brain", "Brain"],
+    ["/knowledge/skills", "Skills"],
+    ["/projects/agent-hub/skills", "Skills"],
+    ["/projects/agent-hub/skills/skill/hub-workflow/feature", "feature"],
     ["/projects/agent-hub/brain", "Note index.md"],
     ["/projects/agent-hub/brain/decisions/index.md", "Note decisions/index.md"],
     ["/knowledge/decisions", "Decisions"],

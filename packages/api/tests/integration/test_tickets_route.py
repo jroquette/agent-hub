@@ -168,6 +168,10 @@ def _get_paths(app: Any, slug: str) -> list[str]:
         "learning_id": "learning-1",
         "run_id": "run-1",
         "hub_id": "hub-1",
+        "kind": "skill",
+        "source": "hub-workflow",
+        "name": "alpha",
+        "file_id": "0" * 16,
     }
     paths = []
     for path, methods in app.openapi()["paths"].items():
