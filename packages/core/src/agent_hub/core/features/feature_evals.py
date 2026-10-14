@@ -30,6 +30,14 @@ from agent_hub.core.brain.brain_note import FrontmatterValue
 from agent_hub.core.brain.frontmatter import split_frontmatter
 from agent_hub.core.features.feature_record import KEY_PATTERN, PlannedTicket, RecordAc
 from agent_hub.core.features.feature_view import EvalRecord, Verdict
+from agent_hub.core.features.scope_rules import (
+    AC_ID_PATTERN,
+    ALL_ACS,
+    COMMIT_PATTERN,
+    RERUN_PATTERN,
+    named_scope,
+    ticket_aliases,
+)
 from agent_hub.core.hub_config.problems import one_line
 
 if TYPE_CHECKING:
@@ -49,15 +57,11 @@ VERDICT_LINE: Final = re.compile(r"Verdict\W{0,4}(SHIP-WITH-OWNER-STEPS|NO-SHIP|
 ISO_TIME: Final = re.compile(
     r"\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})?)?"
 )
-_AC_ID: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 _TICKET: Final = re.compile(KEY_PATTERN)
 _PR: Final = re.compile(r"[A-Za-z0-9._/#:-]{1,200}")
-_COMMIT: Final = re.compile(r"[0-9a-f]{7,40}")
-_RERUN: Final = re.compile(r"-r([1-9][0-9]{0,3})$")
 _SHIPPED: Final = ("SHIP", "SHIP-WITH-OWNER-STEPS")
 # When the latest evals of an AC disagree, the first of these among them decides.
 _CONSERVATIVE: Final[tuple[Verdict, ...]] = ("NO-SHIP", "SHIP-WITH-OWNER-STEPS", "SHIP")
-_ALL: Final = "all"
 _VERDICTS: Final[tuple[str, ...]] = get_args(Verdict.__value__)
 
 
@@ -107,7 +111,7 @@ def eval_coverage(
 ) -> EvalCoverage:
     """What ``records`` cover of ``acs`` (S7); ``tickets`` tie a plan key to its tracker id."""
     live = tuple(ac for ac in acs if not ac.withdrawn)
-    aliases = _aliases(tickets)
+    aliases = ticket_aliases(tickets)
     naming: dict[str, list[int]] = {}
     scoped: list[EvalRecord] = []
     unscoped = False
@@ -202,7 +206,7 @@ def _parsed(stem: str, path: str, fields: dict[str, FrontmatterValue]) -> EvalRe
         tickets=tickets,
         acs=acs,
         prs=_items(fields, "prs", _PR),
-        commit=text_field(fields, "commit", _COMMIT),
+        commit=text_field(fields, "commit", COMMIT_PATTERN),
         evaluated_at=text_field(fields, "evaluated_at", ISO_TIME),
         legacy=False,
         problem=None,
@@ -218,7 +222,7 @@ def _legacy(head: bytes, *, slug: str) -> EvalRecord:
     try:
         fields = record_fields(head)
         tickets, acs = _items(fields, "tickets", _TICKET), _acs(fields)
-        prs, commit = _items(fields, "prs", _PR), text_field(fields, "commit", _COMMIT)
+        prs, commit = _items(fields, "prs", _PR), text_field(fields, "commit", COMMIT_PATTERN)
         evaluated_at = text_field(fields, "evaluated_at", ISO_TIME)
     except RecordFieldError:
         tickets, acs, prs, commit, evaluated_at = (), (), (), None, None
@@ -281,7 +285,7 @@ def _items(
 
 
 def _acs(fields: dict[str, FrontmatterValue]) -> tuple[str, ...] | Literal["all"]:
-    return "all" if fields.get("acs") == _ALL else _items(fields, "acs", _AC_ID)
+    return "all" if fields.get("acs") == ALL_ACS else _items(fields, "acs", AC_ID_PATTERN)
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,7 +297,7 @@ class _OrderKey:
 
 
 def _order_key(record: EvalRecord) -> _OrderKey:
-    found = _RERUN.search(record.delivery)
+    found = RERUN_PATTERN.search(record.delivery)
     stem = record.delivery[: found.start()] if found else record.delivery
     return _OrderKey(
         instant=_instant(record.evaluated_at),
@@ -344,29 +348,13 @@ def _listing_key(record: EvalRecord) -> tuple[bool, bool, datetime, str, int, st
     return (not key.legacy, key.instant is None, instant, key.stem, key.rerun, record.path)
 
 
-def _aliases(tickets: Iterable[PlannedTicket]) -> dict[str, frozenset[str]]:
-    """Each ticket ref (upper case) with every ref of the same ticket (its key and its id)."""
-    aliases: dict[str, frozenset[str]] = {}
-    for ticket in tickets:
-        refs = frozenset(ref.upper() for ref in (ticket.key, ticket.id) if ref is not None)
-        for ref in refs:
-            aliases[ref] = aliases.get(ref, frozenset()) | refs
-    return aliases
-
-
 def _scope(
     record: EvalRecord, live: tuple[RecordAc, ...], aliases: dict[str, frozenset[str]]
 ) -> tuple[str, ...] | None:
     """The AC ids ``record`` names; None for a legacy eval without scope that cannot count."""
-    if record.acs == _ALL:
-        return tuple(ac.id for ac in live)
-    if record.acs:
-        return record.acs
-    if record.tickets:
-        named: set[str] = set()
-        for ref in record.tickets:
-            named |= aliases.get(ref.upper(), frozenset({ref.upper()}))
-        return tuple(ac.id for ac in live if ac.ticket is not None and ac.ticket.upper() in named)
+    named = named_scope(acs=record.acs, tickets=record.tickets, live=live, aliases=aliases)
+    if named is not None:
+        return named
     if record.legacy and all(ac.passes for ac in live):
         return tuple(ac.id for ac in live)
     return None
