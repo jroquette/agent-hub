@@ -1028,12 +1028,14 @@ def test_reports_when_agent_transcript_out_of_budget(gate: Gate, gate_ws: GateWo
     assert state_files(gate_ws) == []
 
 
-def test_reports_when_agent_file_targets_over_cap(gate: Gate, gate_ws: GateWorkspace) -> None:
-    """O-3, E-6: more distinct file-tool targets than the gate resolves is partial evidence, so
-    nothing is blocked: the change is reported with the ``not checked`` note."""
+def test_blocks_when_agent_file_targets_over_cap(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """O-3: past the cap of distinct file-tool targets the gate stops collecting them but still
+    reads the transcript: with no overlap signal every change is the agent's, so it is blocked,
+    and the Bash commands after the cap are still the evidence."""
     calls = [
         app_edit(gate_ws),
         ("Edit", {"file_path": str(gate_ws.app / "b.py"), "old_string": "1", "new_string": "2"}),
+        ("Bash", {"command": "echo after"}),
     ]
 
     output = run_agent(
@@ -1044,10 +1046,14 @@ def test_reports_when_agent_file_targets_over_cap(gate: Gate, gate_ws: GateWorks
         constant=("MAX_TARGETS", 1),
     )
 
-    assert output is not None
-    assert "decision" not in output
-    assert output["systemMessage"].splitlines() == UNATTRIBUTED_REPORT
-    assert state_files(gate_ws) == []
+    assert reason_lines(output) == [
+        agent_head("researcher"),
+        "- app/a.py",
+        REVERT,
+        EVIDENCE_HEAD,
+        "- echo after",
+    ]
+    assert state_files(gate_ws) == [state_name("a1")]
 
 
 def test_counts_target_once_when_agent_edits_same_file_repeatedly(
@@ -1152,3 +1158,22 @@ def test_blocks_when_unmerged_entry_stage_mode_changed(gate: Gate, gate_ws: Gate
     assert now[1] == "100755" + stages[1][len("100644") :]  # stage 2's blob kept, its mode moved
     assert [now[0], now[2]] == [stages[0], stages[2]]
     assert "- app/a.py" in lines
+
+
+def test_replaces_control_chars_when_block_names_agent(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """The agent's id from the event is shown with its control characters as ``?``."""
+    agent_id = "a\x1b[2J\u202e1"
+    main, agent = transcripts(gate_ws, agent_id="a1")
+    assert gate.start("researcher", agent_id=agent_id, transcript_path=main) is None
+    change_app(gate_ws)
+
+    output = gate.stop(
+        "researcher", agent_id=agent_id, transcript_path=main, agent_transcript_path=agent
+    )
+
+    assert output is not None
+    assert output["reason"].splitlines() == [
+        agent_head("researcher", "a?[2J?1"),
+        "- app/a.py",
+        REVERT,
+    ]
