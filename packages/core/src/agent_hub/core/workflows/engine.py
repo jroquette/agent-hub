@@ -294,13 +294,13 @@ class _Run:
             self._record_failure(node, attempt, failure)
             raise
         except SubstitutionError as error:
-            failure = NodeFailedError("config", str(error))
-            self._record_failure(node, attempt, failure)
-            raise failure from None
+            config = NodeFailedError("config", str(error))
+            self._record_failure(node, attempt, config)
+            raise config from None
         except Exception as error:  # noqa: BLE001 - a port's unexpected error ends the step
-            failure = NodeFailedError("unknown", type(error).__name__)
-            self._record_failure(node, attempt, failure)
-            raise failure from None
+            unknown = NodeFailedError("unknown", type(error).__name__)
+            self._record_failure(node, attempt, unknown)
+            raise unknown from None
         self.ports.recorder.step_ended(
             StepEnd(node.id, attempt, "ok", self.ports.clock.now(), output=turn.output)
         )
