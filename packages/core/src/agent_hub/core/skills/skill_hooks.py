@@ -49,8 +49,9 @@ class LoadedHubJson:
 @dataclass(frozen=True, kw_only=True, slots=True)
 class HookRecord:
     """One hook of the catalog: its ``source`` folder (``settings``, ``settings-project`` or the
-    plugin folder), its name ``<source>-<event>-<n>`` lower-cased, the file it is in, its
-    origin and what it configures."""
+    plugin folder), its name ``<source>-<event>-<n>`` lower-cased (with a ``-<k>`` suffix when
+    an event differing only by case took it), the file it is in, its origin and what it
+    configures."""
 
     source: str
     name: str
@@ -172,6 +173,26 @@ class _Fold:
         self.records: list[HookRecord] = []
         self.notices: list[str] = []
         self.truncated = False
+        self._names: set[tuple[str, str]] = set()
+        self._renamed: dict[str, int] = {}
+
+    def _unique(self, source: _Source, name: str) -> str:
+        """``name``, or with the first ``-<k>`` suffix (k from 2) no hook of ``source`` holds:
+        events that differ only by case would otherwise share an id."""
+        unique, suffix = name, 2
+        while (source.name, unique) in self._names:
+            unique, suffix = f"{name}-{suffix}", suffix + 1
+        if unique != name:
+            self._renamed[source.path] = self._renamed.get(source.path, 0) + 1
+        self._names.add((source.name, unique))
+        return unique
+
+    def renamed_notices(self) -> list[str]:
+        return [
+            f"{path}: {count} hook names taken by another event (events differing only by case);"
+            " a suffix keeps them apart"
+            for path, count in self._renamed.items()
+        ]
 
     def entries(self, source: _Source) -> list[_Entry]:
         loaded = load_hub_json(source.path, source.content)
@@ -197,7 +218,7 @@ class _Fold:
         if len(self.records) == MAX_HOOKS:
             self.truncated = True
             return
-        name = f"{source.name}-{entry.event}-{entry.position}".lower()
+        name = self._unique(source, f"{source.name}-{entry.event}-{entry.position}".lower())
         if not _ITEM_NAME.fullmatch(name):
             self.notices.append(f"{source.path}: a hook is skipped (its name is too long)")
             return
@@ -255,6 +276,5 @@ def hook_records(
         active = marketplace is not None and enabled.get(f"{plugin}@{marketplace}") is True
         for entry in fold.entries(source):
             fold.add(source, entry, origin=origin, active=active)
-    return HookFold(
-        records=tuple(fold.records), notices=tuple(fold.notices), truncated=fold.truncated
-    )
+    notices = (*fold.notices, *fold.renamed_notices())
+    return HookFold(records=tuple(fold.records), notices=notices, truncated=fold.truncated)

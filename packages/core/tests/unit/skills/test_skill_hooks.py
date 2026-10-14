@@ -186,6 +186,39 @@ def test_skips_event_when_name_ends_with_newline() -> None:
     )
 
 
+def test_keeps_ids_unique_when_events_differ_only_by_case() -> None:
+    settings = _json(
+        {
+            "hooks": {
+                "Stop": [_group("one", "two")],
+                "stop": [_group("three")],
+                "Stop-1": [_group("x", "four")],
+            }
+        }
+    )
+
+    fold = hook_records(settings, None, {}, enabled={}, marketplace=None)
+
+    assert _names(fold.records) == [
+        "settings-stop-1",
+        "settings-stop-2",
+        "settings-stop-1-2",
+        "settings-stop-1-1",
+        "settings-stop-1-2-2",
+    ]
+    assert [record.facts.command for record in fold.records] == [
+        "one",
+        "two",
+        "three",
+        "x",
+        "four",
+    ]
+    assert fold.notices == (
+        ".claude/settings.json: 2 hook names taken by another event (events differing only by"
+        " case); a suffix keeps them apart",
+    )
+
+
 def test_reads_nothing_when_files_absent() -> None:
     missing = UnreadHubFile(message="File does not exist", is_missing=True)
 
