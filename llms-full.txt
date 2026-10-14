@@ -270,12 +270,11 @@ transcript under `~/.claude/projects/`, and `./hub collect --runs .agent-runs` f
 is stored (sizes, tools, repo-relative paths, short commands with secrets redacted, and for a failed tool its error
 text, redacted and cut at 300 characters), never prompt, output or file text.
 
-Each session is shown by its issue and workflow (`TIP-1511 · /feature`), read from its branch or task worktree name
-and the hub's tracker team; each failure says what failed, where, which agent, and whether the agent handled it or
-it needs you. To read the brain, open Knowledge › Brain (or a project's Brain): it lists the hub's `brain/` notes
-(never `brain/auto/`) and renders any one, with links between notes; a feature's Spec, Research, Plan, Eval and
-Criteria tabs show its records. The app reads the registered hub's checkout as it is on disk, so pull the hub to see
-merged changes.
+Each session is shown by its issue and workflow (`TIP-1511 · /feature`), read from its branch or task worktree name and
+the hub's tracker team; each failure says what failed, where, which agent, and whether the agent handled it or it needs
+you. To read the brain, open Knowledge › Brain (or a project's Brain): it lists the hub's `brain/` notes (never
+`brain/auto/`) and renders any one, with links between notes; a feature's Spec, Research, Plan, Eval and Criteria tabs
+show its records. The app reads the registered hub's checkout as it is on disk, so pull the hub to see merged changes.
 
 The Skills tab (Knowledge › Skills, or a project's Skills) lists the hub's skills, agents and hooks with how each is
 invoked, whether it is managed or the project's, and how often it was used in the last 30 days; a skill's page shows
@@ -313,10 +312,11 @@ web`'s database for 30 days after they end (Delete removes one at once). Off in 
 `--host 0.0.0.0`. Claude's Remote Control also reaches a session from a phone. Cloud sessions (claude.ai/code) are not
 driven from the app: it gives the `claude --cloud` command, then the session's link and `claude --teleport <id>`.
 
-Release note for a hub that moves to a release with the control plane: `./hub sync` adds
-`plugin/hub-workflow/hooks/event_sensor.py` and rewrites `hooks.json`, `.claude/settings.json` (the sensor joins
-eleven hook events), `guard.py`, `stop_gate.py` and `hubhooks.py` once. Review that diff in the sync PR as usual; the
-guard's and the Stop gate's decisions do not change.
+Release notes, for reviewing the sync PR's diff. Control plane: `./hub sync` adds the hook `event_sensor.py` and
+rewrites `hooks.json`, `.claude/settings.json` (the sensor joins eleven hook events), `guard.py`, `stop_gate.py` and
+`hubhooks.py`, decisions unchanged. Read-only gate (AGH-141): adds the hook `readonly_gate.py` and rewrites
+`hooks.json`, `.claude/settings.json` and the researcher, spec-reviewer and quality-reviewer (`mutates_checkout: false`,
+which any agent may add); one that changes a checkout is held at its stop once, or the change is reported.
 
 ---
 

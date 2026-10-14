@@ -2624,3 +2624,402 @@ def test_refuses_existing_counter_when_record_block_counted(
 
     assert fresh.read_text(encoding="utf-8") == "2"
     assert raced.read_text(encoding="utf-8") == "1"
+
+
+# S9: fail-open (AC-141.13) and the time and size budget (AC-141.14, O-3).
+NOTE_HEAD = "[hub readonly-gate] not checked ("
+HOOKS_FOLDER = "plugin/hub-workflow"
+# Where Claude Code's plugin cache would hold the base plugin: no hub.json above it.
+PLUGIN_CACHE = ".claude/plugins/cache/agent-hub/hub-workflow/0.1.0"
+# Runs the gate at ``{hook}`` as its ``__main__`` block does, its block counter written into the
+# folder ``{gone}``, which is not there: the counter cannot be written beside the start state.
+UNWRITABLE_COUNTER_LAUNCHER = """\
+import importlib.util, sys
+hook = {hook!r}
+spec = importlib.util.spec_from_file_location("hook_under_test", hook)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+count_block = module.count_block
+gone = module.Path({gone!r})
+module.count_block = lambda path, done: count_block(gone / path.name, done)
+sys.argv = [hook]
+module.run_hook(module.main)
+"""
+# A crash forced inside the gate (mirrors test_hooks_config.py's CRASH_LAUNCHER): ``load_config``
+# raises, then the gate at ``{hook}`` runs as Claude Code runs it.
+GATE_CRASH_LAUNCHER = """\
+import runpy, sys
+hook = {hook!r}
+sys.path.insert(0, hook.rsplit("/", 1)[0])
+import hubhooks
+def boom(start=None):
+    raise RuntimeError("forced")
+hubhooks.load_config = boom
+sys.argv = [hook]
+runpy.run_path(hook, run_name="__main__")
+"""
+# A git that hangs: it marks that it ran, then waits on a child that would mark ``late`` after 3 s.
+HANGING_GIT = '#!/bin/sh\ntouch "{started}"\n(sleep 3; touch "{late}") &\nwait\n'
+# The test budget (s) the hanging git runs under, and how long after the hook returns ``late``
+# would be there if git's group outlived the hook.
+TEST_BUDGET = 1
+LATE_AFTER = 3.5
+
+
+def note(cause: str) -> str:
+    return f"{NOTE_HEAD}{cause})"
+
+
+def use_env(gate: Gate, **extra: str) -> None:
+    """Run the gate's next events with ``extra`` in its environment (``gate_ws`` keeps its own,
+    for the test's git calls)."""
+    ws = gate.ws
+    gate.ws = GateWorkspace(
+        root=ws.root, hub=ws.hub, app=ws.app, tmp=ws.tmp, home=ws.home, env={**ws.env, **extra}
+    )
+
+
+def run_launcher_instead(gate: Gate, script: Path) -> None:
+    """Run ``script`` (a launcher that runs the gate itself) instead of the gate's file."""
+    run_file = gate.run_file
+
+    def run(python: str, hook: Path, **options: Any) -> subprocess.CompletedProcess[bytes]:
+        assert hook == gate.ws.hub / HOOK
+        return run_file(python, script, **options)
+
+    gate.run_file = run
+
+
+def git_shim(folder: Path, body: str) -> str:
+    """A ``PATH`` whose first folder holds a ``git`` running ``body`` (a ``/bin/sh`` script)."""
+    folder.mkdir()
+    shim = folder / "git"
+    shim.write_text("#!/bin/sh\n" + body, encoding="utf-8")
+    shim.chmod(0o755)
+    return f"{folder}{os.pathsep}{os.environ.get('PATH', os.defpath)}"
+
+
+def launcher(tmp_path: Path, text: str) -> Path:
+    path = tmp_path / "support" / "readonly_gate_launcher.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def start_event(cwd: Path, **extra: object) -> dict[str, object]:
+    """A SubagentStart of the declared researcher ``a1``."""
+    return {
+        "hook_event_name": "SubagentStart",
+        "session_id": SESSION,
+        "cwd": str(cwd),
+        "agent_id": "a1",
+        "agent_type": "researcher",
+        **extra,
+    }
+
+
+def run_raw(gate: Gate, script: Path, stdin: bytes) -> tuple[int, bytes, bytes]:
+    """(exit code, stdout, stderr) of ``script`` run with ``stdin``, from outside every hub."""
+    completed = gate.run_file(gate.python, script, stdin=stdin, cwd=gate.elsewhere, env=gate.ws.env)
+    return completed.returncode, completed.stdout, completed.stderr
+
+
+FAIL_OPEN_CAUSES = [
+    "git_missing",
+    "git_failing",
+    "no_start_state",
+    "corrupt_state",
+    "unwritable_state_dir",
+    "transcript_unreadable",
+    "worktree_removed",
+]
+
+
+def break_gate(gate: Gate, cause: str, *, tmp_path: Path, agent: Path) -> None:
+    """Between the start and the stop, make the gate unable to check what ``cause`` names."""
+    ws = gate.ws
+    if cause == "git_missing":
+        empty = tmp_path / "no-git"
+        empty.mkdir()
+        use_env(gate, PATH=str(empty))
+    elif cause == "git_failing":
+        use_env(gate, PATH=git_shim(tmp_path / "failing-bin", "exit 1\n"))
+    elif cause == "corrupt_state":
+        (ws.tmp / state_name("a1")).write_text("{", encoding="utf-8")
+    elif cause == "unwritable_state_dir":
+        text = UNWRITABLE_COUNTER_LAUNCHER.format(
+            hook=str(ws.hub / HOOK), gone=str(tmp_path / "gone")
+        )
+        run_launcher_instead(gate, launcher(tmp_path, text))
+    elif cause == "transcript_unreadable":
+        agent.unlink()  # the path named and Claude Code's fallback path: the same file
+    elif cause == "worktree_removed":
+        ws.git("worktree", "remove", "--force", f".claude/worktrees/{WORKTREE}", cwd=ws.app)
+
+
+@pytest.mark.parametrize("cause", FAIL_OPEN_CAUSES)
+def test_notes_not_checked_when_fail_open_cause(
+    gate: Gate, gate_ws: GateWorkspace, *, tmp_path: Path, cause: str
+) -> None:
+    """AC-141.13, E-6: whatever the gate could not check ends in exit 0, never a block, and one
+    ``systemMessage`` with a ``not checked`` line per cause, naming the checkout when the cause is
+    in one, although the agent's own Edit changed the file. ``worktree_removed`` is pinned in full
+    by test_notes_removed_when_agent_removes_worktree; here only its note (E-13)."""
+    hub = gate_ws.hub.name
+    edited = gate_ws.app / "a.py"
+    if cause == "worktree_removed":
+        edited = add_worktree(gate_ws, gate_ws.app, WORKTREE) / "a.py"
+    calls = [("Edit", {"file_path": str(edited), "old_string": "1", "new_string": "2"})]
+    main, agent = transcripts(gate_ws, agent_id="a1", calls=calls)
+    if cause != "no_start_state":
+        assert gate.start("researcher", agent_id="a1", transcript_path=main) is None
+    edited.write_text("A = 2\n", encoding="utf-8")
+    break_gate(gate, cause, tmp_path=tmp_path, agent=agent)
+
+    output = gate.stop(
+        "researcher", agent_id="a1", transcript_path=main, agent_transcript_path=agent
+    )
+
+    notes = {
+        "git_missing": [note("app: git not found"), note(f"{hub}: git not found")],
+        "git_failing": [note("app: git failed"), note(f"{hub}: git failed")],
+        "no_start_state": [note("no start snapshot")],
+        "corrupt_state": [note("start snapshot unreadable")],
+        "unwritable_state_dir": [note("state not saved")],
+        "transcript_unreadable": [note("agent transcript unreadable")],
+        "worktree_removed": [note(f"app/.claude/worktrees/{WORKTREE}: removed")],
+    }
+    assert output is not None
+    assert set(output) == {"systemMessage"}, output  # no decision
+    lines = output["systemMessage"].splitlines()
+    assert [line for line in lines if line.startswith(NOTE_HEAD)] == notes[cause]
+    assert counter_name("a1") not in state_files(gate_ws)
+    assert state_name("a1") not in state_files(gate_ws)
+    if cause == "unwritable_state_dir":
+        # the S8 stop branch: the state is there, the counter cannot be written, so no block
+        assert lines == [left_head(), "- app/a.py", note("state not saved")]
+        assert [(line["outcome"], line["paths"]) for line in record_lines(gate_ws)] == [
+            ("left_changed", ["app/a.py"])
+        ]
+
+
+def test_keeps_other_checkout_block_when_fail_open_one_checkout_fails(
+    gate: Gate, gate_ws: GateWorkspace
+) -> None:
+    """AC-141.13: git failing in one checkout (``app``'s ``.git`` is now a file that is no
+    gitfile) cuts only that checkout: a change in the hub, which git still reads, is blocked,
+    and the note names ``app``; the change in ``app`` is never named."""
+    notes = gate_ws.hub / "notes.txt"
+
+    def change() -> None:
+        change_app(gate_ws)
+        shutil.rmtree(gate_ws.app / ".git")
+        (gate_ws.app / ".git").write_text("not a gitfile\n", encoding="utf-8")
+        notes.write_text("x\n", encoding="utf-8")
+
+    output = run_agent(gate, "researcher", change, calls=[app_edit(gate_ws), BASH_EDIT])
+
+    lines = block_lines(output)
+    assert lines[: lines.index(REVERT) + 1] == [
+        BLOCK_HEAD,
+        f"- {gate_ws.hub.name}/notes.txt",
+        REVERT,
+    ]
+    assert output is not None
+    assert output["systemMessage"] == note("app: git failed")
+
+
+@pytest.mark.parametrize("case", ["empty", "list", "not_utf8", "oversize"])
+def test_prints_nothing_when_fail_open_input_malformed(
+    gate: Gate, gate_ws: GateWorkspace, case: str
+) -> None:
+    """AC-141.13: an event that is empty, not an object, not UTF-8, or over 1 MiB (a valid
+    SubagentStart of a declared agent, padded with blanks) is no event: exit 0, nothing printed,
+    no state."""
+    event = json.dumps(start_event(gate_ws.hub)).encode("utf-8")
+    stdins = {
+        "empty": b"",
+        "list": b"[" + event + b"]",
+        "not_utf8": event[:-1] + b', "x": "\xff"}',
+        "oversize": event + b" " * (1 << 20),  # still JSON: only the size refuses it
+    }
+
+    found = run_raw(gate, gate_ws.hub / HOOK, stdins[case])
+
+    assert found == (0, b"", b"")
+    assert state_files(gate_ws) == []
+
+
+def test_prints_nothing_when_fail_open_no_hub(gate: Gate, gate_ws: GateWorkspace) -> None:
+    """AC-141.13: the base plugin's hooks in Claude Code's plugin cache, run from a folder in no
+    hub: the researcher is declared there, but with no hub nothing is watched: exit 0, nothing
+    printed, no state."""
+    cached = gate_ws.home / PLUGIN_CACHE
+    shutil.copytree(gate_ws.hub / HOOKS_FOLDER, cached)
+    assert "mutates_checkout: false" in (cached / "agents" / "researcher.md").read_text("utf-8")
+    event = start_event(gate.elsewhere, transcript_path=str(transcripts(gate_ws, agent_id="a1")[0]))
+
+    found = run_raw(gate, cached / "hooks" / "readonly_gate.py", json.dumps(event).encode())
+
+    assert found == (0, b"", b"")
+    assert state_files(gate_ws) == []
+
+
+@pytest.mark.parametrize("case", ["no_reader", "crash"])
+def test_prints_skip_line_when_fail_open_hook_raises(
+    gate: Gate, gate_ws: GateWorkspace, *, tmp_path: Path, case: str
+) -> None:
+    """AC-141.13: helpers that cannot be imported (``no_reader``: the hooks folder copied without
+    ``stdlib_reader.py``), or an exception inside the gate (``crash``), print one ``skipped`` line
+    on stderr and nothing on stdout, with exit 0 and no state."""
+    if case == "no_reader":
+        broken = tmp_path / "broken" / "hooks"
+        shutil.copytree(gate_ws.hub / HOOKS_FOLDER / "hooks", broken)
+        (broken / "stdlib_reader.py").unlink()
+        script, cause = broken / "readonly_gate.py", "ModuleNotFoundError"
+    else:
+        script = launcher(tmp_path, GATE_CRASH_LAUNCHER.format(hook=str(gate_ws.hub / HOOK)))
+        cause = "RuntimeError"
+
+    found = run_raw(gate, script, json.dumps(start_event(gate_ws.hub)).encode())
+
+    assert found == (0, b"", f"[hub readonly_gate] skipped: {cause}\n".encode())
+    assert state_files(gate_ws) == []
+
+
+@pytest.mark.parametrize("event", ["start", "stop"])
+def test_exits_before_timeout_when_budget_git_hangs(
+    gate: Gate, gate_ws: GateWorkspace, *, tmp_path: Path, event: str
+) -> None:
+    """AC-141.14, O-3: a git that hangs is killed, with every process it started, when the
+    event's budget (lowered to 1 s) runs out: the gate returns well before Claude Code's timeout
+    with a ``budget`` note per checkout and never blocks."""
+    started, late = tmp_path / "started", tmp_path / "late"
+    hanging = git_shim(tmp_path / "hanging-bin", HANGING_GIT.format(started=started, late=late))
+    main, agent = transcripts(gate_ws, agent_id="a1", calls=[app_edit(gate_ws)])
+    budget = "START_BUDGET" if event == "start" else "STOP_BUDGET"
+    if event == "stop":
+        assert gate.start("researcher", agent_id="a1", transcript_path=main) is None
+        change_app(gate_ws)
+    use_env(gate, PATH=hanging)
+
+    begun = time.monotonic()
+    output = gate.run(
+        "SubagentStart" if event == "start" else "SubagentStop",
+        "researcher",
+        agent_id="a1",
+        constant=(budget, TEST_BUDGET),
+        stop_hook_active=False,
+        transcript_path=main,
+        agent_transcript_path=agent,
+    )
+    returned = time.monotonic()
+    time.sleep(max(0.0, LATE_AFTER - (time.monotonic() - returned)))
+
+    hub = gate_ws.hub.name
+    assert output == {"systemMessage": "\n".join([note("app: budget"), note(f"{hub}: budget")])}
+    assert returned - begun < 2.5
+    assert started.exists()  # the probe: the hanging git did run
+    assert not late.exists()  # its group was killed with it
+
+
+@pytest.mark.parametrize("cap", ["checkouts", "entries", "file_size"])
+def test_notes_budget_when_budget_caps_exceeded(
+    gate: Gate, gate_ws: GateWorkspace, cap: str
+) -> None:
+    """AC-141.14, O-3, E-12: past a cap (lowered here) what it cuts is not checked: a note
+    naming it, never a block, although the agent's own Edit changed the file. ``checkouts`` is
+    pinned in full by test_watches_newest_worktree_when_worktree_checkouts_over_cap; here only
+    its note (E-13)."""
+    constant: tuple[str, object] = {
+        "checkouts": ("MAX_CHECKOUTS", 1),
+        "entries": ("MAX_ENTRIES", 2),
+        "file_size": ("MAX_FILE_BYTES", 4),
+    }[cap]
+    if cap == "entries":
+        for name in ("b.py", "c.py", "d.py"):
+            (gate_ws.app / name).write_text("B = 1\n", encoding="utf-8")
+    if cap == "file_size":
+        (gate_ws.app / "a.py").write_text("A = 10\n", encoding="utf-8")  # dirty at both ends
+    written = gate_ws.hub / "notes.txt"
+    calls = [app_edit(gate_ws), ("Write", {"file_path": str(written), "content": "x\n"})]
+    main, agent = transcripts(gate_ws, agent_id="a1", calls=calls)
+
+    started = gate.start("researcher", agent_id="a1", transcript_path=main, constant=constant)
+    if cap == "checkouts":
+        written.write_text("x\n", encoding="utf-8")  # in the hub, past the cap
+    else:
+        change_app(gate_ws)
+    output = gate.stop(
+        "researcher",
+        agent_id="a1",
+        transcript_path=main,
+        agent_transcript_path=agent,
+        constant=constant,
+    )
+
+    expected: dict[str, tuple[dict[str, str] | None, dict[str, str] | None]] = {
+        "checkouts": ({"systemMessage": note("1 checkouts over the cap")}, None),
+        "entries": ({"systemMessage": note("app: caps")}, {"systemMessage": note("app: caps")}),
+        "file_size": (None, {"systemMessage": note("app/a.py: too large")}),
+    }
+    assert (started, output) == expected[cap]
+
+
+# O-3's numbers and the bounds S5 to S8 added (E-13, E-14, E-16), each stated once as a literal.
+LIMITS = {
+    "START_BUDGET": 5,
+    "STOP_BUDGET": 15,
+    "GIT_TIMEOUT": 4,
+    "TRANSCRIPT_BUDGET": 5,
+    "MAX_CHECKOUTS": 24,
+    "MAX_WORKTREES": 256,
+    "MAX_STATUS_BYTES": 4194304,
+    "MAX_ENTRIES": 2000,
+    "MAX_FILE_BYTES": 8388608,
+    "MAX_HASH_BYTES": 134217728,
+    "MAX_STDIN": 1048576,
+    "MAX_TRANSCRIPT_BYTES": 16777216,
+    "MAX_WINDOW_BYTES": 8388608,
+    "MAX_LINE_BYTES": 1048576,
+    "MAX_AGENT_FILES": 256,
+    "MAX_FRONTMATTER_BYTES": 16384,
+    "MAX_SUBAGENT_FILES": 256,
+    "MAX_STATE_FILES": 256,
+    "MAX_TAIL_BYTES": 65536,
+    "MAX_STATE_BYTES": 16777216,
+    "STALE_SECONDS": 43200,
+    "MAX_BLOCKS": 1,
+    "MAX_RECORD_PATHS": 200,
+    "MAX_COMMANDS": 10,
+    "MAX_COMMAND_CHARS": 160,
+    "MAX_TARGETS": 256,
+    "KILL_WAIT": 1,  # waited after killing git's group, past the budget's end
+}
+
+
+def test_pins_limits_when_budget_constants_read(
+    demo_config: HubConfig, pinned_timeout: Callable[..., Any]
+) -> None:
+    """O-3, AC-141.14: every bound of the rendered gate is pinned as a literal here; each run's
+    budget stays inside the timeout Claude Code gives its event (SubagentStart 10 s,
+    SubagentStop 30 s, in hooks.json and the settings alike)."""
+    found = {}
+    timeouts = {}
+    for name in LIMITS:
+        event = "SubagentStop" if name == "STOP_BUDGET" else "SubagentStart"
+        found[name], timeouts[event] = pinned_timeout(
+            demo_config, hook=HOOK, constant=name, event=event
+        )
+
+    assert found == LIMITS
+    assert timeouts == {
+        "SubagentStart": {f"{HOOKS_FOLDER}/hooks/hooks.json": [10], ".claude/settings.json": [10]},
+        "SubagentStop": {f"{HOOKS_FOLDER}/hooks/hooks.json": [30], ".claude/settings.json": [30]},
+    }
+    assert LIMITS["START_BUDGET"] < 10
+    assert LIMITS["STOP_BUDGET"] < 30
+    assert LIMITS["GIT_TIMEOUT"] < LIMITS["START_BUDGET"]
+    assert LIMITS["TRANSCRIPT_BUDGET"] < LIMITS["STOP_BUDGET"]
+    assert LIMITS["START_BUDGET"] + LIMITS["KILL_WAIT"] < 10
+    assert LIMITS["STOP_BUDGET"] + LIMITS["KILL_WAIT"] < 30

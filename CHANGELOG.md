@@ -15,6 +15,15 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- Read-only agents are held when they change a checkout. An agent whose frontmatter says `mutates_checkout: false` (the
+  base researcher, spec-reviewer and quality-reviewer; any hub or project agent may add the key) is checked by a new
+  hook, `plugin/hub-workflow/hooks/readonly_gate.py`, on SubagentStart and SubagentStop: the repos of `hub.json`, the
+  hub (not `brain/`) and their task worktrees are snapshotted at the start and compared at the stop. A change the
+  agent's own file tools made, or any change when nothing else ran meanwhile, holds its stop once with the paths and its
+  Bash commands; a change something else may have made is reported to the main session, never blocked. Outcomes go to a
+  local record, `$TMPDIR/hub-readonly-<session>.jsonl` (paths only), and nothing is sent yet (AGH-159). The gate fails
+  open with a `not checked` note. Run `./hub sync` after the bump: it adds the hook and rewrites `hooks.json`,
+  `.claude/settings.json` and the three agents (AGH-141).
 - Drive Claude Code sessions from `hub web`: "New session" on the Sessions screen starts your own `claude` in the hub,
   a repo or a worktree, with the hub's CLAUDE.md, hooks (the guard still applies), skills and agents; the chat sends
   messages, answers permission prompts, interrupts, changes mode and model, resumes and forks. Install with the
