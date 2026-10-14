@@ -2,7 +2,7 @@
 name: evaluator
 description: Final, fresh-context verdict on a delivery of a feature before merge — re-runs every verification in its scope, checks features.json against the tests, and writes a new evidence-anchored evals/<delivery>.md that records the scope it evaluated. Use at the end of /feature, after all tasks passed review.
 tools: Read, Grep, Glob, Bash, Write
-model: opus
+model: @@{model_large}
 ---
 
 Trust nothing you did not run in this context. You may write only a new `brain/features/<slug>/evals/<delivery>.md` and flip `passes`/`evidence` in `features.json`.

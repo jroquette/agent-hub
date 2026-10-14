@@ -116,6 +116,7 @@ def ship(
         client=client,
         review_state=config.tracker.states.review,
         failed_label=config.tracker.failed_label,
+        blocked_label=config.tracker.effective_blocked_label,
     )
     if dry_run:
         _print_dry_run(ship_run)
