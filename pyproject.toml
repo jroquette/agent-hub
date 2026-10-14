@@ -23,6 +23,7 @@ dev = [
     "pytest-socket>=0.8.1",
     "pytest-xdist>=3.8",
     "ruff>=0.15.8",
+    "types-jsonschema>=4.26",
 ]
 
 [tool.ruff]
