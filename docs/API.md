@@ -80,6 +80,8 @@ Errors are RFC 9457 Problem Details, with media type `application/problem+json`:
   501 only in a build where the decisions are not wired.
 - The feature tickets route ([Feature tickets](#feature-tickets)) never answers an error for a failed Linear read:
   the failure is the `tracker_problem` member of its 200 answer.
+- The agent-session routes ([Agent sessions](#agent-sessions)) answer typed problems,
+  `urn:agent-hub:problem:agent-session-<code>`, listed there.
 
 ## Pagination
 
@@ -120,8 +122,8 @@ the same operation behaves the same from every entry point ([ARCHITECTURE.md](AR
 - A breaking change goes to a new version prefix (`/api/v2`); `v1` keeps working until it is retired.
 - Nested paths only for ownership (`/api/v1/sessions/{session_id}/events`). Methods keep their HTTP meaning: `GET`
   reads, `POST` creates or triggers an action (`POST /api/v1/hubs`, `POST /api/v1/events/hooks`), `PATCH` updates part
-  of a resource, `DELETE` removes it. The only writes are registering and removing a hub, posting hook envelopes and,
-  since AGH-201, the two learning decisions.
+  of a resource, `DELETE` removes it. The only writes are registering and removing a hub, posting hook envelopes,
+  since AGH-201 the two learning decisions, and since AGH-165 the agent-session commands.
 
 ## Learning decisions
 
@@ -179,12 +181,96 @@ the app refetches the route; the cache still applies (`as_of` shows its age). `G
 `GET /features/{project}/{slug}` never call Linear: they use a warm cache entry, else the plan, and say so in their
 `golden_path` and `tickets_source`.
 
+## Agent sessions
+
+`hub web` starts and drives Claude Code sessions of the user's own `claude`
+([ADR 0027](adr/0027-driving-claude-code-sessions-from-the-app.md); design in
+[design/agent-sessions.md](design/agent-sessions.md)). Seventeen route-method pairs, all under
+`/api/v1/agent-sessions`; ids are UUIDv7, a request id at most 64 characters of `[A-Za-z0-9_-]`.
+
+| Route | Answer |
+| --- | --- |
+| `GET /workdirs?project=` | `{items, warnings}`: the hub, its repos and their worktrees, by opaque `workdir_id` (16 hex) |
+| `GET /capabilities` | `{available, reason, engine, cli_version, models, cloud, cloud_followup}`; 200 even when unavailable |
+| `GET /resumable?project=&workdir_id=` | past Claude sessions of that workdir (at most 200, newest first) |
+| `GET ""` · `POST ""` | the sessions, newest first · start one: `{project, workdir_id, mode?, model?, prompt?, resume_session_id?, fork?}` → 201, `Location` |
+| `GET /{id}` · `DELETE /{id}` | the session with its open permission request · delete an ended one with its log → 204 (409 when live) |
+| `GET /{id}/events?after=&limit=` | the persisted log, `seq` order, `limit` 1 to 500 (default 200), `next_after` |
+| `GET /{id}/stream` | the log over SSE (below) |
+| `POST /{id}/messages` | `{text}` (1 byte to 64 KiB UTF-8) → 202 `{seq}`; accepted while a turn runs |
+| `POST /{id}/interrupt` | `{}` → 202; the turn's `result` follows on the stream |
+| `POST /{id}/permissions/{request_id}` | `{decision: allow \| deny \| always, message?, answers?, suggestion?, mode?}` → 200 |
+| `POST /{id}/settings` | `{mode?, model?}` (at least one) → 200 |
+| `POST /{id}/close` | `{}` → 200; idempotent |
+| `GET /cloud` · `POST /cloud` | cloud starts, newest first (at most 50) · `{project, workdir_id, task}` |
+| `POST /cloud/{cloud_id}/messages` | `{text}`, a follow-up through `claude -p --cloud` (behind `cloud_followup`) |
+
+- **Modes and models.** `mode` is `default`, `acceptEdits` or `plan` (never a bypass mode). `model` is `default`,
+  `opus`, `sonnet`, `haiku` or an id matching `^[A-Za-z0-9._\-\[\]]{1,64}$`; anything else is 422 and the driver is
+  not called. Status is `idle`, `running`, `waiting_permission`, `ended` or `failed`; without a first prompt a new
+  session is `idle` with no `init` yet.
+- **Permission answers.** `always` needs `suggestion` (the index of the request's `localSettings` rule); `answers`
+  only for `AskUserQuestion`; `mode` (`default` or `acceptEdits`) only for plan approval, applied after the allow.
+  Other combinations are 422. The first answer stands (a second is 409); none within 10 minutes is a deny by
+  `timeout`.
+- **Records.** Each record is `{seq, at, kind, by, body}`. Kinds: `init`, `text`, `thinking`, `tool.call` (Edit and
+  Write carry a unified `diff`), `tool.result` (at most 64 KiB, then `truncated` and `original_bytes`), `todos`,
+  `permission.request`, `result` (cost, usage, terminal reason), `error`, `exited`, and the audit kinds
+  `user.message`, `permission.decision`, `interrupt`, `settings`, `close`, `log.truncated`, `cloud.start`,
+  `cloud.followup`; `by` is `web`, `timeout`, `closed`, `driver` or `server`. Stored text is redacted (the event store's rule
+  set); a request's live frame and `GET /{id}`'s open request carry the raw summary (at most 4 KiB).
+
+**Stream.** `GET /{id}/stream` sends `retry: 3000`, then the stored records after the resume position, the deltas
+the ring still holds, then live frames:
+
+- `event: record.<kind>`, `id: <seq>`, the record as data (gap-free `seq`);
+- `event: delta`, `id: <seq>.<n>` (`seq` the last record, `n` the delta's place in the open text block), data
+  `{after_seq, block, index, text}`; deltas are never stored, and the completed `text` record supersedes them;
+- `event: status` (no id), `{status, end_reason}` when the session's state changes; `event: heartbeat` every 15 s
+  with the last id sent; `event: reset` (no id) `{reason}` when the position cannot be resumed (malformed, unknown or
+  another session's): the client reloads from `GET /{id}`. A delta position whose block left the ring resumes with
+  that block's completed `text` record instead.
+
+`Last-Event-ID` (or `?after=`, the header wins) is `<seq>` or `<seq>.<n>`, at most 32 characters. Frames sent live
+carry the original text; a replay carries the stored, redacted copy. An unknown session is a 404 problem before any
+byte; an ended session's stream replays its log and ends.
+
+**Access.** Every route of the family needs the cookie `agent_hub_<port>`, reads included: `hub web` mints a token
+per launch and prints `/?token=<token>`; a `GET` or `HEAD` of a page with `token` answers 303 to the same address
+without it and, when it matches, sets the cookie (`HttpOnly; SameSite=Strict; Path=/`). No cookie or a wrong one is
+401 `urn:agent-hub:problem:agent-session-unauthorized`. Writes also need the server's own `Origin`,
+`Sec-Fetch-Site: same-origin` when sent, and a JSON body except on `DELETE` (403, 415); a bodiless command sends
+`{}`. Reads, the stream included, refuse any other `Origin` and a `Sec-Fetch-Site` of `same-site` or `cross-site`
+(another loopback port is same-site and would carry the Strict cookie) and accept a missing `Origin` with a valid
+cookie: Chromium sends none on a same-origin `EventSource` (verified); Firefox and WebKit are unverified. With
+`AGENT_HUB_IN_CONTAINER=1` every route answers 404 `urn:agent-hub:problem:agent-sessions-off` and no token is
+minted. No route speaks WebSocket: any upgrade is closed with code 1008. Under `make dev`, open the token address
+`hub web` printed (port 7420) once: cookies are not port-scoped, so the dev server's `/api` proxy then carries it.
+
+**Problems** (`urn:agent-hub:problem:agent-session-<code>`; details name ids, limits and causes, never conversation
+text or a value the browser sent):
+
+| Code | Status | When |
+| --- | --- | --- |
+| `not-found` · `unknown-request` | 404 | no such session · no pending request with that id (`request_id`) |
+| `terminal` | 409 | the session ended or failed (`session_status`); resume it |
+| `busy` | 409 | a command while an interrupted turn ends, or deleting a live session |
+| `answered` | 409 | a second answer to a request |
+| `log-full` | 409 | the log reached 50,000 records or 32 MiB; the session ended (`end_reason: log_full`); resume it |
+| `limit` | 429 | a fifth live session (`limit`) |
+| `invalid-workdir` · `unknown-resume` · `invalid-decision` | 422 | an id not in `GET /workdirs` or `GET /resumable` (`errors[]`) · an answer that does not fit the request |
+| `message-too-large` | 413 | a prompt or message over the limit (`limit`, `size`) |
+| `unavailable` | 503 | no `claude` on `PATH` or no `sessions` extra (`reason`), on every write |
+| `cloud-unavailable` · `cloud-failed` · `cloud-timeout` | 501 · 502 · 504 | link-out guidance (`guidance`) · the step that failed (`step`) · the 60 s deadline (`seconds`) |
+
 ## Local security
 
 `hub web` binds `127.0.0.1` only. It refuses a `Host` header other than `127.0.0.1:<port>`, `localhost:<port>` or
 `[::1]:<port>` (403, against DNS rebinding) and a `POST` or `DELETE` whose `Origin` is not its own (403); it sends no
 CORS headers, `Cache-Control: no-store` on `/api`, and a CSP that limits scripts, styles, fonts and connections to
 `'self'`. The web app requests no other host; Linear is read by the server only ([Feature tickets](#feature-tickets)).
+The agent-session routes add a cookie and stricter Origin rules ([Agent sessions](#agent-sessions)); every other
+route is unchanged and needs no cookie.
 
 The two learning decisions, which reach the network, take a strict rule on top (`STRICT_WRITES` in
 `agent_hub/api/local_security.py`), checked before the route runs, so a refused request pushes and stores nothing:
