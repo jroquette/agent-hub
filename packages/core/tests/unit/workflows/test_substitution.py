@@ -11,6 +11,7 @@ from agent_hub.core.workflows.substitution import (
     SubstitutionError,
     WithRef,
     canonical_text,
+    check_argv,
     find_refs,
     parse_ref,
     render,
@@ -120,6 +121,10 @@ def test_renders_one_dollar_when_dollar_is_doubled() -> None:
         "$LOOP_PREV.review",
         "$plan.output[0]",  # array items are `.0`
         "$plan.output?.summary",
+        "$plan.output.items[0]",
+        "$plan.output.x?.y",
+        "$plan.output.items.0[1]",
+        "$LOOP_PREV.review.output.a[0]",
     ],
 )
 def test_errors_when_reference_is_malformed(template: str) -> None:
@@ -233,3 +238,36 @@ def test_errors_when_whole_argv_element_cannot_resolve() -> None:
     with pytest.raises(SubstitutionError) as caught:
         render_argv(["echo", "$build.output"], context())
     assert caught.value.code == "producer_failed"
+
+
+def test_errors_when_value_is_not_finite() -> None:
+    for value in (float("inf"), {"x": float("nan")}):
+        assert error_code("$INPUTS.big", context(inputs={"big": value})) == "non_finite"
+
+
+def test_reads_empty_text_when_index_has_too_many_digits() -> None:
+    assert render("[$plan.output.items." + "9" * 5000 + "]", context()) == "[]"
+
+
+@pytest.mark.parametrize(
+    ("argv", "index", "code"),
+    [
+        (["$INPUTS.issue", "x"], 0, "argv_program"),
+        (["sh", "-c", "$INPUTS.issue"], 2, "argv_script"),
+        (["bash", "-e", "-c", "$plan.output", "bash"], 3, "argv_script"),
+        (["hub", "--title=$INPUTS.issue"], 1, "partial_argv"),
+        (["hub", "$plan.output[0]"], 1, "malformed"),
+    ],
+)
+def test_reports_problem_when_reference_sits_where_argv_refuses_it(
+    argv: list[str], index: int, code: str
+) -> None:
+    (problem,) = check_argv(argv)
+    assert (problem.index, problem.error.code) == (index, code)
+    with pytest.raises(SubstitutionError) as caught:
+        render_argv(argv, context())
+    assert caught.value.code == code
+
+
+def test_reports_no_problem_when_references_are_positional_parameters() -> None:
+    assert check_argv(["sh", "-c", 'gh pr view "$1"', "sh", "$plan.output.summary", "$$x"]) == []
