@@ -64,6 +64,10 @@ EVAL_JSON = "brain/features/<slug>/evals/<delivery>.json"
 REVIEW_JSON = "brain/features/<slug>/reviews/<ticket>/<reviewer>-r<N>.json"
 PRINTED_LINES = "every line the command printed (the `… and N more` line included)"
 REVIEW_INPUTS = "when the caller gives `ticket`, `task`, `round` and `commit`"
+SHIP_RULE = (
+    "Act only on the validated JSON: ship on a validated `SHIP`, or on a validated"
+    " `SHIP-WITH-OWNER-STEPS` once the user confirms its owner steps are done"
+)
 AMENDMENT_RULES = (
     "`status: approved`",
     "never rewritten",
@@ -311,7 +315,10 @@ def test_gates_ship_on_eval_outputs_when_feature_step_eight_rendered(
     verify = step(texts[FEATURE], 8)
 
     assert f"Run `./hub validate-output eval <file>` on the evaluator's `{EVAL_JSON}`" in verify
-    assert "Act only on the validated JSON: ship only on `SHIP`" in verify
+    assert SHIP_RULE in verify
+    # An owner-steps verdict ships after the user's confirmation, so no "only on SHIP" rule.
+    assert "ship only on `SHIP`" not in verify
+    assert "`SHIP` required" not in verify
     assert "on `SHIP-WITH-OWNER-STEPS` list its `owner_steps` to the user" in verify
     assert "on `NO-SHIP` send its failing `results` and `gates` back to the implementer" in verify
     assert verify.index("Act only on the validated JSON") < verify.index("**Finish**")
@@ -398,9 +405,9 @@ def test_acts_on_each_verdict_when_feature_step_eight_rendered(texts: dict[str, 
     verify = step(texts[FEATURE], 8)
 
     phrases = (
-        "Act only on the validated JSON: ship only on `SHIP`",
-        "on `SHIP-WITH-OWNER-STEPS` list its `owner_steps` to the user and stop: ship once the user"
-        " confirms they are done, with no new evaluation",
+        SHIP_RULE,
+        "on `SHIP-WITH-OWNER-STEPS` list its `owner_steps` to the user and stop until they"
+        " confirm, with no new evaluation",
         "on `NO-SHIP` send its failing `results` and `gates` back to the implementer and, after the"
         " fix, run a fresh evaluation (a new `<delivery>-rN` pair)",
         "The re-dispatch-once budget covers only a missing or invalid eval JSON,"
