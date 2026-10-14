@@ -7,7 +7,7 @@ a skill's detail under 100 ms, warm, with 200 skills beside the 10,000 events.
 
 Each read follows an append, so it folds again (the memo is keyed by the high-water mark): the
 budget holds while sessions are live, not only on a warm memo. The first read after start-up,
-which loads every event once, is left out.
+which loads every event once, is left out, and so is the first hook POST, the route's cold call.
 """
 
 import asyncio
@@ -91,15 +91,20 @@ def loaded(composed: Any) -> Any:
     return composed
 
 
+def _hook_envelope(tool_use_id: str) -> dict[str, Any]:
+    return an_envelope(a_hook_input("PreToolUse", tool_use_id=tool_use_id)).model_dump(mode="json")
+
+
 def test_answers_hook_within_budget_when_store_holds_ten_thousand_events(loaded: Any) -> None:
+    # Unmeasured: warms the route's cold first call (134 ms on CI); a hook only appends, no memo.
+    hooks = "/api/v1/events/hooks"
+    assert loaded.client.post(hooks, json=_hook_envelope("toolu_perf_warmup")).status_code == 202
     samples: list[float] = []
     for number in range(40):
-        hook = a_hook_input("PreToolUse", tool_use_id=f"toolu_perf_{number}")
-        envelope = an_envelope(hook).model_dump(mode="json")
-        elapsed, response = _timed(
-            lambda e=envelope: loaded.client.post("/api/v1/events/hooks", json=e)
-        )
+        envelope = _hook_envelope(f"toolu_perf_{number}")
+        elapsed, response = _timed(lambda e=envelope: loaded.client.post(hooks, json=e))
         assert response.status_code == 202
+        assert response.json()["duplicates"] == 0, response.json()
         samples.append(elapsed)
 
     assert _p95(samples) < HOOK_P95_MS, samples
