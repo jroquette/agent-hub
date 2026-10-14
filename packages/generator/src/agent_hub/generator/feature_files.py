@@ -23,7 +23,6 @@ it is listed with ``OVER_BUDGET`` as its record problem and files unread.
 """
 
 import contextlib
-import errno
 import heapq
 import os
 import stat
@@ -52,14 +51,13 @@ from agent_hub.core.features.feature_status import (
     FeatureFolder,
     RecordHead,
 )
+from agent_hub.generator.regular_files import read_regular
 
 MAX_FEATURE_FOLDERS: Final = 500
 READ_BUDGET_BYTES: Final = 32 * 1_048_576
 OVER_BUDGET: Final = f"not read: the feature folders read are over {READ_BUDGET_BYTES} bytes"
 FEATURES_PATH: Final = ("brain", "features")
-NOT_REGULAR: Final = "not a regular file"
 _FOLDER_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-_FILE_FLAGS: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 
 
 class _Meter:
@@ -151,7 +149,9 @@ def _read_folder(parent: int, slug: str, meter: _Meter) -> FeatureFolder:
     except OSError:
         return FeatureFolder(slug=slug, files=())
     try:
-        reads = {name: meter.add(_read(folder, name, limit=_limit(name))) for name in RECORD_FILES}
+        reads = {
+            name: meter.add(read_regular(folder, name, limit=_limit(name))) for name in RECORD_FILES
+        }
         evals, evals_skipped = _heads(
             folder, EVALS_FOLDER, cap=MAX_EVAL_FILES, size=EVAL_HEAD_BYTES, meter=meter
         )
@@ -218,7 +218,7 @@ def _notes(entries: Iterable[os.DirEntry[str]], counted: list[int]) -> Iterator[
 
 
 def _record_head(folder: int, name: str, *, size: int, meter: _Meter) -> RecordHead:
-    read = meter.add(_read(folder, name, limit=size))
+    read = meter.add(read_regular(folder, name, limit=size))
     if isinstance(read, bytes):
         return RecordHead(name=name, head=read, problem=None)
     return RecordHead(name=name, head=None, problem=read or "could not be read")
@@ -232,36 +232,3 @@ def _record(read: bytes | str | None) -> bytes | str | None:
 
 def _head(read: bytes | str | None) -> bytes | None:
     return read[:HEAD_BYTES] if isinstance(read, bytes) else None
-
-
-def _read(folder: int, name: str, *, limit: int) -> bytes | str | None:
-    """The file's first ``limit`` bytes, its problem, or None when absent."""
-    try:
-        descriptor = os.open(name, _FILE_FLAGS, dir_fd=folder)
-    except FileNotFoundError:
-        return None
-    except OSError as error:
-        # ELOOP: the name is a link, never followed.
-        return (
-            NOT_REGULAR if error.errno == errno.ELOOP else (error.strerror or type(error).__name__)
-        )
-    try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            return NOT_REGULAR
-        return _read_at_most(descriptor, limit)
-    except OSError as error:
-        return error.strerror or type(error).__name__
-    finally:
-        os.close(descriptor)
-
-
-def _read_at_most(descriptor: int, limit: int) -> bytes:
-    chunks: list[bytes] = []
-    left = limit
-    while left > 0:
-        chunk = os.read(descriptor, left)
-        if not chunk:
-            break
-        chunks.append(chunk)
-        left -= len(chunk)
-    return b"".join(chunks)
