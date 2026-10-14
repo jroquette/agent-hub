@@ -2,6 +2,7 @@ import pytest
 
 from agent_hub.core.skills.skill_structure import (
     CLAUDE_CODE_COMMANDS,
+    MAX_HEADING_CHARS,
     MAX_REFERENCES,
     MAX_STEP_TITLE_CHARS,
     MAX_STEPS,
@@ -80,6 +81,32 @@ def test_lists_headings_when_toc_built() -> None:
         TocEntry(level=2, text="Steps"),
         TocEntry(level=3, text="Indented three"),
     )
+
+
+@pytest.mark.parametrize(
+    ("line", "toc"),
+    [
+        pytest.param("# a #", (TocEntry(level=1, text="a"),), id="closing-sequence"),
+        pytest.param("# a#", (TocEntry(level=1, text="a#"),), id="hash-in-text"),
+        pytest.param("# #", (), id="only-closing-sequence"),
+        pytest.param("#   ", (), id="only-spaces"),
+        pytest.param("# a ##  ", (TocEntry(level=1, text="a"),), id="closing-then-spaces"),
+        pytest.param("## a\t#\t", (TocEntry(level=2, text="a"),), id="closing-after-tab"),
+        pytest.param("#" + " " * 1000, (), id="long-blank-heading"),
+    ],
+)
+def test_strips_closing_sequence_when_heading_read(line: str, toc: tuple[TocEntry, ...]) -> None:
+    assert table_of_contents(f"{line}\n") == toc
+
+
+def test_skips_heading_when_line_over_cap() -> None:
+    at_cap = "# " + "a" * (MAX_HEADING_CHARS - 2)
+    over = "# " + "b" * (MAX_HEADING_CHARS - 1)
+
+    toc = table_of_contents(f"{at_cap}\n\n{over}\n")
+
+    assert len(at_cap) == MAX_HEADING_CHARS
+    assert toc == (TocEntry(level=1, text="a" * (MAX_HEADING_CHARS - 2)),)
 
 
 def test_marks_reference_unresolved_when_name_not_cataloged_or_builtin() -> None:
