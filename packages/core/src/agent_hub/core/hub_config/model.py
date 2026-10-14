@@ -76,10 +76,24 @@ _PATH_CHAR = r"[!-.0-\[\]-~]"
 _PATH_CHAR_NOT_DOT = r"[!-\-0-\[\]-~]"
 _GUARD_SEGMENT = rf"(?:{_PATH_CHAR}*{_PATH_CHAR_NOT_DOT}{_PATH_CHAR}*|\.{{3,}})"
 GuardPath = Annotated[str, Field(pattern=rf"^{_GUARD_SEGMENT}(?:/{_GUARD_SEGMENT})*$")]
-# An env file name with a suffix (``.env.local``): never ``.env`` itself, a path, or a key file.
-# The hooks' reader keeps its own copy of the pattern (``ENV_FILE_NAME``).
+# An env file name with a suffix (``.env.local``): never ``.env`` itself or a path. The guard's
+# key-file suffixes are refused too (``.env.prod.pem``): the guard denies those whatever the name.
+# The hooks' reader keeps its own copy of both (``ENV_FILE_NAME``, ``KEY_FILE_SUFFIXES``).
 ENV_FILE_NAME: Final = r"^\.env\.[A-Za-z0-9_.-]+$"
-EnvFileName = Annotated[str, Field(pattern=ENV_FILE_NAME)]
+KEY_FILE_SUFFIXES: Final = (".pem", ".key", ".p12", ".pfx")
+
+
+def _not_key_file(value: str) -> str:
+    if value.endswith(KEY_FILE_SUFFIXES):
+        raise PydanticCustomError(
+            "key_file_name",
+            "ends in a key file suffix ({suffixes})",
+            {"suffixes": ", ".join(KEY_FILE_SUFFIXES)},
+        )
+    return value
+
+
+EnvFileName = Annotated[str, Field(pattern=ENV_FILE_NAME), AfterValidator(_not_key_file)]
 
 
 def _not_blank(value: str) -> str:

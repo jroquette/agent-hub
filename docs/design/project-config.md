@@ -92,8 +92,9 @@ retype); brain frontmatter lists repo dirs unquoted (no type resolution). A safe
   workspace directory (Loki's `_archive`). Hooks resolve `@hub` to the hub root holding the hook file. Loki's guards on
   adoption: [hub-adopt.md](hub-adopt.md#project-guards).
 - Env file names (`guard.readable_env_files`, `guard.secret_env_files`): `^\.env\.[A-Za-z0-9_.-]+$`, an env file with a
-  suffix, matched against a path's last component, case-sensitive; `.env` itself, a path, `*.pem`, `*.key` and `id_*`
-  never fit.
+  suffix, matched against a path's last component, case-sensitive, and not ending in `.pem`, `.key`, `.p12` or `.pfx`
+  (a model check; the exported schema has the pattern only, and the guard denies such names whatever a list says);
+  `.env` itself, a path and `id_*` never fit.
 - Conventions: each pattern ≤ 120 characters, each placeholder at most once. `branch`: `{prefix}` (the developer's
   effective branch prefix: `project.branch_prefix`, or `hub.local.json`), `{ISSUE}` (the issue id, e.g. `DEM-7`) or
   `{issue_lower}` (the same lowercased; one of the two needed), `{slug}` (the worktree name's description; empty, it
