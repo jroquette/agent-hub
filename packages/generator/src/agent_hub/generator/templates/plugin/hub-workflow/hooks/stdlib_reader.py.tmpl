@@ -23,6 +23,9 @@ this reader falls back instead.
   ``None``, the gate's default.
 - A repo's ``default_branch`` is its effective value: its own when it is a string matching the
   model's branch pattern, else the ``project`` section's ``default_branch`` (it inherits).
+- ``guard.readable_env_files`` keeps only the names that match the model's ``EnvFileName``
+  (``.env.<suffix>``), so a bad ``hub.json`` never releases another file; ``secret_env_files``
+  keeps its strings as written (they only tighten).
 - ``guard.infra`` is ``None`` when absent. Present, ``InfraSection.problem`` names the first value
   the guard cannot use, and that key's tuple is ``()``: ``guard.infra`` when it is not an object
   (``null`` included), ``guard.infra.<key>`` when its value is not a list (``null`` included), and
@@ -83,6 +86,8 @@ BRANCH_NAME = re.compile(
 BRANCH_PREFIX = re.compile(r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*/")
 EMAIL_ADDRESS = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+")
 FREE_STRING = re.compile(r"[^\x00-\x1f\x7f]+")
+# The model's ``EnvFileName`` pattern without ``^`` and ``$``: an env file name with a suffix.
+ENV_FILE_NAME = re.compile(r"\.env\.[A-Za-z0-9_.-]+")
 # A character ``FREE_STRING`` refuses: an infra pattern holding one is unusable.
 CONTROL_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
 # The keys ``guard.infra`` may hold besides comment keys; any other key is unusable.
@@ -160,6 +165,8 @@ class GuardSection:
     ask_before_edit: tuple[str, ...] = ()
     deny_hosts: tuple[str, ...] = ()
     deny_paths: tuple[str, ...] = ()
+    readable_env_files: tuple[str, ...] = ()
+    secret_env_files: tuple[str, ...] = ()
     infra: InfraSection | None = None
 
 
@@ -217,6 +224,10 @@ def load_hub_file(path: str | os.PathLike[str]) -> HubFile:
             ask_before_edit=_texts(guard, "ask_before_edit"),
             deny_hosts=_texts(guard, "deny_hosts"),
             deny_paths=_texts(guard, "deny_paths"),
+            readable_env_files=tuple(
+                name for name in _texts(guard, "readable_env_files") if ENV_FILE_NAME.fullmatch(name)
+            ),
+            secret_env_files=_texts(guard, "secret_env_files"),
             infra=_infra(guard),
         ),
         modules=_settings_by_id(document.get("modules")),
