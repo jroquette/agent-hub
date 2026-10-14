@@ -35,6 +35,7 @@ import {
   problemsLine,
   splitTiles,
   troubled,
+  waitingLink,
   type Grouping,
   type TileGroup,
 } from "./tiles";
@@ -98,14 +99,14 @@ function tileModel(tile: LiveTile, now: number, grouping: Grouping): LiveSession
       )}
       {tile.status === "waiting" && (
         <AppLink
-          href="/approvals"
+          href={waitingLink(tile).href}
           className="ah-small"
           style={{ fontWeight: 500 }}
           onClick={(event) => {
             event.stopPropagation();
           }}
         >
-          Open approval
+          {waitingLink(tile).label}
         </AppLink>
       )}
     </>

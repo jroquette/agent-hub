@@ -39,7 +39,9 @@ def brain_hub(composed: Any, make_hub: Callable[..., Path]) -> Path:
     outside.write_text(f"# Outside\n\n{OUTSIDE_SENTINEL}\n", encoding="utf-8")
     (brain / "linked.md").symlink_to(outside)
     (brain / "linked-dir").symlink_to(hub, target_is_directory=True)
-    registered = composed.client.post("/api/v1/hubs", json={"path": str(hub)})
+    registered = composed.client.post(
+        "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+    )
     assert registered.status_code == 201, registered.text
     return hub
 

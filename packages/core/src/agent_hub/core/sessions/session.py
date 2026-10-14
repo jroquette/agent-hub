@@ -111,6 +111,7 @@ class Session(DerivedView):
     """A session folded from its events (status, counts, tokens, estimated cost).
 
     ``agent`` is deprecated: ``actors`` and ``label`` say who acted and what the session is about.
+    ``agent_session_id`` is the agent session ``hub web`` drives it from, when there is one.
     """
 
     id: str
@@ -146,6 +147,7 @@ class Session(DerivedView):
     label: SessionLabel | None = None
     actors: tuple[Actor, ...] = ()
     problems: ProblemCounts = ProblemCounts()
+    agent_session_id: str | None = None
 
 
 class SummaryLine(ViewModel):

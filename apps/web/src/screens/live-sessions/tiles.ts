@@ -109,3 +109,17 @@ export function splitTiles(tiles: LiveTile[]): Split {
     ended: tiles.filter((tile) => tile.group === "ended_recently"),
   };
 }
+
+/**
+ * Where a waiting tile sends the owner: a session hub web drives to its chat, where the
+ * permission card answers it (AC-165.25); any other wait, a hook-observed permission prompt
+ * included, to the approvals.
+ */
+export function waitingLink(tile: LiveTile): { href: string; label: string } {
+  if (tile.agent_session_id)
+    return {
+      href: `/agent-sessions/${encodeURIComponent(tile.agent_session_id)}`,
+      label: "Open chat",
+    };
+  return { href: "/approvals", label: "Open approval" };
+}

@@ -2,8 +2,16 @@ import { screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { useApi } from "../lib/api";
+import type { RecordKind } from "./builders";
 import {
   aBrainNote,
+  aCapabilities,
+  aCloudSession,
+  aDeltaFrame,
+  aLogRecord,
+  anAgentSession,
+  aPermissionRequest,
+  aWorkdir,
   aBrainTree,
   aBundledFileText,
   aCatalogItem,
@@ -241,5 +249,64 @@ describe("renderWithApi", () => {
 
     expect(stream("/api/v1/live-sessions/stream").url).toBe("/api/v1/live-sessions/stream");
     expect(() => stream("/api/v1/nothing")).toThrow("No EventSource opened for /api/v1/nothing");
+  });
+});
+
+describe("agent-session builders", () => {
+  it("build a record of every kind with its body", () => {
+    const kinds: RecordKind[] = [
+      "init",
+      "text",
+      "thinking",
+      "tool.call",
+      "tool.result",
+      "todos",
+      "permission.request",
+      "result",
+      "error",
+      "exited",
+      "user.message",
+      "permission.decision",
+      "interrupt",
+      "settings",
+      "close",
+      "log.truncated",
+      "cloud.start",
+      "cloud.followup",
+    ];
+
+    const records = kinds.map((kind, index) => aLogRecord(kind, { seq: index + 1 }));
+
+    expect(records.map((record) => record.kind)).toEqual(kinds);
+    expect(records.map((record) => record.seq)).toEqual(kinds.map((_, index) => index + 1));
+    expect(aLogRecord("user.message").by).toBe("web");
+    expect(aLogRecord("text").by).toBe("driver");
+    expect(aLogRecord("tool.call").body.name).toBe("Edit");
+    expect(aLogRecord("text", { body: { block: 1, text: "Done." } }).body.text).toBe("Done.");
+  });
+
+  it("build the agent-session bodies with overrides", () => {
+    const waiting = anAgentSession({
+      status: "waiting_permission",
+      open_permission: aPermissionRequest(),
+    });
+
+    expect(anAgentSession().status).toBe("idle");
+    expect(waiting.open_permission?.suggestions.map((s) => s.destination)).toEqual([
+      "localSettings",
+      "session",
+    ]);
+    expect(aPermissionRequest({ request_kind: "plan_approval" }).request_kind).toBe(
+      "plan_approval",
+    );
+    expect(aWorkdir({ kind: "worktree" }).workdir_id).toMatch(/^[0-9a-f]{16}$/);
+    expect(aCapabilities().models).toEqual(["default", "opus", "sonnet", "haiku"]);
+    expect(aCapabilities({ available: false, reason: "claude not found" }).reason).toBe(
+      "claude not found",
+    );
+    expect(aCloudSession().url).toMatch(/^https:\/\/claude\.ai\/code\//);
+    expect(aCloudSession().teleport_command).toBe(`claude --teleport ${aCloudSession().cloud_id}`);
+    expect(aDeltaFrame({ index: 2 })).toEqual({ after_seq: 3, block: 0, index: 2, text: "Hel" });
+    expect(aSession().agent_session_id).toBeNull();
   });
 });

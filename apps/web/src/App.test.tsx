@@ -56,6 +56,7 @@ describe("routes", () => {
     ["/live", "Live sessions"],
     ["/sessions", "Sessions"],
     ["/sessions/abc", "Session detail"],
+    ["/agent-sessions/abc", "Agent session"],
     ["/runs", "Workflow runs"],
     ["/runs/abc", "Run abc not found"],
     ["/knowledge/learnings", "Knowledge"],
