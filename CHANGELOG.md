@@ -13,6 +13,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub web` can start, cancel, resume and abandon workflow runs: `POST /api/v1/workflow-runs` and
+  `/workflow-runs/{run_id}/cancel|resume|abandon` run `hub workflow run --live` as a detached child (no
+  `LINEAR_API_KEY`, a pid file under `.agent-runs/web/`), keep one live run per issue across starts and resumes,
+  refuse `issue-to-pr`, and are strict writes that need the launch cookie. A run's events now carry its `issue` input
+  when it is a tracker key (AGH-232).
 - `hub workflow list` and `hub workflow validate [NAME]` load and plan the hub's `workflows/<pack>/` files (YAML through
   the strict loader, or JSON), then the built-ins, against the graph workflow format (ADR 0032): unknown keys, unknown
   or non-upstream node references, argv references that are not a whole element, cycles and a bad
@@ -122,6 +127,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   button, and wide tables scroll sideways in their own region (AGH-241).
 - A hub's `make check` also runs `./hub workflow test`, the workflow packs' fixtures, after `hub doctor` and before the
   hub's own tests (AGH-227).
+- The chat is complete for the keyboard and screen readers: `/` at the start of a message lists the session's slash
+  commands and skills (filter as you type, arrows, Enter or Tab inserts, Esc closes; Enter never sends while it is
+  open, and a live region announces how many commands match); Ctrl/Cmd+Alt+Enter allows and Ctrl/Cmd+Alt+Backspace
+  denies the oldest waiting tool permission (not on a key repeat, mid-composition or under a dialog), `a` / `d`
+  answer a focused tool card (`g a` still goes to Approvals and never allows), plain Alt+Enter still sends, Shift+Esc focuses the composer, ArrowUp in an empty composer recalls your last prompt, and a new
+  permission card never takes focus from a composer holding text; the shortcut sheet has a Chat group, and the chat
+  has no serious axe violation in any state (AGH-242).
 - Sessions groups its table into Waiting, Live, Idle and Ended or failed sections, each with its own count, table
   and "Load more", and one shared sort applied within each section; a header button collapses a section (remembered
   in this browser), empty sections are hidden, a section past 100 rows scrolls in its own window, a status facet

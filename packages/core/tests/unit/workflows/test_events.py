@@ -158,6 +158,29 @@ def test_stores_every_payload_whole_when_ingested() -> None:
     assert all(kept_payload(e.type, e.payload) == e.payload for e in recorder.events)
 
 
+def test_tags_every_event_with_issue_when_run_has_one() -> None:
+    recorder = WorkflowEvents(
+        project="demo", run_id="r1", workflow="fix", revision=1, content_hash=HASH, issue="DEM-7"
+    )
+
+    recorder.step_started(StepStart("plan", 1, START))
+    recorder.step_ended(StepEnd("plan", 1, "ok", START))
+    recorder.run_ended(RunEnd("done", START))
+
+    assert [event.payload["issue"] for event in recorder.events] == ["DEM-7"] * 3
+    assert all(kept_payload(e.type, e.payload) == e.payload for e in recorder.events)
+
+
+def test_leaves_issue_out_when_input_is_not_tracker_key() -> None:
+    recorder = WorkflowEvents(
+        project="demo", run_id="r1", workflow="fix", revision=1, content_hash=HASH, issue="dem 7"
+    )
+
+    recorder.run_ended(RunEnd("done", START))
+
+    assert "issue" not in recorder.events[0].payload
+
+
 @pytest.mark.parametrize(
     ("kind", "form", "event_kind"),
     [
@@ -200,3 +223,15 @@ def test_lists_an_open_approval_when_an_approval_request_is_folded() -> None:
 
     approval = approvals["r1:ok:1"]
     assert (approval.kind, approval.status, approval.session_id) == ("human_gate", "open", "run:r1")
+
+
+def test_tags_gate_request_with_issue_when_run_has_one() -> None:
+    recorder = WorkflowEvents(
+        project="demo", run_id="r1", workflow="fix", revision=1, content_hash=HASH, issue="DEM-7"
+    )
+
+    recorder.gate_requested(GateRequest("ok", 1, "approval", "decision", START, ("approve",), "?"))
+
+    [event] = recorder.events
+    assert event.payload["issue"] == "DEM-7"
+    assert kept_payload(event.type, event.payload) == event.payload

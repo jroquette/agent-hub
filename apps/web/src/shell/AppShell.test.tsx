@@ -69,6 +69,30 @@ describe("AppShell", () => {
     expect(router.state.location.pathname).toBe("/");
   });
 
+  it("skips a key a screen already handled", () => {
+    const { router } = renderWithApi(
+      <AppShell>
+        <button
+          type="button"
+          onKeyDown={(event) => {
+            event.preventDefault();
+          }}
+        >
+          handles its keys
+        </button>
+      </AppShell>,
+      { routes },
+    );
+    const own = screen.getByRole("button", { name: "handles its keys" });
+
+    fireEvent.keyDown(own, { key: "g" });
+    fireEvent.keyDown(own, { key: "l" });
+    fireEvent.keyDown(own, { key: "t" });
+
+    expect(router.state.location.pathname).toBe("/");
+    expect(screen.getByRole("button", { name: "UTC" })).toHaveAttribute("aria-pressed", "false");
+  });
+
   it("toggles UTC with t and collapses the sidebar from the top bar", () => {
     renderWithApi(<AppShell />, { routes });
 
