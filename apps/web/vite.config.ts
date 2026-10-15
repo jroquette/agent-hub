@@ -1,4 +1,7 @@
 /// <reference types="vitest/config" />
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
+
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import { DEV_SERVER, apiProxy } from "./src/lib/devProxy";
@@ -6,8 +9,15 @@ import { DEV_SERVER, apiProxy } from "./src/lib/devProxy";
 // The production build goes into the API package, which serves it and ships it (D26).
 const OUT_DIR = "../../packages/api/src/agent_hub/api/web_dist";
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [react()],
+  // The checkout `make dev` serves, so a shake can preselect its workdir (O8); null in a build, so
+  // web_dist holds no absolute path (AC-260.18).
+  define: {
+    __AH_DEV_CHECKOUT__: JSON.stringify(
+      command === "serve" ? realpathSync(resolve(import.meta.dirname, "../..")) : null,
+    ),
+  },
   // `make dev` (vite) only; the production app is served by `hub web` itself.
   server: { ...DEV_SERVER, proxy: apiProxy() },
   build: {
@@ -34,4 +44,4 @@ export default defineConfig({
       thresholds: { lines: 80, branches: 80 },
     },
   },
-});
+}));
